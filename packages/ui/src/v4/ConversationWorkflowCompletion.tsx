@@ -24,14 +24,14 @@ import { useHasV4Conversation } from "@/v4/V4ConversationContext.js";
 import type { WorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
 
 /**
- * 完成卡的落位：把解析出的完成事实接上
- * 宿主回调与产物取数。回调的存在即门控（照 `ConversationWorkflowDigests`）：⤢ 要
- * `onOpenWorkflowRun` + sessionId + 联接到的 `toolCallId`；瓦片与药丸要 `onOpenWorkflowArtifact`
- * + sessionId（不需要 toolCallId，与通知行同一条门）。
+ * Completion-card binding: connect resolved completion facts to
+ * host callbacks and artifact queries. Callback presence is the gate (matching `ConversationWorkflowDigests`): ⤢ requires
+ * `onOpenWorkflowRun` + sessionId + joined `toolCallId`; tiles and pills require `onOpenWorkflowArtifact`
+ * + sessionId (no toolCallId needed, same gate as notification rows).
  *
- * 产物清单**以通知载荷为底**（随通知持久化，冷恢复也在），会话在场时再经既有的产物 hook 补
- * 字节数 / 出处 / 看板 spec / 交付物旗子，并给交付物的框挂预览。没有会话上下文的宿主（静态渲染、
- * 回放）画的是只有字形的冷态卡——同一张卡，少一层。
+ * The artifact list is **based on the notification payload** (persisted with the notification and available during cold recovery). When a session is available,
+ * the existing artifact hook adds byte counts / source paths / board specs / deliverable flags and provides previews for the deliverable frame. Hosts without session context (static rendering,
+ * replay) draw the same card in a cold state with glyphs only—one less data layer.
  */
 export function ConversationWorkflowCompletion({
   completion,
@@ -55,7 +55,7 @@ export function ConversationWorkflowCompletion({
       : {
           tokens: run.usage.spentTokens,
           subagents: run.actors.length,
-          // 卡上不说「步」：第四格是进过的阶段数；无标记脚本没有它，格写 `—`。
+          // Do not label this as "steps" on the card: the fourth cell is phases entered; scripts without phase markers have none and show `—`.
           ...(run.phases !== undefined && run.phases.length > 0
             ? { phases: run.phases.length }
             : {}),
@@ -71,10 +71,10 @@ export function ConversationWorkflowCompletion({
             workflowName: completion.name,
           })
       : undefined;
-  // 打开请求按**当时手上那份清单**构造，所以是一个按清单取参的工厂而不是一个闭死的回调：
-  // 冷态只有通知载荷（有 `contentType`，没有 `sourcePath`），活路径下
-  // `WorkflowCompletionWithData` 拿补齐过的那份再造一次，出处才带得上。宿主据 `contentType`
-  // 决定 html 产物直接开浏览器 tab。
+  // Build the open request from **the list available at that moment**, so this is a factory that takes the list rather than a closed-over callback:
+  // cold state has only the notification payload (`contentType` present, `sourcePath` absent); on the live path,
+  // `WorkflowCompletionWithData` rebuilds the callback with the enriched list so the source path is available. The host uses `contentType`
+  // to decide whether to open an HTML artifact directly in a browser tab.
   const openArtifactFrom =
     context.onOpenWorkflowArtifact && sessionId
       ? (artifacts: readonly WorkflowCompletionArtifact[]) => (artifactId: string) => {
@@ -91,9 +91,10 @@ export function ConversationWorkflowCompletion({
       : undefined;
   const onOpenArtifact = openArtifactFrom?.(completion.artifacts);
 
-  // 表头那一对控件（docs/dynamic-workflow/transcript-and-notifications.md「Saving the run,
-  // and running it again」）。两道门在 `onSendWorkflowSaveRequest` 的供给点上，与 Resume 同一处；
-  // 芯片不受门的影响——它说的是磁盘上有没有那份文件，不是这张卡能不能动它。
+  // The pair of controls in the header (docs/dynamic-workflow/transcript-and-notifications.md,
+  // “Saving the run, and running it again”). Both gates are applied at the same supply point as
+  // Resume, `onSendWorkflowSaveRequest`. The chip is not gated; it reports whether the file exists
+  // on disk, not whether this card can act on it.
   const saveHost: WorkflowRunSaveSlotsHost = {
     sessionId: sessionId ?? undefined,
     workspacePath: context.workspacePath,
@@ -121,7 +122,7 @@ export function ConversationWorkflowCompletion({
     ...(onOpenArtifact === undefined ? {} : { onOpenArtifact }),
   };
 
-  // 没有会话上下文（静态渲染、回放）：就是原来那张卡，一个控件都没有（spec「Gates」）。
+  // Without session context (static rendering or replay), keep the original card with no controls (spec, “Gates”).
   if (!hasConversation || sessionId === undefined) {
     return <WorkflowCompletionCard {...shared} artifacts={completion.artifacts} />;
   }
@@ -141,7 +142,7 @@ export function ConversationWorkflowCompletion({
   );
 }
 
-/** 把两个槽位并进卡的公共 props；缺席的槽位不写键（exactOptionalPropertyTypes）。 */
+/** Combine both slots into shared card props; omit absent slots (exactOptionalPropertyTypes). */
 function withSaveSlots<T extends object>(shared: T, slots: WorkflowRunSaveSlots | null): T {
   if (slots === null) return shared;
   return {
@@ -152,9 +153,9 @@ function withSaveSlots<T extends object>(shared: T, slots: WorkflowRunSaveSlots 
 }
 
 /**
- * 通知载荷的清单 + hook 视图的补充。顺序与身份归载荷（它是通知那一刻的事实，且交付物已在最前）；
- * 载荷被砍过（超 8）时 journal 里多出来的产物追加在末尾，进索引或「还有 N 个」。旗子与说明两个来源
- * 任一带上即算（老载荷没有这两个键，hook 从 journal 补回来）。
+ * Notification payload list + additions from the hook view. Order and identity come from the payload (facts at notification time, with the deliverable already first);
+ * when the payload was truncated (over 8), extra journal artifacts are appended at the end and go into the index or "N more." Either source may supply the flag and caption
+ * (older payloads do not have those keys, and the hook restores them from the journal).
  */
 function mergeCompletionArtifacts(
   base: readonly WorkflowCompletionArtifact[],
@@ -205,7 +206,7 @@ function WorkflowCompletionWithData({
 }: {
   completion: WorkflowTurnCompletion;
   live: readonly WorkflowRunArtifactSummary[] | undefined;
-  /** 打开请求的工厂；缺席即宿主没给打开能力（门与 `shared.onOpenArtifact` 同一条）。 */
+  /** Factory for open requests; if absent, the host did not provide open capability (same gate as `shared.onOpenArtifact`). */
   openArtifactFrom?: (
     artifacts: readonly WorkflowCompletionArtifact[],
   ) => (artifactId: string) => void;
@@ -222,10 +223,10 @@ function WorkflowCompletionWithData({
     () => mergeCompletionArtifacts(completion.artifacts, state.artifacts),
     [completion.artifacts, state.artifacts],
   );
-  // `artifactsTruncated` 说的是**通知载荷**被砍在 8 件，而这里画的清单已经由活投影 /
-  // journal 补齐（产物多的 run 是常态），`+N` 与「还有 N 个」却仍按载荷的旗子写成省略号——用户看到的
-  // 是「还有 … 个」，而数字明明已经知道。清单完整时旗子作废；只有老 CLI（查不到 journal）或还没
-  // 答上来时才仍是省略号，那时数字确实不可知。
+  // `artifactsTruncated` means the **notification payload** was capped at 8 artifacts, but the list rendered here may already be complete from the live projection /
+  // journal (runs with many artifacts are common). If `+N` and "N more" still follow the payload flag, users see "… more" when the count is known.
+  // Ignore the flag when the list is complete; retain the ellipsis only for old CLI versions (no journal lookup) or while the result is still unavailable,
+  // when the count truly is unknown.
   const artifactsTruncated = shared.artifactsTruncated === true && !state.complete;
   const renderPreview = (artifact: WorkflowCompletionArtifact) => (
     <WorkflowArtifactTilePreview
@@ -236,13 +237,13 @@ function WorkflowCompletionWithData({
       theme={theme}
     />
   );
-  // 只有画出来的框挂预览——今天只有交付物行有框；索引行与「还有 N 个」不读字节。
+  // Attach previews only to rendered frames—currently only the deliverable row has a frame; index rows and "N more" do not load bytes.
   const previewIds = useMemo(
     () => completionPreviewIds(completionArtifactLayout(artifacts, artifactsTruncated)),
     [artifacts, artifactsTruncated],
   );
-  // 补齐过的清单重造一次回调：载荷上没有的 `sourcePath`、老载荷上没有的 `contentType`
-  // 都从 journal / 活投影补回来，点开的那一下才带得全。
+  // Rebuild the callback with the enriched list: `sourcePath` missing from the payload and `contentType` missing from old payloads
+  // are restored from the journal/live projection, so the open action has complete data.
   const onOpenArtifact = openArtifactFrom?.(artifacts);
   return (
     <WorkflowCompletionCard

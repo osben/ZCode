@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 import { memo, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronRight, Folder, Star } from "lucide-react";
@@ -214,15 +213,13 @@ export function SessionManagerTable(props: SessionManagerTableProps) {
                     {item.group.workspacePath}
                   </span>
                   <span className="ml-auto shrink-0 text-ui-xs text-foreground-subtle">
-                    {formatPluralMessage(
-                      intl,
-                      "sessionManager.count.sessions",
+                    {intl.formatPlural(
+                      { id: "sessionManager.count.sessions" },
                       item.group.rows.length,
                     )}
                     {" · "}
-                    {formatPluralMessage(
-                      intl,
-                      "sessionManager.count.active",
+                    {intl.formatPlural(
+                      { id: "sessionManager.count.active" },
                       item.group.activeCount,
                     )}
                   </span>

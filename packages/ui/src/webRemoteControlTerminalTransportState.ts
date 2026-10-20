@@ -31,7 +31,8 @@ export function setWebRemoteControlTerminalTransportState(
 export function useWebRemoteControlTerminalTransportState(
   serverSnapshot: WebRemoteControlTerminalTransportState = currentState,
 ): WebRemoteControlTerminalTransportState {
-  // Bugfix: 手机远控 transport 状态可能在 relay 抖动时快速变化。
-  // 这里用轻量外部订阅只更新重连提示，避免为了 toast 反复重渲染整棵 Root/App。
+  // Bugfix: the mobile remote-control transport state can change rapidly while the relay
+  // flaps. This lightweight external subscription updates only the reconnect hint, avoiding
+  // repeated full Root/App re-renders for a toast.
   return useSyncExternalStore(subscribe, getSnapshot, () => serverSnapshot);
 }

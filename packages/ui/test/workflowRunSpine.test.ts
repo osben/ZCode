@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
-// 并行阶段在脊线上（docs/dynamic-workflow/presentation.md「The spine」）：卡上横着的带，在运行
-// 详情页竖着读，像提交图——左边是轨道、右边是文字，两者不共用一列。分叉与汇合各占两节之间的一行
-// 16px 的接头，只在前驱 / 汇合站存在时才有；没有它们时 strand 在自己的灯上起止。排布在
-// `workflowRunSpine.ts` 里是纯函数，这里既钉它，也钉它真的接到了 DOM 上。
+// Parallel phases on the spine (docs/dynamic-workflow/presentation.md "The spine"): a band lying across the
+// card, read vertically on the run
+// detail page, like a commit graph — rails on the left, text on the right, and the two don't share a column.
+// Forks and merges each take a 16px joint row between two sections, present only when a predecessor / join
+// station exists; without them a strand starts and ends on its own lamp. The layout in
+// `workflowRunSpine.ts` is a pure function; this pins both it and the fact that it really reaches the DOM.
 import { createElement } from "react";
 import { cleanup, render, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -14,7 +16,7 @@ import { spineLayout } from "@/app-shell/workflowRunSpine.js";
 import { WorkflowRunPhaseList } from "@/app-shell/WorkflowRunPhaseList.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
-/** 一站一个 ask 成员的骨架图：`near[i]` 是第 i 站的 `alongside`，边按下标给。 */
+/** Skeleton graph with one ask member per station: `near[i]` is station i's `alongside`, edges given by index. */
 function bandGraph(
   near: (number[] | undefined)[],
   edges: [number, number][],
@@ -62,7 +64,7 @@ const settled = (siteId: string): Node =>
   ({ siteId, ordinal: 1, phase: "settled", outcome: "ok" }) as Node;
 const executing = (siteId: string): Node => ({ siteId, ordinal: 1, phase: "executing" }) as Node;
 
-// A ∥ B → C：有界层报的是约简后的边 A → B、B → C。
+// A ∥ B → C: the bounded layer reports the reduced edges A → B, B → C.
 const TESTFIELD = bandGraph(
   [undefined, [0], undefined],
   [
@@ -70,7 +72,7 @@ const TESTFIELD = bandGraph(
     [1, 2],
   ],
 );
-// 同一条带，前面多一站 P：P → A 让带有了前驱，B → C 让它有了汇合站。
+// The same band with one more station P in front: P → A gives the band a predecessor, B → C gives it a join station.
 const WITH_PRED = bandGraph(
   [undefined, undefined, [1], undefined],
   [
@@ -91,7 +93,7 @@ function renderSpine(graph: WorkflowCausalityGraphData, state?: WorkflowRunState
   );
 }
 
-// plan → {A ∥ B}，带后面没有站：有前驱、没有汇合站（LOOP_B 的形状）。
+// plan → {A ∥ B}, with no station after the band: has a predecessor, no join station (LOOP_B's shape).
 const OPEN_END = bandGraph(
   [undefined, undefined, [1]],
   [
@@ -101,7 +103,7 @@ const OPEN_END = bandGraph(
   ],
 );
 
-/** 容器的直接子元素序列：节是 `phase:<下标>`，接头是 `fork` / `merge`。 */
+/** Direct children sequence of the container: sections are `phase:<index>`, joints are `fork` / `merge`. */
 const sequenceOf = (view: ReturnType<typeof render>) =>
   [...view.getByTestId("workflow-run-phases").children].map((child) =>
     child.getAttribute("data-testid") === "workflow-run-spine-joint"
@@ -152,13 +154,14 @@ describe("spineLayout", () => {
     expect(b!.merge).toEqual({ branches: [{ ink: "faint", track: 1 }], main: "faint" });
     expect([p, c].some((section) => section!.fork ?? section!.merge)).toBe(false);
     expect(p!.rails).toEqual([{ ink: "faint", position: "below", track: 0 }]);
-    // A：主轨从分叉行下来到灯，再往下接汇合行；分支轨从分叉行一路穿过去找 B 的灯。
+    // A: the main rail comes down from the fork row to the lamp, then continues down to the merge row; the
+    // branch rail passes straight through looking for B's lamp.
     expect(a!.rails).toEqual([
       { ink: "faint", position: "above", track: 0 },
       { ink: "faint", position: "below", track: 0 },
       { ink: "faint", position: "full", track: 1 },
     ]);
-    // B：自己那条分支轨上下两截，主轨整节穿过。
+    // B: its own branch rail in above/below halves; the main rail passes through the whole section.
     expect(b!.rails).toEqual([
       { ink: "faint", position: "full", track: 0 },
       { ink: "faint", position: "above", track: 1 },
@@ -172,7 +175,8 @@ describe("spineLayout", () => {
     const [a, b, c] = layout.sections;
     expect(a!.fork).toEqual({ branches: [{ ink: "faint", track: 1 }], main: "faint", open: true });
     expect(b!.merge).toEqual({ branches: [{ ink: "faint", track: 1 }], main: "faint" });
-    // A 在主线上：主轨从根下来到灯，再往下穿过 B 去接汇合行；分支轨从根一路穿过 A 去找 B。
+    // A on the main line: the main rail comes down from the root to the lamp, then continues down through B to
+    // the merge row; the branch rail passes from the root straight through A looking for B.
     expect(a!.rails).toEqual([
       { ink: "faint", position: "above", track: 0 },
       { ink: "faint", position: "below", track: 0 },
@@ -196,7 +200,8 @@ describe("spineLayout", () => {
       { ink: "faint", position: "below", track: 0 },
       { ink: "faint", position: "full", track: 1 },
     ]);
-    // B：自己那条分支轨上下两截；主线在 A 之后没有成员，照样整节穿过去接汇合行。
+    // B: its own branch rail in above/below halves; the main line has no member after A and still passes
+    // through the whole section to reach the merge row.
     expect(b!.rails).toEqual([
       { ink: "faint", position: "full", track: 0 },
       { ink: "faint", position: "above", track: 1 },
@@ -205,8 +210,9 @@ describe("spineLayout", () => {
   });
 
   it("整个工作流就是一条带、每条 strand 只有一站：仍然画出根、每站一条线、汇点", () => {
-    // 回归（2026-09-24 实机）：四阶段两两并行、前后都没有站——此前按「在灯上起止」的规则，每条
-    // strand 长度为零，脊线上只剩四枚悬空的灯。
+    // Regression (on real hardware, 2026-09-24): four phases pairwise parallel with no station before or
+    // after — under the old "start and end on the lamp" rule every strand had length zero and the spine
+    // showed only four dangling lamps.
     const whole = bandGraph(
       [undefined, [0], [0, 1], [0, 1, 2]],
       [
@@ -224,7 +230,8 @@ describe("spineLayout", () => {
     expect(sections[0]!.fork).toMatchObject({ open: true });
     expect(sections[3]!.merge).toMatchObject({ open: true });
     expect(sections[0]!.fork!.branches.map((branch) => branch.track)).toEqual([1, 2, 3]);
-    // 每一节里四条轨道都在：自己那条是上下两截，别人的整节穿过。
+    // All four tracks present in every section: one's own is in above/below halves, the others' pass through
+    // whole.
     for (const [i, section] of sections.entries()) {
       expect(section.rails.map((rail) => [rail.track, rail.position])).toEqual(
         [0, 1, 2, 3].flatMap((t) =>
@@ -240,7 +247,7 @@ describe("spineLayout", () => {
   });
 
   it("分支轨道穿过别人的节：只在 strand 活着的那几节整节穿过", () => {
-    // 带 {1,4}：轨道 0 是 1、3、4，轨道 1 只有 2；前驱 0、汇合站 5。
+    // Band {1,4}: track 0 has 1, 3, 4; track 1 has only 2; predecessor 0, join station 5.
     const wide = bandGraph(
       [undefined, undefined, [1], undefined, [2], undefined],
       [
@@ -258,15 +265,17 @@ describe("spineLayout", () => {
     expect(sections[1]!.fork).toBeDefined();
     expect(sections[4]!.merge).toBeDefined();
     const track1 = (i: number) => sections[i]!.rails.filter((rail) => rail.track === 1);
-    // 分叉行之下、第一枚灯之前：整节穿过；过了最后一枚灯、汇合行之前：也整节穿过。
+    // Below the fork row, before the first lamp: passes through whole. After the last lamp, before the merge
+    // row: also passes through whole.
     expect(track1(1)).toEqual([{ ink: "faint", position: "full", track: 1 }]);
     expect(track1(3)).toEqual([{ ink: "faint", position: "full", track: 1 }]);
     expect(track1(4)).toEqual([{ ink: "faint", position: "full", track: 1 }]);
-    // 主轨穿过分支站 2（前后都有主线成员）。
+    // The main rail passes through the branch station 2 (main-line members on both sides).
     expect(sections[2]!.rails.filter((rail) => rail.track === 0)).toEqual([
       { ink: "faint", position: "full", track: 0 },
     ]);
-    // 汇合站那一节只有主轨的上半截：汇合在它上面的那一行里，不在它的节头里。
+    // The join station's section has only the main rail's upper half: the merge lives in the row above it, not
+    // in its section head.
     expect(sections[5]!.rails).toEqual([{ ink: "faint", position: "above", track: 0 }]);
   });
 
@@ -314,7 +323,7 @@ describe("spineLayout", () => {
         ].flat(),
       ),
     ).toEqual(["fork:1", "merge:3:open", "fork:4:open", "merge:5"]);
-    // C 的主轨往下接开口的汇合行，D 的主轨从开口的分叉行下来。
+    // C's main rail continues down to the open merge row; D's main rail comes down from the open fork row.
     expect(sections[3]!.rails.find((rail) => rail.position === "below")).toEqual({
       ink: "faint",
       position: "below",
@@ -417,8 +426,9 @@ describe("WorkflowRunPhaseList · 带", () => {
     expect(railsOf(merge)).toEqual([{ ink: "march", position: "full", track: "0" }]);
     const curve = within(merge).getByTestId("workflow-run-spine-merge");
     expect(curve.getAttribute("data-curve-ink")).toBe("march");
-    // 合流曲线上叠的是一条亮着的光：渐变描边（`url(#…)`），渐变本身就在这张 SVG 里；光画在全部底墨
-    // 之上，所以它是曲线的兄弟而不是孩子。
+    // A lit light overlays the confluence curve: a gradient stroke (`url(#…)`), and the gradient itself lives
+    // in this SVG; the light is drawn above all base ink,
+    // so it is the curve's sibling rather than its child.
     expect(curve.querySelector("path.wf-lit")).toBeNull();
     const light = within(merge)
       .getByTestId("workflow-run-spine-merge-lit")
@@ -426,8 +436,9 @@ describe("WorkflowRunPhaseList · 带", () => {
     expect(light?.getAttribute("data-testid")).toBe("workflow-march-light");
     expect(light?.getAttribute("stroke")).toMatch(/^url\(#.+\)$/);
     expect(merge.querySelector("linearGradient")).toBeTruthy();
-    // 主线那一段（A 的下半截、B 里穿过的主轨、C 的上半截）行进；B 的分支轨下半截接着合流曲线。
-    // 根下来的那几段是到过的站的进入墨：浓。
+    // The main-line segments (A's lower half, the main rail passing through B, C's upper half) march; B's
+    // branch rail's lower half continues into the confluence curve.
+    // The segments from the root are the entry ink of stations that have been reached: strong.
     expect(railsOf(a!)).toEqual([
       { ink: "strong", position: "above", track: "0" },
       { ink: "march", position: "below", track: "0" },
@@ -454,7 +465,7 @@ describe("WorkflowRunPhaseList · 带", () => {
       "true",
       "false",
     ]);
-    // 展开的药丸列也在文字列上。
+    // The expanded pill column also sits on the text column.
     for (const phase of phases.slice(0, 2)) {
       expect(within(phase).getByTestId("workflow-run-phase-body").style.paddingLeft).toBe("51px");
     }
@@ -479,7 +490,7 @@ describe("WorkflowRunPhaseList · 带", () => {
         expect(rail.style.left).toBe("");
       }
     }
-    // 行进段仍落在进入运行站的那一段上。
+    // The marching segment still lands on the segment entering the running station.
     expect(railsOf(phases[0]!)).toEqual([{ ink: "march", position: "below", track: "0" }]);
     expect(railsOf(phases[1]!)).toEqual([
       { ink: "march", position: "above", track: "0" },
@@ -488,8 +499,9 @@ describe("WorkflowRunPhaseList · 带", () => {
   });
 });
 
-// 子代理自己的模型（presentation.md「The spine」）：persona 点名了模型的子代理，行尾计数后面跟模型名，
-// tooltip 多一行规范串；跑在 run 模型上的子代理什么都不说。
+// The subagent's own model (presentation.md "The spine"): for a subagent whose persona names a model, the row's
+// trailing count is followed by the model name,
+// and the tooltip gains a line with the canonical string; a subagent running on the run's model says nothing.
 describe("WorkflowRunPhaseList · 子代理的模型", () => {
   it("点名了模型的那一行带模型名（不带 providerId），tooltip 带规范串；其余行不带", () => {
     const state: WorkflowRunState = {

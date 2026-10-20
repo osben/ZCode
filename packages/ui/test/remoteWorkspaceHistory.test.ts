@@ -364,6 +364,28 @@ describe("remoteWorkspaceHistory helpers", () => {
     ).toBe("/workspace/demo");
   });
 
+  it("matches a session whose stored workspace identity is blank or padded", () => {
+    const target: RemoteTarget = { kind: "docker", container: "demo-container" };
+    const identity = buildRemoteWorkspaceIdentity("/workspace/demo", target);
+    const entry = {
+      kind: "remote" as const,
+      workspacePath: "/workspace/demo",
+      target: { kind: "docker" as const, container: "demo-container" },
+      lastOpenedAt: 10,
+      lastConnectionStatus: "connected" as const,
+    };
+
+    for (const workspaceIdentity of ["   ", `  ${identity} `]) {
+      expect(
+        findMatchingRemoteWorkspaceSessionEntry(
+          [{ ...entry, workspaceIdentity }],
+          "/workspace/demo",
+          target,
+        ),
+      ).not.toBeNull();
+    }
+  });
+
   it("keeps the newest remote session at the top when upserting", () => {
     const updated = upsertRemoteWorkspaceSessionEntries(
       [

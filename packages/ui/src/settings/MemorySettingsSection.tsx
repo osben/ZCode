@@ -10,7 +10,10 @@ import {
 } from "@/settings/MemorySettingsViewer.js";
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 
-type MemoryCatalogService = Pick<IMemoryService, "listProjectMemories">;
+type MemoryCatalogService = Pick<
+  IMemoryService,
+  "listProjectMemories" | "readProjectMemoryFile" | "getProjectMemoryDirectory"
+>;
 
 function normalizeWorkspaceDisplayName(value: string): string {
   const slug = value
@@ -45,14 +48,18 @@ function getErrorMessage(error: unknown): string {
 
 export function MemorySettingsSection({
   memoryEnabled,
+  memoryIndexAsContext,
   memoryService,
   onMemoryEnabledChange,
+  onMemoryIndexAsContextChange,
   projectMemoryViewerAvailable,
   workspaceDisplayNames = [],
 }: {
   memoryEnabled: boolean;
+  memoryIndexAsContext: boolean;
   memoryService: MemoryCatalogService;
   onMemoryEnabledChange: (enabled: boolean) => Promise<void>;
+  onMemoryIndexAsContextChange: (enabled: boolean) => Promise<void>;
   projectMemoryViewerAvailable: boolean;
   workspaceDisplayNames?: readonly string[];
 }) {
@@ -174,6 +181,26 @@ export function MemorySettingsSection({
             />
           }
         />
+        <SettingsRow
+          label={intl.formatMessage({
+            id: "settings.memory.indexAsContext",
+          })}
+          description={intl.formatMessage({
+            id: "settings.memory.indexAsContextDescription",
+          })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({
+                id: "settings.memory.indexAsContext",
+              })}
+              checked={memoryIndexAsContext}
+              data-testid={TID_SETTINGS_MEMORY_SWITCH}
+              onCheckedChange={(checked) => {
+                void onMemoryIndexAsContextChange(checked);
+              }}
+            />
+          }
+        />
       </SettingsGroupCard>
 
       {!projectMemoryViewerAvailable ? (
@@ -184,6 +211,7 @@ export function MemorySettingsSection({
         <MemorySettingsViewer
           catalogError={catalogError}
           catalogState={catalogState}
+          memoryService={memoryService}
           selectedWorkspace={selectedWorkspace}
           workspaces={displayWorkspaces}
           onRefresh={handleRefresh}

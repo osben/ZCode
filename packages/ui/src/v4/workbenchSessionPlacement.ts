@@ -19,6 +19,8 @@ import {
 
 export interface WorkbenchSessionTarget extends PaneWorkspaceScope {
   readonly sessionId: string;
+  readonly readOnly?: boolean;
+  readonly selectionSideChat?: boolean;
 }
 
 export interface WorkbenchSplitPlacementOptions {
@@ -46,8 +48,13 @@ interface SplitResolution {
 }
 
 function targetBinding(target: WorkbenchSessionTarget): WorkbenchSessionBinding {
-  const { sessionId, ...workspaceScope } = target;
-  return { workspaceScope, sessionId };
+  const { sessionId, readOnly, selectionSideChat, ...workspaceScope } = target;
+  return {
+    workspaceScope,
+    sessionId,
+    ...(readOnly ? { readOnly: true } : {}),
+    ...(selectionSideChat ? { selectionSideChat: true } : {}),
+  };
 }
 
 function draftPrimaryOwnsLayout(shellBinding: WorkbenchSessionBinding | null): boolean {
@@ -156,6 +163,8 @@ export function placeWorkbenchSessionInSplit(
     layout.splitPaneWithBinding(resolution.anchorPaneId, resolution.side, {
       workspaceScope: resolution.binding.workspaceScope,
       sessionId: resolution.binding.sessionId,
+      ...(resolution.binding.readOnly ? { readOnly: true } : {}),
+      ...(resolution.binding.selectionSideChat ? { selectionSideChat: true } : {}),
     });
     logger.debug("[v4-workbench] session split beside primary draft", {
       sessionId: resolution.binding.sessionId,
@@ -199,13 +208,24 @@ export function selectWorkbenchSession(
     const paneId = existingPaneId ?? effectiveFocusedPaneId(layout);
     if (existingPaneId) {
       layout.focusPane(existingPaneId);
+      const existingBinding = layout.panes[existingPaneId];
+      if ((binding.readOnly || binding.selectionSideChat) && existingBinding) {
+        layout.replacePaneBinding(existingPaneId, {
+          workspaceScope: binding.workspaceScope,
+          sessionId: binding.sessionId,
+          ...(binding.readOnly ? { readOnly: true } : {}),
+          ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
+        });
+      }
     } else if (paneId !== V4_PRIMARY_PANE_ID && layout.panes[paneId]) {
       const previousSessionId = layout.panes[paneId]?.sessionId ?? null;
-      // shell activeTaskId 先切换会把新 session 灌进 primary draft；
-      // 必须先原子替换 focused secondary 的完整 binding。
+      // Switching shell activeTaskId first would put the new session into the primary draft;
+      // atomically replace the focused secondary pane's full binding first.
       layout.replacePaneBinding(paneId, {
         workspaceScope: binding.workspaceScope,
         sessionId: binding.sessionId,
+        ...(binding.readOnly ? { readOnly: true } : {}),
+        ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
       });
       logger.debug("[v4-workbench] draft split focused pane replaced", {
         paneId,

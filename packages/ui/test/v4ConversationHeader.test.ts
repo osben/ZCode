@@ -14,7 +14,7 @@ function renderHeader(overrides: Record<string, unknown> = {}): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationHeader, {
         title: "这是个啥项目",
         onSplitRight: vi.fn(),

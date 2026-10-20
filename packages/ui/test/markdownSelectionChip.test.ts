@@ -19,14 +19,17 @@ it.each(["/workspace/docs/a.md", "C:\\docs\\a.md"])(
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationSelectionReferenceChip, { references }),
       ),
     );
-    const chip = screen.getByRole("button", { name: "a.md · 引用" });
+    const chip = document.querySelector('[data-conversation-selection-reference-count="1"]')!;
     fireEvent.pointerEnter(chip);
-    expect(await screen.findByText(path)).toBeTruthy();
-    expect(await screen.findByText("excerpt")).toBeTruthy();
+    const content = await screen.findByText(
+      (_, element) => element?.classList.contains("max-h-64") ?? false,
+    );
+    expect(content.textContent).toContain(path);
+    expect(content.textContent).toContain("excerpt");
   },
 );
 it("混合引用使用通用计数", () => {

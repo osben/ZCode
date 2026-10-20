@@ -2,8 +2,9 @@ import { mcpToolDisplayUiSchema } from "@zcode/shared/mcp-apps";
 import type { PluginUiPresentation } from "../contract.js";
 
 /**
- * 从 ToolCallRow 的 legacy raw.display 读出插件 UI 呈现信息。display.ui 由 agent 投影、经 strict schema
- * 校验持久化；这里再校验一次是为了防御旧快照或手改数据，失败即回退到普通 McpToolCallBlock。
+ * Reads plugin UI presentation from a ToolCallRow's legacy raw.display. display.ui is projected by the
+ * agent and persisted after strict schema validation; validating again here defends against old snapshots
+ * or hand-edited data, falling back to the plain McpToolCallBlock on failure.
  */
 export function readPluginUiPresentation(raw: unknown): PluginUiPresentation | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -16,7 +17,7 @@ export function readPluginUiPresentation(raw: unknown): PluginUiPresentation | n
   return { serverName: record.serverName, ...parsed.data };
 }
 
-/** 解析 display.ui 里以 JSON 文本持久化的 structuredContent / widgetMeta；非法 JSON 视为缺失。 */
+/** Parses structuredContent / widgetMeta persisted as JSON text inside display.ui; invalid JSON counts as missing. */
 export function parseJsonText(text: string | undefined): unknown {
   if (typeof text !== "string" || text.length === 0) return undefined;
   try {

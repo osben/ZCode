@@ -12,10 +12,7 @@ import {
 import { toast } from "@/components/ui/toast.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
-import {
-  QUICK_PICK_SECTION_ORDER,
-  type QuickPickCommand,
-} from "@/quickpick/quickPickCommands.js";
+import { QUICK_PICK_SECTION_ORDER, type QuickPickCommand } from "@/quickpick/quickPickCommands.js";
 import { QUICK_PICK_ICON_BY_KIND } from "@/quickpick/quickPickCommandIcons.js";
 import {
   quickPickCommandClassName,
@@ -79,7 +76,7 @@ export function QuickPickCommandDialog({
                     className={quickPickItemClassName}
                     onSelect={() => {
                       onOpenChange(false);
-                      void Promise.resolve(command.run()).catch((error) => {
+                      void Promise.resolve(command.run?.()).catch((error) => {
                         logger.error("[QuickPick] 命令执行失败", {
                           commandId: command.id,
                           error,

@@ -535,6 +535,27 @@ describe("SkillsSection", () => {
     expect(html).toContain('aria-label="Open"');
   });
 
+  it("enabled skill cards do not override the pointer cursor for interactive controls", async () => {
+    mockCapabilityState = { userScopeAvailable: true };
+    mockSkillsState = [
+      {
+        id: "skill-1",
+        name: "skill-creator",
+        description: "Create skills",
+        body: "",
+        path: "/tmp/workspace/.zcode/skills/skill-creator/SKILL.md",
+        scope: "workspace",
+        enabled: true,
+      },
+    ];
+
+    const html = await renderSkillsSection();
+    const skillButton = html.match(/<div(?=[^>]*role="button")[^>]*>/u)?.[0];
+
+    expect(skillButton).toBeTruthy();
+    expect(skillButton).not.toContain("cursor-default");
+  });
+
   it("技能详情弹窗的文件路径可以打开", async () => {
     const skill = {
       id: "skill-1",

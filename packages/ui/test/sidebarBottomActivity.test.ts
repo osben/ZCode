@@ -85,7 +85,7 @@ function renderActivity(controller: MarketingTouchController, noticeStore: Globa
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         MarketingTouchContext.Provider,
         { value: controller },

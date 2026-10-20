@@ -53,7 +53,8 @@ export function registerProviderModelEditorCases(getEnvironment) {
           () => document.querySelectorAll("[data-model-reasoning-chip]").length === 0,
         );
         assert.equal(requests.length, 1);
-        // 空草稿可手动加档位，随后推荐回包不能覆盖显式编辑。
+        // An empty draft allows adding levels manually, and a later recommendation response must
+        // not overwrite explicit edits.
         await editor.getByRole("button").last().click();
         await editor.locator("input").fill("custom-level");
         await editor.locator("input").press("Enter");
@@ -66,7 +67,8 @@ export function registerProviderModelEditorCases(getEnvironment) {
         await (
           await second
         ).fulfill({ contentType: "application/json", body: JSON.stringify(recommendation) });
-        // 等到该解析已完成，验证未覆盖用户档位。
+        // Wait until that resolution has completed, then verify the user level was not
+        // overwritten.
         await page.waitForFunction(
           () =>
             document
@@ -228,7 +230,8 @@ export function registerProviderModelEditorCases(getEnvironment) {
           await page.keyboard.press("Escape");
         }
         const keyboard = page.locator('[data-model-help="followRecommendedConfig"]');
-        // 智能帮助现为最后一个：Escape 关闭弹层后焦点仍在该按钮，先 Tab 离开再验证键盘重入。
+        // Smart help is now the last item: after Escape closes the popup, focus stays on that
+        // button, so Tab away first before verifying keyboard re-entry.
         await page.keyboard.press("Tab");
         await page.mouse.move(0, 0);
         await keyboard.scrollIntoViewIfNeeded();

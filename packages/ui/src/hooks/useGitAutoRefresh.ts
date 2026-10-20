@@ -10,9 +10,15 @@ import {
 import { logger } from "@/logger.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 
-// agent 批量写文件时，150ms watcher 防抖 + 350ms Git 防抖仍会把长批次拆成多轮
-// `git status`。这里把 Git 自动刷新延后到 1 分钟，降低大工作区里的重复 Git I/O。
-const GIT_AUTO_REFRESH_DEBOUNCE_MS = 60_000;
+// Agent batch writes emit many file events. Refreshing on each would run `git status` repeatedly in large
+// workspaces, so refreshes coalesce, but the coalescing must not starve refresh: a debounce that every event
+// resets never fires under a steady event stream (the former 60s debounce did exactly that).
+// - Quiet single event: refresh after the debounce.
+// - Continuous stream: refresh at most once per max-wait window, measured from the first event of the burst.
+// - Minimum interval: no two refreshes closer than the max-wait window; a lone event right after a refresh waits.
+// The schedule state lives in the watcher subscription effect, so a re-watch starts from a clean schedule.
+const GIT_AUTO_REFRESH_DEBOUNCE_MS = 500;
+const GIT_AUTO_REFRESH_MAX_WAIT_MS = 5_000;
 
 interface GitWatcherRegistration {
   subscription: IDisposable;
@@ -50,9 +56,9 @@ export function useGitAutoRefresh({
     service: typeof systemService;
     platform: string;
   } | null>(null);
-  // workspaceScopedServices 在远程 workspace 下指向远端 Host，因此这里获取的是
-  // WSL/SSH/Docker 的真实运行平台，而不是桌面应用本身的平台。service identity
-  // 参与状态匹配，避免 Windows workspace 的旧 platform 泄漏到刚切换的 Linux workspace。
+  // For a remote workspace, workspaceScopedServices points to the remote Host, so this reads the actual WSL/SSH/Docker
+  // platform rather than the desktop app's platform. Include service identity in state matching to prevent a Windows
+  // workspace's old platform from leaking into a newly selected Linux workspace.
   const workspacePlatform =
     workspacePlatformState?.service === systemService ? workspacePlatformState.platform : null;
   useEffect(() => {
@@ -69,7 +75,7 @@ export function useGitAutoRefresh({
         }
       })
       .catch(() => {
-        // 平台信息不可用时由路径构造器采用 metadata-only 保守策略；手动刷新链路不受影响。
+        // If platform information is unavailable, the path builder uses a conservative metadata-only strategy; manual refresh is unaffected.
       });
 
     return () => {
@@ -107,22 +113,36 @@ export function useGitAutoRefresh({
     let cancelled = false;
     const registrations: GitWatcherRegistration[] = [];
 
+    let burstStartedAt: number | null = null;
+    let lastRefreshAt = Number.NEGATIVE_INFINITY;
+
     const scheduleRefresh = (path: string) => {
+      const now = Date.now();
+      burstStartedAt ??= now;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
-      debounceTimerRef.current = setTimeout(() => {
-        debounceTimerRef.current = null;
-        logger.debug("[GitAutoRefresh] Git 状态变更，刷新仓库状态", {
-          workspacePath,
-          path,
-        });
-        refreshRef.current();
-      }, GIT_AUTO_REFRESH_DEBOUNCE_MS);
+      const quietDeadline = now + GIT_AUTO_REFRESH_DEBOUNCE_MS;
+      const maxWaitDeadline = burstStartedAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
+      const minIntervalDeadline = lastRefreshAt + GIT_AUTO_REFRESH_MAX_WAIT_MS;
+      const deadline = Math.max(Math.min(quietDeadline, maxWaitDeadline), minIntervalDeadline);
+      debounceTimerRef.current = setTimeout(
+        () => {
+          debounceTimerRef.current = null;
+          burstStartedAt = null;
+          lastRefreshAt = Date.now();
+          logger.debug("[GitAutoRefresh] Git 状态变更，刷新仓库状态", {
+            workspacePath,
+            path,
+          });
+          refreshRef.current();
+        },
+        Math.max(0, deadline - now),
+      );
     };
 
-    // Git summary 每次刷新都会带回新的 autoRefreshWatchPaths 数组引用。
-    // 监听路径内容没变时不能重建 watcher，否则 agent 批量写文件会出现 unwatch/watch 风暴。
+    // Each Git summary refresh returns a new autoRefreshWatchPaths array reference.
+    // Do not rebuild the watcher when path contents are unchanged, or agent batch writes will cause an unwatch/watch storm.
     for (const watchPath of watchPaths) {
       void fileWatcherService
         .watch({
@@ -147,7 +167,7 @@ export function useGitAutoRefresh({
           if (cancelled) {
             return;
           }
-          // Git 实时刷新只是加速 UI 状态同步；监听失败时保留原有手动刷新和操作后刷新链路。
+          // Live Git refresh only speeds up UI-state synchronization; if watching fails, keep the existing manual and post-operation refresh paths.
           logger.warn("[GitAutoRefresh] 监听 Git 工作区失败", {
             workspacePath,
             path: watchPath.path,

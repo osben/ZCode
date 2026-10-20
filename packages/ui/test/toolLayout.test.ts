@@ -10,7 +10,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-spacing",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -30,7 +30,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-force-open-spacing",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -51,7 +51,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-running-label",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -74,7 +74,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-empty-expanded-summary",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -96,7 +96,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-edit-file-priority",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -118,7 +118,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolLayout, {
           toolId: "tool-layout-summary-action",
           icon: createElement("span", { "aria-hidden": true }, "icon"),

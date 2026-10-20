@@ -15,6 +15,7 @@ import {
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import {
   resolveAutomationWorkspaceSelectionKey,
   type AutomationWorkspaceOption,
@@ -103,7 +104,7 @@ function mount(
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(SavedWorkflowLaunchDialog, {
         entry,
         scope: scope ?? entry?.scope ?? "project",
@@ -128,15 +129,15 @@ describe("SavedWorkflowLaunchDialog", () => {
     expect(screen.getByTestId(TID_WORKFLOW_LAUNCH_DIALOG)).toBeTruthy();
     // 头部 = 名字（mono）+ 作用域徽标 + 说明；不再是「运行 {name}」标题。
     expect(screen.getByText("release-check")).toBeTruthy();
-    expect(screen.getByText("项目")).toBeTruthy();
-    expect(screen.getByText("发布前检查")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.scope.project"))).toBeTruthy();
+    expect(document.body.textContent).toContain("发布前检查");
     const branch = screen.getByTestId(
       testId(TID_WORKFLOW_LAUNCH_ARG, "branch"),
     ) as HTMLInputElement;
     expect(branch.type).toBe("text");
     expect(branch.value).toBe("");
-    expect(screen.getByText("必填")).toBeTruthy();
-    expect(screen.getByText("目标分支")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.required"))).toBeTruthy();
+    expect(document.body.textContent).toContain("目标分支");
     const count = screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "count")) as HTMLInputElement;
     expect(count.type).toBe("number");
     expect(count.value).toBe("3");
@@ -155,8 +156,8 @@ describe("SavedWorkflowLaunchDialog", () => {
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT));
     expect(onSubmit).not.toHaveBeenCalled();
     // 徽标「必填」与错误「必填」同文案：错误出现后应有两处。
-    expect(screen.getAllByText("必填")).toHaveLength(2);
-    expect(screen.getByText("不是合法的 JSON")).toBeTruthy();
+    expect(screen.getAllByText(expectedCopy("workflows.hub.launch.required"))).toHaveLength(2);
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.error.invalid_json"))).toBeTruthy();
 
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "branch")), {
       target: { value: "main" },
@@ -165,8 +166,8 @@ describe("SavedWorkflowLaunchDialog", () => {
       target: { value: '{"a":1}' },
     });
     // 编辑即清掉该字段的错误提示。
-    expect(screen.getAllByText("必填")).toHaveLength(1);
-    expect(screen.queryByText("不是合法的 JSON")).toBeNull();
+    expect(screen.getAllByText(expectedCopy("workflows.hub.launch.required"))).toHaveLength(1);
+    expect(screen.queryByText(expectedCopy("workflows.hub.launch.error.invalid_json"))).toBeNull();
     fireEvent.change(screen.getByTestId(testId(TID_WORKFLOW_LAUNCH_ARG, "count")), {
       target: { value: "" },
     });
@@ -178,7 +179,9 @@ describe("SavedWorkflowLaunchDialog", () => {
 
   it("取消按钮关闭窗口", () => {
     const { onOpenChange, onSubmit } = mount(ENTRY);
-    fireEvent.click(screen.getByText("取消"));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("workflows.hub.launch.cancel") }),
+    );
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -186,7 +189,7 @@ describe("SavedWorkflowLaunchDialog", () => {
   it("不传 targets 时不渲染「运行于」选择器（项目档路径）", () => {
     mount(ENTRY);
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_TARGET)).toBeNull();
-    expect(screen.queryByText("运行于")).toBeNull();
+    expect(screen.queryByText(expectedCopy("workflows.hub.launch.target"))).toBeNull();
   });
 
   it("传 targets 时渲染选择器，默认选中 defaultTargetKey", () => {
@@ -194,7 +197,7 @@ describe("SavedWorkflowLaunchDialog", () => {
       targets: TARGETS,
       defaultTargetKey: resolveAutomationWorkspaceSelectionKey(BETA),
     });
-    expect(screen.getByText("运行于")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.target"))).toBeTruthy();
     const trigger = screen.getByTestId(TID_WORKFLOW_LAUNCH_TARGET);
     expect(trigger.textContent).toContain("Beta");
   });
@@ -207,7 +210,7 @@ describe("SavedWorkflowLaunchDialog", () => {
   it("候选为空时提示并禁用提交", () => {
     mount(GLOBAL_ENTRY, { targets: [] });
     expect(screen.queryByTestId(TID_WORKFLOW_LAUNCH_TARGET)).toBeNull();
-    expect(screen.getByText("打开一个本地项目以运行")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.noLocalProject"))).toBeTruthy();
     expect((screen.getByTestId(TID_WORKFLOW_LAUNCH_SUBMIT) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -228,12 +231,14 @@ describe("SavedWorkflowLaunchDialog", () => {
   it("全局档头部渲染「全局」徽标", () => {
     mount(GLOBAL_ENTRY, { targets: TARGETS, scope: "global" });
     expect(screen.getByText("deep-research")).toBeTruthy();
-    expect(screen.getByText("全局")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("workflows.hub.launch.scope.global"))).toBeTruthy();
   });
 
   it("说明文案带项目名：项目档用所属项目名", () => {
     mount(ENTRY, { projectLabel: "Beta" });
-    expect(screen.getByText("将立即在 Beta 的新会话中运行")).toBeTruthy();
+    expect(
+      screen.getByText(expectedCopy("workflows.hub.launch.note", { project: "Beta" })),
+    ).toBeTruthy();
   });
 
   it("说明文案带项目名：全局档用选中的「运行于」项目名", () => {
@@ -242,7 +247,9 @@ describe("SavedWorkflowLaunchDialog", () => {
       scope: "global",
       defaultTargetKey: resolveAutomationWorkspaceSelectionKey(ALPHA),
     });
-    expect(screen.getByText("将立即在 Alpha 的新会话中运行")).toBeTruthy();
+    expect(
+      screen.getByText(expectedCopy("workflows.hub.launch.note", { project: "Alpha" })),
+    ).toBeTruthy();
   });
 
   it("pending 时禁用提交按钮，且点击不再发起", () => {
@@ -266,7 +273,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     };
     mount(GLOBAL_ENTRY, { targets: TARGETS, scope: "global", error });
     const region = screen.getByTestId(TID_WORKFLOW_LAUNCH_ERROR);
-    expect(region.textContent).toContain("工作流脚本编译失败");
+    expect(region.textContent).toContain(expectedCopy("workflows.hub.launch.error.compile_failed"));
     expect(region.textContent).toContain("line 3: boom");
   });
 
@@ -277,7 +284,7 @@ describe("SavedWorkflowLaunchDialog", () => {
     };
     mount(GLOBAL_ENTRY, { targets: TARGETS, scope: "global", error });
     const region = screen.getByTestId(TID_WORKFLOW_LAUNCH_ERROR);
-    expect(region.textContent).toContain("当前 agent 不支持直接启动工作流");
+    expect(region.textContent).toContain(expectedCopy("workflows.hub.launch.error.unsupported"));
     expect(region.querySelector("pre")).toBeNull();
   });
 

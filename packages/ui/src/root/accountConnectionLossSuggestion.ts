@@ -9,7 +9,7 @@ import { hasActiveUsageEntitlementSnapshot } from "@/lib/codingPlanProvider.js";
 import { getEnterprisePricingProducts } from "@/root/oauthTeamPricing.js";
 import { logger } from "@/logger.js";
 
-/** 只计算建议，不替用户保存；闭包固定按钮展示的那个目标，点击时重新校验。 */
+/** Compute a suggestion only; do not save on the user’s behalf. The closure fixes the target shown by the button and revalidates it on click. */
 export async function prepareAccountConnectionSwitch(
   services: IServiceAccessor,
   event: AccountConnectionLoss,
@@ -55,8 +55,8 @@ export async function prepareAccountConnectionSwitch(
         snapshot.providers.find((p) => p.providerId === providerId)?.accountState?.availability ===
         "available"
       );
-    // 未选中的 Team 没有可复用的 current 事实。按按钮的具体组织/项目查询，
-    // 不能把团队名单存在或另一个 Team 的权益当成目标可用。
+    // An unselected Team has no reusable current fact. Query the specific organization/project for the button,
+    // and do not treat the presence of a team list or another Team’s entitlement as proof that the target is available.
     const { kind: planKind, ...identity } = selection;
     const entitlement = await services.usageStatsService.getEntitlementSnapshot({
       preferredProviderId: providerId,
@@ -124,7 +124,7 @@ export async function prepareAccountConnectionSwitch(
         try {
           await services.providerSettingsService.refresh("account-connection-switched");
         } catch (error) {
-          // 写入已完成，刷新失败不能把结果伪装成未保存；后续正常刷新继续收敛。
+          // The write has completed; a refresh failure must not make it appear unsaved. A later normal refresh will reconcile it.
           logger.lifecycle.warn("[AccountConnection] 连接已保存，刷新暂未完成", { error });
         }
         return "switched";

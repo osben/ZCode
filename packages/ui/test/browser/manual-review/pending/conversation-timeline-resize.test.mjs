@@ -1,4 +1,5 @@
-// SRM10：真实 React timeline、消息组件和 TanStack virtualizer；会话数据由确定性 fixture 提供。
+// SRM10: real React timeline, message components, and TanStack virtualizer; session data comes
+// from a deterministic fixture.
 import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -108,7 +109,8 @@ for (const mobile of [false, true])
         await settle();
         await page.getByRole("button", { name: "Bottom", exact: true }).click();
         const evidence = [];
-        // 每个宽度点都检查布局提交后的实际几何，不只检查整个拖动结束后的落点。
+        // Check the actual geometry after each width point's layout commits, not just the landing
+        // spot after the whole drag ends.
         for (const width of mobile
           ? [420, 390, 360, 390, 430]
           : [1400, 1300, 1250, 1050, 900, 750, 900, 1100, 1250]) {
@@ -130,7 +132,8 @@ for (const mobile of [false, true])
           assert.ok(Math.abs(metrics.gap) <= 1, JSON.stringify(metrics));
           assert.ok(Math.abs(metrics.stale) <= 1, JSON.stringify(metrics));
         }
-        // 外层视口不变，仅内容列继续 CSS 宽度过渡：不能停留在旧 stableWidth。
+        // The outer viewport stays fixed while only the content column keeps a CSS width
+        // transition: it must not stay stuck at the old stableWidth.
         await timeline.evaluate((e) => {
           const history = e.querySelector("[data-v4-timeline-virtual-history]");
           history.style.transition = "width 160ms linear";

@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 import { Button } from "@/components/ui/button.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -28,7 +27,7 @@ export function HiddenSessionsMaintenance({
   const handleErase = async () => {
     const confirmed = await confirmDialog({
       title: intl.formatMessage({ id: "sessionManager.hidden.confirmTitle" }),
-      description: formatPluralMessage(intl, "sessionManager.hidden.confirmBody", sessions),
+      description: intl.formatPlural({ id: "sessionManager.hidden.confirmBody" }, sessions),
       confirmLabel: intl.formatMessage({ id: "sessionManager.hidden.confirm" }),
       confirmVariant: "destructive",
     });
@@ -43,7 +42,7 @@ export function HiddenSessionsMaintenance({
       data-testid="session-manager-hidden-sessions"
     >
       <span className="min-w-0">
-        {sessions > 0 ? formatPluralMessage(intl, "sessionManager.hidden.count", sessions) : null}
+        {sessions > 0 ? intl.formatPlural({ id: "sessionManager.hidden.count" }, sessions) : null}
         {worktrees > 0 ? (
           <span className="block">
             {intl.formatMessage({ id: "sessionManager.hidden.worktrees" }, { count: worktrees })}

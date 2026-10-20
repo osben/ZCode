@@ -30,7 +30,7 @@ const stableHookValues = vi.hoisted(() => ({
   selectRegistrations: 0,
   effectiveSelection: undefined as ModelSelection | null | undefined,
   selectionInputs: [] as Array<{ selection: ModelSelection | null } | undefined>,
-  locale: "zh-CN" as "zh-CN" | "en-US",
+  locale: "en-US" as "en-US" | "fr-FR",
   services: { zcodeAgentService: {} },
 }));
 
@@ -50,9 +50,10 @@ vi.mock("@/components/ui/select.js", async () => {
     }) => {
       useEffect(() => {
         const timer = window.setTimeout(() => {
-          // 模拟 Radix Select 受控值与子项注册竞争、在表单初始化完成后发出的空值：
-          // 这不是用户操作，消费方必须丢弃值域外的回调
-          // （回归：仅打开详情返回就弹未保存提示）。
+          // Simulate the empty value a Radix Select emits after form initialization, racing the
+          // controlled value against child registration: this is not a user action, and consumers
+          // must discard out-of-domain callbacks
+          // (regression: merely opening the detail view popped the unsaved-changes prompt).
           onValueChange?.("");
           if (
             value &&
@@ -149,8 +150,10 @@ vi.mock("@/components/ui/tooltip.js", async () => {
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-// 权限选择器复用会话 composer 的 ConfigSelect：这里保留真实实现，让上方 Select mock
-// 发出的注册竞争空值穿过它，守住“值域外回调不得标记未保存修改”的防护。
+// The permission selector reuses the session composer's ConfigSelect: keep the real
+// implementation here so the registration-race empty value emitted by the Select mock above
+// passes through it, guarding the "out-of-domain callbacks must not mark unsaved changes"
+// protection.
 vi.mock("@/chat-input-toolbar/RollingToolbarLabel.js", () => ({
   RollingToolbarLabel: ({ label }: { label: string }) => label,
 }));
@@ -226,7 +229,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (id === "automations.edit.titlePlaceholder") {
-          return stableHookValues.locale === "zh-CN" ? "未命名定时任务" : "Untitled Automation";
+          return stableHookValues.locale === "en-US"
+            ? "Untitled Automation"
+            : "Automatisation sans titre";
         }
         return id;
       },
@@ -235,6 +240,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 import { AutomationEditView } from "@/settings/AutomationEditView.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const modelSelectionView = {
   revision: 1,
@@ -313,7 +319,7 @@ const sessionCreatedUiResetAutomation: ZCodeAutomation = {
 
 beforeEach(() => {
   stableHookValues.selectRegistrations = 0;
-  stableHookValues.locale = "zh-CN";
+  stableHookValues.locale = "en-US";
   stableHookValues.projectOptions.length = 0;
   stableHookValues.modelSelectionView = null;
   stableHookValues.modelSelectionTargets.length = 0;
@@ -376,17 +382,17 @@ describe("AutomationEditView session-created dirty state", () => {
     const { rerender } = render(createElement(AutomationEditView, props));
     const titleInput = screen.getByLabelText<HTMLInputElement>("automations.form.title.label");
 
-    expect(titleInput.value).toBe("未命名定时任务");
+    expect(titleInput.value).toBe(expectedCopy("automations.edit.titlePlaceholder"));
 
-    stableHookValues.locale = "en-US";
+    stableHookValues.locale = "fr-FR";
     rerender(createElement(AutomationEditView, props));
-    expect(titleInput.value).toBe("Untitled Automation");
+    expect(titleInput.value).toBe("Automatisation sans titre");
 
     fireEvent.click(screen.getByTestId("automation-edit-breadcrumb-section"));
     expect(props.onBack).toHaveBeenCalledOnce();
 
     fireEvent.change(titleInput, { target: { value: "Keep my title" } });
-    stableHookValues.locale = "zh-CN";
+    stableHookValues.locale = "en-US";
     rerender(createElement(AutomationEditView, props));
     expect(titleInput.value).toBe("Keep my title");
   });
@@ -518,7 +524,8 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.queryByText("automations.customRepeat.compactFrequency")).not.toBeNull();
     expect(stableHookValues.selectRegistrations).toBe(0);
 
-    // 等 Select 注册竞争的空值回调发出后再返回，复现“仅打开详情就被标记未保存”的回归。
+    // Wait for the Select registration-race empty callback to fire before returning, reproducing
+    // the "merely opening the detail view marks unsaved changes" regression.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     });

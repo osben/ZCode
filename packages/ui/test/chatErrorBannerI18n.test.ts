@@ -74,7 +74,7 @@ describe("ChatErrorBanner i18n", () => {
         },
         zhIntl,
       ),
-    ).toBe("当前视频附件过大，请移除部分视频或压缩后重试。");
+    ).toBe(zhCN["zcode.error.MEDIA_BUDGET_CURRENT_VIDEO_TOO_LARGE"]);
 
     expect(
       resolveChatErrorBannerDisplayMessage(
@@ -97,9 +97,10 @@ describe("ChatErrorBanner i18n", () => {
         { code: "3102", message: "off peak ticket is invaliad or expired" },
         zhIntl,
       ),
-    ).toBe("已超过单次最长运行时间，请创建新的闲时任务继续。");
+    ).toBe(zhCN["zcode.error.providerBusiness.3102"]);
 
-    // 外层 code 被压成包装码时靠适配层写入的稳定标记兜底。
+    // When the outer code has been collapsed into a wrapper code, fall back to the stable marker
+    // written by the adapter layer.
     expect(
       resolveChatErrorBannerDisplayMessage(
         {

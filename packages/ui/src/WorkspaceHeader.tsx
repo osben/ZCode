@@ -124,7 +124,7 @@ export function WorkspaceHeader({
 }) {
   const [selectedEditor, setSelectedEditor] = useState<EditorInfo | null>(null);
   const shouldOffsetHeaderForWindowControls = !isSidebarVisible;
-  // Linux 与 Windows 共用内联窗控，不再预留旧悬浮窗控的标题栏区域。
+  // Linux and Windows share inline window controls, so do not reserve title-bar space for the old floating controls.
   const usesInlineWindowControls = Boolean(isWindowsDesktop || (isDesktop && !isMacDesktop));
 
   let headerWindowControlsPaddingClass: string | false = false;
@@ -160,10 +160,10 @@ export function WorkspaceHeader({
       ) : null}
       <div
         className={cn(
-          // 大会话 resize trace 显示 titlebar padding 动画层会触发 scrollbar-color 非合成动画；
-          // 明确限定 transition-property 为 padding，避免 duration-300 退回默认 all。
+          // Large-conversation resize traces show that animating the title-bar padding also triggers a non-composited scrollbar-color animation;
+          // set transition-property explicitly to padding so duration-300 does not fall back to the default all.
           "flex h-12 flex-1 min-w-0 items-center justify-between gap-2 overflow-hidden p-2 [app-region:drag] transition-[padding] duration-300",
-          // 旧 caption 菜单移除后不能继续清零右边距，否则终端按钮会贴住面板边框。
+          // After removing the old caption menu, do not keep zeroing the right margin or the terminal button will sit against the panel border.
           headerWindowControlsPaddingClass,
         )}
       >
@@ -215,6 +215,7 @@ export function WorkspaceHeader({
           user={user}
           readOnlyReason={readOnlyReason}
           workspaceAbsPath={workspaceAbsPath}
+          executionWorktreePath={resolvedActiveTaskMeta?.executionWorktree?.path}
           workspaceIdentity={workspaceIdentity}
           remoteSessionId={remoteSessionId}
           remoteTarget={remoteTarget}
@@ -228,7 +229,7 @@ export function WorkspaceHeader({
           simplifyForNarrowRemote={simplifyForNarrowRemote}
           hideHelpMenu={false}
           showWindowControls={usesInlineWindowControls}
-          // 面板操作按钮沿用 macOS 紧凑样式，Windows/Linux 窗控跟随最右侧 Header。
+          // Keep the compact macOS style for panel actions; on Windows/Linux, window controls follow the rightmost part of the Header.
           onSelectedEditorChange={setSelectedEditor}
         />
       </div>

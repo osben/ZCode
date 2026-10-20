@@ -12,18 +12,18 @@ export interface PluginUiCardProps {
   height: number;
   prefersBorder: boolean;
   error: string | null;
-  /** 侧栏模式撑满容器；内联模式按 height 固定。 */
+  /** Side pane mode fills the container; inline mode is fixed by height. */
   fill?: boolean;
   visible?: boolean;
   loadingLabel: string;
   errorLabel: string;
-  /** 错误态的"重新加载"；缺省不显示按钮。 */
+  /** Error-state "reload"; no button shown when absent. */
   retryLabel?: string;
   onRetry?: () => void;
   onWidthChange?: (width: number) => void;
 }
 
-/** 卡片只注册布局锚点；活 webview 由窗口页面管理器持有。 */
+/** The card only registers a layout anchor; the live webview is held by the window page manager. */
 export function PluginUiCard(props: PluginUiCardProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {

@@ -15,8 +15,8 @@ export interface SidebarCodingPlanUpgradeEntitlement {
 export function resolveSidebarCodingPlanUpgradeFallbackProviderId(
   providerFamilyDomain: ProviderFamilyDomain | null,
 ): SidebarUsageCodingPlanProviderId {
-  // API Key 模式不会为 Coding Plan provider 注入套餐 key，头像升级入口因而
-  // 无法从权益或用量来源推导 provider；按 provider 家族域名回退到对应品牌的入口。
+  // API Key mode does not inject a plan key for the Coding Plan provider, so the avatar's upgrade entry
+  // cannot infer the provider from entitlement or usage data. Fall back to the entry for the provider's family domain.
   return providerFamilyDomain === "bigmodel"
     ? BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan
     : BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan;
@@ -32,7 +32,7 @@ function hasPlanLevelToken(value: string | null | undefined, token: string): boo
 
 function isTerminalCodingPlanLevel(value: string | null | undefined): boolean {
   const normalized = normalizePlanLevel(value);
-  // 判断套餐层级是否为不可升级的终态：enterprise/team 视为终态。
+  // Determine whether the plan tier is a terminal state that cannot be upgraded: enterprise/team count as terminal.
   return normalized.includes("enterprise") || normalized.includes("team");
 }
 

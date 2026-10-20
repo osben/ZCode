@@ -1,10 +1,11 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { Locale } from "@zcode/shared";
-import { DEFAULT_LOCALE } from "@zcode/shared";
+import { DEFAULT_LOCALE, FALLBACK_UI_LOCALE, isLocale, resolveSystemLocale } from "@zcode/shared";
 import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
+import ukUA from "@/i18n/locales/uk-UA.js";
 import { logger } from "@/logger.js";
 import { reportReactErrorToArms } from "@/lib/reactErrorArmsTelemetry.js";
 import { cn } from "@/components/lib/utils.js";
@@ -17,8 +18,8 @@ interface AppErrorBoundaryProps {
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;
   /**
-   * React 错误边界捕获的异常不会冒泡到 window.onerror，监控 SDK默认收不到。
-   * Desktop 等宿主可传入此回调，将 React 错误边界捕获的异常转发到监控 SDK。
+   * Exceptions caught by a React error boundary do not bubble to window.onerror, so monitoring SDKs do not receive them by default.
+   * Hosts such as Desktop can provide this callback to forward exceptions caught by React error boundaries to the monitoring SDK.
    */
   onCaughtReactError?: (error: Error, errorInfo: ErrorInfo) => void;
 }
@@ -62,22 +63,28 @@ function serializeErrorForLog(error: Error): {
   };
 }
 
+const BOUNDARY_MESSAGES = {
+  "zh-CN": zhCN,
+  "en-US": enUS,
+  "uk-UA": ukUA,
+} satisfies Record<Locale, Record<string, string>>;
+
 function resolveBoundaryLocale(): Locale {
   if (typeof localStorage !== "undefined" && typeof localStorage.getItem === "function") {
     try {
       const storedPreference = localStorage.getItem(LOCALE_PREFERENCE_KEY);
-      if (storedPreference === "zh-CN" || storedPreference === "en-US") {
+      if (isLocale(storedPreference)) {
         return storedPreference;
       }
     } catch {
-      // 在 Node 测试环境里，可能出现“localStorage 对象存在但能力不完整/不可读”的场景
-      // （例如只有占位对象或读取阶段直接抛错）。错误边界若不兜底会在 fallback 渲染期再次崩溃，
-      // 用户就会看到白屏。这里吞掉存储层异常，继续回退到 navigator / 默认语言。
+      // In the Node test environment, localStorage may exist but lack full functionality or be unreadable
+      // (for example, it may be a placeholder or throw during reads). Without a fallback, the error boundary could crash again while rendering its fallback,
+      // leaving the user with a blank screen. Catch storage-layer errors here and continue with navigator / the default language.
     }
   }
 
   if (typeof navigator !== "undefined") {
-    return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+    return resolveSystemLocale(navigator.language, FALLBACK_UI_LOCALE);
   }
 
   return DEFAULT_LOCALE;
@@ -85,8 +92,8 @@ function resolveBoundaryLocale(): Locale {
 
 function formatBoundaryMessage(id: string): string {
   const locale = resolveBoundaryLocale();
-  const messages = locale === "en-US" ? enUS : zhCN;
-  return messages[id] ?? id;
+  // Match createIntl: when the current locale is missing a key (for example, uk is not fully translated), fall back to English instead of showing the ID.
+  return BOUNDARY_MESSAGES[locale]?.[id] ?? enUS[id] ?? id;
 }
 
 function haveResetKeysChanged(
@@ -129,9 +136,9 @@ function ErrorFallback({
       <div className="flex h-full min-h-0 justify-center overflow-y-auto p-6">
         <div
           role="alert"
-          // 错误信息和组件堆栈可能非常长，之前外层不可滚动会把内容挤出视口，
-          // 用户既看不完堆栈，也点不到“重试/刷新”按钮。这里让 fallback 卡片固定从顶部开始，
-          // 并配合外层纵向滚动，确保窗口再小也能完整访问全部操作。
+          // Error messages and component stacks can be very long. The outer container used to prevent scrolling, pushing content outside the viewport,
+          // so users could not read the full stack or reach the “Retry / Refresh” buttons. Anchor the fallback card to the top
+          // and add vertical scrolling to the outer container so every action remains accessible even in a small window.
           className="w-full max-w-xl self-start rounded-3xl border border-destructive/20 bg-surface-alt p-6 shadow-sm"
         >
           <div className="flex size-10 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
@@ -169,8 +176,8 @@ function ErrorFallback({
                 {formatBoundaryMessage("appError.details")}
               </summary>
               <pre className="mt-2 max-h-[40vh] overflow-auto whitespace-pre-wrap break-words text-ui-base leading-5 text-on-surface-muted">
-                {/* 组件堆栈展开后会瞬间增高，限制 pre 高度并独立滚动，
-                    避免 details 撑满全屏导致主操作区被挤出可视区域。 */}
+                {/* Expanding the component stack can make it grow sharply; constrain the pre height and scroll it independently
+                    so details cannot fill the screen and push the main actions out of view. */}
                 {componentStack.trim()}
               </pre>
             </details>
@@ -293,12 +300,12 @@ function ScopedErrorFallback({
 }
 
 /**
- * AppErrorBoundary —— React 根级错误边界
+ * AppErrorBoundary — React root-level error boundary
  *
- * renderer 入口若直接把 ZCodeIntlProvider / Root 挂到 createRoot，
- * 一旦某个 Provider 或页面组件在 render / lifecycle 阶段抛错，React 会整棵树卸载，
- * 用户看到的就只剩一张白屏。这里包一层共享根级边界，把异常收敛成可恢复 fallback，
- * 至少保证界面还能给出“重试 / 刷新”的出口，并把错误打到统一 UI 日志里。
+ * If the renderer entry mounts ZCodeIntlProvider / Root directly with createRoot,
+ * an error from a Provider or page component during render / lifecycle will cause React to unmount the entire tree,
+ * leaving the user with a blank screen. Wrap the tree in a shared root boundary to turn exceptions into a recoverable fallback,
+ * so the interface can at least offer a “Retry / Refresh” path and record the error in the shared UI log.
  */
 export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundaryState> {
   state: AppErrorBoundaryState = {
@@ -317,14 +324,14 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
     const normalizedError = normalizeError(error);
     logger.error(
       "[AppErrorBoundary] React subtree crashed:",
-      // Error 对象跨 preload 日志 bridge 序列化后会变成 {}，
-      // 导致 Maximum update depth 等关键 message 丢失。这里显式展开可诊断字段。
+      // Error objects become {} when serialized across the preload logging bridge,
+      // which loses key messages such as Maximum update depth. Expand the diagnostic fields explicitly here.
       serializeErrorForLog(normalizedError),
       errorInfo.componentStack,
     );
     this.props.onCaughtReactError?.(normalizedError, errorInfo);
-    // React 错误边界拦截了异常、阻止其冒泡到 window.onerror，RUM Browser SDK 默认收不到。
-    // 主动转发到 ARMS 自定义事件干道（reporter 在 renderer 入口早注入），补上根级渲染崩溃盲区。
+    // React error boundaries intercept exceptions and stop them from bubbling to window.onerror, so the RUM Browser SDK does not receive them by default.
+    // Forward them to the ARMS custom-event pipeline (the reporter is injected early at the renderer entry) to cover root-level render crashes.
     reportReactErrorToArms({
       error: normalizedError,
       componentStack: errorInfo.componentStack ?? "",
@@ -365,11 +372,11 @@ export class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorB
 }
 
 /**
- * ScopedErrorBoundary —— 局部 UI 故障隔离边界
+ * ScopedErrorBoundary — local UI failure-isolation boundary
  *
- * 只有根级错误边界时，workspace 内任意一个面板 render 抛错都会一路冒泡到根，
- * 最终把整套界面替换成全屏错误页。这里提供可复用的局部边界，让 sidebar、chat、
- * terminal、side pane 等区域各自失败各自恢复，避免单个组件问题扩大成整窗不可用。
+ * With only a root error boundary, a render error in any workspace panel bubbles all the way to the root,
+ * replacing the entire interface with a full-screen error page. Provide a reusable local boundary so the sidebar, chat,
+ * terminal, and side pane can fail and recover independently, preventing a single component issue from disabling the whole window.
  */
 export class ScopedErrorBoundary extends Component<
   ScopedErrorBoundaryProps,
@@ -391,14 +398,14 @@ export class ScopedErrorBoundary extends Component<
     const normalizedError = normalizeError(error);
     logger.error(
       `[ScopedErrorBoundary:${this.props.scope}] React subtree crashed:`,
-      // Error 对象跨 preload 日志 bridge 序列化后会变成 {}，
-      // 局部边界需要保留 message/stack 才能定位 UI 更新循环。
+      // Error objects serialize to {} across the preload logging bridge;
+      // local boundaries must preserve message/stack to diagnose UI update loops.
       serializeErrorForLog(normalizedError),
       errorInfo.componentStack,
     );
     this.props.onCaughtReactError?.(normalizedError, errorInfo, this.props.scope);
-    // 同根级边界：scoped 区域捕获的渲染异常同样不会冒泡到 RUM，按 scope 区分上报，
-    // 让 sidebar/chat/terminal/settings 等局部崩溃在 RUM 里可见、可定位。
+    // Like the root boundary, scoped rendering errors do not bubble up to RUM. Report them by scope
+    // so local crashes in sidebar/chat/terminal/settings are visible and diagnosable in RUM.
     reportReactErrorToArms({
       error: normalizedError,
       componentStack: errorInfo.componentStack ?? "",
@@ -409,9 +416,9 @@ export class ScopedErrorBoundary extends Component<
 
   override componentDidUpdate(previousProps: ScopedErrorBoundaryProps) {
     if (this.state.error && haveResetKeysChanged(previousProps.resetKeys, this.props.resetKeys)) {
-      // 局部 fallback 如果不随 workspace/task/tab 切换自动清空，
-      // 用户离开出错区域后再回来仍会看到旧错误。resetKeys 变化时重置边界，
-      // 让新的隔离上下文可以重新渲染。
+      // If a local fallback is not cleared when the workspace/task/tab changes,
+      // users still see the old error after leaving and returning to the affected area. Reset the boundary when resetKeys change
+      // so the new isolated context can render again.
       this.setState({
         error: null,
         componentStack: "",

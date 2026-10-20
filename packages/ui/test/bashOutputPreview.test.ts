@@ -32,7 +32,7 @@ describe("Bash bounded output preview", () => {
       const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ExecuteToolCallBlock, {
             toolCallNode,
             workspacePath: "/workspace",
@@ -84,7 +84,7 @@ describe("Bash final output content", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ExecuteToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",

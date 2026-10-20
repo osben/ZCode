@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 // 工作流详情页（docs/dynamic-workflow/launch.md「The detail page」「元数据编辑」「运行历史」）。
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   TID_WORKFLOW_DETAIL,
+  TID_WORKFLOW_DETAIL_TAB,
   TID_WORKFLOW_DETAIL_DESCRIPTION,
   TID_WORKFLOW_DETAIL_MENU,
   TID_WORKFLOW_DETAIL_PROJECT,
@@ -21,6 +22,7 @@ import {
 } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 const toastMock = vi.fn();
 vi.mock("@/components/ui/toast.js", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
@@ -91,6 +93,18 @@ const RUNS: ZCodeSavedWorkflowRun[] = [
   },
 ];
 
+function openHistoryTab() {
+  const tabs = screen.getByTestId(TID_WORKFLOW_DETAIL_TAB);
+  const historyTab =
+    within(tabs).queryByRole("tab", {
+      name: new RegExp(expectedCopy("workflows.hub.detail.tab.history")),
+    }) ??
+    within(tabs).getByRole("button", {
+      name: new RegExp(expectedCopy("workflows.hub.detail.tab.history")),
+    });
+  fireEvent.mouseDown(historyTab, { button: 0 });
+}
+
 function mount(overrides: Partial<Parameters<typeof SavedWorkflowDetailView>[0]> = {}) {
   const props = {
     target: { workspacePath: "/repo" },
@@ -117,7 +131,7 @@ function mount(overrides: Partial<Parameters<typeof SavedWorkflowDetailView>[0]>
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(SavedWorkflowDetailView, props),
     ),
   );
@@ -163,7 +177,10 @@ describe("SavedWorkflowDetailView", () => {
     expect((screen.getByTestId(TID_WORKFLOW_DETAIL_WHEN_TO_USE) as HTMLTextAreaElement).value).toBe(
       "发版前",
     );
-    expect((screen.getByLabelText("名称") as HTMLInputElement).value).toBe("branch");
+    expect(
+      (screen.getByLabelText(expectedCopy("workflows.hub.detail.args.name")) as HTMLInputElement)
+        .value,
+    ).toBe("branch");
     const script = screen.getByTestId(TID_WORKFLOW_DETAIL_SCRIPT);
     expect(script.querySelector("[data-script]")?.textContent).toBe(SCRIPT);
     expect(script.querySelector("[data-script]")?.getAttribute("data-language")).toBe("typescript");
@@ -210,7 +227,7 @@ describe("SavedWorkflowDetailView", () => {
     );
     await waitFor(() => expect(props.onMetaSaved).toHaveBeenCalledTimes(1));
     expect(agentService.getSavedWorkflow).toHaveBeenCalledTimes(2);
-    expect(toastMock).toHaveBeenCalledWith("已保存元数据");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.detail.meta.saved"));
   });
 
   it("说明清空时拒绝保存并提示", async () => {
@@ -220,24 +237,27 @@ describe("SavedWorkflowDetailView", () => {
     )) as HTMLTextAreaElement;
     fireEvent.change(description, { target: { value: "   " } });
     fireEvent.click(screen.getByTestId(TID_WORKFLOW_META_SAVE));
-    expect(screen.getByText("说明不能为空")).toBeTruthy();
+    expect(
+      screen.getByText(expectedCopy("workflows.hub.detail.meta.descriptionRequired")),
+    ).toBeTruthy();
     expect(agentService.updateSavedWorkflowMeta).not.toHaveBeenCalled();
   });
 
   it("运行历史：每行一条；只有带归属字段的行可「查看实例」", async () => {
     const props = mount();
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    // Radix Tabs 的触发器在 mousedown 上激活，而不是 click。
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
     const openable = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-open"));
     const orphan = screen.getByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-orphan"));
     expect(openable.textContent).toContain("branch=main");
     expect(openable.textContent).toContain("4.2k tokens");
-    const openButton = Array.from(openable.querySelectorAll("button")).find(
-      (button) => button.textContent === "查看实例",
-    );
+    const openButton = within(openable).getByRole("button", {
+      name: expectedCopy("workflows.hub.history.open"),
+    });
     expect(openButton).toBeTruthy();
-    expect(orphan.textContent).not.toContain("查看实例");
+    expect(
+      within(orphan).queryByRole("button", { name: expectedCopy("workflows.hub.history.open") }),
+    ).toBeNull();
     fireEvent.click(openButton!);
     expect(props.onOpenRun).toHaveBeenCalledWith(RUNS[0]);
   });
@@ -245,10 +265,11 @@ describe("SavedWorkflowDetailView", () => {
   it("canOpenRun 为 false 时不出现「查看实例」", async () => {
     mount({ canOpenRun: false });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    // Radix Tabs 的触发器在 mousedown 上激活，而不是 click。
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
     await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-open"));
-    expect(screen.queryByText("查看实例")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("workflows.hub.history.open") }),
+    ).toBeNull();
   });
 
   it("面包屑只有工作流名一级；项目归属写在标题旁的小标上", async () => {
@@ -275,7 +296,7 @@ describe("SavedWorkflowDetailView", () => {
   it("文件已不存在时给出提示而不是表单", async () => {
     detailResult.current = { ok: false, reason: "not_found" };
     mount({ entry: undefined });
-    expect(await screen.findByText("这个工作流已不在项目里。")).toBeTruthy();
+    expect(await screen.findByText(expectedCopy("workflows.hub.detail.notFound"))).toBeTruthy();
     expect(screen.queryByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION)).toBeNull();
   });
 
@@ -287,15 +308,15 @@ describe("SavedWorkflowDetailView", () => {
     );
     const props = mount({ resolveRunProject });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
     const openable = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-open"));
     const project = openable.querySelector('[data-workflow-run-project="true"]');
     expect(project?.textContent).toBe("Alpha");
     expect(project?.getAttribute("title")).toBe("/repo/alpha");
     // r-open：全局 canOpenRun + ids + 该行 canOpen 都成立 → 可查看实例。
-    const openButton = Array.from(openable.querySelectorAll("button")).find(
-      (button) => button.textContent === "查看实例",
-    );
+    const openButton = within(openable).getByRole("button", {
+      name: expectedCopy("workflows.hub.history.open"),
+    });
     expect(openButton).toBeTruthy();
     fireEvent.click(openButton!);
     expect(props.onOpenRun).toHaveBeenCalledWith(RUNS[0]);
@@ -304,15 +325,17 @@ describe("SavedWorkflowDetailView", () => {
   it("resolveRunProject 该行 canOpen=false 时隐藏「查看实例」（即使有归属字段）", async () => {
     mount({ resolveRunProject: () => ({ label: "Alpha", canOpen: false }) });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
     const openable = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-open"));
-    expect(openable.textContent).not.toContain("查看实例");
+    expect(
+      within(openable).queryByRole("button", { name: expectedCopy("workflows.hub.history.open") }),
+    ).toBeNull();
   });
 
   it("不传 resolveRunProject 时不渲染项目列", async () => {
     mount();
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
     await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-open"));
     expect(document.querySelector('[data-workflow-run-project="true"]')).toBeNull();
   });
@@ -350,7 +373,7 @@ describe("SavedWorkflowDetailView", () => {
     const onOpenArtifact = vi.fn();
     mount({ runs: ARTIFACT_RUNS, onOpenArtifact });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
 
     const row = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-latest"));
     const chips = Array.from(row.querySelectorAll(`[data-testid="${TID_WORKFLOW_ARTIFACT_CHIP}"]`));
@@ -363,7 +386,7 @@ describe("SavedWorkflowDetailView", () => {
     const onOpenArtifact = vi.fn();
     mount({ runs: ARTIFACT_RUNS, onOpenArtifact });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
 
     const row = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-legacy"));
     const chip = row.querySelector(`[data-testid="${TID_WORKFLOW_ARTIFACT_CHIP}"]`);
@@ -375,7 +398,7 @@ describe("SavedWorkflowDetailView", () => {
   it("宿主没注入打开能力时 chips 仍在场，只是全都不可点", async () => {
     mount({ runs: ARTIFACT_RUNS });
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
-    fireEvent.mouseDown(screen.getByText("运行历史 2"), { button: 0 });
+    openHistoryTab();
 
     const row = await screen.findByTestId(testId(TID_WORKFLOW_RUN_ROW, "r-latest"));
     const chips = Array.from(row.querySelectorAll(`[data-testid="${TID_WORKFLOW_ARTIFACT_CHIP}"]`));
@@ -404,7 +427,7 @@ describe("SavedWorkflowDetailView", () => {
     await screen.findByTestId(TID_WORKFLOW_DETAIL_DESCRIPTION);
 
     const strip = screen.getByTestId("workflow-detail-artifacts");
-    expect(strip.textContent).toContain("最近产物");
+    expect(strip.textContent).toContain(expectedCopy("workflows.hub.artifacts.latest"));
     expect(strip.textContent).toContain("审计报告");
     fireEvent.click(strip.querySelectorAll(`[data-testid="${TID_WORKFLOW_ARTIFACT_CHIP}"]`)[1]!);
     expect(onOpenArtifact).toHaveBeenCalledWith(ARTIFACT_RUNS[0], "perf");
@@ -425,7 +448,7 @@ describe("SavedWorkflowDetailView", () => {
       ctrlKey: false,
     });
     const moveItem = screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "release-check"));
-    expect(moveItem.textContent).toBe("提升为全局");
+    expect(moveItem.textContent).toBe(expectedCopy("workflows.hub.card.promoteToGlobal"));
     fireEvent.click(moveItem);
     expect(onMove).toHaveBeenCalledTimes(1);
   });
@@ -438,7 +461,7 @@ describe("SavedWorkflowDetailView", () => {
       ctrlKey: false,
     });
     expect(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "release-check")).textContent).toBe(
-      "移到项目…",
+      expectedCopy("workflows.hub.card.moveToProject"),
     );
   });
 

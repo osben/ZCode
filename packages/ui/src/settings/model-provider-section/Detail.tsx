@@ -1,5 +1,5 @@
 import { useCodingPlanEntryGate } from "@/settings/CodingPlanEntryButton.js";
-/* eslint-disable max-lines -- Model Provider 详情页当前集中编排 Plan Card、API Key 表单和 OAuth 套餐态；后续稳定后再按 family/API/OAuth 拆分。 */
+/* eslint-disable max-lines -- The Model Provider detail page currently coordinates Plan Card, API Key forms, and OAuth plan state; split by family/API/OAuth after it stabilizes. */
 import {
   BIGMODEL_PROVIDER_ID,
   BUILTIN_MODEL_PROVIDER_IDS,
@@ -51,6 +51,8 @@ import {
   ProviderFamilyPlanModeSwitch,
 } from "./ProviderFamilyModeHeader.js";
 import { resolveStartPlanEntitlementSummary } from "./StartPlanCard.js";
+import { ChatGptPlanDetail } from "./ChatGptPlanDetail.js";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { useCodingPlanProducts } from "./useCodingPlanProducts.js";
 import { useEnterpriseCodingPlanProducts } from "./useEnterpriseCodingPlanProducts.js";
 import { useUsageEntitlement } from "@/hooks/useUsageEntitlement.js";
@@ -105,8 +107,8 @@ export function resolveTeamScopedPlanNavItem(
     item.availabilityReason === "credential-unavailable" &&
     entitlement.snapshot?.unavailableReason !== "no_plan"
   ) {
-    // 已知 Project Key 不可用时，后续 quota loading/error 不能把真实原因改写成
-    // “正在检查”或“团队套餐未分配”。Provider 配置仍由 Settings View 独立展示。
+    // When a known Project Key is unavailable, later quota loading/errors must not rewrite the actual reason as
+    // "Checking" or "Team plan not assigned." Provider configuration remains independently displayed by the Settings View.
     return {
       ...item,
       status: "unavailable" as const,
@@ -120,7 +122,7 @@ export function resolveTeamScopedPlanNavItem(
     if (entitlement.loading) {
       return {
         ...item,
-        // Team Plan 额度按组织 / 项目重新查询，切换团队时不能继续展示上一团队额度。
+        // Re-query Team Plan quota by organization/project; do not keep displaying the previous team's quota after switching teams.
         status: "checking" as const,
         statusLabelId: undefined,
         availabilityReason: undefined,
@@ -131,7 +133,7 @@ export function resolveTeamScopedPlanNavItem(
     if (entitlement.error) {
       return {
         ...item,
-        // 请求失败只证明权益状态未知，不能等价成服务端明确判定“团队套餐未分配”。
+        // A failed request proves only that entitlement state is unknown; it is not equivalent to the server explicitly reporting "Team plan not assigned."
         status: "unavailable" as const,
         statusLabelId: undefined,
         availabilityReason: undefined,
@@ -166,7 +168,7 @@ export function resolveTeamScopedPlanNavItem(
   const expired = noPlan && snapshot.teamPlanUnavailableReason === "expired";
   return {
     ...item,
-    // 权益只来自团队订阅查询；quota 查询失败不能撤销订阅，也不能被解释成未分配。
+    // Entitlement comes only from the team subscription query; a quota-query failure cannot revoke the subscription or be interpreted as unassigned.
     status: hasTeamSubscription ? ("purchased" as const) : ("unavailable" as const),
     planLevel: item.teamPlanName?.trim() || item.planLevel,
     currentProductId: item.currentProductId,
@@ -191,7 +193,7 @@ export function resolveTeamScopedPlanNavItem(
 export function resolveTeamPlanInspectionAccess(
   item: Extract<ModelProviderNavItem, { type: "teamPlan" }>,
 ) {
-  // 不可用套餐仍需查询失效原因；组织/项目身份来自团队导航，不能被执行可用性门禁清空。
+  // Query the failure reason even for unavailable plans; organization/project identity comes from team navigation and must not be cleared by the execution-availability gate.
   const family = resolveModelProviderFamilySpecByProviderId(item.presetId)?.id;
   const productId = item.currentProductId?.trim();
   const organizationId = item.organizationId?.trim();
@@ -314,7 +316,7 @@ export function ModelProviderSectionDetail({
   const rootProviderSettingsView =
     rootProviderSettingsRead.state.status === "ready" ? rootProviderSettingsRead.state.view : null;
   const providerSettingsView = providerSettingsViewOverride ?? rootProviderSettingsView;
-  // 账号分支曾漏传删除回调，出现只删 UI 不写盘。所有详情共用同一套模型操作装配。
+  // The account branch once omitted the delete callback, removing an item only from the UI without persisting it. All detail views share the same model-operation wiring.
   const modelEditingProps = {
     onAddPersonalModel,
     onSavePersonalModelDraft,
@@ -357,8 +359,8 @@ export function ModelProviderSectionDetail({
     preferredProviderId:
       selectedNavItem?.type === "teamPlan" ? selectedNavItem.presetId : undefined,
     accountAccess: selectedPlanAccess,
-    // 已购 Team Plan 时，个人 Coding Plan provider 可能因个人权益不可用被标记 disabled。
-    // Team 额度查询仍复用 Coding Plan quota 链路，并追加组织 / 项目上下文，不能在服务选择阶段被过滤。
+    // With a purchased Team Plan, the personal Coding Plan provider may be marked disabled because personal entitlement is unavailable.
+    // Team quota queries still reuse the Coding Plan quota path with organization/project context and must not be filtered during service selection.
     allowDisabledPreferredProvider: selectedNavItem?.type === "teamPlan",
     requirePreferredProvider: true,
     allowEnvApiKey: false,
@@ -396,10 +398,19 @@ export function ModelProviderSectionDetail({
     return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
   }
 
+  // The ChatGPT plan (SIWC) has its own identity domain and detail page; it does not ride
+  // the zai/bigmodel preset machinery (connection modes, plan cards, entitlements).
+  if (
+    selectedNavItem.type === "preset" &&
+    isChatGptPlanSubscriptionProviderId(selectedNavItem.presetId)
+  ) {
+    return <ChatGptPlanDetail />;
+  }
+
   if (selectedNavItem.type === "preset") {
     if (!selectedNavItem.provider) {
-      // 首屏慢网时预置供应商配置尚未返回，之前这里会直接展示“尚未同步，请先完成 OAuth 登录”，
-      // 用户会把“还在下载”误判成“当前账号未登录”。首刷期间改为明确显示 loading，等请求结束后再决定是否展示未同步占位。
+      // On a slow first load, preset-provider config may not have returned yet. This used to show "Not synced; complete OAuth sign-in first,"
+      // making users mistake "still downloading" for "current account is not signed in." Show an explicit loading state on the initial fetch and decide whether to show the unsynced placeholder only after it completes.
       if (presetLoading) {
         return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
       }
@@ -429,8 +440,8 @@ export function ModelProviderSectionDetail({
           }
           onTestModel={onTestModel}
           readOnlyEndpoints
-          // 预置供应商名称承载固定 API Key 入口语义，
-          // 允许重命名会让侧边栏和模型选择器展示含义不一致，因此只允许自定义供应商改名。
+          // Preset-provider names carry fixed API Key entry semantics; allowing renaming would make the sidebar and model picker inconsistent,
+          // so only custom providers can be renamed.
           nameEditable={false}
           headerVisible={!familySpec}
           headerActionsVisible={familySpec ? false : undefined}
@@ -446,8 +457,8 @@ export function ModelProviderSectionDetail({
       providerId: selectedNavItem.presetId,
       fallback: selectedNavItem.provider,
     });
-    // 购买/支付接口仍然依赖 OAuth 业务 token。
-    // 这里与卡片登录态分开传递，避免 Provider API Key 点亮状态后误判购买 token 可用。
+    // Purchase/payment APIs still require the OAuth business token.
+    // Pass it separately from the card's sign-in state so a lit Provider API Key does not imply the purchase token is available.
     const codingPlanPurchaseTokenAuthenticated =
       codingPlanPurchaseTokenAuthenticatedByProviderId[selectedNavItem.presetId] === true;
     const codingPlanLoginPending = presetSubscriptionProviderId === selectedNavItem.presetId;
@@ -458,8 +469,8 @@ export function ModelProviderSectionDetail({
     const statusPanelViewState =
       codingPlanDisconnectPending || (codingPlanStatusSyncPending && !hasResolvedEntitlementStatus)
         ? {
-            // 登录/登出后的 provider key 与权益刷新是异步链路。
-            // 刷新落定前继续展示旧的未连接/已连接状态会让用户误以为操作失败。
+            // Provider-key and entitlement refreshes after sign-in/sign-out are asynchronous.
+            // Showing the previous disconnected/connected state until refresh completes makes users think the action failed.
             displayStatus: "checking" as const,
             actionStatus: "checking" as const,
             balanceStatus: "checking" as const,
@@ -472,15 +483,15 @@ export function ModelProviderSectionDetail({
     const visibleStatusLabelId =
       statusPanelViewState.displayStatus === "checking" ? undefined : selectedNavItem.statusLabelId;
     const isStartPlanProvider = isStartPlanModelProviderId(selectedNavItem.presetId);
-    // 明确无权益时隐藏配置入口，但查询/取 Key 失败不能推断无权益，也不删除配置。
+    // Hide the configuration entry only when entitlement is explicitly absent; query/key-fetch failure does not prove that and must not delete config.
     const hasNoPlanEntitlement =
       !isStartPlanProvider &&
       (selectedNavItem.type === "teamPlan"
         ? selectedNavItem.availabilityReason === "not-allocated" ||
           selectedNavItem.availabilityReason === "expired"
         : selectedNavItem.status === "notPurchased");
-    // Start 已由 Account 快照确认可用时，额度查询清空/刷新自己的缓存不能卸载编辑器。
-    // 未取得套餐时不展示可执行模型；配置区不依赖额度请求的临时 loading 状态。
+    // Once the Account snapshot confirms Start is available, clearing/refreshing the quota query's own cache must not unmount the editor.
+    // Do not show executable models without an active plan; the config area does not depend on temporary quota-request loading state.
     const accountAvailable =
       providerSettingsView?.providers.find(
         (provider) => provider.providerId === selectedNavItem.presetId,
@@ -497,7 +508,7 @@ export function ModelProviderSectionDetail({
       selectedNavItem.type === "codingPlan" &&
       isIndividualCodingPlanModelProviderId(selectedNavItem.presetId) &&
       selectedNavItem.provider?.accountState?.unavailableReason === "credential-failed";
-    // 团队查询/取 Key 失败不是未登录：先刷新 Host 凭据，再刷新当前团队权益。
+    // A team-query/key-fetch failure does not mean signed out: first refresh Host credentials, then refresh the current team's entitlement.
     const retryTeamPlan =
       selectedNavItem.type === "teamPlan" &&
       selectedNavItem.status === "unavailable" &&
@@ -534,8 +545,8 @@ export function ModelProviderSectionDetail({
       options: { initialTeamPlanKey?: string; eventText?: string } = {},
     ) => {
       if (resolvePurchaseChoiceSelectionIntent(statusPanelViewState.displayStatus) === "login") {
-        // 未登录时个人/团队套餐必须先建立对应 provider 的 OAuth 身份。
-        // 直接打开购买面板会绕过账号态，导致后续价格/订单接口只能再报 oauth_required。
+        // While signed out, personal/team plans must first establish the corresponding provider's OAuth identity.
+        // Opening the purchase panel directly bypasses account state, causing later price/order APIs to return oauth_required.
         onCodingPlanLogin(
           selectedNavItem.presetId,
           selectedNavItem.oauthProviderId,
@@ -574,8 +585,8 @@ export function ModelProviderSectionDetail({
     const codingPlanFamilyHeader = (
       <ProviderFamilyHeader selectedNavItem={selectedNavItem} trailingAction={planModeSwitch} />
     );
-    // 团队导航在 pricing 返回历史 subscribed 时也可能标为 purchased。购买/升级入口
-    // 只读取 Account owner 已确认的权益，不能把商品目录的展示状态当成当前权益。
+    // Team navigation may also mark a historical subscription as purchased when pricing returns it. Purchase/upgrade entry points
+    // read only entitlements confirmed by the Account owner; do not treat display state from the product catalog as current entitlement.
     const hasActivePaidPlan = navigationItems.some(
       (item) =>
         (item.type === "teamPlan" ||
@@ -652,8 +663,8 @@ export function ModelProviderSectionDetail({
               : undefined
           }
           disconnectLoading={codingPlanDisconnectProviderId === selectedNavItem.presetId}
-          // Plan Card 在未登录/登录失效时仍然是用户当前选中的入口。
-          // 之前详情页没有打开状态卡内置登录动作，导致用户能进入 Coding tab 却只能看到“未连接”文案。
+          // Plan Card remains the user's selected entry when signed out/sign-in has expired.
+          // The detail page previously did not open the status card's built-in sign-in action, leaving users in the Coding tab with only a "Not connected" label.
           loginActionVisible
           loginActionPlacement="trailing"
           reloginOnFailure={!upgradePlansVisible && reloginOnFailure}
@@ -675,8 +686,8 @@ export function ModelProviderSectionDetail({
               selectedNavItem.presetId,
               selectedNavItem.oauthProviderId,
               selectedNavItem.providerName,
-              // 查看套餐接口要求业务 OAuth 仍有效；已购买状态下的“重新链接”不能只静默刷新 key，
-              // 否则 OAuth 过期时点击没有可见反馈。升级态的重连强制走重新登录路径。
+              // The plan-details API requires valid business OAuth; for purchased plans, "Reconnect" cannot silently refresh only the key,
+              // or clicking it gives no visible feedback after OAuth expires. Reconnection in the upgrade state must follow the sign-in flow.
               upgradePlansVisible ? "unavailable" : selectedNavItem.status,
               options,
             );
@@ -729,8 +740,8 @@ export function ModelProviderSectionDetail({
             providerName={selectedNavItem.providerName}
             status={selectedNavItem.status}
             viewState={statusPanelViewState}
-            // 未登录状态下右侧只渲染 Plan Card，不再回退到 API Key 表单。
-            // 因此登录入口必须留在 Plan Card 本身，否则用户进入 Coding tab 后没有下一步动作。
+            // While signed out, render only the Plan Card on the right; do not fall back to the API Key form.
+            // Therefore the Plan Card itself must retain the sign-in entry point, or users in the Coding tab have no next action.
             loginActionVisible
             loginActionPlacement="trailing"
             purchaseUrl={selectedNavItem.purchaseUrl}
@@ -830,7 +841,7 @@ export function ModelProviderSectionDetail({
   }
 
   if (selectedNavItem.type === "codingPlanLoading") {
-    // Z.AI plan 判定占位只属于左侧导航，不应进入详情表单渲染路径。
+    // The Z.AI plan-classification placeholder belongs only in left navigation and must not enter the detail-form render path.
     return null;
   }
 
@@ -843,7 +854,7 @@ export function ModelProviderSectionDetail({
     ? getProviderFormApiKeyManagementUrl(customProvider)
     : undefined;
   return (
-    // 仅展示预设模板声明的入口，不根据地址猜测自定义 Provider 的 Key 控制台。
+    // Show only the entry point declared by the preset template; do not guess the Key console for a custom Provider from its URL.
     <InlineEditableProviderCard
       provider={customProvider}
       onSave={onSave}
@@ -902,14 +913,14 @@ function CodingPlanPurchaseChoiceBanners({
   const startPlanSummary = startPlanPreview
     ? resolveStartPlanEntitlementSummary(startPlanPreview, intl, locale)
     : null;
-  // Start Plan 只是免费入口，入口价格必须读取对应付费 Coding Plan 的商品源；
-  // 否则这里拿到免费 SKU/空列表后会隐藏对应付费 Coding Plan 的起售价。
+  // Start Plan is only a free entry point; entry pricing must come from the corresponding paid Coding Plan product source,
+  // or a free SKU/empty list here would hide the starting price for the paid Coding Plan.
   const pricingProviderId = resolvePurchaseChoiceBannerProductsProviderId(providerId);
   const staticProducts = useCodingPlanProducts(pricingProviderId, {
     remotePreviewEnabled: false,
   });
   const enterpriseProducts = useEnterpriseCodingPlanProducts({
-    // 未登录也必须读取静态团队目录；售罄可见性不能充当目录加载开关。
+    // Read the static team catalog even when signed out; sold-out visibility must not act as the catalog-loading switch.
     enabled:
       teamVisible && pricingProviderId === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
     authenticated: soldOutVisible,
@@ -921,7 +932,7 @@ function CodingPlanPurchaseChoiceBanners({
     products: staticProducts.snapshot?.productList ?? [],
     soldOutVisible,
   });
-  // 团队入口只展示一个横幅，价格来自已配置商品的最低价，不按档位拆成多个入口。
+  // The team entry shows one banner only; price it from the lowest configured product, without creating separate entries by tier.
   const teamPrice = resolveEnterprisePurchaseChoiceBannerPrice({
     key: "team",
     title: "",
@@ -975,7 +986,7 @@ function CodingPlanPurchaseChoiceBanners({
           },
         ]
       : []),
-    // 历史订阅记录不决定购买入口可见性；团队 banner 沿用静态目录价格。
+    // Historical subscription records do not determine purchase-entry visibility; the team banner continues to use static catalog pricing.
     ...(teamVisible && teamPrice !== null
       ? [
           {
@@ -1122,8 +1133,8 @@ export function resolvePurchaseChoiceBannerPrice({
       return {
         kind: "price",
         price: product.price,
-        // 商品价格属于 provider 维度，缺失币种时只能按当前 provider 的结算域兜底。
-        // 不能让 formatter 默认落到 CNY，否则 Z.ai Global 入口会错误显示 RMB。
+        // Product prices belong to the provider. If the currency is missing, fall back only to the current provider's settlement region.
+        // Do not let the formatter default to CNY, or the Z.ai Global entry will incorrectly show RMB.
         currency:
           product.product.priceCurrency ??
           (providerId === BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan ? "CNY" : "USD"),
@@ -1134,13 +1145,13 @@ export function resolvePurchaseChoiceBannerPrice({
       products.length > 0 &&
       products.every((candidate) => candidate.soldOut === true)
     ) {
-      // 个人套餐入口 banner 是用户进入购买流前看到的第一层价格信息。
-      // 所有个人套餐都售罄时需要在金额位置前置展示售罄，而不是继续显示静态最低价。
+      // The personal-plan entry banner is the first price information users see before starting checkout.
+      // If all personal plans are sold out, show that before the amount instead of continuing to show a static minimum price.
       return { kind: "soldOut" };
     }
   }
 
-  // 缺失远端商品时不能补造静态价格，否则配置键失配会伪装成正常套餐。
+  // Do not fabricate a static price when a remote product is missing, or a configuration-key mismatch will look like a valid plan.
 
   return null;
 }
@@ -1183,8 +1194,8 @@ function resolveStartPlanPurchaseChoiceBannerTitle({
 }): string {
   const title = remoteTitle?.trim() || fallbackTitle;
   if (locale.startsWith("zh") && /^start\s+plan$/i.test(title)) {
-    // Start Plan banner 的名称来自远端 preview；当前远端默认只返回英文。
-    // 这里只本地化这个已知默认名，避免覆盖真实远端自定义套餐名。
+    // The Start Plan banner name comes from the remote preview, which currently returns English by default.
+    // Localize only this known default name so genuine remote custom plan names are not overwritten.
     return fallbackTitle;
   }
   return title;

@@ -91,7 +91,9 @@ interface PositionedCard {
 }
 
 function normalizeTrailingUrlText(url: string): string {
-  return url.trim().replace(/(?:[*_`]+|[.,;:!?，。！？；：、]+)+$/g, "");
+  // Fix rationale: The nested quantifier (?:[*_`]+|[…]+)+$ has exponential backtracking behavior (code-scanning js/redos);
+  // a long symbol sequence can hang rendering. Flattening it to one character class preserves the matched language while eliminating the exponential path.
+  return url.trim().replace(/[*_`.,;:!?，。！？；：、]+$/g, "");
 }
 
 export function isValidAssistantPreviewWebsiteUrl(url: string): boolean {
@@ -307,7 +309,7 @@ export function buildAssistantPreviewCardsFromReferences(
   for (const match of content.matchAll(LOCALHOST_URL_RE)) {
     const url = normalizeTrailingUrlText(match[0] ?? "");
     if (!isValidAssistantPreviewWebsiteUrl(url)) continue;
-    // Web 远控没有本地端口转发或 HTML 运行环境；在候选上限前过滤，避免隐藏卡片占位。
+    // Web remote control has no local port forwarding or HTML runtime; filter before the candidate limit so hidden cards do not take up slots.
     if (options.suppressWebRemoteCards) continue;
     const filePath = resolveLocalhostHtmlChangedPath(url, workspacePath, changedFilePaths, {
       homePath: options.homePath,
@@ -341,7 +343,7 @@ export function buildAssistantPreviewCardsFromReferences(
       if (!changedPath) continue;
       resolvedReference = { ...reference, path: changedPath };
     }
-    // 可视化已在正文展示；通用文件引用识别会再次命中其 HTML 路径，需在候选限额前去重。
+    // The visualization is already shown in the body. Generic file-reference detection can match its HTML path again, so deduplicate before applying the candidate limit.
     if (matchesGenUiSourcePath(resolvedReference.path, genUiSources)) continue;
     fileReferences.push(resolvedReference);
   }
@@ -351,8 +353,8 @@ export function buildAssistantPreviewCardsFromReferences(
     productTurnId: "",
     workspacePath,
     fileChanges: changedFilePaths.map((path) => ({ path, state: "active" as const })),
-    // Renderer 仍需展示已解析的 Home-relative/file URL 卡片；Share Service 会在自己的
-    // Host source 上再次执行 workspace 边界校验。
+    // The renderer still needs to show resolved Home-relative/file URL cards. Share Service performs workspace-boundary validation
+    // again against its own Host source.
     enforceWorkspaceBoundary: false,
   });
   const referencesByPath = new Map(

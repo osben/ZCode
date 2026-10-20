@@ -30,9 +30,7 @@ function resolveInlineDiffHighlightTheme(
     return codePreviewSettings.lightTheme;
   }
 
-  return theme === "dark" || theme === "zai-dark"
-    ? codePreviewSettings.darkTheme
-    : codePreviewSettings.lightTheme;
+  return theme === "dark" ? codePreviewSettings.darkTheme : codePreviewSettings.lightTheme;
 }
 
 export const EditInlineDiffContent = memo(function EditInlineDiffContent({
@@ -42,11 +40,11 @@ export const EditInlineDiffContent = memo(function EditInlineDiffContent({
 }: {
   preview: PatchCodeViewerSource;
   /**
-   * 应用主题（store 耦合剥离）：决定 diff 高亮取 light/dark 主题。
-   * 由调用方（tool call 渲染上下文）传入；默认 "system" 跟随操作系统兜底。
+   * Application theme (decoupled from the store): selects light/dark diff highlighting.
+   * Passed by the caller (tool-call rendering context); defaults to "system" to follow the operating system.
    */
   theme?: Theme;
-  /** 代码预览设置（store 耦合剥离）：由调用方传入，需保持引用稳定。 */
+  /** Code preview settings (decoupled from the store): passed by the caller and must keep a stable reference. */
   codePreviewSettings?: CodePreviewSettings;
 }) {
   const previewLines = useMemo(() => getPlainTextPatchPreviewLines(preview.patch), [preview.patch]);
@@ -65,9 +63,10 @@ export const EditInlineDiffContent = memo(function EditInlineDiffContent({
         className="mb-2 max-h-60 overflow-auto rounded-xl border border-border bg-card"
         data-inline-diff-preview
       >
-        {/* 聊天内联 diff 展开时直接挂载 @pierre/diffs 会把高亮和 Shadow DOM 汇总渲染压到主线程，
-        导致点击展开后长时间掉帧。这里首帧只渲染轻量 hunk 文本，再在 effect 里异步补 Shiki token；
-        之前只保留纯文本会让 session 里的 diff 永久失去语法高亮。 */}
+        {/* Mounting @pierre/diffs directly when an inline chat diff expands puts syntax highlighting and Shadow DOM rendering on the main thread,
+        causing a long frame drop after expanding. Render lightweight hunk text on the first frame, then add Shiki
+        tokens asynchronously in an effect; keeping plain text only would permanently remove syntax highlighting
+        from the session diff. */}
         <HighlightedLightweightDiffPreview
           className="h-full bg-card"
           codePreviewSettings={codePreviewSettings}

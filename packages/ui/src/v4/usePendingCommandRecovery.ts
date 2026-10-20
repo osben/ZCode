@@ -16,8 +16,8 @@ export interface UsePendingCommandRecoveryOptions {
 }
 
 /**
- * pending registry 的 React 接缝：projection 用 queue/guided/transcript anchor 收口；远端 query
- * 只在 subscription 代际进入 live 时执行，不跟随 streaming snapshot 高频重跑。
+ * React seam for pending registry: settle projection using queue/guided/transcript anchors; remote queries
+ * run only when the subscription generation becomes live, not repeatedly on high-frequency streaming snapshots.
  */
 export function usePendingCommandRecovery({
   layer,
@@ -38,7 +38,7 @@ export function usePendingCommandRecovery({
 
   useEffect(() => {
     if (status !== "live" || subscriptionId === null) return;
-    // 当前 session 与 createSession(null bucket) 可并行查询；registry 内部各自 single-flight。
+    // Current-session and createSession (null bucket) queries can run in parallel; the registry handles single-flight for each.
     const targets: Array<string | null> = sessionId === null ? [null] : [sessionId, null];
     void Promise.all(
       targets.map((target) =>
@@ -53,13 +53,13 @@ export function usePendingCommandRecovery({
     });
   }, [layer, sessionId, status, subscriptionId, workspacePath, workspaceIdentity]);
 
-  // version 是 registry 的窄订阅信号；不把整份账本复制进 React state。
+  // version is the registry's narrow subscription signal; do not copy the entire ledger into React state.
   void version;
   const scoped = pendingCommandRegistry.listRecoverable(sessionId);
   const recoverableCreates = pendingCommandRegistry
     .listRecoverable(null)
     .filter((entry) => isPendingCommandForWorkspace(entry, workspacePath, workspaceIdentity));
-  // null bucket 只表示 createSession 尚未绑定 session，不表示它没有 workspace。
-  // 每个 pane 都订阅同一 registry，因此必须在展示/消费前按 workspace identity 隔离。
+  // The null bucket means createSession has not been bound to a session yet; it does not mean there is no workspace.
+  // Every pane subscribes to the same registry, so isolate by workspace identity before displaying/consuming it.
   return sessionId === null ? recoverableCreates : [...scoped, ...recoverableCreates];
 }

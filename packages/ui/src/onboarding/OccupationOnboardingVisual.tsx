@@ -21,7 +21,7 @@ export function OccupationOnboardingVisual({
   useEffect(() => {
     if (!isMacDesktop || !platform.getDesktopWindowChromeState) return;
     let disposed = false;
-    // 系统版本在会话内固定；复用主界面的版本查询和圆角规则，未知版本沿用其保守值。
+    // The OS version is fixed for the session; reuse the main UI's version lookup and corner-radius rules, and keep its conservative value for unknown versions.
     void platform.getDesktopWindowChromeState().then(
       (state) => {
         if (!disposed) setMacOSMajorVersion(state.macOSMajorVersion ?? null);
@@ -66,7 +66,7 @@ export function OccupationOnboardingVisual({
         </h2>
         <p
           className={cn(
-            "mt-6 w-full whitespace-pre-line text-[16px] leading-[26px]",
+            "mt-6 w-full whitespace-pre-line text-ui-lg leading-relaxed",
             palette.description,
             "dark:text-slate-200",
           )}

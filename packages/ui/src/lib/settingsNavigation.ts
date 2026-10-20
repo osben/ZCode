@@ -5,8 +5,6 @@ export type SettingsSectionId =
   | "general"
   | "appearance"
   | "migration"
-  // Fork section (voice dictation settings, specs/voice-dictation.md); re-applied in UI-2.
-  | "voiceDictation"
   | "browser"
   | "modelProvider"
   | "remoteDevices"

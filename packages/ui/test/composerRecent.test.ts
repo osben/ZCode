@@ -189,7 +189,8 @@ describe("composerRecent", () => {
       }),
     );
     expect(readComposerRecent("/repo", undefined, target)).toEqual({ mode: "yolo" });
-    // 旧版纯 ModelSelection 格式同样丢弃，避免新草稿种子指向隐藏加速身份。
+    // The legacy pure ModelSelection format is discarded too, so a new draft seed never points at
+    // a hidden highspeed identity.
     target.values.set(
       key,
       JSON.stringify({ providerId: "account:zai-highspeed-card", modelId: "GLM-5.3" }),

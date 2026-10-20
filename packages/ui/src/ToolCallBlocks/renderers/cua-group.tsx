@@ -82,8 +82,9 @@ function CuaGroupChildren({
     const content = contentRef.current;
     if (!viewport || !content || typeof ResizeObserver === "undefined") return;
 
-    // 每次尺寸变化都强制吸底会让用户向上查看历史时被截图加载或流式
-    // message 拉回底部。只有用户原本位于底部时才跟随新内容。
+    // Forcing the scroll to bottom on every size change would pull users back down while they are
+    // reading history, for example when a screenshot loads or a message streams in. Follow new
+    // content only when the user was already at the bottom.
     const observer = new ResizeObserver(() => {
       if (shouldStickToBottomRef.current) scrollToBottom();
       else updateScrollState();
@@ -185,26 +186,10 @@ export function CuaGroupToolCallBlock(context: CuaGroupRenderProps) {
   const isRunning = context.isRunning || toolCall.status === "in_progress";
   const eventCount = events.length;
   const messageCount = events.filter((event) => event.kind === "assistantMessage").length;
-  const eventCountText = intl.formatMessage(
-    {
-      id:
-        eventCount === 1
-          ? "chat.toolCall.cua.group.event.one"
-          : "chat.toolCall.cua.group.event.other",
-    },
-    { count: eventCount },
-  );
+  const eventCountText = intl.formatPlural({ id: "chat.toolCall.cua.group.event" }, eventCount);
   const messageCountText =
     messageCount > 0 || !isRunning
-      ? intl.formatMessage(
-          {
-            id:
-              messageCount === 1
-                ? "chat.toolCall.cua.group.message.one"
-                : "chat.toolCall.cua.group.message.other",
-          },
-          { count: messageCount },
-        )
+      ? intl.formatPlural({ id: "chat.toolCall.cua.group.message" }, messageCount)
       : null;
   const animatedTextClass = isRunning
     ? "cua-group-gradient-text min-w-0 truncate"

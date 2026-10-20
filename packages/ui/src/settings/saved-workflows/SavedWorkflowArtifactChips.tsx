@@ -3,14 +3,14 @@ import type { ArtifactPillSize } from "@/components/workflow-timeline/WorkflowAr
 import { WorkflowArtifactStrip } from "@/components/workflow-timeline/WorkflowArtifactStrip.js";
 
 /**
- * 中枢里的产物条：运行历史行的状态词之后用小号药丸，
- * 详情页头部那条「最近产物」用常规尺寸。
+ * Artifact chips in the hub: small pills after the status label in run-history rows,
+ * and regular size for the “Recent artifacts” row in the detail-page header.
  *
- * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出。
+ * ⚠ Terminology: artifact = output a script publishes for users through `artifact.*`.
  *
- * 与通知行、时间线下的产物条是**同一个**组件——同一个产物在四处必须长得一样。载荷类型
- * （legacy `workflows/runs` 行）与 v4 通知 meta 不同，但四个字段（id / kind / title / version）
- * 两边都有，条只读这四个。
+ * This is the **same** component used in notification rows and beneath the timeline — the same artifact must look identical in all four places. The payload types
+ * differ (legacy `workflows/runs` rows vs v4 notification meta), but both provide the four fields (id / kind / title / version),
+ * and the chip reads only those.
  */
 export function SavedWorkflowArtifactChips({
   artifacts,
@@ -19,7 +19,7 @@ export function SavedWorkflowArtifactChips({
   size = "sm",
 }: {
   artifacts: NonNullable<ZCodeSavedWorkflowRun["artifacts"]>;
-  /** 缺席即药丸禁用（老行没有 `parentSessionId`，或宿主没注入打开能力）。 */
+  /** If absent, disable the pill (legacy rows have no `parentSessionId`, or the host did not provide open capability). */
   onOpenArtifact?: (artifactId: string) => void;
   size?: ArtifactPillSize;
   className?: string;

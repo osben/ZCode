@@ -12,6 +12,7 @@ import {
 import { ProviderTemplatePicker } from "@/settings/model-provider-section/ProviderTemplatePicker.js";
 import { ProviderDetailFeedbackBoundary } from "@/settings/model-provider-section/ProviderDetailFeedback.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const loggerMock = vi.hoisted(() => ({ error: vi.fn() }));
 
@@ -21,19 +22,10 @@ afterEach(cleanup);
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
-        const message =
-          {
-            "settings.modelProvider.templatePickerTitle": "添加供应商",
-            "settings.modelProvider.templatePickerBack": "返回供应商详情",
-            "settings.modelProvider.createCustomProvider": "创建自定义供应商",
-            "settings.modelProvider.templateCreateFailed": "创建供应商失败：个人供应商配置格式无效",
-            "settings.modelProvider.templateCreateRetry": "重试",
-          }[id] ?? id;
-        return message.replace("{reason}", values?.reason ?? "");
-      },
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
+        expectedCopy(id, values),
     },
   }),
 }));
@@ -65,14 +57,14 @@ describe("ProviderTemplatePicker", () => {
       ),
     );
 
-    expect(html).toContain("添加供应商");
+    expect(html).toContain(expectedCopy("settings.modelProvider.templatePickerTitle"));
     expect(html).toContain(`data-testid="${TID_MODEL_PROVIDER_TEMPLATE_PICKER}"`);
     expect(html).toContain(`data-testid="${testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "custom")}"`);
     expect(html).toContain(`data-testid="${testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "deepseek")}"`);
-    expect(html).toContain("创建自定义供应商");
-    expect(html).toContain("深度求索");
+    expect(html).toContain(expectedCopy("settings.modelProvider.createCustomProvider"));
+    expect(html).toContain("DeepSeek");
     expect(html).toContain("Alibaba Model Studio (International)");
-    expect(html.indexOf("深度求索")).toBeLessThan(
+    expect(html.indexOf("DeepSeek")).toBeLessThan(
       html.indexOf("Alibaba Model Studio (International)"),
     );
   });
@@ -94,7 +86,7 @@ describe("ProviderTemplatePicker", () => {
             templates: [
               {
                 templateId: "deepseek",
-                templateNameMap: { "zh-CN": "DeepSeek" },
+                templateNameMap: { "en-US": "DeepSeek" },
                 config: { logo: { type: "builtin", key: "deepseek" } },
               },
             ],
@@ -107,16 +99,20 @@ describe("ProviderTemplatePicker", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "DeepSeek" }));
+    fireEvent.click(screen.getByTestId(testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "deepseek")));
     expect((await screen.findByRole("alert")).textContent).toContain(
-      "创建供应商失败：个人供应商配置格式无效",
+      expectedCopy("settings.modelProvider.templateCreateFailed"),
     );
     expect(loggerMock.error).toHaveBeenCalledWith(
       "[ProviderTemplatePicker] 创建供应商失败",
       expect.any(Error),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.templateCreateRetry"),
+      }),
+    );
     await waitFor(() => expect(onCreateFromTemplate).toHaveBeenCalledTimes(2));
     expect(onCreateFromTemplate).toHaveBeenLastCalledWith("deepseek");
   });

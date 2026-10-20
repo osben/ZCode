@@ -28,7 +28,7 @@ describe("artifact-backed Markdown images", () => {
     const rendered = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(MarkdownImage, {
           alt: "shot",
           src,

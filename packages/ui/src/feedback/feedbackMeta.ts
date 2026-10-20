@@ -17,14 +17,11 @@ interface TypeMeta {
   label: string;
   description: string;
   Icon: ComponentType<SVGProps<SVGSVGElement>>;
-  /** 选中时图标颜色 */
+  /** Icon color when selected. */
   iconText: string;
 }
 
-type MessageFormatter = (
-  descriptor: { id: string },
-  values?: Record<string, string>,
-) => string;
+type MessageFormatter = (descriptor: { id: string }, values?: Record<string, string>) => string;
 
 export const FEEDBACK_TYPE_META: TypeMeta[] = [
   {
@@ -89,8 +86,8 @@ export const STATUS_META: Record<FeedbackTicketStatus, StatusMeta> = {
     className: "text-emerald-700 dark:text-emerald-300",
     dot: "bg-emerald-500",
   },
-  // 公开反馈接口会把历史「答复关闭」归一为「已归档」返回。
-  // 客户端必须同时识别两种终态，否则我的反馈列表渲染状态标记时会拿不到 meta 而崩溃。
+  // The public feedback API normalizes the legacy “reply closed” state to “archived”.
+  // The client must recognize both terminal states, or the My Feedback list may crash when rendering a status badge without meta.
   已归档: {
     className: "text-emerald-700 dark:text-emerald-300",
     dot: "bg-emerald-500",
@@ -113,23 +110,21 @@ export const STATUS_META: Record<FeedbackTicketStatus, StatusMeta> = {
   },
 };
 
-export const SEVERITY_BADGE: Record<
-  FeedbackTicketSeverity,
-  { label: string; className: string }
-> = {
-  "P1-高": {
-    label: "P1",
-    className: "text-rose-600 dark:text-rose-400 border-rose-500/40",
-  },
-  "P2-中": {
-    label: "P2",
-    className: "text-amber-600 dark:text-amber-400 border-amber-500/40",
-  },
-  "P3-低": {
-    label: "P3",
-    className: "text-emerald-600 dark:text-emerald-400 border-emerald-500/40",
-  },
-};
+export const SEVERITY_BADGE: Record<FeedbackTicketSeverity, { label: string; className: string }> =
+  {
+    "P1-高": {
+      label: "P1",
+      className: "text-rose-600 dark:text-rose-400 border-rose-500/40",
+    },
+    "P2-中": {
+      label: "P2",
+      className: "text-amber-600 dark:text-amber-400 border-amber-500/40",
+    },
+    "P3-低": {
+      label: "P3",
+      className: "text-emerald-600 dark:text-emerald-400 border-emerald-500/40",
+    },
+  };
 
 export const FEEDBACK_MODULE_MESSAGE_IDS: Record<FeedbackTicketModule, string> = {
   "Plugin / MCP": "feedback.module.pluginMcp",
@@ -151,8 +146,8 @@ export const FEEDBACK_STATUS_MESSAGE_IDS: Record<FeedbackTicketStatus, string> =
   信息不足: "feedback.status.needInfo",
   已采纳: "feedback.status.accepted",
   答复关闭: "feedback.status.closedByReply",
-  // 后端 closed 仍归一为「已归档」兼容值，但不能把接口内部命名直接暴露给用户。
-  // 这里映射到 completed 展示文案，让“我的反馈”列表和详情统一显示为「已完成」。
+  // The backend closed state is still normalized to the compatibility value “archived”, but the API internal name must not be exposed to users.
+  // Map it to the completed display label so the My Feedback list and detail view both show “Completed”.
   已归档: "feedback.status.completed",
   已拒绝: "feedback.status.rejected",
   开发中: "feedback.status.inDevelopment",

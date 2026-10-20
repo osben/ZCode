@@ -11,8 +11,9 @@ import {
 const HIGHSPEED_DIFFUSION_DELAY_MS = 500;
 const HIGHSPEED_DIFFUSION_FRAME_INTERVAL_MS = 1_000 / 30;
 
-// 参考稿的马赛克颗粒约 6px；更高的内部像素密度不会增加可见细节，反而会让宽屏
-// Composer 每帧处理数万像素并阻塞 renderer。
+// The reference mock uses ~6px mosaic grain; higher internal pixel density adds no visible
+// detail and instead makes the widescreen composer process tens of thousands of pixels per
+// frame, blocking the renderer.
 const PIXEL_SIZE_CSS_PX = 6;
 const SURFACE_FALLBACK: Rgb = [21, 21, 21];
 const ACCENT_FALLBACK: Rgb = [179, 146, 255];
@@ -76,8 +77,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
     (event: TransitionEvent<HTMLCanvasElement>) => {
       if (event.propertyName !== "opacity") return;
 
-      // Bug 根因：旧实现从扩散回调开始计时卸载 Canvas，但 React 提交 handoff 相位可能更晚，
-      // renderer 忙时会压缩甚至吞掉真实淡出窗口。以 CSS opacity 过渡完成事件作为唯一卸载边界。
+      // Root cause: the old implementation started an unload timer from the diffusion callback,
+      // but React may commit the handoff phase later, and a busy renderer compresses or even
+      // swallows the real fade-out window. Use the CSS opacity transitionend event as the only
+      // unload boundary.
       onComplete();
     },
     [onComplete],
@@ -147,8 +150,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
         }
       }
 
-      // Bug 根因：旧实现每一帧、每个像素都重复计算距离和两组多层噪声，宽屏下会产生
-      // 1s 级 long task。尺寸变化时一次性缓存静态场，播放阶段只移动扩散阈值。
+      // Root cause: the old implementation recomputed the distance field and two multi-octave
+      // noise fields for every pixel on every frame, producing second-long tasks on wide
+      // screens. Cache the static fields once on resize; playback only moves the diffusion
+      // threshold.
       for (let y = 0; y < height; y += 1) {
         for (let x = 0; x < width; x += 1) {
           const fieldIndex = y * width + x;
@@ -206,8 +211,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
       const elapsed = now - startTime;
       const progress = resolveHighSpeedDiffusionProgress(elapsed);
       if (!modelTransitionStarted && shouldStartHighSpeedModelSwitch(progress)) {
-        // Bug 根因：工具栏过去直接读取激活布尔值，模型先于噪音扩散翻页，两个视觉事件失去因果顺序。
-        // 由 Canvas 的同一进度时钟在尾段发出一次性信号，确保翻页提前开始但仍在噪音结束前完成。
+        // Root cause: the toolbar previously read the active boolean directly, flipping the
+        // model before the noise diffusion and losing causal order between the two visual
+        // events. The canvas's own progress clock emits a one-shot signal near the end so the
+        // flip starts early but still completes before the noise ends.
         modelTransitionStarted = true;
         onModelTransitionStart();
       }
@@ -241,8 +248,10 @@ export const HighSpeedDiffusionCanvas = memo(function HighSpeedDiffusionCanvas({
 
       context.putImageData(imageData, 0, 0);
       if (shouldCompleteHighSpeedDiffusion(progress)) {
-        // Bug 根因：完成帧过去用固定 timer 卸载 Canvas，React 提交稍有延迟就会让淡出近似硬切。
-        // 这里只停止逐像素循环并切换 handoff，Canvas 由真实 opacity transitionend 再卸载。
+        // Root cause: the completion frame previously unloaded the canvas on a fixed timer, so
+        // any React commit delay turned the fade-out into a near hard cut. Only stop the
+        // per-pixel loop and switch to handoff here; the canvas unloads on the real opacity
+        // transitionend.
         onHandoffStart();
         return;
       }

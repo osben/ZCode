@@ -8,9 +8,7 @@ function getStorage(): Storage | null {
   }
 }
 
-export function readFeedbackContactPreference(
-  storage: Storage | null = getStorage(),
-): string {
+export function readFeedbackContactPreference(storage: Storage | null = getStorage()): string {
   if (!storage) return "";
   try {
     return storage.getItem(FEEDBACK_CONTACT_STORAGE_KEY)?.trim() ?? "";
@@ -19,14 +17,12 @@ export function readFeedbackContactPreference(
   }
 }
 
-export function clearFeedbackContactPreference(
-  storage: Storage | null = getStorage(),
-): void {
+export function clearFeedbackContactPreference(storage: Storage | null = getStorage()): void {
   if (!storage) return;
   try {
     storage.removeItem(FEEDBACK_CONTACT_STORAGE_KEY);
   } catch {
-    // localStorage 在隐私模式或 WebView 限制下可能不可用；联系方式记忆失败不能阻断反馈提交。
+    // localStorage may be unavailable in private browsing or restricted WebViews; failure to remember contact details must not block feedback submission.
   }
 }
 
@@ -43,7 +39,7 @@ export function persistFeedbackContactPreference(
   try {
     storage.setItem(FEEDBACK_CONTACT_STORAGE_KEY, normalized);
   } catch {
-    // localStorage 在隐私模式或 WebView 限制下可能不可用；联系方式记忆失败不能阻断反馈提交。
+    // localStorage may be unavailable in private browsing or restricted WebViews; failure to remember contact details must not block feedback submission.
   }
 }
 

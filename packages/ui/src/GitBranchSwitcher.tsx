@@ -1,11 +1,5 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+/* eslint-disable max-lines -- One switcher surface: trigger, list with occupancy hints, and the create dialog wiring share one component; split by view when it grows further. */
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { GitRepositorySummary } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -16,11 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command.js";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover.js";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import { cn } from "@/components/lib/utils.js";
 import {
   GitBranchCreateDialog,
@@ -37,13 +27,7 @@ import {
   isCoarseTouchDevice,
   shouldRestoreChatInputFocusAfterPickerClose,
 } from "@/lib/pickerFocus.js";
-import {
-  ChevronDownIcon,
-  GitBranchIcon,
-  GitGraph,
-  LoaderIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, GitGraph, LoaderIcon, PlusIcon } from "lucide-react";
 
 interface GitBranchSwitcherProps {
   workspacePath: string;
@@ -59,6 +43,24 @@ interface GitBranchSwitcherProps {
   popoverSide?: "top" | "bottom" | "left" | "right";
   avoidPopoverCollisions?: boolean;
   showFooterActions?: boolean;
+  /**
+   * Draft intent mode (specs/composer-branch-switcher-semantics.md §1): selecting a branch issues
+   * no git call — it records the caller's intent (applied at send). The trigger reflects the
+   * chosen branch and the menu footer notes it applies on send.
+   */
+  selectionIntent?: {
+    branchName: string | null;
+    onSelect: (branchName: string) => void;
+  };
+  /**
+   * Switch guard (spec §2): awaited before a real switch; resolving false cancels it. Used by the
+   * status-panel switcher to confirm with the affected active tasks.
+   */
+  beforeSwitch?: (targetBranchName: string) => Promise<boolean>;
+  /** Disables the trigger (e.g. the worktree setup intent owns the branch while active). */
+  disabled?: boolean;
+  /** Native tooltip for the disabled trigger explaining why. */
+  triggerTitle?: string;
 }
 
 export function GitBranchSwitcher({
@@ -75,6 +77,10 @@ export function GitBranchSwitcher({
   popoverSide = "top",
   avoidPopoverCollisions = true,
   showFooterActions = true,
+  selectionIntent,
+  beforeSwitch,
+  disabled,
+  triggerTitle,
 }: GitBranchSwitcherProps) {
   const { intl, locale } = useZCodeIntl();
   const numberFormatter = new Intl.NumberFormat(locale);
@@ -95,6 +101,7 @@ export function GitBranchSwitcher({
     branchesResult,
     loadingBranches,
     mutationPending,
+    worktreeOccupancy,
     switchBranch,
     createBranchAndSwitch,
     openSwitchCommitDialog,
@@ -108,9 +115,8 @@ export function GitBranchSwitcher({
   });
 
   const isVisible = gitSummary.isGitAvailable && gitSummary.isRepository;
-  const displayedCurrentBranchName =
-    branchesResult?.currentBranchName ?? gitSummary.branchName;
-  const triggerLabel = useMemo(
+  const displayedCurrentBranchName = branchesResult?.currentBranchName ?? gitSummary.branchName;
+  const checkoutTriggerLabel = useMemo(
     () =>
       resolveGitBranchTriggerLabel({
         headRefType: gitSummary.headRefType,
@@ -120,13 +126,15 @@ export function GitBranchSwitcher({
       }),
     [displayedCurrentBranchName, gitSummary.headRefType, intl],
   );
+  // Draft intent mode: the trigger shows the chosen branch (the future chat's branch), not the
+  // checkout state.
+  const triggerLabel = selectionIntent?.branchName ?? checkoutTriggerLabel;
   const currentBranchDirtyLabel = useMemo(
     () =>
       dirtyFileCount > 0
-        ? intl.formatMessage(
-            { id: "git.branchSwitcher.currentDirty" },
-            { count: numberFormatter.format(dirtyFileCount) },
-          )
+        ? intl.formatPlural({ id: "git.branchSwitcher.currentDirty" }, dirtyFileCount, {
+            count: numberFormatter.format(dirtyFileCount),
+          })
         : null,
     [dirtyFileCount, intl, numberFormatter],
   );
@@ -143,8 +151,7 @@ export function GitBranchSwitcher({
     });
   }, [gitSummary.headRefType, intl, switchAssistState, triggerLabel]);
   const branchSearchFilter = useCallback(
-    (value: string, search: string) =>
-      matchesGitBranchSearch(value, search) ? 1 : 0,
+    (value: string, search: string) => (matchesGitBranchSearch(value, search) ? 1 : 0),
     [],
   );
 
@@ -155,9 +162,7 @@ export function GitBranchSwitcher({
 
     const frameId = window.requestAnimationFrame(() => {
       const selectedItem =
-        commandListRef.current?.querySelector<HTMLElement>(
-          '[data-branch-current="true"]',
-        ) ?? null;
+        commandListRef.current?.querySelector<HTMLElement>('[data-branch-current="true"]') ?? null;
       selectedItem?.scrollIntoView({ block: "nearest" });
     });
 
@@ -166,11 +171,10 @@ export function GitBranchSwitcher({
     };
   }, [branchesResult, open]);
 
-  const handleContentKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.key !== "Tab") {
-        return;
-      }
+  const handleContentKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab") {
+      return;
+    }
 
     const highlightedItem =
       event.currentTarget.querySelector<HTMLElement>(
@@ -184,11 +188,9 @@ export function GitBranchSwitcher({
       return;
     }
 
-      event.preventDefault();
-      highlightedItem.click();
-    },
-    [],
-  );
+    event.preventDefault();
+    highlightedItem.click();
+  }, []);
 
   if (!isVisible) {
     return null;
@@ -206,16 +208,15 @@ export function GitBranchSwitcher({
               type="button"
               variant="ghost"
               size={"default"}
-              disabled={mutationPending}
+              disabled={disabled || mutationPending}
+              title={disabled ? triggerTitle : undefined}
               aria-label={intl.formatMessage({
                 id: "git.branchSwitcher.trigger.ariaLabel",
               })}
               className={cn(
                 "min-w-0 rounded-full text-ui-base/relaxed",
-                // Bugfix: 手机远控聊天页底部空间很窄，分支名会挤压输入工具栏；远控模式只保留图标入口。
-                compactForRemoteControl
-                  ? "size-8 px-0"
-                  : "max-w-full pl-3 pr-2",
+                // Bugfix: The bottom area of the mobile remote-control chat page is narrow, and branch names crowd the input toolbar. Keep only the icon entry in remote-control mode.
+                compactForRemoteControl ? "size-8 px-0" : "max-w-full pl-3 pr-2",
                 triggerClassName,
               )}
             >
@@ -249,8 +250,8 @@ export function GitBranchSwitcher({
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               if (isCoarseTouchDevice()) {
-                // 手机触控设备打开分支列表时，自动聚焦搜索框会拉起系统键盘遮挡列表。
-                // 移动端保留触发器焦点，用户需要搜索时再手动点输入框；桌面端继续自动进入搜索。
+                // On mobile touch devices, automatically focusing the search box when opening the branch list brings up the system keyboard and obscures the list.
+                // Keep focus on the trigger on mobile until users tap the input to search; continue focusing search automatically on desktop.
                 return;
               }
 
@@ -258,9 +259,7 @@ export function GitBranchSwitcher({
               if (!(target instanceof HTMLElement)) {
                 return;
               }
-              const searchInput = target.querySelector<HTMLElement>(
-                '[data-slot="command-input"]',
-              );
+              const searchInput = target.querySelector<HTMLElement>('[data-slot="command-input"]');
               searchInput?.focus();
             }}
             onCloseAutoFocus={(event) => {
@@ -272,9 +271,7 @@ export function GitBranchSwitcher({
               ) {
                 return;
               }
-              const input = document.querySelector<HTMLElement>(
-                '[data-testid="chat-input"]',
-              );
+              const input = document.querySelector<HTMLElement>('[data-testid="chat-input"]');
               input?.focus();
             }}
           >
@@ -302,19 +299,37 @@ export function GitBranchSwitcher({
                   className="space-y-0.5 p-1 **:[[cmdk-group-heading]]:px-3 **:[[cmdk-group-heading]]:py-2 **:[[cmdk-group-heading]]:text-ui-base **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:text-foreground-subtle"
                 >
                   {(branchesResult?.branches ?? []).map((branch) => {
-                    const isCurrent =
-                      branch.name === displayedCurrentBranchName;
+                    const isCurrent = branch.name === displayedCurrentBranchName;
+                    // Git refuses to check out a branch checked out in another worktree; the hint names it.
+                    const occupiedDirectory = worktreeOccupancy.get(branch.name);
+                    const branchHint =
+                      (isCurrent && currentBranchDirtyLabel) ||
+                      (occupiedDirectory !== undefined &&
+                        intl.formatMessage(
+                          { id: "git.branchSwitcher.checkedOutIn" },
+                          { directory: occupiedDirectory },
+                        )) ||
+                      null;
                     return (
                       <CommandItem
                         key={branch.name}
                         value={branch.name}
                         data-checked={isCurrent ? "true" : undefined}
                         data-branch-current={isCurrent ? "true" : undefined}
-                        disabled={mutationPending}
-                        className={cn(
-                          "items-start gap-3 rounded-lg px-3 py-2 text-ui-base",
-                        )}
+                        disabled={mutationPending || occupiedDirectory !== undefined}
+                        className={cn("items-start gap-3 rounded-lg px-3 py-2 text-ui-base")}
                         onSelect={() => {
+                          if (selectionIntent) {
+                            setOpen(false);
+                            selectionIntent.onSelect(branch.name);
+                            return;
+                          }
+                          if (beforeSwitch) {
+                            void beforeSwitch(branch.name).then((allowed) => {
+                              if (allowed) void switchBranch(branch.name);
+                            });
+                            return;
+                          }
                           void switchBranch(branch.name);
                         }}
                       >
@@ -323,9 +338,9 @@ export function GitBranchSwitcher({
                           <div className="truncate text-ui-base font-medium text-foreground">
                             {branch.name}
                           </div>
-                          {isCurrent && currentBranchDirtyLabel ? (
+                          {branchHint ? (
                             <p className="pt-0.5 text-ui-base text-foreground-subtle">
-                              {currentBranchDirtyLabel}
+                              {branchHint}
                             </p>
                           ) : null}
                         </div>
@@ -337,6 +352,11 @@ export function GitBranchSwitcher({
             </Command>
             {showFooterActions ? (
               <div className="border-t border-border p-1">
+                {selectionIntent ? (
+                  <p className="px-3 py-1.5 text-ui-xs text-foreground-subtle">
+                    {intl.formatMessage({ id: "git.branchSwitcher.appliesOnSend" })}
+                  </p>
+                ) : null}
                 <Button
                   type="button"
                   variant="ghost"
@@ -388,7 +408,13 @@ export function GitBranchSwitcher({
           setCreateBranchName("");
         }}
         onSubmit={() => {
-          void createBranchAndSwitch();
+          if (beforeSwitch) {
+            void beforeSwitch(createBranchName).then((allowed) => {
+              if (allowed) void createBranchAndSwitch();
+            });
+          } else {
+            void createBranchAndSwitch();
+          }
         }}
       />
 

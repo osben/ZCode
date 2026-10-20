@@ -17,7 +17,7 @@ vi.mock("@/components/ui/dropdown-menu.js", () => ({
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
     intl: { formatMessage: ({ id }: { id: string }) => id },
   }),
 }));

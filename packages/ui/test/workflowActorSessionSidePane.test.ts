@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-// actor transcript 面板（docs/dynamic-workflow/presentation.md「Subagent transcripts」）：
-// 嵌套只读 SessionPane，组合方式照 SubagentSessionSidePane。
+// Actor transcript pane (docs/dynamic-workflow/presentation.md "Subagent transcripts"):
+// a nested read-only SessionPane, composed the same way as SubagentSessionSidePane.
 //
-// 这里钉的是**组合**，不是会话内容：actor 会话是真实持久会话，它的实时性、冷恢复与回看
-// 全部由既有 SessionPane 链路负责。所以唯一需要保证的是「读到的是那个 actor 的会话，
-// 而且是只读的」——把 sessionId 接错，面板会安静地显示另一个人的对话。
+// What is pinned here is the **composition**, not the session content: the actor session is a real persisted
+// session whose liveness, cold resume, and history are all handled by the existing SessionPane pipeline. The
+// only thing that must be guaranteed is "what is read is that actor's session, and it is read-only" — wire
+// the sessionId wrong and the pane quietly shows someone else's conversation.
 //
-// 另一半是**未启动门**（「actor transcript 的未启动态」）：actor 会话在首个 ask 派发时才
-// 创建，所以提前点开 tab 会订阅一条还不存在的会话，投影 store 随即停在 error 只等手动
-// retry。门在 notStarted 时不挂订阅，改渲染占位。
+// The other half is the **not-started gate** ("the actor transcript's not-started state"): the actor session
+// is created only when its first ask is dispatched, so opening the tab early would subscribe to a session that
+// does not exist yet, leaving the projection store stuck in error waiting for a manual retry. When notStarted,
+// the gate attaches no subscription and renders a placeholder instead.
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,17 +21,19 @@ import type { WorkflowActorSessionSidePaneTab } from "@/lib/workspaceSidePane.js
 const paneState = vi.hoisted(() => ({
   props: null as Record<string, unknown> | null,
   /**
-   * SessionPane **每次渲染**时的 sessionId（不是每次挂载——同一次挂载重渲染会重复入列）。
-   * 因此空数组才是可断言的强命题；判身份时看去重集合，别把重渲染次数写进期望。
+   * The sessionId at the time of **each render** of SessionPane (not per mount — rerenders of the same mount
+   * enqueue repeatedly).
+   * An empty array is therefore the strong, assertable proposition; for identity checks look at the deduped
+   * set, and never write rerender counts into expectations.
    */
   rendered: [] as string[],
 }));
 
-// layer 必须是**稳定引用**：门在渲染期同步 acquire 父会话租约（以 layer 为 useMemo 依赖），
-// 每次渲染换一个新对象就会每帧建一份新租约。生产里 useV4Conversation 返回的是 useMemo 过的
-// bundle，本来就稳定。
+// The layer must be a **stable reference**: the gate acquires the parent session lease synchronously during
+// render (with the layer as a useMemo dependency), so a fresh object per render would create a new lease every
+// frame. In production useV4Conversation returns a useMemo'd bundle, which is stable by construction.
 const leaseState = vi.hoisted(() => ({
-  /** 经由 layer 订阅过的 sessionId 序列——门的断言面就是这一条。 */
+  /** The sequence of sessionIds subscribed via the layer — this is the gate's assertion surface. */
   acquired: [] as string[],
   release: vi.fn(),
 }));
@@ -48,9 +52,10 @@ vi.mock("@/v4/SessionPane.js", async () => {
     SessionPane: (props: Record<string, unknown>) => {
       paneState.props = props;
       paneState.rendered.push(String(props.sessionId));
-      // 复刻真 SessionPane 的订阅接缝（`SessionPane.tsx:1617-1633`：挂载 effect 里
-      // `layer.acquire(effectiveSessionId)`，而 acquire 立刻 connect）。桩必须真的走一遍，
-      // 否则「从没订阅过 actor 会话」会退化成一句空断言——桩本来就不订阅任何东西。
+      // Replicates the real SessionPane's subscription seam (`SessionPane.tsx:1617-1633`: the mount effect calls
+      // `layer.acquire(effectiveSessionId)`, and acquire connects immediately). The stub must actually walk this
+      // path, otherwise "never subscribed to the actor session" degenerates into an empty assertion — the stub
+      // subscribes to nothing to begin with.
       React.useEffect(() => {
         const lease = conversation.layer.acquire(String(props.sessionId));
         return () => lease.release();
@@ -76,17 +81,18 @@ vi.mock("@/v4/V4ConversationContext.js", async () => {
 const projectionState = vi.hoisted(() => ({ snapshot: null as unknown }));
 
 vi.mock("@/v4/useConversationProjection.js", () => ({
-  // 复刻生产语义：**租约为 null 时没有 snapshot**（`CLOSED_STATE`）。这一条不能图省事，
-  // 否则门看起来在首帧就有投影，而生产里它还没有——SessionPane 会先挂一次、订阅失败，
-  // 而失败的 store 会在 SessionDataLayer 的 keep-warm 里带着 status:"error" 活满 30s，
-  // 门放行时的 acquire 直接复用它（refCount++ 不再 connect），死面板照旧。
+  // Replicates production semantics: **a null lease has no snapshot** (`CLOSED_STATE`). This must not be
+  // cut short, otherwise the gate appears to have a projection on the first frame while production does not —
+  // SessionPane would mount once, the subscription would fail, and the failed store would live out its 30s in
+  // SessionDataLayer's keep-warm with status:"error"; the acquire at gate release would reuse it as-is
+  // (refCount++ without reconnecting) and the dead pane would persist.
   useConversationProjection: (lease: unknown) =>
     lease === null || lease === undefined
       ? { snapshot: undefined }
       : { snapshot: projectionState.snapshot },
 }));
 
-// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
 import { cleanup, render } from "@testing-library/react";
 // eslint-disable-next-line import/first
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -115,8 +121,8 @@ function tabOf(overrides: Partial<WorkflowActorSessionSidePaneTab> = {}) {
 }
 
 /**
- * 该 actor 的 run 投影。`nodes` 决定门的判定；门按槽位 (runId, siteId, ordinal) 查 actor，
- * `actors` 可整体换掉（`[]` = 这个槽位还没出现）。
+ * The run projection for this actor. `nodes` decides the gate's verdict; the gate looks the actor up by slot
+ * (runId, siteId, ordinal), and `actors` can be swapped wholesale (`[]` = the slot has not appeared yet).
  */
 function snapshotWith(
   nodes: WorkflowRunState["nodes"],
@@ -182,7 +188,7 @@ describe("WorkflowActorSessionSidePane", () => {
       focused: true,
       paneId: tabOf().id,
       readOnly: true,
-      // 关键一行：读的是 actor 会话，不是父会话，也不是 run id。
+      // The key line: what is read is the actor session, not the parent session, and not the run id.
       sessionId: "dwf-dwfrun-1-actor_1@2",
       telemetryVisible: true,
       workspacePath: "/workspace",
@@ -190,15 +196,15 @@ describe("WorkflowActorSessionSidePane", () => {
   });
 
   it("不下发 subagent 下钻回调：actor 的工具面里没有 subagent", () => {
-    // 引擎 spec 的「Actor tool surface」把 subagent 关掉了，所以这里既没有嵌套下钻可点，
-    // 也就不该假装有一个入口。
+    // The engine spec's "Actor tool surface" turns subagent off, so there is no nested drill-down to click and
+    // the pane must not pretend there is an entry point.
     renderToStaticMarkup(
       createElement(WorkflowActorSessionSidePane, { tab: tabOf(), focused: false }),
     );
 
     expect(paneState.props?.onOpenSubagentSession).toBeUndefined();
-    // rootSessionId 同理：actor 会话不在任何 subagent 树里，编一个根会让只读面板
-    // 去订阅一条与它无关的会话。
+    // Same for rootSessionId: the actor session is in no subagent tree, and inventing a root would make the
+    // read-only pane subscribe to a session unrelated to it.
     expect(paneState.props?.rootSessionId).toBeUndefined();
   });
 
@@ -235,22 +241,25 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
   });
 
   it("actor 尚未派发任何节点时渲染占位，且**不挂订阅**", () => {
-    // 这就是那个 bug：会话在首个 ask 派发时才创建，提前订阅必然 sessionNotFound，
-    // 而投影 store 失败后只等手动 retry。门在这里不让 SessionPane 挂上。
+    // This is the very bug: the session is created only when the first ask is dispatched, so an early
+    // subscription is a guaranteed sessionNotFound, and the failed projection store then just waits for a
+    // manual retry. The gate keeps SessionPane from mounting here.
     projectionState.snapshot = snapshotWith([
       { siteId: "ask#1", ordinal: 1, phase: "queued", actorSiteId: "actor#1", actorOrdinal: 2 },
     ]);
     const view = renderPane();
 
     expect(view.queryByTestId("workflow-actor-not-started")).not.toBeNull();
-    // 门要保证的那条**否定**，也是最先该说话的一条：acquire 从没收到过 actor 会话 id。
-    // 写成否定而不是 `toEqual(["parent-a"])`，是为了让将来多出一个正当的 acquire 时，
-    // 这条断言仍然只说它该说的那件事。
+    // The **negation** the gate must guarantee, and the first thing that should speak: acquire never received
+    // the actor session id.
+    // Written as a negation rather than `toEqual(["parent-a"])` so that when a legitimate acquire is added in
+    // the future, this assertion still says only what it is supposed to say.
     expect(leaseState.acquired).not.toContain(ACTOR_SESSION_ID);
-    // 同时确认门**真的**读到了投影：父会话被订阅了。否则上面那条否定可以靠「什么都没做」通过。
+    // At the same time confirm the gate **really** read the projection: the parent session was subscribed. Otherwise the negation above could pass by doing nothing at all.
     expect(leaseState.acquired).toContain("parent-a");
-    // 连一帧都没渲染过。渲染过一帧就订阅过一次，而失败的 store 会在 keep-warm 里活满 30s
-    // 并被后续 acquire 原样复用——那时门放行也换不回一个活面板。
+    // Not a single frame was ever rendered. One rendered frame means one subscription, and the failed store
+    // would live out its 30s in keep-warm and be reused as-is by later acquires — by then even a gate release
+    // could not buy back a live pane.
     expect(paneState.rendered).toEqual([]);
     expect(view.queryByTestId("mock-session-pane")).toBeNull();
     expect(paneState.props).toBeNull();
@@ -286,13 +295,14 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
     expect(view.queryByTestId("workflow-actor-not-started")).toBeNull();
     expect(view.queryByTestId("mock-session-pane")).not.toBeNull();
     expect(paneState.props).toMatchObject({ sessionId: ACTOR_SESSION_ID, readOnly: true });
-    // 自愈的正面证据：门放行后订阅**真的**发生了（首次派发之前它一次都没发生过）。
+    // Positive evidence of self-healing: after the gate releases, the subscription **really** happens (before first dispatch it never happened once).
     expect(leaseState.acquired).toContain(ACTOR_SESSION_ID);
   });
 
   it("started 与 unknown 都照旧订阅：投影里查不到这个 actor 时绝不拦", () => {
-    // run 被 8-run 上限淘汰或冷恢复后投影为空，直接订阅是 transcript 唯一的路——
-    // 拦 unknown 等于把已完结 run 的唯一持久视图关死。tab 带着会话 id，就订阅它。
+    // After the run is evicted by the 8-run cap or on cold resume the projection is empty; subscribing directly
+    // is the transcript's only path — blocking unknown would shut the only persisted view of a finished run.
+    // The tab carries a session id, so subscribe to it.
     projectionState.snapshot = snapshotWith([], ACTOR_SESSION_ID, []);
     const unknown = renderPane();
     expect(unknown.queryByTestId("mock-session-pane")).not.toBeNull();
@@ -301,7 +311,7 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
     cleanup();
     leaseState.acquired = [];
 
-    // 投影整体缺席（父会话还没连上 / 冷启动）同样是 unknown。
+    // The projection being absent entirely (parent session not connected yet / cold start) is unknown too.
     projectionState.snapshot = null;
     const empty = renderPane();
     expect(empty.queryByTestId("mock-session-pane")).not.toBeNull();
@@ -309,7 +319,7 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
   });
 
   it("未启动药丸开的槽位 tab（没有会话 id）：占位、不订阅；actor 带着会话出现并派发后自愈", () => {
-    // docs/dynamic-workflow/presentation.md「The pill」：tab 可以在 actor 出现之前就开。
+    // docs/dynamic-workflow/presentation.md "The pill": a tab can be opened before the actor appears.
     const { actorSessionId: _absent, ...slotTab } = tabOf();
     projectionState.snapshot = snapshotWith([], ACTOR_SESSION_ID, []);
     const view = render(renderTab(slotTab));
@@ -318,14 +328,16 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
     expect(leaseState.acquired).not.toContain(ACTOR_SESSION_ID);
     expect(paneState.rendered).toEqual([]);
 
-    // actor 出现但还没派发：仍是占位（会话 id 已知，但订阅它必然 sessionNotFound）。
-    // 面板是 memo 的，桩投影不会自己触发重渲染，所以每次换一个等价的 tab 对象。
+    // The actor has appeared but not dispatched: still the placeholder (the session id is known, but
+    // subscribing to it is a guaranteed sessionNotFound).
+    // The pane is memoized and the stub projection will not trigger a rerender on its own, so each time an
+    // equivalent but new tab object is passed.
     projectionState.snapshot = snapshotWith([]);
     view.rerender(renderTab({ ...slotTab }));
     expect(view.queryByTestId("workflow-actor-not-started")).not.toBeNull();
     expect(paneState.rendered).toEqual([]);
 
-    // 首个节点派发：会话 id 从投影里来，SessionPane 挂上——tab 自己从没拿到过会话 id。
+    // First node dispatched: the session id comes from the projection and SessionPane mounts — the tab itself never received a session id.
     projectionState.snapshot = snapshotWith([
       { siteId: "ask#1", ordinal: 1, phase: "dispatched", actorSiteId: "actor#1", actorOrdinal: 2 },
     ]);
@@ -336,7 +348,7 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
   });
 
   it("started 时订阅的是 actor 会话本身，不是父会话的替身", () => {
-    // 门是加在 SessionPane **之前**的一层，最容易的接错方式就是把父会话 id 传下去。
+    // The gate is a layer added **before** SessionPane, and the easiest miswiring is passing the parent session id down.
     projectionState.snapshot = snapshotWith([
       {
         siteId: "ask#1",
@@ -349,7 +361,7 @@ describe("WorkflowActorSessionSidePane 未启动门", () => {
     ]);
     renderPane();
 
-    // 看去重集合而不是序列：重渲染次数不是契约，"只见过这一个会话 id"才是。
+    // Look at the deduped set rather than the sequence: the rerender count is not the contract; "only ever saw this one session id" is.
     expect(new Set(paneState.rendered)).toEqual(new Set([ACTOR_SESSION_ID]));
     expect(leaseState.acquired).toContain(ACTOR_SESSION_ID);
   });

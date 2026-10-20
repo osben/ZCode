@@ -1490,6 +1490,66 @@ describe("ConversationTelemetrySupervisor", () => {
     supervisor.dispose();
   });
 
+  it("前台 child 同一 request 以新 eventId 重放时只计一次 usage", async () => {
+    const { platform, reportTelemetryEvent } = createPlatform();
+    const supervisor = new ConversationTelemetrySupervisor({
+      platform,
+      workspaceScopeKey: "scope-foreground-usage-replay",
+    });
+    startForegroundSubagent(supervisor, 100);
+    startForegroundSubagentRequest(supervisor);
+    reportForegroundSubagentUsage(supervisor);
+    // Same completed child request, delivered again under a new event id (replay).
+    supervisor.handleFact({
+      ...commonFact("child-usage-replay", 3, "child-session"),
+      sourceCommandId: "child-command",
+      turnId: "child-turn",
+      kind: "usage.delta",
+      requestId: "child-request",
+      providerId: "qwen-provider",
+      modelId: "qwen3.7-max",
+      providerHostname: "provider.example.com",
+      inputTokens: 8_616,
+      outputTokens: 69,
+      totalTokens: 8_685,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 5_797,
+    });
+    supervisor.handleFact({
+      ...commonFact("foreground-stopped", 4, "parent-session"),
+      sourceCommandId: "parent-command",
+      kind: "subagent.lifecycle",
+      phase: "stopped",
+      agentId: "agent-1",
+      childSessionId: "child-session",
+      parentToolCallId: "agent-tool",
+      background: false,
+      status: "completed",
+    });
+    supervisor.handleFact({
+      ...commonFact("agent-tool-complete", 5, "parent-session"),
+      sourceCommandId: "parent-command",
+      kind: "tool.lifecycle",
+      phase: "completed",
+      toolCallId: "agent-tool",
+      toolName: "Agent",
+    });
+    await supervisor.flushReportsForTest();
+
+    const agentStep = reportsByElement(reportTelemetryEvent, "agent_step").find(
+      (step) => step.eventExtraDetail.tool_name === "Agent",
+    );
+    expect(agentStep?.eventExtraDetail).toEqual(
+      expect.objectContaining({
+        tool_call_id: "agent-tool",
+        token_usage_scope: "subagent_requests",
+        total_tokens: "8685",
+      }),
+    );
+    supervisor.dispose();
+  });
+
   it("background notification dequeue 后启动的 main turn 计为 main_plus_bg", async () => {
     const { platform, reportTelemetryEvent } = createPlatform();
     const supervisor = new ConversationTelemetrySupervisor({

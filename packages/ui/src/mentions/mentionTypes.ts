@@ -17,9 +17,9 @@ export interface MentionItemData {
   scope?: "built-in" | "workspace" | "user" | "plugin";
   source?: "built-in" | "user" | "plugin";
   model?: string;
-  /** Plugin 引用的稳定身份（`name@marketplace`），canonical 链接目标；label 不参与身份。 */
+  /** Stable identity for a Plugin reference (`name@marketplace`); canonical link destination; the label is not part of the identity. */
   pluginId?: string;
-  /** Plugin 商店 listing 原始图标；仅用于 UI，必须经 HTTPS 校验后加载。 */
+  /** Original icon for a Plugin store listing; used only in the UI and must be loaded only after HTTPS validation. */
   icon?: string;
 }
 
@@ -33,14 +33,14 @@ export interface MentionItem {
   keywords?: string[];
   data?: MentionItemData;
   /**
-   * 仅供面板渲染的本地化展示名（如 Plugin listing 的 displayName）。
-   * `label` 同时是面板文案与 chip/markdown 载体的 label，直接本地化 `label` 会让
-   * composer chip 与消息气泡（按 markdown label 重建）显示不一致；面板展示名单独走此字段。
+   * Localized display name used only in the panel (for example, a Plugin listing displayName).
+   * `label` is both the panel copy and the label in the chip/markdown payload; localizing it directly `label` would make the
+   * composer chip and message bubble (reconstructed from the markdown label) inconsistent; the panel display name uses this separate field.
    */
   displayLabel?: string;
-  /** 禁选态（V1 同名 Plugin 冲突 fail closed）：面板可见但不可选择。 */
+  /** Disabled state (V1 same-name Plugin conflict fails closed): visible in the panel but not selectable. */
   disabled?: boolean;
-  /** 禁选原因，展示在候选行右侧弱信息位。 */
+  /** Reason the item is disabled, shown as secondary information on the right of the candidate row. */
   disabledReason?: string;
 }
 

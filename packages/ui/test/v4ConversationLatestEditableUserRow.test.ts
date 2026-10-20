@@ -37,6 +37,16 @@ vi.mock("@/v4/ConversationRowView.js", async () => {
   };
 });
 
+// 实时吞吐链路（useSessionThroughput → useSessionDebug）读取会话调试快照；
+// 测试里回退 null，吞吐标签不渲染，不影响既有断言。
+vi.mock("@/hooks/useServices.js", () => ({
+  useServices: () => ({
+    zcodeAgentService: {
+      readSessionDebug: async () => null,
+    },
+  }),
+}));
+
 const context: ConversationRowRenderContext = {
   codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
   sessionId: "session-1",
@@ -111,7 +121,7 @@ describe("authoritative conversation row actions", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationTurnGroup, {
             unit,
             context,
@@ -145,7 +155,7 @@ describe("authoritative conversation row actions", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationTurnGroup, {
             unit,
             context,

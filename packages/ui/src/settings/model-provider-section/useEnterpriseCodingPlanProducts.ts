@@ -25,7 +25,7 @@ export interface EnterpriseCodingPlanProductsSnapshot {
   productList: EnterpriseCodingPlanProductDisplay[];
   raw: EnterpriseCodingPlanPricingResponse;
   authenticated: boolean;
-  /** 静态目录控制购买横幅，不能用实时 pricing 补造目录中缺失的商品。 */
+  /** The static catalog controls the purchase banner; do not use live pricing to fabricate products missing from the catalog. */
   staticProductIds?: string[];
 }
 
@@ -64,12 +64,7 @@ export function resolveEnterprisePricingFailureSnapshot({
   };
 }
 
-/**
- * 给企业套餐展示列表打上 family 标记（zai / bigmodel）。
- * 下游可见性函数（appendSubscribedTeamPlanItems 等）需要按 family
- * 找到对应 codingPlanItem 和 team key 前缀；原列表无 family 字段，只能按
- * bigmodelCodingPlan 派生，导致 zai team plan 无法渲染。
- */
+/** Tag enterprise-plan items with their family (zai / bigmodel). Downstream visibility functions (such as appendSubscribedTeamPlanItems) need the family to find the matching codingPlanItem and team-key prefix; the original list has no family field, so deriving only from bigmodelCodingPlan leaves Zai team plans unrenderable. */
 function tagEnterpriseProductsFamily(
   products: EnterpriseCodingPlanProductDisplay[],
   family: ProviderFamilyDomain,
@@ -77,13 +72,9 @@ function tagEnterpriseProductsFamily(
   return products.map((product) => ({ ...product, family }));
 }
 
-/**
- * 原 hook 只服务 bigmodel family，getStaticTeamProducts 硬编码
- * 读 bigmodelCodingPlan bucket、getEnterprisePricing 不传 family。
- * zai family 对称化后，hook 接受 family 参数：
- *   - 按 family 读 static bucket（zaiCodingPlan / bigmodelCodingPlan）
- *   - 传 family 给 service.getEnterprisePricing，service 据此路由到对应 provider
- * 缺省 family 时保持 bigmodel，向后兼容既有调用点。
+/** The old hook served only the bigmodel family: getStaticTeamProducts hardcoded the bigmodelCodingPlan bucket, and getEnterprisePricing did not receive a family. After making the Zai family symmetrical, this hook accepts a family parameter:
+ * - read the static bucket by family (zaiCodingPlan / bigmodelCodingPlan)
+ * - pass family to service.getEnterprisePricing
  */
 export function useEnterpriseCodingPlanProducts({
   enabled,
@@ -92,7 +83,7 @@ export function useEnterpriseCodingPlanProducts({
   staticOnly = false,
 }: {
   enabled: boolean;
-  /** 未登录购买横幅只读取公开静态目录，不请求实时 pricing。 */
+  /** For the unauthenticated purchase banner, read only the public static catalog; do not request live pricing. */
   staticOnly?: boolean;
   authenticated: boolean;
   family?: ProviderFamilyDomain;
@@ -161,10 +152,10 @@ export function useEnterpriseCodingPlanProducts({
       }
 
       setState((current) => ({
-        // 企业/个人切换和登录态刷新时不应把套餐区域替换成整块 loading；
-        // 保留上一轮企业套餐数据，让刷新状态只体现在刷新按钮和卡片局部状态上。
-        // 但公开 pricing 与登录态 pricing 的字段语义不同，切换鉴权来源时必须丢弃旧数据，
-        // 否则升级 Coding Plan 列表页会继续展示未鉴权的套餐结果。
+        // Switching between enterprise/personal or refreshing authentication should not replace the plan area with a full loading screen;
+        // retain the previous enterprise-plan data so refresh state appears only on the refresh button and individual cards.
+        // But public-pricing and authenticated-pricing fields have different semantics; discard old data when the auth source changes,
+        // or the Coding Plan upgrade list will keep showing unauthenticated plan results.
         snapshot: shouldRetainEnterprisePricingSnapshotForRefresh(current.snapshot, authenticated)
           ? current.snapshot
           : null,
@@ -173,8 +164,8 @@ export function useEnterpriseCodingPlanProducts({
       }));
 
       try {
-        // 静态目录是展示配置，pricing 是订阅身份与实时价格的权威来源。
-        // 两者必须独立请求，避免灰度环境缺少新配置字段时阻断已购 Team Plan 的恢复。
+        // The static catalog is display configuration; pricing is authoritative for subscription identity and live prices.
+        // Request them independently so a missing new config field in a rollout does not block recovery of an already-purchased Team Plan.
         const [staticResult, pricingResult] = await Promise.allSettled([
           service.getStaticTeamProducts(),
           staticOnly
@@ -196,8 +187,8 @@ export function useEnterpriseCodingPlanProducts({
         if (pricingError) {
           const message = normalizeErrorMessage(pricingError);
           setState((current) => ({
-            // pricing 刷新失败代表实时状态未知，不能用静态目录或空列表覆盖
-            // 同鉴权态下上一轮有效的订阅身份与价格；首次失败时才展示静态禁用卡片。
+            // A pricing refresh failure means live state is unknown; do not replace the previous valid subscription identity/prices
+            // under the same auth state with the static catalog or an empty list. Show a static disabled card only on the first failure.
             snapshot: resolveEnterprisePricingFailureSnapshot({
               currentSnapshot: current.snapshot,
               authenticated,
@@ -239,8 +230,8 @@ export function useEnterpriseCodingPlanProducts({
         }
       } catch (error) {
         const message = normalizeErrorMessage(error);
-        // 远端 workspace 壳层会早于 attachment 绑定短暂渲染；此时断连代理报错是
-        // 可预期的初始化等待态，不应伪装成 pricing 故障。真实 RPC 错误仍保留 warn。
+        // The remote workspace shell may render briefly before its attachment is bound; errors from the disconnected proxy at this point are
+        // an expected initialization wait and should not masquerade as a pricing failure. Keep warn for real RPC errors.
         if (!isRemoteWorkspaceDisconnectedError(error)) {
           logger.warn("[useEnterpriseCodingPlanProducts] 读取企业 Coding Plan 套餐失败", {
             authenticated,
@@ -248,9 +239,9 @@ export function useEnterpriseCodingPlanProducts({
           });
         }
         setState((current) => ({
-          // 企业定价接口失败时如果直接清空 snapshot，
-          // 切换到团队套餐页会只剩“暂无可购买的编程套餐”，用户无法分辨是接口失败还是确实无商品。
-          // 保留上一轮可见套餐并把错误显式抛给 UI，避免把可恢复的刷新失败伪装成空列表。
+          // If an enterprise pricing request fails and clears the snapshot directly,
+          // the Team Plan page shows only “No programming plans available,” leaving users unable to distinguish an API failure from no products.
+          // Keep the previous visible plans and explicitly throw the error to the UI, so a recoverable refresh failure does not masquerade as an empty list.
           snapshot: shouldRetainEnterprisePricingSnapshotForRefresh(current.snapshot, authenticated)
             ? current.snapshot
             : null,

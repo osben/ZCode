@@ -6,6 +6,7 @@ import type { IProviderSettingsService, ProviderSettingsView } from "@zcode/serv
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 import { persistPersonalProvider } from "@/lib/providerPersonalSave.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
+import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { useModelProviders } from "@/hooks/useModelProviders.js";
 
 function createProviderSettingsView(
@@ -314,4 +315,40 @@ describe("useModelProviders", () => {
       "after-refresh",
     ]);
   });
+
+  // specs/acp-agent-runtime.md "Dev-only visibility": an agent enabled in a development
+  // runtime must not leak into provider lists in packaged/production builds.
+  it.each([
+    { dev: false, visible: false },
+    { dev: true, visible: true },
+  ] as const)(
+    "acp: провайдеры $visible ? 'видимы' : 'скрыты' при isLocalDevelopmentRuntime=$dev",
+    async ({ dev, visible }) => {
+      const service = {
+        getView: vi.fn(async () => createProviderSettingsView(["provider-a", "acp:opencode"], 1)),
+        onDidChange: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as IProviderSettingsService;
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        PlatformProvider({
+          platform: { isLocalDevelopmentRuntime: dev } as IPlatformService,
+          children: ServiceProvider({
+            services: { providerSettingsService: service } as never,
+            children,
+          }),
+        });
+      const hook = renderHook(
+        () => useModelProviders({ workspacePath: "/ws", workspaceIdentity: "ws:test" }),
+        { wrapper },
+      );
+
+      await waitFor(() => expect(hook.result.current.providerSettingsView).not.toBeNull());
+      const expectedIds = visible ? ["provider-a", "acp:opencode"] : ["provider-a"];
+      expect(hook.result.current.modelProviders.map((provider) => provider.providerId)).toEqual(
+        expectedIds,
+      );
+      expect(
+        hook.result.current.providerSettingsView?.providers.map((provider) => provider.providerId),
+      ).toEqual(expectedIds);
+    },
+  );
 });

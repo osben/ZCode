@@ -230,8 +230,8 @@ export const Attachment = ({
     [data, mediaCategory, onRemove, variant],
   );
 
-  // 上传后的图片附件之前只是普通 div，没有打开预览的交互入口。
-  // 这里把可打开附件统一补成 click + Enter/Space，既修复鼠标点击，也保留键盘可访问性。
+  // Uploaded image attachments used to be plain divs with no way to open a preview.
+  // Give openable attachments click + Enter/Space handling to support both mouse interaction and keyboard accessibility.
   const handleClick = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
       onClick?.(event);
@@ -320,8 +320,8 @@ export const AttachmentPreview = ({
       return renderAttachmentImage(data.url, data.filename, variant === "grid");
     }
 
-    // Composer 的 video objectUrl 曾让 inline chip 嵌入一个静音播放器，
-    // 从而丢失文件类型图标；完整视频预览由点击后的共享 Dialog 负责。
+    // Composer's video objectUrl used to embed a muted player in the inline chip,
+    // replacing the file-type icon. The shared Dialog handles the full video preview after click.
     if (mediaCategory === "video" && variant === "inline") {
       return renderIcon(mediaCategoryIcons.video);
     }

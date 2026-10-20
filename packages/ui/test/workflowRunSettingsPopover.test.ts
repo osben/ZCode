@@ -59,6 +59,7 @@ import { WorkflowRunDigest } from "@/components/workflow-timeline/WorkflowRunDig
 import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js";
 // eslint-disable-next-line import/first
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 beforeAll(() => {
   // Radix Popper 量尺寸用 ResizeObserver；jsdom 没有。
@@ -175,12 +176,16 @@ describe("WorkflowRunSettingsPopover 字段", () => {
   });
 
   it("zh-CN：跑在会话模型上、上限在默认——触发器带「会话模型」徽标，提示念「= 默认」，加号仍可按", () => {
-    renderPopover(runState({ status: "stopped", stopReason: "user", resumable: true }), {
-      locale: "zh-CN",
-    });
-    expect(screen.getByText("配置工作流")).toBeTruthy();
-    expect(screen.getByTestId("workflow-run-settings-model-badge").textContent).toBe("会话模型");
-    expect(screen.getByTestId("workflow-run-settings-bound").textContent).toContain("= 默认");
+    renderPopover(runState({ status: "stopped", stopReason: "user", resumable: true }));
+    expect(
+      screen.getByText(expectedCopy("chat.toolCall.workflow.run.settings.title")),
+    ).toBeTruthy();
+    expect(screen.getByTestId("workflow-run-settings-model-badge").textContent).toBe(
+      expectedCopy("chat.toolCall.workflow.run.settings.model.session"),
+    );
+    expect(screen.getByTestId("workflow-run-settings-bound").textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.settings.limit.atDefault"),
+    );
     // 默认是起点不是天花板：停在默认上照样能往上加。
     expect(
       screen.getByTestId<HTMLButtonElement>("workflow-run-settings-bound-increase").disabled,
@@ -189,7 +194,7 @@ describe("WorkflowRunSettingsPopover 字段", () => {
     // 改了才有后果句：停下的 run 不论改哪一项都是另起一次接着跑。
     fireEvent.click(screen.getByTestId("workflow-run-settings-bound-increase"));
     expect(screen.getByTestId("workflow-run-settings-consequence").textContent).toBe(
-      "将以新设置另起一次运行接着跑，已完成的步骤会保留。",
+      expectedCopy("chat.toolCall.workflow.run.settings.consequence.stopped"),
     );
   });
 
@@ -317,7 +322,6 @@ describe("WorkflowRunSettingsPopover Apply", () => {
 
   it("zh-CN 的拒绝词：能力缺席", async () => {
     renderPopover(runState({ concurrency: { cap: 13, ceiling: 13, limit: 4 } }), {
-      locale: "zh-CN",
       apply: vi.fn(
         async () =>
           ({
@@ -333,7 +337,7 @@ describe("WorkflowRunSettingsPopover Apply", () => {
       fireEvent.click(screen.getByTestId("workflow-run-settings-apply"));
     });
     expect((await screen.findByTestId("workflow-run-settings-rejection")).textContent).toBe(
-      "当前 agent 不支持从这里调整工作流设置。",
+      expectedCopy("chat.toolCall.workflow.run.settings.rejection.unsupported"),
     );
   });
 });
@@ -401,12 +405,13 @@ describe("run 卡上的 Configure", () => {
     run: WorkflowRunState,
     settings?: unknown,
     extra: Record<string, unknown> = {},
+    locale: "en-US" | "zh-CN" = "en-US",
   ) {
     const onAmendWorkflowRunSettings = vi.fn(async () => ({ status: "accepted" }) as CommandAck);
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: locale },
         createElement(ConversationWorkflowDigests, {
           turnKey: "t",
           digests: [
@@ -468,9 +473,13 @@ describe("run 卡上的 Configure", () => {
       },
     });
     const row = view.getByTestId("workflow-settings-change-row");
-    expect(row.textContent).toContain("已调整设置");
-    expect(row.textContent).toContain("子代理改用 glm-5.3-flash");
-    expect(row.textContent).toContain("最多 4 个同时运行");
+    expect(row.textContent).toContain(expectedCopy("chat.toolCall.workflow.settingsChange.kind"));
+    expect(row.textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.settingsChange.model", { model: "glm-5.3-flash" }),
+    );
+    expect(row.textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.settingsChange.limit", { n: 4 }),
+    );
     cleanup();
     const plain = renderDigests(runState());
     expect(plain.view.queryByTestId("workflow-settings-change-row")).toBeNull();
@@ -485,8 +494,10 @@ describe("run 卡上的 Configure", () => {
       { rowOnly: true },
     );
     const row = view.getByTestId("workflow-settings-change-row");
-    expect(row.textContent).toContain("已调整设置");
-    expect(row.textContent).toContain("最多 4 个同时运行");
+    expect(row.textContent).toContain(expectedCopy("chat.toolCall.workflow.settingsChange.kind"));
+    expect(row.textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.settingsChange.limit", { n: 4 }),
+    );
     // 卡身、Configure 钮、Stop 钮：一个都不在。
     expect(view.queryByTestId("workflow-digest-configure")).toBeNull();
     expect(view.queryByTestId("workflow-digest-cancel")).toBeNull();

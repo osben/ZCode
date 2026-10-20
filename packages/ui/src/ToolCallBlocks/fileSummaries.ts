@@ -76,9 +76,9 @@ function readDisplayFileDiffSummaries(...values: unknown[]): RawToolCallFileSumm
 
       seenPaths.add(path);
       const descriptor = resolveFileDisplayDescriptor(path);
-      // ZCode agent 的 edit/write/apply_patch 工具会把真实 diff 放在
-      // rawOutput.display(file_diff/file_diffs)。summary 和工具轨迹必须复用这份结构化事实，
-      // 否则会出现工具行能展开 diff、底部摘要却只能显示“无法预览”的分叉。
+      // ZCode agent edit/write/apply_patch tools put the actual diff in
+      // rawOutput.display(file_diff/file_diffs). The summary and tool trace must reuse this structured fact,
+      // or the tool row could expand the diff while the bottom summary says “Cannot preview.”
       summaries.push({
         path,
         actionLabel: "Edited",
@@ -105,9 +105,9 @@ export function readRawToolCallFileSummaries(
   source?: EditKindSource,
 ): RawToolCallFileSummary[] {
   if (source && !hasWritableToolSemantic(source)) {
-    // renderer 分流会把“存在 rawFileSummaries”视为 edit 证据。
-    // 如果非写类工具也从 raw.changes 抽摘要，就会把 search / explore / execute 误导到 edit/delete。
-    // 这里先按 kind/toolName 过滤，只允许明确写类工具继续读取文件变更摘要。
+    // Renderer routing treats the presence of rawFileSummaries as evidence of an edit.
+    // If non-writing tools also extract summaries from raw.changes, search / explore / execute may be misrouted to edit/delete.
+    // Filter by kind/toolName first so only clearly writing tools continue to read file-change summaries.
     return [];
   }
 

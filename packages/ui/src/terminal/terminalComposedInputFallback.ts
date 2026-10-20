@@ -26,8 +26,8 @@ export function createPendingTerminalInputFallback(text: string): PendingTermina
 }
 
 function isPlainTerminalInputData(data: string): boolean {
-  // 方向键等控制输入会产生 ESC 序列，例如 "\x1b[D"。
-  // 这些序列里的普通字符不能参与 composed input 兜底匹配，否则可能把真实待补文本误判为已处理。
+  // Control input such as arrow keys produces ESC sequences, e.g. "\x1b[D".
+  // Printable characters inside these sequences must not participate in composed-input fallback matching, or real pending text may be mistaken for already handled.
   return Array.from(data).every((char) => {
     const code = char.codePointAt(0);
     return code !== undefined && code >= 0x20 && code !== 0x7f;
@@ -55,9 +55,9 @@ function getHandledFallbackData(params: {
   data: string;
 }): string | null {
   if (params.candidate.kind === "imeCommit") {
-    // 搜狗等三方输入法用 Enter 提交候选词时，xterm 的 onData 可能把中文和
-    // Enter 控制符合并在同一个 chunk（例如 "中文\r"）。把整个 chunk 判为非 plain 会让
-    // 后续 textarea input 兜底又写一次中文；这里只在 IME 提交键路径提取可打印文本。
+    // When third-party IMEs such as Sogou submit a candidate with Enter, xterm's onData may combine Chinese text and
+    // the Enter control character in the same chunk (for example, "中文\r"). Treating the whole chunk as non-plain would make
+    // the later textarea-input fallback write the Chinese text again; extract printable text only on the IME commit-key path.
     return getPlainTerminalInputText(params.data);
   }
 
@@ -74,9 +74,9 @@ export function createTerminalInputFallbackKeydownCandidate(params: {
   now: number;
 }): TerminalInputFallbackKeydownCandidate | null {
   if (params.key === "Enter" || params.key === "Process") {
-    // 搜狗等三方中文输入法在 Windows 上常用 Enter/Process 提交候选词。
-    // 此时 xterm 可能已经通过 onData 发出中文，随后 textarea input 又残留同一段组合文本；
-    // 这里保留提交键时间戳，让后续 plain onData 能和同一拍 input 去重，避免再次兜底写入。
+    // Third-party Chinese IMEs such as Sogou commonly use Enter/Process to commit candidates on Windows.
+    // xterm may already have sent the Chinese text through onData, while textarea input then retains the same composed text;
+    // keep the commit-key timestamp here so later plain onData can deduplicate with the same-frame input and avoid another fallback write.
     return {
       eventTimeStamp: params.eventTimeStamp,
       kind: "imeCommit",
@@ -170,8 +170,8 @@ export function recordTerminalInputFallbackRecentData(params: {
   maxAgeMs: number;
   now: number;
 }): TerminalInputFallbackHandledData[] {
-  // 搜狗输入法提交候选词时，xterm 可能先通过 onData 写入中文，随后才派发
-  // textarea composed input；这条路径没有稳定 keydown candidate，只能用极短窗口的 recentData 去重。
+  // When Sogou commits a candidate, xterm may first write the Chinese text through onData and then dispatch
+  // textarea composed input; this path has no stable keydown candidate, so deduplicate using a very short recentData window.
   const retainedHistory = params.history.filter(
     (item) => params.now - item.recordedAt <= params.maxAgeMs,
   );

@@ -78,12 +78,13 @@ function showTaskNotification(
 }
 
 /**
- * v4 任务终态通知编排。
+ * Orchestrate notifications for v4 task terminal states.
  *
- * v4 重构删掉旧 renderer background monitor 后，platform 通知通道仍在，
- * 但 sessions-index 事实没有再被翻译成展示命令，导致任务完成/失败没有系统通知。
- * 这里只在 renderer 做“已观察边沿”的通知意图，事实仍以 sessions-index 为准；
- * 是否因窗口活跃而抑制通知继续交给 desktop/web platform 层判断。
+ * After the v4 refactor removed the old renderer background monitor, the platform notification
+ * channel remained, but sessions-index facts were no longer turned into display commands, so
+ * completed and failed tasks stopped generating system notifications. The renderer only records
+ * notification intent for observed transitions; sessions-index remains the source of truth.
+ * The desktop/web platform layer decides whether to suppress notifications while the window is active.
  */
 export function useWorkspaceTerminalTaskNotifications({
   workspacePath,
@@ -121,9 +122,10 @@ export function useWorkspaceTerminalTaskNotifications({
 
   useEffect(() => {
     if (!enabled || !rpcReady || !platform) {
-      // App 壳在 remote attachment 就绪前会先挂载，旧通知 hook
-      // 只看用户开关就订阅 sessions-index，从而越过 conversation 的 readiness gate
-      // 访问断连代理。这里共用 workspace rpcReady；本地 workspace 始终为 true。
+      // The app shell mounts before a remote attachment is ready. The old notification hook
+      // subscribed to sessions-index based only on the user setting, bypassing the conversation
+      // readiness gate and accessing a disconnected proxy. Reuse workspace rpcReady here;
+      // it is always true for a local workspace.
       previousBySessionIdRef.current = null;
       setIndexState({ signature, sessions: [], status: "idle" });
       return;
@@ -192,10 +194,11 @@ export function useWorkspaceTerminalTaskNotifications({
 }
 
 /**
- * 当前 conversation snapshot 的阻塞交互通知。
+ * Blocking interaction notifications for the current conversation snapshot.
  *
- * 首个 snapshot 只作为基线，避免订阅历史/恢复 replayable snapshot 时重放旧权限弹窗通知；
- * 后续新增 interactionId 才发通知，重复 pending 不会刷屏。
+ * Treat the first snapshot as a baseline so subscribing or restoring a replayable snapshot does not
+ * replay old permission-prompt notifications. Notify only for newly added interactionIds afterward;
+ * repeated pending interactions do not generate repeated notifications.
  */
 export function usePendingInteractionTaskNotifications({
   snapshot,

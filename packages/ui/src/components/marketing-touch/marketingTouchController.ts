@@ -1,5 +1,3 @@
-import { toServiceLocale } from "../../i18n/serviceLocale.js";
-import type { Locale } from "@zcode/shared";
 import { createStore } from "zustand/vanilla";
 import type { IMarketingTouchService } from "@zcode/services";
 import type { MarketingAction, MarketingDelivery } from "@zcode/shared";
@@ -56,7 +54,7 @@ export function createMarketingTouchController(options: {
     signal: AbortSignal,
     phase: (phase: MarketingTouchState["phase"]) => void,
   ) => Promise<MarketingActionResult>;
-  locale: Locale;
+  locale: "zh-CN" | "en-US";
   canOpen: () => boolean;
   refresh: () => void;
 }) {
@@ -90,7 +88,7 @@ export function createMarketingTouchController(options: {
         scope: value.scope,
         campaignId: value.delivery.campaign_id,
         actionType,
-        locale: toServiceLocale(options.locale),
+        locale: options.locale,
       })
       .catch(() =>
         logger.warn("[marketing-touch] action report failed", {

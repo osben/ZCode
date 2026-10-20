@@ -148,9 +148,9 @@ function RenderedPage({
     if (!frame) {
       return;
     }
-    // 幻灯片内部 overflow:hidden 容器的滚动条已被全局隐藏，但选区拖拽自动滚动、
-    // 链接焦点 scrollIntoView 等原生行为仍能滚动它们，内容会无声偏移且无法拖回。
-    // scroll 不冒泡，这里用捕获监听把内部任何滚动偏移复位。
+    // Scrollbars are globally hidden on overflow:hidden containers inside slides, but selection-drag auto-scroll,
+    // native behaviors such as scrolling links into focus can still scroll them, silently shifting content with no way to drag it back.
+    // scroll does not bubble, so use a capturing listener here to reset any internal scroll offset.
     const resetScroll = (event: Event) => {
       const target = event.target;
       if (target instanceof HTMLElement && (target.scrollTop !== 0 || target.scrollLeft !== 0)) {
@@ -190,8 +190,8 @@ function RenderedPage({
           }
         },
       });
-      // PPTX renderer 会把 OOXML 外链直接写成 <a href>；必须在页面挂载点
-      // 统一净化并阻断主 renderer 导航，同时覆盖异步追加的链接节点。
+      // The PPTX renderer writes OOXML external links directly as <a href>; sanitize and block them at the page mount point
+      // to consistently sanitize them and block main-renderer navigation, including links appended asynchronously.
       disposeLinkSafety = installDocumentLinkSafety(mount, onOpenBrowserUrl);
       void handle.ready.catch(reportRenderError);
     } catch (error) {
@@ -199,7 +199,7 @@ function RenderedPage({
     }
 
     return () => {
-      // dispose() 不保证 ready Promise 同步结束；先取消回调，避免已卸载页面的迟到错误写入下一次会话。
+      // dispose() does not guarantee the ready Promise has settled synchronously; cancel the callback first so a late error from an unmounted page cannot write into the next session.
       cancelled = true;
       disposeLinkSafety?.();
       handle?.dispose();
@@ -216,9 +216,9 @@ function RenderedPage({
         height: document.pageSize.height * scale,
       }}
     >
-      {/* renderer mount ref 曾同时绑定这一 React 容器和内层节点，cleanup 的
-          replaceChildren() 会误删 selection overlay，随后 React removeChild 因节点已不存在而崩溃。
-          renderer 只能操作下面不包含 React 子节点的独立 leaf mount。 */}
+      {/* The renderer mount ref previously pointed to both this React container and its inner node. During cleanup,
+          replaceChildren() could remove the selection overlay, then React's removeChild crashed because the node was gone.
+          The renderer may only operate on the separate leaf mount below, which contains no React children. */}
       <div
         data-zcode-pptx-render-surface=""
         className="absolute left-0 top-0 origin-top-left"
@@ -252,8 +252,8 @@ function RenderedPage({
             if (isSamePresentationElement(hitElement, selectedElement)) {
               return;
             }
-            // 选中浮层覆盖真实文本，且底层页面禁用了指针命中，浏览器无法创建原生文字 Selection。
-            // 含文本元素高亮后只放行其 bounds；bounds 外仍由稳定元素模型切换选择，避免打开底层超链接。
+            // The selection overlay covers the actual text and the underlying page disables pointer hit-testing, so the browser cannot create a native text Selection.
+            // After highlighting an element with text, allow interaction only within its bounds; outside them, keep using the stable element model to switch selection and avoid opening underlying links.
             event.preventDefault();
             event.stopPropagation();
             if (hitElement) {
@@ -264,7 +264,7 @@ function RenderedPage({
             if (!selectionMode) {
               return;
             }
-            // 文字划选结束后的 click 不得恢复 PPTX 内部跳转；原生 Selection 已在 pointer 序列中完成。
+            // Do not restore PPTX internal navigation on the click following text selection; the native Selection was completed during the pointer sequence.
             event.preventDefault();
             event.stopPropagation();
           }}
@@ -521,7 +521,7 @@ export function PptxPreviewViewer({
       });
 
     return () => {
-      // open() 的 Promise 不会因 effect cleanup 自动取消；generation 让旧会话的迟到结果只能释放资源，不能污染新会话状态。
+      // The Promise from open() is not cancelled by effect cleanup; generation checks ensure late results from an old session only release resources and cannot pollute new session state.
       cancelled = true;
       if (generation === generationRef.current) {
         generationRef.current += 1;
@@ -553,8 +553,8 @@ export function PptxPreviewViewer({
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      // 评论草稿的 Textarea 经 Popover Portal 渲染，但仍在 React 树内向此处冒泡；
-      // 只豁免 INPUT 会让方向键在评论框里翻页，并连带清空未提交的评论。
+      // The comment draft Textarea renders through a Popover Portal but still bubbles through this React tree.
+      // Exempting only INPUT would let arrow keys turn pages from the comment box and could clear an unsubmitted comment.
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
         return;
@@ -562,7 +562,7 @@ export function PptxPreviewViewer({
       if (event.key === "Escape" && selectionMode) {
         event.preventDefault();
         if (aiEditDraft) {
-          // 编辑评论时 Esc 只回退到 AI 编辑条，避免误按直接丢弃已输入内容。
+          // While editing a comment, Esc returns only to the AI edit bar so a mistaken keypress does not discard entered text.
           setAiEditDraft(null);
           return;
         }
@@ -611,8 +611,8 @@ export function PptxPreviewViewer({
     if (!referenceNavigation) {
       return;
     }
-    // 引用跳转的入口位于 Composer；旧选择浮层若继续存在，会让用户误以为引用页定位同时恢复了元素。
-    // 因此先关闭 generation-local 选择，再等待文件存在性校验和文档解析完成后尝试页码定位。
+    // Reference navigation starts in the Composer. Leaving the old selection overlay open could make users think that navigating to a referenced page also restores the selected element.
+    // Close the generation-local selection first, then wait for the file check and document parsing before attempting page navigation.
     setSelectionMode(false);
     setSelectedElement(null);
     setAiEditDraft(null);
@@ -688,8 +688,8 @@ export function PptxPreviewViewer({
       const normalizedComment = comment.trim();
       const referenceGeneration = generationRef.current;
       setAddingReference(true);
-      // 部分文字划选曾覆盖完整 element.text，导致 textFingerprint 锁定子串，
-      // 而 OOXML resolver 校验的是整个 shape/cell。完整文本用于冲突校验，子串只作模型上下文。
+      // Some text selections used to replace the full element.text, causing textFingerprint to lock onto a substring,
+      // while the OOXML resolver validates the whole shape/cell. Use full text for conflict checks and the substring only as model context.
       void createPptxElementReference({
         element: selectedElement,
         ...aiEditDraft,
@@ -740,7 +740,7 @@ export function PptxPreviewViewer({
         await import("@/presentation/presentationPdfPrintExport.js");
       printHost = await renderPresentationToPrintHost(document, window.document);
       const printResult = await printPageToPdf();
-      // 拿到 PDF 字节立即释放打印 DOM，避免保存对话框期间占着全量页面的内存
+      // Release the print DOM as soon as PDF bytes are available so the full page does not remain in memory while the save dialog is open.
       printHost.dispose();
       printHost = null;
       if (!printResult.success || !printResult.data) {

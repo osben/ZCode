@@ -1,11 +1,11 @@
-// TreemappingPane 的数据源是 v4 conversation 投影 rows。
-// Treemapping 只消费「一轮 assistant 输出的 toolCalls + 是否仍在流式」，这里把
-// snapshot rows 里最后一个 assistant 轮的 ToolCallRow 适配回旧 TaskChatMessage 形态，
-// 复用 treemappingActivity 的既有解析规则，不复活 zcodeChatMessages。
+// TreemappingPane uses v4 conversation projection rows as its data source.
+// Treemapping consumes only “toolCalls from one assistant turn + whether it is still streaming”; adapt
+// the last assistant turn's ToolCallRow from snapshot rows back to the old TaskChatMessage shape,
+// reusing treemappingActivity's existing parsing rules without reviving zcodeChatMessages.
 //
-// TreemappingPane 挂在 side pane（V4ConversationProvider 之外），因此自持一条
-// SessionDataLayer；pane 当前默认从侧边栏隐藏（workspaceSidePane sanitize 过滤
-// treemapping tab），该订阅只在 pane 真实挂载时才会建立。
+// TreemappingPane lives in the side pane (outside V4ConversationProvider), so it owns a
+// SessionDataLayer subscription; the pane is currently hidden from the sidebar by default (workspaceSidePane sanitizes away
+// the treemapping tab), and this subscription is created only when the pane is actually mounted.
 import { useEffect, useMemo, useState } from "react";
 import type { ConversationRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import type { TaskChatMessage } from "@/lib/taskChatMessageTypes.js";
@@ -22,7 +22,7 @@ const ASSISTANT_TURN_ROW_KINDS = new Set<ConversationRow["kind"]>([
   "subagent",
 ]);
 
-/** 从 rows 窗口选出最后一个 assistant 轮，并适配为旧 TaskChatMessage 形态。 */
+/** Select the last assistant turn from the rows window and adapt it to the old TaskChatMessage shape. */
 export function buildTreemappingMessageFromRows(
   rows: readonly ConversationRow[],
 ): TaskChatMessage | null {
@@ -39,15 +39,11 @@ export function buildTreemappingMessageFromRows(
   }
 
   const turnRows = rows.filter((row) => row.turnId === lastAssistantTurnId);
-  const toolCallRows = turnRows.filter(
-    (row): row is ToolCallRow => row.kind === "toolCall",
-  );
+  const toolCallRows = turnRows.filter((row): row is ToolCallRow => row.kind === "toolCall");
   const streaming = turnRows.some(
     (row) =>
-      ((row.kind === "assistantText" || row.kind === "reasoning") &&
-        row.state === "streaming") ||
-      (row.kind === "toolCall" &&
-        (row.status === "inputStreaming" || row.status === "running")),
+      ((row.kind === "assistantText" || row.kind === "reasoning") && row.state === "streaming") ||
+      (row.kind === "toolCall" && (row.status === "inputStreaming" || row.status === "running")),
   );
 
   return {
@@ -61,8 +57,8 @@ export function buildTreemappingMessageFromRows(
 }
 
 /**
- * 订阅指定 session 的 v4 conversation 投影，返回 Treemapping 需要的合成 assistant 消息。
- * sessionId 为空时不订阅，返回 null。
+ * Subscribe to the v4 conversation projection for the given session and return the synthetic assistant message Treemapping needs.
+ * If sessionId is empty, do not subscribe and return null.
  */
 export function useTreemappingConversationMessage(params: {
   sessionId: string | null;
@@ -100,8 +96,5 @@ export function useTreemappingConversationMessage(params: {
 
   const state = useConversationProjection(lease);
   const rows = state.snapshot?.rows.window;
-  return useMemo(
-    () => (rows ? buildTreemappingMessageFromRows(rows) : null),
-    [rows],
-  );
+  return useMemo(() => (rows ? buildTreemappingMessageFromRows(rows) : null), [rows]);
 }

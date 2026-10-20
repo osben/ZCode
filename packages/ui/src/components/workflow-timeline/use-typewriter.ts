@@ -1,32 +1,34 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * 草稿的笔。
+ * Draft typewriter.
  *
- * 模型的脚本按块到达，扫描器看到的是跳变：一整个 `phase("implement")` 在一个 delta 里，有时
- * 两个阶段一起到。笔把跳变还原成书写：一次只写一站、每字 `PEN_MS`，写完一站停 `PEN_GAP_MS`
- * 再揭示下一站——笔没到的站还不在轨道上，哪怕扫描器已经知道它。名字在写到一半时变长（未闭合的
- * `phase("ver` 又来了字）笔接着写；名字变短或前缀变了（不该发生，但流式下要稳）退到公共前缀。
+ * Model scripts arrive in chunks, so the scanner sees jumps: an entire `phase("implement")` may arrive in one delta, sometimes
+ * with two phases at once. The typewriter turns those jumps into writing: reveal one station at a time, one character every `PEN_MS`,
+ * then pause for `PEN_GAP_MS` before revealing the next. A station the pen has not reached is not on the track, even if the scanner knows it.
+ * If a name grows while it is being written (more characters arrive for an unfinished `phase("ver`), continue; if it shrinks or its prefix changes
+ * (unexpected, but possible in a stream), rewind to the common prefix.
  *
- * `names` 是扫描器当前的站名序列；undefined 表示不是草稿，钩子静默。计时只认**内容**变化
- * （按内容键控），脚本每来一块都换一个数组也不会把正在走的笔打断。
- * `prefers-reduced-motion: reduce` 下整站立即写完（仍一站一站揭示，只是不逐字）。
+ * `names` is the scanner's current station-name sequence; undefined means this is not a draft and the hook is silent.
+ * Timers respond only to **content** changes (keyed by content), so a new array on every script chunk does not interrupt the typewriter.
+ * Under `prefers-reduced-motion: reduce`, reveal each station immediately (still one at a time, but not character by character).
  *
- * 修订（GUI 崩溃 React #185 的根因）：
- * 笔只在**有站可揭示**时揭示。「还没有任何站时立即揭示」不看站数的话，空草稿（脚本开头的 `meta`
- * 还没写到第一个 `phase(`）会揭示一个不存在的站、下一轮被裁回 0、再揭示……在 effect 里无限 setState。
- * 这个空转本身只烧 CPU，但它让 React 手里永远有一笔待处理的更新；投影帧一旦积压成几十次连续的
- * 同步提交，嵌套更新计数就过 50，React 抛 #185，整块聊天区被错误边界接管。
+ * Revision (root cause of GUI crash React #185):
+ * The typewriter reveals only when there is a station to reveal. If it reveals immediately when there are no stations without checking
+ * the count, an empty draft (the opening `meta` has not reached the first `phase(`) reveals a nonexistent station, gets trimmed back to 0,
+ * then reveals again, causing an infinite setState loop in the effect.
+ * The loop itself only burns CPU, but it leaves React with a pending update. If projection frames backlog into dozens of synchronous commits,
+ * nested updates exceed 50, React throws #185, and the error boundary takes over the entire chat area.
  */
 export const PEN_MS = 24;
 export const PEN_GAP_MS = 120;
 
 export interface TypewriterState {
-  /** 已揭示的站数（笔到过的站）；后面的站还不在轨道上。 */
+  /** Number of revealed stations (those the pen has reached); later stations are not on the track yet. */
   visible: number;
-  /** 每个已揭示站已写出的字符数。 */
+  /** Number of characters written for each revealed station. */
   shown: readonly number[];
-  /** 笔追上了流（没有可写的字、没有可揭示的站）：光标闪烁。 */
+  /** The pen has caught up with the stream (no characters to write and no stations to reveal); blink the cursor. */
   idle: boolean;
 }
 
@@ -51,7 +53,7 @@ function commonPrefix(a: string, b: string): number {
   return i;
 }
 
-/** 站名变了（变短 / 前缀变了 / 站数变少）时把笔退回到仍然成立的位置；没变就原样返回。 */
+/** When station names change (shorter names, changed prefixes, or fewer stations), rewind the pen to the still-valid position; otherwise return the state unchanged. */
 function reconcile(
   state: PenState,
   names: readonly string[],
@@ -68,9 +70,9 @@ function reconcile(
 }
 
 /**
- * 已揭示各站写出的字数。reduced-motion 下整站算写完，**在渲染时派生**而不是 effect 里再 setState 一轮：
- * 站名每个 delta 都在变长，effect 里的那次 setState 恰好落在投影帧的同步提交里，每帧都给嵌套更新计数
- * 记一笔。
+ * Characters written per revealed station. Under reduced motion, treat each station as fully written and **derive during render**
+ * rather than calling setState from an effect: station names grow on every delta, and the effect's setState lands in the projection frame's
+ * synchronous commit, adding one to the nested-update count on every frame.
  */
 function shownOf(state: PenState, names: readonly string[], reduced: boolean): readonly number[] {
   return reduced ? state.shown.map((_, i) => names[i]?.length ?? 0) : state.shown;
@@ -78,8 +80,8 @@ function shownOf(state: PenState, names: readonly string[], reduced: boolean): r
 
 export function useTypewriter(names: readonly string[] | undefined): TypewriterState {
   const [state, setState] = useState<PenState>({ shown: [], visible: 0 });
-  // 分隔符是 NUL（站名里不会出现），["a b"] 与 ["a", "b"] 才不会撞成同一个键。源码里不能直接写一个
-  // 裸 NUL 字节，git 把整个文件当二进制看；改成转义写法，内容不变。
+  // NUL is the separator (station names cannot contain it), so ["a b"] and ["a", "b"] do not collide as keys.
+  // A literal NUL byte makes git treat the file as binary; use the escaped form without changing the value.
   const key = names?.join("\u0000");
   const namesRef = useRef<readonly string[]>([]);
   const lastRef = useRef<readonly string[]>([]);
@@ -100,7 +102,7 @@ export function useTypewriter(names: readonly string[] | undefined): TypewriterS
     const target = at >= 0 ? current[at]! : undefined;
     const written = target === undefined ? 0 : (shownOf(pen, current, reduced)[at] ?? 0);
     if (target !== undefined && written < target.length) {
-      // 逐字写当前站（reduced-motion 下 written 已经是整站，不会进到这里）。
+      // Write the current station character by character (under reduced motion, written is already complete, so this branch is not reached).
       const timer = setTimeout(() => {
         const shown = pen.shown.slice();
         shown[at] = written + 1;
@@ -108,7 +110,7 @@ export function useTypewriter(names: readonly string[] | undefined): TypewriterS
       }, PEN_MS);
       return () => clearTimeout(timer);
     }
-    // 当前站写完了（或还没有站）：**有下一站才揭示**——空草稿什么都不做。
+    // The current station is complete (or there are no stations): reveal only if there is a next station; an empty draft does nothing.
     if (current.length <= pen.visible) return undefined;
     const reveal = () => setState({ shown: [...pen.shown, 0], visible: pen.visible + 1 });
     if (target === undefined) {

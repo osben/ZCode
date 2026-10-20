@@ -1,6 +1,8 @@
-// 轮尾 run 卡的解析（docs/dynamic-workflow/presentation.md「The run card」）：凡点名了 runId 的来源都出一张卡
-// ——直接启动轮按元数据、CreateWorkflow 按 toolCallId、ResumeWorkflowRun 按 runId；图按 run 的发起
-// toolCallId 到图表里取；联接不到活投影的来源出中性卡（summary 缺席）；同 run 一轮一张。
+// Parsing of the turn-tail run card (docs/dynamic-workflow/presentation.md "The run card"):
+// every source that names a runId produces a card — direct launch turns by metadata,
+// CreateWorkflow by toolCallId, ResumeWorkflowRun by runId; the graph is fetched from the
+// graph map by the run's originating toolCallId; sources that cannot join a live projection
+// produce a neutral card (summary absent); one card per run per turn.
 import { describe, expect, it } from "vitest";
 import type { ToolCallRow, WorkflowLaunchMeta } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
@@ -50,8 +52,10 @@ const LAUNCH: WorkflowLaunchMeta = {
 };
 
 describe("resolveWorkflowTurnDigests", () => {
-  // 设置轮（docs/dynamic-workflow/presentation.md「The settings turn」）：与直接启动同一份元数据，多一块
-  // `amend`；卡照旧是新 run 的卡，卡上方那一行的素材（改了什么、那一轮的时刻）随卡带出去。
+  // Settings turn (docs/dynamic-workflow/presentation.md "The settings turn"): the same
+  // metadata as a direct launch plus an `amend` block; the card is still the new run's
+  // card, and the material for the row above the card (what changed, the moment of that
+  // turn) travels with the card.
   it("设置轮：一张新 run 的卡，带着 amend 与那一轮的时刻；普通启动轮没有这一块", () => {
     const amend = {
       predecessorRunId: "run-a",
@@ -82,8 +86,9 @@ describe("resolveWorkflowTurnDigests", () => {
     expect(launch[0]).not.toHaveProperty("settings");
   });
 
-  // 就地生效的设置轮（docs/dynamic-workflow/presentation.md「The settings turn」）：`amend` 不带
-  // predecessorRunId——它点名的 run 就是自己，卡已经在它启动的那一轮里了。只出行、不出卡。
+  // In-place settings turn (docs/dynamic-workflow/presentation.md "The settings turn"):
+  // the `amend` carries no predecessorRunId — the run it names is itself, and the card is
+  // already in the turn where it was launched. Emits a row only, no card.
   it("就地生效的设置轮：只出那一行（rowOnly），不再出第二张卡", () => {
     const amend = { maxConcurrency: { from: 13, to: 4 }, ceiling: 13 };
     const retune: WorkflowLaunchMeta = {
@@ -105,7 +110,8 @@ describe("resolveWorkflowTurnDigests", () => {
     });
   });
 
-  // 只出行的那条来源没有占掉「一轮一张卡」的名额：同一轮里真正启动了这条 run 的来源照常出卡。
+  // The row-only source does not consume the "one card per turn" slot: the source that
+  // actually launched the run in the same turn still produces its card.
   it("rowOnly 不挡同一轮里真正的发起来源出卡", () => {
     const retune: WorkflowLaunchMeta = {
       runId: "run-1",
@@ -122,9 +128,10 @@ describe("resolveWorkflowTurnDigests", () => {
     expect(digests[1]).not.toHaveProperty("rowOnly");
   });
 
-  // 就地生效的 AmendWorkflow 工具行（docs/dynamic-workflow/concurrency.md）：它没有铸新 run，所以
-  // 按 toolCallId 什么都联接不到，轮尾也就没有卡——那条 run 的卡在它启动的那一轮里。行本身退成
-  // 一条设置行（create-workflow 渲染器按 display.retune 走）。
+  // In-place AmendWorkflow tool row (docs/dynamic-workflow/concurrency.md): it minted no
+  // new run, so nothing can be joined by toolCallId and there is no turn-tail card — that
+  // run's card lives in the turn where it was launched. The row itself degrades into a
+  // settings row (the create-workflow renderer handles display.retune).
   it("就地生效的 AmendWorkflow 行不出轮尾卡：它没有自己的 run", () => {
     const retuneRow = toolCallRow(7, "AmendWorkflow", { run_id: "run-1", max_concurrency: 4 });
     const digests = resolveWorkflowTurnDigests(
@@ -175,7 +182,7 @@ describe("resolveWorkflowTurnDigests", () => {
     );
     expect(alone).toHaveLength(1);
     expect(alone[0]).toMatchObject({ name: undefined, runId: "run-1", toolCallId: "tool-7" });
-    // 图是 run 的属性：resume 卡与发起行同一张图。
+    // The graph belongs to the run: the resume card shares the originating row's graph.
     expect(alone[0]!.graph?.steps).toHaveLength(1);
 
     const both = resolveWorkflowTurnDigests(
@@ -225,7 +232,8 @@ describe("resolveWorkflowTurnDigests", () => {
     });
     expect(digests[0]!.graph?.steps).toHaveLength(1);
 
-    // run 不在投影里（淘汰 / 冷恢复）：仍出卡，summary 缺席。
+    // The run is not in the projection (evicted / cold-recovered): the card is still
+    // produced, with the summary absent.
     const cold = resolveWorkflowTurnDigests({ workflowLaunch: LAUNCH, assistantWorkRows: [] }, {});
     expect(cold).toHaveLength(1);
     expect(cold[0]).toMatchObject({ runId: "run-l", summary: undefined, graph: undefined });

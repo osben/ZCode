@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { MemoTaskItem as TaskItem } from "@/TaskListItem.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 
 const { workspaceStateByPath } = vi.hoisted(() => ({
   workspaceStateByPath: new Map<string, unknown>(),
@@ -35,6 +37,7 @@ vi.mock("@/useTaskListItemContextActions.js", () => ({
 
 beforeEach(() => {
   workspaceStateByPath.clear();
+  useBranchMergeStatusStore.setState({ statusByWorkspaceKey: {} });
 });
 
 function createTaskMeta(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
@@ -140,6 +143,26 @@ function renderTaskItem(
 }
 
 describe("TaskList change summary", () => {
+  it("renders a workspace-merged legacy row without merge indicators or branch details", () => {
+    useBranchMergeStatusStore
+      .getState()
+      .setBranchMergeStatus(buildTaskWorkspaceKey("/repo/workspace"), {
+        state: "merged",
+        baseRef: "origin/main",
+        headRef: "feature/workspace-branch",
+        lastCommitAt: null,
+      });
+
+    const html = renderTaskItem();
+
+    expect(html).not.toContain('data-branch-merged-badge="true"');
+    expect(html).not.toContain("Merged");
+    expect(html).not.toContain("feature/workspace-branch");
+    expect(html).toContain("汇总任务文件改动");
+    expect(html).toContain("+8");
+    expect(html).toContain("-3");
+  });
+
   it("任务标题右侧只显示总增删，不再显示文件数量和文件列表", () => {
     const html = renderTaskItem();
 

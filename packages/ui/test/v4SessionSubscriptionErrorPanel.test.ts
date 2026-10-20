@@ -8,6 +8,7 @@ import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const screenshot = {
   filename: "session-subscription-error.png",
@@ -24,7 +25,7 @@ function renderPanel() {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         PlatformProvider,
         { platform },
@@ -60,14 +61,16 @@ describe("SessionSubscriptionErrorPanel", () => {
     renderPanel();
 
     expect(screen.getByText("EPERM: operation not permitted")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "反馈问题" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "重新连接" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: expectedCopy("chat.error.feedback") })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: expectedCopy("workspaceSidebar.reconnect") }),
+    ).toBeTruthy();
   });
 
   it("opens a feedback draft with the subscription error context", async () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "反馈问题" }));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("chat.error.feedback") }));
 
     await waitFor(() => expect(useFeedbackStore.getState().open).toBe(true));
     expect(useFeedbackStore.getState().submitDraft).toMatchObject({
@@ -79,11 +82,15 @@ describe("SessionSubscriptionErrorPanel", () => {
       screenshots: [],
     });
     expect(useFeedbackStore.getState().submitDraft?.description).toContain(
-      "报错摘要：EPERM: operation not permitted",
+      expectedCopy("feedback.submit.template.section.errorSummaryLine", {
+        message: "EPERM: operation not permitted",
+      }),
     );
-    expect(useFeedbackStore.getState().submitDraft?.description).toContain("任务 ID: session-1");
     expect(useFeedbackStore.getState().submitDraft?.description).toContain(
-      "工作区: F:\\ZCode_data",
+      expectedCopy("feedback.submit.template.section.taskId", { id: "session-1" }),
+    );
+    expect(useFeedbackStore.getState().submitDraft?.description).toContain(
+      expectedCopy("feedback.submit.template.section.taskWorkspace", { path: "F:\\ZCode_data" }),
     );
   });
 });

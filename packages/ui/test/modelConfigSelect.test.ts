@@ -29,7 +29,7 @@ function createGroup(key: string): ModelSelectGroup {
   };
 }
 
-function renderWithTooltipProvider(element: ReactElement, locale: Locale = "zh-CN") {
+function renderWithTooltipProvider(element: ReactElement, locale: Locale = "en-US") {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,

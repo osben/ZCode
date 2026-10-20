@@ -3,6 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { registerProviderAppIconCases } from "./provider-app-icon-cases.mjs";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
+import zhCN from "../../../../src/i18n/locales/zh-CN.js";
 
 export function registerProviderPresentationCases(getEnvironment) {
   registerProviderAppIconCases(getEnvironment);
@@ -96,14 +98,20 @@ export function registerProviderPresentationCases(getEnvironment) {
         );
         await page
           .getByTestId("subagent-error")
-          .getByText(locale === "zh-CN" ? "执行失败" : "Failed", { exact: true })
+          .getByText(
+            locale === "zh-CN"
+              ? zhCN["chat.toolCall.status.failed"]
+              : expectedCopy("chat.toolCall.status.failed"),
+            { exact: true },
+          )
           .hover();
         const detail = page
           .locator('[data-slot="tooltip-content"]')
           .filter({ hasText: "reasoning-level-missing" });
         await detail.waitFor();
         assert.match(await detail.innerText(), /未选择思考档位/);
-        // Radix 还生成一份 aria 隐藏描述，点击实际展示的复制按钮。
+        // Radix also generates an aria-hidden description; click the copy button that is actually
+        // shown.
         await detail.locator('button:not([role="tooltip"] button)').click();
         const copied = await page.evaluate(() => navigator.clipboard.readText());
         assert.match(copied, /reason=reasoning-level-missing/);

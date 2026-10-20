@@ -19,7 +19,7 @@ function readText(record: Record<string, unknown> | null, key: string): string |
 function CuaDetailRows({ rows }: { rows: CuaDetailsModel["actionRows"] }) {
   const { intl } = useZCodeIntl();
   return (
-    <dl className="grid grid-cols-[minmax(4rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+    <dl className="grid grid-cols-[minmax(4rem,auto)_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-ui-base">
       {rows.map((row) => (
         <div key={`${row.labelId}:${row.value}`} className="contents">
           <dt className="text-foreground-subtlest">{intl.formatMessage({ id: row.labelId })}</dt>
@@ -55,13 +55,14 @@ export function CuaToolCallDetails({
 }) {
   const { intl } = useZCodeIntl();
   const typedCount = readText(asRecord(toolCall.input), "text")?.length ?? 0;
-  // 完整 tool call JSON 混入了面向用户的 CUA 详情，暴露内部生命周期字段并制造无效入口。
-  // 原始数据继续保留在协议与持久化层；这里仅渲染用户完成操作所需的信息。
+  // Including the full tool-call JSON in user-facing CUA details exposed internal lifecycle fields
+  // and created a misleading entry point. Keep raw data in the protocol and persistence layers;
+  // render only what users need to complete the action.
   return (
     <div className="space-y-3 rounded-xl border border-border bg-surface/40 p-3">
       {model.actionRows.length > 0 ? (
         <section className="space-y-2">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.action" })}
           </h4>
           <CuaDetailRows rows={model.actionRows} />
@@ -72,14 +73,14 @@ export function CuaToolCallDetails({
           model.actionRows.length > 0 ? "space-y-2 border-t border-border pt-3" : "space-y-2"
         }
       >
-        <h4 className="text-sm text-foreground-subtle">
+        <h4 className="text-ui-base text-foreground-subtle">
           {intl.formatMessage({ id: "chat.toolCall.cua.details.result" })}
         </h4>
         <div
           className={
             model.success
-              ? "flex items-center gap-2 text-sm text-foreground"
-              : "flex items-center gap-2 text-sm text-destructive"
+              ? "flex items-center gap-2 text-ui-base text-foreground"
+              : "flex items-center gap-2 text-ui-base text-destructive"
           }
         >
           {model.success ? (
@@ -97,10 +98,10 @@ export function CuaToolCallDetails({
       </section>
       {model.failureReasonId || model.failureReason ? (
         <section className="space-y-2 border-t border-border pt-3">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.failureReason" })}
           </h4>
-          <p className="text-sm text-foreground">
+          <p className="text-ui-base text-foreground">
             {model.failureReasonId
               ? intl.formatMessage({ id: model.failureReasonId })
               : model.failureReason}
@@ -109,10 +110,10 @@ export function CuaToolCallDetails({
       ) : null}
       {model.suggestedActionId || model.suggestedAction ? (
         <section className="space-y-2 border-t border-border pt-3">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.suggestedAction" })}
           </h4>
-          <p className="text-sm text-foreground">
+          <p className="text-ui-base text-foreground">
             {model.suggestedActionId
               ? intl.formatMessage({ id: model.suggestedActionId })
               : model.suggestedAction}
@@ -122,7 +123,7 @@ export function CuaToolCallDetails({
       {model.screenshot ? <CuaScreenshotSection screenshot={model.screenshot} /> : null}
       {model.permissionRows?.length ? (
         <section className="space-y-2 border-t border-border pt-3">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.permissions" })}
           </h4>
           <CuaDetailRows rows={model.permissionRows} />
@@ -130,7 +131,7 @@ export function CuaToolCallDetails({
       ) : null}
       {model.environmentRows?.length ? (
         <section className="space-y-2 border-t border-border pt-3">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.environment" })}
           </h4>
           <CuaDetailRows rows={model.environmentRows} />
@@ -141,7 +142,7 @@ export function CuaToolCallDetails({
       ) : null}
       {model.stateRows.length > 0 ? (
         <section className="space-y-2 border-t border-border pt-3">
-          <h4 className="text-sm text-foreground-subtle">
+          <h4 className="text-ui-base text-foreground-subtle">
             {intl.formatMessage({ id: "chat.toolCall.cua.details.state" })}
           </h4>
           <CuaDetailRows rows={model.stateRows} />

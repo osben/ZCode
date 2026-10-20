@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 import { useEffect, useMemo, useState } from "react";
 import type { ZCodeTaskTreeCounts } from "@zcode/services";
 import { GitBranch, MessageSquare, Star } from "lucide-react";
@@ -141,7 +140,7 @@ export function TaskDeleteConfirmationDialog({
         data-testid={TID_TASK_DELETE_DIALOG}
       >
         <DialogHeader>
-          <DialogTitle>{formatPluralMessage(intl, "taskDelete.title", deletableCount)}</DialogTitle>
+          <DialogTitle>{intl.formatPlural({ id: "taskDelete.title" }, deletableCount)}</DialogTitle>
           <DialogDescription>{intl.formatMessage({ id: "taskDelete.body" })}</DialogDescription>
         </DialogHeader>
         {previewRows.length > 0 ? (
@@ -164,7 +163,7 @@ export function TaskDeleteConfirmationDialog({
             ))}
             {overflowCount > 0 ? (
               <li className="px-2.5 py-1.5 text-ui-xs text-foreground-subtlest">
-                {formatPluralMessage(intl, "taskDelete.more", overflowCount)}
+                {intl.formatPlural({ id: "taskDelete.more" }, overflowCount)}
               </li>
             ) : null}
           </ul>
@@ -180,7 +179,7 @@ export function TaskDeleteConfirmationDialog({
         ) : null}
         {runningCount > 0 ? (
           <p className="text-ui-sm text-warning">
-            {formatPluralMessage(intl, "taskDelete.running", runningCount)}
+            {intl.formatPlural({ id: "taskDelete.running" }, runningCount)}
           </p>
         ) : null}
         {pinnedCount > 0 && rows.length > 1 ? (
@@ -189,7 +188,7 @@ export function TaskDeleteConfirmationDialog({
               checked={includePinned}
               onCheckedChange={(checked) => setIncludePinned(checked === true)}
             />
-            {formatPluralMessage(intl, "taskDelete.includePinned", pinnedCount)}
+            {intl.formatPlural({ id: "taskDelete.includePinned" }, pinnedCount)}
           </label>
         ) : null}
         {worktreePreview === null ? (
@@ -200,7 +199,7 @@ export function TaskDeleteConfirmationDialog({
         {hasDirtyWorktree ? (
           <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-2.5">
             <p className="text-ui-sm text-warning">
-              {formatPluralMessage(intl, "taskDelete.dirtyWarning", dirtyWorktrees.length)}
+              {intl.formatPlural({ id: "taskDelete.dirtyWarning" }, dirtyWorktrees.length)}
             </p>
             <ul className="space-y-0.5 font-mono text-ui-xs text-foreground-subtle">
               {files.slice(0, PREVIEW_ROW_LIMIT).map((file) => (
@@ -211,9 +210,8 @@ export function TaskDeleteConfirmationDialog({
               ))}
               {files.length > PREVIEW_ROW_LIMIT ? (
                 <li>
-                  {formatPluralMessage(
-                    intl,
-                    "taskDelete.worktreeMore",
+                  {intl.formatPlural(
+                    { id: "taskDelete.worktreeMore" },
                     files.length - PREVIEW_ROW_LIMIT,
                   )}
                 </li>
@@ -241,7 +239,7 @@ export function TaskDeleteConfirmationDialog({
             data-testid={TID_TASK_DELETE_CONFIRM}
             onClick={() => onConfirm(candidates)}
           >
-            {formatPluralMessage(intl, confirmLabel, deletableCount)}
+            {intl.formatPlural({ id: confirmLabel }, deletableCount)}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -30,6 +30,8 @@ export interface FileDisplayOptions {
   kind?: "file" | "directory";
   showIcon?: boolean;
   showFilePath?: boolean;
+  /** Render the directory before the name so the label reads as one path (dir/name). */
+  pathBeforeName?: boolean;
   iconSize?: number;
   className?: string;
   fileNameClassName?: string;
@@ -42,14 +44,13 @@ export function setDefaultFileDisplayBasePath(basePath: string | null) {
 
 function resolveMaterialIconBasePath(): string {
   const baseUrl =
-    typeof import.meta !== "undefined" &&
-    typeof import.meta.env?.BASE_URL === "string"
+    typeof import.meta !== "undefined" && typeof import.meta.env?.BASE_URL === "string"
       ? import.meta.env.BASE_URL
       : "/";
 
-  // web 端 public 资源挂在根路径下，desktop 端则使用 file:// + base="./"。
-  // 之前把图标路径写死成 /material-icons，Electron 会把它解析到磁盘根目录，导致 file icon 全部 404。
-  // 这里统一基于运行时 base URL 生成资源路径，让 desktop/web 都命中各自的 public/material-icons。
+  // Public assets are rooted at the site root on Web, while Desktop uses file:// + base="./".
+  // Previously, icon paths were hard-coded as /material-icons; Electron resolved them from the disk root, causing all file icons to return 404.
+  // Generate asset paths from the runtime base URL here so Desktop/Web both resolve their own public/material-icons.
   return `${baseUrl.replace(/\/?$/, "/")}material-icons`;
 }
 
@@ -62,9 +63,7 @@ function buildIconSrc(iconName: string): string {
 }
 
 export const FOLDER_FILE_ICON_SRC = buildMaterialFileIconSrc("folder");
-export const DOCUMENT_FILE_ICON_SRC = buildMaterialFileIconSrc(
-  DEFAULT_FILE_ICON_NAME,
-);
+export const DOCUMENT_FILE_ICON_SRC = buildMaterialFileIconSrc(DEFAULT_FILE_ICON_NAME);
 
 function resolveFallbackFileIconSrc(currentSrc: string): string | null {
   const defaultIconSrc = DOCUMENT_FILE_ICON_SRC;
@@ -73,9 +72,9 @@ function resolveFallbackFileIconSrc(currentSrc: string): string | null {
   }
 
   if (currentSrc === defaultIconSrc || currentSrc.endsWith("/document.svg")) {
-    // 之前图标缺失最多只会回退到 document.svg。
-    // 如果默认素材本身也不存在，界面上仍会出现破图。这里补第二层兜底，
-    // 退回内置 data URL 图标，保证不同运行环境都至少有稳定占位。
+    // Previously, a missing icon fell back only to document.svg.
+    // If that asset was also missing, the UI still showed a broken image. Add a second fallback
+    // to a built-in data URL icon so every runtime has a stable placeholder.
     return INLINE_FALLBACK_FILE_ICON_SRC;
   }
 
@@ -123,12 +122,10 @@ export function resolveFileDisplayDescriptor(
 ): FileDisplayDescriptor {
   const normalizedPath = normalizePath(filePath);
   const fileName = getPathLeaf(normalizedPath);
-  const effectiveBasePath =
-    options.basePath ?? defaultFileDisplayBasePath ?? undefined;
+  const effectiveBasePath = options.basePath ?? defaultFileDisplayBasePath ?? undefined;
   const relativePath = stripBasePath(normalizedPath, effectiveBasePath);
   const resolvedFilePath = buildFilePath(relativePath, fileName);
-  const fileIcon =
-    options.kind === "directory" ? "folder" : resolveIconName(fileName);
+  const fileIcon = options.kind === "directory" ? "folder" : resolveIconName(fileName);
 
   return {
     fileIcon,
@@ -149,8 +146,7 @@ export function createFileDisplayDom(
   });
   const container = document.createElement("span");
   container.className =
-    options.className ??
-    "inline-flex max-w-full items-center gap-1.5 align-middle";
+    options.className ?? "inline-flex max-w-full items-center gap-1.5 align-middle";
 
   if (options.showIcon !== false) {
     const icon = document.createElement("img");
@@ -171,16 +167,14 @@ export function createFileDisplayDom(
   }
 
   const primary = document.createElement("span");
-  primary.className =
-    options.fileNameClassName ?? "truncate text-[0.95em] leading-[1.6]";
+  primary.className = options.fileNameClassName ?? "truncate text-[0.95em] leading-[1.6]";
   primary.textContent = descriptor.fileName;
   container.append(primary);
 
   if (options.showFilePath && descriptor.filePath) {
     const secondary = document.createElement("span");
     secondary.className =
-      options.filePathClassName ??
-      "truncate text-[0.85em] text-muted-foreground";
+      options.filePathClassName ?? "truncate text-[0.85em] text-muted-foreground";
     secondary.textContent = descriptor.filePath;
     container.append(secondary);
   }
@@ -202,18 +196,32 @@ export function FileDisplayInline({
   const [fileIconSrc, setFileIconSrc] = useState(descriptor.fileIconSrc);
 
   useEffect(() => {
-    // mention panel 会复用同一批列表项组件，之前这里只在首次渲染时初始化图标 src，
-    // 过滤条件或可视区变化后 path 变了但 state 没重置，就会把上一行的图标串到下一行。
-    // 这里在解析结果变化时同步重置，确保图标始终跟当前文件扩展名对应。
+    // The mention panel reuses the same list-item components. Previously, icon src was initialized only on first render;
+    // after filters or the visible range changed the path, state was not reset and the previous row's icon leaked into the next.
+    // Reset it when the parsed result changes so the icon always matches the current file extension.
     setFileIconSrc(descriptor.fileIconSrc);
   }, [descriptor.fileIconSrc]);
 
-  return (
+  const fileName = (
     <span
-      className={
-        options?.className ?? "inline-flex max-w-full items-center gap-1 "
-      }
+      className={options?.fileNameClassName ?? "truncate text-ui-base font-medium text-foreground"}
     >
+      {descriptor.fileName}
+    </span>
+  );
+  const filePath =
+    options?.showFilePath && descriptor.filePath ? (
+      <span
+        className={options.filePathClassName ?? "truncate text-ui-base text-foreground-subtlest"}
+      >
+        {/* Bidi-isolate the path text: leading-ellipsis styles (direction: rtl) must not
+            reorder leading/trailing slashes when the path fits on one line. */}
+        <bdi>{descriptor.filePath}</bdi>
+      </span>
+    ) : null;
+
+  return (
+    <span className={options?.className ?? "inline-flex max-w-full items-center gap-1 "}>
       {options?.showIcon !== false ? (
         <img
           src={fileIconSrc}
@@ -231,24 +239,17 @@ export function FileDisplayInline({
           }}
         />
       ) : null}
-      <span
-        className={
-          options?.fileNameClassName ??
-          "truncate text-ui-base font-medium text-foreground"
-        }
-      >
-        {descriptor.fileName}
-      </span>
-      {options?.showFilePath && descriptor.filePath ? (
-        <span
-          className={
-            options.filePathClassName ??
-            "truncate text-ui-base text-foreground-subtlest"
-          }
-        >
-          {descriptor.filePath}
-        </span>
-      ) : null}
+      {options?.pathBeforeName ? (
+        <>
+          {filePath}
+          {fileName}
+        </>
+      ) : (
+        <>
+          {fileName}
+          {filePath}
+        </>
+      )}
     </span>
   );
 }
@@ -265,8 +266,8 @@ export function FileDisplayIcon({
   const [fileIconSrc, setFileIconSrc] = useState(src);
 
   useEffect(() => {
-    // toolcall 列表项会复用同一套文件图标节点。
-    // 如果这里只在首次渲染时保留旧 src，切到下一条文件记录后会把上一条 fallback 状态串过来。
+    // Tool-call list items reuse the same file-icon node.
+    // If the old src is kept after the first render, switching to the next file record carries over the previous fallback state.
     setFileIconSrc(src);
   }, [src]);
 
@@ -289,10 +290,7 @@ export function FileDisplayIcon({
   );
 }
 
-export function getFileDisplayPath(
-  filePath: string,
-  basePath?: string,
-): string {
+export function getFileDisplayPath(filePath: string, basePath?: string): string {
   const normalizedPath = normalizePath(filePath);
   const pathWithoutBase = stripBasePath(normalizedPath, basePath);
 

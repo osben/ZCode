@@ -1,9 +1,9 @@
-import { toServiceLocale } from "../../i18n/serviceLocale.js";
 import {
   prepareRequestVerificationClaim,
   useRequestVerificationPrewarm,
 } from "@/request-security-edition/claim.js";
 import { requestVerificationClaimFailureMessageId } from "@/request-security-edition/errors.js";
+import { toServiceLocale } from "@zcode/shared";
 import { useStartPlanEntitlement } from "@/hooks/useStartPlanEntitlement.js";
 import { createContext, useContext, useEffect, useCallback, useState, useRef } from "react";
 import type { ReactNode } from "react";
@@ -50,7 +50,7 @@ import { MarketingRefreshContext } from "@/components/marketing-touch/useMarketi
 
 const Context = createContext<MarketingTouchController | null>(null);
 
-// 导出给左下角活动仲裁层（SidebarBottomActivity）读取 Banner 可见性；控制器仍是唯一 owner。
+// Exported so the bottom-left activity arbiter (SidebarBottomActivity) can read banner visibility; the controller remains the sole owner.
 export { Context as MarketingTouchContext };
 
 export function MarketingTouchProvider({
@@ -81,6 +81,8 @@ export function MarketingTouchProvider({
   const openRewardsRef = useRef(openRewards);
   openRewardsRef.current = openRewards;
   const { intl, locale } = useZCodeIntl();
+  // The marketing backend and copy support only Chinese and English (external service); pass it as a ServiceLocale.
+  const serviceLocale = toServiceLocale(locale);
   const startEntitlement = useStartPlanEntitlement(
     BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
     services.usageStatsService,
@@ -93,9 +95,9 @@ export function MarketingTouchProvider({
     if (!service || restoring) return null;
     let poller: ReturnType<typeof createMarketingTouchPoller>;
     const controller = createMarketingTouchController({
-      query: () => service.query({ locale: toServiceLocale(locale) }),
+      query: () => service.query({ locale: serviceLocale }),
       report: (input) => service.report(input),
-      locale,
+      locale: serviceLocale,
       canOpen: canOpenMarketingPopup,
       refresh: () => poller.refresh(),
       prepare: async (delivery) => {
@@ -104,10 +106,10 @@ export function MarketingTouchProvider({
           delivery.resource_position === "banner"
             ? delivery.banner.success_popup?.hero
             : delivery.popup.hero;
-        const success = prepareMarketingHero(visual, assets, locale, desktop);
+        const success = prepareMarketingHero(visual, assets, serviceLocale, desktop);
         const background =
           delivery.resource_position === "banner"
-            ? prepareMarketingHero(delivery.banner.background, assets, locale, desktop)
+            ? prepareMarketingHero(delivery.banner.background, assets, serviceLocale, desktop)
             : undefined;
         let released = false;
         const release = async () => {
@@ -160,7 +162,7 @@ export function MarketingTouchProvider({
               if (!controller.store.getState().dialog)
                 toast(intl.formatMessage({ id: "manualClaimPlan.claim.share.copyTextSucceeded" }));
             } else if (action.args.page === "rewards") {
-              // 只确认窗口级 Provider 接收意图；登录续接不依赖会在账号变化时销毁的营销实例。
+              // Only confirm that the window-level Provider received the intent; login continuation must not depend on a marketing instance that is destroyed when the account changes.
               if (!openRewardsRef.current) throw new Error("marketing_navigation_unavailable");
               await openRewardsRef.current();
             } else {
@@ -200,7 +202,7 @@ export function MarketingTouchProvider({
                     if (!tabs.activeWorkspacePath)
                       throw new Error("marketing_navigation_unavailable");
                     requestPluginStoreOpen(action.args.plugin_id);
-                    // 市场在工作区内；仅发事件会在设置层后挂载，必须退出设置并激活原工作区。
+                    // The marketplace lives in the workspace; only dispatching the event would mount it behind the settings layer, so exit settings and activate the original workspace.
                     if (
                       !tabs.activateTabByPath(tabs.activeWorkspacePath, {
                         workspaceIdentity: tabs.activeWorkspaceIdentity ?? undefined,
@@ -273,16 +275,19 @@ export function MarketingTouchProvider({
                 ? result.message
                 : intl.formatMessage({ id: "manualClaimPlan.claim.failure.generic" }),
             };
-          // 成功已由 claim 确定，后置刷新失败只影响本地权益投影，不能逆转领取结果。
+          // Success is already settled by claim; a failed post-refresh only affects the local
+          // entitlement projection and cannot reverse the claim result.
           void Promise.allSettled([
             refreshStartEntitlementRef.current({ force: true, silent: true, reason: "purchase" }),
-            // Provider 迁移后旧服务已不存在；统一刷新权威设置视图，不重建第二条凭据刷新链路。
+            // After the provider migration the old service no longer exists; refresh the authoritative
+            // settings view uniformly instead of rebuilding a second credential refresh chain.
             services.providerSettingsService.refresh("marketing-plan-claim"),
           ]).then((results) => {
             if (results.some((value) => value.status === "rejected"))
               logger.warn("[marketing-touch] claim succeeded but entitlement refresh failed");
           });
-          // 领取结果由 Controller 的结果弹窗承载，避免成功 toast 与弹窗重复提示。
+          // The claim result is carried by the controller's result dialog, avoiding duplicate success
+          // notices from a toast plus the dialog.
           return { status: "success" };
         } catch {
           if (signal.aborted) return { status: "cancelled" };
@@ -362,6 +367,7 @@ function ConnectedBanner({ controller }: { controller: MarketingTouchController 
   const state = useStore(controller.store);
   const { dark } = useCloudHeroEnvironment();
   const { intl, locale } = useZCodeIntl();
+  const serviceLocale = toServiceLocale(locale);
   const banner = state.banner;
   useRequestVerificationPrewarm(
     Boolean(
@@ -371,7 +377,7 @@ function ConnectedBanner({ controller }: { controller: MarketingTouchController 
         .type === "claim_zcode_plan",
     ),
   );
-  // 与仲裁层（SidebarBottomActivity）共用同一可见性谓词，避免两处判断漂移。
+  // Shares the same visibility predicate as the arbiter (SidebarBottomActivity) so the two judgments cannot drift.
   if (!isMarketingBannerRenderable(banner)) return null;
   const buttons = banner.delivery.banner.buttons;
   const action = buttons.find((button) => button.action.type !== "close");
@@ -381,8 +387,8 @@ function ConnectedBanner({ controller }: { controller: MarketingTouchController 
       src={dark && banner.darkImage ? banner.darkImage : banner.image}
       bundle={banner.bannerHero?.type === "interactive_bundle" ? banner.bannerHero : undefined}
       video={banner.bannerHero?.type === "video" ? banner.bannerHero : undefined}
-      locale={locale}
-      // 纯图片 Banner 允许空文案；动作是否存在不能由标签决定。
+      locale={serviceLocale}
+      // Image-only banners allow empty copy; whether an action exists must not be decided by the label.
       hasAction={Boolean(action)}
       hasClose={Boolean(close)}
       actionLabel={

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-// 单项目工作流组（docs/dynamic-workflow/launch.md「Groups」「目录监听」「删除」「运行发起」）。
-// 迁移自 v1 单项目 section 的用例；卡片与详情页各有自己的用例，这里换桩，只看组的状态流与
-// **本项目**的 target（不变式 8）。useWorkspaceServices 按 workspacePath 返回不同 agent，钉住
-// 组用的是 ITS project 而不是活动 workspace。
+// Single-project workflow group (docs/dynamic-workflow/launch.md "Groups", "Directory watching", "Delete", "Run
+// initiation").
+// Cases migrated from the v1 single-project section; the card and the detail page each have their own cases, so this
+// stubs things out and only watches the group's state flow and the **its-project** target (invariant 8).
+// useWorkspaceServices returns a different agent per workspacePath, pinning that the group uses ITS project rather than
+// the active workspace.
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +24,7 @@ import {
 import { testId } from "@zcode/shared/test-ids";
 import type { AutomationWorkspaceOption } from "@/settings/automationWorkspaceOptions.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { resetSavedWorkflowStoreForTests } from "@/store/savedWorkflowStore.js";
 
 const confirmMock = vi.fn(async () => true);
@@ -74,8 +77,9 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 }));
 vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirmMock }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: (...args: unknown[]) => toastMock(...args) }));
-// 直接启动器换桩：组只负责按类型开窗 / 直发；launch 的 createSession→startSavedWorkflow 编排
-// 与导航由 useSavedWorkflowLauncher 单测覆盖，这里只断言组以正确 target + request 调它。
+// Direct launcher stubbed: the group only opens the window / sends directly by type; launch's
+// createSession→startSavedWorkflow orchestration and navigation are covered by useSavedWorkflowLauncher unit tests, so
+// this only asserts the group calls it with the right target + request.
 const launchMock = vi.fn(async () => ({
   ok: true as const,
   sessionId: "s-1",
@@ -91,8 +95,9 @@ vi.mock("@/settings/saved-workflows/useSavedWorkflowLauncher.js", () => ({
     clearError: clearErrorMock,
   }),
 }));
-// 「提升为全局」编排换桩：createSession(firstInput) 与导航由 useSavedWorkflowPromote 单测覆盖，
-// 这里只断言组以本项目 target + 名字 / 路径 / locale 调它，失败时 toast。
+// "Promote to global" orchestration stubbed: createSession(firstInput) and navigation are covered by
+// useSavedWorkflowPromote unit tests; this only asserts the group calls it with this project's target + name / path /
+// locale, and toasts on failure.
 const promoteMock = vi.fn(async () => ({ ok: true as const, sessionId: "s-p" }));
 vi.mock("@/settings/saved-workflows/useSavedWorkflowPromote.js", () => ({
   useSavedWorkflowPromote: () => ({ promote: promoteMock, pending: false }),
@@ -204,7 +209,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowProjectGroup>[0]> =
   const result = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(SavedWorkflowProjectGroup, {
         project: BETA,
         isCurrent: false,
@@ -271,7 +276,7 @@ describe("SavedWorkflowProjectGroup", () => {
     ];
     mount();
     await screen.findByTestId(testId(TID_WORKFLOWS_LIST, "/beta"));
-    // 用的是 /beta 的 agent，不是 /repo
+    // Uses /beta's agent, not /repo's
     expect(agentBeta.listSavedWorkflows).toHaveBeenCalledWith({ workspacePath: "/beta" });
     expect(agentRepo.listSavedWorkflows).not.toHaveBeenCalled();
     expect(agentBeta.listSavedWorkflowRuns).toHaveBeenCalledWith({
@@ -287,7 +292,8 @@ describe("SavedWorkflowProjectGroup", () => {
 
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_CARD_RUN, "nightly")));
     await waitFor(() => expect(launchMock).toHaveBeenCalledTimes(1));
-    // 无实参项目档：不弹窗，直发；带本项目 target + project scope + 空实参。
+    // Project scope without arguments: no dialog, send directly; carrying this project's target + project scope +
+    // empty arguments.
     expect(launchMock.mock.calls[0]?.[0]).toEqual({ workspacePath: "/beta" });
     expect(launchMock.mock.calls[0]?.[1]).toEqual({ name: "nightly", scope: "project", args: {} });
   });
@@ -327,7 +333,7 @@ describe("SavedWorkflowProjectGroup", () => {
     const { container } = mount();
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "ok"));
     const strip = container.querySelector('[data-workflows-invalid="true"]');
-    expect(strip?.textContent).toContain("1 个文件无法读取");
+    expect(strip?.textContent).toContain(expectedCopy("workflows.hub.invalid.one", { count: 1 }));
     expect(strip?.textContent).toContain("/beta/.zcode/workflows/bad.dwf.ts");
   });
 
@@ -340,7 +346,7 @@ describe("SavedWorkflowProjectGroup", () => {
     rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SavedWorkflowProjectGroup, {
           project: BETA,
           isCurrent: false,
@@ -386,7 +392,7 @@ describe("SavedWorkflowProjectGroup", () => {
     );
     expect(agentRepo.deleteSavedWorkflow).not.toHaveBeenCalled();
     await waitFor(() => expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(2));
-    expect(toastMock).toHaveBeenCalledWith("已删除工作流「x」");
+    expect(toastMock).toHaveBeenCalledWith(expectedCopy("workflows.hub.deleted", { name: "x" }));
   });
 
   it("修订：带本项目 target 预填草稿", async () => {
@@ -395,7 +401,7 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId("revise-x"));
     expect(onCreateViaChat).toHaveBeenCalledTimes(1);
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("请修订已保存的工作流「x」");
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain('Please revise the saved workflow "x"');
     expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
   });
 
@@ -405,11 +411,11 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOWS_CREATE_VIA_CHAT, "/beta")));
     expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/beta" });
-    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("帮我设计一个工作流");
+    expect(onCreateViaChat.mock.calls[0]?.[0]).toContain("Help me design a workflow");
   });
 
-  // 「提升为全局」（docs/dynamic-workflow/launch.md「Promote to global」）：不搬文件，在本项目开
-  // 新会话发概括提示。
+  // "Promote to global" (docs/dynamic-workflow/launch.md "Promote to global"): no files are moved; a new session in
+  // this project sends the summarizing prompt.
   it("提升为全局：带本项目 target 与名字 / 路径 / locale 调 promote；不调 move、不 toast", async () => {
     agentBeta.listResult.current = {
       workflows: [entry("x")],
@@ -424,10 +430,11 @@ describe("SavedWorkflowProjectGroup", () => {
     expect(promoteMock.mock.calls[0]?.[1]).toEqual({
       name: "x",
       path: "/beta/.zcode/workflows/x.dwf.ts",
-      locale: "zh-CN",
+      locale: "en-US",
     });
     expect(toastMock).not.toHaveBeenCalled();
-    // 列表不重拉：源文件没动，全局档由模型另存后靠全局组的目录监听出现。
+    // The list is not refetched: the source file was untouched, and the global entry appears via the global group's
+    // directory watching once the model saves it separately.
     expect(agentBeta.listSavedWorkflows).toHaveBeenCalledTimes(1);
   });
 
@@ -446,7 +453,11 @@ describe("SavedWorkflowProjectGroup", () => {
     await screen.findByTestId(testId(TID_WORKFLOW_CARD, "x"));
     fireEvent.click(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "x")));
     await waitFor(() => expect(promoteMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith("提升失败：workspace is read-only"));
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expectedCopy("workflows.hub.promote.failed", { reason: "workspace is read-only" }),
+      ),
+    );
   });
 
   it("远程项目不提供「提升为全局」（不变式 4：远端 home 不进中枢）", async () => {

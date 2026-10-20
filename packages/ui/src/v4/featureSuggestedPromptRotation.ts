@@ -43,7 +43,7 @@ export function unregisterRecommendedPromptPane(id: string) {
 export function advanceRecommendedPromptPane(id: string) {
   const pane = panes.get(id);
   if (!pane) return;
-  // 每个候选都要有机会成为本批首项；固定跳三格会让避重时跳过的候选永远不可达。
+  // Every candidate must have a chance to become the first item in a batch; always skipping three positions would make skipped candidates unreachable during deduplication.
   pane.cursor += 1;
   pane.items = selectForPane(
     getRecommendedPromptPool(pane.mode === "office"),
@@ -98,7 +98,7 @@ function selectForPane(
   const localIcons = new Set<string>();
   const candidates = pool.map((_, index) => pool[(cursor + index) % pool.length]!);
 
-  // 换一批优先全部换新；候选不足时才复用旧条目，并继续尽量保证同屏图标不同。
+  // Prefer a fully new batch; reuse old entries only when there are not enough candidates, while continuing to keep visible icons distinct when possible.
   for (const avoidPrevious of [true, false]) {
     for (const avoidGlobal of [true, false]) {
       for (const item of candidates) {

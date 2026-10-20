@@ -12,7 +12,7 @@ function parkingRoot(): HTMLElement {
   return root;
 }
 
-/** 实例与锚点分离；普通内联与正文在同一滚动树内，不用屏幕坐标追赶滚动。 */
+/** Instances are decoupled from anchors; plain inline pages share the scroll tree with the body, so screen coordinates are not needed to chase scrolling. */
 export function createPluginUiPagePlane(events: {
   onVisibility(visible: boolean): void;
   onCrash(): void;
@@ -43,7 +43,7 @@ export function createPluginUiPagePlane(events: {
     if (root.parentElement === parent) return;
     if (!frame) parent.append(root);
     else {
-      // appendChild 会触发 Electron guest 的断开重建。preload 为沙箱注册移动回调后才允许迁移。
+      // appendChild triggers a disconnect-rebuild of the Electron guest. Migration is allowed only after preload registers the move callback for the sandbox.
       if (
         typeof parent.moveBefore !== "function" ||
         typeof (frame as HTMLElement & { connectedMoveCallback?: unknown })
@@ -54,7 +54,7 @@ export function createPluginUiPagePlane(events: {
     }
   };
   const resetStyle = () => {
-    // webview 释放后容器仍可能覆盖错误态按钮；容器只负责定位，点击由 webview 显式接收。
+    // After the webview is released the container may still cover the error-state button; the container only positions, clicks are received explicitly by the webview.
     root.style.cssText =
       "display:flow-root;position:relative;width:100%;height:100%;margin:0;border:0;padding:0;overflow:hidden;pointer-events:none";
   };
@@ -81,7 +81,7 @@ export function createPluginUiPagePlane(events: {
     preview = null;
   };
   const track = (node: HTMLElement, update: () => void) => {
-    // 承载层尺寸完全由锚点决定；反向观察承载层会在 popover 切换时形成 ResizeObserver 回环。
+    // The carrier's size is fully determined by the anchor; observing the carrier back would form a ResizeObserver loop on popover switches.
     const stop = autoUpdate(node, root, update, { elementResize: false });
     const resize = new ResizeObserver(update);
     resize.observe(node);
@@ -194,7 +194,7 @@ export function createPluginUiPagePlane(events: {
         anchors.delete(token);
         if (![...anchors.values()].some((a) => a.placement.node === placement.node))
           intersection.unobserve(placement.node);
-        // 必须同步迁移，再让 React 删除锚点；不能放到 RAF / passive effect。
+        // Must migrate synchronously before React removes the anchor; this cannot be deferred to RAF / passive effects.
         layout();
       };
     },

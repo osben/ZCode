@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 /**
  * Sidebar child-conversation marker (spec: sidebar-child-conversation-counts.md): message-circle and
  * bot glyph segments with tabular counts, styled like the neighboring clock/moon/worktree meta icons
@@ -31,13 +30,13 @@ export function ChildSessionCountsMarker({
   if (sideChats <= 0 && subagentTotal <= 0) return null;
   const tooltipParts: string[] = [];
   if (sideChats > 0) {
-    tooltipParts.push(formatPluralMessage(intl, "taskList.childSideChatsCount", sideChats));
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSideChatsCount" }, sideChats));
   }
   if (subagentTotal > 0) {
-    tooltipParts.push(formatPluralMessage(intl, "taskList.childSubagentsCount", subagentTotal));
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsCount" }, subagentTotal));
   }
   if (running > 0) {
-    tooltipParts.push(formatPluralMessage(intl, "taskList.childSubagentsRunningCount", running));
+    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsRunningCount" }, running));
   }
   const tooltip = tooltipParts.join(" · ");
   const segmentClass = "flex items-center gap-0.5 tabular-nums";

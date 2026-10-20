@@ -9,16 +9,16 @@ import { LaneGlyph } from "./WorkflowAgentPill.js";
 import { RosterTally } from "./WorkflowRosterParts.js";
 
 /**
- * 「还有 n 个」那一行：卡上名册站
- * 钉住五枚药丸之后的第六枚——同高、同底色、同内距、同圆角、同一套悬停语法。内容是三张脸一叠（其余里
- * 最要紧的三个，表情自带状态）、`还有 n 个`、藏着失败时一枚红色 `✕ n`、尾槽里常驻的 ↗。
+ * "N more" row: the sixth item after the five pinned pills in a card roster station—same height, background, padding, radius, and hover behavior.
+ * It contains a stack of three faces (the three most important of the rest, with status shown through expression), `N more`,
+ * a red `✕ n` when failures are hidden, and a persistent ↗ in the tail slot.
  *
- * 它是一扇门不是状态：点一下开运行侧栏、落到这一站、把清单展开（`onOpen` 由卡接到 `onSelectStation`）。
- * 没有状态标记可让位，所以 ↗ 不等悬停就在（空尾槽读作「这里没东西」）。没有回调时是静态的 span。
+ * This is a door, not a status: clicking opens the run side pane, selects this station, and expands its roster (`onOpen` connects to `onSelectStation`).
+ * There is no status marker to replace, so ↗ is always visible (an empty tail slot would suggest nothing is there). Without a callback, render a static span.
  *
- * 侧板上同一具身体是**门**（`door` 在场）：尾槽里换成下箭头，原地开合。
- * 关着时带其余人的计数行（藏着失败时红的就在计数行里，不再另挂 `✕ n`）；开着时计数行搬进名单的
- * 组头，这一行只剩人数、底色抬一级、名字转前景。
+ * In the side pane, the same element acts as a **door** (`door` is present): the tail slot changes to a down arrow and expands/collapses in place.
+ * When closed, it includes the count row for the remaining agents (hidden failures appear in red there, without a separate `✕ n`).
+ * When open, the count row moves to the roster group header; this row keeps only the count, a raised background, and a foreground-colored name.
  */
 export function WorkflowMoreRow({
   door,
@@ -27,11 +27,11 @@ export function WorkflowMoreRow({
   onOpen,
 }: {
   more: RosterMore;
-  /** 入场延迟（跟在钉住的药丸之后落地）；缺席即立刻。 */
+  /** Entrance delay (arrives after pinned pills); absent means immediate. */
   enterDelayMs?: number;
-  /** 在场即整行是按钮（回调的存在即门控）。 */
+  /** When present, the whole row is a button (the callback's presence is the gate). */
   onOpen?: () => void;
-  /** 门的形态（侧板）：开合状态与其余人的计数。缺席即卡上那一行（↗ 常驻）。 */
+  /** Door variant (side pane): expanded state and count of remaining agents. Absent means the card row (↗ always visible). */
   door?: { open: boolean; tally: RosterCounts };
 }) {
   const { intl } = useZCodeIntl();
@@ -52,7 +52,7 @@ export function WorkflowMoreRow({
     },
     { count: more.count },
   );
-  // 与药丸同一条入场纪律：有延迟时 backwards 填充。
+  // Same entrance rule as the pill: use backwards fill when there is a delay.
   const style =
     enterDelayMs === undefined || enterDelayMs <= 0
       ? undefined

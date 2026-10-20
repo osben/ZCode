@@ -7,6 +7,7 @@ import {
   resolveV4QueueReorderAnchor,
 } from "@/v4/ConversationQueuePanel.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/ControlHintTooltip.js", async () => {
   const React = await import("react");
@@ -54,7 +55,7 @@ function renderPanel(): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationQueuePanel, {
         queue: queueState(),
         onDeleteItem: vi.fn(),
@@ -75,7 +76,7 @@ describe("ConversationQueuePanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationQueuePanel, { queue }),
       ),
     );
@@ -90,8 +91,8 @@ describe("ConversationQueuePanel", () => {
     expect(html).toContain('data-queue-item-id="q-2"');
     expect(html).toContain('data-v4-queue-drag-handle="true"');
     expect(html).toContain("backdrop-blur-md");
-    expect(html).toContain(">立即<");
-    expect(html).not.toContain(">立即发送<");
+    expect(html).toContain(`>${expectedCopy("chat.queue.sendNow")}<`);
+    expect(html).not.toContain(`>${expectedCopy("chat.followup.sendNow")}<`);
     expect(html).not.toContain(">上移<");
   });
 
@@ -100,7 +101,7 @@ describe("ConversationQueuePanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationQueuePanel, {
           queue,
           onResume: vi.fn(),
@@ -109,9 +110,9 @@ describe("ConversationQueuePanel", () => {
     );
 
     expect(html).toContain('data-testid="v4-queue-paused-banner"');
-    expect(html).toContain("由于你中断了当前响应，队列已暂停");
+    expect(html).toContain(expectedCopy("chat.queue.paused.stopped"));
     expect(html).toContain('data-testid="v4-queue-resume"');
-    expect(html).toContain(">继续<");
+    expect(html).toContain(`>${expectedCopy("chat.queue.resume")}<`);
   });
 
   it("uses authoritative dispatch to lock reserved/promoting item actions", () => {
@@ -123,7 +124,7 @@ describe("ConversationQueuePanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationQueuePanel, {
           queue,
           onDeleteItem: vi.fn(),
@@ -143,7 +144,7 @@ describe("ConversationQueuePanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationQueuePanel, {
           queue: queueState(),
           onDeleteItem: vi.fn(),
@@ -174,7 +175,7 @@ describe("ConversationQueuePanel", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationQueuePanel, {
           queue,
           onDeleteItem: vi.fn(),
@@ -186,10 +187,10 @@ describe("ConversationQueuePanel", () => {
     );
 
     expect(html).toContain("/compact");
-    expect(html).toContain(">立即<");
+    expect(html).toContain(`>${expectedCopy("chat.queue.runNow")}<`);
     expect(html).not.toContain("立即执行");
     expect(html).not.toContain("lucide-minimize-2");
-    expect(html).not.toContain('aria-label="编辑"');
+    expect(html).not.toContain(`aria-label="${expectedCopy("chat.queue.edit")}"`);
   });
 
   it("converts drag targets into CLI beforeQueueItemId anchors", () => {

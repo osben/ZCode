@@ -355,7 +355,7 @@ describe("SessionPane followupMode app setting sync", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(SessionPane, {
               paneId: "workspace-main",
               sessionId: "session-1",
@@ -410,7 +410,7 @@ describe("SessionPane followupMode app setting sync", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",

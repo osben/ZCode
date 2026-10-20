@@ -65,6 +65,68 @@ describe("model selection groups", () => {
       "supportsVisionInput",
     );
   });
+
+  it("marks the ChatGPT plan as Subscription and api.openai.com API-key providers as API", () => {
+    const view: ModelSelectionView = {
+      revision: 1,
+      providers: [
+        {
+          providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+          providerName: "ChatGPT Plan",
+          config: {
+            access: { type: "chatgpt-account", entitled: true },
+            api: { type: "openai-responses", baseUrl: "https://api.openai.com/v1" },
+          },
+          models: [{ modelId: "gpt-6.1-sol", config: {} }],
+        },
+        {
+          providerId: "personal-openai",
+          providerName: "OpenAI",
+          config: {
+            access: { type: "api-key", apiKey: "sk-test" },
+            api: { type: "openai-responses", baseUrl: "https://api.openai.com/v1" },
+          },
+          models: [{ modelId: "gpt-6-astra", config: {} }],
+        },
+      ],
+    };
+    const groups = buildRegistryModelSelectGroups("glm", view);
+    expect(groups[0]).toMatchObject({
+      label: "ChatGPT Plan",
+      labelBadge: "Subscription",
+    });
+    expect(groups[1]).toMatchObject({
+      label: "OpenAI",
+      labelBadge: "API",
+    });
+    // Localized labels win when provided.
+    const localized = buildRegistryModelSelectGroups("glm", view, {
+      chatgptPlanBadgeLabel: "Подписка",
+      apiKeyBadgeLabel: "API-ключ",
+    });
+    expect(localized[0]).toMatchObject({ labelBadge: "Подписка" });
+    expect(localized[1]).toMatchObject({ labelBadge: "API-ключ" });
+  });
+
+  it("does not badge unrelated API-key providers", () => {
+    const view: ModelSelectionView = {
+      revision: 1,
+      providers: [
+        {
+          providerId: "personal-aggregator",
+          providerName: "Aggregator",
+          config: {
+            access: { type: "api-key", apiKey: "sk-test" },
+            api: { type: "openai-chat-completions", baseUrl: "https://api.example.test/v1" },
+          },
+          models: [{ modelId: "model-x", config: {} }],
+        },
+      ],
+    };
+    const groups = buildRegistryModelSelectGroups("glm", view);
+    expect(groups[0]).not.toHaveProperty("labelBadge");
+  });
+
   it("直接把 Registry API Provider 投影为有序模型组", () => {
     const selectionView: ModelSelectionView = {
       revision: 7,
@@ -179,5 +241,30 @@ describe("model selection groups", () => {
         ],
       },
     ]);
+  });
+
+  it("keeps registry groups for ChatGPT plan sessions and hides them for custom providers", () => {
+    const view: ModelSelectionView = {
+      revision: 1,
+      providers: [
+        {
+          providerId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
+          providerName: "ChatGPT Plan",
+          config: {
+            access: { type: "chatgpt-account", entitled: true },
+            api: { type: "openai-responses", baseUrl: "https://api.openai.com/v1" },
+          },
+          models: [{ modelId: "gpt-6-luna", config: {} }],
+        },
+      ],
+    };
+    // A session left on a ChatGPT plan model must still be able to switch models.
+    expect(
+      buildRegistryModelSelectGroups(BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan, view),
+    ).toHaveLength(1);
+    // Registry groups stay hidden for custom (non-agent) providers.
+    expect(buildRegistryModelSelectGroups("d6819161-0127-45d7-b88d-82f2a73208aa", view)).toEqual(
+      [],
+    );
   });
 });

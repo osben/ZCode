@@ -1,6 +1,7 @@
-import type { Theme } from "@/useTheme.js";
+import type { Theme, ThemePalette } from "@/useTheme.js";
 import { useState } from "react";
 import { resolveTheme } from "@/useTheme.js";
+import { THEME_PALETTE_IDS } from "@/lib/themePalettes.js";
 import { Card, CardContent } from "@/components/ui/card.js";
 import { Input } from "@/components/ui/input.js";
 import { Switch } from "@/components/ui/switch.js";
@@ -17,6 +18,7 @@ import {
   ThemePreviewCard,
   ThemeSelect,
 } from "@/settings/SettingsPageParts.js";
+import { FontFamilyPicker } from "@/settings/FontFamilyPicker.js";
 import { getCodePreviewTheme } from "@/lib/codePreviewPreferences.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { CodePreviewSettings } from "@/store/index.js";
@@ -83,15 +85,27 @@ export function AppearanceSectionContent({
   setCodePreviewSettings,
   theme,
   setTheme,
+  palette,
+  setPalette,
   uiFontSizePx,
   setUiFontSizePx,
+  uiFontFamily,
+  setUiFontFamily,
+  monoFontFamily,
+  setMonoFontFamily,
 }: {
   codePreviewSettings: CodePreviewSettings;
   setCodePreviewSettings: (settings: Partial<CodePreviewSettings>) => void;
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  palette: ThemePalette;
+  setPalette: (palette: ThemePalette) => void;
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
+  uiFontFamily: string | null;
+  setUiFontFamily: (value: string | null) => void;
+  monoFontFamily: string | null;
+  setMonoFontFamily: (value: string | null) => void;
 }) {
   const { intl } = useZCodeIntl();
   const activePreviewMode = resolveTheme(theme);
@@ -137,6 +151,29 @@ export function AppearanceSectionContent({
               }
             />
             <SettingsRow
+              label={intl.formatMessage({ id: "settings.themePalette" })}
+              description={intl.formatMessage({
+                id: "settings.themePaletteDescription",
+              })}
+              control={
+                <Select
+                  value={palette}
+                  onValueChange={(value) => setPalette(value as ThemePalette)}
+                >
+                  <SelectTrigger size="lg" className="w-[260px] min-w-0 justify-between">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {THEME_PALETTE_IDS.map((id) => (
+                      <SelectItem key={id} value={id}>
+                        {intl.formatMessage({ id: `settings.themePalette.${id}` })}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              }
+            />
+            <SettingsRow
               label={intl.formatMessage({ id: "settings.uiFontSize" })}
               description={intl.formatMessage({
                 id: "settings.uiFontSizeDescription",
@@ -149,6 +186,21 @@ export function AppearanceSectionContent({
                   value={uiFontSizePx}
                   onChange={setUiFontSizePx}
                   ariaLabel={intl.formatMessage({ id: "settings.uiFontSize" })}
+                />
+              }
+            />
+            <SettingsRow
+              label={intl.formatMessage({ id: "settings.uiFont" })}
+              description={intl.formatMessage({
+                id: "settings.uiFontDescription",
+              })}
+              control={
+                <FontFamilyPicker
+                  key={uiFontFamily ?? ""}
+                  value={uiFontFamily}
+                  mono={false}
+                  ariaLabel={intl.formatMessage({ id: "settings.uiFont" })}
+                  onChange={setUiFontFamily}
                 />
               }
             />
@@ -235,6 +287,21 @@ export function AppearanceSectionContent({
                     value={codePreviewSettings.fontSizePx}
                     onChange={(fontSizePx) => setCodePreviewSettings({ fontSizePx })}
                     ariaLabel={intl.formatMessage({ id: "settings.fontSize" })}
+                  />
+                }
+              />
+              <SettingsRow
+                label={intl.formatMessage({ id: "settings.monoFont" })}
+                description={intl.formatMessage({
+                  id: "settings.monoFontDescription",
+                })}
+                control={
+                  <FontFamilyPicker
+                    key={monoFontFamily ?? ""}
+                    value={monoFontFamily}
+                    mono
+                    ariaLabel={intl.formatMessage({ id: "settings.monoFont" })}
+                    onChange={setMonoFontFamily}
                   />
                 }
               />

@@ -66,7 +66,7 @@ declare global {
     getTitle(): string;
     loadURL(url: string): Promise<void>;
     executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
-    // guest webContents id：dom-ready 后有效，renderer 上报给 main 用于 CDP attach（<webview>+CDP-on-guest）。
+    // Guest webContents ID: available after dom-ready; the renderer reports it to main for CDP attachment (<webview> + CDP-on-guest).
     getWebContentsId(): number;
     canGoBack(): boolean;
     canGoForward(): boolean;
@@ -147,9 +147,9 @@ declare global {
     ): void;
   }
 
-  // React 对 <webview> 的 ref 依赖 HTMLWebViewElement，
-  // 之前我们只声明了自定义的 ElectronWebviewTag，导致 ref 回调参数和 JSX intrinsic element 的宿主类型对不上。
-  // 这里把 DOM 侧的 HTMLWebViewElement 补齐到同一接口层级，让事件和 ref 都能按 Electron webview 解析。
+  // React refs for <webview> depend on HTMLWebViewElement,
+  // but we previously declared only the custom ElectronWebviewTag, so the ref callback parameter did not match the host type of the JSX intrinsic element.
+  // Complete the DOM-side HTMLWebViewElement at the same interface level so events and refs resolve as Electron webview types.
   interface HTMLWebViewElement extends ElectronWebviewTag {}
 
   namespace JSX {

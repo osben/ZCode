@@ -19,21 +19,21 @@ function withinOnePixel(left: BrowserViewportSize, right: BrowserViewportSize): 
 
 const SURFACE_SCALE_EPSILON = 0.001;
 
-// ready 过去只在
-// requestAnimationFrame 回调里上报，而 ZCode 主窗口被遮挡/最小化时 Chromium 会冻结
-// renderer 的 rAF，ready 永远发不出去，主进程握手只能固定在 1500ms 超时。用户日志里
-// 失败全是 1501/1502ms、成功全是 146~736ms，且 app-activate 之后 461ms 立刻成功，
-// 可以印证是"窗口不在前台 → rAF 不调度"而不是截图本身慢。
+// Previously, ready was reported only in the
+// requestAnimationFrame callback, but Chromium freezes renderer rAF when the ZCode main window is obscured or minimized
+// so ready is never sent and the main-process handshake always times out after 1500ms. User logs showed
+// all failures at 1501/1502ms and all successes at 146–736ms; after app-activate it succeeded immediately in 461ms,
+// confirming that “window is not in the foreground → rAF is not scheduled,” rather than the screenshot itself being slow.
 //
-//   前台：prepare ──► rAF(帧1) ──► rAF(帧2) ──► ready ──► capture      ✅ ~150ms
-//   后台：prepare ──► rAF 冻结 ───────────────► (无 ready) ──► 1500ms timeout ❌
+//   Foreground: prepare ──► rAF (frame 1) ──► rAF (frame 2) ──► ready ──► capture      ✅ ~150ms
+//   Background: prepare ──► rAF frozen ───────────────► (no ready) ──► 1500ms timeout ❌
 //
-// 因此 timer 必须和 rAF 竞速调度同一次检查：窗口被遮挡时 timer 是唯一还在走的时钟。
+// Therefore, race a timer against rAF to schedule the same check: when the window is obscured, the timer is the only clock still running.
 const SURFACE_VERIFY_FALLBACK_MS = 100;
-// viewport 尚未对齐时过去直接 return，而重启点只有 ResizeObserver 和 dom-ready；
-// setViewportSize / reload 之后尺寸如果恰好不再变化，就再也没有第二次验证机会，同样白等 1500ms。
-// 改为受控重试；main 把当前实际 timeout 放进 prepare payload，renderer 额外保留一段
-// Release 消息清理宽限。正常由 main 先释放，宽限只防止 Release 丢失后循环永久存活。
+// Previously, the function returned immediately if the viewport was not aligned, and only ResizeObserver and dom-ready could restart it;
+// if the size did not change after setViewportSize/reload, there was no second chance to validate and it still waited 1500ms in vain.
+// Use controlled retries; main includes the actual current timeout in the prepare payload, and the renderer keeps an additional
+// grace period for Release message cleanup. Main normally releases first; the grace period only prevents the loop from running forever if Release is lost.
 const SURFACE_VERIFY_RELEASE_GRACE_MS = 1_000;
 
 function resolveSurfacePrepareTimeoutMs(timeoutMs: number | undefined): number {
@@ -72,8 +72,8 @@ function readSurfaceViewport(
   const rect = webview.getBoundingClientRect();
   const transformed = roundViewport(rect.width, rect.height);
   const layoutScale = readBrowserLayoutScale(webview);
-  // Desktop 负缩放会先按 1 / zoom 扩张 webview 布局，再缩回可见 frame；
-  // raw offset 是宿主补偿尺寸，必须按同一 layout scale 还原后才能代表逻辑截图 viewport。
+  // Negative Desktop zoom first expands the webview layout by 1 / zoom, then scales it back into the visible frame;
+  // raw offset is the host’s compensated size and must be restored by the same layout scale to represent the logical screenshot viewport.
   const layout = roundViewport(
     webview.offsetWidth / layoutScale,
     webview.offsetHeight / layoutScale,
@@ -83,7 +83,7 @@ function readSurfaceViewport(
   return transformed ?? layout;
 }
 
-/** 在后台合成层中等候两个稳定帧，确认 guest id 与自然 viewport 同时仍然有效。 */
+/** Wait for two stable frames in the background compositing layer to confirm that both the guest id and natural viewport are still valid. */
 export function useBrowserScreenshotSurfaceReady({
   request,
   webview,
@@ -110,8 +110,8 @@ export function useBrowserScreenshotSurfaceReady({
       return;
     }
 
-    // TypeScript 不会把 early return 的非空收窄带进下面的 hoisted function declaration
-    // （它们理论上可能在守卫前被调用），这里固定一份已收窄的引用给整个验证链使用。
+    // TypeScript does not carry the non-null narrowing from an early return into the hoisted function declaration below
+    // (they could theoretically be called before the guard), so capture a narrowed reference here for the entire validation chain.
     const activeRequest = request;
     const activeWebview = webview;
 
@@ -136,7 +136,7 @@ export function useBrowserScreenshotSurfaceReady({
         fallbackTimer = null;
       }
     };
-    // rAF 与 timer 竞速：谁先到谁执行这一次检查，另一路立即取消，语义上仍然是"一次验证"。
+    // Race rAF and the timer: whichever fires first runs the single check and immediately cancels the other, preserving the semantics of one validation.
     function verify(): void {
       if (disposed || reported) return;
       cancelPendingVerification();
@@ -216,14 +216,14 @@ export function useBrowserScreenshotSurfaceReady({
     const observer = new ResizeObserver(() => {
       restartVerification();
     });
-    // guest 首次 attach 时 getWebContentsId() 可能暂时返回 0；若布局尺寸没有变化，
-    // ResizeObserver 不会再次触发。dom-ready 是 guest identity 可读后的同一视图边界，
-    // 因此在这里重置稳定帧重新开始验证。
+    // getWebContentsId() may temporarily return 0 on the guest’s first attach; if the layout size does not change,
+    // ResizeObserver will not fire again. dom-ready is the view boundary where the guest identity becomes readable,
+    // so reset the stable-frame count here and restart validation.
     const handleDomReady = () => {
       restartVerification();
     };
-    // 窗口从后台回到前台时 Chromium 才恢复 rAF 与合成，此时 surface 可能刚重建，
-    // 之前采到的稳定帧不能再信任；这里清空重来，让恢复可见的瞬间就能重新走完两帧验证。
+    // When the window returns to the foreground, Chromium resumes rAF and compositing; the surface may have just been rebuilt,
+    // so previous stable frames are no longer trustworthy. Clear them and start over so validation can complete its two frames as soon as the view becomes visible again.
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
       restartVerification();

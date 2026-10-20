@@ -10,26 +10,30 @@ import {
 } from "./timeline-geometry.js";
 
 /**
- * 补全的框（docs/dynamic-workflow/presentation.md「Holes on the timeline」的「Filled with phases」与
- * 「The stroke」）：一根 1px 的线、圆角 8，围住一次补全写下的东西，只在指针落在它的**头**上（或键盘
- * 焦点在头上）时画出；补全接进 run 后的两秒里它自己画一遍。线是**一笔**：从上缘的起点出发、顺时针
- * 绕一圈回到起点——有头的补全起点是笔的 x（头是图例，线从名字的右端冒出来、收在笔上），没有头的
- * 从左上角起。纯几何，无 React、无 DOM。
+ * Fill frames (docs/dynamic-workflow/presentation.md "Holes on the timeline", sections "Filled with
+ * phases" and "The stroke"): a single 1px line, radius 8, enclosing what one fill wrote, drawn only
+ * when the pointer is over its **head** (or keyboard focus is on the head); during the two seconds
+ * after the fill joins the run it draws itself. The line is **one stroke**: it starts on the top edge
+ * and circles clockwise back to its start — a headed fill starts at the pen's x (the head is the
+ * legend; the line emerges at the name's right end and ends on the pen), a headless one starts from
+ * the top-left corner. Pure geometry: no React, no DOM.
  *
- * 修复原因（2026-09-29 实测）：此前的「区域」是一块着色的底，指针落在补全里任一站 / 药丸上都会亮，
- * 横扫卡片时一路闪；嵌套的补全叠成深浅两块，读起来像面板；侧板上则什么都没有。
+ * Fix rationale (tested 2026-09-29): the previous "area" was a tinted block that lit whenever the
+ * pointer touched any station / pill inside the fill, flickering all the way across a card sweep;
+ * nested fills stacked into two blocks of different depth and read like a panel; and the side pane
+ * had nothing at all.
  */
 
-/** 框越过它所围的列两侧的量。 */
+/** How far the frame extends past the columns it encloses, on both sides. */
 export const FRAME_OUTSET = 8;
-/** 同起于一列的嵌套框每层向里收的量。 */
+/** How far each nesting level of same-start nested frames insets inward. */
 export const FRAME_NEST_INSET = 4;
-/** 框的圆角。 */
+/** The frame's corner radius. */
 export const FRAME_RADIUS = 8;
-/** 头那一行两侧给线留的空。 */
+/** The gap the line leaves on both sides of the head row. */
 export const FRAME_LEGEND_GAP = 4;
 
-/** 框的外接矩形（整数像素），`start` 是笔在上缘的 x；缺席即从左上角起笔。 */
+/** The frame's bounding rectangle (integer pixels); `start` is the pen's x on the top edge; absent means the stroke starts from the top-left corner. */
 export interface FrameBox {
   x0: number;
   y0: number;
@@ -41,13 +45,14 @@ export interface FrameBox {
 export interface TimelineFrame {
   holeId: string;
   box: FrameBox;
-  /** 补全的时刻：新鲜态（两秒）按它算。 */
+  /** The fill's moment: the fresh state (two seconds) is computed from it. */
   filledAt?: number;
 }
 
 /**
- * 一笔画完的路径：从上缘的 `start` 出发，向右、顺时针绕一圈、回到 `start`。1px 的线落在半像素上
- * 才不糊：矩形向里收半个像素。`pathLength` 由调用方给 1，虚线偏移从 1 走到 0 就是「画出来」。
+ * A one-stroke path: starts at `start` on the top edge, goes right, circles clockwise, and returns to
+ * `start`. A 1px line stays crisp only on half pixels: the rectangle is inset by half a pixel.
+ * The caller supplies `pathLength` 1; the dash offset walking from 1 to 0 is "being drawn".
  */
 export function framePath(box: FrameBox, radius = FRAME_RADIUS): string {
   const x0 = box.x0 + 0.5;
@@ -70,7 +75,7 @@ export function framePath(box: FrameBox, radius = FRAME_RADIUS): string {
   ].join(" ");
 }
 
-/** 无阶段的补全：留白自己的站带笔标、不在 `fills` 里的那些（它们的框只围自己一列）。 */
+/** Phase-less fills: the holes' own stations that carry a pen mark and are not in `fills` (their frames enclose only their own column). */
 export interface FillMark {
   holeId: string;
   index: number;
@@ -95,7 +100,7 @@ export function fillMarksOf(
   });
 }
 
-/** 与 `fill` 同起于一列、又包着它的补全有几层：框按层向里收。 */
+/** How many fills start on the same station as `fill` and also enclose it: frames inset by depth. */
 function sameStartDepth(
   fill: TimelineFill,
   fills: readonly TimelineFill[],
@@ -109,7 +114,7 @@ function sameStartDepth(
   ).length;
 }
 
-/** 包着 `holeId` 的补全有几层（侧板的框按它向里收）。 */
+/** How many fills enclose `holeId` (the pane's frames inset by it). */
 export function fillDepthOf(
   holeId: string,
   fills: readonly Pick<TimelineFill, "holeId">[],
@@ -121,10 +126,13 @@ export function fillDepthOf(
 }
 
 /**
- * 卡上的框。有头的补全：x 从首列左缘 − 8 到末列右缘 + 8，y 从头那一行的中线到它最高那一列药丸之下 8px
- * （那几列没有药丸——比如卡收起时——就到轨道行 / 站台行之下 4px）；同起于一列的嵌套框每层左、右、
- * 下各收 4px。无阶段的补全：它那一列，轨道行之上 4px 到它的药丸之下 8px，从左上角起笔。一律夹在
- * 时间线的画布里（首列与末列的框才不会被滚动层裁掉半根线）。
+ * Frames on the card. A headed fill: x from the first column's left edge − 8 to the last column's
+ * right edge + 8, y from the head row's midline to 8px below its tallest column's pills (when those
+ * columns have no pills — the card collapsed, say — to 4px below the rail row / platform row);
+ * same-start nested frames inset 4px on left, right, and bottom per level. A phase-less fill: its own
+ * column, 4px above the rail row to 8px below its pill, stroke starting from the top-left corner.
+ * Everything is clamped to the timeline canvas (so the first and last columns' frames are not cut in
+ * half by the scroll layer).
  */
 export function timelineFrames({
   columnHeight,
@@ -139,7 +147,7 @@ export function timelineFrames({
   fills: readonly TimelineFill[];
   stations: readonly Pick<TimelineStation, "hole" | "track">[];
   layout: Pick<TimelineLayout, "pillsTop" | "rowY">;
-  /** 第 i 站药丸列的高（没有药丸为 0）。 */
+  /** The i-th station's pill-column height (0 when there are no pills). */
   columnHeight: (index: number) => number;
   height: number;
   width: number;
@@ -149,7 +157,7 @@ export function timelineFrames({
   const bottomOf = (from: number, to: number): number => {
     let tallest = 0;
     for (let i = from; i <= to; i += 1) tallest = Math.max(tallest, columnHeight(i));
-    // 药丸列顶 = 轨道行（或站台行）底 + 8，所以没有药丸时 pillsTop − 4 就是那一行之下 4px。
+    // Pill column top = rail row (or platform row) bottom + 8, so with no pills, pillsTop − 4 is 4px below that row.
     return tallest > 0 ? layout.pillsTop + tallest + FRAME_OUTSET : layout.pillsTop - 4;
   };
   const clamp = (box: FrameBox): FrameBox => ({
@@ -189,7 +197,7 @@ export function timelineFrames({
   return frames;
 }
 
-/** 头那一行在上缘上挖的空（图例）：一行一个矩形，两侧各让 4px。宽度量不到（0）时不挖。 */
+/** The gap the head row cuts out of the top edge (the legend): one rectangle per row, 4px clearance on each side. Not cut when the width is unmeasurable (0). */
 export function legendGaps(
   rows: readonly { left: number; width: number }[],
 ): { x: number; width: number }[] {
@@ -199,9 +207,11 @@ export function legendGaps(
 }
 
 /**
- * 侧板的框：x 从 8 到列表右缘 − 12，每层嵌套各收 4px；有标题的补全从标题的中线起、到它最后一节之下
- * 4px，起笔在轨道的 x（21，笔盖着那一截）；无阶段的补全围自己那一节，上下各收 2px，从左上角起笔。
- * 纵向位置由调用方从 DOM 量来（节的展开 / 折叠会改它们）。
+ * The side pane's frame: x from 8 to the list's right edge − 12, each nesting level inset 4px; a
+ * headed fill goes from the heading's midline to 4px below its last section, with the stroke starting
+ * at the track's x (21, where the pen covers the line); a phase-less fill encloses its own section,
+ * inset 2px top and bottom, stroke starting from the top-left corner. Vertical positions are measured
+ * from the DOM by the caller (section expand/collapse changes them).
  */
 export const SPINE_FRAME_LEFT = 8;
 export const SPINE_FRAME_RIGHT = 12;
@@ -214,9 +224,9 @@ export function spineFrameBox({
   top,
   width,
 }: {
-  /** 标题行的顶（有头）或那一节的顶（无头），相对列表内容。 */
+  /** The heading row's top (headed) or the section's top (headless), relative to the list content. */
   top: number;
-  /** 最后一节的底。 */
+  /** The last section's bottom. */
   bottom: number;
   width: number;
   depth: number;

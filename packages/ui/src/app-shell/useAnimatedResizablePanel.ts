@@ -64,8 +64,8 @@ export function useAnimatedResizablePanel({
     }
 
     if (open) {
-      // 条件渲染的 Panel 如果一挂载就直接处于展开态，首帧会直接跳到目标尺寸。
-      // 这里先让常驻 Panel 保持折叠态，再在下一帧切到展开态，打开和关闭就能复用同一套过渡。
+      // If a conditionally rendered Panel mounts already expanded, the first frame jumps directly to the target size.
+      // Keep the persistent Panel collapsed first, then expand it on the next frame so opening and closing can share the same transition.
       const rafId = window.requestAnimationFrame(() => {
         setIsVisible(true);
       });
@@ -87,23 +87,22 @@ export function useAnimatedResizablePanel({
     if (!hasHandledVisibilityRef.current) {
       hasHandledVisibilityRef.current = true;
       if (isVisible && !resizeOnInitialVisibleMount) {
-        // sidebar 的 PanelGroup 已通过 layoutId 持久化宽度。
-        // 首次可见挂载时如果这里再 resize 到默认值，会覆盖用户上次拖拽保存的宽度。
+        // The sidebar PanelGroup already persists width through layoutId.
+        // Resizing it to the default on first visible mount would overwrite the width saved by the user's last drag.
         return;
       }
     }
 
-    // 之前把 flex-grow transition 常驻在 data-panel 上，窗口原生缩放时
-    // react-resizable-panels 的 ResizeObserver 会看到一串动画中间尺寸，进而触发大量
-    // layout store 更新和 React commit。这里只在显式展开/收起面板时短暂启用尺寸过渡，
-    // 避免普通窗口 resize 被动画链路放大。
+    // Previously, a persistent flex-grow transition on data-panel made react-resizable-panels' ResizeObserver see
+    // a series of intermediate sizes during native window resizing, triggering many layout-store updates and React commits. Enable size transitions briefly only when explicitly expanding/collapsing the panel,
+    // so ordinary window resize does not amplify through the animation path.
     const cleanupTransition = panelElement
       ? enablePanelFlexGrowTransition(panelElement)
       : undefined;
 
-    // Panel 首次挂载时，react-resizable-panels 会在内部 effect 里注册约束。
-    // 如果我们同一拍就立刻调用 collapse/expand，偶发会早于约束注册完成，触发
-    // “Panel constraints not found” 崩溃。这里延后一帧，确保面板先完成注册再执行动画命令。
+    // When a Panel first mounts, react-resizable-panels registers constraints in an internal effect.
+    // Calling collapse/expand immediately in the same frame may race ahead of constraint registration and occasionally throw
+    // “Panel constraints not found.” Defer one frame so the panel can register before running the animation command.
     const rafId = window.requestAnimationFrame(() => {
       if (isVisible) {
         const nextExpandedSize = expandedSizeRef.current;

@@ -1,13 +1,16 @@
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
+import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 
 export function TaskListItemContextMenu({
   organizationActions,
   intl,
+  task,
   isPinned,
   isArchived = false,
   fileManagerLabel,
@@ -18,6 +21,8 @@ export function TaskListItemContextMenu({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
+  onDeleteTask,
+  deleteDisabledReason,
   onMarkTaskAsUnread,
   onOpenInSplitPane,
   openInSplitPaneDisabled,
@@ -27,6 +32,7 @@ export function TaskListItemContextMenu({
   onCopyTaskPath,
   onCopyTaskLogPath,
   onCopySessionId,
+  onCopyText,
   onViewModelTrajectory,
   onOpenProviderConfig,
   disableTaskActions = false,
@@ -36,6 +42,7 @@ export function TaskListItemContextMenu({
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
+  task: ZCodeTaskMeta;
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
@@ -50,10 +57,12 @@ export function TaskListItemContextMenu({
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
-  /** 「在分屏打开」（仅桌面 shell 传入）。 */
+  /** “Open in split pane” (provided only by the desktop shell). */
   onOpenInSplitPane?: () => void;
-  /** 叶子数达上限且该 session 未在任何 pane 时禁用。 */
+  /** Disabled when the leaf limit is reached and the session is not already in any pane. */
   openInSplitPaneDisabled?: boolean;
   onOpenTaskFeedback: () => void;
   onOpenTaskPathInFileManager: () => void;
@@ -61,6 +70,7 @@ export function TaskListItemContextMenu({
   onCopyTaskPath: () => void;
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
+  onCopyText: (label: string, value: string | null) => void;
   onViewModelTrajectory?: () => void;
   onOpenProviderConfig: () => void;
   disableTaskActions?: boolean;
@@ -83,6 +93,8 @@ export function TaskListItemContextMenu({
         onTogglePinTask={onTogglePinTask}
         onStartRenameTask={onStartRenameTask}
         onArchiveTask={onArchiveTask}
+        onDeleteTask={onDeleteTask}
+        deleteDisabledReason={deleteDisabledReason}
         onMarkTaskAsUnread={onMarkTaskAsUnread}
         onOpenInSplitPane={onOpenInSplitPane}
         openInSplitPaneDisabled={openInSplitPaneDisabled}
@@ -96,6 +108,13 @@ export function TaskListItemContextMenu({
         onOpenProviderConfig={onOpenProviderConfig}
         disableTaskActions={disableTaskActions}
         disabledReason={disabledReason}
+      />
+      <TaskPullRequestMenuItems
+        task={task}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        onCopyText={onCopyText}
       />
     </ContextMenuContent>
   );

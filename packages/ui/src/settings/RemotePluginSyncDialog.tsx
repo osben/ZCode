@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- 远端 plugin 同步弹窗集中维护加载、选择、风险提示、逐项进度和结果状态，保持与 Skill/MCP 同步弹窗一致。 */
+/* eslint-disable max-lines -- The remote Plugin sync dialog centralizes loading, selection, risk notices, per-item progress, and result state to match the Skill/MCP sync dialogs. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircleIcon,
@@ -1644,8 +1644,8 @@ export function RemotePluginSyncDialog(props: RemotePluginSyncDialogProps) {
 
     return () => {
       cancelled = true;
-      // 远端目标失效会直接卸载 Dialog，绕过“同步中禁止关闭”的交互保护。
-      // 主动终止当前 run，避免旧目标上的后续步骤和结果继续落回已失效的 UI。
+      // An invalid remote target unmounts the Dialog directly, bypassing the interaction guard that prevents closing during sync.
+      // Stop the current run explicitly so later steps and results from the old target cannot update the invalidated UI.
       syncAbortControllerRef.current?.abort();
       syncAbortControllerRef.current = null;
     };
@@ -1676,8 +1676,8 @@ export function RemotePluginSyncDialog(props: RemotePluginSyncDialogProps) {
   const targetLabel = formatRemoteSkillSyncTarget(remoteTarget, workspacePath);
 
   const handleOpenChange = (nextOpen: boolean) => {
-    // plugin 同步是逐项远端 RPC；同步中关闭弹窗会让下次打开时重置为 loading/0 项，
-    // 但后台 RPC 仍在跑。同步中只拦截关闭请求，避免丢失进度状态。
+    // Plugin sync makes one remote RPC per item. Closing the dialog during sync resets the next opening to loading/0 items,
+    // while the background RPCs continue running. Block close requests during sync so progress state is retained.
     if (!shouldAllowRemotePluginSyncDialogOpenChange(step, nextOpen)) {
       return;
     }
@@ -1699,8 +1699,8 @@ export function RemotePluginSyncDialog(props: RemotePluginSyncDialogProps) {
   const stopPluginSync = (candidateId: string) => {
     stopRequestedRef.current.add(candidateId);
     stopWaitersRef.current.get(candidateId)?.();
-    // 远端 marketplace install/add 会占用插件存储锁；只在远程同步生成的
-    // operationId 上发送取消，避免误伤本地插件页的常规安装、启停和市场管理操作。
+    // Remote marketplace install/add uses the plugin storage lock. Send cancellation only for operationIds created by remote sync,
+    // so normal install, enable/disable, and marketplace management actions on the local plugin page are not interrupted.
     setSyncProgressById((current) => {
       const next = new Map(current);
       const previous = next.get(candidateId) ?? { logs: [], status: "queued" as const };

@@ -8,8 +8,8 @@ interface AutomationSwitchToggleProps {
   size?: "default" | "sm";
 }
 
-// Scheduled 曾单独实现 switch，导致关闭态轨道与滑块定位偏离 Automations；两页统一从这里渲染。
-// 首页模板进入创建页时 switch 只有点击和 focus 反馈，鼠标悬浮无法识别为可交互控件。
+// Scheduled used to implement its own switch, so its off-state track and thumb were misaligned with Automations; both pages render it here.
+// When home-page templates opened the create page, the switch responded only to click and focus, so hover did not identify it as interactive.
 export function AutomationSwitchToggle({
   checked,
   onChange,

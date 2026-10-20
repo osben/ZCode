@@ -1,6 +1,6 @@
-// 已保存工作流中枢的读缓存。
-// 按 workspaceKey 分片；磁盘仍是唯一权威（不变式 2）——缓存只服务同一页内的重渲染，
-// 变更后一律 `bypass` 刷新（skillStore 的同一条教训：复用 in-flight Promise 会拿到旧扫描）。
+// Read cache for the saved-workflow hub.
+// Sharded by workspaceKey; disk remains the only authority (invariant 2) — the cache only supports rerenders on the same page,
+// always refresh with `bypass` after a mutation (same lesson as skillStore: reusing an in-flight Promise returns a stale scan).
 import { create } from "zustand";
 import {
   resolveWorkspaceKey,
@@ -13,24 +13,24 @@ import type { IZCodeAgentService, ZCodeAgentSavedWorkflowTarget } from "@zcode/s
 import { logger } from "@/logger.js";
 import { useWorkflowRunSavedStore } from "@/store/workflowRunSavedStore.js";
 
-/** 一页里最多拉多少条 run 来算「上次运行」；一个项目的活跃工作流很少超过这个数。 */
+/** Maximum runs to fetch per page to compute "last run"; a project rarely has more active workflows than this. */
 const SAVED_WORKFLOW_RUNS_PAGE = 50;
 
 /**
- * 声明输出需要：useSavedWorkflowGlobalGroup 的返回类型引用它，tsc -d 要求可命名；
- * knip 看不到这种用法，故标 public。
+ * Needed for declaration output: useSavedWorkflowGlobalGroup's return type references it, and tsc -d requires a nameable type;
+ * knip cannot detect this use, so mark it public.
  * @public
  */
 export interface SavedWorkflowWorkspaceState {
   entries: ZCodeSavedWorkflowEntry[];
   invalid: ZCodeSavedWorkflowInvalidEntry[];
   runs: ZCodeSavedWorkflowRun[];
-  /** 扫过的目录（本地绝对路径），全局组据此 watch；未加载或列表未回时为 null。 */
+  /** Scanned directories (local absolute paths), used by the global group to watch; null before loading or while the list has not returned. */
   dir: string | null;
   loading: boolean;
   loaded: boolean;
   error: string | null;
-  /** 列表调用的 JSON-RPC 错误码（有则填）；全局组用 -32602 区分「旧 agent 不支持」与其他错误。 */
+  /** JSON-RPC error code from the list call, when available; the global group uses -32602 to distinguish "unsupported by legacy Agent" from other errors. */
   errorCode: number | null;
 }
 
@@ -57,9 +57,9 @@ interface SavedWorkflowStoreState {
 const inFlight = new Map<string, Promise<void>>();
 
 /**
- * 读缓存的分片键：全局档（`scope:"global"` 且不带 workspace）
- * 用固定键 `"global"`——它跨项目、由 services 自选载体，不该与任何项目的 workspaceKey 混淆；
- * 项目档仍按 `resolveWorkspaceKey` 分片。
+ * Read-cache shard key: the global tier (`scope:"global"` with no workspace)
+ * uses the fixed key `"global"` — it spans projects and services chooses its storage location, so it must not be confused with any project's workspaceKey;
+ * project tiers remain sharded by `resolveWorkspaceKey`.
  */
 function savedWorkflowStoreKey(target: ZCodeAgentSavedWorkflowTarget): string {
   if (target.scope === "global" && !target.workspacePath) return "global";
@@ -69,7 +69,7 @@ function savedWorkflowStoreKey(target: ZCodeAgentSavedWorkflowTarget): string {
   });
 }
 
-/** 从抛出的错误里取 JSON-RPC code（ChannelClient 保留 error.code）；取不到回 null。 */
+/** Gets the JSON-RPC code from a thrown error (ChannelClient preserves error.code); returns null if unavailable. */
 function extractErrorCode(error: unknown): number | null {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "number" ? code : null;
@@ -79,7 +79,7 @@ async function fetchWorkspace(
   target: ZCodeAgentSavedWorkflowTarget,
   agentService: IZCodeAgentService,
 ): Promise<{ list: ZCodeWorkflowsListResult; runs: ZCodeSavedWorkflowRun[] }> {
-  // 列表与运行历史并行；运行历史失败不拖垮列表（journal 缺席时中枢照常能看、能管）。
+  // Fetch the list and run history in parallel; a run-history failure does not break the list (the hub remains usable when the journal is unavailable).
   const [list, runs] = await Promise.all([
     agentService.listSavedWorkflows(target),
     agentService
@@ -111,9 +111,9 @@ export const useSavedWorkflowStore = create<SavedWorkflowStoreState>((set) => ({
     }));
     const request = fetchWorkspace(target, agentService)
       .then(({ list, runs }) => {
-        // 中枢刚看过磁盘：把完成卡那张「这次 run 存成了哪个工作流」的读缓存一并作废
+        // The hub just read from disk: invalidate the completion-card read cache for “which workflow this run was saved as” too
         // （docs/dynamic-workflow/transcript-and-notifications.md「Which workflow a run is saved as」）。
-        // 中枢里的删除 / 移动 / 改元数据都以一次刷新收尾，这一行让那些动作也走到对话里的卡片上。
+        // Delete, move, and metadata changes in the hub all finish with a refresh; this line propagates those actions to the cards in the conversation.
         useWorkflowRunSavedStore.getState().invalidate();
         set((state) => ({
           byWorkspaceKey: {
@@ -163,7 +163,7 @@ export function selectSavedWorkflowState(
   return state.byWorkspaceKey[savedWorkflowStoreKey(target)] ?? EMPTY_SAVED_WORKFLOW_STATE;
 }
 
-/** 测试用：清掉 in-flight 去重表。 */
+/** For tests: clear the in-flight deduplication table. */
 export function resetSavedWorkflowStoreForTests(): void {
   inFlight.clear();
   useSavedWorkflowStore.setState({ byWorkspaceKey: {} });

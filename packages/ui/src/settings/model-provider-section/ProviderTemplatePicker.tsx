@@ -1,4 +1,3 @@
-import { toServiceLocale } from "../../i18n/serviceLocale.js";
 import type { ProviderSettingsView } from "@zcode/services";
 import { ArrowLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { resolveProviderTemplateName } from "@zcode/provider";
@@ -108,11 +107,7 @@ export function ProviderTemplatePicker({
                 />
               ) : null}
               {group.templates.map((template) => {
-                const label = resolveProviderTemplateName(
-                  template.templateId,
-                  template,
-                  toServiceLocale(locale),
-                );
+                const label = resolveProviderTemplateName(template.templateId, template, locale);
                 return (
                   <ProviderTemplateCard
                     key={template.templateId}

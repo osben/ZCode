@@ -67,10 +67,12 @@ export function recordHighspeedTurn(record: HighspeedTurnRecord): void {
 }
 
 /**
- * 冷启动恢复与跨端追平：到期时 renderer 可能不在场，内存 store 没有机会登记/收口这张卡；
- * 远控 Renderer 也可能先登记运行中 row、桌面端随后才把完成态持久化进 transcript。
- * 合并口径见 planHighspeedTranscriptHydration；这里只负责按序落库并发一次通知。
- * 返回产生变化的 row 数；无变化不发通知，重复水合不会造成渲染抖动。
+ * Cold-start restore and cross-device catch-up: the renderer may be absent at expiry, leaving the
+ * in-memory store no chance to register or settle the card; a remote-control Renderer may also
+ * register a running row before the desktop later persists the settled state into the transcript.
+ * Merge policy is defined in planHighspeedTranscriptHydration; this only persists in order and
+ * notifies once. Returns the number of changed rows; no notification when nothing changed, so
+ * repeated hydration cannot cause render churn.
  */
 export function hydrateHighspeedTurnsFromTranscript(
   sessionId: string,
@@ -153,9 +155,10 @@ export function getHighspeedCardTps(cardId: string): number | undefined {
 }
 
 /**
- * 卡级 healthy 查询防重必须跨 SessionPane 生命周期存在；组件 ref 会在重挂载后清空，
- * 导致同一张已过期卡持续请求并放大服务端限流。每张卡最多允许到期查询一次，
- * 若当时仍有 Turn 运行，再允许最后一轮结束后补查一次。
+ * Card-level healthy-query dedup must outlive SessionPane's lifecycle; a component ref is cleared
+ * on remount, letting the same expired card keep requesting and amplifying server rate limiting.
+ * Each card gets at most one expiry-time query, plus one completion retry if a Turn was still
+ * running at that point.
  */
 export function claimHighspeedHealthyAttempt(cardId: string, allTurnsCompleted: boolean): boolean {
   const attempts = healthyAttemptsByCardId.get(cardId) ?? {
@@ -203,10 +206,7 @@ export function markHighspeedTurnMetricsPersisted(
   if (changed) publishChange();
 }
 
-export function markHighspeedCardAutoShared(
-  cardId: string,
-  autoSharedAt = Date.now(),
-): void {
+export function markHighspeedCardAutoShared(cardId: string, autoSharedAt = Date.now()): void {
   let changed = false;
   records = records.map((record) => {
     if (record.card.cardId !== cardId || record.autoSharedAt !== undefined) return record;
@@ -314,12 +314,14 @@ export function listHighspeedCardAutoShareCandidates(
       return [];
     }
     const metrics = aggregateHighspeedCardMetrics(cardId);
-    // Bug 原因：零输出卡过去仍会进入自动分享，build request 再把 token_usage 强制成 1，
-    // 既违背“没有生成内容不展示/分享”的产品语义，也会向后端写入虚假 usage。
+    // Bug cause: zero-output cards still entered auto-share, and build request then forced
+    // token_usage to 1, violating the "no generated content means no display/share" product
+    // semantics and writing fake usage to the backend.
     if (metrics.outputTokens <= 0) return [];
-    // 未达标（总体加速倍率 ≤1.2x）不发布左下角分享卡：发布门禁与「查看」按钮门禁同口径，
-    // 否则会出现「卡弹出来却没有查看按钮」的半残态（spec §9）。诊断 blocker below-min-speedup
-    // 与此保持一致，避免达标判定漂移或静默丢卡。
+    // Below threshold (overall speedup <=1.2x) does not publish the bottom-left share card: the
+    // publish gate matches the "View" button gate, otherwise a half-broken state appears where the
+    // card pops up with no View button (spec §9). The diagnostic blocker below-min-speedup stays
+    // consistent with this to avoid eligibility drift or silently dropped cards.
     if (!isHighspeedShareEligible(metrics)) return [];
     return [
       {
@@ -376,9 +378,7 @@ export function aggregateHighspeedCardMetrics(cardId: string): HighspeedShareMet
   const regularDurationSeconds = records.reduce(
     (total, record) =>
       total +
-      (record.metrics.regularTps > 0
-        ? record.metrics.outputTokens / record.metrics.regularTps
-        : 0),
+      (record.metrics.regularTps > 0 ? record.metrics.outputTokens / record.metrics.regularTps : 0),
     0,
   );
   const hasRealTiming =
@@ -416,9 +416,7 @@ export function aggregateHighspeedCardMetrics(cardId: string): HighspeedShareMet
       : {}),
     savedDurationMs,
     regularTps:
-      regularDurationSeconds > 0
-        ? Number((outputTokens / regularDurationSeconds).toFixed(3))
-        : 0,
+      regularDurationSeconds > 0 ? Number((outputTokens / regularDurationSeconds).toFixed(3)) : 0,
     highspeedTps,
   };
 }

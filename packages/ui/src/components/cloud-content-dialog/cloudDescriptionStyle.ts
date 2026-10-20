@@ -17,7 +17,7 @@ function length(value: string): boolean {
   return !!match && Number(match[1]) <= (match[2] === "px" ? 32 : 2);
 }
 function allowed(property: string, value: string): boolean {
-  // CSS 解析之后仍禁止变量 fallback、转义和资源函数；不能只靠属性名单放行值。
+  // Even after CSS parsing, variable fallbacks, escapes, and resource functions are forbidden; an allowlist of properties alone must not admit values.
   if (/[\\@!]|\/\*/.test(value)) return false;
   if (["color", "background-color", "text-decoration-color"].includes(property)) {
     return (
@@ -65,7 +65,7 @@ function allowed(property: string, value: string): boolean {
 
 export function parseCloudDescriptionStyle(text: string | null): CSSProperties | undefined {
   if (!text) return undefined;
-  // 未挂载元素上的 CSSOM 负责声明解析，不把原始 style 或 DOM 直接插入宿主。
+  // CSSOM on an unmounted element handles declaration parsing; raw style or DOM is never inserted into the host directly.
   const parsed = document.createElement("span").style;
   parsed.cssText = text;
   const result: Record<string, string> = {};

@@ -28,8 +28,8 @@ function createDirectiveStartPattern(
   directiveName: string,
   options: AssistantDirectiveSyntaxOptions = {},
 ): RegExp {
-  // 模型偶尔把文件引用的双冒号输出成单/三冒号；不能全局放宽，否则
-  // code-comment 等协议也会被意外兼容。opt-in 时同时拒绝从连续冒号中间起匹配。
+  // The model sometimes outputs file references with one or three colons instead of two; do not relax the rule globally, or
+  // protocols such as code-comment would be accepted unintentionally. When opted in, also reject matches that start inside a run of consecutive colons.
   const minimumColonCount = options.allowSingleColon ? 1 : 2;
   const maximumColonCount = options.allowTripleColon ? 3 : 2;
   const prefix = `(?<!:):{${minimumColonCount},${maximumColonCount}}`;
@@ -48,8 +48,8 @@ function getDirectiveQuoteState(
   if (character === '"' || character === "'") {
     return { open: character, close: character };
   }
-  // 中文模型输出可能使用成对智能引号；未识别时会退化为未加引号值，
-  // 使空格截断路径或把引号字符带入后续文件解析。仅由 citation opt-in，保持其它 directive 严格。
+  // Chinese-language model output may use paired smart quotes. If they are not recognized, the value is treated as unquoted,
+  // which can truncate paths at spaces or pass quote characters into later file parsing. Enable this only for citations; keep other directives strict.
   if (!options.allowSmartQuotes) return null;
   if (character === "“") return { open: character, close: "”" };
   if (character === "‘") return { open: character, close: "’" };
@@ -110,7 +110,7 @@ function parseQuotedValue(
     ) {
       value += escapedCharacter;
     } else {
-      // Directive 不是 JSON；未知转义必须保留反斜杠，避免把 Windows 路径改坏。
+      // A directive is not JSON; preserve the backslash for unknown escapes so Windows paths are not corrupted.
       value += `\\${escapedCharacter}`;
     }
     index += 1;
@@ -291,8 +291,8 @@ export function findUnclosedAssistantDirectiveStart(
       continue;
     }
     if (findDirectiveClosingBrace(content, openBraceIndex, options) < 0) {
-      // 只有仍然符合“参数前缀”的半截 directive 才隐藏。闭合引号后又出现
-      // 普通正文时，参数解析会失败，于是保留原文，避免缺失 `}` 把后文吞掉。
+      // Hide only a partial directive that still matches the “argument prefix.” If text appears after a closing quote
+      // as ordinary prose, argument parsing fails and the original text is kept, preventing a missing `}` from swallowing later content.
       const parameterPrefix = content.slice(openBraceIndex + 1);
       let quote: DirectiveQuoteState | null = null;
       let escaped = false;
@@ -317,8 +317,8 @@ export function findUnclosedAssistantDirectiveStart(
 }
 
 /**
- * 流式尾部可能刚开始输出特化 directive 时，先把仍然匹配协议名称前缀的内容暂存。
- * 只检查文末连续尾部，且跳过 Markdown 代码范围；一旦前缀分叉，返回 null 让正文照常显示。
+ * When a streaming tail may have just started outputting a specialized directive, temporarily hold content that still matches a protocol-name prefix.
+ * Check only the continuous tail at the end and skip Markdown code ranges; once the prefix diverges, return null so the text displays normally.
  */
 export function findAssistantDirectivePrefixStart(
   content: string,

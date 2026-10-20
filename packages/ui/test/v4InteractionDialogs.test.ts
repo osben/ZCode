@@ -105,7 +105,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -176,7 +176,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",
@@ -224,7 +224,7 @@ describe("V4InteractionDialogs", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "sess-1",
           workspacePath: "/workspace",

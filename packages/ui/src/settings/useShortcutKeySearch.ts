@@ -2,25 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import { recordShortcutBinding } from "@/shortcuts/bindings.js";
 
 export interface ShortcutKeySearch {
-  /** 武装态：等待用户按出组合键。 */
+  /** Armed state: waiting for the user to press a key combination. */
   armed: boolean;
-  /** 已捕获的组合（null = 未启用按键过滤）。键盘独占抑制由设置页按 armed 聚合管理。 */
+  /** Captured combination (null = key filtering disabled). The settings page manages exclusive keyboard suppression based on armed. */
   binding: string | null;
-  /** 切换武装态。激活前调用方需先取消行内录制（互斥，见 ShortcutSettingsSection）。 */
+  /** Toggle armed state. The caller must cancel inline recording first (mutually exclusive; see ShortcutSettingsSection). */
   toggle: () => void;
-  /** 退出武装态（保留已捕获组合的过滤）。 */
+  /** Exit armed state (keep filtering by the captured combination). */
   disarm: () => void;
-  /** 清除已捕获组合（过滤回到纯文本）。 */
+  /** Clear the captured combination (return to text-only filtering). */
   clear: () => void;
 }
 
 /**
- * 设置页「按组合键搜索」状态机（VSCode 键盘快捷键同款）：
- * Escape 退出武装态；Backspace 清除已捕获组合；其余事件经内核录制器捕获
- * （含平台归一），成功即退出武装态、过滤保留直到手动清除。
- * 裸字母等命令表不可能出现的键（录制器 invalid）静默忽略，等待下一次有效组合。
- * 过滤命中的比较口径是 conflicts.isSamePhysicalBinding（物理等价，win 的
- * Ctrl+m ≡ CmdOrCtrl+m），与冲突检测看到的是同一张表。
+ * Settings-page “search by key combination” state machine (same behavior as VS Code keyboard shortcuts):
+ * Escape exits armed state; Backspace clears the captured combination; other events are captured by the core recorder
+ * (including platform normalization), and on success armed state exits while filtering remains until manually cleared.
+ * Ignore keys that cannot appear in the command table, such as bare letters (recorder marks invalid), and wait for the next valid combination.
+ * Filtering uses the same comparison as conflicts.isSamePhysicalBinding (physical equivalence, e.g. Win Ctrl+m ≡ CmdOrCtrl+m),
+ * so it checks the same binding set as conflict detection.
  */
 export function useShortcutKeySearch(): ShortcutKeySearch {
   const [armed, setArmed] = useState(false);

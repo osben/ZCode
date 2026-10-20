@@ -1,13 +1,16 @@
-// 完成卡上那两个**壳级**落点（docs/dynamic-workflow/transcript-and-notifications.md
-// 「Saving the run, and running it again」）：
+// The two shell-level landing points on the completion card
+// (docs/dynamic-workflow/transcript-and-notifications.md,
+// "Saving the run, and running it again"):
 //
-//   openWorkflow  ── 「已保存」芯片 → 工作流中枢里那一页；
-//   navigateToRun ── 「再次运行」启动成功 → 切到新建的那个会话。
+//   openWorkflow  ── "Saved" chip → that workflow's page in the hub;
+//   navigateToRun ── "Run again" launch success → switch to the newly created session.
 //
-// 与 WorkflowRunOpenProvider 同一条理由用 context 而不是逐层 props：这两件事只有壳知道怎么做，
-// 而卡片长在会话时间线与 run 侧板两处，中间隔着 pane / 行上下文好几层，没有一层需要知道
-// 「中枢在哪」。没有 provider（手机远控壳、单测、静态回放）时芯片只是文字、启动不切页——
-// 手机远控壳本来就不提供中枢。
+// Same rationale as WorkflowRunOpenProvider for using context instead of layer-by-layer
+// props: only the shell knows how to do these two things, while the card lives in both the
+// conversation timeline and the run side panel, separated by several pane / row context
+// layers that should not need to know "where the hub is". Without a provider (mobile remote
+// shell, unit tests, static replay) the chip is just text and a launch does not switch pages
+// — the mobile remote shell does not provide a hub in the first place.
 import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 import type { ZCodeSavedWorkflowScope } from "@zcode/shared";
 import type { SavedWorkflowLaunchTarget } from "@/settings/saved-workflows/useSavedWorkflowLauncher.js";
@@ -15,7 +18,7 @@ import type { SavedWorkflowLaunchTarget } from "@/settings/saved-workflows/useSa
 export interface SavedWorkflowHubTarget {
   name: string;
   scope: ZCodeSavedWorkflowScope;
-  /** 项目档所属的项目；全局档忽略它（中枢的全局组不按项目分）。 */
+  /** Project a project-scoped entry belongs to; ignored for global entries (the hub's global group is not split by project). */
   workspacePath: string;
   workspaceIdentity?: string;
 }
@@ -34,7 +37,8 @@ export function SavedWorkflowHubProvider({
 }: SavedWorkflowHubHandlers & { children: ReactNode }) {
   const ref = useRef({ openWorkflow, navigateToRun });
   ref.current = { openWorkflow, navigateToRun };
-  // 引用恒定：芯片挂在虚拟列表里的卡上，回调换引用就等于整列重渲染。
+  // Stable reference: the chip sits on cards inside a virtualized list; changing the callback
+  // identity would re-render the whole list.
   const stable = useMemo<SavedWorkflowHubHandlers>(
     () => ({
       openWorkflow: (target) => ref.current.openWorkflow(target),

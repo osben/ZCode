@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Coding Plan usage 面板集中处理数据来源、额度卡片和用量图表，拆分会让账号级来源绑定状态更分散。 */
+/* eslint-disable max-lines -- The Coding Plan usage panel coordinates data sources, quota cards, and usage charts. Keeping it together avoids scattering account-level source binding state. */
 import { Fragment, lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, InfoIcon, RefreshCw } from "lucide-react";
 import type {
@@ -60,7 +60,7 @@ import {
 
 export { buildCodingPlanUsageSources, type CodingPlanUsageSource };
 
-/** Usage stats 独有的完整重置时刻格式；其它紧凑入口继续按各自规则展示。 */
+/** Full reset-time format used only in Usage stats; other compact entry points keep their own display rules. */
 export function formatUsageStatsQuotaResetTime(
   locale: string,
   value: number | null | undefined,
@@ -68,9 +68,9 @@ export function formatUsageStatsQuotaResetTime(
   return formatQuotaResetTime({ locale, value, format: "dateTime" });
 }
 
-// Recharts 会在模块初始化阶段触发 decimal.js-light 的 LN10 校验，
-// 在 Electron Linux 容器里会阻断整个 renderer 启动。图表按需加载后，
-// 普通启动和 e2e 首页不会被 Usage 页图表依赖影响，打开 Usage 时也由局部边界隔离。
+// Recharts validates decimal.js-light LN10 during module initialization,
+// which prevents the whole renderer from starting in Electron Linux containers. Lazy-load charts so
+// regular startup and the e2e home page are unaffected by Usage-page chart dependencies; isolate them locally when Usage opens.
 const CodingPlanUsageLineChart = lazy(() =>
   import("@/settings/usage-stats/CodingPlanUsageLineChart.js").then((module) => ({
     default: module.CodingPlanUsageLineChart,
@@ -122,9 +122,9 @@ export function CodingPlanUsagePanel({
       ? JSON.stringify([effectiveSource.providerId, effectiveSource.accountAccess])
       : "";
   const zaiEntitlement = useUsageEntitlement({
-    // 原只按 zai providerId 启用，没区分个人/团队，team source 会被
-    // 当成个人 zaiEntitlement 查询（缺 org/project）。加上 !effectiveSourceIsTeamPlan
-    // 后，zai team source 改走 teamEntitlement 分支。
+    // Previously this was enabled only for zai providerId, without distinguishing personal and team plans, so team sources were
+    // treated as personal zaiEntitlement queries (missing org/project). Add !effectiveSourceIsTeamPlan
+    // so zai team sources use the teamEntitlement branch.
     enabled:
       !loadingSources &&
       effectiveProviderId === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan &&
@@ -161,8 +161,8 @@ export function CodingPlanUsagePanel({
     refreshOnMount: false,
   });
   const teamEntitlement = useUsageEntitlement({
-    // 原硬绑 bigmodelCodingPlan providerId，zai team source 永远进不来。
-    // 改为按 effectiveSourceIsTeamPlan 路由，providerId 按 effectiveSource 动态取，
+    // Previously this was hard-coded to the bigmodelCodingPlan providerId, so zai team sources never reached this path.
+    // Route by effectiveSourceIsTeamPlan and derive providerId from effectiveSource,
     // zai team → zaiCodingPlan，bigmodel team → bigmodelCodingPlan。
     enabled: !loadingSources && effectiveSourceIsTeamPlan,
     includeSubscription: true,
@@ -175,8 +175,8 @@ export function CodingPlanUsagePanel({
     cacheKey: effectiveSource?.id,
     refreshOnMount: false,
   });
-  // 原 zai providerId 一律走 zaiEntitlement（个人），把 team plan 漏掉。
-  // 改为先判 team plan，命中走 teamEntitlement；否则按 providerId 走个人分支。
+  // because the original zai providerId path always used zaiEntitlement (personal) and skipped team plans.
+  // Check team plan first and route matches through teamEntitlement; otherwise use the personal branch by providerId.
   const effectiveEntitlement = effectiveSourceIsTeamPlan
     ? teamEntitlement
     : effectiveProviderId === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan
@@ -210,8 +210,8 @@ export function CodingPlanUsagePanel({
       return;
     }
 
-    // Usage 页的 Quota Remaining 优先展示 entitlement quota。
-    // 打开 Coding Plan Usage 页面时，如果只依赖共享 TTL，可能继续显示 sidebar/input 留下的旧快照。
+    // On the Usage page, prefer entitlement quota for Quota Remaining.
+    // When opening Coding Plan Usage, relying only on the shared TTL could keep showing an old snapshot left by the sidebar/input.
     void effectiveEntitlementRefresh({ silent: true, reason: "access" });
   }, [effectiveEntitlementRefresh, effectiveProviderId]);
 
@@ -244,7 +244,7 @@ export function CodingPlanUsagePanel({
       {error ? <UsageStatsErrorNotice error={error} /> : null}
 
       {loading && !snapshot ? (
-        // Coding Plan 来自供应商 monitor API，加载说明要和 App Usage 的本地统计区分。
+        // Coding Plan data comes from the provider monitor API; its loading message should be distinct from App Usage local statistics.
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.loadingTitle" })}
           description={intl.formatMessage({
@@ -284,8 +284,8 @@ export function resolveCodingPlanUsageProviderName({
   snapshot: CodingPlanUsageSnapshot | null;
   source: CodingPlanUsageSource | null;
 }): string | undefined {
-  // 修复原因：Team Plan 复用 BigModel Coding Plan provider，monitor 接口只知道通用 provider 名。
-  // 使用统计必须按当前 Team 连接的展示 key 取团队项目名，不能继续识别已删除的 team-plan key。
+  // Reason for the fix: Team Plan reuses the BigModel Coding Plan provider, and the monitor endpoint knows only the generic provider name.
+  // Usage statistics must use the display key of the current Team connection to identify the team project, rather than a removed team-plan key.
   if (source?.id.startsWith("team:")) {
     return source.label || snapshot?.sourceProvider.name || fallbackProviderName;
   }
@@ -326,7 +326,7 @@ function CodingPlanQuotaCards({
   onUsageStatsRefresh,
 }: {
   quota: UsageQuotaSnapshot | null;
-  /** 官方 Server MCP 额度不在 quota.limits[] 里，由 entitlement 快照的独立字段传入。 */
+  /** Official Server MCP quota is not in quota.limits[]; pass it through a separate field in the entitlement snapshot. */
   mcpQuotaLimit: UsageQuotaLimit | null;
   generatedAt: number;
   sourceKey: string | undefined;
@@ -355,9 +355,9 @@ function CodingPlanQuotaCards({
     findCodingPlanQuotaLimit(limits, "TOKENS_LIMIT", 6),
     resetUi.week.entry,
   );
-  // 五小时与周机会合并为一个徽标,次数累加,倒计时取最早到期的一档。
-  // Bugfix：曾用「剩余 100% 则重置无收益」隐藏徽标与按钮。核销会把剩余改写成 100%，
-  // 同类型余下的机会随即被藏掉，用户以为卡丢了。只要额度存在且有可用机会就展示。
+  // Combine five-hour and weekly opportunities into one badge, add their counts, and use the earliest expiration for the countdown.
+  // Bugfix: The badge and button were hidden when resetting at 100% remaining appeared to offer no benefit. Redeeming rewrites the remaining amount to 100%,
+  // which hid other remaining opportunities of the same type and made users think the card disappeared. Show it whenever quota and an available opportunity exist.
   const opportunityBadge = mergeCodingPlanQuotaResetOpportunityBadges([
     {
       count: resetUi.entry?.opportunityCount ?? 0,
@@ -434,9 +434,9 @@ function CodingPlanQuotaCards({
     weekEnabled: Boolean(weeklyLimit),
   });
 
-  // Quota remaining 的响应式只允许整组纵向或整组横向。
-  // 额度项（最多 4 个：5 小时 / 每周 / MCP / Server MCP）不能在中间断点排成 n+1，
-  // 否则信息组会被视觉拆散。
+  // Quota Remaining may switch responsively only as a whole group, vertically or horizontally.
+  // Quota items (up to four: five-hour / weekly / MCP / Server MCP) must not wrap into n+1 items at intermediate breakpoints,
+  // or the visual grouping will break apart.
   const quotaCardsLayoutClass = "flex flex-col gap-3 lg:flex-row";
 
   return (
@@ -480,7 +480,7 @@ function CodingPlanQuotaCards({
           const resetTime = formatUsageStatsQuotaResetTime(locale, card.limit.nextResetTime);
           return (
             <div key={card.key} className="min-w-0 flex-1 rounded-xl bg-surface/70 p-4">
-              {/* min-h 与重置动作(h-5)对齐:没有动作的额度卡也保持同高,避免同排数值/进度条错位。 */}
+              {/* Align min-h with the reset action (h-5): quota cards without an action stay the same height, preventing values/progress bars from misaligning within a row. */}
               <div className="flex min-h-5 min-w-0 items-center gap-1">
                 <span className="min-w-0 truncate text-ui-base text-foreground">{card.label}</span>
                 {card.key === "serverMcp" ? (
@@ -502,7 +502,7 @@ function CodingPlanQuotaCards({
                     </button>
                   </ControlHintTooltip>
                 ) : null}
-                {/* 额度标题旁入口只打开统一弹窗；真正核销由弹窗内对应类型按钮触发。 */}
+                {/* The entry next to the quota title only opens the shared dialog; the matching button inside the dialog performs redemption. */}
                 {card.key === "fiveHour" &&
                 resetUi.entry &&
                 (resetUi.opportunityVisible ||
@@ -588,14 +588,14 @@ function CodingPlanActivitySection({ snapshot }: { snapshot: CodingPlanUsageSnap
       value: formatSummaryCompactTokenUsage(locale, summary.totalTokens),
     },
     {
-      // 日期直接拼进标签会在窄卡片中被截断；固定标题保持可读，日期改由信息图标按需展示。
+      // Appending the date to the label gets truncated in narrow cards; keep the title fixed and show the date on demand through the info icon.
       label: intl.formatMessage({ id: "settings.usage.lifetimePeakTokens" }),
       peakDailyTokensDate: summary.peakDailyTokensDate,
       value: formatSummaryCompactTokenUsage(locale, summary.peakDailyTokens),
     },
     {
-      // 修复回归：CodingPlanActivitySummary 只有 totalUsageDurationMs（累计使用时长），
-      // longestSessionMs 是 App Usage 侧的字段，不能使用“最长聊天时长”标签。
+      // Regression fix: CodingPlanActivitySummary has only totalUsageDurationMs (cumulative usage duration).
+      // longestSessionMs belongs to App Usage, so do not use the "longest chat duration" label here.
       label: intl.formatMessage({ id: "settings.usage.totalUsageDuration" }),
       value: formatAppUsageDuration(summary.totalUsageDurationMs, intl),
     },
@@ -913,8 +913,8 @@ export function shouldShowCodingPlanUsageDetailSummary({
     return true;
   }
 
-  // 旧版 Coding Plan usage-detail 只有 token 用量时也可能返回 cache 命中率，
-  // 但 BigModel 官网不展示积分摘要卡；只有真实 credits 数据才展示这组三卡。
+  // The older Coding Plan usage-detail response may include cache hit rate even when it has only token usage,
+  // but the BigModel website does not show a credits summary card. Show these three cards only when actual credits data is available.
   return hasCodingPlanCreditUsageData({ summary, modelDataList, toolDataList });
 }
 

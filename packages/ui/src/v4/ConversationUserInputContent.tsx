@@ -32,9 +32,9 @@ export interface V4UserInputGoalQueryDisplay {
 }
 
 /**
- * 只解析发送入口会消费的 goal query；普通正文和携带附件的同名文本保持原样。
- * 原因：用户消息展示不能仅凭包含 `/goal` 就重猜 command intent，否则上下文 prompt
- * 在隐藏附加块后会被误画成 goal 控制命令。
+ * Parse only goal queries consumed by the send entry point; preserve ordinary body text and same-named text with attachments.
+ * Reason: user-message display must not infer command intent just because it contains `/goal`, or a context prompt
+ * may be incorrectly rendered as a goal control command after its hidden attachment block is removed.
  */
 export function parseV4UserInputGoalQuery(
   text: string,
@@ -65,7 +65,7 @@ function mentionClassName(category: Parameters<typeof getPromptMentionVariantCla
   return cn(
     "mx-0.5 max-w-full",
     PROMPT_MENTION_BASE_CLASS_NAME,
-    // userInput 正文使用 text-ui-base，与 assistant 消息体保持一致。
+    // Use text-ui-base for userInput body text, matching the assistant message body.
     "text-ui-base leading-6",
     getPromptMentionVariantClassName(category),
   );
@@ -115,7 +115,7 @@ function V4UserInputMention({
   }
 
   if (part.type === "plugin") {
-    // Plugin 引用在气泡里渲染为 chip：不进 file 分支、不可作外链打开。
+    // Render Plugin references as chips in the bubble: do not route through the file branch or allow opening as external links.
     return (
       <span className={mentionClassName("plugins")} data-plugin-mention-id={part.pluginId}>
         <PluginUserMessageIcon src={pluginIcon} />
@@ -135,8 +135,8 @@ function V4UserInputMention({
 
   const commandName = normalizeCommandMentionLabel(part.label);
   if ((commandName === "goal" || commandName === "target") && !authoritativeGoal) {
-    // 旧版纯文本嗅探会把带附件的 `/goal` 普通 prompt 也画成控制命令。
-    // V4 只允许发送入口确认的首个 goal token 使用特殊 UI，其余情况必须保持用户原文。
+    // The old plain-text detector also rendered an ordinary `/goal` prompt with attachments as a control command.
+    // V4 allows special UI only for the first goal token confirmed by the send entry point; all other cases must preserve the user's original text.
     return `/${part.label}`;
   }
 
@@ -152,8 +152,8 @@ function V4UserInputMention({
       ) : (
         <SquareSlash aria-hidden="true" className="size-4 shrink-0" />
       )}
-      {/* Bug 根因：authoritative goal 使用原始 slash token 回显，导致用户气泡重复暴露
-          控制语法。标签保留 Goal 语义，只省略 `/`；复制、编辑和协议仍使用原始 row.text。 */}
+      {/* Bug root cause: the authoritative goal echoed the raw slash token, repeatedly exposing the
+          control syntax in the user bubble. The label keeps Goal semantics and omits only the `/`; copy, edit, and the protocol still use the original row.text. */}
       {part.label}
     </span>
   );

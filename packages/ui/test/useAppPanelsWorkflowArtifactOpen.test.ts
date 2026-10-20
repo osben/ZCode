@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 
-// 产物点击的落点裁决（docs/dynamic-workflow/authoring.md「How the user sees them」）。
+// Ruling on where an artifact click lands (docs/dynamic-workflow/authoring.md "How the user sees them").
 //
-// ⚠ 术语：artifact = 脚本经 `artifact.*` 交付给**用户**的产出，不是引擎内部那个「脚本顶层
-// 返回值」的同名词。
+// ⚠ Terminology: artifact = output delivered **to the user** by the script via `artifact.*`, not a synonym for the
+// engine-internal "script top-level return value".
 //
-// 钉三件事：
-//   1. html + 本地 workspace + 有内嵌浏览器 ⇒ 直接开 browser tab，不再经过产物 tab；
-//   2. 同一枚产物再点一次 ⇒ 复用那一个 tab，并**重新**发导航请求（v2 必须显示新字节）；
-//   3. 任何一条判据不成立、出处查不到、查询本身失败 ⇒ 退回产物 tab，点击绝不落空。
+// Pins three things:
+//   1. html + local workspace + embedded browser ⇒ open a browser tab directly, never going through the artifact tab;
+//   2. clicking the same artifact again ⇒ reuse that one tab and **re-issue** the navigation request (v2 must show
+//      the new bytes);
+//   3. any criterion failing, provenance not found, or the query itself failing ⇒ fall back to the artifact tab;
+//      the click never lands nowhere.
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { V4ConversationWorkflowRunArtifactsResult } from "@zcode/shared/zcode-protocol-v4";
@@ -88,7 +90,7 @@ function tabTypes(tabs: WorkspaceSidePaneTab[] | undefined): string[] {
   return (tabs ?? []).map((tab) => tab.type);
 }
 
-/** hook 内部的 journal 查询是 fire-and-forget 的 async IIFE，要把微任务跑干净。 */
+/** The hook's internal journal query is a fire-and-forget async IIFE; drain the microtasks fully. */
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -103,7 +105,7 @@ describe("产物落点判据", () => {
     expect(shouldOpenWorkflowArtifactInBrowser({ ...base, contentType: "text/markdown" })).toBe(
       false,
     );
-    // 参数化的 content type 走产物 tab：与画 html 卡那道门同一个严格判据。
+    // A parameterized content type goes to the artifact tab: the same strict gate as for painting an html card.
     expect(
       shouldOpenWorkflowArtifactInBrowser({ ...base, contentType: "text/html; charset=utf-8" }),
     ).toBe(false);
@@ -114,7 +116,7 @@ describe("产物落点判据", () => {
     expect(
       shouldOpenWorkflowArtifactInBrowser({ ...base, workspaceIdentity: "ssh://host/repo" }),
     ).toBe(false);
-    // 空白 identity 不算远程（与 canRevealArtifactInWorkspace 同源）。
+    // A blank identity does not count as remote (same source as canRevealArtifactInWorkspace).
     expect(shouldOpenWorkflowArtifactInBrowser({ ...base, workspaceIdentity: "  " })).toBe(true);
     expect(shouldOpenWorkflowArtifactInBrowser({ ...base, remoteSessionId: "remote-a" })).toBe(
       false,
@@ -170,7 +172,7 @@ describe("useAppPanels 打开工作流产物", () => {
     const firstTabId = result.current.sidePaneState?.tabs[0]?.id;
     const firstRequestId = result.current.browserNavigationRequest?.id;
 
-    // 中间切走，确认第二次点击会把它重新激活。
+    // Switch away in between, to confirm the second click reactivates it.
     act(() => {
       result.current.handleOpenGit();
     });
@@ -183,7 +185,7 @@ describe("useAppPanels 打开工作流产物", () => {
     expect(tabs.filter((tab) => tab.type === "browser")).toHaveLength(1);
     expect(tabs[0]?.id).toBe(firstTabId);
     expect(result.current.sidePaneState?.activeTabId).toBe(firstTabId);
-    // 同一个落点、新的请求 id：v2 重新发布后 webview 必须重新取字节。
+    // Same landing spot, new request id: after v2 republishes, the webview must re-fetch the bytes.
     expect(result.current.browserNavigationRequest?.targetTabId).toBe(firstTabId);
     expect(result.current.browserNavigationRequest?.id).not.toBe(firstRequestId);
     expect(result.current.browserNavigationRequest?.url).toBe(REPORT_URL);
@@ -283,9 +285,10 @@ describe("useAppPanels 打开工作流产物", () => {
   });
 
   it("中枢那条路径上 owner ref 还没追上时，browser tab 仍归属目标会话", async () => {
-    // handleOpenSavedWorkflowArtifact 在同一个同步块里先 handleSelectTaskInChat 再开产物，
-    // 所以点击时 sidePaneOwnerId 还停在上一条会话上。browser tab 的可见性按 ownerTaskId
-    // 收窄，盖成旧会话的话切换落定后这个 tab 就消失了。
+    // handleOpenSavedWorkflowArtifact calls handleSelectTaskInChat and then opens the artifact within the same
+    // synchronous block, so at click time sidePaneOwnerId still points at the previous session. The browser tab's
+    // visibility narrows by ownerTaskId; if it were stamped with the old session, the tab would disappear once the
+    // switch settles.
     const { result, unmount } = renderPanels({ sidePaneOwnerId: "sess-previous" });
 
     act(() => {
@@ -298,7 +301,7 @@ describe("useAppPanels 打开工作流产物", () => {
     const tabs = result.current.sidePaneState?.tabs ?? [];
     expect(tabTypes(tabs)).toEqual(["browser"]);
     expect(tabs[0]).toMatchObject({ ownerTaskId: SESSION_ID, workspaceKey: WORKSPACE_PATH });
-    // 切换落定后（scope = 目标会话）这个 tab 必须还在可见集合里。
+    // After the switch settles (scope = target session), this tab must still be in the visible set.
     expect(
       getVisibleSidePaneTabs(tabs, {
         workspaceKey: WORKSPACE_PATH,

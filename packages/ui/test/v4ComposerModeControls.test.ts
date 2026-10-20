@@ -40,7 +40,10 @@ vi.mock("@/components/ui/dropdown-menu.js", () => {
   };
 });
 
-vi.mock("@/lib/pickerFocus.js", () => ({ isCoarseTouchDevice: () => false }));
+vi.mock("@/lib/pickerFocus.js", () => ({
+  restoreComposerInputFocusAfterPickerClose: ({ fallbackSelector }: { fallbackSelector: string }) =>
+    document.querySelector(fallbackSelector)?.focus(),
+}));
 
 vi.mock("@/hooks/useZCodeConfig.js", () => ({
   useToolbarConfigOptions: () => ({ configOptions: [] }),

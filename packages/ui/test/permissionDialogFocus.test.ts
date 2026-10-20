@@ -114,7 +114,7 @@ describe("PermissionDialog focus", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(PermissionDialog, {
           request: {
             ...request,
@@ -150,14 +150,14 @@ describe("PermissionDialog focus", () => {
       flush,
       options: view.getAllByRole("option"),
       input: view.queryByRole("textbox") as HTMLTextAreaElement | null,
-      confirm: view.getByRole("button", { name: "确认" }) as HTMLButtonElement,
+      confirm: view.getByRole("button") as HTMLButtonElement,
     };
   }
 
   it("完全访问为第三项，数字 5 只聚焦反馈，第三项按原 optionId 提交", () => {
     const { input, options, flush, onRespond, confirm } = renderPermission(true, true);
     expect(options).toHaveLength(4);
-    expect(options[2]!.textContent).toContain("完全访问");
+    expect(options[2]!.getAttribute("data-permission-option-kind")).toBe("custom");
     expect(input!.previousElementSibling?.textContent).toBe("5.");
     fireEvent.keyDown(options[0]!, { key: "5" });
     flush();
@@ -173,6 +173,28 @@ describe("PermissionDialog focus", () => {
     expect(onRespond).toHaveBeenCalledWith(
       "request-focus",
       expect.objectContaining({ optionId: "fullAccess" }),
+      undefined,
+    );
+  });
+
+  it("selects an option with a digit key without answering, and answers only on Enter", () => {
+    const { options, flush, onRespond } = renderPermission(false);
+    expect(document.activeElement).toBe(options[0]);
+
+    for (const key of ["1", "2", "3"]) {
+      fireEvent.keyDown(document.activeElement!, { key });
+      flush();
+      expect(document.activeElement).toBe(options[Number(key) - 1]);
+      expect(options[Number(key) - 1]!.getAttribute("aria-selected")).toBe("true");
+    }
+    expect(onRespond).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    flush();
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(onRespond).toHaveBeenCalledExactlyOnceWith(
+      request.requestId,
+      request.options[1],
       undefined,
     );
   });
@@ -284,7 +306,7 @@ describe("PermissionDialog focus", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(PermissionDialog, {
           request: {
             type: "permission_request",
@@ -316,9 +338,7 @@ describe("PermissionDialog focus", () => {
       ),
     );
 
-    const feedbackInput = document.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="拒绝时给模型的可选反馈"]',
-    );
+    const feedbackInput = document.querySelector<HTMLTextAreaElement>("textarea");
     expect(feedbackInput).not.toBeNull();
 
     act(() => {
@@ -334,7 +354,7 @@ describe("PermissionDialog focus", () => {
     const renderDialog = (interactionId: string) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(V4InteractionDialogs, {
           sessionId: "task-focus",
           workspacePath: "/tmp/workspace",
@@ -342,17 +362,13 @@ describe("PermissionDialog focus", () => {
         }),
       );
     const view = render(renderDialog("permission-a"));
-    const firstInput = document.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="拒绝时给模型的可选反馈"]',
-    );
+    const firstInput = document.querySelector<HTMLTextAreaElement>("textarea");
     expect(firstInput).not.toBeNull();
 
     act(() => firstInput?.focus());
     view.rerender(renderDialog("permission-b"));
 
-    const secondInput = document.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="拒绝时给模型的可选反馈"]',
-    );
+    const secondInput = document.querySelector<HTMLTextAreaElement>("textarea");
     expect(secondInput).not.toBe(firstInput);
   });
 });

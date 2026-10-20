@@ -1,8 +1,8 @@
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 
 /**
- * transcript 和 custom provider 的安全 code/message 证据集中在这里判定：
- * 低基数 allowlist，每条规则原子返回同一份证据决定的 source/reason。
+ * Security code/message evidence from transcripts and custom providers is evaluated centrally here:
+ * a low-cardinality allowlist where each rule atomically returns the source/reason determined by the same evidence.
  */
 export interface TelemetryEvidenceAttribution {
   errorSource: "provider" | "runtime" | "network";
@@ -58,8 +58,8 @@ const PROVIDER_CODE_FAILURE_REASONS: Readonly<Record<string, string>> = {
   "429": "rate_limited",
 };
 
-// provider 包装可能只保留上游业务码，未带 adapter 的标准 reason；
-// 这些 code 的拒绝语义有明确证据，只在 telemetry 边界补为低基数 invalid_request。
+// Provider wrappers may preserve only the upstream business code and omit the adapter’s standard reason;
+// the rejection semantics of these codes are well-established, so normalize them to low-cardinality invalid_request only at the telemetry boundary.
 const GENERIC_PROVIDER_INVALID_REQUEST_CODES = new Set(["BAD_REQUEST"]);
 
 const LOCAL_MODEL_VALIDATION_MESSAGES = new Set([
@@ -71,8 +71,8 @@ const LOCAL_MODEL_VALIDATION_MESSAGES = new Set([
   "Model does not support PDF input",
 ]);
 
-// 事件可能只持久化 providerErrorCode，错误文案不重复底层 errno；
-// allowlist 若只覆盖少量现场样本，ECONNRESET 等 adapter 已确认的网络码会退化成 provider/unknown。
+// An event may persist only providerErrorCode, while the error message does not repeat the underlying errno;
+// if the allowlist covers only a few observed samples, adapter-confirmed network codes such as ECONNRESET will degrade to provider/unknown.
 const STABLE_TRANSPORT_ERROR_CODES = new Set([
   "EPIPE",
   "ECONNABORTED",

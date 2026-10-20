@@ -13,6 +13,7 @@ import type { IFeedbackService } from "@zcode/services";
 import type { FeedbackTicketDetail, FeedbackTicketSummary, IPlatformService } from "@zcode/shared";
 import { TabStoreProvider } from "@/store/TabStoreProvider.js";
 import { dismissFeedbackSubmissionJob } from "@/feedback/feedbackSubmissionJob.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function createFeedbackService(): IFeedbackService {
   return {
@@ -50,7 +51,7 @@ function createTicket(id: string): FeedbackTicketDetail {
   };
 }
 
-function renderFeedbackSubmitForm(locale: "zh-CN" | "en-US" = "zh-CN") {
+function renderFeedbackSubmitForm(locale: "en-US" | "zh-CN" = "en-US") {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
@@ -94,7 +95,7 @@ describe("FeedbackSubmitForm", () => {
     expect(html).toContain("safe projection of CLI configuration");
     expect(html).toContain("model-call traces");
     expect(html).not.toContain("问题描述");
-    expect(html).not.toContain("反馈类型");
+    expect(html).not.toContain(expectedCopy("feedback.submit.type.label"));
   });
 
   it("从当前模型配置读取选中的模型展示名", () => {
@@ -125,28 +126,24 @@ describe("FeedbackSubmitForm", () => {
   it("不再展示旧提交弹窗里的分类字段，但保留简化日志开关", () => {
     const html = renderFeedbackSubmitForm();
 
-    expect(html).toContain("问题描述");
-    expect(html).toContain("截图");
-    expect(html).toContain("联系方式");
-    expect(html).toContain("日志");
-    expect(html).toContain("上传诊断日志");
+    expect(html).toContain(expectedCopy("feedback.submit.simple.descriptionTitle"));
+    expect(html).toContain(expectedCopy("feedback.submit.simple.screenshotTitle"));
+    expect(html).toContain(expectedCopy("feedback.submit.simple.contactTitle"));
+    expect(html).toContain(expectedCopy("feedback.submit.simple.logsLabel"));
     expect(html).toContain('aria-checked="true"');
-    expect(html).toContain("默认开启");
-    expect(html).toContain("CLI 配置中的安全投影");
-    expect(html).toContain("当天模型调用轨迹");
-    expect(html).not.toContain("Issue description");
-    expect(html).not.toContain("Screenshots");
-    expect(html).not.toContain("反馈类型");
-    expect(html).not.toContain("功能模块");
-    expect(html).not.toContain("影响程度");
-    expect(html).not.toContain("当前模型型号");
+    expect(html).toContain("On by default");
+    expect(html).toContain("model-call traces");
+    expect(html).not.toContain(expectedCopy("feedback.submit.type.label"));
+    expect(html).not.toContain(expectedCopy("feedback.submit.module.label"));
+    expect(html).not.toContain(expectedCopy("feedback.submit.severity.label"));
+    expect(html).not.toContain(expectedCopy("feedback.submit.model.label"));
     expect(html).not.toContain("附带完整日志");
   });
 
   it("截图附件区域保持可聚焦，方便用户定位截图上传入口", () => {
     const html = renderFeedbackSubmitForm();
 
-    expect(html).toContain("粘贴、拖拽图片到这里，或选择文件。");
+    expect(html).toContain(expectedCopy("feedback.submit.simple.screenshotHint"));
     expect(html).toContain('tabindex="0"');
   });
 
@@ -179,7 +176,7 @@ describe("FeedbackSubmitForm", () => {
       ticketSeverity: "P3-低",
       ticketModule: "其它",
       modelContext: {},
-      locale: "zh-CN",
+      locale: "en-US",
       formatMessage: (descriptor: { id: string }) => descriptor.id,
       copy: {
         connectingLabel: "connecting",

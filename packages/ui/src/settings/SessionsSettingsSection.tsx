@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -354,7 +353,7 @@ export function SessionsSettingsSection({
           className="absolute bottom-4 left-1/2 flex h-10.5 -translate-x-1/2 items-center gap-1 rounded-lg border border-border bg-card pl-3.5 pr-1.5 shadow-lg"
         >
           <span className="text-ui-base font-medium">
-            {formatPluralMessage(intl, "sessionManager.bulk.selected", liveSelectedKeys.size)}
+            {intl.formatPlural({ id: "sessionManager.bulk.selected" }, liveSelectedKeys.size)}
           </span>
           <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
           <Button

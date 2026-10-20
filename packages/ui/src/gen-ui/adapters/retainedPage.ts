@@ -56,7 +56,8 @@ function createOwner(
     snapshot = { ...snapshot, phase: "error", error: String(error) };
     notify();
   };
-  // 回收的是 guest；锚点观察属于窗口 owner，离屏回收后重新滚入视口仍能唤醒。
+  // What gets reclaimed is the guest; anchor observation belongs to the window owner, so after
+  // off-screen reclamation scrolling back into the viewport can wake it up again.
   const intersection = new IntersectionObserver((entries) => {
     for (const entry of entries)
       for (const anchor of anchors.values())
@@ -150,7 +151,8 @@ function createOwner(
       sandboxPages.visibility(owner, true);
       void ensure();
       return () => {
-        // layout cleanup 在 React 移除祖先前把活页面停放；passive cleanup 会先断开 guest。
+        // Layout cleanup parks the live page before React removes the ancestor; passive cleanup
+        // would disconnect the guest first.
         anchor.off?.();
         anchors.delete(id);
         if (![...anchors.values()].some((item) => item.node === node)) intersection.unobserve(node);

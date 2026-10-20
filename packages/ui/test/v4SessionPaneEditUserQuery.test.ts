@@ -426,7 +426,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "pane-2",
             sessionId: "session-1",
@@ -465,7 +465,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -551,7 +551,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -634,7 +634,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -688,7 +688,7 @@ describe("SessionPane user query editing", () => {
     const renderPane = () =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-1",
@@ -775,7 +775,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -829,7 +829,7 @@ describe("SessionPane user query editing", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(SessionPane, {
               paneId: "workspace-main",
               sessionId: "session-1",
@@ -876,7 +876,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -926,7 +926,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -971,7 +971,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1056,7 +1056,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1169,7 +1169,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1217,7 +1217,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1271,7 +1271,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1325,7 +1325,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",
@@ -1366,7 +1366,7 @@ describe("SessionPane user query editing", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",

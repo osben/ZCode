@@ -1,4 +1,3 @@
-import { formatPluralMessage } from "../i18n/formatPlural.js";
 import type { RefObject } from "react";
 import { ChevronDown, Folder, Search, SlidersHorizontal, Star, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -238,9 +237,9 @@ export function SessionManagerToolbar(props: SessionManagerToolbarProps) {
           </Button>
         ) : null}
         <span className="ml-auto text-ui-sm text-foreground-subtle">
-          {formatPluralMessage(intl, "sessionManager.count.sessions", props.visibleCount)}
+          {intl.formatPlural({ id: "sessionManager.count.sessions" }, props.visibleCount)}
           {" · "}
-          {formatPluralMessage(intl, "sessionManager.count.running", props.runningCount)}
+          {intl.formatPlural({ id: "sessionManager.count.running" }, props.runningCount)}
         </span>
       </div>
     </div>

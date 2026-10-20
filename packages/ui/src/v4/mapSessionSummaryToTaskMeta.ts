@@ -1,7 +1,7 @@
-// sessions-index 的 SessionSummary → 侧栏实时 detail ZCodeTaskMeta 映射。
-// 这些对象不独立决定列表行存在性；后续以 tasks-index.sqlite 持久行为左表 join。
-// 注意：summary.sessionEnded 是「成功轮收口」语义（completedSuccess 即 true），不是删除；
-// session.removed 只会移除实时 detail，持久行删除仍由 tasks-index row/tombstone 决定。
+// Map sessions-index SessionSummary → live sidebar detail ZCodeTaskMeta.
+// These objects do not independently determine list-row existence; the persistent rows from tasks-index.sqlite are joined as the left side later.
+// Note: summary.sessionEnded means “successful turn settled” (true for completedSuccess), not deletion;
+// session.removed only removes live detail, while persistent-row deletion is still determined by the tasks-index row/tombstone.
 import type { TraceId, ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -9,7 +9,7 @@ import {
   type TaskListMetaWithActivity,
 } from "@/v4/taskListRowActivity.js";
 
-/** phase → 侧栏持久化状态（running/completed/error）；draft 无结果状态。 */
+/** phase → persisted sidebar status (running/completed/error); draft has no result status. */
 function phaseToStatus(phase: SessionSummary["phase"]): ZCodeTaskMeta["status"] {
   switch (phase) {
     case "running":
@@ -28,13 +28,13 @@ function phaseToStatus(phase: SessionSummary["phase"]): ZCodeTaskMeta["status"] 
 export interface MapSessionSummaryOptions {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** 本地已有 meta（保留手动标题/provider 等旧值，避免被列表刷新冲掉）。 */
+  /** Existing local metadata (preserve manual title/provider and other old values so list refresh does not overwrite them). */
   previous?: ZCodeTaskMeta;
 }
 
 /**
- * SessionSummary → 实时 detail ZCodeTaskMeta。sessions-index 不携带的字段
- * （traceId/mode/provider）取合理默认或沿用 previous；真实持久字段以 join 时的 task 行为准。
+ * SessionSummary → live detail ZCodeTaskMeta. Fields not carried by sessions-index
+ * (traceId/mode/provider) use reasonable defaults or reuse previous values; actual persisted fields come from the task row during the join.
  */
 export function mapSessionSummaryToTaskMeta(
   summary: SessionSummary,
@@ -43,17 +43,15 @@ export function mapSessionSummaryToTaskMeta(
   const previous = options.previous;
   const status = phaseToStatus(summary.phase);
   const summaryTitleIsCustom = summary.titleSource === "custom";
-  // 旧 task-index 里已经存在 titleOverridden=true 的手动标题时，
-  // sessions-index 冷启动 summary 可能仍是 first_input/generated 标题。只有 v4 session
-  // store 明确标记 custom 时才把 summary.title 当成新的手动标题权威。
+  // If the old task-index already has a manual title with titleOverridden=true,
+  // the sessions-index cold-start summary may still contain the first_input/generated title. Treat summary.title as the new manual-title authority only when the v4 session
+  // store explicitly marks it custom.
   const title =
     previous?.titleOverridden === true && !summaryTitleIsCustom
       ? previous.title
       : summary.title || previous?.title || "";
   const titleOverridden =
-    summaryTitleIsCustom || previous?.titleOverridden === true
-      ? true
-      : undefined;
+    summaryTitleIsCustom || previous?.titleOverridden === true ? true : undefined;
   return attachTaskListRowActivity(
     {
       taskId: summary.sessionId,
@@ -61,19 +59,13 @@ export function mapSessionSummaryToTaskMeta(
       title,
       ...(titleOverridden ? { titleOverridden } : {}),
       workspacePath: options.workspacePath,
-      ...(options.workspaceIdentity
-        ? { workspaceIdentity: options.workspaceIdentity }
-        : {}),
+      ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
       createdAt: summary.createdAt || previous?.createdAt || 0,
       updatedAt: summary.lastActivityAt || previous?.updatedAt || 0,
       mode: previous?.mode ?? "default",
       ...(previous?.model ? { model: previous.model } : {}),
-      ...(summary.parentSessionId
-        ? { forkedFromTaskId: summary.parentSessionId }
-        : {}),
-      ...(previous?.provider
-        ? { provider: previous.provider as ZCodeProvider }
-        : {}),
+      ...(summary.parentSessionId ? { forkedFromTaskId: summary.parentSessionId } : {}),
+      ...(previous?.provider ? { provider: previous.provider as ZCodeProvider } : {}),
       ...(status ? { status } : {}),
       ...(summary.pendingInteraction
         ? {
@@ -89,6 +81,21 @@ export function mapSessionSummaryToTaskMeta(
             },
           }
         : {}),
+      ...(summary.executionWorktree ? { executionWorktree: summary.executionWorktree } : {}),
+      // Child-conversation facts (spec: sidebar-child-conversation-counts.md); zero/absent stay absent.
+      // The wire element and ZCodeTaskChildSession are structurally identical — pass by reference
+      // like executionWorktree above.
+      ...(summary.sideChatCount ? { sideChatCount: summary.sideChatCount } : {}),
+      ...(summary.subagentCount ? { subagentCount: summary.subagentCount } : {}),
+      ...(summary.runningSubagentCount
+        ? { runningSubagentCount: summary.runningSubagentCount }
+        : {}),
+      ...(summary.childSessions && summary.childSessions.length > 0
+        ? { childSessions: summary.childSessions }
+        : {}),
+      // Worktree health flag rides at the summary top level (cross-version wire shape); absent = healthy.
+      ...(summary.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
+      ...(summary.incognito ? { incognito: true } : {}),
       ...(previous?.unreadAt ? { unreadAt: previous.unreadAt } : {}),
     },
     {

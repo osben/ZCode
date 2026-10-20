@@ -1,9 +1,9 @@
-// Conversation row 结构共享单测（docs/performance/conversation-row-structural-sharing.md）。
+// Structural-sharing unit tests for the conversation row (docs/performance/conversation-row-structural-sharing.md).
 import { describe, expect, it } from "vitest";
 import type { ConversationRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationRowPool, shareStructure } from "@/v4/conversationRowSharing.js";
 
-/** 模拟一次反序列化：内容相同、引用全新（包括字符串）。 */
+/** Simulates one deserialization pass: identical content, all-new references (including strings). */
 function fresh<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -25,6 +25,47 @@ function bigToolRow(rowId: number, status: ToolCallRow["status"] = "running"): T
 }
 
 describe("shareStructure", () => {
+  it("returns prev for a rebuilt Map with equal entries, including nested Maps", () => {
+    const prev = new Map([
+      ["run-1", { graph: { steps: ["a"] }, holeLabels: new Map([["h1", { name: "Hole" }]]) }],
+    ]);
+    const next = new Map([
+      ["run-1", { graph: { steps: ["a"] }, holeLabels: new Map([["h1", { name: "Hole" }]]) }],
+    ]);
+    expect(shareStructure(prev, next)).toBe(prev);
+  });
+
+  it("returns a new Map when an entry, the key set or the key order changes", () => {
+    const prev = new Map([
+      ["a", { ordinal: 1, superseded: false }],
+      ["b", { ordinal: 2, superseded: false }],
+    ]);
+    const changed = shareStructure(
+      prev,
+      new Map([
+        ["a", { ordinal: 1, superseded: true }],
+        ["b", { ordinal: 2, superseded: false }],
+      ]),
+    );
+    expect(changed).not.toBe(prev);
+    expect(changed.get("a")).toEqual({ ordinal: 1, superseded: true });
+    expect(changed.get("b")).toBe(prev.get("b"));
+
+    expect(shareStructure(prev, new Map([["a", { ordinal: 1, superseded: false }]]))).not.toBe(
+      prev,
+    );
+    const reordered = shareStructure(
+      prev,
+      new Map([
+        ["b", { ordinal: 2, superseded: false }],
+        ["a", { ordinal: 1, superseded: false }],
+      ]),
+    );
+    expect(reordered).not.toBe(prev);
+    expect([...reordered.keys()]).toEqual(["b", "a"]);
+    expect(shareStructure(undefined, prev)).toBe(prev);
+  });
+
   it("深相等时返回 prev 本身", () => {
     const prev = { a: 1, b: { c: ["x", { d: null }] } };
     expect(shareStructure(prev, fresh(prev))).toBe(prev);
@@ -84,7 +125,7 @@ describe("ConversationRowPool", () => {
     expect(done).not.toBe(first);
     expect(done.status).toBe("success");
     expect(done.input).toBe(first.input);
-    // 字符串无法用 toBe 区分引用，这里至少确保值正确；引用复用由 heap snapshot 验证。
+    // toBe cannot tell string references apart, so this only checks values; reference reuse is verified via heap snapshots.
     expect(done.inputText).toBe(first.inputText);
   });
 

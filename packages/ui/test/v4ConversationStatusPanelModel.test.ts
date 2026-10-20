@@ -698,6 +698,30 @@ describe("resolveSoleRunningWorkflowRunTarget", () => {
     expect(resolveSoleRunningWorkflowRunTarget(withSubagent)).toBeNull();
   });
 
+  it("keeps the shortcut for a retained terminal Dream result and blocks it only while Dream runs", () => {
+    const withTerminalDream = buildConversationStatusPanelModel({
+      backgroundWorks: [
+        backgroundWork({ workId: "dream-1", kind: "dream", status: "resultPending" }),
+        workflowWork,
+      ],
+      workflowRuns: [workflowRun()],
+    });
+    expect(resolveSoleRunningWorkflowRunTarget(withTerminalDream)).toEqual({
+      runId: "dwfrun-1",
+      toolCallId: "tool-wf-1",
+      workflowName: "发布前检查",
+    });
+
+    const withRunningDream = buildConversationStatusPanelModel({
+      backgroundWorks: [
+        backgroundWork({ workId: "dream-1", kind: "dream", status: "running" }),
+        workflowWork,
+      ],
+      workflowRuns: [workflowRun()],
+    });
+    expect(resolveSoleRunningWorkflowRunTarget(withRunningDream)).toBeNull();
+  });
+
   it("returns null for two workflow runs and for a sole run without a tool call id", () => {
     const two = buildConversationStatusPanelModel({
       backgroundWorks: [workflowWork, backgroundWork({ workId: "dwfrun-2", kind: "workflow" })],
@@ -753,5 +777,35 @@ describe("通用模式 Git 投影", () => {
     expect(general.hasContent).toBe(true);
     expect(buildConversationStatusPanelModel(input).git).toMatchObject({ added: 7, removed: 2 });
     expect(JSON.stringify(input)).toBe(original);
+  });
+});
+
+describe("latest Dream panel state", () => {
+  it("retains only the newest Dream, including terminal results", () => {
+    const latest = backgroundWork({
+      workId: "new",
+      kind: "dream",
+      status: "resultPending",
+      startedAt: 20,
+    });
+    const model = buildConversationStatusPanelModel({
+      backgroundWorks: [backgroundWork({ workId: "old", kind: "dream", startedAt: 10 }), latest],
+    });
+    expect(model.latestDreamWork).toEqual(latest);
+    expect(model.runningBashWorks).toEqual([]);
+    expect(model.hasContent).toBe(true);
+  });
+  it("keeps the panel entry when Dream coexists with a workflow", () => {
+    const dream = backgroundWork({ kind: "dream" });
+    const model = buildConversationStatusPanelModel({
+      backgroundWorks: [dream],
+      workflowRuns: [workflowRun()],
+    });
+    expect(model.latestDreamWork).toEqual(dream);
+    expect(model.runningWorkflowRuns.length).toBe(1);
+    expect(model.hasContent).toBe(true);
+    // A sole running workflow target would open the workflow shortcut while a Dream occupies
+    // the panel; the running Dream must suppress that shortcut.
+    expect(resolveSoleRunningWorkflowRunTarget(model)).toBeNull();
   });
 });

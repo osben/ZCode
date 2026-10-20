@@ -10,10 +10,7 @@ import type { TaskChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { readRawToolCallFileSummaries } from "@/ToolCallBlocks/fileSummaries.js";
 
 interface TaskChangeSummaryIntl {
-  formatMessage: (
-    desc: { id: string },
-    values?: Record<string, string>,
-  ) => string;
+  formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
 }
 
 interface AggregatedFileChange {
@@ -63,13 +60,8 @@ export function formatTaskTitleWithChanges(
   return `${title} (${formatTaskChangeStats(summary, intl)})`;
 }
 
-export function toWorkspaceRelativePath(
-  workspacePath: string,
-  filePath: string,
-): string {
-  const normalizedWorkspacePath = trimTrailingSeparators(
-    workspacePath.replace(/\\/g, "/"),
-  );
+export function toWorkspaceRelativePath(workspacePath: string, filePath: string): string {
+  const normalizedWorkspacePath = trimTrailingSeparators(workspacePath.replace(/\\/g, "/"));
   const normalizedFilePath = filePath.replace(/\\/g, "/");
 
   if (normalizedFilePath === normalizedWorkspacePath) {
@@ -81,7 +73,7 @@ export function toWorkspaceRelativePath(
     return normalizedFilePath.slice(exactPrefix.length) || getPathLeaf(filePath);
   }
 
-  // Windows 路径在不同来源下大小写可能不一致，这里做一次只用于比较的降级匹配。
+  // Windows paths may differ in case across sources; perform a fallback match here for comparison only.
   const caseInsensitivePrefix = exactPrefix.toLowerCase();
   if (normalizedFilePath.toLowerCase().startsWith(caseInsensitivePrefix)) {
     return normalizedFilePath.slice(exactPrefix.length) || getPathLeaf(filePath);
@@ -103,9 +95,7 @@ export function formatTaskChangedFileLabel(
     statParts.push(`-${file.removed}`);
   }
 
-  return statParts.length > 0
-    ? `${relativePath} ${statParts.join(" ")}`
-    : relativePath;
+  return statParts.length > 0 ? `${relativePath} ${statParts.join(" ")}` : relativePath;
 }
 
 export function buildPerTurnFileChangeMap(
@@ -164,10 +154,7 @@ export function buildTaskChangeSummary(
   let removed = 0;
   const files: ZCodeTaskChangedFileSummary[] = Array.from(changedFileMap.values())
     .map((file) => {
-      const fileStat = computeLineChangeStat(
-        file.originalContent,
-        file.finalContent,
-      );
+      const fileStat = computeLineChangeStat(file.originalContent, file.finalContent);
       added += fileStat.added;
       removed += fileStat.removed;
       return {
@@ -238,8 +225,8 @@ export function buildToolCallChangeSummary(
   const patchesByPath = new Map<string, string>();
   for (const toolCall of message.toolCalls) {
     if (hasUnsuccessfulToolStatus(toolCall)) {
-      // Bugfix: plan mode 会把被拒绝的 Write 保留成 tool call 输入，但它没有真实落盘。
-      // 从 tool input 派生变更摘要时必须跳过失败/拒绝工具，否则会显示不存在的文件改动。
+      // Bugfix: Plan mode retains rejected Write inputs as tool calls, even though they were never written to disk.
+      // Skip failed/rejected tools when deriving change summaries from tool input, or the UI will show file changes that never happened.
       continue;
     }
 
@@ -300,9 +287,7 @@ export function buildTaskChangeSummaryFromToolCalls(
   for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
     const message = messages[messageIndex]!;
     const turnIndex =
-      message.role === "assistant"
-        ? (message.turnIndex ?? messageIndex)
-        : messageIndex;
+      message.role === "assistant" ? (message.turnIndex ?? messageIndex) : messageIndex;
     const summary = buildToolCallChangeSummary(message, turnIndex).summary;
     if (!summary) {
       continue;
@@ -354,9 +339,9 @@ export function buildTurnChangeSummary(
     return null;
   }
 
-  // 调用方需要严格只显示当前轮的文件摘要。
-  // 这里把单轮摘要计算抽成独立 helper，只从传入的当前轮快照重算，
-  // 避免任何 task/session 级聚合误传进来时把历史轮次文件一起展示出来。
+  // Callers require file summaries for the current turn only.
+  // Extract single-turn summary calculation into a helper that recomputes only from the current-turn snapshot passed in,
+  // preventing historical-turn files from being included if a task/session-level aggregate is passed accidentally.
   const filesByPath = new Map<
     string,
     {
@@ -385,10 +370,7 @@ export function buildTurnChangeSummary(
   let removed = 0;
   const files: ZCodeTaskChangedFileSummary[] = Array.from(filesByPath.entries())
     .map(([path, snapshot]) => {
-      const fileStat = computeLineChangeStat(
-        snapshot.beforeContent,
-        snapshot.afterContent,
-      );
+      const fileStat = computeLineChangeStat(snapshot.beforeContent, snapshot.afterContent);
       added += fileStat.added;
       removed += fileStat.removed;
       return {
@@ -410,8 +392,8 @@ export function buildTurnChangeSummary(
 }
 
 /**
- * 从 fileChanges 中按轮次构建 per-turn 文件变更摘要。
- * 用于在每条 assistant 消息下方显示该轮的文件改动。
+ * Build per-turn file-change summaries from fileChanges.
+ * Used to show that turn's changes beneath each assistant message.
  */
 export function buildPerTurnChangeSummaries(
   fileChanges: readonly ZCodePersistedFileChange[] | undefined,

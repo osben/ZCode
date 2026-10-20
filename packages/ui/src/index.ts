@@ -30,8 +30,7 @@ export type {
   GitGraphRefKind,
 } from "./git-graph/layout.js";
 export { SSHDialog, RemoteConnectionDialog } from "./SSHDialog.js";
-export { useTheme } from "./useTheme.js";
-export type { Theme } from "./useTheme.js";
+export type { Theme, ThemePalette, ThemeSelection } from "./useTheme.js";
 export { useTestActions } from "./test-actions.js";
 export type { TestActions } from "./test-actions.js";
 export { StoreProvider, useZCodeStore } from "./store/StoreProvider.js";
@@ -55,7 +54,7 @@ export {
   useSourceSettingsServices,
 } from "./store/sourceSettingsServiceStore.js";
 
-// Hooks —— 统一的服务和平台操作访问层
+// Hooks — shared access layer for services and platform operations
 export {
   ServiceProvider,
   useServices,
@@ -99,6 +98,14 @@ export {
   loadUiFontSizePx,
   subscribeToUiFontSizeStorageChanges,
 } from "./lib/uiFontSize.js";
+export {
+  applyMonoFontFamily,
+  applyUiFontFamily,
+  loadMonoFontFamily,
+  loadUiFontFamily,
+  subscribeToMonoFontFamilyStorageChanges,
+  subscribeToUiFontFamilyStorageChanges,
+} from "./lib/uiFonts.js";
 export { reportUiLaunchToInput } from "./lib/uiPerfArmsTelemetry.js";
 export {
   RendererUserActionTelemetry,

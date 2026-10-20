@@ -4,8 +4,8 @@ const MAX_PATCH_DIFF_SAFE_LINE_COUNT = 1_200;
 const MAX_PATCH_DIFF_SAFE_CHAR_COUNT = 180_000;
 const MAX_PATCH_DIFF_SAFE_HUNK_LINE_NUMBER = 1_200;
 const MAX_PLAIN_TEXT_FALLBACK_RENDER_LINES = 800;
-// 这里不能直接拼接展示文案，否则 lib 层会把英文硬编码带进 UI，破坏国际化。
-// 改成内部 marker token，真正展示文案在组件层走 intl 渲染。
+// Do not concatenate display copy here, or the library layer would hard-code English in the UI and break localization.
+// Use an internal marker token instead; the component layer renders the actual copy through intl.
 const FALLBACK_TRUNCATED_MARKER_PREFIX = "\\ __ZCODE_DIFF_TRUNCATED__:";
 const FALLBACK_TRUNCATED_MARKER_REGEX = /^\\ __ZCODE_DIFF_TRUNCATED__:(\d+)$/;
 const PACKAGE_MANAGER_LOCKFILE_NAMES = new Set([
@@ -17,9 +17,9 @@ const PACKAGE_MANAGER_LOCKFILE_NAMES = new Set([
   "yarn.lock",
 ]);
 const PATCH_DIFF_FORCE_PLAIN_TEXT_FILE_TYPES = new Set(["zsh"]);
-// Gradle 脚本会被 @pierre/diffs 识别成普通 text。
-// 这类 patch 在部分入口或 worker 不可用时继续走 PatchDiff，仍可能同步解析卡住主线程。
-// 这里按文件后缀提前降级成轻量 <pre>，避免点击文件 chip 后整屏不可交互。
+// Gradle scripts are identified as ordinary text by @pierre/diffs.
+// If some entry points or workers are unavailable, these patches may still go through PatchDiff and synchronously block the main thread.
+// Fall back to a lightweight <pre> by file extension to keep the whole screen interactive after clicking a file chip.
 const PATCH_DIFF_FORCE_PLAIN_TEXT_PATH_SUFFIXES = [".gradle", ".gradle.kts"];
 
 function buildTruncatedMarkerLine(omittedLineCount: number): string {
@@ -61,13 +61,12 @@ export function countPatchFileDiffs(patch: string): number {
         return null;
       }
 
-      // 没有 `diff --git` 前缀的多文件 patch 里，
-      // 下一个文件头是 `--- a/x` 紧跟 `+++ b/x`。这两行恰好以 `-` / `+` 开头，
-      // 把它们当成当前 hunk 的删除/新增行消费掉的话——当模型把 hunk 头的行数
-      // 写得比正文多（LLM 常见的 off-by-one）时，多出的配额正好"吃掉"下一文件头，
-      // 后续 `@@` 又被当成同一文件的下一个 hunk，导致多文件 patch 被误计为单文件。
-      // 这里在消费正文时先探测完整的 `---`/`+++` 文件头对：一旦遇到就提前结束当前 hunk，
-      // 把控制权交还外层循环去识别新文件，而不是把文件头并进正文。
+      // In multi-file patches without a `diff --git` prefix, the next file header is `--- a/x` followed by `+++ b/x`.
+      // These lines start with `-`/`+`; if consumed as current-hunk deletion/addition lines, an oversized hunk count
+      // (a common LLM off-by-one) may use up the extra allowance on the next file header. The following `@@` is then
+      // treated as another hunk in the same file, miscounting a multi-file patch as a single-file patch.
+      // Probe for the complete `---`/`+++` header pair while consuming the body; end the current hunk as soon as it appears
+      // and return control to the outer loop to recognize the next file instead of folding its header into the body.
       if (isFileHeaderPair(cursor)) {
         return cursor;
       }
@@ -136,10 +135,10 @@ export function countPatchFileDiffs(patch: string): number {
       continue;
     }
 
-    // hunk 正文允许出现以 `---` / `+++` 开头的真实文本行，
-    // 不能仅按 `---/+++` 生数；但当出现 hunk 头后正文被截断时，也应保守按“有一个文件 diff”计数。
-    // 这里按 hunk 头声明的行数消费正文，只把成功解析出 hunk 的 `---/+++` 对识别成文件头，
-    // 并在截断场景下保守计数，避免把多文件 patch 误判成单文件。
+    // Hunk bodies can contain real text lines beginning with `---`/`+++`, so do not count file headers by prefix alone.
+    // But if a body is truncated after a hunk header, conservatively count one file diff.
+    // Consume the body using the line counts declared in the hunk header, recognize `---`/`+++` pairs as file headers
+    // only when a hunk parsed successfully, and count conservatively on truncation to avoid misclassifying a multi-file patch as one file.
     diffCount += 1;
     cursor = hasHunk ? hunkCursor : cursor + 2;
   }
@@ -222,8 +221,8 @@ function getPatchContentFileName(lines: readonly string[]): string | null {
       continue;
     }
 
-    // 标准 unified diff 头部允许在路径后追加 tab 分隔的时间戳。
-    // 如果不先剥离时间戳，`.gradle` 这类按后缀降级的规则会被 `test.gradle\t...` 绕过。
+    // Standard unified-diff headers may append a tab-separated timestamp after the path.
+    // Strip the timestamp first, or suffix-based fallback rules for `.gradle` can be bypassed by `test.gradle\t...`.
     const fileName = line.slice(4).trim().split("\t", 1)[0]?.trim() ?? "";
     if (!fileName || fileName === "/dev/null") {
       continue;
@@ -305,9 +304,8 @@ function collectPlainTextPreviewLines(lines: readonly string[]): string[] {
       continue;
     }
 
-    // 之前直接按 `+++ / --- / @@` 前缀过滤，
-    // 会把正文里真实存在的 `++ ` / `-- ` 行误删。
-    // 这里改成只跳过 hunk 头本身；一旦进入 hunk，后续内容全部原样保留。
+    // Filtering directly by `+++`/`---`/`@@` prefixes previously removed real `++ `/`-- ` lines from the body.
+    // Skip only the hunk header; once inside a hunk, preserve all following content as-is.
     if (isPatchHunkHeaderLine(line)) {
       continue;
     }
@@ -319,16 +317,15 @@ function collectPlainTextPreviewLines(lines: readonly string[]): string[] {
     return previewLines;
   }
 
-  // rename-only / mode-only 这类 Git patch 没有 @@ hunk，
-  // 但仍然有用户需要看的变更信息。之前会继续交给 PatchDiff，
-  // 打包后部分文件展开会变成空白；这里保留元信息走轻量 fallback。
+  // Git patches such as rename-only/mode-only have no @@ hunk but still contain changes users need to see.
+  // They were previously sent to PatchDiff, where some files rendered blank in packaged builds; preserve the metadata in the lightweight fallback.
   return collectPatchMetadataPreviewLines(lines);
 }
 
 function normalizePlainTextPreviewLines(lines: readonly string[]): string[] {
   const normalizedLines = limitPlainTextPreviewLines(lines);
 
-  // fallback 的目标是保住可读性和交互性，不需要继续暴露 `---/+++ / @@` 这些协议头。
+  // The fallback preserves readability and interaction; it does not need to expose protocol headers such as `---/+++ / @@`.
   while (normalizedLines.length > 0 && normalizedLines.at(-1) === "") {
     normalizedLines.pop();
   }
@@ -373,17 +370,17 @@ export function getPlainTextPatchFallbackLines(patch: string): string[] | null {
     !shouldForcePlainTextPreview
   ) {
     try {
-      // 自有计数器按 hunk 行数能判断这是逻辑上的单文件，但 PatchDiff 的实际解析器
-      // 会把删除的 SQL 注释（patch 正文形如 `--- ...`）误切成第二个文件。最终是否安全必须以
-      // 真正负责渲染的 @pierre/diffs 解析结果为准，不能让两套解析语义再次产生漏网输入。
-      // 这里不能调用 getSingularPatch：它会在预期的多文件结果上先 console.error(files) 再抛错，
-      // 把用户代码泄露到控制台。改用 throwOnError 解析并自行判断数量，让正常降级保持无日志副作用。
+      // Our counter may identify this as logically single-file by hunk line counts, while PatchDiff's actual parser
+      // can misread a deleted SQL comment (body line like `--- ...`) as a second file. The final safety decision must use
+      // the parser from @pierre/diffs, which is responsible for rendering; otherwise two parsing semantics can let input slip through.
+      // Do not call getSingularPatch here: on expected multi-file results it first console.error(files) and then throws,
+      // leaking user code into the console. Parse with throwOnError and inspect the count ourselves so normal fallback has no log side effects.
       const parsedPatches = parsePatchFiles(patch, undefined, true);
       if (parsedPatches.length === 1 && parsedPatches[0]?.files.length === 1) {
         return null;
       }
     } catch {
-      // 解析失败与解析出多个文件都属于预期降级条件，统一在下方返回轻量文本预览。
+      // Parse failures and multiple files are both expected fallback conditions; return a lightweight text preview below.
     }
     return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
   }
@@ -393,22 +390,22 @@ export function getPlainTextPatchFallbackLines(patch: string): string[] | null {
   }
 
   if (hasNoFileDiff) {
-    // summary/工具回放里可能拿到 apply_patch 片段或裸 hunk。
-    // 这些输入没有标准 file diff 头，PatchDiff 会同步抛
-    // “Provided patch must contain exactly 1 file diff”，所以必须直接降级。
+    // Summaries/tool replays may contain apply_patch fragments or bare hunks.
+    // These inputs have no standard file-diff header, so PatchDiff synchronously throws
+    // “Provided patch must contain exactly 1 file diff”; fall back directly.
     return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
   }
 
   if (shouldForcePlainTextPreview) {
-    // lockfile / shell script 这类文件在生产包里走 PatchDiff 的高亮 worker 路径不稳定，
-    // 已观察到 diff 已加载但展开内容失败。这里固定走轻量文本预览，优先保证内容可见。
+    // Syntax-highlighting worker handling of lockfiles/shell scripts through PatchDiff is unstable in production builds;
+    // diffs have loaded but expanded content failed. Always use the lightweight text preview for these files so the content remains visible.
     return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
   }
 
   if ((isCreatedFile || isDeletedFile) && !isOversizedPatch && !isDeepHunkLinePatch) {
-    // 文件变更面板展开“非纯文本”新增/删除文件时，PatchDiff 可能只渲染空壳，
-    // 用户看到的是展开后没有任何内容。新增/删除文件本来就是整文件快照，
-    // 这里不再按扩展名分流，统一走轻量文本 fallback，优先保证展开态始终有可读内容。
+    // When the file-change panel expands a non-plain-text added/deleted file, PatchDiff may render only an empty shell,
+    // leaving users with no content. Added/deleted files are full-file snapshots anyway, so skip extension-based routing
+    // and use the lightweight text fallback to keep expanded content readable.
     return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
   }
 
@@ -417,30 +414,28 @@ export function getPlainTextPatchFallbackLines(patch: string): string[] | null {
       const resolvedPatchFileName = patchFileName ?? getSingularPatch(patch).name;
       const patchFileType = getFiletypeFromFileName(resolvedPatchFileName);
 
-      // 新建/删除的纯文本文件即使 patch 很小，
-      // `@pierre/diffs` 也可能在同步渲染阶段卡住主线程，表现成整个界面都点不动。
-      // 另外删除文件里如果正文恰好以 `--- ` 开头，`getSingularPatch()` 会把它误拆成新的文件头。
-      // 这里优先用首个真实文件头提取路径，再回退到库解析，避免文件类型判断被正文干扰。
-      // 未知后缀会回退成 text，所以这里按解析后的文件类型拦截，而不是只匹配固定扩展名。
+      // Even a small patch for an added/deleted plain-text file can make `@pierre/diffs` block the main thread during synchronous rendering,
+      // leaving the whole UI unresponsive. Also, if a deleted file's body begins with `--- `, `getSingularPatch()` may split it as a new file header.
+      // Prefer extracting the path from the first real file header, then fall back to the library parser, so body text cannot affect file-type detection.
+      // Unknown extensions fall back to text, so gate by the parsed file type instead of matching a fixed set of extensions.
       if (patchFileType !== "text") {
         return null;
       }
     } catch {
-      // 单文件数量检测只能过滤明显的畸形输入；真正交给 @pierre/diffs 前仍要尊重
-      // 解析器结果。解析失败说明它无法确认“恰好一个 file diff”，继续渲染会触发错误边界。
+      // Single-file count detection filters only obviously malformed input; before passing it to @pierre/diffs, still trust
+      // the parser result. If parsing fails, the library cannot confirm there is exactly one file diff, and rendering could trigger the error boundary.
       return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
     }
   }
 
-  // `@pierre/diffs` 的 PatchDiff 只能渲染单文件 patch。
-  // 某些工具链会把多个文件的 unified diff 拼进同一个字段，继续交给 PatchDiff 会在渲染阶段抛
-  // “Provided patch must contain exactly 1 file diff”，最终触发整页错误边界。
-  // 这里和大文件/深行号一样降级为纯文本预览，保住聊天界面的可用性。
-  // 超大 patch（例如千行级 Dockerfile）在展开时会触发 PatchDiff 的同步解析，
-  // UI 主线程会被长时间占用，表现为点击“展开 diff”后整个页面卡死。
-  // 另外某些大文件只改 1 行时，hunk 行号会落在很深的位置（如 1500+），
-  // PatchDiff 在这类输入上也可能出现长时间卡顿。
-  // 这里统一退化为轻量纯文本渲染，优先保证交互可用性。
+  // PatchDiff from `@pierre/diffs` can render only single-file patches.
+  // Some toolchains concatenate multiple files' unified diffs into one field; passing that through makes rendering throw
+  // “Provided patch must contain exactly 1 file diff” and triggers the page-wide error boundary.
+  // Fall back to a plain-text preview here as for large files/deep line numbers, preserving chat usability.
+  // Expanding a very large patch (for example, a thousand-line Dockerfile) triggers synchronous PatchDiff parsing
+  // and can block the UI main thread, freezing the whole page after clicking “Expand diff.”
+  // Some large files change only one line at a deep hunk position (such as 1500+), which can also make PatchDiff stall.
+  // Always use lightweight plain-text rendering for these cases to keep interactions usable.
 
   return normalizePlainTextPreviewLines(collectPlainTextPreviewLines(lines));
 }

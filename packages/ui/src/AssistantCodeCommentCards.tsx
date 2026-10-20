@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TID_ASSISTANT_CODE_COMMENT_ITEM, TID_ASSISTANT_CODE_COMMENT_TOGGLE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { AssistantCodeCommentCard } from "@/lib/assistantCodeComment.js";
@@ -62,6 +63,7 @@ export function AssistantCodeCommentCards({
       >
         <button
           type="button"
+          data-testid={TID_ASSISTANT_CODE_COMMENT_TOGGLE}
           className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-left"
           aria-expanded={isOpen}
           aria-label={intl.formatMessage(
@@ -81,12 +83,7 @@ export function AssistantCodeCommentCards({
             )}
           />
           <h3 className="min-w-0 truncate text-ui-base font-medium text-foreground">
-            {intl.formatMessage(
-              {
-                id: cards.length === 1 ? "chat.codeComments.one" : "chat.codeComments.many",
-              },
-              { count: cards.length },
-            )}
+            {intl.formatPlural({ id: "chat.codeComments" }, cards.length)}
           </h3>
         </button>
       </div>
@@ -107,8 +104,8 @@ export function AssistantCodeCommentCards({
               const openReview = () => {
                 navigationRequestSequence += 1;
                 const requestId = `${card.id}:${navigationRequestSequence}`;
-                // 设计原因：模型评论描述的是 workspace 文件，不是 Git diff。直接打开独立的
-                // code-review source，既保留远程 workspace 路由，也避免未提交状态成为前置条件。
+                // Design reason: model comments describe workspace files, not Git diffs. Open the standalone
+                // code-review source directly to preserve remote workspace routing without requiring uncommitted changes.
                 onOpenCodeViewer?.({
                   type: "code-review",
                   title: getPathLeaf(card.path),
@@ -136,10 +133,11 @@ export function AssistantCodeCommentCards({
                   <div
                     role="button"
                     tabIndex={0}
+                    data-testid={TID_ASSISTANT_CODE_COMMENT_ITEM}
                     data-code-comment-path={card.displayPath}
-                    // Git 文件行把半透明基础面放在父层，hover 放在内层；若把
-                    // 两个背景放到同一元素，hover 会替换基础背景而不是在其上叠加，
-                    // 浅色主题下对比度几乎不可见。因此这里保持与 Git 文件行相同的分层。
+                    // Git file rows place the translucent base surface on the parent and hover on the inner layer.
+                    // Putting both backgrounds on one element would replace the base on hover instead of layering over it,
+                    // making the contrast nearly invisible in light theme. Keep the same layering as Git file rows.
                     className="flex min-h-10 w-full min-w-0 cursor-pointer select-text items-center gap-3 px-6 py-2 text-left whitespace-nowrap transition-colors hover:bg-hover/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
                     aria-label={intl.formatMessage(
                       { id: "chat.codeCommentCards.openReview" },

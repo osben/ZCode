@@ -11,14 +11,14 @@ type Props = {
   tab: PluginUiSidePaneTab;
   visible: boolean;
   onOpenBrowserUrl?: (url: string) => void;
-  /** 页面请求回到 inline 时宿主关闭本 tab。 */
+  /** The host closes this tab when the page asks to return to inline. */
   onCloseTab?: (tabId: string) => void;
 };
 function Content(props: Props & { scopeRef: PluginUiScopeRef }) {
   return <PluginUiSidePaneView {...usePluginUiSidePaneModel(props)} />;
 }
 
-/** 模块组装入口：将只读会话适配器与纯视图连接。 */
+/** Module assembly entry: wires the read-only conversation adapter to the pure view. */
 export const PluginUiSidePane = memo(function PluginUiSidePane(props: Props) {
   const scopeRef = useMemo(
     () => readPluginUiScopeRef(props.tab),

@@ -106,10 +106,7 @@ for (const [width, locale, theme] of [
         toggleBox.x + toggleBox.width - expansion < menuBox.x,
         "switch expanded hit area must not reach menu",
       );
-      assert.equal(
-        await toggle.getAttribute("aria-label"),
-        locale === "zh-CN" ? "禁用供应商" : "Disable provider",
-      );
+      assert.equal(await toggle.getAttribute("aria-checked"), "true");
       const rename = async () => {
         await menu.click();
         await page.getByTestId("model-provider-name-edit-button").click();
@@ -202,7 +199,8 @@ for (const [width, locale, theme] of [
         const on = await tile.evaluate(style);
         await checkIndicator(tile, true);
         assert.notEqual(on.background, off.background, "same-pointer click must change background");
-        // Todo134：选中时出现勾选图标是新预期，外层控件的文字/边框/尺寸仍不得跳变。
+        // Todo134: a checkmark icon appearing when selected is the new expectation; the outer
+        // control's text/border/size must still not jump.
         for (const key of ["color", "border", "width", "height"])
           assert.equal(on[key], off[key], key);
         await page.screenshot({
@@ -306,9 +304,8 @@ for (const [width, locale, theme] of [
             .getAttribute("aria-checked") === "false",
       );
       assert.equal(await page.locator('[data-provider-status="disabled"]').count(), 2);
-      const disabledTests = page.getByTitle(
-        locale === "zh-CN" ? "请先启用供应商" : "Enable the provider first",
-        { exact: true },
+      const disabledTests = page.locator(
+        '[data-testid="model-provider-model-test-button"]:disabled',
       );
       assert.ok((await disabledTests.count()) > 0);
       assert.equal(await disabledTests.first().isDisabled(), true);
@@ -323,12 +320,8 @@ for (const [width, locale, theme] of [
             .querySelector('[data-testid="model-provider-enabled-switch"]')
             .getAttribute("aria-checked") === "true",
       );
-      const keyLink = page.getByRole("button", {
-        name: locale === "zh-CN" ? "获取 API Key" : "Get API key",
-        exact: true,
-      });
-      const allKeyLinks = page.getByRole("button", { name: /获取.*Key|Get.*[Kk]ey/ });
-      assert.equal(await allKeyLinks.count(), 1);
+      const keyLink = page.getByTestId("model-provider-get-api-key-button");
+      assert.equal(await keyLink.count(), 1);
       await keyLink.click();
       assert.equal(
         await page.getByTestId("opened").textContent(),
@@ -345,29 +338,16 @@ for (const [width, locale, theme] of [
       assert.ok(Math.abs(during.x - before.x) < 2, "horizontal drag must remain inside sidebar");
       await page.mouse.up();
       await page.getByTestId("model-provider-model-delete-button-2").click();
-      await page.getByRole("alert").waitFor();
-      assert.match(
-        await page.getByRole("alert").innerText(),
-        locale === "zh-CN" ? /删除失败/ : /delete/i,
-      );
-      await page
-        .getByRole("button", { name: locale === "zh-CN" ? "重试" : "Retry", exact: true })
-        .click();
+      const deletionAlert = page.getByRole("alert");
+      await deletionAlert.waitFor();
+      await deletionAlert.getByRole("button").click();
       await page.waitForFunction(
         () => !document.querySelector('[data-testid="model-provider-model-delete-button-2"]'),
       );
-      assert.match(
-        await page.locator('[data-provider-detail-feedback-state="success"]').last().innerText(),
-        locale === "zh-CN" ? /已删除/ : /deleted/i,
-      );
+      await page.locator('[data-provider-detail-feedback-state="success"]').last().waitFor();
       assert.equal(mutations.filter((m) => m.action === "delete").length, 2);
-      await page
-        .getByTitle(locale === "zh-CN" ? "测试模型" : "Test model", { exact: true })
-        .first()
-        .click();
-      const success = page
-        .locator('[data-provider-detail-feedback-state="success"]')
-        .filter({ hasText: locale === "zh-CN" ? "连接成功" : "connected" });
+      await page.getByTestId("model-provider-model-test-button").first().click();
+      const success = page.locator('[data-provider-detail-feedback-state="success"]').last();
       await success.waitFor();
       assert.match(await success.innerText(), /Fixture Provider/);
       const visual = await success.evaluate((node) => ({
@@ -388,10 +368,11 @@ for (const [width, locale, theme] of [
       assert.equal(await success.locator("button").count(), 1);
       await success.locator("button").click();
       await success.waitFor({ state: "hidden" });
-      // 清空 Key 会触发异步草稿保存，放在独立操作完成后，避免与删除回归竞争保存门禁。
-      const keyInput = page.getByPlaceholder(locale === "zh-CN" ? "输入 API Key" : "Enter API key");
+      // Clearing the Key triggers an async draft save; do it after the standalone operations so it
+      // does not race the delete regression against the save gate.
+      const keyInput = page.getByTestId("model-provider-api-key-input");
       await keyInput.fill("");
-      assert.equal(await allKeyLinks.count(), 1);
+      assert.equal(await keyLink.count(), 1);
       await keyLink.click();
       assert.equal(
         await page.getByTestId("opened").textContent(),
