@@ -229,7 +229,7 @@ describe(`${CASE_MARKER}: Desktop continuous + Mobile replayable 同时运行的
       viewport: MOBILE_VIEWPORT,
       isMobile: true,
       hasTouch: true,
-      locale: "zh-CN",
+      locale: "en-US",
     });
     const mobile: PwPage = await mobileContext.newPage();
     await openMobilePairingPage(mobile, pairUrl, {

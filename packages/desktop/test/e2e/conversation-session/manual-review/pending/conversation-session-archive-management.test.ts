@@ -364,9 +364,7 @@ async function captureArchiveLayouts() {
             theme,
           ),
         );
-        await expect($('[data-testid="archive-sort"]')).toHaveText(
-          locale === "zh-CN" ? "更新时间" : "Updated time",
-        );
+        await expect($('[data-testid="archive-sort"]')).toHaveText("Updated time");
         await setArchiveGroupsOpen(false);
         expect(await $$('[data-testid="archive-task"]').length).toBe(0);
         await waitForArchiveAnimations();
@@ -391,18 +389,13 @@ async function captureArchiveLayouts() {
         expect(dimensions.right).toBeLessThanOrEqual(dimensions.width);
         expect(dimensions.left).toBeGreaterThanOrEqual(0);
         expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth + 1);
-        const heading = $(`h2=${locale === "zh-CN" ? "归档管理" : "Archive management"}`);
+        const heading = $(`h2=${"Archive management"}`);
         await heading.scrollIntoView();
         await expect(heading).toBeDisplayed();
-        await expect($('[data-testid="archive-management"] h2')).toHaveText(
-          locale === "zh-CN" ? "已归档的会话" : "Archived sessions",
-        );
+        await expect($('[data-testid="archive-management"] h2')).toHaveText("Archived sessions");
         const autoArchive = $('[data-testid="archive-auto-archive-switch"]');
         await autoArchive.scrollIntoView();
-        await expect(autoArchive).toHaveAttribute(
-          "aria-label",
-          locale === "zh-CN" ? "自动归档旧会话" : "Auto-archive old sessions",
-        );
+        await expect(autoArchive).toHaveAttribute("aria-label", "Auto-archive old sessions");
         const controlBounds = await browser.execute(() =>
           ["archive-auto-archive-switch", "archive-auto-archive-days"].map((id) => {
             const box = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();

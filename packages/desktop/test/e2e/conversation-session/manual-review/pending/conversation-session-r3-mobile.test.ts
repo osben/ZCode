@@ -221,7 +221,7 @@ describe(`${CASE_MARKER}: 手机 viewport 经真实 relay 配对，选择 SSH ta
         viewport: MOBILE_VIEWPORT,
         isMobile: true,
         hasTouch: true,
-        locale: "zh-CN",
+        locale: "en-US",
       });
       const page = await context.newPage();
       await openMobilePairingPage(page, pairUrl, {
@@ -532,7 +532,7 @@ PY`,
       ["light", "浅色主题"],
       ["dark", "深色主题"],
     ]) {
-      await mobile.getByRole("button", { name: "选择主题", exact: true }).click();
+      await mobile.getByRole("button", { name: "Choose theme", exact: true }).click();
       await mobile.getByRole("menuitemradio", { name: label, exact: true }).click();
       await mobile.waitForFunction(
         (value: string) => document.documentElement.classList.contains(`theme-zai-${value}`),
@@ -545,7 +545,7 @@ PY`,
         animations: "disabled",
       });
     }
-    await disconnectedBanner.getByRole("button", { name: "重新连接", exact: true }).click();
+    await disconnectedBanner.getByRole("button", { name: "Reconnect", exact: true }).click();
     await disconnectedBanner.waitFor({ state: "hidden", timeout: 60_000 });
     await mobileDraftInput.waitFor().catch(async (error: unknown) => {
       await mobile.screenshot({
@@ -614,7 +614,7 @@ PY`,
       viewport: MOBILE_VIEWPORT,
       isMobile: true,
       hasTouch: true,
-      locale: "zh-CN",
+      locale: "en-US",
     });
     const mobile = await context.newPage();
     let phase = "pairing";
@@ -672,7 +672,7 @@ PY`,
         ["light", "浅色主题"],
         ["dark", "深色主题"],
       ] as const) {
-        await mobile.getByRole("button", { name: "选择主题", exact: true }).click();
+        await mobile.getByRole("button", { name: "Choose theme", exact: true }).click();
         await mobile.getByRole("menuitemradio", { name: label, exact: true }).click();
         await mobile.waitForFunction(
           (value: string) => document.documentElement.classList.contains(`theme-zai-${value}`),
@@ -689,7 +689,7 @@ PY`,
         });
       }
       phase = "reconnect-original-project";
-      await banner.getByRole("button", { name: "重新连接", exact: true }).click();
+      await banner.getByRole("button", { name: "Reconnect", exact: true }).click();
       await banner.waitFor({ state: "hidden", timeout: 120_000 });
       await composer.waitFor({ timeout: 60_000 });
       expect(await composer.textContent()).toContain(unsentDraft);

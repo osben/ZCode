@@ -93,7 +93,7 @@ it.each(["zh-CN", "en-US"] as const)("无宿主图片能力时 %s 展示静态�
       ),
     ),
   );
-  expect(html).toContain(locale === "zh-CN" ? "预览不可用" : "Preview unavailable");
+  expect(html).toContain("Preview unavailable");
   expect(html).not.toMatch(/Loading|正在加载/);
 });
 it("公开图片资源命中时直接渲染图片", () => {

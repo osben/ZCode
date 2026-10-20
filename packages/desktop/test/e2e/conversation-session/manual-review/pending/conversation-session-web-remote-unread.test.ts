@@ -171,7 +171,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       viewport: { width, height: 900 },
       isMobile: width < 768,
       hasTouch: width < 768,
-      locale: "zh-CN",
+      locale: "en-US",
     });
     if (staleBootstrap) {
       bootstrapReplay = await replayStaleBootstrapAfterReconnect(context);
@@ -301,7 +301,7 @@ describe(`${CASE}: 实际 Web 查看与桌面唯一未读写者`, () => {
       await beginDesktopTurn(address, `${CASE}_HOME`);
       // 窄屏返回首页；宽屏通过插件市场离开会话，不能仅用聊天已挂载判断正在查看。
       if (width < 768) await showMobileTaskHome(page);
-      else await page.getByRole("button", { name: /^(插件市场|Plugin Store)$/u }).click();
+      else await page.getByRole("button", { name: /^(Plugin Store)$/u }).click();
       await waitMobileTaskView(null);
       await releaseControlledReplay("mro03-home");
       const homeMarker = await waitMarker(address, true);
