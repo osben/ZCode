@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-// 启动前 ToolLayout 与旧宿主运行卡的渲染回归；v4 run 摘要另由 workflowToolSummary 测试覆盖。
+// Rendering regression for ToolLayout and the legacy host run card before launch; the v4 run summary is covered
+// separately by the workflowToolSummary tests.
 import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -35,35 +36,40 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
     ),
 }));
 
-// ControlHintTooltip 依赖应用根部的 TooltipProvider；测试里按既有惯例替换为透传桩。
+// ControlHintTooltip depends on the app root's TooltipProvider; in tests it is replaced with a pass-through stub per existing convention.
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-// 接线用例要把整行渲染出来；行不碰 workspace 服务，给一个空实现免去搭一整份 Provider。
+// Wiring cases render the whole row; the row never touches workspace services, so an empty implementation spares us
+// building a whole Provider.
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServices: () => ({}),
 }));
 
-// eslint-disable-next-line import/first -- 必须在 code-block mock 之后再引入被测 renderer。
+// eslint-disable-next-line import/first -- The renderer under test must be imported after the code-block mock.
 import {
   CreateWorkflowToolCallBlock,
   readWorkflowKindMessageId,
 } from "../src/ToolCallBlocks/renderers/create-workflow.js";
-// eslint-disable-next-line import/first -- 同上；反馈提示的纯函数与 renderer 同一读取规则。
+// eslint-disable-next-line import/first -- Same as above; the feedback tooltip's pure function reads under the same rule as the renderer.
 import { formatWorkflowFeedbackTooltip } from "../src/ToolCallBlocks/renderers/createWorkflowDisplay.js";
-// eslint-disable-next-line import/first -- 同上；卡片与确认窗共用的入参读取规则。
+// eslint-disable-next-line import/first -- Same as above; the input-reading rule shared by the card and the confirmation dialog.
 import {
   readWorkflowAmendScriptInherited,
   readWorkflowRetuneCall,
 } from "../src/ToolCallBlocks/renderers/createWorkflowInput.js";
-// eslint-disable-next-line import/first -- 同上；接线层（行 → 宿主请求）只在这一节用到。
+// eslint-disable-next-line import/first -- Same as above; the wiring layer (row → host request) is used only in that section.
 import { ConversationRowView } from "@/v4/ConversationRowView.js";
-// eslint-disable-next-line import/first -- 同上。
+// eslint-disable-next-line import/first -- Same as above.
 import { PlatformProvider } from "@/hooks/usePlatform.js";
+// eslint-disable-next-line import/first -- Same as above; the locale entries are used only for two-language existence assertions.
+import enUS from "../src/i18n/locales/en-US.js";
+// eslint-disable-next-line import/first -- Same as above.
+import zhCN from "../src/i18n/locales/zh-CN.js";
 
 type ToolCallOverrides = {
-  /** 工具名（kind / title 同值）；缺省 CreateWorkflow，修订行传 AmendWorkflow。 */
+  /** Tool name (same value for kind / title); defaults to CreateWorkflow, amend rows pass AmendWorkflow. */
   kind?: string;
   input?: unknown;
   output?: unknown;
@@ -115,7 +121,7 @@ function createBlock(
           snapshotRefs: toolCall.snapshotRefs,
         },
         childToolCalls: [],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 测试上下文只填 renderer 读取的字段。
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- The test context only fills the fields the renderer reads.
       } as any,
       workspacePath: "/workspace",
       displayModel: {
@@ -127,7 +133,7 @@ function createBlock(
         showInput: false,
         showOutput: true,
         showKind: false,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
       } as any,
       viewerSource: null,
       rawFileSummaries: [],
@@ -166,8 +172,8 @@ function renderBlockDom(
   return render(createBlock(toolCall, contextOverrides, locale));
 }
 
-// 本仓 vitest 没开 globals，@testing-library 的自动 cleanup 不会注册；不显式清理，
-// 上一条用例的 DOM 会留下来。
+// This repo's vitest does not enable globals, so @testing-library's automatic cleanup is never registered; without an
+// explicit cleanup the previous case's DOM would leak into the next one.
 afterEach(() => {
   cleanup();
 });
@@ -179,7 +185,7 @@ const OK_DISPLAY = {
   diagnostics: [],
 };
 
-// ── 图夹具：plan → verify，verify 回到 plan ─────────────────────────────────────
+// ── Graph fixture: plan → verify, verify back to plan ──
 const LOOP_GRAPH = {
   steps: [
     {
@@ -277,6 +283,21 @@ function joined(
   } satisfies WorkflowRunCardSummary;
 }
 
+describe("CreateWorkflowToolCallBlock 表头种类词", () => {
+  it("扫光中的种类词可见：换词的 wf-swap 包在 animated-gradient-text 外面，不在里面", () => {
+    // background-clip:text only clips its own layer's text; children promoted to their own layer by transform/opacity
+    // animations turn transparent, and the header's "Workflow running" becomes a stretch of blank (round 7 revision).
+    const view = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() });
+    const kind = view.getByTestId("workflow-card-kind");
+    expect(kind.textContent).toBe("Workflow running");
+    const gradient = kind.querySelector(".animated-gradient-text")!;
+    expect(gradient).toBeTruthy();
+    expect(gradient.querySelector(".wf-swap")).toBeNull();
+    expect(gradient.closest(".wf-swap")).toBeTruthy();
+    expect(gradient.textContent).toBe("Workflow running");
+  });
+});
+
 describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）", () => {
   it("表头：种类词 + 名字，右侧空环灯「compiled」+ 等宽计数；卡体是时间线，脚本折叠", () => {
     const view = renderBlockDom(LOOP_TOOL_CALL);
@@ -287,6 +308,8 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
     expect(view.getByTestId("workflow-card-name").textContent).toBe("Research pipeline");
     expect(view.getByTestId("workflow-card-static-status").textContent).toBe("compiled");
     expect(view.getByTestId("workflow-card-detail").textContent).toBe("2 phases · 2 agents");
+    // Green is reserved for the awaiting-confirmation state: compiled is not a success-colored badge.
+    expect(card.innerHTML).not.toContain("text-success");
 
     const stations = view.getAllByTestId("workflow-timeline-station");
     expect(stations.map((station) => station.textContent)).toEqual([
@@ -297,13 +320,14 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
       expect.stringContaining("planner"),
       expect.stringContaining("checker"),
     ]);
-    // 相邻的边是淡墨轨道段；回边是弧。
+    // Adjacent edges are light-ink track segments; the back edge is an arc.
     expect(view.getByTestId("workflow-timeline-rail").getAttribute("data-rail-ink")).toBe("faint");
     const arc = view.getByTestId("workflow-timeline-arc");
     expect(arc.getAttribute("data-arc-from")).toBe("1");
     expect(arc.getAttribute("data-arc-to")).toBe("0");
-    // 最低一道的弧也要有一段像样的下落：圆角之后的竖段向下且不短于箭头（回归：16px 的道高让最后
-    // 一段向上走了一像素，`marker-end` 跟着朝上，箭头就不见了）。
+    // Even the lowest lane's arc needs a decent drop: the vertical segment after the rounded corner points down and is
+    // no shorter than the arrow (regression: a 16px lane height made the last segment climb one pixel upward, `marker-end`
+    // followed suit, and the arrow disappeared).
     const d = arc.querySelector("path")!.getAttribute("d")!;
     const verticals = [...d.matchAll(/V(-?[\d.]+)/gu)].map((match) => Number(match[1]));
     const corner = Number(
@@ -311,10 +335,10 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
     );
     expect(verticals).toHaveLength(2);
     expect(verticals[1]! - corner).toBeGreaterThanOrEqual(8);
-    // 没有汇点、没有「may terminate」。
+    // No sink, no "may terminate".
     expect(card.textContent).not.toContain("terminate");
 
-    // 脚本原文只能在这里读：默认收起，点开才进 DOM。
+    // The script source can only be read here: collapsed by default, entering the DOM only once expanded.
     expect(view.queryByTestId("code-block")).toBeNull();
     fireEvent.click(view.getByTestId("workflow-card-script-toggle"));
     expect(view.getByTestId("code-block").textContent).toContain('phase("plan")');
@@ -392,6 +416,8 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
         },
       },
     });
+    // The rank band is retired (addendum "edge ledge"): the invisible ones stand on the timeline's own ledge, and the header no longer repeats them.
+    expect(view.queryByTestId("workflow-rank-strip")).toBeNull();
     expect(view.getAllByTestId("workflow-timeline-station")).toHaveLength(6);
   });
 
@@ -412,7 +438,7 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
 
     expect(markup).toContain("The workflow script compiled cleanly.");
     expect(markup).toContain("workflow-card-script-toggle");
-    // 无 display 时不应出现结构化反馈卡、compiled 词或待修正计数。
+    // Without display there should be no structured feedback card, no "compiled" word, and no pending-fix count.
     expect(markup).not.toContain("Compiler feedback");
     expect(markup).not.toContain("workflow-draft-lamp");
     expect(markup).not.toContain("workflow-card-static-status");
@@ -447,8 +473,9 @@ function html(view: ReturnType<typeof render>): string {
   return view.container.innerHTML;
 }
 
-// ── 编译反馈（docs/dynamic-workflow/presentation.md「Compiler feedback」）──────────────────
-// 编不过不是失败：什么都没跑，反馈交回了模型。行只用 ToolLayout 已有的槽位说这件事，全程不用 destructive。
+// ── Compile feedback (docs/dynamic-workflow/presentation.md, "Compiler feedback") ──
+// Failing to compile is not a failure: nothing ran, and the feedback is handed back to the model. The row says this using
+// only ToolLayout's existing slots, never destructive.
 describe("CreateWorkflowToolCallBlock 编译反馈", () => {
   const FEEDBACK_DISPLAY = {
     kind: "create_workflow",
@@ -482,6 +509,10 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     const lamp = view.getByTestId("workflow-draft-lamp");
     expect(lamp.getAttribute("data-draft-lamp")).toBe("open");
     expect(lamp.className).toContain("border-warning");
+    expect(lamp.className).toContain("bg-transparent");
+    // The lamp sits outside the underlined status word: the tooltip triggers on the word only.
+    expect(view.getByTestId("workflow-draft-status").contains(lamp)).toBe(false);
+    expect(row.innerHTML).not.toContain("destructive");
     expect(view.queryByTestId("workflow-card")).toBeNull();
     expect(view.queryByTestId("workflow-timeline")).toBeNull();
   });
@@ -507,7 +538,7 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
 
   it("展开脚本带行号与问题行，反馈显示标题、计数、说明及逐条位置", () => {
     const view = renderBlockDom(FEEDBACK_CALL, { workflowDraft: LATEST, forceOpen: true });
-    // 展开后稿号仍在行上（不随展开隐藏）。
+    // After expanding, the draft number stays on the row (not hidden along with the expansion).
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("draft 2");
     const code = view.getByTestId("code-block");
     expect(code.getAttribute("data-show-line-numbers")).toBe("true");
@@ -528,7 +559,7 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     expect(lines[0]!.textContent).toContain("L3:C5");
     expect(lines[0]!.textContent).toContain("Cannot find name");
     expect(lines[0]!.textContent).toContain("TS2304");
-    // 分析器自有规则不是 TypeScript 码。
+    // The analyzer's own rules are not TypeScript codes.
     expect(lines[1]!.textContent).toContain("rule 9003");
     expect(lines[1]!.textContent).not.toContain("TS9003");
   });
@@ -594,7 +625,9 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     );
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("第 1 稿");
     expect(view.getByTestId("workflow-draft-status").textContent).toBe("2 处待修正 · 未运行");
-    expect(view.getByTestId("workflow-compiler-feedback-title").textContent).toBe("编译反馈");
+    expect(view.getByTestId("workflow-compiler-feedback-title").textContent).toBe(
+      zhCN["chat.toolCall.workflow.feedback"],
+    );
     expect(view.getByTestId("workflow-compiler-feedback-count").textContent).toBe("2 条");
     expect(view.getByTestId("workflow-compiler-feedback-lede").textContent).toBe(
       "类型检查未通过，脚本未运行；反馈已交回模型，由它修改后重新提交。",
@@ -649,14 +682,16 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
   const DRAFT =
     'phase("plan");\nconst planner = agent("planner");\nawait world.run("pnpm test");\nphase("ver';
 
-  // 草稿由笔逐字写出（追记「书写效果」）：断言最终形态前先让笔写完。
+  // The draft is typed out character by character by the pen (addendum "typewriter effect"): let the pen finish before
+  // asserting the final form.
   beforeEach(() => {
     vi.useFakeTimers();
   });
   afterEach(() => {
     vi.useRealTimers();
   });
-  // 笔每写一字都是 setState → effect 再排下一枚定时器；一次 advance 只走一步，所以按步长逐段推进。
+  // Each character the pen writes is a setState → effect that schedules the next timer; one advance moves one step, so
+  // progress segment by segment using the step size.
   const settle = () => {
     for (let i = 0; i < 120; i += 1) {
       act(() => {
@@ -680,7 +715,8 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
     expect(view.container.querySelector("[aria-expanded]")).toBeNull();
     expect(view.queryByTestId("workflow-card")).toBeNull();
     expect(view.queryByTestId("code-block")).toBeNull();
-    // 笔刚落下：第一站已揭示但一个字还没写，光标稳住（正在写）；第二站还不在轨道上。
+    // The pen just landed: the first station is revealed but not one character written yet, the cursor holds steady
+    // (writing); the second station is not on the track yet.
     expect(view.getByTestId("workflow-draft-timeline")).toBeTruthy();
     expect(view.getAllByTestId("workflow-timeline-station")).toHaveLength(1);
     expect(view.getByTestId("workflow-timeline-caret").getAttribute("data-pen")).toBe("writing");
@@ -688,11 +724,13 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
     settle();
     const stations = view.getAllByTestId("workflow-timeline-station");
     expect(stations.map((station) => station.textContent)).toEqual(["plan", "ver"]);
-    // 笔追上了流：光标在最后一站的名字后面闪烁。
+    // The pen has caught up with the stream: the cursor blinks after the last station's name.
     const caret = view.getByTestId("workflow-timeline-caret");
     expect(stations[1]!.contains(caret)).toBe(true);
     expect(caret.getAttribute("data-pen")).toBe("idle");
-    // 草稿只有阶段线：没有药丸、没有弧；阶段线不是展开内容，行上仍没有展开入口。
+    expect(caret.className).toContain("wf-caret");
+    // The draft has only the phase line: no pills, no arcs; the phase line is not expandable content, and the row still
+    // has no expansion affordance.
     expect(view.queryByTestId("workflow-agent-pill")).toBeNull();
     expect(view.queryByTestId("workflow-timeline-arc")).toBeNull();
     expect(view.container.querySelector("[aria-expanded]")).toBeNull();
@@ -758,7 +796,7 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
   });
 });
 
-// ── 联接到 run：图整个留在聊天区，灯、药丸、墨迹随投影 ─────────────────────────────
+// ── Joined to a run: the graph stays entirely in the chat area; lamp, pills, and ink follow the projection ──
 describe("CreateWorkflowToolCallBlock 运行态", () => {
   it("表头：种类词「Workflow running」、灯 + 状态词、步数细节；没有紧凑卡", () => {
     const view = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() });
@@ -791,7 +829,7 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
       "done",
       "running",
     ]);
-    // 状态不只靠颜色：标记带可读文字。
+    // Status is not color alone: the marker carries readable text.
     expect(
       pills[1]!.querySelector('[data-testid="workflow-pill-status"]')?.getAttribute("aria-label"),
     ).toBe("running");
@@ -883,11 +921,11 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
     const card = view.getByTestId("workflow-card").textContent ?? "";
     expect(card).not.toContain("steps");
     expect(card).not.toContain("tokens");
-    // 产物只在产物条上出现（不再有「1 artifact」计数）；「results」在屏幕上仍没有落点。
+    // Artifacts appear only on the artifact strip (no more "1 artifact" count); "results" still has no place on screen.
     expect(card).not.toContain("artifact");
     expect(card).not.toContain("result");
     expect(card).not.toContain("working");
-    // 时间线下挂产物条：一枚可点的药丸，尾槽里是 v2。
+    // The artifact strip hangs below the timeline: one clickable pill, with v2 in the tail slot.
     const strip = view.getByTestId("workflow-card-artifacts");
     const pills = within(strip).getAllByTestId("workflow-card-artifact");
     expect(pills).toHaveLength(1);
@@ -923,8 +961,8 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
     expect(onOpenWorkflowRun).toHaveBeenCalledTimes(2);
 
     cleanup();
-    // 没有回调时站头不是控件（span，不是禁用的 button）：禁用按钮会吞掉点击，轮尾摘要的整块开关
-    // 就收不到（追记「点击语法修订」）。
+    // Without a callback the station header is not a control (a span, not a disabled button): a disabled button swallows
+    // clicks, and the turn-tail summary's whole-block toggle would never receive them (addendum "click syntax revision").
     const gated = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() });
     expect(gated.queryByTestId("workflow-card-open-details")).toBeNull();
     const station = gated.getAllByTestId("workflow-timeline-station")[0]!;
@@ -993,7 +1031,9 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
   it("zh-CN 下卡面全部本地化", () => {
     const view = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() }, "zh-CN");
     const card = view.getByTestId("workflow-card");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流运行中");
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
+      zhCN["chat.toolCall.workflow.card.running"],
+    );
     expect(view.getByTestId("workflow-card-status").textContent).toBe("运行中");
     expect(card.textContent).toContain("2 个阶段 · 1 个子代理工作中");
     expect(card.textContent).toContain("1 个子代理工作中");
@@ -1002,7 +1042,7 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
   });
 });
 
-// ── 药丸 → 子代理 transcript（docs/dynamic-workflow/presentation.md「The pill」）──
+// ── Pill → subagent transcript (docs/dynamic-workflow/presentation.md, "The pill") ──
 describe("CreateWorkflowToolCallBlock 药丸点击", () => {
   it("带会话的药丸是按钮：点一下交出实例身份（run、会话、站点、序号、运行时名）", () => {
     const onOpenWorkflowActor = vi.fn();
@@ -1011,7 +1051,7 @@ describe("CreateWorkflowToolCallBlock 药丸点击", () => {
     const pills = view.getAllByTestId("workflow-agent-pill");
     expect(pills.map((pill) => pill.tagName)).toEqual(["BUTTON", "BUTTON"]);
     expect(pills[1]!.getAttribute("aria-label")).toBe("Open the transcript of Bob");
-    // ↗ 的在场就是「可打开」的可见证据。
+    // The presence of ↗ is the visible evidence of "openable"; the hover affordance hangs on wf-pill-open.
     expect(view.getAllByTestId("workflow-timeline-pill-open")).toHaveLength(2);
 
     fireEvent.click(pills[1]!);
@@ -1032,8 +1072,8 @@ describe("CreateWorkflowToolCallBlock 药丸点击", () => {
     expect(noCallback.queryByTestId("workflow-timeline-pill-open")).toBeNull();
     cleanup();
 
-    // 还没启动的子代理（追记「点击语法修订」）：与活药丸同一套悬停与点击，交出槽位——车道 +
-    // 将来的序号——不带会话 id；宿主开的是占位 tab。
+    // A subagent that has not started yet (addendum "click syntax revision"): the same hover and click as a live pill,
+    // handing over the slot — lane + future ordinal — without a session id; the host opens a placeholder tab.
     const onOpenWorkflowActor = vi.fn();
     const noSession = renderBlockDom(LOOP_TOOL_CALL, {
       onOpenWorkflowActor,
@@ -1076,8 +1116,9 @@ describe("CreateWorkflowToolCallBlock 药丸点击", () => {
   });
 });
 
-// 脚本药丸（docs/dynamic-workflow/transcript-and-notifications.md「Opening the tab」）：与子代理药丸同一套打开语法，
-// 交出的不是槽位而是这一站的阶段 id——脚本 transcript 一个 run 只有一份，落点才按站。
+// Script pill (docs/dynamic-workflow/transcript-and-notifications.md, "Opening the tab"): the same open syntax as the
+// subagent pill, but it hands over the station's phase id rather than a slot — a script transcript exists once per run,
+// so the target is keyed by station.
 describe("CreateWorkflowToolCallBlock 脚本药丸", () => {
   const WORKSPACE_GRAPH = {
     ...LOOP_GRAPH,
@@ -1125,7 +1166,7 @@ describe("CreateWorkflowToolCallBlock 脚本药丸", () => {
       phaseId: "phase#b",
       workflowName: "Research pipeline",
     });
-    // 与子代理那条路互不串线。
+    // Never crosses wires with the subagent path.
     expect(onOpenWorkflowActor).not.toHaveBeenCalled();
   });
 
@@ -1217,7 +1258,8 @@ describe("CreateWorkflowToolCallBlock 失败态与 Resume", () => {
     });
     expect(view.getByTestId("workflow-card-kind").textContent).toBe("Workflow stopped");
     expect(view.getByTestId("workflow-card-status-reason").textContent).toContain("by you");
-    // 状态行的第三个词：停下的 run 还能接着跑。动词从「取消」改成「停止」之后，后果由这里说。
+    // The third word of the status line: a stopped run can still continue. After the verb changed from "cancel" to "stop",
+    // the consequence is stated here.
     expect(view.getByTestId("workflow-card-status-resumable").textContent).toContain("resumable");
     expect(view.getByTestId("workflow-card-resume")).toBeTruthy();
   });
@@ -1231,10 +1273,11 @@ describe("CreateWorkflowToolCallBlock 失败态与 Resume", () => {
   });
 });
 
-// ── kind 文案的相位化 ─────────────────────────────────────────────────────────────
-// ToolLayout 只在失败态渲染 statusLabel，所以非失败态 kindLabel 是卡上唯一说明「在干什么」
-// 的文字；而「校验」只在 running 相为真（脚本在 prepareApproval 里早于弹窗就被 analyze 过）。
-// 相位读适配器挂在 raw 上的 v4 原状态，两层都钉：纯函数与实际渲染出来的那句话。
+// ── Phase-aware kind copy ──
+// ToolLayout renders statusLabel only in the failed state, so in non-failed states kindLabel is the only text on the card
+// saying "what is happening"; and "validating" is true only in the running phase (the script was already analyzed in
+// prepareApproval before the dialog). The phase reader hangs off the v4 raw status attached to raw; both layers are
+// pinned: the pure function and the sentence actually rendered.
 describe("readWorkflowKindMessageId", () => {
   it("终态一律是「工作流」，不看 v4 状态", () => {
     expect(readWorkflowKindMessageId({ v4Status: "success" }, false)).toBe(
@@ -1265,17 +1308,17 @@ describe("readWorkflowKindMessageId", () => {
   });
 
   it("v4Status 缺席（非 v4 宿主 / 老快照）时逐字保持今天的行为", () => {
-    // 新相位只在有权威状态时生效；没有状态就不猜，回落 isRunning → 校验。
+    // The new phase applies only with an authoritative status; without one there is no guessing — fall back to isRunning → validating.
     expect(readWorkflowKindMessageId(undefined, true)).toBe("chat.toolCall.workflow.running");
     expect(readWorkflowKindMessageId({}, true)).toBe("chat.toolCall.workflow.running");
     expect(readWorkflowKindMessageId({ display: OK_DISPLAY }, true)).toBe(
       "chat.toolCall.workflow.running",
     );
-    // raw 不是普通对象（数组 / 字符串 / null）同样回落，不崩。
+    // A raw that is not a plain object (array / string / null) falls back the same way, without crashing.
     expect(readWorkflowKindMessageId([], true)).toBe("chat.toolCall.workflow.running");
     expect(readWorkflowKindMessageId("running", true)).toBe("chat.toolCall.workflow.running");
     expect(readWorkflowKindMessageId(null, true)).toBe("chat.toolCall.workflow.running");
-    // 认不出的状态字符串也走同一条回落。
+    // An unrecognized status string takes the same fallback.
     expect(readWorkflowKindMessageId({ v4Status: "queued" }, true)).toBe(
       "chat.toolCall.workflow.running",
     );
@@ -1343,22 +1386,22 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
       { isRunning: true },
       "zh-CN",
     );
-    expect(writing).toContain("正在编写工作流");
-    expect(writing).not.toContain("正在校验工作流");
+    expect(writing).toContain(zhCN["chat.toolCall.workflow.writing"]);
+    expect(writing).not.toContain(zhCN["chat.toolCall.workflow.running"]);
 
     const awaiting = renderBlock(
       { input: IN_FLIGHT_INPUT, raw: { v4Status: "pendingApproval" }, status: "running" },
       { isRunning: true },
       "zh-CN",
     );
-    expect(awaiting).toContain("工作流待确认");
+    expect(awaiting).toContain(zhCN["chat.toolCall.workflow.awaitingConfirmation"]);
 
     const validating = renderBlock(
       { input: IN_FLIGHT_INPUT, raw: { v4Status: "running" }, status: "running" },
       { isRunning: true },
       "zh-CN",
     );
-    expect(validating).toContain("正在校验工作流");
+    expect(validating).toContain(zhCN["chat.toolCall.workflow.running"]);
   });
 
   it("第 2 稿起编写中的种类词是「Revising workflow」、细节槽带稿号；第 1 稿照旧不编号", () => {
@@ -1397,7 +1440,7 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
     expect(validating.getByTestId("workflow-card-detail").textContent).toBe("draft 3");
     cleanup();
 
-    // 编过、没启动的静态卡不是在途行：不带稿号。
+    // A compiled, not-yet-started static card is not an in-flight row: no draft number.
     const settled = renderBlockDom(LOOP_TOOL_CALL, {
       workflowDraft: { ordinal: 2, superseded: false },
     });
@@ -1410,18 +1453,52 @@ describe("CreateWorkflowToolCallBlock kind 文案分相", () => {
       { isRunning: true, workflowDraft: { ordinal: 2, superseded: false } },
       "zh-CN",
     );
-    expect(view.container.textContent).toContain("正在修改工作流");
+    expect(view.container.textContent).toContain(zhCN["chat.toolCall.workflow.revising"]);
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("第 2 稿");
+  });
+
+  it("编译反馈的新 key 在两种语言里都存在且已翻译；旧的错误计数与「诊断」键退场", () => {
+    for (const key of [
+      "chat.toolCall.workflow.draft",
+      "chat.toolCall.workflow.amend.draft",
+      "chat.toolCall.workflow.revising",
+      "chat.toolCall.workflow.amend.revising",
+      "chat.toolCall.workflow.draftOrdinal",
+      "chat.toolCall.workflow.toFix",
+      "chat.toolCall.workflow.notRun",
+      "chat.toolCall.workflow.feedback",
+      "chat.toolCall.workflow.feedback.lede",
+      "chat.toolCall.workflow.feedback.lede.saved",
+      // The fork plural family keys: count/countOne were merged into feedback.count.one/.other (createIntl formatPlural).
+      "chat.toolCall.workflow.feedback.count.one",
+      "chat.toolCall.workflow.feedback.count.other",
+      "chat.toolCall.workflow.feedback.rule",
+    ]) {
+      expect((enUS as Record<string, string>)[key], key).toBeTruthy();
+      expect((zhCN as Record<string, string>)[key], key).toBeTruthy();
+      expect((zhCN as Record<string, string>)[key], key).not.toBe(
+        (enUS as Record<string, string>)[key],
+      );
+    }
+    for (const gone of [
+      "chat.toolCall.workflow.error",
+      "chat.toolCall.workflow.errors",
+      "chat.toolCall.workflow.diagnostics",
+    ]) {
+      expect((enUS as Record<string, string>)[gone], gone).toBeUndefined();
+      expect((zhCN as Record<string, string>)[gone], gone).toBeUndefined();
+    }
   });
 });
 
-// ── 五枚药丸与一扇门（docs/dynamic-workflow/presentation.md「Past six participants」）──
-// 一站过了六个参与者：五枚钉住的药丸 + 一行「还有 n 个」；点那一行或站头开 run 详情、落到这一站。
+// ── Five pills and one door (docs/dynamic-workflow/presentation.md, "Past six participants") ──
+// Once a station passes six participants: five pinned pills + one "n more" row; clicking that row or the station header
+// opens run details anchored at this station.
 describe("CreateWorkflowToolCallBlock 名册站", () => {
   type FanStatus = "done" | "running" | "failed" | "pending";
-  // 真实的 fan-out 是一条车道跑出 N 个实例（`agent(\`reviewer-${i}\`)` 在循环里）：静态图上是一张
-  // `many` 卡，run 一来按实例拆成 N 枚药丸（liveParticipantView）。display 的车道上限是 32，
-  // 所以名册的大数只能从这里来。
+  // A real fan-out is one lane spawning N instances (`agent(\`reviewer-${i}\`)` in a loop): on the static graph it is a
+  // single `many` card, and once the run arrives it splits into N pills by instance (liveParticipantView). Display's lane
+  // cap is 32, so the roster's large numbers can only come from here.
   const FANOUT_GRAPH = {
     steps: [
       {
@@ -1509,7 +1586,7 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
     expect(row.getAttribute("data-more-count")).toBe("2");
     expect(row.textContent).toBe("2 more");
     expect(row.getAttribute("title")).toBe("2 more subagents · list everyone in the run pane");
-    // 叠上的脸按注意力序：pending 的 7 在 done 的 5 前面。
+    // The stacked faces follow attention order: pending's 7 comes before done's 5.
     const faces = within(row)
       .getByTestId("workflow-more-deck")
       .querySelectorAll("[data-face-state]");
@@ -1518,12 +1595,15 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
       "content",
     ]);
     expect(within(row).queryByTestId("workflow-more-failed")).toBeNull();
-    // 表头照旧。
+    expect(within(column).queryByTestId("workflow-roster-tally")).toBeNull();
+    expect(within(column).queryByTestId("workflow-roster-meter")).toBeNull();
+    expect(within(column).queryByTestId("workflow-agent-cell")).toBeNull();
+    // The header stays as before.
     expect(view.getByTestId("workflow-card-detail").textContent).toContain("1 agent working");
   });
 
-  // 表外的那些（docs/dynamic-workflow/presentation.md「Past six participants」）：被归约淘汰的
-  // 子代理没有药丸也没有脸，但阈值、人数与红 ✕ 都算它们。
+  // The off-table ones (docs/dynamic-workflow/presentation.md, "Past six participants"): subagents evicted by the
+  // reduction have neither pill nor face, but the threshold, the headcount, and the red ✕ all count them.
   it("四枚药丸加三百个被淘汰的就是名册：药丸四枚、那一行说「还有 300 个」、红 ✕ 含表外失败的", () => {
     const view = renderBlockDom(fanoutToolCall(4), {
       workflowRun: fanoutRun(4, () => "running", [
@@ -1537,7 +1617,7 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
     expect(row.getAttribute("data-more-count")).toBe("300");
     expect(row.textContent).toContain("300 more");
     expect(within(row).getByTestId("workflow-more-failed").textContent).toBe("2");
-    // 表外的没有脸：叠上一张都不该有。
+    // Off-table participants have no faces: there should not be a single one in the stack.
     expect(
       within(row).getByTestId("workflow-more-deck").querySelectorAll("[data-face-state]"),
     ).toHaveLength(0);
@@ -1585,7 +1665,7 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
       workflowName: "bug-scan",
       phaseId: "phase#a",
     });
-    // 站头（有回调时是按钮，title = 站名）同一条路。
+    // The station header (a button when a callback exists, title = station name) takes the same path.
     fireEvent.click(view.getByTitle("review"));
     expect(onOpenWorkflowRun).toHaveBeenCalledTimes(2);
     expect(onOpenWorkflowRun).toHaveBeenLastCalledWith({
@@ -1630,9 +1710,10 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
   });
 });
 
-// ── AmendWorkflow 行（docs/dynamic-workflow/presentation.md「The tool row」第二张表）──
-// 同一个渲染器换修订词汇：编写中「正在调整工作流」、待确认「等待调整确认」、编不过 / 静态卡
-// 「工作流调整」；卡体多一行「调整 run X」。display 仍是 create_workflow，图与草稿笔一份实现。
+// ── AmendWorkflow row (docs/dynamic-workflow/presentation.md, "The tool row" second table) ──
+// The same renderer swaps in amend vocabulary: drafting "adjusting the workflow", awaiting confirmation "waiting for amend
+// confirmation", failed compile / static card "workflow amend"; the card body gains one line "amend run X". display stays
+// create_workflow, and the graph and draft pen share one implementation.
 describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
   const DRAFT = 'phase("plan");\nconst planner = agent("planner");\nphase("ver';
   const AMEND_INPUT = { name: "Research pipeline", script: DRAFT, run_id: "dwfrun-prev" };
@@ -1653,7 +1734,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     );
     expect(view.container.textContent).toContain(word);
     expect(view.container.textContent).not.toContain("Writing workflow");
-    // 草稿笔照旧：站从半截脚本里扫出来。
+    // The draft pen works as before: stations are scanned out of the partial script.
     expect(view.getByTestId("workflow-draft-timeline")).toBeTruthy();
   });
 
@@ -1729,9 +1810,9 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("draft 2");
   });
 
-  // 省略 script 的修订（docs/dynamic-workflow/presentation.md「The tool row」）：行上的入参是模型发出的
-  // 那一份，脚本是之后才回填的，所以卡上没有脚本可折叠。lineage 行说「脚本不变」，「未提供脚本」的
-  // 提示不出现——缺脚本正是这次调用的用意，不是故障。
+  // Amend omitting script (docs/dynamic-workflow/presentation.md, "The tool row"): the input on the row is the one the
+  // model emitted and the script is backfilled only afterwards, so the card has no script to collapse. The lineage row says
+  // "script unchanged" and the "no script provided" hint must not appear — a missing script is the intent of this call, not a failure.
   const SETTINGS_ONLY_INPUT = { run_id: "dwfrun-prev", max_concurrency: 2 };
 
   it.each([
@@ -1748,7 +1829,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     expect(lineage?.textContent).toContain("dwfrun-prev");
     expect(lineage?.textContent).toContain(unchanged);
     expect(lineage?.getAttribute("data-workflow-card-amends-script-inherited")).toBe("true");
-    // 图照常画（display 来自回填后的脚本），但没有脚本折叠、也没有「未提供脚本」。
+    // The graph renders as usual (display comes from the backfilled script), but there is no script collapse and no "no script provided".
     expect(view.getByTestId("workflow-timeline")).toBeTruthy();
     expect(view.queryByTestId("workflow-card-script-toggle")).toBeNull();
     expect(view.container.textContent).not.toContain("No workflow script provided.");
@@ -1774,7 +1855,8 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
   });
 
   it("an input trimmed to a snapshot preview is not read as a kept script", () => {
-    // 首屏快照把大入参裁成预览时，缺的是字节而不是脚本：不能把一个传了脚本的修订说成「脚本不变」。
+    // When the first-screen snapshot trims a large input into a preview, what is missing is bytes, not the script: an amend
+    // that did pass a script must not be described as "script unchanged".
     const view = renderBlockDom({
       kind: "AmendWorkflow",
       input: { run_id: "dwfrun-prev" },
@@ -1801,7 +1883,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
   });
 
   it("readWorkflowAmendScriptInherited: the resolved flag, or a finished input with neither script source", () => {
-    // 确认窗：CLI 回填过的入参带脚本，flag 说话。
+    // Confirmation dialog: the CLI-backfilled input carries the script, and the flag speaks.
     expect(
       readWorkflowAmendScriptInherited({
         run_id: "r",
@@ -1809,9 +1891,9 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
         predecessor: { status: "completed", script_inherited: true },
       }),
     ).toBe(true);
-    // 聊天卡：模型发出的入参里没有脚本。
+    // Chat card: the model-emitted input has no script.
     expect(readWorkflowAmendScriptInherited({ run_id: "r", max_concurrency: 2 })).toBe(true);
-    // 给了脚本、flag 不在：不是沿用。
+    // Script given but flag absent: not inherited.
     expect(
       readWorkflowAmendScriptInherited({
         run_id: "r",
@@ -1819,12 +1901,12 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
         predecessor: { status: "completed" },
       }),
     ).toBe(false);
-    // `path` 修订（docs/dynamic-workflow/launch.md「Script files」的常态）同样不带 `script`，但它交上来的
-    // 是一份**改过的**脚本：说「脚本不变」就是对用户撒谎。
+    // A `path` amend (the norm of docs/dynamic-workflow/launch.md, "Script files") likewise carries no `script`, but what
+    // it submits is a **modified** script: saying "script unchanged" would be lying to the user.
     expect(
       readWorkflowAmendScriptInherited({ run_id: "r", path: ".zcode/workflow-drafts/x.dwf.ts" }),
     ).toBe(false);
-    // 沿用脚本且前驱的文件仍可记：回填的入参同时带 `path` 与 flag，flag 说了算。
+    // Script inherited and the predecessor's file is still resolvable: the backfilled input carries both `path` and the flag, and the flag decides.
     expect(
       readWorkflowAmendScriptInherited({
         run_id: "r",
@@ -1833,7 +1915,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
         predecessor: { status: "completed", script_inherited: true },
       }),
     ).toBe(true);
-    // 非记录的入参（快照被裁掉、形状不明）什么都不断言。
+    // Unrecorded input (snapshot trimmed, shape unknown): nothing is asserted.
     expect(readWorkflowAmendScriptInherited(undefined)).toBe(false);
     expect(readWorkflowAmendScriptInherited("{}")).toBe(false);
   });
@@ -1850,7 +1932,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     expect(readWorkflowKindMessageId({ v4Status: "pendingApproval" }, true, true)).toBe(
       "chat.toolCall.workflow.amend.awaitingConfirmation",
     );
-    // 校验中与创建同一个词。
+    // Validating reuses the same word as create.
     expect(readWorkflowKindMessageId({ v4Status: "running" }, true, true)).toBe(
       "chat.toolCall.workflow.running",
     );
@@ -1859,10 +1941,44 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     );
   });
 
-  // ── 就地生效的修订（docs/dynamic-workflow/concurrency.md）────────────────────────────
-  // 只改并发上限、run 又在飞时这次调用不编译、不铸新 run，结果连 display 都没有——整行退成设置行
-  // 是接线层（ConversationRowView）按入参形状裁的，见本文件末尾那一节。这里只钉渲染器这一侧：
-  // 在途的那几个词不能说「校验」，因为这种调用什么都不编译。
+  it("every amend key exists in both locales", () => {
+    for (const key of [
+      "chat.toolCall.workflow.amend.writing",
+      "chat.toolCall.workflow.amend.awaitingConfirmation",
+      "chat.toolCall.workflow.amend.ran",
+      "chat.toolCall.workflow.amend.amended",
+      "chat.toolCall.workflow.amend.amends",
+      "chat.toolCall.workflow.card.superseded",
+      "chat.toolCall.workflow.run.stopReason.superseded",
+      "chat.toolCall.workflow.run.amends",
+      "chat.toolCall.workflow.run.supersededBy",
+      "chat.permission.workflow.amend.title",
+      "chat.permission.workflow.amends",
+      "chat.permission.workflow.amends.running",
+      "chat.permission.workflow.amends.scriptUnchanged",
+      "chat.toolCall.workflow.amend.scriptUnchanged",
+    ]) {
+      expect(enUS[key as keyof typeof enUS], key).toBeTruthy();
+      expect(zhCN[key as keyof typeof zhCN], key).toBeTruthy();
+    }
+    // The old lineage keys retire along with resume_from; the card's two lineage lines (amended from / superseded by) are
+    // not drawn per the user ruling, and the keys are not kept either.
+    for (const gone of [
+      "chat.toolCall.workflow.card.supersededBy",
+      "chat.toolCall.workflow.card.amends",
+    ]) {
+      expect((enUS as Record<string, string>)[gone], gone).toBeUndefined();
+      expect((zhCN as Record<string, string>)[gone], gone).toBeUndefined();
+    }
+    expect((enUS as Record<string, string>)["chat.permission.workflow.resumeFrom"]).toBeUndefined();
+    expect((zhCN as Record<string, string>)["chat.permission.workflow.resumeFrom"]).toBeUndefined();
+  });
+
+  // ── In-place amend (docs/dynamic-workflow/concurrency.md) ──
+  // When the call only changes the concurrency cap and the run is in flight, it compiles nothing and mints no new run, so
+  // the result has no display either — the whole row degrades to a settings row, cut by the wiring layer
+  // (ConversationRowView) based on the input shape; see the section at the end of this file. Here only the renderer side is
+  // pinned: those in-flight words must not say "validating", because this kind of call compiles nothing.
   it("只改并发上限的调用在途时不说「正在校验」，从头到尾说「正在调整工作流」", () => {
     expect(readWorkflowKindMessageId({ v4Status: "running" }, true, true, true)).toBe(
       "chat.toolCall.workflow.amend.writing",
@@ -1870,7 +1986,7 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
     expect(readWorkflowKindMessageId({ v4Status: "inputStreaming" }, true, true, true)).toBe(
       "chat.toolCall.workflow.amend.writing",
     );
-    // 带脚本的修订不受影响：校验是真发生的。
+    // Amends carrying a script are unaffected: validation really happens.
     expect(readWorkflowKindMessageId({ v4Status: "running" }, true, true, false)).toBe(
       "chat.toolCall.workflow.running",
     );
@@ -1885,13 +2001,13 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
       { run_id: "r", max_concurrency: null },
       { runId: "r", requested: null },
     ],
-    // 带了脚本来源：这次修订要编译，不是就地生效的形状。
+    // A script source is present: this amend needs compiling, not the in-place shape.
     [{ run_id: "r", max_concurrency: 4, script: "phase('a')" }, undefined],
     [{ run_id: "r", max_concurrency: 4, path: ".zcode/workflow-drafts/x.dwf.ts" }, undefined],
-    // 还改了模型或名字：那要换一条 run，不是就地生效。
+    // Model or name also changed: that calls for a different run, not an in-place amend.
     [{ run_id: "r", max_concurrency: 4, subagent_model: "zhipu/glm-5.3" }, undefined],
     [{ run_id: "r", max_concurrency: 4, name: "Research pipeline" }, undefined],
-    // 只有 run_id（脚本可能还在路上）：不作判断。
+    // Only run_id (the script may still be on its way): no judgment.
     [{ run_id: "r" }, undefined],
     [{ max_concurrency: 4 }, undefined],
     ["{}", undefined],
@@ -1914,10 +2030,11 @@ describe("CreateWorkflowToolCallBlock as AmendWorkflow", () => {
   });
 });
 
-// ── 接线（docs/dynamic-workflow/authoring.md「How the user sees them」）──
-// 上面钉的是药丸把**产物 id** 交给上一层；这里钉 `ConversationRowView` 把 id 变成什么样的打开
-// 请求。走到这张卡的是**没有被轮尾摘要接管**的那条路（联接到 run 但工具调用本身报错），联接到
-// run 且成功的行只画一条 `WorkflowToolSummary`，卡在轮尾。
+// ── Wiring (docs/dynamic-workflow/authoring.md, "How the user sees them") ──
+// Above we pinned the pill handing the **artifact id** to the layer above; here we pin what kind of open request
+// `ConversationRowView` turns the id into. What reaches this card is the path **not taken over by the turn-tail summary**
+// (joined to a run but the tool call itself errored); a row joined to a run and successful draws only a
+// `WorkflowToolSummary`, with the card in the turn tail.
 describe("ConversationRowView 把工具卡的产物药丸变成打开请求", () => {
   const RUN = {
     runId: "run-7",
@@ -1934,7 +2051,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
   } as unknown as WorkflowRunState;
 
   function renderRow(onOpenWorkflowArtifact: (request: unknown) => void) {
-    // 代码块桩会吃掉 matchMedia 的读者，但正文渲染器仍会问一次；jsdom 没有它。
+    // The code-block stub swallows matchMedia readers, but the body renderer still asks once; jsdom has no matchMedia.
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       writable: true,
@@ -1952,7 +2069,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
         { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 这条路径不碰平台服务。
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- This path never touches platform services.
           { platform: {} as any },
           createElement(ConversationRowView, {
             row: {
@@ -1963,7 +2080,8 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
               kind: "toolCall",
               toolCallId: "tool-5",
               toolName: "CreateWorkflow",
-              // 成功的发起行被轮尾摘要接管，画不出这张卡；报错的行才落回完整工具卡。
+              // A successful launch row is taken over by the turn-tail summary and cannot draw this card; only an errored
+              // row falls back to the full tool card.
               status: "error",
               input: { name: "implement-verify", script: "phase('a')" },
               inputText: "{}",
@@ -1998,7 +2116,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
                   },
                 },
               },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 只填 renderer 读取的字段。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only fills the fields the renderer reads.
             } as any,
             context: {
               workspacePath: "/workspace",
@@ -2018,7 +2136,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
                   },
                 ],
               ]),
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
             } as any,
           }),
         ),
@@ -2040,16 +2158,17 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
     });
   });
 
-  // 就地生效的修订行（docs/dynamic-workflow/concurrency.md）：结果没有 display、也没有铸新 run，
-  // 所以判据全在入参形状上。默认并发从被调整那条 run 的投影读（run.concurrencyCeiling）。
+  // In-place amend row (docs/dynamic-workflow/concurrency.md): the result has no display and mints no new run, so all the
+  // criteria live in the input shape. The default concurrency is read from the amended run's projection
+  // (run.concurrencyCeiling).
   function renderRetuneRow(
     input: unknown,
     options: {
       ceiling?: number;
       onOpenWorkflowRun?: (request: unknown) => void;
-      /** 退回真修订的那一条：编译过，所以有 display。 */
+      /** The row that returns a real amend: it compiled, so it has display. */
       display?: unknown;
-      /** 同上：它铸了一条新 run，按**本行的** toolCallId 联接得上。 */
+      /** Same idea: it minted a new run, joinable by **this row's** toolCallId. */
       joinedByToolCallId?: boolean;
       status?: string;
     } = {},
@@ -2071,7 +2190,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
         { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 这条路径不碰平台服务。
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- This path never touches platform services.
           { platform: {} as any },
           createElement(ConversationRowView, {
             row: {
@@ -2085,19 +2204,19 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
               status: options.status ?? "success",
               input,
               inputText: "{}",
-              // 就地生效的结果只有一句话：没有 display。
+              // The in-place result is a single sentence: no display.
               output: {
                 text: "Applied to the running run run-7; at most 4 subagents run at once.",
                 ...(options.display === undefined ? {} : { display: options.display }),
               },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 只填 renderer 读取的字段。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only fills the fields the renderer reads.
             } as any,
             context: {
               workspacePath: "/workspace",
               theme: "system",
               sessionId: "parent-a",
               onOpenWorkflowRun: options.onOpenWorkflowRun,
-              // 本行的 toolCallId 查不到任何 run（它没铸新 run）；那条 run 按 runId 才在。
+              // No run can be found by this row's toolCallId (it minted no new run); that run exists only when joined by runId.
               workflowRunByToolCallId: options.joinedByToolCallId
                 ? new Map([
                     [
@@ -2127,7 +2246,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
                   },
                 ],
               ]),
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
             } as any,
           }),
         ),
@@ -2141,7 +2260,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
       { run_id: "run-7", max_concurrency: 4 },
       { ceiling: 13, onOpenWorkflowRun },
     );
-    // 卡没了，只剩那一行；「已通过校验」「脚本不变」一个字都不在。
+    // The card is gone, only the row remains; neither "passed validation" nor "script unchanged" appears anywhere.
     expect(view.queryByTestId("workflow-card")).toBeNull();
     const row = view.getByTestId("workflow-retune-row");
     expect(row.textContent).toContain("Settings changed");
@@ -2157,8 +2276,8 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
     });
   });
 
-  // 默认并发 D（run.concurrencyCeiling）是起点不是上限：请求值正好等于 D 与 null 都是「解除本 run
-  // 自己的界」，高于或低于 D 的数照念。
+  // The default concurrency D (run.concurrencyCeiling) is a starting point, not a cap: a requested value exactly equal to
+  // D and null both mean "lift this run's own bound"; numbers above or below D are rendered verbatim.
   it.each([
     ["请求高于默认", { run_id: "run-7", max_concurrency: 40 }, 13, "at most 40 at once"],
     ["请求正好是默认", { run_id: "run-7", max_concurrency: 13 }, 13, "limit back to the default"],
@@ -2169,7 +2288,7 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
       "limit back to the default",
     ],
     ["请求低于默认", { run_id: "run-7", max_concurrency: 4 }, 13, "at most 4 at once"],
-    // 默认未知（那条 run 已被淘汰出投影）：只能照念请求值。
+    // Default unknown (that run has been evicted from the projection): the requested value is rendered verbatim.
     ["默认未知", { run_id: "run-7", max_concurrency: 4 }, undefined, "at most 4 at once"],
   ])("%s", (_case, input, ceiling, text) => {
     const view = renderRetuneRow(input, ceiling === undefined ? {} : { ceiling });
@@ -2181,8 +2300,8 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
     expect(view.getByTestId("workflow-retune-row").tagName).not.toBe("BUTTON");
   });
 
-  // run 已结算时同一个调用退回一次**真修订**：它编译过（有 display）、也铸出一条按本行 toolCallId
-  // 联接得上的 run。两条判据各自都足以把它挡在设置行之外——这里各钉一条。
+  // Once the run has settled, the same call returns a **real amend**: it compiled (has display) and minted a run joinable
+  // by this row's toolCallId. Either criterion alone is enough to keep it out of the settings row — each is pinned here.
   it("退回真修订（有 display、有按 toolCallId 联接的 run）：照旧走运行摘要，不退成设置行", () => {
     const view = renderRetuneRow(
       { run_id: "run-7", max_concurrency: 4 },
@@ -2226,9 +2345,11 @@ describe("ConversationRowView 把工具卡的产物药丸变成打开请求", ()
   });
 });
 
-// ── 接线：行上下文的稿号联接表 → 编译反馈行（docs/dynamic-workflow/presentation.md「Compiler feedback」）──
-// 稿号由宿主从行窗口一遍建成（`workflowDraftJoin.ts`）；这里钉 `ConversationRowView` 按 toolCallId 把
-// 这一行自己的位置交给卡片，而不是让卡片自己去翻行窗口。
+// ── Wiring: the row context's draft-number join table → compile feedback row (docs/dynamic-workflow/presentation.md,
+// "Compiler feedback") ──
+// The draft number is built from the row window by the host in one pass (`workflowDraftJoin.ts`); here we pin that
+// `ConversationRowView` hands this row's own position to the card by toolCallId, instead of letting the card page through
+// the row window itself.
 describe("ConversationRowView 把稿号交给编译反馈行", () => {
   function renderFeedbackRow(context: Record<string, unknown>) {
     Object.defineProperty(window, "matchMedia", {
@@ -2248,7 +2369,7 @@ describe("ConversationRowView 把稿号交给编译反馈行", () => {
         { initialLocale: "en-US" },
         createElement(
           PlatformProvider,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 这条路径不碰平台服务。
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- This path never touches platform services.
           { platform: {} as any },
           createElement(ConversationRowView, {
             row: {
@@ -2271,14 +2392,14 @@ describe("ConversationRowView 把稿号交给编译反馈行", () => {
                   diagnostics: [{ line: 1, column: 7, code: 2322, message: "Type error" }],
                 },
               },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 只填 renderer 读取的字段。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only fills the fields the renderer reads.
             } as any,
             context: {
               workspacePath: "/workspace",
               theme: "system",
               sessionId: "parent-a",
               ...context,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
             } as any,
           }),
         ),

@@ -21,6 +21,9 @@ import {
 } from "@/settings/automationConfirmDialogPresentation.js";
 import { SourceServerBoundaryDialogContent } from "@/remote/SourceServerBoundaryDialogContent.js";
 
+const CONFIRM_DIALOG_OWN_ENTER_SELECTOR =
+  'button,input,textarea,select,[role="checkbox"],[contenteditable="true"]';
+
 export function ConfirmDialogHost() {
   const { intl } = useZCodeIntl();
   const pendingRequest = useConfirmDialogStore((state) => state.pendingRequest);
@@ -76,11 +79,11 @@ export function ConfirmDialogHost() {
         return;
       }
 
-      // 带复选框的选择对话框保留焦点按钮的键盘语义，避免“不了”按 Enter 变成切换。
+      // Keep the keyboard semantics of focused controls inside the dialog, so Enter on a checkbox,
+      // button, or text field does not confirm the dialog.
       if (
-        displayedRequest?.checkbox &&
         event.target instanceof HTMLElement &&
-        event.target.closest("button,input")
+        event.target.closest(CONFIRM_DIALOG_OWN_ENTER_SELECTOR)
       )
         return;
       // 二次确认场景下如果不接 Enter，键盘用户会只能切到按钮再触发，

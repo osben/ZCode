@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { RemoteConversationAvailability } from "@/v4/RemoteConversationAvailability.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const captured = vi.hoisted(() => ({
   chatErrorBannerProps: null as Record<string, unknown> | null,
@@ -163,11 +163,12 @@ function renderComposerWithError(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: null,
         sessionId: "session-1",
         workspacePath: "/workspace",
+        updateComposerContent: vi.fn(),
         provider: undefined,
         onSendText: vi.fn(async () => {}),
         onStop: vi.fn(),
@@ -195,21 +196,19 @@ function renderComposerWithSnapshot(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
-      createElement(RemoteConversationAvailability, {
-        available: remoteAvailable,
-        children: createElement(AnyConversationComposer, {
-          snapshot,
-          sessionId: "session-1",
-          workspacePath: "/workspace",
-          provider: undefined,
-          onSendText: vi.fn(async () => {}),
-          onStop: vi.fn(),
-          onSelectModel: vi.fn(),
-          onSelectThought: vi.fn(),
-          onSwitchMode: vi.fn(),
-          ...overrides,
-        }),
+      { initialLocale: "en-US" },
+      createElement(AnyConversationComposer, {
+        snapshot,
+        sessionId: "session-1",
+        workspacePath: "/workspace",
+        updateComposerContent: vi.fn(),
+        provider: undefined,
+        onSendText: vi.fn(async () => {}),
+        onStop: vi.fn(),
+        onSelectModel: vi.fn(),
+        onSelectThought: vi.fn(),
+        onSwitchMode: vi.fn(),
+        ...overrides,
       }),
     ),
   );
@@ -219,11 +218,12 @@ function renderHighspeedComposer(overrides: Record<string, unknown> = {}): strin
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
         workspacePath: "/workspace",
+        updateComposerContent: vi.fn(),
         provider: undefined,
         highspeedCard: {
           cardId: "hsc-composer",
@@ -248,11 +248,12 @@ function renderBlockedComposer(): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(AnyConversationComposer, {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
         workspacePath: "/workspace",
+        updateComposerContent: vi.fn(),
         provider: undefined,
         blockingRequestId: "perm-1",
         onSendText: vi.fn(async () => {}),
@@ -364,7 +365,11 @@ describe("ConversationComposer error banner", () => {
     renderComposerWithSnapshot();
     const onModifiedSubmit = captured.chatPromptEditorProps?.onModifiedSubmit;
     expect(onModifiedSubmit).toEqual(expect.any(Function));
-    expect((onModifiedSubmit as (value: string) => boolean)("草稿")).toBe(false);
+    expect(
+      (onModifiedSubmit as (value: string) => boolean)(
+        expectedCopy("chat.toolCall.workflow.hole.draftPath"),
+      ),
+    ).toBe(false);
 
     const snapshot = makeSnapshot();
     snapshot.control = {

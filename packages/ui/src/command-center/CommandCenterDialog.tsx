@@ -1,22 +1,35 @@
 import { getRemoteConnectionFailureCode } from "@/lib/remoteWorkspaceServiceError.js";
 import { formatRemoteConnectionError } from "@/lib/remoteConnectionPresentation.js";
 import { isRemoteConversationWorkspace } from "@/conversation-workspace-target/purpose.js";
-/* eslint-disable max-lines -- 聚合命令、任务、文件三类搜索结果，后续可按 result section 拆分。 */
-import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+/* eslint-disable max-lines -- Aggregates command, task, and file search results; it can be split by result section later. */
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { unpackWorkspaceFileEntries } from "@zcode/shared/workspaceFileEntriesCodec";
 import { fetchWorkspaceFileEntriesPacked } from "@/workspace-file-search/fetchWorkspaceFileEntries.js";
 import { Command as CommandPrimitive } from "cmdk";
 import {
+  ArrowLeftIcon,
+  CheckIcon,
   ChevronDownIcon,
   FileIcon,
+  FolderIcon,
+  GitBranchPlusIcon,
   ListIcon,
   MessageSquareIcon,
   MessagesSquareIcon,
+  Dices,
   RocketIcon,
   SearchIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from "lucide-react";
-import type { WorkspaceFileEntry, ZCodeTaskChangeSummary, ZCodeTaskMeta } from "@zcode/shared";
+import type {
+  GitLocalBranchListResult,
+  GitWorkspaceRepositoryInfo,
+  GitWorktreeListResult,
+  WorkspaceFileEntry,
+  ZCodeTaskChangeSummary,
+  ZCodeTaskMeta,
+} from "@zcode/shared";
 import {
   Command,
   CommandDialog,
@@ -26,18 +39,29 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command.js";
+import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { toast } from "@/components/ui/toast.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
+import { useSettings } from "@/hooks/useSettingService.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { matchesGitBranchSearch } from "@/git-branch-switcher/display.js";
 import { FileDisplayIcon, resolveFileDisplayDescriptor } from "@/lib/fileDisplay.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { toWorkspaceRelativePath } from "@/lib/taskChangeSummary.js";
+import { getErrorMessage } from "@/lib/errorMessage.js";
 import { getPathLeaf } from "@/lib/path.js";
 import { logger } from "@/logger.js";
 import { HighlightedMatchText } from "@/quickpick/HighlightedMatchText.js";
-import { QUICK_PICK_SECTION_ORDER, type QuickPickCommand } from "@/quickpick/quickPickCommands.js";
+import {
+  QUICK_PICK_SECTION_ORDER,
+  type QuickPickCommand,
+  type QuickPickValueList,
+  type QuickPickValueListOption,
+} from "@/quickpick/quickPickCommands.js";
 import { QUICK_PICK_ICON_BY_KIND } from "@/quickpick/quickPickCommandIcons.js";
 import {
   quickPickCommandClassName,
@@ -57,18 +81,50 @@ import {
   type CommandCenterSearchHistoryEntry,
   type CommandCenterSearchScope,
 } from "@/command-center/commandCenterSearchHistory.js";
+import {
+  createCommandCenterPageStack,
+  getActiveCommandCenterPage,
+  popCommandCenterPage,
+  pushCommandCenterPage,
+  resetCommandCenterPageStack,
+  type CommandCenterPageStack,
+} from "@/command-center/commandCenterPageStack.js";
+import {
+  buildWorktreeTaskProjects,
+  composeBranchName,
+  computeWorktreeTargetPath,
+  deriveWorktreeFormValues,
+  findWorktreeForBranch,
+  getWorkspaceIdentityKey,
+  NEW_TASK_PROJECT_PAGE_ID,
+  NEW_TASK_SETUP_PAGE_ID,
+  NEW_TASK_WORKTREE_COMMAND_ID,
+  resolveWorktreeIssueMessageId,
+  resolveWorktreeLocation,
+  type WorktreeTaskDestination,
+  type WorktreeTaskProject,
+} from "@/command-center/worktreeTaskFlow.js";
+import {
+  isWorktreeProtected,
+  isWorktreeRemovalBlockedNow,
+} from "@/command-center/worktreeProtection.js";
+import { generateWorktreeBranchName } from "@/command-center/worktreeNameGenerator.js";
+import { executeWorktreeCreation } from "@/command-center/worktreeCreation.js";
 
 const EMPTY_QUICK_PICK_COMMANDS: QuickPickCommand[] = [];
 const EMPTY_COMMAND_CENTER_WORKSPACE_TABS: WorkspaceTabState[] = [];
+// Stable fallback so the worktreeProjects useMemo is not invalidated on every render when
+// the settings snapshot has no recentProjects yet.
+const EMPTY_RECENT_PROJECTS: readonly string[] = [];
 const COMMAND_CENTER_SECTION_LIMIT = 3;
 const COMMAND_CENTER_CONTEXT_SECTION_LIMIT = 3;
 const COMMAND_CENTER_FILE_RESULT_LIMIT = 80;
 const COMMAND_CENTER_TASK_RESULT_LIMIT = 80;
 const commandCenterDialogClassName = cn(
   quickPickDialogClassName,
-  // Linux 桌面端的通用 DialogContent 会给居中弹窗补偿自绘标题栏高度。
-  // Command Center 是顶部搜索浮层，必须在 Linux variant 下重新声明 top，
-  // 否则平台补偿会覆盖 top-16/sm:top-20，导致弹层掉到窗口中部。
+  // On Linux desktop, the shared DialogContent offsets centered dialogs for the custom title bar.
+  // The Command Center is a top search overlay, so redeclare top in the Linux variant;
+  // otherwise the platform offset overrides top-16/sm:top-20 and moves the overlay to the middle of the window.
   "top-16 max-h-[calc(100dvh-4.5rem)] -translate-y-0 sm:top-20 sm:max-h-[calc(100dvh-6rem)]",
   "platform-linux-desktop:top-16 sm:platform-linux-desktop:top-20",
 );
@@ -182,7 +238,8 @@ function resolveQueryScope(rawQuery: string): {
   return { query: rawQuery.trim(), scope: "all", explicitScope: false };
 }
 
-function matchesCommand(command: QuickPickCommand, title: string, query: string): boolean {
+// Accepts any keyword-carrying row so command entries and value-list options share the same matcher.
+function matchesCommand(command: { keywords: string[] }, title: string, query: string): boolean {
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) {
     return true;
@@ -258,9 +315,8 @@ export function CommandCenterScopeButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        // scope tabs 是可交互的范围切换按钮，按 DESIGN.md 语义角色属于
-        // common buttons，应使用 text-ui-base；不能用 text-ui-xs（10px，badge/
-        // counter 专用），否则字号过小。同时与上方搜索输入框 (text-ui-base) 保持一致。
+        // Scope tabs are interactive scope-switching buttons. Per the semantic roles in DESIGN.md, they are
+        // common buttons and should use text-ui-base, not text-ui-xs (10px, reserved for badges/counters), which is too small. Match the search input above (text-ui-base).
         "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-ui-base font-medium leading-none transition-colors",
         active
           ? "border-border bg-selected text-foreground"
@@ -274,8 +330,8 @@ export function CommandCenterScopeButton({
 }
 
 /**
- * 搜索历史 chip 的 scope 前缀（如 commands → ">"）。
- * 提取为独立函数以便 CommandCenterSearchHistory 组件复用。
+ * Scope prefix for a search-history chip (for example, commands → ">").
+ * Extracted so CommandCenterSearchHistory can reuse it.
  */
 function scopeToPrefix(scope: CommandCenterSearchScope): string {
   switch (scope) {
@@ -291,9 +347,9 @@ function scopeToPrefix(scope: CommandCenterSearchScope): string {
 }
 
 /**
- * 对话搜索结果的时间戳。
- * 独立组件便于复用与单测；按 DESIGN.md 语义角色，列表项里的相对时间属于
- * secondary copy，使用 text-ui-sm（不用 text-ui-xs，避免偏小）。
+ * Timestamp for a conversation-search result.
+ * Kept as a separate component for reuse and unit tests; per DESIGN.md, relative time in a list item is
+ * secondary copy and uses text-ui-sm (not text-ui-xs, which is too small).
  */
 export function CommandCenterConversationTimestamp({
   className,
@@ -315,13 +371,13 @@ export function CommandCenterConversationTimestamp({
 }
 
 /**
- * 命令中心搜索历史区：分区标题 + 历史 chip + 清除/展开按钮。
- * 从 CommandCenterDialog 内联 JSX 抽取，便于复用与单测。
+ * Command-center search-history area: section heading + history chips + clear/expand buttons.
+ * Extracted from CommandCenterDialog's inline JSX for reuse and unit testing.
  *
- * 字号语义（DESIGN.md）：
- * - 分区标题：text-ui-sm（section label / helper text）
- * - 历史 chip 搜索词：text-ui-base（可读内容，与列表主体一致）
- * - chip 内 scope 前缀：text-ui-xs（badge 标记，比主体小一级形成层级）
+ * Font-size roles (DESIGN.md):
+ * - Section heading: text-ui-sm (section label / helper text)
+ * - Search term in history chip: text-ui-base (readable content, matching the list body)
+ * - Scope prefix in chip: text-ui-xs (badge marker, one level smaller than the content)
  */
 export function CommandCenterSearchHistory({
   entries,
@@ -370,10 +426,10 @@ export function CommandCenterSearchHistory({
             <button
               key={`${entry.scope}:${entry.query}:${entry.updatedAt}`}
               type="button"
-              // text-ui-base 随 --ui-font-size（12–20px）缩放，不能用固定 h-5
-              // 否则 20px 字号下内容区（20px - 2px 边框 = 18px）装不下字体行盒，
-              // 配合外层 overflow-hidden 会裁切文字。改用 min-h-5 + py-0.5 + leading-none
-              // 让高度随字号增长，保证 12–20px 全范围可读。
+              // text-ui-base scales with --ui-font-size (12–20px), so do not use a fixed h-5.
+              // At 20px, the content area (20px - 2px border = 18px) cannot fit the font line box,
+              // and the outer overflow-hidden would clip the text. Use min-h-5 + py-0.5 + leading-none
+              // so height grows with the font and remains readable across the 12–20px range.
               className="inline-flex min-h-5 max-w-44 shrink-0 items-center gap-1 rounded-full border border-border px-2 py-0.5 leading-none text-ui-base text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
               onClick={() => onPickEntry(entry)}
             >
@@ -409,6 +465,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   workspaceTabs,
   onOpenChange,
   onSelectTask,
+  onCreateTaskInWorkspace,
   onSearchResultHighlightRequest,
   onOpenCodeViewer,
 }: {
@@ -425,6 +482,16 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     taskId: string,
     targetWorkspaceIdentity?: string,
   ) => void;
+  /**
+   * Opens (or reuses) the workspace tab and starts a draft task in it — the App-level
+   * workspace-open + startDraft contract used by the "New task in worktree" flow.
+   * Web remote control resolves after the desktop open + bridge switch; async
+   * rejections surface through the flow's open-failure toast.
+   */
+  onCreateTaskInWorkspace: (
+    targetWorkspacePath: string,
+    targetWorkspaceIdentity?: string,
+  ) => void | Promise<void>;
   onSearchResultHighlightRequest?: (
     request: Omit<ChatSearchResultHighlightRequest, "requestId">,
   ) => void;
@@ -432,6 +499,12 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
 }) {
   const { fileService } = useServices();
   const { intl } = useZCodeIntl();
+  // Worktree flow runs local Git for arbitrary local project paths; the active workspace's
+  // scoped services may point at a remote Host, so always resolve the local base Host accessor.
+  const baseServices = useBaseWorkspaceServices();
+  const { settings } = useSettings();
+  // Stage F: the global storage directory is implemented on desktop only; stays null without the provider/method (global mode then behaves as an invalid location).
+  const platform = useOptionalPlatform();
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
   const [rawQuery, setRawQuery] = useState("");
   const [manualScope, setManualScope] = useState<CommandCenterSearchScope>("all");
@@ -440,12 +513,55 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   );
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<CommandCenterSearchHistoryEntry[]>([]);
+  // Copilot-style page stack: commands with a `page` push an in-palette sub-page instead of closing the dialog.
+  const [pageStack, setPageStack] = useState<CommandCenterPageStack>(createCommandCenterPageStack);
+  // “New task in worktree” flow state lives with the page-stack machinery (no global store):
+  // back keeps the chosen project and form values (CC-01); closing the palette resets everything.
+  const [worktreeProject, setWorktreeProject] = useState<WorktreeTaskProject | null>(null);
+  const [worktreeDestination, setWorktreeDestination] =
+    useState<WorktreeTaskDestination>("worktree");
+  /** null = not chosen yet; the effective base branch falls back to the repo default. */
+  const [worktreeBaseBranch, setWorktreeBaseBranch] = useState<string | null>(null);
+  const [worktreeBranchName, setWorktreeBranchName] = useState("");
+  const [worktreeBranchesResult, setWorktreeBranchesResult] =
+    useState<GitLocalBranchListResult | null>(null);
+  const [worktreeRepoInfo, setWorktreeRepoInfo] = useState<GitWorkspaceRepositoryInfo | null>(null);
+  const [worktreeDataLoading, setWorktreeDataLoading] = useState(false);
+  const [worktreeDataError, setWorktreeDataError] = useState<string | null>(null);
+  const [worktreeStartBusy, setWorktreeStartBusy] = useState(false);
+  const [worktreeIssueMessage, setWorktreeIssueMessage] = useState<string | null>(null);
+  /** Existing worktree path offered when creation fails with target-path-exists (WT-04 recovery). */
+  const [worktreeRecoveryPath, setWorktreeRecoveryPath] = useState<string | null>(null);
+  /** Existing worktree of a typed existing branch (2026-10-13 offer); null = free branch / unknown. */
+  const [worktreeExistingBranchWorktreePath, setWorktreeExistingBranchWorktreePath] = useState<
+    string | null
+  >(null);
+  /** Registered worktree of a typed existing branch whose directory is gone (prunable record). */
+  const [worktreeExistingBranchStalePath, setWorktreeExistingBranchStalePath] = useState<
+    string | null
+  >(null);
+  /** Bumped after an explicit prune so the existing-branch offer is resolved again. */
+  const [worktreeOfferRefreshKey, setWorktreeOfferRefreshKey] = useState(0);
+  /** Full worktree list for the setup-page manage section (2026-10-13 Phase 2). */
+  const [worktreeListResult, setWorktreeListResult] = useState<GitWorktreeListResult | null>(null);
+  const [worktreeRemoveBusyPath, setWorktreeRemoveBusyPath] = useState<string | null>(null);
+  /** Row pending the force confirmation (first remove answered worktree-dirty). */
+  const [worktreeForceConfirmPath, setWorktreeForceConfirmPath] = useState<string | null>(null);
+  const [worktreePruneBusy, setWorktreePruneBusy] = useState(false);
+  const [worktreePruneMessage, setWorktreePruneMessage] = useState<string | null>(null);
+  /** Stage F: lazily loaded global storage directory (fetched only in global mode, cached in component state; failures silently keep null). */
+  const [appWorktreesDir, setAppWorktreesDir] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  // In-flight worktree Start attempts: incremented on dialog close and on every new Start,
+  // so a result resolving after the user closed the palette cannot switch workspaces or
+  // write state into the already-reset flow (CodeRabbit: ignore late creation results).
+  const worktreeStartAttemptRef = useRef(0);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileEntry[]>([]);
   const [workspaceFilesLoading, setWorkspaceFilesLoading] = useState(false);
   const [workspaceFilesError, setWorkspaceFilesError] = useState<string | null>(null);
   const [loadedWorkspaceKey, setLoadedWorkspaceKey] = useState<string | null>(null);
-  // 性能修复：Command Center 关闭时不需要跟随 chat streaming 重算命令、任务和 recent changes。
-  // 保留 hooks 顺序，但把关闭态输入降为空，避免隐藏弹窗在每个 token 批次重建结果区。
+  // Performance fix: the closed Command Center does not need to recompute commands, tasks, and recent changes during chat streaming.
+  // Keep hook order but pass empty inputs while closed so the hidden dialog does not rebuild its results on every token batch.
   const effectiveCommands = open ? commands : EMPTY_QUICK_PICK_COMMANDS;
   const effectiveWorkspaceTabs = useMemo(
     () =>
@@ -455,9 +571,135 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     [open, workspaceTabs],
   );
   const effectiveActiveTaskChangeSummary = open ? activeTaskChangeSummary : null;
+  const activePage = getActiveCommandCenterPage(pageStack);
+  const activePageCommand = useMemo(
+    () =>
+      activePage
+        ? effectiveCommands.find((command) => command.id === activePage.commandId)
+        : undefined,
+    [activePage, effectiveCommands],
+  );
+  const worktreeProjectPageActive = activePage?.id === NEW_TASK_PROJECT_PAGE_ID;
+  const worktreeSetupPageActive = activePage?.id === NEW_TASK_SETUP_PAGE_ID && !!worktreeProject;
+  const recentProjects = settings?.recentProjects ?? EMPTY_RECENT_PROJECTS;
+  const worktreeProjects = useMemo(
+    () =>
+      worktreeProjectPageActive
+        ? buildWorktreeTaskProjects({
+            tabs: effectiveWorkspaceTabs,
+            recentProjects,
+            activeWorkspaceKey: workspaceKey,
+          })
+        : [],
+    [worktreeProjectPageActive, effectiveWorkspaceTabs, recentProjects, workspaceKey],
+  );
+  // Stage D: effective worktree defaults = global settings + the project override entry keyed by path.
+  const worktreeEffectiveLocation = useMemo(
+    () =>
+      worktreeProject
+        ? resolveWorktreeLocation(
+            settings,
+            settings?.worktreeProjectOverrides,
+            worktreeProject.workspacePath,
+            appWorktreesDir,
+          )
+        : null,
+    [settings, worktreeProject, appWorktreesDir],
+  );
+  // Stage F: fetch the app worktrees dir from the platform only when the effective mode is global (lazy load + component state cache).
+  const getAppWorktreesDir = platform?.getAppWorktreesDir;
+  useEffect(() => {
+    if (
+      worktreeEffectiveLocation?.mode !== "global" ||
+      typeof getAppWorktreesDir !== "function" ||
+      appWorktreesDir !== null
+    ) {
+      return;
+    }
+    let cancelled = false;
+    getAppWorktreesDir().then(
+      (dir) => {
+        if (!cancelled) {
+          setAppWorktreesDir(dir.trim() || null);
+        }
+      },
+      (error: unknown) => {
+        if (!cancelled) {
+          // Silent failure: an unavailable directory makes global mode an invalid location (Start blocked + inline error).
+          logger.debug("[CommandCenter] getAppWorktreesDir failed", {
+            error: getErrorMessage(error),
+          });
+          setAppWorktreesDir(null);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [worktreeEffectiveLocation?.mode, getAppWorktreesDir, appWorktreesDir]);
+  // Recomputed together because Start, validation, and the previews all read the same
+  // composed values; the memo keeps per-keystroke work off renders that did not change the form.
+  const {
+    effectiveBaseBranch: effectiveWorktreeBaseBranch,
+    trimmedBranchName: trimmedWorktreeBranchName,
+    composedBranchName: composedWorktreeBranchName,
+    branchNameIssue: worktreeBranchNameIssue,
+    existingBranchName: worktreeExistingBranchName,
+    customLocationInvalid: worktreeCustomLocationInvalid,
+    globalLocationUnavailable: worktreeGlobalLocationUnavailable,
+    targetPathPreview: worktreeTargetPathPreview,
+    targetPathPreviewDisplay: worktreeTargetPathPreviewDisplay,
+  } = useMemo(
+    () =>
+      deriveWorktreeFormValues({
+        projectPath: worktreeProject?.workspacePath ?? null,
+        branchName: worktreeBranchName,
+        selectedBaseBranch: worktreeBaseBranch,
+        branchesResult: worktreeBranchesResult,
+        effectiveLocation: worktreeEffectiveLocation,
+        isWorktreeDestination: worktreeDestination === "worktree",
+      }),
+    [
+      worktreeBaseBranch,
+      worktreeBranchesResult,
+      worktreeBranchName,
+      worktreeDestination,
+      worktreeEffectiveLocation,
+      worktreeProject,
+    ],
+  );
+  // WT-03: a non-repository or Git-less project shows a dedicated state and blocks Start.
+  const worktreeRepoUnavailable =
+    worktreeRepoInfo !== null &&
+    (!worktreeRepoInfo.isGitAvailable || worktreeRepoInfo.kind === "not-repository");
   const resolvedQuery = useMemo(() => resolveQueryScope(rawQuery), [rawQuery]);
   const activeScope = resolvedQuery.explicitScope ? resolvedQuery.scope : manualScope;
   const searchQuery = resolvedQuery.query;
+  // Query filter + open/recent split of the project page, memoized so typing does not
+  // re-filter from scratch on renders unrelated to the list or the query.
+  const worktreeProjectPageRows = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    const filteredProjects = normalizedQuery
+      ? worktreeProjects.filter((project) =>
+          `${project.label ?? ""} ${project.workspacePath}`
+            .toLocaleLowerCase()
+            .includes(normalizedQuery),
+        )
+      : worktreeProjects;
+    return {
+      openProjects: filteredProjects.filter((project) => project.isOpen),
+      recentProjectsRows: filteredProjects.filter((project) => !project.isOpen),
+      isEmpty: filteredProjects.length === 0,
+    };
+  }, [worktreeProjects, searchQuery]);
+  const worktreeBranchRows = useMemo(() => {
+    if (!worktreeSetupPageActive || !worktreeBranchesResult) {
+      return [];
+    }
+    return worktreeBranchesResult.branches.filter((branch) =>
+      matchesGitBranchSearch(branch.name, searchQuery),
+    );
+  }, [searchQuery, worktreeBranchesResult, worktreeSetupPageActive]);
   const hasSearchQuery = searchQuery.trim().length > 0;
   const searchConversations =
     open && hasSearchQuery && (activeScope === "all" || activeScope === "conversations");
@@ -496,6 +738,134 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         ? COMMAND_CENTER_TASK_RESULT_LIMIT + (activeTaskId ? 1 : 0)
         : COMMAND_CENTER_CONTEXT_SECTION_LIMIT + (activeTaskId ? 1 : 0),
   });
+  const worktreeProtectionTaskList = useGlobalTaskList({
+    kind: "active",
+    workspaceTabs:
+      open && worktreeSetupPageActive
+        ? effectiveWorkspaceTabs.filter((tab) => !tab.remoteSessionId && !tab.remoteTarget)
+        : EMPTY_COMMAND_CENTER_WORKSPACE_TABS,
+    sortBy: "updated",
+    searchQuery: "",
+    expanded: true,
+    collapsedLimit: 0,
+  });
+  const localOpenWorktreePaths = useMemo(
+    () =>
+      effectiveWorkspaceTabs
+        .filter((tab) => !tab.remoteSessionId && !tab.remoteTarget)
+        .map((tab) => tab.workspacePath),
+    [effectiveWorkspaceTabs],
+  );
+  const activeSessionWorktreePaths = useMemo(
+    () =>
+      worktreeProtectionTaskList.items.flatMap((task) => [
+        ...(task.executionWorktree?.path ? [task.executionWorktree.path] : []),
+        // A prepared, not-yet-cancelled session owns its target worktree even before a runtime
+        // exists (a directory may already be on disk while the frozen input waits).
+        ...(task.worktreePreparation && task.worktreePreparation.status !== "cancelled"
+          ? [task.worktreePreparation.targetPath]
+          : []),
+      ]),
+    [worktreeProtectionTaskList.items],
+  );
+  const activeSessionWorktreeBranches = useMemo(
+    () =>
+      new Set(
+        worktreeProtectionTaskList.items.flatMap((task) => [
+          ...(task.executionWorktree?.branchName ? [task.executionWorktree.branchName] : []),
+          ...(task.worktreePreparation && task.worktreePreparation.status !== "cancelled"
+            ? [task.worktreePreparation.branchName]
+            : []),
+        ]),
+      ),
+    [worktreeProtectionTaskList.items],
+  );
+  const listedWorktreePaths = useMemo(
+    () => worktreeListResult?.worktrees.map((entry) => entry.path) ?? [],
+    [worktreeListResult],
+  );
+  const worktreeProtectionPaths = useMemo(
+    () => [
+      ...new Set([
+        ...localOpenWorktreePaths,
+        ...activeSessionWorktreePaths,
+        ...listedWorktreePaths,
+      ]),
+    ],
+    [activeSessionWorktreePaths, listedWorktreePaths, localOpenWorktreePaths],
+  );
+  const worktreeProtectionPathKey = JSON.stringify(worktreeProtectionPaths);
+  const [resolvedWorktreePathIdentities, setResolvedWorktreePathIdentities] = useState<{
+    inputKey: string;
+    identities: string[] | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!open || !worktreeSetupPageActive) return;
+    let current = true;
+    if (worktreeProtectionPaths.length === 0) {
+      setResolvedWorktreePathIdentities({ inputKey: worktreeProtectionPathKey, identities: [] });
+      return () => {
+        current = false;
+      };
+    }
+    const paths = JSON.parse(worktreeProtectionPathKey) as string[];
+    void baseServices.gitService
+      .resolveWorktreePathIdentities({ paths })
+      .then((identities) => {
+        if (current)
+          setResolvedWorktreePathIdentities({ inputKey: worktreeProtectionPathKey, identities });
+      })
+      .catch((error: unknown) => {
+        logger.warn("[CommandCenter] worktree protection path resolution failed", error);
+        if (current)
+          setResolvedWorktreePathIdentities({
+            inputKey: worktreeProtectionPathKey,
+            identities: null,
+          });
+      });
+    return () => {
+      current = false;
+    };
+  }, [baseServices.gitService, open, worktreeProtectionPathKey, worktreeSetupPageActive]);
+  const canonicalWorktreePathByPath = useMemo(() => {
+    const identities = resolvedWorktreePathIdentities?.identities;
+    if (
+      resolvedWorktreePathIdentities?.inputKey !== worktreeProtectionPathKey ||
+      !identities ||
+      identities.length !== worktreeProtectionPaths.length
+    ) {
+      return null;
+    }
+    return new Map(worktreeProtectionPaths.map((path, index) => [path, identities[index]]));
+  }, [resolvedWorktreePathIdentities, worktreeProtectionPathKey, worktreeProtectionPaths]);
+  const worktreeProtectionResolutionPending =
+    resolvedWorktreePathIdentities?.inputKey !== worktreeProtectionPathKey;
+  const worktreeProtectionResolutionFailed =
+    !worktreeProtectionResolutionPending && canonicalWorktreePathByPath === null;
+  const canonicalOpenWorktreePaths = useMemo(
+    () =>
+      new Set(
+        canonicalWorktreePathByPath
+          ? localOpenWorktreePaths.flatMap((path) => {
+              const identity = canonicalWorktreePathByPath.get(path);
+              return identity ? [identity] : [];
+            })
+          : [],
+      ),
+    [canonicalWorktreePathByPath, localOpenWorktreePaths],
+  );
+  const canonicalActiveSessionWorktreePaths = useMemo(
+    () =>
+      new Set(
+        canonicalWorktreePathByPath
+          ? activeSessionWorktreePaths.flatMap((path) => {
+              const identity = canonicalWorktreePathByPath.get(path);
+              return identity ? [identity] : [];
+            })
+          : [],
+      ),
+    [activeSessionWorktreePaths, canonicalWorktreePathByPath],
+  );
   const workspaceLabelByKey = useMemo(
     () =>
       new Map(
@@ -558,7 +928,210 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setManualScope("all");
     setExpandedSections(new Set());
     setHistoryExpanded(false);
+    setPageStack(createCommandCenterPageStack());
+    // Closing the palette exits the worktree flow: project, form, and error state all reset (no global store).
+    setWorktreeProject(null);
+    setWorktreeDestination("worktree");
+    setWorktreeBaseBranch(null);
+    setWorktreeBranchName("");
+    worktreeBranchNameTouchedRef.current = false;
+    setWorktreeBranchesResult(null);
+    setWorktreeRepoInfo(null);
+    setWorktreeDataLoading(false);
+    setWorktreeDataError(null);
+    setWorktreeStartBusy(false);
+    setWorktreeIssueMessage(null);
+    setWorktreeRecoveryPath(null);
+    setWorktreeExistingBranchWorktreePath(null);
+    setWorktreeListResult(null);
+    setWorktreeRemoveBusyPath(null);
+    setWorktreeForceConfirmPath(null);
+    setWorktreePruneBusy(false);
+    setWorktreePruneMessage(null);
+    // An in-flight Start result must not reopen/switch anything after dismissal.
+    worktreeStartAttemptRef.current += 1;
   }, [open, workspaceKey]);
+
+  const setupWorkspacePath = worktreeProject?.workspacePath ?? null;
+  useEffect(() => {
+    if (!worktreeSetupPageActive || !setupWorkspacePath) {
+      return;
+    }
+
+    // Entering the setup page loads repository info and local branches; WT-03 (not-a-repository
+    // / git unavailable) comes from repoInfo, the branch list feeds base-branch selection and
+    // branch-name client pre-validation. The worktree list feeds the manage section (2026-10-13
+    // Phase 2: remove / prune); it fails silently (the section renders its empty state).
+    let cancelled = false;
+    setWorktreeDataLoading(true);
+    setWorktreeDataError(null);
+    setWorktreeListResult(null);
+    setWorktreePruneMessage(null);
+    setWorktreeForceConfirmPath(null);
+    void Promise.resolve()
+      .then(() => baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }))
+      .then(
+        (worktreesResult) => {
+          if (!cancelled) {
+            setWorktreeListResult(
+              worktreesResult?.isRepository && worktreesResult.isGitAvailable
+                ? worktreesResult
+                : null,
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.debug("[CommandCenter] optional worktree list failed", {
+            workspacePath: setupWorkspacePath,
+            error: getErrorMessage(error),
+          });
+        },
+      );
+    Promise.all([
+      baseServices.gitService.getWorkspaceRepositoryInfo({ workspacePath: setupWorkspacePath }),
+      baseServices.gitService.getLocalBranches({ workspacePath: setupWorkspacePath }),
+    ])
+      .then(
+        ([repoInfo, branchesResult]) => {
+          if (cancelled) {
+            return;
+          }
+
+          // ?? null: test doubles may resolve undefined; treated the same as "not loaded yet".
+          setWorktreeRepoInfo(repoInfo ?? null);
+          setWorktreeBranchesResult(branchesResult ?? null);
+        },
+        (error: unknown) => {
+          if (!cancelled) {
+            setWorktreeDataError(getErrorMessage(error));
+          }
+        },
+      )
+      .finally(() => {
+        if (!cancelled) {
+          setWorktreeDataLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [baseServices.gitService, setupWorkspacePath, worktreeSetupPageActive]);
+
+  // 2026-10-13 spec: prefill the branch-name field with a generated name (template + weighted
+  // word lists) once the branch list arrives; the touch guard keeps manual edits (and clears)
+  // from being overwritten — the dice button is the explicit regenerate.
+  const worktreeBranchNameTouchedRef = useRef(false);
+  const generateWorktreeBranchNameForPalette = useCallback((): string => {
+    const branchNameSet = new Set(
+      worktreeBranchesResult?.branches.map((branch) => branch.name) ?? [],
+    );
+    return generateWorktreeBranchName({
+      isTaken: (raw) => {
+        const composed = composeBranchName(worktreeEffectiveLocation?.prefix, raw);
+        return branchNameSet.has(composed);
+      },
+    });
+  }, [worktreeBranchesResult, worktreeEffectiveLocation]);
+
+  const regenerateWorktreeBranchName = useCallback(() => {
+    worktreeBranchNameTouchedRef.current = true;
+    setWorktreeBranchName(generateWorktreeBranchNameForPalette());
+    setWorktreeIssueMessage(null);
+  }, [generateWorktreeBranchNameForPalette]);
+
+  useEffect(() => {
+    if (
+      !worktreeSetupPageActive ||
+      worktreeDestination !== "worktree" ||
+      !worktreeBranchesResult ||
+      worktreeBranchNameTouchedRef.current ||
+      worktreeBranchName.trim().length > 0
+    ) {
+      return;
+    }
+    setWorktreeBranchName(generateWorktreeBranchNameForPalette());
+  }, [
+    generateWorktreeBranchNameForPalette,
+    worktreeBranchName,
+    worktreeBranchesResult,
+    worktreeDestination,
+    worktreeSetupPageActive,
+  ]);
+
+  // Existing-branch offer: when the composed name matches an existing branch, look up its
+  // worktree — a hit offers opening it, a miss means the free branch is checked out by Start.
+  useEffect(() => {
+    if (
+      !worktreeSetupPageActive ||
+      worktreeDestination !== "worktree" ||
+      !worktreeExistingBranchName ||
+      !setupWorkspacePath
+    ) {
+      setWorktreeExistingBranchWorktreePath(null);
+      setWorktreeExistingBranchStalePath(null);
+      return;
+    }
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => baseServices.gitService.listWorktrees({ workspacePath: setupWorkspacePath }))
+      .then(async (result) => {
+        if (cancelled) {
+          return;
+        }
+        const match = findWorktreeForBranch(result.worktrees, worktreeExistingBranchName);
+        if (!match) {
+          setWorktreeExistingBranchWorktreePath(null);
+          setWorktreeExistingBranchStalePath(null);
+          return;
+        }
+        // `git worktree list` keeps a prunable record after the directory was deleted by hand;
+        // opening it would silently create a ghost workspace on a missing path.
+        let usable = true;
+        try {
+          const verification = await baseServices.gitService.verifyWorktreeUsable({
+            workspacePath: setupWorkspacePath,
+            targetPath: match.path,
+          });
+          usable = verification.ok;
+        } catch (error: unknown) {
+          // Degrade to the plain offer: a failing check must not block the dialog.
+          logger.warn("[CommandCenter] existing worktree usability check failed", {
+            workspacePath: setupWorkspacePath,
+            path: match.path,
+            error: getErrorMessage(error),
+          });
+        }
+        if (cancelled) {
+          return;
+        }
+        setWorktreeExistingBranchWorktreePath(usable ? match.path : null);
+        setWorktreeExistingBranchStalePath(usable ? null : match.path);
+      })
+      .catch((error: unknown) => {
+        // Silent: without the list the Start attempt stays authoritative (server classifies
+        // an occupied branch as branch-in-other-worktree).
+        if (!cancelled) {
+          logger.debug("[CommandCenter] existing-branch worktree lookup failed", {
+            workspacePath: setupWorkspacePath,
+            existingBranchName: worktreeExistingBranchName,
+            error: getErrorMessage(error),
+          });
+          setWorktreeExistingBranchWorktreePath(null);
+          setWorktreeExistingBranchStalePath(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    baseServices.gitService,
+    setupWorkspacePath,
+    worktreeDestination,
+    worktreeExistingBranchName,
+    worktreeOfferRefreshKey,
+    worktreeSetupPageActive,
+  ]);
 
   useEffect(() => {
     setExpandedSections(new Set());
@@ -581,7 +1154,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     setWorkspaceFilesError(null);
     void fetchWorkspaceFileEntriesPacked(fileService, workspaceAbsPath)
       .then((result) => {
-        // Host 返回列式 packed 字符串（避免大数组结构化克隆），此处一次性解包。
+        // Host returns a columnar packed string (avoiding structured cloning large arrays); unpack it once here.
         const entries = unpackWorkspaceFileEntries(result, workspaceAbsPath);
         if (cancelled) {
           return;
@@ -639,10 +1212,27 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   const runCommand = useCallback(
     (command: QuickPickCommand) => {
       rememberSearch("commands");
+      if (command.page) {
+        // Page-stack commands open a sub-page instead of running and closing; per-page query memory is managed by the stack helpers.
+        const transition = pushCommandCenterPage(
+          pageStack,
+          {
+            id: command.page.id,
+            placeholderId: command.page.placeholderId,
+            commandId: command.id,
+          },
+          rawQuery,
+        );
+        setPageStack(transition.stack);
+        setRawQuery(transition.query);
+        searchInputRef.current?.focus();
+        return;
+      }
+
       closeDialog();
       // The command may omit run() for navigation-only entries; a missing run is a no-op.
       void Promise.resolve(command.run?.()).catch((error) => {
-        logger.error("[CommandCenter] 命令执行失败", {
+        logger.error("[CommandCenter] command execution failed", {
           commandId: command.id,
           error,
         });
@@ -656,8 +1246,383 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         );
       });
     },
-    [closeDialog, intl, rememberSearch],
+    [closeDialog, intl, pageStack, rawQuery, rememberSearch],
   );
+
+  const popPage = useCallback(() => {
+    const transition = popCommandCenterPage(pageStack, rawQuery);
+    setPageStack(transition.stack);
+    setRawQuery(transition.query);
+    searchInputRef.current?.focus();
+  }, [pageStack, rawQuery]);
+
+  const selectPageValue = useCallback(
+    (valueList: QuickPickValueList, value: string) => {
+      // Applying a value-list selection returns to the palette root and keeps the dialog open.
+      const transition = resetCommandCenterPageStack(pageStack, rawQuery);
+      setPageStack(transition.stack);
+      setRawQuery(transition.query);
+      searchInputRef.current?.focus();
+      try {
+        valueList.onSelect(value);
+      } catch (error) {
+        logger.error("[CommandCenter] page option execution failed", {
+          value,
+          error,
+        });
+        toast(
+          intl.formatMessage(
+            { id: "quickPick.commandFailed" },
+            {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          ),
+        );
+      }
+    },
+    [intl, pageStack, rawQuery],
+  );
+
+  const selectWorktreeProject = useCallback(
+    (project: WorktreeTaskProject) => {
+      const sameProject =
+        worktreeProject !== null &&
+        getWorkspaceIdentityKey(worktreeProject) === getWorkspaceIdentityKey(project);
+      if (!sameProject) {
+        // Reset the form only when the project changes; re-entering the same project keeps typed content (CC-01).
+        setWorktreeDestination("worktree");
+        setWorktreeBaseBranch(null);
+        setWorktreeBranchName("");
+        setWorktreeBranchesResult(null);
+        setWorktreeRepoInfo(null);
+        setWorktreeDataError(null);
+      }
+
+      setWorktreeIssueMessage(null);
+      setWorktreeRecoveryPath(null);
+      if (!sameProject) {
+        // A new project restarts the prefill budget (2026-10-13).
+        worktreeBranchNameTouchedRef.current = false;
+      }
+      setWorktreeProject(project);
+      const transition = pushCommandCenterPage(
+        pageStack,
+        {
+          id: NEW_TASK_SETUP_PAGE_ID,
+          placeholderId: "commandCenter.placeholder.newTaskSetup",
+          commandId: NEW_TASK_WORKTREE_COMMAND_ID,
+        },
+        rawQuery,
+      );
+      setPageStack(transition.stack);
+      setRawQuery(transition.query);
+      searchInputRef.current?.focus();
+    },
+    [pageStack, rawQuery, worktreeProject],
+  );
+
+  /** Open a workspace + draft via the App contract; WT-04 keeps the created path recoverable. */
+  const openTaskWorkspace = useCallback(
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => {
+      // Web remote control resolves after the desktop open + bridge switch; catch the async
+      // rejection here so the failure toast (with the retry action) still appears.
+      void (async () => {
+        try {
+          await onCreateTaskInWorkspace(targetWorkspacePath, targetWorkspaceIdentity);
+        } catch (error) {
+          logger.error("[CommandCenter] Failed to open worktree workspace", {
+            targetWorkspacePath,
+            error: getErrorMessage(error),
+          });
+          toast(
+            intl.formatMessage(
+              { id: "commandCenter.worktree.openFailed" },
+              { path: targetWorkspacePath },
+            ),
+            {
+              durationMs: 10_000,
+              actionLabel: intl.formatMessage({ id: "commandCenter.worktree.openExisting" }),
+              onAction: () => onCreateTaskInWorkspace(targetWorkspacePath),
+            },
+          );
+        }
+      })();
+    },
+    [intl, onCreateTaskInWorkspace],
+  );
+
+  const startWorktreeTask = useCallback(async () => {
+    const project = worktreeProject;
+    if (!project || worktreeStartBusy) {
+      return;
+    }
+
+    if (worktreeDestination === "checkout") {
+      closeDialog();
+      openTaskWorkspace(project.workspacePath, project.workspaceIdentity);
+      return;
+    }
+
+    const branchName = composedWorktreeBranchName;
+    const targetPath = computeWorktreeTargetPath(
+      project.workspacePath,
+      branchName,
+      worktreeEffectiveLocation,
+    );
+    if (
+      !branchName ||
+      !targetPath ||
+      worktreeBranchNameIssue ||
+      worktreeCustomLocationInvalid ||
+      worktreeExistingBranchWorktreePath ||
+      worktreeExistingBranchStalePath
+    ) {
+      return;
+    }
+
+    setWorktreeStartBusy(true);
+    setWorktreeIssueMessage(null);
+    setWorktreeRecoveryPath(null);
+    // A new Start invalidates any previous in-flight attempt; dialog close does the same.
+    const attempt = ++worktreeStartAttemptRef.current;
+    try {
+      // Creation orchestration (request, issue mapping, target-path-exists recovery) shared with the empty-state send interception.
+      const outcome = await executeWorktreeCreation({
+        gitService: baseServices.gitService,
+        workspacePath: project.workspacePath,
+        branchName,
+        baseBranch: effectiveWorktreeBaseBranch || undefined,
+        targetPath,
+        formatMessage: (id, values) => intl.formatMessage({ id }, values),
+      });
+      if (worktreeStartAttemptRef.current !== attempt) {
+        // The palette was closed (or another Start began) while the request was in flight:
+        // do not reopen it, switch the workspace, or write into the reset flow state.
+        return;
+      }
+      if (outcome.kind === "created") {
+        logger.info("[CommandCenter] worktree created", {
+          workspacePath: project.workspacePath,
+          branchName,
+          targetPath: outcome.worktreePath,
+        });
+        closeDialog();
+        openTaskWorkspace(outcome.worktreePath);
+        return;
+      }
+      if (outcome.kind === "existing-worktree") {
+        setWorktreeIssueMessage(outcome.message);
+        setWorktreeRecoveryPath(outcome.worktreePath);
+        return;
+      }
+      // Issue codes only: the raw Git/RPC text (rawDetail) is never logged.
+      logger.warn("[CommandCenter] worktree creation failed", {
+        workspacePath: project.workspacePath,
+        branchName,
+        issues: outcome.issueCodes,
+      });
+      // A thrown request has no issue code: show the request failure with its raw text here (the
+      // Command Center has no details block), so the cause is not lost behind the generic summary.
+      setWorktreeIssueMessage(
+        outcome.issueCode === null && outcome.rawDetail
+          ? intl.formatMessage(
+              { id: "commandCenter.worktree.error.requestFailed" },
+              { error: outcome.rawDetail },
+            )
+          : outcome.message,
+      );
+    } finally {
+      // A stale request's finally must not unlock a newer Start; busy is cleared exclusively by the current attempt.
+      if (worktreeStartAttemptRef.current === attempt) {
+        setWorktreeStartBusy(false);
+      }
+    }
+  }, [
+    baseServices.gitService,
+    closeDialog,
+    composedWorktreeBranchName,
+    effectiveWorktreeBaseBranch,
+    intl,
+    openTaskWorkspace,
+    worktreeBranchNameIssue,
+    worktreeCustomLocationInvalid,
+    worktreeDestination,
+    worktreeEffectiveLocation,
+    worktreeExistingBranchWorktreePath,
+    worktreeProject,
+    worktreeStartBusy,
+  ]);
+
+  // Phase 2 (2026-10-13): remove one linked worktree. The first attempt runs without force;
+  // a worktree-dirty answer arms the per-row force confirmation rendered by the list.
+  const removeWorktreeEntry = useCallback(
+    async (targetPath: string, force: boolean) => {
+      const project = worktreeProject;
+      if (!project || worktreeRemoveBusyPath) {
+        return;
+      }
+      // Re-check protection at click time for both the normal and the force path: the rendered
+      // guard may be stale after a prepared session's worktree fact or the task list changed, and
+      // the dirty-directory force confirmation must never bypass the in-use guard.
+      const worktreeInUseNow = isWorktreeRemovalBlockedNow({
+        targetPath,
+        targetBranch:
+          worktreeListResult?.worktrees.find((entry) => entry.path === targetPath)?.branchName ??
+          null,
+        targetIdentity: canonicalWorktreePathByPath?.get(targetPath),
+        canonicalIdentityOf: (path) => canonicalWorktreePathByPath?.get(path),
+        tasks: worktreeProtectionTaskList.items,
+      });
+      if (worktreeInUseNow) {
+        setWorktreeForceConfirmPath(null);
+        setWorktreePruneMessage(
+          intl.formatMessage({ id: "commandCenter.worktree.existingWorktrees.openBadge" }),
+        );
+        return;
+      }
+      setWorktreeRemoveBusyPath(targetPath);
+      setWorktreePruneMessage(null);
+      try {
+        const result = await baseServices.gitService.removeWorktree({
+          workspacePath: project.workspacePath,
+          targetPath,
+          force,
+        });
+        if (result.ok) {
+          setWorktreeForceConfirmPath(null);
+          const list = await baseServices.gitService.listWorktrees({
+            workspacePath: project.workspacePath,
+          });
+          setWorktreeListResult(list.isRepository && list.isGitAvailable ? list : null);
+          return;
+        }
+        const dirty = result.issues.some((issue) => issue.code === "worktree-dirty");
+        if (dirty && !force) {
+          setWorktreeForceConfirmPath(targetPath);
+          return;
+        }
+        const issue = result.issues[0];
+        setWorktreePruneMessage(
+          issue
+            ? intl.formatMessage(
+                { id: resolveWorktreeIssueMessageId(issue.code) },
+                { branchName: getPathLeaf(targetPath) },
+              )
+            : intl.formatMessage({ id: "commandCenter.worktree.error.unknown" }),
+        );
+      } catch (error) {
+        logger.warn("[CommandCenter] removeWorktree request failed", {
+          workspacePath: project.workspacePath,
+          targetPath,
+          error: getErrorMessage(error),
+        });
+        setWorktreePruneMessage(
+          intl.formatMessage(
+            { id: "commandCenter.worktree.error.requestFailed" },
+            { error: getErrorMessage(error) },
+          ),
+        );
+      } finally {
+        setWorktreeRemoveBusyPath(null);
+      }
+    },
+    [
+      baseServices.gitService,
+      canonicalWorktreePathByPath,
+      intl,
+      worktreeListResult,
+      worktreeProject,
+      worktreeProtectionTaskList.items,
+      worktreeRemoveBusyPath,
+    ],
+  );
+
+  // Phase 2 (2026-10-13): prune stale administrative records (directories removed by hand).
+  const pruneWorktreeEntries = useCallback(async () => {
+    const project = worktreeProject;
+    if (!project || worktreePruneBusy) {
+      return;
+    }
+    setWorktreePruneBusy(true);
+    setWorktreePruneMessage(null);
+    try {
+      const result = await baseServices.gitService.pruneWorktrees({
+        workspacePath: project.workspacePath,
+      });
+      if (result.ok) {
+        const list = await baseServices.gitService.listWorktrees({
+          workspacePath: project.workspacePath,
+        });
+        setWorktreeListResult(list.isRepository && list.isGitAvailable ? list : null);
+        setWorktreeOfferRefreshKey((key) => key + 1);
+        setWorktreePruneMessage(
+          intl.formatMessage(
+            { id: "commandCenter.worktree.prune.done" },
+            { count: result.prunedCount },
+          ),
+        );
+        return;
+      }
+      const issue = result.issues[0];
+      setWorktreePruneMessage(
+        issue
+          ? intl.formatMessage(
+              { id: resolveWorktreeIssueMessageId(issue.code) },
+              { branchName: getPathLeaf(project.workspacePath) },
+            )
+          : intl.formatMessage({ id: "commandCenter.worktree.error.unknown" }),
+      );
+    } catch (error) {
+      logger.warn("[CommandCenter] pruneWorktrees request failed", {
+        workspacePath: project.workspacePath,
+        error: getErrorMessage(error),
+      });
+      setWorktreePruneMessage(
+        intl.formatMessage(
+          { id: "commandCenter.worktree.error.requestFailed" },
+          { error: getErrorMessage(error) },
+        ),
+      );
+    } finally {
+      setWorktreePruneBusy(false);
+    }
+  }, [baseServices.gitService, intl, worktreePruneBusy, worktreeProject]);
+
+  const canStartWorktreeTask = useMemo(() => {
+    if (!worktreeSetupPageActive || worktreeStartBusy) {
+      return false;
+    }
+    if (worktreeDataError || worktreeRepoUnavailable) {
+      return false;
+    }
+    if (worktreeDestination === "checkout") {
+      return true;
+    }
+    return (
+      !worktreeDataLoading &&
+      worktreeBranchesResult !== null &&
+      trimmedWorktreeBranchName.length > 0 &&
+      worktreeBranchNameIssue === null &&
+      !worktreeExistingBranchWorktreePath &&
+      !worktreeExistingBranchStalePath &&
+      !worktreeCustomLocationInvalid &&
+      !worktreeGlobalLocationUnavailable
+    );
+  }, [
+    trimmedWorktreeBranchName,
+    worktreeBranchNameIssue,
+    worktreeBranchesResult,
+    worktreeCustomLocationInvalid,
+    worktreeDataError,
+    worktreeDataLoading,
+    worktreeDestination,
+    worktreeExistingBranchStalePath,
+    worktreeExistingBranchWorktreePath,
+    worktreeGlobalLocationUnavailable,
+    worktreeRepoUnavailable,
+    worktreeSetupPageActive,
+    worktreeStartBusy,
+  ]);
 
   const selectTask = useCallback(
     (row: TaskSearchResultRow) => {
@@ -723,7 +1688,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   const shouldShowCommandSection = activeScope === "all" || activeScope === "commands";
   const shouldShowConversationSection = activeScope === "all" || activeScope === "conversations";
   const shouldShowFileSection = activeScope === "all" || activeScope === "files";
-  const showHistory = !hasSearchQuery && historyEntries.length > 0;
+  const showHistory = !activePage && !hasSearchQuery && historyEntries.length > 0;
 
   const renderMoreRow = (sectionId: CommandCenterSectionId, count: number) => {
     if (expandedSections.has(sectionId) || count <= COMMAND_CENTER_SECTION_LIMIT) {
@@ -979,6 +1944,509 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     workspaceFilesLoading ||
     (shouldShowFileSection && Boolean(workspaceFilesError));
 
+  const renderWorktreeProjectRow = (project: WorktreeTaskProject) => {
+    const label = project.label?.trim() || getPathLeaf(project.workspacePath);
+    return (
+      <CommandItem
+        key={`${project.workspaceIdentity ?? ""}:${project.workspacePath}`}
+        value={`${label} ${project.workspacePath}`}
+        className={quickPickItemClassName}
+        onSelect={() => selectWorktreeProject(project)}
+      >
+        <FolderIcon className="size-3.5 shrink-0 text-foreground-subtle" />
+        <span className="min-w-0 flex-1 truncate">
+          <HighlightedMatchText text={label} query={searchQuery} />
+        </span>
+        {project.isOpen && !project.isActive ? (
+          <span className="shrink-0 rounded-sm bg-surface px-1 font-sans text-ui-xs leading-4 text-foreground-subtle">
+            {intl.formatMessage({ id: "commandCenter.worktree.alreadyOpen" })}
+          </span>
+        ) : null}
+        <CommandShortcut
+          className={cn(quickPickMetadataClassName, "font-mono")}
+          title={project.workspacePath}
+        >
+          <HighlightedMatchText text={project.workspacePath} query={searchQuery} />
+        </CommandShortcut>
+        {project.isActive ? <CheckIcon className="size-3.5 shrink-0 text-foreground" /> : null}
+      </CommandItem>
+    );
+  };
+
+  const renderWorktreeProjectsSection = () => {
+    const { openProjects, recentProjectsRows, isEmpty } = worktreeProjectPageRows;
+    return (
+      <>
+        <CommandGroup heading={intl.formatMessage({ id: "commandCenter.section.openWorkspaces" })}>
+          {isEmpty ? (
+            <CommandEmpty className="px-4 py-5 text-foreground-subtle">
+              {intl.formatMessage({ id: "commandCenter.worktree.noProjects" })}
+            </CommandEmpty>
+          ) : null}
+          {openProjects.map(renderWorktreeProjectRow)}
+        </CommandGroup>
+        {recentProjectsRows.length > 0 ? (
+          <CommandGroup
+            heading={intl.formatMessage({ id: "commandCenter.section.recentProjects" })}
+          >
+            {recentProjectsRows.map(renderWorktreeProjectRow)}
+          </CommandGroup>
+        ) : null}
+      </>
+    );
+  };
+
+  const renderWorktreeDestinationRow = (
+    destination: WorktreeTaskDestination,
+    labelId: string,
+    descriptionId: string,
+    icon: ReactNode,
+  ) => (
+    <CommandItem
+      value={`destination ${destination}`}
+      className={quickPickItemClassName}
+      disabled={worktreeStartBusy}
+      onSelect={() => setWorktreeDestination(destination)}
+    >
+      {icon}
+      <span className="flex min-w-0 flex-1 flex-col justify-center py-0.5">
+        <span className="truncate text-ui-base font-normal leading-5 text-foreground">
+          {intl.formatMessage({ id: labelId })}
+        </span>
+        <span className="min-w-0 truncate text-ui-base leading-4 text-foreground-subtle">
+          {intl.formatMessage({ id: descriptionId })}
+        </span>
+      </span>
+      {worktreeDestination === destination ? (
+        <CheckIcon className="size-3.5 shrink-0 text-foreground" />
+      ) : null}
+    </CommandItem>
+  );
+
+  const renderWorktreeSetupSection = () => {
+    if (!worktreeProject) {
+      return null;
+    }
+
+    const showWorktreeControls = worktreeDestination === "worktree";
+    return (
+      <div className="flex flex-col gap-3 px-3 py-3">
+        <div>
+          <p className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtle">
+            {intl.formatMessage({ id: "commandCenter.worktree.destination" })}
+          </p>
+          {renderWorktreeDestinationRow(
+            "worktree",
+            "commandCenter.worktree.destination.worktree",
+            "commandCenter.worktree.destination.worktree.description",
+            <GitBranchPlusIcon className="size-3.5 shrink-0 text-foreground-subtle" />,
+          )}
+          {renderWorktreeDestinationRow(
+            "checkout",
+            "commandCenter.worktree.destination.checkout",
+            "commandCenter.worktree.destination.checkout.description",
+            <FolderIcon className="size-3.5 shrink-0 text-foreground-subtle" />,
+          )}
+        </div>
+        {showWorktreeControls ? (
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="command-center-worktree-branch-name"
+              className="px-2.5 text-ui-sm font-medium text-foreground-subtle"
+            >
+              {intl.formatMessage({ id: "commandCenter.worktree.branchName" })}
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                id="command-center-worktree-branch-name"
+                value={worktreeBranchName}
+                disabled={worktreeStartBusy}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={intl.formatMessage({
+                  id: "commandCenter.worktree.branchName.placeholder",
+                })}
+                onChange={(event) => {
+                  worktreeBranchNameTouchedRef.current = true;
+                  setWorktreeBranchName(event.target.value);
+                }}
+                onKeyDown={(event) => {
+                  // Enter in the branch-name input submits directly instead of triggering
+                  // the highlighted cmdk item.
+                  if (event.key === "Enter" && canStartWorktreeTask) {
+                    event.preventDefault();
+                    void startWorktreeTask();
+                  }
+                }}
+                className={cn(
+                  "h-8 w-full rounded-lg border border-input-border bg-input px-2 font-mono text-ui-base text-foreground outline-none transition-colors",
+                  "placeholder:font-sans placeholder:text-foreground-subtlest",
+                  "hover:border-input-border-hover focus:border-input-border-focused focus:bg-input-focused",
+                  worktreeBranchNameIssue ? "border-destructive" : undefined,
+                )}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                disabled={worktreeStartBusy}
+                aria-label={intl.formatMessage({ id: "commandCenter.worktree.regenerateName" })}
+                title={intl.formatMessage({ id: "commandCenter.worktree.regenerateName" })}
+                onClick={regenerateWorktreeBranchName}
+              >
+                <Dices className="size-3.5" />
+              </Button>
+            </div>
+            {worktreeBranchNameIssue ? (
+              <p className="px-2.5 text-ui-sm text-destructive">
+                {intl.formatMessage({ id: "commandCenter.worktree.branchName.invalid" })}
+              </p>
+            ) : null}
+            {/* 2026-10-13 spec: an existing branch name is a hint or an open-existing offer,
+                never a blocker; an occupied branch is still classified by the server. */}
+            {worktreeExistingBranchName ? (
+              <p className="px-2.5 text-ui-sm text-foreground-subtle">
+                {intl.formatMessage({ id: "commandCenter.worktree.existingBranchHint" })}
+              </p>
+            ) : null}
+            {worktreeExistingBranchName && worktreeExistingBranchStalePath ? (
+              <div className="flex flex-col items-start gap-2 px-2.5">
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 text-ui-sm text-foreground-subtle"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                  {intl.formatMessage(
+                    { id: "commandCenter.worktree.error.worktreeMissing" },
+                    {
+                      branchName: worktreeExistingBranchName,
+                      path: worktreeExistingBranchStalePath,
+                    },
+                  )}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={worktreePruneBusy || worktreeStartBusy}
+                  onClick={() => void pruneWorktreeEntries()}
+                >
+                  {intl.formatMessage({ id: "commandCenter.worktree.prune" })}
+                </Button>
+              </div>
+            ) : null}
+            {worktreeExistingBranchName && worktreeExistingBranchWorktreePath ? (
+              <div className="px-2.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={worktreeStartBusy}
+                  onClick={() => {
+                    closeDialog();
+                    openTaskWorkspace(worktreeExistingBranchWorktreePath);
+                  }}
+                >
+                  {intl.formatMessage({ id: "commandCenter.worktree.openExisting" })}
+                </Button>
+              </div>
+            ) : null}
+            {/* WTS-02: with an effective prefix, preview the final branch name; Start and validation both use the composed value. */}
+            {worktreeEffectiveLocation?.prefix && trimmedWorktreeBranchName ? (
+              <p className="px-2.5 text-ui-sm text-foreground-subtle">
+                {intl.formatMessage(
+                  { id: "commandCenter.worktree.branchName.final" },
+                  { name: composedWorktreeBranchName },
+                )}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {showWorktreeControls ? (
+          <div>
+            <p className="px-2.5 pb-1 text-ui-sm font-medium text-foreground-subtle">
+              {intl.formatMessage({ id: "commandCenter.worktree.baseBranch" })}
+            </p>
+            {worktreeDataError ? (
+              <CommandEmpty className="px-4 py-3 text-destructive">
+                {intl.formatMessage(
+                  { id: "commandCenter.worktree.error.requestFailed" },
+                  { error: worktreeDataError },
+                )}
+              </CommandEmpty>
+            ) : worktreeDataLoading && !worktreeBranchesResult ? (
+              <CommandEmpty className="px-4 py-3 text-foreground-subtle">
+                {intl.formatMessage({ id: "commandCenter.worktree.baseBranch.loading" })}
+              </CommandEmpty>
+            ) : worktreeRepoUnavailable ? (
+              <p className="flex items-start gap-2 px-2.5 py-2 text-ui-sm text-foreground-subtle">
+                <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                {intl.formatMessage({
+                  id: worktreeRepoInfo?.isGitAvailable
+                    ? "commandCenter.worktree.error.not-a-repository"
+                    : "commandCenter.worktree.error.git-unavailable",
+                })}
+              </p>
+            ) : worktreeBranchRows.length === 0 ? (
+              <CommandEmpty className="px-4 py-3 text-foreground-subtle">
+                {intl.formatMessage({ id: "commandCenter.worktree.baseBranch.empty" })}
+              </CommandEmpty>
+            ) : (
+              worktreeBranchRows.map((branch) => (
+                <CommandItem
+                  key={branch.name}
+                  value={`base ${branch.name}`}
+                  className={quickPickItemClassName}
+                  disabled={worktreeStartBusy}
+                  onSelect={() => setWorktreeBaseBranch(branch.name)}
+                >
+                  <span className="min-w-0 flex-1 truncate font-mono">
+                    <HighlightedMatchText text={branch.name} query={searchQuery} />
+                  </span>
+                  {effectiveWorktreeBaseBranch === branch.name ? (
+                    <CheckIcon className="size-3.5 shrink-0 text-foreground" />
+                  ) : null}
+                </CommandItem>
+              ))
+            )}
+          </div>
+        ) : null}
+        {showWorktreeControls ? (
+          // Phase 2 (2026-10-13): manage existing worktrees — remove (dirty → force confirm)
+          // and prune stale records. Main worktree, the current workspace, and open tabs are
+          // not removable from the UI; the service still rejects main/foreign paths itself.
+          <div>
+            <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
+              <p className="text-ui-sm font-medium text-foreground-subtle">
+                {intl.formatMessage({ id: "commandCenter.worktree.existingWorktrees" })}
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={worktreePruneBusy || worktreeStartBusy || !worktreeListResult}
+                onClick={() => void pruneWorktreeEntries()}
+              >
+                {intl.formatMessage({ id: "commandCenter.worktree.prune" })}
+              </Button>
+            </div>
+            {(() => {
+              const removableEntries =
+                worktreeListResult?.worktrees.filter((entry) => !entry.isMain) ?? [];
+              if (removableEntries.length === 0) {
+                return (
+                  <p className="px-2.5 py-2 text-ui-sm text-foreground-subtle">
+                    {intl.formatMessage({ id: "commandCenter.worktree.existingWorktrees.empty" })}
+                  </p>
+                );
+              }
+              return (
+                <div className="flex flex-col">
+                  {removableEntries.map((entry) => {
+                    const label = entry.branchName ?? entry.path;
+                    const worktreePathIdentity = canonicalWorktreePathByPath?.get(entry.path);
+                    const isProtected = isWorktreeProtected({
+                      entry,
+                      canonicalIdentity: worktreePathIdentity ?? null,
+                      identitiesResolved: canonicalWorktreePathByPath !== null,
+                      openPathIdentities: canonicalOpenWorktreePaths,
+                      activePathIdentities: canonicalActiveSessionWorktreePaths,
+                      activeBranchNames: activeSessionWorktreeBranches,
+                    });
+                    const busyHere = worktreeRemoveBusyPath === entry.path;
+                    const forceConfirmHere = worktreeForceConfirmPath === entry.path;
+                    return (
+                      <div
+                        key={entry.path}
+                        className="flex items-center gap-2 rounded-md px-2.5 py-1"
+                      >
+                        <span className="min-w-0 flex-1 truncate font-mono text-ui-sm">
+                          {label}
+                          <span className="ml-2 text-foreground-subtlest" title={entry.path}>
+                            {getPathLeaf(entry.path)}
+                          </span>
+                        </span>
+                        {isProtected ? (
+                          <span className="shrink-0 text-ui-sm text-foreground-subtlest">
+                            {intl.formatMessage({
+                              id: worktreeProtectionResolutionPending
+                                ? "commandCenter.worktree.protection.checking"
+                                : worktreeProtectionResolutionFailed
+                                  ? "commandCenter.worktree.protection.unavailable"
+                                  : "commandCenter.worktree.existingWorktrees.openBadge",
+                            })}
+                          </span>
+                        ) : forceConfirmHere ? (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            disabled={
+                              busyHere || worktreeStartBusy || worktreeProtectionTaskList.loading
+                            }
+                            onClick={() => void removeWorktreeEntry(entry.path, true)}
+                          >
+                            {intl.formatMessage({
+                              id: "commandCenter.worktree.remove.confirmDirty",
+                            })}
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            disabled={
+                              busyHere || worktreeStartBusy || worktreeProtectionTaskList.loading
+                            }
+                            aria-label={intl.formatMessage({
+                              id: "commandCenter.worktree.remove",
+                            })}
+                            title={intl.formatMessage({ id: "commandCenter.worktree.remove" })}
+                            onClick={() => void removeWorktreeEntry(entry.path, false)}
+                          >
+                            <Trash2Icon className="size-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+            {worktreePruneMessage ? (
+              <p className="px-2.5 pt-1 text-ui-sm text-foreground-subtle">
+                {worktreePruneMessage}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {showWorktreeControls &&
+        (worktreeCustomLocationInvalid || worktreeGlobalLocationUnavailable) ? (
+          // WTS-01 / Stage F: for an invalid location (Custom non-absolute path, or unavailable global directory) the error stays next
+          // to the target path, the preview hides, and Start is blocked.
+          <div className="px-2.5">
+            <p className="text-ui-sm font-medium text-foreground-subtle">
+              {intl.formatMessage({ id: "commandCenter.worktree.targetPath" })}
+            </p>
+            <p className="text-ui-sm text-destructive">
+              {intl.formatMessage({
+                id: worktreeCustomLocationInvalid
+                  ? "commandCenter.worktree.error.custom-location-invalid"
+                  : "commandCenter.worktree.error.global-location-unavailable",
+              })}
+            </p>
+          </div>
+        ) : showWorktreeControls && worktreeTargetPathPreviewDisplay ? (
+          <div className="px-2.5">
+            <p className="text-ui-sm font-medium text-foreground-subtle">
+              {intl.formatMessage({ id: "commandCenter.worktree.targetPath" })}
+            </p>
+            <p
+              className="truncate font-mono text-ui-sm text-foreground-subtle"
+              title={worktreeTargetPathPreview ?? undefined}
+            >
+              {worktreeTargetPathPreviewDisplay}
+            </p>
+          </div>
+        ) : null}
+        {worktreeRepoUnavailable && worktreeDestination === "checkout" ? (
+          <p className="flex items-start gap-2 px-2.5 py-1 text-ui-sm text-foreground-subtle">
+            <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+            {intl.formatMessage({
+              id: worktreeRepoInfo?.isGitAvailable
+                ? "commandCenter.worktree.error.not-a-repository"
+                : "commandCenter.worktree.error.git-unavailable",
+            })}
+          </p>
+        ) : null}
+        {worktreeIssueMessage ? (
+          <div role="alert" className="flex flex-col gap-1.5 px-2.5">
+            <p className="text-ui-sm text-destructive">{worktreeIssueMessage}</p>
+            {worktreeRecoveryPath ? (
+              <div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={worktreeStartBusy}
+                  onClick={() => {
+                    // The recovery entry also closes the palette first, then follows the open contract.
+                    closeDialog();
+                    openTaskWorkspace(worktreeRecoveryPath);
+                  }}
+                >
+                  {intl.formatMessage({ id: "commandCenter.worktree.openExisting" })}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-end">
+          <Button disabled={!canStartWorktreeTask} onClick={() => void startWorktreeTask()}>
+            {intl.formatMessage({
+              id: worktreeStartBusy
+                ? "commandCenter.worktree.starting"
+                : "commandCenter.worktree.start",
+            })}
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderActivePageSection = () => {
+    if (!activePage) {
+      return null;
+    }
+    if (activePage.id === NEW_TASK_PROJECT_PAGE_ID) {
+      return renderWorktreeProjectsSection();
+    }
+    if (activePage.id === NEW_TASK_SETUP_PAGE_ID) {
+      return renderWorktreeSetupSection();
+    }
+    if (!activePageCommand?.valueList) {
+      return null;
+    }
+
+    const valueList = activePageCommand.valueList;
+    const options = valueList.options
+      .map((option: QuickPickValueListOption) => ({
+        option,
+        label: intl.formatMessage({ id: option.labelId }),
+      }))
+      .filter(({ option, label }) => matchesCommand(option, label, searchQuery));
+    return (
+      <CommandGroup heading={intl.formatMessage({ id: activePageCommand.titleId })}>
+        {options.length === 0 ? (
+          <CommandEmpty className="px-4 py-5 text-foreground-subtle">
+            {intl.formatMessage({ id: "commandCenter.noResults" })}
+          </CommandEmpty>
+        ) : null}
+        {options.map(({ option, label }) => (
+          <CommandItem
+            key={option.value}
+            value={`${label} ${option.keywords.join(" ")}`}
+            className={quickPickItemClassName}
+            onSelect={() => selectPageValue(valueList, option.value)}
+          >
+            {option.swatchColor !== undefined ? (
+              // Swatch color is palette preview content (THEME_PALETTES accent data), not UI chrome tokening.
+              <span
+                aria-hidden="true"
+                className="size-3.5 shrink-0 rounded-full border border-border"
+                style={option.swatchColor ? { backgroundColor: option.swatchColor } : undefined}
+              />
+            ) : null}
+            <span className="min-w-0 flex-1 truncate">
+              <HighlightedMatchText text={label} query={searchQuery} />
+            </span>
+            {valueList.current === option.value ? (
+              <CheckIcon className="size-3.5 shrink-0 text-foreground" />
+            ) : null}
+          </CommandItem>
+        ))}
+      </CommandGroup>
+    );
+  };
+
   const renderDefaultSections = () => {
     switch (activeScope) {
       case "commands":
@@ -1009,51 +2477,78 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       <Command shouldFilter={false} loop className={quickPickCommandClassName}>
         <div className="border-b border-border px-2 pt-2 pb-2">
           <div className="flex h-8 items-center gap-2 rounded-full border border-input-border bg-input px-2.5 transition-colors hover:border-input-border-hover focus-within:border-input-border-focused focus-within:bg-input-focused">
+            {activePage ? (
+              <button
+                type="button"
+                aria-label={intl.formatMessage({ id: "quickPick.command.goBack" })}
+                title={intl.formatMessage({ id: "quickPick.command.goBack" })}
+                onClick={popPage}
+                className="inline-grid size-5 shrink-0 place-items-center rounded-md text-foreground-subtle hover:bg-surface-hover hover:text-foreground"
+              >
+                <ArrowLeftIcon className="size-3.5" />
+              </button>
+            ) : null}
             <SearchIcon className="size-4 shrink-0 text-foreground-subtlest" />
             <CommandPrimitive.Input
+              ref={searchInputRef}
               value={rawQuery}
               onValueChange={setRawQuery}
-              placeholder={intl.formatMessage({ id: "commandCenter.placeholder" })}
+              onKeyDown={(event) => {
+                // Keyboard back navigation while a sub-page is active; with text in the input ArrowLeft keeps moving the caret.
+                if (event.key === "ArrowLeft" && activePage && rawQuery === "") {
+                  event.preventDefault();
+                  popPage();
+                }
+              }}
+              placeholder={
+                activePage
+                  ? intl.formatMessage({ id: activePage.placeholderId })
+                  : intl.formatMessage({ id: "commandCenter.placeholder" })
+              }
               className="min-w-0 flex-1 bg-transparent text-ui-base leading-5 text-foreground outline-none placeholder:text-foreground-subtlest"
             />
           </div>
-          <div
-            role="tablist"
-            aria-label={intl.formatMessage({ id: "commandCenter.scopeTabs" })}
-            className="-mx-1 mt-1.5 flex gap-1 overflow-x-auto px-1 pb-0.5 scrollbar-hide"
-          >
-            <CommandCenterScopeButton
-              active={activeScope === "all"}
-              label={intl.formatMessage({ id: "commandCenter.scope.all" })}
-              onClick={() => setScope("all")}
+          {activePage ? null : (
+            <div
+              role="tablist"
+              aria-label={intl.formatMessage({ id: "commandCenter.scopeTabs" })}
+              className="-mx-1 mt-1.5 flex gap-1 overflow-x-auto px-1 pb-0.5 scrollbar-hide"
             >
-              <ListIcon className="size-3" />
-            </CommandCenterScopeButton>
-            <CommandCenterScopeButton
-              active={activeScope === "commands"}
-              label={intl.formatMessage({ id: "commandCenter.scope.commands" })}
-              onClick={() => setScope("commands")}
-            >
-              <RocketIcon className="size-3" />
-            </CommandCenterScopeButton>
-            <CommandCenterScopeButton
-              active={activeScope === "conversations"}
-              label={intl.formatMessage({ id: "commandCenter.scope.conversations" })}
-              onClick={() => setScope("conversations")}
-            >
-              <MessagesSquareIcon className="size-3" />
-            </CommandCenterScopeButton>
-            <CommandCenterScopeButton
-              active={activeScope === "files"}
-              label={intl.formatMessage({ id: "commandCenter.scope.files" })}
-              onClick={() => setScope("files")}
-            >
-              <FileIcon className="size-3" />
-            </CommandCenterScopeButton>
-          </div>
+              <CommandCenterScopeButton
+                active={activeScope === "all"}
+                label={intl.formatMessage({ id: "commandCenter.scope.all" })}
+                onClick={() => setScope("all")}
+              >
+                <ListIcon className="size-3" />
+              </CommandCenterScopeButton>
+              <CommandCenterScopeButton
+                active={activeScope === "commands"}
+                label={intl.formatMessage({ id: "commandCenter.scope.commands" })}
+                onClick={() => setScope("commands")}
+              >
+                <RocketIcon className="size-3" />
+              </CommandCenterScopeButton>
+              <CommandCenterScopeButton
+                active={activeScope === "conversations"}
+                label={intl.formatMessage({ id: "commandCenter.scope.conversations" })}
+                onClick={() => setScope("conversations")}
+              >
+                <MessagesSquareIcon className="size-3" />
+              </CommandCenterScopeButton>
+              <CommandCenterScopeButton
+                active={activeScope === "files"}
+                label={intl.formatMessage({ id: "commandCenter.scope.files" })}
+                onClick={() => setScope("files")}
+              >
+                <FileIcon className="size-3" />
+              </CommandCenterScopeButton>
+            </div>
+          )}
         </div>
         <CommandList className={commandCenterListClassName}>
-          {!hasSearchQuery ? (
+          {activePage ? (
+            renderActivePageSection()
+          ) : !hasSearchQuery ? (
             renderDefaultSections()
           ) : hasAnySearchResults || hasSearchStatus ? (
             <>
