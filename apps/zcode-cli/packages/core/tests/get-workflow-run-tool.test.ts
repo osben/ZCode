@@ -15,7 +15,7 @@ import { createToolRegistry } from "../src/tool/registry.js";
 import { expectV2CommonContract } from "./tool-contract-assertions.js";
 import type { ToolExecutionContext, ToolHandlerFailure } from "../src/tool/types.js";
 
-/** Snapshot instant: 40s after the run's updatedAt, 5m 40s after createdAt. All ages are computed against it. */
+/** 快照时刻：run 的 updatedAt 之后 40 秒，createdAt 之后 5m 40s。所有年龄都对它算。 */
 const NOW = Date.UTC(2026, 7, 21, 9, 5, 40);
 
 const RUNNING_DETAIL: DynamicWorkflowRunDetail = {
@@ -70,7 +70,7 @@ const RUNNING_DETAIL: DynamicWorkflowRunDetail = {
     {
       siteId: "agent#2",
       ordinal: 1,
-      // On a live run the port never sends `done` (that is a terminal word): a resting subagent is `idle`.
+      // 活着的 run 上端口从不发 `done`（那是终态词）：歇着的子代理是 `idle`。
       state: "idle",
       phaseName: "collect",
       stepsSettled: 1,
@@ -87,9 +87,9 @@ const RUNNING_DETAIL: DynamicWorkflowRunDetail = {
 };
 
 /**
- * The model face's input is the **tool output**, not the port detail: `summary` and `generatedAt`
- * are cast by the handler, and the formatter is a pure function of them. Pinning a fixed
- * `generatedAt` means the whole text (including every "how long ago") can be asserted verbatim.
+ * 模型面的输入是**工具输出**，不是端口详情：`summary` 与 `generatedAt` 由 handler 铸出，
+ * 格式器只是它们的纯函数。钉住一个固定的 `generatedAt`，整段文本（含每一个「多久以前」）
+ * 因此可以逐字断言。
  */
 const RUNNING_OUTPUT: GetWorkflowRunOutput = {
   ...(RUNNING_DETAIL as unknown as Omit<GetWorkflowRunOutput, "summary" | "generatedAt">),
@@ -98,7 +98,7 @@ const RUNNING_OUTPUT: GetWorkflowRunOutput = {
     "Running for 5m 40s. 2 of 3 dispatched steps settled, 1 running (1 executing). Last progress 40s ago.",
 };
 
-/** Stub port implementing only `getRunDetail`; touching any other member means the wiring went wrong. */
+/** 只实现 `getRunDetail` 的桩端口；其余成员被触达即说明接线跑偏。 */
 function stubDetailPort(
   details: Readonly<Record<string, DynamicWorkflowRunDetail>>,
 ): DynamicWorkflowRunPort {
@@ -130,7 +130,10 @@ function contextWith(port?: DynamicWorkflowRunPort): ToolExecutionContext {
   } as ToolExecutionContext;
 }
 
-async function call(runId: string, port?: DynamicWorkflowRunPort): Promise<Record<string, unknown>> {
+async function call(
+  runId: string,
+  port?: DynamicWorkflowRunPort,
+): Promise<Record<string, unknown>> {
   return (await getWorkflowRunToolEntry.handler({ run_id: runId }, contextWith(port))) as Record<
     string,
     unknown
@@ -144,12 +147,13 @@ function asFailure(output: unknown): ToolHandlerFailure {
 }
 
 /**
- * Output = the port detail carried over field by field, plus two things the handler casts itself:
- * the summary sentence and the instant of this snapshot. The clock is a real `Date.now()`, so only
- * the shape is pinned here, not the values — the values' determinism is pinned by the formatter
- * and summary unit tests.
+ * 输出 = 端口详情逐字段搬过来，外加 handler 自己铸的两件事：那一句摘要，和这次快照的时刻。
+ * 时钟是真的 `Date.now()`，所以这里只钉形状不钉值——值的确定性由格式器与摘要的单测钉。
  */
-function expectMirrorsDetail(output: Record<string, unknown>, detail: DynamicWorkflowRunDetail): void {
+function expectMirrorsDetail(
+  output: Record<string, unknown>,
+  detail: DynamicWorkflowRunDetail,
+): void {
   expect(GetWorkflowRunOutputSchema.parse(output)).toEqual({
     ...detail,
     summary: expect.any(String),
@@ -172,14 +176,13 @@ describe("GetWorkflowRun handler — capability and identity", () => {
     expect(withoutMethod).toEqual(withoutPort);
   });
 
-  // An unknown runId is a **structured failure**, not an empty object: the latter would make the
-  // model think the run exists but has no content.
+  // 未知 runId 是一个**结构化失败**而不是一个空对象：后者会让模型以为这个 run 存在但没内容。
   it("fails with run_not_found for an unknown run id", async () => {
     const failure = asFailure(await call("dwfrun-nope", stubDetailPort({})));
 
     expect(failure.message).toContain("run_not_found");
     expect(failure.message).toContain("dwfrun-nope");
-    // A missing capability and an unknown run must be distinguishable.
+    // 能力缺席与 run 未知必须可分辨。
     expect(failure.errorCode).not.toBe(asFailure(await call("dwfrun-nope")).errorCode);
   });
 });
@@ -196,14 +199,12 @@ describe("GetWorkflowRun handler — running snapshot", () => {
     expect("error" in output).toBe(false);
   });
 
-  // The run's own concurrency bound (docs/dynamic-workflow/concurrency.md "Two bounds on a run").
-  // The port only sends this field when it differs from the default concurrency, so "absent means
-  // default" holds by construction on the read side and is not re-checked here.
+  // 每 run 的并发上界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）。端口只在不等于
+  // 默认并发时给这个字段，所以「无则缺席」在读面上是构造成立的，不是这里再判一次。
   it("carries the run's own concurrency bound when it has one", async () => {
     const detail: DynamicWorkflowRunDetail = { ...RUNNING_DETAIL, maxConcurrency: 3 };
     const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": detail }));
 
-    expect(output.maxConcurrency).toBe(3);
     expectMirrorsDetail(output, detail);
   });
 
@@ -216,8 +217,8 @@ describe("GetWorkflowRun handler — running snapshot", () => {
     expect("maxConcurrency" in output).toBe(false);
   });
 
-  // The run's own subagent model (docs/dynamic-workflow/launch.md). Same rule as the concurrency
-  // bound, "absent means default": a run inheriting the session model has nothing to say.
+  // 每 run 的子代理模型（docs/dynamic-workflow/launch.md）。与并发上界同规「无则缺席」：
+  // 继承会话模型的 run 没有可说的。
   it("carries the run's own subagent model when it chose one", async () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
@@ -225,7 +226,6 @@ describe("GetWorkflowRun handler — running snapshot", () => {
     };
     const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": detail }));
 
-    expect(output.subagentModel).toBe("bigmodel/GLM-4.6$high");
     expectMirrorsDetail(output, detail);
   });
 
@@ -238,10 +238,9 @@ describe("GetWorkflowRun handler — running snapshot", () => {
     expect("subagentModel" in output).toBe(false);
   });
 
-  // This run's script file (docs/dynamic-workflow/launch.md "Script files"). The port gives the
-  // absolute path (part of the run identity); the model face rewrites it workspace-relative — the
-  // model is about to Edit that file, and this is the kind of path it uses to read and write
-  // files everywhere else.
+  // 本 run 的脚本文件（docs/dynamic-workflow/launch.md「Script files」）。端口给绝对路径（run
+  // 身份的一部分），模型面给工作区相对写法——模型接下来要 Edit 这个文件，而那是它在别处
+  // 读写文件时用的那一种路径。
   it("rewrites the run's script file as a workspace-relative path", async () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
@@ -289,18 +288,31 @@ describe("GetWorkflowRun handler — the situation cross-section", () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
       phases: [
-        { name: "collect", state: "done", rounds: 1, nodesSettled: 2, nodesRunning: 0, enteredAt: 1, exitedAt: 2 },
-        { name: "judge", state: "current", rounds: 1, nodesSettled: 1, nodesRunning: 1, enteredAt: 2 },
+        {
+          name: "collect",
+          state: "done",
+          rounds: 1,
+          nodesSettled: 2,
+          nodesRunning: 0,
+          enteredAt: 1,
+          exitedAt: 2,
+        },
+        {
+          name: "judge",
+          state: "current",
+          rounds: 1,
+          nodesSettled: 1,
+          nodesRunning: 1,
+          enteredAt: 2,
+        },
       ],
     };
     const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": detail }));
 
     expectMirrorsDetail(output, detail);
-    expect(output.subagents).toHaveLength(2);
   });
 
-  // A run with no actors at all is an empty array, not an absence: "how many subagents" always has
-  // an answer, and 0 is that answer.
+  // 一个 actor 都没有的 run 是空数组，不是缺席：「有几个子代理」永远有答案，而 0 就是那个答案。
   it("keeps an empty roster as an empty array and an absent phase table absent", async () => {
     const detail: DynamicWorkflowRunDetail = { ...RUNNING_DETAIL, subagents: [] };
     const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": detail }));
@@ -328,8 +340,7 @@ describe("GetWorkflowRun handler — the situation cross-section", () => {
     expect("subagentsTruncated" in exact).toBe(false);
   });
 
-  // A terminal run having no leftover rows is the norm; `leftover_running=0` reads like an event
-  // that happened.
+  // 终态 run 没有残留行是常态；`leftover_running=0` 读起来像一件发生过的事。
   it("drops a zero leftover count instead of reporting it", async () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
@@ -343,8 +354,7 @@ describe("GetWorkflowRun handler — the situation cross-section", () => {
     expect(GetWorkflowRunOutputSchema.safeParse(output).success).toBe(true);
   });
 
-  // Missing turn / toolCalls reads as "unknown": an old journal has no node-progress, and the
-  // handler must not backfill 0.
+  // turn / toolCalls 缺席读作「不知道」：老 journal 没有 node-progress，handler 不得补 0。
   it("never fabricates progress readings a journal does not have", async () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
@@ -361,18 +371,30 @@ describe("GetWorkflowRun handler — the situation cross-section", () => {
       ],
     };
     const output = await call("dwfrun-old", stubDetailPort({ "dwfrun-old": detail }));
-    const ask = (output.subagents as Record<string, unknown>[])[0]!.currentAsk as Record<string, unknown>;
+    const ask = (output.subagents as Record<string, unknown>[])[0]!.currentAsk as Record<
+      string,
+      unknown
+    >;
 
-    for (const key of ["turn", "toolCalls", "lastTool", "startedAt", "actorSeq", "instructionsHead"]) {
+    for (const key of [
+      "turn",
+      "toolCalls",
+      "lastTool",
+      "startedAt",
+      "actorSeq",
+      "instructionsHead",
+    ]) {
       expect(key in ask).toBe(false);
     }
   });
 
-  // One call, one ruler: every age in the summary and the model face is computed against this
-  // single reading.
+  // 一次调用一把尺：摘要与模型面的每一个年龄都对这一个读数算。
   it("stamps the snapshot with one clock and assembles the summary from it", async () => {
     const before = Date.now();
-    const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": RUNNING_DETAIL }));
+    const output = await call(
+      "dwfrun-running",
+      stubDetailPort({ "dwfrun-running": RUNNING_DETAIL }),
+    );
 
     expect(output.generatedAt as number).toBeGreaterThanOrEqual(before);
     expect(output.generatedAt as number).toBeLessThanOrEqual(Date.now());
@@ -395,8 +417,7 @@ describe("GetWorkflowRun handler — terminal artifact", () => {
     expect(output.result).toBe("all specs green");
   });
 
-  // Serialization goes through core's single implementation (serializeWorkflowArtifact), the same
-  // text as the completion notification and TaskOutput.
+  // 序列化走 core 的唯一实现（serializeWorkflowArtifact），与完成通知和 TaskOutput 同一段文本。
   it("pretty-prints a structured artifact exactly like the completion notification", async () => {
     const output = await call(
       "dwfrun-done",
@@ -422,10 +443,9 @@ describe("GetWorkflowRun handler — terminal artifact", () => {
   });
 });
 
-// ⚠ Terminology: the previous describe's "artifact" is the script's **top-level return value**
-// (goes into `result`); this one is output the script **published for the user** via `artifact.*`
-// (goes into `artifacts`). The two sit side by side in the same output. See
-// docs/dynamic-workflow/authoring.md "Artifacts: what the user keeps".
+// ⚠ 术语：上一个 describe 的 "artifact" 是脚本的**顶层返回值**（进 `result`）；这一个是
+// 脚本经 `artifact.*` **发布给用户看的产出**（进 `artifacts`）。两者在同一份输出里并列。
+// 见 docs/dynamic-workflow/authoring.md「Artifacts: what the user keeps」。
 describe("GetWorkflowRun handler — published artifacts", () => {
   const AUDIT = {
     id: "audit",
@@ -464,21 +484,17 @@ describe("GetWorkflowRun handler — published artifacts", () => {
         title: "审计报告",
         version: 2,
         contentType: "application/pdf",
-        // The latest version's byte count, not the first version's.
+        // 最新版的字节数，不是第一版的。
         bytes: 4_096,
         sourcePath: "out/audit.pdf",
         itemCount: 0,
       },
       { id: "perf", kind: "chart", version: 1, itemCount: 12 },
     ]);
-    // `uri` is deliberately absent: the model cannot read the tool-artifact store. `spec` /
-    // `versions` are the UI's business too.
-    expect(JSON.stringify(output.artifacts)).not.toContain("zcode-artifact://");
-    expect(JSON.stringify(output.artifacts)).not.toContain("round");
     expect(GetWorkflowRunOutputSchema.safeParse(output).success).toBe(true);
   });
 
-  // Attached in any status: a still-running run may already have delivered its first chart.
+  // 任意状态都附：一个还在跑的 run 也可能已经交付了第一张图。
   it("carries artifacts on a running run too, and omits the field when there are none", async () => {
     const running = await call(
       "dwfrun-art-running",
@@ -487,8 +503,7 @@ describe("GetWorkflowRun handler — published artifacts", () => {
     expect(running.status).toBe("running");
     expect(running.artifacts).toHaveLength(1);
 
-    // The component / port does not send this key ⇒ the whole field is absent (an empty array
-    // would read as "ran but produced nothing").
+    // 零件 / 端口不发这个键 ⇒ 整字段缺席（空数组读起来像「跑过但没产出」）。
     const none = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": RUNNING_DETAIL }));
     expect("artifacts" in none).toBe(false);
     const empty = await call(
@@ -536,11 +551,10 @@ describe("GetWorkflowRun handler — published artifacts", () => {
     );
 
     expect(content).toContain('<artifacts count="2">');
-    // Shares one formatter verbatim with the completion notification: both readers are the same
-    // model.
+    // 与完成通知逐字共用一个格式器：两处的读者是同一个模型。
     expect(content).toContain("- audit (file, v2, application/pdf, 4096 bytes): 审计报告");
     expect(content).toContain("- perf (chart, v1, 12 items)");
-    // Placed after result: read the run's outcome first; the deliverable list is an index.
+    // 排在 result 之后：run 的收场先读，交付物清单是索引。
     expect(content.indexOf("<artifacts")).toBeGreaterThan(content.indexOf("<result>"));
   });
 
@@ -567,7 +581,15 @@ describe("GetWorkflowRun handler — published artifacts", () => {
       }),
     );
     expect(output.artifacts).toEqual([
-      { id: "report", kind: "markdown", title: "审计报告", version: 1, bytes: 2_048, itemCount: 0, primary: true },
+      {
+        id: "report",
+        kind: "markdown",
+        title: "审计报告",
+        version: 1,
+        bytes: 2_048,
+        itemCount: 0,
+        primary: true,
+      },
       { id: "perf", kind: "chart", version: 1, itemCount: 12 },
     ]);
     expect(GetWorkflowRunOutputSchema.safeParse(output).success).toBe(true);
@@ -589,8 +611,7 @@ describe("GetWorkflowRun handler — published artifacts", () => {
     );
   });
 
-  // The sentence from the description copy: the artifacts are already in front of the user, so
-  // refer to them by title instead of restating their contents.
+  // 描述文案里的那一句：产物已经在用户面前，按标题引用而不是复述内容。
   it("tells the model in the tool description not to paste artifact contents", () => {
     expect(getWorkflowRunToolEntry.metadata.description).toContain(
       "ALREADY shown to them as cards",
@@ -614,8 +635,6 @@ describe("GetWorkflowRun handler — terminal failure", () => {
     };
     const output = await call("dwfrun-dead", stubDetailPort({ "dwfrun-dead": detail }));
 
-    expect(output.error).toEqual(detail.error);
-    expect(output.stopReason).toBe("interrupted");
     expectMirrorsDetail(output, detail);
   });
 
@@ -632,8 +651,7 @@ describe("GetWorkflowRun handler — terminal failure", () => {
     expect(output.error).toEqual(detail.error);
   });
 
-  // Provider stop (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md): the
-  // structured details cross the boundary as-is, and the model face picks its wording from them.
+  // provider 停下（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）：结构化明细原样过界，模型面据它选文案。
   it("carries a provider stop's structured details", async () => {
     const detail: DynamicWorkflowRunDetail = {
       ...RUNNING_DETAIL,
@@ -657,8 +675,6 @@ describe("GetWorkflowRun handler — terminal failure", () => {
     };
     const output = await call("dwfrun-stop", stubDetailPort({ "dwfrun-stop": detail }));
 
-    expect(output.stopReason).toBe("provider");
-    expect(output.error).toEqual(detail.error);
     expectMirrorsDetail(output, detail);
   });
 });
@@ -671,16 +687,14 @@ describe("GetWorkflowRun model content", () => {
     expect(content).toContain('<label source="name">nightly triage</label>');
     expect(content).toContain("<status>running</status>");
     expect(content).toContain("<owned_by_this_session>true</owned_by_this_session>");
-    // Each instant written twice: a checkable ISO, plus the quantity the reader actually wants
-    // (the age relative to generatedAt).
+    // 时刻写两遍：可核对的 ISO，加上读者真正要的那个量（相对 generatedAt 的年龄）。
     expect(content).toContain("<updated_at>2026-08-21T09:05:00.000Z (40s ago)</updated_at>");
     expect(content).toContain("<created_at>2026-08-21T09:00:00.000Z (5m 40s ago)</created_at>");
     expect(content).toContain("<usage>spent_tokens=1204");
     expect(content).not.toContain("budget");
     expect(content).toContain("nodes_observed=3");
     expect(content).toContain("nodes_running=1");
-    // The roster replaced the former identity-only actors table: names first, then address and
-    // phase.
+    // 花名册取代了原先那张「只有身份」的 actors 表：名字在前，地址与相位随后。
     expect(content).toContain("judge  agent#1@1  executing");
     expect(content).toContain("agent#2@1");
     expect(content).toContain("[11]  4m 50s ago  collected the failing specs");
@@ -689,8 +703,8 @@ describe("GetWorkflowRun model content", () => {
     expect(content).not.toContain("<error");
   });
 
-  // An AmendWorkflow that omits `max_concurrency` carries over exactly this number, so it must be
-  // visible on the model face — otherwise the model cannot know what a revision would inherit.
+  // 一次省略 `max_concurrency` 的 AmendWorkflow 沿用的就是这个数，所以它必须在模型面上
+  // 可见——否则模型无从知道一次修订会继承什么。
   it("gives the run's concurrency bound its own tag, and only when there is one", () => {
     const limited = String(
       getWorkflowRunToolEntry.formatModelContent?.({ ...RUNNING_OUTPUT, maxConcurrency: 3 }),
@@ -701,7 +715,7 @@ describe("GetWorkflowRun model content", () => {
     );
   });
 
-  // Same reasoning: an AmendWorkflow that omits `subagent_model` carries over exactly this string.
+  // 同理：一次省略 `subagent_model` 的 AmendWorkflow 沿用的就是这个字符串。
   it("gives the run's subagent model its own tag, and only when there is one", () => {
     const chosen = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -715,8 +729,7 @@ describe("GetWorkflowRun model content", () => {
     );
   });
 
-  // Models named by the script (docs/dynamic-workflow/launch.md "GetWorkflowRun"): a revision
-  // reusing the same names inherits these bindings.
+  // 脚本点名的模型（docs/dynamic-workflow/launch.md「GetWorkflowRun」）：修订里同名的模型沿用这些绑定。
   it("lists the script's model bindings one per line, next to the subagent model, only when there are any", () => {
     const bound = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -737,14 +750,13 @@ describe("GetWorkflowRun model content", () => {
     );
   });
 
-  // The script-file sentence goes into `<amendable>` (docs/dynamic-workflow/launch.md "Script
-  // files"): this block is about "how to revise", and without the file the model is left to
-  // re-paste a twenty-thousand-token script inline.
+  // 脚本文件那一句进 `<amendable>`（docs/dynamic-workflow/launch.md「Script files」）：这一块
+  // 说的就是「怎么修订」，少了文件就等于让模型去内联重贴一份两万 token 的脚本。
   it("names the script file inside <amendable>, in both the short and the full form", () => {
     const sentence =
       ' Its script is at .zcode/workflow-drafts/audit.dwf.ts: edit that file in place and pass `path: ".zcode/workflow-drafts/audit.dwf.ts"` to AmendWorkflow instead of a script.';
 
-    // Healthy and running: the block is one sentence, and the script-file sentence still follows.
+    // 健康在跑：整块只有一句话，脚本文件那一句仍然跟在后面。
     const running = String(
       getWorkflowRunToolEntry.formatModelContent?.({
         ...RUNNING_OUTPUT,
@@ -753,8 +765,7 @@ describe("GetWorkflowRun model content", () => {
     );
     expect(running).toContain(`cache.${sentence}</amendable>`);
 
-    // Terminal (errored is this block's highest-value branch): the full argument, then the same
-    // sentence.
+    // 终态（errored 是这一块最高价值的那一支）：完整论证之后接同一句。
     const errored = String(
       getWorkflowRunToolEntry.formatModelContent?.({
         ...RUNNING_OUTPUT,
@@ -808,8 +819,7 @@ describe("GetWorkflowRun model content", () => {
     expect(interrupted).toContain('<error code="Interrupted">the owning process exited</error>');
   });
 
-  // The provider-stop `<error>` block shares one function with the terminal notification:
-  // cause → action → facts line → raw line.
+  // provider 停下的 `<error>` 块与终态通知共用同一函数：原因 → 动作 → 事实行 → 原文行。
   it("renders a provider stop as the curated cause/fix block", () => {
     const content = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -842,7 +852,7 @@ describe("GetWorkflowRun model content", () => {
       "provider=account:bigmodel-coding-plan model=GLM-5.3 subagent=verify@2 phase=Verify code=1006",
     );
     expect(content).toContain("raw: [1006] token expired");
-    // The resumable hint must first send the model to resolve the cause, not blindly resume.
+    // 可恢复提示要先让模型去解决原因，而不是盲目续跑。
     expect(content).toContain("<resumable>");
     expect(content).toMatch(/resolve the cause/i);
   });
@@ -853,11 +863,9 @@ describe("GetWorkflowRun model content", () => {
     );
   });
 
-  // The predicate for the <resumable> hint block has the same semantics as the port.resume gate:
-  // `stopped`, regardless of reason
-  // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). Pin both positive and
-  // negative cases so it cannot be loosened to errored (a run replay of ScriptError reproduces the
-  // failure verbatim; the model must never be steered to resume it).
+  // <resumable> 提示块的判定谓词与 port.resume 的门同语义：`stopped`，不论 reason
+  // （apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。钉正反例，防它被放宽到 errored（ScriptError 的
+  // run replay 会逐字复现失败，绝不能引导模型去恢复它）。
   it("adds the <resumable> hint exactly for stopped runs, with the reason-specific caveat", () => {
     const user = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -879,14 +887,13 @@ describe("GetWorkflowRun model content", () => {
     expect(user).toContain("ResumeWorkflowRun");
     expect(interrupted).toContain("<resumable>");
     expect(interrupted).toContain("ResumeWorkflowRun");
-    // The user hint block must say it was stopped by a person on purpose and resumes only when the
-    // user asks; interrupted does not carry that sentence (cancel-resume follow-up 2026-09-09).
+    // user 的提示块要说明它是有人故意停的、只在用户要求时恢复；interrupted 不带这句
+    // （cancel-resume 追记 2026-09-09）。
     expect(user).toMatch(/stopped on purpose/i);
     expect(user).toMatch(/only when the user asks/i);
     expect(interrupted).not.toMatch(/stopped on purpose/i);
-    // "Resume as-is, wait for the user to speak" and "stopped for a fix, amend it now" are two
-    // different things: the model-stopped hint block has both sentences, the user-stopped one only
-    // the first (amend-resume follow-up 2026-09-14).
+    // 「原样续跑等用户开口」与「为修而停的现在就修」是两件事：model 停的提示块两句都要有，
+    // user 停的只有前一句（amend-resume 追记 2026-09-14）。
     const model = String(
       getWorkflowRunToolEntry.formatModelContent?.({
         ...RUNNING_OUTPUT,
@@ -902,13 +909,12 @@ describe("GetWorkflowRun model content", () => {
 
   it("keeps the <resumable> hint off every non-resumable state", () => {
     const nonResumable = [
-      // completed: already finished; there is nothing to resume.
+      // completed：已经跑完，没有可恢复的东西。
       { ...RUNNING_OUTPUT, status: "completed" as const, result: "done" },
-      // running / pending: in flight or not yet started; resuming is a meaningless action.
+      // running / pending：在飞或未起飞，恢复是无意义动作。
       RUNNING_OUTPUT,
       { ...RUNNING_OUTPUT, status: "pending" as const },
-      // errored: the script genuinely failed and a replay would reproduce the failure verbatim —
-      // the predicate must never be loosened to include it.
+      // errored：脚本真失败，replay 会逐字复现失败——谓词绝不能放宽到它。
       {
         ...RUNNING_OUTPUT,
         status: "errored" as const,
@@ -922,9 +928,8 @@ describe("GetWorkflowRun model content", () => {
     }
   });
 
-  // Amend-resume (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Terminal
-  // states"): amend's eligible set is **any terminal state**, deliberately different from the plain
-  // resume set. The two hint blocks each say their own thing and neither may pollute the other.
+  // 修订续跑（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Terminal states」）：amend 的可用集是**任意
+  // 终态**，与 plain resume 集刻意不同。两块提示各说各的，谁也不许污染谁。
   it("adds the <amendable> hint for every terminal run, including completed and ScriptError", () => {
     const terminal = [
       { ...RUNNING_OUTPUT, status: "completed" as const, result: "done" },
@@ -946,25 +951,20 @@ describe("GetWorkflowRun model content", () => {
       expect(content).toContain("<amendable>");
       expect(content).toContain("AmendWorkflow");
       expect(content).toContain("run_id");
-      // The run ID goes into the hint: the model can copy it directly without scrolling back to
-      // <run_id>.
+      // run ID 进提示：模型可以直接照抄，不必回头翻 <run_id>。
       expect(content).toContain(RUNNING_OUTPUT.runId);
-      // Omit script when only settings change (docs/dynamic-workflow/launch.md "Keeping the
-      // predecessor's script"): if this is not said, the model will copy the whole script again
-      // just to change one number.
+      // 只改设定时省略 script（docs/dynamic-workflow/launch.md「Keeping the predecessor's script」）：
+      // 不说出来，模型会为了改一个数把整份脚本再抄一遍。
       expect(content).toContain(
         "To change only its settings (max_concurrency, subagent_model, name), omit both `script` and `path`: the new run keeps this run's script.",
       );
     }
   });
 
-  // docs/dynamic-workflow/launch.md "The `AmendWorkflow` tool": an in-flight run can be amended
-  // too (amend stops it first), so the hint block is also present for running / pending, and the
-  // tail sentence says "amend now, do not TaskStop first".
-  // But the **healthy running** variant collapses to one sentence: at that moment there is no
-  // decision for the model to make, and the full argument only crowds out the attention it spends
-  // reading the roster; not-yet-started (pending) and already stalled runs still get the full
-  // argument.
+  // docs/dynamic-workflow/launch.md「The `AmendWorkflow` tool」：在飞的 run 也可修订（amend 会先停下它），
+  // 所以提示块对 running / pending 也在场，尾句说的是「现在就改、不要先 TaskStop」。
+  // 但**健康地在跑**的那一种收缩成一句：那时没有任何决定要模型现在做，整段论证只是在挤占
+  // 它读花名册的注意力；还没起飞的（pending）和已经停滞的仍给完整论证。
   it("keeps the <amendable> hint on runs that have not finished, with the amend-now tail", () => {
     const stalled = {
       ...RUNNING_OUTPUT,
@@ -984,8 +984,7 @@ describe("GetWorkflowRun model content", () => {
     expect(content).toContain(
       '<amendable>AmendWorkflow with run_id "dwfrun-running" supersedes this run with a revised script and imports its finished work as cache.</amendable>',
     );
-    // The one-sentence form does not carry the "omit script" sentence: a healthy running run has
-    // no decision for the model to make right now.
+    // 一句话形态不带「省略 script」那句：健康地在跑的 run 没有要模型现在做的决定。
     expect(content).not.toContain("omit both `script` and `path`");
     expect(content).not.toContain("Do not TaskStop it first");
   });
@@ -1006,8 +1005,7 @@ describe("GetWorkflowRun model content", () => {
     expect(content).not.toContain("<amendable>");
   });
 
-  // A genuinely failed script is the highest-value amend scenario, and the model's default reflex
-  // is to rewrite from scratch. The tail sentence must call that out.
+  // 脚本真失败是修订的最高价值场景，而模型的默认反射是从头重写。尾句必须把它说破。
   it("tells a script-failed run to fix the script instead of rewriting from scratch", () => {
     const scriptError = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -1021,9 +1019,8 @@ describe("GetWorkflowRun model content", () => {
     expect(scriptError).toMatch(/fix the script/i);
   });
 
-  // When both hint blocks are present (a stopped run qualifies for plain resume and amend alike),
-  // the difference must be spelled out in the hints: same run, same script vs new run, new script.
-  // Otherwise the model only sees two equally clickable routes.
+  // 两块提示同时在场（stopped 既可 plain resume 又可修订）时，差别必须写在提示里：
+  // 同 run 同脚本 vs 新 run 新脚本。否则模型只会看到两条都能点的路由。
   it("distinguishes plain resume from amend when a run qualifies for both", () => {
     const cancelled = String(
       getWorkflowRunToolEntry.formatModelContent?.({
@@ -1035,22 +1032,21 @@ describe("GetWorkflowRun model content", () => {
 
     expect(cancelled).toContain("<resumable>");
     expect(cancelled).toContain("<amendable>");
-    // The plain-resume side's semantics are not weakened: same run ID, byte-identical script.
+    // plain resume 侧的语义未被削弱：同 run ID、逐字节相同脚本。
     expect(cancelled).toContain("same run ID");
     expect(cancelled).toMatch(/byte-for-byte/i);
-    // The amend side: new run, revised script.
+    // amend 侧：新 run、修订脚本。
     expect(cancelled).toMatch(/revised script/i);
   });
 });
 
 // ————————————————————————————————————————————————
-// Escalated questions while parked (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
+// 停驻中的升级问题（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
 //
-// This is the model side's **only** discovery surface: escalation notifications have two known drop
-// paths (stale branch generation / shutdown), and `ResolveWorkflowQuestion` only accepts a qid. The
-// spec wrote the "query fallback" as the safety net for those two paths, and both the server-side
-// wording for `unknown_question` and the escalation notification explicitly point here — so what
-// these assertions pin is not a display detail but whether those two promises are kept.
+// 这是模型侧**唯一**的发现面：升级通知有两条已知的丢弃路径（stale branch generation /
+// shutdown），而 `ResolveWorkflowQuestion` 只认 qid。spec 把「查询兜底」写成了那两条路径的
+// 安全网，`unknown_question` 的服务端文案与升级通知也都明确指向这里——所以这几条断言钉住的
+// 不是一个展示细节，而是那两处承诺是否兑现。
 // ————————————————————————————————————————————————
 const PARKED_QUESTIONS = [
   {
@@ -1095,17 +1091,18 @@ describe("GetWorkflowRun handler — pending escalations", () => {
       context: "已经试了 6 轮，最高 95。",
       askedAt: Date.UTC(2026, 7, 21, 9, 5, 0),
     });
-    // An anonymous actor gets no synthesized fallback name; an absent optional field is absent.
+    // 匿名 actor 不合成兜底名；可选字段缺席就是缺席。
     expect(parsed.pendingQuestions?.[1] && "actorName" in parsed.pendingQuestions[1]).toBe(false);
     expect(parsed.pendingQuestions?.[1] && "context" in parsed.pendingQuestions[1]).toBe(false);
 
-    // Zero entries → the whole field is absent (an empty array would read as "asked and all
-    // answered"; absence is what says "nobody is waiting").
+    // 零条 → 整字段缺席（空数组读起来像「问过、已答完」，缺席才是「没人在等」）。
     const idle = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": RUNNING_DETAIL }));
     expect("pendingQuestions" in idle).toBe(false);
     const empty = await call(
       "dwfrun-empty",
-      stubDetailPort({ "dwfrun-empty": { ...RUNNING_DETAIL, runId: "dwfrun-empty", pendingQuestions: [] } }),
+      stubDetailPort({
+        "dwfrun-empty": { ...RUNNING_DETAIL, runId: "dwfrun-empty", pendingQuestions: [] },
+      }),
     );
     expect("pendingQuestions" in empty).toBe(false);
   });
@@ -1117,11 +1114,10 @@ describe("GetWorkflowRun handler — pending escalations", () => {
     expect(content).toContain("dwfq-parked01-1");
     expect(content).toContain("dwfq-parked01-2");
     expect(content).toContain("judge");
-    // An anonymous actor falls back to the structured ref.
+    // 匿名 actor 落到结构化 ref。
     expect(content).toContain("agent#2@1");
     expect(content).toContain("ResolveWorkflowQuestion");
-    // Placed before the log tail: a parked actor is the thing to do right now and must not be
-    // buried behind twenty lines of narrative.
+    // 排在 log 尾巴之前：一个停驻的 actor 是此刻要做的事，不该埋在二十行叙事后面。
     expect(content.indexOf("<pending_questions>")).toBeLessThan(content.indexOf("<log_tail>"));
   });
 
@@ -1133,15 +1129,14 @@ describe("GetWorkflowRun handler — pending escalations", () => {
 });
 
 // ————————————————————————————————————————————————
-// The situation cross-section (docs/dynamic-workflow/launch.md "`GetWorkflowRun`").
+// 情势截面（docs/dynamic-workflow/launch.md「`GetWorkflowRun`」）。
 //
-// The three scenarios pin the same thing: can this output answer "where is the run, who is doing
-// what, is it still moving". The block order is a contract, and so is the wording of each line —
-// so this asserts both the order and the words of those lines. `summary` is cast by the real
-// assembler (not a hand-written sentence), so these three texts are the true end-to-end rendering.
+// 三个场景钉的是同一件事：这份输出能不能回答「run 在哪、谁在干什么、它还在动吗」。
+// 块序是契约，每一行的事实也是——所以这里既断言顺序，也断言那几行的字。
+// `summary` 用真正的拼装器铸出（不是手写一句），于是这三段文本就是端到端的真实渲染。
 // ————————————————————————————————————————————————
 
-/** Where each block appears in the text, used to assert the block order. */
+/** 块在文本里的出现位置，用来断言块序。 */
 function blockOrder(content: string, tags: readonly string[]): number[] {
   return tags.map((tag) => content.indexOf(tag));
 }
@@ -1162,9 +1157,8 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
   generatedAt: NOW,
   maxConcurrency: 3,
   subagentModel: "bigmodel/GLM-4.6$high",
-  // The counters and the roster line up with each other: each subagent in the live phase
-  // contributes one still-running ask row (one executing / one waiting / one parked), so
-  // nodesRunning = 3; nodesObserved is the sum of the three states = 5 + 3.
+  // 计数与花名册互相对齐：活相位的子代理各占一条还在跑的 ask 行（executing / waiting /
+  // parked 各一），所以 nodesRunning = 3；nodesObserved 是三态之和 = 5 + 3。
   usage: {
     spentTokens: 18_420,
     nodesObserved: 8,
@@ -1181,11 +1175,30 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
   logTail: [
     { sequence: 11, message: "collected 14 failing specs", at: Date.UTC(2026, 7, 21, 9, 0, 50) },
     { sequence: 14, message: "dispatching judges in pairs", at: Date.UTC(2026, 7, 21, 9, 1, 50) },
-    { sequence: 19, message: "judge#1 finished: 6 flaky, 1 real", at: Date.UTC(2026, 7, 21, 9, 4, 10) },
+    {
+      sequence: 19,
+      message: "judge#1 finished: 6 flaky, 1 real",
+      at: Date.UTC(2026, 7, 21, 9, 4, 10),
+    },
   ],
   phases: [
-    { name: "collect", state: "done", rounds: 1, nodesSettled: 2, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0), exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20) },
-    { name: "judge", state: "current", rounds: 1, nodesSettled: 3, nodesRunning: 3, enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20) },
+    {
+      name: "collect",
+      state: "done",
+      rounds: 1,
+      nodesSettled: 2,
+      nodesRunning: 0,
+      enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0),
+      exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+    },
+    {
+      name: "judge",
+      state: "current",
+      rounds: 1,
+      nodesSettled: 3,
+      nodesRunning: 3,
+      enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+    },
     { name: "verify", state: "ahead", rounds: 0, nodesSettled: 0, nodesRunning: 0 },
     { name: "report", state: "ahead", rounds: 0, nodesSettled: 0, nodesRunning: 0 },
   ],
@@ -1194,8 +1207,7 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
       siteId: "agent#1",
       ordinal: 1,
       name: "collector",
-      // On a live run the port never sends `done` (that is a terminal word): a subagent that
-      // finished its own share is `idle`.
+      // 活着的 run 上端口从不发 `done`（那是终态词）：干完自己那份活的子代理是 `idle`。
       state: "idle",
       phaseName: "collect",
       stepsSettled: 2,
@@ -1234,7 +1246,11 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
         startedAt: Date.UTC(2026, 7, 21, 9, 4, 28),
         turn: 4,
         toolCalls: 7,
-        lastTool: { name: "Read", target: "packages/net/retry.spec.ts", at: Date.UTC(2026, 7, 21, 9, 5, 32) },
+        lastTool: {
+          name: "Read",
+          target: "packages/net/retry.spec.ts",
+          at: Date.UTC(2026, 7, 21, 9, 5, 32),
+        },
       },
       stepsSettled: 1,
       stepsFailed: 0,
@@ -1246,7 +1262,12 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
       ordinal: 1,
       state: "waiting",
       phaseName: "judge",
-      wait: { cause: "backoff", reason: "429", retryAfterMs: 20_000, since: Date.UTC(2026, 7, 21, 9, 5, 20) },
+      wait: {
+        cause: "backoff",
+        reason: "429",
+        retryAfterMs: 20_000,
+        since: Date.UTC(2026, 7, 21, 9, 5, 20),
+      },
       stepsSettled: 1,
       stepsFailed: 0,
       tokens: 2_130,
@@ -1254,7 +1275,12 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
   ],
   health: {
     lastProgressAt: Date.UTC(2026, 7, 21, 9, 5, 0),
-    concurrency: { effective: 2, cap: 3, reason: "rate_limited", since: Date.UTC(2026, 7, 21, 9, 4, 35) },
+    concurrency: {
+      effective: 2,
+      cap: 3,
+      reason: "rate_limited",
+      since: Date.UTC(2026, 7, 21, 9, 4, 35),
+    },
     consecutiveFailures: 0,
     cachedSteps: 0,
     pendingQuestionsKnown: true,
@@ -1269,7 +1295,9 @@ const SITREP_BASE: Omit<GetWorkflowRunOutput, "summary"> = {
       askedAt: Date.UTC(2026, 7, 21, 9, 5, 0),
     },
   ],
-  artifacts: [{ id: "triage-board", kind: "board", title: "Triage board", version: 3, itemCount: 7 }],
+  artifacts: [
+    { id: "triage-board", kind: "board", title: "Triage board", version: 3, itemCount: 7 },
+  ],
 };
 
 describe("GetWorkflowRun model content — a running situation report", () => {
@@ -1308,8 +1336,7 @@ describe("GetWorkflowRun model content — a running situation report", () => {
     );
   });
 
-  // An `ahead` row has only the name and the state: it has not happened yet, so no rounds, no
-  // counts, no duration.
+  // `ahead` 的行只有名字和状态：它还没发生过，所以没有轮次、没有计数、没有时长。
   it("draws the phase table with rounds, counts and the current phase's time so far", () => {
     expect(content).toContain("1. collect  done     1 round  2 steps settled  1m 20s");
     expect(content).toContain("2. judge    current  1 round  3 settled, 3 running  4m 20s so far");
@@ -1317,16 +1344,24 @@ describe("GetWorkflowRun model content — a running situation report", () => {
     expect(content).toContain("4. report   ahead");
   });
 
-  // A line reads as "who · where · which actor · which phase · doing what · how much spent".
+  // 一行读作「谁 · 在哪 · 什么相位 · 哪个阶段 · 在做什么 · 花了多少」。
   it("draws one roster line per subagent, with the ask, the last tool and the wait cause", () => {
     expect(content).toContain(
       "judge      agent#2@2  executing  phase judge  ask#4@1 (step 3), 1m 12s on this step, turn 4, 7 tool calls, last Read packages/net/retry.spec.ts 8s ago  5,100 tokens",
     );
-    expect(content).toContain("judge      agent#2@1  parked     phase judge  on question q-01 for 40s  4,980 tokens");
-    expect(content).toContain("agent#3@1  waiting    phase judge  backoff after 429 for 20s, retry in 20s  2,130 tokens");
-    expect(content).toContain("collector  agent#1@1  idle       phase collect  2 steps  6,210 tokens");
-    // The task summary is indented on its own line, hung under the line it belongs to.
-    expect(content).toContain("  task: Judge specs 1-7 for flakiness; report real failures with evidence");
+    expect(content).toContain(
+      "judge      agent#2@1  parked     phase judge  on question q-01 for 40s  4,980 tokens",
+    );
+    expect(content).toContain(
+      "agent#3@1  waiting    phase judge  backoff after 429 for 20s, retry in 20s  2,130 tokens",
+    );
+    expect(content).toContain(
+      "collector  agent#1@1  idle       phase collect  2 steps  6,210 tokens",
+    );
+    // 任务摘要缩进一行挂在它所属的那一行下面。
+    expect(content).toContain(
+      "  task: Judge specs 1-7 for flakiness; report real failures with evidence",
+    );
   });
 
   it("prefixes each log line with its age", () => {
@@ -1344,20 +1379,70 @@ describe("GetWorkflowRun model content — a completed run", () => {
     ...SITREP_BASE,
     status: "completed",
     updatedAt: Date.UTC(2026, 7, 21, 9, 4, 20),
-    usage: { ...SITREP_BASE.usage, spentTokens: 41_200, nodesRunning: 0, nodesCompleted: 12, nodesObserved: 12 },
+    usage: {
+      ...SITREP_BASE.usage,
+      spentTokens: 41_200,
+      nodesRunning: 0,
+      nodesCompleted: 12,
+      nodesObserved: 12,
+    },
     phases: [
-      { name: "collect", state: "done", rounds: 1, nodesSettled: 2, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0), exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20) },
-      { name: "judge", state: "done", rounds: 1, nodesSettled: 6, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20), exitedAt: Date.UTC(2026, 7, 21, 9, 3, 0) },
-      { name: "verify", state: "done", rounds: 2, nodesSettled: 3, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 3, 0), exitedAt: Date.UTC(2026, 7, 21, 9, 4, 0) },
-      { name: "report", state: "done", rounds: 1, nodesSettled: 1, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 4, 0), exitedAt: Date.UTC(2026, 7, 21, 9, 4, 20) },
+      {
+        name: "collect",
+        state: "done",
+        rounds: 1,
+        nodesSettled: 2,
+        nodesRunning: 0,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0),
+        exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+      },
+      {
+        name: "judge",
+        state: "done",
+        rounds: 1,
+        nodesSettled: 6,
+        nodesRunning: 0,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+        exitedAt: Date.UTC(2026, 7, 21, 9, 3, 0),
+      },
+      {
+        name: "verify",
+        state: "done",
+        rounds: 2,
+        nodesSettled: 3,
+        nodesRunning: 0,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 3, 0),
+        exitedAt: Date.UTC(2026, 7, 21, 9, 4, 0),
+      },
+      {
+        name: "report",
+        state: "done",
+        rounds: 1,
+        nodesSettled: 1,
+        nodesRunning: 0,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 4, 0),
+        exitedAt: Date.UTC(2026, 7, 21, 9, 4, 20),
+      },
     ],
-    // Only on a terminal run is a finished subagent `done`.
+    // 终态 run 上干完的子代理才是 `done`。
     subagents: [{ ...SITREP_BASE.subagents[0]!, state: "done" }],
-    health: { lastProgressAt: Date.UTC(2026, 7, 21, 9, 4, 20), consecutiveFailures: 0, cachedSteps: 2, pendingQuestionsKnown: true },
+    health: {
+      lastProgressAt: Date.UTC(2026, 7, 21, 9, 4, 20),
+      consecutiveFailures: 0,
+      cachedSteps: 2,
+      pendingQuestionsKnown: true,
+    },
     pendingQuestions: undefined,
     result: "12 specs triaged",
     artifacts: [
-      { id: "report", kind: "markdown", title: "Nightly triage report", version: 1, itemCount: 0, primary: true },
+      {
+        id: "report",
+        kind: "markdown",
+        title: "Nightly triage report",
+        version: 1,
+        itemCount: 0,
+        primary: true,
+      },
     ],
   };
   const content = renderWithSummary(completed);
@@ -1368,10 +1453,11 @@ describe("GetWorkflowRun model content — a completed run", () => {
     );
   });
 
-  // A terminal run reports no stalled (of course it no longer moves) and no leftover (there are no
-  // leftover rows).
+  // 终态 run 不报 stalled（它当然不动了），也不报 leftover（没有残留行）。
   it("drops the stalled reading from a terminal run's health", () => {
-    expect(content).toContain("<health>last_progress=1m 20s ago  consecutive_failures=0  cached_steps=2</health>");
+    expect(content).toContain(
+      "<health>last_progress=1m 20s ago  consecutive_failures=0  cached_steps=2</health>",
+    );
     expect(content).not.toContain("stalled=");
     expect(content).not.toContain("leftover");
   });
@@ -1391,13 +1477,27 @@ describe("GetWorkflowRun model content — an interrupted run seen from another 
     ownedByThisSession: false,
     updatedAt: Date.UTC(2026, 7, 21, 9, 5, 0),
     error: { code: "Interrupted", message: "the owning process exited" },
-    // In a terminal run, the "still running" rows are the leftovers: nodesRunning =
-    // leftoverRunning = one row for each of the two unfinished subagents. observed is still the
-    // sum of the three states = 5 + 2.
+    // 终态 run 里「还在跑」的行就是残留行：nodesRunning = leftoverRunning = 两个 unfinished
+    // 子代理各自那一条。observed 仍是三态之和 = 5 + 2。
     usage: { ...SITREP_BASE.usage, nodesObserved: 7, nodesRunning: 2 },
     phases: [
-      { name: "collect", state: "done", rounds: 1, nodesSettled: 2, nodesRunning: 0, enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0), exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20) },
-      { name: "judge", state: "unfinished", rounds: 1, nodesSettled: 3, nodesRunning: 2, enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20) },
+      {
+        name: "collect",
+        state: "done",
+        rounds: 1,
+        nodesSettled: 2,
+        nodesRunning: 0,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 0, 0),
+        exitedAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+      },
+      {
+        name: "judge",
+        state: "unfinished",
+        rounds: 1,
+        nodesSettled: 3,
+        nodesRunning: 2,
+        enteredAt: Date.UTC(2026, 7, 21, 9, 1, 20),
+      },
       { name: "verify", state: "ahead", rounds: 0, nodesSettled: 0, nodesRunning: 0 },
       { name: "report", state: "ahead", rounds: 0, nodesSettled: 0, nodesRunning: 0 },
     ],
@@ -1409,7 +1509,12 @@ describe("GetWorkflowRun model content — an interrupted run seen from another 
         name: "judge",
         state: "unfinished",
         phaseName: "judge",
-        currentAsk: { siteId: "ask#4", ordinal: 0, actorSeq: 1, startedAt: Date.UTC(2026, 7, 21, 9, 2, 0) },
+        currentAsk: {
+          siteId: "ask#4",
+          ordinal: 0,
+          actorSeq: 1,
+          startedAt: Date.UTC(2026, 7, 21, 9, 2, 0),
+        },
         stepsSettled: 1,
         stepsFailed: 0,
         tokens: 4_980,
@@ -1420,7 +1525,12 @@ describe("GetWorkflowRun model content — an interrupted run seen from another 
         name: "judge",
         state: "unfinished",
         phaseName: "judge",
-        currentAsk: { siteId: "ask#4", ordinal: 1, actorSeq: 2, startedAt: Date.UTC(2026, 7, 21, 9, 4, 28) },
+        currentAsk: {
+          siteId: "ask#4",
+          ordinal: 1,
+          actorSeq: 2,
+          startedAt: Date.UTC(2026, 7, 21, 9, 4, 28),
+        },
         stepsSettled: 1,
         stepsFailed: 0,
         tokens: 5_100,
@@ -1431,8 +1541,7 @@ describe("GetWorkflowRun model content — an interrupted run seen from another 
       consecutiveFailures: 0,
       cachedSteps: 0,
       leftoverRunning: 2,
-      // The parked-question table lives only in the asking process's memory: this read has no way
-      // to know whether anyone is waiting.
+      // 停驻表只活在提问那个进程的内存里：这次读根本不知道有没有人在等。
       pendingQuestionsKnown: false,
     },
     pendingQuestions: undefined,
@@ -1446,19 +1555,26 @@ describe("GetWorkflowRun model content — an interrupted run seen from another 
     );
   });
 
-  // Silence would be read as "nobody is waiting", the most dangerous misreading — this is one of
-  // the only two places that say "unknown" out loud.
+  // 沉默会被读成「没有人在等」，而那是最危险的误读——这是仅有的两处「把不知道说出口」之一。
   it("replaces the pending block with the explicit unknown sentence", () => {
-    expect(content).toContain("<pending_questions>Unknown: pending questions are tracked only by the process");
-    expect(content).toContain("Resuming the run will re-ask any question its subagent still needs answered.");
+    expect(content).toContain(
+      "<pending_questions>Unknown: pending questions are tracked only by the process",
+    );
+    expect(content).toContain(
+      "Resuming the run will re-ask any question its subagent still needs answered.",
+    );
     expect(content).not.toContain("[q-01]");
   });
 
-  // The other place: rows marked running in a terminal run are leftovers, not live work.
+  // 另一处：终态 run 里标着 running 的行是残留，不是活的工作。
   it("adds the leftover note under health and marks the phase unfinished", () => {
-    expect(content).toContain('The 2 "running" steps below are leftovers of the exited process, not live work.');
+    expect(content).toContain(
+      'The 2 "running" steps below are leftovers of the exited process, not live work.',
+    );
     expect(content).toContain("2. judge    unfinished  1 round  3 settled, 2 unfinished");
-    expect(content).toContain("judge      agent#2@1  unfinished  phase judge  ask#4@0 (step 2) was in flight at the stop");
+    expect(content).toContain(
+      "judge      agent#2@1  unfinished  phase judge  ask#4@0 (step 2) was in flight at the stop",
+    );
   });
 
   it("still routes to ResumeWorkflowRun and AmendWorkflow with the full argument", () => {
@@ -1490,8 +1606,7 @@ describe("GetWorkflowRun declaration", () => {
     expect(getWorkflowRunToolEntry.permission.alwaysAsk).toBeUndefined();
   });
 
-  // The result is exactly the kind of payload that can grow large enough to need an artifact
-  // (modeled on TaskOutput).
+  // 产物就是可能大到需要 artifact 的那类载荷（照 TaskOutput）。
   it("budgets the result as a persistable artifact", () => {
     expect(getWorkflowRunToolEntry.resultBudget).toMatchObject({
       maxInlineBytes: 400_000,
@@ -1503,8 +1618,7 @@ describe("GetWorkflowRun declaration", () => {
     expect(getWorkflowRunToolEntry.resultArtifactContentType).toBe("text/plain");
   });
 
-  // tool-contracts.test.ts's full v2 round-trip aborts at the first inconsistency; each new tool
-  // pins it again here on its own.
+  // tool-contracts.test.ts 的 v2 全量循环在第一处不一致就中止；新工具在这里各自再钉一遍。
   it("declares the v2 common contract", () => {
     expectV2CommonContract(getWorkflowRunToolEntry);
   });
@@ -1519,8 +1633,7 @@ describe("GetWorkflowRun declaration", () => {
     expect(description).toContain("ListWorkflowRuns");
   });
 
-  // Routing guidance (2026-08-29): resumable terminal states must point at ResumeWorkflowRun. Pin
-  // keywords, not verbatim text.
+  // 路由引导（2026-08-29）：可恢复终态要指路 ResumeWorkflowRun。钉关键词，不钉逐字。
   it("cross-references ResumeWorkflowRun for the resumable terminal states", () => {
     const description = getWorkflowRunToolEntry.metadata.description ?? "";
 
@@ -1529,8 +1642,7 @@ describe("GetWorkflowRun declaration", () => {
     expect(description).toContain("interrupted");
   });
 
-  // Amend-resume (2026-08-31): the description also needs the second route, and it must be
-  // distinguished from the previous one.
+  // 修订续跑（2026-08-31）：描述里也要有第二条路由，且必须与上一条区分开。
   it("cross-references AmendWorkflow for any run and names the superseded state", () => {
     const description = getWorkflowRunToolEntry.metadata.description ?? "";
 
@@ -1576,9 +1688,8 @@ describe("GetWorkflowRun registration", () => {
   }
 });
 
-// Holes (docs/dynamic-workflow/launch.md "The `FillWorkflowHole` tool"): `holes` follows the same
-// rule as pendingQuestions — absent at zero entries, mirrored field by field; the model face's
-// `<holes>` block lists the waiting and the filled ones and names FillWorkflowHole and hole_id.
+// 留白（docs/dynamic-workflow/launch.md「The `FillWorkflowHole` tool」）：`holes` 与 pendingQuestions 同规——
+// 零条缺席、逐字段镜像；模型面的 `<holes>` 块列出等着的与补过的，并点名 FillWorkflowHole 与 hole_id。
 describe("GetWorkflowRun handler — holes", () => {
   const holes = [
     {
@@ -1604,8 +1715,7 @@ describe("GetWorkflowRun handler — holes", () => {
     const detail: DynamicWorkflowRunDetail = { ...RUNNING_DETAIL, holes };
     const output = await call("dwfrun-running", stubDetailPort({ "dwfrun-running": detail }));
     expectMirrorsDetail(output, detail);
-    // The summary calls it out too: a waiting hole is what the model is being asked to do right
-    // now (filled ones do not count).
+    // 摘要也点一句：等着的留白是此刻等着模型做的事（补过的不算）。
     expect(output.summary).toContain("1 hole awaiting your code.");
     const empty = await call(
       "dwfrun-running",
@@ -1637,8 +1747,7 @@ describe("GetWorkflowRun handler — holes", () => {
   });
 });
 
-// Nested holes: a nested site id appears verbatim inside the square brackets of the `<holes>`
-// block (the escaping does not touch `/` or `#`).
+// 递归留白：嵌套站点 id 在 `<holes>` 块的方括号里逐字出现（转义不碰 `/` 与 `#`）。
 describe("GetWorkflowRun — nested hole ids", () => {
   it("prints the nested site id verbatim", () => {
     const text = getWorkflowRunToolEntry.formatModelContent!({

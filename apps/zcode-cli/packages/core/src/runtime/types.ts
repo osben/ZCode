@@ -3,6 +3,7 @@ import type {
   RequestVerificationReason,
   SystemPromptOverrides,
 } from "@zcode/shared";
+import type { ToolSearchExecutionContext, ToolSearchMode } from "@zcode/contracts";
 import type { GetAgentDefinitions, LoadAgentDefinitions } from "../subagent/definitions.js";
 import type { LspService } from "../lsp/service.js";
 import type { RuntimeInputPresentation, TurnExecutionModelFallbackReason } from "@zcode/contracts";
@@ -124,6 +125,7 @@ import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-
 // -----------------------------------------------
 
 export interface AgentRuntimeConfig {
+  toolSearch?: { mode?: ToolSearchMode };
   /** shared-host CUA request routing metadata; desktop is the safe default. */
   clientMode?: "desktop-continuous" | "web-remote-replayable";
   deliveryKind?: "desktop-continuous" | "web-remote-replayable";
@@ -255,6 +257,8 @@ export interface AgentRuntimeConfig {
   systemPromptOverrides?: SystemPromptOverrides;
   agentName?: string; // Default: "zcode-agent"
   workingDirectory?: string; // Required for context builder
+  /** 本次运行的附加目录，仅用于环境 prompt 展示，不参与配置发现或持久化。 */
+  additionalDirectories?: readonly string[];
   /**
    * Actual workspace path representation supplied by the caller, used for session persistence and
    * local identity restoration. File and command execution still use only normalized workingDirectory.
@@ -408,6 +412,9 @@ export interface AgentRuntimeDeps {
    * observer (signals only). Absence means no gate.
    */
   modelRequestAdmission?: ModelRequestAdmission;
+  onOffPeakLifecycleEvent?: (
+    event: import("./off-peak/lifecycle.js").OffPeakLifecycleEvent,
+  ) => void;
   workflowPort?: WorkflowPort;
   /** Submit/observe/cancel port for workflow runs; when present, CreateWorkflow launches for real, otherwise it returns a placeholder diagnostic. */
   dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
@@ -480,13 +487,16 @@ export interface TurnResult {
  * Provider/Model facts and is not a second source for Session Selection.
  */
 export interface ModelExecutionContext {
+  offPeak?: { executionId: string; ticketId: string; providerErrorCode: string };
   /** Skip automatic Project Memory Extraction for this Turn only; does not modify Session Memory config. */
   memoryExtraction?: "skip";
   selectionScope: "execution";
+  /** 接纳加速输入前固定的 Session 候选；仅在内存中随本条命令传递。 */
+  highspeedFallbackSelection?: ModelSelection;
   requestDependencies?: ModelRequestDependencies;
   subagents?: {
     foregroundModel: "submission";
-    background: "deny";
+    background: "deny" | "allow";
   };
   /**
    * If this execution's Selection fails, fall back to the original model within the same Turn and continue (preserving committed history and replacing only the model for subsequent requests),
@@ -507,6 +517,9 @@ export interface ModelExecutionContext {
 }
 
 export interface ExecuteTurnOptionsBase {
+  /** 内存后台命令归属；不进入 canonical intent 或持久化模型默认。 */
+  offPeakExecutionId?: string;
+  executionSelection?: ModelSelection;
   abortSignal?: AbortSignal;
   browserAmbientContext?: {
     tabCount: number;
@@ -802,6 +815,7 @@ export interface PermissionDecisionResult {
 }
 
 export interface ExecuteToolsOptions {
+  toolSearch?: ToolSearchExecutionContext;
   automationTurn?: boolean;
   offPeakTurn?: boolean;
   signal?: AbortSignal;
@@ -891,6 +905,7 @@ export interface ProviderContextUsageSnapshot {
 }
 
 export interface RunModelTextRequestOptions {
+  toolSearchEnabled?: boolean;
   abortSignal?: AbortSignal;
   assistantMessageId: MessageId;
   events: SessionEvent[];

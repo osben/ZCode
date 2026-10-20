@@ -88,6 +88,9 @@ Each file below keeps its fork HEAD version. A fork-wins three-way merge was tri
 5. Fork-only tables and columns keep the `fork_` prefix. No upstream migration definition changes.
 6. Settings: fork keys survive a projected write and never reach `setting.json`; connection versions are monotonic and stale snapshots are rejected.
 
+
 ## API export ledger (3.16.1, PR api-exports)
 
 The export ledger (name, upstream definition, fork location, status) lives in `specs/services-upstream-sync-api-exports.md` to keep this file under the staged-size limit.
+=======
+

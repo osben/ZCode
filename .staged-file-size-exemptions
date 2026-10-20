@@ -194,11 +194,6 @@ packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
 
 
-# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
-packages/provider-node/test/provider-node-runtime.test.ts
-packages/provider/test/config-service.test.ts
-
-
 # TEMPORARY upstream 3.16.1 sync - revert/split in final PR
 packages/shared/src/bots.ts
 packages/shared/src/channels.ts
@@ -238,6 +233,8 @@ packages/services/src/zcode-agent/zcodeAgent.ts
 packages/services/src/zcode-agent/runtimeCapabilitySupport.ts
 packages/services/src/zcode-agent/zcodeAgentService.ts
 
+=======
+
 
 
 # Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
@@ -266,5 +263,97 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
+
+# TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
+apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
+apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
+apps/zcode-cli/packages/adapters/tests/session-store.test.ts
+# Real sqlite histories used by session-migration-history.test.ts (binary fixtures, not editable source).
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
+# TEMPORARY upstream 3.16.1 sync: oversize upstream-owned files (differ from the 0a1fc56d blob only by fork edits); split in the final sync PR.
+apps/zcode-cli/packages/adapters/src/config/schema.ts
+apps/zcode-cli/packages/adapters/src/mcp/index.ts
+apps/zcode-cli/packages/adapters/src/mcp/pool.ts
+apps/zcode-cli/packages/adapters/src/model/runner-generate.ts
+apps/zcode-cli/packages/adapters/src/model/runner-stream.ts
+apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts
+apps/zcode-cli/packages/adapters/tests/auth.test.ts
+apps/zcode-cli/packages/adapters/tests/config.test.ts
+apps/zcode-cli/packages/adapters/tests/runner.test.ts
+apps/zcode-cli/packages/contracts/src/events/session.events.ts
+apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts
+apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts
+apps/zcode-cli/packages/contracts/src/model/index.ts
+apps/zcode-cli/packages/contracts/src/tools/create-workflow.ts
+apps/zcode-cli/packages/dynamic-workflow/tests/hole-sites.test.ts
+# TEMPORARY upstream 3.16.1 sync (slice 2): oversize upstream-owned core files; split in the final sync PR.
+apps/zcode-cli/packages/core/src/agent/message-history.ts
+apps/zcode-cli/packages/core/src/mcp/index.ts
+apps/zcode-cli/packages/core/src/runtime/helpers/project-memory-dream.ts
+apps/zcode-cli/packages/core/src/runtime/methods/events.ts
+apps/zcode-cli/packages/core/src/runtime/methods/model.ts
+apps/zcode-cli/packages/core/src/runtime/methods/steering.ts
+apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts
+apps/zcode-cli/packages/core/src/runtime/methods/turn-model-step.ts
+apps/zcode-cli/packages/core/src/runtime/methods/turn.ts
+apps/zcode-cli/packages/core/src/runtime/types.ts
+apps/zcode-cli/packages/core/src/subagent/runner.ts
+apps/zcode-cli/packages/core/src/tool/handlers/amend-workflow.ts
+apps/zcode-cli/packages/core/src/tool/handlers/create-workflow.ts
+apps/zcode-cli/packages/core/src/tool/types.ts
+apps/zcode-cli/packages/core/tests/bash-handler.test.ts
+apps/zcode-cli/packages/core/tests/context-builder.test.ts
+apps/zcode-cli/packages/core/tests/create-workflow-permission.test.ts
+apps/zcode-cli/packages/core/tests/dynamic-workflow-run-settings.test.ts
+apps/zcode-cli/packages/core/tests/dynamic-workflow-run-start.test.ts
+apps/zcode-cli/packages/core/tests/edit-tool-contract.test.ts
+apps/zcode-cli/packages/core/tests/runtime-compact.test.ts
+apps/zcode-cli/packages/core/tests/runtime-memory-dream.test.ts
+apps/zcode-cli/packages/core/tests/runtime-memory-extraction.test.ts
+apps/zcode-cli/packages/core/tests/runtime-tool-loop.test.ts
+apps/zcode-cli/packages/core/tests/session-fork.test.ts
+apps/zcode-cli/packages/core/tests/subagent-explore.test.ts
+apps/zcode-cli/packages/core/tests/subagent-prompt-assembly.test.ts
+apps/zcode-cli/packages/core/tests/tool-contracts.test.ts
+# TEMPORARY upstream 3.16.1 sync (slice 3, bootstrap): fork-modified bootstrap files that stay oversize after the merge; split each one later and remove its line.
+apps/zcode-cli/packages/bootstrap/src/app/create-app.ts
+apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts
+apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts
+apps/zcode-cli/packages/bootstrap/src/app/types.ts
+apps/zcode-cli/packages/bootstrap/src/plugins.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts
+apps/zcode-cli/packages/bootstrap/tests/conversation-topic-publisher.test.ts
+apps/zcode-cli/packages/bootstrap/tests/dynamic-workflow-run-service.test.ts
+apps/zcode-cli/packages/bootstrap/tests/plugins.test.ts
+apps/zcode-cli/packages/bootstrap/tests/product-projection.test.ts
+apps/zcode-cli/packages/bootstrap/tests/session-resident-pool.test.ts
+apps/zcode-cli/packages/bootstrap/tests/sessions-index-projection.test.ts
+apps/zcode-cli/packages/bootstrap/tests/transcript-hydration.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-cold-resume.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-gateway.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-native-session-mgmt.test.ts
+apps/zcode-cli/packages/bootstrap/tests/workflow-concurrency-governor.test.ts
+apps/zcode-cli/packages/bootstrap/tests/workflow-driver.test.ts
+apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts
+# TEMPORARY upstream 3.16.1 sync (slice 4b, cli/tui): fork CLI code (ChatGPT plan login, incognito resume, dwf/dream wiring) and fork i18n locale; split with the translation follow-up.
+apps/zcode-cli/packages/cli/src/prompt-command.ts
+apps/zcode-cli/packages/cli/tests/cli.unit.test.ts
+apps/zcode-cli/packages/i18n/src/locales/uk-UA.ts
+
+# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+
+# Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
+packages/services/test/highspeedCardService.test.ts

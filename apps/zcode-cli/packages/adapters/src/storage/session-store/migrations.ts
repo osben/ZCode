@@ -1,16 +1,24 @@
+import type { SqliteMigration } from "@zcode/shared/sqlite-migrations";
+export type { SqliteMigration } from "@zcode/shared/sqlite-migrations";
 import { PROVIDER_MODEL_SELECTION_MIGRATION_SQL } from "./migrations/0020-provider-model-selection.js";
+import { SESSION_DATABASE_IDENTITY_MIGRATION } from "@zcode/shared/sqlite-migrations";
 
-export interface SqliteMigration {
-  appVersion: string;
-  acceptedHistoricalChecksums?: readonly string[];
-  id: string;
-  sql: string;
-}
+import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
+import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";
 
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.2.0",
     id: "0001_base_session_store",
+    touchedTables: [
+      "input_history",
+      "message",
+      "part",
+      "permission",
+      "session",
+      "session_entry",
+      "todo",
+    ],
     sql: `
       create table if not exists session (
         id text primary key,
@@ -113,6 +121,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.2.0",
     id: "0002_local_setting",
+    touchedTables: ["local_setting"],
     sql: `
       create table if not exists local_setting (
         scope text not null,
@@ -136,6 +145,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.2.0",
     id: "0003_backfill_permission_local_setting",
+    touchedTables: ["local_setting"],
     sql: `
       insert or ignore into local_setting (
         scope,
@@ -163,6 +173,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.7.0",
     id: "0004_session_target",
+    touchedTables: ["session_target"],
     sql: `
       create table if not exists session_target (
         session_id text primary key references session(id) on delete cascade,
@@ -177,6 +188,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.7.0",
     id: "0005_session_target_accounting",
+    touchedTables: ["session_target", "session_target_next"],
     sql: `
       create table if not exists session_target_next (
         session_id text primary key references session(id) on delete cascade,
@@ -220,6 +232,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.11.0",
     id: "0006_input_history_attachments",
+    touchedTables: ["input_history"],
     sql: `
       alter table input_history add column attachments text;
     `,
@@ -227,6 +240,14 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.13.0",
     id: "0007_workflow_script_runtime",
+    touchedTables: [
+      "session",
+      "session_task_link",
+      "workflow_activity",
+      "workflow_definition",
+      "workflow_event",
+      "workflow_run",
+    ],
     sql: `
       alter table session add column task_type text not null default 'interactive';
 
@@ -369,6 +390,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.13.0",
     id: "0008_workflow_definition_scope",
+    touchedTables: ["workflow_definition"],
     sql: `
       alter table workflow_definition
         add column scope text not null default 'explicit'
@@ -378,6 +400,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.14.0",
     id: "0009_session_title_metadata",
+    touchedTables: ["session"],
     sql: `
       alter table session
         add column title_source text not null default 'first_input'
@@ -393,6 +416,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.0",
     id: "0010_usage_observability",
+    touchedTables: ["model_usage", "tool_usage", "turn_usage"],
     sql: `
       create table if not exists model_usage (
         id text primary key,
@@ -520,6 +544,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.0",
     id: "0011_session_target_summary_title",
+    touchedTables: ["session_target"],
     sql: `
       alter table session_target add column summary_title text;
     `,
@@ -527,6 +552,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.0",
     id: "0012_session_trace_id",
+    touchedTables: ["session"],
     sql: `
       alter table session add column trace_id text;
 
@@ -536,6 +562,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.0",
     id: "0013_session_target_active_run_accounting",
+    touchedTables: ["session_target"],
     sql: `
       alter table session_target add column active_input_id text;
       alter table session_target add column active_run_started_at integer;
@@ -545,6 +572,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.0",
     id: "0014_message_part_sequence",
+    touchedTables: ["message", "part"],
     sql: `
       alter table message add column sequence integer;
       alter table part add column sequence integer;
@@ -596,15 +624,16 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.2",
     id: "0015_message_part_sequence_backfill_and_guard",
-    // Background: NULL sequence values continued to appear after the 0014 backfill
-    // (locally observed 1,690 message rows / 5,933 part rows across 331 sessions). The likely cause is an older binary
-    // writing to the same DB concurrently (its INSERT omits the sequence column). This migration does two things:
-    // 1. Incremental backfill: fill only NULL rows, starting at max(sequence)+1 for each scope and ordering by
-    //    time_created/rowid. This exactly matches the read-path fallback (NULL sequences sort after non-NULL ones),
-    //    so hydration order does not change before vs. after backfill. Do not reuse 0014's row_number-1 approach:
-    //    it numbers all rows, so interleaved data can collide with existing sequences and move NULL rows earlier.
-    // 2. AFTER INSERT trigger fallback: when an older binary writes a NULL sequence, assign the current scope's tail
-    //    sequence automatically, preventing new NULL values at the source. The new code path always writes a sequence, so the trigger does not fire.
+    touchedTables: ["message", "part"],
+    // 背景（16-timeline-authority-plan P0）：0014 backfill 之后仍持续出现 NULL sequence
+    // （本机观测 message 1,690 / part 5,933 行，跨 331 sessions），主要嫌疑是旧版本二进制
+    // 并存写同一 DB（其 INSERT 不含 sequence 列）。本迁移做两件事：
+    // 1. 增量 backfill：只补 NULL 行，序号从各 scope 现有 max(sequence)+1 起、按
+    //    time_created/rowid 排——与读路径 fallback（sequence is null 排在非空之后）完全
+    //    一致，backfill 前后 hydrate 顺序不变。不能复用 0014 的 row_number-1 写法：
+    //    它按全量行编号，混排数据下会与既有 sequence 撞号并把 NULL 行重排到前面。
+    // 2. AFTER INSERT 触发器兜底：旧二进制再写入 NULL sequence 时自动补当前 scope 队尾，
+    //    从源头阻止新的 NULL 产生；新代码路径 sequence 恒非空，触发器不生效。
     sql: `
       with session_max as (
         select session_id, coalesce(max(sequence), -1) as max_sequence
@@ -684,9 +713,11 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.2",
     id: "0016_session_input_ledger",
-    // session_input ledger: durable lifecycle for accepted input,
-    // admitted -> promoted / cancelled / discarded. If queue/wakeup existence lives only in process memory (the event log is also in memory),
-    // a crash silently loses it. The ledger prevents a queue from disappearing without entering history and provides durable idempotency for input commands.
+    touchedTables: ["session_input"],
+    // session_input 账本（16-timeline-authority-plan P3）：输入的 durable 生命周期
+    // admitted -> promoted / cancelled / discarded。旧实现里队列/唤醒的存在性只在
+    // 进程内存（事件日志也是内存的），崩溃即静默丢；账本让「queue 消失但不进
+    // history」不可能静默发生，并为输入类 command 提供 durable 幂等。
     sql: `
       create table if not exists session_input (
         id text primary key,
@@ -712,8 +743,9 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.2",
     id: "0017_session_input_start_now_delivery",
-    // Every input command records durable admission before execution. startNow also needs its own
-    // delivery record; it must not be represented as a queue. SQLite cannot modify a CHECK in place, so rebuild the table while preserving the ledger.
+    touchedTables: ["session_input", "session_input_before_start_now"],
+    // 05C：所有 input command 都在执行前落 durable admission，startNow 也需要独立
+    // delivery，不能伪装成 queue。SQLite 不能原地修改 CHECK，必须重建表并保全账本。
     sql: `
       alter table session_input rename to session_input_before_start_now;
 
@@ -754,9 +786,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.15.2",
     id: "0018_session_input_failed_status",
-    // The child runtime can still fail synchronously after the fork bundle is committed. The parent has already accepted this input,
-    // so it must not be represented as cancelled/discarded. Add a durable failed terminal state and rebuild the CHECK so upgraded databases can write it;
-    // after restart it will not be consumed or rewritten again.
+    touchedTables: ["session_input", "session_input_before_failed_status"],
+    // Bugfix：fork bundle 提交后 child runtime 仍可能同步启动失败。该输入已经被 parent
+    // accepted fact 接受，不能伪装成 cancelled/discarded；新增 durable failed 终态，并通过
+    // 重建 CHECK 保证旧库升级后也能写入，重启不会再次消费或改写它。
     sql: `
       alter table session_input rename to session_input_before_failed_status;
 
@@ -797,34 +830,37 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.16.5",
     id: "0019_dwf_journal",
-    // Durable journal for the dynamic-workflow execution engine.
-    // Legacy workflow_* tables store templates, not runs: dwf_* is a separate system, independent of the existing workflow mechanism.
+    touchedTables: ["dwf_run", "dwf_actor", "dwf_artifact", "dwf_node", "dwf_event"],
+    // dynamic-workflow 执行引擎的 durable journal（docs/execution-engine.md 的 "Journal & storage"）。
+    // legacy 的 workflow_* 表只是模板不是家：dwf_* 自成一套，与既有 workflow 机制彼此独立。
     //
-    // Before beta, this migration **condenses** twelve development migrations (0019–0030) into one baseline: create all four tables in their final
-    // post-0030 shape at once. Intermediate states (three full-table rebuilds to relax CHECK constraints and the column rename/removal in 0028) exist only
-    // in internal preview databases. To consolidate one, delete all four dwf_* tables and remove their dwf ledger rows from schema_migration;
-    // the next startup rebuilds them here. Do not modify this migration after beta:
-    // the runner records checksums, so historical migrations may only be appended.
+    // 本条是 beta 前把开发期 0019–0030 十二条迁移**压成的单一基线**：四张表一次建齐、形状即
+    // 0030 之后的终态。中间态（三次为放宽 CHECK 的整表重建、0028 的删列改名）只存在于
+    // 内部预览库里，收敛办法是删掉四张 dwf_* 表并清掉 schema_migration 里的 dwf 记账行，
+    // 下次启动由本条重建。beta 之后本条
+    // 不可再改：runner 按 checksum 记账，历史迁移只能追加。
     //
-    // Reserve slot 0019 so later staging migrations start at 0020 and ledger IDs do not collide when feature branches merge.
-    // The four tables are harmless while unused before the feature lands.
+    // 只为占住 0019 这个槽位，让
+    // staging 后续迁移从 0020 起编号，功能分支合回时 ledger 不会撞号。四张表在功能落地前闲置无害。
     //
-    // Deliberate design choices:
-    // 1) parent_session_id / session_id are plain text, with no FOREIGN KEY. Subagent sessions live in the in-memory
-    //    event store and have no session row; because the runner enables pragma foreign_keys = on, an FK would reject valid journal records.
-    //    No table outside dwf_* is referenced, and no outside table references dwf_*.
-    // 2) dwf_run has no node limit / token budget columns: run-level token use is observational only, represented by spent_tokens.
-    // 3) A unique(run_id, actor_id, actor_seq) constraint on dwf_node is not possible: putNode is an upsert that fills data during admission,
-    //    settlement, and stats backfill, while actor coordinates are spread across three nullable columns. The engine enforces per-subagent actor_seq uniqueness.
-    //    Report / artifact rows do not have a node: they are written once, always have status completed, and have all three actor columns NULL.
-    // 4) For nullable columns, NULL always means absent: result_json / name / tool_call_id / args_json / resumed_from / resolved_model /
-    //    message_boundary / artifact_id / input_json all decode to absent keys (args_json decodes to `{}`); do not store dummy values.
-    // 5) Indexes encode query shapes (reversing the column order would require a full table scan):
-    //    - dwf_run_cwd_idx: enumerate historical runs by cwd, using "cwd equality + time_updated descending + limit".
-    //    - dwf_node_artifact_idx: artifact rows for this run and labeled report rows looked up by id.
-    //    - dwf_event_artifact_idx: dashboard data is paged by journal sequence from dwf_event, not dwf_node. The expression index (SQLite ≥ 3.9)
-    //      avoids scanning the entire journal. The third sequence column is essential: without it, the planner prefers the automatic
-    //      unique(run_id, sequence) index and filters artifacts row by row.
+    // 几条刻意为之的设计：
+    // 1) parent_session_id / session_id 是纯 text，不加 FOREIGN KEY——子代理会话跑在内存
+    //    event store 上、没有 session 行，而 runner 开着 pragma foreign_keys = on，真加 FK
+    //    会把合法的 journal 记录挡在门外。dwf_* 之外的任何表都不被引用，也不引用它们。
+    // 2) dwf_run 没有节点上限 / token 预算列：run 级
+    //    token 用量只作观察面，即 spent_tokens。
+    // 3) dwf_node 的 unique(run_id, actor_id, actor_seq) 不可实现：putNode 是准入→结算→统计
+    //    回填的 upsert，actor 坐标分散在三个可空列上；每子代理的 actor_seq 唯一性由引擎守。
+    //    report / artifact 行有行无节点：一次写入、status 恒为 completed、actor 三列全空。
+    // 4) 可空列一律「NULL 即缺席」：result_json / name / tool_call_id / args_json /
+    //    resumed_from / resolved_model / message_boundary / artifact_id / input_json 都解码成
+    //    缺席的键（args_json 解成 `{}`），不存哑值。
+    // 5) 索引即查询形状（列序反了就只能全表扫）：
+    //    - dwf_run_cwd_idx：按 cwd 枚举历史 run，「cwd 等值 + time_updated 倒序 + limit」。
+    //    - dwf_node_artifact_idx：本 run 的产物行与按 id 取带标签的 report 行。
+    //    - dwf_event_artifact_idx：看板取数按 journal sequence 分页，取数源是 dwf_event 而不是
+    //      dwf_node；表达式索引（SQLite ≥ 3.9）让它不必扫整条 journal。第三列 sequence 不是
+    //      装饰——没有它规划器宁可走 unique(run_id, sequence) 的自动索引再逐行筛产物。
     sql: `
       create table if not exists dwf_run (
         id text primary key,
@@ -912,45 +948,40 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     appVersion: "0.16.5",
     id: "0020_provider_model_selection",
     sql: PROVIDER_MODEL_SELECTION_MIGRATION_SQL,
-    // SQL comments feed the checksum; SQL is upstream-verbatim, accept fork-translated ledger rows.
-    acceptedHistoricalChecksums: [
-      "31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788",
-    ],
+    touchedTables: ["message", "part", "session_entry"],
   },
   {
     appVersion: "0.16.5",
     id: "0021_official_glm_selection",
     sql: OFFICIAL_GLM_SELECTION_MIGRATION_SQL,
+    touchedTables: ["session_entry"],
   },
   {
     appVersion: "0.16.5",
     id: "0022_backfilled_session_reasoning",
     sql: BACKFILLED_SESSION_REASONING_MIGRATION_SQL,
+    touchedTables: ["session_entry"],
   },
   {
     appVersion: "0.16.9",
-    id: "0023_session_execution_worktree",
-    // Execution worktree facts for sessions whose agent runs in a linked worktree while the row's
-    // directory/path keep the parent workspace (listing filters stay correct); nullable because
-    // every ordinary session has no execution worktree.
+    id: "0023_session_soft_delete_outcome",
+    previousIds: ["0020_session_soft_delete_outcome"],
+    touchedTables: ["session"],
+    apply: (db) => {
+      const columns = new Set(
+        db
+          .prepare("pragma table_info(session)")
+          .all()
+          .map((row) => row.name),
+      );
+      if (!columns.has("time_deleted"))
+        db.exec("alter table session add column time_deleted integer");
+      if (!columns.has("last_outcome")) db.exec("alter table session add column last_outcome text");
+    },
     sql: `
-      alter table session
-        add column execution_directory text;
-
-      alter table session
-        add column execution_branch text;
+      alter table session add column time_deleted integer;
+      alter table session add column last_outcome text;
     `,
   },
-  {
-    appVersion: "0.16.9",
-    id: "9001_fork_session_incognito",
-    // Fork-owned (fork_ prefix, 9001_fork_* id): the frozen incognito profile JSON; NULL is a
-    // normal session. Upstream builds ignore this ledger row and never list the column.
-    sql: `
-      alter table session
-        add column fork_incognito text;
-    `,
-  },
+  { ...SESSION_DATABASE_IDENTITY_MIGRATION, touchedTables: ["zcode_database_identity"] },
 ];
-import { OFFICIAL_GLM_SELECTION_MIGRATION_SQL } from "./migrations/0021-official-glm-selection.js";
-import { BACKFILLED_SESSION_REASONING_MIGRATION_SQL } from "./migrations/0022-backfilled-session-reasoning.js";

@@ -23,6 +23,7 @@
 13. [Workflow](15-workflow.md)
 14. [EnterPlanMode / ExitPlanMode](16-plan-mode.md)
 15. [LSP 与 Language Server Runtime](19-lsp.md)
+16. [ToolSearch](19-tool-search.md)
 
 ## 公共 tool 形态
 

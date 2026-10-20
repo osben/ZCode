@@ -1,11 +1,10 @@
 /**
- * `@zcode/dynamic-workflow-runtime`: sandbox harness.
+ * `@zcode/dynamic-workflow-runtime`：沙箱 harness。
  *
- * Exposes the harness entry point, wire protocol types, entry-file rendering and writing
- * (`renderChildEntry` / `writeChildEntryFile`, which tests and tools use to create production-shaped
- * entry files), and the child-process export `childMain`. The SEA hidden subcommand
- * (`__zcode-dwf-child`) no longer imports this package: the entry file contains childMain, and the
- * subcommand only `import()`s the file and calls its `start`.
+ * 对外暴露 harness 入口、线协议类型、入口文件的渲染与落盘（`renderChildEntry` /
+ * `writeChildEntryFile`，测试与工具据此造出与生产同形的入口文件），以及子进程出口 `childMain`。
+ * SEA 隐藏子命令（`__zcode-dwf-child`）不再 import 本包：入口文件自带 childMain，子命令只
+ * `import()` 文件并调它的 `start`。
  */
 
 export {

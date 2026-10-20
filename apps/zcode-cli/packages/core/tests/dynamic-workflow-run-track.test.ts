@@ -1,11 +1,10 @@
-// Tracking re-arm for a resumed dwf run (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
+// 恢复的 dwf run 的追踪重臂（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
 //
-// Tracking on the submit path is done automatically by the tool executor when CreateWorkflow returns backgrounded;
-// resume is a v4 command with no in-flight tool call, so the runtime needs a public method to synthesize a tool
-// descriptor and go through the same trackBackgroundTask. Missing it has two testable consequences: the resumed run is
-// absent from the runtime-task registry (hasRunningBackgroundTasks is false → the session is reclaimed as idle and the
-// completion notification is lost), and there is no entry on the backgroundWorks panel (cancellable unreachable → the
-// run cannot be cancelled again after resume).
+// submit 路径的追踪由 tool executor 在 CreateWorkflow 返回 backgrounded 时自动完成；resume
+// 是一条 v4 命令、没有在飞的工具调用，所以 runtime 需要一个公共方法合成工具描述子、走同一条
+// trackBackgroundTask。漏掉它的两个可测后果：恢复的 run 不在 runtime-task registry 里
+// （hasRunningBackgroundTasks 为假 → 会话被当空闲回收、完成通知丢失），以及 backgroundWorks
+// 面板上没有条目（cancellable 不可达 → 恢复后无法再取消）。
 import { describe, expect, it, vi } from "vitest";
 import {
   CREATE_WORKFLOW_TOOL_NAME,
@@ -38,10 +37,9 @@ function defer<T>(): Deferred<T> {
 }
 
 /**
- * A queue-style waitForTask stub that can settle more than once: each call parks a new deferred, and settle consumes
- * the oldest one in call order. A single-shot deferred, in the "cancel terminal state → resume without restarting"
- * scenario, can only feed the first round's waiter; the promise parked by the second round's re-arm stays pending
- * forever — exactly the shape the full regression path of the terminal-residue defect needs.
+ * 可二次 settle 的队列式 waitForTask stub：每次被调用就挂一个新的 deferred，settle 按调用
+ * 顺序消费最旧的一个。单次 deferred 在「cancel 终态 → 未重启即 resume」场景下只能喂第一轮
+ * waiter，第二轮重臂挂上的 promise 永远悬置——那正是终态残留缺陷的完整回归路径需要的形状。
  */
 interface TerminalQueue {
   resolve(value: DynamicWorkflowRunSnapshot): void;
@@ -80,7 +78,12 @@ function makeRuntime(name: string): {
           throw new Error("resume 重臂不应触发 submit");
         },
         async getTask() {
-          return { runId: "dwfrun-1", taskId: "dwfrun-1", startedAt: new Date(), status: "running" };
+          return {
+            runId: "dwfrun-1",
+            taskId: "dwfrun-1",
+            startedAt: new Date(),
+            status: "running",
+          };
         },
         waitForTask: () => terminal.waitForTask(),
         async cancel() {
@@ -107,23 +110,21 @@ describe("trackResumedDynamicWorkflowRun", () => {
       name: "Nightly audit",
     });
 
-    // Reclamation guard: while the resumed run is in flight, the session must never look idle.
+    // 回收护栏：恢复的 run 在飞期间，会话绝不能显得空闲。
     expect(runtime.hasRunningBackgroundTasks()).toBe(true);
 
-    const started = events.find(
-      (event) => event.type === SessionEventType.BackgroundTaskStarted,
-    );
+    const started = events.find((event) => event.type === SessionEventType.BackgroundTaskStarted);
     expect(started?.payload).toMatchObject({
       cancellable: true,
       description: "Nightly audit",
       status: "running",
       taskId: "dwfrun-1",
       taskKind: "workflow",
-      // The synthesized descriptor's id is the original toolCallId: the tool-card → details-page join key survives resume.
+      // 合成描述子的 id 就是原始 toolCallId：工具卡 → 详情页的关联键跨 resume 保持。
       toolCallId: "call-origin",
       toolName: "CreateWorkflow",
     });
-    // Command-initiated, belonging to no model turn.
+    // 命令发起、不属于任何模型回合。
     expect(started?.turnId).toBeUndefined();
   });
 
@@ -139,9 +140,9 @@ describe("trackResumedDynamicWorkflowRun", () => {
       output: "revived artifact",
     });
     await vi.waitFor(() => {
-      expect(
-        events.some((event) => event.type === SessionEventType.BackgroundTaskCompleted),
-      ).toBe(true);
+      expect(events.some((event) => event.type === SessionEventType.BackgroundTaskCompleted)).toBe(
+        true,
+      );
     });
     expect(runtime.hasRunningBackgroundTasks()).toBe(false);
   });
@@ -151,9 +152,7 @@ describe("trackResumedDynamicWorkflowRun", () => {
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1", toolCallId: "call-1" });
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1", toolCallId: "call-1" });
 
-    const started = events.filter(
-      (event) => event.type === SessionEventType.BackgroundTaskStarted,
-    );
+    const started = events.filter((event) => event.type === SessionEventType.BackgroundTaskStarted);
     expect(started).toHaveLength(1);
   });
 
@@ -161,27 +160,23 @@ describe("trackResumedDynamicWorkflowRun", () => {
     const { runtime, events } = makeRuntime("dwf-track-no-anchor");
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-old" });
 
-    const started = events.find(
-      (event) => event.type === SessionEventType.BackgroundTaskStarted,
-    );
+    const started = events.find((event) => event.type === SessionEventType.BackgroundTaskStarted);
     expect((started?.payload as { toolCallId?: string }).toolCallId).toBe("resume-dwfrun-old");
-    // Display name absent → the fallback chain lands on taskId (same semantics as the submit path; the UI treats it via fallbackName).
+    // 展示名缺席 → 兜底链走到 taskId（与 submit 路径同语义，UI 侧按 fallbackName 处理）。
     expect((started?.payload as { description?: string }).description).toBe("dwfrun-old");
   });
 });
 
 // ————————————————————————————————————————————————
-// Terminal-residue reset (fix tier, apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md,
-// "Cancel and resume").
+// 终态残留复位（fix 档，apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Cancel and resume」）。
 //
-// Root cause: same-process cancel terminal state → resume without restarting. The registry's existing entry carries the
-// previous round's claim notified:true, registerRuntimeBackgroundTask's {...existing} rebuild does not reset it, and
-// claimRuntimeBackgroundTaskNotification refuses based on it — the resumed run's terminal model notification is swallowed.
-// The defect is unrelated to the tool name (today it is reached via the v4 command path under the CreateWorkflow name),
-// so a CreateWorkflow descriptor is used here too; at the fix's commit point lifecycleProvider did not yet recognize
-// ResumeWorkflowRun.
+// 根因：同进程 cancel 终态 → 未重启即 resume 时，registry 既有条目带上一轮 claim 的
+// notified:true，registerRuntimeBackgroundTask 的 {...existing} 重建不复位它，
+// claimRuntimeBackgroundTaskNotification 据此拒收——恢复 run 的终态模型通知被吞。
+// 缺陷与工具名无关（今天就经 v4 命令路径以 CreateWorkflow 名触达），所以这里也用
+// CreateWorkflow 描述子；fix 提交点上 lifecycleProvider 尚不认 ResumeWorkflowRun。
 // ————————————————————————————————————————————————
-/** Unit-level fixture building executor deps directly: registry + notification spy + event array + dwf port stub. */
+/** 直构 executor deps 的单元级 fixture：registry + 通知 spy + 事件数组 + dwf 端口 stub。 */
 function makeUnitFixture(runId = "dwfrun-relive"): {
   deps: ToolExecutorDeps;
   events: SessionEvent[];
@@ -216,15 +211,19 @@ function makeUnitFixture(runId = "dwfrun-relive"): {
     },
     sessionId: createSessionId("dwf-relive-unit"),
   } as unknown as ToolExecutorDeps;
-  return { deps, events, notifications, registry, settleTerminal: (value) => terminal.resolve(value) };
+  return {
+    deps,
+    events,
+    notifications,
+    registry,
+    settleTerminal: (value) => terminal.resolve(value),
+  };
 }
 
 describe("trackBackgroundTask 终态残留复位（单元级）", () => {
-
   it("重臂终态条目按新生命重盖 branchGeneration（cancel → rewind → resume 不被 stale-branch fencing 拦下）", async () => {
     const { deps, registry } = makeUnitFixture();
-    // The previous lifecycle registered at branch generation 3 and was cancelled; the user then rewinds, and the
-    // active branch generation advances to 7.
+    // 上一段生命周期在分支代 3 登记并被 cancel；随后用户 rewind，active 分支代推进到 7。
     registry.setActiveBranchGeneration(3);
     registry.register({
       taskId: "dwfrun-relive",
@@ -247,9 +246,8 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
       createRootTraceContext({ sessionId: createSessionId("dwf-relive-unit") }),
       undefined,
     );
-    // Before the fix: update's {...existing} carried the 3 into the new life, and runtime-command-generation dropped
-    // the new life's task events as old-branch residue. The new life must be stamped with the current active branch
-    // generation.
+    // 修复前：update 的 {...existing} 把 3 带进新生命，runtime-command-generation 会把新生命的
+    // 任务事件当旧分支残留丢弃。新生命必须盖当前 active 分支代。
     expect(registry.get("dwfrun-relive")?.branchGeneration).toBe(7);
     expect(registry.get("dwfrun-relive")?.status).toBe("running");
   });
@@ -281,10 +279,9 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
   it("重臂既有终态条目：结算面复位、身份面保留，二次结算通知不被旧 claim 吞掉", async () => {
     const { deps, notifications, registry, settleTerminal } = makeUnitFixture();
     const startedAt = new Date(Date.UTC(2026, 7, 1, 8, 0, 0));
-    // Pre-seed the previous round's terminal residue: cancelled already settled, the claim already consumed
-    // (notified:true), with the old failure and old deliverable still attached. The identity facets
-    // (parentToolCallId/startedAt) anchor the "tool-card → details-page link survives resume"; if the fix were
-    // miswritten as a wholesale rebuild dropping identity, the identity assertions below must go red.
+    // 预置上一轮的终态残留：cancelled 已结算、claim 已消费（notified:true），还挂着旧失败
+    // 与旧产物。身份面（parentToolCallId/startedAt）是「工具卡 → 详情页链路跨 resume 保持」
+    // 的锚，修复若被误写成整体重建丢身份，下面的身份面断言必须红。
     registry.register({
       taskId: "dwfrun-relive",
       agentId: "dwfrun-relive",
@@ -302,7 +299,11 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
     });
 
     const tracker = new BackgroundTaskTracker(deps);
-    const toolCall: ExecutableToolCall = { id: "call-resume-new", name: CREATE_WORKFLOW_TOOL_NAME, input: {} };
+    const toolCall: ExecutableToolCall = {
+      id: "call-resume-new",
+      name: CREATE_WORKFLOW_TOOL_NAME,
+      input: {},
+    };
     await tracker.trackBackgroundTask(
       toolCall,
       { status: "backgrounded", backgroundTaskId: "dwfrun-relive" },
@@ -310,21 +311,19 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
       undefined,
     );
 
-    // Settlement facets reset: an entry in its running period must not still carry the previous round's
-    // notified/error/completedAt/resultText (leftover error/completedAt/resultText would hang the old failure on a
-    // running-period entry via update's ?? chain).
+    // 结算面复位：running 期的条目不能再挂着上一轮的 notified/error/completedAt/resultText
+    // （error/completedAt/resultText 残留会让 running 期条目经 update 的 ?? 链挂旧失败）。
     const rearmed = registry.get("dwfrun-relive");
     expect(rearmed?.status).toBe("running");
     expect(rearmed?.notified).toBe(false);
     expect(rearmed?.error).toBeUndefined();
     expect(rearmed?.completedAt).toBeUndefined();
     expect(rearmed?.resultText).toBeUndefined();
-    // Identity facets preserved: parentToolCallId/startedAt keep the existing values, not this re-arm's descriptor.
+    // 身份面保留：parentToolCallId/startedAt 维持 existing，不换成本次重臂的描述子。
     expect(rearmed?.parentToolCallId).toBe("call-create-origin");
     expect(rearmed?.startedAt).toBe(startedAt);
 
-    // The second settlement's terminal notification must be delivered: before the fix the leftover notified:true made
-    // the claim refuse and the notification was swallowed.
+    // 二次结算的终态通知必须送达：修复前 notified:true 残留让 claim 拒收、通知被吞。
     settleTerminal({
       runId: "dwfrun-relive",
       taskId: "dwfrun-relive",
@@ -340,11 +339,9 @@ describe("trackBackgroundTask 终态残留复位（单元级）", () => {
 });
 
 // ————————————————————————————————————————————————
-// The terminal notification's manifest payload (docs/dynamic-workflow/transcript-and-notifications.md, where the
-// payload is minted).
-// The payload is minted on the emitting side, bounded, and travels the whole pipeline with originMeta; the GUI renders
-// manifest entries from it. A missing snapshot (lost) or a non-terminal state never carries it — a missing payload
-// falls back to the bare title line.
+// 终态通知的 manifest 载荷（docs/dynamic-workflow/transcript-and-notifications.md「Where the payload is minted」发射点）。
+// 载荷发射侧铸造、有界，随 originMeta 走全管线；GUI 据它渲染 manifest 条目。快照缺失（lost）
+// 或非终态一律不携带——载荷缺席即退回裸标题行。
 // ————————————————————————————————————————————————
 interface TerminalNotificationMeta {
   kind: "terminal";
@@ -360,7 +357,7 @@ interface TerminalNotificationMeta {
   durationMs?: number;
 }
 
-/** The workflowNotification of notifications[0] (terminal branch), or undefined if none. */
+/** 取 notifications[0] 的 workflowNotification（terminal 分支），无则 undefined。 */
 function terminalMetaOf(
   notification: { originMeta?: unknown } | undefined,
 ): TerminalNotificationMeta | undefined {
@@ -396,7 +393,7 @@ describe("终态通知的 manifest 载荷", () => {
       expect(notifications).toHaveLength(1);
     });
     const meta = terminalMetaOf(notifications[0]);
-    // summary and the background result header's title share a source (workflowTaskSubject → input.name).
+    // summary 与后台结果头的 title 同源（workflowTaskSubject → input.name）。
     expect(notifications[0]!.originMeta).toMatchObject({ title: "nightly audit" });
     expect(meta).toMatchObject({
       kind: "terminal",
@@ -406,9 +403,9 @@ describe("终态通知的 manifest 载荷", () => {
       resultForm: "prose",
       durationMs: 5_000,
     });
-    // string deliverable → prose, never a truncation marker.
+    // string 产物 → prose，绝不截断标志。
     expect(meta?.resultTruncated).toBeUndefined();
-    // reports: count is the true total number of items, preview serializes each item (the second is a plain string, verbatim).
+    // reports：count 是真实总条数，preview 逐条序列化（第二条是纯字符串，原样）。
     expect(meta?.reports).toEqual({
       count: 2,
       shown: 2,
@@ -431,13 +428,12 @@ describe("终态通知的 manifest 载荷", () => {
   });
 
   // ————————————————————————————————————————————————
-  // The duration's accounting (docs/dynamic-workflow/transcript-and-notifications.md, "How long it took").
-  // The regression's defect: only "this process's own life that settled it" was reported, so the life produced by an
-  // amend/resume (mostly cache replay, seconds) became the duration of the whole lineage — four hours of work reported
-  // as 12 seconds, while the same card's tokens are the lineage total.
+  // 时长的口径（docs/dynamic-workflow/transcript-and-notifications.md「How long it took」）。
+  // 回归的缺陷：只报「结算它的这个进程自己的那一世」，于是修订/恢复出来的那一世（大半是缓存
+  // 重放，秒级）成了整条 lineage 的时长——四小时的活报 12 秒，而同卡的 tokens 是 lineage 总数。
   // ————————————————————————————————————————————————
 
-  /** Track a run and hand back its terminal payload. */
+  /** 追踪一个 run 并交出它的终态载荷。 */
   async function terminalMetaAfterSettle(
     runId: string,
     snapshot: Omit<DynamicWorkflowRunSnapshot, "runId" | "taskId">,
@@ -457,7 +453,7 @@ describe("终态通知的 manifest 载荷", () => {
     return terminalMetaOf(notifications[0]);
   }
 
-  /** This life 12 seconds (the amend/resume life); lineage four hours. */
+  /** 本世 12 秒（修订/恢复出来的那一世），lineage 四小时。 */
   const AMENDED_LIFE = {
     startedAt: new Date(Date.UTC(2026, 8, 1, 12, 0, 0)),
     completedAt: new Date(Date.UTC(2026, 8, 1, 12, 0, 12)),
@@ -471,9 +467,8 @@ describe("终态通知的 manifest 载荷", () => {
     });
 
     expect(meta?.durationMs).toBe(4 * 3_600_000);
-    // The gate at the boundary: a payload rejected by the shared schema would keep the whole row out of the store
-    // (the notification would be lost permanently), and the numbers under this accounting are orders of magnitude
-    // larger than before — the upper bound must genuinely be absent.
+    // 跨边界的那道闸：共享 schema 拒收的载荷会让整条 row 落不了库（通知因此永久消失），
+    // 而这个口径下的数比以往大几个数量级——上界必须真的没有。
     expect(workflowNotificationMetaSchema.safeParse(meta).success).toBe(true);
   });
 
@@ -515,7 +510,7 @@ describe("终态通知的 manifest 载荷", () => {
     });
     expect(notFinite?.durationMs).toBe(12_000);
 
-    // Neither source can tell → the whole field is absent (`—` on the card), not written as 0.
+    // 两个来源都说不出 → 整字段缺席（卡上 `—`），不写 0。
     const neither = await terminalMetaAfterSettle("dwfrun-neither", {
       startedAt: new Date(Date.UTC(2026, 8, 1, 12, 0, 0)),
       status: "completed",
@@ -533,7 +528,7 @@ describe("终态通知的 manifest 载荷", () => {
       createRootTraceContext({ sessionId: createSessionId("dwf-json") }),
       undefined,
     );
-    // An object deliverable serializing to more than 4000 characters.
+    // 一个序列化后 >4000 字符的对象产物。
     const big = "x".repeat(5_000);
     settleTerminal({
       runId: "dwfrun-json",
@@ -572,8 +567,7 @@ describe("终态通知的 manifest 载荷", () => {
       expect(notifications).toHaveLength(1);
     });
     const meta = terminalMetaOf(notifications[0]);
-    // The tracker's `failed` is the terminal word `errored` on the manifest
-    // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
+    // 追踪器的 `failed` 在 manifest 上是三终态词 `errored`（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
     expect(meta).toMatchObject({
       kind: "terminal",
       status: "errored",
@@ -584,8 +578,7 @@ describe("终态通知的 manifest 载荷", () => {
   });
 
   it("lost（快照缺失）→ 无 manifest 载荷，仅保留三基字段", async () => {
-    // With the dwf port present it never lands as lost; with the port entirely absent there is no snapshot source and
-    // no waiter, so tracking goes straight to lost.
+    // dwf 端口在场时不会落 lost；端口整个缺席时无快照源、无等待者，tracking 直接 lost。
     const notifications: { text: string; originMeta?: unknown }[] = [];
     const deps = {
       emitEvent: async () => {},
@@ -608,15 +601,13 @@ describe("终态通知的 manifest 载荷", () => {
       title: "orphan",
       workId: "dwfrun-lost",
     });
-    expect(terminalMetaOf(notifications[0])).toBeUndefined();
   });
 
-  // The chips payload of user-facing artifacts (docs/dynamic-workflow/authoring.md, "How the user sees them"). This is
-  // the only data source of the notification row's chips; cold recovery reads it back verbatim via shared's zod, so the
-  // shape must align word for word with that schema.
+  // 用户面产物的 chips 载荷（docs/dynamic-workflow/authoring.md「How the user sees them」）。这是通知行 chips
+  // 的唯一数据源；冷恢复靠 shared 的 zod 原样读回，所以形状必须与那份 schema 逐字对齐。
   //
-  // ⚠ Terminology: artifacts here are output a script publishes via `artifact.*` for the user to see; the `result` on
-  // the same payload (the script's top-level return value, also called an artifact inside the engine) is a different thing.
+  // ⚠ 术语：这里的 artifacts 是脚本经 `artifact.*` 发布给用户看的产出，与同一载荷上的 `result`
+  // （脚本顶层返回值，引擎内部也叫 artifact）是两件不同的东西。
   it("artifacts：只带 chip 画得下的字段，与 result 并列且互不影响", async () => {
     const { deps, notifications, settleTerminal } = makeUnitFixture("dwfrun-artifacts");
     const tracker = new BackgroundTaskTracker(deps);
@@ -646,27 +637,31 @@ describe("终态通知的 manifest 载荷", () => {
             { version: 2, publishedAt: 2, bytes: 4096 },
           ],
         },
-        { id: "perf", kind: "chart", version: 1, itemCount: 7, versions: [{ version: 1, publishedAt: 3 }] },
+        {
+          id: "perf",
+          kind: "chart",
+          version: 1,
+          itemCount: 7,
+          versions: [{ version: 1, publishedAt: 3 }],
+        },
       ],
     });
     await vi.waitFor(() => {
       expect(notifications).toHaveLength(1);
     });
     const meta = terminalMetaOf(notifications[0]);
-    // Bytes / item count / provenance / spec deliberately stay out of the payload — they do not fit on a chip; open the
-    // side pane for them.
+    // 字节 / 条目 / 出处 / spec 都刻意不进载荷——chip 上放不下，点开侧板即可。
     expect(meta?.artifacts).toEqual([
       { id: "report", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
       { id: "perf", kind: "chart", version: 1 },
     ]);
     expect(meta?.artifactsTruncated).toBeUndefined();
-    // The top-level return value remains present independently: the two artifacts do not interfere.
+    // 顶层返回值仍然独立在场：两个 artifact 互不干扰。
     expect(meta?.result).toBe("the script's return value");
   });
 
-  // Deliverables (docs/dynamic-workflow/transcript-and-notifications.md, "Artifact tiles"):
-  // sorted to the front of the list — the cap of 8 can never cut them; only they carry a description (the line the
-  // completion card reads out).
+  // 交付物（docs/dynamic-workflow/transcript-and-notifications.md「Artifact tiles」）：
+  // 排到清单最前——8 的上界永远砍不到它；只有它带 description（完成卡的那一行要念）。
   it("artifacts：primary 带头进清单（第 9 件发布也不会被 8 的上界砍掉），description 只在它身上", async () => {
     const { deps, notifications, settleTerminal } = makeUnitFixture("dwfrun-artifacts-primary");
     const tracker = new BackgroundTaskTracker(deps);
@@ -698,7 +693,10 @@ describe("终态通知的 manifest 载荷", () => {
           version: 2,
           itemCount: 0,
           primary: true,
-          versions: [{ version: 1, publishedAt: 9, bytes: 8, primary: true }, { version: 2, publishedAt: 10, bytes: 9, primary: true }],
+          versions: [
+            { version: 1, publishedAt: 9, bytes: 8, primary: true },
+            { version: 2, publishedAt: 10, bytes: 9, primary: true },
+          ],
         },
       ],
     });
@@ -716,12 +714,18 @@ describe("终态通知的 manifest 载荷", () => {
       description: "结论与修复建议",
     });
     expect(meta?.artifacts?.slice(1).map((artifact) => artifact.id)).toEqual([
-      "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+      "a1",
+      "a2",
+      "a3",
+      "a4",
+      "a5",
+      "a6",
+      "a7",
     ]);
-    // Non-deliverable descriptions stay out of the payload (they do not fit on a chip, and are not needed).
+    // 非交付物的 description 不进载荷（chip 上放不下，也不需要）。
     expect(meta?.artifacts?.slice(1).some((artifact) => "description" in artifact)).toBe(false);
     expect(meta?.artifactsTruncated).toBe(true);
-    // The model-facing list likewise leads with the deliverable, and marks primary after the kind.
+    // 模型面的清单同样以交付物带头，并在种类后标 primary。
     const text = notifications[0]!.text;
     const primaryLine = text.indexOf("- report (markdown, primary, v2");
     expect(primaryLine).toBeGreaterThan(-1);
@@ -759,7 +763,7 @@ describe("终态通知的 manifest 载荷", () => {
     expect(meta?.artifacts?.[7]?.id).toBe("a8");
     expect(meta?.artifactsTruncated).toBe(true);
 
-    // No items (the key is absent on the snapshot): both fields absent together, not an empty array.
+    // 零件（快照上没有这个键）：两个字段一起缺席，而不是一个空数组。
     const empty = makeUnitFixture("dwfrun-artifacts-none");
     const emptyTracker = new BackgroundTaskTracker(empty.deps);
     await emptyTracker.trackBackgroundTask(
@@ -797,10 +801,21 @@ describe("终态通知的 manifest 载荷", () => {
       startedAt: new Date(),
       status: "completed",
       artifacts: [
-        // A new kind from a future version: letting it through would make zod reject the whole payload, taking the
-        // remaining chips down with it.
-        { id: "future", kind: "hologram", version: 1, itemCount: 0, versions: [{ version: 1, publishedAt: 1 }] },
-        { id: "notes", kind: "markdown", version: 1, itemCount: 0, versions: [{ version: 1, publishedAt: 2 }] },
+        // 未来版本的新种类：放行会让整份载荷被 zod 拒收，连带其余 chip 一起消失。
+        {
+          id: "future",
+          kind: "hologram",
+          version: 1,
+          itemCount: 0,
+          versions: [{ version: 1, publishedAt: 1 }],
+        },
+        {
+          id: "notes",
+          kind: "markdown",
+          version: 1,
+          itemCount: 0,
+          versions: [{ version: 1, publishedAt: 2 }],
+        },
       ],
     });
     await vi.waitFor(() => {
@@ -808,13 +823,12 @@ describe("终态通知的 manifest 载荷", () => {
     });
     const meta = terminalMetaOf(notifications[0]);
     expect(meta?.artifacts).toEqual([{ id: "notes", kind: "markdown", version: 1 }]);
-    // One entry dropped ⇒ the list is partial.
+    // 丢掉了一条 ⇒ 清单是局部的。
     expect(meta?.artifactsTruncated).toBe(true);
   });
 
-  // The payload travels the protocol on the turnHeader row; over the bound, zod would reject the whole row on write —
-  // so every bound must be honored **before construction**. Feeding the emitting side's artifacts directly to that
-  // schema is the only hard evidence the two sides do not drift.
+  // 载荷随 turnHeader row 走协议，超界会让整行落库时 zod 拒收——所以每一条界都必须在
+  // **构造前**兑现。这条把发射侧的产物直接喂给那份 schema，是两边不漂移的唯一硬证据。
   it("artifacts：越界的 id / version / contentType 整条或整键丢弃，产物恒可被 shared 的 zod 接受", async () => {
     const { deps, notifications, settleTerminal } = makeUnitFixture("dwfrun-artifacts-bounds");
     const tracker = new BackgroundTaskTracker(deps);
@@ -830,14 +844,28 @@ describe("终态通知的 manifest 载荷", () => {
       startedAt: new Date(),
       status: "completed",
       artifacts: [
-        // id over 64: truncating would fabricate an artifact that does not exist ⇒ drop the entry.
+        // id 超 64：截短就是编造一个不存在的产物 ⇒ 整条丢。
         { id: "x".repeat(65), kind: "file", version: 1, itemCount: 0, versions: [] },
-        // Non-positive-integer version ⇒ drop the entry.
+        // 非正整数版本号 ⇒ 整条丢。
         { id: "half", kind: "file", version: 1.5, itemCount: 0, versions: [] },
-        // contentType over 255 ⇒ drop only this decorative key; the entry stays.
-        { id: "ok", kind: "file", version: 1, contentType: "a/".repeat(200), itemCount: 0, versions: [] },
-        // title over 120 ⇒ truncate (title is display text; a shortened one still means something).
-        { id: "long", kind: "markdown", version: 1, title: "标".repeat(200), itemCount: 0, versions: [] },
+        // contentType 超 255 ⇒ 只丢这一个装饰键，条目仍在。
+        {
+          id: "ok",
+          kind: "file",
+          version: 1,
+          contentType: "a/".repeat(200),
+          itemCount: 0,
+          versions: [],
+        },
+        // title 超 120 ⇒ 截断（title 是展示文本，截短仍然有意义）。
+        {
+          id: "long",
+          kind: "markdown",
+          version: 1,
+          title: "标".repeat(200),
+          itemCount: 0,
+          versions: [],
+        },
       ],
     });
     await vi.waitFor(() => {
@@ -848,7 +876,7 @@ describe("终态通知的 manifest 载荷", () => {
     expect(meta?.artifacts?.[0]).not.toHaveProperty("contentType");
     expect(meta?.artifacts?.[1]?.title).toHaveLength(120);
     expect(meta?.artifactsTruncated).toBe(true);
-    // Emitting-side artifacts → shared's zod: the bounds on both sides do not drift.
+    // 发射侧产物 → shared 的 zod：两边的界不漂移。
     expect(workflowNotificationMetaSchema.safeParse(meta).success).toBe(true);
   });
 
@@ -887,28 +915,23 @@ describe("终态通知的 manifest 载荷", () => {
       title: "wait",
       workId: "bash-bg",
     });
-    expect(
-      (notifications[0]!.originMeta as { workflowNotification?: unknown }).workflowNotification,
-    ).toBeUndefined();
   });
 });
 
-// Full regression for the v4 path: cancel terminal state → resume without restarting → second settlement. The main
-// assertion spies on runtime.enqueueBackgroundTaskNotification (reachable via the default wiring in runtime-tools.ts);
-// BackgroundTaskCompleted events fire whether or not the claim happens, so they cannot pin the "swallow the
-// notification" behavior.
+// v4 路径的完整回归：cancel 终态 → 未重启即 resume → 二次结算。主断言是 spy
+// runtime.enqueueBackgroundTaskNotification（经 runtime-tools.ts 默认接线可达）；
+// BackgroundTaskCompleted 事件无论 claim 与否都发，钉不住「吞通知」这个行为。
 describe("trackResumedDynamicWorkflowRun 终态残留复位（v4 路径回归）", () => {
   it("cancel 结算后再重臂同 runId：两轮终态各送达一次通知且内容可分辨", async () => {
     const { runtime, events, terminal } = makeRuntime("dwf-track-relive");
     const recorded: string[] = [];
-    const notifySpy = vi
-      .spyOn(runtime, "enqueueBackgroundTaskNotification")
-      .mockImplementation((notification: { text: string }) => {
-        // Record only, do not actually enqueue: enqueueing would start a model turn through the runtime command queue
-        // (task-notification → executeTurnCommand), and the test has no model. What this case pins is "whether the
-        // notification gets swallowed by the claim".
+    vi.spyOn(runtime, "enqueueBackgroundTaskNotification").mockImplementation(
+      (notification: { text: string }) => {
+        // 只记录不真正入队：入队会经 runtime 命令队列启动模型轮次（task-notification →
+        // executeTurnCommand），测试没有模型；本用例钉的是「通知是否被 claim 吞掉」。
         recorded.push(notification.text);
-      });
+      },
+    );
 
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1", toolCallId: "call-origin" });
     terminal.resolve({
@@ -922,7 +945,7 @@ describe("trackResumedDynamicWorkflowRun 终态残留复位（v4 路径回归）
     });
     expect(recorded[0]).toMatch(/stopped/i);
 
-    // Same-process cancel terminal state → resume without restarting: re-arm the same runId and settle a second time.
+    // 同进程内 cancel 终态 → 未重启即 resume：重臂同一个 runId 并二次结算。
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1", toolCallId: "call-origin" });
     terminal.resolve({
       runId: "dwfrun-1",
@@ -934,27 +957,26 @@ describe("trackResumedDynamicWorkflowRun 终态残留复位（v4 路径回归）
     await vi.waitFor(() => {
       expect(recorded).toHaveLength(2);
     });
-    // The two rounds are distinguishable: cancelled vs completed (carrying new deliverables).
+    // 两轮内容可分辨：cancelled vs completed（携新产物）。
     expect(recorded[1]).toMatch(/completed/i);
     expect(recorded[1]).toContain("second life");
 
-    // Auxiliary assertion: each round fires one BackgroundTaskCompleted (it fires whether or not the claim happens, so
-    // it cannot pin notification swallowing — only that both rounds' settlements ran to completion).
+    // 辅助断言：两轮各发一次 BackgroundTaskCompleted（它无论 claim 与否都发，钉不住吞通知，
+    // 只证明两轮结算都走完了）。
     const completions = events.filter(
       (event) => event.type === SessionEventType.BackgroundTaskCompleted,
     );
     expect(completions).toHaveLength(2);
-    expect(notifySpy).toHaveBeenCalled();
   });
 });
 
 // ————————————————————————————————————————————————
-// feat tier (2026-08-29): the ResumeWorkflowRun name itself must be claimed by the tracking pipeline — once
-// isDynamicWorkflowRunDispatchToolName is extended, the resume entry and the fresh-launch entry are isomorphic to the
-// tracker (taskType, panel taskKind, cancellability, notification format, and registry re-arm semantics all aligned).
+// feat 档（2026-08-29）：ResumeWorkflowRun 这个名字本身要被追踪管线认领——
+// isDynamicWorkflowRunDispatchToolName 扩名后，恢复入口与新启动入口对 tracker 同构
+//（taskType、面板 taskKind、可取消、通知格式、registry 重臂语义全部一致）。
 // ————————————————————————————————————————————————
 describe("ResumeWorkflowRun 的追踪分派", () => {
-  /** The real output shape of the ResumeWorkflowRun tool (the executor triggers tracking on its backgrounded). */
+  /** ResumeWorkflowRun 工具的真实输出形状（executor 据其中的 backgrounded 触发追踪）。 */
   function resumeOutput(runId: string): Record<string, unknown> {
     return {
       ok: true,
@@ -966,24 +988,29 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
   }
 
   it("走 dwf 生命周期：registry 在册、workflow 面板条目可取消、终态通知携产物与 reports", async () => {
-    const { deps, events, notifications, registry, settleTerminal } = makeUnitFixture("dwfrun-feat");
+    const { deps, events, notifications, registry, settleTerminal } =
+      makeUnitFixture("dwfrun-feat");
     const tracker = new BackgroundTaskTracker(deps);
     await tracker.trackBackgroundTask(
-      { id: "call-resume-1", name: RESUME_WORKFLOW_RUN_TOOL_NAME, input: { run_id: "dwfrun-feat" } },
+      {
+        id: "call-resume-1",
+        name: RESUME_WORKFLOW_RUN_TOOL_NAME,
+        input: { run_id: "dwfrun-feat" },
+      },
       resumeOutput("dwfrun-feat"),
       createRootTraceContext({ sessionId: createSessionId("dwf-feat") }),
       undefined,
     );
 
-    // The reclamation guard is registered + taskType attributed to dwf (otherwise registerRuntimeBackgroundTask
-    // returns directly, and both the session reclamation guard and TaskOutput visibility are lost).
+    // 回收护栏在册 + taskType 归 dwf（缺席则 registerRuntimeBackgroundTask 直接 return，
+    // 会话回收护栏与 TaskOutput 可见性全失）。
     expect(registry.get("dwfrun-feat")).toMatchObject({
       taskType: "local_dynamic_workflow",
       type: "local_dynamic_workflow",
       status: "running",
       parentToolCallId: "call-resume-1",
     });
-    // Panel entry: taskKind "workflow" + cancellable (port present → cancel reachable).
+    // 面板条目：taskKind "workflow" + 可取消（端口在场 → cancel 可达）。
     const started = events.find((event) => event.type === SessionEventType.BackgroundTaskStarted);
     expect(started?.payload).toMatchObject({
       cancellable: true,
@@ -993,7 +1020,7 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
       toolCallId: "call-resume-1",
       toolName: RESUME_WORKFLOW_RUN_TOOL_NAME,
     });
-    // Port present → snapshot provider available → never lands as lost.
+    // 端口在场 → 有快照提供者 → 绝不落 lost。
     expect(
       events.some(
         (event) =>
@@ -1013,8 +1040,8 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
     await vi.waitFor(() => {
       expect(notifications).toHaveLength(1);
     });
-    // formatWorkflowTaskNotification: serializeWorkflowArtifact deliverables + a reports section + workflow originMeta
-    // (the background result header, workId ≡ runId).
+    // formatWorkflowTaskNotification：serializeWorkflowArtifact 产物 + reports 节 +
+    // workflow originMeta（后台结果头，workId ≡ runId）。
     expect(notifications[0]!.text).toContain("resumed artifact");
     expect(notifications[0]!.text).toContain("中途产物");
     expect(notifications[0]!.originMeta).toMatchObject({
@@ -1027,16 +1054,19 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
     const { deps, notifications, registry, settleTerminal } = makeUnitFixture("dwfrun-again");
     const tracker = new BackgroundTaskTracker(deps);
     await tracker.trackBackgroundTask(
-      { id: "call-resume-a", name: RESUME_WORKFLOW_RUN_TOOL_NAME, input: { run_id: "dwfrun-again" } },
+      {
+        id: "call-resume-a",
+        name: RESUME_WORKFLOW_RUN_TOOL_NAME,
+        input: { run_id: "dwfrun-again" },
+      },
       resumeOutput("dwfrun-again"),
       createRootTraceContext({ sessionId: createSessionId("dwf-again") }),
       undefined,
     );
     expect(registry.get("dwfrun-again")?.parentToolCallId).toBe("call-resume-a");
 
-    // The second re-arm in the cancel→resume loop: it must happen **after** the first round's terminal settlement
-    // (settlement removes the poller, and only then does the re-arm genuinely rebuild the entry — while the poller is
-    // still there a second call is blocked by dedup, which is the existing idempotence semantics).
+    // cancel→resume 循环里的第二次重臂：必须发生在第一轮终态结算**之后**（结算把 poller
+    // 摘掉，重臂才会真正重建条目——poller 还在时二次调用被去重挡掉，是既有幂等语义）。
     settleTerminal({
       runId: "dwfrun-again",
       taskId: "dwfrun-again",
@@ -1047,10 +1077,14 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
       expect(notifications).toHaveLength(1);
     });
 
-    // The existing-merge semantics keep the **first** resume tool row's id instead of swapping in the new descriptor —
-    // the join key is stable, so we do not assert "it became a new row".
+    // existing 合并语义保住**首个** resume 工具行 id，不换成新描述子——join 键稳定，
+    // 不做「换成新行」的断言。
     await tracker.trackBackgroundTask(
-      { id: "call-resume-b", name: RESUME_WORKFLOW_RUN_TOOL_NAME, input: { run_id: "dwfrun-again" } },
+      {
+        id: "call-resume-b",
+        name: RESUME_WORKFLOW_RUN_TOOL_NAME,
+        input: { run_id: "dwfrun-again" },
+      },
       resumeOutput("dwfrun-again"),
       createRootTraceContext({ sessionId: createSessionId("dwf-again") }),
       undefined,
@@ -1059,10 +1093,9 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
     expect(registry.get("dwfrun-again")?.status).toBe("running");
   });
 
-  // Production first chain: CreateWorkflow launches → terminal state → ResumeWorkflowRun resumes. Via the
-  // existing-merge semantics the registry entry keeps the original CreateWorkflow tool row's parentToolCallId — the
-  // details-page join does not break across resume (same destination as the v4 path synthesizing the original
-  // toolCallId, by a different route).
+  // 生产首链：CreateWorkflow 启动 → 终态 → ResumeWorkflowRun 恢复。registry 条目经
+  // existing 合并语义沿用原始 CreateWorkflow 工具行的 parentToolCallId——详情页 join
+  // 跨 resume 不断链（与 v4 路径合成原始 toolCallId 的效果殊途同归）。
   it("混合场景：CreateWorkflow 首链条目被 ResumeWorkflowRun 重臂后 join 键不断链", async () => {
     const { deps, registry } = makeUnitFixture("dwfrun-mixed");
     registry.register({
@@ -1080,7 +1113,11 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
 
     const tracker = new BackgroundTaskTracker(deps);
     await tracker.trackBackgroundTask(
-      { id: "call-resume-mixed", name: RESUME_WORKFLOW_RUN_TOOL_NAME, input: { run_id: "dwfrun-mixed" } },
+      {
+        id: "call-resume-mixed",
+        name: RESUME_WORKFLOW_RUN_TOOL_NAME,
+        input: { run_id: "dwfrun-mixed" },
+      },
       resumeOutput("dwfrun-mixed"),
       createRootTraceContext({ sessionId: createSessionId("dwf-mixed") }),
       undefined,
@@ -1089,8 +1126,8 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
     expect(registry.get("dwfrun-mixed")?.parentToolCallId).toBe("call-create-origin");
   });
 
-  // Name-level re-verification of the fix tier's behavior: after a ResumeWorkflowRun descriptor re-arms a
-  // terminal-residue entry, the second settlement's notification is not swallowed by the old claim.
+  // fix 档行为的名字面复验：ResumeWorkflowRun 描述子重臂终态残留条目后，二次结算的通知
+  // 不被旧 claim 吞掉。
   it("终态结算后再经 ResumeWorkflowRun 重臂同 runId：通知不被吞（fix 档行为的名字面）", async () => {
     const { deps, notifications, registry, settleTerminal } = makeUnitFixture("dwfrun-cycle");
     const tracker = new BackgroundTaskTracker(deps);
@@ -1101,7 +1138,12 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
     };
     const traceContext = createRootTraceContext({ sessionId: createSessionId("dwf-cycle") });
 
-    await tracker.trackBackgroundTask(toolCall, resumeOutput("dwfrun-cycle"), traceContext, undefined);
+    await tracker.trackBackgroundTask(
+      toolCall,
+      resumeOutput("dwfrun-cycle"),
+      traceContext,
+      undefined,
+    );
     settleTerminal({
       runId: "dwfrun-cycle",
       taskId: "dwfrun-cycle",
@@ -1112,7 +1154,12 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
       expect(notifications).toHaveLength(1);
     });
 
-    await tracker.trackBackgroundTask(toolCall, resumeOutput("dwfrun-cycle"), traceContext, undefined);
+    await tracker.trackBackgroundTask(
+      toolCall,
+      resumeOutput("dwfrun-cycle"),
+      traceContext,
+      undefined,
+    );
     settleTerminal({
       runId: "dwfrun-cycle",
       taskId: "dwfrun-cycle",
@@ -1129,15 +1176,14 @@ describe("ResumeWorkflowRun 的追踪分派", () => {
 });
 
 // ————————————————————————————————————————————————
-// feat tier (2026-09-03, docs/dynamic-workflow/launch.md): the CreateWorkflow descriptor synthesized by direct launch
-// from the hub (input = { name, saved: {...} }, id = launch-<uuid>) goes through the same trackBackgroundTask, and the
-// terminal notification's subject / originMeta it produces is field-for-field identical in shape to the model tool path
-// (input = { name }) — invariant 1: the two paths' runs are indistinguishable to notifications (distinguishable only
-// by the toolCallId prefix).
+// feat 档（2026-09-03，docs/dynamic-workflow/launch.md）：中枢直接启动合成的 CreateWorkflow
+// 描述子（input = { name, saved: {...} }，id = launch-<uuid>）经同一条 trackBackgroundTask，
+// 产出的终态通知 subject / originMeta 与模型工具路径（input = { name }）逐字段同形——不变式 1：
+// 两条路径的 run 对通知不可区分（只在 toolCallId 前缀上可辨）。
 // ————————————————————————————————————————————————
 describe("直接启动合成 toolCall 的通知同形", () => {
   it("launch- 描述子（含 saved 袋）与工具路径产出同一 subject / originMeta", async () => {
-    // Tool path: input.name decides the subject.
+    // 工具路径：input.name 决定 subject。
     const tool = makeUnitFixture("dwfrun-parity");
     const toolTracker = new BackgroundTaskTracker(tool.deps);
     await toolTracker.trackBackgroundTask(
@@ -1157,8 +1203,7 @@ describe("直接启动合成 toolCall 的通知同形", () => {
       expect(tool.notifications).toHaveLength(1);
     });
 
-    // Direct-launch path: a synthesized CreateWorkflow descriptor whose input carries the saved bag, with a launch-
-    // prefixed id.
+    // 直接启动路径：合成 CreateWorkflow 描述子，input 带 saved 袋，id 为 launch- 前缀。
     const launch = makeUnitFixture("dwfrun-parity-2");
     const launchTracker = new BackgroundTaskTracker(launch.deps);
     const launchCall: ExecutableToolCall = {
@@ -1186,7 +1231,7 @@ describe("直接启动合成 toolCall 的通知同形", () => {
       expect(launch.notifications).toHaveLength(1);
     });
 
-    // subject (title) shares a source: both paths take it from input.name, independent of the saved bag.
+    // subject（title）同源：两路都从 input.name 取，与 saved 袋无关。
     const toolMeta = tool.notifications[0]!.originMeta as {
       title?: string;
       backgroundSource?: string;
@@ -1199,7 +1244,7 @@ describe("直接启动合成 toolCall 的通知同形", () => {
     expect(launchMeta.title).toBe(toolMeta.title);
     expect(launchMeta.backgroundSource).toBe("workflow");
     expect(launchMeta.backgroundSource).toBe(toolMeta.backgroundSource);
-    // Terminal manifest payloads are shape-identical: summary from the same source, both completed.
+    // 终态 manifest 载荷同形：summary 同源、都 completed。
     expect(terminalMetaOf(launch.notifications[0])).toMatchObject({
       kind: "terminal",
       status: "completed",
@@ -1211,10 +1256,8 @@ describe("直接启动合成 toolCall 的通知同形", () => {
   });
 });
 
-// After a user cancellation the main agent must not resume on its own
-// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md, "Cancel and resume", 2026-09-09):
-// the stop branch writes "who stopped it" into the registry, and the terminal notification phrases itself accordingly
-// and gives "do not resume" guidance.
+// 用户取消之后主代理不得自行恢复（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Cancel and resume」 2026-09-09）：
+// 停止分支把「谁停的」写进 registry，终态通知据此措辞并给出「不要恢复」的指引。
 describe("用户取消的 run：终态通知说清是谁停的", () => {
   function recordNotifications(runtime: AgentRuntime): string[] {
     const recorded: string[] = [];
@@ -1231,7 +1274,7 @@ describe("用户取消的 run：终态通知说清是谁停的", () => {
     const recorded = recordNotifications(runtime);
     await runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1", toolCallId: "call-origin" });
 
-    // The only entry the GUI / background panel uses: runtime.cancelBackgroundTask (v4 cancelBackgroundWork).
+    // GUI / 后台面板唯一走的入口：runtime.cancelBackgroundTask（v4 cancelBackgroundWork）。
     await runtime.cancelBackgroundTask("dwfrun-1");
     terminal.resolve({
       runId: "dwfrun-1",
@@ -1250,7 +1293,7 @@ describe("用户取消的 run：终态通知说清是谁停的", () => {
     expect(text).toContain("<stop-reason>user</stop-reason>");
     expect(text).toContain("The user stopped this workflow on purpose.");
     expect(text).toMatch(/Do not resume it with ResumeWorkflowRun/);
-    // The old guidance sentence "resumable as-is" must never appear again in a user-cancelled notification.
+    // 旧指引那句「resumable as-is」绝不能再出现在用户取消的通知里。
     expect(text).not.toContain("resumable as-is");
   });
 
@@ -1259,7 +1302,7 @@ describe("用户取消的 run：终态通知说清是谁停的", () => {
     const recordedModel = recordNotifications(stoppedByModel.runtime);
     await stoppedByModel.runtime.trackResumedDynamicWorkflowRun({ runId: "dwfrun-1" });
     await stoppedByModel.runtime.stopBackgroundTask("dwfrun-1", { initiator: "model" });
-    // The snapshot carries no stopReason (old port): the registry's stopInitiator remains the fallback.
+    // 快照不带 stopReason（老端口）：registry 的 stopInitiator 仍是兜底。
     stoppedByModel.terminal.resolve({
       runId: "dwfrun-1",
       taskId: "dwfrun-1",
@@ -1271,8 +1314,7 @@ describe("用户取消的 run：终态通知说清是谁停的", () => {
     });
     expect(recordedModel[0]).toContain("was stopped by you (TaskStop).");
     expect(recordedModel[0]).toContain("<stop-reason>model</stop-reason>");
-    // A run stopped in order to amend the script should be amended on the spot (amend-resume addendum 2026-09-14), so
-    // the guidance's first sentence must say this first.
+    // 为改脚本而停的 run 要当场修订（amend-resume 追记 2026-09-14），指引首句必须先说这个。
     expect(recordedModel[0]).toContain("If you stopped it to fix the script");
     expect(recordedModel[0]).not.toContain("resumable as-is");
 

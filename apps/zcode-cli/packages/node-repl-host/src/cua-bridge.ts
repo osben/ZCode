@@ -20,7 +20,7 @@ export interface NodeReplCuaBrokerConnection {
 }
 
 export interface ComputerUseRuntimeBridge {
-  /** Private capability request; this is not an MCP tool call, as MCP only carries the outer node_repl call. */
+  /** 私有 capability 请求；这里不是 MCP tool 调用，MCP 只承载外层 node_repl。 */
   call(method: string, input: unknown): Promise<CallToolResult>;
   assertAvailable(): void;
   documentationRoot: string;
@@ -69,10 +69,9 @@ export function createComputerUseBridgeGlobals(input: {
       );
       assertActive();
       if (result.responseMeta) input.session().mergeResponseMeta(result.responseMeta);
-      // Read the target app identity here: the broker response is a hop the model cannot
-      // see or modify. Once `projectToHost` passes `_meta` to
-      // `nodeRepl.emitStructuredResult`, it is on a sandbox channel writable by the
-      // model, so producer metadata can no longer be distinguished from cell-authored data.
+      // 目标应用身份必须在这里取：broker 响应是模型看不见也改不了的一跳。等到
+      // `projectToHost` 把 `_meta` 交给 `nodeRepl.emitStructuredResult` 就已经落在模型可写的
+      // sandbox 通道上，无法再区分「producer 给的」和「cell 里自己写的」。
       const app = readPrimaryAppIdentity(result.result);
       if (app) input.session().recordCuaAppIdentity(app);
       return result.result;
@@ -83,14 +82,12 @@ export function createComputerUseBridgeGlobals(input: {
 }
 
 /**
- * Read the single target application from the producer's app-associations metadata.
+ * 从 producer 的 app-associations 元数据里取出单一目标应用。
  *
- * Read only `primary`: `list_apps` uses `items` mode (associated by result index, with
- * no per-item list card in node_repl), while `request_access` /
- * `stop_computer_control` declare `none`. None of these should overwrite the identity
- * established by earlier actions in the same cell. Deliberately ignore the producer's
- * inline icon PNG: the session protocol does not carry icon bytes, and the UI derives a
- * locator from appKey for the platform service to resolve.
+ * 只读 `primary`：`list_apps` 用的是 `items` 模式（按结果下标关联，node_repl 下没有逐条列表卡），
+ * `request_access` / `stop_computer_control` 声明 `none`，这三者都不该覆盖同一 cell 里前面动作
+ * 已经确立的身份。producer 自带的内联 icon PNG 刻意不取：会话协议不承载图标字节，UI 按
+ * appKey 派生 locator 后交平台服务解析。
  */
 function readPrimaryAppIdentity(result: CallToolResult): NodeReplCuaAppIdentity | undefined {
   const meta = result._meta;

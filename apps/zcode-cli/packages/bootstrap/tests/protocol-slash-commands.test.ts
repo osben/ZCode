@@ -47,26 +47,16 @@ describe("protocol slash command surface", () => {
         { name: "compact", source: "builtin" },
         { name: "init", source: "builtin" },
         { name: "dream", source: "builtin" },
-        { name: "plan", source: "builtin" },
         { name: "review", source: "custom" },
         { name: "ship", source: "custom" },
       ]);
       expect(commands.find((command) => command.name === "review")?.description).toBe(
         "User review",
       );
-      expect(commands.find((command) => command.name === "ship")?.inputHint).toBe(
-        "/ship [target]",
-      );
-      expect(commands.some((command) => command.name === "model")).toBe(false);
-      expect(commands.filter((command) => command.name === "workflow")).toHaveLength(1);
+      expect(commands.find((command) => command.name === "ship")?.inputHint).toBe("/ship [target]");
       expect(commands.find((command) => command.name === "workflow")?.inputHint).toBe(
         "/workflow [what the workflow should accomplish]",
       );
-      expect(commands.filter((command) => command.name === "plan")).toHaveLength(1);
-      expect(commands.find((command) => command.name === "plan")?.description).toBe(
-        "Switch to Plan mode and optionally send a task.",
-      );
-      expect(commands.some((command) => command.name === "offline")).toBe(false);
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }
@@ -84,6 +74,7 @@ describe("protocol slash command surface", () => {
       await writeCommand(userCommands, "review", "Review changes", "Review $ARGUMENTS.");
       await writeCommand(userCommands, "init", "Custom init", "Should not expand.");
       await writeCommand(userCommands, "model", "Reserved model", "Should not expand.");
+      await writeCommand(userCommands, "plan", "Reserved Plan action", "Should not expand.");
 
       const options = {
         env: { ZCODE_ENV: "test" },
@@ -97,6 +88,10 @@ describe("protocol slash command surface", () => {
       expect(prompt).toContain("Command source: user/zcode.");
       expect(prompt).toContain("Review src packages.");
       await expect(resolveZCodeCustomCommandPrompt("/model glm-5", options)).resolves.toBe(
+        undefined,
+      );
+      await expect(resolveZCodeCustomCommandPrompt("/plan task", options)).resolves.toBe(undefined);
+      expect(resolveZCodeBuiltinPromptCommand("/plan task", { workingDirectory: workspace })).toBe(
         undefined,
       );
       await expect(resolveZCodeCustomCommandPrompt("/init", options)).resolves.toBe(undefined);
@@ -173,9 +168,9 @@ describe("protocol slash command surface", () => {
       expect(resolveZCodeBuiltinPromptCommand("/review", { workingDirectory: workspace })).toBe(
         undefined,
       );
-      expect(resolveZCodeBuiltinPromptCommand("please /init", { workingDirectory: workspace })).toBe(
-        undefined,
-      );
+      expect(
+        resolveZCodeBuiltinPromptCommand("please /init", { workingDirectory: workspace }),
+      ).toBe(undefined);
     } finally {
       await rm(tempRoot, { force: true, recursive: true });
     }
@@ -278,13 +273,13 @@ describe("protocol slash command surface", () => {
         userCommands,
         "skill-context",
         "Needs skill context",
-        ['```!', 'echo "${CLAUDE_SKILL_DIR}"', "```"].join("\n"),
+        ["```!", 'echo "${CLAUDE_SKILL_DIR}"', "```"].join("\n"),
       );
       await writeCommand(
         userCommands,
         "session-context",
         "Needs session context",
-        ['```!', 'echo "${CLAUDE_SESSION_ID}"', "```"].join("\n"),
+        ["```!", 'echo "${CLAUDE_SESSION_ID}"', "```"].join("\n"),
       );
 
       const options = {

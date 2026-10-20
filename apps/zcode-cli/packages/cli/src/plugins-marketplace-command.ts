@@ -30,7 +30,7 @@ export async function runMarketplaceCommand(
   switch (action) {
     case "add": {
 
-      // There is only one Host-level marketplace collection; validate spelling here to keep the argument surface consistent.
+      // marketplaces 只有 Host 级一份，这里仅校验拼写以保持参数面一致。
       resolveScope(flags.scope);
       const source = requireOne(rest);
       const summary = await (await resolveDep(deps, "addMarketplace"))({

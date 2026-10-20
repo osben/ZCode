@@ -103,6 +103,7 @@ export interface OutputStylePromptConfig {
 
 export interface ContextBuilderConfig {
   workingDirectory: string;
+  additionalDirectories?: readonly string[];
   envInfo: EnvInfo;
   /** Execution object for the current step; excluded from Context Source and persisted environment snapshots. */
   model?: Model;

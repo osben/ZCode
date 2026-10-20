@@ -1,7 +1,6 @@
 import {
   CoreErrorType,
   createCoreError,
-  modelMessageContentToText,
   traceContextToLogContext,
   type ModelMessageContent,
   type ModelMessageContentBlock,
@@ -14,18 +13,20 @@ import {
 } from "@zcode/zcode-cua/frame-contract";
 import type { ToolEntry, ToolResultSerialization } from "../types.js";
 import { formatHookAdditionalContexts } from "./hook-flow.js";
-import {
-  formatGenericPersistedOutputContent,
-  isPersistedOutputContent,
-} from "../result-persistence-format.js";
+import { formatGenericPersistedOutputContent } from "../result-persistence-format.js";
 import {
   appendHookToPersistedArtifactPreview,
   appendHookToStringContent,
   appendHookWithoutReorderingStructuredContent,
   fitContentWithSuffix,
+  isEmptyModelContent,
+  isPersistedArtifactPreview,
   OfficialCuaFrameContractError,
   projectHookAugmentedModelContent,
   projectOfficialCuaStructuredContent,
+  projectToolReferenceContent,
+  stringifyModelContentForSerialization,
+  stringifyOutputForModel,
 } from "./result-content-projection.js";
 import type { ToolExecutorDeps } from "./types.js";
 import { isRecord } from "./utils.js";
@@ -55,7 +56,7 @@ export async function serializeOutput(
   const modelContent = stringifyOutputForModel(output, entry);
   const content = stringifyModelContentForSerialization(modelContent);
   if (isEmptyModelContent(modelContent)) {
-    // Empty Bash output also needs a generic placeholder so the model does not mistake a silent success for a missing tool result.
+    // Bash 空输出也需要通用占位，避免模型把静默成功误读成缺失工具结果。
     const emptyContent = `(${entry.metadata.name} completed with no output)`;
     return {
       content: emptyContent,
@@ -71,9 +72,8 @@ export async function serializeOutput(
     entry.resultArtifactContentType ??
     (typeof output === "string" ? "text/plain" : "application/json");
   const originalBytes = Buffer.byteLength(content, "utf8");
-  // Some provider contracts count JavaScript characters. Preserve the existing UTF-8
-  // byte budget for other tools, and add this persistence threshold only for tools that
-  // explicitly declare a character limit.
+  // 部分 provider contract 按 JS 字符计数；保留现有工具的 UTF-8
+  // byte budget，只让显式声明字符阈值的工具增加该持久化判据。
   const exceedsCharacterBudget =
     entry.maxModelChars !== undefined && content.length > entry.maxModelChars;
   const maxModelBytes = Math.max(
@@ -81,6 +81,19 @@ export async function serializeOutput(
     Math.min(effectiveBudget.maxModelBytes, effectiveBudget.maxInlineBytes),
   );
   const artifactPath = findArtifactPath(output);
+  const referenceProjection = projectToolReferenceContent(
+    modelContent,
+    maxModelBytes,
+    effectiveBudget.preview?.direction ?? "head",
+  );
+  if (referenceProjection) {
+    return {
+      ...referenceProjection,
+      originalBytes,
+      budgetStrategy: effectiveBudget.strategy,
+      artifactPath,
+    };
+  }
   const shouldPersistArtifact =
     (originalBytes > maxModelBytes || exceedsCharacterBudget) &&
     effectiveBudget.artifact?.enabled === true &&
@@ -112,9 +125,8 @@ export async function serializeOutput(
       );
     } catch (error) {
       if (!(error instanceof OfficialCuaFrameContractError)) throw error;
-      // Non-canonical frames must still fail closed, but low-level layout invariants
-      // must not be exposed to the model as tool results. Record a stable diagnostic
-      // here, then let the executor produce a recoverable error result.
+      // 原因：非 canonical frame 必须继续 fail closed，但低层布局 invariant 不能作为
+      // tool result 暴露给模型；这里只记录稳定诊断，再交给 executor 生成可恢复错误结果。
       deps.logger?.warn("Official CUA frame contract rejected during result serialization", {
         ...traceContextToLogContext(traceContext),
         code: error.code,
@@ -137,19 +149,17 @@ export async function serializeOutput(
       const projectedModelContent = protectedProjection.content;
       const projectedContent = stringifyModelContentForSerialization(projectedModelContent);
       const projectedBytes = Buffer.byteLength(projectedContent, "utf8");
-      // In serialized text, an image block is only a short placeholder; the real base64
-      // raster (up to the bridge's 200 KiB limit) is sent to the model unchanged.
-      // returnedBytes means bytes sent to the model, so it must include the image
-      // payload. Otherwise setOutputBytes / turn-tool-usage / usage-observability would
-      // systematically undercount each CUA frame by one raster. Keep only the aggregate
-      // to avoid maintaining a second text/media accounting state alongside returnedBytes.
+      // 序列化文本里 image 块只是短占位符；真实 base64 栅格（bridge 上限 200 KiB）
+      // 会原样进入模型请求。returnedBytes 语义是"发给模型的字节"，必须计入
+      // 图片载荷，否则 setOutputBytes / turn-tool-usage / usage-observability
+      // 每次 CUA 帧系统性少计一张栅格。只保留 aggregate，避免文本/媒体分量
+      // 与 returnedBytes 形成需要同步维护的第二份状态。
       const structuredPayloadBytes = structuredMediaBytes(projectedModelContent);
 
-      // Preserve official CUA image/image_ref atomic pairs unchanged. The bridge applies
-      // a separate limit to image bytes, while ordinary text still uses resultBudget so
-      // a valid raster cannot bypass the context budget. The early return is coupled to
-      // official CUA protection authority; if pair validation fails
-      // (protectedProjection is undefined), do not bypass the generic budget.
+      // 官方 CUA 的 image/image_ref 原子对始终原样保留；图片字节由 bridge 的独立
+      // 上限保护，普通文本仍走 resultBudget，不能借一张合法 raster 绕过上下文预算。
+      // 早返回与 official CUA protection authority 强制成对；配对验证失败
+      //（protectedProjection 为 undefined）时不得绕过通用预算。
       return {
         content: projectedContent,
         modelContent: projectedModelContent,
@@ -164,8 +174,8 @@ export async function serializeOutput(
 
   if (
     (originalBytes <= maxModelBytes && !exceedsCharacterBudget) ||
-    // Preserve provider text with a character limit verbatim if persistence fails; do
-    // not fall through to generic resultBudget truncation and inject a different notice.
+    // 带字符阈值的 provider 文本在持久化失败时必须保留原文；
+    // 不能再落入通用 resultBudget 截断并注入另一套提示。
     (exceedsCharacterBudget && shouldPersistArtifact && artifact === undefined)
   ) {
     return {
@@ -271,19 +281,28 @@ export function appendFormattedContextToSerialization(
     entry.modelContentProtection === OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION &&
     hasImageBlock(serialization.modelContent ?? serialization.content)
   ) {
-    return appendHookWithoutReorderingStructuredContent(
-      serialization,
-      formattedContext,
-      suffix,
-      maxModelBytes,
-    );
+    return appendHookWithoutReorderingStructuredContent(serialization, formattedContext, suffix, maxModelBytes);
   }
   const previewDirection = entry.resultBudget?.preview?.direction ?? "head";
+  const modelContent = serialization.modelContent ?? serialization.content;
+  const referenceProjection = Array.isArray(modelContent)
+    ? projectToolReferenceContent(
+        [...modelContent, { type: "text", text: formattedContext }],
+        maxModelBytes,
+        previewDirection,
+      )
+    : undefined;
+  if (referenceProjection) {
+    return {
+      ...serialization,
+      ...referenceProjection,
+      truncated: serialization.truncated || referenceProjection.truncated,
+    };
+  }
   const artifactPreview = isPersistedArtifactPreview(serialization);
   const contentProjection = artifactPreview
     ? appendHookToPersistedArtifactPreview(serialization.content, suffix, maxModelBytes)
     : appendHookToStringContent(serialization.content, suffix, maxModelBytes, previewDirection);
-
   return {
     ...serialization,
     content: contentProjection.content,
@@ -305,12 +324,12 @@ function hasImageBlock(content: ModelMessageContent): content is ModelMessageCon
   return Array.isArray(content) && content.some((block) => block.type === "image");
 }
 
-/** Actual payload bytes for all image/file blocks in structured content (including dataUrl verbatim). */
+/** 结构化内容里所有 image/file 块的真实载荷字节（dataUrl 原样计入）。 */
 function structuredMediaBytes(content: ModelMessageContent): number {
   if (!Array.isArray(content)) return 0;
   return content.reduce((total, block) => {
     if (block.type === "image") return total + Buffer.byteLength(block.dataUrl, "utf8");
-    // For file-with-text, the model-visible content is text (the dataUrl is not sent in the request), so it does not count as media bytes.
+    // file-with-text 的模型可见内容是 text（dataUrl 不进请求），不计入媒体字节。
     if (block.type === "file" && block.dataUrl !== undefined && block.text === undefined)
       return total + Buffer.byteLength(block.dataUrl, "utf8");
     return total;
@@ -351,9 +370,8 @@ async function tryWriteToolArtifact(
       { signal },
     );
   } catch {
-    // When interacting with the main model, an artifact-write failure should not turn a
-    // successful tool call into a failure. Fall back to the shared resultBudget
-    // truncation path to keep the result visible without sending the full large output.
+    // 与主模型交互时，artifact 写入失败不应让一次成功的工具调用变成失败。
+    // 这里回退到统一的 resultBudget 截断路径，保持工具结果可见并避免原始大输出进模型。
     return undefined;
   }
 }
@@ -378,41 +396,6 @@ function formatPersistedOutputContent(input: {
     originalBytes: input.originalBytes,
     persistedPath: input.persistedPath,
   });
-}
-
-function isEmptyModelContent(content: ModelMessageContent): boolean {
-  if (typeof content === "string") return content.trim() === "";
-  if (content.length === 0) return true;
-  return content.every((block) => {
-    if (block.type !== "text") return false;
-    return typeof block.text !== "string" || block.text.trim() === "";
-  });
-}
-
-function stringifyOutputForModel(output: unknown, entry: ToolEntry): ModelMessageContent {
-  if (entry.formatModelContent) return entry.formatModelContent(output);
-  if (typeof output === "string") return output;
-  if (output === undefined) return "";
-
-  try {
-    return JSON.stringify(output) ?? "";
-  } catch {
-    return String(output);
-  }
-}
-
-function stringifyModelContentForSerialization(content: ModelMessageContent): string {
-  return typeof content === "string" ? content : modelMessageContentToText(content);
-}
-
-function isPersistedArtifactPreview(serialization: ToolResultSerialization): boolean {
-  return (
-    serialization.budgetStrategy === "artifact" &&
-    serialization.truncated &&
-    typeof serialization.artifactPath === "string" &&
-    serialization.artifactPath.length > 0 &&
-    isPersistedOutputContent(serialization.content)
-  );
 }
 
 function findArtifactPath(output: unknown): string | undefined {
