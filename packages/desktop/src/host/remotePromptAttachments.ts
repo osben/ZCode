@@ -76,15 +76,15 @@ export async function materializeRemotePromptAttachments(
       }
       await lockDownRemotePromptAttachmentFile(options.backend, remotePath);
     } catch (error) {
-      // If upload succeeds but chmod or a later commit step fails, the remote file already exists. Simply throwing would leave it
-      // consuming user storage and bypass renderer cleanup. Attempt to remove it within the original failure boundary.
+      // 上传成功但 chmod/后续提交失败时，远端文件已经存在；若只抛错会一直
+      // 占用用户空间并绕过 renderer 删除清理。这里在原始失败边界内尽力回收。
       await cleanupRemotePromptAttachment(options.backend, remotePath).catch(() => {});
       throw new Error(`远端附件上传失败：${attachment.filename}`, {
         cause: error,
       });
     }
 
-    // An agent in a remote workspace can read only the remote filesystem; upload the host localPath and rewrite it first.
+    // remote workspace 的 agent 只能读取远端文件系统；host localPath 必须先上传并改写。
     nextAttachments.push({
       ...attachment,
       localPath: remotePath,
@@ -101,7 +101,7 @@ export async function materializeRemotePromptAttachments(
   };
 }
 
-/** Eager-staging deletion entry point; only operate on paths under the private attachment root. */
+/** eager staging 删除入口；只允许操作附件私有根目录下的路径。 */
 export async function cleanupRemotePromptAttachment(
   backend: Pick<IRemoteBackend, "exec">,
   remotePath: string,
@@ -115,7 +115,7 @@ export async function cleanupRemotePromptAttachment(
   );
 }
 
-/** Reclaim staged attachments with no renderer owner after the Host is rebuilt. */
+/** host 重建后回收无 renderer 持有者的历史暂存附件。 */
 export async function cleanupStaleRemotePromptAttachments(
   backend: Pick<IRemoteBackend, "exec">,
   olderThanMinutes = 24 * 60,
@@ -149,7 +149,7 @@ async function ensureRemotePromptAttachmentDirectory(
 ): Promise<void> {
   const remoteDir = remoteDirname(remotePath);
   const privateDirs = collectRemotePromptAttachmentPrivateDirs(remoteDir, root);
-  // Prompt attachments may contain clipboard, image, or local file contents and must not be stored in public /tmp; create a private user directory and restrict permissions before remote materialization.
+  // prompt 附件可能包含剪贴板、图片和本地文件内容，不能落在公共 /tmp；远端物化前先创建用户私有目录并收紧权限。
   const command = [
     `mkdir -p ${quotePosixPathArg(remoteDir)}`,
     `command chmod 700 ${privateDirs.map((dir) => quotePosixPathArg(dir)).join(" ")}`,
@@ -279,4 +279,96 @@ function sanitizePathSegment(value: string): string {
     .replace(/^-+/u, "")
     .replace(/-+$/u, "");
   return sanitized || "attachment";
+}
+
+export function createRemotePromptAttachmentTaskService<T extends object>(
+  service: T,
+  options: {
+    materializePromptAttachments: (
+      params: RemotePromptAttachmentMaterializeInput & { taskId: string },
+    ) => Promise<Pick<RemotePromptAttachmentMaterializeResult, "content" | "attachments">>;
+  },
+): T {
+  return createRemotePromptAttachmentServiceProxy(service, {
+    methods: new Set(["sendPrompt", "enqueueTaskCommand"]),
+    materializePromptAttachments: options.materializePromptAttachments,
+    readTaskId: (params) => stringValue((params as { taskId?: unknown }).taskId),
+    readTraceId: (params) => stringValue((params as { traceId?: unknown }).traceId),
+  });
+}
+
+export function createRemotePromptAttachmentSessionService<T extends object>(
+  service: T,
+  options: {
+    materializePromptAttachments: (
+      params: RemotePromptAttachmentMaterializeInput & { taskId: string },
+    ) => Promise<Pick<RemotePromptAttachmentMaterializeResult, "content" | "attachments">>;
+  },
+): T {
+  return createRemotePromptAttachmentServiceProxy(service, {
+    methods: new Set(["sendPrompt"]),
+    materializePromptAttachments: options.materializePromptAttachments,
+    readTaskId: (params) => stringValue((params as { sessionId?: unknown }).sessionId),
+    readTraceId: (params) =>
+      stringValue((params as { inputId?: unknown }).inputId) ??
+      stringValue((params as { sessionId?: unknown }).sessionId),
+  });
+}
+
+function createRemotePromptAttachmentServiceProxy<T extends object>(
+  service: T,
+  options: {
+    methods: Set<string>;
+    materializePromptAttachments: (
+      params: RemotePromptAttachmentMaterializeInput & { taskId: string },
+    ) => Promise<Pick<RemotePromptAttachmentMaterializeResult, "content" | "attachments">>;
+    readTaskId: (params: object) => string | undefined;
+    readTraceId: (params: object) => string | undefined;
+  },
+): T {
+  return new Proxy(service, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (
+        typeof property !== "string" ||
+        !options.methods.has(property) ||
+        typeof value !== "function"
+      ) {
+        return value;
+      }
+
+      return async (...args: unknown[]) => {
+        const params = args[0];
+        if (typeof params !== "object" || params === null) {
+          return value.apply(target, args);
+        }
+        const content = stringValue((params as { content?: unknown }).content);
+        const taskId = options.readTaskId(params);
+        const traceId = options.readTraceId(params);
+        if (content === undefined || !taskId || !traceId) {
+          return value.apply(target, args);
+        }
+        const prepared = await options.materializePromptAttachments({
+          taskId,
+          traceId,
+          content,
+          attachments: Array.isArray((params as { attachments?: unknown }).attachments)
+            ? (params as { attachments?: ZCodePromptAttachment[] }).attachments
+            : undefined,
+        });
+        const nextParams: Record<string, unknown> = {
+          ...params,
+          content: prepared.content,
+        };
+        if ("attachments" in params || prepared.attachments !== undefined) {
+          nextParams.attachments = prepared.attachments;
+        }
+        return value.call(target, nextParams);
+      };
+    },
+  });
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }

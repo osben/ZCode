@@ -217,9 +217,9 @@ describe("registerPlatformIpcHandlers", () => {
     expect(syncWindowControlsOverlayForZoomLevel).toHaveBeenCalledWith(targetWindow, 2);
   });
 
-  it("offers restored local workspace contexts to Web remote control startup recovery", async () => {
+  it("keeps local window tabs separate from the complete remote control workspace snapshot", async () => {
     const { registerPlatformIpcHandlers } = await import("../src/main/desktopMainIpcPlatform.js");
-    const restorePreviouslyEnabledWebRemoteControl = vi.fn();
+    const syncWebRemoteControlWorkspaces = vi.fn();
     const targetWindow = { id: 7 };
     electronMocks.browserWindowFromWebContents.mockReturnValue(targetWindow);
 
@@ -233,10 +233,8 @@ describe("registerPlatformIpcHandlers", () => {
       executeDesktopCommand: vi.fn(async () => {}),
       acknowledgePostUpdateReleaseNotes: vi.fn(async () => {}),
       syncTaskRealtimeWorkspaceKeys: vi.fn(),
-      restorePreviouslyEnabledWebRemoteControl,
       getUpdateState: vi.fn(() => ({ status: "idle" })),
-      syncWebRemoteControlWorkspaces: vi.fn(),
-      syncWebRemoteControlTasks: vi.fn(),
+      syncWebRemoteControlWorkspaces,
       deviceMid: "test-device-mid",
     });
 
@@ -245,10 +243,22 @@ describe("registerPlatformIpcHandlers", () => {
       "/workspace/two",
     ]);
 
-    expect(restorePreviouslyEnabledWebRemoteControl).toHaveBeenCalledWith(7, [
-      { workspacePath: "/workspace/one" },
-      { workspacePath: "/workspace/two" },
-    ]);
+    expect(syncWebRemoteControlWorkspaces).not.toHaveBeenCalled();
+    const workspaces = [
+      { kind: "local", label: "Local", workspacePath: "/workspace/one" },
+      {
+        kind: "remote",
+        label: "Remote",
+        workspacePath: "/remote",
+        workspaceIdentity: "ssh://host/remote",
+        remoteSessionId: "remote-1",
+      },
+    ];
+    electronMocks.handlers.get(PlatformChannels.SyncWebRemoteControlWorkspaces)?.(
+      { sender: {} },
+      workspaces,
+    );
+    expect(syncWebRemoteControlWorkspaces).toHaveBeenCalledWith(7, workspaces);
   });
 
   it("runs generalized CUA permission onboarding for Screen Recording", async () => {

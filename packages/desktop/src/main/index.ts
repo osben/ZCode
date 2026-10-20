@@ -2619,9 +2619,6 @@ app.whenReady().then(async () => {
         taskRealtimeBus.updateHostWorkspaceKeys(hostId, workspaceKeys);
       }
     },
-    restorePreviouslyEnabledWebRemoteControl: (windowId, contexts) => {
-      void webRemoteControlManager.restorePreviouslyEnabled(windowId, contexts);
-    },
     getUpdateState: getAutoUpdaterState,
     openUpdateStatusWindow,
     getAutoUpdatePreferences,

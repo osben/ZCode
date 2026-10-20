@@ -257,3 +257,6 @@ packages/services/src/zcode-agent/zcodeAgentProcessManager.ts
 packages/services/src/zcode-session/zcodeSessionService.ts
 scripts/architecture/upstream-snapshot.json
 architecture-policy.yaml
+
+# TEMPORARY (final fork restore desktop): restored fork createRemoteWorkspaceServiceCollection (~33 KB). Remove after the desktop host split.
+packages/desktop/src/host/remoteWorkspaceServiceCollection.ts
