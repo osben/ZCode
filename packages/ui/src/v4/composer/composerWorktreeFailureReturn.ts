@@ -62,6 +62,31 @@ function resolveHandOffServices(params: ComposerWorktreeCreationParams): IServic
   return resolveRegisteredWorkspaceServices({ workspacePath: params.workspacePath });
 }
 
+/**
+ * Ownership fence for the hand-off. Only the entry still holding this attempt with the return flag
+ * set may tombstone the preparing session or discard the entry. A newer attempt (Retry or a Host
+ * restart that reuses the prepared session) replaces the entry without the flag, so this check
+ * fails for the old hand-off. The Host's deleteTask has no attempt CAS, so the check runs right
+ * before and after the delete await.
+ */
+function ownsHandOff(
+  workspaceKey: string,
+  sessionId: string,
+  attemptId: string | undefined,
+): boolean {
+  const entry = selectComposerWorktreePipeline(
+    useComposerWorktreePipelineStore.getState(),
+    workspaceKey,
+    sessionId,
+  );
+  return Boolean(
+    entry &&
+    entry.attemptId === attemptId &&
+    entry.status === "failed" &&
+    entry.returningToDraft === true,
+  );
+}
+
 /** Failures already taken over by the hand-off (idempotency across runner re-entry). */
 const handledFailureKeys = new Set<string>();
 
@@ -235,6 +260,16 @@ export function initiateComposerWorktreeFailureReturn(
         .setReturningToDraft(workspaceKey, sessionId, attemptId, false);
       return;
     }
+    // Fence A: a newer attempt may have taken over the prepared session after the cancellation
+    // CAS. The recovery record stays in the pending scope (the user's frozen submission), and the
+    // newer attempt's session is left alone.
+    if (!ownsHandOff(workspaceKey, sessionId, attemptId)) {
+      logger.warn("[WorktreeFailureReturn] hand-off superseded before tombstone; keeping session", {
+        workspaceKey,
+        sessionId,
+      });
+      return;
+    }
     // Tombstone through the existing Hide path (session-deletion-cascade.md): tasks.deleted=1
     // hides the preparing session from every sidebar list while the CLI session row is retained.
     // Do not remove the local recovery surface unless the existing Hide/tombstone succeeded.
@@ -257,6 +292,18 @@ export function initiateComposerWorktreeFailureReturn(
       useComposerWorktreePipelineStore
         .getState()
         .setReturningToDraft(workspaceKey, sessionId, attemptId, false);
+      return;
+    }
+    // Fence B: the delete await can overlap a newer attempt. The tombstone is already written, so
+    // only local discard, continuation release, modal and navigation are skipped here.
+    if (!ownsHandOff(workspaceKey, sessionId, attemptId)) {
+      logger.warn(
+        "[WorktreeFailureReturn] hand-off superseded during tombstone; skipping local cleanup",
+        {
+          workspaceKey,
+          sessionId,
+        },
+      );
       return;
     }
     useComposerWorktreePipelineStore.getState().discard(workspaceKey, sessionId, attemptId);

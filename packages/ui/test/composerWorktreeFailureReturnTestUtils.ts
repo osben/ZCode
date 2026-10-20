@@ -14,9 +14,14 @@ import {
 export function createMockServices(options?: {
   cancelRejected?: boolean;
   deleteRejected?: boolean;
+  /** Runs after the Host acknowledges the cancellation, before the tombstone is requested. */
+  onCancelAccepted?: () => void;
+  /** Runs while the tombstone request is in flight (before it resolves). */
+  onDeleteTaskStarted?: () => void;
 }) {
   const commands: Array<Record<string, unknown>> = [];
   const deleteTask = vi.fn(async () => {
+    options?.onDeleteTaskStarted?.();
     if (options?.deleteRejected) throw new Error("task deletion failed");
   });
   const services = {
@@ -44,6 +49,7 @@ export function createMockServices(options?: {
           if (options?.cancelRejected && payload?.status === "cancelled") {
             return { status: "rejected", reasonCode: "guard.worktreePreparationStale" };
           }
+          if (payload?.status === "cancelled") options?.onCancelAccepted?.();
           return { status: "accepted" };
         },
       ),

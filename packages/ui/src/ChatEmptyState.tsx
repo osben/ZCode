@@ -786,8 +786,11 @@ export function ChatEmptyWorktreeTaskToggle({
           ? { ...effectiveLocation, mode: "custom", customPath: frozen.customLocationPath }
           : effectiveLocation,
         branchName: frozen?.branchName ?? generateComposedBranchName(),
-        ...(effectiveBaseBranch && hasBranchList ? { baseBranch: effectiveBaseBranch } : {}),
-        baseFromHeadDefault: !hasBranchList,
+        // A frozen HEAD-default base stays HEAD-default on Retry, even when a branch list now exists.
+        ...(effectiveBaseBranch && hasBranchList && !frozen?.baseFromHeadDefault
+          ? { baseBranch: effectiveBaseBranch }
+          : {}),
+        baseFromHeadDefault: !hasBranchList || frozen?.baseFromHeadDefault === true,
         queuedPromptPreview,
         submissionId,
         prepareSession,
