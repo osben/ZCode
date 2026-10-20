@@ -8,20 +8,20 @@ const PROJECT = '[data-project-name="E2E_MISSING_PRIMARY"]';
 const SINGLE_PROJECT = '[data-project-name="E2E_SINGLE_PRIMARY"]';
 const HISTORY_ID = "sess_e2e_missing_primary_history";
 const HISTORY_BODY = "E2E_MISSING_PRIMARY_HISTORY_BODY";
-const REASON = "该项目主文件夹已被删除或移动";
+const REASON = "This project's main folder has been deleted or moved";
 type TestWindow = Window & {
   __testActions?: {
-    setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void;
+    setLocale(locale: "en-US" | "uk-UA" | "zh-CN"): void;
     setTheme(theme: string): void;
   };
   __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath: string | null } };
 };
 
-describe("项目主目录失效", () => {
-  it("VP-ROOT-01：移走主目录仍可展开历史但禁用新建与查看文件，恢复后重新可用", async function () {
+describe("project primary folder unavailable", () => {
+  it("VP-ROOT-01: history stays expandable after the primary folder is moved; new session and file view are disabled; re-enabled after restore", async function () {
     this.timeout(150_000);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await browser.execute(() => (window as TestWindow).__testActions!.setLocale("zh-CN"));
+    await browser.execute(() => (window as TestWindow).__testActions!.setLocale("en-US"));
     const root = join(DEFAULT_WORKSPACE, ".zcode-e2e", "missing-primary");
     const primary = join(root, "primary");
     const extra = join(root, "extra");
@@ -69,7 +69,7 @@ describe("项目主目录失效", () => {
         async () => (await project.getAttribute("data-primary-root-status")) === "missing",
         {
           timeout: 15_000,
-          timeoutMsg: "主目录移走后未更新目录状态",
+          timeoutMsg: "folder status did not update after the primary folder was moved",
         },
       );
       await project.moveTo();
@@ -197,7 +197,7 @@ describe("项目主目录失效", () => {
         async () => $(PROJECT).$('[data-testid="virtual-project-create-task"]').isEnabled(),
         {
           timeout: 15_000,
-          timeoutMsg: "主目录恢复后项目仍被禁用",
+          timeoutMsg: "project still disabled after the primary folder was restored",
         },
       );
       await $(PROJECT).moveTo();
@@ -227,7 +227,7 @@ describe("项目主目录失效", () => {
         ),
       );
       await browser.execute(() =>
-        document.querySelector<HTMLButtonElement>('button[aria-label="切换侧边栏"]')!.click(),
+        document.querySelector<HTMLButtonElement>('button[aria-label="Toggle sidebar"]')!.click(),
       );
       await browser.waitUntil(() =>
         browser.execute(() => {

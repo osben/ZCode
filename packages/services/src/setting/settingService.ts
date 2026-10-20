@@ -23,7 +23,7 @@ import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
 import { createSettingsWriteQueue } from "./settingsWriteQueue.js";
-import { getSettingsDir, getSettingsFile } from "./settingsPaths.js";
+import { resolveSettingsLocation, type SettingsLocation } from "./settingsPaths.js";
 import {
   maybeSeedLegacyForkSettings,
   readForkSettings,
@@ -93,10 +93,13 @@ function shouldPersistSettingsMigrations(rawValue: unknown): boolean {
   if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return false;
   const raw = rawValue as Record<string, unknown>;
   return (
+    // In-memory migration would leave version 3 on disk for rollback clients; it must persist under the write lock.
+    raw.remoteBoundaryOnboardingVersion === 3 ||
     (needsLegacyAccountConnectionMigration(rawValue) &&
       readIncompleteLegacyTeamConnections(rawValue).length === 0) ||
     raw.closeToTrayOnWindowsMigrationInitialized !== true ||
-    raw.messageStreamShowReasoningMigrationInitialized !== true
+    raw.messageStreamShowReasoningMigrationInitialized !== true ||
+    raw.taskAutoArchiveResetVersion !== 1
   );
 }
 
@@ -106,8 +109,8 @@ interface ReadSettingsResult {
   /** Fork-owned keys found in the raw setting.json before the schema stripped them; set only when the one-time sidecar migration still has something to move. */
   legacyForkSettings?: Partial<ForkAppSettings>;
 }
-async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
-  const settingsFile = getSettingsFile();
+async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSettingsResult> {
+  const settingsFile = location.file;
   try {
     // settingService.get() is called frequently by the UI and remote sessions.
     // Logging the full config on every read previously inflated production logs and exposed paths/config details; ordinary reads now log only at development debug level.
@@ -177,11 +180,12 @@ async function readSettingsWithMeta(): Promise<ReadSettingsResult> {
   }
 }
 
-async function readSettings(): Promise<AppSettings> {
-  return (await readSettingsWithMeta()).settings;
+async function readSettings(location: SettingsLocation): Promise<AppSettings> {
+  return (await readSettingsWithMeta(location)).settings;
 }
 
 async function writeSettings(
+  location: SettingsLocation,
   settings: AppSettings,
   shouldCommit: () => boolean = () => true,
   runExclusiveCommit: (commit: () => Promise<void>) => Promise<void> = (commit) => commit(),
@@ -189,8 +193,8 @@ async function writeSettings(
   commitAccountSelection = false,
   baseWriteOptions?: { useFileLock?: boolean },
 ): Promise<void> {
-  const settingsDir = getSettingsDir();
-  const settingsFile = getSettingsFile();
+  const settingsDir = location.dir;
+  const settingsFile = location.file;
   // Tests on Windows may change only HOME; if a module-level constant freezes homedir() at import time,
   // later reads/writes still use the real user directory. Resolve the config path from the current environment each time for stable local/test behavior.
   log("writing settings to:", settingsFile, JSON.stringify(settings));
@@ -242,6 +246,8 @@ export function createSettingServiceWithMigrations(): {
 } {
   const { enqueueSettingsWrite, runSettingsCommit, waitForQueuedWrites } =
     createSettingsWriteQueue();
+  // Paths are pinned here: a later service created under another HOME must not redirect this instance's IO.
+  const location = resolveSettingsLocation();
   // Upstream host assembly binds the workspace projection once. Fork keys are merged after projection,
   // so projection parsing (which strips unknown keys) never sees the sidecar values.
   let workspaceProjection:
@@ -257,28 +263,37 @@ export function createSettingServiceWithMigrations(): {
       // A Session may be created or cold-restored immediately after settings change; if this read overtakes an enqueued write,
       // runtime will retain the old switch value. Wait for queued writes first so startup preferences use the committed choice.
       await waitForQueuedWrites();
-      const result = await readSettingsWithMeta();
-      const forkSettings = await readForkSettings();
-      if (!result.needsMigrationPersist && !result.legacyForkSettings) {
-        return { ...(await projectSettings(result.settings)), ...forkSettings };
+      const result = await readSettingsWithMeta(location);
+      const projected = await projectSettings(result.settings);
+      const migrationPending =
+        result.needsMigrationPersist || result.legacyForkSettings !== undefined;
+      if (!migrationPending && JSON.stringify(projected) === JSON.stringify(result.settings)) {
+        return { ...projected, ...(await readForkSettings(location)) };
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
         // The whole main-file read-modify-write runs under the main-file lock: another service
         // instance saving a base preference while this turn's migration is in flight must not be
         // undone by this turn writing its older snapshot back.
-        await mkdir(getSettingsDir(), { recursive: true });
-        await withAtomicFileLock(getSettingsFile(), async () => {
-          const latest = await readSettingsWithMeta();
-          await maybeSeedLegacyForkSettings(latest.legacyForkSettings, { shouldCommit });
-          if (!latest.needsMigrationPersist && !latest.legacyForkSettings) {
+        await mkdir(location.dir, { recursive: true });
+        await withAtomicFileLock(location.file, async () => {
+          const latest = await readSettingsWithMeta(location);
+          await maybeSeedLegacyForkSettings(latest.legacyForkSettings, { shouldCommit }, location);
+          const latestProjected = await projectSettings(latest.settings);
+          const latestPending =
+            latest.needsMigrationPersist || latest.legacyForkSettings !== undefined;
+          if (
+            !latestPending &&
+            JSON.stringify(latestProjected) === JSON.stringify(latest.settings)
+          ) {
             return;
           }
 
           // Initialization rationale: older settings may have persisted defaults with indistinguishable origins; migrate once using the schema after upgrade.
           // The schema no longer contains the fork keys, so the persisted object drops them here.
           await writeSettings(
-            latest.settings,
+            location,
+            latestProjected,
             shouldCommit,
             runSettingsCommit,
             enterCommitPhase,
@@ -289,8 +304,8 @@ export function createSettingServiceWithMigrations(): {
       });
 
       const [settings, migratedForkSettings] = await Promise.all([
-        readSettings(),
-        readForkSettings(),
+        readSettings(location),
+        readForkSettings(location),
       ]);
       return { ...(await projectSettings(settings)), ...migratedForkSettings };
     },
@@ -307,12 +322,19 @@ export function createSettingServiceWithMigrations(): {
         const validatedForkPatch = hasForkPatch
           ? forkAppSettingsPatchSchema.parse(forkPatch)
           : undefined;
+        // A full connection-mapping write from an unversioned caller would bypass the Composer's committed selection.
+        if (
+          Object.hasOwn(patch, "providerFamilyConnectionSelections") &&
+          expectedAccountSettings?.providerFamilyDomainUpdatedAt === undefined
+        ) {
+          throw new Error("Account connection CAS required");
+        }
         // The whole main-file read-modify-write runs under the main-file lock: a base preference
         // another service instance saves concurrently cannot be overwritten by this instance
         // writing back its older snapshot (the migration rewrite included).
-        await mkdir(getSettingsDir(), { recursive: true });
-        await withAtomicFileLock(getSettingsFile(), async () => {
-          const read = await readSettingsWithMeta();
+        await mkdir(location.dir, { recursive: true });
+        await withAtomicFileLock(location.file, async () => {
+          const read = await readSettingsWithMeta(location);
           if (expectedAccountSettings) {
             // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
             const expected = appSettingsPatchSchema.parse(expectedAccountSettings);
@@ -331,7 +353,7 @@ export function createSettingServiceWithMigrations(): {
           // An update that arrives before the first get() must not destroy the only stored copy of
           // pre-sidecar fork preferences: seed the sidecar (sidecar wins) before the main file is
           // rewritten without those keys.
-          await maybeSeedLegacyForkSettings(read.legacyForkSettings, { shouldCommit });
+          await maybeSeedLegacyForkSettings(read.legacyForkSettings, { shouldCommit }, location);
           const merged = appSettingsSchema.parse({
             ...read.settings,
             ...validatedPatch,
@@ -357,6 +379,7 @@ export function createSettingServiceWithMigrations(): {
           }
 
           await writeSettings(
+            location,
             await projectSettings(merged),
             shouldCommit,
             runSettingsCommit,
@@ -366,7 +389,7 @@ export function createSettingServiceWithMigrations(): {
           );
         });
         if (validatedForkPatch) {
-          await updateForkSettings(validatedForkPatch, { shouldCommit });
+          await updateForkSettings(validatedForkPatch, { shouldCommit }, location);
         }
       };
 
@@ -427,7 +450,7 @@ export function createSettingServiceWithMigrations(): {
       if (inFlight) return inFlight;
       const run = async (): Promise<readonly ProviderFamilyDomain[]> => {
         await service.get();
-        const original = await readLegacyAccountConnectionSettingsFile(getSettingsFile());
+        const original = await readLegacyAccountConnectionSettingsFile(location.file);
         const incomplete = readIncompleteLegacyTeamConnections(original);
         if (incomplete.length === 0) return [];
         // Network access is outside the write queue, so proxy-setting reads and user actions can continue without a get → HTTP → get cycle.
@@ -438,7 +461,7 @@ export function createSettingServiceWithMigrations(): {
           })),
         );
         await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
-          const latest = await readLegacyAccountConnectionSettingsFile(getSettingsFile());
+          const latest = await readLegacyAccountConnectionSettingsFile(location.file);
           // Check only migration inputs; do not discard valid results on ordinary language/window changes or overwrite the user's new account choice.
           if (
             Object.hasOwn(latest, "providerFamilyConnectionSelections") ||
@@ -461,6 +484,7 @@ export function createSettingServiceWithMigrations(): {
             };
           }
           await writeSettings(
+            location,
             { ...migrated, providerFamilyConnectionSelections: selections },
             shouldCommit,
             runSettingsCommit,
@@ -469,7 +493,7 @@ export function createSettingServiceWithMigrations(): {
           );
         });
         return readIncompleteLegacyTeamConnections(
-          await readLegacyAccountConnectionSettingsFile(getSettingsFile()),
+          await readLegacyAccountConnectionSettingsFile(location.file),
         ).map((entry) => entry.family);
       };
       const pending = run();

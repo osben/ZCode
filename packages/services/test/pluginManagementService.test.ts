@@ -3,7 +3,14 @@ import { withPluginTelemetry } from "../src/plugins/pluginManagement.js";
 import { createPluginManagementService } from "../src/plugins/pluginManagementService.js";
 import type { IZCodeAgentService } from "../src/zcode-agent/zcodeAgent.js";
 
-describe("plugin management terminal telemetry", () => {
+// Fork adaptation (specs/upstream-sync-final-ledger.md, "## decisions"): the fork's thin plugin
+// management service intentionally emits no plugin lifecycle telemetry (see the note on
+// reportPluginTelemetryEvent in packages/services/src/node.ts). The upstream reporter was not
+// ported because it would also drop the fork's LSP methods. The tests below keep every business
+// result, forwarding, cancellation and error-propagation assertion; only the telemetry-event
+// expectations were removed.
+
+describe("plugin management results without telemetry", () => {
   const plugin = {
     id: "demo@market",
     name: "demo",
@@ -13,15 +20,13 @@ describe("plugin management terminal telemetry", () => {
     scope: "user" as const,
   };
   function setup(result: unknown, reject = false) {
-    const reportTelemetryEvent = vi.fn();
     const installPlugin = reject
       ? vi.fn().mockRejectedValue(result)
       : vi.fn().mockResolvedValue(result);
     const service = createPluginManagementService({
       zcodeAgentService: { installPlugin } as unknown as IZCodeAgentService,
-      reportTelemetryEvent,
     });
-    return { service, installPlugin, reportTelemetryEvent };
+    return { service, installPlugin };
   }
   const params = {
     workspacePath: "/private/work",
@@ -29,90 +34,71 @@ describe("plugin management terminal telemetry", () => {
     marketplace: "market",
     telemetry: { entry: "store_detail" as const, client_kind: "desktop" as const },
   };
-  it("reports a single final result and strips telemetry before forwarding", async () => {
+  it("returns the final result and strips telemetry before forwarding", async () => {
     const result = { installedPlugins: [plugin], dependencyClosure: [plugin.id], diagnostics: [] };
-    const { service, installPlugin, reportTelemetryEvent } = setup(result);
+    const { service, installPlugin } = setup(result);
     expect(await service.installPlugin(params)).toBe(result);
     expect(installPlugin).toHaveBeenCalledWith({
       workspacePath: params.workspacePath,
       pluginName: "demo",
       marketplace: "market",
     });
-    expect(reportTelemetryEvent).toHaveBeenCalledTimes(1);
-    expect(reportTelemetryEvent.mock.calls[0][0]).toMatchObject({
-      elementName: "plugin_lifecycle",
-      eventExtraDetail: {
-        action: "install",
-        result: "success",
-        plugin_id: plugin.id,
-        version_after: "1.0",
-        entry: "store_detail",
-      },
-    });
-    expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain(params.workspacePath);
-    expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain("operation_id");
   });
-  it("uses diagnostics, not Promise resolution, as success", async () => {
-    const { service, reportTelemetryEvent } = setup({
+  it("passes diagnostics through without deciding success from them", async () => {
+    const diagnostics = [{ severity: "error", message: "secret" }];
+    const { service, installPlugin } = setup({
       installedPlugins: [],
       dependencyClosure: [],
-      diagnostics: [{ severity: "error", message: "secret" }],
+      diagnostics,
     });
-    await service.installPlugin(params);
-    expect(reportTelemetryEvent.mock.calls[0][0].eventExtraDetail).toMatchObject({
-      result: "failure",
-      error_category: "diagnostic",
-    });
-    expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain("secret");
+    await expect(service.installPlugin(params)).resolves.toMatchObject({ diagnostics });
+    expect(installPlugin).toHaveBeenCalledTimes(1);
   });
-  it("does not report dry runs", async () => {
-    const { service, reportTelemetryEvent } = setup({
+  it("forwards dry runs with the dryRun flag and without telemetry", async () => {
+    const { service, installPlugin } = setup({
       installedPlugins: [plugin],
       dependencyClosure: [],
       diagnostics: [],
     });
     await service.installPlugin({ ...params, dryRun: true });
-    expect(reportTelemetryEvent).not.toHaveBeenCalled();
-  });
-  it("does not let reporter failure change the business result", async () => {
-    const result = { installedPlugins: [plugin], dependencyClosure: [], diagnostics: [] };
-    const { service, reportTelemetryEvent } = setup(result);
-    reportTelemetryEvent.mockImplementation(() => {
-      throw new Error("report unavailable");
+    expect(installPlugin).toHaveBeenCalledWith({
+      workspacePath: params.workspacePath,
+      pluginName: "demo",
+      marketplace: "market",
+      dryRun: true,
     });
+  });
+  it("returns the business result unchanged", async () => {
+    const result = { installedPlugins: [plugin], dependencyClosure: [], diagnostics: [] };
+    const { service } = setup(result);
     await expect(service.installPlugin(params)).resolves.toBe(result);
   });
-  it("preserves the original rejection without disclosing it", async () => {
+  it("preserves the original rejection", async () => {
     const error = new Error("token=secret");
-    const { service, reportTelemetryEvent } = setup(error, true);
+    const { service } = setup(error, true);
     await expect(service.installPlugin(params)).rejects.toBe(error);
-    expect(reportTelemetryEvent.mock.calls[0][0].eventExtraDetail.result).toBe("failure");
-    expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain("secret");
   });
 });
 
-describe("plugin telemetry operation boundaries", () => {
-  it("reports no-op uninstall and preserves the cancellation protocol", async () => {
-    const reportTelemetryEvent = vi.fn();
+describe("plugin operation boundaries without telemetry", () => {
+  it("preserves the no-op uninstall result and the cancellation protocol", async () => {
     const cancelPluginOperation = vi.fn(async () => ({ cancelled: true, operationId: "cancel-1" }));
     const service = createPluginManagementService({
       zcodeAgentService: {
         uninstallPlugin: vi.fn(async () => ({ diagnostics: [] })),
         cancelPluginOperation,
       } as unknown as IZCodeAgentService,
-      reportTelemetryEvent,
     });
-    await service.uninstallPlugin({ workspacePath: "/work", pluginId: "demo@market" });
-    expect(reportTelemetryEvent.mock.calls[0][0].eventExtraDetail).toMatchObject({
-      action: "uninstall",
-      result: "noop",
+    await expect(
+      service.uninstallPlugin({ workspacePath: "/work", pluginId: "demo@market" }),
+    ).resolves.toMatchObject({ diagnostics: [] });
+    await expect(service.cancelPluginOperation({ operationId: "cancel-1" })).resolves.toEqual({
+      cancelled: true,
+      operationId: "cancel-1",
     });
-    await service.cancelPluginOperation({ operationId: "cancel-1" });
     expect(cancelPluginOperation).toHaveBeenCalledWith({ operationId: "cancel-1" });
-    expect(reportTelemetryEvent).toHaveBeenCalledTimes(1);
   });
-  it("records explicit cancellation and batch partial separately", async () => {
-    const reportTelemetryEvent = vi.fn();
+  it("keeps explicit cancellation as a rejection and batch partial as a resolved result", async () => {
     const service = createPluginManagementService({
       zcodeAgentService: {
         installPlugin: vi.fn(async () => {
@@ -124,76 +110,55 @@ describe("plugin telemetry operation boundaries", () => {
           dependencyClosure: [],
         })),
       } as unknown as IZCodeAgentService,
-      reportTelemetryEvent,
     });
     await expect(
       service.installPlugin({ workspacePath: "/work", pluginName: "a", marketplace: "market" }),
     ).rejects.toThrow();
-    await service.updatePlugin({ workspacePath: "/work" });
-    expect(reportTelemetryEvent.mock.calls.map(([x]) => x.eventExtraDetail.result)).toEqual([
-      "cancelled",
-      "partial",
-    ]);
+    await expect(service.updatePlugin({ workspacePath: "/work" })).resolves.toMatchObject({
+      installedPlugins: [{ id: "a@market" }],
+    });
   });
-  it("isolates concurrent durations and does not wait for the reporter", async () => {
-    const reportTelemetryEvent = vi.fn(() => new Promise<void>(() => {}));
-    let clock = 0;
+  it("isolates concurrent operations so each resolves with its own result", async () => {
     const finishes: Array<(value: unknown) => void> = [];
     const service = createPluginManagementService({
       zcodeAgentService: {
         installPlugin: vi.fn(() => new Promise((resolve) => finishes.push(resolve))),
       } as unknown as IZCodeAgentService,
-      reportTelemetryEvent,
-      now: () => clock,
     });
     const a = service.installPlugin({
       workspacePath: "/a",
       pluginName: "a",
       marketplace: "market",
     });
-    clock = 10;
     const b = service.installPlugin({
       workspacePath: "/b",
       pluginName: "b",
       marketplace: "market",
     });
-    clock = 25;
     finishes[1]({
       installedPlugins: [{ id: "b@market", marketplace: "market", scope: "user" }],
       diagnostics: [],
       dependencyClosure: [],
     });
-    await b;
-    clock = 50;
+    await expect(b).resolves.toMatchObject({ installedPlugins: [{ id: "b@market" }] });
     finishes[0]({
       installedPlugins: [{ id: "a@market", marketplace: "market", scope: "user" }],
       diagnostics: [],
       dependencyClosure: [],
     });
-    await a;
-    expect(
-      reportTelemetryEvent.mock.calls.map(([x]) => [
-        x.eventExtraDetail.plugin_id,
-        x.eventExtraDetail.duration_ms,
-      ]),
-    ).toEqual([
-      ["b@market", "15"],
-      ["a@market", "50"],
-    ]);
+    await expect(a).resolves.toMatchObject({ installedPlugins: [{ id: "a@market" }] });
   });
 });
 
-describe("serialized cancellation telemetry", () => {
-  it("recognizes original AbortError type preserved by JSON-RPC", async () => {
+describe("serialized cancellation without telemetry", () => {
+  it("propagates a JSON-RPC serialized AbortError unchanged", async () => {
     const error = Object.assign(new Error("opaque transport error"), {
       data: { name: "AbortError", stack: "private" },
     });
-    const reportTelemetryEvent = vi.fn();
     const service = createPluginManagementService({
       zcodeAgentService: {
         installPlugin: vi.fn().mockRejectedValue(error),
       } as unknown as IZCodeAgentService,
-      reportTelemetryEvent,
     });
     await expect(
       service.installPlugin({
@@ -202,8 +167,6 @@ describe("serialized cancellation telemetry", () => {
         marketplace: "market",
       }),
     ).rejects.toBe(error);
-    expect(reportTelemetryEvent.mock.calls[0][0].eventExtraDetail.result).toBe("cancelled");
-    expect(JSON.stringify(reportTelemetryEvent.mock.calls)).not.toContain("private");
   });
 });
 
