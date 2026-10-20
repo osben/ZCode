@@ -306,6 +306,3 @@ packages/ui/src/lib/workspaceSidePane.ts
 packages/ui/src/settingsPageHelpers.tsx
 # TEMPORARY upstream 3.16.1 sync (ui): fork test spec restored over the upstream test; split later.
 packages/ui/test/taskListItemHoverActions.test.ts
-
-# TEMPORARY upstream 3.16.1 sync (ui fix G2): oversize upstream UI file re-applied with fork Docker chooser; split or reconcile in the UI-2 PR and remove these lines.
-packages/ui/src/RemoteConnectionFields.tsx
