@@ -330,3 +330,7 @@ apps/zcode-cli/packages/bootstrap/tests/v4-native-session-mgmt.test.ts
 apps/zcode-cli/packages/bootstrap/tests/workflow-concurrency-governor.test.ts
 apps/zcode-cli/packages/bootstrap/tests/workflow-driver.test.ts
 apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts
+# TEMPORARY upstream 3.16.1 sync (slice 4b, cli/tui): fork CLI code (ChatGPT plan login, incognito resume, dwf/dream wiring) and fork i18n locale; split with the translation follow-up.
+apps/zcode-cli/packages/cli/src/prompt-command.ts
+apps/zcode-cli/packages/cli/tests/cli.unit.test.ts
+apps/zcode-cli/packages/i18n/src/locales/uk-UA.ts
