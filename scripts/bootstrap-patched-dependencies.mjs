@@ -1,5 +1,10 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { resolveSpawnRuntimeOptions } from "./spawn-command.mjs";
+
+const exec = promisify(execFile);
 
 export function resolvePatchedDependencyPackageName(key) {
   const value = key.trim();
@@ -19,9 +24,13 @@ async function pathExists(path) {
   );
 }
 
-export async function clearHoistedPatchedDependencyTargets({ rootDir, packageJsonPath }) {
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-  const patchedDependencies = packageJson.pnpm?.patchedDependencies ?? {};
+export async function clearHoistedPatchedDependencyTargets({ rootDir, pnpmCommand = "pnpm" }) {
+  // Bootstrap runs before dependencies exist, so let pnpm read its YAML configuration.
+  const { stdout } = await exec(pnpmCommand, ["config", "get", "patchedDependencies", "--json"], {
+    cwd: rootDir,
+    ...resolveSpawnRuntimeOptions(pnpmCommand),
+  });
+  const patchedDependencies = JSON.parse(stdout) ?? {};
   const packageNames = Object.keys(patchedDependencies).map(resolvePatchedDependencyPackageName);
   const removed = [];
   for (const packageName of packageNames) {

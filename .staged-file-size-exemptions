@@ -1,5 +1,14 @@
 # Files allowed to exceed the staged-file size limit (scripts/check-staged-file-tokens.mjs).
 # Add one repo-relative path per line.
+
+THIRD-PARTY-NOTICES.md
+third-party/inventory.json
+UI_PLUGIN.md
+UI_PLUGIN.en.md
+scripts/prepare-prebuilds.mjs
+packages/services/src/highspeed/highspeedCardService.ts
+
+packages/ui/src/ChatEmptyState.tsx
 packages/ui/src/i18n/locales/en-US.ts
 packages/ui/src/i18n/locales/uk-UA.ts
 packages/ui/src/i18n/locales/zh-CN.ts
@@ -373,8 +382,9 @@ packages/ui/test/remoteConnectionFlowRecovery.test.ts
 packages/ui/test/projectCreation.test.ts
 packages/ui/test/sourceServerManagementPanel.test.ts
 
+packages/services/src/bots/botsService.ts
+packages/services/test/botsChannelRuntime.test.ts
+
 packages/services/test/highspeedCardService.test.ts
 
-# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration, unchanged by this merge.
-packages/services/src/highspeed/highspeedCardService.ts
 specs/upstream-sync-cli-divergences.md

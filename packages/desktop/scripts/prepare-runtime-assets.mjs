@@ -46,12 +46,12 @@ const localRuntimeScripts = [
   ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-apple-fm"] : []),
 ];
 
-function runTimedPnpmScript(scriptName) {
+function runTimedPnpmScript(scriptName, cwd = desktopRoot) {
   const startMs = Date.now();
   console.log(`[ci][timer] prepare-runtime-assets:${scriptName} start`);
   try {
-    runCommand(pnpmCommand, [scriptName], {
-      cwd: desktopRoot,
+    runCommand(pnpmCommand, ["run", scriptName], {
+      cwd,
       env: process.env,
     });
   } finally {
@@ -64,7 +64,8 @@ function runTimedPnpmScript(scriptName) {
 const shouldSkipRemoteAssets = process.env.ZCODE_SKIP_REMOTE_ASSETS === "1";
 
 if (!shouldSkipRemoteAssets) {
-  runTimedPnpmScript("prepare:remote-assets");
+  // pnpm 12 does not look up missing package scripts in parent directories.
+  runTimedPnpmScript("prepare:remote-assets", resolve(desktopRoot, "../.."));
 } else {
   // The desktop installer in the Windows build job does not depend on mock-cdn remote assets.
   // This previously ran prepare:remote-assets unconditionally, serially downloading and packaging

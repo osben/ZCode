@@ -124,15 +124,39 @@ export async function readInstallTargets(root) {
 export function productionPackages(projects, isInstallable = () => true) {
   const own = new Set(projects.map((project) => project.name));
   const required = new Map();
+  const graph = new Map();
+  const identity = (alias, info) => `${info.name ?? alias}@${info.version}`;
+  function index(deps) {
+    for (const [alias, info] of Object.entries(deps ?? {})) {
+      const key = identity(alias, info);
+      const edges = graph.get(key) ?? {};
+      Object.assign(edges, info.dependencies, info.optionalDependencies);
+      graph.set(key, edges);
+      index(info.dependencies);
+      index(info.optionalDependencies);
+    }
+  }
+  // pnpm 12 prunes repeated subtrees; their expansion may live under a dev root.
+  // Index all edges before selecting production roots so runtime peers keep their closure.
+  for (const project of projects) {
+    index(project.dependencies);
+    index(project.optionalDependencies);
+    index(project.devDependencies);
+  }
+  const visited = new Set();
   function dependencies(deps) {
     for (const [alias, info] of Object.entries(deps ?? {})) {
       const name = info.name ?? alias;
+      // Workspace projects are traversed through their own production roots, not expanded links.
+      if (own.has(name) || info.version.startsWith("link:")) continue;
       if (!isInstallable(name, info.version)) continue;
-      if (!own.has(name) && !name.startsWith("@zcode/") && !info.version.startsWith("link:")) {
+      const key = identity(alias, info);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if (!name.startsWith("@zcode/")) {
         required.set(`${name}@${info.version}`, { name, version: info.version });
       }
-      dependencies(info.dependencies);
-      dependencies(info.optionalDependencies);
+      dependencies(graph.get(key));
     }
   }
   for (const project of projects) {
@@ -162,15 +186,7 @@ export async function readWorkspaceProductionGraph(root) {
     [true, false].map(async (lockfileOnly) => {
       const { stdout } = await exec(
         "pnpm",
-        [
-          "-r",
-          "ls",
-          "--prod",
-          "--json",
-          "--depth",
-          "Infinity",
-          ...(lockfileOnly ? ["--lockfile-only"] : []),
-        ],
+        ["-r", "ls", "--json", "--depth", "Infinity", ...(lockfileOnly ? ["--lockfile-only"] : [])],
         {
           cwd: root,
           maxBuffer: 256 * 1024 * 1024,

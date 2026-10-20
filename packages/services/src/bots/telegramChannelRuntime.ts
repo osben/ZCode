@@ -79,6 +79,23 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
     });
   }
 
+  async function readOffsetForStatus(bot: BotConfig): Promise<number | undefined> {
+    // Bug fix: status payloads show the stored offset, but a rejected status-path read (for example the shared
+    // bot-state file-lock timeout under cross-instance contention) escaped the polling loop's error handlers
+    // and permanently stopped polling. Offset ownership stays with writeTelegramOffset; a failed display read
+    // must be reported as undefined instead of ending the runtime. The getUpdates cursor read stays strict so a
+    // storage failure never silently re-fetches the queue from an older offset.
+    try {
+      return await deps.readTelegramOffset(bot.id);
+    } catch (error) {
+      deps.logger.debug(
+        undefined,
+        `read Telegram offset for status failed bot=${bot.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
+  }
+
   async function pollBot(bot: BotConfig, signal: AbortSignal): Promise<void> {
     const token = bot.credentialRef ? await deps.credentialService.load(bot.credentialRef) : null;
     if (!token?.trim()) {
@@ -107,7 +124,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           provider: "telegram",
           status: "error",
           message: `Telegram polling lock failed: ${error instanceof Error ? error.message : String(error)}`,
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(5_000, signal);
         continue;
@@ -119,7 +136,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           status: "idle",
           messageId: "bots.runtime.telegramLongPollingHandledElsewhere",
           message: "Telegram long polling is handled by another ZCode window.",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(BOT_RUNTIME_LOCK_RETRY_MS, signal);
         continue;
@@ -144,7 +161,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           // Fix: runtime status is displayed directly in the UI. Include messageId so the frontend can render in the current language; message is only a fallback for older versions.
           message: "Telegram long polling is running.",
           messageId: "bots.runtime.telegramLongPollingRunning",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
 
         while (!signal.aborted) {
@@ -216,7 +233,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
             // Fix: runtime status is displayed directly in the UI. Include messageId so the frontend can render in the current language; message is only a fallback for older versions.
             message: "Telegram long polling is running.",
             messageId: "bots.runtime.telegramLongPollingRunning",
-            offset: await deps.readTelegramOffset(bot.id),
+            offset: await readOffsetForStatus(bot),
           });
         }
       } catch {
@@ -229,7 +246,7 @@ export function createTelegramChannelRuntime(deps: TelegramChannelRuntimeDeps) {
           status: "error",
           messageId: "bots.runtime.telegramPollingFailedRetrying",
           message: "Telegram polling failed; retrying.",
-          offset: await deps.readTelegramOffset(bot.id),
+          offset: await readOffsetForStatus(bot),
         });
         await waitFor(5_000, signal);
       } finally {

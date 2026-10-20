@@ -1366,8 +1366,6 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - hachure-fill@0.5.2 — MIT
 
-- has-flag@4.0.0 — MIT
-
 - has-property-descriptors@1.0.2 — MIT
 
 - has-symbols@1.1.0 — MIT
@@ -2006,7 +2004,7 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - react-is@16.13.1 — MIT
 
-- react-is@18.3.1 — MIT
+- react-is@19.3.1 — MIT
 
 - react-jsx-parser@2.4.1 — MIT
 
@@ -2229,8 +2227,6 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 - stylis@4.4.0 — MIT
 
 - sumchecker@3.0.1 — Apache-2.0
-
-- supports-color@8.1.1 — MIT
 
 - swr@2.5.1 — MIT
 
@@ -2468,6 +2464,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - zod@3.25.76 — MIT
 
+- zod@4.6.5 — MIT
+
 - zod@4.6.7 — MIT
 
 - zrender@6.1.0 — BSD-3-Clause
@@ -2553,6 +2551,8 @@ Fig autocomplete source carries the repository's MIT license; the generated regi
 Electron/Chromium target-specific notices are shipped separately under Resources/licenses/electron. Distributions containing an independent Node runtime also include its exact-version LICENSE.node.txt; SEA includes that text in --licenses output.
 
 ## Modified npm packages
+
+- @radix-ui/react-collapsible@1.1.12: modified by ZCode; the changes are recorded in patches/@radix-ui__react-collapsible@1.1.12.patch in the source repository.
 
 - vitest@4.1.7: modified by ZCode; the changes are recorded in patches/vitest@4.1.7.patch in the source repository.
 
@@ -5058,6 +5058,8 @@ MIT
 
 - react-dom@19.3.0: LICENSE
 
+- react-is@19.3.1: LICENSE
+
 - react-reconciler@0.33.0: LICENSE
 
 - react@19.3.0: LICENSE
@@ -6967,8 +6969,6 @@ SOFTWARE.
 
 - strip-final-newline@4.0.0: license
 
-- supports-color@8.1.1: license
-
 - type-fest@4.41.0: license-mit
 
 - uint8array-extras@1.5.0: license
@@ -8442,8 +8442,6 @@ SOFTWARE.
 - find-up@4.1.0: license
 
 - got@11.8.6: license
-
-- has-flag@4.0.0: license
 
 - is-fullwidth-code-point@3.0.0: license
 
@@ -10018,8 +10016,6 @@ SOFTWARE.
 - camelcase@5.3.1: readme.md (license section)
 
 - decamelize@1.2.0: readme.md (license section)
-
-- has-flag@4.0.0: readme.md (license section)
 
 - is-fullwidth-code-point@3.0.0: readme.md (license section)
 
@@ -33461,8 +33457,6 @@ SOFTWARE.
 
 - react-is@16.13.1: LICENSE
 
-- react-is@18.3.1: LICENSE
-
 - yoga-layout@3.2.1: https://raw.githubusercontent.com/facebook/yoga/v3.2.1/LICENSE
 
 
@@ -40507,6 +40501,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ### Notice 3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8
 
 - zod@3.25.76: LICENSE
+
+- zod@4.6.5: LICENSE
 
 - zod@4.6.7: LICENSE
 
