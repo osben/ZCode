@@ -32,7 +32,7 @@ async function isDocumentationOnly() {
   );
 }
 
-async function runStage(task, args = []) {
+async function runStage(task, args = [], extraEnv = {}) {
   const stageStarted = performance.now();
   print(`${task} started`);
   const status = await new Promise((resolve, reject) => {
@@ -45,6 +45,7 @@ async function runStage(task, args = []) {
       cwd: root,
       env: {
         ...process.env,
+        ...extraEnv,
         NODE_COMPILE_CACHE:
           process.env.NODE_COMPILE_CACHE || join(root, ".cache", "pre-push", "node-compile"),
       },
@@ -55,6 +56,15 @@ async function runStage(task, args = []) {
   });
   print(`${task} ${status === 0 ? "passed" : `failed (${status})`} in ${elapsed(stageStarted)}`);
   return status;
+}
+
+// Returns the merge-base of the resolved comparison target and HEAD, or "" when no target exists.
+// An empty value leaves upstream's own base resolution in charge, which only applies when no target was found.
+async function affectedBase() {
+  const target = resolveDiffTarget(root);
+  if (!target) return "";
+  const { stdout } = await exec("git", ["merge-base", target.base, "HEAD"], { cwd: root });
+  return stdout.trim();
 }
 
 async function main() {
@@ -71,7 +81,10 @@ async function main() {
   ];
   if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {
-    const status = await runStage(task, args);
+    // The affected stage receives the base resolved here, so upstream's first-push fallback (origin/staging) is never used.
+    const extraEnv =
+      task === "test:unit:affected" ? { ZCODE_AFFECTED_TEST_BASE: await affectedBase() } : {};
+    const status = await runStage(task, args, extraEnv);
     if (status !== 0) return status;
   }
   if (docsOnly) print("documentation-only changes: skip test:unit:affected and test:node");
