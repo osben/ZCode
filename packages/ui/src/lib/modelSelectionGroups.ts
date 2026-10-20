@@ -1,18 +1,19 @@
 import {
-  isZCodeAgentProvider,
+  ZCODE_AGENT_PROVIDER,
   resolveModelProviderFamilySpecByProviderId,
   zcodeProviderAccountAccessSchema,
   type ZCodeProviderAccountAccess,
-  type ZCodeProvider,
 } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
+import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { shouldShowModelVisionBadge } from "@/lib/modelVisionBadge.js";
 
 export interface ModelProviderGroupLabelOptions {
   apiKeyLabel?: string;
   apiKeyBadgeLabel?: string;
+  chatgptPlanBadgeLabel?: string;
   codingPlanLabel?: string;
   codingPlanBadgeLabel?: string;
   startPlanLabel?: string;
@@ -22,16 +23,19 @@ export interface ModelProviderGroupLabelOptions {
 }
 
 function supportsRegistryApiFormat(
-  selectedProvider: ZCodeProvider,
+  selectedProvider: string,
   apiFormat: string | null | undefined,
 ): boolean {
   if (!apiFormat) return false;
   // 仅剩 glm（ZCode Agent）provider；三方 CLI 的 api format 差异已随 provider 下线。
-  return isZCodeAgentProvider(selectedProvider);
+  return (
+    selectedProvider === ZCODE_AGENT_PROVIDER ||
+    isChatGptPlanSubscriptionProviderId(selectedProvider)
+  );
 }
 
 export function buildRegistryModelSelectGroups(
-  selectedProvider: ZCodeProvider,
+  selectedProvider: string,
   view: ModelSelectionView,
   labels: ModelProviderGroupLabelOptions = {},
 ): ModelSelectGroup[] {
@@ -48,10 +52,12 @@ export function buildRegistryModelSelectGroups(
     // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
     const labelBadge =
       accountPresentation?.labelBadge ??
-      (provider.config.access?.type === "api-key" ||
-      provider.config.access?.type === "zhipu-coding-plan-api-key"
-        ? (labels.apiKeyBadgeLabel ?? "API")
-        : undefined);
+      (provider.config.access?.type === "chatgpt-account"
+        ? (labels.chatgptPlanBadgeLabel ?? "Subscription")
+        : provider.config.access?.type === "api-key" ||
+            provider.config.access?.type === "zhipu-coding-plan-api-key"
+          ? (labels.apiKeyBadgeLabel ?? "API")
+          : undefined);
 
     return [
       {

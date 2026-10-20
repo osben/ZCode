@@ -1548,6 +1548,7 @@ const enUS: Record<string, string> = {
   "sidePane.launcher.terminal": "Run commands and view output.",
   "sidePane.launcher.browser": "Browse websites and preview apps.",
   "sidePane.launcher.developer-tools": "Inspect and debug the app.",
+  "sidePane.launcher.model-trajectory": "Inspect the model calls made by this task.",
   "sidePane.launcher.viewAllPlugins": "View all plugins",
   "sidePane.launcher.empty": "No recommended app plugins yet",
   "sidePane.openFile": "Open file",
@@ -3298,6 +3299,16 @@ const enUS: Record<string, string> = {
   "settings.locale.system": "System default",
   "settings.locale.zh-CN": "中文简体",
   "settings.locale.en-US": "English",
+  "settings.terminalWebglDescription":
+    "Use WebGL to render terminals. Turn off if you see rendering glitches; the terminal falls back to the standard renderer automatically when WebGL is unavailable.",
+  "settings.resourceTelemetryEnabledDescription":
+    "Sample CPU and memory of app processes every 10 seconds and send aggregated resource reports when the build has a monitoring endpoint. Off by default. Desktop only.",
+  "settings.codingPlanLimitAutoContinueDefaultDescription":
+    "Sets the default for automatically continuing a Coding Plan task after its 5-hour usage limit resets.",
+  "settings.terminalWebgl": "GPU-accelerated terminal rendering",
+  "settings.resourceTelemetryEnabled": "Resource telemetry",
+  "settings.codingPlanLimitAutoContinueDefault": "Continue after Coding Plan limit reset",
+  "settings.locale.uk-UA": "Українська",
   "sidebar.settings.systemDefault": "System default",
   "sidebar.settings.locale.en-US": "English",
   "sidebar.settings.locale.zh-CN": "中文简体",

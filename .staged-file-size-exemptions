@@ -296,3 +296,9 @@ packages/ui/test/settingsPageIntegratedTerminalShell.test.ts
 # TEMPORARY upstream 3.16.1 sync (ui bucket 7): oversize UI files re-applied with fork changes; split or reconcile in the UI-2 PR and remove these lines.
 packages/ui/src/ModelConfigSelect.tsx
 packages/ui/src/v4/ConversationTurnGroup.tsx
+# TEMPORARY upstream 3.16.1 sync (ui bucket 8): oversize UI files re-applied with fork changes; reconcile in the UI-2 / i18n PRs and remove these lines.
+packages/ui/src/lib/builtinSkillI18n.ts
+packages/ui/src/lib/remoteWorkspaceHistory.ts
+packages/ui/src/lib/settingsNavigation.ts
+packages/ui/src/lib/workspaceSidePane.ts
+packages/ui/src/settingsPageHelpers.tsx

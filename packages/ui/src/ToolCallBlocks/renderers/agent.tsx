@@ -12,6 +12,7 @@ import type { ToolCallBlockRenderContext } from "../shared.js";
 import { getLatestExploreChildSummaryFromChildren } from "./explore.js";
 import { AgentPromptSection } from "./agentPromptSection.js";
 import {
+  combineAgentSecondarySummary,
   formatAgentMessage,
   getAgentColor,
   getAgentKindLabel,
@@ -229,6 +230,10 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
         includeChildActionKindLabel: true,
       })
     : null;
+  const summarySecondaryText = combineAgentSecondarySummary(
+    collapsedChildSummary?.secondaryText,
+    context.agentUsageSummary,
+  );
   const backgroundAgentInfo = readBackgroundAgentInfo(toolCall);
   const activityContent = getAgentActivityContent(toolCall);
   const activityThought = toolCall.thought?.trim();
@@ -357,11 +362,12 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
           collapsedChildSummary ? collapsedChildSummary.primaryText : collapsedPrimaryText
         }
         expandedPrimaryText={expandedPrimaryText}
-        secondaryText={collapsedChildSummary?.secondaryText}
+        secondaryText={summarySecondaryText}
         expandedSecondaryText={null}
         summaryContentSeparator="·"
         animateSummaryContent
         disableSummaryContentAnimation={context.disableSummaryContentAnimation}
+        summaryContentRefreshVersion={context.agentUsageSummaryVersion}
         summaryContentKey={
           collapsedChildSummary?.animationKey ?? `agent:${toolCall.toolId}:${primaryText}`
         }

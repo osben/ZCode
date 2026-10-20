@@ -1423,6 +1423,7 @@ const zhCN: Record<string, string> = {
   "sidePane.launcher.terminal": "运行命令和查看输出。",
   "sidePane.launcher.browser": "浏览网页和预览应用。",
   "sidePane.launcher.developer-tools": "检查和调试应用。",
+  "sidePane.launcher.model-trajectory": "查看此任务的模型调用轨迹。",
   "sidePane.launcher.viewAllPlugins": "查看所有插件",
   "sidePane.launcher.empty": "暂无推荐的应用插件",
   "sidePane.openFile": "打开文件",
@@ -3089,6 +3090,16 @@ const zhCN: Record<string, string> = {
   "settings.locale.system": "系统默认",
   "settings.locale.zh-CN": "中文简体",
   "settings.locale.en-US": "English",
+  "settings.terminalWebglDescription":
+    "使用 WebGL 渲染终端。若出现渲染异常可关闭；WebGL 不可用时会自动回退到标准渲染。",
+  "settings.resourceTelemetryEnabledDescription":
+    "每 10 秒采样应用各进程的 CPU 与内存，并在构建配置了监控端点时发送聚合资源报告。默认关闭。仅桌面端。",
+  "settings.codingPlanLimitAutoContinueDefaultDescription":
+    "设置达到 Coding Plan 五小时用量限额后，重置时自动继续任务的默认勾选状态。",
+  "settings.terminalWebgl": "GPU 加速终端渲染",
+  "settings.resourceTelemetryEnabled": "资源遥测",
+  "settings.codingPlanLimitAutoContinueDefault": "Coding Plan 限额重置后自动继续",
+  "settings.locale.uk-UA": "Українська",
   "sidebar.settings.systemDefault": "系统默认",
   "sidebar.settings.locale.en-US": "English",
   "sidebar.settings.locale.zh-CN": "中文简体",

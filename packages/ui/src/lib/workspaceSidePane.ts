@@ -231,6 +231,7 @@ export interface PlanDetailSidePaneTab {
   workspaceIdentity?: string;
   remoteSessionId?: string;
   parentSessionId: string;
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -238,6 +239,7 @@ export interface PlanDetailSidePaneTab {
 
 export interface OpenPlanDetailSideTabRequest {
   parentSessionId: string;
+  rootSessionId?: string;
   toolCallId: string;
   markdown: string;
   planFilePath?: string;
@@ -858,6 +860,7 @@ export function createPlanDetailSidePaneTab(
     ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),
     ...(options.remoteSessionId ? { remoteSessionId: options.remoteSessionId } : {}),
     parentSessionId: options.parentSessionId,
+    ...(options.rootSessionId ? { rootSessionId: options.rootSessionId } : {}),
     toolCallId: options.toolCallId,
     markdown: options.markdown,
     ...(options.planFilePath ? { planFilePath: options.planFilePath } : {}),
@@ -1179,7 +1182,6 @@ export function isSidePaneTabVisibleInScope(
     case "bash-output":
       return tab.rootSessionId === scope.ownerTaskId;
     case "selection-side-chat":
-    case "plan-detail":
     case "plugin-ui":
     case "workflow-run":
     case "workflow-directory":
@@ -1187,6 +1189,8 @@ export function isSidePaneTabVisibleInScope(
     case "workflow-workspace":
     case "workflow-artifact":
       return tab.parentSessionId === scope.ownerTaskId;
+    case "plan-detail":
+      return (tab.rootSessionId ?? tab.parentSessionId) === scope.ownerTaskId;
     case "browser":
     case "browser-permissions":
     case "file-manager":
@@ -1991,7 +1995,11 @@ export function openPlanDetailSidePane(
   );
   // 同一个 toolCall 只保留一个 tab；再次点击用卡片当前正文刷新 fallback，
   // 详情组件的实时正文仍以父 conversation projection 为权威。
-  return activateSidePaneTab(current, existing ? { ...existing, ...nextTab } : nextTab);
+  if (!existing) return activateSidePaneTab(current, nextTab);
+  // 不能让旧的 rootSessionId 在没有新值时残留；展开 spread 会保留 existing 的字段。
+  const merged: PlanDetailSidePaneTab = { ...existing, ...nextTab };
+  if (nextTab.rootSessionId === undefined) delete merged.rootSessionId;
+  return activateSidePaneTab(current, merged);
 }
 
 /**

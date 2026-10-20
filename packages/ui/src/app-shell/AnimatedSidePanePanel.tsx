@@ -90,6 +90,9 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
+  type OpenScopedSubagentDirectorySideTabRequest,
+  type OpenScopedPlanDetailSideTabRequest,
+  type SyncSubagentSessionTabsRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
@@ -103,6 +106,7 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
+  ChartLineIcon,
   ChevronRightIcon,
   FileDiffIcon,
   FolderOpenIcon,
@@ -307,6 +311,7 @@ export function AnimatedSidePanePanel({
   activeTaskId,
   sidePaneOwnerId,
   gitState,
+  gitRepositoryWorkspacePath,
   activeGitSourceId,
   panelRef,
   panelElementRef,
@@ -336,12 +341,16 @@ export function AnimatedSidePanePanel({
   onCreateTask,
   onOpenTerminalTab,
   onOpenReviewTab,
+  onOpenModelTrajectory,
   onOpenSelectionSideConversation,
+  onOpenPlanDetail,
   onRevealGitFileInTree,
   onOpenBrowserUrl,
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
+  onOpenSubagentDirectory,
+  onSyncSubagentSessionTabs,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -380,6 +389,7 @@ export function AnimatedSidePanePanel({
   activeTaskId: string | null;
   sidePaneOwnerId: string | null;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
+  gitRepositoryWorkspacePath: string;
   activeGitSourceId: GitChangeSourceId;
   panelRef: RefObject<PanelImperativeHandle | null>;
   panelElementRef: RefObject<HTMLDivElement | null>;
@@ -411,13 +421,17 @@ export function AnimatedSidePanePanel({
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
+  onOpenModelTrajectory: () => void;
   onOpenSelectionSideConversation: () => void;
+  onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
   onOpenBrowserUrl: (url: string) => void;
   onOpenCodeViewer: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  onOpenSubagentDirectory: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
+  onSyncSubagentSessionTabs: (request: SyncSubagentSessionTabsRequest) => void;
   /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
   /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
@@ -782,6 +796,13 @@ export function AnimatedSidePanePanel({
       icon: GlobeIcon,
       onOpen: onOpenBrowserTab,
     },
+    "model-trajectory": {
+      id: "model-trajectory",
+      label: intl.formatMessage({ id: "modelTrajectory.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.model-trajectory" }),
+      icon: ChartLineIcon,
+      onOpen: onOpenModelTrajectory,
+    },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
@@ -793,6 +814,7 @@ export function AnimatedSidePanePanel({
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
     canOpenSelectionSideConversation,
     developerToolsEnabled,
+    hasActiveTask: activeTaskId !== null,
     hasReviewTab,
     supportsEmbeddedBrowser,
   })
@@ -1157,6 +1179,11 @@ export function AnimatedSidePanePanel({
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}
+                            onOpenPlanDetail={onOpenPlanDetail}
+                            onOpenSubagentSession={onOpenSubagentSession}
+                            onOpenSubagentDirectory={onOpenSubagentDirectory}
+                            onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
+                            onOpenBackgroundBash={onOpenBackgroundBash}
                             onUnavailable={onCloseTab}
                           />
                         ) : tab.type === "plugin-ui" ? (
@@ -1267,7 +1294,7 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "git" ? (
                           <GitPane
-                            workspacePath={workspaceAbsPath}
+                            workspacePath={gitRepositoryWorkspacePath}
                             workspaceIdentity={workspaceIdentity}
                             workspaceRemoteSessionId={workspaceRemoteSessionId}
                             gitState={gitState}
