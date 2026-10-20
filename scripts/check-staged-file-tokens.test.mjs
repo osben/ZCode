@@ -48,17 +48,17 @@ test("an empty index and exactly 20,000 staged bytes pass without HEAD", async (
 test("oversize files report every path, byte count, tokens and split instructions", async (t) => {
   const f = await fixture(t);
   await f.stage("code.ts", "a".repeat(20_001));
-  await f.stage("notes.md", "a".repeat(24_000));
+  await f.stage("other.ts", "a".repeat(24_000));
   const result = await f.check();
   assert.equal(result.code, 1);
-  for (const expected of ["code.ts", "notes.md", "20001", "5000.25", "6000", "Split", "git add"]) {
+  for (const expected of ["code.ts", "other.ts", "20001", "5000.25", "6000", "Split", "git add"]) {
     assert.ok(result.stderr.includes(expected), result.stderr);
   }
 });
 
 test("the limit counts UTF-8 bytes, not characters", async (t) => {
   const f = await fixture(t);
-  await f.stage("unicode.md", "я".repeat(10_001));
+  await f.stage("unicode.ts", "я".repeat(10_001));
   const result = await f.check();
   assert.equal(result.code, 1);
   assert.match(result.stderr, /20002/);
@@ -217,7 +217,7 @@ execFileSync('git', ['add', '--', 'code.ts']);
   assert.equal(await readFile(path.join(f.cwd, "formatter-ran"), "utf8"), "ran\n");
 });
 
-// Pending-upstream fixture: commit A holds an oversized file at `notes/upstream.md`
+// Pending-upstream fixture: commit A holds an oversized file at `notes/upstream.ts`
 // and is the pending commit; the fork then changes it. The caller decides what
 // is staged afterwards.
 async function pendingSizeFixture(t, { stagePin = true } = {}) {
@@ -226,10 +226,10 @@ async function pendingSizeFixture(t, { stagePin = true } = {}) {
   await f.git("config", "user.name", "Test");
   await f.git("config", "commit.gpgsign", "false");
   const upstream = "a".repeat(21_000);
-  await f.stage("notes/upstream.md", upstream);
+  await f.stage("notes/upstream.ts", upstream);
   await f.git("commit", "--quiet", "-m", "pending upstream");
   const pending = (await f.git("rev-parse", "HEAD")).stdout.trim();
-  await f.stage("notes/upstream.md", "small fork version");
+  await f.stage("notes/upstream.ts", "small fork version");
   await f.git("commit", "--quiet", "-m", "fork");
   await writeFile(
     path.join(f.cwd, "fork-upstream-base.json"),
@@ -241,21 +241,21 @@ async function pendingSizeFixture(t, { stagePin = true } = {}) {
 
 test("an oversize staged blob identical to the pending commit passes the size guard", async (t) => {
   const f = await pendingSizeFixture(t);
-  await f.stage("notes/upstream.md", f.upstream);
+  await f.stage("notes/upstream.ts", f.upstream);
   assert.equal((await f.check()).code, 0);
 });
 
 test("an oversize staged blob that differs from the pending commit by one byte still blocks", async (t) => {
   const f = await pendingSizeFixture(t);
-  await f.stage("notes/upstream.md", `${f.upstream}\n`);
+  await f.stage("notes/upstream.ts", `${f.upstream}\n`);
   const result = await f.check();
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /notes\/upstream\.md/);
+  assert.match(result.stderr, /notes\/upstream\.ts/);
 });
 
 test("the size guard ignores an unstaged pin: an identical blob still blocks", async (t) => {
   const f = await pendingSizeFixture(t, { stagePin: false });
-  await f.stage("notes/upstream.md", f.upstream);
+  await f.stage("notes/upstream.ts", f.upstream);
   assert.equal((await f.check()).code, 1);
 });
 
@@ -271,10 +271,58 @@ test("a staged file listed in the exemptions file may exceed the limit", async (
   assert.equal((await f.check()).code, 0);
 });
 
-test("oversize markdown under docs/ is not size-limited, other markdown still is", async (t) => {
+test("markdown files are never size-limited, at any depth and in any case", async (t) => {
   const f = await fixture(t);
-  await f.stage("docs/guide/big.md", "a".repeat(40_000));
+  for (const name of [
+    "notes.md",
+    "docs/guide/big.md",
+    "specs/huge-SPEC.MD",
+    "packages/ui/src/readme.md",
+  ]) {
+    await f.stage(name, "a".repeat(40_000));
+  }
   assert.equal((await f.check()).code, 0);
-  await f.stage("notes/big.md", "a".repeat(40_000));
-  assert.notEqual((await f.check()).code, 0);
+});
+
+test("test files are never size-limited", async (t) => {
+  const f = await fixture(t);
+  for (const name of [
+    "packages/ui/src/feature.test.ts",
+    "packages/ui/src/view.spec.tsx",
+    "scripts/tool.test.mjs",
+    "scripts/tool.test.cjs",
+    "lib/a.test.mts",
+    "lib/a.test.cts",
+    "lib/a.test.js",
+    "lib/a.test.jsx",
+    "packages/ui/test/helper.ts",
+    "packages/desktop/test/e2e/flow.ts",
+    "apps/x/tests/data.ts",
+    "packages/web/__tests__/render.tsx",
+    "packages/desktop/e2e/login.ts",
+  ]) {
+    await f.stage(name, "a".repeat(21_000));
+  }
+  assert.equal((await f.check()).code, 0);
+});
+
+test("source, script and config files stay guarded, including test-like names", async (t) => {
+  const f = await fixture(t);
+  const names = [
+    "packages/ui/src/feature.ts",
+    "docs/guide/code.ts",
+    "packages/ui/src/testing-utils.ts",
+    "packages/ui/src/contest/index.ts",
+    "packages/ui/src/attest/index.ts",
+    "packages/ui/src/latest.ts",
+    "packages/ui/src/test.ts",
+    "scripts/check.mjs",
+    "config/app.json",
+    "notes.mdx",
+    "notes.txt",
+  ];
+  for (const name of names) await f.stage(name, "a".repeat(21_000));
+  const result = await f.check();
+  assert.equal(result.code, 1);
+  for (const name of names) assert.ok(result.stderr.includes(JSON.stringify(name)), result.stderr);
 });

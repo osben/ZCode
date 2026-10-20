@@ -3,9 +3,11 @@ import path from "node:path";
 import { loadPendingUpstream, pendingIdenticalPaths } from "./fork-format-pending.mjs";
 
 const MAX_BYTES = 5_000 * 4;
-// Temporary during the upstream 3.16.1 sync: documentation is copied from
-// upstream and cannot be split, so markdown under a docs/ directory is not size-limited.
-const DOCS_MARKDOWN = /(^|\/)docs\/.+\.md$/i;
+// Permanent file-kind exemptions (specs/fork-format-scope.md). The size cap protects
+// agent-readable source; markdown and test files are naturally long and are never limited.
+const MARKDOWN_FILE = /\.md$/i;
+const TEST_FILE = /\.(?:test\.(?:[cm]?[jt]sx?)|spec\.[^/]+)$/i;
+const TEST_DIRECTORY = /(^|\/)(?:test|tests|__tests__|e2e)\//i;
 // Repo-relative paths that may exceed the limit. One path per line, `#` starts a comment.
 // Add a file here (and stage the list) instead of using --no-verify.
 const EXEMPTIONS_FILE = ".staged-file-size-exemptions";
@@ -24,6 +26,10 @@ const LOCK_FILES = new Set([
   "Gemfile.lock",
   "go.sum",
 ]);
+
+function isKindExempt(name) {
+  return MARKDOWN_FILE.test(name) || TEST_FILE.test(name) || TEST_DIRECTORY.test(name);
+}
 
 function git(args, cwd, input = "") {
   return new Promise((resolve, reject) => {
@@ -95,9 +101,7 @@ async function main() {
   const exemptions = await readExemptions(cwd);
   const oversizedFiles = files.filter(
     (file) =>
-      sizes.get(file.oid) > MAX_BYTES &&
-      !exemptions.has(file.name) &&
-      !DOCS_MARKDOWN.test(file.name),
+      sizes.get(file.oid) > MAX_BYTES && !exemptions.has(file.name) && !isKindExempt(file.name),
   );
   if (!oversizedFiles.length) return;
   // Staged blobs identical to the pending upstream commit are not the fork's
