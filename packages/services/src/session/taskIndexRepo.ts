@@ -150,6 +150,14 @@ interface TaskIndexWriteRecord {
   searchableText?: string;
 }
 
+export interface TaskIndexWorktreeOwnerFact {
+  taskId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  deleted: boolean;
+  executionWorktree?: ZCodeTaskMeta["executionWorktree"];
+}
+
 interface TaskIndexStatePatch {
   pinned?: boolean;
   archived?: boolean;
@@ -2132,6 +2140,7 @@ export class TaskIndexRepo {
     workspacePath: string;
     workspaceIdentity?: string;
     taskIds: string[];
+    clearExecutionWorktree?: boolean;
   }): Promise<void> {
     if (params.taskIds.length === 0) return;
     await this.ensureReady();
@@ -2144,10 +2153,19 @@ export class TaskIndexRepo {
             `UPDATE tasks
             SET searchable_text = '',
                 title = '',
-                meta_json = CASE WHEN json_valid(meta_json) THEN json_set(meta_json, '$.title', '') ELSE meta_json END
-            WHERE workspace_key = ? AND task_id = ? AND deleted = 1`,
+                meta_json = CASE
+                  WHEN json_valid(meta_json) AND @clear_execution_worktree = 1
+                    THEN json_remove(json_set(meta_json, '$.title', ''), '$.executionWorktree')
+                  WHEN json_valid(meta_json) THEN json_set(meta_json, '$.title', '')
+                  ELSE meta_json
+                END
+            WHERE workspace_key = @workspace_key AND task_id = @task_id AND deleted = 1`,
           )
-          .run(key, taskId);
+          .run({
+            workspace_key: key,
+            task_id: taskId,
+            clear_execution_worktree: params.clearExecutionWorktree ? 1 : 0,
+          });
       });
     }
   }
@@ -2171,6 +2189,53 @@ export class TaskIndexRepo {
       task_id: string;
     }>;
     return rows.map((row) => ({ workspacePath: row.workspace_path, taskId: row.task_id }));
+  }
+
+  /** All local task-index owners and durable execution-worktree facts, including deletion state. */
+  async listLocalWorktreeOwnerFacts(params: {
+    provider?: ZCodeProvider;
+  }): Promise<TaskIndexWorktreeOwnerFact[]> {
+    await this.ensureReady();
+    const rows = this.getDatabase()
+      .prepare(
+        `SELECT
+          workspace_key,
+          workspace_path,
+          workspace_identity,
+          task_id,
+          title,
+          task_status,
+          provider,
+          mode,
+          model,
+          migration_source,
+          forked_from_task_id,
+          cron_automation_id,
+          off_peak_task_id,
+          created_at,
+          updated_at,
+          unread_at,
+          pinned,
+          archived,
+          deleted,
+          title_overridden,
+          meta_json
+        FROM tasks
+        WHERE (workspace_identity IS NULL OR TRIM(workspace_identity) = '')
+          AND (@provider IS NULL OR provider = @provider)
+        ORDER BY workspace_path, task_id`,
+      )
+      .all({ provider: params.provider ?? null }) as TaskIndexMetaRow[];
+    return rows.map((row) => {
+      const meta = rowToMeta(row);
+      return {
+        taskId: row.task_id,
+        workspacePath: row.workspace_path,
+        workspaceIdentity: meta.workspaceIdentity,
+        deleted: row.deleted === 1,
+        ...(meta.executionWorktree ? { executionWorktree: meta.executionWorktree } : {}),
+      };
+    });
   }
 
   /**

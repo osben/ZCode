@@ -31,6 +31,31 @@ function createSource(count: number, workspacePath = "/isolated/probe") {
       reason: "task_deleted",
     });
   const source = {
+    getDeletionCapability: vi.fn(async () => ({ supported: true })),
+    countTaskTrees: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
+      total: taskIds.length,
+      sideChats: 0,
+      subagents: 0,
+      workflowSessions: 0,
+      workflowRuns: 0,
+      running: 0,
+    })),
+    eraseTasks: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
+      erasedTaskIds: taskIds,
+      skippedTaskIds: [],
+      blockedRunningTaskIds: [],
+      failedTaskIds: [],
+      fileFailureCount: 0,
+      filesRetainedCount: 0,
+      worktreeCleanup: {
+        removed: [],
+        retained: [],
+        failed: [],
+        removedCount: 0,
+        retainedCount: 0,
+        failedCount: 0,
+      },
+    })),
     listTasks: vi.fn(async () => []),
     listPinnedTasks: vi.fn(async () => []),
     listArchivedTasks: vi.fn(async () => [...rows.values()]),
@@ -63,6 +88,9 @@ describe("归档批次跨 UI / Controller 的刷新边界", () => {
     });
     try {
       const facade = {
+        getDeletionCapability: source.getDeletionCapability,
+        countTaskTrees: source.countTaskTrees,
+        eraseTasks: source.eraseTasks,
         listArchivedTasks: source.listArchivedTasks,
         deleteArchivedTask: async (params: { taskId: string; workspacePath: string }) =>
           runtime.service.deleteArchivedTask({
@@ -80,18 +108,31 @@ describe("归档批次跨 UI / Controller 的刷新边界", () => {
       };
       await runtime.resolveTaskAddress({ workspacePath, taskId: "task-0" });
       const selection = await collectArchivedTaskDeletion([
-        { workspacePath, label: "probe", service: facade },
+        {
+          workspacePath,
+          label: "probe",
+          service: facade,
+          gitService: { getChanges: vi.fn(async () => []) },
+        },
       ]);
       source.listTasks.mockClear();
       source.listPinnedTasks.mockClear();
       source.listArchivedTasks.mockClear();
       expect(await deleteArchivedTaskSelection(selection, vi.fn())).toMatchObject({
-        deleted: count,
+        tombstoned: count,
+        erased: count,
         skipped: 0,
         failed: 0,
       });
       expect(rows.size).toBe(0);
       expect(source.deleteArchivedTasks).toHaveBeenCalledTimes(1);
+      expect(source.eraseTasks).toHaveBeenCalledExactlyOnceWith({
+        workspacePath,
+        taskIds: [...Array(count).keys()].map((index) => `task-${index}`),
+      });
+      expect(source.deleteArchivedTasks.mock.invocationCallOrder[0]).toBeLessThan(
+        source.eraseTasks.mock.invocationCallOrder[0]!,
+      );
       expect(source.deleteArchivedTask).not.toHaveBeenCalled();
       // 事件通知与 mutation 回包共享 single-flight；一次批次只读取三个持久分区。
       expect(source.listTasks).toHaveBeenCalledTimes(1);

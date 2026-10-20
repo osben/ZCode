@@ -93,6 +93,21 @@ export interface ZCodeTaskEraseResult {
   fileFailureCount: number;
   /** Sessions whose files were kept because a surviving fork still references them. */
   filesRetainedCount: number;
+  worktreeCleanup: ZCodeTaskWorktreeCleanupResult;
+}
+
+export interface ZCodeTaskWorktreeCleanupItem {
+  targetPath: string;
+  reason: string;
+}
+
+export interface ZCodeTaskWorktreeCleanupResult {
+  removed: string[];
+  retained: ZCodeTaskWorktreeCleanupItem[];
+  failed: ZCodeTaskWorktreeCleanupItem[];
+  removedCount: number;
+  retainedCount: number;
+  failedCount: number;
 }
 
 /** A message content part from one model request (text / tool call / tool result / other raw structure). */
@@ -519,6 +534,12 @@ export interface IZCodeTaskService {
     taskIds: string[];
   }): Promise<ZCodeTaskTreeCounts | null>;
 
+  /** Explicitly report whether this local service can execute permanent deletion. */
+  getDeletionCapability?(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<{ supported: boolean }>;
+
   /**
    * Permanently erase tasks that are already hidden (tombstoned), with their side chats, subagents and
    * workflow runs. The tombstone is kept. Resolves null when unsupported (remote workspace, older CLI).
@@ -530,7 +551,7 @@ export interface IZCodeTaskService {
   }): Promise<ZCodeTaskEraseResult | null>;
 
   /** Number of stored sessions behind local hidden tasks; null when unsupported. */
-  countHiddenTaskContent?(): Promise<{ sessions: number } | null>;
+  countHiddenTaskContent?(): Promise<{ sessions: number; worktrees: number } | null>;
 
   /** Erase the stored content of every local hidden task; null when unsupported. */
   eraseHiddenTaskContent?(): Promise<ZCodeTaskEraseResult | null>;

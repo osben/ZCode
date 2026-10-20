@@ -11,14 +11,21 @@ import { isWorkspaceTab } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
-import { removeTaskFromTaskCaches } from "@/lib/taskListMetaSync.js";
 import { toast } from "@/components/ui/toast.js";
 import {
   buildSessionManagerRowKey,
   buildSessionManagerRows,
   type SessionManagerRow,
 } from "./sessionManagerModel.js";
-import { countRowTrees, eraseHiddenRows } from "./sessionManagerErase.js";
+import {
+  countTaskDeletionTrees,
+  formatTaskDeletionResult,
+  loadTaskDeletionWorktreePreview,
+  permanentlyDeleteTasks,
+  taskDeletionSupported,
+  type TaskDeleteTarget,
+  type TaskDeleteServices,
+} from "@/task-deletion/taskDeletion.js";
 import type { SessionManagerScope, SessionManagerStatusFilter } from "./sessionManagerTypes.js";
 
 export interface SessionManagerUniverseTab {
@@ -138,11 +145,6 @@ export function useSessionManagerTaskLists(params: {
   };
 }
 
-export interface SessionManagerRowActionResult {
-  succeeded: number;
-  failed: number;
-}
-
 /** Mutations through per-workspace zcodeTaskService (the sidebar-section lane), followed by the shared cache-sync helpers. */
 export function useSessionManagerRowActions(
   universe: readonly SessionManagerUniverseTab[],
@@ -167,6 +169,27 @@ export function useSessionManagerRowActions(
 
   const resolveRowServices = (row: SessionManagerRow) =>
     lookup.get(row.workspaceKey)?.services.zcodeTaskService ?? null;
+  const resolveTaskDeleteServices = (row: TaskDeleteTarget): TaskDeleteServices | null => {
+    // Remote workspaces never execute permanent Delete; do not rely on the remote Host's capability answer.
+    if (row.workspaceIdentity?.trim()) return null;
+    const services = lookup.get(
+      buildTaskWorkspaceKey(row.workspacePath, row.workspaceIdentity),
+    )?.services;
+    return services
+      ? { taskService: services.zcodeTaskService, gitService: services.gitService }
+      : null;
+  };
+  const toDeleteTargets = (rows: readonly SessionManagerRow[]): TaskDeleteTarget[] =>
+    rows.map((row) => ({
+      id: row.taskKey,
+      taskId: row.task.taskId,
+      title: row.task.title,
+      workspacePath: row.task.workspacePath,
+      workspaceIdentity: row.task.workspaceIdentity,
+      archived: row.archived,
+      pinned: row.pinned,
+      ...(row.task.executionWorktree ? { executionWorktree: row.task.executionWorktree } : {}),
+    }));
 
   const reportError = (error: unknown, action: string, row: SessionManagerRow) => {
     logger.error(`[SessionManager] ${action} failed`, {
@@ -181,13 +204,12 @@ export function useSessionManagerRowActions(
     () => ({
       canMutate: (row: SessionManagerRow) => !row.offline && Boolean(resolveRowServices(row)),
 
-      /** Erase needs a local workspace whose host exposes the optional erase methods (spec §4). */
-      canErase: (row: SessionManagerRow) =>
-        !row.offline &&
-        !row.task.workspaceIdentity &&
-        typeof resolveRowServices(row)?.eraseTasks === "function",
-
-      countTrees: (rows: readonly SessionManagerRow[]) => countRowTrees(rows, resolveRowServices),
+      countTrees: (rows: readonly SessionManagerRow[]) =>
+        countTaskDeletionTrees(toDeleteTargets(rows), resolveTaskDeleteServices),
+      deletionSupported: (rows: readonly SessionManagerRow[]) =>
+        taskDeletionSupported(toDeleteTargets(rows), resolveTaskDeleteServices),
+      worktreePreview: (rows: readonly SessionManagerRow[]) =>
+        loadTaskDeletionWorktreePreview(toDeleteTargets(rows), resolveTaskDeleteServices),
 
       async setPinned(row: SessionManagerRow, pinned: boolean) {
         const service = resolveRowServices(row);
@@ -281,115 +303,13 @@ export function useSessionManagerRowActions(
        * still-archived guard skips rows restored elsewhere. Partial failures are tolerated
        * and reported by count; the list refreshes through the registry either way.
        */
-      async deleteRows(
-        rows: readonly SessionManagerRow[],
-        options: { erase?: boolean } = {},
-      ): Promise<SessionManagerRowActionResult> {
-        let succeeded = 0;
-        let failed = 0;
-        // Erase only follows a successful Hide, so a failure at any point leaves the session hidden.
-        const hiddenRows: SessionManagerRow[] = [];
-        const archivedByWorkspace = new Map<
-          string,
-          {
-            workspacePath: string;
-            workspaceIdentity?: string;
-            taskIds: string[];
-            rows: SessionManagerRow[];
-          }
-        >();
-        for (const row of rows) {
-          if (row.archived) {
-            const key = row.workspaceKey;
-            const bucket = archivedByWorkspace.get(key) ?? {
-              workspacePath: row.task.workspacePath,
-              ...(row.task.workspaceIdentity
-                ? { workspaceIdentity: row.task.workspaceIdentity }
-                : {}),
-              taskIds: [],
-              rows: [],
-            };
-            bucket.taskIds.push(row.task.taskId);
-            bucket.rows.push(row);
-            archivedByWorkspace.set(key, bucket);
-            continue;
-          }
-          const service = resolveRowServices(row);
-          if (!service) {
-            failed += 1;
-            continue;
-          }
-          try {
-            await service.deleteTask({
-              taskId: row.task.taskId,
-              workspacePath: row.task.workspacePath,
-              ...(row.task.workspaceIdentity
-                ? { workspaceIdentity: row.task.workspaceIdentity }
-                : {}),
-            });
-            removeTaskFromTaskCaches({
-              workspacePath: row.task.workspacePath,
-              workspaceIdentity: row.task.workspaceIdentity,
-              taskId: row.task.taskId,
-            });
-            succeeded += 1;
-            hiddenRows.push(row);
-          } catch (error) {
-            reportError(error, "delete", row);
-            failed += 1;
-          }
-        }
-        for (const bucket of archivedByWorkspace.values()) {
-          const representative = rows.find(
-            (row) =>
-              row.workspaceKey ===
-              buildTaskWorkspaceKey(bucket.workspacePath, bucket.workspaceIdentity),
-          );
-          const service = representative ? resolveRowServices(representative) : null;
-          if (!service) {
-            failed += bucket.taskIds.length;
-            continue;
-          }
-          try {
-            const result = await service.deleteArchivedTasks({
-              workspacePath: bucket.workspacePath,
-              ...(bucket.workspaceIdentity ? { workspaceIdentity: bucket.workspaceIdentity } : {}),
-              taskIds: bucket.taskIds,
-            });
-            // skippedTaskIds = restored elsewhere mid-dialog: neither deleted nor failed; those rows
-            // reappear through the next active-kind query and are simply not removed here.
-            succeeded += result.deletedTaskIds.length;
-            failed += result.failedTaskIds.length;
-            const deletedIds = new Set(result.deletedTaskIds);
-            hiddenRows.push(...bucket.rows.filter((row) => deletedIds.has(row.task.taskId)));
-            for (const taskId of result.deletedTaskIds) {
-              removeTaskFromTaskCaches({
-                workspacePath: bucket.workspacePath,
-                workspaceIdentity: bucket.workspaceIdentity,
-                taskId,
-              });
-            }
-          } catch (error) {
-            logger.error("[SessionManager] archived batch delete failed", {
-              workspacePath: bucket.workspacePath,
-              workspaceIdentity: bucket.workspaceIdentity,
-              message: error instanceof Error ? error.message : String(error),
-            });
-            failed += bucket.taskIds.length;
-          }
-        }
-        if (failed > 0) {
-          toast(
-            formatMessage("sessionManager.delete.partialFailure", {
-              failed: String(failed),
-              succeeded: String(succeeded),
-            }),
-          );
-        }
-        if (options.erase && hiddenRows.length > 0) {
-          await eraseHiddenRows(hiddenRows, { resolveRowServices, reportError, formatMessage });
-        }
-        return { succeeded, failed };
+      async deleteRows(rows: readonly SessionManagerRow[]) {
+        const result = await permanentlyDeleteTasks(
+          toDeleteTargets(rows),
+          resolveTaskDeleteServices,
+        );
+        toast(formatTaskDeletionResult(result, formatMessage));
+        return result;
       },
     }),
     // lookup changes identity when services or resolver state change; formatMessage is stable per intl instance.

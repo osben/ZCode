@@ -1,8 +1,7 @@
+import { syncForkUsageProtectedRawRows } from "./fork-usage-detached.js";
 import type { DatabaseSync } from "node:sqlite";
-import {
-  FORK_USAGE_BUCKET_MS,
-  ensureForkUsageRollupSchema,
-} from "./fork-usage-rollup-schema.js";
+import { FORK_USAGE_BUCKET_MS, ensureForkUsageRollupSchema } from "./fork-usage-rollup-schema.js";
+import { ensureForkUsageDetachedSchema } from "./fork-usage-detached-schema.js";
 
 const REPLACE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ROLLUP_RETENTION_MS = 2 * 365 * 24 * 60 * 60 * 1000;
@@ -31,17 +30,41 @@ export function alignDownToBucket(timeMs: number): number {
  */
 export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void {
   ensureForkUsageRollupSchema(db);
-  const watermark = readWatermark(db);
-  const windowStart = watermark === null ? 0 : alignDownToBucket(watermark - REPLACE_WINDOW_MS);
-
+  ensureForkUsageDetachedSchema(db);
+  if (db.isTransaction) {
+    recomputeForkUsageRollupInTransaction(db, nowMs);
+    return;
+  }
   db.exec("begin immediate");
   try {
-    replaceBuckets(db, {
-      table: "fork_usage_bucket",
-      rawTable: "model_usage",
-      countColumn: "request_count",
-      windowStart,
-      insertSql: (from) => `
+    recomputeForkUsageRollupInTransaction(db, nowMs);
+    db.exec("commit");
+  } catch (error) {
+    db.exec("rollback");
+    throw error;
+  }
+  lastRecomputeAt.set(db, nowMs);
+}
+
+/** Runs the rollup replacement body under a caller-owned write transaction. */
+export function recomputeForkUsageRollupInTransaction(db: DatabaseSync, nowMs: number): void {
+  ensureForkUsageRollupSchema(db);
+  ensureForkUsageDetachedSchema(db);
+  syncForkUsageProtectedRawRows(db);
+  const watermark = readWatermark(db);
+  const windowStart = watermark === null ? 0 : alignDownToBucket(watermark - REPLACE_WINDOW_MS);
+  replaceBuckets(db, {
+    table: "fork_usage_bucket",
+    rawTable: "model_usage",
+    countColumn: "request_count",
+    protectedMatch: (alias) => `not exists (
+        select 1 from fork_usage_protected_bucket p where p.kind = 'model'
+          and p.bucket_start = ${alias}.bucket_start and p.workspace_key = ${alias}.workspace_key
+          and p.provider_id = ${alias}.provider_id and p.model_id = ${alias}.model_id
+          and p.query_source = ${alias}.query_source
+      )`,
+    windowStart,
+    insertSql: (from) => `
         insert into fork_usage_bucket (
           bucket_start, workspace_key, provider_id, model_id, query_source,
           input_tokens, output_tokens, reasoning_tokens, cache_creation_tokens, cache_read_tokens,
@@ -66,14 +89,21 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
         from model_usage m
         left join session s on s.id = m.session_id
         where m.started_at >= ${from}
+          and not exists (
+            select 1 from fork_usage_protected_bucket p where p.kind = 'model'
+              and p.bucket_start = ${BUCKET_EXPR("m.started_at")}
+              and p.workspace_key = coalesce(s.directory, '') and p.provider_id = m.provider_id
+              and p.model_id = coalesce(m.model_id, '') and p.query_source = m.query_source
+          )
         group by 1, 2, 3, 4, 5`,
-    });
-    replaceBuckets(db, {
-      table: "fork_usage_turn",
-      rawTable: "turn_usage",
-      countColumn: "turn_count",
-      windowStart,
-      insertSql: (from) => `
+  });
+  replaceBuckets(db, {
+    table: "fork_usage_turn",
+    rawTable: "turn_usage",
+    countColumn: "turn_count",
+    protectedMatch: () => "1 = 1",
+    windowStart,
+    insertSql: (from) => `
         insert into fork_usage_turn (
           bucket_start, session_id, workspace_key, turn_count,
           completed_duration_sum_ms, completed_count, total_tokens
@@ -90,13 +120,18 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
         left join session s on s.id = t.session_id
         where t.started_at >= ${from}
         group by 1, 2, 3`,
-    });
-    replaceBuckets(db, {
-      table: "fork_usage_tool",
-      rawTable: "tool_usage",
-      countColumn: "call_count",
-      windowStart,
-      insertSql: (from) => `
+  });
+  replaceBuckets(db, {
+    table: "fork_usage_tool",
+    rawTable: "tool_usage",
+    countColumn: "call_count",
+    protectedMatch: (alias) => `not exists (
+        select 1 from fork_usage_protected_bucket p where p.kind = 'tool'
+          and p.bucket_start = ${alias}.bucket_start and p.workspace_key = ${alias}.workspace_key
+          and p.tool_name = ${alias}.tool_name
+      )`,
+    windowStart,
+    insertSql: (from) => `
         insert into fork_usage_tool (
           bucket_start, workspace_key, tool_name, call_count, error_count,
           duration_sum_ms, duration_count
@@ -112,18 +147,17 @@ export function recomputeForkUsageRollup(db: DatabaseSync, nowMs: number): void 
         from tool_usage u
         left join session s on s.id = u.session_id
         where u.started_at >= ${from}
+          and not exists (
+            select 1 from fork_usage_protected_bucket p where p.kind = 'tool'
+              and p.bucket_start = ${BUCKET_EXPR("u.started_at")}
+              and p.workspace_key = coalesce(s.directory, '') and p.tool_name = u.tool_name
+          )
         group by 1, 2, 3`,
-    });
-    pruneRollup(db, nowMs);
-    db.prepare(
-      "insert into fork_usage_meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value",
-    ).run(WATERMARK_KEY, String(nowMs));
-    db.exec("commit");
-  } catch (error) {
-    db.exec("rollback");
-    throw error;
-  }
-  lastRecomputeAt.set(db, nowMs);
+  });
+  pruneForkUsageRollup(db, nowMs);
+  db.prepare(
+    "insert into fork_usage_meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value",
+  ).run(WATERMARK_KEY, String(nowMs));
 }
 
 function replaceBuckets(
@@ -133,6 +167,7 @@ function replaceBuckets(
     rawTable: string;
     /** Rollup column that counts the raw rows a bucket row stands for. */
     countColumn: string;
+    protectedMatch: (alias: string) => string;
     windowStart: number;
     insertSql: (fromParam: string) => string;
   },
@@ -153,20 +188,30 @@ function replaceBuckets(
     )
     .get(oldestBucket) as { n: number };
   const raw = db
-    .prepare(
-      `select count(*) as n from ${input.rawTable} where started_at >= ? and started_at < ?`,
-    )
+    .prepare(`select count(*) as n from ${input.rawTable} where started_at >= ? and started_at < ?`)
     .get(oldestBucket, oldestBucket + FORK_USAGE_BUCKET_MS) as { n: number };
   const earliestSafe =
     Number(raw.n) >= Number(rolledUp.n) ? oldestBucket : oldestBucket + FORK_USAGE_BUCKET_MS;
   const from = Math.max(input.windowStart, earliestSafe);
-  db.prepare(`delete from ${input.table} where bucket_start >= ?`).run(from);
+  db.prepare(
+    `delete from ${input.table} where bucket_start >= ? and ${input.protectedMatch(input.table)}`,
+  ).run(from);
   db.exec(input.insertSql(String(from)));
 }
 
-function pruneRollup(db: DatabaseSync, nowMs: number): void {
+export function pruneForkUsageRollup(db: DatabaseSync, nowMs: number): void {
   const cutoff = nowMs - ROLLUP_RETENTION_MS;
-  for (const table of ["fork_usage_bucket", "fork_usage_turn", "fork_usage_tool"]) {
+  for (const table of [
+    "fork_usage_bucket",
+    "fork_usage_turn",
+    "fork_usage_tool",
+    "fork_usage_detached_turn",
+    "fork_usage_protected_bucket",
+    "fork_usage_protected_model",
+    "fork_usage_protected_tool",
+    "fork_usage_protected_model_raw",
+    "fork_usage_protected_tool_raw",
+  ]) {
     db.prepare(`delete from ${table} where bucket_start < ?`).run(cutoff);
   }
 }

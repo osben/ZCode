@@ -1,3 +1,7 @@
+export {
+  zcodeTaskEraseResultSchema,
+  zcodeTaskWorktreeCleanupResultSchema,
+} from "../task-deletion.js";
 import { requestVerificationReasons } from "../request-security-edition/verification-policy.js";
 import { zcodeProtocolTraceSchema } from "./trace.js";
 // Bot reverse-reply name resolution and clarification results use the same strict schema as App and CLI.

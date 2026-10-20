@@ -212,12 +212,42 @@ interface PendingLocalMediaPreviewPathAuthorization {
   reject: (error: Error) => void;
 }
 
+interface PendingOpenWorkspaceInventoryRequest {
+  resolve: (inventory: { available: boolean; paths: string[] }) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 const pendingFeedbackLogArchiveRequests = new Map<string, PendingFeedbackLogArchiveRequest>();
 let nextFeedbackLogArchiveRequestSeq = 0;
 const pendingLocalMediaPreviewPathAuthorizations = new Map<
   string,
   PendingLocalMediaPreviewPathAuthorization
 >();
+const pendingOpenWorkspaceInventoryRequests = new Map<
+  string,
+  PendingOpenWorkspaceInventoryRequest
+>();
+let nextOpenWorkspaceInventoryRequestSeq = 0;
+
+function requestOpenWorkspaceInventory(): Promise<{ available: boolean; paths: string[] }> {
+  if (!parentPort) return Promise.reject(new Error("parentPort unavailable"));
+  const requestId = `open-workspace-inventory-${Date.now()}-${nextOpenWorkspaceInventoryRequestSeq++}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingOpenWorkspaceInventoryRequests.delete(requestId);
+      reject(new Error("Open workspace inventory request timed out."));
+    }, 5_000);
+    pendingOpenWorkspaceInventoryRequests.set(requestId, { resolve, reject, timer });
+    try {
+      parentPort.postMessage({ type: HostResponseTypes.OpenWorkspaceInventoryRequest, requestId });
+    } catch (error) {
+      clearTimeout(timer);
+      pendingOpenWorkspaceInventoryRequests.delete(requestId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
 
 function authorizeLocalMediaPreviewPath(path: string): Promise<string> {
   if (!parentPort) {
@@ -2407,6 +2437,15 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     hostNetworkCapture.setCaptureId(msg.control.captureId);
     return;
   }
+  if (msg.type === HostMessageTypes.OpenWorkspaceInventoryResult) {
+    const pending = pendingOpenWorkspaceInventoryRequests.get(msg.requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingOpenWorkspaceInventoryRequests.delete(msg.requestId);
+      pending.resolve({ available: msg.available, paths: msg.paths });
+    }
+    return;
+  }
   const port = e.ports[0];
   if (msg.type === HostMessageTypes.DatabaseStartupControl) {
     if (msg.control.action === "snapshot") databaseStartup?.coordinator.publish();
@@ -2983,6 +3022,12 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               zcodeBuiltinProviderConfigFilePath: msg.zcodeBuiltinProviderConfigFilePath,
               processLifecycleReporter: runtimeProcessLifecycleReporter,
               taskRuntimeReporter: runtimeTaskReporter,
+              getOpenWorkspacePaths: async () => {
+                const inventory = await requestOpenWorkspaceInventory();
+                if (!inventory.available)
+                  throw new Error("Open workspace inventory is incomplete.");
+                return inventory.paths;
+              },
               feedback: {
                 getDeviceMid: () => msg.deviceMid,
                 apiBaseUrl: msg.feedbackApiBase,

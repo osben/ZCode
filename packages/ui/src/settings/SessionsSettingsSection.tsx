@@ -5,7 +5,6 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 import { toast } from "@/components/ui/toast.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import {
   applySessionManagerClientFilters,
@@ -37,7 +36,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 interface SessionsSettingsSectionProps {
   onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
-  /** False on web remote control: neither the erase option nor the hidden-sessions row is offered. */
+  /** False on web remote control: historical hidden-content maintenance is unavailable there. */
   allowErase?: boolean;
   /** Workspace scope carried by the settings navigation intent (project-menu entry). */
   scope?: SettingsSessionsScope;
@@ -51,8 +50,6 @@ export function SessionsSettingsSection({
   onOpenSession,
 }: SessionsSettingsSectionProps) {
   const { intl } = useZCodeIntl();
-  const activeWorkspacePath = useTabStore((state) => state.activeWorkspacePath);
-  const activeWorkspaceIdentity = useTabStore((state) => state.activeWorkspaceIdentity);
 
   const [viewState, setViewState] = useState<SessionManagerViewState>(readSessionManagerViewState);
   const [search, setSearch] = useState("");
@@ -235,7 +232,7 @@ export function SessionsSettingsSection({
   }, []);
 
   const confirmDelete = useCallback(
-    async (rowsToDelete: readonly SessionManagerRow[], options: { erase: boolean }) => {
+    async (rowsToDelete: readonly SessionManagerRow[]) => {
       setDeleteDialogRows(null);
       setSelectedKeys((current) => {
         const next = new Set(current);
@@ -244,8 +241,7 @@ export function SessionsSettingsSection({
         }
         return next;
       });
-      await actions.deleteRows(rowsToDelete, options);
-      // Hide adds to the hidden-content count and erase removes from it; either way it changed.
+      await actions.deleteRows(rowsToDelete);
       await hiddenSessions.refresh();
     },
     [actions, hiddenSessions],
@@ -345,6 +341,7 @@ export function SessionsSettingsSection({
       )}
       <HiddenSessionsMaintenance
         sessions={allowErase ? hiddenSessions.sessions : null}
+        worktrees={allowErase ? hiddenSessions.worktrees : 0}
         busy={hiddenSessions.busy}
         onErase={hiddenSessions.erase}
       />
@@ -398,9 +395,10 @@ export function SessionsSettingsSection({
         <SessionManagerDeleteDialog
           selectedRows={deleteDialogRows}
           loadTreeCounts={actions.countTrees}
-          canEraseRow={allowErase ? actions.canErase : () => false}
+          loadCapability={actions.deletionSupported}
+          loadWorktreePreview={actions.worktreePreview}
           onCancel={() => setDeleteDialogRows(null)}
-          onConfirm={(rowsToDelete, options) => void confirmDelete(rowsToDelete, options)}
+          onConfirm={(rowsToDelete) => void confirmDelete(rowsToDelete)}
         />
       ) : null}
     </div>
