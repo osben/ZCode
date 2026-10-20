@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
 
-// Tail-of-turn digest (docs/dynamic-workflow/presentation.md "The run card"): two states,
-// collapsed by default — collapsed is the header + phase line, expanded drops pills under their
-// stations; cold state is a single line. Interactions (chevron, ⤢, Resume, chips, pills) go
-// through the real DOM.
+// 轮尾摘要（docs/dynamic-workflow/presentation.md「The run card」）：两态、默认收起——收起是表头 +
+// 阶段线，展开是药丸落到站下；冷态只剩一行。交互（chevron、⤢、Resume、芯片、药丸）走真实 DOM。
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { createElement, Profiler, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,9 +10,8 @@ import type { WorkflowRunCardSummary } from "@/ToolCallBlocks/shared.js";
 import type { TimelinePill } from "@/components/workflow-timeline/timeline-model.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
-// The tooltip only renders children (no DOM shape change) but records title / description: the
-// Stop button's second line "You can resume later" lives only in the tooltip — that is the half of
-// the sentence this rename pins down.
+// 提示只渲染 children（不改 DOM 形状），但把 title / description 记下来：Stop 钮的第二行
+// 「停止后可以随时恢复」只活在提示里，是这次改名要钉住的那半句话。
 const tooltips = vi.hoisted(() => ({
   calls: [] as Array<{ title: unknown; description?: string }>,
 }));
@@ -33,25 +30,24 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   },
 }));
 
-// The wiring layer's card only reads the provider name of the workspace-scoped operator proxy
-// model; this does not verify that line, so an empty implementation saves building a whole session
-// store for it.
+// 接线层的卡只读 workspace 作用域算子代理模型的 provider 名；这里不验证那行字，给一个空实现
+// 免去为它搭一整份 session store。
 vi.mock("@/hooks/useWorkflowSubagentModelProviderName.js", () => ({
   useWorkflowSubagentModelProviderName: () => undefined,
 }));
 
-// eslint-disable-next-line import/first -- the component under test must be imported after the tooltip mock.
+// eslint-disable-next-line import/first -- 必须在 tooltip mock 之后再引入被测组件。
 import {
   WorkflowRunDigest,
   type WorkflowRunDigestProps,
 } from "@/components/workflow-timeline/WorkflowRunDigest.js";
-// eslint-disable-next-line import/first -- same as above.
+// eslint-disable-next-line import/first -- 同上。
 import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js";
-// eslint-disable-next-line import/first -- same as above.
+// eslint-disable-next-line import/first -- 同上。
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
-// eslint-disable-next-line import/first -- same as above; the entries are used only for bilingual existence assertions.
+// eslint-disable-next-line import/first -- 同上；词条只用于双语言存在性断言。
 import enUS from "../src/i18n/locales/en-US.js";
-// eslint-disable-next-line import/first -- same as above.
+// eslint-disable-next-line import/first -- 同上。
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 afterEach(() => {
@@ -59,7 +55,7 @@ afterEach(() => {
   tooltips.calls.length = 0;
 });
 
-// plan → verify, verify back to plan (same fixture as the tool-card tests).
+// plan → verify，verify 回到 plan（与工具卡测试同一夹具）。
 const LOOP_GRAPH = {
   steps: [
     {
@@ -162,10 +158,8 @@ function renderDigest(
   );
 }
 
-// The neutral card for a run not in the live projection (evicted by the eight-entry cap / cold
-// recovery with no journal hit) (docs/dynamic-workflow/presentation.md "The run card"): any source
-// that names a runId produces a card, and if the join fails it degrades to a single line — the
-// kind word says "ended" without impersonating a terminal state.
+// run 不在活投影里（八条上限淘汰 / 冷恢复无 journal 命中）的中性卡（docs/dynamic-workflow/presentation.md
+// 「The run card」）：凡点名了 runId 的来源都出卡，联接不到就退成单行——种类词说「已结束」而不冒充终态。
 describe("WorkflowRunDigest 中性卡（summary 缺席）", () => {
   it("单行：种类词「Workflow ended」，无灯无轨道无 Cancel / Resume，⤢ 仍在；status 属性为 absent", () => {
     const onOpenRun = vi.fn();
@@ -191,18 +185,15 @@ describe("WorkflowRunDigest 中性卡（summary 缺席）", () => {
 
   it("双语言词条在场", () => {
     expect(enUS["chat.toolCall.workflow.card.ended"]).toBe("Workflow ended");
-    expect(zhCN["chat.toolCall.workflow.card.ended"]).toBeTruthy();
+    expect(zhCN["chat.toolCall.workflow.card.ended"]).toBe("工作流已结束");
     const view = renderDigest({ summary: undefined }, "zh-CN");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
-      zhCN["chat.toolCall.workflow.card.ended"],
-    );
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流已结束");
   });
 });
 
-// ── The "n more" row on a roster station (docs/dynamic-workflow/presentation.md "Past six participants") ──
-// Desktop-observed: that row in the tail digest used to be a static span, and clicking it bubbled
-// up to the whole-block toggle and folded the card. It is a door: open the run details, landing on
-// that station; the station head stays part of the toggle.
+// ── 名册站上「还有 n 个」那一行（docs/dynamic-workflow/presentation.md「Past six participants」）──
+// 桌面实测：轮尾摘要里那一行原本是静态 span，点它冒泡到整块开关、把卡折起来了。它是一扇门：开 run
+// 详情、落到这一站；站头照旧是开关的一部分。
 describe("WorkflowRunDigest 「还有 n 个」", () => {
   const FANOUT_GRAPH = {
     steps: [
@@ -263,14 +254,13 @@ describe("WorkflowRunDigest 「还有 n 个」", () => {
     fireEvent.click(row);
     expect(onOpenRun).toHaveBeenCalledWith({ phaseId: "phase#a" });
     expect(root.getAttribute("data-expanded")).toBe("true");
-    // The station head has no callback: a span, clicking it toggles the collapse (follow-up
-    // "click grammar revision").
+    // 站头没有回调：span，点它切换折叠（追记「点击语法修订」）。
     const head = view.getByTestId("workflow-timeline-station-head");
     expect(head.tagName).toBe("SPAN");
     fireEvent.click(head);
     expect(root.getAttribute("data-expanded")).toBe("false");
     expect(onOpenRun).toHaveBeenCalledTimes(1);
-    // ⤢ opens the whole run, with no landing point.
+    // ⤢ 开整个 run，不带落点。
     fireEvent.click(view.getByTestId("workflow-card-open-details"));
     expect(onOpenRun).toHaveBeenLastCalledWith();
   });
@@ -285,12 +275,11 @@ describe("WorkflowRunDigest 「还有 n 个」", () => {
   });
 });
 
-// ── Subagent model (docs/dynamic-workflow/presentation.md "The run card") ──
-// The detail string already says "how many subagents"; the model name follows it as the last
-// segment, in the same muted text — no chip, no prefix. Strength and the spec string live in the
-// tooltip. A run that never specified a model has no such segment.
+// ── 子代理模型（docs/dynamic-workflow/presentation.md「The run card」）──
+// 细节串已经在说「几个子代理」，模型名跟在它后面当最后一段，同一段淡色文字——不加芯片、不加
+// 前缀。强度与规范串在 tooltip 里。没指定过模型的 run 没有这一段。
 describe("WorkflowRunDigest 子代理模型", () => {
-  // The team plan's provider id is a hex string — exactly what this change guards against.
+  // 团队套餐的 provider id 是一串十六进制：这次改动要挡的就是它。
   const TEAM_PLAN_MODEL = "4fc7f541-2382-4c32-be11-f021b8d7ed1d/GLM-5.3-Flash$high";
 
   it("模型名是细节串的最后一段；provider id 不上屏，规范串与强度进 tooltip", () => {
@@ -323,14 +312,8 @@ describe("WorkflowRunDigest 子代理模型", () => {
   });
 });
 
-// ── When the header runs out of room (docs/dynamic-workflow/presentation.md "When the header runs out of room") ──
-// The detail string used to be the only text in the header that refused to yield: once it grew
-// (a subagent model name can push it well past "2 phases · 1 agent working"), Configure and Stop
-// were squeezed outside the card's right border. jsdom does no layout, so this pins the class
-// contract that produces that layout — the detail string can shrink, the controls cannot, and the
-// right cluster carries min-w-0 (without it the whole cluster refuses to shrink by a single pixel;
-// see the third case below).
-describe("WorkflowRunDigest 表头溢出", () => {
+// 控件与细节串的 DOM 归属。
+describe("WorkflowRunDigest 表头控件归属", () => {
   const LONG_MODEL = "4fc7f541-2382-4c32-be11-f021b8d7ed1d/GLM-5.3-Flash$high";
 
   function runningCard() {
@@ -342,39 +325,11 @@ describe("WorkflowRunDigest 表头溢出", () => {
     });
   }
 
-  it("让位的是细节串：min-w-0 + truncate，一行截断", () => {
-    const detail = runningCard().getByTestId("workflow-card-detail");
-
-    expect(detail.className).toContain("min-w-0");
-    expect(detail.className).toContain("truncate");
-  });
-
-  it("控件不缩：Configure、Stop、⤢ 都带 shrink-0", () => {
-    const view = runningCard();
-
-    for (const id of [
-      "workflow-digest-configure",
-      "workflow-digest-cancel",
-      "workflow-card-open-details",
-    ]) {
-      expect(view.getByTestId(id).className).toContain("shrink-0");
-    }
-  });
-
-  it("右簇可压缩：不带 shrink-0，且必须带 min-w-0（否则地板是整串细节，一个像素都不缩）", () => {
+  it("Configure、Stop、详情按钮与细节串位于同一右簇", () => {
     const view = runningCard();
     const cluster = view.getByTestId("workflow-card-detail").parentElement!;
 
-    // shrink-0 would fix the whole cluster at its content width — exactly the old shape where the
-    // buttons got pushed out of the card.
-    expect(cluster.className).not.toContain("shrink-0");
-    // The cluster's min-w-0 is the load-bearing part of this fix: a flex item's automatic minimum
-    // size is min-content, and truncate's nowrap makes the detail string's min-content equal the
-    // full text width (neither overflow:hidden nor the detail string's own min-w-0 computes it
-    // smaller). Without it, the cluster's floor is "the whole detail string + buttons".
-    expect(cluster.className).toContain("min-w-0");
-    // The three controls share the cluster with the detail string: negative space can only land on
-    // the detail string.
+    // 三个控件与细节串同处一簇。
     for (const id of [
       "workflow-digest-configure",
       "workflow-digest-cancel",
@@ -396,17 +351,14 @@ describe("WorkflowRunDigest 收起态（默认）", () => {
     expect(view.queryByTestId("workflow-digest-status")).toBeNull();
     const detail = view.getByTestId("workflow-card-detail").textContent!;
     expect(detail).toBe("2 phases · 1 agent working");
-    expect(view.getByTestId("workflow-card-detail").className).toContain("text-ui-base");
-    expect(view.getByTestId("workflow-card-detail").className).not.toContain("font-mono");
-    expect(detail).not.toContain("tokens");
-    // The running kind word's shimmer: wf-swap wraps outside the gradient (the lesson of round 7).
+    // 运行中的种类词扫光，wf-swap 包在渐变外面（round 7 的教训）。
     expect(root.querySelector(".wf-swap .animated-gradient-text")).toBeTruthy();
 
     expect(view.getAllByTestId("workflow-timeline-station")).toHaveLength(2);
     expect(view.getByTestId("workflow-timeline-arc")).toBeTruthy();
     expect(view.queryAllByTestId("workflow-agent-pill")).toHaveLength(2);
     expect(view.queryByTestId("workflow-card-footer")).toBeNull();
-    // No callback means no ⤢ and no Resume (the callback's existence is the gate).
+    // 没有回调就没有 ⤢、没有 Resume（回调的存在即门控）。
     expect(view.queryByTestId("workflow-card-open-details")).toBeNull();
     expect(view.queryByTestId("workflow-digest-resume")).toBeNull();
   });
@@ -426,8 +378,8 @@ describe("WorkflowRunDigest 收起态（默认）", () => {
   });
 
   it("还没启动的子代理药丸与活药丸同一套点击语法：按钮、↗，点它交出槽位而不切换整块", () => {
-    // docs/dynamic-workflow/presentation.md "The pill": it used to be a span, and clicking it
-    // bubbled up to the whole-block toggle, folding the card.
+    // docs/dynamic-workflow/presentation.md「The pill」：此前它是 span，点击冒泡到整块
+    // 开关，把卡折起来。
     const onOpenPill = vi.fn();
     const view = renderDigest({
       summary: joined({
@@ -511,15 +463,14 @@ describe("WorkflowRunDigest 产物条", () => {
     expect(pills).toHaveLength(2);
     expect(pills[0]?.tagName).toBe("BUTTON");
     expect(pills[0]?.getAttribute("data-pill-size")).toBe("md");
-    // The v2 in the tail slot only on the pill that has version 2.
+    // 尾槽里的 v2 只在第 2 版的那枚上。
     expect(strip.querySelectorAll('[data-testid="workflow-run-artifact-version"]')).toHaveLength(1);
 
     expect(root.getAttribute("data-expanded")).toBe("true");
     fireEvent.click(pills[1]!);
     expect(onOpenArtifact).toHaveBeenCalledWith("perf");
     expect(root.getAttribute("data-expanded")).toBe("true");
-    // Blank space on the strip **is** part of the whole-block toggle (follow-up "click grammar
-    // revision"): clicking it toggles, and the artifact strip remains.
+    // 条上的空白处**是**整块开关的一部分（追记「点击语法修订」）：点它切换，产物条仍在。
     fireEvent.click(strip);
     expect(root.getAttribute("data-expanded")).toBe("false");
     expect(view.getAllByTestId("workflow-digest-artifact")).toHaveLength(2);
@@ -550,9 +501,8 @@ describe("WorkflowRunDigest 产物条", () => {
   });
 });
 
-// Instance table overflow (docs/dynamic-workflow/presentation.md "The run card"): the header's
-// counts already include instances outside the table, but the timeline can only draw those inside
-// it — the sentence under the timeline is exactly about that difference.
+// 实例表撞界（docs/dynamic-workflow/presentation.md「The run card」）：表头的计数已经把表外的
+// 实例算进来了，时间线却只画得出表内那些——时间线下的这一句说的正是这个差额。
 describe("WorkflowRunDigest 撞界提示", () => {
   const truncated = (overrides: Partial<WorkflowRunState> = {}) =>
     joined({
@@ -577,8 +527,7 @@ describe("WorkflowRunDigest 撞界提示", () => {
       renderDigest({ summary: joined() }).queryByTestId("workflow-digest-truncated"),
     ).toBeNull();
     cleanup();
-    // `truncated` is also set when reports / artifacts / phases overflow; then not a single step is
-    // missing, so there is nothing to say.
+    // `truncated` 也会被 reports / artifacts / phases 触界置位；那时步数一个不少，没有可说的。
     expect(
       renderDigest({ summary: joined({ truncated: true }) }).queryByTestId(
         "workflow-digest-truncated",
@@ -623,7 +572,7 @@ describe("WorkflowRunDigest 冷态", () => {
     expect(view.queryByTestId("workflow-card-toggle")).toBeNull();
     const root = view.getByTestId("workflow-run-digest-t");
     expect(root.hasAttribute("data-expanded")).toBe(false);
-    // No phase line means no toggle: the whole block is not a button.
+    // 没有阶段线就没有开关：整块不是按钮。
     expect(root.hasAttribute("role")).toBe(false);
     expect(view.getByTestId("workflow-card-open-details")).toBeTruthy();
   });
@@ -648,31 +597,20 @@ describe("WorkflowRunDigest 文案", () => {
       expect(zhCN[id as keyof typeof zhCN]).toBeTruthy();
     }
     const view = renderDigest({ summary: joined(), pendingQuestions: 1 }, "zh-CN");
-    expect(view.getByTestId("workflow-card-kind").textContent).toBe(
-      zhCN["chat.toolCall.workflow.card.running"],
-    );
+    expect(view.getByTestId("workflow-card-kind").textContent).toBe("工作流运行中");
     expect(view.getByTestId("workflow-digest-questions").textContent).toBe("1 个待答问题");
     expect(view.queryByTestId("workflow-card-toggle")).toBeNull();
   });
 });
 
-it.each(["running", "completed", "stopped"] as const)(
-  "运行卡名称使用普通 UI 字体：%s",
-  (status) => {
-    const view = renderDigest({ summary: joined({ status }) });
-    expect(view.getByTestId("workflow-card-name").className).not.toContain("font-mono");
-  },
-);
-
-// Stop run on a running card (docs/dynamic-workflow/presentation.md): while running, Resume's spot
-// is replaced by Stop, going through the same command as the detail page; it disables on click
-// until the status changes.
+// 运行卡上的 Stop run（docs/dynamic-workflow/presentation.md）：running 时
+// Resume 的位置换成 Stop，走详情页同一条命令；点下即禁用直到状态变化。
 describe("WorkflowRunDigest Stop run", () => {
   it("running + onCancel：Stop 进表头、可点；点后禁用并换成 Stopping…", () => {
     const onCancel = vi.fn();
     const view = renderDigest({ summary: joined(), onCancel });
     const cancel = view.getByTestId("workflow-digest-cancel");
-    // Same style as ⤢: a ghost icon button, text only in aria-label / tooltip.
+    // 与 ⤢ 同款：ghost 图标钮，文字只在 aria-label / 提示里。
     expect(cancel.getAttribute("aria-label")).toBe("Stop run");
     expect(cancel.textContent).toBe("");
     expect(cancel.getAttribute("data-size")).toBe("icon-md");
@@ -682,18 +620,16 @@ describe("WorkflowRunDigest Stop run", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect((cancel as HTMLButtonElement).disabled).toBe(true);
     expect(cancel.getAttribute("aria-label")).toBe("Stopping…");
-    // Clicking Cancel does not trigger the card collapse (the button is excluded by hitsControl).
+    // 点 Cancel 不触发卡片折叠（按钮被 hitsControl 排除）。
     expect(
       view.container.querySelector("[data-workflow-run-digest]")?.getAttribute("data-expanded"),
     ).toBe("true");
   });
 
   it("Stopping… 的复位不再是一轮 effect setState：状态变化只提交一次", () => {
-    // Revision 2026-09-12: the reset used to be a setCancelling(false) inside an effect keyed on
-    // status — every status change added one more update after the projection frame's synchronous
-    // commit (same shape as the workflow card crash's throw site). Now the Cancel button is keyed
-    // by status and remounts; the reset is the remount itself, and the frame carrying the status
-    // change commits exactly once. Count commits with a Profiler.
+    // 修订 2026-09-12：复位曾是按 status 跑的 effect 里的 setCancelling(false)——每次状态变化都在
+    // 投影帧的同步提交之后再补一笔更新（与工作流卡崩溃的抛点同形）。现在 Cancel 钮按 status 键控
+    // 重挂，复位是重挂本身，状态变化那一帧只提交一次。用 Profiler 数提交。
     const onCancel = vi.fn();
     const onResume = vi.fn();
     let commits = 0;
@@ -718,7 +654,7 @@ describe("WorkflowRunDigest Stop run", () => {
     fireEvent.click(view.getByTestId("workflow-digest-cancel"));
     expect(view.getByTestId("workflow-digest-cancel").getAttribute("aria-label")).toBe("Stopping…");
 
-    // A new frame in the same status: the button stays Stopping….
+    // 同状态的新帧：按钮保持 Stopping…。
     view.rerender(tree(joined({ status: "running" }, { nodesSettled: 3 })));
     expect((view.getByTestId("workflow-digest-cancel") as HTMLButtonElement).disabled).toBe(true);
 
@@ -765,16 +701,15 @@ describe("WorkflowRunDigest Stop run", () => {
   it("zh-CN：停止运行 / 正在停止…", () => {
     const view = renderDigest({ summary: joined(), onCancel: vi.fn() }, "zh-CN");
     const cancel = view.getByTestId("workflow-digest-cancel");
-    expect(cancel.getAttribute("aria-label")).toBe(zhCN["chat.toolCall.workflow.run.cancel"]);
+    expect(cancel.getAttribute("aria-label")).toBe("停止运行");
     fireEvent.click(cancel);
-    expect(cancel.getAttribute("aria-label")).toBe(zhCN["chat.toolCall.workflow.run.cancelling"]);
+    expect(cancel.getAttribute("aria-label")).toBe("正在停止…");
     expect(enUS["chat.toolCall.workflow.run.cancelling"]).toBeTruthy();
     expect(zhCN["chat.toolCall.workflow.run.cancelling"]).toBeTruthy();
   });
 
-  // The other half of the verb rename: say clearly before the click that "stop ≠ discard". That
-  // sentence lives only in the tooltip's second line, so the assertion goes through the tooltip
-  // props, not the DOM.
+  // 动词改名的另一半：按下去之前就说清楚「停止 ≠ 丢弃」。这句话只活在提示的第二行里，
+  // 所以断言走提示 props，而不是 DOM。
   it("提示第二行说明可恢复；正在停止时那句话撤走", () => {
     const view = renderDigest({ summary: joined(), onCancel: vi.fn() });
     const before = tooltips.calls.find((call) => call.title === "Stop run");
@@ -789,14 +724,12 @@ describe("WorkflowRunDigest Stop run", () => {
 
   it("zh-CN 的提示第二行同样在场", () => {
     renderDigest({ summary: joined(), onCancel: vi.fn() }, "zh-CN");
-    expect(
-      tooltips.calls.find((call) => call.title === zhCN["chat.toolCall.workflow.run.cancel"])
-        ?.description,
-    ).toBe(zhCN["chat.toolCall.workflow.run.stopHint"]);
+    expect(tooltips.calls.find((call) => call.title === "停止运行")?.description).toBe(
+      "停止后可以随时恢复，已完成的步骤会保留。",
+    );
   });
 
-  // The run-control vocabulary must be the same set in the same order on both sides: one side adds
-  // a word and the other forgets, and the user sees an English fallback leak into the Chinese UI.
+  // run 控件的词表两边必须同集同序：一边加了词另一边忘了，用户看到的是英文兜底漏进中文界面。
   it("run 词表的键集在两种语言下完全一致", () => {
     const prefix = "chat.toolCall.workflow.run.";
     const zhKeys = Object.keys(zhCN).filter((key) => key.startsWith(prefix));
@@ -810,13 +743,10 @@ describe("WorkflowRunDigest Stop run", () => {
   });
 });
 
-// ── lineage (docs/dynamic-workflow/presentation.md "The run card") ──
-// On the card only the kind word changes; the "amended from / superseded by" sentences are not
-// drawn (user ruling: too noisy); those two sentences live only on the detail page and in the
-// confirmation window.
+// ── lineage（docs/dynamic-workflow/presentation.md「The run card」）──
+// 卡上只换种类词，不画「调整自 / 已被替代」两句（用户裁决：太吵）；那两句只在详情页与确认窗。
 describe("WorkflowRunDigest lineage", () => {
-  // The join table copies run.stopReason onto the summary (workflowRunCardJoin.ts); the fixture
-  // copies it the same way.
+  // 联接表把 run.stopReason 抄到摘要上（workflowRunCardJoin.ts）；夹具照抄。
   const superseded = joined(
     { status: "stopped", stopReason: "superseded", supersededBy: "dwfrun-next" },
     { stopReason: "superseded" },
@@ -830,9 +760,9 @@ describe("WorkflowRunDigest lineage", () => {
     const view = renderDigest({ summary: superseded, onResume }, locale);
     expect(view.getByTestId("workflow-card-kind").textContent).toBe(kind);
     expect(view.container.textContent).not.toContain("dwfrun-next");
-    // A superseded run is never resumable (the CLI does not provide resumable).
+    // 被替代的 run 永不可恢复（CLI 不给 resumable）。
     expect(view.queryByTestId("workflow-digest-resume")).toBeNull();
-    // The light is still stopped's neutral empty ring, not destructive.
+    // 灯仍是 stopped 的中性空环，不是 destructive。
     expect(view.container.innerHTML).not.toContain("bg-destructive");
   });
 
@@ -849,12 +779,10 @@ describe("WorkflowRunDigest lineage", () => {
   });
 });
 
-// ── Wiring (docs/dynamic-workflow/authoring.md "How the user sees them") ──
-// Above we pinned the pill handing the **artifact id** to the layer above; here we pin what kind of
-// open request that layer turns the id into. The live projection's artifact summary carries the
-// latest version's `contentType` (the host uses it to open html artifacts directly as a browser
-// tab) and deliberately omits `sourcePath` (a high-frequency state key), so the request must not
-// invent a provenance out of thin air either.
+// ── 接线（docs/dynamic-workflow/authoring.md「How the user sees them」）──
+// 上面钉的是药丸把**产物 id** 交给上一层；这里钉上一层把 id 变成什么样的打开请求。活投影里那份
+// 产物摘要带最新版的 `contentType`（宿主据它把 html 产物直接开成浏览器 tab），刻意不带
+// `sourcePath`（高频状态键），所以请求里也不该凭空出现一个出处。
 describe("ConversationWorkflowDigests 把药丸变成打开请求", () => {
   const ARTIFACTS = [
     { id: "book", kind: "file", title: "Audit report", version: 2, contentType: "text/html" },

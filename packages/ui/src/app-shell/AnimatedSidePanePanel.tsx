@@ -1,5 +1,6 @@
-/* eslint-disable max-lines -- The side pane currently hosts tabs plus browser/Git/code-viewer content; a full extraction should follow the pane feature boundaries. */
-import { ServiceProvider } from "@/hooks/useServices.js";
+/* eslint-disable max-lines -- Side pane 当前集中承载 tabs、browser/git/code-viewer 内容；完整拆分需按 pane 功能边界继续推进。 */
+import type { CreateTaskRequest } from "@/app-shell/types.js";
+import { ServiceProvider, useComposerClientNamespace } from "@/hooks/useServices.js";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import type { IServiceAccessor } from "@zcode/services";
@@ -15,7 +16,10 @@ import {
 } from "@dnd-kit/core";
 import { horizontalListSortingStrategy, SortableContext } from "@dnd-kit/sortable";
 import type { BrowserViewScreenshotSurfacePreparePayload, GitChangeSourceId } from "@zcode/shared";
-import { PreviewPane } from "@/PreviewPane.js";
+import { FileManagerPane } from "@/WorkspaceFileTree.js";
+import type { FileManagerTarget } from "@/lib/workspaceSidePane.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { composerScopeKey, resolveComposerScope } from "@/v4/composer/composerDraftStore.js";
 import { SidePaneTerminalPane } from "@/SidePaneTerminalPane.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import { WorkspaceSidePaneToggleButton } from "@/WorkspaceSidePaneToggleButton.js";
@@ -29,16 +33,16 @@ import { GitPane } from "@/GitPane.js";
 import { TreemappingPane } from "@/TreemappingPane.js";
 import { WhiteboardPane } from "@/WhiteboardPane.js";
 import { ModelTrajectoryPane } from "@/ModelTrajectoryPane.js";
+import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { DeveloperToolsPane } from "@/DeveloperToolsPane.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
+
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu.js";
-import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable.js";
+  ResizableHandle,
+  ResizablePanel,
+  WORKSPACE_VERTICAL_RESIZE_HANDLE_CLASS_NAME,
+} from "@/components/ui/resizable.js";
 import { Tabs, TabsContent, TabsList } from "@/components/ui/tabs.js";
 import { SidePaneTabOverview } from "@/app-shell/SidePaneTabOverview.js";
 import { SubagentSessionSidePane } from "@/app-shell/SubagentSessionSidePane.js";
@@ -46,7 +50,12 @@ import { SubagentDirectorySidePane } from "@/app-shell/SubagentDirectorySidePane
 import { SelectionSideChatPane } from "@/app-shell/SelectionSideChatPane.js";
 import { BackgroundBashOutputSidePane } from "@/app-shell/BackgroundBashOutputSidePane.js";
 import { PlanDetailSidePane } from "@/app-shell/PlanDetailSidePane.js";
-import { PluginUiLauncherItems, PluginUiSidePane, useOpenPluginUi } from "@/plugin-ui/index.js";
+import {
+  PluginUiLauncherItems,
+  PluginUiSidePane,
+  SidePaneLauncherRow,
+  useOpenPluginUi,
+} from "@/plugin-ui/index.js";
 import { WorkflowRunSidePane } from "@/app-shell/WorkflowRunSidePane.js";
 import { WorkflowRunDirectorySidePane } from "@/app-shell/WorkflowRunDirectorySidePane.js";
 import { WorkflowActorSessionSidePane } from "@/app-shell/WorkflowActorSessionSidePane.js";
@@ -81,14 +90,11 @@ import {
   type BrowserUseSidePaneTab,
   type BrowserSidePaneMetadata,
   type OpenScopedSubagentSideTabRequest,
-  type OpenScopedSubagentDirectorySideTabRequest,
-  type OpenScopedPlanDetailSideTabRequest,
   type OpenScopedWorkflowActorSessionSideTabRequest,
   type OpenScopedWorkflowWorkspaceSideTabRequest,
   type OpenScopedWorkflowArtifactSideTabRequest,
   type OpenScopedWorkflowRunSideTabRequest,
   type OpenBackgroundBashSideTabRequest,
-  type SyncSubagentSessionTabsRequest,
   type WorkspaceSidePaneState,
 } from "@/lib/workspaceSidePane.js";
 import { inferMediaPreview, type CodeViewerSource } from "@/lib/codeViewer.js";
@@ -97,8 +103,9 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
-  ChartLineIcon,
+  ChevronRightIcon,
   FileDiffIcon,
+  FolderOpenIcon,
   GlobeIcon,
   MessageSquareTextIcon,
   PlusIcon,
@@ -112,12 +119,10 @@ type TabsScrollMaskEdges = {
   left: boolean;
   right: boolean;
 };
-const OPEN_TAB_LAUNCHER_BUTTON_CLASS =
-  "side-pane-open-tab-button flex h-12 min-w-0 items-center gap-3 rounded-xl bg-surface px-3 text-ui-base font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
 type OpenTabLauncherItem = {
   id: OpenTabLauncherItemId;
   label: string;
+  description: string;
   icon: LucideIcon;
   onOpen: () => void;
 };
@@ -138,15 +143,12 @@ function SuspendedBrowserSidePaneContent({
 
   useEffect(() => {
     if (tab.residency !== "suspended") return;
-    // React effects run after the old UnifiedBrowserView has committed its unmount; acknowledge here so main can safely
-    // close the corresponding guest WebContents and avoid treating suspend as a crash via render-process-gone, which would immediately recreate it.
-    // Info-level instrumentation: swapping the shell first unmounts <webview>; if CDP remains attached at that moment,
-    // it opens a main-process use-after-free window. This log aligns the swap time with UnifiedBrowserView’s
-    // unmount instrumentation to identify what destroyed the guest.
-    logger.info("[browser-use] tab 换挂起壳，suspend ready ack", {
-      generation,
-      tabId,
-    });
+    // React effect 在旧 UnifiedBrowserView 提交 unmount 后运行；此时回 ack，main 才能安全
+    // 关闭对应 guest WebContents，避免 suspend 被 render-process-gone 当成 crash 立即重建。
+    // info 级打点：挂起换壳会先卸载 <webview>，若卸载瞬间
+    // CDP 仍 attached 即打开主进程 UAF 窗口；这条日志把换壳时刻与 UnifiedBrowserView 的
+    // 卸载打点对齐，用于归因 guest destroyed 的销毁者。
+    logger.info("[browser-use] tab 换挂起壳，suspend ready ack", { generation, tabId });
     void platform.browserViewSuspendReady?.({ tabId, generation }).catch((error) => {
       logger.debug("[browser-use] suspend ready ack 失败", {
         error: error instanceof Error ? error.message : String(error),
@@ -259,8 +261,8 @@ function useWindowResizeSettling(enabled: boolean) {
     };
 
     const markSettling = () => {
-      // During window resize, the thousands of lines of Shadow DOM in a large-file PreviewPane participate in
-      // React commit and layout every frame. Treat resize as a temporary unstable phase and restore the heavyweight content after dimensions stop changing.
+      // 窗口 resize 期间，大文件 PreviewPane 的千行 Shadow DOM 会在每帧参与
+      // React commit + Layout。这里只把 resize 视为短暂的不稳定阶段，等尺寸停止抖动后再恢复重内容。
       setIsResizeSettling((current) => (current ? current : true));
       if (resizeSettleTimerRef.current !== null) {
         window.clearTimeout(resizeSettleTimerRef.current);
@@ -293,6 +295,7 @@ export function AnimatedSidePanePanel({
   services,
   isDesktop,
   isWindowsDesktop,
+  isMacDesktop,
   isVisible,
   sidePaneState,
   recentClosedSidePaneTabs,
@@ -304,7 +307,6 @@ export function AnimatedSidePanePanel({
   activeTaskId,
   sidePaneOwnerId,
   gitState,
-  gitRepositoryWorkspacePath,
   activeGitSourceId,
   panelRef,
   panelElementRef,
@@ -316,9 +318,9 @@ export function AnimatedSidePanePanel({
   fileChangeFindNavigationRequestId,
   fileChangeFindQuery,
   onFileChangeFindMatchCountChange,
-  onCloseCodeViewer,
   onCloseGit,
   onActivateTab,
+  onOpenNewTab,
   onReorderTab,
   onCloseTab,
   onCloseOtherTabs,
@@ -328,18 +330,18 @@ export function AnimatedSidePanePanel({
   onOpenBrowserPermissionSettings,
   onOpenWhiteboard: _onOpenWhiteboard,
   onOpenDeveloperTools,
+  onOpenFileManager,
+  onNavigateFileManager,
+  onOpenPluginMarket,
+  onCreateTask,
   onOpenTerminalTab,
   onOpenReviewTab,
-  onOpenModelTrajectory,
   onOpenSelectionSideConversation,
-  onOpenPlanDetail,
   onRevealGitFileInTree,
   onOpenBrowserUrl,
   onOpenCodeViewer,
   onOpenFileLink,
   onOpenSubagentSession,
-  onOpenSubagentDirectory,
-  onSyncSubagentSessionTabs,
   onOpenWorkflowActorSession,
   onOpenWorkflowWorkspace,
   onOpenWorkflowArtifact,
@@ -366,6 +368,7 @@ export function AnimatedSidePanePanel({
   toggleSidePaneShortcutLabel?: string;
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
+  isMacDesktop?: boolean;
   isVisible: boolean;
   sidePaneState: WorkspaceSidePaneState | null;
   recentClosedSidePaneTabs: RecentClosedSidePaneTab[];
@@ -377,7 +380,6 @@ export function AnimatedSidePanePanel({
   activeTaskId: string | null;
   sidePaneOwnerId: string | null;
   gitState: ReturnType<typeof import("@/hooks/useGitRepository.js").useGitRepository>;
-  gitRepositoryWorkspacePath: string;
   activeGitSourceId: GitChangeSourceId;
   panelRef: RefObject<PanelImperativeHandle | null>;
   panelElementRef: RefObject<HTMLDivElement | null>;
@@ -392,7 +394,8 @@ export function AnimatedSidePanePanel({
   onCloseCodeViewer: () => void;
   onCloseGit: () => void;
   onActivateTab: (tabId: string) => void;
-  /** Opens a panel tab from the "Plugin" group; the group is not rendered by default (web/no host). */
+  onOpenNewTab: () => void;
+  /** "插件"分组打开面板 tab；缺省不渲染分组（web / 无宿主）。 */
   onReorderTab: (activeTabId: string, overTabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onCloseOtherTabs: (tabId: string) => void;
@@ -402,27 +405,26 @@ export function AnimatedSidePanePanel({
   onOpenBrowserPermissionSettings?: (origin: string) => void;
   onOpenWhiteboard: () => void;
   onOpenDeveloperTools: () => void;
+  onOpenFileManager: (target?: FileManagerTarget) => void;
+  onNavigateFileManager: (tabId: string, source: CodeViewerSource) => void;
+  onOpenPluginMarket?: () => void;
+  onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
-  /** Opens the model trajectory tab for the active task; launcher entry is hidden without one. */
-  onOpenModelTrajectory: () => void;
   onOpenSelectionSideConversation: () => void;
-  onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
   onOpenBrowserUrl: (url: string) => void;
   onOpenCodeViewer: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBackgroundBash?: (request: OpenBackgroundBashSideTabRequest) => void;
   onOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
-  onOpenSubagentDirectory: (request: OpenScopedSubagentDirectorySideTabRequest) => void;
-  onSyncSubagentSessionTabs: (request: SyncSubagentSessionTabsRequest) => void;
-  /** In the run details page, clicking an ask node opens the transcript tab for that actor instance. */
+  /** run 详情页里点 ask 节点 → 打开那个 actor 实例的 transcript tab。 */
   onOpenWorkflowActorSession?: (request: OpenScopedWorkflowActorSessionSideTabRequest) => void;
-  /** In the run details page, clicking a script row opens that run’s script transcript tab at the corresponding station. */
+  /** run 详情页里点脚本行 → 打开该 run 的脚本 transcript tab，落到那一站。 */
   onOpenWorkflowWorkspace?: (request: OpenScopedWorkflowWorkspaceSideTabRequest) => void;
-  /** In the run details page, clicking an artifact card opens its full-size viewer tab. */
+  /** run 详情页里点一张产物卡 → 打开那个产物的全尺寸查看 tab。 */
   onOpenWorkflowArtifact?: (request: OpenScopedWorkflowArtifactSideTabRequest) => void;
-  /** In the run directory page, clicking a row opens that run’s detail tab (directory → details is the purpose of this page). */
+  /** run 目录页里点一行 → 打开那个 run 的详情页 tab（目录 → 详情是这一页存在的理由）。 */
   onOpenWorkflowRun?: (request: OpenScopedWorkflowRunSideTabRequest) => void;
   onRefreshGit: () => void;
   onBrowserNavigationRequestHandled: (requestId: string) => void;
@@ -440,6 +442,13 @@ export function AnimatedSidePanePanel({
   const isDragCollapsible = !isVisible;
   const isResizeDisabled = !isVisible;
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
+  const composerClientNamespace = useComposerClientNamespace();
+  const draftProjectId = useZCodeSessionStore(
+    (state) => state.workspaces[workspaceKey]?.draftProjectId,
+  );
+  const draftScopeKey = composerScopeKey(
+    resolveComposerScope(draftProjectId, workspaceIdentity, composerClientNamespace),
+  );
   const tabs = sidePaneState?.tabs ?? EMPTY_SIDE_PANE_TABS;
   const screenshotSurfaceRequest = screenshotSurfaceRequestProp;
   const isScreenshotSurfaceActive = Boolean(screenshotSurfaceRequest);
@@ -460,7 +469,17 @@ export function AnimatedSidePanePanel({
   const visibleActiveTabId = visibleTabs.some((tab) => tab.id === activeTabId)
     ? activeTabId
     : (visibleTabs.at(-1)?.id ?? "");
-  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [marketReturnTarget, setMarketReturnTarget] = useState<{
+    workspaceKey: string;
+    ownerId: string | null;
+    tabId: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!visibleTabs.some((tab) => tab.type === "plugin-market")) {
+      setMarketReturnTarget(null);
+    }
+  }, [visibleTabs]);
+  const hasVisibleTabs = visibleTabs.length > 0;
   const tabsScrollViewportRef = useRef<HTMLDivElement | null>(null);
   const tabsScrollContentRef = useRef<HTMLDivElement | null>(null);
   const [lockedContentWidthPx, setLockedContentWidthPx] = useState<number | null>(null);
@@ -526,10 +545,10 @@ export function AnimatedSidePanePanel({
 
   useEffect(() => {
     if (shouldMountContent) {
-      // The side pane’s collapsed animation previously depended on opacity/flex-grow transitions on the outer panel,
-      // but this code used `isVisible && sidePaneState ? ... : null`,
-      // which immediately unmounted the entire Tabs/Git/Browser content when closing, before the animation finished.
-      // Keep it mounted after the first open; later collapses only hide it, preserving both the animation and internal state.
+      // side pane 收起动画原本依赖外层 panel 的 opacity/flex-grow 过渡，
+      // 但这里之前把内容写成 `isVisible && sidePaneState ? ... : null`，
+      // 一收起就会先把 Tabs/Git/Browser 整块卸载，动画还没走完内容就没了。
+      // 改成首次打开后保持挂载，后续收起只隐藏不卸载，这样动画和内部状态都能一起保留。
       setHasRenderedSidePane(true);
     }
   }, [shouldMountContent]);
@@ -547,16 +566,16 @@ export function AnimatedSidePanePanel({
       const currentPanelWidthPx = Math.round(
         panelElementRef.current?.getBoundingClientRect().width ?? 0,
       );
-      // When collapsing the side pane, the content layer also participates in the outer panel transition.
-      // Lock its current pixel width before collapse so Tabs/Git/Browser do not reflow before fading out.
+      // side pane 收起时内容层会跟着外层 panel 一起参与过渡，
+      // 这里在收起前锁住当前像素宽度，避免内部 Tabs/Git/Browser 先重新排版后再淡出。
       setLockedContentWidthPx(currentPanelWidthPx > 0 ? currentPanelWidthPx : null);
       return;
     }
 
     if (!previousIsVisible && isVisible) {
-      // On the first expansion there is no previous collapsed width to reuse, so the content first participates at 0 width before expanding.
-      // Convert the actual PanelGroup pixel width into a default expanded width and lock the content near its final size first;
-      // remove the fixed width after the 200ms transition to restore regular responsive layout.
+      // 首次展开没有“上一次收起前宽度”可复用，内容会先以 0 宽度参与布局再被撑开。
+      // 这里用 PanelGroup 的真实像素宽度换算默认展开宽度，先给内容层一个接近最终态的锁宽；
+      // 等 200ms 过渡结束后再移除固定宽度，恢复成普通自适应布局。
       setLockedContentWidthPx(
         (currentWidthPx) => currentWidthPx ?? readInitialExpandedContentWidthPx(),
       );
@@ -588,8 +607,8 @@ export function AnimatedSidePanePanel({
 
     if (!viewport || !content) {
       setIsTabsOverflowing(false);
-      // Refs remain empty when sidePaneState has no tabs or content is not mounted yet.
-      // Do not write a new mask object each time or the effect will repeatedly trigger updates while tabs are empty.
+      // sidePaneState 为空或内容尚未挂载时 refs 会持续为空。
+      // 这里不能每次写入新的 mask 对象，否则 effect 会在空 tabs 阶段反复触发更新。
       setTabsScrollMaskEdges((current) =>
         current.left || current.right ? EMPTY_TABS_SCROLL_MASK_EDGES : current,
       );
@@ -602,19 +621,19 @@ export function AnimatedSidePanePanel({
         "[data-side-pane-add-tab-trigger]",
       );
       const addButtonWidth = addButton?.getBoundingClientRect().width ?? 0;
-      // The old check read content.scrollWidth directly, but the overflow state itself moves the add button
-      // in/out of content and changes the viewport width, creating a ResizeObserver feedback loop near the threshold.
-      // Reconstruct the hypothetical layout with the add button at the end of the tabs and use only a stable minimum-width budget.
+      // 旧判定直接读取 content.scrollWidth，但 overflow 状态本身会把新增按钮
+      // 移进/移出 content 并改变 viewport 宽度，临界区会形成 ResizeObserver 反馈环。
+      // 这里统一还原“新增按钮位于 tabs 末尾”的假想布局，只用稳定的最小宽度预算判定。
       const isOverflowing = resolveSidePaneTabsOverflow({
         addButtonInside: Boolean(addButton && content.contains(addButton)),
         addButtonWidth,
         tabCount: visibleTabs.length,
         viewportWidth: viewport.clientWidth,
       });
-      // Keep the add button at the end while tabs can still shrink evenly; pin it to the right only after overflow remains at the 60px minimum.
+      // 新增按钮在 tabs 尚可等宽收缩时跟随末尾，只有达到 60px 下限仍溢出后才固定到右侧。
       setIsTabsOverflowing(isOverflowing);
-      // When tabs overflow, do not always show gradient masks on both sides; at the start/end they suggest more scrolling is possible.
-      // Tie masks to actual scrollLeft and indicate only the side that can still scroll.
+      // tabs 溢出时不能两侧一直显示渐变 mask：滚动到起点/终点也像还能继续滚。
+      // 这里把 mask 和实际 scrollLeft 绑定，只提示仍可继续滚动的一侧。
       setTabsScrollMaskEdges((current) => {
         const next = {
           left: isOverflowing && viewport.scrollLeft > 1,
@@ -694,9 +713,9 @@ export function AnimatedSidePanePanel({
       const rightOverflow = activeTabRect.right - viewportRect.right;
 
       if (leftOverflow < 0) {
-        // When a tab is activated externally (for example, opening a file or returning to an old Browser),
-        // it may be hidden in the horizontal scroll region. Use its real DOM width to scroll it into view,
-        // avoiding misalignment of long titles/favicon tabs caused by fixed-width estimates.
+        // 从外部激活 tab（例如打开文件或切回旧 Browser）时，
+        // active tab 可能已经被横向滚动区域遮住。这里按真实 DOM 宽度滚回可视区，
+        // 避免使用固定宽度估算导致长标题 / favicon tab 对不齐。
         viewport.scrollBy({ left: leftOverflow, behavior: "smooth" });
         return;
       }
@@ -713,144 +732,60 @@ export function AnimatedSidePanePanel({
     };
   }, [visibleActiveTabId, visibleTabs]);
 
-  const addTabMenu = (
-    <DropdownMenu open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-md"
-          className="shrink-0"
-          data-side-pane-add-trigger
-          data-side-pane-add-tab-trigger=""
-          aria-label={intl.formatMessage({
-            id: "sidePane.addTab",
-          })}
-        >
-          <PlusIcon className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
-        {canOpenSelectionSideConversation ? (
-          <DropdownMenuItem
-            data-side-pane-add-item="selection-side-conversation"
-            onSelect={onOpenSelectionSideConversation}
-          >
-            <MessageSquareTextIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "sidePane.selectionChat" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {!isOfficeMode && !hasReviewTab ? (
-          <DropdownMenuItem
-            onSelect={() => {
-              onOpenReviewTab();
-            }}
-          >
-            <FileDiffIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "sidePane.review" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {/* Temporarily hide the canvas entry; it may be reopened later. */}
-        {/* <DropdownMenuItem
-          onSelect={() => {
-            onOpenWhiteboard();
-          }}
-        >
-          <PaletteIcon className="size-4" />
-          <span>{intl.formatMessage({ id: "whiteboard.title" })}</span>
-        </DropdownMenuItem> */}
-        {!isOfficeMode ? (
-          <DropdownMenuItem
-            data-side-pane-add-item="terminal"
-            onSelect={() => {
-              onOpenTerminalTab();
-            }}
-          >
-            <SquareTerminalIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "terminal.title" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {supportsEmbeddedBrowser ? (
-          <DropdownMenuItem
-            data-side-pane-add-item="browser"
-            onSelect={() => {
-              onOpenBrowserTab();
-            }}
-          >
-            <GlobeIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "browser.title" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {activeTaskId ? (
-          <DropdownMenuItem
-            data-side-pane-add-item="model-trajectory"
-            onSelect={() => {
-              onOpenModelTrajectory();
-            }}
-          >
-            <ChartLineIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "modelTrajectory.title" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {developerToolsEnabled ? (
-          <DropdownMenuItem
-            data-side-pane-add-item="developer-tools"
-            onSelect={() => {
-              onOpenDeveloperTools();
-            }}
-          >
-            <BugIcon className="size-4" />
-            <span>{intl.formatMessage({ id: "developerTools.title" })}</span>
-          </DropdownMenuItem>
-        ) : null}
-        {/* Plugins previously supported only blank pages; once tabs exist, the plus menu must reuse the same candidates and open action. */}
-        {onOpenPluginUi ? (
-          <PluginUiLauncherItems
-            variant="menu"
-            workspacePath={workspaceAbsPath}
-            workspaceIdentity={workspaceIdentity}
-            remoteSessionId={workspaceRemoteSessionId}
-            sessionId={activeTaskId}
-            onOpenPluginUi={onOpenPluginUi}
-          />
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
+  const addTabButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-md"
+      className="shrink-0"
+      data-side-pane-add-trigger
+      data-side-pane-add-tab-trigger=""
+      aria-label={intl.formatMessage({ id: "sidePane.addTab" })}
+      onClick={onOpenNewTab}
+    >
+      <PlusIcon className="size-4" />
+    </Button>
   );
   const openTabLauncherItemById: Record<OpenTabLauncherItemId, OpenTabLauncherItem> = {
     "selection-side-conversation": {
       id: "selection-side-conversation",
       label: intl.formatMessage({ id: "sidePane.selectionChat" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.selection-side-conversation" }),
       icon: MessageSquareTextIcon,
       onOpen: onOpenSelectionSideConversation,
+    },
+    files: {
+      id: "files",
+      label: intl.formatMessage({ id: "fileManager.title" }),
+      description: intl.formatMessage({ id: "fileManager.empty" }),
+      icon: FolderOpenIcon,
+      onOpen: () => onOpenFileManager(),
     },
     review: {
       id: "review",
       label: intl.formatMessage({ id: "sidePane.review" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.review" }),
       icon: FileDiffIcon,
       onOpen: onOpenReviewTab,
     },
     terminal: {
       id: "terminal",
       label: intl.formatMessage({ id: "terminal.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.terminal" }),
       icon: SquareTerminalIcon,
       onOpen: onOpenTerminalTab,
     },
     browser: {
       id: "browser",
       label: intl.formatMessage({ id: "browser.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.browser" }),
       icon: GlobeIcon,
       onOpen: onOpenBrowserTab,
-    },
-    "model-trajectory": {
-      id: "model-trajectory",
-      label: intl.formatMessage({ id: "modelTrajectory.title" }),
-      icon: ChartLineIcon,
-      onOpen: onOpenModelTrajectory,
     },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.developer-tools" }),
       icon: BugIcon,
       onOpen: onOpenDeveloperTools,
     },
@@ -858,7 +793,6 @@ export function AnimatedSidePanePanel({
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
     canOpenSelectionSideConversation,
     developerToolsEnabled,
-    hasActiveTask: activeTaskId !== null,
     hasReviewTab,
     supportsEmbeddedBrowser,
   })
@@ -876,57 +810,68 @@ export function AnimatedSidePanePanel({
       </div>
     ) : null;
   const openTabLauncher = (
-    <div className="side-pane-open-tab-shell flex h-full min-h-0 flex-col bg-background">
-      {!mobileOverlay ? (
-        <div
-          className={cn(
-            "flex h-12 shrink-0 items-center justify-end px-2",
-            isDesktop && "[app-region:drag]",
-          )}
-          style={captionControlsStyle}
-        >
-          {closeSidePaneButton}
-        </div>
-      ) : null}
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-5 py-10">
-        <div className="side-pane-open-tab-content flex w-full max-w-[20rem] flex-col gap-5">
-          <div className="flex flex-col gap-2 text-center">
-            <h2 className="text-xl font-semibold leading-7 text-foreground">
-              {intl.formatMessage({ id: "sidePane.openTab" })}
-            </h2>
-            <p className="text-ui-base leading-5 text-foreground-subtle">
-              {intl.formatMessage({ id: "sidePane.openTabDescription" })}
-            </p>
-          </div>
-          <div className="side-pane-open-tab-list flex w-full flex-col gap-2">
-            {openTabLauncherItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  data-side-pane-open-tab-item={item.id}
-                  className={OPEN_TAB_LAUNCHER_BUTTON_CLASS}
-                  onClick={item.onOpen}
-                >
-                  <Icon className="size-4 text-foreground-subtle" />
-                  <span className="side-pane-open-tab-button-label min-w-0 flex-1 truncate text-left">
-                    {item.label}
-                  </span>
-                </button>
-              );
-            })}
-            {onOpenPluginUi ? (
-              <PluginUiLauncherItems
-                workspacePath={workspaceAbsPath}
-                workspaceIdentity={workspaceIdentity}
-                remoteSessionId={workspaceRemoteSessionId}
-                sessionId={activeTaskId}
-                onOpenPluginUi={onOpenPluginUi}
-                itemClassName={OPEN_TAB_LAUNCHER_BUTTON_CLASS}
+    <div className="side-pane-open-tab-shell @container/launcher flex h-full min-h-0 flex-col bg-background">
+      {/* 对齐原型：顶部对齐滚动、左对齐标题；内置应用与 UI 插件同为横向行，短分割线分区。 */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <h2 className="pl-2 text-ui-xl font-semibold text-foreground">
+            {intl.formatMessage({ id: "sidePane.openTab" })}
+          </h2>
+          <div className="grid min-w-0 grid-cols-1 gap-x-8 gap-y-1 @min-[36rem]/launcher:grid-cols-2">
+            {openTabLauncherItems.map((item) => (
+              <SidePaneLauncherRow
+                key={item.id}
+                itemId={item.id}
+                icon={item.icon}
+                label={item.label}
+                description={item.description}
+                onOpen={item.onOpen}
               />
-            ) : null}
+            ))}
           </div>
+          {/* 空会话暂不支持应用插件，连同分区入口一起隐藏。 */}
+          {activeTaskId ? (
+            <>
+              <div aria-hidden="true" className="my-4 h-px w-24 self-center bg-border" />
+              <section className="min-w-0" data-testid="side-pane-ui-recommendations">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+                  <h2 className="pl-2 text-ui-lg font-semibold text-foreground">
+                    {intl.formatMessage({ id: "settings.plugins.store.ui.title" })}
+                  </h2>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0 text-foreground-subtle"
+                    data-testid="side-pane-plugin-market"
+                    onClick={() => {
+                      if (!onOpenPluginMarket) return;
+                      setMarketReturnTarget({
+                        workspaceKey,
+                        ownerId: sidePaneOwnerId ?? null,
+                        tabId: visibleActiveTabId,
+                      });
+                      onOpenPluginMarket();
+                    }}
+                  >
+                    {intl.formatMessage({ id: "sidePane.launcher.viewAllPlugins" })}
+                    <ChevronRightIcon className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </div>
+                <div className="mt-2 grid min-w-0 grid-cols-1 gap-x-8 gap-y-1 @min-[36rem]/launcher:grid-cols-2">
+                  {onOpenPluginUi ? (
+                    <PluginUiLauncherItems
+                      workspacePath={workspaceAbsPath}
+                      workspaceIdentity={workspaceIdentity}
+                      remoteSessionId={workspaceRemoteSessionId}
+                      sessionId={activeTaskId}
+                      onOpenPluginUi={onOpenPluginUi}
+                    />
+                  ) : null}
+                </div>
+              </section>
+            </>
+          ) : null}
         </div>
       </div>
     </div>
@@ -950,12 +895,15 @@ export function AnimatedSidePanePanel({
         relativeTime: (timestamp) => formatTaskRelativeTime(timestamp, intl),
         browserTitle: intl.formatMessage({ id: "browser.title" }),
         reviewTitle: intl.formatMessage({ id: "sidePane.review" }),
+        fileManagerTitle: intl.formatMessage({ id: "fileManager.title" }),
         codeViewerTitle: intl.formatMessage({ id: "codeViewer.title" }),
         treemappingTitle: intl.formatMessage({ id: "treemapping.title" }),
         whiteboardTitle: intl.formatMessage({ id: "whiteboard.title" }),
         modelTrajectoryTitle: intl.formatMessage({
           id: "modelTrajectory.title",
         }),
+        newTabTitle: intl.formatMessage({ id: "sidePane.newTab" }),
+        pluginMarketTitle: intl.formatMessage({ id: "workspace.openPluginsSettings" }),
         developerToolsTitle: intl.formatMessage({
           id: "developerTools.title",
         }),
@@ -972,18 +920,10 @@ export function AnimatedSidePanePanel({
         }),
         planTitle: intl.formatMessage({ id: "planTool.panel.planTab" }),
         workflowRunTitle: intl.formatMessage({ id: "sidePane.workflowRun" }),
-        workflowDirectoryTitle: intl.formatMessage({
-          id: "sidePane.workflowDirectory",
-        }),
-        workflowActorTitle: intl.formatMessage({
-          id: "sidePane.workflowActor",
-        }),
-        workflowScriptTitle: intl.formatMessage({
-          id: "sidePane.workflowScript",
-        }),
-        workflowArtifactTitle: intl.formatMessage({
-          id: "sidePane.workflowArtifact",
-        }),
+        workflowDirectoryTitle: intl.formatMessage({ id: "sidePane.workflowDirectory" }),
+        workflowActorTitle: intl.formatMessage({ id: "sidePane.workflowActor" }),
+        workflowScriptTitle: intl.formatMessage({ id: "sidePane.workflowScript" }),
+        workflowArtifactTitle: intl.formatMessage({ id: "sidePane.workflowArtifact" }),
       }}
       onActivateTab={onActivateTab}
       onCloseTab={onCloseTab}
@@ -999,7 +939,7 @@ export function AnimatedSidePanePanel({
       aria-hidden={!isVisible}
       data-workspace-side-frame={mobileOverlay ? undefined : "true"}
       className={cn(
-        // Place the standalone frame in the content layer; closing it keeps the Browser Guest and tab instance without changing the panel persistence boundary.
+        // 独立外框放在内容层：关闭仍保留 Browser Guest 和 tab 实例，不改变面板持久化边界。
         "h-full overflow-hidden bg-background",
         !mobileOverlay && frameClassName,
         mobileStacked && "max-md:rounded-none max-md:border-0",
@@ -1016,12 +956,12 @@ export function AnimatedSidePanePanel({
       >
         {hasRenderedSidePane && sidePaneState ? (
           <>
-            {visibleTabs.length === 0 ? openTabLauncher : null}
-            {/* Bugfix: sidePaneState is a workspace-level registry. After forking or switching tasks, it may contain only session-scoped tabs from another task. The registry is then nonempty while visibleTabs is empty; the old logic rendered empty Tabs with value="" and showed a blank screen. Hide the tabs while keeping TabsContent mounted so auxiliary-chat drafts and references survive when returning to the parent task. */}
+            {/* 收起或切换对话时保留其他对话的内容挂载，避免丢失辅助对话草稿和引用。
+                展开后的空标签集合由 useAppPanels 统一补建「新标签页」。 */}
             <div
               className={cn(
                 "h-full min-h-0",
-                visibleTabs.length === 0 && !screenshotSurfaceRequest && "hidden",
+                !hasVisibleTabs && !screenshotSurfaceRequest && "hidden",
               )}
             >
               <Tabs
@@ -1033,14 +973,14 @@ export function AnimatedSidePanePanel({
                   style={mobileOverlay ? undefined : captionControlsStyle}
                   className={cn(
                     "flex justify-start w-full rounded-none p-0 border-0 border-b border-border/50 bg-transparent shadow-none !h-12 overflow-hidden",
-                    // The standalone panel moves the tab bar to the top of the window, so add a window drag region; tabs and buttons keep handling their own interactions.
+                    // 独立面板将标签栏移至窗口顶部，需补充窗口拖拽区域；标签和按钮仍处理自身交互。
                     isDesktop &&
                       !mobileOverlay &&
                       "[app-region:drag] [&_button]:[app-region:no-drag] [&_[data-side-pane-tab-id]]:[app-region:no-drag]",
                   )}
                 >
                   <div className="flex items-center justify-start flex-1 min-w-0">
-                    {/* Align with WorkspaceHeader's p-2 so the left and right action areas do not jump when switching panels. */}
+                    {/* 与 WorkspaceHeader 的 p-2 对齐，避免切换面板后左右操作区跳动。 */}
                     <div className="flex h-full shrink-0 items-center p-2">
                       {sidePaneTabOverview}
                     </div>
@@ -1067,8 +1007,8 @@ export function AnimatedSidePanePanel({
                             "[mask-image:linear-gradient(to_right,black_0%,black_calc(100%-16px),transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,black_0%,black_calc(100%-16px),transparent_100%)]",
                         )}
                       >
-                        {/* Keep the tab strip at the full scroll viewport width: each tab first shrinks evenly from 156 px
-                            to 60 px, and horizontal scrolling begins only when their combined minimum width still exceeds the viewport. */}
+                        {/* tab strip 固定占满滚动 viewport：每个 tab 先从 156px 等宽收缩到
+                            60px，只有最小宽度之和仍超出 viewport 时才产生横向滚动。 */}
                         <div
                           ref={tabsScrollContentRef}
                           data-side-pane-tabs-content=""
@@ -1111,7 +1051,7 @@ export function AnimatedSidePanePanel({
                               );
                             })}
                           </SortableContext>
-                          {!isTabsOverflowing ? addTabMenu : null}
+                          {!isTabsOverflowing ? addTabButton : null}
                         </div>
                       </div>
                       <DragOverlay dropAnimation={null}>
@@ -1128,11 +1068,11 @@ export function AnimatedSidePanePanel({
                     </DndContext>
 
                     <div className="ml-auto flex h-full shrink-0 items-center gap-1 px-2">
-                      {isTabsOverflowing ? addTabMenu : null}
+                      {isTabsOverflowing ? addTabButton : null}
                       {closeSidePaneButton}
                     </div>
                   </div>
-                  {/* The Expand Panel button is retained as a comment per request; its related logic has been removed.
+                  {/* Expand Panel 按钮按要求先注释保留，相关逻辑已删除。
                 <div className="flex h-full shrink-0 items-center pl-1.5 pr-2">
                   <ControlHintTooltip title="" side="bottom" align="end">
                     <Button type="button" variant="ghost" size="icon-sm" aria-label="">
@@ -1163,8 +1103,8 @@ export function AnimatedSidePanePanel({
                           screenshotSurfaceRequest={
                             screenshotSurfaceTab?.id === tab.id ? screenshotSurfaceRequest : null
                           }
-                          // Main writes the full history for a restoring guest after did-attach;
-                          // if the renderer also consumes initialUrl, it submits navigation first and Chromium rejects the restore.
+                          // restoring guest 的完整 history 由 main 在 did-attach 后写入；
+                          // renderer 同时消费 initialUrl 会抢先提交导航，使 Chromium 拒绝 restore。
                           initialUrl={
                             tab.residency === "restoring" ? undefined : browserRestoreUrls[tab.id]
                           }
@@ -1214,20 +1154,15 @@ export function AnimatedSidePanePanel({
                           <SelectionSideChatPane
                             tab={tab}
                             focused={isVisible && tab.id === visibleActiveTabId}
-                            isDesktop={isDesktop}
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
                             onOpenFileLink={onOpenFileLink}
-                            onOpenPlanDetail={onOpenPlanDetail}
-                            onOpenSubagentSession={onOpenSubagentSession}
-                            onOpenSubagentDirectory={onOpenSubagentDirectory}
-                            onSyncSubagentSessionTabs={onSyncSubagentSessionTabs}
-                            onOpenBackgroundBash={onOpenBackgroundBash}
                             onUnavailable={onCloseTab}
                           />
                         ) : tab.type === "plugin-ui" ? (
                           <PluginUiSidePane
                             tab={tab}
+                            visible={isVisible && tab.id === visibleActiveTabId}
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onCloseTab={onCloseTab}
                           />
@@ -1253,9 +1188,9 @@ export function AnimatedSidePanePanel({
                               : { onOpenWorkflowWorkspace })}
                           />
                         ) : tab.type === "workflow-directory" ? (
-                          // Narrow the type branch first and handle a missing callback **inside the branch**: adding
-                          // `&& onOpenWorkflowRun` to the condition leaves this tab type in the union for later
-                          // branches (so the browser branch would try to read residency from it).
+                          // 类型分支必须先收窄，回调缺席在**分支内部**处理：把
+                          // `&& onOpenWorkflowRun` 写进条件会让这个 tab 类型继续留在后面
+                          // 那些分支的联合里（browser 分支于是拿它去读 residency）。
                           onOpenWorkflowRun ? (
                             <WorkflowRunDirectorySidePane
                               tab={tab}
@@ -1277,8 +1212,8 @@ export function AnimatedSidePanePanel({
                             onOpenCodeViewer={onOpenCodeViewer}
                           />
                         ) : tab.type === "workflow-artifact" ? (
-                          // “Show in workspace” reuses the Git panel's file-tree reveal (the same host callback)
-                          // rather than creating a second navigation path.
+                          // 「在工作区显示」复用 Git 面板那条文件树 reveal（同一个宿主回调），
+                          // 不新造第二条定位路径。
                           <WorkflowArtifactSidePane
                             tab={tab}
                             onOpenBrowserUrl={onOpenBrowserUrl}
@@ -1286,26 +1221,43 @@ export function AnimatedSidePanePanel({
                               ? {}
                               : { onRevealFileInTree: onRevealGitFileInTree })}
                           />
-                        ) : tab.type === "code-viewer" ? (
-                          <PreviewPane
+                        ) : tab.type === "code-viewer" || tab.type === "file-manager" ? (
+                          <FileManagerPane
                             markdownSelectionTarget={{
                               sessionId: activeTaskId,
                               workspaceKey,
+                              draftScopeKey,
                             }}
                             source={tab.source}
-                            onClose={onCloseCodeViewer}
+                            target={
+                              tab.type === "file-manager"
+                                ? tab.target
+                                : {
+                                    workspacePath: tab.source.workspacePath ?? workspaceAbsPath,
+                                    workspaceIdentity: tab.source.workspacePath
+                                      ? tab.source.workspaceIdentity
+                                      : workspaceIdentity,
+                                    workspaceRemoteSessionId: tab.source.workspacePath
+                                      ? tab.source.workspaceRemoteSessionId
+                                      : workspaceRemoteSessionId,
+                                  }
+                            }
+                            mobileOverlay={mobileOverlay}
+                            canOpenLocalFileManager={Boolean(isDesktop)}
+                            onNavigate={(source) => onNavigateFileManager(tab.id, source)}
+                            onClose={() => onCloseTab(tab.id)}
                             workspacePath={workspaceAbsPath}
                             onOpenBrowserUrl={onOpenBrowserUrl}
                             onOpenCodeViewer={onOpenCodeViewer}
-                            // A code preview in an inactive/narrow tab or during resize should not keep
-                            // @pierre/diffs' thousand-line Shadow DOM in layout. Clip only the body and preserve tab/source/file state.
+                            // inactive/窄条/resize 中的 code preview 不应继续让
+                            // @pierre/diffs 的千行 Shadow DOM 参与布局；这里只裁剪 body，保留 tab/source/file state。
                             renderHeavyContent={shouldRenderPreviewPaneHeavyContent({
                               isActiveTab: tab.id === visibleActiveTabId,
-                              // Native video/audio fullscreen triggers resize; keep the current media node mounted
-                              // while resize settles or the browser exits fullscreen immediately.
+                              // video/audio 原生全屏会触发 resize，resize settling
+                              // 期间必须保持当前媒体节点挂载，否则浏览器会立即退出全屏。
                               isMediaPreview:
-                                tab.source.type === "media" ||
-                                (tab.source.type === "file" &&
+                                tab.source?.type === "media" ||
+                                (tab.source?.type === "file" &&
                                   inferMediaPreview(tab.source.path) !== null),
                               isMobileOverlay: mobileOverlay,
                               isResizeSettling: isWindowResizeSettling,
@@ -1315,7 +1267,7 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "git" ? (
                           <GitPane
-                            workspacePath={gitRepositoryWorkspacePath}
+                            workspacePath={workspaceAbsPath}
                             workspaceIdentity={workspaceIdentity}
                             workspaceRemoteSessionId={workspaceRemoteSessionId}
                             gitState={gitState}
@@ -1351,6 +1303,40 @@ export function AnimatedSidePanePanel({
                             workspaceIdentity={workspaceIdentity}
                             onClose={() => onCloseTab(tab.id)}
                           />
+                        ) : tab.type === "new-tab" ? (
+                          openTabLauncher
+                        ) : tab.type === "plugin-market" ? (
+                          <ServiceProvider services={services}>
+                            <div className="h-full min-w-0 overflow-y-auto p-4">
+                              <PluginStorePage
+                                onBack={
+                                  marketReturnTarget?.workspaceKey === workspaceKey &&
+                                  marketReturnTarget.ownerId === (sidePaneOwnerId ?? null)
+                                    ? () => {
+                                        const targetId = marketReturnTarget.tabId;
+                                        setMarketReturnTarget(null);
+                                        onCloseTab(tab.id);
+                                        if (visibleTabs.some((item) => item.id === targetId)) {
+                                          onActivateTab(targetId);
+                                        } else {
+                                          onOpenNewTab();
+                                        }
+                                      }
+                                    : undefined
+                                }
+                                embedded
+                                onCreateTask={onCreateTask}
+                                workspacePath={workspaceAbsPath}
+                                workspaceIdentity={workspaceIdentity}
+                                remoteSessionId={workspaceRemoteSessionId}
+                                sessionId={activeTaskId}
+                                isDesktop={isDesktop}
+                                isWindowsDesktop={isWindowsDesktop}
+                                isMacDesktop={isMacDesktop}
+                                isWebRemoteControl={mobileOverlay}
+                              />
+                            </div>
+                          </ServiceProvider>
                         ) : tab.type === "developer-tools" ? (
                           <ServiceProvider services={services}>
                             <DeveloperToolsPane
@@ -1385,8 +1371,8 @@ export function AnimatedSidePanePanel({
                             isVisible={isVisible && isBrowserOpen && tab.id === visibleActiveTabId}
                             isSelected={tab.id === visibleActiveTabId}
                             isCurrentTask={tab.ownerTaskId === sidePaneOwnerId}
-                            // restoring mounts only the bootstrap URL and does not commit the document;
-                            // Main exclusively owns the pageState/URL restoration transaction.
+                            // restoring 只挂载不会提交 document 的 bootstrap URL，
+                            // 由 main 独占 pageState/URL 恢复事务。
                             initialUrl={
                               tab.residency === "restoring"
                                 ? undefined
@@ -1420,8 +1406,6 @@ export function AnimatedSidePanePanel({
               </Tabs>
             </div>
           </>
-        ) : hasRenderedSidePane ? (
-          openTabLauncher
         ) : null}
       </ScopedErrorBoundary>
     </div>
@@ -1430,9 +1414,9 @@ export function AnimatedSidePanePanel({
   if (!panelLayout.useResizablePanel) {
     return (
       <>
-        {/* Bugfix: the mobile remote-control sidebar is a drawer overlaying the chat area and sits outside a ResizablePanelGroup layout context;
-            rendering ResizablePanel makes the outer auto width resolve the child 100% width chain to 0 px,
-            so diff/preview content mounts but is invisible. Use a regular full-width container here instead. */}
+        {/* Bugfix: 手机远控侧栏是覆盖聊天区的抽屉，不在 ResizablePanelGroup 的布局上下文里。
+            如果继续渲染 ResizablePanel，外层 auto 宽度会把子级 100% 宽度链路解析成 0px，
+            diff / preview 内容就会挂载但不可见；这里改用普通满宽容器承接内容。 */}
         <div
           ref={panelElementRef}
           aria-hidden={!isVisible}
@@ -1455,12 +1439,7 @@ export function AnimatedSidePanePanel({
         <ResizableHandle
           data-workspace-side-pane-resize-handle="true"
           className={cn(
-            // The resize handle occupies a real 4px gap and is removed with the handle when closed, leaving no gap for a hidden pane.
-            "aria-[orientation=vertical]:w-1 aria-[orientation=vertical]:translate-x-0 aria-[orientation=vertical]:my-0 aria-[orientation=vertical]:h-full",
-            "hover:bg-transparent data-[separator=hover]:bg-transparent data-[separator=active]:bg-transparent focus-visible:bg-transparent",
-            "aria-[orientation=vertical]:[mask-image:none] aria-[orientation=vertical]:[-webkit-mask-image:none]",
-            "after:pointer-events-none after:absolute after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-[var(--workspace-panel-radius,var(--radius-xl))] after:w-0.5",
-            "hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100",
+            WORKSPACE_VERTICAL_RESIZE_HANDLE_CLASS_NAME,
             mobileStacked && "max-md:hidden",
           )}
         />
@@ -1473,11 +1452,11 @@ export function AnimatedSidePanePanel({
         minSize={panelLayout.minSize}
         maxSize={panelLayout.maxSize}
         collapsedSize={panelLayout.collapsedSize}
-        // When the right pane is always declared collapsible, the library treats dragging it to minimum width as a collapse.
-        // Allow collapse only on explicit close so the pane does not disappear when users only intend to resize it to minimum width.
+        // 右侧面板常驻声明成 collapsible 时，拖到最小宽度会被库判定为 collapse。
+        // 这里改成只在显式关闭时允许折叠，避免用户只是想拖到最小宽度时面板自动收起。
         collapsible={isDragCollapsible}
-        // When the preview/side pane is collapsed, there is no ResizableHandle, but the library still exposes a collapsed-panel edge drag area.
-        // Disable the pane resize target after collapse so users cannot drag it open from the right edge and bypass the explicit toggle.
+        // preview/side pane 收起时没有 ResizableHandle，但库仍会暴露 collapsed panel 边缘拖拽区。
+        // 收起后禁用面板 resize target，避免用户绕过显式开关从右侧边缘拖出面板。
         disabled={isResizeDisabled}
         className={cn(
           "!overflow-hidden transition-opacity duration-200 ease-out",
@@ -1486,8 +1465,8 @@ export function AnimatedSidePanePanel({
           mobileStacked &&
             !mobileOverlay &&
             "max-md:!h-[min(45dvh,24rem)] max-md:!w-full max-md:!min-w-0 max-md:!max-w-none max-md:!flex-none max-md:!basis-auto max-md:border-l-0 max-md:border-t",
-          // Keep the panel at opacity=1 during screenshots so opacity=0 does not make Chromium discard the guest
-          // compositor surface. The actual browser surface is fixed in a low-opacity compositing layer inside the window and does not reveal the tab bar.
+          // 截图期间 panel 仍保持 opacity=1，避免 opacity=0 让 Chromium 丢弃 guest
+          // compositor surface；实际 browser surface 已 fixed 到窗口内的低透明合成层，不会露出 tab 栏。
           isVisible || isScreenshotSurfaceActive ? "opacity-100" : "pointer-events-none opacity-0",
         )}
       >

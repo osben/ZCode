@@ -65,17 +65,26 @@ Consequence: UI-1 cannot compile until the services and shared surface named abo
 branch. Adding them by hand into UI is forbidden (AGENTS.md: the UI must not own services or
 protocol types). The next step is to pull these exports through the services/shared PRs.
 
-## Blocker status
+## Method and status
 
-Full typecheck of the upstream overlay was not run: the sandbox refused the commands needed for a
-scratch overlay (a `git rm` of `packages/ui/src` in the working tree and a `git worktree add` for an
-overlay probe). No fork or upstream file was changed by the refused commands; the working tree is
-clean. Baseline `pnpm typecheck` on the merged branch state passes (exit 0, zero `error TS`).
+Baseline `pnpm typecheck` on the merged branch state passes (exit 0, zero `error TS`).
+
+Overlay (applied on this branch, reversible via git, base = merge commit 9c2434f7):
+
+1. `git checkout 0a1fc56d -- packages/ui` (wholesale: upstream adds and modifies win; fork edits in
+   both-modified files are replaced by upstream, and their deltas are recoverable from
+   `git show 9c2434f7:<file>` / `git diff aac47556 9c2434f7 -- <file>`). This is a take-upstream rule,
+   not a three-way merge; no `merge-file` was run.
+2. `git rm` of the 94 upstream-deleted files that the fork never edited.
+3. The 147 upstream-deleted files that the fork edited remain on disk and are ledgered below.
+
+Typecheck after the overlay (`pnpm typecheck`, exit 2, 513 errors). Blockers listed in the section
+"Typecheck buckets" below. Services/shared exports from branch `claude/upstream-sync-api-exports`
+are not merged yet.
 
 ## Ledger (fork edits in upstream-deleted or structurally rewritten files)
 
-Filled in per file when the restructure is applied. Columns: file, fork feature, where to re-apply.
-Empty until the overlay compiles. Known candidates from `git log aac47556..HEAD -- packages/ui`
+Columns: file, fork feature, where to re-apply. Known candidates from `git log aac47556..HEAD -- packages/ui`
 and `specs/*.md`: sidebar polish and hover actions (`sidebar-ui-polish.md`), sidebar child counts
 (`sidebar-child-conversation-counts.md`), incognito marker (`incognito-session.md`), archive
 confirm guards (`ui-accidental-action-guards.md`), SettingsPage sections (`system-prompt-settings.md`,
@@ -91,3 +100,7 @@ merged-session highlight (`merged-session-highlight.md`), manage-sessions table
   structure typechecks. Not started.
 - i18n reconciliation of fork keys (en-US and zh-CN take upstream in a later PR; uk-UA is stale).
 - Compat shims for web and desktop consumers of removed UI exports: none added yet.
+
+## Ledger and buckets
+
+See `specs/ui-upstream-sync-ledger.md` (deleted-but-fork-edited rows, typecheck buckets) and `specs/ui-upstream-sync-ledger-2.md` (upstream-owned error files and window.zcode rule violations).

@@ -10,9 +10,9 @@ import {
 import { logMemoryDiagnostics } from "@/logger.js";
 
 /**
- * Registry of renderer memory-diagnostic counters.
- * Cache/store modules register read-only providers at module load; `startMemoryDiagnosticsLogger` samples every 60 seconds
- * and, after gating, writes to the desktop main log through `logger.logMemoryDiagnostics`.
+ * renderer 内存诊断计数器注册表。
+ * 各缓存/store 模块在模块加载时注册纯读取 provider；`startMemoryDiagnosticsLogger` 每 60 秒
+ * 采样一次，经门控后通过 `logger.logMemoryDiagnostics` 写桌面主日志。
  */
 export const uiMemoryDiagnosticsRegistry: MemoryDiagnosticsRegistry =
   createMemoryDiagnosticsRegistry();
@@ -22,7 +22,7 @@ interface RendererHeapSnapshot {
   totalJSHeapSize?: number;
 }
 
-/** Chromium-only `performance.memory`; returns undefined when unavailable in a Web browser. */
+/** Chromium 专有的 `performance.memory`；Web 端浏览器缺失时返回 undefined。 */
 export function readRendererHeapSnapshot(): RendererHeapSnapshot | undefined {
   if (typeof performance === "undefined") {
     return undefined;
@@ -41,9 +41,9 @@ interface StartMemoryDiagnosticsLoggerOptions {
   write?: (line: string) => void;
   registry?: MemoryDiagnosticsRegistry;
   /**
-   * Resource-telemetry output: in addition to writing the same sample to the local
-   * diagnostic log, also send it through the preload bridge as a main-process `renderer_main` role event. Injected by App as
-   * `platform.reportRendererHeapSample`; Web and mobile remote control have no bridge, so omitting it is a no-op.
+   * 资源遥测出口：同一次读数除写本地
+   * 诊断日志外，还经 preload 桥送 main 的 `renderer_main` 角色事件。由 App 注入
+   * `platform.reportRendererHeapSample`；Web 端与手机远控没有桥，不注入即 no-op。
    */
   reportHeapSample?: (sample: RendererHeapSample) => void;
 }
@@ -67,13 +67,13 @@ export function startMemoryDiagnosticsLogger(
     try {
       const heap = readHeap();
       const heapUsedKb = heap ? Math.round(heap.usedJSHeapSize! / 1024) : undefined;
-      // Send samples to resource telemetry as soon as they are read: ARMS needs the full 60-second series, while local logs are written only when values change,
-      // so the two outputs cannot share a single gating result. Counter collection/formatting must not delay this heap sample either.
+      // 读到就先交给资源遥测：ARMS 要的是完整的 60 秒序列，而本地日志只在有变化时才写，
+      // 两个出口不能共用同一个门控结论；计数器采集与格式化也不该拖走这条 heap 样本。
       if (heapUsedKb !== undefined) {
         try {
           reportHeapSample?.({ heapUsedKb });
         } catch {
-          // A bridge failure drops only this telemetry sample; local diagnostic logging and rendering are unaffected.
+          // 桥失败只丢这条遥测样本，本地诊断日志与渲染都不受影响。
         }
       }
       const sample: MemorySample = {
@@ -93,7 +93,7 @@ export function startMemoryDiagnosticsLogger(
       write(formatMemorySampleLine(sample, reason));
       return true;
     } catch {
-      // A diagnostic-sampling failure drops only the current sample and must not affect rendering.
+      // 诊断采样失败只丢当前样本，不能影响渲染。
       return false;
     }
   };
