@@ -25,9 +25,9 @@ bucket and what the owning change needs.
 
 ## Catalog keys
 
-| Key               | en-US       | zh-CN    | uk-UA             | Why                                                                                         |
-| ----------------- | ----------- | -------- | ----------------- | ------------------------------------------------------------------------------------------- |
-| `taskList.delete` | Delete task | 删除任务 | Видалити завдання | Used by `TaskActionMenuContent.tsx`. The key existed in the fork catalogs but not upstream. |
+| Key               | en-US       | zh-CN    | uk-UA                                | Why                                                                                                                               |
+| ----------------- | ----------- | -------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `taskList.delete` | Delete task | 删除任务 | Видалити завдання (already upstream) | Used by `TaskActionMenuContent.tsx`. en-US and zh-CN lacked it upstream; uk-UA already had it, so the uk-UA catalog is unchanged. |
 
-The three catalogs are already in the `# TEMPORARY upstream 3.16.1 sync (ui)` exemption block, so no new
+en-US and zh-CN are already in the `# TEMPORARY upstream 3.16.1 sync (ui)` exemption block, so no new
 `.staged-file-size-exemptions` lines were added. Source files in this bucket are below 20 KB.
