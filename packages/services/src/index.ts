@@ -160,7 +160,20 @@ export type {
   ZCodeTaskListWorkspaceScope,
   ZCodeTaskReadyOutcome,
 } from "./session/zcodeTaskService.js";
-export type { ZCodeTaskListItem } from "./session/zcodeTaskListTypes.js";
+export type {
+  ZCodeGroupedTaskRef,
+  ZCodeGroupedTaskView,
+  ZCodeGroupedTaskViewNode,
+  ZCodeGroupedTaskViewOrderInput,
+  ZCodeGroupedTaskViewQuery,
+  ZCodeGroupedTaskViewStructure,
+  ZCodeGroupedTaskViewStructureMember,
+  ZCodeGroupedTaskViewStructureTopOrder,
+  ZCodeGroupedTaskViewTopLevelNodeRef,
+  ZCodeTaskGroup,
+  ZCodeTaskGroupColor,
+  ZCodeTaskListItem,
+} from "./session/zcodeTaskListTypes.js";
 
 export { IWindowControllerService } from "./window-controller/windowController.js";
 export {

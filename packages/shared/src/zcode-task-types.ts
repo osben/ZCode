@@ -209,7 +209,7 @@ export interface ZCodeWorkspaceTaskListChanged {
   workspacePath: string;
   workspaceIdentity?: string;
   taskId?: string;
-  reason: TaskRealtimeReason;
+  reason: "auto_archive" | "realtime_sync" | TaskRealtimeReason;
   taskMeta?: ZCodeTaskMeta;
   /** Host confirmed that this terminal state should create a background unread item; ordinary status/resume/snapshot reconciliation must omit it. */
   unreadSignal?: "background_terminal";
