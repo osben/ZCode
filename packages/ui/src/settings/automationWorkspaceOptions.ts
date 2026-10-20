@@ -2,6 +2,8 @@ import { resolveWorkspaceKey, type RemoteTarget, type WorkspacePurpose } from "@
 import { isWorkspaceTab, isWorkspaceTabReadOnly, type WindowTabState } from "@/store/tabStore.js";
 
 export interface AutomationWorkspaceOption {
+  projectId?: string | null;
+  hostId?: string;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
@@ -11,9 +13,14 @@ export interface AutomationWorkspaceOption {
 }
 
 export function resolveAutomationWorkspaceSelectionKey(
-  workspace: Pick<AutomationWorkspaceOption, "workspacePath" | "workspaceIdentity">,
+  workspace: Pick<
+    AutomationWorkspaceOption,
+    "workspacePath" | "workspaceIdentity" | "projectId" | "hostId"
+  >,
 ): string {
-  return resolveWorkspaceKey(workspace);
+  return workspace.projectId
+    ? JSON.stringify([workspace.hostId ?? "local", workspace.projectId])
+    : resolveWorkspaceKey(workspace);
 }
 
 export function findAutomationWorkspaceOptionByKey(
@@ -24,13 +31,16 @@ export function findAutomationWorkspaceOptionByKey(
 }
 
 /**
- * Project selection in a create form must use a currently valid candidate.
- * When candidates change, keep a still-valid selection; otherwise fall back to the valid default project, first valid project, or null in that order.
+ * 新建表单的项目选择只能落在当前有效候选中。
+ * 候选变化时保留仍有效的选择，否则依次回落到有效默认项目、首个有效项目或 null。
  */
 export function reconcileAutomationWorkspaceSelectionKey(
   options: readonly AutomationWorkspaceOption[],
   currentWorkspaceKey: string | null,
-  preferredWorkspace?: Pick<AutomationWorkspaceOption, "workspacePath" | "workspaceIdentity">,
+  preferredWorkspace?: Pick<
+    AutomationWorkspaceOption,
+    "workspacePath" | "workspaceIdentity" | "projectId" | "hostId"
+  >,
 ): string | null {
   const current = findAutomationWorkspaceOptionByKey(options, currentWorkspaceKey);
   if (current) return resolveAutomationWorkspaceSelectionKey(current);
@@ -45,6 +55,7 @@ export function reconcileAutomationWorkspaceSelectionKey(
   return first ? resolveAutomationWorkspaceSelectionKey(first) : null;
 }
 
+// Fork port (UI-1): restored from the fork; used by WorkflowRunSaveControls.
 function workspaceLabelFromPath(path: string): string {
   return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
 }

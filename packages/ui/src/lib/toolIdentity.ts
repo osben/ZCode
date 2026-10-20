@@ -11,6 +11,7 @@ import { normalizeAskUserQuestionInput, readAskUserQuestionInput } from "@/lib/a
 export type ToolCallPresentationFamily =
   | ZCodeToolFamily
   | "plan-guidance"
+  | "web-fetch"
   | "switch-mode"
   | "explore"
   | "unknown";
@@ -81,6 +82,9 @@ function identityFromKnownToolName(
   value: string | null | undefined,
   source: ToolCallIdentitySource,
 ): ToolCallIdentity | null {
+  if (["fetch", "web_fetch"].includes(normalizeLegacyToken(value))) {
+    return identityFromLegacyFamily(value?.trim() ?? "WebFetch", "web-fetch", source);
+  }
   const toolName = normalizeZCodeToolName(value);
   if (!toolName) {
     return null;
@@ -185,6 +189,9 @@ function resolveLegacyKindFamily(kind: string): ToolCallPresentationFamily | nul
   }
   if (/^(?:execute|run|exec|bash|shell|command|terminal)(?:_|$)/i.test(kind)) {
     return "shell";
+  }
+  if (/^(?:fetch|web_fetch|webfetch)$/i.test(kind)) {
+    return "web-fetch";
   }
   if (
     /^(?:search|grep|find|fetch|web_search|web_fetch|webfetch|query|lookup|glob|list|ls|dir|tree)(?:_|$)/i.test(

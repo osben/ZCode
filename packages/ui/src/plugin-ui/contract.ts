@@ -46,6 +46,8 @@ export type PluginUiOpenTarget =
   | { surfaceId: string; serverName: string; toolCallId?: never };
 
 export type OpenPluginUiSideTabRequest = PluginUiOpenTarget & {
+  /** 手动新建的文档窗口身份；恢复标签页时保持不变。 */
+  instanceId?: string;
   parentSessionId: string;
   pluginId: string;
   resourceUri: string;
@@ -60,6 +62,7 @@ export type OpenPluginUiSideTabRequest = PluginUiOpenTarget & {
  * `plugin-ui:<ws>:<session>:<pluginId>:surface:<surfaceId>`; visibility is scoped by parentSessionId.
  */
 export interface PluginUiSidePaneTab {
+  instanceId?: string;
   id: string;
   type: "plugin-ui";
   ownerTaskId?: string | null;
@@ -100,9 +103,15 @@ export const PLUGIN_UI_SIDE_PANE_TITLE_BAR = {
 
 /** Scope of a request / tab: surfaceId wins, otherwise toolCallId; missing both is an invalid request. */
 export function readPluginUiScopeRef(
-  input: Pick<OpenPluginUiSideTabRequest, "toolCallId" | "surfaceId">,
+  input: Pick<OpenPluginUiSideTabRequest, "toolCallId" | "surfaceId" | "instanceId">,
 ): PluginUiScopeRef | null {
-  if (input.surfaceId) return { kind: "surface", surfaceId: input.surfaceId };
+  if (input.surfaceId)
+    return {
+      kind: "surface",
+      surfaceId: input.instanceId
+        ? `${input.surfaceId}:instance:${input.instanceId}`
+        : input.surfaceId,
+    };
   if (input.toolCallId) return { kind: "toolCall", toolCallId: input.toolCallId };
   return null;
 }
@@ -192,6 +201,8 @@ export function buildPluginUiSidePaneTabId(request: OpenPluginUiSideTabRequest):
 }
 
 export interface PluginUiSidePaneViewProps {
+  /** 由宿主页面、侧栏展开状态与当前标签派生，不以保活 DOM 的几何相交替代。 */
+  visible: boolean;
   scopeRef: PluginUiScopeRef;
   host: {
     pageKey: string;
@@ -243,4 +254,11 @@ export interface PluginUiResourceNotificationTarget {
   notifyResourceListChanged(): void;
   /** Instance mailbox of App-Provided Tools: a model-initiated page tool call has arrived at this instance. */
   notifyAppToolCall(call: McpAppsAppToolCallRequest): void;
+}
+
+/** 文档查看器手动入口创建独立窗口；工具调用继续使用原有的显式 surface 路由。 */
+export function documentViewerInstance(resourceUri: string): { instanceId?: string } {
+  return /^ui:\/\/(documents|pdf|presentations|spreadsheets)\/panel\.html$/.test(resourceUri)
+    ? { instanceId: crypto.randomUUID() }
+    : {};
 }

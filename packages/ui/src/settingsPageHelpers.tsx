@@ -1,21 +1,25 @@
-/* oxlint-disable eslint(max-lines) -- Settings helpers group several settings sections; terminal, network, and auto-archive capabilities across multiple surfaces temporarily exceed the line limit. */
+/* oxlint-disable eslint(max-lines) -- settings helper 聚合多个设置分组；终端、网络与自动归档多侧能力暂时超过行数限制。 */
 import type {
+  AppToolSearchMode,
   IntegratedTerminalShellOption,
   IntegratedTerminalShellSelection,
   LocalePreference,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
+import { appToolSearchModeSchema } from "@zcode/shared";
 import {
   TID_SETTINGS_ASK_USER_QUESTION_AUTO_RESOLUTION_SWITCH,
   TID_SETTINGS_NATIVE_SEARCH_SWITCH,
-} from "@zcode/shared";
+  TID_SETTINGS_TOOL_SEARCH_SELECT,
+  TID_SETTINGS_TOOL_SEARCH_OPTION,
+} from "@zcode/shared/test-ids";
 import { useState, useCallback, useEffect } from "react";
 import type { IPlatformService } from "@zcode/shared";
 import {
   TID_SETTINGS_LOCALE_SELECT_ITEM,
   TID_SETTINGS_LOCALE_SELECT_TRIGGER,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   Select,
   SelectContent,
@@ -36,15 +40,90 @@ import { normalizeInterfaceMode, type InterfaceMode } from "@/lib/interfaceMode.
 import {
   createSettingsPageConfig,
   resolveSettingsSectionForPlatform,
+  SETTINGS_SECTION_GROUPS,
+  SETTINGS_SECTIONS,
+  isSettingsSectionAvailable,
   type SettingsSectionId,
 } from "@/settings/settingsPageConfig.js";
 
 export type { Locale, LocalePreference } from "@zcode/shared";
 export { type SettingsSectionId };
 export { createSettingsPageConfig, resolveSettingsSectionForPlatform };
+export { SETTINGS_SECTION_GROUPS, SETTINGS_SECTIONS };
+export { isSettingsSectionAvailable };
 
 const TASK_AUTO_ARCHIVE_DAY_OPTIONS = [3, 7, 14, 30] as const;
 const ZCODE_INTERACTION_BEHAVIOR_OPTIONS: readonly ZCodeInteractionBehavior[] = ["queue", "guide"];
+
+/** 归档偏好与归档列表集中展示，设置值和保存动作继续由 SettingsPage 持有。 */
+export function TaskAutoArchiveSettings({
+  taskAutoArchiveEnabled,
+  taskAutoArchiveOlderThanDays,
+  onTaskAutoArchiveEnabledChange,
+  onTaskAutoArchiveOlderThanDaysChange,
+}: {
+  taskAutoArchiveEnabled: boolean;
+  taskAutoArchiveOlderThanDays: number;
+  onTaskAutoArchiveEnabledChange: (enabled: boolean) => Promise<void>;
+  onTaskAutoArchiveOlderThanDaysChange: (days: number) => Promise<void>;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <SettingsGroupCard>
+      <SettingsRow
+        controlLayout="wide"
+        label={intl.formatMessage({ id: "settings.taskAutoArchive" })}
+        description={intl.formatMessage({
+          id: "settings.taskAutoArchiveDescription",
+        })}
+        control={
+          <Switch
+            data-testid="archive-auto-archive-switch"
+            aria-label={intl.formatMessage({ id: "settings.taskAutoArchive" })}
+            checked={taskAutoArchiveEnabled}
+            onCheckedChange={(checked) => {
+              void onTaskAutoArchiveEnabledChange(checked);
+            }}
+          />
+        }
+      />
+      <SettingsRow
+        controlLayout="wide"
+        label={intl.formatMessage({ id: "settings.taskAutoArchiveDays" })}
+        description={intl.formatMessage({
+          id: "settings.taskAutoArchiveDaysDescription",
+        })}
+        control={
+          <Select
+            value={String(taskAutoArchiveOlderThanDays)}
+            onValueChange={(value) => {
+              void onTaskAutoArchiveOlderThanDaysChange(Number(value));
+            }}
+            disabled={!taskAutoArchiveEnabled}
+          >
+            <SelectTrigger
+              data-testid="archive-auto-archive-days"
+              aria-label={intl.formatMessage({ id: "settings.taskAutoArchiveDays" })}
+              size="lg"
+              className="w-full min-w-0 justify-between"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TASK_AUTO_ARCHIVE_DAY_OPTIONS.map((days) => (
+                <SelectItem key={days} value={String(days)}>
+                  {intl.formatMessage({
+                    id: `settings.taskAutoArchiveDays.option.${days}`,
+                  })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        }
+      />
+    </SettingsGroupCard>
+  );
+}
 
 export function GeneralSectionContent({
   localePreference,
@@ -60,10 +139,12 @@ export function GeneralSectionContent({
   autoDownloadAndInstallUpdates,
   dataBaseDir,
   terminalInheritSystemProfile = true,
-  terminalFontFamily = "",
   terminalWebglEnabled = false,
+  terminalFontFamily = "",
   integratedTerminalShell = { mode: "auto" },
   integratedTerminalShellOptions = [],
+  toolSearchMode = "off",
+  onToolSearchModeChange,
   nativeSearchEnhancementsEnabled,
   httpProxy = "",
   httpProxyNoProxy = "",
@@ -77,8 +158,6 @@ export function GeneralSectionContent({
   setLocalePreference,
   setNotificationEnabled,
   setNotificationSoundEnabled,
-  taskAutoArchiveEnabled,
-  taskAutoArchiveOlderThanDays,
   messageStreamShowReasoning,
   messageStreamShowTodos,
   toolGroupingExploreEnabled,
@@ -93,13 +172,12 @@ export function GeneralSectionContent({
   onTerminalInheritSystemProfileChange = async () => {},
   onTerminalFontFamilyChange = async () => {},
   onTerminalWebglEnabledChange = () => {},
+  onCodingPlanLimitAutoContinueDefaultEnabledChange = async () => {},
   onIntegratedTerminalShellChange = async () => {},
   onNativeSearchEnhancementsEnabledChange,
   onHttpProxyChange = async () => {},
   onHttpProxyNoProxyChange = async () => {},
   onHttpProxyCaCertPathChange = async () => {},
-  onTaskAutoArchiveEnabledChange,
-  onTaskAutoArchiveOlderThanDaysChange,
   onCloseToTrayOnWindowsChange,
   onKeepAwakeWhileRunningChange = async () => {},
   onResourceTelemetryEnabledChange = async () => {},
@@ -113,7 +191,6 @@ export function GeneralSectionContent({
   onToolGroupingChangesEnabledChange,
   onZCodeInteractionBehaviorChange,
   onAskUserQuestionAutoResolutionEnabledChange = async () => {},
-  onCodingPlanLimitAutoContinueDefaultEnabledChange = async () => {},
   onModelIoFullRetentionEnabledChange = async () => {},
   onOpenOnboardingDialog,
 }: {
@@ -124,7 +201,6 @@ export function GeneralSectionContent({
   notificationSoundEnabled: boolean;
   closeToTrayOnWindows: boolean;
   keepAwakeWhileRunning?: boolean;
-  /** Fork setting: main-process resource sampling (specs/resource-telemetry-toggle.md). */
   resourceTelemetryEnabled?: boolean;
   desktopChromiumHardwareAccelerationEnabled?: boolean;
   receivePreviewUpdates: boolean;
@@ -132,9 +208,10 @@ export function GeneralSectionContent({
   dataBaseDir: string;
   terminalInheritSystemProfile: boolean;
   terminalFontFamily: string;
-  terminalWebglEnabled: boolean;
   integratedTerminalShell?: IntegratedTerminalShellSelection;
   integratedTerminalShellOptions?: IntegratedTerminalShellOption[];
+  toolSearchMode?: AppToolSearchMode;
+  onToolSearchModeChange: (mode: AppToolSearchMode) => Promise<void>;
   nativeSearchEnhancementsEnabled: boolean;
   httpProxy?: string;
   httpProxyNoProxy?: string;
@@ -142,15 +219,15 @@ export function GeneralSectionContent({
   defaultHomeDir: string;
   isDesktop?: boolean;
   isWindowsDesktop?: boolean;
-  /** Linux desktop (`isDesktop` and not Windows/macOS); show the close-to-tray setting based on capabilities. */
+  /** Linux 桌面端（isDesktop 且非 win/mac）；关闭驻留托盘设置在 Linux 上按能力自适应展示 */
   isLinuxDesktop?: boolean;
-  /** Linux close-to-tray capability state (spec: docs/desktop/linux-close-to-tray.md); omitted on Windows. */
+  /** Linux 关闭驻留托盘能力状态（spec：docs/desktop/linux-close-to-tray.md）；Windows 不传 */
   linuxCloseToTray?: {
-    /** Capability is being detected or confirmed unavailable; lock the toggle. */
+    /** 能力探测中或确认不可用，开关锁定 */
     disabled: boolean;
-    /** Confirmed unavailable (description changes to “System tray not provided”). */
+    /** 确认不可用（描述文案切换为"未提供系统托盘"） */
     unavailable: boolean;
-    /** GNOME-based desktop without a tray (add a prompt to install the AppIndicator extension). */
+    /** GNOME 系桌面且无托盘（追加 AppIndicator 扩展安装提示） */
     gnomeLikeHint: boolean;
   };
   showIntegratedTerminalShell?: boolean;
@@ -158,8 +235,6 @@ export function GeneralSectionContent({
   setLocalePreference: (locale: LocalePreference) => void;
   setNotificationEnabled: (enabled: boolean) => void;
   setNotificationSoundEnabled: (enabled: boolean) => void;
-  taskAutoArchiveEnabled: boolean;
-  taskAutoArchiveOlderThanDays: number;
   messageStreamShowReasoning: boolean;
   messageStreamShowTodos: boolean;
   toolGroupingExploreEnabled: boolean;
@@ -172,6 +247,7 @@ export function GeneralSectionContent({
   onDataBaseDirChange: (dir: string) => Promise<void>;
   onSelectDataBaseDir: () => Promise<string | null>;
   onTerminalInheritSystemProfileChange: (enabled: boolean) => Promise<void>;
+  terminalWebglEnabled: boolean;
   onTerminalFontFamilyChange: (fontFamily: string) => Promise<void>;
   onTerminalWebglEnabledChange: (enabled: boolean) => void;
   onIntegratedTerminalShellChange?: (selection: IntegratedTerminalShellSelection) => Promise<void>;
@@ -179,8 +255,6 @@ export function GeneralSectionContent({
   onHttpProxyChange?: (httpProxy: string) => Promise<void>;
   onHttpProxyNoProxyChange?: (noProxy: string) => Promise<void>;
   onHttpProxyCaCertPathChange?: (caCertPath: string) => Promise<void>;
-  onTaskAutoArchiveEnabledChange: (enabled: boolean) => Promise<void>;
-  onTaskAutoArchiveOlderThanDaysChange: (days: number) => Promise<void>;
   onCloseToTrayOnWindowsChange: (enabled: boolean) => Promise<void>;
   onKeepAwakeWhileRunningChange?: (enabled: boolean) => Promise<void>;
   onResourceTelemetryEnabledChange?: (enabled: boolean) => Promise<void>;
@@ -200,8 +274,8 @@ export function GeneralSectionContent({
 }) {
   const { intl } = useZCodeIntl();
   const hasServices = Boolean(useOptionalServices());
-  // Some SSR unit tests render this component directly with minimal props, and older helpers may not pass the new terminal setting.
-  // Default to “inherit system profile” at runtime so undefined.trim() does not interrupt unrelated tests.
+  // 部分 SSR 单测会用精简 props 直接渲染本组件，新增终端设置项后旧 helper 未必同步传值。
+  // 这里把运行时缺省值兜到“继承系统 profile”，避免 undefined.trim() 把无关测试打断。
   const [localTerminalFontFamily, setLocalTerminalFontFamily] = useState(terminalFontFamily);
 
   useEffect(() => {
@@ -428,6 +502,9 @@ export function GeneralSectionContent({
             />
           }
         />
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
         <SettingsRow
           label={intl.formatMessage({ id: "settings.terminalWebgl" })}
           description={intl.formatMessage({ id: "settings.terminalWebglDescription" })}
@@ -470,6 +547,42 @@ export function GeneralSectionContent({
             }
           />
         ) : null}
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.toolSearch" })}
+          description={intl.formatMessage({ id: "settings.toolSearchDescription" })}
+          detail={
+            <p className="text-ui-sm leading-5 text-foreground-subtle">
+              {intl.formatMessage({ id: "settings.toolSearchExperimentalNotice" })}
+            </p>
+          }
+          control={
+            <Select
+              value={toolSearchMode}
+              onValueChange={(value) => {
+                void onToolSearchModeChange(appToolSearchModeSchema.parse(value));
+              }}
+            >
+              <SelectTrigger
+                size="lg"
+                className="w-[260px] min-w-0 justify-between"
+                data-testid={TID_SETTINGS_TOOL_SEARCH_SELECT}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {appToolSearchModeSchema.options.map((mode) => (
+                  <SelectItem
+                    key={mode}
+                    value={mode}
+                    data-testid={testId(TID_SETTINGS_TOOL_SEARCH_OPTION, mode)}
+                  >
+                    {intl.formatMessage({ id: `settings.toolSearch.${mode}` })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
         <SettingsRow
           label={intl.formatMessage({
             id: "settings.nativeSearchEnhancements",
@@ -525,7 +638,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* No Proxy and the HTTP proxy jointly determine the same egress policy, so this must sit below the proxy address.*/}
+        {/* No Proxy 与 HTTP 代理共同决定同一出口策略，必须贴在代理地址下面。*/}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.httpProxyNoProxy" })}
           description={intl.formatMessage({
@@ -560,7 +673,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* A custom CA is part of the HTTP proxy’s network egress policy and must be in the same card as the proxy input.*/}
+        {/* 自定义 CA 属于 HTTP 代理的同一网络出口策略，必须跟代理输入放在同一卡片里。*/}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.httpProxyCaCertPath" })}
           description={intl.formatMessage({
@@ -692,7 +805,7 @@ export function GeneralSectionContent({
             control={
               <Switch
                 checked={closeToTrayOnWindows}
-                // Lock the setting when Linux tray capability is unknown (still probing) or confirmed unavailable, so enabling it cannot make the window inaccessible after close.
+                // Linux 上托盘能力未知（探测中）或确认不可用时都锁定，防止误开导致关窗失联
                 //（spec：docs/desktop/linux-close-to-tray.md）。
                 disabled={Boolean(linuxCloseToTray?.disabled)}
                 onCheckedChange={(checked) => {
@@ -790,7 +903,7 @@ export function GeneralSectionContent({
             />
           }
         />
-        {/* docs/dynamic-workflow/launch.md "The user's choice": the entire row is not rendered when the server does not provide it. */}
+        {/* docs/dynamic-workflow/launch.md「The user's choice」：服务端未提供时整行不渲染。 */}
         {hasServices ? <DynamicWorkflowModeSetting /> : null}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.codingPlanLimitAutoContinueDefault" })}
@@ -897,51 +1010,6 @@ export function GeneralSectionContent({
                 void onToolGroupingChangesEnabledChange(checked);
               }}
             />
-          }
-        />
-      </SettingsGroupCard>
-
-      <SettingsGroupCard>
-        <SettingsRow
-          label={intl.formatMessage({ id: "settings.taskAutoArchive" })}
-          description={intl.formatMessage({
-            id: "settings.taskAutoArchiveDescription",
-          })}
-          control={
-            <Switch
-              checked={taskAutoArchiveEnabled}
-              onCheckedChange={(checked) => {
-                void onTaskAutoArchiveEnabledChange(checked);
-              }}
-            />
-          }
-        />
-        <SettingsRow
-          label={intl.formatMessage({ id: "settings.taskAutoArchiveDays" })}
-          description={intl.formatMessage({
-            id: "settings.taskAutoArchiveDaysDescription",
-          })}
-          control={
-            <Select
-              value={String(taskAutoArchiveOlderThanDays)}
-              onValueChange={(value) => {
-                void onTaskAutoArchiveOlderThanDaysChange(Number(value));
-              }}
-              disabled={!taskAutoArchiveEnabled}
-            >
-              <SelectTrigger size="lg" className="w-[260px] min-w-0 justify-between">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TASK_AUTO_ARCHIVE_DAY_OPTIONS.map((days) => (
-                  <SelectItem key={days} value={String(days)}>
-                    {intl.formatMessage({
-                      id: `settings.taskAutoArchiveDays.option.${days}`,
-                    })}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           }
         />
       </SettingsGroupCard>

@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
-// Script transcript panel (docs/dynamic-workflow/transcript-and-notifications.md "The panel"; visuals: the logbook,
-// docs/dynamic-workflow/presentation.md "The pill" visual revision): a run's
-// files.* / git.* / world.run replayed into chapters + two-line entries + a time ruler + command output tails.
-// What is pinned here is "the manifest wired onto the DOM" — chapter heads, verb and object, result lines, status
-// words, peek and expand, placeholder, landing — while the derivation rules live in
-// workflowWorkspaceTranscript.test.ts and workflowWorkspaceLogbook.test.ts.
+// 脚本 transcript 面板（docs/dynamic-workflow/transcript-and-notifications.md「The panel」；视觉：日志簿，
+// docs/dynamic-workflow/presentation.md「The pill」视觉修订）：一个 run 的
+// files.* / git.* / world.run 回放成章节 + 两行条目 + 时间标尺 + 命令输出的尾巴。钉的是
+// 「清单接到了 DOM 上」——章头、动词与对象、结果行、状态词、peek 与展开、占位、落点——
+// 派生规则在 workflowWorkspaceTranscript.test.ts 与 workflowWorkspaceLogbook.test.ts。
 import { createElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,7 +36,7 @@ vi.mock("@/v4/useConversationProjection.js", () => ({
   useConversationProjection: () => ({ snapshot }),
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after all mocks.
+// eslint-disable-next-line import/first -- 必须在全部 mock 之后再引入被测组件。
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowWorkspaceSidePane } from "@/app-shell/WorkflowWorkspaceSidePane.js";
@@ -218,7 +217,7 @@ describe("WorkflowWorkspaceSidePane", () => {
       "world-read#2",
       "world-read#2",
     ]);
-    // Two-line entries: verb + object, then the result line; the right side shows the time relative to the first card.
+    // 两行条目：动词 + 对象，然后结果行；右侧是相对第一张卡的时刻。
     expect(cards[0]!.textContent).toContain("Searched");
     expect(cards[0]!.textContent).toContain("src/**/*.ts");
     expect(cards[0]!.textContent).toContain("2 files");
@@ -229,15 +228,15 @@ describe("WorkflowWorkspaceSidePane", () => {
     const whenOf = (card: HTMLElement) =>
       card.querySelector('[data-testid="workflow-workspace-when"]')!.textContent;
     expect(cards.map(whenOf)).toEqual(["+0:00", "+0:00", "+0:01", "now"]);
-    // The running one: the verb reads "Running" with a shine sweep, and the result line says how long ago it started.
+    // running 的那张：动词说「Running」并扫光，结果行说开始于多久前。
     expect(cards[3]!.textContent).toContain("Running");
     expect(cards[3]!.textContent).toContain("started");
     expect(cards[3]!.querySelector(".wf-ws-shine")).toBeTruthy();
     expect(cards[3]!.getAttribute("data-status")).toBe("running");
-    // Read is not expandable; the rest carry button semantics.
+    // Read 不可展开；其余是按钮语义。
     expect(cards[1]!.getAttribute("role")).toBeNull();
     expect(cards[2]!.getAttribute("role")).toBe("button");
-    // The first batch arrives one by one: each card staggered by 24 ms.
+    // 首批依次到场：每张错 24 ms。
     expect(cards[1]!.style.animationDelay).toBe("24ms");
   });
 
@@ -252,12 +251,10 @@ describe("WorkflowWorkspaceSidePane", () => {
     expect(chapters[0]!.textContent).toContain("plan");
     expect(chapters[0]!.textContent).toContain("2 steps");
     expect(chapters[1]!.textContent).toContain("verify");
-    // The chapter head's rule grows out from the left.
-    expect(chapters[0]!.querySelector(".wf-ws-rule")).toBeTruthy();
     const cards = view.getAllByTestId("workflow-workspace-card");
     expect(cards[0]!.getAttribute("data-phase-id")).toBe("phase#a");
     expect(cards[2]!.getAttribute("data-phase-id")).toBe("phase#b");
-    // Header second line: the logbook's three totals.
+    // 表头第二行：整本日志簿的三个数。
     const summary = view.getByTestId("workflow-workspace-summary").textContent;
     expect(summary).toContain("2 phases");
     expect(summary).toContain("4 steps");
@@ -295,8 +292,7 @@ describe("WorkflowWorkspaceSidePane", () => {
   it("收起的命令露出输出的尾巴（peek，正文按卡取一次）；展开是完整面板：$ 命令行、stdout、单独成段的 stderr、页脚 + Copy", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getAllByTestId("workflow-workspace-card")).toHaveLength(4));
-    // Only finished commands fetch their body (jsdom has no IntersectionObserver → treated as immediately visible);
-    // running ones do not.
+    // 只有跑完的命令取正文（jsdom 没有 IntersectionObserver → 视作立刻可见）；running 的不取。
     await waitFor(() => expect(workflowRunNodeResult).toHaveBeenCalledTimes(1));
     expect(workflowRunNodeResult).toHaveBeenCalledWith({
       sessionId: "parent-a",
@@ -313,7 +309,7 @@ describe("WorkflowWorkspaceSidePane", () => {
       fireEvent.click(terminal);
     });
     await waitFor(() => expect(view.getByTestId("workflow-workspace-card-footer")).toBeTruthy());
-    // Expanding does not fetch again: peek already put the body into the cache.
+    // 展开不再读：peek 已经把正文放进缓存。
     expect(workflowRunNodeResult).toHaveBeenCalledTimes(1);
     expect(terminal.getAttribute("aria-expanded")).toBe("true");
     expect(peek()).toBeNull();
@@ -326,12 +322,12 @@ describe("WorkflowWorkspaceSidePane", () => {
     expect(footer.textContent).toContain("1.3s");
     expect(footer.textContent).toContain("9 B");
     expect(footer.querySelector('[data-testid="workflow-workspace-copy"]')).toBeTruthy();
-    // Clicks inside the body do not collapse it.
+    // 正文里的点击不折叠。
     await act(async () => {
       fireEvent.click(body);
     });
     expect(terminal.getAttribute("aria-expanded")).toBe("true");
-    // Keyboard: Enter collapses.
+    // 键盘：Enter 收起。
     await act(async () => {
       fireEvent.keyDown(terminal, { key: "Enter" });
     });
@@ -349,7 +345,7 @@ describe("WorkflowWorkspaceSidePane", () => {
       title: "a.ts",
       path: "/workspace/src/a.ts",
     });
-    // Read never fetches a body (only the finished command fetched one, for peek).
+    // Read 从不取正文（只有那条跑完的命令为 peek 取过）。
     expect(workflowRunNodeResult).not.toHaveBeenCalledWith(
       expect.objectContaining({ siteId: "world-read#1" }),
     );

@@ -8,7 +8,7 @@ import {
 export { BROWSER_VIEWPORT_ZOOM_OPTIONS, DEFAULT_BROWSER_VIEWPORT_ZOOM };
 export type { BrowserViewportZoom };
 
-/** Keep the Fit canvas padding consistent with ResponsiveBrowserViewport's `p-4`. */
+/** Fit 的画布内边距与 ResponsiveBrowserViewport 的 `p-4` 保持一致。 */
 export const RESPONSIVE_BROWSER_CANVAS_PADDING_PX = 16;
 
 export function resolveBrowserViewportScale({
@@ -31,8 +31,8 @@ export function resolveBrowserViewportScale({
 
   const safeDesktopZoomFactor =
     Number.isFinite(desktopZoomFactor) && desktopZoomFactor > 0 ? desktopZoomFactor : 1;
-  // ResizeObserver returns CSS dimensions scaled by the parent renderer page zoom; convert to screen-space dimensions before resolving Fit
-  // so the application-wide zoom is not mistaken for browser preview zoom.
+  // ResizeObserver 返回父 renderer 页面缩放后的 CSS 尺寸；换算为屏幕视觉尺寸后再解析 Fit，
+  // 才不会让应用全局缩放被误当成浏览器预览缩放。
   const availableWidth =
     Math.max(0, canvasSize.width - RESPONSIVE_BROWSER_CANVAS_PADDING_PX * 2) *
     safeDesktopZoomFactor;
@@ -65,21 +65,12 @@ export function resolveResponsiveBrowserGuestLayout(desktopZoomFactor: number): 
   const safeDesktopZoomFactor =
     Number.isFinite(desktopZoomFactor) && desktopZoomFactor > 0 ? desktopZoomFactor : 1;
 
-  if (safeDesktopZoomFactor > 1) {
-    // When Desktop page zoom increases, the outer transform only enlarges the webview DOM;
-    // the guest native raster remains at 1 / zoom of the frame, leaving blank space at the right/bottom.
-    // The enlargement compensation has moved to the main process CDP metrics scale, so the renderer must keep the actual 100% bounds.
-    return { layoutScale: 1, transformScale: 1 };
-  }
-
-  if (safeDesktopZoomFactor < 1) {
-    // At lower zoom levels, scaling only the surface also leaves blank space; first expand the layout in reverse, then scale it back into the frame,
-    // preserving the full page content and correct guest coordinate mapping.
-    return {
-      layoutScale: 1 / safeDesktopZoomFactor,
-      transformScale: safeDesktopZoomFactor,
-    };
-  }
-
-  return { layoutScale: 1, transformScale: 1 };
+  // 放大档曾把补偿交给 main 的 CDP metrics scale，但 metrics 是 per-session 状态，
+  // 命令空闲 detach 后被 Chromium 清掉，guest 退回 viewport × zoom，Browser Use 每次操作页面都会
+  // 变大又变回。放大和缩小统一在宿主布局补偿：先按 1 / zoom 布局，再缩放回 frame，
+  // guest 的自然 viewport 因此与 CDP 是否 attach 无关。
+  return {
+    layoutScale: 1 / safeDesktopZoomFactor,
+    transformScale: safeDesktopZoomFactor,
+  };
 }

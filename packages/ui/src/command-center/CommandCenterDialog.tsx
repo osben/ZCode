@@ -1,3 +1,6 @@
+import { getRemoteConnectionFailureCode } from "@/lib/remoteWorkspaceServiceError.js";
+import { formatRemoteConnectionError } from "@/lib/remoteConnectionPresentation.js";
+import { isRemoteConversationWorkspace } from "@/conversation-workspace-target/purpose.js";
 /* eslint-disable max-lines -- Aggregates command, task, and file search results; it can be split by result section later. */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { unpackWorkspaceFileEntries } from "@zcode/shared/workspaceFileEntriesCodec";
@@ -560,7 +563,13 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   // Performance fix: the closed Command Center does not need to recompute commands, tasks, and recent changes during chat streaming.
   // Keep hook order but pass empty inputs while closed so the hidden dialog does not rebuild its results on every token batch.
   const effectiveCommands = open ? commands : EMPTY_QUICK_PICK_COMMANDS;
-  const effectiveWorkspaceTabs = open ? workspaceTabs : EMPTY_COMMAND_CENTER_WORKSPACE_TABS;
+  const effectiveWorkspaceTabs = useMemo(
+    () =>
+      open
+        ? workspaceTabs.filter((tab) => !isRemoteConversationWorkspace(tab))
+        : EMPTY_COMMAND_CENTER_WORKSPACE_TABS,
+    [open, workspaceTabs],
+  );
   const effectiveActiveTaskChangeSummary = open ? activeTaskChangeSummary : null;
   const activePage = getActiveCommandCenterPage(pageStack);
   const activePageCommand = useMemo(
@@ -1156,7 +1165,16 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       })
       .catch((error) => {
         if (!cancelled) {
-          setWorkspaceFilesError(String(error));
+          const remoteCode = getRemoteConnectionFailureCode(error);
+          setWorkspaceFilesError(
+            remoteCode
+              ? formatRemoteConnectionError({
+                  fallback: String(error),
+                  reasonCode: remoteCode,
+                  formatMessage: intl.formatMessage,
+                })
+              : String(error),
+          );
         }
       })
       .finally(() => {
@@ -1168,7 +1186,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     return () => {
       cancelled = true;
     };
-  }, [fileService, loadedWorkspaceKey, searchFiles, workspaceAbsPath, workspaceKey]);
+  }, [fileService, loadedWorkspaceKey, searchFiles, workspaceAbsPath, workspaceKey, intl]);
 
   const rememberSearch = useCallback(
     (scope: CommandCenterSearchScope = activeScope) => {
@@ -1212,6 +1230,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       }
 
       closeDialog();
+      // The command may omit run() for navigation-only entries; a missing run is a no-op.
       void Promise.resolve(command.run?.()).catch((error) => {
         logger.error("[CommandCenter] command execution failed", {
           commandId: command.id,
@@ -1749,10 +1768,11 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         ) : null}
         {rows.map((task) => {
           const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
+          // Bugfix：cmdk 按 value 判断选中；标题可重复，必须用工作区身份和任务 ID 隔离重名行。
           return (
             <CommandItem
               key={`${task.workspaceIdentity?.trim() || task.workspacePath}:${task.taskId}`}
-              value={`${title} ${task.workspacePath}`}
+              value={`recent-task:${task.workspaceIdentity?.trim() || task.workspacePath}:${task.taskId}`}
               className={quickPickItemClassName}
               onSelect={() => selectRecentTask(task)}
             >
@@ -1836,7 +1856,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           return (
             <CommandItem
               key={row.key}
-              value={`${title} ${workspaceLabel} ${searchSnippet ?? ""}`}
+              // 搜索结果沿用含工作区身份、任务 ID 和片段序号的行 key，避免同文案一起选中。
+              value={`task-result:${row.key}`}
               className={quickPickItemClassName}
               onSelect={() => selectTask(row)}
             >

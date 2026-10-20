@@ -92,6 +92,7 @@ export type ConversationShareFailureReasonCode =
   | "artifact_extension_missing"
   | "artifact_outside_workspace"
   | "artifact_changed"
+  | "content_unavailable"
   | "artifact_read_failed"
   // Known capacity overflow: the actual attachment size exceeds the server's max_artifact_bytes or the channel's transfer limit.
   // Unlike artifact_read_failed (unknown), this is a definite blocker at selection time.
@@ -104,6 +105,14 @@ export type ConversationShareFailureReasonCode =
   | "invalid_conversation";
 
 export type ConversationShareFailureIssueCode =
+  | "authentication_required"
+  | "network"
+  | "service_unavailable"
+  | "rate_limited"
+  | "feature_disabled"
+  | "connection_unavailable"
+  | "invalid_contract"
+  | "disclosure_required"
   | ConversationShareFailureReasonCode
   | "rows_limit"
   | "artifact_count_limit"
@@ -404,6 +413,8 @@ export interface ImportedConversationShare {
    * When >0, show a non-blocking notice at the top of the read-only block so users do not think content was lost.
    */
   unsupportedRowCount: number;
+  /** Upstream content blocks of the imported share; optional so older copies without them still type-check. */
+  contentBlocks?: unknown[];
   artifacts: Array<{
     artifactId: string;
     displayName: string;

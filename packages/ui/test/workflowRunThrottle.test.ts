@@ -1,10 +1,8 @@
-// The adaptive concurrency observation surface of the dwf run detail page (docs/dynamic-workflow/concurrency.md
-// "Protocol and UI"):
-// the run head's concurrency/cooldown reading, the event log's three kinds of lines, and the phase → four graph values
-// mapping.
-// All jsdom-free: these are pure rules with the clock injected as a parameter.
+// dwf run 详情页的自适应并发观察面（docs/dynamic-workflow/concurrency.md「Protocol and UI」）：
+// run 头的并发/冷却读数与事件日志。
+// 全部无 jsdom：这些是纯规则，时钟由参数注入。
 import { describe, expect, it } from "vitest";
-import type { WorkflowRunNode, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
+import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import enUS from "@/i18n/locales/en-US.js";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import { workflowRunEventLines } from "@/app-shell/workflowRunPanel.js";
@@ -13,24 +11,11 @@ import {
   workflowRunConcurrencyChip,
   workflowRunConcurrencyView,
 } from "@/app-shell/workflowRunThrottle.js";
-import { statusOfRunNode } from "@/components/workflow-graph/run-status.js";
 
 const format = (descriptor: { id: string }, values?: Record<string, string>) =>
   values ? `${descriptor.id}:${Object.values(values).join("/")}` : descriptor.id;
 
 const T0 = 1_700_000_000_000;
-
-function node(overrides: Partial<WorkflowRunNode> = {}): WorkflowRunNode {
-  return {
-    siteId: "ask#1",
-    ordinal: 1,
-    kind: "ask",
-    phase: "executing",
-    actorSiteId: "actor#1",
-    actorOrdinal: 1,
-    ...overrides,
-  };
-}
 
 describe("原因标签（事件日志用）", () => {
   it("已知原因映射到短标签键，陌生原因原样显示", () => {
@@ -68,8 +53,8 @@ describe("workflowRunConcurrencyView：被压在自己的界之下，或有自�
     });
   });
 
-  // The smaller of the two bounds (docs/dynamic-workflow/concurrency.md "Two bounds on a run"): the reading says how
-  // many subagents this run can really have in flight right now; which bound is in force is not its question to answer.
+  // 两条界取小（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）：读数说的是这次 run
+  // 此刻真能有几个子代理在飞，哪一条界在起作用不是它要回答的问题。
   it("有 limit 时显示两条界里小的那个", () => {
     expect(workflowRunConcurrencyView({ cap: 8, ceiling: 8, limit: 3 }, T0)).toEqual({
       cap: 3,
@@ -79,12 +64,12 @@ describe("workflowRunConcurrencyView：被压在自己的界之下，或有自�
       cap: 2,
       ceiling: 8,
     });
-    // An absent limit means the shared bucket's bound is the only one — verbatim the same as before.
+    // limit 缺席就是只有共享桶那一条界——与从前逐字相同。
     expect(workflowRunConcurrencyView({ cap: 8, ceiling: 8 }, T0)).toBeUndefined();
   });
 
-  // `ceiling` is the default concurrency D, not a cap (docs/dynamic-workflow/concurrency.md "What the user sees"):
-  // the shared bucket can auto-grow to 2D, and the user can tune a run above D.
+  // `ceiling` 是默认并发 D，不是上限（docs/dynamic-workflow/concurrency.md「What the user sees」）：
+  // 共享桶可以自动长到 2D，用户也可以把 run 调到 D 之上。
   it("默认 run 的共享 cap 长到 D 之上：读数是 min(cap, D) = D，没有可说的", () => {
     expect(workflowRunConcurrencyView({ cap: 12, ceiling: 8 }, T0)).toBeUndefined();
   });
@@ -112,11 +97,9 @@ describe("workflowRunConcurrencyView：被压在自己的界之下，或有自�
   });
 });
 
-// Chip present = reading present ∧ the run is configurable (docs/dynamic-workflow/concurrency.md "What the user
-// sees").
-// The chip states a bound whose control is Configure; when the control goes, the chip goes — on a completed run nothing
-// still runs under that bound, a superseded run's bound belongs to its successor, and keeping a number would only be
-// read as a stale live reading.
+// 芯片在场 = 读数在场 ∧ run 能配置（docs/dynamic-workflow/concurrency.md「What the user sees」）。
+// 芯片说的是一条界，界的控件是 Configure；控件走了芯片也走——完成的 run 上没有东西还在这条界下跑，
+// 被替代的 run 的界归后继管，留一个数只会被读成一个过期的实时读数。
 describe("workflowRunConcurrencyChip：与 Configure 同进同退", () => {
   function runWith(overrides: Partial<WorkflowRunState>): WorkflowRunState {
     return {
@@ -158,26 +141,11 @@ describe("workflowRunConcurrencyChip：与 Configure 同进同退", () => {
     ).toBeUndefined();
   });
 
-  // The chip's number is a bound, not a running count: the wording must be the bound's wording, and neither language
-  // may read as "how many right now".
+  // 芯片的数是一条界，不是在跑的个数：字必须是界的字，两种语言都不能读成「此刻有几个」。
   it("两种语言都是「最大并发数 N」/「Max concurrency N」", () => {
     const key = "chat.toolCall.workflow.run.concurrency.label";
-    expect((zhCN as Record<string, string>)[key]).toBeTruthy();
+    expect((zhCN as Record<string, string>)[key]).toBe("最大并发数 {cap}");
     expect((enUS as Record<string, string>)[key]).toBe("Max concurrency {cap}");
-  });
-});
-
-describe("相位 → 图上四值（决策 39）", () => {
-  it("executing / repairing / nudged 是 running", () => {
-    for (const phase of ["executing", "repairing", "nudged"] as const) {
-      expect(statusOfRunNode(node({ phase }))).toBe("running");
-    }
-  });
-
-  it("queued / dispatched / waiting 都是 pending：还没有请求在 provider 那里跑", () => {
-    for (const phase of ["queued", "dispatched", "waiting"] as const) {
-      expect(statusOfRunNode(node({ phase }))).toBe("pending");
-    }
   });
 });
 
@@ -237,10 +205,9 @@ describe("事件日志：三条自适应并发事件各有一行，其余仍走 
     expect(lines[4]?.label).toBe("chat.toolCall.workflow.run.event.unknown:compaction");
   });
 
-  // run-caps-changed (docs/dynamic-workflow/concurrency.md): an amendment that only changes max_concurrency takes
-  // effect in place, and the engine emits this after updating the caps. It is a separate line from
-  // concurrency-changed: that one is the governor squeezing the shared bucket ("concurrency 13 → 9"), this one is the
-  // user changing this run's own bound.
+  // run-caps-changed（docs/dynamic-workflow/concurrency.md）：只改 max_concurrency 的修订就地生效，
+  // 引擎改完 caps 发这条。与 concurrency-changed 分两行说：那条是治理器压共享桶（「并发 13 → 9」），
+  // 这条是用户改了这次 run 自己的上限。
   it("run-caps-changed 各有一行；caps 读不动时数字写「?」", () => {
     const lines = workflowRunEventLines(
       [
@@ -263,6 +230,15 @@ describe("事件日志：三条自适应并发事件各有一行，其余仍走 
     });
     expect(lines[0]).not.toHaveProperty("detail");
     expect(lines[1]?.label).toBe("chat.toolCall.workflow.run.event.runCapsChanged:?/?");
+  });
+
+  it("两种语言各有一句：并发上限 8 → 2 / Concurrency limit 8 → 2", () => {
+    expect(zhCN["chat.toolCall.workflow.run.event.runCapsChanged"]).toBe(
+      "并发上限 {previous} → {next}",
+    );
+    expect(enUS["chat.toolCall.workflow.run.event.runCapsChanged"]).toBe(
+      "Concurrency limit {previous} → {next}",
+    );
   });
 
   it("node-waiting 缺 cause 时按 slot 处理（没有退避细节可说）", () => {

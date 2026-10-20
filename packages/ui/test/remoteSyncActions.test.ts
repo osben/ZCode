@@ -4,7 +4,6 @@ import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const { capturedSkillDialogProps, capturedMcpDialogProps, capturedPluginDialogProps } = vi.hoisted(
   () => ({
@@ -19,8 +18,12 @@ vi.mock("lucide-react", () => {
     createElement("svg", { "data-icon": name, ...props });
 
   return {
+    BlocksIcon: createIcon("blocks"),
+    CableIcon: createIcon("cable"),
     ChevronDown: createIcon("chevron-down"),
+    PackageIcon: createIcon("package"),
     UploadCloud: createIcon("upload-cloud"),
+    WandIcon: createIcon("wand"),
   };
 });
 
@@ -51,14 +54,22 @@ vi.mock("@/components/ui/dropdown-menu.js", () => ({
       },
       children,
     ),
+  DropdownMenuSeparator: () => createElement("div", { "data-testid": "dropdown-menu-separator" }),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => children,
 }));
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
-        expectedCopy(id, values),
+      formatMessage: ({ id }: { id: string }) => {
+        const messages: Record<string, string> = {
+          "remote.syncSkills": "同步技能到该设备",
+          "remote.syncMcp": "同步 MCP 配置",
+          "remote.syncPlugins": "同步插件",
+          "remote.syncAll": "一键同步",
+        };
+        return messages[id] ?? id;
+      },
     },
   }),
 }));
@@ -223,33 +234,13 @@ describe("RemoteSyncActions", () => {
     });
   });
 
-  it("clears the remote sync preflight timeout after a successful response", async () => {
+  it("returns a successful remote sync preflight response", async () => {
     vi.useFakeTimers();
     const { REMOTE_SYNC_PREFLIGHT_TIMEOUT_MS, runRemoteSyncPreflightWithTimeout } =
       await import("@/settings/RemoteSyncActions.js");
 
     await expect(runRemoteSyncPreflightWithTimeout(async () => "ok")).resolves.toBe("ok");
     await vi.advanceTimersByTimeAsync(REMOTE_SYNC_PREFLIGHT_TIMEOUT_MS);
-  });
-
-  it("renders Skill, MCP, and Plugin menu actions for SSH remote contexts", async () => {
-    const { RemoteSyncMenuItems } = await import("@/settings/RemoteSyncActions.js");
-
-    const html = renderToStaticMarkup(
-      createElement(RemoteSyncMenuItems, {
-        canSyncSkills: true,
-        canSyncMcp: true,
-        canSyncPlugins: true,
-        onOpenSkillSync: vi.fn(),
-        onOpenMcpSync: vi.fn(),
-        onOpenPluginSync: vi.fn(),
-      }),
-    );
-
-    expect(html).toContain(expectedCopy("settings.skills.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.mcp.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.plugins.remoteSync.open"));
-    expect(html.match(/data-icon="upload-cloud"/g)?.length).toBe(3);
   });
 
   it("renders one sync dropdown button with Skill, MCP, and Plugin actions", async () => {
@@ -266,13 +257,11 @@ describe("RemoteSyncActions", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("settings.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.skills.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.mcp.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.plugins.remoteSync.open"));
+    expect(html).toContain("一键同步");
+    expect(html).toContain("同步技能到该设备");
+    expect(html).toContain("同步 MCP 配置");
+    expect(html).toContain("同步插件");
     expect(html.match(/data-testid="dropdown-menu-item"/g)?.length).toBe(3);
-    expect(html.match(/data-icon="upload-cloud"/g)?.length).toBe(4);
-    expect(html).toContain('data-icon="chevron-down"');
   });
 
   it("keeps the MCP dropdown action disabled until a remote workspace path exists", async () => {
@@ -290,9 +279,9 @@ describe("RemoteSyncActions", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("settings.skills.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.mcp.remoteSync.open"));
-    expect(html).toContain(expectedCopy("settings.plugins.remoteSync.open"));
+    expect(html).toContain("同步技能到该设备");
+    expect(html).toContain("同步 MCP 配置");
+    expect(html).toContain("同步插件");
     expect(html).toContain('data-disabled="true"');
   });
 

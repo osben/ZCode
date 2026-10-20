@@ -10,8 +10,8 @@ interface RootStartupLoadingProps {
 export function RootStartupLoading({ label, children, busy = true }: RootStartupLoadingProps) {
   return (
     <div
-      // On Web, global html/body/#root backgrounds are transparent for Electron; React replaces the HTML startup shell when it takes over.
-      // The blocking state must provide its own themed background, or remote-control links will continue showing the browser’s white background while Root restores.
+      // Web 端全局 html/body/#root 为 Electron 透明背景让路，React 接管后会替换 HTML 启动壳。
+      // 这里必须由阻塞态自身承接主题背景，否则远控链接会在 Root 恢复期间继续露出浏览器白底。
       className="flex h-full min-h-dvh flex-col items-center justify-center gap-6 bg-background text-foreground"
       role="status"
       aria-busy={busy}
@@ -24,11 +24,29 @@ export function RootStartupLoading({ label, children, busy = true }: RootStartup
   );
 }
 
-/** Initialization and onboarding share the brand icon so the background, border, corner radius, and logo proportions stay consistent. */
-export function ZCodeStartupLogoBadge({ animated = true }: { animated?: boolean }) {
+/** 初始化与引导共用品牌图标，保持底色、描边、圆角和标志比例一致。 */
+export function ZCodeStartupLogoBadge({
+  animated = true,
+  size = "default",
+}: {
+  animated?: boolean;
+  size?: "default" | "titlebar";
+}) {
   return (
-    <div className="relative flex size-24 items-center justify-center rounded-3xl bg-[linear-gradient(180deg,#000000_0%,#151718_100%)] text-[#ffffff] shadow-xl/20 before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:border before:border-[rgba(255,255,255,0.1)] before:content-['']">
-      <ZCodeStartupLogo className="h-auto w-14" animated={animated} />
+    <div
+      data-desktop-logo-badge={size === "titlebar" ? "true" : undefined}
+      className={cn(
+        "relative flex items-center justify-center bg-[linear-gradient(180deg,#000000_0%,#151718_100%)] text-[#ffffff] before:pointer-events-none before:absolute before:inset-0 before:rounded-[inherit] before:border before:border-[rgba(255,255,255,0.1)] before:content-['']",
+        size === "titlebar"
+          ? "size-5 rounded shadow-sm/20 before:border-white/20"
+          : "size-24 rounded-3xl shadow-xl/20",
+      )}
+    >
+      {/* Button 会给 SVG 默认尺寸；紧凑 Logo 显式恢复自动高度，保持标志原始比例。 */}
+      <ZCodeStartupLogo
+        className={size === "titlebar" ? "size-auto w-3.25" : "h-auto w-14"}
+        animated={animated}
+      />
     </div>
   );
 }

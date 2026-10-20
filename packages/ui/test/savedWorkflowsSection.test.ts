@@ -1,11 +1,8 @@
 // @vitest-environment jsdom
-// Saved workflows hub "page" layer (docs/dynamic-workflow/launch.md "The hub page" +
-// docs/dynamic-workflow/launch.md "Names and scopes"): a fixed "global" group on top,
-// grouped below by opened projects. Both groups are replaced by stubs — the stubs drive
-// their props.onStateChange reports from a controllable map and expose buttons; this layer
-// only checks group order, current marker, total count (including global), the empty state
-// (which only looks at project groups), spinner, refresh broadcast, detail state, and deep links.
-import { createElement, useEffect, type ReactNode } from "react";
+// 已保存工作流中枢「页」层（docs/dynamic-workflow/launch.md「The hub page」 + docs/dynamic-workflow/launch.md「Names and scopes」）：顶部固定「全局」组，
+// 其下按已打开项目分组。两个组都换成桩——桩把 props.onStateChange 回报由可控 map 驱动、暴露按钮，
+// 只看页层的组顺序、当前标记、总数（含全局）、空态（只看项目组）、spinner、刷新广播、详情态与深链。
+import { createElement, useEffect, useMemo, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,8 +15,8 @@ import {
   TID_WORKFLOW_GLOBAL_GROUP,
   TID_WORKFLOW_PROJECT_GROUP,
   resolveWorkspaceKey,
-  testId,
 } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   resetDynamicWorkflowAvailabilityStoreForTests,
@@ -30,7 +27,7 @@ import type {
   SavedWorkflowGroupMode,
   SavedWorkflowGroupState,
 } from "@/settings/saved-workflows/savedWorkflowContract.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 interface FakeTab {
   id: string;
@@ -62,11 +59,35 @@ vi.mock("@/lib/settingsNavigation.js", async (importOriginal) => ({
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (selector: (state: typeof tabStoreState) => unknown) => selector(tabStoreState),
 }));
+// 页层只消费项目目录；单独 hook 测试覆盖 Host 身份和离线过滤。
+vi.mock("@/project-sidebar/useSavedWorkflowProjectOptions.js", () => ({
+  useSavedWorkflowProjectOptions: () =>
+    useMemo(
+      () =>
+        tabStoreState.tabs
+          .filter(
+            (tab) =>
+              tab.kind === "workspace" &&
+              tab.workspacePurpose !== "conversation" &&
+              tab.availability !== "unavailable",
+          )
+          .map((tab) => ({
+            projectId: tab.id,
+            hostId: tab.remoteSessionId ? "remote:server:test" : "local",
+            ...(tab.remoteSessionId
+              ? { workspaceIdentity: `remote:server:test:${tab.workspacePath}` }
+              : {}),
+            workspacePath: tab.workspacePath,
+            label: tab.label,
+          })),
+      [tabStoreState.tabs],
+    ),
+}));
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 
-// Each group's loading state is indexed by key (project workspacePath or "global"); tests mutate this table directly.
+// 每个组的加载态由键（项目 workspacePath 或 "global"）索引，测试直接改这张表。
 const groupReadiness: Record<string, SavedWorkflowGroupState> = {};
 
 vi.mock("@/settings/saved-workflows/SavedWorkflowProjectGroup.js", () => ({
@@ -146,7 +167,7 @@ vi.mock("@/settings/saved-workflows/SavedWorkflowProjectGroup.js", () => ({
   },
 }));
 
-// Global group stub: always renders (even when empty); reports state with the "global" key; exposes open / moved / back.
+// 全局组桩：始终渲染（空也显示）；用 "global" 键回报状态；暴露 open / moved / back。
 vi.mock("@/settings/saved-workflows/SavedWorkflowGlobalGroup.js", () => ({
   SavedWorkflowGlobalGroup: ({
     refreshSeq,
@@ -215,7 +236,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowsSection>[0]> = {})
   const utils = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: TEST_LOCALE },
       createElement(SavedWorkflowsSection, {
         workspacePath: tabStoreState.activeWorkspacePath,
         onNavigateToLaunchedRun,
@@ -287,11 +308,11 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     groupReadiness["/a"] = { loaded: true, empty: true, count: 0 };
     mount({ workspacePath: "/a" });
     await screen.findByTestId(TID_WORKFLOWS_EMPTY);
-    // The global group still sits above the empty-state card
+    // 全局组仍在空态卡之上
     const global = screen.getByTestId(TID_WORKFLOW_GLOBAL_GROUP);
     const empty = screen.getByTestId(TID_WORKFLOWS_EMPTY);
     expect(global.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Total count includes global
+    // 总数含全局
     expect(screen.getByText(expectedCopy("workflows.hub.sectionTitle")).textContent).toContain("3");
   });
 
@@ -303,7 +324,11 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     const { onCreateViaChat } = mount({ workspacePath: "/a" });
     await screen.findByTestId(TID_WORKFLOWS_EMPTY);
     fireEvent.click(screen.getByTestId(TID_WORKFLOWS_CREATE_VIA_CHAT));
-    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({ workspacePath: "/a" });
+    expect(onCreateViaChat.mock.calls[0]?.[1]).toEqual({
+      projectId: "t-/a",
+      hostId: "local",
+      workspacePath: "/a",
+    });
     expect(onCreateViaChat.mock.calls[0]?.[0]).toEqual(
       expect.stringContaining("save it to this project"),
     );
@@ -334,12 +359,11 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     await screen.findByTestId(TID_WORKFLOW_GLOBAL_GROUP);
     expect(screen.getByText(expectedCopy("workflows.hub.noWorkspace"))).toBeTruthy();
     expect(screen.getByTestId(TID_WORKFLOWS_REFRESH)).toBeTruthy();
-    // With no candidates the empty-state card is not shown (that is "all projects empty"; here there are no project groups at all)
+    // 无候选时空态卡不出（那是「项目全空」，此处根本没有项目组）
     expect(screen.queryByTestId(TID_WORKFLOWS_EMPTY)).toBeNull();
   });
 
-  // launch.md "The hub page" "The user's choice": the title row carries "Workflow Settings"
-  // and the currently effective mode; clicking jumps straight to Settings › General.
+  // launch.md「The hub page」「The user's choice」：标题行带「工作流设置」和当前生效模式，点击直达设置 › 常规。
   it("「工作流设置」显示当前生效模式，点击打开设置并定位到常规", async () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",
@@ -391,9 +415,8 @@ describe("SavedWorkflowsSection（全局 + 多项目页）", () => {
     ).toBe("1");
   });
 
-  // Project groups no longer have onMoved ("promote to global" only opens a session and
-  // does not change either group's content, docs/dynamic-workflow/launch.md
-  // "Postscript (2026-09-04)"); only the global group's "move to project…" broadcasts.
+  // 项目组不再有 onMoved（「提升为全局」只开会话、不改两组内容，docs/dynamic-workflow/launch.md
+  // 「追记（2026-09-04）」）；只有全局组「移到项目…」会广播。
   it("全局组 onMoved 让两组 refreshSeq 递增", async () => {
     tabStoreState.tabs = [workspaceTab("/a", "Alpha")];
     groupReadiness.global = { loaded: true, empty: false, count: 1 };

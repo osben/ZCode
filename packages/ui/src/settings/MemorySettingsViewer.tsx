@@ -17,7 +17,7 @@ import {
   TID_SETTINGS_MEMORY_SEARCH_CLEAR,
   TID_SETTINGS_MEMORY_SEARCH_INPUT,
   TID_SETTINGS_MEMORY_WORKSPACE,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { Accordion } from "@/components/ui/accordion.js";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";

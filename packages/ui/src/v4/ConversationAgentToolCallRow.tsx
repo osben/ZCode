@@ -1,17 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
-import { TID_V4_ROW, TID_V4_SUBAGENT_OPEN_SIDE_PANE, testId } from "@zcode/shared";
-import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
-import { getSubagentToolUsage, subscribeSubagentToolUsage } from "@/lib/messageTelemetry.js";
-import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { useCallback, useMemo } from "react";
+import { TID_V4_ROW, TID_V4_SUBAGENT_OPEN_SIDE_PANE, testId } from "@zcode/shared/test-ids";
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { getAgentPrimaryText } from "@/ToolCallBlocks/renderers/agentHelpers.js";
 import type { ConversationAssistantWorkRenderItem } from "@/v4/conversationAssistantWorkItems.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
-import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
-import { useScopedConversationTelemetrySupervisor } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
 
 export function openSubagentSessionFromSummary({
   backgrounded: _backgrounded = false,
@@ -49,88 +43,10 @@ export function ConversationAgentToolCallRow({
   item: Extract<ConversationAssistantWorkRenderItem, { kind: "agentToolCall" }>;
   context: ConversationRowRenderContext;
 }) {
-  const { intl, locale } = useZCodeIntl();
   const toolCallNode = useMemo(() => toolCallRowToLegacyNode(item.row), [item.row]);
   const childSessionId = item.subagentRow.childSessionId;
   const subagentType = item.subagentRow.subagentType;
-  const conversationTelemetry = useScopedConversationTelemetrySupervisor({
-    workspacePath: context.workspacePath,
-    ...(context.workspaceIdentity ? { workspaceIdentity: context.workspaceIdentity } : {}),
-    ...(context.workspaceRemoteSessionId
-      ? { remoteSessionId: context.workspaceRemoteSessionId }
-      : {}),
-  });
-  const usageSessionKey =
-    context.sessionId && conversationTelemetry
-      ? conversationTelemetry.getSubagentUsageSessionKey(context.sessionId)
-      : "";
-  const toolCallId = item.row.toolCallId;
-  const subscribeUsage = useCallback(
-    (listener: () => void) =>
-      usageSessionKey
-        ? subscribeSubagentToolUsage(usageSessionKey, toolCallId, listener)
-        : () => {},
-    [usageSessionKey, toolCallId],
-  );
-  const getUsage = useCallback(
-    () => getSubagentToolUsage(usageSessionKey, toolCallId),
-    [usageSessionKey, toolCallId],
-  );
-  const usage = useSyncExternalStore(subscribeUsage, getUsage, getUsage);
-  const [now, setNow] = useState(() => Date.now());
-  const isSubagentRunning = item.subagentRow.status === "running";
-  useEffect(() => {
-    if (!isSubagentRunning || item.subagentRow.startedAt === undefined) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [isSubagentRunning, item.subagentRow.startedAt]);
-
-  const durationEnd = item.subagentRow.endedAt ?? (isSubagentRunning ? now : undefined);
-  const durationMs =
-    item.subagentRow.startedAt !== undefined && durationEnd !== undefined
-      ? Math.max(0, durationEnd - item.subagentRow.startedAt)
-      : undefined;
-  const durationLabel = formatConversationWorkDuration(durationMs, intl, locale);
-  const inputCount = usage ? formatCompactTokenNumber(locale, usage.inputTokens) : null;
-  const outputCount = usage ? formatCompactTokenNumber(locale, usage.outputTokens) : null;
-  const inlineStats =
-    usage || durationLabel ? (
-      <span className="inline-flex shrink-0 items-center gap-1.5 text-foreground-subtlest tabular-nums">
-        {usage ? (
-          <>
-            <span
-              className="inline-flex items-center gap-1"
-              role="img"
-              aria-label={`${intl.formatMessage({ id: "settings.usage.detail.inputTokens" })}: ${usage.inputTokens}`}
-            >
-              <ArrowDownToLine aria-hidden className="size-3.5" />
-              {inputCount}
-            </span>
-            <span
-              className="inline-flex items-center gap-1"
-              role="img"
-              aria-label={`${intl.formatMessage({ id: "settings.usage.detail.outputTokens" })}: ${usage.outputTokens}`}
-            >
-              <ArrowUpFromLine aria-hidden className="size-3.5" />
-              {outputCount}
-            </span>
-          </>
-        ) : null}
-        {durationLabel ? (
-          <>
-            {usage ? <span aria-hidden>·</span> : null}
-            <span>{durationLabel}</span>
-          </>
-        ) : null}
-      </span>
-    ) : null;
-  const summaryTextVersion = [
-    usage?.inputTokens ?? "",
-    usage?.outputTokens ?? "",
-    usage?.totalTokens ?? "",
-    durationLabel ?? "",
-  ].join(":");
-  // Reuse the Agent summary row's title resolver so the visible title matches exactly in the right tab and on click.
+  // 与 Agent 摘要行复用同一 title resolver，保证右侧 tab 和用户点击的可见标题逐字一致。
   const title = getAgentPrimaryText(toolCallNode.toolCall, "");
   const canOpenChildSession = Boolean(
     childSessionId && context.sessionId && context.onOpenSubagentSession,
@@ -155,8 +71,8 @@ export function ConversationAgentToolCallRow({
     [canOpenChildSession, childSessionId, handleOpenChildSession],
   );
 
-  // Agent and regular tool rows are both part of the workflow. Do not add extra px-4 to the paired wrapper,
-  // or its horizontal indentation will differ from an unpaired toolCall row.
+  // Agent 工具行和普通工具行同属工作流，不能在配对壳上额外加 px-4，
+  // 否则会和未配对 toolCall 行产生左右缩进差异。
   return (
     <div
       data-row-id={item.row.rowId}
@@ -175,8 +91,6 @@ export function ConversationAgentToolCallRow({
         onOpenAutomationsMain={context.onOpenAutomationsMain}
         agentSummaryAction={agentSummaryAction}
         authoritativeAgentType={subagentType}
-        agentUsageSummary={inlineStats}
-        agentUsageSummaryVersion={summaryTextVersion}
       />
     </div>
   );

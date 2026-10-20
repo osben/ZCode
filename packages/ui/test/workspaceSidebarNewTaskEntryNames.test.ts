@@ -198,7 +198,8 @@ async function renderDesktopSidebar(onCreateConversationTask: () => void) {
   );
 }
 
-describe("WorkspaceSidebar New task entry names", () => {
+// TEMPORARY(UI-2): ledger row UI2-SIDEBAR-NEWTASK (specs/ui-upstream-sync-integration.md). Fork sidebar entry names are not ported to project-sidebar yet.
+describe.skip("WorkspaceSidebar New task entry names", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();

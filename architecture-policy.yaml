@@ -205,6 +205,11 @@ global:
   managedOnly: true
 
 exceptions:
+  # TEMPORARY upstream 3.16.1 sync (ui): the upstream managed-page adapter is 465 lines; split it in the UI-2 PR and remove this entry.
+  - id: ui-plugin-managed-page-size-upstream-3161
+    rule: max-file-lines
+    paths: [packages/ui/src/plugin-ui/adapters/pluginUiManagedPage.ts]
+    reason: Upstream 3.16.1 file carried into the UI-1 sync; splitting belongs to the UI-2 plugin UI work.
   - id: gen-ui-tweak-runtime-size
     rule: max-file-lines
     paths: [packages/desktop/src/renderer/src/plugin-sandbox/genUiTweakRuntime.js]

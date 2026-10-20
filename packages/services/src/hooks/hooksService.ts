@@ -210,6 +210,7 @@ async function loadHooksImpl(
   params: {
     workspaceIdentity?: string;
     workspacePath: string;
+    scope?: "all" | "user";
   },
   logger: ServiceLogger,
 ): Promise<{
@@ -218,6 +219,22 @@ async function loadHooksImpl(
   workspaceHookSnapshot?: WorkspaceHookBundleSnapshotData;
 }> {
   const workspacePath = resolve(params.workspacePath);
+  if (params.scope === "user") {
+    // Source Settings user scope reads only the user home, never the anchor path as a project.
+    const userSource = await readUserZCodeSource();
+    const runtimeRoot = resolveWorkspaceHookRuntimeRoot([userSource?.hooks]);
+    const hooks = [
+      ...fromUserZCodeSource({
+        source: userSource,
+        runtimeRoot,
+        workspacePath,
+        location: buildLocation("zcode"),
+      }),
+      ...(await loadLegacyHooksFromLocation("agents")),
+      ...(await loadLegacyHooksFromLocation("claude")),
+    ];
+    return { hooks, hooksEnabled: hooks.some((hook) => hook.enabled) };
+  }
   const workspaceIdentity = params.workspaceIdentity?.trim() || workspacePath;
   const [{ sources: projectSources }, userSource] = await Promise.all([
     readWorkspaceHookProjectSources({ workingDirectory: workspacePath }),
@@ -282,6 +299,7 @@ async function writeZCodeHooksConfig(
 async function saveHooksImpl(params: {
   workspaceIdentity?: string;
   workspacePath: string;
+  scope?: "all" | "user";
   hooks: Hook[];
 }): Promise<void> {
   const currentProjectConfigPath = resolve(params.workspacePath, ".zcode", "config.json");
@@ -299,7 +317,9 @@ async function saveHooksImpl(params: {
         resolve(hook.configuredState.sourcePath) === currentProjectConfigPath),
   );
   await writeZCodeHooksConfig(undefined, userHooks);
-  await writeZCodeHooksConfig(params.workspacePath, projectHooks);
+  if (params.scope !== "user") {
+    await writeZCodeHooksConfig(params.workspacePath, projectHooks);
+  }
 }
 
 export function createHooksService(

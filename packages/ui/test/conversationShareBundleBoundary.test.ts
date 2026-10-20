@@ -22,6 +22,10 @@ const UI_SRC_ROOT = fileURLToPath(new URL("../src", import.meta.url));
 const VALUE_IMPORT_DENYLIST: ReadonlySet<string> = new Set([
   "@/OpenSplitButton.js",
   "@/hooks/usePlatform.js",
+  "@/hooks/useServices.js",
+  "@/ToolCallBlocks.js",
+  "@/plugin-ui/index.js",
+  "@/chat-input-toolbar/display.js",
   "@/hooks/useFileContextActions.js",
   "@/hooks/useWorkspaceOpenInEditorTarget.js",
   "@/lib/editorPreference.js",

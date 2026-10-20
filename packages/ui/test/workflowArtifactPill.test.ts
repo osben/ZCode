@@ -94,12 +94,11 @@ describe("WorkflowArtifactPill", () => {
     expect(noVersion.getByTestId("workflow-pill-tail")).toBeTruthy();
   });
 
-  it("小号：24px 行高的类；标题缺席退回 id；截字只在要求时发生", () => {
+  it("小号尺寸透传；标题缺席退回 id；截字只在要求时发生", () => {
     const long = { id: "long", kind: "table" as const, title: "一".repeat(40), version: 1 };
     const view = renderPill({ artifact: long, size: "sm", truncateTitle: true });
     const pill = view.getByTestId("workflow-artifact-pill");
     expect(pill.getAttribute("data-pill-size")).toBe("sm");
-    expect(pill.className).toContain("h-6");
     expect(pill.querySelector(".wf-pill-name")?.textContent?.length).toBeLessThan(40);
     expect(pill.getAttribute("title")).toBe(`Table · ${"一".repeat(40)}`);
     cleanup();

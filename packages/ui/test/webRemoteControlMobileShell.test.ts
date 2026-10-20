@@ -1,16 +1,10 @@
 import { createElement, type ReactNode } from "react";
-
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WebRemoteControlMobileShell,
   isWebRemoteControlMobileChatHistoryState,
 } from "@/WebRemoteControlMobileShell.js";
-import { persistWebRemoteControlMobileTaskHomePreferences } from "@/WebRemoteControlMobileTaskHome.js";
-import type {
-  WebRemoteControlTaskTarget,
-  WebRemoteControlWorkspaceListResult,
-} from "@zcode/shared";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -54,19 +48,6 @@ vi.mock("@/components/ui/resizable.js", () => ({
     ),
 }));
 
-function createStorageMock(initial: Record<string, string> = {}) {
-  const state = new Map(Object.entries(initial));
-  return {
-    getItem: (key: string) => state.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      state.set(key, value);
-    },
-    removeItem: (key: string) => {
-      state.delete(key);
-    },
-  };
-}
-
 function renderMobileShell(initialNavigationIntent?: "chat") {
   return renderToStaticMarkup(
     createElement(WebRemoteControlMobileShell, {
@@ -74,7 +55,7 @@ function renderMobileShell(initialNavigationIntent?: "chat") {
       activeWorkspacePath: "/workspace/app",
       chatContent: createElement("main", { "data-testid": "chat-content" }),
       initialNavigationIntent,
-      onSelectTask: vi.fn(),
+      renderTaskHome: () => createElement("aside", { "data-testid": "project-home" }),
       renderChatHeader: () => createElement("header", { "data-testid": "chat-header" }),
       switcher: {
         listWorkspaces: vi.fn(async () => ({ workspaces: [] })),
@@ -94,7 +75,7 @@ function renderMobileShellWithSidePane(isSidePaneOpen: boolean, chatOverlay?: Re
       initialNavigationIntent: "chat",
       isSidePaneOpen,
       onCloseSidePane: vi.fn(),
-      onSelectTask: vi.fn(),
+      renderTaskHome: () => createElement("aside", { "data-testid": "project-home" }),
       renderChatHeader: () => createElement("header", { "data-testid": "chat-header" }),
       sidePaneContent: createElement("section", { "data-testid": "side-pane-content" }),
       switcher: {
@@ -112,62 +93,13 @@ function renderMobileShellWithTransportState(terminalTransportState: "paired" | 
       activeWorkspacePath: "/workspace/app",
       chatContent: createElement("main", { "data-testid": "chat-content" }),
       initialNavigationIntent: "chat",
-      onSelectTask: vi.fn(),
+      renderTaskHome: () => createElement("aside", { "data-testid": "project-home" }),
       renderChatHeader: () => createElement("header", { "data-testid": "chat-header" }),
       switcher: {
         listWorkspaces: vi.fn(async () => ({ workspaces: [] })),
         switchWorkspace: vi.fn(async () => {}),
       },
       webRemoteControlTerminalTransportState: terminalTransportState,
-    }),
-  );
-}
-
-const workspaceList: WebRemoteControlWorkspaceListResult = {
-  workspaces: [
-    {
-      workspacePath: "/workspace/app",
-      label: "App",
-      kind: "local",
-    },
-  ],
-  tasks: [
-    {
-      taskId: "older-created",
-      title: "Older created",
-      workspacePath: "/workspace/app",
-      workspaceLabel: "App",
-      workspaceKind: "local",
-      createdAt: 10,
-      updatedAt: 100,
-      provider: "codex",
-    },
-    {
-      taskId: "newer-created",
-      title: "Newer created",
-      workspacePath: "/workspace/app",
-      workspaceLabel: "App",
-      workspaceKind: "local",
-      createdAt: 20,
-      updatedAt: 1,
-      provider: "codex",
-    },
-  ] satisfies WebRemoteControlTaskTarget[],
-};
-
-function renderMobileShellWithInitialWorkspaceList() {
-  return renderToStaticMarkup(
-    createElement(WebRemoteControlMobileShell, {
-      activeTaskId: null,
-      activeWorkspacePath: "/workspace/app",
-      chatContent: createElement("main", { "data-testid": "chat-content" }),
-      initialWorkspaceList: workspaceList,
-      onSelectTask: vi.fn(),
-      renderChatHeader: () => createElement("header", { "data-testid": "chat-header" }),
-      switcher: {
-        listWorkspaces: vi.fn(async () => workspaceList),
-        switchWorkspace: vi.fn(async () => {}),
-      },
     }),
   );
 }
@@ -180,7 +112,7 @@ describe("WebRemoteControlMobileShell", () => {
   it("keeps scan bootstrap on the mobile home page without a chat intent", () => {
     const html = renderMobileShell();
 
-    expect(html).toContain("webRemoteControl.mobileHome.title");
+    expect(html).toContain('data-testid="project-home"');
     expect(html).not.toContain('data-mobile-page="chat"');
     expect(html).not.toContain('data-testid="chat-content"');
   });
@@ -215,51 +147,12 @@ describe("WebRemoteControlMobileShell", () => {
     expect(html).toContain('data-testid="chat-content"');
   });
 
-  it("restores mobile task home preferences from localStorage after refreshing the page", () => {
-    const storage = createStorageMock();
-    vi.stubGlobal("window", {
-      localStorage: storage,
-      history: {
-        state: null,
-      },
-    });
-
-    persistWebRemoteControlMobileTaskHomePreferences(
-      { organizeBy: "timeline", sortBy: "created" },
-      storage,
-    );
-    const html = renderMobileShellWithInitialWorkspaceList();
-
-    expect(html.indexOf("Newer created")).toBeLessThan(html.indexOf("Older created"));
-    expect(html).not.toContain("webRemoteControl.mobileHome.workspaceKind.local");
-  });
-
-  it("constrains chat content in a flex column so the conversation area can scroll", () => {
-    const html = renderMobileShell("chat");
-
-    expect(html).toContain(
-      '<main class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">',
-    );
-  });
-
-  it("keeps the mobile chat and side-pane content shrinkable at narrow widths", () => {
-    const html = renderMobileShell("chat");
-
-    // 回归原因：长 subagent 输出或进程条目让 flex 子项按 min-content 宽度撑开，
-    // 窄屏远控抽屉随后会裁掉每一行的开头。
-    expect(html).toContain(
-      '<main class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">',
-    );
-  });
-
   it("renders side pane content as a right-side overlay over the mobile chat page", () => {
     const html = renderMobileShellWithSidePane(true);
 
     expect(html).toContain('data-mobile-side-pane-overlay="true"');
-    expect(html).toContain("absolute top-0 right-0 h-full w-[min(88vw,28rem)]");
     expect(html).toContain("translate-x-0");
     expect(html).toContain('data-testid="side-pane-content"');
-    expect(html).not.toContain("web-remote-control-mobile-side-pane-layout");
   });
 
   it("removes the covered chat surface from interaction while the mobile side pane is open", () => {

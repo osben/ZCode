@@ -1,3 +1,5 @@
+import { pluginUiStateKey } from "@/plugin-ui/adapters/pluginUiStateKey.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getPluginUiSessionActions } from "./pluginUiSessionActions.js";
 import { logger } from "@/logger.js";
 import { createPluginUiMessagePortTransport } from "@/plugin-ui/adapters/messagePortTransport.js";
@@ -45,14 +47,35 @@ export function createPage(
   platform: Platform,
   services: Services,
 ): Page {
+  const reportUsage = (action: string, failed = false) => {
+    void reportAppTelemetryEvent(
+      platform,
+      {
+        elementName: failed ? "plugin_runtime_error" : "plugin_usage",
+        eventRegion: "app",
+        eventType: "result",
+        eventExtraDetail: {
+          schema_version: "1",
+          action,
+          plugin_id: input.presentation.pluginId,
+          plugin_component: "ui",
+          client_kind: "desktop",
+          ...(failed ? { error_category: "unknown", result: "failure" } : {}),
+        },
+      },
+      "plugin-ui",
+    );
+  };
   const bridge = services.pluginUiBridgeService!;
   const sandboxPlatform = platform.pluginSandbox!;
   const surfaceKey = key;
   const latest = { current: input };
   const listeners = new Set<() => void>();
+  let surfaceStateKey: string | undefined;
   let controller: PluginUiHostController | null = null;
   let releaseFeed: (() => void) | undefined;
   let releaseLease: (() => void) | undefined;
+  let executionKey = "";
   let disposed = false;
   let starting = false;
   let incarnation = 0;
@@ -87,6 +110,7 @@ export function createPage(
     appIdentity = handle.instance.appIdentity;
     patch({ handle });
     plane.mount(handle);
+    syncExecution();
   };
   const setHeight = (height: number) => patch({ height });
   const setError = (error: string) => patch({ error });
@@ -96,18 +120,42 @@ export function createPage(
     onVisibility(visible) {
       if (page.visible !== visible) pluginUiPages.visibility(page, visible);
       if (visible) ensure();
+      syncExecution();
     },
     onCrash() {
       void page.suspend(true);
       patch({ phase: "error", error: "MCP App page stopped" });
     },
   });
+  function syncExecution() {
+    // 握手完成和 session 空闲都不能证明插件内部已无工作；宿主保留页面时必须允许它执行。
+    const active = controller !== null;
+    plane.setExecutionActive(active);
+    const handle = snapshot.handle;
+    if (!handle || !sandboxPlatform.setExecutionActive) return;
+    const background = active && (!page.visible || document.hidden);
+    const nextKey = `${handle.sandboxId}:${handle.initId}:${background}`;
+    if (nextKey === executionKey) return;
+    executionKey = nextKey;
+    logger.lifecycle.info("[plugin-ui] background execution", {
+      sessionId: input.scope.sessionId,
+      sandboxId: handle.sandboxId,
+      active: background,
+    });
+    void sandboxPlatform
+      .setExecutionActive(handle.sandboxId, handle.initId, background)
+      .catch((error: unknown) => {
+        if (snapshot.handle !== handle || disposed) return;
+        logger.warn("[plugin-ui] background execution failed", { error: String(error) });
+      });
+  }
   async function ensure() {
     if (disposed || controller || starting || snapshot.phase === "error") return;
     starting = true;
     const epoch = ++incarnation;
     try {
       await releasing;
+      surfaceStateKey = await pluginUiStateKey(surfaceKey);
       if (disposed || epoch !== incarnation) return;
       await pluginUiPages.reserve(page);
     } catch (error) {
@@ -121,7 +169,7 @@ export function createPage(
     }
     starting = false;
     try {
-      // The page holds its own lease on an existing workspace connection; exiting a card or pane does not cut off background pages.
+      // 页面独立持有已有 workspace 连接租约；卡片或 pane 退出不会让后台页面失联。
       const connection = acquireWorkspaceConnection(
         latest.current.scope,
         services.zcodeAgentService,
@@ -161,12 +209,12 @@ export function createPage(
       ...(latest.current.availableDisplayModes
         ? { availableDisplayModes: latest.current.availableDisplayModes }
         : {}),
-      // Theme tokens ship with the initial hostContext; theme switches update via updateHostContext.
+      // 主题 token 随初始 hostContext 下发，主题切换时经 updateHostContext 更新。
       styleVariables: readPluginUiStyleVariables(),
     });
     const scope = latest.current.scope;
     const presentation = latest.current.presentation;
-    // Platform interactions (downloadFile) are merged with caller-injected session interactions; capability declarations follow whether the merged callbacks exist.
+    // 平台交互（downloadFile）与调用方注入的会话交互合成一份；能力声明按合成后的回调是否存在。
     const platformInteractions = createPluginUiDownloadInteraction({
       platform,
       bridge,
@@ -185,7 +233,7 @@ export function createPage(
       platform: sandboxPlatform,
       scope,
       presentation,
-      // Registered by generation into the routing table; once this session's projection store receives pluginUi.* deltas, it delivers by (scopeId, generation).
+      // 按代际登记到路由表；该会话的投影 store 收到 pluginUi.* 增量后按 (scopeId, generation) 投递。
       resourceNotifications: createPluginUiResourceNotificationRegistrar(
         scope,
         presentation.serverName,
@@ -197,8 +245,8 @@ export function createPage(
         ...(latest.current.toolResult ? { toolResult: latest.current.toolResult } : {}),
         ...(latest.current.toolCancelled ? { toolCancelled: true } : {}),
       }),
-      // widgetState initial value is read straight from the host in-memory store (single owner), not cached again via props;
-      // it is read when the port delivers, so a rebuild after off-screen recycling also gets the page's most recent explicit save.
+      // widgetState 初值直接读宿主内存 store（唯一 owner），不经 props 再缓存一份；
+      // 端口投递时才读；切换展示位置仍使用同一 guest 与内存状态。
       getWidgetState: () => getPluginUiWidgetState(surfaceKey),
       getHostCapabilities: () =>
         buildPluginUiHostCapabilities({
@@ -208,10 +256,12 @@ export function createPage(
           canSample: Boolean(services?.pluginUiSamplingService && getPluginUiSessionActions(scope)),
           canSubscribeResources: true,
           canDownloadFile: Boolean(platformInteractions?.onDownloadFile),
-          ...(scope.scope.kind === "surface" ? { surfaceId: scope.scope.surfaceId } : {}),
+          ...(scope.scope.kind === "surface"
+            ? { surfaceId: scope.scope.surfaceId, surfaceStateKey }
+            : {}),
         }),
       ...platformInteractions,
-      // Calls through the latest ref so callback identity changes do not rebuild the controller; absent callbacks reject with -32601 (translated to ProtocolError at the port layer).
+      // 经 latest ref 转调，回调 identity 变化不触发 controller 重建；缺省回 -32601（端口层翻译成 ProtocolError）。
       onSendFollowUpMessage: (payload, context) =>
         latest.current.interactions?.onSendFollowUpMessage
           ? latest.current.interactions.onSendFollowUpMessage(payload, context)
@@ -225,7 +275,9 @@ export function createPage(
       },
       onPhase: (next, detail) => {
         if (controller !== nextController) return;
-        // Lifecycle events are few per sandbox, so they go through the lifecycle channel to reach the main log (for diagnosing user sites).
+        if (next === "running" && snapshot.phase !== "running") reportUsage("ui_ready");
+        if (next === "error" && snapshot.phase !== "error") reportUsage("ui_open_request", true);
+        // 生命周期事件每个沙箱只有几条，走 lifecycle 才能进主日志（排查用户现场用）。
         logger.lifecycle.info("[plugin-ui] lifecycle", {
           phase: next,
           sessionId: latest.current.scope.sessionId,
@@ -241,10 +293,10 @@ export function createPage(
         setPhase(next);
         if (detail?.handle) {
           setHandle(detail.handle);
-          // The resource-declared initial height replaces the fixed 240; still clamped by min / max.
+          // 资源声明的初始高度替代固定 240；仍受 min / max clamp。
           const hint = detail.handle.resourceMeta?.heightHint;
           if (hint !== undefined) setHeight(clampCardHeight(hint, detail.handle));
-          // Browser permissions declared by the resource arrive with the handle (before the port) and go into hostContext so the page can feature detect (spec draft `permissions`).
+          // 资源声明的浏览器权限随句柄到达（早于端口），进 hostContext 让页面 feature detect（规范草案 `permissions`）。
           const permissions = detail.handle.resourceMeta?.permissions;
           if (permissions?.length) {
             nextController.updateHostContext({
@@ -270,6 +322,7 @@ export function createPage(
     });
 
     controller = nextController;
+    reportUsage("ui_open_request");
     controller.start();
   }
   const task = buildPluginUiSessionKey(input.scope);
@@ -290,6 +343,7 @@ export function createPage(
     task,
     visible: false,
     snapshot: () => snapshot,
+    start: () => void ensure(),
     subscribe(listener) {
       listeners.add(listener);
       return () => {
@@ -308,7 +362,7 @@ export function createPage(
       return off;
     },
     update(next) {
-      // A background inline anchor must not override the side pane's current interaction context.
+      // 背景内联锚点不能覆盖侧栏当前的交互上下文。
       if (next.enabled === false) return;
       latest.current = next;
       const nextContextInputs = JSON.stringify([
@@ -336,6 +390,17 @@ export function createPage(
           controller?.updateHostContext(context);
         }
       }
+      page.updateToolFeed(next);
+    },
+    updateToolFeed(next) {
+      if (disposed) return;
+      latest.current = {
+        ...latest.current,
+        toolCallId: next.toolCallId,
+        toolInput: next.toolInput,
+        toolResult: next.toolResult,
+        toolCancelled: next.toolCancelled,
+      };
       const feed = JSON.stringify([
         next.toolCallId,
         next.toolInput,
@@ -350,24 +415,25 @@ export function createPage(
       }
     },
     async suspend(force = false) {
-      const candidate = controller;
-      if (!force && (starting || (candidate && !(await candidate.tryRecycle().catch(() => false)))))
-        return false;
-      // Approval admission and background recycling are decided atomically by the Agent; a controller swapped in while waiting is unaffected by stale results.
-      if (!force && candidate !== controller) return false;
+      // 编辑器的未保存文档在 guest 内存中；即使 session 空闲，也不能按离屏期限或容量回收。
+      // 管理器沿用 false 拒绝淘汰；删除、重载与来源失效仍显式 force 清理。
+      if (!force) return false;
       incarnation++;
       starting = false;
       const previous = controller;
       controller = null;
+      plane.setExecutionActive(false);
+      executionKey = "";
       const previousHandle = snapshot.handle;
       const offFeed = releaseFeed,
         offLease = releaseLease;
       releaseFeed = undefined;
       releaseLease = undefined;
       patch({ phase: "idle", handle: null, appCapabilities: undefined });
-      // Cannot re-prepare while a previous release is still in flight; repeated retries all wait on the same release chain.
-      // Main navigating to about:blank triggers navigation; detach the old generation's observers first so recycling is not misreported as a crash.
+      // 先前释放未完成时不能重新预备；反复重试也只等待同一个释放链。
+      // Main 主动导航到 about:blank 会触发 navigation；先解除旧代际观察，避免回收被误报为崩溃。
       if (previousHandle) plane.prepareUnmount(previousHandle.sandboxId);
+      if (previous) reportUsage("ui_close");
       const closing = previous?.dispose();
       releasing = Promise.all([releasing, closing]).then(() => {
         if (previousHandle) plane.unmount(previousHandle.sandboxId);
@@ -376,11 +442,10 @@ export function createPage(
         pluginUiPages.released(page);
       });
       await releasing;
-      // While waiting for the Agent's recycling reply the anchor may become visible again; the same owner restores it after the release completes, avoiding a stuck empty page.
-      if (!force && page.visible && !disposed) void ensure();
       return true;
     },
     destroy() {
+      document.removeEventListener("visibilitychange", syncExecution);
       workspaceEvents.dispose();
       clearPluginUiSurfaceFeed(key);
       disposed = true;
@@ -389,10 +454,11 @@ export function createPage(
       listeners.clear();
     },
   };
+  document.addEventListener("visibilitychange", syncExecution);
   return page;
 }
 
-/** Card height clamp: the lower bound is the larger of the resource `minFrameHeight` and the host minimum; the upper bound is fixed. */
+/** 卡片高度 clamp：下限取资源 `minFrameHeight` 与宿主最小值的较大者，上限固定。 */
 function clampCardHeight(next: number, handle: PluginSandboxHandle | null): number {
   const min = Math.max(PLUGIN_UI_CARD_MIN_HEIGHT_PX, handle?.resourceMeta?.minFrameHeight ?? 0);
   return Math.min(PLUGIN_UI_CARD_MAX_HEIGHT_PX, Math.max(min, next));

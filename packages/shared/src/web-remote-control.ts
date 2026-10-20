@@ -81,7 +81,9 @@ export type WebRemoteControlStatusKind =
   | "running"
   | "connecting"
   | "active"
-  | "error";
+  | "error"
+  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
+  | "auth-required";
 
 export type WebRemoteControlFailureReason =
   | "session-not-found"
@@ -94,6 +96,9 @@ export type WebRemoteControlFailureReason =
   | "connection-recovery-timeout"
   | "relay-unavailable"
   | "unsupported-action"
+  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
+  | "device-not-owned"
+  | "auth-required"
   | "unexpected-error";
 
 export interface WebRemoteControlFailure {
@@ -337,6 +342,8 @@ export interface WebRemoteControlStatus {
   expiresAt?: number;
   mobileConnected?: boolean;
   mobileViewState?: WebRemoteControlMobileViewState;
+  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional and unused by the fork v1 path.
+  mobileTaskView?: WebRemoteControlMobileTaskView;
   mobileDeviceInfo?: WebRemoteControlMobileDeviceInfo;
   qrUrl?: string;
   connectUrl?: string;
@@ -694,6 +701,15 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlAppErrorPayload
   | WebRemoteControlMobileDiagnosticPayload;
 
+/** Task the mobile client is viewing. Plain shape only; the relay payloads that carry it are not part of this module's transport. */
+export interface WebRemoteControlMobileTaskView {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+  // TEMPORARY relay-decision placeholder: the UI reads it on the view; the bridge injects it (never the Web client).
+  remoteSessionId?: string;
+}
+
 export interface WebRemoteControlWorkspaceTarget {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -731,6 +747,8 @@ export interface WebRemoteControlTaskTarget {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
+  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional; the fork v1 path never sets it.
+  hostId?: string;
   workspaceLabel: string;
   workspaceKind: "local" | "remote";
   createdAt: number;
@@ -766,6 +784,10 @@ export interface WebRemoteControlWorkspaceSwitchOptions {
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
   /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
+  // TEMPORARY relay-decision placeholders (upstream relay v2 members; remove with the relay decision).
+  openFileManager?: boolean;
+  taskHostId?: string;
+  fileTreeTaskId?: string;
 }
 
 export interface WebRemoteControlWorkspaceSwitchResult extends WebRemoteControlSessionCreateResponse {}
@@ -825,7 +847,7 @@ export function resolveWebRemoteControlWorkspaceKey(
   return target.workspaceIdentity?.trim() || target.workspacePath;
 }
 
-function isWebRemoteControlBridgeableWorkspaceTarget(
+export function isWebRemoteControlBridgeableWorkspaceTarget(
   workspace: WebRemoteControlWorkspaceTarget,
 ): boolean {
   return (

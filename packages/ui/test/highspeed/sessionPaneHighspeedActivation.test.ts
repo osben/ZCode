@@ -98,6 +98,10 @@ const servicesMock = vi.hoisted(() => ({
   zcodeTaskService: {
     restartWorkspaceProcess: vi.fn(),
   },
+  // Sending with a recent-submission scope resolves the session's project before prepare; the mock keeps that step inert.
+  projectService: {
+    resolveSessionDirectories: vi.fn(async () => ({ projectId: null })),
+  },
 }));
 
 // The Start plan recommendation is a real await in sendText before prepare; the test uses it to
@@ -130,6 +134,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => servicesMock,
 }));

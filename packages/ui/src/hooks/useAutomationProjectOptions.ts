@@ -1,82 +1,59 @@
-import { useMemo } from "react";
-import type { WorkspacePurpose } from "@zcode/shared";
-import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
-import { useLocalWorkspaceScopes } from "@/hooks/useLocalWorkspaceScopes.js";
+import { useEffect, useMemo, useState } from "react";
+import type { VirtualProject } from "@zcode/services";
+import type { WorkspaceTabState } from "@/store/tabStore.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { logger } from "@/logger.js";
 
 export interface AutomationProjectOption {
+  projectId: string;
+  hostId: string;
   workspacePath: string;
   label: string;
-  workspacePurpose?: WorkspacePurpose;
 }
 
 export function isRemoteAutomationWorkspace(tab: WorkspaceTabState | undefined): boolean {
   return Boolean(tab?.remoteSessionId || tab?.remoteTarget || tab?.workspaceIdentity);
 }
 
-export interface AutomationProjectOptionsConfig {
-  includeConversationWorkspace?: boolean;
-}
-
 export function resolveAutomationProjectOptions(
-  workspaceTabs: WorkspaceTabState[],
-  config: AutomationProjectOptionsConfig = {},
+  projects: readonly VirtualProject[],
 ): AutomationProjectOption[] {
-  const result: AutomationProjectOption[] = [];
-  let conversationWorkspaceIncluded = false;
+  return projects
+    .filter((project) => !project.deleted && project.hostId === "local")
+    .map((project) => ({
+      projectId: project.id,
+      hostId: project.hostId,
+      workspacePath: project.roots.find((root) => root.isPrimary)?.rootPath ?? "",
+      label: project.name,
+    }));
+}
 
-  for (const tab of workspaceTabs) {
-    if (tab.availability === "unavailable-local-directory") continue;
-
-    if (tab.workspacePurpose === "conversation") {
-      if (!config.includeConversationWorkspace || conversationWorkspaceIncluded) {
-        continue;
+/** 定义选择 Host 的虚拟项目；空项目在提交时初始化目录，不随打开的 tab 增减。 */
+export function useAutomationProjectOptions(): AutomationProjectOption[] {
+  const services = useBaseWorkspaceServices();
+  const [projects, setProjects] = useState<VirtualProject[]>([]);
+  useEffect(() => {
+    let generation = 0;
+    const refresh = async () => {
+      const request = ++generation;
+      try {
+        if (!services.projectService) throw new Error("project.service-unavailable");
+        const projects = await services.projectService.readProjects();
+        if (request === generation) setProjects(projects);
+      } catch (error) {
+        if (request !== generation) return;
+        setProjects([]);
+        logger.error("[automation-projects] 读取项目选项失败", error);
       }
-      // Historical settings may retain multiple conversation backing paths, but they all represent the same logical
-      // "no-project session" target. Keep purpose rather than identifying it by default label, so the menu can reuse the
-      // session-side "Work outside a project" label/icon while still binding to one canonical cwd.
-      conversationWorkspaceIncluded = true;
-      result.push({
-        workspacePath: tab.workspacePath,
-        label: "default",
-        workspacePurpose: "conversation",
-      });
-      continue;
-    }
-
-    result.push({
-      workspacePath: tab.workspacePath,
-      label: tab.label || workspaceBasename(tab.workspacePath),
+    };
+    void refresh();
+    const subscription = services.broadcastService.onMessage((event) => {
+      if (event.channel === "state:projects") void refresh();
     });
-  }
-
-  return result;
-}
-
-/**
- * Automation creation reads only usable local workspaces already open in the current window.
- * Scheduled tasks may explicitly include a logical "no-project session" target; off-peak tasks remain limited to real projects.
- *
- * Keep only usable local workspace tabs; exclude recent projects and remote tabs to avoid passing remote identity to a local
- * host or letting an off-peak task inherit a remote workspace. Both task types share these entry filters to preserve consistent project-isolation semantics.
- */
-export function useAutomationProjectOptions(
-  config: AutomationProjectOptionsConfig = {},
-): AutomationProjectOption[] {
-  const tabs = useTabStore((state) => state.tabs);
-  const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
-  const localWorkspaceTabs = useLocalWorkspaceScopes({ workspaceTabs });
-  const includeConversationWorkspace = config.includeConversationWorkspace === true;
-
-  return useMemo(
-    () =>
-      resolveAutomationProjectOptions(localWorkspaceTabs, {
-        includeConversationWorkspace,
-      }),
-    [includeConversationWorkspace, localWorkspaceTabs],
-  );
-}
-
-function workspaceBasename(path: string): string {
-  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
+    return () => {
+      generation++;
+      subscription.dispose();
+    };
+  }, [services]);
+  return useMemo(() => resolveAutomationProjectOptions(projects), [projects]);
 }

@@ -950,15 +950,23 @@ export function ModelProviderSection({
         codingPlanStatusSyncAttemptsRef.current.set(planSyncAttemptKey, "inFlight");
       }
       try {
-        await updateSharedSettings({
-          providerFamilyDomain: familySpec.id,
-          providerFamilyDomainUpdatedAt: Date.now(),
-          providerFamilyDomainMigrated: true,
-          providerFamilyConnectionSelections: {
-            ...connectionSelections,
-            [familySpec.id]: selection,
+        await updateSharedSettings(
+          {
+            providerFamilyDomain: familySpec.id,
+            providerFamilyDomainUpdatedAt: Date.now(),
+            providerFamilyDomainMigrated: true,
+            providerFamilyConnectionSelections: {
+              ...sharedSettings?.providerFamilyConnectionSelections,
+              [familySpec.id]: selection,
+            },
           },
-        });
+          {
+            // 原因：页面快照可能落后其它窗口；不能把展示/待提交映射当作锁内预期。
+            providerFamilyDomain: sharedSettings?.providerFamilyDomain,
+            providerFamilyConnectionSelections: sharedSettings?.providerFamilyConnectionSelections,
+            providerFamilyDomainUpdatedAt: sharedSettings?.providerFamilyDomainUpdatedAt ?? 0,
+          },
+        );
         if (item.type === "codingPlan" || item.type === "teamPlan") {
           // The user's action owns the connection-method transition: refresh the target Plan provider once after settings persist.
           await syncCodingPlanProviderOnce(item, {
@@ -983,7 +991,7 @@ export function ModelProviderSection({
     [
       activeOAuthProvider,
       connectionSelections,
-      sharedSettings?.providerFamilyDomain,
+      sharedSettings,
       syncCodingPlanProviderOnce,
       updateSharedSettings,
     ],

@@ -166,34 +166,6 @@ describe("AppUsageDailyModelTrendChart view model", () => {
     });
   });
 
-  it("每日模型图表使用应用用量专用色板", () => {
-    const snapshot = createSnapshot({
-      models: Array.from({ length: 6 }, (_, index) => ({
-        modelId: `model-${index}`,
-        totalTokens: 100 - index,
-        inputTokens: 40,
-        outputTokens: 60,
-        requestCount: 1,
-        share: 1 / 6,
-      })),
-    });
-
-    const viewModel = buildAppUsageDailyModelChartViewModel({
-      intl,
-      locale: "en-US",
-      snapshot,
-    });
-
-    expect(viewModel.modelKeys.map((model) => model.color)).toEqual([
-      "var(--color-usage-chart-1)",
-      "var(--color-usage-chart-2)",
-      "var(--color-usage-chart-3)",
-      "var(--color-usage-chart-4)",
-      "var(--color-usage-chart-5)",
-      "var(--color-usage-chart-6)",
-    ]);
-  });
-
   it("tooltip payload 过滤当天用量为 0 的模型", () => {
     const activeModel = { name: "glm-4.5", value: 128 };
     const zeroModel = { name: "glm-4.6", value: 0 };

@@ -7,7 +7,12 @@ export interface IHooksService {
   /**
    * Load hook configuration for the workspace.
    */
-  loadHooks(params: { workspaceIdentity?: string; workspacePath: string }): Promise<{
+  loadHooks(params: {
+    workspaceIdentity?: string;
+    workspacePath: string;
+    /** Source Settings 的 user scope 只读取用户目录，禁止把锚点路径当成项目。 */
+    scope?: "all" | "user";
+  }): Promise<{
     hooks: Hook[];
     hooksEnabled: boolean;
     workspaceHookSnapshot?: WorkspaceHookBundleSnapshotData;
@@ -21,6 +26,7 @@ export interface IHooksService {
   saveHooks(params: {
     workspaceIdentity?: string;
     workspacePath: string;
+    scope?: "all" | "user";
     hooks: Hook[];
   }): Promise<void>;
 

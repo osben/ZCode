@@ -31,7 +31,11 @@ const RUNTIME_RECYCLE_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
 
 /** Grace period for the authoritative input projection after an accepted ACK. The core admission ACK does not wait for the TurnStarted/QueueItem/userInput projection; normally these paths differ by only one renderer/network round trip. A 2-second window covers typical desktop/mobile latency while quickly recovering from a half-open channel where the CLI keeps working but the subscription is completely silent. A timeout restores only the subscription; it does not replay the command. */
 export const ACCEPTED_INPUT_PROJECTION_GRACE_MS = 2_000;
-const ACCEPTED_INPUT_COMMAND_TYPES = new Set(["sendText"]);
+const ACCEPTED_INPUT_COMMAND_TYPES = new Set(["sendText", "editUserQuery"]);
+
+export function requiresAcceptedInputProjection(type: string): boolean {
+  return ACCEPTED_INPUT_COMMAND_TYPES.has(type);
+}
 
 /** lastError shown to the user when backoff is exhausted (for replacement paths with no underlying error object to reference). */
 const RUNTIME_RECYCLED_ERROR = "ZCode agent runtime 已被回收，重连未成功";
@@ -367,6 +371,7 @@ export class ConversationProjectionStore {
   async connect(
     options: {
       forceSnapshot?: boolean;
+      retryInitialization?: string;
       initialOverflowRetry?: boolean;
       rendererPrepareStartedAt?: number;
     } = {},
@@ -395,6 +400,9 @@ export class ConversationProjectionStore {
       const result = await this.transport.subscribe({
         topic: this.topic,
         base: snapshot ? { logEpoch: snapshot.logEpoch, seq: snapshot.seq } : undefined,
+        ...(options.retryInitialization
+          ? { retryInitialization: options.retryInitialization }
+          : {}),
       });
       if (generation !== this.generation || this.closed) {
         // Stale generation: no one consumes this subscription anymore, so unsubscribe immediately.
@@ -583,7 +591,10 @@ export class ConversationProjectionStore {
     if (this.sessionGone) return Promise.resolve();
     this.clearRuntimeRecycleRetry();
     this.runtimeRecycleRetryAttempt = 0;
-    return this.connect();
+    const initialization = this.state.snapshot?.runtimeInitialization;
+    return this.connect(
+      initialization?.status === "failed" ? { retryInitialization: initialization.attemptId } : {},
+    );
   }
 
   /** Epoch/entity authority for a row command/query became invalid; recover through same-sub recovery. */
@@ -1285,7 +1296,7 @@ export class ConversationProjectionStore {
   expectAcceptedInputProjection(commandId: string): void {
     if (this.closed || this.acceptedInputProjectionTimers.has(commandId)) return;
     const command = this.state.optimisticCommands.find((item) => item.commandId === commandId);
-    if (!command || !ACCEPTED_INPUT_COMMAND_TYPES.has(command.type)) return;
+    if (!command || !requiresAcceptedInputProjection(command.type)) return;
     if (hasAcceptedInputProjection(this.state.snapshot, commandId)) {
       this.settleCommand(commandId);
       return;
@@ -1345,7 +1356,7 @@ export class ConversationProjectionStore {
       }
     }
     const remaining = this.state.optimisticCommands.filter((command) =>
-      ACCEPTED_INPUT_COMMAND_TYPES.has(command.type)
+      requiresAcceptedInputProjection(command.type)
         ? !inputProjectionIds.has(command.commandId)
         : !acknowledged.has(command.commandId),
     );

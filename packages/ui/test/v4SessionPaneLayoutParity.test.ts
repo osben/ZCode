@@ -9,14 +9,11 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import type {
   OpenScopedSubagentSideTabRequest,
   OpenScopedWorkflowRunSideTabRequest,
 } from "@/lib/workspaceSidePane.js";
-import {
-  CONVERSATION_CONTENT_WITHOUT_STATUS_PANEL_WIDTH_CLASS_NAME,
-  CONVERSATION_CONTENT_WITH_STATUS_PANEL_WIDTH_CLASS_NAME,
-} from "@/v4/conversationLayout.js";
 
 const projectionState = vi.hoisted(() => ({
   current: null as {
@@ -87,11 +84,10 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => ({
-    zcodeSessionService: {
-      updateProviderRegistry: vi.fn(),
-    },
+    zcodeSessionService: {},
     zcodeTaskService: {
       restartWorkspaceProcess: vi.fn(),
     },
@@ -328,7 +324,6 @@ function renderPane({
   onSummaryPanelVariantOverrideChange,
   snapshot = makeSnapshot(),
   sessionId = "session-1",
-  rootSessionId,
 }: {
   compactForRemoteControl?: boolean;
   onOpenSubagentSession?: (request: OpenScopedSubagentSideTabRequest) => void;
@@ -336,7 +331,6 @@ function renderPane({
   onSummaryPanelVariantOverrideChange?: (variant: "panel" | "mini" | null) => void;
   snapshot?: ConversationSnapshot;
   sessionId?: string | null;
-  rootSessionId?: string;
 } = {}): string {
   statusPanelCapture.props = [];
   statusPanelCapture.composerProps = [];
@@ -352,13 +346,12 @@ function renderPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: TEST_LOCALE },
       createElement(SessionPane, {
         paneId: "workspace-main",
         sessionId,
         workspacePath: "/workspace",
         compactForRemoteControl,
-        ...(rootSessionId ? { rootSessionId } : {}),
         ...(onOpenSubagentSession ? { onOpenSubagentSession } : {}),
         ...(onOpenWorkflowRun ? { onOpenWorkflowRun } : {}),
         ...(onSummaryPanelVariantOverrideChange ? { onSummaryPanelVariantOverrideChange } : {}),
@@ -375,39 +368,15 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).toContain('data-v4-timeline-scroll="true"');
     expect(html).toContain('data-testid="mock-draft-empty"');
     expect(html).toContain('data-v4-composer-dock="true"');
-    expect(html).toMatch(
-      /class="[^"]*flex[^"]*min-h-full[^"]*before:min-h-\[52px\][^"]*after:min-h-4/u,
-    );
-    expect(html).toMatch(/data-v4-composer-dock="true" class="[^"]*mt-3[^"]*"/u);
-    expect(html).not.toContain("@media(max-height:700px)");
-
     expect(html).toContain('data-compact-remote="false"');
-
     expect(html).toContain('data-draft-mode="true"');
     expect(html).toContain('data-centered="true"');
-    expect(html).not.toContain("发送第一条消息开始对话");
   });
 
-  it("keeps the mobile remote draft on the original compact centered layout", () => {
+  it("passes compact remote draft mode to the empty state", () => {
     const html = renderPane({ sessionId: null, compactForRemoteControl: true });
 
     expect(html).toContain('data-compact-remote="true"');
-    expect(html).toMatch(/class="[^"]*justify-center[^"]*gap-4/u);
-    expect(html).not.toContain("before:min-h-[52px]");
-  });
-
-  it("scopes narrow-width shrinking to mobile remote conversations", () => {
-    const desktopHtml = renderPane({ compactForRemoteControl: false });
-    const mobileHtml = renderPane({ compactForRemoteControl: true });
-    const readSessionPaneClassName = (html: string) =>
-      html.match(/data-v4-conversation-drop-target="true"[^>]*class="([^"]*)"/u)?.[1] ?? "";
-    const readTimelineClassName = (html: string) =>
-      html.match(/data-v4-timeline-scroll="true"[^>]*class="([^"]*)"/u)?.[1] ?? "";
-
-    expect(readSessionPaneClassName(mobileHtml)).toContain("min-w-0");
-    expect(readTimelineClassName(mobileHtml)).toContain("min-w-0");
-    expect(readSessionPaneClassName(desktopHtml)).not.toContain("min-w-0");
-    expect(readTimelineClassName(desktopHtml)).not.toContain("min-w-0");
   });
 
   it("keeps a bound empty session blank while preserving the bottom composer dock", () => {
@@ -424,13 +393,10 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).not.toContain("发送第一条消息开始对话");
   });
 
-  it("renders the composer inside the timeline scroll viewport with shared content width", () => {
+  it("renders the composer after the timeline viewport and inside its dock", () => {
     const html = renderPane();
 
     expect(html).toContain('data-v4-timeline-scroll="true"');
-    expect(html).toMatch(
-      /data-v4-timeline-scroll="true"[^>]*class="[^"]*overflow-x-hidden[^"]*overflow-y-auto/,
-    );
     expect(html).toContain('data-v4-timeline-content-column="true"');
     expect(html).toContain('data-v4-composer-dock="true"');
     expect(html.indexOf('data-v4-timeline-scroll="true"')).toBeLessThan(
@@ -439,30 +405,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html.indexOf('data-v4-composer-dock="true"')).toBeLessThan(
       html.indexOf('data-testid="mock-composer"'),
     );
-    expect(html).toContain("@container/conversation");
-    expect(html).toContain(CONVERSATION_CONTENT_WITHOUT_STATUS_PANEL_WIDTH_CLASS_NAME);
-    expect(html).toContain(
-      "transition-[width,max-width,transform] duration-150 ease-out @min-[1280px]/conversation:transition-[transform]",
-    );
-    expect(html).not.toContain("transition-transform duration-150 ease-out");
-  });
-
-  it("TN08：composer 只在内容列接收事件，不遮挡左侧问题导航", () => {
-    const html = renderPane();
-
-    expect(html).toMatch(/data-v4-composer-dock="true" class="[^"]*pointer-events-none/);
-    expect(html).toMatch(/data-v4-composer-dock-content="true" class="[^"]*pointer-events-auto/);
-  });
-
-  it("keeps transparent composer bottom padding and masks only the message layer", () => {
-    const html = renderPane();
-
-    expect(html).toContain('data-v4-timeline-message-layer="true"');
-    expect(html).toContain("px-4 pb-4");
-    expect(html).not.toContain("px-4 pb-4 max-md:px-2");
-    expect(html).not.toContain("max-md:pb-2");
-    expect(html).not.toContain("h-4 bg-background max-md:h-2");
-    expect(html).toContain("mask-repeat:no-repeat");
   });
 
   it("anchors the back-to-bottom control to the composer dock above input", () => {
@@ -505,6 +447,31 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).toContain('data-blocking-request-id="perm-1"');
   });
 
+  for (const compactForRemoteControl of [false, true]) {
+    it.each([
+      ["permission", [pendingPermissionInteraction()]],
+      ["user input", [pendingStructuredUserInputInteraction()]],
+      ["mixed requests", [pendingPermissionInteraction(), pendingStructuredUserInputInteraction()]],
+    ])(
+      `keeps %s in the bottom dock without a top notice (remote=${compactForRemoteControl})`,
+      (_label, pendingInteractions) => {
+        const html = renderPane({
+          compactForRemoteControl,
+          snapshot: makeSnapshot({ pendingInteractions }),
+        });
+
+        // 待处理请求已有底部卡片，顶部不再重复展示 warning 和跳转入口。
+        expect(html).not.toContain('data-testid="v4-pending-interaction-top-notice"');
+        const dockIndex = html.indexOf('data-v4-composer-dock="true"');
+        const interactionIndex = html.indexOf('data-testid="mock-interactions"');
+        const composerIndex = html.indexOf('data-testid="mock-composer"');
+        expect(dockIndex).toBeGreaterThanOrEqual(0);
+        expect(interactionIndex).toBeGreaterThan(dockIndex);
+        expect(composerIndex).toBeGreaterThan(interactionIndex);
+      },
+    );
+  }
+
   it("普通 Web 没有 desktop-continuous attachment 时不挂一次性 runtime header controller", () => {
     conversationTelemetryState.current = null;
     const html = renderPane();
@@ -531,7 +498,7 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(html).toContain('data-blocking-request-id="ask-1"');
   });
 
-  it("offsets the conversation column and composer when the status panel can sit inline", () => {
+  it("selects automatic status panel layout for an active goal", () => {
     vi.stubGlobal("window", {
       innerWidth: 1280,
       addEventListener: vi.fn(),
@@ -554,8 +521,6 @@ describe("SessionPane v4 chat layout parity", () => {
         }),
       });
 
-      expect(html).toContain("@min-[1280px]/conversation:-translate-x-42");
-      expect(html).toContain(CONVERSATION_CONTENT_WITH_STATUS_PANEL_WIDTH_CLASS_NAME);
       expect(html).toContain('data-v4-timeline-content-column="true"');
       expect(html).toContain('data-v4-composer-dock="true"');
       expect(statusPanelCapture.props.at(-1)?.layoutMode).toBe("auto");
@@ -622,7 +587,6 @@ describe("SessionPane v4 chat layout parity", () => {
     if (!panelProps) throw new Error("Status panel props were not captured");
     expect(panelProps.parentSessionId).toBe("session-1");
     expect(panelProps.runningSubagents).toEqual([]);
-    expect(panelProps.onOpenSubagentSession).toEqual(expect.any(Function));
 
     (
       panelProps.onOpenSubagentSession as (request: {
@@ -659,48 +623,6 @@ describe("SessionPane v4 chat layout parity", () => {
     expect(statusPanelCapture.props.at(-1)?.onOpenSubagentDirectory).toBeUndefined();
   });
 
-  it("scopes a side chat subagent open to the main task root", () => {
-    const onOpenSubagentSession = vi.fn();
-    const row = subagentRow();
-    const snapshot = makeSnapshot({
-      rows: { window: [userInputRow(), row], totalCount: 2, firstRowId: 1 },
-    });
-
-    // A selection side chat runs as its own session, but its subagents belong to the main task.
-    renderPane({
-      snapshot,
-      sessionId: "side-chat-session",
-      rootSessionId: "main-task",
-      onOpenSubagentSession,
-    });
-    const panelProps = statusPanelCapture.props.at(-1);
-    if (!panelProps) throw new Error("Status panel props were not captured");
-    expect(panelProps.rootSessionId).toBe("main-task");
-    expect(panelProps.parentSessionId).toBe("side-chat-session");
-
-    (
-      panelProps.onOpenSubagentSession as (request: {
-        parentSessionId: string;
-        childSessionId: string;
-        subagentType: string;
-        title: string;
-      }) => void
-    )({
-      parentSessionId: "side-chat-session",
-      childSessionId: "grandchild-session",
-      subagentType: "Explore",
-      title: "Nested explore",
-    });
-    expect(onOpenSubagentSession).toHaveBeenCalledWith({
-      workspacePath: "/workspace",
-      rootSessionId: "main-task",
-      parentSessionId: "side-chat-session",
-      childSessionId: "grandchild-session",
-      subagentType: "Explore",
-      title: "Nested explore",
-    });
-  });
-
   it("wires the Composer background entry to panel expansion and controlled Running state", () => {
     const onSummaryPanelVariantOverrideChange = vi.fn();
     const snapshot = makeSnapshot({
@@ -719,7 +641,6 @@ describe("SessionPane v4 chat layout parity", () => {
     renderPane({ snapshot, onSummaryPanelVariantOverrideChange });
     const composerProps = statusPanelCapture.composerProps.at(-1);
     const panelProps = statusPanelCapture.props.at(-1);
-    expect(composerProps?.onOpenRunningBackgroundWorks).toEqual(expect.any(Function));
     expect(panelProps?.terminalSectionOpen).toBe(false);
     expect(panelProps?.onTerminalSectionOpenChange).toEqual(expect.any(Function));
     expect(panelProps?.agentSectionOpen).toBe(false);

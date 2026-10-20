@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react";
 import { ActivityIcon, MoonIcon, BotIcon, SquareTerminalIcon, Workflow } from "lucide-react";
-import { TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER } from "@zcode/shared";
+import { TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER } from "@zcode/shared/test-ids";
 import type { BackgroundWorkSummary } from "@zcode/shared/zcode-protocol-v4";
 import { getLatestDreamWork } from "@/v4/conversationStatusPanelModel.js";
 import { Button } from "@/components/ui/button.js";

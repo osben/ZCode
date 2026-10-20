@@ -40,7 +40,7 @@ Status: in progress, part of the upstream 3.16.1 sync series. Base `aac47556` (v
 Merged in 8c (each file compiled before its commit):
 
 - `oauth/oauthService.ts`, `oauth/repo/oauthCredentialRepo.ts`: upstream `loadCachedSessionTokens` and `onDidChangeSession` are in, with corrupt-credential cleanup. Startup restore reads only the shared zcode JWT. The fork test "does not send zai token to BigModel when migration token load races with provider switch" pins this. Upstream's business-JWT expiry check is deferred for that reason.
-- `window-controller/windowController.ts`, `windowHostControllerService.ts`: `getTaskMeta` (projection-backed; owner-direct read deferred) and `onDynamicTaskUnreadSignal` (live emitter with no producer; the producer belongs to the UI sidebar PR).
+- `window-controller/windowController.ts`, `windowHostControllerService.ts`: `getTaskMeta` (owner-direct read from the resolved source's task service; null when the owner is offline) and `onDynamicTaskUnreadSignal` (live-only; the runtime is the single producer, fired from the source's `background_terminal` workspace event). See `specs/ui-upstream-sync-ledger-fix-g5.md`.
 - `zcode-agent/runtimeCapabilitySupport.ts` is the single owner of execution-endpoint capability checks. The fork deleted `zcode-agent/independentPlanSupport.ts`, and it stays deleted. Upstream's `supportsHistoryFirst` is ported here, with tests in `runtimeCapabilitySupport.test.ts`.
 - `zcode-agent/zcodeAgent.ts` (contract): upstream `retryInitialization` and `reconcileSessionsIndexV4?` are added. `onDynamicOffPeakLifecycle?`, `controlOffPeakExecutionV4?` and `onDynamicPluginUiToolResult?` are optional until the desktop consumer is synced. `includeArchived` is kept, because fork archive repair and deletion use it.
 - `zcode-agent/zcodeAgentService.ts`: upstream account-config delivery (receipt bookkeeping) and the historyFirst subscribe field are taken. The fork keeps dynamic-workflow forwarding, the V4 createSession warmup gate (only Account Config is awaited; the Worker assembles its own registry), the automation `syncTaskMeta` path, and the single-argument `AutomationService`. The upstream `provider/refreshRegistry` call sites are removed, because the fork test suite pins that the createSession path sends no refresh request.
@@ -87,3 +87,7 @@ Each file below keeps its fork HEAD version. A fork-wins three-way merge was tri
 4. Upstream contract tests (`src/**/contract.test.ts`) run and pass.
 5. Fork-only tables and columns keep the `fork_` prefix. No upstream migration definition changes.
 6. Settings: fork keys survive a projected write and never reach `setting.json`; connection versions are monotonic and stale snapshots are rejected.
+
+## API export ledger (3.16.1, PR api-exports)
+
+The export ledger (name, upstream definition, fork location, status) lives in `specs/services-upstream-sync-api-exports.md` to keep this file under the staged-size limit.

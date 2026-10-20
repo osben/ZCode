@@ -83,13 +83,14 @@ describe("ConfirmDialogHost Enter routing", () => {
     expect(choices).toEqual(["confirm"]);
   });
 
-  it("still confirms on Enter when focus is on non-interactive dialog content", async () => {
+  // Upstream rule (DEC-DESTRUCTIVE-ENTER): destructive dialogs never confirm on Enter from non-interactive content.
+  it("does not confirm a destructive dialog on Enter when focus is on non-interactive dialog content", async () => {
     const choices = openDialog();
     const title = screen.getByText("Delete server?");
 
     pressEnter(title);
     await flushPromises();
 
-    expect(choices).toEqual(["confirm"]);
+    expect(choices).toEqual([]);
   });
 });

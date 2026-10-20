@@ -35,7 +35,8 @@ const statusPanelCapture = vi.hoisted(() => ({
   gitBranchSwitchers: [] as Array<Record<string, unknown>>,
 }));
 
-vi.mock("@/ControlHintTooltip.js", () => ({
+vi.mock("@/ControlHintTooltip.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/ControlHintTooltip.js")>()),
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 
@@ -1486,6 +1487,40 @@ describe("ConversationStatusPanel", () => {
     expect(html).toContain("gap-1.5 text-ui-sm text-[var(--color-foreground-subtlest)]");
     expect(html).toContain("line-clamp-2 text-ui-base leading-5");
     expect(html).toContain("pl-2 pr-3 text-ui-base text-[var(--color-foreground)]");
+  });
+
+  it("renders expanded panel controls and sections", async () => {
+    const html = await renderStatusPanel({
+      summaryPanelVariantOverride: "panel",
+      goal: goalState(),
+      plan: planState(),
+      runningSubagents: [runningSubagent()],
+    });
+
+    expect(html).toContain('data-state="expanded"');
+    expect(html).toContain("chat.summaryPanel.displayMode");
+    expect(html).toContain("chat.summaryPanel.displayModeAuto");
+    expect(html).not.toContain("chat.summaryPanel.displayModeExpanded");
+    expect(html).not.toContain("chat.summaryPanel.displayModeCollapsed");
+    expect(html).toContain("mock-git-branch-switcher");
+    expect(html).toContain("mock-git-action-menu");
+    expect(html).toContain("修好状态面板");
+    expect(html).toContain("复刻浮层");
+    expect(html).toContain("chat.statusPanel.agents");
+    expect(html).toContain('data-goal-status="active"');
+    expect(html).toContain('data-goal-objective="修好状态面板"');
+    expect(html).toContain('data-running-background-count="1"');
+    expect(html).toContain('data-status-section="agent"');
+    expect(html).toContain('data-status-section-trigger="agent"');
+  });
+
+  it("projects automatic display mode to the shell", async () => {
+    const html = await renderStatusPanel({
+      layoutMode: "auto",
+      summaryPanelVariantOverride: null,
+    });
+
+    expect(html).toContain('data-display-mode="auto"');
   });
 
   it("uses the conversation container query for automatic responsive mode", async () => {
