@@ -35,6 +35,7 @@ export interface ZCodeAgentV4ConnectionContext {
    * **connection**, not a preference a subscription can choose. Missing means treat it as a legacy consumer.
    */
   workflowRunDeltas?: boolean;
+  historyFirst?: boolean;
 }
 
 const TRUSTED_CONNECTION_FIELD = "__zcodeTrustedV4Connection";
@@ -85,6 +86,7 @@ export function readTrustedZCodeAgentV4Connection(
     clientMode: context.clientMode,
     // Accept only true: absent and false both mean “legacy consumer”; downstream readers use key presence as the signal.
     ...(context.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
+    ...(context.historyFirst === true ? { historyFirst: true } : {}),
   };
 }
 
@@ -104,6 +106,7 @@ function withTrustedConnection<T extends object>(
   delete forwarded["subscriberScope"];
   // A trusted flag like clientMode: the UI subscribe surface cannot choose its own delta encoding.
   delete forwarded["workflowRunDeltas"];
+  delete forwarded["historyFirst"];
   forwarded[TRUSTED_CONNECTION_FIELD] = context;
   return forwarded as T;
 }
@@ -223,6 +226,7 @@ function createHello(context: ZCodeAgentV4ConnectionContext): HelloMessage {
       // This Host forwards `workflowRun.*` key-level deltas, so clients can see them and declare support in clientHello
       // (that capabilities object is .strict(), which would otherwise prevent handshakes with older Hosts).
       workflowRunDeltas: true,
+      historyFirst: true,
     },
     auth: {},
   };
@@ -255,6 +259,7 @@ export function createZCodeAgentConnectionScope(
   let boundClientId: string | null = null;
   /** Delta capability declared by clientHello; a trusted relay has no clientHello of its own and only forwards the downstream declaration. */
   let clientWorkflowRunDeltas = false;
+  let clientHistoryFirst = false;
   let commandQueryWorkspaceKey: string | null = null;
   let currentTransportFlowState: V4ConnectionFlowState = "drained";
   let flowClosed = false;
@@ -272,12 +277,14 @@ export function createZCodeAgentConnectionScope(
         clientMode: downstream.clientMode,
         // Delta support belongs to the **downstream endpoint**: the relay does not consume frames and only forwards the downstream clientHello declaration.
         ...(downstream.workflowRunDeltas === true ? { workflowRunDeltas: true } : {}),
+        ...(downstream.historyFirst === true ? { historyFirst: true } : {}),
       };
     }
     return {
       connectionId: context.connectionId,
       clientMode: context.clientMode,
       ...(clientWorkflowRunDeltas ? { workflowRunDeltas: true } : {}),
+      ...(clientHistoryFirst ? { historyFirst: true } : {}),
     };
   };
 
@@ -681,6 +688,7 @@ export function createZCodeAgentConnectionScope(
       }
       boundClientId = parsed.clientId;
       clientWorkflowRunDeltas = clientSupportsWorkflowRunDeltas(parsed);
+      clientHistoryFirst = parsed.capabilities?.historyFirst === true;
       handshakeComplete = true;
     },
     async setConnectionFlowStateV4(params) {
@@ -1069,3 +1077,6 @@ export function createZCodeAgentConnectionScope(
     },
   };
 }
+
+// Share RPC 复用同一内部 carrier 写入规则，不能复制一套连接身份拼装。
+export { withTrustedConnection as withTrustedZCodeAgentV4Connection };

@@ -278,6 +278,15 @@ export class HighspeedCardService implements IHighspeedCardService {
     };
   }
 
+  async invalidateCard(cardId: string): Promise<boolean> {
+    this.expireCard(this.now());
+    if (this.card?.cardId !== cardId) return false;
+    // Bug 根因：创建期发现加速 Provider 已从 Registry 下架时，卡仍留在服务里，Renderer 会继续
+    // 锁定模型选择器。按事件携带的 cardId 作废当前卡，旧事件不能误删随后抽到的新卡；冷却时间不变。
+    this.card = null;
+    return true;
+  }
+
   healthy(cardId: string): Promise<HighspeedCardUsage> {
     return this.transport.healthy(cardId);
   }
