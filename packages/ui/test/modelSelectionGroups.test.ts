@@ -170,7 +170,6 @@ describe("model selection groups", () => {
       {
         key: "registry-provider:anthropic-api",
         label: "Anthropic API",
-        labelBadge: "API",
         items: [
           {
             key: "registry-provider:anthropic-api:claude-a",
@@ -188,7 +187,6 @@ describe("model selection groups", () => {
       {
         key: "registry-provider:openai-api",
         label: "OpenAI API",
-        labelBadge: "API",
         items: [
           {
             key: "registry-provider:openai-api:model-a",
