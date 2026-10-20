@@ -36,19 +36,26 @@ export function useConfigWorkspaceServicesResolution(
       : undefined;
   useEffect(() => {
     if (workspace.rpcReady || !canAttach || !sourceServices || !workspacePath) return;
+    // The accessor marks sourceServerWorkspaceService optional for hosts that do not register it.
+    // Without it there is no alias admission to wait for, so keep the binding unset: config RPC stays closed rather than skipping admission.
+    const sourceServerWorkspaceService = sourceServices.sourceServerWorkspaceService;
+    if (!sourceServerWorkspaceService) {
+      logger.error(
+        "[workspace-config-catalog] 当前 Source 未注册工作区身份解析服务，配置 RPC 保持关闭",
+      );
+      return;
+    }
     let current = true;
     // 原因：无 tab 的 Source 配置没有经历 workspace attach，直接写会绕过旧 canonical key。
     // alias admission 完成后才开放该目录的配置 RPC，迟到结果只属于原 attachment/目标。
-    void sourceServices.sourceServerWorkspaceService
-      .resolveWorkspace({ workspacePath, legacyRouteHint })
-      .then(
-        () => {
-          if (current) setBinding({ services: sourceServices, workspaceKey });
-        },
-        (error) => {
-          if (current) logger.error("[workspace-config-catalog] 绑定配置目录身份失败", error);
-        },
-      );
+    void sourceServerWorkspaceService.resolveWorkspace({ workspacePath, legacyRouteHint }).then(
+      () => {
+        if (current) setBinding({ services: sourceServices, workspaceKey });
+      },
+      (error) => {
+        if (current) logger.error("[workspace-config-catalog] 绑定配置目录身份失败", error);
+      },
+    );
     return () => {
       current = false;
     };
