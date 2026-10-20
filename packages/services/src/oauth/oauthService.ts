@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- OAuthService coordinates OAuth session lifecycle and provider-switch boundaries; the current review fix only narrows background migration write conditions. */
 import { randomBytes } from "node:crypto";
+import { Emitter } from "@zcode/rpc";
 import {
   ApiError,
   formatLogPrefix,
@@ -11,6 +12,7 @@ import {
   type OAuthCachedSessionRestoreResult,
   type OAuthProviderId,
   type OAuthProviderMeta,
+  type OAuthSessionState,
   type OAuthStartResponse,
   type OAuthTokenSet,
   type OAuthUserProfile,
@@ -19,6 +21,7 @@ import {
   type SiwcPlanAccountsStatus,
   type UserInfo,
   resolveJwtExpiration,
+  isCredentialDecryptError,
 } from "@zcode/shared";
 import type { ICredentialService } from "../credential/credential.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
@@ -124,6 +127,8 @@ function resolveInactiveOAuthProvider(provider: OAuthProviderId): OAuthProviderI
  * Runs in the host process and manages the full lifecycle of OAuth flows.
  */
 export class OAuthService implements IOAuthService {
+  private readonly sessionChanges = new Emitter<OAuthSessionState>();
+  readonly onDidChangeSession = this.sessionChanges.event;
   private readonly credentialService: ICredentialService;
   private readonly repo: OAuthCredentialRepo;
   private readonly adapters = new Map<OAuthProviderId, OAuthProviderAdapter>();
@@ -168,6 +173,7 @@ export class OAuthService implements IOAuthService {
     this.repo = new OAuthCredentialRepo(credentialService, {
       providerIds: adapters.map((adapter) => adapter.providerId),
       onCorruptOAuthSessionCleared: async (providers) => {
+        this.sessionChanges.fire("signed-out");
         // Failure to decrypt local OAuth credentials is equivalent to a forced logout.
         // The repo can clear only the OAuth namespace; derived Start/Coding Plan provider keys must be cleared at the service layer.
         await this.notifyProvidersLogout(providers);
@@ -228,6 +234,7 @@ export class OAuthService implements IOAuthService {
 
     // Startup cache restoration needs to check only the shared zcode JWT. Reading the provider access token via loadActiveTokenSet
     // would put the BigModel profile migration, which should run in the background, back on the first-screen restoration path.
+    // Upstream also checks the business JWT here; that is deferred because the fork test pins this path to the shared JWT only.
     const zcodeJwtToken = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? "";
     if (zcodeJwtToken && resolveJwtExpiration(zcodeJwtToken, this.now()).kind === "expired") {
       serviceLog.info("cached session invalidated because zcode JWT expired", {
@@ -293,11 +300,12 @@ export class OAuthService implements IOAuthService {
     expectedProvider: OAuthProviderId,
     expectedProfile: OAuthUserProfile,
     expectedJwt: string,
+    credentialKey = ZCODE_JWT_TOKEN_KEY,
   ): Promise<boolean> {
     const invalidated = await this.runSessionMutation(async () => {
       const currentProvider = await this.repo.getActiveProvider();
       const currentProfile = await this.repo.loadUserProfile(expectedProvider);
-      const currentJwt = (await this.credentialService.load(ZCODE_JWT_TOKEN_KEY))?.trim() ?? "";
+      const currentJwt = (await this.credentialService.load(credentialKey))?.trim() ?? "";
       if (
         this.oauthSessionGeneration !== expectedGeneration ||
         currentProvider !== expectedProvider ||
@@ -314,6 +322,7 @@ export class OAuthService implements IOAuthService {
       }
       this.oauthSessionGeneration += 1;
       await this.repo.clearActiveSession();
+      this.sessionChanges.fire("signed-out");
       return true;
     });
     if (!invalidated) {
@@ -453,6 +462,8 @@ export class OAuthService implements IOAuthService {
       await rollback();
       throw new Error("OAuth flow 已取消");
     }
+    // 凭据是认证事实源；同账号重登也必须通知，不能等 renderer 的设置更新或成功计数。
+    this.sessionChanges.fire("signed-in");
   }
 
   private async runPendingSessionCompletion(
@@ -1050,6 +1061,8 @@ export class OAuthService implements IOAuthService {
         : null;
       this.oauthSessionGeneration += 1;
       await this.repo.clearActiveSession();
+      // 登出已生效：后续 provider/设置清理即使失败，也必须先撤销已认证的远控连接。
+      this.sessionChanges.fire("signed-out");
       return { activeProvider, accountIdentity };
     });
     if (!result) return false;
@@ -1082,6 +1095,7 @@ export class OAuthService implements IOAuthService {
       // Unlink for ZAI/BigModel providers now routes through App logout.
       // Only the currently active provider represents the signed-in state, preventing a legacy unlink path from deleting a non-current provider token.
       await this.repo.clearActiveSession();
+      this.sessionChanges.fire("signed-out");
       return accountIdentity;
     });
     if (loggedOutIdentity !== undefined) {
@@ -1099,6 +1113,7 @@ export class OAuthService implements IOAuthService {
       }
       this.oauthSessionGeneration += 1;
       await this.repo.clearAll(providers);
+      this.sessionChanges.fire("signed-out");
       return identities;
     });
     await this.cancelPending();

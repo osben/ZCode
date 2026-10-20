@@ -533,6 +533,8 @@ describe("Coding Plan API key resolver", () => {
     expect(httpClient.requests[1]?.headers).toMatchObject({
       authorization: "zai-biz-token",
     });
+    for (const request of httpClient.requests.slice(2))
+      expect(request.headers).toMatchObject({ authorization: "Bearer zai-biz-token" });
   });
 
   it("resolves a BigModel OAuth access token through project access token issuance", async () => {

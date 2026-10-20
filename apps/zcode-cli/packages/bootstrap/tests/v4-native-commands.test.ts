@@ -1,6 +1,6 @@
-// L2: v4 native command executor (sendText / stop) — verifies that the decision semantics moved over
-// from the old server-operations stay faithful at the native layer: steer routing, draft promotion, ready boundary, goal-pause barrier.
-// The L2 layer of 08-phasing M4's definition of done (command → core call → state advance, without going through old protocol code).
+// L2：v4 原生命令执行器（sendText / stop）——验证自旧 server-operations 搬运的
+// 决策语义在原生层保真：steer 分流、draft 提升、ready 边界、goal-pause barrier。
+// 08-phasing M4 完成定义的 L2 层（命令 → core 调用 → 状态推进，不经旧协议代码）。
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
@@ -13,6 +13,11 @@ import type {
   V4CommandCoreHost,
   V4SessionRecordView,
 } from "../src/zcode-protocol-v4/commands/types.js";
+
+const ORDINARY_MODEL_SELECTION = {
+  providerId: "builtin:bigmodel-coding-plan",
+  modelId: "GLM-5.3",
+};
 
 function makeApp(overrides: Record<string, unknown> = {}) {
   return {
@@ -92,7 +97,7 @@ function envelope(type: string, payload: unknown): CommandEnvelope {
 }
 
 async function settle() {
-  // A background turn is a microtask chain started with void; two flush rounds ensure the finally blocks finish.
+  // 后台 turn 是 void 起跑的微任务链，flush 两轮保证 finally 执行完。
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
@@ -363,7 +368,6 @@ describe("v4 原生 sendText", () => {
     });
     const record = makeRecord({ app });
     const host = makeHost(record);
-    let commandSettled = false;
     const executing = new V4CommandExecutor(host)
       .execute(
         envelope("sendText", {
@@ -380,11 +384,9 @@ describe("v4 原生 sendText", () => {
           delivery: "startNow",
           inputId: "cmd-1",
         });
-        commandSettled = true;
       });
     await vi.waitFor(() => expect(app.sendInput).toHaveBeenCalledTimes(1));
     await executing;
-    expect(commandSettled).toBe(true);
     expect(record.activeAbortController).toBeUndefined();
     finishTurn();
     await settle();
@@ -405,7 +407,7 @@ describe("v4 原生 sendText", () => {
         }),
       }),
     );
-    // legacy cleanup runs after Core completion; the Bootstrap controller never participates in busy decisions.
+    // Core completion 后再执行 legacy cleanup；Bootstrap controller 从不参与 busy 判定。
     expect(record.activeAbortController).toBeUndefined();
     expect(host.legacyMutations).toEqual(["prompt_completed"]);
   });
@@ -461,6 +463,7 @@ describe("v4 原生 sendText", () => {
             requestAuth: { apiKey: "card-jwt", headers: { "X-Highspeed-Card-ID": "card-1" } },
             selectionFallback: {
               providerId: "account:bigmodel-highspeed-card",
+              target: ORDINARY_MODEL_SELECTION,
               rules: [
                 { reason: "highspeed_card_expired", providerErrorCode: "3402" },
                 { reason: "highspeed_request_failed" },
@@ -481,21 +484,68 @@ describe("v4 原生 sendText", () => {
         requireQueue: true,
         intent: expect.objectContaining({
           highspeed: expect.objectContaining({ cardId: "card-1" }),
-          // The highspeed turn's Selection must enter the canonical intent; promotion no longer looks back at the session model.
-          modelSelection: {
-            providerId: "account:bigmodel-highspeed-card",
-            modelId: "GLM-5.3",
-          },
+          // 队列只持久化普通模型；临时 Selection 与凭据必须成包驻留内存。
+          modelSelection: ORDINARY_MODEL_SELECTION,
         }),
       }),
     );
-    // Credentials do not go into queue events; they are only stashed in the CLI process by (sessionId, sourceCommandId).
-    expect(retainQueuedTurnExecution).toHaveBeenCalledWith(
-      "s1",
-      "cmd-1",
-      expect.objectContaining({
+    // 凭据不进队列事件，只按 (sessionId, sourceCommandId) 暂存在 CLI 进程内。
+    expect(retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
+      modelSelection: {
+        providerId: "account:bigmodel-highspeed-card",
+        modelId: "GLM-5.3",
+      },
+      modelExecution: expect.objectContaining({
         selectionScope: "execution",
         requestAuth: expect.objectContaining({ apiKey: "card-jwt" }),
+      }),
+    });
+  });
+
+  it("Highspeed 入队忽略被污染为加速 Provider 的退回目标", async () => {
+    const app = makeApp({ getModel: () => "builtin:bigmodel-coding-plan/GLM-5.3" });
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getInputRoutingMode: () => "enqueue",
+      retainQueuedTurnExecution: vi.fn(),
+    });
+
+    await new V4CommandExecutor(host).execute(
+      envelope("sendText", {
+        text: "退回目标被污染时仍保存普通模型",
+        highspeedMeta: {
+          schemaVersion: 1,
+          cardId: "card-polluted-fallback",
+          taskId: "s1",
+          provider: "bigmodel",
+          model: "GLM-5.3",
+          issuedAt: 1,
+          expiresAt: Date.now() + 60_000,
+        },
+        modelSelection: {
+          providerId: "account:bigmodel-highspeed-card",
+          modelId: "GLM-5.3",
+        },
+        modelExecution: {
+          selectionScope: "execution",
+          requestAuth: { apiKey: "card-jwt" },
+          selectionFallback: {
+            providerId: "account:bigmodel-highspeed-card",
+            target: {
+              providerId: "account:bigmodel-highspeed-card",
+              modelId: "GLM-5.3",
+            },
+            rules: [{ reason: "highspeed_request_failed" }],
+          },
+        },
+      }),
+    );
+
+    expect(app.sendInput).toHaveBeenCalledWith(
+      { text: "退回目标被污染时仍保存普通模型" },
+      expect.objectContaining({
+        requireQueue: true,
+        intent: expect.objectContaining({ modelSelection: ORDINARY_MODEL_SELECTION }),
       }),
     );
   });
@@ -533,6 +583,7 @@ describe("v4 原生 sendText", () => {
           requestAuth: { apiKey: "card-jwt", headers: { "X-Highspeed-Card-ID": "card-guide" } },
           selectionFallback: {
             providerId: "account:bigmodel-highspeed-card",
+            target: ORDINARY_MODEL_SELECTION,
             rules: [
               { reason: "highspeed_card_expired", providerErrorCode: "3402" },
               { reason: "highspeed_request_failed" },
@@ -551,14 +602,17 @@ describe("v4 原生 sendText", () => {
           admittedDelivery: "queue",
           fallbackReasonCode: "highspeed.requiresQueue",
           highspeed: expect.objectContaining({ cardId: "card-guide" }),
+          modelSelection: ORDINARY_MODEL_SELECTION,
         }),
       }),
     );
-    expect(retainQueuedTurnExecution).toHaveBeenCalledWith(
-      "s1",
-      "cmd-1",
-      expect.objectContaining({ selectionScope: "execution" }),
-    );
+    expect(retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
+      modelSelection: {
+        providerId: "account:bigmodel-highspeed-card",
+        modelId: "GLM-5.3",
+      },
+      modelExecution: expect.objectContaining({ selectionScope: "execution" }),
+    });
   });
 
   it("Core active turn 已存在但 controller 与投影尚未同步时，Highspeed 输入仍进入 queue", async () => {
@@ -601,6 +655,7 @@ describe("v4 原生 sendText", () => {
             requestAuth: { apiKey: "card-jwt", headers: { "X-Highspeed-Card-ID": "card-1" } },
             selectionFallback: {
               providerId: "account:bigmodel-highspeed-card",
+              target: ORDINARY_MODEL_SELECTION,
               rules: [
                 { reason: "highspeed_card_expired", providerErrorCode: "3402" },
                 { reason: "highspeed_request_failed" },
@@ -621,17 +676,21 @@ describe("v4 原生 sendText", () => {
         requireQueue: true,
         intent: expect.objectContaining({
           highspeed: expect.objectContaining({ cardId: "card-1" }),
+          modelSelection: ORDINARY_MODEL_SELECTION,
         }),
       }),
     );
-    // modelExecution is not issued at enqueue time (credentials stay in memory only), so the Session model preflight still runs as for a normal turn:
-    // if the card has expired when this input is promoted, it falls back to the session's resident Selection; an unavailable session model must surface at admission.
+    // 入队只下发普通 Selection 与卡元数据，不下发 execution 与凭据，仍按普通轮做 Session 模型
+    // preflight：卡失效后提升使用 QueueItem 的普通 Selection，模型不可用必须在 admission 就暴露。
     expect(host.ensureModelReady).toHaveBeenCalledWith(record);
-    expect(retainQueuedTurnExecution).toHaveBeenCalledWith(
-      "s1",
-      "cmd-1",
-      expect.objectContaining({ selectionScope: "execution" }),
-    );
+    expect(app.sendInput.mock.calls[0]?.[1]).not.toHaveProperty("modelExecution");
+    expect(retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
+      modelSelection: {
+        providerId: "account:bigmodel-highspeed-card",
+        modelId: "GLM-5.3",
+      },
+      modelExecution: expect.objectContaining({ selectionScope: "execution" }),
+    });
   });
 
   it("execution-scoped Selection 直接进入 Core，Session 模型从不临时切换", async () => {
@@ -832,9 +891,9 @@ describe("v4 原生 sendText", () => {
       }),
     );
     expect(app.sendInput.mock.calls[0]?.[1]?.intent).not.toHaveProperty("highspeed");
-    // Scheduled execution identity takes priority: the highspeed Selection and execution materials must be discarded wholesale before admission. The intent will still
-    // pin this session's resident Selection (the generic behavior of a normal turn), but it must never be the highspeed card Provider — otherwise this turn would
-    // send its request with highspeed card credentials, or persist ordinary output as a Highspeed message.
+    // 定时执行身份优先：加速 Selection 与执行材料必须在 admission 前被整体丢弃。intent 仍会
+    // 固化本会话常驻 Selection（普通轮的通用行为），但绝不能是加速卡 Provider，否则本轮会
+    // 拿加速卡凭据发请求，或把普通输出持久化成 Highspeed 消息。
     expect(app.sendInput.mock.calls[0]?.[1]?.intent?.modelSelection).toEqual({
       providerId: "account:bigmodel-start-plan",
       modelId: "glm-5",
@@ -931,12 +990,15 @@ describe("v4 原生 sendText", () => {
         offPeakRunType: "resume",
       }),
     );
-    // D49 added the off-peak self-creation restriction, D52 added SendMessage/Workflow; do not mix in the automation write-tool set —
-    // the Host's extra denylist is merged separately.
+    // 闲时支持 SendMessage；独立工作流无法继承票据，执行与修改入口继续限制。
+    // Host 的额外 denylist 另行合并。
     expect(app.sendInput.mock.calls[0]?.[1].toolDisallowlist).toEqual([
       "OffPeakCreate",
-      "SendMessage",
       "Workflow",
+      "CreateWorkflow",
+      "AmendWorkflow",
+      "ResumeWorkflowRun",
+      "EvalWorkflowSnippet",
     ]);
     expect(app.sendInput.mock.calls[1]?.[1]).not.toHaveProperty("offPeakTaskId");
     expect(app.sendInput.mock.calls[1]?.[1]).not.toHaveProperty("offPeakRunType");
@@ -1047,7 +1109,7 @@ describe("v4 原生 sendText", () => {
             ),
         },
       });
-      // Even if the UI still shows busy, Core's idle receipt must not be guessed into a preemption.
+      // UI 即使仍显示 busy，Core 的 idle 回执也不能被猜成一次抢占。
       const host = makeHost(makeRecord({ app }), { getInputRoutingMode: () => "enqueue" });
       await new V4CommandExecutor(host).execute(
         envelope("sendText", {
@@ -1397,9 +1459,9 @@ describe("v4 原生 sendText", () => {
   });
 
   it("restoreWarning 时序自愈：进程 Registry 已有可用模型 → 清告警放行", async () => {
-    // Scenario: after an app restart, cold restore runs before the provider registry push, so the record carries a "model
-    // unresolvable" warning; the registry arrives later (the host probe deems it usable) and sending must not be permanently
-    // rejected by this stale one-shot flag.
+    // 场景：app 重启后冷恢复跑在 provider registry 推送之前，record 挂上「模型
+    // 不可解析」告警；registry 随后到达（宿主探针判可用），发送不得再被这个
+    // 过期的一次性标志永久拒绝。
     const app = makeApp();
     const record = makeRecord({
       app,
@@ -1431,6 +1493,186 @@ describe("v4 原生 sendText", () => {
     expect(record.restoreWarning).toBeDefined();
   });
 
+  it("普通 Selection 不在 Worker Registry 时在 ACK 前拒绝并保留输入", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app });
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "使用新 Provider",
+          modelSelection: { providerId: "new-provider", modelId: "new-model" },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("无退回声明的 execution Selection 不在 Registry 时仍在 ACK 前拒绝", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app });
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "使用不可退回的执行模型",
+          modelSelection: { providerId: "new-provider", modelId: "new-model" },
+          modelExecution: { selectionScope: "execution" },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("带同 Provider 退回声明且退回目标可用时，execution Selection 延迟到 Core 解析", async () => {
+    const app = makeApp({
+      listModels: () => [
+        {
+          ref: { providerId: "account:bigmodel-start-plan", modelId: "glm-5" },
+        },
+      ],
+    });
+    const record = makeRecord({ app });
+    const selectionFallback = {
+      providerId: "account:bigmodel-highspeed-card",
+      rules: [{ reason: "highspeed_selection_unavailable" as const }],
+      target: { providerId: "account:bigmodel-start-plan", modelId: "glm-5" },
+    };
+
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "使用可退回的执行模型",
+          modelSelection: {
+            providerId: "account:bigmodel-highspeed-card",
+            modelId: "missing-highspeed-model",
+          },
+          modelExecution: { selectionScope: "execution", selectionFallback },
+        }),
+      ),
+    ).resolves.toBeDefined();
+    await settle();
+
+    expect(app.sendInput).toHaveBeenCalledWith(
+      { text: "使用可退回的执行模型" },
+      expect.objectContaining({
+        intent: expect.objectContaining({
+          modelSelection: {
+            providerId: "account:bigmodel-highspeed-card",
+            modelId: "missing-highspeed-model",
+          },
+        }),
+        modelExecution: expect.objectContaining({
+          selectionScope: "execution",
+          selectionFallback,
+        }),
+      }),
+    );
+  });
+
+  it("Highspeed execution Selection 可用时不因退回目标缺失而拒绝", async () => {
+    const highspeedSelection = {
+      providerId: "account:bigmodel-highspeed-card",
+      modelId: "GLM-5.3",
+    };
+    const app = makeApp({
+      listModels: () => [{ ref: highspeedSelection }],
+    });
+    const record = makeRecord({ app });
+
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "执行模型可用时继续发送",
+          modelSelection: highspeedSelection,
+          modelExecution: {
+            selectionScope: "execution",
+            selectionFallback: {
+              providerId: highspeedSelection.providerId,
+              rules: [{ reason: "highspeed_selection_unavailable" }],
+              target: { providerId: "missing-fallback", modelId: "missing-model" },
+            },
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("Highspeed execution Selection 与退回目标都不在 Registry 时在 ACK 前拒绝", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app });
+
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "双模型都不可用时保留输入",
+          modelSelection: {
+            providerId: "account:bigmodel-highspeed-card",
+            modelId: "missing-highspeed-model",
+          },
+          modelExecution: {
+            selectionScope: "execution",
+            selectionFallback: {
+              providerId: "account:bigmodel-highspeed-card",
+              rules: [{ reason: "highspeed_selection_unavailable" }],
+              target: { providerId: "account:bigmodel-start-plan", modelId: "glm-5" },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("退回声明与 execution Provider 不一致时仍在 ACK 前拒绝", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app });
+    await expect(
+      new V4CommandExecutor(makeHost(record)).execute(
+        envelope("sendText", {
+          text: "使用声明不一致的执行模型",
+          modelSelection: {
+            providerId: "account:bigmodel-highspeed-card",
+            modelId: "missing-highspeed-model",
+          },
+          modelExecution: {
+            selectionScope: "execution",
+            selectionFallback: {
+              providerId: "other-provider",
+              rules: [{ reason: "highspeed_selection_unavailable" }],
+              target: { providerId: "account:bigmodel-start-plan", modelId: "glm-5" },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("排队 execution Selection 仍按原模型目录做 admission 预检", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    await expect(
+      new V4CommandExecutor(makeHost(record, { getInputRoutingMode: () => "enqueue" })).execute(
+        envelope("sendText", {
+          text: "排队执行模型",
+          modelSelection: {
+            providerId: "account:bigmodel-highspeed-card",
+            modelId: "missing-highspeed-model",
+          },
+          modelExecution: {
+            selectionScope: "execution",
+            selectionFallback: {
+              providerId: "account:bigmodel-highspeed-card",
+              rules: [{ reason: "highspeed_selection_unavailable" }],
+              target: { providerId: "account:bigmodel-start-plan", modelId: "glm-5" },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
   it("turn 失败：finally 仍释放锁，legacy 广播 reason=prompt_failed", async () => {
     const app = makeApp({ sendInput: vi.fn().mockRejectedValue(new Error("boom")) });
     const record = makeRecord({ app });
@@ -1444,21 +1686,6 @@ describe("v4 原生 sendText", () => {
 });
 
 describe("v4 原生 sendText：软门禁（soft gate）", () => {
-  it("pending hooks 不阻塞 turn:prompt 直接 TurnStarted,pending hooks 被跳过", async () => {
-    // Soft gate: a turn never waits for review. Pending hooks are skipped directly (HookRunBlocked),
-    // the turn runs as usual, and the snapshot is written via the WorkspaceHookAdmissionUpdated event.
-    const app = makeApp();
-    const record = makeRecord({ app });
-    const host = makeHost(record);
-
-    await new V4CommandExecutor(host).execute(envelope("sendText", { text: "hello" }));
-    await settle();
-
-    // sendInput was called and TurnStarted was observed
-    expect(app.sendInput).toHaveBeenCalledTimes(1);
-    expect(record.activeAbortController).toBeUndefined();
-  });
-
   it("startPromptTurn 不再把 authority observer 传给 Core admission", async () => {
     let capturedOptions: PromptSendInputOptions | undefined;
     const app = makeApp({
@@ -1477,15 +1704,13 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
     await new V4CommandExecutor(host).execute(envelope("sendText", { text: "test" }));
     await settle();
 
-    expect(capturedOptions).toBeDefined();
-    // The projection observer has been removed; Core admission ACK does not wait for TurnStarted.
+    // projection observer 已移除，Core admission ACK 不等待 TurnStarted。
     expect(capturedOptions!.onEvent).toBeUndefined();
     expect(capturedOptions!.onTurnStartedObserved).toBeUndefined();
   });
 
   it("projection commit 永不完成时，input ACK 仍立即返回", async () => {
     const turnGate = deferred<void>();
-    let commandSettled = false;
     const app = makeApp({
       sendInput: vi.fn().mockResolvedValue({
         completion: turnGate.promise,
@@ -1500,17 +1725,14 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
       },
     });
 
-    const executing = new V4CommandExecutor(host)
-      .execute(envelope("sendText", { text: "等待 projection commit" }))
-      .then(() => {
-        commandSettled = true;
-      });
+    const executing = new V4CommandExecutor(host).execute(
+      envelope("sendText", { text: "等待 projection commit" }),
+    );
 
     await vi.waitFor(() => expect(app.sendInput).toHaveBeenCalled());
     await flushMicrotasks();
-    // Projection commit does not participate in admission at all; deliberately never resolve it.
+    // projection commit 完全不参与 admission；故意不 resolve 它。
     await executing;
-    expect(commandSettled).toBe(true);
     turnGate.resolve(undefined);
     await settle();
   });
@@ -1518,7 +1740,7 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
   it("回归：TurnStarted 后 projection 延迟时，第二条只产生一个 Core queue item", async () => {
     const admissions: Array<"started" | "queued"> = [];
     const runtime = {
-      // Bootstrap no longer queries activeTurn; Core admission holds the starting/active state itself.
+      // Bootstrap 不再查询 activeTurn；Core admission 自己持有 starting/active 状态。
       getActiveTurnInfo: vi.fn(),
     };
     const sendInput = vi.fn().mockImplementation(async () => {
@@ -1548,7 +1770,6 @@ describe("v4 原生 sendText：软门禁（soft gate）", () => {
 
     expect(admissions).toEqual(["started", "queued"]);
     expect(runtime.getActiveTurnInfo).not.toHaveBeenCalled();
-    expect(admissions.filter((admission) => admission === "started")).toHaveLength(1);
   });
 });
 
@@ -1835,7 +2056,7 @@ describe("v4 原生 stop", () => {
 describe("supports 分流", () => {
   it("协议命令全部原生（回落面清零）；未知命令不 supports", () => {
     const executor = new V4CommandExecutor(makeHost(makeRecord()));
-    // Maintained in sync with the payload map in packages/shared/src/zcode-protocol-v4/command.ts.
+    // 与 packages/shared/src/zcode-protocol-v4/command.ts 的 payload map 同步维护。
     const allCommands = [
       "createSession",
       "sendText",

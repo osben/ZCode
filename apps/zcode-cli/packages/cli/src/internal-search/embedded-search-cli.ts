@@ -29,7 +29,7 @@ const GREP_BYPASS_PATTERNS = [
   /^---.*$/u,
   /^-@.*$/u,
   /^-.*-save-config.*$/u,
-  // ugrep's -z/-Z semantics differ from GNU grep's null-data behavior; these options must fall back to system grep.
+  // ugrep 的 -z/-Z 与 GNU grep 的 null-data 语义不同；这些参数必须绕回系统 grep。
   /^-[Zz].*$/u,
   /^-[^-].*[Zz].*$/u,
   /^--null$/u,
@@ -131,13 +131,13 @@ function runNativeSearchCommand(
     };
 
     const onAbort = () => {
-      // __internal-search spawns the actual embedded search process;
-      // do not rely only on the outer Bash process-tree cleanup, or native find/grep processes may remain after canceling remote or large-repository searches.
+      // embedded search 的真实搜索进程由 __internal-search 再 spawn；
+      // 不能只依赖外层 Bash 的进程树清理，否则 remote/大仓库搜索取消时 native find/grep 可能残留。
       requestChildTermination();
     };
 
-    // Models often put internal grep in a `grep ... | head` pipeline; the downstream command closes stdout once it has enough data.
-    // Native grep/ugrep handle this SIGPIPE quietly, so the Node forwarding layer must also absorb EPIPE and stop the child process to keep stack traces out of tool results.
+    // internal grep 常被模型放进 `grep ... | head` 管道里；下游读够后会关闭 stdout。
+    // 原生 grep/ugrep 会安静处理这种 SIGPIPE，Node 转发层也必须吞掉 EPIPE 并停止子进程，避免栈污染工具结果。
     const stopAfterStdoutClosed = () => {
       stdoutClosed = true;
       requestChildTermination();
@@ -282,8 +282,8 @@ function terminateNativeSearchChild(
     return undefined;
   }
 
-  // Native find/grep are direct children of __internal-search;
-  // keep them in the outer Bash process group so the Bash runner's second cleanup pass can catch them, while the wrapper explicitly terminates its direct child.
+  // native find/grep 是 __internal-search 的直接子进程；
+  // 保持它在外层 Bash 进程组内，让 Bash runner 的二段清理仍能兜住，同时 wrapper 自己定点终止直接 child。
   child.kill("SIGTERM");
 
   const timer = setTimeout(() => {

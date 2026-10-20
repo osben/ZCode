@@ -1,29 +1,28 @@
 // ============================================================
-// `hole-reached` → one model-visible in-run notification (hole)
+// `hole-reached` → 一条模型可见的 run 中通知（留白）
 // ============================================================
-// docs/dynamic-workflow/transcript-and-notifications.md `hole` payload and "What the model reads"; engine side
-// apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Holes".
+// docs/dynamic-workflow/transcript-and-notifications.md 的 `hole` 载荷与「What the model reads」；引擎侧
+// apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Holes」。
 //
-// Split out of dynamic-workflow-run-progress.ts (400-line gate); same layer as the escalation/stall
-// emitters there, and the same three disciplines:
-// **exactly one notification per `hole-reached`** (no resending, no nagging; the fallback after loss is GetWorkflowRun's `holes`);
-// **`hole-filled` sends no notification** (the filler is the main agent itself, and the receipt is already that tool call's result); **never throw**
-// (this is the observation surface; the run's truth lives in the journal).
+// 从 dynamic-workflow-run-progress.ts 拆出（400 行门），与那里的升级 / 停滞发射器同层、同三条纪律：
+// **每条 `hole-reached` 恰好一条通知**（这条自己不重发；一直没人补时由 dynamic-workflow-blocked-reminder.ts
+// 那条按状态铸的提醒接手，随时可查的兜底是 GetWorkflowRun 的 `holes`）；
+// **`hole-filled` 不发通知**（补全方就是主代理自己，回执已是那次工具调用的结果）；**绝不抛异常**
+// （这是观察面，run 的真相在 journal）。
 //
-// One difference from the other two: the event payload only carries the site, the name, and the prompt,
-// while the notification also reads type, draft path and line number, and before/after
-// phases — those are compilation artifacts that live on the snapshot's `holes[]` and `scriptPath`. So this reads the port snapshot once (bounded:
-// once per hole); when the port is absent or unreadable, fall back to the fields the payload itself can state, and the notification still goes out, just with fewer lines.
+// 与另两条不同的一点：事件载荷只带站点、名字与 prompt，而通知还要念类型、草稿路径与行号、前后
+// 阶段——那些是编译产物，住在快照的 `holes[]` 与 `scriptPath` 上。所以这里读一次端口快照（有界：
+// 一处留白一次），端口缺席或读不到时退回载荷自己说得出的字段，通知照发、只是少几句。
 
 import type { DynamicWorkflowRunHole } from "@zcode/contracts";
 import type { DynamicWorkflowRunProgressPayload, TraceContext } from "../deps.js";
 import { formatWorkflowHoleNotification } from "../../runtime-task/workflow-notification-copy.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 
-/** Event kind for a hole being reached (the engine's `RunEvent.type`). */
+/** 留白到达的事件种类（引擎的 `RunEvent.type`）。 */
 export const HOLE_REACHED_EVENT_TYPE = "hole-reached";
 
-/** Bound for the prompt in the manifest payload and in the notification (spec: 4000 chars, truncation ends with `…`, same bound as the escalation notification). */
+/** manifest 载荷与通知里 prompt 的界（spec：4000 字符，截断以 `…` 收尾，与升级通知同界）。 */
 const WORKFLOW_HOLE_PROMPT_MAX_CHARS = 4_000;
 const PROMPT_ELLIPSIS = "…";
 
@@ -48,10 +47,10 @@ export async function notifyHoleReached(
   }
 
   const snapshot = await readHoleSnapshot(this, payload.runId, siteId, ordinal);
-  // The display-name fallback chain shares its origin with the other two notifications: registry entry's description → runId.
+  // 展示名的兜底链与另两条通知同源：registry 条目的 description → runId。
   const runLabel = this.runtimeTaskRegistry.get(payload.runId)?.description ?? payload.runId;
   const prompt = boundPrompt(stringField(payload.payload, "prompt"));
-  // Type, line number, and before/after phases come from the snapshot's hole entry; if the payload also carries them (future engine versions), the payload wins.
+  // 类型、行号与前后阶段来自快照的留白条目；载荷上若也带（未来的引擎版本）以载荷为准。
   const type = stringField(payload.payload, "type") ?? snapshot.hole?.type ?? "unknown";
   const line = numberField(payload.payload, "line") ?? snapshot.hole?.line;
   const before = stringField(payload.payload, "before") ?? snapshot.hole?.before;
@@ -70,9 +69,9 @@ export async function notifyHoleReached(
     originMeta: {
       backgroundSource: "workflow",
       title: runLabel,
-      // workId ≡ runId: same display anchor as the rest of this run's notifications.
+      // workId ≡ runId：与该 run 的其余通知同一个展示锚点。
       workId: payload.runId,
-      // manifest payload (hole discriminant branch): the GUI's hole line uses the run projection's `holes` to render the three live states.
+      // manifest 载荷（hole 判别分支）：GUI 的留白行按 run 投影的 `holes` 翻三种活状态。
       workflowNotification: {
         kind: "hole",
         siteId,
@@ -83,7 +82,7 @@ export async function notifyHoleReached(
         ...(reachedAt === undefined ? {} : { reachedAt }),
       },
     },
-    // taskId lets the notification inherit this run's branchGeneration (fencing for late notifications); the fallback after being dropped is a snapshot query.
+    // taskId 让通知继承该 run 的 branchGeneration（迟到通知的 fencing）；丢弃后的兜底是快照查询。
     taskId: payload.runId,
     text: formatWorkflowHoleNotification({
       runLabel,
@@ -97,7 +96,7 @@ export async function notifyHoleReached(
   });
 }
 
-/** Read the snapshot once for this hole's entry and draft path; absent port / read failure / missing entry all just mean "not there". */
+/** 读一次快照取这处留白的条目与草稿路径；端口缺席 / 读失败 / 没有条目都只是「没有」。 */
 async function readHoleSnapshot(
   runtime: AgentRuntimeInternal,
   runId: string,
@@ -128,7 +127,7 @@ async function readHoleSnapshot(
   }
 }
 
-/** prompt bound: past the limit, truncate to the cap and end with `…` (step back one code unit if the tail character splits a surrogate pair). */
+/** prompt 的界：超出即截到上限并以 `…` 收尾（尾字符落在代理对中间时再退一个码元）。 */
 function boundPrompt(prompt: string | undefined): string | undefined {
   if (prompt === undefined) return undefined;
   if (prompt.length <= WORKFLOW_HOLE_PROMPT_MAX_CHARS) return prompt;

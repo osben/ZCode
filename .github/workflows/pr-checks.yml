@@ -142,6 +142,14 @@ jobs:
         run: >
           pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
 
+      - name: Build official plugin runtimes needed by unit tests
+        # bootstrap official-plugin-definitions.ts requires built artifacts that are not committed:
+        # dist/server.mjs and dist/ui/* for the document viewers (office-runtime build), and
+        # dist/mcp/server.js for node-repl-host (also used by browser-use). "@zcode/node-repl-host..."
+        # builds its workspace dependencies (@zcode/core and friends) first.
+        run: >
+          pnpm --filter "@zcode/node-repl-host..." --filter @zcode/browser-use-plugin --filter @zcode/documents-plugin --filter @zcode/pdf-plugin --filter @zcode/presentations-plugin --filter @zcode/spreadsheets-plugin build
+
       # The pre-commit regression tests run the wrapper against this checkout,
       # so make the pending upstream blob available just as in the checks job.
       - name: Fetch pending upstream commit

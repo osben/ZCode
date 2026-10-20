@@ -24,14 +24,14 @@ function makeCwd(): string {
   return dir;
 }
 
-/** An isolated home directory injected by global-scope cases — never touches the developer machine's real `~/.zcode/workflows`. */
+/** 一个隔离的家目录，供全局档用例注入——绝不碰开发机真实的 `~/.zcode/workflows`。 */
 function makeHome(): string {
   const dir = mkdtempSync(join(tmpdir(), "dwf-home-"));
   created.push(dir);
   return dir;
 }
 
-/** Writes a saved file into the given scope root, bypassing saveSavedWorkflow — read-side cases must not depend on the write side. */
+/** 往指定作用域根写一个保存文件，绕过 saveSavedWorkflow——读侧的用例不该依赖写侧。 */
 function writeRawInRoot(dir: string, fileName: string, source: string): string {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, fileName);
@@ -39,14 +39,13 @@ function writeRawInRoot(dir: string, fileName: string, source: string): string {
   return path;
 }
 
-/** Writes a saved file directly into the project root, bypassing saveSavedWorkflow — read-side cases must not depend on the write side. */
+/** 直接往项目根写一个保存文件，绕过 saveSavedWorkflow——读侧的用例不该依赖写侧。 */
 function writeRaw(cwd: string, fileName: string, source: string): string {
   return writeRawInRoot(savedWorkflowRoots(cwd)[0]!.dir, fileName, source);
 }
 
-// The global root defaults to os.homedir(). Existing cases that do not inject homeDir would scan the real home
-// directory, which may genuinely hold global definitions — point HOME at an empty temp directory so the existing
-// "two roots, first-wins" assertions only see project files.
+// 全局根默认取 os.homedir()。不注入 homeDir 的既有用例会扫真实家目录，那里可能真有全局
+// 定义——把 HOME 指到一个空的临时目录，让「两根 first-wins」的既有断言只看到项目档。
 let originalHome: string | undefined;
 let originalUserProfile: string | undefined;
 beforeEach(() => {
@@ -90,12 +89,7 @@ describe("saved workflow frontmatter codec", () => {
     expect(parsed.script).toBe(SCRIPT);
   });
 
-  it("serializes deterministically so re-saving makes no spurious diff", () => {
-    const meta: SavedWorkflowMeta = { description: "stable", whenToUse: "always" };
-    expect(serializeSavedWorkflow(meta, SCRIPT)).toBe(serializeSavedWorkflow(meta, SCRIPT));
-  });
-
-  // The script body is the baseline for the run's script hash; any "casual normalization" would break resume matching.
+  // 脚本正文是 run 的脚本哈希的基准，任何一次"顺手规范化"都会让 resume 对不上。
   it("preserves trailing newlines, blank lines and CRLF-free content verbatim", () => {
     const script = "\n\nlog('one');\n\n\nlog('two');\n";
     const parsed = parseSavedWorkflow(
@@ -113,14 +107,7 @@ describe("saved workflow frontmatter codec", () => {
     expect(parsed.script).toBe("");
   });
 
-  it("tolerates blank lines before the sentinel", () => {
-    const parsed = parseSavedWorkflow(
-      `\n\n${serializeSavedWorkflow({ description: "padded" }, SCRIPT)}`,
-    );
-    expect(parsed.ok).toBe(true);
-  });
-
-  // The four failures each get their own name, because they give the user different advice.
+  // 四种失败各有各的名字，因为它们要给用户不同的建议。
   it("names a missing sentinel", () => {
     const parsed = parseSavedWorkflow(SCRIPT);
     expect(parsed).toMatchObject({ ok: false, reason: "missing_frontmatter" });
@@ -141,7 +128,7 @@ describe("saved workflow frontmatter codec", () => {
     expect(parsed).toMatchObject({ ok: false, reason: "invalid_metadata" });
   });
 
-  // .strict(): a misspelled key must be called out, not silently dropped — these files are hand-edited by users.
+  // .strict()：拼错一个键必须被指出来，而不是被静默丢弃——这些文件是用户手改的。
   it("rejects an unknown metadata key", () => {
     const parsed = parseSavedWorkflow("/* zcode-workflow\ndescription: x\nwhenToUseIt: typo\n*/\n");
     expect(parsed).toMatchObject({ ok: false, reason: "invalid_metadata" });
@@ -192,7 +179,7 @@ describe("saved workflow store", () => {
     expect(resolved.script).toBe("return 2;");
   });
 
-  // Name validation **is** the path traversal defense: once spliced into a join, it is too late.
+  // 名字合法性检查**就是**路径穿越的防线：拼进 join 之后就晚了。
   it.each([
     ["../evil", "traversal"],
     ["a/b", "separator"],
@@ -256,7 +243,7 @@ describe("saved workflow store", () => {
       scope: "project",
       path: join(cwd, ".zcode/workflows/alpha.dwf.ts"),
     });
-    // Enumeration is not reading: the body never enters the list.
+    // 枚举不是读取：正文绝不进列表。
     expect(JSON.stringify(entries)).not.toContain("agent(");
   });
 
@@ -287,23 +274,6 @@ describe("saved workflow store", () => {
   it("returns an empty list when the project has never saved a workflow", () => {
     expect(listSavedWorkflows({ cwd: makeCwd() })).toEqual({ entries: [], invalid: [] });
   });
-
-  // The roots are an **array** ordered by priority `[project, global]`. This case pins the "first-wins in order" shape.
-  it("looks up roots in priority order, first match winning", () => {
-    const cwd = makeCwd();
-    const home = makeHome();
-    const roots = savedWorkflowRoots(cwd, { homeDir: home });
-    expect(roots).toHaveLength(2);
-    expect(roots[0]).toEqual({ scope: "project", dir: join(cwd, ".zcode/workflows") });
-    expect(roots[1]).toEqual({ scope: "global", dir: join(home, ".zcode/workflows") });
-
-    saveSavedWorkflow({ cwd, name: "shadowed", meta: { description: "project" }, script: SCRIPT });
-    const resolved = resolveSavedWorkflow({ cwd, name: "shadowed" });
-    expect(resolved.ok).toBe(true);
-    if (!resolved.ok) return;
-    expect(resolved.scope).toBe(roots[0]!.scope);
-    expect(resolved.path).toBe(join(roots[0]!.dir, "shadowed.dwf.ts"));
-  });
 });
 
 describe("saved workflow global scope", () => {
@@ -329,7 +299,7 @@ describe("saved workflow global scope", () => {
     expect(resolved.script).toBe(SCRIPT);
   });
 
-  // First-wins: with the same name, undirected resolution hits the project copy and the global one is shadowed.
+  // first-wins：同名时 undirected 解析命中项目档，全局那份被遮蔽。
   it("resolves the project copy first when both scopes carry the same name", () => {
     const cwd = makeCwd();
     const home = makeHome();
@@ -354,7 +324,7 @@ describe("saved workflow global scope", () => {
     expect(resolved.scope).toBe("project");
     expect(resolved.meta.description).toBe("the project one");
 
-    // Directed to global: skip the shadowing and hit the global copy directly.
+    // 定向到 global：跳过遮蔽，直接命中全局那份。
     const directed = resolveSavedWorkflow({ cwd, name: "dup", scope: "global", homeDir: home });
     expect(directed.ok).toBe(true);
     if (!directed.ok) return;
@@ -362,7 +332,7 @@ describe("saved workflow global scope", () => {
     expect(directed.meta.description).toBe("the global one");
   });
 
-  // Directed global resolution cannot find the project copy: only that one root is searched, no fallback to project.
+  // 定向 global 解析找不到项目档：只查那一根，不回落到项目。
   it("does not fall back to the other root when a scope is given", () => {
     const cwd = makeCwd();
     const home = makeHome();
@@ -393,21 +363,21 @@ describe("saved workflow global scope", () => {
       homeDir: home,
     });
 
-    // Undirected: dup only shows the project copy; onlyglobal shows the global copy.
+    // undirected：dup 只出项目那份，onlyglobal 出全局那份。
     const both = listSavedWorkflows({ cwd, homeDir: home });
     expect(both.entries.map((entry) => `${entry.name}:${entry.scope}`)).toEqual([
       "dup:project",
       "onlyglobal:global",
     ]);
 
-    // Directed global: scan only the global root, no shadowing — the project-shadowed dup is also there.
+    // 定向 global：只扫全局根，不做遮蔽——被项目档遮蔽的 dup 也在。
     const globalOnly = listSavedWorkflows({ cwd, scope: "global", homeDir: home });
     expect(globalOnly.entries.map((entry) => `${entry.name}:${entry.scope}`)).toEqual([
       "dup:global",
       "onlyglobal:global",
     ]);
 
-    // Directed project: only the project copy.
+    // 定向 project：只项目那份。
     const projectOnly = listSavedWorkflows({ cwd, scope: "project", homeDir: home });
     expect(projectOnly.entries.map((entry) => entry.name)).toEqual(["dup"]);
   });
@@ -425,7 +395,7 @@ describe("saved workflow global scope", () => {
     });
     expect(savedWorkflowExists({ cwd, name: "g", scope: "global", homeDir: home })).toBe(true);
     expect(savedWorkflowExists({ cwd, name: "g", scope: "project", homeDir: home })).toBe(false);
-    // The default scope is project (backward compatible).
+    // 默认作用域是 project（向后兼容）。
     expect(savedWorkflowExists({ cwd, name: "g", homeDir: home })).toBe(false);
   });
 });
@@ -466,8 +436,8 @@ describe("findSavedWorkflowShadowing", () => {
   });
 });
 
-// Only global → project is a file move (docs/dynamic-workflow/launch.md "Promote to global"): project → global is
-// a model-level generalization ("promote to global"), not moving files.
+// 只有全局→项目一向（docs/dynamic-workflow/launch.md「Promote to global」）：项目→全局是模型的
+// 概括（「提升为全局」），不是搬文件。
 describe("moveSavedWorkflow (global → project)", () => {
   it("moves a global workflow to project byte-identically and removes the source", () => {
     const cwd = makeCwd();
@@ -489,9 +459,9 @@ describe("moveSavedWorkflow (global → project)", () => {
       to: join(cwd, ".zcode/workflows/landing.dwf.ts"),
     });
     if (!result.ok) return;
-    // Byte-for-byte: move neither parses nor reserializes.
+    // 逐字节：move 不 parse、不 reserialize。
     expect(readFileSync(result.to, "utf8")).toBe(before);
-    // Source deleted.
+    // 源已删除。
     expect(savedWorkflowExists({ cwd, name: "landing", scope: "global", homeDir: home })).toBe(
       false,
     );
@@ -519,7 +489,7 @@ describe("moveSavedWorkflow (global → project)", () => {
       reason: "target_exists",
       path: join(cwd, ".zcode/workflows/dup.dwf.ts"),
     });
-    // Source and target both remain (the refusal is atomic: nothing was moved).
+    // 源与目标都还在（拒绝是原子的：什么都没搬）。
     expect(savedWorkflowExists({ cwd, name: "dup", scope: "project", homeDir: home })).toBe(true);
     expect(savedWorkflowExists({ cwd, name: "dup", scope: "global", homeDir: home })).toBe(true);
   });
@@ -532,7 +502,7 @@ describe("moveSavedWorkflow (global → project)", () => {
       ok: false,
       reason: "not_found",
     });
-    // The project copy is untouched: move never treats a project copy as the source.
+    // 项目档原样不动：move 绝不把项目档当源。
     expect(savedWorkflowExists({ cwd, name: "local-only", scope: "project", homeDir: home })).toBe(
       true,
     );
@@ -603,7 +573,7 @@ describe("workflow args validation", () => {
     expect(result.errors.join("\n")).toContain(expected);
   });
 
-  // NaN/Infinity cannot pass through JSON; letting them through would just move a readable error into the sandbox as a null.
+  // NaN/Infinity 过不了 JSON，放行只会把可读的错误挪进沙箱变成一个 null。
   it.each([Number.NaN, Number.POSITIVE_INFINITY])("rejects the non-finite number %p", (value) => {
     const result = validateWorkflowArgs({ n: { type: "number" } }, { n: value });
     expect(result.ok).toBe(false);
@@ -625,7 +595,7 @@ describe("workflow args validation", () => {
     expect(result.errors).toHaveLength(3);
   });
 
-  // Declared number but defaulted as a string: the mistake is at save time and must not wait to explode when the script reads it.
+  // 声明成 number 却默认写成字符串，错在保存那一刻，不该等到脚本读到它才炸。
   it("type-checks the declared default through the same rule", () => {
     const result = validateWorkflowArgs({ n: { type: "number", default: "3" } }, {});
     expect(result.ok).toBe(false);

@@ -1,4 +1,5 @@
 import type { AgentRuntimeInternal } from "../internal.js";
+import { getOffPeakExecution } from "../off-peak/runtime.js";
 
 /**
  * Register runtime-owned work that outlives the current synchronous call stack.
@@ -20,6 +21,7 @@ export function trackResidencyBlockingWork<T>(
 /** The session residency pool consumes only this count, so adding a sidecar no longer requires changing a guessed list in bootstrap. */
 export function hasResidencyBlockingWork(this: AgentRuntimeInternal): boolean {
   return (
+    getOffPeakExecution(this)?.lifecycle.terminal === false ||
     this.hasActiveOrQueuedTurnWork() ||
     this.hasRunningBackgroundTasks() ||
     this.residencyBlockingWorkCount > 0 ||

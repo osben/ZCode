@@ -55,6 +55,7 @@ import type { resolveWorkspaceGitBranch } from "./tui-workspace-git.js";
 export type BootstrapModule = typeof import("@zcode/bootstrap");
 
 export interface RunDependencies extends PluginsCommandOverrides {
+  migrateStorage?: () => Promise<import("@zcode/shared/sqlite-migrations").MigrationResult>;
   protocolLifecycle?: RunZCodeProtocolAgentOptions["lifecycle"];
   protocolInput?: NodeJS.ReadableStream;
   createManagedCdpBrowserRuntime?: (
@@ -103,8 +104,8 @@ export interface RunDependencies extends PluginsCommandOverrides {
   loadCustomCommand?: (
     options: InspectZCodeCustomCommandOptions,
   ) => ReturnType<typeof loadZCodeCustomCommand>;
-  // Headless slash routing must use the same reserved-name gate as the app facade; default to bootstrap's implementation.
-  // The injection point lets unit tests avoid loading the entire bootstrap module. See prompt-command.ts.
+  // headless slash 路由要和 app facade 的保留名 gate 用同一个判据；默认取 bootstrap 的，
+  // 注入点只为让单测不必拉起整个 bootstrap 模块。见 prompt-command.ts。
   isReservedSlashCommandName?: BootstrapModule["isReservedZCodeSlashCommandName"];
   listSkills?: (options: ListZCodeSkillsOptions) => ReturnType<typeof listZCodeSkills>;
   logger?: Logger;

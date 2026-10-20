@@ -21,6 +21,7 @@ import type {
 } from "../session/zcodeTaskListTypes.js";
 
 export type WindowHostControllerMutation =
+  | { kind: "rename"; title: string }
   | { kind: "pin"; pinned: boolean }
   | { kind: "archive"; archived: boolean }
   | { kind: "delete" }
@@ -31,6 +32,8 @@ export type WindowHostControllerMutation =
   | { kind: "resume" };
 
 export type WindowHostControllerTaskListItem = ZCodeTaskListItem & {
+  sourceServerId?: string;
+  serverDisplayName?: string;
   remoteSessionId?: string;
   sourceAvailability: "online" | "offline";
   liveStatus: WindowHostControllerTaskRow["liveStatus"];
@@ -49,6 +52,13 @@ export type WindowHostControllerFrame =
   | WindowHostControllerTaskFrame
   | WindowHostControllerWorkspaceFrame;
 
+/** 仅实时发送；列表快照与重同步不能重放一次完成提醒。 */
+export interface WindowHostTaskUnreadSignal {
+  address: WindowHostTaskAddress;
+  updatedAt: number;
+  status: "completed" | "error";
+}
+
 /**
  * The window-level Controller service carries only list projections and cross-source routing.
  * conversation/file/git/terminal are still provided by the scoped facade for each attachment.
@@ -60,6 +70,8 @@ export interface IWindowControllerService {
     taskIds: string[];
   }): Promise<ZCodeArchivedTaskDeletionResult>;
   listTaskList(params: ZCodeTaskListQuery): Promise<WindowHostControllerTaskListResult>;
+  /** 直接读取所属 owner 的轻量 meta；未读 CAS 不得使用可能降级为旧快照的列表投影。 */
+  getTaskMeta(params: { address: WindowHostTaskAddress }): Promise<ZCodeTaskMeta | null>;
   mutateTask(params: {
     address: WindowHostTaskAddress;
     mutation: WindowHostControllerMutation;
@@ -68,6 +80,7 @@ export interface IWindowControllerService {
   resyncControllerV4(params: ControllerResyncParams): Promise<ControllerResyncResult>;
   unsubscribeControllerV4(params: ControllerUnsubscribeParams): Promise<void>;
   onDynamicControllerFrame(): Event<WindowHostControllerFrame>;
+  onDynamicTaskUnreadSignal(): Event<WindowHostTaskUnreadSignal>;
 }
 
 export const IWindowControllerService = createServiceDescriptor<IWindowControllerService>(

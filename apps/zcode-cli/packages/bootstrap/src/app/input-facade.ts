@@ -17,6 +17,7 @@ import {
   projectInputHistoryAttachments,
 } from "./prompt-input.js";
 import type { PrepareUserExecutionBoundary, SubmitPromptOptions, ZCodeApp } from "./types.js";
+import type { CliDefaultSelection } from "./cli-default-selection.js";
 
 type InputFacade = Pick<
   ZCodeApp,
@@ -40,6 +41,7 @@ type InputFacade = Pick<
 >;
 
 interface CreateInputFacadeDeps {
+  cliDefaultSelection?: CliDefaultSelection;
   artifactStore?: ToolArtifactStorePort;
   customCommandPromptResolver?: (
     text: string,
@@ -165,8 +167,8 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
         ? deps.runtime.subscribeEvents({ onSessionEvent: options.onEvent })
         : undefined;
       try {
-        // Cold resume may trigger SessionStart Hook review inside the prepare boundary. Subscribe first,
-        // or ReviewRequested may arrive before the subscription and Dual ACK will never receive release authority.
+        // cold resume 会在 prepare boundary 内触发 SessionStart Hook review。必须先订阅，
+        // 否则 ReviewRequested 发生在订阅窗口之前，Dual ACK 永远拿不到释放 authority。
         await preparePromptBoundary(options);
         return await deps.runtime.continueActiveTargetLoop({
           abortSignal: options?.abortSignal,
@@ -197,21 +199,22 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
         options?.onEvent || options?.onTurnStartedObserved
           ? deps.runtime.subscribeEvents({
               onSessionEvent: async (event) => {
-                await options.onEvent?.(event);
+                await options?.onEvent?.(event);
                 if (
                   event.type === SessionEventType.TurnStarted &&
-                  (event.payload as { inputId?: unknown }).inputId === options.inputId
+                  (event.payload as { inputId?: unknown }).inputId === options?.inputId
                 ) {
-                  // TurnStarted is used only for later correlation; admission ACK does not wait for the projection commit.
-                  options.onTurnStartedObserved?.(event);
+                  // TurnStarted 只用于后续关联；admission ACK 不等待 projection commit。
+                  options?.onTurnStartedObserved?.(event);
                 }
               },
             })
           : undefined;
       try {
-        // Resume review belongs to this prompt lifecycle, so keep the subscription across the prepare boundary. Core admission
-        // performs start/queue in the same session runtime; do not branch here by reading activeTurn.
+        // resume review 属于本次 prompt 生命周期，订阅覆盖 prepare boundary；Core admission
+        // 在同一个 session runtime 内完成 start/queue，不在这里读取 activeTurn 做分叉。
         await preparePromptBoundary(options);
+        options = deps.cliDefaultSelection?.prepareInput(options) ?? options;
         const prepared = await prepareRuntimePrompt(promptInput, options);
         const result = await deps.runtime.admitPrompt(prepared.input, prepared.storedAttachments, {
           ...options,
@@ -249,6 +252,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       }
     },
     enqueueDeferredInput: async (input, options) => {
+      options = deps.cliDefaultSelection?.prepareInput(options) ?? options;
       const result = await deps.runtime.enqueueDeferredInput({
         input,
         inputPresentation: "user_steer",
@@ -272,6 +276,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       return result;
     },
     steerTurn: async (input, options) => {
+      options = deps.cliDefaultSelection?.prepareInput(options) ?? options;
       const unsubscribe = options?.onEvent
         ? deps.runtime.subscribeEvents({ onSessionEvent: options.onEvent })
         : undefined;
@@ -303,7 +308,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       }
     },
     removeQueueItem: async (pendingInputId, options) => {
-      // v4 queue item removal: bridge the v4 command to removal of one pending input in the runtime.
+      // v4 queue 单项删除：把 v4 命令桥到 runtime 单项 pending-input 移除。
       return deps.runtime.removePendingInputById({
         pendingInputId,
         reason: options?.reason ?? "user_removed",
@@ -330,7 +335,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
         traceContext: options?.traceContext ?? deps.traceContext,
       }),
     editQueueItem: async (pendingInputId, newText, options) => {
-      // v4 queue item edit: replace queued input text (the reducer updates the same ID in place, preserving its position).
+      // v4 queue 单项编辑：替换排队输入文本（reducer 同 id 原地更新，保位）。
       return deps.runtime.editPendingInputById({
         pendingInputId,
         newText,
@@ -338,7 +343,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       });
     },
     reorderQueueItem: async (pendingInputId, beforePendingInputId, options) => {
-      // v4 queue reorder: move a queued item before the anchor (null = end of queue).
+      // v4 queue 重排：移动排队项到锚点前（null=队尾）。
       return deps.runtime.reorderPendingInput({
         pendingInputId,
         beforePendingInputId,
@@ -346,11 +351,11 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       });
     },
     clearQueueItems: async (options) => {
-      // v4 clearQueueAndSend: clear in-memory items from the active turn and any held projection remnants.
+      // v4 clearQueueAndSend：清空 active turn 内存项 + held 投影残留。
       return deps.runtime.clearAllPendingInputs(options?.traceContext ?? deps.traceContext);
     },
     setQueueAutoDrain: async (autoDrain, options) => {
-      // v4 setAutoDrain: toggle the queue autoDrain authorization flag (session-level config event).
+      // v4 setAutoDrain：翻转 queue autoDrain 授权位（会话级配置事件）。
       await deps.runtime.setQueueAutoDrain({
         autoDrain,
         traceContext: options?.traceContext ?? deps.traceContext,
@@ -360,7 +365,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
       deps.runtime.completeExternalQueueDrain();
     },
     setFollowupMode: async (mode, options) => {
-      // v4 setFollowupMode: toggle followup routing mode (queue/guide).
+      // v4 setFollowupMode：翻转 followup 路由模式（queue/guide）。
       await deps.runtime.setFollowupMode({
         mode,
         traceContext: options?.traceContext ?? deps.traceContext,
@@ -373,6 +378,7 @@ export function createInputFacade(deps: CreateInputFacadeDeps): InputFacade {
         : undefined;
       try {
         await preparePromptBoundary(options);
+        options = deps.cliDefaultSelection?.prepareInput(options) ?? options;
         return await runPromptTurn(promptInput, options);
       } finally {
         unsubscribe?.();

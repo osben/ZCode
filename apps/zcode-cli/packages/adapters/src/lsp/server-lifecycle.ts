@@ -19,6 +19,7 @@ import {
 } from "./command-resolution.js";
 import type { TraceContext } from "@zcode/contracts";
 import { traceLogFields, type LspServerEntry } from "./server-entry.js";
+import { JsonRpcResponseError } from "./json-rpc.js";
 import { LspServerConnection } from "./server-connection.js";
 import {
   LspServerProcess,
@@ -252,12 +253,15 @@ function failProcess(
     });
     deps.emit({ type: "crashed", serverId: proc.server.id, key: entry.key });
   } else {
+    // The server's own message can contain workspace paths, so only its numeric code is logged.
+    const rpcCode = error.cause instanceof JsonRpcResponseError ? error.cause.code : undefined;
     deps.logger.warn("LSP server failed to start", {
       event: "adapters.lsp.start_failed",
       ...traceLogFields(entry.traceContext),
       serverId: proc.server.id,
       pid: proc.pid,
       code: error.code,
+      ...(rpcCode === undefined ? {} : { rpcCode }),
     });
   }
   proc.terminate().catch((killError: unknown) => {

@@ -1,7 +1,7 @@
-// tui-prompt-handler.ts reached oxlint's max-lines limit (400 lines), so the process-level
-// setup from createApp—read dotenv → find the session to resume → load bootstrap modules
-// → start the persistent Provider Registry runtime → read the default model selection—
-// was moved here. Keep exporting it from tui-prompt-handler.ts.
+// tui-prompt-handler.ts 顶到 oxlint max-lines 上限（400 行），把 createApp 里
+// 「读 dotenv → 定位要恢复的会话 → 装 bootstrap 模块 → 起 Provider Registry
+// 常驻运行时 → 读默认模型选择」这段进程级准备拆到本文件；
+// 公开面仍从 tui-prompt-handler.ts 导出。
 import type { ZCodeAppOptions } from "@zcode/bootstrap";
 import { loadBootstrapModule } from "./bootstrap-loader.js";
 import { loadCliDotenv } from "./env.js";
@@ -13,10 +13,8 @@ type ProviderRegistryRuntime = Awaited<
   ReturnType<NonNullable<RunDependencies["startProcessProviderRegistryRuntime"]>>
 >;
 
-// Process-level handles reused across App replacements (/new, /resume, /fork): create
-// them once for the lifetime of the Prompt Handler and shut them down symmetrically only
-// on terminal close. Previously these were three let-bound closure variables inside
-// createTuiSubmitPrompt.
+// 跨 App 替换（/new、/resume、/fork）复用的进程级句柄：整个 Prompt Handler 生命期只起一份，
+// 只在终态 close 时对称 shutdown。之前是 createTuiSubmitPrompt 里的三个 let 闭包变量。
 interface TuiProcessRuntimeState {
   providerEndpointRoutingPort: ZCodeAppOptions["providerEndpointRoutingPort"];
   providerRegistryRuntimePromise: Promise<ProviderRegistryRuntime> | undefined;
@@ -29,9 +27,8 @@ export const createTuiProcessRuntimeState = (): TuiProcessRuntimeState => ({
   shutdownTelemetry: undefined,
 });
 
-// Let the return type be inferred: in the original createApp these were inferred local
-// variables, and a handwritten interface could incorrectly narrow branded types
-// (SessionId) and createZCodeApp's union signature.
+// 返回值类型交给推断：原地 createApp 里这几个都是推断出来的局部变量，手写接口反而会把
+// 品牌类型（SessionId）和 createZCodeApp 的联合签名收窄错。
 export async function prepareTuiAppRuntime(
   deps: RunDependencies,
   version: string,

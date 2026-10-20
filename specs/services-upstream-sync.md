@@ -35,7 +35,33 @@ Status: in progress, part of the upstream 3.16.1 sync series. Base `aac47556` (v
 - `task-groups` repository: unwired. Nothing in the live runtime imports `task-groups/repository.ts`. It becomes live with the UI sidebar PR, where the grouped view switches to this owner. Until then the fork grouped view (`taskIndexRepo` group parts, `zcodeTaskListTypes.ts`, `zcodeTaskService*`, index exports, `zcodeGroupedTaskView*` tests) stays on the fork owner and is deferred.
 - `startup-storage/` and `project-storage/startup-entry.ts`: added, not wired. No consumer. The fork `project-storage/startup.ts` (`prepareTasksIndexStorage`) stays the only live barrier.
 
-## Deferred (not in 8b yet)
+## Status after PR 8c (#204)
+
+Merged in 8c (each file compiled before its commit):
+
+- `oauth/oauthService.ts`, `oauth/repo/oauthCredentialRepo.ts`: upstream `loadCachedSessionTokens` and `onDidChangeSession` are in, with corrupt-credential cleanup. Startup restore reads only the shared zcode JWT. The fork test "does not send zai token to BigModel when migration token load races with provider switch" pins this. Upstream's business-JWT expiry check is deferred for that reason.
+- `window-controller/windowController.ts`, `windowHostControllerService.ts`: `getTaskMeta` (projection-backed; owner-direct read deferred) and `onDynamicTaskUnreadSignal` (live emitter with no producer; the producer belongs to the UI sidebar PR).
+- `zcode-agent/runtimeCapabilitySupport.ts` is the single owner of execution-endpoint capability checks. The fork deleted `zcode-agent/independentPlanSupport.ts`, and it stays deleted. Upstream's `supportsHistoryFirst` is ported here, with tests in `runtimeCapabilitySupport.test.ts`.
+- `zcode-agent/zcodeAgent.ts` (contract): upstream `retryInitialization` and `reconcileSessionsIndexV4?` are added. `onDynamicOffPeakLifecycle?`, `controlOffPeakExecutionV4?` and `onDynamicPluginUiToolResult?` are optional until the desktop consumer is synced. `includeArchived` is kept, because fork archive repair and deletion use it.
+- `zcode-agent/zcodeAgentService.ts`: upstream account-config delivery (receipt bookkeeping) and the historyFirst subscribe field are taken. The fork keeps dynamic-workflow forwarding, the V4 createSession warmup gate (only Account Config is awaited; the Worker assembles its own registry), the automation `syncTaskMeta` path, and the single-argument `AutomationService`. The upstream `provider/refreshRegistry` call sites are removed, because the fork test suite pins that the createSession path sends no refresh request.
+
+Deferred in 8c (kept at fork HEAD):
+
+- `zcode-agent/zcodeTaskServiceAdapter.ts`, `zcode-agent/zcodeTaskIndexSyncer.ts`: upstream moves task-state writes to the `task-facts` owner (`createTaskFacts`, `mutateSessionFacts`). The fork keeps its own overlay, deletion, unread-CAS and grouped-sort writes. The three-way merge has 36 conflict hunks. Two owners for the same writes is what AGENTS.md forbids, so the owner must be decided first.
+- `bots/botsService.ts`: upstream project binding needs `BotsRepo.updateContext` (botsRepo, not yet merged) and the runtime-preference type. Fork `/remote` and `BotsServiceDeps` stay as they are. The `botRemote*` deletions are not applied.
+- `packages/server/src/http.ts`: upstream removes the web-mode `/api/connect-remote` and `/ws/remote/:id` routes (R3 attachment fix). That is a product removal and needs a decision; the fork keeps the routes for now. Upstream also wires `workspaceIdentityMapper` and `serverId` from options, which needs the 8b standalone host to reach server-cli.
+- `session/taskIndexRepo.ts`: non-group hunks. The upstream constructor is `(migrationSettings, storageHostId, startupDbPath, busyTimeout)`, and the fork's is `(startupDbPath, busyTimeout)`. Upstream deletes group imports that the fork's group code still uses, and the hunks are intertwined, so no safe per-hunk split exists yet.
+- Upstream `independentPlanSupport.ts`: not restored (see above).
+- `projectId` on `createAutomation` and `prepareProjectExecution` on `AutomationService`: upstream project binding for automations, deferred with the project PR.
+
+### Coordinator decisions applied after 8c (recorded for the next PR)
+
+- Task-state single writer: the fork `zcodeTask*` path stays the only writer. Upstream `task-facts` (`createTaskFacts`, `mutateSessionFacts`) stays unwired until the UI sidebar PR. `zcodeTaskServiceAdapter.ts` and `zcodeTaskIndexSyncer.ts` remain at fork HEAD in 8c, because the three-way merge is not a clean non-ownership subset.
+- `packages/server/src/http.ts`: `/api/connect-remote` and `/ws/remote/:id` are kept (fork remote features and bots `/remote` depend on them; `specs/bot-remote-command.md`). Remaining upstream hunks are not in 8c: one wires `workspaceIdentityMapper` from the standalone host, one takes `serverId` from options. Both need the server-cli wiring, so the hand merge and the fork-route test are the next PR's work.
+- `session/taskIndexRepo.ts` non-group hunks: deferred to the UI sidebar PR, together with the grouped view they depend on.
+- `bots/botsService.ts`: `BotsRepo.updateContext` and the project binding are not added in 8c. `botsRepo` is not merged, and the project binding needs the project runtime wiring. Fork `/remote` is unchanged. The next PR adds these as optional deps and must keep `specs/bot-remote-command.md` tests passing.
+
+## Deferred from 8b (historical; superseded by the 8c status above where they overlap)
 
 Each file below keeps its fork HEAD version. A fork-wins three-way merge was tried and rejected: upstream deletions of lines the fork still uses left files syntactically broken or referring to missing members. The remaining work needs per-hunk review.
 

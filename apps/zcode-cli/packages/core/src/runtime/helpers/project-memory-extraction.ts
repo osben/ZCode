@@ -10,7 +10,7 @@ import { scanMemoryManifest } from "../../memory/recall/index.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
-  buildProjectMemoryAgentProviderMessages,
+  prepareProjectMemoryAgentRequest,
   captureProjectMemoryAgentContext,
   createProjectMemoryAgentToolExecutor,
   recordProjectMemoryAgentModelUsageFact,
@@ -141,11 +141,7 @@ async function executeProjectMemoryExtraction(
         messageCount: input.messageCount,
         override: resolveMainAgentSystemPromptOverrides(runtime.config)?.["memory-extraction"],
       });
-      const providerMessages = buildProjectMemoryAgentProviderMessages(
-        runtime,
-        input.snapshot,
-        prompt,
-      );
+      const request = prepareProjectMemoryAgentRequest(input.snapshot, prompt);
       const executor = createProjectMemoryAgentToolExecutor(runtime, input.snapshot);
 
       await runMemoryAgentLoop({
@@ -156,7 +152,6 @@ async function executeProjectMemoryExtraction(
             traceContext: input.snapshot.traceContext,
           }),
         maxTurns: EXTRACTION_MAX_TURNS,
-        messages: providerMessages,
         onRequestSettled: (request) =>
           recordProjectMemoryAgentModelUsageFact(
             runtime,
@@ -164,9 +159,9 @@ async function executeProjectMemoryExtraction(
             request,
             "project_memory_extract",
           ),
+        request,
         model: input.snapshot.model,
         rootDir: input.snapshot.memoryRoot,
-        tools: input.snapshot.tools,
         workingDirectory: input.snapshot.workingDirectory,
         workspaceRoot: input.snapshot.workspaceRoot,
       });

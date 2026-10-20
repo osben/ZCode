@@ -7,7 +7,29 @@ import {
 import {
   ensureIncognitoSupport,
   ensureIndependentPlanSupport,
+  supportsHistoryFirst,
 } from "../src/zcode-agent/runtimeCapabilitySupport.js";
+
+describe("historyFirst execution-endpoint capability", () => {
+  it("forwards history-first only when the CLI advertises it, sharing one capability read", async () => {
+    const client = {
+      request: vi.fn().mockResolvedValue({ historyFirst: true, independentPlanState: true }),
+    };
+    await expect(supportsHistoryFirst(client as never)).resolves.toBe(true);
+    await expect(ensureIndependentPlanSupport(client as never)).resolves.toBeUndefined();
+    expect(client.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers false for a CLI without the flag and for a failed capability read", async () => {
+    const stale = { request: vi.fn().mockResolvedValue({ independentPlanState: true }) };
+    await expect(supportsHistoryFirst(stale as never)).resolves.toBe(false);
+    const broken = { request: vi.fn().mockRejectedValue(new Error("Method not found")) };
+    await expect(supportsHistoryFirst(broken as never)).resolves.toBe(false);
+    // A failed read is not cached: the next check asks the CLI again.
+    broken.request.mockResolvedValueOnce({ historyFirst: true });
+    await expect(supportsHistoryFirst(broken as never)).resolves.toBe(true);
+  });
+});
 
 describe("独立 Plan 执行端能力", () => {
   it("复用同一 CLI 的成功检查，重建 CLI 后重新检查", async () => {
