@@ -82,18 +82,14 @@ describe("external relay QR helpers", () => {
   it("builds an encoded web remote control QR URL without theme params", () => {
     expect(
       buildWebRemoteControlExternalQrUrl({
-        baseUrl: "https://zcode.z.ai/remote",
+        baseUrl: "https://zcode.z.ai/remote?hash=stale&t=1",
         deviceSid: "sid-1",
-        passHash: "hash+with/slash=",
-        timestamp: 1710000000000,
         deviceMid: "mid-1",
         deviceName: "MacBook",
         appVersion: "1.5.0",
         theme: "zai-dark",
       }),
-    ).toBe(
-      "https://zcode.z.ai/remote?sid=sid-1&hash=hash%2Bwith%2Fslash%3D&t=1710000000000&mid=mid-1&name=MacBook&app_version=1.5.0",
-    );
+    ).toBe("https://zcode.z.ai/remote?sid=sid-1&mid=mid-1&name=MacBook&app_version=1.5.0");
   });
 
   it("parses required external relay QR params", () => {

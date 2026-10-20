@@ -166,7 +166,12 @@ export interface WebRemoteControlExternalQrParams {
   theme?: WebRemoteControlThemeSeed;
 }
 
-export interface BuildWebRemoteControlExternalQrUrlOptions extends WebRemoteControlExternalQrParams {
+// V2 QR codes carry routing hints only (sid, mid, name, app_version). A credential (hash) or
+// timestamp (t) is never part of a QR code, so those fields are not accepted here.
+export interface BuildWebRemoteControlExternalQrUrlOptions extends Omit<
+  WebRemoteControlExternalQrParams,
+  "passHash" | "timestamp"
+> {
   baseUrl: string;
 }
 
@@ -213,8 +218,6 @@ export function matchesWebRemoteControlRoutePath(pathname: string, routePath: st
 export function buildWebRemoteControlExternalQrUrl({
   baseUrl,
   deviceSid,
-  passHash,
-  timestamp,
   deviceMid,
   deviceName,
   appVersion,
@@ -222,8 +225,9 @@ export function buildWebRemoteControlExternalQrUrl({
 }: BuildWebRemoteControlExternalQrUrlOptions): string {
   const url = new URL(baseUrl);
   url.searchParams.set("sid", deviceSid);
-  url.searchParams.set("hash", passHash);
-  url.searchParams.set("t", String(timestamp));
+  // Stale credentials from a base URL must never carry into a new QR code.
+  url.searchParams.delete("hash");
+  url.searchParams.delete("t");
 
   if (deviceMid?.trim()) {
     url.searchParams.set("mid", deviceMid);
@@ -343,7 +347,7 @@ export interface WebRemoteControlStatus {
   mobileConnected?: boolean;
   mobileViewState?: WebRemoteControlMobileViewState;
   // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional and unused by the fork v1 path.
-  mobileTaskView?: WebRemoteControlMobileTaskView;
+  mobileTaskView?: WebRemoteControlMobileTaskView | null;
   mobileDeviceInfo?: WebRemoteControlMobileDeviceInfo;
   qrUrl?: string;
   connectUrl?: string;
@@ -353,6 +357,8 @@ export interface WebRemoteControlStatus {
   initialTaskId?: string;
   error?: string;
   failure?: WebRemoteControlFailure;
+  /** Pre-V2 pairing was discarded for this run; every phone must scan the new QR code to pair again. */
+  repairRequired?: boolean;
 }
 
 export interface WebRemoteControlSessionCreateRequest {
@@ -480,6 +486,8 @@ export interface WebRemoteControlExternalRemoteWorkspaceBridge {
   workspaceIdentity: string;
   remoteSessionId: string;
   initialTaskId?: string;
+  /** Older desktops omit this; clients must not infer capabilities from the presence of a proxy. */
+  capabilities?: { windowProjectDirectory?: true };
 }
 
 export type WebRemoteControlExternalWorkspaceBridge =
@@ -523,6 +531,24 @@ export interface WebRemoteControlWorkspaceBridgeOpenPayload {
   recoveryId?: string;
   workspaceKey: string;
   taskId?: string;
+  project?: { projectId: string | null; hostId?: string; draftId?: string; reuseDraft?: boolean };
+  taskHostId?: string;
+  /** Resolves only the task directory for the file tree; it does not select the task or mark it read. */
+  fileTreeTaskId?: string;
+}
+
+export interface WebRemoteControlMobileTaskViewUpdatePayload {
+  zcode_type: "mobile-task-view-update";
+  epoch: string;
+  seq: number;
+  bridgeSessionId: string;
+  bridgeGeneration?: number;
+  view: WebRemoteControlMobileTaskView | null;
+}
+
+export interface WebRemoteControlMobileTaskViewRequestPayload {
+  zcode_type: "mobile-task-view-request";
+  epoch: string;
 }
 
 export interface WebRemoteControlWorkspaceBridgeReadyPayload {
@@ -638,7 +664,12 @@ export interface WebRemoteControlBridgeDegradedPayload {
   bridgeSessionId: string;
   bridgeGeneration?: number;
   recoveryId?: string;
-  reason: "rpc-transport-fault" | "rpc-frame-gap" | "buffer-overflow" | "buffer-timeout";
+  reason:
+    | "rpc-transport-fault"
+    | "rpc-frame-gap"
+    | "buffer-overflow"
+    | "buffer-timeout"
+    | "source-session-replaced";
   seq?: number;
   expectedSeq?: number;
   droppedCount?: number;
@@ -693,6 +724,8 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlWorkspaceReconnectResponsePayload
   | WebRemoteControlWorkspaceOpenRequestPayload
   | WebRemoteControlWorkspaceOpenResponsePayload
+  | WebRemoteControlMobileTaskViewUpdatePayload
+  | WebRemoteControlMobileTaskViewRequestPayload
   | WebRemoteControlMobileViewStatePayload
   | WebRemoteControlPlatformRequestPayload
   | WebRemoteControlPlatformResponsePayload
@@ -832,6 +865,8 @@ export interface WebRemoteControlWindowBootstrapResult {
   tasks: WebRemoteControlTaskTarget[];
   initialViewState?: WebRemoteControlMobileViewState;
   mobileViewState?: WebRemoteControlMobileViewState;
+  /** Provided by new desktops only; bootstrap backfills a re-declaration request missed at pairing time and cannot restore a visible task. */
+  mobileTaskViewEpoch?: string;
 }
 
 export interface WebRemoteControlWindowControlReadyEvent {

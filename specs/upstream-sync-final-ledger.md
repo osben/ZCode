@@ -540,3 +540,17 @@ The four bots files (18 tests) need the upstream bot workspace model end to end,
 - botsService.groups "preserves historical identity but does not offer tasks outside the current project execution scope" is the same project-scope filter.
 
 Recommendation recorded for the coordinator: decide whether the bot workspace id moves to `[hostId, projectId]` (upstream) or stays on the fork identity (`/remote`). Until then, `botsService.ts` is unchanged in this slice, so production bots behavior is unchanged. Production (`node.ts`) does not pass `projectService` to `createBotsService`, so the upstream bot path is test-only, as it was before this slice.
+
+### Relay v2 desktop client (S2, claude/relay-v2-desktop)
+
+Full design notes: `specs/relay-v2-migration.md` section 12. Ledger rows for this slice:
+
+- `packages/desktop/src/main/web-remote-relay/**`: taken from upstream 0a1fc56d (contract, device storage, V2 HTTP, WS transport, module, CONTRACT.md); CJK comments translated; new `webRemoteControlRelaySession.ts` (bearer exchange, spec 11.2).
+- `packages/desktop/src/main/webRemoteControlManager.ts`: upstream 0a1fc56d manager with the fork hunks re-applied (`openWorkspace` / `workspace-open-request`, bots `findLinkForWorkspace` on V2, `resetPairing` for the refresh QR, `repairRequired`, `relayBearer` seam). CJK comments translated. Upstream mobile task view behavior comes with it.
+- Removed V1 desktop files: `webRemoteControlTransport.ts`, `webRemoteControlRelayAuthProvider.ts`, `webRemoteControlRelayAuthStorageProvider.ts`. Removed V1 tests: `webRemoteControlRelayAuthProvider.test.ts`, `webRemoteControlRelayAuthStorageProvider.test.ts` (V1 HMAC proof and pass-hash storage; V2 has no proof).
+- Not ported: upstream `webRemoteControlAuthGateFixture.test.ts` (auth-gate fixture is web-client slice S3).
+- Intentional behavior changes (ledgered, fork tests replaced by V2 tests): `zcodeEndpoint` relay URL and callback values (ws2 and `/remote/v4`), QR without credentials, task-list sync removed (bootstrap `tasks: []`), relay HTTP on the relay origin.
+- Shared additions (additive): see spec 12 item 11; channel `ResetWebRemoteControlPairing` restored; `WebRemoteControlStatus.repairRequired`.
+- `packages/desktop/tsconfig.e2e.json`: the TEMPORARY(relay-decision) exclude is removed; the four relay-v2 e2e files compile.
+- `architecture-policy.yaml`: new managed module `desktop-web-remote-relay`.
+- `packages/remote-relay/test/clientCompatibility.test.ts` (1): removed. V1-only end-to-end test (desktop V1 transport and web V1 terminal transport against the V1 relay with HMAC proofs). Its subject is deleted by this slice; the S4 server PR adds V2 contract tests in its place.

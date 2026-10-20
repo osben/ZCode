@@ -2,11 +2,16 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AppSettings,
+  HostPreparedProjectWorkspace,
+  HostProjectWorkspaceNavigationInput,
   WebRemoteControlAppPayload,
-  WebRemoteControlTaskTarget,
   WebRemoteControlWorkspaceTarget,
 } from "@zcode/shared";
-import { buildZCodeEndpointUrls, encodeWebRemoteControlRpcTransportMessage } from "@zcode/shared";
+import {
+  parseWebRemoteControlAppPayload,
+  buildZCodeEndpointUrls,
+  encodeWebRemoteControlRpcTransportMessage,
+} from "@zcode/shared";
 import { createWebRemoteControlManager } from "../src/main/webRemoteControlManager.js";
 import { createWebRemoteControlFeatureGate } from "../src/main/webRemoteControlFeatureGate.js";
 
@@ -30,10 +35,8 @@ function createManagerHarness(options?: {
   featureEnabled?: boolean;
   delayReadyMs?: number;
   canSendPayload?: () => boolean;
-  storedAuth?: { deviceSid: string; passHash: string };
   startupRestoreContext?: NonNullable<AppSettings["webRemoteControlLastEnabledContext"]>;
   startupRestoreClearError?: Error;
-  registeredAuths?: Array<{ deviceSid: string; passHash: string }>;
   attachWorkspaceHost?: AttachWorkspaceHost;
   releaseWorkspaceHostAttachment?: (attachmentId: string) => void;
   disposeWorkspaceHostAttachmentsForWindow?: (windowId: number, reason: string) => void;
@@ -43,14 +46,20 @@ function createManagerHarness(options?: {
   ) => void;
   reconnectWorkspace?: (windowId: number, workspaceKey: string) => Promise<void>;
   openWorkspace?: Parameters<typeof createWebRemoteControlManager>[0]["openWorkspace"];
+  legacyPairingFound?: boolean;
+  platformHandlers?: Partial<
+    Parameters<typeof createWebRemoteControlManager>[0]["platformHandlers"]
+  >;
+  prepareProjectWorkspace?: (
+    windowId: number,
+    project: HostProjectWorkspaceNavigationInput,
+    requestId: string,
+  ) => Promise<HostPreparedProjectWorkspace>;
   onStatusChanged?: Parameters<typeof createWebRemoteControlManager>[0]["onStatusChanged"];
   getEndpointUrls?: Parameters<typeof createWebRemoteControlManager>[0]["getEndpointUrls"];
   reportRemoteUsageEvent?: Parameters<
     typeof createWebRemoteControlManager
   >[0]["reportRemoteUsageEvent"];
-  platformHandlers?: Partial<
-    Parameters<typeof createWebRemoteControlManager>[0]["platformHandlers"]
-  >;
 }) {
   const sentPayloads: WebRemoteControlAppPayload[] = [];
   const logger = {
@@ -59,7 +68,8 @@ function createManagerHarness(options?: {
     error: vi.fn(),
   };
   const settings: AppSettings = { recentProjects: [], locale: "zh-CN" };
-  let storedAuth = options?.storedAuth;
+  const endpointOrigin = async () =>
+    (await options?.getEndpointUrls?.())?.origin ?? "https://zcode.z.ai";
   let startupRestoreContext = options?.startupRestoreContext;
   let transportStartCount = 0;
   let deliverPayload: ((payload: WebRemoteControlAppPayload) => void) | undefined;
@@ -94,22 +104,17 @@ function createManagerHarness(options?: {
     deviceMid: "mid-1",
     deviceName: "MacBook",
     appVersion: "1.5.0",
-    authProvider: {
-      createPassword: () => "password",
-      createPassHash: () => "hash-1",
-      calculateProof: () => "proof",
-    },
-    authStorageProvider: {
-      load: async () => storedAuth,
-      save: async (auth) => {
-        storedAuth = auth;
-        settings.webRemoteControlExternalRelayDevice = { deviceSid: auth.deviceSid };
+    getLogin: async () => ({ userId: "user", jwt: "jwt" }),
+    deviceStorage: {
+      load: async () => ({
+        deviceSid: "sid-1",
+        userId: "user",
+        endpointOrigin: await endpointOrigin(),
+      }),
+      save: async (device) => {
+        settings.webRemoteControlRelayV2Device = device;
       },
-      clear: async () => {
-        storedAuth = undefined;
-        settings.webRemoteControlExternalRelayDevice = undefined;
-      },
-      rotate: async () => {},
+      clearLegacy: async () => options?.legacyPairingFound ?? false,
     },
     startupRestoreStorageProvider: {
       load: async () => startupRestoreContext,
@@ -138,10 +143,15 @@ function createManagerHarness(options?: {
         importedCount: 0,
         skippedCount: 0,
       }),
+      getInstalledEditors: async () => [],
+      openInEditor: async () => ({ success: true }),
+      openInFileManager: async () => ({ success: true }),
+      openExternalFile: async () => ({ success: true }),
       ...options?.platformHandlers,
     },
     reconnectWorkspace: options?.reconnectWorkspace ?? vi.fn(async () => undefined),
     openWorkspace: options?.openWorkspace ?? vi.fn(async () => undefined),
+    prepareProjectWorkspace: options?.prepareProjectWorkspace,
     reportRemoteUsageEvent,
     reportRendererTelemetryEvent,
     attachWorkspaceHost: options?.attachWorkspaceHost ?? defaultAttachWorkspaceHost,
@@ -154,22 +164,16 @@ function createManagerHarness(options?: {
         latestTransportOptions = transportOptions;
         transportStartCount += 1;
         emitTransportState = transportOptions.onStateChange;
-        const markReady = () => {
-          const registeredAuth = options?.registeredAuths?.[transportStartCount - 1] ?? {
-            deviceSid: "sid-1",
-            passHash: "hash-1",
-          };
+        const markReady = async () => {
+          await transportOptions.resolveDeviceSid(new AbortController().signal, false);
           deliverPayload = transportOptions.onPayload;
-          if (transportOptions.auth.mode === "register") {
-            transportOptions.onRegisteredAuth(registeredAuth);
-          }
           transportOptions.onStateChange("waiting_terminal");
         };
         if (options?.delayReadyMs !== undefined) {
           setTimeout(markReady, options.delayReadyMs);
           return;
         }
-        markReady();
+        void markReady();
       },
       sendPayload: (payload) => {
         if (options?.canSendPayload && !options.canSendPayload()) {
@@ -201,7 +205,6 @@ function createManagerHarness(options?: {
     reportRemoteUsageEvent,
     reportRendererTelemetryEvent,
     sentPayloads,
-    getStoredAuth: () => storedAuth,
     getStartupRestoreContext: () => startupRestoreContext,
     getLatestTransportOptions: () => latestTransportOptions,
     deliverPayload: (payload: WebRemoteControlAppPayload) => {
@@ -240,34 +243,6 @@ const remoteWorkspace: WebRemoteControlWorkspaceTarget = {
   connectionState: "connected",
 };
 
-function createTaskTarget(
-  overrides: Partial<WebRemoteControlTaskTarget> = {},
-): WebRemoteControlTaskTarget {
-  return {
-    taskId: "task-1",
-    title: "Task one",
-    workspacePath: localWorkspace.workspacePath,
-    workspaceLabel: localWorkspace.label,
-    workspaceKind: "local",
-    createdAt: 1,
-    updatedAt: 2,
-    displayStatus: "completed",
-    ...overrides,
-  };
-}
-
-async function createPrimedTaskSyncHarness(
-  taskOverrides: Partial<WebRemoteControlTaskTarget> = {},
-) {
-  const harness = createManagerHarness();
-  await harness.manager.start(1, { workspacePath: localWorkspace.workspacePath });
-  harness.manager.syncAvailableWorkspaces(1, [localWorkspace]);
-  const task = createTaskTarget(taskOverrides);
-  harness.manager.syncAvailableTasks(1, [task]);
-  harness.sentPayloads.length = 0;
-  return { ...harness, task };
-}
-
 async function createPrimedWorkspaceSyncHarness(
   workspaceOverrides: Partial<WebRemoteControlWorkspaceTarget> = {},
 ) {
@@ -277,23 +252,6 @@ async function createPrimedWorkspaceSyncHarness(
   harness.manager.syncAvailableWorkspaces(1, [workspace]);
   harness.sentPayloads.length = 0;
   return { ...harness, workspace };
-}
-
-async function createPrimedRemoteTaskSyncHarness(
-  taskOverrides: Partial<WebRemoteControlTaskTarget> = {},
-) {
-  const harness = await createPrimedWorkspaceSyncHarness();
-  const task = createTaskTarget({
-    workspacePath: remoteWorkspace.workspacePath,
-    workspaceIdentity: remoteWorkspace.workspaceIdentity,
-    remoteSessionId: remoteWorkspace.remoteSessionId,
-    workspaceLabel: remoteWorkspace.label,
-    workspaceKind: "remote",
-    ...taskOverrides,
-  });
-  harness.manager.syncAvailableTasks(1, [task]);
-  harness.sentPayloads.length = 0;
-  return { ...harness, task };
 }
 
 describe("createWebRemoteControlManager external relay", () => {
@@ -315,7 +273,7 @@ describe("createWebRemoteControlManager external relay", () => {
     vi.useRealTimers();
   });
 
-  it("授权票据绑定窗口与工作区，并且只能消费一次", async () => {
+  it("an authorization ticket binds the window and workspace and can be consumed only once", async () => {
     const { manager } = createManagerHarness();
     const context = { workspacePath: localWorkspace.workspacePath };
     const authorization = manager.authorizeStart(1, context);
@@ -327,7 +285,7 @@ describe("createWebRemoteControlManager external relay", () => {
     await manager.stop(1);
   });
 
-  it("停止窗口远控时会作废尚未消费的授权票据", async () => {
+  it("stopping window remote control revokes authorization tickets not yet consumed", async () => {
     const { manager } = createManagerHarness();
     const context = { workspacePath: localWorkspace.workspacePath };
     const authorization = manager.authorizeStart(1, context);
@@ -337,7 +295,7 @@ describe("createWebRemoteControlManager external relay", () => {
     await expect(manager.startAuthorized(1, context, authorization)).rejects.toThrow("invalid");
   });
 
-  it("授权票据拒绝窗口或 workspace 目标不匹配", async () => {
+  it("an authorization ticket rejects a mismatched window or workspace target", async () => {
     const { manager } = createManagerHarness();
     const context = { workspacePath: localWorkspace.workspacePath };
     const authorization = manager.authorizeStart(1, context);
@@ -350,7 +308,7 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
-  it("授权票据超过短 TTL 后不可消费", async () => {
+  it("an authorization ticket cannot be consumed after its short TTL", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-19T00:00:00Z"));
     const { manager } = createManagerHarness();
@@ -362,7 +320,7 @@ describe("createWebRemoteControlManager external relay", () => {
     await expect(manager.startAuthorized(1, context, authorization)).rejects.toThrow("expired");
   });
 
-  it("按首次配对和重连上报低频配对成功事件", async () => {
+  it("reports low-frequency pairing success events for the first pairing and for reconnects", async () => {
     const { emitTransportState, manager, reportRemoteUsageEvent } = createManagerHarness();
 
     await manager.start(1, { workspacePath: localWorkspace.workspacePath });
@@ -396,7 +354,7 @@ describe("createWebRemoteControlManager external relay", () => {
     });
   });
 
-  it("在远程 shared-host attachment 成功后上报 bridge 实际使用", async () => {
+  it("reports actual bridge usage after a remote shared-host attachment succeeds", async () => {
     const attachWorkspaceHost = vi.fn(async () => ({
       entryId: "entry-remote",
       attachmentId: "attachment-remote",
@@ -438,7 +396,7 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
-  it("bridge 失败只上报错误分类，不泄漏原始目标信息", async () => {
+  it("a bridge failure reports only the error category and does not leak raw target information", async () => {
     const attachWorkspaceHost = vi.fn<AttachWorkspaceHost>(async () => {
       throw Object.assign(new Error("secret-host.example.com attach failed"), {
         code: "REMOTE_SESSION_MISSING",
@@ -514,6 +472,7 @@ describe("createWebRemoteControlManager external relay", () => {
             kind: "remote",
             workspaceKey: "remote:ssh:host:/workspace/demo",
             workspaceIdentity: "remote:ssh:host:/workspace/demo",
+            capabilities: { windowProjectDirectory: true },
           }),
         }),
       );
@@ -533,7 +492,7 @@ describe("createWebRemoteControlManager external relay", () => {
     await manager.start(1, { workspacePath: "/workspace/demo" });
     const status = manager.getStatus(1);
 
-    expect(getLatestTransportOptions()?.relayWsUrl).toBe("ws://localhost:3030/ws");
+    expect(getLatestTransportOptions()?.relayWsUrl).toBe("ws://localhost:3030/api/v1/remote/ws2");
     expect(status.qrUrl).toContain("http://localhost:3030/remote/v3?");
   });
 
@@ -645,49 +604,6 @@ describe("createWebRemoteControlManager external relay", () => {
     });
   });
 
-  it("resets persisted relay auth and returns a new QR URL when refreshing leaked pairing material", async () => {
-    const disposeWorkspaceHostAttachmentsForWindow = vi.fn();
-    const { disposeTransport, getStoredAuth, manager } = createManagerHarness({
-      storedAuth: { deviceSid: "sid-old", passHash: "hash-old" },
-      registeredAuths: [
-        { deviceSid: "sid-unused", passHash: "hash-unused" },
-        { deviceSid: "sid-new", passHash: "hash-new" },
-      ],
-      disposeWorkspaceHostAttachmentsForWindow,
-    });
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-    const oldStatus = manager.getStatus(1);
-    expect(oldStatus.qrUrl).toContain("sid=sid-old");
-    expect(oldStatus.qrUrl).toContain("hash=hash-old");
-
-    const refreshed = await manager.resetPairing(1, {
-      workspacePath: "/workspace/demo",
-    });
-
-    expect(refreshed.qrUrl).toContain("sid=sid-new");
-    expect(refreshed.qrUrl).toContain("hash=hash-new");
-    expect(refreshed.qrUrl).not.toContain("sid=sid-old");
-    expect(refreshed.qrUrl).not.toContain("hash=hash-old");
-    expect(getStoredAuth()).toEqual({ deviceSid: "sid-new", passHash: "hash-new" });
-    expect(disposeTransport).toHaveBeenCalledTimes(1);
-    expect(disposeWorkspaceHostAttachmentsForWindow).toHaveBeenCalledWith(1, "leaked-qr");
-  });
-
-  it("does not clear persisted relay auth when refreshing pairing is blocked by the feature gate", async () => {
-    const { disposeTransport, getStoredAuth, manager } = createManagerHarness({
-      featureEnabled: false,
-      storedAuth: { deviceSid: "sid-old", passHash: "hash-old" },
-    });
-
-    await expect(manager.resetPairing(1, { workspacePath: "/workspace/demo" })).rejects.toThrow(
-      "Web remote control is disabled in this build",
-    );
-
-    expect(getStoredAuth()).toEqual({ deviceSid: "sid-old", passHash: "hash-old" });
-    expect(disposeTransport).not.toHaveBeenCalled();
-  });
-
   it("releases only the previous attachment when mobile reconnects to the same workspace", async () => {
     let nextAttachmentId = 0;
     const attachWorkspaceHost = vi.fn(async () => ({
@@ -793,204 +709,6 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
-  it("dispatches open-on-desktop platform requests to the registered handlers", async () => {
-    const getInstalledEditors = vi.fn(async () => [
-      { id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" },
-    ]);
-    const openInEditor = vi.fn(async () => ({ success: true }));
-    const openInFileManager = vi.fn(async () => ({ success: true }));
-    const openExternalFile = vi.fn(async () => ({ success: true }));
-    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
-      platformHandlers: { getInstalledEditors, openInEditor, openInFileManager, openExternalFile },
-    });
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-    sentPayloads.length = 0;
-
-    deliverPayload({
-      zcode_type: "platform-request",
-      requestId: "open-1",
-      method: "openInFileManager",
-      args: "/workspace/demo",
-    });
-    deliverPayload({
-      zcode_type: "platform-request",
-      requestId: "open-2",
-      method: "openInEditor",
-      args: {
-        editorId: "vscode",
-        path: "/workspace/demo/README.md",
-        options: { pathKind: "file" },
-      },
-    });
-    deliverPayload({
-      zcode_type: "platform-request",
-      requestId: "open-3",
-      method: "getInstalledEditors",
-    });
-    deliverPayload({
-      zcode_type: "platform-request",
-      requestId: "open-4",
-      method: "openExternalFile",
-      args: "/workspace/demo/report.pdf",
-    });
-
-    await vi.waitFor(() => {
-      expect(sentPayloads).toHaveLength(4);
-    });
-    expect(openInFileManager).toHaveBeenCalledWith("/workspace/demo");
-    expect(openInEditor).toHaveBeenCalledWith({
-      editorId: "vscode",
-      path: "/workspace/demo/README.md",
-      options: { pathKind: "file" },
-    });
-    expect(getInstalledEditors).toHaveBeenCalledWith(undefined);
-    expect(openExternalFile).toHaveBeenCalledWith("/workspace/demo/report.pdf");
-    expect(sentPayloads).toContainEqual({
-      zcode_type: "platform-response",
-      requestId: "open-1",
-      method: "openInFileManager",
-      success: true,
-      result: { success: true },
-    });
-    expect(sentPayloads).toContainEqual({
-      zcode_type: "platform-response",
-      requestId: "open-3",
-      method: "getInstalledEditors",
-      success: true,
-      result: [{ id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" }],
-    });
-  });
-
-  it("returns platform-response errors when an open-on-desktop handler fails", async () => {
-    const openInFileManager = vi.fn(async () => {
-      throw new Error("path not found");
-    });
-    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
-      platformHandlers: { openInFileManager },
-    });
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-    sentPayloads.length = 0;
-
-    deliverPayload({
-      zcode_type: "platform-request",
-      requestId: "open-err",
-      method: "openInFileManager",
-      args: "/workspace/missing",
-    });
-
-    await vi.waitFor(() => {
-      expect(sentPayloads).toContainEqual({
-        zcode_type: "platform-response",
-        requestId: "open-err",
-        method: "openInFileManager",
-        success: false,
-        error: "path not found",
-      });
-    });
-  });
-
-  it("pushes workspace list updates after renderer syncs task membership changes", async () => {
-    const { manager, sentPayloads } = createManagerHarness();
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-    manager.syncAvailableWorkspaces(1, [
-      {
-        workspacePath: "/workspace/demo",
-        label: "demo",
-        kind: "local",
-      },
-    ]);
-
-    sentPayloads.length = 0;
-    manager.syncAvailableTasks(1, [
-      {
-        taskId: "task-1",
-        title: "Task one",
-        workspacePath: "/workspace/demo",
-        workspaceLabel: "demo",
-        workspaceKind: "local",
-        createdAt: 1,
-        updatedAt: 2,
-      },
-    ]);
-
-    expect(sentPayloads).toContainEqual(
-      expect.objectContaining({
-        zcode_type: "workspace-list-updated",
-        result: expect.objectContaining({
-          tasks: [
-            expect.objectContaining({
-              taskId: "task-1",
-              workspacePath: "/workspace/demo",
-            }),
-          ],
-        }),
-      }),
-    );
-  });
-
-  it.each([
-    ["displayStatus", { displayStatus: "running" }, { displayStatus: "completed" }],
-    ["hasBackgroundWork", {}, { hasBackgroundWork: true }],
-    [
-      "workflowActivity",
-      {},
-      {
-        workflowActivity: {
-          runs: [{ runId: "run-1", status: "running", phases: [], agentsWorking: 0 }],
-        },
-      },
-    ],
-    [
-      "workflowActivity phase",
-      {
-        workflowActivity: {
-          runs: [
-            {
-              runId: "run-1",
-              status: "running",
-              phases: [{ name: "a", status: "running" }],
-              agentsWorking: 0,
-            },
-          ],
-        },
-      },
-      {
-        workflowActivity: {
-          runs: [
-            {
-              runId: "run-1",
-              status: "running",
-              phases: [{ name: "a", status: "done" }],
-              agentsWorking: 0,
-            },
-          ],
-        },
-      },
-    ],
-    ["unreadAt", { unreadAt: 3 }, { unreadAt: undefined }],
-    ["title", {}, { title: "Task renamed" }],
-    ["pinned", {}, { pinned: true }],
-    ["archived", {}, { archived: true }],
-  ] satisfies Array<
-    [string, Partial<WebRemoteControlTaskTarget>, Partial<WebRemoteControlTaskTarget>]
-  >)("pushes workspace list updates when task %s changes", async (_field, initial, patch) => {
-    const { manager, sentPayloads, task } = await createPrimedTaskSyncHarness(initial);
-
-    manager.syncAvailableTasks(1, [{ ...task, ...patch }]);
-
-    expect(sentPayloads).toContainEqual(
-      expect.objectContaining({
-        zcode_type: "workspace-list-updated",
-        result: expect.objectContaining({
-          tasks: [expect.objectContaining({ taskId: task.taskId, ...patch })],
-        }),
-      }),
-    );
-  });
-
   it.each([
     ["connectionState", {}, { connectionState: "reconnecting" }],
     ["remoteSessionId", {}, { remoteSessionId: "remote-session-2" }],
@@ -1021,65 +739,6 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
-  it("pushes workspace list updates when a task remote session changes", async () => {
-    const { manager, sentPayloads, task } = await createPrimedRemoteTaskSyncHarness();
-
-    manager.syncAvailableTasks(1, [{ ...task, remoteSessionId: "remote-session-2" }]);
-
-    expect(sentPayloads).toContainEqual(
-      expect.objectContaining({
-        zcode_type: "workspace-list-updated",
-        result: expect.objectContaining({
-          tasks: [
-            expect.objectContaining({
-              taskId: task.taskId,
-              remoteSessionId: "remote-session-2",
-            }),
-          ],
-        }),
-      }),
-    );
-  });
-
-  it("does not push workspace list updates when only high-frequency task time changes", async () => {
-    const { manager, sentPayloads, task } = await createPrimedTaskSyncHarness({
-      displayStatus: "running",
-    });
-
-    manager.syncAvailableTasks(1, [{ ...task, updatedAt: task.updatedAt + 1 }]);
-
-    expect(sentPayloads).toEqual([]);
-  });
-
-  it("does not collide when task signature fields contain control separators", async () => {
-    const { manager, sentPayloads, task } = await createPrimedRemoteTaskSyncHarness({
-      title: "Title\u0001session",
-      remoteSessionId: "tail",
-    });
-
-    manager.syncAvailableTasks(1, [
-      {
-        ...task,
-        title: "Title",
-        remoteSessionId: "session\u0001tail",
-      },
-    ]);
-
-    expect(sentPayloads).toContainEqual(
-      expect.objectContaining({
-        zcode_type: "workspace-list-updated",
-        result: expect.objectContaining({
-          tasks: [
-            expect.objectContaining({
-              title: "Title",
-              remoteSessionId: "session\u0001tail",
-            }),
-          ],
-        }),
-      }),
-    );
-  });
-
   it("forwards mobile workspace reconnect requests to the desktop renderer", async () => {
     const reconnectWorkspace = vi.fn(async () => undefined);
     const { deliverPayload, manager, sentPayloads } = createManagerHarness({
@@ -1103,69 +762,6 @@ describe("createWebRemoteControlManager external relay", () => {
       }),
     );
     expect(reconnectWorkspace).toHaveBeenCalledWith(1, "remote:ssh:host:/workspace/demo");
-  });
-
-  it("dispatches workspace open requests to the desktop window open dependency", async () => {
-    const openWorkspace = vi.fn(async () => undefined);
-    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-
-    deliverPayload({
-      zcode_type: "workspace-open-request",
-      requestId: "open-1",
-      workspacePath: "/workspace/demo-worktrees/feature",
-    });
-
-    await vi.waitFor(() =>
-      expect(sentPayloads).toContainEqual({
-        zcode_type: "workspace-open-response",
-        requestId: "open-1",
-        workspacePath: "/workspace/demo-worktrees/feature",
-        success: true,
-      }),
-    );
-    expect(openWorkspace).toHaveBeenCalledWith(1, {
-      workspacePath: "/workspace/demo-worktrees/feature",
-    });
-  });
-
-  it("reports workspace open failures and keeps other window-control requests working", async () => {
-    const openWorkspace = vi.fn(async () => {
-      throw new Error("Desktop window is not available for Web remote control workspace open.");
-    });
-    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
-
-    await manager.start(1, { workspacePath: "/workspace/demo" });
-
-    deliverPayload({
-      zcode_type: "workspace-open-request",
-      requestId: "open-1",
-      workspacePath: "/workspace/demo-worktrees/feature",
-      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
-    });
-    await vi.waitFor(() =>
-      expect(sentPayloads).toContainEqual({
-        zcode_type: "workspace-open-response",
-        requestId: "open-1",
-        workspacePath: "/workspace/demo-worktrees/feature",
-        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
-        success: false,
-        error: "Desktop window is not available for Web remote control workspace open.",
-      }),
-    );
-
-    // Existing window-control traffic on the same session must stay unaffected.
-    deliverPayload({ zcode_type: "bootstrap-request", requestId: "bootstrap-1" });
-    await vi.waitFor(() =>
-      expect(sentPayloads).toContainEqual(
-        expect.objectContaining({
-          zcode_type: "bootstrap-response",
-          requestId: "bootstrap-1",
-          success: true,
-        }),
-      ),
-    );
   });
 
   it("releases stale attachments when an older bridge open completes after reconnect", async () => {
@@ -1628,7 +1224,9 @@ describe("createWebRemoteControlManager external relay", () => {
 
     emitTransportSendReady("same-socket");
     expect(sentPayloads.filter((payload) => payload.zcode_type === "rpc-frame")).toHaveLength(2);
-    expect(sentPayloads[1]).toBe(firstFrame);
+    expect(sentPayloads.filter((payload) => payload.zcode_type === "rpc-frame")[1]).toBe(
+      firstFrame,
+    );
 
     deliverPayload({
       zcode_type: "rpc-frame-ack",
@@ -1746,7 +1344,7 @@ describe("createWebRemoteControlManager external relay", () => {
     });
   });
 
-  it("手机 session_create 保留来源和手机 context，宿主只转发一次", async () => {
+  it("phone session_create keeps the source and phone context; the host forwards it exactly once", async () => {
     const { deliverPayload, manager, reportRendererTelemetryEvent } = createManagerHarness();
     await manager.start(1, { workspacePath: "/workspace/demo" });
     const event = {
@@ -1882,6 +1480,144 @@ describe("createWebRemoteControlManager external relay", () => {
     );
   });
 
+  it("degrades an active remote bridge after Source reconnect so Web opens a new transport generation", async () => {
+    let attachment = 0;
+    const attachWorkspaceHost = vi.fn(async () => ({
+      entryId: `entry-${++attachment}`,
+      attachmentId: `attachment-${attachment}`,
+      process: {} as never,
+      port: createFakePort() as never,
+    }));
+    const releaseWorkspaceHostAttachment = vi.fn();
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      attachWorkspaceHost,
+      releaseWorkspaceHostAttachment,
+    });
+    const workspaceIdentity = "remote:server:source-1:/workspace/demo";
+
+    await manager.start(1, {
+      workspacePath: "/workspace/demo",
+      workspaceIdentity,
+      remoteSessionId: "remote-session-1",
+    });
+    manager.syncAvailableWorkspaces(1, [
+      {
+        workspacePath: "/workspace/demo",
+        workspaceIdentity,
+        remoteSessionId: "remote-session-1",
+        label: "demo",
+        kind: "remote",
+      },
+    ]);
+    deliverPayload({
+      zcode_type: "workspace-bridge-open",
+      requestId: "req-1",
+      bridgeSessionId: "bridge-1",
+      bridgeGeneration: 4,
+      recoveryId: "recovery-1",
+      workspaceKey: workspaceIdentity,
+    });
+    await vi.waitFor(() => expect(manager.getStatus(1).status).toBe("active"));
+    sentPayloads.length = 0;
+
+    await manager.replaceRemoteSession({
+      previousSessionId: "remote-session-1",
+      sessionId: "remote-session-2",
+      workspacePath: "/workspace/demo",
+      workspaceIdentity,
+    });
+
+    expect(releaseWorkspaceHostAttachment).toHaveBeenCalledWith("attachment-1");
+    expect(attachWorkspaceHost).toHaveBeenCalledTimes(1);
+    expect(sentPayloads).toContainEqual(
+      expect.objectContaining({
+        zcode_type: "bridge-degraded",
+        bridgeSessionId: "bridge-1",
+        bridgeGeneration: 4,
+        recoveryId: "recovery-1",
+        reason: "source-session-replaced",
+      }),
+    );
+    expect(sentPayloads).not.toContainEqual(
+      expect.objectContaining({ zcode_type: "workspace-bridge-ready" }),
+    );
+  });
+
+  it("replays Source replacement invalidation after the ordinary app buffer deadline", async () => {
+    vi.useFakeTimers();
+    let canSendPayload = true;
+    let attachment = 0;
+    const releaseWorkspaceHostAttachment = vi.fn();
+    const { deliverPayload, emitTransportSendReady, manager, sentPayloads } = createManagerHarness({
+      canSendPayload: () => canSendPayload,
+      releaseWorkspaceHostAttachment,
+      attachWorkspaceHost: vi.fn(async () => ({
+        entryId: `entry-${++attachment}`,
+        attachmentId: `attachment-${attachment}`,
+        process: {} as never,
+        port: createFakePort() as never,
+      })),
+    });
+    const workspaceIdentity = "remote:server:source-1:/workspace/demo";
+    await manager.start(1, {
+      workspacePath: "/workspace/demo",
+      workspaceIdentity,
+      remoteSessionId: "remote-session-1",
+    });
+    manager.syncAvailableWorkspaces(1, [
+      {
+        workspacePath: "/workspace/demo",
+        workspaceIdentity,
+        remoteSessionId: "remote-session-1",
+        label: "demo",
+        kind: "remote",
+      },
+    ]);
+    deliverPayload({
+      zcode_type: "workspace-bridge-open",
+      requestId: "req-1",
+      bridgeSessionId: "bridge-1",
+      workspaceKey: workspaceIdentity,
+    });
+    await vi.waitFor(() => expect(manager.getStatus(1).status).toBe("active"));
+    sentPayloads.length = 0;
+    canSendPayload = false;
+
+    await manager.replaceRemoteSession({
+      previousSessionId: "remote-session-1",
+      sessionId: "remote-session-2",
+      workspacePath: "/workspace/demo",
+      workspaceIdentity,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(sentPayloads).toEqual([]);
+    expect(releaseWorkspaceHostAttachment).toHaveBeenCalledWith("attachment-1");
+
+    canSendPayload = true;
+    emitTransportSendReady("same-socket");
+
+    expect(sentPayloads).toContainEqual(
+      expect.objectContaining({
+        zcode_type: "bridge-degraded",
+        bridgeSessionId: "bridge-1",
+        reason: "source-session-replaced",
+      }),
+    );
+
+    const firstReplayCount = sentPayloads.filter(
+      (payload) => payload.zcode_type === "bridge-degraded",
+    ).length;
+    emitTransportSendReady("same-socket");
+    expect(sentPayloads.filter((payload) => payload.zcode_type === "bridge-degraded")).toHaveLength(
+      firstReplayCount,
+    );
+
+    emitTransportSendReady("reconnected-socket");
+    expect(sentPayloads.filter((payload) => payload.zcode_type === "bridge-degraded")).toHaveLength(
+      firstReplayCount + 1,
+    );
+  });
+
   it("keeps the desktop relay session alive when a waiting remote workspace session closes", async () => {
     const disposeWorkspaceHostAttachmentsForRemoteSession = vi.fn();
     const { disposeTransport, manager, sentPayloads } = createManagerHarness({
@@ -1912,6 +1648,657 @@ describe("createWebRemoteControlManager external relay", () => {
   });
 });
 
+describe("mobile project bridge admission", () => {
+  const prepared: HostPreparedProjectWorkspace = {
+    projectId: "project-a",
+    hostId: "server:source-a",
+    workspacePath: "/new-project",
+    workspaceIdentity: "remote:server:source-a:/new-project",
+    additionalDirectories: [],
+    remote: {
+      remoteSessionId: "project-scope",
+      sourceServerId: "source-a",
+      generation: 1,
+      target: { kind: "server", url: "http://source.test" },
+      workspacePath: "/new-project",
+      workspaceIdentity: "remote:server:source-a:/new-project",
+    },
+  };
+  const projectRequest = {
+    zcode_type: "workspace-bridge-open" as const,
+    requestId: "project-request",
+    bridgeSessionId: "project-bridge",
+    workspaceKey: localWorkspace.workspacePath,
+    project: { projectId: "project-a", hostId: "server:source-a" },
+  };
+  it("attaches the Host admitted directory even without a desktop tab", async () => {
+    const prepareProjectWorkspace = vi.fn(async () => prepared);
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    harness.manager.syncAvailableWorkspaces(1, [localWorkspace]);
+    harness.deliverPayload(projectRequest);
+    await vi.waitFor(() =>
+      expect(harness.defaultAttachWorkspaceHost).toHaveBeenCalledWith(
+        1,
+        expect.objectContaining({
+          workspacePath: prepared.workspacePath,
+          workspaceIdentity: prepared.workspaceIdentity,
+          remoteSessionId: "project-scope",
+          kind: "remote",
+        }),
+      ),
+    );
+    expect(prepareProjectWorkspace).toHaveBeenCalledOnce();
+    expect(prepareProjectWorkspace).toHaveBeenCalledWith(
+      1,
+      projectRequest.project,
+      expect.any(String),
+    );
+    await harness.manager.disposeWindow(1);
+  });
+  it("keeps the current bridge when the Host refuses project admission", async () => {
+    const prepareProjectWorkspace = vi.fn(async () => {
+      throw new Error("Source offline");
+    });
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    harness.manager.syncAvailableWorkspaces(1, [localWorkspace]);
+    harness.deliverPayload({
+      ...projectRequest,
+      project: undefined,
+      bridgeSessionId: "old-bridge",
+    });
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          bridgeSessionId: "old-bridge",
+        }),
+      ),
+    );
+    harness.deliverPayload(projectRequest);
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-error",
+          bridgeSessionId: "project-bridge",
+          error: "Source offline",
+        }),
+      ),
+    );
+    expect(harness.releaseWorkspaceHostAttachment).not.toHaveBeenCalled();
+    await harness.manager.disposeWindow(1);
+  });
+  it("deduplicates project preparation across transport retries", async () => {
+    let finish!: (result: HostPreparedProjectWorkspace) => void;
+    const prepareProjectWorkspace = vi.fn(
+      () =>
+        new Promise<HostPreparedProjectWorkspace>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    harness.deliverPayload(projectRequest);
+    harness.deliverPayload({ ...projectRequest, requestId: "retry" });
+    await vi.waitFor(() => expect(prepareProjectWorkspace).toHaveBeenCalledOnce());
+    finish(prepared);
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({ zcode_type: "workspace-bridge-ready", requestId: "retry" }),
+      ),
+    );
+    harness.deliverPayload({ ...projectRequest, requestId: "retry-after-ready" });
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          requestId: "retry-after-ready",
+        }),
+      ),
+    );
+    expect(prepareProjectWorkspace).toHaveBeenCalledOnce();
+    expect(harness.defaultAttachWorkspaceHost).toHaveBeenCalledOnce();
+    await harness.manager.disposeWindow(1);
+  });
+  it("does not let a late project result supersede a later ordinary navigation", async () => {
+    let finish!: (result: HostPreparedProjectWorkspace) => void;
+    const prepareProjectWorkspace = vi.fn(
+      () =>
+        new Promise<HostPreparedProjectWorkspace>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    harness.manager.syncAvailableWorkspaces(1, [localWorkspace]);
+    harness.deliverPayload(projectRequest);
+    await vi.waitFor(() => expect(prepareProjectWorkspace).toHaveBeenCalledOnce());
+    harness.deliverPayload({
+      ...projectRequest,
+      project: undefined,
+      bridgeSessionId: "later-bridge",
+      requestId: "later",
+    });
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          bridgeSessionId: "later-bridge",
+        }),
+      ),
+    );
+    finish(prepared);
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-error",
+          requestId: "project-request",
+        }),
+      ),
+    );
+    expect(harness.defaultAttachWorkspaceHost).toHaveBeenCalledOnce();
+    await harness.manager.disposeWindow(1);
+  });
+  it("rejects a retry for the invalidated bridge after Source replacement", async () => {
+    const harness = createManagerHarness({ prepareProjectWorkspace: async () => prepared });
+    await harness.manager.start(1, localWorkspace);
+    harness.deliverPayload(projectRequest);
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          requestId: "project-request",
+        }),
+      ),
+    );
+    await harness.manager.replaceRemoteSession({
+      previousSessionId: "project-scope",
+      sessionId: "replacement",
+      workspacePath: prepared.workspacePath,
+      workspaceIdentity: prepared.workspaceIdentity!,
+    });
+    harness.deliverPayload({ ...projectRequest, requestId: "invalidated-retry" });
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-error",
+          requestId: "invalidated-retry",
+        }),
+      ),
+    );
+    await harness.manager.disposeWindow(1);
+  });
+  it("admits a file-only task cwd without selecting or marking the task read", async () => {
+    const prepareProjectWorkspace = vi.fn(async () => prepared);
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    const request = {
+      ...projectRequest,
+      project: undefined,
+      workspaceKey: prepared.workspaceIdentity!,
+      fileTreeTaskId: "existing-task",
+      taskHostId: prepared.hostId,
+    };
+    expect(parseWebRemoteControlAppPayload(request)).toEqual(request);
+    harness.deliverPayload(request);
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          bridge: expect.objectContaining({ workspacePath: prepared.workspacePath }),
+        }),
+      ),
+    );
+    const response = harness.sentPayloads.find(
+      (payload) => payload.zcode_type === "workspace-bridge-ready",
+    );
+    expect(
+      response && response.zcode_type === "workspace-bridge-ready" && response.bridge.initialTaskId,
+    ).toBeUndefined();
+    expect(prepareProjectWorkspace).toHaveBeenCalledWith(
+      1,
+      {
+        hostId: prepared.hostId,
+        task: { taskId: "existing-task", workspaceKey: prepared.workspaceIdentity },
+      },
+      expect.any(String),
+    );
+    expect(parseWebRemoteControlAppPayload({ ...request, taskId: "other" })).toBeNull();
+    expect(parseWebRemoteControlAppPayload({ ...request, taskHostId: undefined })).toBeNull();
+    await harness.manager.disposeWindow(1);
+  });
+  it("admits an existing project task absent from the desktop workspace list", async () => {
+    const prepareProjectWorkspace = vi.fn(async () => prepared);
+    const harness = createManagerHarness({ prepareProjectWorkspace });
+    await harness.manager.start(1, localWorkspace);
+    harness.deliverPayload({
+      ...projectRequest,
+      project: undefined,
+      workspaceKey: prepared.workspaceIdentity!,
+      taskId: "existing-task",
+      taskHostId: prepared.hostId,
+    });
+    await vi.waitFor(() =>
+      expect(harness.sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "workspace-bridge-ready",
+          bridge: expect.objectContaining({
+            initialTaskId: "existing-task",
+            workspacePath: prepared.workspacePath,
+          }),
+        }),
+      ),
+    );
+    expect(prepareProjectWorkspace).toHaveBeenCalledWith(
+      1,
+      {
+        hostId: prepared.hostId,
+        task: { taskId: "existing-task", workspaceKey: prepared.workspaceIdentity },
+      },
+      expect.any(String),
+    );
+    await harness.manager.disposeWindow(1);
+  });
+});
+
+async function createTaskViewHarness() {
+  const onStatusChanged = vi.fn();
+  const harness = createManagerHarness({ onStatusChanged });
+  await harness.manager.start(1, { workspacePath: localWorkspace.workspacePath });
+  harness.manager.syncAvailableWorkspaces(1, [remoteWorkspace]);
+  harness.emitTransportState("paired");
+  const epoch = () => {
+    const request = harness.sentPayloads.findLast(
+      (payload) => payload.zcode_type === "mobile-task-view-request",
+    );
+    expect(request).toBeDefined();
+    if (!request || request.zcode_type !== "mobile-task-view-request")
+      throw new Error("missing task view epoch");
+    return request.epoch;
+  };
+  const open = async (bridgeSessionId = "view-bridge", bridgeGeneration = 1) => {
+    harness.deliverPayload({
+      zcode_type: "workspace-bridge-open",
+      requestId: bridgeSessionId,
+      bridgeSessionId,
+      bridgeGeneration,
+      workspaceKey: remoteWorkspace.workspaceIdentity!,
+    });
+    await vi.waitFor(() =>
+      expect(
+        harness.sentPayloads.some(
+          (payload) =>
+            payload.zcode_type === "workspace-bridge-ready" &&
+            payload.bridgeSessionId === bridgeSessionId,
+        ),
+      ).toBe(true),
+    );
+  };
+  await open();
+  const view = {
+    workspacePath: remoteWorkspace.workspacePath,
+    workspaceIdentity: remoteWorkspace.workspaceIdentity,
+    taskId: "view-task",
+  };
+  const send = (
+    seq: number,
+    value: typeof view | null = view,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    harness.deliverPayload({
+      zcode_type: "mobile-task-view-update",
+      epoch: epoch(),
+      seq,
+      bridgeSessionId: "view-bridge",
+      bridgeGeneration: 1,
+      view: value,
+      ...overrides,
+    } as never);
+  return { ...harness, onStatusChanged, epoch, open, view, send };
+}
+
+it("MRO03: viewing enter and leave push a sync; a stale navigation position cannot count as valid viewing", async () => {
+  const f = await createTaskViewHarness();
+  try {
+    f.deliverPayload({
+      zcode_type: "mobile-view-state-update",
+      viewState: {
+        activeWorkspaceKey: remoteWorkspace.workspaceIdentity,
+        activeTaskId: "cached",
+        updatedAt: 1,
+      },
+    });
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    f.onStatusChanged.mockClear();
+    f.send(1);
+    f.send(2);
+    f.send(3, null);
+    expect(f.onStatusChanged.mock.calls.map(([, status]) => status.mobileTaskView)).toEqual([
+      { ...f.view, remoteSessionId: remoteWorkspace.remoteSessionId },
+      null,
+    ]);
+    expect(f.manager.getStatus(1).mobileViewState?.activeTaskId).toBe("cached");
+  } finally {
+    await f.manager.stop(1);
+  }
+});
+
+it("MRO03: a disconnect clears viewing immediately but keeps the connection grace; a reconnect accepts only the new epoch", async () => {
+  const f = await createTaskViewHarness();
+  try {
+    f.send(1);
+    const previous = f.epoch();
+    f.emitTransportState("connecting");
+    expect(f.manager.getStatus(1)).toMatchObject({ mobileConnected: true, mobileTaskView: null });
+    f.emitTransportState("paired");
+    expect(f.epoch()).not.toBe(previous);
+    f.send(99, f.view, { epoch: previous });
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    f.send(1);
+    expect(f.manager.getStatus(1).mobileTaskView).toEqual({
+      ...f.view,
+      remoteSessionId: remoteWorkspace.remoteSessionId,
+    });
+  } finally {
+    await f.manager.stop(1);
+  }
+});
+
+it("MRO03: an old sequence number, bridge generation, a different device on the same path, or a wrong cwd cannot replace the viewing fact", async () => {
+  const f = await createTaskViewHarness();
+  try {
+    f.send(5);
+    f.send(4, null);
+    f.send(6, null, { bridgeSessionId: "old" });
+    f.send(6, null, { bridgeGeneration: 0 });
+    f.send(6, { ...f.view, workspaceIdentity: "remote:server:other:/workspace/remote" });
+    f.send(6, { ...f.view, workspacePath: "/other" });
+    expect(f.manager.getStatus(1).mobileTaskView).toEqual({
+      ...f.view,
+      remoteSessionId: remoteWorkspace.remoteSessionId,
+    });
+    f.send(6, null);
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    f.send(7);
+    await f.open("next-view-bridge", 2);
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    f.send(8);
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+  } finally {
+    await f.manager.stop(1);
+  }
+});
+
+it("MRO03: bootstrap resends the epoch; send-ready does not re-assert viewing at heartbeat frequency", async () => {
+  const f = await createTaskViewHarness();
+  try {
+    const epoch = f.epoch();
+    f.deliverPayload({ zcode_type: "bootstrap-request", requestId: "view-bootstrap" });
+    expect(f.sentPayloads).toContainEqual(
+      expect.objectContaining({
+        zcode_type: "bootstrap-response",
+        requestId: "view-bootstrap",
+        result: expect.objectContaining({ mobileTaskViewEpoch: epoch }),
+      }),
+    );
+    f.emitTransportSendReady("same-socket");
+    const count = f.sentPayloads.filter(
+      (payload) => payload.zcode_type === "mobile-task-view-request",
+    ).length;
+    f.emitTransportSendReady("same-socket");
+    expect(
+      f.sentPayloads.filter((payload) => payload.zcode_type === "mobile-task-view-request"),
+    ).toHaveLength(count);
+    f.emitTransportSendReady("reconnected-socket");
+    expect(
+      f.sentPayloads.filter((payload) => payload.zcode_type === "mobile-task-view-request"),
+    ).toHaveLength(count + 1);
+  } finally {
+    await f.manager.stop(1);
+  }
+});
+
+it.each(["raw-fault", "replaced", "closed"] as const)(
+  "MRO03: when the bridge is invalidated while still paired, viewing is cleared immediately: %s",
+  async (reason) => {
+    const f = await createTaskViewHarness();
+    try {
+      f.send(1);
+      if (reason === "raw-fault")
+        f.getLatestTransportOptions()?.onRawTransportFault?.("invalid-frame");
+      else if (reason === "closed")
+        f.manager.failRemoteSession(remoteWorkspace.remoteSessionId!, "test", {
+          reason: "workspace-closed",
+        });
+      else
+        await f.manager.replaceRemoteSession({
+          previousSessionId: remoteWorkspace.remoteSessionId!,
+          sessionId: "new-session",
+          workspacePath: remoteWorkspace.workspacePath,
+          workspaceIdentity: remoteWorkspace.workspaceIdentity!,
+        });
+      expect(f.manager.getStatus(1)).toMatchObject({ mobileConnected: true, mobileTaskView: null });
+      f.send(2);
+      expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    } finally {
+      await f.manager.stop(1);
+    }
+  },
+);
+
+it("MRO03: for a legacy identity, Main injects the current session into the viewing fact; a new generation cannot reuse the old session", async () => {
+  const f = await createTaskViewHarness();
+  try {
+    f.send(1);
+    expect(f.manager.getStatus(1).mobileTaskView).toEqual({
+      ...f.view,
+      remoteSessionId: remoteWorkspace.remoteSessionId,
+    });
+    await f.manager.replaceRemoteSession({
+      previousSessionId: remoteWorkspace.remoteSessionId!,
+      sessionId: "replacement-session",
+      workspacePath: remoteWorkspace.workspacePath,
+      workspaceIdentity: remoteWorkspace.workspaceIdentity!,
+    });
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    await f.open("replacement-view-bridge", 2);
+    f.send(2);
+    expect(f.manager.getStatus(1).mobileTaskView).toBeNull();
+    f.send(3, f.view, { bridgeSessionId: "replacement-view-bridge", bridgeGeneration: 2 });
+    expect(f.manager.getStatus(1).mobileTaskView).toEqual({
+      ...f.view,
+      remoteSessionId: "replacement-session",
+    });
+  } finally {
+    await f.manager.stop(1);
+  }
+});
+describe("fork open-on-desktop and workspace-open dispatch", () => {
+  it("dispatches open-on-desktop platform requests to the registered handlers", async () => {
+    const getInstalledEditors = vi.fn(async () => [
+      { id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" },
+    ]);
+    const openInEditor = vi.fn(async () => ({ success: true }));
+    const openInFileManager = vi.fn(async () => ({ success: true }));
+    const openExternalFile = vi.fn(async () => ({ success: true }));
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { getInstalledEditors, openInEditor, openInFileManager, openExternalFile },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-1",
+      method: "openInFileManager",
+      args: "/workspace/demo",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-2",
+      method: "openInEditor",
+      args: {
+        editorId: "vscode",
+        path: "/workspace/demo/README.md",
+        options: { pathKind: "file" },
+      },
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+    });
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-4",
+      method: "openExternalFile",
+      args: "/workspace/demo/report.pdf",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toHaveLength(4);
+    });
+    expect(openInFileManager).toHaveBeenCalledWith("/workspace/demo");
+    expect(openInEditor).toHaveBeenCalledWith({
+      editorId: "vscode",
+      path: "/workspace/demo/README.md",
+      options: { pathKind: "file" },
+    });
+    expect(getInstalledEditors).toHaveBeenCalledWith(undefined);
+    expect(openExternalFile).toHaveBeenCalledWith("/workspace/demo/report.pdf");
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-1",
+      method: "openInFileManager",
+      success: true,
+      result: { success: true },
+    });
+    expect(sentPayloads).toContainEqual({
+      zcode_type: "platform-response",
+      requestId: "open-3",
+      method: "getInstalledEditors",
+      success: true,
+      result: [{ id: "vscode", name: "VS Code", iconDataUrl: "data:image/png;base64,x" }],
+    });
+  });
+
+  it("returns platform-response errors when an open-on-desktop handler fails", async () => {
+    const openInFileManager = vi.fn(async () => {
+      throw new Error("path not found");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({
+      platformHandlers: { openInFileManager },
+    });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+    sentPayloads.length = 0;
+
+    deliverPayload({
+      zcode_type: "platform-request",
+      requestId: "open-err",
+      method: "openInFileManager",
+      args: "/workspace/missing",
+    });
+
+    await vi.waitFor(() => {
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "platform-response",
+        requestId: "open-err",
+        method: "openInFileManager",
+        success: false,
+        error: "path not found",
+      });
+    });
+  });
+
+  it("dispatches workspace open requests to the desktop window open dependency", async () => {
+    const openWorkspace = vi.fn(async () => undefined);
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        success: true,
+      }),
+    );
+    expect(openWorkspace).toHaveBeenCalledWith(1, {
+      workspacePath: "/workspace/demo-worktrees/feature",
+    });
+  });
+
+  it("reports workspace open failures and keeps other window-control requests working", async () => {
+    const openWorkspace = vi.fn(async () => {
+      throw new Error("Desktop window is not available for Web remote control workspace open.");
+    });
+    const { deliverPayload, manager, sentPayloads } = createManagerHarness({ openWorkspace });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    deliverPayload({
+      zcode_type: "workspace-open-request",
+      requestId: "open-1",
+      workspacePath: "/workspace/demo-worktrees/feature",
+      workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+    });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual({
+        zcode_type: "workspace-open-response",
+        requestId: "open-1",
+        workspacePath: "/workspace/demo-worktrees/feature",
+        workspaceIdentity: "remote:ssh:dev:/workspace/demo-worktrees/feature",
+        success: false,
+        error: "Desktop window is not available for Web remote control workspace open.",
+      }),
+    );
+
+    // Existing window-control traffic on the same session must stay unaffected.
+    deliverPayload({ zcode_type: "bootstrap-request", requestId: "bootstrap-1" });
+    await vi.waitFor(() =>
+      expect(sentPayloads).toContainEqual(
+        expect.objectContaining({
+          zcode_type: "bootstrap-response",
+          requestId: "bootstrap-1",
+          success: true,
+        }),
+      ),
+    );
+  });
+});
+
+describe("pre-V2 pairing re-pair notice", () => {
+  it("reports repair-required when discarded pre-V2 pairing was found at start", async () => {
+    const onStatusChanged = vi.fn();
+    const { manager } = createManagerHarness({ legacyPairingFound: true, onStatusChanged });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    const flags = onStatusChanged.mock.calls.map(([, status]) => status.repairRequired);
+    expect(flags).toContain(true);
+  });
+
+  it("does not report repair-required when no pre-V2 pairing existed", async () => {
+    const onStatusChanged = vi.fn();
+    const { manager } = createManagerHarness({ onStatusChanged });
+
+    await manager.start(1, { workspacePath: "/workspace/demo" });
+
+    const flags = onStatusChanged.mock.calls.map(([, status]) => status.repairRequired);
+    expect(flags).not.toContain(true);
+  });
+});
+
 describe("findLinkForWorkspace", () => {
   it("re-mints a connect URL from the live runtime started for the workspace", async () => {
     const harness = createManagerHarness();
@@ -1924,7 +2311,9 @@ describe("findLinkForWorkspace", () => {
     const url = new URL(link!.url);
     expect(url.pathname).toBe("/remote/v3");
     expect(url.searchParams.get("sid")).toBe("sid-1");
-    expect(url.searchParams.get("hash")).toBe("hash-1");
+    // V2 QR codes carry routing hints only: no credential (hash) and no timestamp (t).
+    expect(url.searchParams.has("hash")).toBe(false);
+    expect(url.searchParams.has("t")).toBe(false);
   });
 
   it("matches a remote workspace that only appears in the synced workspace list", async () => {

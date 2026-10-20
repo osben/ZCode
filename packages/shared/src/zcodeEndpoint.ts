@@ -11,7 +11,7 @@ export const DEFAULT_ZAI_BUSINESS_BASE_URL = "https://api.z.ai";
 export const TEST_ZAI_BUSINESS_BASE_URL = "https://api.z.ai";
 export const DEFAULT_ZAI_OAUTH_CLIENT_ID = "client_P8X5CMWmlaRO9gyO-KSqtg";
 export const TEST_ZAI_OAUTH_CLIENT_ID = "client_P8X5CMWmlaRO9gyO-KSqtg";
-export const DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL = "wss://zcode.z.ai/ws";
+export const WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH = "/api/v1/remote/ws2";
 export const WEB_REMOTE_CONTROL_V4_MIN_APP_VERSION = "3.4.0";
 
 export interface BuildZCodeEndpointUrlsOptions {
@@ -234,6 +234,11 @@ export function buildRuntimeZCodeApiUrl(env: RuntimeZCodeEndpointEnv = {}, path:
   return `${resolveRuntimeZCodeEndpointOrigin(env)}${normalizedPath}`;
 }
 
+/**
+ * Relay V2 WebSocket URL. The configured value is a relay ORIGIN (`https://host`, `wss://host`);
+ * any path is dropped and the V2 WS path is appended. Precedence: runtime override, then the baked
+ * release default, then the endpoint origin (see specs/relay-v2-migration.md section 11.1).
+ */
 export function resolveWebRemoteControlRelayWsUrl(options?: {
   endpointOrigin?: string | null | undefined;
   overrideUrl?: string | null | undefined;
@@ -242,22 +247,27 @@ export function resolveWebRemoteControlRelayWsUrl(options?: {
 }): string {
   const overrideUrl = options?.overrideUrl?.trim();
   if (overrideUrl) {
-    return overrideUrl;
+    return toWebRemoteControlRelayWsUrl(overrideUrl);
   }
 
   const defaultUrl = options?.defaultUrl?.trim();
   if (defaultUrl) {
-    return defaultUrl;
+    return toWebRemoteControlRelayWsUrl(defaultUrl);
   }
 
-  // Bugfix: the standard test endpoint now has its own relay; pinning it to the production relay
-  // made test environments pair across environments. Recognize the canonical test origin only, to
-  // avoid changing existing behavior for production, localhost, and other custom endpoints.
-  if (options?.endpointOrigin?.trim() === TEST_ZCODE_ENDPOINT_ORIGIN) {
-    return "wss://zcode.z.ai/ws";
-  }
+  return toWebRemoteControlRelayWsUrl(
+    options?.endpointOrigin?.trim() || DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+  );
+}
 
-  return DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL;
+function toWebRemoteControlRelayWsUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol === "https:") url.protocol = "wss:";
+  else if (url.protocol === "http:") url.protocol = "ws:";
+  url.pathname = WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 export function resolveBigModelApiOrigin(env: RuntimeBigModelApiEnv = {}): string {
@@ -387,9 +397,9 @@ export function buildZCodeEndpointUrls(
     origin: normalizedOrigin,
     apiBaseUrl: `${normalizedOrigin}/api/v1`,
     remoteUrl: `${normalizedOrigin}/remote/${remoteVersion}`,
-    webRemoteCallbackUrl: `${normalizedOrigin}/web-remote/callback`,
+    webRemoteCallbackUrl: `${normalizedOrigin}/remote/v4`,
     webShareCallbackUrl: `${normalizedOrigin}/cn/share/callback`,
-    relayWsUrl: `${wsOrigin}/ws`,
+    relayWsUrl: `${wsOrigin}${WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH}`,
     zcodePlanOpenAiBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan`,
     zcodePlanAnthropicBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan/anthropic`,
     zcodePlanBillingCurrentUrl: `${normalizedOrigin}/api/v1/zcode-plan/billing/current`,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BIGMODEL_API_ORIGIN,
-  DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL,
   DEFAULT_ZAI_BUSINESS_BASE_URL,
   DEFAULT_ZAI_OAUTH_CLIENT_ID,
   DEFAULT_ZAI_OAUTH_ORIGIN,
@@ -85,9 +84,9 @@ describe("zcodeEndpoint", () => {
       origin: "http://localhost:3030",
       apiBaseUrl: "http://localhost:3030/api/v1",
       remoteUrl: "http://localhost:3030/remote/v3",
-      webRemoteCallbackUrl: "http://localhost:3030/web-remote/callback",
+      webRemoteCallbackUrl: "http://localhost:3030/remote/v4",
       webShareCallbackUrl: "http://localhost:3030/cn/share/callback",
-      relayWsUrl: "ws://localhost:3030/ws",
+      relayWsUrl: "ws://localhost:3030/api/v1/remote/ws2",
       zcodePlanOpenAiBaseUrl: "http://localhost:3030/api/v1/zcode-plan",
       zcodePlanAnthropicBaseUrl: "http://localhost:3030/api/v1/zcode-plan/anthropic",
       zcodePlanBillingCurrentUrl: "http://localhost:3030/api/v1/zcode-plan/billing/current",
@@ -149,47 +148,53 @@ describe("zcodeEndpoint", () => {
     ).toBe("https://zcode.z.ai/api/v1/zcode-plan/anthropic");
   });
 
-  it("uses the test relay only for the standard test endpoint", () => {
+  it("derives the V2 relay WebSocket from the endpoint origin when nothing is configured", () => {
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
       }),
-    ).toBe("wss://zcode.z.ai/ws");
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
       }),
-    ).toBe(DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL);
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: "http://localhost:3030",
       }),
-    ).toBe(DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL);
+    ).toBe("ws://localhost:3030/api/v1/remote/ws2");
   });
 
-  it("allows an explicit web remote control relay url override", () => {
+  it("treats the configured web remote control relay value as an origin and drops its path", () => {
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
         overrideUrl: " ws://localhost:8787/ws ",
       }),
-    ).toBe("ws://localhost:8787/ws");
+    ).toBe("ws://localhost:8787/api/v1/remote/ws2");
+    expect(
+      resolveWebRemoteControlRelayWsUrl({
+        endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
+        overrideUrl: "https://relay.example.com",
+      }),
+    ).toBe("wss://relay.example.com/api/v1/remote/ws2");
   });
 
   it("prefers the baked release default over endpoint defaults and keeps the override on top", () => {
-    // The baked default replaces the endpoint-derived (z.ai) defaults in fork release builds.
+    // The baked default replaces the endpoint-derived defaults in fork release builds.
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
         defaultUrl: "wss://relay.example.com/ws",
       }),
-    ).toBe("wss://relay.example.com/ws");
+    ).toBe("wss://relay.example.com/api/v1/remote/ws2");
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
         defaultUrl: "wss://relay.example.com/ws",
       }),
-    ).toBe("wss://relay.example.com/ws");
+    ).toBe("wss://relay.example.com/api/v1/remote/ws2");
     // The runtime environment override still wins over the baked default.
     expect(
       resolveWebRemoteControlRelayWsUrl({
@@ -197,14 +202,14 @@ describe("zcodeEndpoint", () => {
         overrideUrl: "wss://override.example.com/ws",
         defaultUrl: "wss://relay.example.com/ws",
       }),
-    ).toBe("wss://override.example.com/ws");
+    ).toBe("wss://override.example.com/api/v1/remote/ws2");
     // An empty baked default falls back to endpoint-derived behavior.
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
         defaultUrl: "  ",
       }),
-    ).toBe("wss://zcode.z.ai/ws");
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
   });
 
   it("derives BigModel API origin from ZCODE_ENV", () => {

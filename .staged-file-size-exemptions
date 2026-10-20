@@ -260,3 +260,7 @@ architecture-policy.yaml
 
 # TEMPORARY (final fork restore desktop): restored fork createRemoteWorkspaceServiceCollection (~33 KB). Remove after the desktop host split.
 packages/desktop/src/host/remoteWorkspaceServiceCollection.ts
+
+# TEMPORARY (relay v2 desktop client, specs/relay-v2-migration.md section 12): webRemoteControlManager.ts carries the upstream V2 manager plus fork hunks (~87 KB); split it into relay start/transport, bridge, and status modules, then remove this block. WebRemoteControlDialog.tsx grew past 20 KB with the repair notice; split the failure/notice presentation out, then remove this block.
+packages/desktop/src/main/webRemoteControlManager.ts
+packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
