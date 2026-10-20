@@ -1,15 +1,12 @@
-// Core capability contract for the native v4 command layer (native rewrite).
+// v4 原生命令层的 core 能力契约（原生重做版）。
 //
-// Layering rules (no bridge):
-// - This directory contains native command implementations: handlers drive core (ZCodeApp/runtime)
-//   directly for decisions (steer routing / draft promotion / abort lifecycle / goal-pause barrier),
-//   without going through legacy protocol operations.
-// - The host still owns the session registry: V4CommandCoreHost passes through the legacy
-//   ZCodeProtocolSessionRecord as a "structured narrow view" (same object reference, bidirectional
-//   field visibility, no second registry).
-// - Environment capabilities (model readiness / legacy broadcast / shell resolution) are injected
-//   hooks. The legacy protocol binder supplies implementations during the transition with the same
-//   lifecycle as the old protocol; each hook documents its destination, and new hooks must do so too.
+// 分层纪律（不做桥接）：
+// - 本目录是命令的原生实现：决策逻辑（steer 分流 / draft 提升 / abort 生命周期 /
+//   goal-pause barrier）在 handler 里直驱 core（ZCodeApp / runtime），不经旧协议 op。
+// - 会话注册表仍归宿主：通过 V4CommandCoreHost 以「结构化窄视图」透传旧
+//   ZCodeProtocolSessionRecord（同一对象引用，字段变更双向可见，不产生第二份注册表）。
+// - 环境能力（模型就绪 / legacy 广播 / shell 解析）是注入钩子：旧协议 binder 在过渡期
+//   提供实现，与旧协议同生命周期——每个钩子都标注过渡归宿，新增钩子必须标注。
 import type {
   SessionTaskType,
   StableForkGoalBoundaryMetadata,
@@ -34,7 +31,7 @@ import type {
   ConversationRowTargetResolution,
 } from "../product-projection.js";
 
-/** Minimal logging surface (structured fields pass directly to the host logger). */
+/** 最小日志面（结构化字段直传宿主 logger）。 */
 export interface V4CommandLogger {
   info?(message: string, fields?: Record<string, unknown>): void;
   warn?(message: string, fields?: Record<string, unknown>): void;
@@ -58,12 +55,17 @@ export type PreparedWorktreeActivationOutcome =
   | "input-admitted"
   | "already-active";
 
+/** 单轮执行材料的协议原形。 */
+export type V4TurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
+
 /**
- * Per-turn execution material for a queue item (protocol-native shape). The speed-up card's
- * Selection already enters the projection via QueueItem.modelSelection; only the non-projectable
- * dynamic credentials are staged here, frozen into a ModelExecutionContext on promotion.
+ * Highspeed 队列项的临时执行包。QueueItem.modelSelection 只保存普通提交模型；
+ * 加速 Selection 必须与动态凭据一起驻留内存，提升时再冻结进本轮。
  */
-export type V4QueuedTurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
+export interface V4QueuedTurnExecution {
+  modelSelection: NonNullable<CommandPayloadMap["sendText"]["modelSelection"]>;
+  modelExecution: V4TurnExecution;
+}
 
 export type V4StableForkTargetResolution =
   | {
@@ -74,50 +76,49 @@ export type V4StableForkTargetResolution =
   | Extract<StableForkTargetResolution, { ok: false }>;
 
 /**
- * Structured narrow view of the legacy ZCodeProtocolSessionRecord (declares only fields needed by
- * the command layer). Structurally compatible: the binder passes through the legacy record object;
- * once v4 owns the session registry, it will provide an object with the same shape.
+ * 旧 ZCodeProtocolSessionRecord 的结构化窄视图（只声明命令层需要的字段）。
+ * 结构兼容：binder 直接把旧 record 对象透传进来；v4 自持会话注册表后由其提供同形对象。
  */
 export interface V4SessionRecordView {
   app: ZCodeApp;
   /**
-   * Session-root traceContext (traceId sits above sessionId and corresponds to the whole task chain).
-   * Preserve it when command handlers call runtime methods or re-emit core events; do not start a
-   * new trace midway. The legacy record already carries this field, so the narrow view passes it through.
+   * 会话根 traceContext（traceId 位于 sessionId 之上，对应整条任务链）。
+   * 命令层调 runtime 方法/补发 core 事件时透传沿用，不得中途另起 trace。
+   * 旧 record 本就携带此字段，窄视图直接透传。
    */
   traceContext: TraceContext;
   workspace: { workspacePath: string };
-  /** Draft semantics: deferred means no first message has been sent and nothing is written to sqlite; the first send promotes it to immediate. */
+  /** draft 语义：deferred = 未发送首条消息，不进 sqlite；首条 send 时提升 immediate。 */
   persistence: "immediate" | "deferred";
-  /** Active-turn lock: present means a turn is running (sendText routes through steer; stop has a target). */
+  /** active turn 锁：存在 = turn 运行中（sendText 走 steer 分流、stop 有目标）。 */
   activeAbortController?: AbortController;
-  /** Reference count for record/runtime users finishing state mutations after the ready lock is released. */
+  /** ready lock 已释放但 state mutation 收尾仍在使用 record/runtime 的引用计数。 */
   residencyFinalizationCount?: number;
-  /** Currently executing automation-dispatch turn; present only while the turn runs. */
+  /** 当前正在执行的 automation 派发 turn；只在 turn 运行期间存在。 */
   activeAutomationId?: string;
-  /** Currently executing idle-dispatch turn; present only while the turn runs. */
+  /** 当前正在执行的闲时派发 turn；只在 turn 运行期间存在。 */
   activeOffPeakTaskId?: string;
-  /** Stable callback address for the current inbound Bot turn; restore it when the turn ends. */
+  /** 当前 Bot 入站 turn 的稳定回推地址；turn 结束后必须恢复。 */
   activeBotDeliveryTarget?: ZCodeAutomationBotDeliveryTarget;
-  /** Recovery-failure warning; when present, reject new turns (do not silently continue corrupted history). */
+  /** 恢复失败告警：存在时拒绝新 turn（历史损坏不能静默续写）。 */
   restoreWarning?: { message: string; type: string };
   taskType?: SessionTaskType;
 }
 
 export interface V4CommandCoreHost {
-  /** Look up a session (same registry object reference; return undefined if absent, so the handler rejects). */
+  /** 会话查找（同一注册表对象引用；不存在返回 undefined → handler 拒绝）。 */
   getRecord(sessionId: string): V4SessionRecordView | undefined;
   logger?: V4CommandLogger;
 
-  // ── Native v4 capabilities (not transition hooks) ─────────────────────────────
-  /** Complete authoritative intent for a queue item; sendQueuedNow must not degrade to resending text only. */
+  // ── v4 原生能力（非过渡钩子）────────────────────────────────
+  /** queue 项完整权威 intent；sendQueuedNow 禁止退化成 text-only 重发。 */
   getQueueItem?(sessionId: string, queueItemId: string): V4QueueItemCommand | null;
-  /** Deduplicate typed maintenance commands using the same projection queue as the source of truth; maintain no side set. */
+  /** typed maintenance 命令去重；判据来自同一 projection queue，不维护旁路集合。 */
   hasQueueItemKind?(sessionId: string, kind: QueueItem["kind"]): boolean;
-  /** Guide eligibility: block only when an ordinary queue already exists; existing guides may continue through FIFO admission. */
+  /** guide eligibility：只阻止已有 ordinary queue；已有 guide 仍允许继续按 FIFO admission。 */
   hasQueuedDelivery?(sessionId: string, delivery: "guide" | "queue"): boolean;
   getQueueLength?(sessionId: string): number;
-  /** Highspeed queue execution material contains credentials: keep it memory-resident only; it must never enter queue events/snapshots. */
+  /** Highspeed queue 的执行材料含凭据，只允许驻留内存，禁止进入 queue event/snapshot。 */
   retainQueuedTurnExecution?(
     sessionId: string,
     sourceCommandId: string,
@@ -129,14 +130,14 @@ export interface V4CommandCoreHost {
   ): V4QueuedTurnExecution | undefined;
   deleteQueuedTurnExecution?(sessionId: string, sourceCommandId: string): void;
   clearQueuedTurnExecutions?(sessionId: string): void;
-  /** Persist deduplication facts for successful side effects without user messages, such as timeline/child operations. */
+  /** timeline/child 这类无 user message 的成功副作用持久化查重事实。 */
   recordPersistentCommandFact?(
     sessionId: string,
     source: "timeline" | "child",
     ack: CommandAck,
     metadata?: Record<string, unknown>,
   ): Promise<void>;
-  /** Durable admission boundary shared by createSession.firstInput, selection-side firstInput, and ordinary sends. */
+  /** createSession.firstInput / selection side firstInput 与普通 send 共用的 durable admission 边界。 */
   admitInputCommand?(
     envelope: CommandEnvelope,
     sessionId: string,
@@ -145,82 +146,80 @@ export interface V4CommandCoreHost {
   cancelInputCommand?(sessionId: string, queueItemId: string, reason: string): Promise<void>;
   discardSharedContext?(sessionId: string, contextId: string): Promise<boolean>;
   /**
-   * Current input routing mode (source: v4 projection inputRouting.mode).
-   * The held-choice decision for sendText/sendGoalCommand (`heldQueueInputRequiresChoice`) uses it
-   * to determine whether heldQueueDisposition is required.
-   * If the session has no projection yet (no events), return null (treat as non-held).
+   * 当前输入路由模式（数据源 = v4 投影 inputRouting.mode）。
+   * sendText/sendGoalCommand 的 held choice 裁决（heldQueueInputRequiresChoice）依赖它判定是否必须携带 heldQueueDisposition。
+   * 会话无投影（尚无事件）→ null（按非 held 处理）。
    */
   getInputRoutingMode?(
     sessionId: string,
   ): "startNow" | "enqueue" | "guide" | "reject" | "choice" | null;
-  /** After runtime event notification, wait for the target event to finish reorder drain and projection apply. */
+  /** runtime event notification 后，等待目标 event 真正完成 reorder drain + projection apply。 */
   waitForProjectionEventCommit?(
     sessionId: string,
     eventId: string,
     options?: { signal?: AbortSignal },
   ): Promise<void>;
   /**
-   * rowId -> authoritative messageId (source: v4 projection's rowId-to-messageId translation table).
-   * Legacy-compatible lookup: translate a projected rowId (assistant row) to a transcript messageId.
-   * If translation fails (non-assistant row/stale rowId), return null and let the handler reject;
-   * never silently fall back to latestCheckpoint, which would fork/rewind at the wrong point.
+   * rowId → 权威 messageId（数据源 = v4 投影 rowId→messageId 翻译表）。
+   * 历史兼容查询：把投影 rowId（assistant 行）翻译成
+   * transcript 的 messageId。翻译不到（非 assistant 行/迟到 rowId）→ null → handler
+   * reject，绝不静默兜底 latestCheckpoint（会 fork/rewind 错点）。
    */
   getMessageIdForRow?(sessionId: string, rowId: number): string | null;
-  /** Sole row-target resolver shared by row.actions, CommandInbox, and handlers. */
+  /** row.actions/CommandInbox/handler 共用的唯一 row target resolver。 */
   resolveRowActionTarget?(
     sessionId: string,
     target: ConversationRowTarget,
     action: ConversationRowTargetAction,
   ): ConversationRowTargetResolution | null;
   /**
-   * rowId -> all transcript messageIds in its product turn (used to undo file summaries).
-   * Pass multiple assistant segments/checkpoints to core together to avoid undoing only the last file segment.
+   * rowId → 所属 product turn 内所有 transcript messageId（文件摘要撤销用）。
+   * 多段 assistant / 多个 checkpoint 必须一次性交给 core，避免只撤最后一段文件。
    */
   getMessageIdsForTurnRow?(sessionId: string, rowId: number): string[];
   /**
-   * Strict core-side check: a fork may attach only to the final segment at the end of a turn.
-   * true = final segment; false = middle segment (reject); null = no projection/unknown (treat as translation failure).
+   * core 侧强校验：fork 只挂每轮结尾最后一段。
+   * true=是轮尾段；false=中间段（reject）；null=无投影/未知（按翻译失败处理）。
    */
   isLatestAssistantSegmentRow?(sessionId: string, rowId: number): boolean | null;
-  /** Sole stable-fork resolver: projection gate plus transcript-persistent anchor/fallback. */
+  /** 唯一 stable fork resolver：projection 闸门 + transcript 持久 anchor/fallback。 */
   resolveStableForkTarget?(sessionId: string, rowId: number): Promise<V4StableForkTargetResolution>;
   /**
-   * Core-side defense for latestAssistantRetryOnly: retryTurn may target only the last assistantText
-   * row in the current projection. The handler rejects false/null to prevent legacy clients from bypassing the UI.
+   * latestAssistantRetryOnly core 侧防御：retryTurn 只能指向当前投影里的最后一条
+   * assistantText row。false/null 都由 handler 拒绝，避免旧客户端绕过 UI。
    */
   isLatestRetryAssistantRow?(sessionId: string, rowId: number): boolean | null;
   /**
-   * Core-side defense for latestQueryEditOnly: editUserQuery may target only the last realUser
-   * userInput row in the current projection. The handler rejects false/null to prevent legacy clients from bypassing the UI.
+   * latestQueryEditOnly core 侧防御：editUserQuery 只能指向当前投影里的最后一条
+   * realUser userInput row。false/null 都由 handler 拒绝，避免旧客户端绕过 UI。
    */
   isLatestEditableUserRow?(sessionId: string, rowId: number): boolean | null;
-  /** rowId -> product turnId (used to query the store when editUserQuery has no assistant anchor). */
+  /** rowId → product turnId（editUserQuery 无 assistant anchor 时回查 store 用）。 */
   getTurnIdForRow?(sessionId: string, rowId: number): string | null;
   /**
-   * Timing probe for restoreWarning self-healing: has the current process Registry published an
-   * available model? Implemented by the binder; if the host does not support it, do not self-heal and keep rejecting.
+   * restoreWarning 时序自愈探针：当前进程 Registry 是否已经发布可用模型。
+   * binder 实现；宿主不支持 → 不自愈，维持拒绝。
    */
   hasUsableRuntimeModelTarget?(record: V4SessionRecordView): boolean;
   /**
-   * rowId -> rewind anchor messageId for its turn (same data source as above).
-   * editUserQuery targets a user row (which has no messageId), but rewind needs a messageId, so use
-   * the assistant row's messageId from the same turn as the anchor.
+   * rowId → 所属 turn 的 rewind 锚点 messageId（数据源同上）。
+   * editUserQuery targets user 行（user 行无 messageId），rewind 需要 messageId——
+   * 用同 turn 内 assistant 行的 messageId 作锚点。
    */
   getTurnRewindAnchor?(sessionId: string, rowId: number): string | null;
   /**
-   * Fallback for a running latest edit before its assistant anchor exists: after stop, look up the
-   * real user messageId in sessionStore using the row's turn.
+   * running latest edit 在 assistant anchor 尚未出现时的兜底：
+   * stop 后按 row 所属 turn 回查 sessionStore 中的 real user messageId。
    */
   resolveUserMessageIdForRow?(sessionId: string, rowId: number): Promise<string | null>;
   /**
-   * Resolve retryTurn's original prompt: assistant messageId -> parentID (user message) -> text.
-   * Source is core sessionStore (transcript authority), not the legacy protocol. The binder
-   * implements it only because deps are injected at the host; once v4 owns the session registry,
-   * the host will own this natively.
-   * If unavailable (no parent/no store), return null; the handler truncates without resending.
+   * retryTurn 的原 prompt 解析：assistant messageId → parentID（user 消息）→ 文本。
+   * 数据源 = core sessionStore（transcript 权威），非旧协议——binder 实现只是
+   * 因为 deps 注入点在宿主；v4 自持会话注册表后随 host 原生持有。
+   * 找不到（无 parent / 无 store）→ null → handler 只截断不重发。
    */
   resolveTurnUserPrompt?(sessionId: string, assistantMessageId: string): Promise<string | null>;
-  /** Persist assistant feedback as transcript metadata first, then publish the projection event for the same entity. */
+  /** assistant 反馈先持久化 transcript metadata，再发布同一 entity 的投影事件。 */
   setAssistantFeedback?(
     sessionId: string,
     input: {
@@ -257,51 +256,50 @@ export interface V4CommandCoreHost {
     },
   ): Promise<void>;
   /**
-   * Interaction response registry (native v4 infrastructure, not a transition hook): register a
-   * deferred when interaction-broker issues a reverse request (permission/AskUserQuestion), then
-   * deliver the response through the resolveInteraction command. The binder injects the same
-   * instance used by the broker. It is optional only to simplify test fixtures; when absent, treat
-   * as a miss (idempotently complete successfully).
+   * 交互应答登记表（v4 原生基础设施，非过渡钩子）：interaction-broker 发起
+   * 反向请求（permission/AskUserQuestion）时注册 deferred，resolveInteraction 命令
+   * 经此投递应答。binder 注入与 broker 同一实例；类型上可选仅为测试夹具便利——
+   * 未注入时按未命中处理（幂等成功收口）。
    */
   interactions?: V4InteractionRegistry;
 
-  // ── Transition hooks (legacy compatibility window) ─────────────────────────────
+  // ── 过渡期钩子（legacy 兼容窗口）─────────────────────────
   /**
-   * Check model readiness (credential/catalog resolution) before a turn starts.
-   * Currently implemented by the legacy protocol binder (ensureSessionModelAvailableForNextTurn);
-   * destination: replace this hook when the core app layer owns model resolution.
+   * turn 开跑前的模型就绪检查（凭据/catalog 解析）。
+   * 现由旧协议 binder 实现（ensureSessionModelAvailableForNextTurn）；
+   * 归宿：core app 层自持模型解析后，由其取代本钩子。
    */
   ensureModelReady?(record: V4SessionRecordView): Promise<void>;
   /**
-   * Before switching models, validate the target Provider using the Agent process Registry.
-   * Ordinary model commands carry only Selection, so this hook cannot accept or install a Host runtime snapshot.
+   * 切模型前由 Agent 进程 Registry 校验目标 Provider。普通模型命令只携带 Selection，
+   * 因此这里不能接收或安装 Host 运行快照。
    */
   ensureProviderAvailable?(
     sessionId: string,
     providerId: string,
   ): Promise<{ available: boolean; reason?: string }>;
   /**
-   * Legacy broadcast (state.updated + record.stateRevision): legacy protocol consumers (sidebar/task
-   * index) still rely on it for state changes until the sidebar migration is complete. v4 projection
-   * uses gateway event ingestion and does not depend on this hook; remove the hook when legacy
-   * broadcasting is retired.
+   * legacy 广播（state.updated + record.stateRevision）：旧协议消费者（侧栏/任务索引）
+   * 在侧栏迁移完成前仍靠它感知状态变更。v4 自身投影走 gateway 事件 ingest，
+   * 不依赖本钩子；旧广播机制收口时本钩子随之收口。
    */
   afterLegacyStateMutation?(record: V4SessionRecordView, reason: string): Promise<void>;
   /**
-   * Close a session (deleteSession execution: unsubscribe events -> app.close -> remove from registry
-   * -> clear gateway channels). During transition, the legacy protocol host owns the session registry
-   * and the binder implements this inline (order matches the old closeSession operation; see
-   * zcode-protocol/server-operations.ts). Once v4 owns the registry, move this into the native implementation.
+   * 会话删除（deleteSession 的执行面：软删除持久化 → 退订事件 → app.close → 注册表摘除 →
+   * gateway 清通道）。
+   * 过渡形态：会话注册表现归旧协议宿主，binder 内联实现（顺序对齐旧 closeSession op，
+   * 见 zcode-protocol/server-operations.ts）；v4 自持会话注册表后收编为原生实现。
    */
-  closeSession?(sessionId: string): Promise<void>;
+  deleteSession?(sessionId: string): Promise<void>;
   /**
-   * Create a session record (createSession execution: record creation/event wiring/model catalog
-   * synchronization/failure cleanup, all coupled to the legacy protocol host). The binder calls the
-   * old createSession operation; replace this hook with a native implementation once v4 owns the
-   * session registry. Semantic decisions (draft persistence/firstInput submission) stay in the
-   * native handler, not in the hook.
+   * 会话记录创建（createSession 的执行面：record 建立/事件接线/模型 catalog 同步/
+   * 失败清理，全部与旧协议宿主纠缠）。binder 实现调旧 createSession op；
+   * v4 自持会话注册表后由原生实现取代本钩子。
+   * 语义决策（draft persistence / firstInput 提交）留在原生 handler，不进钩子。
    */
   createSessionRecord?(params: {
+    sessionId?: string;
+    additionalDirectories?: string[];
     workspaceId: string;
     /** Host-reserved identity to materialize; the Host must validate the preparation marker. */
     preparedSessionId?: string;
@@ -370,7 +368,7 @@ export interface V4CommandCoreHost {
       >["modelSelection"];
     },
   ): Promise<{ sessionId: string }>;
-  /** Stable conversation-only fork; do not stop the parent, rewind the workspace, or copy active work/queue. */
+  /** conversation-only stable fork；不得 stop parent、rewind workspace 或复制 active work/queue。 */
   forkStableConversation?(
     sessionId: string,
     options: {
@@ -380,7 +378,7 @@ export interface V4CommandCoreHost {
       revisionAtDecision: number;
     },
   ): Promise<{ forkedSessionId: string }>;
-  /** @deprecated Compatibility with the legacy host shape only; new editUserQuery never calls this, and explicit forkAssistant is unaffected. */
+  /** @deprecated 仅旧宿主结构兼容；新 editUserQuery 永不调用，显式 forkAssistant 不受影响。 */
   forkConversationBeforeInput?(
     sessionId: string,
     options: {
@@ -389,7 +387,7 @@ export interface V4CommandCoreHost {
       admission: { admissionSeq: number; admittedAt: number; queueItemId: string };
     },
   ): Promise<{ forkedSessionId: string }>;
-  /** Runtime start failed synchronously after bundle commit: record only child failure and keep the parent fork ACK accepted. */
+  /** bundle 已提交后 runtime 同步启动失败：只记 child failure，parent fork ACK 保持 accepted。 */
   recordForkStartFailure?(
     sessionId: string,
     envelope: CommandEnvelope,

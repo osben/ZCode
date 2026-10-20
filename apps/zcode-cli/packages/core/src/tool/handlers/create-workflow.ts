@@ -403,6 +403,7 @@ export const createWorkflowToolEntry: ToolEntry = {
   capability:
     "Typecheck a dynamic-workflow TypeScript script against the facade and, once confirmed, start the run in the background",
   metadata: {
+    shouldDefer: true,
     name: CREATE_WORKFLOW_TOOL_NAME,
     description: CREATE_WORKFLOW_TOOL_DESCRIPTION,
     // With the engine wired, this call starts an execution child process and multiple actor

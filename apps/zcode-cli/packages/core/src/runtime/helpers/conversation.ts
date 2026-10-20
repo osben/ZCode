@@ -1,12 +1,10 @@
 import { activeSessionMessages, modelMessageContentToText } from "../deps.js";
+import { buildPromptAttachmentBlocks } from "../../system-reminder/prompt-attachment.js";
 import {
-  buildPromptAttachmentBlocks,
-  buildPromptAttachmentReminderBodies,
-  type PromptAttachmentReminderInput,
-} from "../../system-reminder/prompt-attachment.js";
-import {
-  realUserRuntimeMetadata,
-  systemReminderAttachmentEntry,
+  buildUserMessageEntries,
+  isPastedInlineImageAttachment,
+  promptAttachmentInputForResolvedAttachment,
+  isFailedTextAttachmentPlaceholder,
   type RuntimeMessageEntry,
 } from "../../agent/message-history.js";
 import type {
@@ -46,8 +44,8 @@ export function findLatestRealUserMessageIndex(
 ): number {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]!;
-    // Provider projection passes the request-local index of the latest real user before stripping metadata.
-    // Use this only as a fallback when that index is absent, preventing a literal meta tag in user input from being treated as runtime metadata.
+    // provider projection 会在剥离 metadata 前传入 latest real user 的 request-local index。
+    // 这里仅作为缺失该 index 时的兜底，避免把用户输入的 literal meta tag 当成 runtime meta。
     if (message.role === "user" && !isMetaUserContextMessage(message)) {
       return index;
     }
@@ -71,7 +69,7 @@ export function buildUserContentFromTurn(
   if (attachments.length === 0) return input;
 
   const blocks: ModelMessageContentBlock[] = [];
-  // Keep video after the body so existing ordering of non-pasted image/@file/url attachments remains unchanged.
+  // video 跟随正文，避免影响既有非粘贴 image/@file/url 的顺序。
   const videoBlocks: ModelMessageContentBlock[] = [];
   const pastedImageBlocks: ModelMessageContentBlock[] = [];
   for (const attachment of attachments) {
@@ -113,59 +111,17 @@ export function buildRuntimeUserEntriesFromTurn(
     browserAmbientContext?: { tabCount: number; currentUrl?: string };
   } = {},
 ): RuntimeMessageEntry[] {
-  const realUserBlocks: ModelMessageContentBlock[] = [];
-  const pastedImageBlocks: ModelMessageContentBlock[] = [];
-  const promptAttachmentEntries: RuntimeMessageEntry[] = [];
-
-  for (const attachment of attachments) {
-    if (isPastedInlineImageAttachment(attachment)) {
-      pastedImageBlocks.push(attachment.contentBlock);
-      continue;
-    }
-
-    const promptAttachmentInput = promptAttachmentInputForResolvedAttachment(attachment);
-    if (promptAttachmentInput) {
-      const reminderBody = buildPromptAttachmentReminderBodies(promptAttachmentInput).join("\n");
-      promptAttachmentEntries.push(
-        systemReminderAttachmentEntry("prompt_attachment", reminderBody),
-      );
-      continue;
-    }
-
-    if (isFailedTextAttachmentPlaceholder(attachment)) {
-      continue;
-    }
-
-    realUserBlocks.push(attachment.contentBlock);
-  }
-
-  const blocks: ModelMessageContentBlock[] = [];
-  if (input.length > 0) {
-    blocks.push({
-      type: "text",
-      text: formatBrowserAmbientUserInput(input, options.browserAmbientContext),
-    });
-  }
-  blocks.push(...realUserBlocks, ...pastedImageBlocks);
-
-  return [
-    {
-      message: {
-        role: "user",
-        content: normalizeRealUserContent(blocks),
-      },
-      metadata: realUserRuntimeMetadata(),
-    },
-    ...promptAttachmentEntries,
-  ];
+  return buildUserMessageEntries(
+    input.length > 0 ? formatBrowserAmbientUserInput(input, options.browserAmbientContext) : input,
+    attachments,
+  );
 }
 
 export function formatBrowserAmbientUserInput(
   input: string,
   context?: { tabCount: number; currentUrl?: string },
 ): string {
-  if (!context || !Number.isInteger(context.tabCount) || context.tabCount <= 0)
-    return input;
+  if (!context || !Number.isInteger(context.tabCount) || context.tabCount <= 0) return input;
   const tabLabel = context.tabCount === 1 ? "tab" : "tabs";
   const lines = [
     '<in-app-browser-context source="ambient-ui-state">',
@@ -179,90 +135,4 @@ export function formatBrowserAmbientUserInput(
     input,
   ];
   return lines.join("\n");
-}
-
-function normalizeRealUserContent(
-  blocks: readonly ModelMessageContentBlock[],
-): ModelMessageContent {
-  if (blocks.length === 0) return "";
-  if (blocks.length === 1 && blocks[0]!.type === "text") {
-    return blocks[0]!.text;
-  }
-  return blocks.map((block) => ({ ...block })) as ModelMessageContentBlock[];
-}
-
-function isPastedInlineImageAttachment(attachment: ResolvedTurnAttachment): boolean {
-  if (attachment.contentBlock.type === "image") {
-    return attachment.contentBlock.source?.kind === "inline";
-  }
-  return (
-    attachment.contentBlock.type === "text" &&
-    attachment.mime.startsWith("image/") &&
-    /^\[Attached image\/[^:]+: \[image #\d+\]\]$/u.test(attachment.contentBlock.text)
-  );
-}
-
-function shouldAddReadLikePromptAttachmentReminder(
-  attachment: ResolvedTurnAttachment,
-): attachment is ResolvedTurnAttachment & {
-  contentBlock: Extract<ModelMessageContentBlock, { type: "text" }>;
-  source: NonNullable<ResolvedTurnAttachment["source"]>;
-} {
-  if (attachment.contentBlock.type !== "text") return false;
-  if (!attachment.mime.startsWith("text/")) return false;
-  if (!attachment.source) return false;
-  if (attachment.metadata.storageKind !== "inline") return false;
-  if (
-    attachment.metadata.recoverability !== "provider_ready" &&
-    attachment.metadata.recoverability !== "preview_only"
-  ) {
-    return false;
-  }
-  return attachment.metadata.preview?.text === attachment.contentBlock.text;
-}
-
-function promptAttachmentInputForResolvedAttachment(
-  attachment: ResolvedTurnAttachment,
-): (PromptAttachmentReminderInput & { content: string; kind: "file" | "inline_text" }) | undefined {
-  if (shouldAddReadLikePromptAttachmentReminder(attachment)) {
-    return {
-      content: attachment.contentBlock.text,
-      kind: "file",
-      // Provider-visible Read input must match the attachment reference submitted by the user.
-      // A local file's filename is only a display name; use it as a fallback only when source is missing to prevent live/hydrated traces from diverging.
-      label: attachment.source.text.value ?? attachment.filename,
-      preview: attachment.metadata.preview,
-    };
-  }
-
-  if (shouldAddInlinePromptAttachmentReminder(attachment)) {
-    return {
-      content: attachment.contentBlock.text,
-      kind: "inline_text",
-      label: attachment.filename,
-      preview: attachment.metadata.preview,
-    };
-  }
-
-  return undefined;
-}
-
-function shouldAddInlinePromptAttachmentReminder(
-  attachment: ResolvedTurnAttachment,
-): attachment is ResolvedTurnAttachment & {
-  contentBlock: Extract<ModelMessageContentBlock, { type: "text" }>;
-} {
-  return (
-    attachment.contentBlock.type === "text" &&
-    attachment.mime.startsWith("text/") &&
-    !attachment.source
-  );
-}
-
-function isFailedTextAttachmentPlaceholder(attachment: ResolvedTurnAttachment): boolean {
-  return (
-    attachment.contentBlock.type === "text" &&
-    attachment.mime.startsWith("text/") &&
-    attachment.metadata.errorCode === "attachment_read_failed"
-  );
 }

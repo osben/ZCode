@@ -184,7 +184,12 @@ export class ContextBuilder {
         if (worktreeSection) sections.push(worktreeSection);
       } else {
         sections.push(
-          buildEnvInfoSection(this.config.envInfo, this.config.model, this.config.executionWorktree),
+          buildEnvInfoSection(
+            this.config.envInfo,
+            this.config.model,
+            this.config.executionWorktree,
+            this.config.additionalDirectories,
+          ),
         );
       }
 

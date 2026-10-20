@@ -14,7 +14,8 @@ const PROFILE = { ...INCOGNITO_LOCKDOWN_PROFILE, memory: true };
 function makeServer(sessionStore: SessionStorePort) {
   const resume = vi.fn(async () => undefined);
   const server = new ZCodeProtocolAgentServer({
-    sessionStore,
+    // Stub stores answer "no existing session" for the create-time id check; tests override the rest.
+    sessionStore: { getSession: async () => undefined, ...sessionStore } as SessionStorePort,
     createZCodeApp: (options) => createFakeApp(options, { getModel: () => "", resume }),
   });
   const context = (server as unknown as { context: ZCodeProtocolAgentServerContext }).context;

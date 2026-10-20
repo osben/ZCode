@@ -371,7 +371,7 @@ describe("child session facts resolver", () => {
 
   it("fetch batches both store reads for the cold path", async () => {
     const harness = createHarness(new Map([["s-parent", { sideChats: 3, subagents: 4 }]]));
-    const [counts] = await harness.resolver.fetch(["s-parent"]);
+    const [counts] = await harness.resolver.loadStoredFacts(["s-parent"]);
     expect(counts.get("s-parent")).toEqual({ sideChats: 3, subagents: 4 });
     expect(harness.listCalls()).toBe(1);
   });

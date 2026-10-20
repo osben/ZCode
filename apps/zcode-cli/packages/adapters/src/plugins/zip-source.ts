@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, chmod, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import * as yauzl from "yauzl";
@@ -271,6 +271,15 @@ async function extractZipArchive(input: {
             }
             await mkdir(dirname(targetPath), { recursive: true });
             await writeFile(targetPath, bytes);
+            // Bug fix: the entry's Unix permission bits were dropped entirely, so plugin hook executables shipped in
+            // marketplace zips (for example superpowers' run-hook.cmd) were extracted non-executable and every hook
+            // spawn failed with EACCES/exit 126. chmod after write applies the archived rwx bits verbatim; writeFile's
+            // mode would be masked by the process umask. Entries without Unix attributes (mode 0) keep the platform
+            // default instead of being forced executable, and setuid/setgid/sticky are never restored.
+            const unixMode = (entry.externalFileAttributes >>> 16) & 0o777;
+            if (unixMode !== 0) {
+              await chmod(targetPath, unixMode);
+            }
             zipFile.readEntry();
           } catch (error) {
             rejectOnce(error);

@@ -161,7 +161,7 @@ const CreateWorkflowModelInputSchema = z
       .min(1)
       .optional()
       .describe(
-        "Model for the subagents (`providerId/modelId` or a model id). Only when the user asks; you stay on the session model.",
+        "Model for the subagents (`providerId/modelId` or a model id). Only when the user asks, and never a model under another provider the user did not name — ask them first if one would help; you stay on the session model.",
       ),
     // Resuming an amendment does not belong here; that is handled by `AmendWorkflow` (amend-workflow.ts).
     // `.strict()` makes the legacy `resume_from` spelling a visible schema error rather than silently

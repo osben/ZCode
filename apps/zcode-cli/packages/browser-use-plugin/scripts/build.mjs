@@ -6,16 +6,16 @@ import { build } from "esbuild";
 const defaultPackageRoot = resolve(import.meta.dirname, "..");
 const executableFileMode = 0o755;
 
-// When esbuild bundles with format: "esm", it replaces require() in CJS dependencies with a __require shim:
+// esbuild 以 format: "esm" 打包时，会把 CJS 依赖里的 require() 替换成一个 __require shim：
 //   typeof require !== "undefined" ? require : (name) => { throw Error('Dynamic require of "' + name + '" is not supported') }
-// The ESM module scope has no require, so the shim always takes its throwing branch.
-// @zcode/core eagerly imports CJS yaml through tool/handlers/write.js -> memory/origin-session.js.
-// yaml's require("process") hits the shim, causing dist/mcp/server.js to throw
-// `Dynamic require of "process" is not supported` during **module evaluation**. The plugin host's await import() then fails,
-// resulting in mcp.server.closed / mcp.server.failed, zero registered tools, and mcp__node_repl__js becoming unavailable to the model.
-// Inject the real createRequire so the shim uses a working require (the output remains ESM).
-// Apply this to both bundles: browser-client currently has no CJS dependencies, but as an ESM artifact it would fail at load
-// time in the same way if a CJS dependency is introduced later.
+// ESM 模块作用域里没有 require，于是这个 shim 永远走抛错分支。
+// @zcode/core 从 tool/handlers/write.js -> memory/origin-session.js eager import 了 CJS 的
+// yaml，yaml 内部 require("process") 正好命中 shim，导致 dist/mcp/server.js 在**模块求值阶段**
+// 就抛 `Dynamic require of "process" is not supported`；plugin host 的 await import() 直接失败，
+// 表现为 mcp.server.closed / mcp.server.failed、注册 0 个工具，模型侧彻底看不到 mcp__node_repl__js。
+// 这里注入真实的 createRequire，让 shim 落到可用的 require 上（产物仍是 ESM）。
+// 两个 bundle 都加：browser-client 目前没有 CJS 依赖，但同样是 ESM 产物，后续被拖进一个
+// CJS 依赖就会以同样的方式在加载期炸掉。
 const nodeRequireBanner = `import { createRequire as __zcodeCreateRequire } from "node:module";
 const require = __zcodeCreateRequire(import.meta.url);`;
 
@@ -34,14 +34,13 @@ const createBundleOptions = ({ entryPoint, outfile }) => ({
 });
 
 /**
- * Build entry point shared by direct script execution and smoke tests, ensuring tests validate artifacts built with the same
- * esbuild options as release artifacts.
+ * 供 scripts 直跑与 smoke test 复用的构建入口，保证测试校验的产物与发布产物同一套 esbuild 选项。
  */
 export const buildBrowserUsePluginBundles = async ({
   packageRoot = defaultPackageRoot,
   browserClientOutfile = resolve(packageRoot, "scripts", "browser-client.mjs"),
 } = {}) => {
-  // @zcode/node-repl-host builds and ships the node_repl host artifact itself; this package emits only browser-client.
+  // node_repl 宿主的产物由 @zcode/node-repl-host 自己构建与携带；这个包只出 browser-client。
   await mkdir(dirname(browserClientOutfile), { recursive: true });
   await build(
     createBundleOptions({

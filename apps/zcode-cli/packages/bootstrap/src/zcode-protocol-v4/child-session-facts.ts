@@ -2,10 +2,26 @@
 // The live sessions-index hook is synchronous, so store reads refresh a per-parent TTL cache in the
 // background. Live lifecycle state comes from the owner of each runtime: session records for ordinary
 // children and the V4 gateway's detached-child registry for subagents without bootstrap records.
-import type { ChildSessionInfo, SessionId, SessionStorePort } from "@zcode/contracts";
+import type {
+  ChildSessionInfo,
+  SessionId,
+  SessionStorePort,
+  SessionTaskType,
+} from "@zcode/contracts";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
 import { SESSION_SUMMARY_CHILD_SESSIONS_MAX } from "@zcode/shared/zcode-protocol-v4";
-import type { ZCodeProtocolSessionRecord } from "../zcode-protocol/server-types.js";
+
+/**
+ * Structural view of a live session record. The v4 directory must not import the legacy protocol
+ * directory (v4-native-boundary), so the legacy registry entries are passed in by shape.
+ */
+export interface ChildSessionRecordView {
+  app: { runtime: { hasResidencyBlockingWork(): boolean } };
+  activeAbortController?: AbortController;
+  residencyFinalizationCount?: number;
+  taskType?: SessionTaskType;
+  parentSessionId?: string;
+}
 
 const CHILD_SESSION_FACTS_TTL_MS = 1_000;
 
@@ -23,7 +39,7 @@ export interface ChildSessionFactsResolver {
   /** Register parents that may have children; cold seed and live discovery call this. */
   noteParents(parentKeys: Iterable<string>): void;
   /** Cold-path store reads for many parents (one query pair). */
-  fetch(
+  loadStoredFacts(
     parentIds: readonly SessionId[],
   ): Promise<
     [Map<string, { sideChats: number; subagents: number }>, Map<string, ChildSessionInfo[]>]
@@ -59,7 +75,7 @@ export function toWireChildSession(child: ChildSessionInfo, running: boolean) {
 }
 
 /** Finished-but-resident children must not render the running spinner. */
-export function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
+export function isRecordBusy(record: ChildSessionRecordView): boolean {
   return (
     record.activeAbortController !== undefined ||
     (record.residencyFinalizationCount ?? 0) > 0 ||
@@ -69,7 +85,7 @@ export function isRecordBusy(record: ZCodeProtocolSessionRecord): boolean {
 
 export function createChildSessionFactsResolver(deps: {
   store: () => SessionStorePort | undefined;
-  sessions: Map<string, ZCodeProtocolSessionRecord>;
+  sessions: Map<string, ChildSessionRecordView>;
   getDetachedChildren?: () => readonly DetachedChildSessionFact[];
   onRefresh?: (parentKeys: readonly string[]) => void;
   logger?: ChildSessionFactsLogger;
@@ -250,7 +266,7 @@ export function createChildSessionFactsResolver(deps: {
     noteParents(parentKeys) {
       for (const parentKey of parentKeys) seenParentIds.add(parentKey);
     },
-    fetch(parentIds) {
+    loadStoredFacts(parentIds) {
       const store = deps.store();
       if (!store) return Promise.resolve([new Map(), new Map()] as const);
       return Promise.all([

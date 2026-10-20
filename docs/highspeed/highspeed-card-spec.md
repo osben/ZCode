@@ -380,6 +380,13 @@ User        Renderer coordinator       Highspeed service/API       Session comma
     会话旧组合抽卡后把用户的提交选择覆盖成卡模型。历史 edit 重发没有普通提交选择时按会话常驻
     Selection prepare；队列手动提升必须显式传入 QueueItem 自身的普通 Selection，禁止回看可能已被
     后续 admission 改写的 Session Selection。
+16. draw 请求的失败若在当轮 1s 发送预算内被本轮观察到（HTTP 4xx/5xx、网络错误、业务码非 0 等，
+    2026-10-19 线上为稳定的 HTTP 400 `code=3001 parameter error`），本轮立即 fallback 普通发送
+    （reason `draw-failed`），并把 Service 的 `nextDrawAt` 推进到 `now + 60s`：冷却语义与成功 draw
+    返回的 `next_draw_at`（§1）相同，冷却期内的后续发送不得重复发起同样注定失败的 draw 并再次支付
+    其全部时延。冷却只推进、不回退：与已有 `nextDrawAt` 取较大值。未被任何一轮观察到的迟到后台
+    拒绝（例如超出预算后 20s 生命周期中止，规则 6/CR-01）不得写入冷却，下一次发送仍可重新抽卡；
+    冷却到期后正常重新抽卡，成功 draw 的 `next_draw_at` 覆盖失败冷却。
 
 ```text
 running Highspeed turn

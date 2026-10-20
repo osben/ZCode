@@ -49,6 +49,7 @@ export const ukUA: ZCodeCopy = {
     Вилучити інструменти повністю лише для цього запуску промпту/TUI; збережені налаштування не змінюються.
     Назви інструментів через кому або пробіл, напр. "Bash Edit".
     "Bash(git *)" вилучає весь Bash; шаблони команд не зіставляються.
+  --toolsearch-mode <auto|native|local|off> Режим ToolSearch (типово: off; лише для цього запуску)
   --force-mcs      Примусово вмикати системну проєкцію посеред розмови для провайдерів Anthropic
   --locale <locale>  Мова інтерфейсу: en-US, zh-CN, uk-UA або auto
   --mode <mode>    Режим дозволів для промптів: build, edit, plan або yolo (типово: yolo для --prompt)

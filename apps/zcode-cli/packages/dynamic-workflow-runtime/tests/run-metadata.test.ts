@@ -1,13 +1,13 @@
 /**
- * Run metadata is journaled through the **real entry point**: runWorkflowScript → engine construction → createRun.
+ * Run 元数据经**真实入口**落库：runWorkflowScript → 引擎构造 → createRun。
  *
- * Unit tests that directly new WorkflowEngine (inside the dynamic-workflow package) only prove the engine writes these four fields;
- * this proves the harness really passes them down — dropping a single field along the way shows up as dwf_run columns being forever empty,
- * leaving the resume script_hash check with nothing to compare against.
+ * 直接 new WorkflowEngine 的单测（dynamic-workflow 包内）只证明引擎会写这四个字段；
+ * 这里证明 harness 真的把它们递下去了——中间少接一个字段的表现是 dwf_run 里永远为空，
+ * 而 resume 的 script_hash 校验因此永远没有比对对象。
  *
- * The harness deliberately does **not** compute scriptHash itself: the compile-once path passes `lowered` (at that point the harness
- * does not even hold the original script text); if the harness "conveniently" hashed the text it sees, that path would journal the hash of the
- * lowered function body — a silently wrong comparison target. Hashing belongs to the caller.
+ * harness 刻意**不**自己算 scriptHash：编译一次的路径传 `lowered`（此时 harness 手里根本
+ * 没有原始脚本文本），若 harness "顺手" 哈希它看到的文本，那条路径上落库的就是 lowered
+ * 函数体的哈希——一个静默错误的比对对象。哈希归调用方。
  */
 
 import { describe, expect, it } from "vitest";
@@ -36,7 +36,7 @@ describe("run metadata through the real entry point", () => {
         return driver;
       },
       timeoutMs: 20000,
-      // Caller-provided metadata: forwarded verbatim to EngineConfig; the harness does not process it.
+      // 调用方给定的元数据：verbatim 递到 EngineConfig，harness 不加工。
       scriptHash: "caller-computed-hash",
       parentSessionId: "sess_parent",
       cwd: TEST_CWD,
@@ -48,19 +48,19 @@ describe("run metadata through the real entry point", () => {
     expect(run).toMatchObject({
       runId: RUN,
       status: "completed",
-      // scriptText stores the caller's original script text, not the lowered function body.
+      // scriptText 落的是调用方给的脚本原文，不是 lowered 之后的函数体。
       scriptText: SCRIPT,
       scriptHash: "caller-computed-hash",
       parentSessionId: "sess_parent",
       cwd: TEST_CWD,
-      // The sole persistent source of the tool card join / resume notification anchor after a restart (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
+      // 重启后工具卡 join / resume 通知锚点的唯一持久来源（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
       toolCallId: "call-origin",
     });
   });
 
   it("carries the run's subagent model on the journaled run-launched event, reasoning segment included", async () => {
-    // The subagent model lives in `run-launched` with zero SQL (docs/dynamic-workflow/launch.md), riding the same vehicle as the launch anchor
-    // and the phase table: the harness only forwards the whole launch block verbatim to EngineConfig — no reading, no parsing, no processing.
+    // 子代理模型零 SQL 地活在 `run-launched` 里（docs/dynamic-workflow/launch.md），与发起锚点、
+    // 阶段表同车：harness 只把 launch 整块 verbatim 转交 EngineConfig，不读、不解析、不加工。
     const journal = new InMemoryJournalStore();
     const driver = new AutoDriver(journal, {
       asks: { "ask#1": () => ({ type: "text", finalText: "hi" }) },
@@ -87,16 +87,16 @@ describe("run metadata through the real entry point", () => {
     expect(launched?.event).toEqual({
       type: "run-launched",
       inputId: "input-origin",
-      // The reasoning-level segment travels as is: `$high` is part of the selection and the host reads the whole string back from this event.
+      // 档位段原样带着走：`$high` 是选择的一部分，宿主从这条事件读回整串。
       subagentModel: "zhipu/glm-5.3-flash$high",
     });
-    // This fact is not on the row: it is not a dwf_run column (user ruling: no migration).
+    // 行上没有这条事实：它不是 dwf_run 的列（用户裁决不做迁移）。
     expect("subagentModel" in journal.getRun(RUN)!).toBe(false);
   });
 
   it("omits subagentModel entirely when launch carries none", async () => {
-    // Absence means "the subagent runs on the session model". Journaling a key with an undefined value would make the read side interpret "not set"
-    // as "set to an empty model" — the two mean different things in AmendWorkflow's three states.
+    // 缺席即「子代理跑在会话模型上」。落成值为 undefined 的键会让读侧把「没设」读成
+    // 「设了一个空模型」——两者在 AmendWorkflow 的三态里是不同的意思。
     const journal = new InMemoryJournalStore();
     const driver = new AutoDriver(journal, {
       asks: { "ask#1": () => ({ type: "text", finalText: "hi" }) },
@@ -124,8 +124,8 @@ describe("run metadata through the real entry point", () => {
   });
 
   it("journals the authored scriptText, not the lowered body, when both are given", async () => {
-    // The "compile once" shape: the caller compiles to lowered itself while also handing down the authored original. What gets journaled must be
-    // the original — the two texts differ on purpose, so "conveniently substituting lowered" is caught by this assertion.
+    // 「编译一次」的形态：调用方自己编译得到 lowered，同时把作者原文交下来。落库的必须是
+    // 原文——两段文本刻意不同，所以"顺手拿 lowered 顶替"会被这条断言抓住。
     const journal = new InMemoryJournalStore();
     const driver = new AutoDriver(journal, {});
 
@@ -153,8 +153,8 @@ describe("run metadata through the real entry point", () => {
   });
 
   it("forwards the run name onto the journaled run record", async () => {
-    // name travels the same metadata path as scriptText / cwd. Dropping this field in the harness shows up as dwf_run.name
-    // being forever empty, leaving the host's enumeration surface to list bare runIds (the run introspection tool's label goes dead).
+    // name 与 scriptText / cwd 同一条元数据路。harness 少接这一个字段的表现是 dwf_run.name
+    // 永远为空，而宿主的枚举面只能列出裸 runId（run 内省工具的标签就此失效）。
     const journal = new InMemoryJournalStore();
     const driver = new AutoDriver(journal, {});
 
@@ -201,7 +201,7 @@ describe("run metadata through the real entry point", () => {
   });
 
   it("rejects a resume whose scriptHash does not match the journaled one", async () => {
-    // Proves end to end that this check now has a comparison target: the first pass journals a hash, and the second pass with a different hash is rejected.
+    // 端到端地证明这条校验现在有比对对象了：第一趟落库哈希，第二趟换一个哈希即被拒。
     const journal = new InMemoryJournalStore();
     const driver = new AutoDriver(journal, { asks: { "ask#1": () => ({ type: "text", finalText: "hi" }) } });
     const base = {
@@ -241,7 +241,7 @@ describe("run metadata through the real entry point", () => {
       mismatch: { expected: "hash-v1", got: "hash-v2" },
     });
 
-    // A rejected resume must not rewrite the existing record (it can still be resumed with the hash-v1 script).
+    // 被拒的 resume 不得改写既有记录（它仍可用 hash-v1 的脚本 resume）。
     expect(journal.getRun(RUN)).toMatchObject({ status: "completed", scriptHash: "hash-v1" });
   });
 });

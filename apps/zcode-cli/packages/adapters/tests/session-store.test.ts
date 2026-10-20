@@ -343,6 +343,36 @@ describe("SQLite session store", () => {
     }
   });
 
+  it("persists the terminal outcome through the partial update and keeps it across later writes", async () => {
+    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const sessionID = createSessionId("last-outcome");
+    try {
+      await store.createSession({
+        id: sessionID,
+        projectID: createProjectId("last-outcome"),
+        workspaceID: "local:/home/dev/project" as WorkspaceId,
+        slug: "last-outcome",
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        title: "last outcome",
+        version: "0.1.0",
+        time: { created: 1, updated: 2 },
+      });
+
+      await expect(
+        store.updateSession({ id: sessionID, lastOutcome: "error", timeUpdated: 3 }),
+      ).resolves.toMatchObject({ lastOutcome: "error", title: "last outcome" });
+
+      // A title-only write omits lastOutcome, so the stored terminal state must survive it.
+      await expect(store.updateSession({ id: sessionID, title: "renamed" })).resolves.toMatchObject({
+        lastOutcome: "error",
+        title: "renamed",
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   it("persists execution worktree facts beside the parent workspace identity", async () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("worktree-execution");
@@ -432,7 +462,7 @@ describe("SQLite session store", () => {
   it("keeps the existing in-memory session store path working", () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     try {
-      expect(store.debugMigrationIds()).toHaveLength(24);
+      expect(store.debugMigrationIds()).toHaveLength(26);
     } finally {
       store.close();
     }
@@ -558,8 +588,10 @@ describe("SQLite session store", () => {
       "0020_provider_model_selection",
       "0021_official_glm_selection",
       "0022_backfilled_session_reasoning",
-      "0023_session_execution_worktree",
+      "0023_session_soft_delete_outcome",
+      "0024_session_database_identity",
       "9001_fork_session_incognito",
+      "9002_fork_session_execution_worktree",
     ];
 
     try {
@@ -596,6 +628,8 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.5",
         "0.16.5",
+        "0.16.9",
+        "0.16.9",
         "0.16.9",
         "0.16.9",
       ]);
@@ -645,7 +679,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 24)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 26)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -868,8 +902,10 @@ describe("SQLite session store", () => {
         "0020_provider_model_selection",
         "0021_official_glm_selection",
         "0022_backfilled_session_reasoning",
-        "0023_session_execution_worktree",
+        "0023_session_soft_delete_outcome",
+        "0024_session_database_identity",
         "9001_fork_session_incognito",
+        "9002_fork_session_execution_worktree",
       ]);
       store.close();
     } finally {

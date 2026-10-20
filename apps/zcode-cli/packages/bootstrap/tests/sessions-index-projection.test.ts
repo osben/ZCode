@@ -1,6 +1,5 @@
-// Golden tests for SessionsIndexProjection / SessionsIndexPublisher (M5 ①, 14-sessions-index):
-// multi-session ConversationSnapshot → SessionSummary derivation + upsert/remove delta + conflation + frame
-// accounting.
+// SessionsIndexProjection / SessionsIndexPublisher 黄金测试（M5 ①，14-sessions-index）：
+// 多会话 ConversationSnapshot → SessionSummary 派生 + upsert/remove delta + conflation + 帧记账。
 import { describe, expect, it } from "vitest";
 import type {
   EventId,
@@ -51,6 +50,18 @@ function projectionFor(sessionId: string, events: SessionEvent[]): ProductProjec
 }
 
 describe("SessionsIndexProjection 黄金测试（L1）", () => {
+  it("裁剪正文不改变持久化 lastOutcome，实时 phase 也不推导历史结果", () => {
+    const snapshot = projectionFor("s1", []).getSnapshot();
+    const summary = deriveSessionSummary(snapshot, {
+      workspaceId: "/repo",
+      createdAt: 1,
+      lastActivityAt: 2,
+      lastOutcome: "error",
+    });
+    expect(summary.lastOutcome).toBe("error");
+    expect(summary.phase).toBe("draft");
+  });
+
   it("派生：title/phase/goal/hasBackgroundWork/preview 从会话快照取值", () => {
     const events = buildEvents("s1", (push) => {
       push(SessionEventType.SessionCreated, {
@@ -97,14 +108,15 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       workspaceId: "ws-1",
       createdAt: 1000,
       lastActivityAt: 2000,
+      lastOutcome: "completed",
     });
     expect(summary.sessionId).toBe("s1");
     expect(summary.workspaceId).toBe("ws-1");
     expect(summary.title).toBe("我的会话");
     expect(summary.titleSource).toBe("custom");
     expect(summary.phase).toBe("completedSuccess");
-    // control.sessionEnded is set by onTurnComplete to phase!=="error" (existing M2 semantics; the summary passes it
-    // through faithfully).
+    expect(summary.lastOutcome).toBe("completed");
+    // control.sessionEnded 由 onTurnComplete 置为 phase!=="error"（M2 既有语义，summary 忠实透传）。
     expect(summary.sessionEnded).toBe(true);
     expect(summary.hasBackgroundWork).toBe(false);
     expect(summary.lastAssistantPreview).toContain("你好世界");
@@ -279,8 +291,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       runProgress(push, 1, "run-launched", {
         inputId: "in-1",
         phaseNames: ["Research", "Write"],
-        // Research's strand is still running when Write is entered: the sidebar draws a double-line segment between
-        // the two stations based on this.
+        // 进入 Write 时 Research 的 strand 还在跑：侧栏据此把两站之间画成双线段。
         phaseAlongside: [[], [0]],
       });
       runProgress(push, 2, "phase-entered", { name: "Research", ordinal: 1 });
@@ -320,8 +331,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       ],
     });
 
-    // Events for the same run that only change node / usage but not phase / status / subagent count: the summaries
-    // compare equal and no sidebar frame is produced.
+    // 同一 run 再来只改 node / 用量、不改 phase / status / 子代理数的事件：摘要判等，不产侧栏帧。
     const index = new SessionsIndexProjection("ws-1", "epoch-1");
     expect(
       index.upsertFromConversation(projection.getSnapshot(), { createdAt: 1, lastActivityAt: 2 }),
@@ -338,7 +348,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(
       index.upsertFromConversation(projection.getSnapshot(), { createdAt: 1, lastActivityAt: 2 }),
     ).toEqual([]);
-    // Entering the next phase produces a delta, and the station lamps flip with it.
+    // 进入下一个 phase 则产 delta，且站点灯随之翻转。
     const [phase] = buildEvents("s-wf", (push) =>
       runProgress(push, 8, "phase-entered", { name: "Write", ordinal: 1 }),
     );
@@ -483,26 +493,26 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     const snapshot = projectionFor("s1", events).getSnapshot();
     const extra = { createdAt: 1, lastActivityAt: 2 };
 
-    // The first upsert produces a delta
+    // 首次 upsert 产 delta
     const d1 = index.upsertFromConversation(snapshot, extra);
     expect(d1).toHaveLength(1);
     expect(d1[0]).toMatchObject({ op: "session.upserted" });
 
-    // Same snapshot + extra → idempotent, no delta
+    // 相同 snapshot + extra → 幂等无 delta
     const d2 = index.upsertFromConversation(snapshot, extra);
     expect(d2).toHaveLength(0);
 
-    // lastActivityAt changed → another upsert
+    // lastActivityAt 变化 → 再产 upsert
     const d3 = index.upsertFromConversation(snapshot, {
       createdAt: 1,
       lastActivityAt: 3,
     });
     expect(d3).toHaveLength(1);
 
-    // The snapshot contains the session
+    // 快照含该会话
     expect(index.getSnapshot().sessions.map((s) => s.sessionId)).toEqual(["s1"]);
 
-    // A hit on remove produces a delta; removing again is idempotent
+    // remove 命中产 delta，再 remove 幂等
     expect(index.remove("s1")).toHaveLength(1);
     expect(index.remove("s1")).toHaveLength(0);
     expect(index.getSnapshot().sessions).toHaveLength(0);
@@ -510,7 +520,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
 
   it("index：stored→live 降级防御——live 空标题/新时间不得覆盖 store 种子", () => {
     const index = new SessionsIndexProjection("ws-1", "list-epoch-1");
-    // Store seed: with title and original times (simulating a sidebar cold start).
+    // store 种子：带标题与原始时间（模拟侧栏冷启动）。
     index.seed({
       sessionId: "s1",
       workspaceId: "ws-1",
@@ -522,8 +532,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       lastAssistantPreview: "旧预览",
       createdAt: 10,
     });
-    // The live projection of a cold recovery: before hydration meta.title is empty and the record times were reset to
-    // "now" by the resume path.
+    // 冷恢复的 live 投影：hydration 前 meta.title 为空、record 时间被 resume 重置为"现在"。
     const events = buildEvents("s1", (push) => {
       push(SessionEventType.SessionCreated, {
         mode: "default",
@@ -539,8 +548,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     expect(merged?.title).toBe("项目分析与优化");
     expect(merged?.createdAt).toBe(10);
     expect(merged?.lastAssistantPreview).toBe("旧预览");
-    // Bugfix assertion: the live projection's phase before hydration is the initial draft and must not downgrade the
-    // terminal baseline.
+    // Bugfix 断言：hydration 前的 live 投影 phase 是初始 draft，不得把终态基线降级。
     expect(merged?.phase).toBe("completedSuccess");
     expect(merged?.sessionEnded).toBe(true);
   });
@@ -558,8 +566,8 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       lastAssistantPreview: "旧预览",
       createdAt: 10,
     });
-    // Cold-recovery live projection (hydration not finished): phase=draft, no title/preview;
-    // the record times were backfilled by the resume path to the store's real times (lastActivityAt matches).
+    // 冷恢复 live 投影（hydration 未完成）：phase=draft、无标题/预览；
+    // record 时间已由 resume 路径回填 store 真实时间（lastActivityAt 一致）。
     const events = buildEvents("s1", (push) => {
       push(SessionEventType.SessionCreated, {
         mode: "default",
@@ -571,7 +579,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
       createdAt: 10,
       lastActivityAt: 100,
     });
-    // Every field is protected by the downgrade defense → summariesEqual → zero deltas, the UI list does not move.
+    // 所有字段被降级防御保住 → summariesEqual → 零 delta，UI 列表不动。
     expect(deltas).toHaveLength(0);
   });
 
@@ -592,7 +600,7 @@ describe("SessionsIndexProjection 黄金测试（L1）", () => {
     const snap = index.getSnapshot();
     expect(snap.sessions).toHaveLength(3);
     expect(new Set(snap.sessions.map((s) => s.sessionId))).toEqual(new Set(["a", "b", "c"]));
-    // Frame schema validity
+    // 帧 schema 合法性
     expect(() => sessionsIndexSnapshotSchema.parse(snap)).not.toThrow();
   });
 
@@ -642,7 +650,7 @@ describe("SessionsIndexPublisher 单测（帧记账）", () => {
     const pub = new SessionsIndexPublisher("ws-1", "epoch-1", now);
     const res = pub.subscribe("conn-1");
     const baseSeq = res.frame?.toSeq ?? 0;
-    // A new session arrives → there are changes
+    // 新会话进入 → 有变化
     expect(pub.ingestConversation(snap("a"), { createdAt: 1, lastActivityAt: 2 })).toBe(true);
     const frame = pub.flush(res.subscriptionId);
     expect(frame?.payload.kind).toBe("deltas");
@@ -651,14 +659,14 @@ describe("SessionsIndexPublisher 单测（帧记账）", () => {
     if (frame?.payload.kind === "deltas") {
       expect(frame.payload.deltas[0]).toMatchObject({ op: "session.upserted" });
     }
-    // Drained → a further flush returns null
+    // 已排空 → 再 flush 为 null
     expect(pub.flush(res.subscriptionId)).toBeNull();
   });
 
   it("幂等 ingest 不产帧；resume base=当前 seq → frame null", () => {
     const pub = new SessionsIndexPublisher("ws-1", "epoch-1", now);
     pub.ingestConversation(snap("a"), { createdAt: 1, lastActivityAt: 2 });
-    // The same snapshot ingested again → no change
+    // 同快照再进 → 无变化
     expect(pub.ingestConversation(snap("a"), { createdAt: 1, lastActivityAt: 2 })).toBe(false);
     const res = pub.subscribe("conn-1", { logEpoch: "epoch-1", seq: pub.seq });
     expect(res.mode).toBe("resume");

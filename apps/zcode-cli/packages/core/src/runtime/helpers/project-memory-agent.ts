@@ -1,4 +1,4 @@
-import type { Model, ModelInputMessage, ModelToolContract, TraceContext } from "../deps.js";
+import type { Model, ModelToolContract, TraceContext } from "../deps.js";
 import type { AgentTelemetryCausation, ModelApiOperation } from "@zcode/contracts";
 import {
   PermissionService,
@@ -13,7 +13,7 @@ import type { MemoryAgentLoopRequestUsage } from "../../memory/memory-agent-loop
 import type { ReadFileStateMap } from "../../tool/types.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { getSessionShellSelectionFromConfig } from "../methods/session-shell-environment.js";
-import { buildRuntimeProviderRequestMessages } from "./runtime-provider-request-messages.js";
+import { prepareRuntimeProviderRequest } from "./runtime-provider-request-messages.js";
 import { createRefreshRuntimeHeadersBeforeModelAttempt } from "../methods/model-runtime-headers.js";
 import { createRuntimeModel, withModelInvocationContext } from "../methods/runtime-model.js";
 import { recordModelUsageFact } from "../methods/usage-observability.js";
@@ -76,28 +76,33 @@ export function captureProjectMemoryAgentContext(
     model,
     operation: input.operation,
     readFileState: new Map(runtime.readFileState),
-    tools: runtime.getTools(model).map((tool) => ({ ...tool })),
+    // Memory 的既有执行策略不允许 ToolSearch；历史引用只在此请求投影中降级。
+    tools: runtime
+      .getTools(model)
+      .filter((tool) => tool.name !== "ToolSearch")
+      .map((tool) => ({ ...tool })),
     traceContext: input.traceContext,
     workingDirectory: runtime.workingDirectory,
     workspaceRoot: runtime.workspaceRoot,
   };
 }
 
-export function buildProjectMemoryAgentProviderMessages(
-  runtime: AgentRuntimeInternal,
+export function prepareProjectMemoryAgentRequest(
   context: ProjectMemoryAgentContext,
   prompt: string,
-): ModelInputMessage[] {
-  const entries: RuntimeMessageEntry[] = [
-    ...context.providerEntries,
-    { message: { content: prompt, role: "user" } },
-  ];
-  return buildRuntimeProviderRequestMessages(
+) {
+  return prepareRuntimeProviderRequest(
     {
       config: { midConversationSystem: context.midConversationSystem },
     },
-    { applyCacheControl: true, entries, model: context.model },
-  ).messages;
+    {
+      applyCacheControl: true,
+      entries: context.providerEntries,
+      model: context.model,
+      prompt,
+      tools: context.tools,
+    },
+  ).request;
 }
 
 export function createProjectMemoryAgentToolExecutor(

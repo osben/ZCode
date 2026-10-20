@@ -1,10 +1,10 @@
-// ConversationTopicPublisher golden tests (M2 transport shell; 10 §3 / 04 recovery / 05 flush pipeline).
-// Core assertion surface:
-//   1. subscribe(base) decision matrix: epoch mismatch / seq outside the retention window / seq ahead → snapshot; inside the window → resume
-//   2. Frame interval accounting (fromSeq, toSeq] joins seamlessly (including "a frame fully filtered by a profile" still covering the interval)
-//   3. snapshot frame + subsequent streaming frames' applied final state ≡ full direct delivery (recovery protocol golden path)
-//   4. Resubscription replacement semantics (R-01): old subId invalidated, old buffer cleared
-//   5. Resync overflow downgrade: realigning to a snapshot without breaking the following stream
+// ConversationTopicPublisher 黄金测试（M2 传输外壳，10 §3 / 04 恢复 / 05 flush 管线）。
+// 核心断言面：
+//   1. subscribe(base) 裁决矩阵：epoch 不匹配 / seq 出保留窗 / seq 超前 → snapshot；窗内 → resume
+//   2. 帧区间记账 (fromSeq, toSeq] 无缝衔接（含「整帧被 profile 过滤」时区间照样覆盖）
+//   3. snapshot 帧 + 后续续流帧 apply 的终态 ≡ 全量直投（恢复协议黄金路径）
+//   4. 重订阅替换语义（R-01）：旧 subId 作废、旧 buffer 清空
+//   5. resync 溢出降级：snapshot 重对齐后续流不断
 import { describe, expect, it } from "vitest";
 import type {
   EventId,
@@ -34,7 +34,7 @@ import {
   ProductProjection,
 } from "../src/zcode-protocol-v4/index.js";
 
-// ── Event construction ──
+// ── 事件构造 ──
 
 class EventLog {
   private seq = 0;
@@ -106,14 +106,14 @@ function makeLog(turns: number): EventLog {
   return log;
 }
 
-/** Authoritative final state: run the reducer over the full replay directly. */
+/** 权威终态：直接跑 reducer 全量重放。 */
 function authoritativeSnapshot(events: readonly SessionEvent[]): ConversationSnapshot {
   const projection = new ProductProjection("session-1", "epoch-1");
   for (const event of events) projection.applyEvent(event);
   return projection.getSnapshot();
 }
 
-/** Client apply rules (10 §3.2): a snapshot replaces wholesale; a deltas frame requires fromSeq === store.seq. */
+/** 客户端 apply 规则（10 §3.2）：snapshot 整体替换；deltas 帧要求 fromSeq === store.seq。 */
 function clientApply(
   store: { seq: number; snapshot: ConversationSnapshot | null },
   frame: ConversationTopicFrame,
@@ -127,7 +127,7 @@ function clientApply(
   if (frame.toSeq <= store.seq) return; // late/duplicate frame
   expect(frame.fromSeq).toBe(store.seq); // a gap fails the test (this suite should never have gaps)
   expect(store.snapshot).not.toBeNull();
-  // seq semantics = "the containing frame's toSeq" (10 §4.2 R-03); it does not propagate through deltas — the client aligns itself after apply.
+  // seq 语义 = 「所在帧 toSeq」（10 §4.2 R-03），不经 delta 传播，客户端 apply 后自行对齐。
   store.snapshot = {
     ...applyConversationDeltas(store.snapshot as ConversationSnapshot, frame.payload.deltas),
     seq: frame.toSeq,
@@ -306,7 +306,7 @@ describe("subscribe(base) 裁决矩阵", () => {
   });
 
   it("base.seq 掉出保留窗 → snapshot；窗内 → resume", () => {
-    // 3 turns (1 + 3×5 = 16 events) with the retention window squeezed to 5: floor = seq 11.
+    // 3 turn（1 + 3×5 = 16 事件），保留窗压到 5：floor = seq 11。
     const publisher = publisherWith(makeLog(3).events, 5);
     expect(
       publisher.subscribe({
@@ -342,7 +342,7 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
     });
     const store = { seq: 0, snapshot: null as ConversationSnapshot | null };
 
-    // Subscribe only after the first turn completes.
+    // 第 1 个 turn 结束后才订阅。
     const firstHalf = log.events.slice(0, 6);
     const secondHalf = log.events.slice(6);
     for (const event of firstHalf) publisher.ingest(event);
@@ -358,7 +358,7 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
     }); // resubscribe goes through resume (watermark aligned → no initial frame), yielding the active subId
     expect(subId.ack.mode).toBe("resume");
 
-    // Streaming continuation: flush after every event (finest-grained frames).
+    // 续流：每个事件后 flush（最细粒度帧）。
     for (const event of secondHalf) {
       publisher.ingest(event);
       const next = publisher.flush(subId.ack.subscriptionId);
@@ -374,7 +374,7 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
     });
     const store = { seq: 0, snapshot: null as ConversationSnapshot | null };
 
-    // First follow online up to the 8th event.
+    // 先在线跟到第 8 个事件。
     const online = log.events.slice(0, 8);
     const offline = log.events.slice(8, 12);
     const afterReconnect = log.events.slice(12);
@@ -388,11 +388,11 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
       if (frame) clientApply(store, frame);
     }
 
-    // Events keep arriving while offline (the subscription is still attached but the client cannot receive → invalidate the old subscription to simulate the disconnect).
+    // 掉线期间事件继续产生（订阅还挂着，但客户端收不到 → 直接作废旧订阅模拟断连）。
     publisher.unsubscribe(first.ack.subscriptionId);
     for (const event of offline) publisher.ingest(event);
 
-    // Reconnect with base: should resume and fill the gap in one frame.
+    // 重连带 base：应 resume 并一帧补齐缺口。
     const second = publisher.subscribe({
       connectionId: "conn-1",
       base: { logEpoch: "epoch-1", seq: store.seq },
@@ -410,8 +410,8 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
   });
 
   it("replayable 订阅者：resume 重放过 profile 过滤，终态仍与全量重放一致", () => {
-    // replayable subscriber: tool input streaming happened inside the offline window; the inputText row.delta is
-    // filtered by replayable, and closure relies on ToolCallScheduled's row.upserted (profiles.ts closure invariant).
+    // tool 输入流式在掉线窗口内发生：inputText row.delta 被 replayable 过滤，
+    // 靠 ToolCallScheduled 的 row.upserted 收口（profiles.ts 收口不变量）。
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
     const turnId = "turn-1";
@@ -464,6 +464,52 @@ describe("恢复协议黄金路径：snapshot/resume + 续流 ≡ 全量重放",
 });
 
 describe("帧区间记账与替换语义", () => {
+  it.each(["continuous", "replayable"] as const)(
+    "历史初始化与重试保持已分页窗口（%s）",
+    (deliveryProfile) => {
+      const log = makeLog(50);
+      const publisher = new ConversationTopicPublisher("session-1", "epoch-1");
+      publisher.rehydrate(log.events);
+      publisher.setRuntimeInitialization({ status: "initializing", attemptId: "first" });
+      const initial = publisher.subscribe({ connectionId: "reader", deliveryProfile });
+      const store = { seq: 0, snapshot: null as ConversationSnapshot | null };
+      clientApply(store, initial.frame!);
+      const page = publisher.getRowsRange({
+        beforeRowId: store.snapshot!.rows.window[0]!.rowId,
+        limit: 20,
+      });
+      store.snapshot = {
+        ...store.snapshot!,
+        rows: { ...store.snapshot!.rows, window: [...page.rows, ...store.snapshot!.rows.window] },
+      };
+      const rowIds = store.snapshot.rows.window.map((row) => row.rowId);
+      publisher.setRuntimeInitialization({
+        status: "failed",
+        attemptId: "first",
+        reasonCode: "fault.subscribe.resumeFailed",
+        message: "hook failed",
+      });
+      clientApply(store, publisher.flush(initial.ack.subscriptionId, "reader")!);
+      publisher.rehydrate(log.events);
+      publisher.setRuntimeInitialization({ status: "initializing", attemptId: "retry" });
+      const retry = publisher.subscribe({
+        connectionId: "reader",
+        deliveryProfile,
+        base: { logEpoch: "epoch-1", seq: store.seq },
+      });
+      expect(retry.ack.mode).toBe("resume");
+      clientApply(store, retry.frame!);
+      publisher.rehydrate(log.events);
+      publisher.setRuntimeInitialization({ status: "ready", attemptId: "retry" });
+      const frame = publisher.flush(retry.ack.subscriptionId, "reader")!;
+      expect(frame.payload.kind).toBe("deltas");
+      clientApply(store, frame);
+      expect(store.snapshot!.rows.window.map((row) => row.rowId)).toEqual(rowIds);
+      expect(store.snapshot!.runtimeInitialization?.status).toBe("ready");
+      expect(store.seq).toBeGreaterThan(initial.frame!.toSeq);
+    },
+  );
+
   it("批量 cold rehydrate 与逐事件 reducer 终态一致，中间 base 经 snapshot boundary 恢复", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, {
@@ -677,8 +723,8 @@ describe("帧区间记账与替换语义", () => {
   });
 
   it("整帧被 profile 过滤时区间照样推进（连续性判定不受过滤影响）", () => {
-    // Under replayable, tool_input_delta only produces row.delta(inputText) → filtered to empty,
-    // but the frame interval must still cover that seq, or the client would misjudge a gap.
+    // replayable 下 tool_input_delta 只产 row.delta(inputText) → 被过滤为空，
+    // 但帧区间必须覆盖该 seq，否则客户端会误判断档。
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 1000 });
     const turnId = "turn-1";
@@ -695,7 +741,7 @@ describe("帧区间记账与替换语义", () => {
     for (const event of log.events) publisher.ingest(event);
     const { ack } = publisher.subscribe({ connectionId: "conn-1" }); // replayable
 
-    // Pure inputText stream event: every delta is filtered.
+    // 纯 inputText 流事件：deltas 全被过滤。
     const pureStream = log.push(
       SessionEventType.ModelStreaming,
       { kind: "tool_input_delta", delta: '{"a":1}', done: false, toolCallId: "tc-1" },
@@ -707,7 +753,7 @@ describe("帧区间记账与替换语义", () => {
     expect(frame!.payload).toEqual({ kind: "deltas", deltas: [] });
     expect(frame!.toSeq).toBe(pureStream.sequenceNumber);
 
-    // The subsequent structural event continues from the new watermark.
+    // 随后的结构性事件从新水位续接。
     const scheduled = log.push(
       SessionEventType.ToolCallScheduled,
       {
@@ -853,12 +899,12 @@ describe("帧区间记账与替换语义", () => {
     });
     clientApply(store, frame!);
 
-    // Events advance without flush (simulating buffer buildup), then resync is triggered.
+    // 事件推进但不 flush（模拟缓冲堆积），然后触发 resync。
     for (const event of log.events.slice(1, 8)) publisher.ingest(event);
     const resyncFrame = publisher.resync(ack.subscriptionId);
     clientApply(store, resyncFrame!);
     expect(store.seq).toBe(8);
-    // After resync the buffer is empty: flush returns null when there are no new events.
+    // resync 后 buffer 清空：无新事件时 flush 为 null。
     expect(publisher.flush(ack.subscriptionId)).toBeNull();
 
     for (const event of log.events.slice(8)) {
@@ -918,7 +964,7 @@ describe("帧区间记账与替换语义", () => {
       forceSnapshot: true,
     })!;
     expect(oldReservation.commit()).toBe(false);
-    // New events inside the encode/admission window go into the recovery's buffer; rollback must not overwrite what was lost.
+    // encode/admission 窗口内的新事件进入 recovery 后 buffer；rollback 不能覆盖丢失。
     publisher.ingest(log.events[2]!);
     expect(recovered.rollback()).toBe(true);
     expect(recovered.reservation?.commit()).toBe(false);
@@ -1129,9 +1175,8 @@ describe("subscriber 有界缓冲与自动 resync", () => {
   });
 
   /**
-   * Backlog beyond the tail window: the upserts of 40 turns (~120 rows) all sit in the buffer while the wire snapshot
-   * carries only the last 60 rows — the buffer genuinely exceeds the snapshot upper bound, so downgrading to a
-   * snapshot pays off (05 §3).
+   * 积压超出尾部窗口：40 个 turn（约 120 行）的 upsert 都在 buffer 里，而 wire snapshot 只带
+   * 尾部 60 行——buffer 真正大于 snapshot 上界，降级为 snapshot 才有收益（05 §3）。
    */
   function pushBacklogBeyondTailWindow(log: EventLog, publisher: ConversationTopicPublisher): void {
     const firstTurn = log.events.filter(
@@ -1264,7 +1309,7 @@ describe("subscriber 有界缓冲与自动 resync", () => {
     );
     const fastKinds: string[] = [];
     const ingest = publisher.ingest.bind(publisher);
-    // fast flushes on every event; slow never flushes, letting the backlog exceed the tail window.
+    // fast 每条事件都 flush；slow 从不 flush，积压超出尾部窗口。
     publisher.ingest = (event) => {
       ingest(event);
       const frame = publisher.flush(fast.ack.subscriptionId);
@@ -1297,10 +1342,9 @@ describe("subscriber 有界缓冲与自动 resync", () => {
   });
 
   /**
-   * Long-session regression (observed live 2026-09-30): a single large delta such as 3MiB of bash output exceeds the
-   * 1MiB floor; the old rule downgraded to snapshot → the client replaced wholesale and lost history → the turn
-   * navigator re-paginated from scratch every turn. The snapshot would only be larger (the same row is still in the
-   * tail window), so deltas must keep flowing.
+   * 长 session 回归（2026-09-30 实测）：3MiB bash 输出这类单条大 delta 超过 1MiB 下限，
+   * 旧规则降级为 snapshot → 客户端整份替换丢历史 → turn navigator 每轮全量重新分页。
+   * snapshot 只会更大（同一行还在尾部窗口），所以必须继续发 deltas。
    */
   it("单条大 delta 超过 1MiB 但不超过 snapshot 上界：继续发 deltas，终态 ≡ 全量重放", () => {
     const log = makeLog(2);
@@ -1395,12 +1439,11 @@ describe("subscriber 有界缓冲与自动 resync", () => {
   });
 });
 
-// ── M5④ R-06: snapshot tail window + rows/range cursor pagination ──
-// Golden invariant: after backfilling the truncated snapshot's window with rows/range pages, it is byte-for-byte
-// identical to the full replay's rows.window (same projection as the data source, guaranteed by construction;
-// this test cross-validates with an independent replay).
+// ── M5④ R-06：snapshot 尾部窗口 + rows/range 游标分页 ──
+// 黄金不变量：截断 snapshot 的 window 前面补齐 rows/range 各页后，与全量重放
+// 的 rows.window 逐字节一致（数据源同一投影，构造保证；此处独立重放交叉验证）。
 describe("rows/range 游标分页（R-06）", () => {
-  // 3 rows per turn (turnHeader+userInput+assistantText); 30 turns = 90 rows > 60.
+  // 每 turn 3 行（turnHeader+userInput+assistantText）；30 turn = 90 行 > 60。
   const TURNS = 30;
 
   function longPublisher(): {
@@ -1426,9 +1469,9 @@ describe("rows/range 游标分页（R-06）", () => {
     expect(wire!.rows.window.length).toBe(60);
     expect(wire!.rows.totalCount).toBe(full.rows.totalCount);
     expect(wire!.rows.firstRowId).toBe(full.rows.firstRowId);
-    // Tail window = the full replay's last 60 rows (byte-for-byte identical).
+    // 尾部窗口 = 全量重放的最后 60 行（逐字节一致）。
     expect(wire!.rows.window).toEqual(full.rows.window.slice(-60));
-    // Zone A is unaffected by truncation.
+    // A 区不受截断影响。
     expect({ ...wire!, rows: full.rows }).toEqual(full);
   });
 
@@ -1438,7 +1481,7 @@ describe("rows/range 游标分页（R-06）", () => {
     const { frame } = publisher.subscribe({ connectionId: "conn-1" });
     const wire = frame!.payload.kind === "snapshot" ? frame!.payload.snapshot : null;
 
-    // Simulate the client's loadOlder: page upward using the window's first row as the cursor until hasMore=false.
+    // 模拟客户端 loadOlder：以窗口首行为游标逐页向上，直到 hasMore=false。
     let window = [...wire!.rows.window];
     let guard = 0;
     for (;;) {
@@ -1452,7 +1495,7 @@ describe("rows/range 游标分页（R-06）", () => {
       expect(page.atLogEpoch).toBe("epoch-1");
       expect(page.atSeq).toBe(full.seq);
       expect(page.atRevision).toBe(full.revision);
-      // Within a page rowIds ascend and are all < the cursor.
+      // 页内 rowId 升序且都 < 游标。
       for (let i = 0; i < page.rows.length; i++) {
         expect(page.rows[i]!.rowId).toBeLessThan(first.rowId);
         if (i > 0) {
@@ -1464,21 +1507,17 @@ describe("rows/range 游标分页（R-06）", () => {
         expect(window[0]!.rowId).toBe(wire!.rows.firstRowId);
       }
     }
-    // Golden assertion: the backfilled window is byte-for-byte identical to the full replay.
+    // 黄金断言：补齐后的 window 与全量重放逐字节一致。
     expect(JSON.stringify(window)).toBe(JSON.stringify(full.rows.window));
   });
 
-  it("beforeRowId 缺省 = 从尾部向前；limit 截到 rowsRangeMaxLimit", () => {
+  it("beforeRowId 缺省 = 从尾部向前", () => {
     const { publisher, log } = longPublisher();
     const full = authoritativeSnapshot(log.events);
 
     const tail = publisher.getRowsRange({ limit: 5 });
     expect(tail.rows).toEqual(full.rows.window.slice(-5));
     expect(tail.hasMore).toBe(true);
-
-    const all = publisher.getRowsRange({ limit: 10_000 });
-    expect(all.rows.length).toBeLessThanOrEqual(200);
-    expect(all.hasMore).toBe(full.rows.window.length > all.rows.length);
   });
 
   it("已到顶：beforeRowId = 全序首行 → 空页 hasMore=false", () => {

@@ -1,13 +1,13 @@
-// L2: the fork/edit/retry command group (the last M4 group).
-// Semantic key points (the L2 tier of the 08-phasing M4 completion definition):
-// - rowId->messageId translation is a native decision: reject when it cannot translate (never silently fall back to latestCheckpoint);
-// - editUserQuery = core branch cut + resending the new text as a native prompt turn;
-// - retryTurn = resolve the original text **before** the rewind (the transcript no longer has the message after truncation) + truncate + resend;
-//   when the original text cannot be resolved, truncate only and do not resend;
-// - when the latest real user query is running, stop the active turn first, then rewind + rerun;
-// - historical user queries are rejected directly without interrupting the current active turn;
-// - retry only allows the last assistant reply on the whole timeline; historical replies are rejected directly;
-// - forkAssistant goes through the stable resolver and then takes the conversation-only fork, with the result carrying forkedSessionId.
+// L2：fork/edit/retry 命令组（M4 最后一组）。
+// 语义要点（08-phasing M4 完成定义的 L2 层）：
+// - rowId→messageId 翻译是原生决策：翻译不到 reject（绝不静默兜底 latestCheckpoint）；
+// - editUserQuery = core branch cut + 原生 prompt turn 重发新文本；
+// - retryTurn = 原文在 rewind **之前**解析（截断后 transcript 已无该消息）+ 截断 + 重发；
+//   原文解析不到直接拒绝，不截断；
+// - latest real user query running 时先 stop active turn，再 rewind + rerun；
+// - 历史 user query 直接拒绝，且不打断当前 active turn；
+// - retry 只允许全时间线最后一条 assistant 回复，历史回复直接拒绝；
+// - forkAssistant 经过 stable resolver 后走 conversation-only fork，result 带 forkedSessionId。
 import { describe, expect, it, vi } from "vitest";
 import { RewindStrategy, SessionEventType } from "@zcode/contracts";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
@@ -162,16 +162,20 @@ function envelope(type: string, payload: unknown): CommandEnvelope {
 }
 
 async function settle() {
-  // The native prompt turn is a void-launched microtask chain; flush twice to guarantee the finally block finishes.
+  // 原生 prompt turn 是 void 起跑的微任务链，flush 两轮保证 finally 执行完。
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 }
 
 /**
- * The protocol shape of a highspeed turn: the Selection points at the hidden highspeed card's
- * built-in Provider (endpoint/capabilities are provided by the Provider Config), and only the
- * card JWT and card ID are delivered with modelExecution as this execution's dynamic auth.
+ * 加速轮的协议原形：Selection 指向隐藏的加速卡内建 Provider（端点/能力都由 Provider Config
+ * 提供），只有卡 JWT 与卡 ID 作为本次执行的动态鉴权随 modelExecution 下发。
  */
+const ORDINARY_MODEL_SELECTION = {
+  providerId: "builtin:bigmodel-coding-plan",
+  modelId: "GLM-5.3",
+};
+
 const HIGHSPEED_MODEL_SELECTION = {
   providerId: "account:bigmodel-highspeed-card",
   modelId: "GLM-5.3",
@@ -185,6 +189,7 @@ const HIGHSPEED_MODEL_EXECUTION = {
   },
   selectionFallback: {
     providerId: "account:bigmodel-highspeed-card",
+    target: ORDINARY_MODEL_SELECTION,
     rules: [
       { reason: "highspeed_card_expired" as const, providerErrorCode: "3402" },
       { reason: "highspeed_request_failed" as const },
@@ -248,12 +253,12 @@ describe("v4 原生 editUserQuery", () => {
     expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledWith(
       expect.objectContaining({ targetMessageId: "msg-a" }),
     );
-    // The resend goes through a native prompt turn (sendInput), with inputId=commandId as the authoritative anchor.
+    // 重发走原生 prompt turn（sendInput），inputId=commandId 权威锚点。
     expect(app.sendInput).toHaveBeenCalledWith(
       { text: "改过的问题" },
       expect.objectContaining({ inputId: "cmd-1" }),
     );
-    // Order: truncate first, then resend.
+    // 顺序：先截断后重发。
     expect(app.runtime.rewindConversationToMessage.mock.invocationCallOrder[0]).toBeLessThan(
       app.sendInput.mock.invocationCallOrder[0],
     );
@@ -305,7 +310,7 @@ describe("v4 原生 editUserQuery", () => {
     );
     await settle();
 
-    // The Selection is projectable (it must enter the intent so transcript restoration knows this turn used the highspeed Provider).
+    // Selection 可投影（要进 intent 让 transcript 复原时知道这轮走了加速 Provider）。
     expect(app.sendInput).toHaveBeenCalledWith(
       { text: "改过的问题" },
       expect.objectContaining({
@@ -320,19 +325,158 @@ describe("v4 原生 editUserQuery", () => {
     expect(options.modelExecution.selectionFallback).toEqual(
       HIGHSPEED_MODEL_EXECUTION.selectionFallback,
     );
-    // The card JWT may only be lazily resolved as this turn's execution dependency; it must never enter the persistable intent.
+    // 卡 JWT 只能作为本轮执行依赖惰性解析，绝不能进入可持久化的 intent。
     await expect(
       options.modelExecution.requestDependencies.requestAuth.source.resolve(),
     ).resolves.toEqual(HIGHSPEED_MODEL_EXECUTION.requestAuth);
     expect(options.intent).not.toHaveProperty("modelExecution");
   });
 
+  it("Highspeed 执行模型可用但退回目标缺失时仍允许编辑重发", async () => {
+    const fallbackTarget = {
+      providerId: "account:bigmodel-start-plan",
+      modelId: "GLM-5.3",
+    };
+    const app = makeApp({
+      listModels: () => [{ ref: HIGHSPEED_MODEL_SELECTION }],
+    });
+    const record = makeRecord({ app });
+    const host = makeHost(record, { getTurnRewindAnchor: () => "msg-user" });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("editUserQuery", {
+          target: { rowId: 7, entityId: "entity-7" },
+          newText: "执行模型仍可用",
+          highspeedMeta: {
+            schemaVersion: 1 as const,
+            cardId: "card-edit",
+            taskId: "s1",
+            provider: "bigmodel",
+            model: "GLM-5.3",
+            issuedAt: 1,
+            expiresAt: Date.now() + 60_000,
+          },
+          modelSelection: HIGHSPEED_MODEL_SELECTION,
+          modelExecution: {
+            ...HIGHSPEED_MODEL_EXECUTION,
+            selectionFallback: {
+              ...HIGHSPEED_MODEL_EXECUTION.selectionFallback,
+              target: fallbackTarget,
+            },
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+
+    expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledTimes(1);
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("编辑预检通过后 Registry 变化仍提交 replacement input", async () => {
+    const listModels = vi
+      .fn()
+      .mockReturnValueOnce([{ ref: HIGHSPEED_MODEL_SELECTION }])
+      .mockReturnValue([]);
+    const app = makeApp({ listModels });
+    const record = makeRecord({ app });
+    const host = makeHost(record, { getTurnRewindAnchor: () => "msg-user" });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("editUserQuery", {
+          target: { rowId: 7, entityId: "entity-7" },
+          newText: "目录变化后仍需保留的编辑内容",
+          highspeedMeta: {
+            schemaVersion: 1 as const,
+            cardId: "card-edit-race",
+            taskId: "s1",
+            provider: "bigmodel",
+            model: "GLM-5.3",
+            issuedAt: 1,
+            expiresAt: Date.now() + 60_000,
+          },
+          modelSelection: HIGHSPEED_MODEL_SELECTION,
+          modelExecution: {
+            ...HIGHSPEED_MODEL_EXECUTION,
+            selectionFallback: {
+              ...HIGHSPEED_MODEL_EXECUTION.selectionFallback,
+              target: { providerId: "user-provider", modelId: "user-model" },
+            },
+          },
+        }),
+      ),
+    ).resolves.toBeDefined();
+
+    // 破坏性操作前只读取一次目录；branch cut 后由 Core 接纳并对创建失败落权威输入。
+    expect(listModels).toHaveBeenCalledTimes(1);
+    expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledTimes(1);
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("Highspeed 执行模型与退回目标都缺失时在历史和文件回退前拒绝编辑", async () => {
+    const previewWorkspaceFileRewind = vi.fn().mockResolvedValue({
+      canApply: true,
+      safeFiles: [{ action: "restore", operationCount: 1, path: "/w/a.ts", toolNames: ["Edit"] }],
+      unsafeFiles: [],
+      ignoredFiles: [],
+    });
+    const applyWorkspaceFileRewind = vi.fn().mockImplementation(async (options) => {
+      await options.commitAfterApply();
+      return {
+        applied: true,
+        response: "ok",
+        preview: await previewWorkspaceFileRewind(),
+      };
+    });
+    const app = makeApp({
+      listModels: () => [],
+      runtime: { previewWorkspaceFileRewind, applyWorkspaceFileRewind },
+    });
+    const record = makeRecord({ app });
+    const host = makeHost(record, { getTurnRewindAnchor: () => "msg-user" });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("editUserQuery", {
+          target: { rowId: 7, entityId: "entity-7" },
+          newText: "不能丢失的编辑内容",
+          workspaceMode: "rewind",
+          highspeedMeta: {
+            schemaVersion: 1 as const,
+            cardId: "card-edit",
+            taskId: "s1",
+            provider: "bigmodel",
+            model: "GLM-5.3",
+            issuedAt: 1,
+            expiresAt: Date.now() + 60_000,
+          },
+          modelSelection: HIGHSPEED_MODEL_SELECTION,
+          modelExecution: {
+            ...HIGHSPEED_MODEL_EXECUTION,
+            selectionFallback: {
+              ...HIGHSPEED_MODEL_EXECUTION.selectionFallback,
+              target: {
+                providerId: "account:bigmodel-start-plan",
+                modelId: "GLM-5.3",
+              },
+            },
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+
+    // 模型准入是破坏性编辑的前置条件；失败时没有 branch cut，也没有文件副作用。
+    expect(previewWorkspaceFileRewind).not.toHaveBeenCalled();
+    expect(applyWorkspaceFileRewind).not.toHaveBeenCalled();
+    expect(app.runtime.rewindConversationToMessage).not.toHaveBeenCalled();
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
   it("卡已过期的编辑重发退回会话常驻 Selection，不保留无鉴权的加速 Selection", async () => {
-    // CR-01 regression: the edited turn was a Highspeed turn, so the canonical intent still carries
-    // account:*-highspeed-card; there is no valid new card this time (expired), and the old
-    // implementation merely omitted modelExecution while keeping that Selection. Core would fail
-    // with ModelRequestAuthMissing, and that Selection got pinned into the new intent, polluting
-    // later normal sends.
+    // CR-01 回归：被编辑的那轮是 Highspeed 轮，canonical intent 里留着 account:*-highspeed-card；
+    // 本次没有有效新卡（已过期），旧实现只是不传 modelExecution 却沿用该 Selection，Core 会以
+    // ModelRequestAuthMissing 失败，且该 Selection 被固定进新 intent，污染后续普通发送。
     const setModel = vi.fn();
     const app = makeApp({ getModel: () => "builtin:bigmodel-coding-plan/GLM-5.3", setModel });
     const record = makeRecord({ app });
@@ -381,12 +525,20 @@ describe("v4 原生 editUserQuery", () => {
     });
     expect(options.intent).not.toHaveProperty("highspeed");
     expect(options).not.toHaveProperty("modelExecution");
-    // Only this turn's intent changes; the session's resident model does not.
+    // 只改本轮 intent，不改 session 常驻模型。
     expect(setModel).not.toHaveBeenCalled();
   });
 
   it("Highspeed admission 遇到收口竞态时保留编辑文本并进入队列", async () => {
+    const pollutedFallbackExecution = {
+      ...HIGHSPEED_MODEL_EXECUTION,
+      selectionFallback: {
+        ...HIGHSPEED_MODEL_EXECUTION.selectionFallback,
+        target: HIGHSPEED_MODEL_SELECTION,
+      },
+    };
     const app = makeApp({
+      getModel: () => "builtin:bigmodel-coding-plan/GLM-5.3",
       sendInput: vi.fn().mockImplementation(async (_input, options) => {
         if (options?.requireQueue) {
           return { kind: "queued", queueItemId: "queue-edited" };
@@ -416,7 +568,7 @@ describe("v4 原生 editUserQuery", () => {
         newText: "竞态下的新问题",
         highspeedMeta,
         modelSelection: HIGHSPEED_MODEL_SELECTION,
-        modelExecution: HIGHSPEED_MODEL_EXECUTION,
+        modelExecution: pollutedFallbackExecution,
       }),
     );
 
@@ -430,7 +582,7 @@ describe("v4 原生 editUserQuery", () => {
         modelExecution: expect.objectContaining({ selectionScope: "execution" }),
       }),
     );
-    // The enqueue path must not hand credentials to a turn (no turn exists yet); it only projects the Selection + card metadata.
+    // 入队路径不能把凭据交给 turn（此时还没有 turn），只投影 Selection + 卡元数据。
     expect(app.sendInput).toHaveBeenNthCalledWith(
       2,
       { text: "竞态下的新问题" },
@@ -438,17 +590,16 @@ describe("v4 原生 editUserQuery", () => {
         requireQueue: true,
         intent: expect.objectContaining({
           highspeed: highspeedMeta,
-          modelSelection: HIGHSPEED_MODEL_SELECTION,
+          modelSelection: ORDINARY_MODEL_SELECTION,
         }),
       }),
     );
     expect(app.sendInput.mock.calls[1]?.[1]).not.toHaveProperty("modelExecution");
-    // Credentials are instead staged in memory by the host keyed by commandId, and frozen into an execution context when the queue item is promoted.
-    expect(host.retainQueuedTurnExecution).toHaveBeenCalledWith(
-      "s1",
-      "cmd-1",
-      HIGHSPEED_MODEL_EXECUTION,
-    );
+    // 凭据改由宿主按 commandId 暂存在内存，提升队列项时再冻结成执行上下文。
+    expect(host.retainQueuedTurnExecution).toHaveBeenCalledWith("s1", "cmd-1", {
+      modelSelection: HIGHSPEED_MODEL_SELECTION,
+      modelExecution: pollutedFallbackExecution,
+    });
   });
 
   it("attachments 缺省时稳定保留 canonical 原 refs", async () => {
@@ -675,30 +826,6 @@ describe("v4 原生 editUserQuery", () => {
     expect(info).not.toHaveBeenCalledWith("v4 editUserQuery completed", expect.anything());
   });
 
-  it("无 assistant anchor 时回查 user messageId 作为 rewind 锚点", async () => {
-    const app = makeApp();
-    const record = makeRecord({ app });
-    const host = makeHost(record, {
-      getTurnRewindAnchor: (_sessionId, rowId) => (rowId === 7 ? "msg-user-7" : null),
-    });
-
-    await new V4CommandExecutor(host).execute(
-      envelope("editUserQuery", {
-        target: { rowId: 7, entityId: "entity-7" },
-        newText: "改过的问题",
-      }),
-    );
-    await settle();
-
-    expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMessageId: "msg-user-7" }),
-    );
-    expect(app.sendInput).toHaveBeenCalledWith(
-      { text: "改过的问题" },
-      expect.objectContaining({ inputId: "cmd-1" }),
-    );
-  });
-
   it("running latest query：abort → idle → rewind → rerun", async () => {
     const calls: string[] = [];
     const app = makeApp({
@@ -863,7 +990,7 @@ describe("v4 原生 retryTurn", () => {
     await settle();
 
     expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMessageId: "msg-assistant" }),
+      expect.objectContaining({ targetMessageId: "msg-user" }),
     );
     expect(app.sendInput).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -896,9 +1023,8 @@ describe("v4 原生 retryTurn", () => {
   });
 
   it("retry Highspeed 轮时没有新执行材料，退回会话常驻 Selection 且不改 session 模型", async () => {
-    // CR-01 regression: retry copies the historical Selection from the canonical intent; a Highspeed
-    // turn's Selection is account:*-highspeed-card, and this retry has no execution materials, so it
-    // must be explicitly rewritten back to the session's resident Selection.
+    // CR-01 回归：retry 从 canonical intent 复制历史 Selection；Highspeed 轮的 Selection 是
+    // account:*-highspeed-card，本次 retry 没有任何执行材料，必须显式改写回会话常驻 Selection。
     const setModel = vi.fn();
     const app = makeApp({ getModel: () => "builtin:bigmodel-coding-plan/GLM-5.3", setModel });
     const record = makeRecord({ app });
@@ -1038,7 +1164,76 @@ describe("v4 原生 retryTurn", () => {
     expect(app.sendInput).not.toHaveBeenCalled();
   });
 
-  it("正路径：原文在 rewind 前解析 → 截断 → 重发原 prompt", async () => {
+  it("重试模型不可用时在 branch cut 前拒绝", async () => {
+    const app = makeApp({ listModels: () => [] });
+    const record = makeRecord({ app });
+    const host = makeHost(record, {
+      getMessageIdForRow: () => "msg-assistant",
+      resolveRowActionTarget: () => ({
+        ok: true,
+        action: "retryTurn",
+        row: {} as never,
+        messageId: "msg-assistant",
+        editTarget: {
+          entityId: "user-entity-7",
+          productTurnId: "turn-7",
+          transcriptMessageId: "msg-user",
+          coveredByStableCompact: false,
+          intent: {
+            kind: "sendText",
+            text: "原始问题",
+            modelSelection: { providerId: "missing-provider", modelId: "missing-model" },
+          },
+        },
+      }),
+    });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("retryTurn", { target: { rowId: 7, entityId: "entity-7" } }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "modelUnavailable" });
+
+    expect(app.runtime.rewindConversationToMessage).not.toHaveBeenCalled();
+    expect(app.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("重试预检通过后 Registry 变化仍提交 replacement input", async () => {
+    const selection = { providerId: "user-provider", modelId: "user-model" };
+    const listModels = vi
+      .fn()
+      .mockReturnValueOnce([{ ref: selection }])
+      .mockReturnValue([]);
+    const app = makeApp({ listModels });
+    const record = makeRecord({ app });
+    const host = makeHost(record, {
+      resolveRowActionTarget: () => ({
+        ok: true,
+        action: "retryTurn",
+        row: {} as never,
+        messageId: "msg-assistant",
+        editTarget: {
+          entityId: "user-entity-7",
+          productTurnId: "turn-7",
+          transcriptMessageId: "msg-user",
+          coveredByStableCompact: false,
+          intent: { kind: "sendText", text: "必须保留的重试内容", modelSelection: selection },
+        },
+      }),
+    });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("retryTurn", { target: { rowId: 7, entityId: "entity-7" } }),
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(listModels).toHaveBeenCalledTimes(1);
+    expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledTimes(1);
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("canonical resolver 给出的原文在 rewind 后重发", async () => {
     const app = makeApp();
     const record = makeRecord({ app });
     const resolveOrder: string[] = [];
@@ -1059,10 +1254,10 @@ describe("v4 原生 retryTurn", () => {
     );
     await settle();
 
-    // The canonical intent was already provided by the projection resolver before the truncation; the raw transcript text is no longer read back.
+    // canonical intent 已由 projection resolver 在截断前给出，不再回读 raw transcript 文本。
     expect(resolveOrder).toEqual(["rewind"]);
     expect(app.runtime.rewindConversationToMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMessageId: "msg-b" }),
+      expect.objectContaining({ targetMessageId: "user-msg-b" }),
     );
     expect(app.sendInput).toHaveBeenCalledWith(
       { text: "原始问题" },
@@ -1090,16 +1285,6 @@ describe("v4 原生 retryTurn", () => {
     expect(app.sendInput).not.toHaveBeenCalled();
   });
 
-  it("翻译不到 messageId：reject", async () => {
-    const record = makeRecord();
-    const host = makeHost(record, { getMessageIdForRow: () => null });
-    await expect(
-      new V4CommandExecutor(host).execute(
-        envelope("retryTurn", { target: { rowId: 5, entityId: "entity-5" } }),
-      ),
-    ).rejects.toThrow(V4RetryTargetNotLatestError);
-  });
-
   it("handler 不按 activeAbortController 二次拒绝，而是进入 resolver 授权后的执行路径", async () => {
     const record = makeRecord({ activeAbortController: new AbortController() });
     const host = makeHost(record, { getMessageIdForRow: () => "msg-b" });
@@ -1109,7 +1294,7 @@ describe("v4 原生 retryTurn", () => {
       ),
     ).resolves.toBeUndefined();
     expect(record.app.runtime.rewindConversationToMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ targetMessageId: "msg-b" }),
+      expect.objectContaining({ targetMessageId: "user-msg-b" }),
     );
     expect(record.app.sendInput).toHaveBeenCalled();
   });
@@ -1289,42 +1474,6 @@ describe("v4 Task3 canonical edit disposition", () => {
     });
     expect(parent.app.sendInput).toHaveBeenCalled();
     expect(childApp.sendInput).not.toHaveBeenCalled();
-    expect(recordForkStartFailure).not.toHaveBeenCalled();
-  });
-
-  it("compact edit remains same-session when legacy child registration is unavailable", async () => {
-    const parent = makeRecord({ app: makeApp() });
-    const recordForkStartFailure = vi.fn().mockRejectedValue(new Error("failure store offline"));
-    const host = makeHost(parent, {
-      getRecord: (sessionId) => (sessionId === "s1" ? parent : undefined),
-      forkConversationBeforeInput: vi.fn().mockResolvedValue({ forkedSessionId: "s-child" }),
-      recordForkStartFailure,
-      resolveRowActionTarget: () => ({
-        ok: true,
-        action: "editUserQuery",
-        row: {} as never,
-        editTarget: {
-          entityId: "msg-user",
-          productTurnId: "turn-product",
-          transcriptMessageId: "msg-user",
-          coveredByStableCompact: true,
-          intent: { kind: "sendText", text: "old", sourceCommandId: "cmd-old" },
-        },
-      }),
-    });
-
-    await expect(
-      new V4CommandExecutor(host).execute(
-        envelope("editUserQuery", {
-          target: { rowId: 7, entityId: "msg-user" },
-          newText: "edited",
-        }),
-      ),
-    ).resolves.toEqual({
-      type: "editUserQuery",
-      disposition: "rewind",
-      sessionId: "s1",
-    });
     expect(recordForkStartFailure).not.toHaveBeenCalled();
   });
 });

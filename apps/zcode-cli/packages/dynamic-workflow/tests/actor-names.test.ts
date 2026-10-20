@@ -2,29 +2,27 @@ import { describe, expect, it } from "vitest";
 import { analyzeWorkflowScript } from "../src/index.js";
 import { DUPLICATE_ACTOR_NAME_CODE, FANOUT_ACTOR_NAME_CODE } from "../src/analysis/actor-names.js";
 
-// Compile-time courtesy diagnostics for duplicate literal actor names (the "Naming uniqueness
-// (engine)" row of docs/execution-engine.md). The rule's front gate is at runtime (the engine's
-// createActor DuplicateActorName); this pass only looks at literals, so it may under-report but
-// must never over-report — every "legal" case below is an assertion of the latter.
+// 字面量 actor 重名的编译期 courtesy 诊断（docs/execution-engine.md 的
+// 「命名唯一性（引擎）」行）。规则的正门在运行期（引擎 createActor 的 DuplicateActorName）；
+// 这一趟只看字面量，所以它只许漏报、不许误报——每条 "legal" 用例都是对后者的断言。
 
-/** Takes only duplicate-name diagnostics (the script itself must typecheck cleanly, otherwise analyze never reaches this pass). */
+/** 只取重名诊断（脚本本身必须 typecheck 干净，否则 analyze 根本走不到这一趟）。 */
 function duplicates(scriptText: string) {
   const result = analyzeWorkflowScript(scriptText);
   const hits = result.diagnostics.filter((d) => d.code === DUPLICATE_ACTOR_NAME_CODE);
   return { hits, result };
 }
 
-/** Takes only fan-out static-name diagnostics (clause 2, a separate code — see the top of actor-names.ts). */
+/** 只取 fan-out 静态名诊断（子句 2，单独一个码——见 actor-names.ts 顶部）。 */
 function fanOutNames(scriptText: string) {
   const result = analyzeWorkflowScript(scriptText);
   const hits = result.diagnostics.filter((d) => d.code === FANOUT_ACTOR_NAME_CODE);
   return { hits, result };
 }
 
-/** Assertion for clean scripts: no duplicate-name diagnostics and the whole analysis passes (the graph is still produced). */
+/** 干净脚本的断言：无重名诊断，且整份分析通过（图照常产出）。 */
 function expectClean(scriptText: string): void {
-  const { hits, result } = duplicates(scriptText);
-  expect(hits).toEqual([]);
+  const { result } = duplicates(scriptText);
   expect(result.diagnostics).toEqual([]);
   expect(result.ok).toBe(true);
 }
@@ -37,17 +35,15 @@ describe("duplicate actor names (compile-time courtesy)", () => {
     expect(hits).toHaveLength(1);
     expect(hits[0]?.line).toBe(2);
     expect(hits[0]?.message).toContain('"planner"');
-    // The diagnostic shares the blocking tier with world.run / phase: the script cannot be submitted and no graph is produced.
+    // 诊断与 world.run / phase 同席：脚本不可提交，图不产出。
     expect(result.ok).toBe(false);
     expect(result.graph).toBeUndefined();
   });
 
   it("reads through an object-literal persona to the name argument", () => {
-    // Today `AgentPersona` does **not** declare name (facade dts), so any persona a script can
-    // write carries no name and the effective name always comes from the name argument. The
-    // collector still processes personas by normalizePersona's rules (see the two skip cases
-    // below) — that keeps it in sync with the runtime's effective-name definition, not because
-    // it can trigger today.
+    // 今天 `AgentPersona` **不声明** name（facade dts），所以脚本能写出的 persona 从不带名字，
+    // 有效名一律来自 name 实参。收集器仍按 normalizePersona 的规则处理 persona（见下面两条
+    // 跳过用例）——那是为了与运行期的有效名定义保持同步，而不是为了今天能触发。
     const { hits } = duplicates(
       `const a = agent("planner", { system: "You plan first." });\n` +
         `const b = agent("planner", { system: "You plan." });\n` +
@@ -58,7 +54,7 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 
   it("takes a string persona as a system prompt, not a name", () => {
-    // The effective name of agent(name, "You plan.") is still the name argument — identical names in two places are still duplicates.
+    // agent(name, "You plan.") 的有效名仍是 name 实参——两处同名照样是重名。
     const { hits } = duplicates(
       `const a = agent("planner", "You plan.");\n` +
         `const b = agent("planner", "You also plan.");\n` +
@@ -75,10 +71,9 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 
   it("leaves anonymous actors alone, however many", () => {
-    // Anonymous is legal (the runtime does not check it either). Note the site table records the
-    // binding name into site.name as a **display label**, so this case also pins "the diagnostic
-    // reads the argument, not that label" — otherwise the two anonymous actors named "a"/"b"
-    // below would be falsely flagged.
+    // 匿名合法（运行期也不查）。注意站点表会把绑定名当**展示标签**记进 site.name，
+    // 所以这条同时钉住「诊断读的是实参，不是那个标签」——否则下面两个都叫 "a"/"b" 的
+    // 匿名 actor 会被误伤。
     expectClean(`const a = agent();\nconst b = agent();\nreturn 1;`);
   });
 
@@ -91,7 +86,7 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 
   it("skips dynamic names — the runtime check is the real gate", () => {
-    // Template holes, identifiers, the same site inside loops: statically undecidable, so let them all through and let the engine's runtime check backstop.
+    // 模板洞、标识符、循环里的同一个站点：静态说不准，一律放行，由引擎运行期兜底。
     expectClean(
       `const workers = [1, 2, 3].map((i) => agent(\`worker-\${i}\`));\n` +
         `const n = "planner";\nconst p = agent(n);\nconst q = agent(n);\n` +
@@ -100,9 +95,8 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 
   it("skips a persona with a computed key (the key itself could be `name`)", () => {
-    // A computed key must make the whole site give up, not "skip this one property and fall back
-    // to the name argument" — the latter is a guess, and the direction it guesses wrong in is
-    // exactly a false positive.
+    // 计算键必须让整个站点放弃，而不是「跳过这一个属性再落回 name 实参」——后者是一次猜测，
+    // 猜错的方向正好是误报。
     expectClean(
       `const a = agent("w", { ["system"]: "You work." });\n` +
         `const b = agent("w", { ["system"]: "You work." });\n` +
@@ -128,11 +122,9 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 
   it("skips a spread persona and a non-literal persona (either could carry a name)", () => {
-    // Conservative, not clever: `AgentPersona` has no name today, but the collector does not take
-    // the facade's current shape as a premise — once it grows a name, "judge by the name argument"
-    // would become a **false positive** for a renamed actor, and false positives block legal
-    // scripts. Under-reporting is free (the engine's runtime check backstops), so anything
-    // unreadable is let through.
+    // 保守而不是聪明：`AgentPersona` 今天没有 name，但收集器不拿 facade 的现状当前提——
+    // 一旦它长出 name，「按 name 实参判定」就会变成对一个被改名的 actor 的**误报**，而误报
+    // 会挡住合法脚本。漏报没有代价（引擎运行期兜底），所以看不穿就放行。
     expectClean(
       `const base = { system: "You work." };\n` +
         `const a = agent("w", { ...base });\nconst b = agent("w", base);\nreturn 1;`,
@@ -140,10 +132,9 @@ describe("duplicate actor names (compile-time courtesy)", () => {
   });
 });
 
-// The second clause: static names inside a fan-out body. One site, N actors, the same name — a
-// runtime DuplicateActorName is guaranteed. This clause **deliberately** may over-report (the
-// `.map` collection may hold a single element); see the top of src/analysis/actor-names.ts for
-// why: the fix is free, while staying silent costs a whole run.
+// 第二条子句：fan-out 体内的静态名。一个站点、N 个 actor、同一个名字——运行期必然
+// DuplicateActorName。这条**刻意**可能误报（`.map` 的集合可能只有一个元素），理由见
+// src/analysis/actor-names.ts 顶部：修复免费，而沉默的代价是烧掉一整个 run。
 describe("static actor names inside a fan-out (compile-time)", () => {
   it("flags a literal name inside an array-method fan-out, without withholding the graph", () => {
     const { hits, result } = fanOutNames(
@@ -155,9 +146,8 @@ describe("static actor names inside a fan-out (compile-time)", () => {
     expect(hits[0]?.line).toBe(2);
     expect(hits[0]?.message).toContain("fan-out");
     expect(hits[0]?.message).toContain('"reviewer"');
-    // Submission is blocked (ok:false) but the graph is still produced — this clause says the
-    // script would **fail when run**, not "this code cannot be analyzed", and the author needs the
-    // graph to see which fan-out it is (see analyze.ts).
+    // 提交被挡住（ok:false），但图照常产出——这一条说的是脚本**跑**起来会失败，不是
+    // 「这段代码没法分析」，而作者正需要看图才知道是哪个 fan-out（见 analyze.ts）。
     expect(result.ok).toBe(false);
     expect(result.graph).toBeDefined();
     expect(result.causality).toBeDefined();
@@ -174,7 +164,7 @@ describe("static actor names inside a fan-out (compile-time)", () => {
   });
 
   it("still withholds the graph when a blocking clause fires alongside it", () => {
-    // 9005 and 9006 present together: 9005 is the graph-withholding tier, so the whole analysis still produces no graph.
+    // 9005 与 9006 同时在场：9005 是扣图的那一档，整份分析照旧不产出图。
     const { result } = fanOutNames(
       `const paths = await files.glob("src/**/*.ts");\n` +
         `const verdicts = await Promise.all(paths.map((p) => agent("reviewer").ask<string>(\`Review \${p}\`)));\n` +
@@ -194,12 +184,14 @@ describe("static actor names inside a fan-out (compile-time)", () => {
   });
 
   it("leaves a literal name outside any fan-out alone (single site = runtime's business)", () => {
-    expectClean(`const reviewer = agent("reviewer");\nreturn await reviewer.ask<string>("Review.");`);
+    expectClean(
+      `const reviewer = agent("reviewer");\nreturn await reviewer.ask<string>("Review.");`,
+    );
   });
 
   it("reports one diagnostic per site, preferring the fan-out clause over the duplicate one", () => {
-    // The same name appears inside a fan-out and duplicated outside: the fan-out site reports 9006
-    // and the outside one reports 9005 as usual — one diagnostic per site, never stacked.
+    // 同一个名字既在 fan-out 里、又在外面重复出现：fan-out 站点报 9006，外面那个照常按
+    // 9005 报——两个站点各一条，不叠加。
     const script =
       `const paths = await files.glob("src/**/*.ts");\n` +
       `const verdicts = await Promise.all(paths.map((p) => agent("reviewer").ask<string>(\`Review \${p}\`)));\n` +

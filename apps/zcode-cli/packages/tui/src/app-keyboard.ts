@@ -348,8 +348,8 @@ export function useTuiKeyboardControls({
           return;
         }
 
-        // `+` / `-` expand/collapse all workflow cards (the spec has no card selection mechanism, so the keys apply to all cards).
-        // Keep the key binding and both gates (empty draft + at least one card) in a pure function for direct testing.
+        // `+` / `-` 展开/收起全部 workflow 卡（spec 无卡片选择机制，只能作用于全体）。
+        // 键位与两层闸门（草稿为空 + 至少一张卡）全部收在纯函数里，直接可测。
         const workflowExpansionKey = workflowExpansionActionFor({
           key,
           draftValue,
