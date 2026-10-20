@@ -270,6 +270,7 @@ packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
 # TEMPORARY upstream 3.16.1 sync (ui): oversize upstream UI files that differ from the pending upstream blob; split or reconcile in the UI-2 / i18n PRs and remove these lines.
 packages/ui/src/command-center/worktreeTaskFlow.ts
+packages/ui/src/settings/PluginStoreDetailView.tsx
 packages/ui/src/hooks/useVoiceDictation.ts
 packages/ui/src/i18n/locales/uk-UA.ts
 packages/ui/src/settings/CodingPlanEmbeddedWebviewDialog.tsx

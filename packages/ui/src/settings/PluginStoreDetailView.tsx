@@ -57,6 +57,7 @@ const SECTION_ORDER: ZCodePluginComponentKind[] = ["mcp", "skill", "command", "a
 
 const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
   mcp: "settings.plugins.store.section.mcp",
+  lsp: "settings.plugins.detail.component.lsp",
   skill: "settings.plugins.store.section.skills",
   command: "settings.plugins.store.section.commands",
   agent: "settings.plugins.store.section.agents",
@@ -66,6 +67,7 @@ const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
 // 与各资源设置列表共用同一图标语义，避免详情页用近似图标造成识别不一致。
 const SECTION_ICONS: Record<ZCodePluginComponentKind, typeof Server> = {
   mcp: Server,
+  lsp: Terminal,
   skill: WandSparkles,
   command: Terminal,
   agent: Bot,

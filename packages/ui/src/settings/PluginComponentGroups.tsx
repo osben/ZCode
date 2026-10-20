@@ -24,6 +24,7 @@ const COMPONENT_BADGE_STYLES: Record<ZCodePluginComponentKind, string> = {
   skill: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
   hook: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
   mcp: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
+  lsp: "bg-teal-500/15 text-teal-600 dark:text-teal-300",
 };
 
 const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
@@ -32,6 +33,7 @@ const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
   skill: "settings.plugins.detail.component.skill",
   hook: "settings.plugins.detail.component.hook",
   mcp: "settings.plugins.detail.component.mcp",
+  lsp: "settings.plugins.detail.component.lsp",
 };
 
 /**

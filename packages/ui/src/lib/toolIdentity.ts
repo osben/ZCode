@@ -11,6 +11,7 @@ import { normalizeAskUserQuestionInput, readAskUserQuestionInput } from "@/lib/a
 export type ToolCallPresentationFamily =
   | ZCodeToolFamily
   | "plan-guidance"
+  | "web-fetch"
   | "switch-mode"
   | "explore"
   | "unknown";
