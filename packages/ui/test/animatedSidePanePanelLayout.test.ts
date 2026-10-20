@@ -158,14 +158,14 @@ describe("AnimatedSidePanePanel layout", () => {
         hasActiveTask: true,
         hasReviewTab: false,
       }),
-    ).toEqual(["review", "terminal", "browser", "model-trajectory"]);
+    ).toEqual(["files", "browser", "terminal", "review", "model-trajectory"]);
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
         hasActiveTask: false,
         hasReviewTab: false,
       }),
-    ).toEqual(["review", "terminal", "browser"]);
+    ).toEqual(["files", "browser", "terminal", "review"]);
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: true,
@@ -173,7 +173,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasReviewTab: true,
         supportsEmbeddedBrowser: false,
       }),
-    ).toEqual(["terminal", "model-trajectory", "developer-tools"]);
+    ).toEqual(["files", "terminal", "model-trajectory", "developer-tools"]);
   });
 
   it("hides the side conversation entry without an active task and on mobile", () => {
