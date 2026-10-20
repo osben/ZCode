@@ -382,3 +382,10 @@ packages/ui/test/workflowTimelineHoles.test.ts
 packages/ui/test/workflowTimelineModel.test.ts
 packages/ui/test/workflowTimelineTracks.test.ts
 packages/ui/test/zcodeSessionStore.test.ts
+
+# TEMPORARY upstream 3.16.1 sync (ui bucket 8): oversize UI files re-applied with fork changes; reconcile in the UI-2 / i18n PRs and remove these lines.
+packages/ui/src/lib/builtinSkillI18n.ts
+packages/ui/src/lib/remoteWorkspaceHistory.ts
+packages/ui/src/lib/settingsNavigation.ts
+packages/ui/src/lib/workspaceSidePane.ts
+packages/ui/src/settingsPageHelpers.tsx

@@ -37,6 +37,9 @@ import type {
 export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
+  remoteSessionId?: string;
+  /** Side conversation (selection chat) embeds the composer without the main-pane chrome. */
+  selectionSideChat?: boolean;
   /** Prompt 模板埋点当前仅覆盖 Desktop。 */
   isDesktop?: boolean;
   readOnly?: boolean;
@@ -91,6 +94,8 @@ export interface V4ChatPaneProps {
 export function V4ChatPane({
   workspacePath,
   workspaceIdentity,
+  remoteSessionId,
+  selectionSideChat = false,
   isDesktop = false,
   readOnly = false,
   allowEscapeStopOutsidePane = false,
@@ -155,11 +160,13 @@ export function V4ChatPane({
       <SessionPane
         paneId="workspace-main"
         readOnly={readOnly}
+        selectionSideChat={selectionSideChat}
         allowEscapeStopOutsidePane={allowEscapeStopOutsidePane}
         sessionId={sessionId}
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
+        remoteSessionId={remoteSessionId}
         isDesktop={isDesktop}
         compactForRemoteControl={compactForRemoteControl}
         provider={provider}
