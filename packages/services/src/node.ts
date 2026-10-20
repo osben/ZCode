@@ -3150,3 +3150,15 @@ export async function createServerHostServices(options: {
   });
   return { services, workspaceIdentityMapper, migrationFailedPathCount };
 }
+
+// Upstream 3.16.1 barrel exports (module contracts are fork-present; these lines only expose them to the hosts).
+export { createRemoteProjectService } from "#src/remote-projects/index.js";
+export {
+  createRemoteProjectConnectionAdmission,
+  remoteProjectHostIdForProfile,
+  remoteProjectHostIdForTarget,
+  prepareRemoteServerConnection,
+} from "#src/remote-projects/index.js";
+export { createProjectWorkspaceNavigation } from "#src/project-workspace-navigation/index.js";
+export { migrateControllerRemoteWorkspaceIdentity } from "./session/controllerRemoteIdentityMigration.js";
+export { prepareTasksIndexStorage } from "#src/project-storage/startup.js";

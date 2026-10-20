@@ -447,7 +447,8 @@ export const conversationShareKnownErrorCodeSchema = z.union([
   z.literal(3213),
   z.literal(3214),
   z.literal(3215),
-  // 3216/3217 (safety_check_rejected / _unavailable) deferred: the unsynced services share client mapping is exhaustive over codes.
+  z.literal(3216),
+  z.literal(3217),
 ]);
 export type ConversationShareApiErrorCode = z.infer<typeof conversationShareKnownErrorCodeSchema>;
 
@@ -469,6 +470,8 @@ const SHARE_ERROR_KIND_BY_CODE = {
   3213: "authentication_required",
   3214: "import_not_allowed",
   3215: "safety_check_pending",
+  3216: "safety_check_rejected",
+  3217: "safety_check_unavailable",
 } as const satisfies Record<ConversationShareApiErrorCode, string>;
 
 export type ConversationShareErrorKind =

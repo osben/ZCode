@@ -9,6 +9,7 @@ import { claudeNativeSessionImportRepo } from "#src/session/claude-native/claude
 import { parseClaudeNativeSessionFile } from "#src/session/claude-native/claudeNativeSessionImportParser.js";
 import {
   buildSearchableTextFromMessages,
+  persistImportedClaudeTask,
   writeImportedClaudeTaskSnapshot,
 } from "#src/session/claude-native/persistImportedClaudeTask.js";
 import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
@@ -34,7 +35,7 @@ async function cleanupCreatedArtifacts(paths: readonly string[]): Promise<void> 
     try {
       await rm(path, { force: true });
     } catch {
-      // 清理失败不阻断主流程
+      // Cleanup failures do not block the main flow.
     }
   }
 }
@@ -44,7 +45,7 @@ export async function importClaudeNativeSessions(params: {
   workspacePath?: string;
   workspaceIdentity?: string;
   sessionIds: string[];
-  createImportedSession: (source: ClaudeNativeImportedSessionSource) => Promise<ZCodeTaskMeta>;
+  createImportedSession?: (source: ClaudeNativeImportedSessionSource) => Promise<ZCodeTaskMeta>;
   onTaskImported: (meta: ZCodeTaskMeta) => void;
 }): Promise<ZCodeImportSessionsResult> {
   const normalizedSessionIds = [
@@ -121,25 +122,39 @@ export async function importClaudeNativeSessions(params: {
       });
 
       const targetWorkspaceIdentity = params.workspacePath ? params.workspaceIdentity : undefined;
-      // 导入只能由 CLI 创建持久会话；备份文件不能成为第二个会话事实写者。
-      const created = await params.createImportedSession(importedSource);
-      const sessionFile = buildImportedClaudeTaskFile(importedSource, undefined, created.taskId);
-      await writeImportedClaudeTaskSnapshot({
-        sessionFile: {
-          ...sessionFile,
-          meta: {
-            ...sessionFile.meta,
-            ...(targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : {}),
+      let meta: ZCodeTaskMeta;
+      if (params.createImportedSession) {
+        meta = await params.createImportedSession(importedSource);
+        const sessionFile = buildImportedClaudeTaskFile(importedSource, undefined, meta.taskId);
+        await writeImportedClaudeTaskSnapshot({
+          sessionFile: {
+            ...sessionFile,
+            meta: {
+              ...sessionFile.meta,
+              ...(targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : {}),
+            },
           },
-        },
-      });
-      const meta = await params.taskIndexRepo.updateTaskPresentation({
-        ...created,
-        presentation: { migrationSource: "claudeCode" },
-        searchableText: buildSearchableTextFromMessages(sessionFile.messages),
-      });
-      if (!meta) throw new Error("CLI import did not persist session facts");
-      await params.taskIndexRepo.updateTaskState({ ...created, patch: { archived: false } });
+        });
+        meta = await params.taskIndexRepo.syncTaskMeta({
+          meta: {
+            ...meta,
+            migrationSource: "claudeCode",
+            workspaceIdentity: targetWorkspaceIdentity ?? meta.workspaceIdentity,
+          },
+          searchableText: buildSearchableTextFromMessages(sessionFile.messages),
+          // If an imported session is deleted/archived and later imported again, do not inherit the old row's hidden state;
+          // otherwise, the import succeeds but the session cannot be found in the active list.
+          archived: false,
+          deleted: false,
+        });
+      } else {
+        const sessionFile = buildImportedClaudeTaskFile(importedSource);
+        meta = await persistImportedClaudeTask({
+          taskIndexRepo: params.taskIndexRepo,
+          sessionFile,
+          workspaceIdentity: targetWorkspaceIdentity,
+        });
+      }
       params.onTaskImported(meta);
 
       result.imported.push({

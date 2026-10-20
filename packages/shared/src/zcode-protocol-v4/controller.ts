@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zcodeTaskMetaSchema } from "../validation.js";
-import { zcodeExecutionWorktreeSchema } from "../zcode-protocol/index.js";
+import { zcodeExecutionWorktreeSchema } from "./execution-worktree.js";
 import { pendingInteractionSummarySchema } from "./sessions-index.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
 import { sessionPhaseSchema, worktreePreparationStateSchema } from "./snapshot.js";

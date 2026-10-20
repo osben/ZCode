@@ -31,6 +31,8 @@ const LOCK_WAIT_MS = 60 * 60_000;
 export async function prepareTasksIndexStorage(
   path: string,
   onProgress: (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) => void,
+  // Upstream 3-argument form. Accepted so callers compile; the fork TaskIndexRepo has no project seeding, so it is not used (services part 4, section 7).
+  _settings?: unknown,
 ): Promise<void> {
   // 回调拿到的是当时事实，不共享后续执行会继续递增的内部对象。
   const report = (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) =>

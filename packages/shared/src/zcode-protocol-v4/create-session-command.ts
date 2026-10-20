@@ -2,10 +2,8 @@ import { z } from "zod";
 import { DYNAMIC_WORKFLOW_MODES } from "../dynamic-workflow-feature.js";
 import { incognitoProfileSchema } from "../incognito-profile.js";
 import { modelSelectionSchema } from "../model-selection.js";
-import {
-  zcodeExecutionWorktreeSchema,
-  zcodeProtocolMcpServerSchema,
-} from "../zcode-protocol/index.js";
+import { zcodeProtocolMcpServerSchema } from "../zcode-protocol/index.js";
+import { zcodeExecutionWorktreeSchema } from "./execution-worktree.js";
 import { attachmentRefSchema } from "./attachment-ref.js";
 import { createSessionRequestedConfigSchema } from "./create-session-config.js";
 import { submissionModeSchema } from "./submission.js";

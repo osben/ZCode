@@ -8,7 +8,6 @@ import type {
   PrepareCuaHelperPermissionDragResult,
   AppSettings,
   BrowserViewOperationPayload,
-  BrowserGuestAttachResult,
   BrowserViewScreenshotSurfacePreparePayload,
   BrowserViewScreenshotSurfaceReadyPayload,
   BrowserViewScreenshotSurfaceReleasePayload,
@@ -37,13 +36,12 @@ import type {
   WebRemoteControlReconnectWorkspaceResult,
   WebRemoteControlStartOperationResult,
   WebRemoteControlStatus,
-  WebRemoteControlTaskTarget,
   WebRemoteControlWorkspaceTarget,
   OAuthStateRegistration,
+  WebRemoteControlAuthStateChange,
   PostUpdateReleaseNotesPayload,
   RemoteConnectionRuntimeLog,
   RemoteSessionClosedEvent,
-  BotRemoteWorkspaceReconnectedEvent,
   RemoteTarget,
   SSHConfigAliasOption,
   RendererTelemetryEventPayload,
@@ -70,6 +68,7 @@ declare global {
     /** Plugin UI sandbox preload namespace; undefined under the legacy preload. */
     zcodePluginSandbox?: {
       supportsRetainedMove?: boolean;
+      setExecutionActive?(sandboxId: string, initId: number, active: boolean): Promise<void>;
       copyImage?(
         input: import("@zcode/shared/mcp-apps").PluginSandboxCaptureRequest,
       ): Promise<void>;
@@ -87,6 +86,7 @@ declare global {
           connectTrigger?: import("@zcode/shared").RemoteWorkspaceConnectTrigger;
         },
       ): Promise<{ success: boolean; error?: string; sessionId?: string }>;
+      requestSourceSettingsAttachment?(sourceServerId: string): Promise<{ attachmentId: string }>;
       /** Cancel a remote connection that has not yet been established in the current window. */
       cancelPendingRemoteConnection?(requestId?: string): Promise<void>;
       /** Bind the canonical workspace context for a remote logical session. */
@@ -94,7 +94,7 @@ declare global {
         remoteSessionId: string;
         workspacePath: string;
         workspaceIdentity?: string;
-      }): Promise<BrowserGuestAttachResult>;
+      }): Promise<import("@zcode/shared").BindRemoteWorkspaceSessionContextResult>;
       /** Enable Web remote control for the current workspace. */
       startWebRemoteControl(
         context: WebRemoteControlContext,
@@ -129,6 +129,8 @@ declare global {
       getAppWorktreesDir(): Promise<string>;
       /** Apply/release the system-wide output mute used while voice dictation records; implemented only by the current preload bridge. */
       setDictationSystemMute?(active: boolean): Promise<void>;
+      /** Open the system multi-directory picker; returns an empty array when cancelled. */
+      selectDirectories(): Promise<string[]>;
       /** Open the system file picker and return the selected file path, or null. */
       selectFile(): Promise<string | null>;
       /** Open the system multi-file picker and return the selected paths, or an empty array if canceled. */
@@ -283,6 +285,7 @@ declare global {
       startCuaHelperPermissionDrag?(): void;
       /** Report OAuth state for deep-link routing. */
       registerOAuthState(payload: OAuthStateRegistration): void;
+      notifyWebRemoteControlAuthStateChanged(change: WebRemoteControlAuthStateChange): void;
       /** Register an OAuth deep-link callback and return a disposer. */
       onOAuthCallback(cb: (url: string) => void): () => void;
       /** Register a payment deep-link callback and return a disposer. */
@@ -381,7 +384,7 @@ declare global {
       /** Restart the application and install the update after user confirmation. */
       quitAndInstallUpdate(): Promise<void>;
       /** Get the list of installed editors and terminals, including their icons. */
-      getInstalledEditors(): Promise<EditorInfo[]>;
+      getInstalledEditors(filePath?: string): Promise<EditorInfo[]>;
       /** Get a system application icon by a compatible bundle ID or structured locator. */
       getApplicationIcon?(
         request: string | ApplicationIconRequest,
