@@ -44,7 +44,10 @@ import { createRemoteConnectionServiceCollection } from "../src/host/remoteConne
 import { createRemotePromptAttachmentTaskService } from "../src/host/remotePromptAttachments.js";
 import { setDataBaseDir } from "@zcode/services/node";
 import * as nodeServices from "@zcode/services/node";
-import { createServerRemoteWorkspaceServiceCollection } from "../src/host/remoteWorkspaceServiceCollection.js";
+import {
+  createRemoteWorkspaceServiceCollection,
+  createServerRemoteWorkspaceServiceCollection,
+} from "../src/host/remoteWorkspaceServiceCollection.js";
 
 const originalHome = process.env.HOME;
 const clientConfigService = {
@@ -189,7 +192,7 @@ describe("remote workspace host service wiring", () => {
 
   it("keeps workspace services remote and exposes local global services for Web remote control", () => {
     const remoteServices = makeRemoteServices();
-    const services = createServerRemoteWorkspaceServiceCollection({
+    const services = createRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -253,7 +256,7 @@ describe("remote workspace host service wiring", () => {
               connectionServices,
               sourceServices,
             })
-          : createServerRemoteWorkspaceServiceCollection({
+          : createRemoteWorkspaceServiceCollection({
               clientConfigService,
               connectionServices,
               sourceServices,
@@ -349,7 +352,7 @@ describe("remote workspace host service wiring", () => {
           headers: { "content-type": "application/json" },
         });
       });
-      const services = createServerRemoteWorkspaceServiceCollection({
+      const services = createRemoteWorkspaceServiceCollection({
         clientConfigService,
         connectionServices: makeRemoteServices(),
         ...(sharedOwner ? { sourceServices: new ServiceCollection() } : {}),
@@ -448,7 +451,7 @@ describe("remote workspace host service wiring", () => {
           headers: { "content-type": "application/json" },
         });
       });
-      const services = createServerRemoteWorkspaceServiceCollection({
+      const services = createRemoteWorkspaceServiceCollection({
         clientConfigService,
         connectionServices: makeRemoteServices(),
         ...remoteWorkspaceHostOptions(),
@@ -509,7 +512,7 @@ describe("remote workspace host service wiring", () => {
     const home = createTempHome();
     vi.spyOn(globalThis, "fetch").mockImplementation(createPresetFetchMock("preflight-v1"));
     const remoteServices = makeRemoteServices();
-    const services = createServerRemoteWorkspaceServiceCollection({
+    const services = createRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -610,7 +613,7 @@ describe("remote workspace host service wiring", () => {
     remoteServices.zcodeAgentService.respondSessionRuntimePreferences.mockRejectedValueOnce(
       transportError,
     );
-    const services = createServerRemoteWorkspaceServiceCollection({
+    const services = createRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(onError),
@@ -665,7 +668,7 @@ describe("remote workspace host service wiring", () => {
     const fetchImpl = createPresetFetchMock();
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
     const remoteServices = makeRemoteServices();
-    createServerRemoteWorkspaceServiceCollection({
+    createRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -767,7 +770,7 @@ describe("remote workspace host service wiring", () => {
       ...makeRemoteServices(),
       zcodeTaskService: { sendPrompt: rawSendPrompt },
     } as never;
-    const services = createServerRemoteWorkspaceServiceCollection({
+    const services = createRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),

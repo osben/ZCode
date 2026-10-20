@@ -310,3 +310,29 @@ Unchanged and passing (checked, not in the failing list): `connectDesktopSourceS
 
 - No test was skipped, deleted or weakened. The two replaced tests (desktopMainIpcPlatform restore case, e2eSshRemoteReleaseAssets file) encode behavior upstream removed; their upstream successors are used.
 - `scripts/check-test-copy.mjs` not edited. Test copy stays English where new.
+
+## fork restore desktop
+
+Scope: restore fork desktop behavior that the upstream-shaped hand merge dropped. Source of truth: fork `origin/integration` (base `aac47556`), compared with the current file. Tests: `packages/desktop/test`.
+
+### Restored
+
+- `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`: the fork's `createRemoteWorkspaceServiceCollection` (desktop-attached and non-server remote workspace host) is back, adapted to upstream's names and layout. It keeps the runtime preference bridge (`runtimePreferencesBridge`, with `memoryIndexAsContext`), the reporting wrapper for web remote prompts, the local onboarding fallback, the local account/usage Token and PAT-owner 401 routing (`fallbackTokenClient`, `resolveProviderMaterial` with `rejectedProjectTokenFingerprint`), and the fork's `IUserInstructionsService`, `IOutputStyleService` (remote instance), and `ISystemPromptService` registrations. The upstream `createServerRemoteWorkspaceServiceCollection` is unchanged except that it keeps `ISystemPromptService` as in the fork. The fork's server variant has no `IUserInstructionsService` registration, so the hand-merge addition was removed. The unused `createMediaPreviewService` import was removed.
+- `packages/desktop/src/host/remotePromptAttachments.ts`: the fork's `createRemotePromptAttachmentTaskService`, `createRemotePromptAttachmentSessionService`, the shared proxy and `stringValue` were missing after the hand merge. Restored at the end of the file.
+- `packages/desktop/test/hostRemoteWorkspaceServices.test.ts`: the previous pass had renamed the desktop-attached and local-global call sites to `createServerRemoteWorkspaceServiceCollection`. That hid the fork's local-global behavior. Those 10 call sites now use the fork's `createRemoteWorkspaceServiceCollection` again (the import lists both factories). The RPC v1 stub channels added in the earlier pass are kept. No assertion was changed.
+
+### Verified present (base to fork non-comment hunks found in current file)
+
+Automated check: for every desktop file changed from base to fork, every added non-comment line was searched in the current file after trimming indentation. Only formatting-level differences (multi-line signatures and types) or intended upstream changes remained for `host/index.ts` (`OpenWorkspaceInventory` request and timer), `host/windowRemoteConnectionRegistry.ts` (`onDidClose`), `main/desktopSaveFile.ts` (public URL and download helpers), `preload/index.ts` (`OpenTaskDraftPayload`), `main/index.ts`, `desktopPlatform.ts`, and `desktopMainIpcPlatform.ts`. Those are present with reformatted text.
+
+### Not restored (decisions needed)
+
+- `host/database-startup/tasksStorageWorker.ts`: upstream uses the three-argument `prepareTasksIndexStorage`. This is the services-owned signature already recorded above and is not a fork hunk loss.
+- `host/index.ts` remote backend path: the fork selected `createRemoteWorkspaceServiceCollection` for non-server targets (`RemoteBackendHostConnection`), and passed the local onboarding record, `parentPort`, prompt attachment wrappers, and the reporting wrapper. Upstream replaced that path with the source-server connection, and its two call sites (initial connect and reconnect) only use `createServerRemoteWorkspaceServiceCollection`. Wiring the local-global variant into the source-server path would lose upstream virtual projects, because the local variant does not register `IProjectService`/`IRemoteProjectService`. So the production wiring is not restored. The factory is restored and covered by tests, but the desktop-attached and SSH/Docker local-global behavior (Web remote control reading local settings and credentials) is not active in the running app until a product decision is made on the source-server path. Verify in the app before merging.
+- `buildPipelineEntrypoints` and `webRemoteControlManagerExternalRelay` failures are unchanged and are recorded in `## tests desktop`.
+
+### Verification
+
+- Desktop unit tests: before 7 failed files and 42 failed tests. After 6 failed files and 30 failed tests (2911 passed). `hostRemoteWorkspaceServices.test.ts` now passes all 16 tests (12 were failing). `remotePromptAttachments` and the related remote tests pass. The 30 remaining failures are the `windowHostController*` services-owned tests (28), `buildPipelineEntrypoints` (1), and `webRemoteControlManagerExternalRelay` (1).
+- `pnpm typecheck`: exit 0. `pnpm lint`: exit 0, 0 errors (98 warnings, none in the restored files). `oxfmt --check` on the changed files: pass.
+- Size guard: `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts` is about 33 KB. It has a TEMPORARY entry in `.staged-file-size-exemptions`.
