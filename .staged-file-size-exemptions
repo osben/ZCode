@@ -303,3 +303,9 @@ apps/zcode-cli/packages/core/tests/session-fork.test.ts
 apps/zcode-cli/packages/core/tests/subagent-explore.test.ts
 apps/zcode-cli/packages/core/tests/subagent-prompt-assembly.test.ts
 apps/zcode-cli/packages/core/tests/tool-contracts.test.ts
+
+# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
+packages/services/src/session/automationRepo.ts
+packages/services/src/session/offPeakTaskRepo.ts

@@ -817,6 +817,16 @@ artifact 后人工观察”的软通过口径。
 | SP16       | planned  | `packages/ui/test/v4ConversationStatusPanel.test.ts` + runtime CDP                                                   | 组件交互测试守住前后位置桶的混合 status 中性文案、双预览互斥、左侧 HoverCard、原序分组、卡片内部滚动且不在面板内插入明细；桌面 CDP 验证 hover / focus 与可穿越交互，手机 touch-click 待补 V4 formal E2E                                                                                                                                                                                                              |
 | SP17       | planned  | `packages/ui/test/v4ConversationStatusPanel.test.ts` + runtime CDP                                                   | key 签名与桌面 CDP 验证 snapshot 更新后旧预览关闭并重算分组；待补 V4 formal E2E                                                                                                                                                                                                                                                                                                                                      |
 
+SP13 refresh-failure candidate (2026-10-19): the same pending spec now includes
+`GIT-REFRESH-01`, exercising missing tracking ref → visible error plus retained rows →
+restore ref → manual Refresh recovery. No provider fixture change or promotion is implied.
+The 2026-10-19 Desktop replay passed all three cases, including the missing-ref error
+and recovery assertions. The earlier navigation failure came from matching the Expand
+status capsule's preview text as Changes and treating CSS-collapsed auto mode as an open
+panel. Setup now expands by visible action and gives aria-label precedence over preview
+text. The case remains pending human review/promotion. Status timeout and cross-target
+isolation are covered by `packages/ui/test/gitRepositoryResilience.test.ts` (passed).
+
 ## Assistant Preview Cards 覆盖口径
 
 这组 case 对应 [conversation-session-case-catalog.md](../conversation-session-case-catalog.md) 的 `APC` 分组。Assistant Preview Cards 是 v4 assistant text row 的派生 UI，不新增协议、snapshot、replayable queue 或 relay 状态；E2E 通过 provider replay fixture 输出 localhost/HTML/Markdown/Office/PDF 候选，并断言卡片只出现在 latest terminal assistant row 下方。当前窗口 case 已完成人工 review、正式目录 promotion 和本地 formal replay；覆盖状态仍记 partial，因为 replay-isolated Docker admission 尚未执行，部分排列继续由 focused tests 守护。
