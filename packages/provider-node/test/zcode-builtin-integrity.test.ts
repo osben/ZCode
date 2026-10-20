@@ -3,13 +3,15 @@ import { compileModelOptionMaps } from "@zcode/model-option-map";
 import { fileURLToPath } from "node:url";
 import {
   ApiKeyAccessConfig,
+  ChatgptAccountAccessConfig,
   ModelConfigRules,
-  ProviderConfig,
   ProviderApiConfig,
+  ProviderConfig,
   ProviderConfigMap,
   ProviderConfigResolver,
-  ChatgptAccountAccessConfig,
+  ProviderRegistry,
   ZhipuAccountAccessConfig,
+  parseModelConfig,
 } from "@zcode/provider";
 import { describe, expect, it } from "vitest";
 import { NodeZCodeBuiltinProviderConfigSource } from "../src/index.js";
@@ -43,7 +45,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
           baseUrl: "https://unknown.example/v1",
         });
         expect(model.validateComplete()).toEqual([]);
-        expect(model.optionSpecs?.maxOutputTokens?.max).toBe(32_000);
+        expect(model.optionSpecs?.maxOutputTokens?.max).toBe(128_000);
         expect(model.optionSpecs?.reasoningLevel?.values).toEqual(["disabled", "enabled"]);
         expect(model.properties?.inputFormat.supportsImage).toBe(false);
         const result = new ProviderConfigResolver().resolve({
@@ -558,6 +560,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "qwen-alibaba-model-studio-cn",
         "qwen-alibaba-model-studio-intl",
         "xiaomi-mimo",
+        "xiaomi-mimo-token-plan",
         "openai",
         "anthropic",
         "xai",
@@ -656,49 +659,55 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("按模型家族连续排列 Rule，且不保留语义等价的重复 matcher", async () => {
+  it("does not keep semantically duplicate matchers", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
     });
 
     try {
-      const rules = (await source.read()).models.rules().filter((rule) => rule.type === "match");
+      // Each of the three matcher groups is independent, but semantically equivalent selectors must not be repeated across groups.
+      const rules = (await source.read()).models
+        .rules()
+        .filter(
+          (rule) =>
+            rule.type === "model" || rule.type === "model-api" || rule.type === "provider-site",
+        );
       const selectorKeys = rules.map((rule) =>
         JSON.stringify([
-          rule.providerMatch ?? "",
           rule.modelMatch.toLowerCase(),
-          rule.apiMatch ?? "",
-          rule.baseUrlMatch ?? "",
+          "apiTypeMatch" in rule ? (rule.apiTypeMatch ?? "") : "",
+          "baseUrlMatch" in rule ? rule.baseUrlMatch : "",
         ]),
       );
       expect(new Set(selectorKeys).size).toBe(selectorKeys.length);
-
-      // After grouping, "model families are contiguous" constrains only the Model Rule group itself.
-      // Concatenating the Model/API/Site groups would artificially create duplicate families and make
-      // the intended authoring-order check impossible.
-      const rawRelease = JSON.parse(await readFile(zcodeBuiltinProviderConfigFilePath, "utf8")) as {
-        config: { modelConfigRules: { modelRules: readonly { modelMatch: string }[] } };
-      };
-      const modelRules = rawRelease.config.modelConfigRules.modelRules;
-      const familySequence = modelRules
-        .map((rule) => builtinRuleFamily(rule))
-        .filter((family, index, families) => family !== families[index - 1]);
-      expect(familySequence).toEqual([
-        "fallback",
-        "glm",
-        "gpt",
-        "claude",
-        "grok",
-        "kimi",
-        "minimax",
-        "deepseek",
-        "qwen",
-        "mimo",
-      ]);
     } finally {
       source.dispose();
     }
+  });
+
+  it("keeps Model Rule families contiguous", async () => {
+    // Fork-owned check kept from integration: model families in the Model Rule group must stay contiguous.
+    // Only the Model Rule group is checked; concatenating the Model/API/Site groups would create duplicate families.
+    const rawRelease = JSON.parse(await readFile(zcodeBuiltinProviderConfigFilePath, "utf8")) as {
+      config: { modelConfigRules: { modelRules: readonly { modelMatch: string }[] } };
+    };
+    const modelRules = rawRelease.config.modelConfigRules.modelRules;
+    const familySequence = modelRules
+      .map((rule) => builtinRuleFamily(rule))
+      .filter((family, index, families) => family !== families[index - 1]);
+    expect(familySequence).toEqual([
+      "fallback",
+      "glm",
+      "gpt",
+      "claude",
+      "grok",
+      "kimi",
+      "minimax",
+      "deepseek",
+      "qwen",
+      "mimo",
+    ]);
   });
 
   it("Reasoning 公开档位按语义强度从低到高排列", async () => {
@@ -1027,6 +1036,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "template:qwen-alibaba-model-studio-cn",
         "template:qwen-alibaba-model-studio-intl",
         "template:xiaomi-mimo",
+        "template:xiaomi-mimo-token-plan",
         "template:openai",
         "template:anthropic",
         "template:xai",
@@ -1066,6 +1076,104 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         expect(offPeak?.models).not.toHaveLength(0);
         for (const model of offPeak?.models ?? []) {
           expect(model).toMatchObject({ executable: true, selectable: false });
+        }
+      }
+    } finally {
+      source.dispose();
+    }
+  });
+
+  it("完整兜底让任意未知模型 ID 在各 API type 与模板下完整并进入 Registry（R3A-B-03）", async () => {
+    const source = new NodeZCodeBuiltinProviderConfigSource({
+      bundledFilePath: zcodeBuiltinProviderConfigFilePath,
+      watch: false,
+    });
+
+    try {
+      const snapshot = await source.read();
+      const fallbackRule = snapshot.models
+        .rules()
+        .find((rule) => rule.type === "model" && rule.modelMatch === ".*");
+      const fallbackMax = fallbackRule?.config.optionSpecs?.maxOutputTokens?.max;
+      expect(fallbackMax, "兜底规则必须声明 maxOutputTokens.max").toEqual(expect.any(Number));
+
+      const unknownModelId = "b03-unknown-model-x";
+      const scenarios = [
+        { providerId: "custom-chat", apiType: "openai-chat-completions" as const },
+        { providerId: "custom-messages", apiType: "anthropic-messages" as const },
+        { providerId: "custom-responses", apiType: "openai-responses" as const },
+        {
+          providerId: "custom-deepseek",
+          templateId: "deepseek",
+          apiType: "openai-chat-completions" as const,
+          baseURL: "https://api.deepseek.com",
+          // Probe only with known models enabled by the catalog default: deepseek-v4-flash is marked by the Built-in catalog as
+          // enabled:false, so the sparse Personal rule does not override it and the Registry naturally omits it.
+          knownModelId: "deepseek-v4-pro",
+        },
+        {
+          providerId: "custom-zai",
+          templateId: "zai-api",
+          apiType: "anthropic-messages" as const,
+          baseURL: "https://api.z.ai/api/anthropic",
+          knownModelId: "glm-5.3",
+        },
+      ];
+      const personalProviders = scenarios.map((scenario) => ({
+        providerId: scenario.providerId,
+        ...(scenario.templateId ? { templateId: scenario.templateId } : {}),
+        config: new ProviderConfig({
+          group: "standard-personal",
+          access: new ApiKeyAccessConfig({ apiKey: `test-key-for-${scenario.providerId}` }),
+          api: new ProviderApiConfig({
+            type: scenario.apiType,
+            baseUrl: scenario.baseURL ?? "https://custom.example.com/v1",
+          }),
+          personalModelIds: [
+            unknownModelId,
+            ...(scenario.knownModelId ? [scenario.knownModelId] : []),
+          ],
+        }),
+      }));
+      // When the settings page adds a model, config-service writes only {enabled:true}; reuse the same sparse Personal rule here.
+      const personalModels = new ModelConfigRules(
+        scenarios.map((scenario) => ({
+          type: "provider-model" as const,
+          providerId: scenario.providerId,
+          modelId: unknownModelId,
+          config: parseModelConfig({ enabled: true }),
+        })),
+      );
+      const resolution = new ProviderConfigResolver().resolve({
+        zcodeBuiltinProviders: ProviderConfigMap.empty(),
+        zcodeBuiltinProviderTemplates: snapshot.providerTemplates,
+        accountProviders: ProviderConfigMap.empty(),
+        personalProviders: new ProviderConfigMap(personalProviders),
+        zcodeBuiltinModelRules: snapshot.models,
+        personalModels,
+      });
+      const registry = new ProviderRegistry(resolution.registryProviders);
+
+      expect(resolution.issues).toEqual([]);
+      for (const scenario of scenarios) {
+        const unknown = registry.getModel(scenario.providerId, unknownModelId);
+        expect(unknown, `${scenario.providerId}/${unknownModelId} 应进入 Registry`).toBeDefined();
+        expect(unknown?.config.optionSpecs.maxOutputTokens).toEqual({
+          max: fallbackMax,
+          map: expect.any(String),
+        });
+        if (scenario.knownModelId) {
+          const known = registry.getModel(scenario.providerId, scenario.knownModelId);
+          expect(
+            known,
+            `${scenario.providerId}/${scenario.knownModelId} 应进入 Registry`,
+          ).toBeDefined();
+          expect(known?.config.optionSpecs.maxOutputTokens.max).toEqual(expect.any(Number));
+          // A new generic limit may match a known model; known models still resolve through their own rules, so a different value must not be used to judge a match.
+          expect(known?.config.optionSpecs.reasoningLevel.values).not.toEqual([
+            "disabled",
+            "enabled",
+          ]);
         }
       }
     } finally {

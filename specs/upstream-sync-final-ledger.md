@@ -270,3 +270,46 @@ Desktop typecheck drive (branch `claude/final-desktop-compile`). Each bullet nam
 
 - TEMPORARY(relay-decision): packages/desktop/tsconfig.e2e.json excludes four upstream relay-v2 e2e files (web-remote-unread helper and three conversation-session tests). Remove when the user decides on relay v2.
 - Note: windowHostController\*.test.ts in desktop imports desktop/src/host/windowHostControllerService.js, which moved to services in the fork. Left for the test-fix wave.
+
+## tests misc
+
+Branch `claude/final-tests-misc` (local, from `claude/upstream-sync-final` 97810706). Scope: packages/shared, client, provider, provider-node, web, zcode-server-cli, apps/zcode-cli adapters plugins test, scripts tests, apps/dev-docs tests.
+
+Failing counts before and after (vitest run of the assigned packages, `node --test scripts/test/*.test.mjs`, dev-docs vitest):
+
+- shared: 5 failing before (webRemoteControl 3, zcodeEndpoint 1, zcodeProtocolSessionArchive 1); after 3 (webRemoteControl).
+- web: 6 failing before (webOAuthCallbackEntry, with 2 unhandled undici errors); after 0.
+- provider-node: 6 failing before (zcode-builtin-integrity 5, builtin-provider-build fork-isolated 1); after 0.
+- client, provider, zcode-server-cli: 0 before and after.
+- scripts node tests: 1 before (builtin-provider-config-build); after 0 (166/166).
+- apps/zcode-cli adapters `tests/plugins.test.ts`: 1 before (resolveFetch); after 0 (79/79).
+- apps/dev-docs: 1 before (featureBoundaryGraph counts); after 0.
+- third-party/inventory.json: not regenerated (see below).
+
+Fixes and decisions:
+
+- zcodeEndpoint (shared src + test): restored the fork relay v1 values from origin/integration (`/ws` default and test relay, `/web-remote/callback` callback URL). The upstream ws2 and `/remote/v4` values had been taken into the source while the fork test still expected v1. The fork test file is the spec; the test-only relay case and the ZCODE_BASE_URL env-base case were restored there too.
+- zcodeSessionInfoSchema: restored `archivedAt` (fork commit c0e76f62 added it with its test).
+- webOAuthCallbackEntry: the six `/remote/v4` cases are retargeted to the fork callback route `/web-remote/callback` and `/web-remote/callback/`, which `main.tsx` already routes. `isWebOAuthCallback` now tolerates a trailing slash. Assertions are unchanged. Same decision as the webAuthService skips in specs/web-upstream-sync.md, limited to the callback route for this test.
+- plugins.test.ts "enriches an existing Claude catalog without refreshing its marketplace": fails on origin/integration too, because the fork commit 4f301f4d made the HTTP adapter load TLS CA material asynchronously before calling fetch. The test waited one microtask for fetch. It now waits with `vi.waitFor` for the fetch call. The assertions are unchanged.
+- featureBoundaryGraph test: the YAML is hand-maintained (416 declared nodes + 2 unresolved endpoints = 418; 799 edges). The two unresolved ids (`capability.mcp-oauth-authorization`, `persistence.desktop-user-data-root`) are the endpoints the YAML really references and are not declared anywhere, so the expectation stays. Only the counts were updated.
+- zcode-builtin-integrity: upstream's test file is the base, with the fork's chatgpt-plan additions re-applied (ChatgptAccountAccessConfig branch, `account:chatgpt-plan` in the provider lists) and the fork's family-contiguity check restored as its own `it` with its helper. Built-in JSON keeps upstream's fallback (128000) and xiaomi-mimo-token-plan entries.
+- build-desktop-agent-cli.mjs: the fork's `stageBuiltinProviderConfig` staging was dropped by the upstream hunk. It is restored through `stageProviderConfigForAgentBundle()` on all three exit paths. This also clears provider-node builtin-provider-build, which runs the scripts test.
+
+Fixed after review: packages/shared/test/webRemoteControl.test.ts (41/41). `web-remote-control.ts` still types `tasks` on the bootstrap result (required) and on the workspace-list result (optional), and the desktop producer `webRemoteControlManager.ts` still sends `tasks`. The branch zod schema had dropped `webRemoteControlTaskTarget(s)Schema` and the `tasks` fields, so the runtime stripped what the types promised. They are restored from integration next to upstream's mobile-task-view fields. No test is left failing in the assigned packages.
+
+Caller-list tests that pass on this branch without changes and are not excluded in vitest.config.ts: externalRelayFrameGapRecovery, homeOnlyWebRemoteControlServices, webPlatformOpenOnDesktop, mimo-templates, new-model-catalog-round2, zcode-builtin-model-aliases, zcode-builtin-reasoning-map, clientConfig, scopedServicePortPayload, windowHostControlProtocol, remoteServiceAccess.
+
+Collateral check for the zcodeEndpoint restore: a repository grep for `api/v1/remote/ws2`, `zcode.z.ai/ws`, `/web-remote/callback` and `DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL` finds value assertions only in packages/shared and packages/web. The ui, services, desktop and server test hits for `/remote/v4` are literal route fixtures and do not depend on the relay constant. The full ui, services and desktop suites were not run here, so flips there are not excluded.
+
+Not done and blocked:
+
+- third-party/inventory.json: `node scripts/licenses.mjs notices` fails before writing, so no stale hash was refreshed. Cause, checked against base aac47556, integration and upstream 0a1fc56d:
+  - Rive: base and upstream pin `^4.27.3` in packages/ui/package.json, and upstream overrides cover 4.28.0 and 2.37.1 only. The fork bumped the range to `^4.36.0` in packages/ui and packages/share-ui and pins 4.36.0 and 2.44.0 in its overrides. The branch packages/ui/package.json is back at `^4.27.3`, so the lockfile carries 4.28.0 and 4.37.0 (and 2.37.1 and 2.45.0). That is a lost fork bump in the ui manifest, which belongs to the ui slice. Fixing it needs a lockfile re-resolution and an override decision, so it is not done here.
+  - OFL: `@fontsource-variable/inter` and `jetbrains-mono` 5.3.0 are fork-added dependencies (integration packages/ui/package.json, absent upstream). Neither upstream nor integration has a PROD_REVIEWED entry for OFL-1.1, and a license conclusion has to come from a person, so none was written.
+  - `scripts/third-party-notices.test.mjs` passes (7/7).
+- apps/zcode-cli adapters full suite: `tests/mcp-oauth-cross-process.e2e.test.ts` failed once under the full-suite load and passes alone. Flaky, not touched.
+- Architecture check (`pnpm architecture:check --changed`) reports 4 unmanaged new files from the merge (desktop host files and packages/shared/src/zcode-protocol-v4/execution-worktree.ts). Not registered here.
+- Formatting: `pnpm fmt:check` fails on other slices' files (packages/web/src/webRemoteControlDeviceInfo.ts, packages/web/test/webRemoteControlWorkspaceBridgeSession.test.ts, and more). None of the files changed here is listed.
+- Test copy: `node scripts/check-test-copy.mjs` reports 7 locale violations, all in packages/desktop/test/e2e manual-review pending files outside this scope. In the touched test files, the comments the fork had already translated are English again, and every comment or title this slice added is English. About 40 Chinese `it` titles and assertion messages from upstream remain in `zcode-builtin-integrity.test.ts`; the check does not flag them. Translating them is open follow-up work.
+- Staged size: packages/web/src/main.tsx (about 103 KB) is already listed as TEMPORARY in `.staged-file-size-exemptions`; no new entry needed.
