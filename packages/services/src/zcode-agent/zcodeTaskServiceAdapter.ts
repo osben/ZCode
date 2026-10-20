@@ -2019,11 +2019,17 @@ export function createZCodeTaskServiceAdapter(
             "createSession",
             await options.zcodeAgentService.sendConversationCommandV4({
               ...target,
+              // Same guard as the legacy createSession path: a defined projectId reaches the agent
+              // envelope builder, which rejects it when no project creation port is wired.
+              ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
               envelope: createHostCommandEnvelope({
                 type: "createSession",
                 sessionId: null,
                 payload: {
                   workspaceId: target.workspaceIdentity?.trim() || target.workspacePath,
+                  ...(params.additionalDirectories !== undefined
+                    ? { additionalDirectories: params.additionalDirectories }
+                    : {}),
                   ...(params.permissionScope ? { permissionScope: params.permissionScope } : {}),
                   config: {
                     ...(model ? { provider: model.providerId, model: model.modelId } : {}),
@@ -2049,6 +2055,13 @@ export function createZCodeTaskServiceAdapter(
         } else {
           snapshot = await options.zcodeAgentService.createSession({
             ...target,
+            // Project binding is forwarded only when the caller supplies it. The agent service rejects a
+            // defined projectId when no project creation port is wired, so an unconditional null would
+            // break task creation in the fork.
+            ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
+            ...(params.additionalDirectories !== undefined
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
             sessionTraceId: createSessionTraceId(),
             mode: toZCodeMode(params.mode),
             model: requestedSelection,

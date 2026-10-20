@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { basename, extname, resolve } from "node:path";
-import { hostname } from "node:os";
+import { hostname, userInfo } from "node:os";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -18,7 +18,11 @@ import {
   ProxyChannel,
   type ISocket,
 } from "@zcode/rpc";
-import type { TopicResourcePeers } from "@zcode/services/node";
+import {
+  SourceServerWorkspaceIdentityChannelServer,
+  type SourceServerWorkspaceIdentityMapper,
+  type TopicResourcePeers,
+} from "@zcode/services/node";
 import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import { TOPIC_RESOURCE_RELAY_CHANNEL } from "@zcode/shared";
 import {
@@ -39,7 +43,9 @@ import {
   formatLogPrefix,
   formatZodError,
   remoteTargetSchema,
+  serverRemoteInfoOutputSchema,
   SERVER_REMOTE_PROTOCOL_VERSION,
+  ZCODE_COMPATIBILITY_MANIFEST,
   ZCODE_RPC_HOST_CAPABILITY_HEADER,
   ZCODE_VERSION,
   type BotProvider,
@@ -96,13 +102,18 @@ function setupChannelServer(
   ws: WebSocket,
   services: ServiceCollection,
   clientMode: "desktop-continuous" | "web-remote-replayable",
+  workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper,
   resourcePeers?: TopicResourcePeers,
 ) {
   const socket = wrapWebSocket(ws);
   const protocol = new SocketProtocol(socket);
   const rawServer = new ChannelServer(protocol, "server");
   // Wrap with logging middleware so all RPC calls are recorded consistently.
-  const server = new LoggingChannelServer(rawServer, log);
+  const loggedServer = new LoggingChannelServer(rawServer, log);
+  // Workspace identity mapping is applied only when the host supplies a mapper (standalone server-cli).
+  const server = workspaceIdentityMapper
+    ? new SourceServerWorkspaceIdentityChannelServer(loggedServer, workspaceIdentityMapper)
+    : loggedServer;
   const agentService = services.getOptional(IZCodeAgentService);
   const reverseClient =
     clientMode === "desktop-continuous" && resourcePeers ? new ChannelClient(protocol) : undefined;
@@ -197,6 +208,9 @@ function isLoopbackHost(host: string): boolean {
 export interface HttpServerOptions {
   topicResourcePeers?: TopicResourcePeers;
   serverId?: string;
+  virtualProjects?: boolean;
+  migrationFailedPathCount?: number;
+  workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper;
   name?: string;
   host?: string;
   authToken?: string;
@@ -210,7 +224,7 @@ function readTrimmedEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function resolveServerId(options: HttpServerOptions): string {
+export function resolveHttpServerId(options: HttpServerOptions = {}): string {
   return (
     options.serverId?.trim() || readTrimmedEnv("ZCODE_SERVER_ID") || hostname() || "zcode-server"
   );
@@ -233,8 +247,8 @@ function createServerInfo(
   options: HttpServerOptions,
   authToken: string | undefined,
 ): ServerRemoteInfo {
-  return {
-    serverId: resolveServerId(options),
+  return serverRemoteInfoOutputSchema.parse({
+    serverId: resolveHttpServerId(options),
     ...(options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME")
       ? { name: options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME") }
       : {}),
@@ -243,12 +257,16 @@ function createServerInfo(
     // Derived from the token only, so the advertised state cannot diverge from enforcement.
     authRequired: Boolean(authToken),
     workspaces: resolveServerWorkspaces(options),
+    compatibility: ZCODE_COMPATIBILITY_MANIFEST,
+    migration: { failedPathCount: options.migrationFailedPathCount ?? 0 },
+    identity: { osUser: userInfo().username, hostname: hostname() },
     capabilities: {
       desktopContinuous: true,
       websocketRpc: true,
+      ...(options.virtualProjects ? { virtualProjects: true } : {}),
       processResourceTelemetry: true,
     },
-  };
+  });
 }
 
 const zcodeLiteTokenCookieName = "zcode_lite_token";
@@ -292,6 +310,13 @@ function parseCookieHeader(header: string | undefined): Map<string, string> {
 }
 
 function hasValidLiteToken(c: Context, token: string): boolean {
+  const authorization = c.req.header("authorization");
+  if (
+    authorization?.startsWith("Bearer ") &&
+    authorization.slice("Bearer ".length).trim() === token
+  ) {
+    return true;
+  }
   const url = new URL(c.req.url);
   if (url.searchParams.get("token") === token) {
     c.header(
@@ -475,7 +500,12 @@ export function createHttpServer(
     "/ws",
     upgradeWebSocket(() => ({
       onOpen(_event, ws) {
-        setupChannelServer(ws.raw as WebSocket, services, "web-remote-replayable");
+        setupChannelServer(
+          ws.raw as WebSocket,
+          services,
+          "web-remote-replayable",
+          options.workspaceIdentityMapper,
+        );
       },
     })),
   );
@@ -486,6 +516,7 @@ export function createHttpServer(
         ws.raw as WebSocket,
         services,
         "desktop-continuous",
+        options.workspaceIdentityMapper,
         options.topicResourcePeers,
       );
     },
@@ -594,7 +625,14 @@ export function createHttpServer(
             .register(ISystemService, connection.services.systemService)
             .register(ITerminalService, connection.services.terminalService);
 
-          setupChannelServer(ws.raw as WebSocket, remoteServices, "web-remote-replayable");
+          // This route serves a different backend (SSH/Docker target). The source-server identity mapper
+          // translates this server's own workspace identities, so it must not apply here.
+          setupChannelServer(
+            ws.raw as WebSocket,
+            remoteServices,
+            "web-remote-replayable",
+            undefined,
+          );
         },
         onClose() {
           claimedConnection?.dispose();
