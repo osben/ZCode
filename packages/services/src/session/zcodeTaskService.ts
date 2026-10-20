@@ -273,6 +273,10 @@ export interface IZCodeTaskService {
     draftSessionId?: string;
     forkedFromTaskId?: string;
     mcpServers?: ZCodeAgentMcpServer[];
+    /** Project binding for the new session. Undefined means the caller does not use project binding. */
+    projectId?: string | null;
+    /** Extra directories the session may read, forwarded to the agent session create. */
+    additionalDirectories?: string[];
     /** Mark the owning automation during scheduled-task dispatch, persist cron_automation_id in tasks-index, and place it in the cron group. */
     automationId?: string;
     /** Mark the owning off-peak task during off-peak dispatch and persist off_peak_task_id in tasks-index. */

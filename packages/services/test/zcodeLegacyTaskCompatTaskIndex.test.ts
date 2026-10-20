@@ -943,6 +943,29 @@ describe("ZCode legacy task compat task index", () => {
     }
   });
 
+  it("forwards project and directory fields to createSession only when the caller supplies them", async () => {
+    const { agent, service } = createService();
+
+    await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const withoutFields = vi.mocked(agent.createSession).mock.calls[0]?.[0];
+    expect(withoutFields).not.toHaveProperty("projectId");
+    expect(withoutFields).not.toHaveProperty("additionalDirectories");
+
+    await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      projectId: "project-1",
+      additionalDirectories: ["/extra"],
+    });
+    const withFields = vi.mocked(agent.createSession).mock.calls[1]?.[0];
+    expect(withFields).toEqual(
+      expect.objectContaining({
+        projectId: "project-1",
+        additionalDirectories: ["/extra"],
+      }),
+    );
+  });
+
   it("keeps automation mutation isolation turn-scoped when creating an execution task", async () => {
     const { agent, service, taskIndexRepo } = createService();
 

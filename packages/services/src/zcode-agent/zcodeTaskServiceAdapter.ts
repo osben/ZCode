@@ -216,6 +216,7 @@ interface TaskTarget {
 }
 
 interface TaskTargetWithMcpServers extends TaskTarget {
+  additionalDirectories?: string[];
   model?: string;
   thoughtLevel?: string;
   mcpServers?: ZCodeAgentMcpServer[];
@@ -1213,6 +1214,11 @@ export function createZCodeTaskServiceAdapter(
       workspacePath: params.workspacePath,
       workspaceIdentity: params.workspaceIdentity,
       sessionId: params.taskId,
+      // Forward only a defined list. An undefined value lets the agent service resolve the session's
+      // directories itself, so the adapter must not overwrite that with an explicit undefined.
+      ...(params.additionalDirectories !== undefined
+        ? { additionalDirectories: params.additionalDirectories }
+        : {}),
       // Mobile replayable recovery still goes through the task adapter, but the stale-model guard runs
       // during session resume. Pass the current UI model here so the guard also protects this path, not
       // only the desktop-continuous primary path.
@@ -2049,6 +2055,13 @@ export function createZCodeTaskServiceAdapter(
         } else {
           snapshot = await options.zcodeAgentService.createSession({
             ...target,
+            // Project binding is forwarded only when the caller supplies it. The agent service rejects a
+            // defined projectId when no project creation port is wired, so an unconditional null would
+            // break task creation in the fork.
+            ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
+            ...(params.additionalDirectories !== undefined
+              ? { additionalDirectories: params.additionalDirectories }
+              : {}),
             sessionTraceId: createSessionTraceId(),
             mode: toZCodeMode(params.mode),
             model: requestedSelection,
