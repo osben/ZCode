@@ -16,7 +16,9 @@ export function createProtocolProcessLifecycle(
     exitProcess?: (code: number) => void;
   } = {},
 ) {
-  const source = options.input ?? process.stdin;
+  // Annotate the union: `ReadableStream | ReadStream` has incompatible overloaded `on` signatures,
+  // so calling `source.on` on the inferred union fails typecheck (TS2349) with @types/node 26.
+  const source: NodeJS.ReadableStream = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const input = new PassThrough();
