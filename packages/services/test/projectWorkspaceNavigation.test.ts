@@ -14,7 +14,8 @@ it("MRO01：真实远端目录解析补齐身份后可打开已有任务，不�
   const workspacePath = directory;
   const workspaceIdentity = buildRemoteHostWorkspaceIdentity(hostId, workspacePath);
   const task = { taskId: "existing", workspacePath, workspaceIdentity };
-  const index = new TaskIndexRepo(join(directory, "tasks-index.sqlite"));
+  // Upstream storage-host argument: project rows are owned by the remote Host named by the workspace identity.
+  const index = new TaskIndexRepo(join(directory, "tasks-index.sqlite"), undefined, hostId);
   try {
     const repository = await index.getProjectRepository();
     const project = repository.saveProject({ roots: [workspacePath] });

@@ -6,7 +6,7 @@ import {
 import { mkdir } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import {
   isRemoteWorkspaceIdentity,
   normalizeAgentProviderToZCodeAgent,
@@ -37,7 +37,8 @@ import type {
   ZCodeTaskGroupColor,
 } from "#src/session/zcodeTaskListTypes.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
-import { getTasksIndexDatabasePath } from "#src/paths.js";
+import { getTasksIndexDatabasePath, getZCodeDataRootDir } from "#src/paths.js";
+import { projectStorage } from "#src/project-storage/index.js";
 import { runTasksDatabaseMigrations } from "#src/session/tasksDatabase/migrations.js";
 
 const require = createRequire(import.meta.url);
@@ -63,6 +64,14 @@ type TaskMetaConvergence = {
 type SQLInputValue = import("node:sqlite").SQLInputValue;
 
 interface TaskIndexRow {
+  // Upstream CLI-fact columns from the project-storage migration (0005_projects); absent only before that migration.
+  cli_title?: string | null;
+  cli_title_source?: string | null;
+  cli_created_at?: number | null;
+  cli_updated_at?: number | null;
+  cli_last_outcome?: string | null;
+  cli_deleted?: number | null;
+  handoff_pending?: number | null;
   workspace_key: string;
   workspace_path: string;
   workspace_identity: string | null;
@@ -557,14 +566,31 @@ function compareGroupTasks(
 }
 
 export class TaskIndexRepo {
+  /** Startup migration result for the Host startup barrier; not a task fact or organization state. */
+  migrationBackupSkipped = false;
+
   constructor(
     private readonly startupDbPath?: string,
     private readonly startupBusyTimeoutMs = 5000,
+    // Trusted owner Host of project rows (the Source Server storage identity on a standalone server); undefined means local.
+    private readonly storageHostId?: string,
   ) {}
   private db: DatabaseSyncInstance | null = null;
   private dbPath: string | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly writeChains = new Map<string, Promise<void>>();
+
+  /** Shared organization database handle for the project and remote-project services (not for UI or Repo callers). */
+  async getOrganizationDatabase(): Promise<DatabaseSyncInstance> {
+    await this.ensureReady();
+    return this.getDatabase();
+  }
+
+  /** Project storage over the same tasks-index database; UI must reach it through project services. */
+  async getProjectRepository() {
+    await this.ensureReady();
+    return projectStorage.repository(this.getDatabase(), this.storageHostId);
+  }
 
   async ensureReady(): Promise<void> {
     const path = this.startupDbPath ?? getTasksIndexDatabasePath();
@@ -608,8 +634,13 @@ export class TaskIndexRepo {
       this.db.exec("PRAGMA synchronous = NORMAL");
     }
     // The Worker already performed the initial preparation for this path; the business connection must not repeat the full-table repair.
-    if (isTasksStoragePrepared(path, this.db)) return;
+    // The startup Worker prepares only the tasks ledger; project-storage migrations are ledger-guarded and idempotent, so they always run here.
+    if (isTasksStoragePrepared(path, this.db)) {
+      await this.runProjectStorageMigrations();
+      return;
+    }
     if (!isTasksStorageMigrated(path, this.db)) await runTasksDatabaseMigrations(this.db);
+    await this.runProjectStorageMigrations();
     this.backfillOffPeakTaskMarkers();
     this.backfillOffPeakGroupMemberships();
     // Bugfix: early z-code-2 list task_id values were wrapper IDs; the actual ZCode session ID was in the old
@@ -617,6 +648,28 @@ export class TaskIndexRepo {
     // so migrate index rows to the actual session ID during initialization and use the normal new-protocol path afterward.
     this.migrateLegacyAcpTaskIds();
     this.cleanupDeletedTaskGroupingReferences();
+  }
+
+  /**
+   * Upstream additive project-storage migrations (ledger `schema_migration`, ids 0005_projects and
+   * 0006_default_workspace_tasks). They add project tables and the upstream `tasks` CLI-fact columns.
+   * The fork passes no settings, so no project is seeded from the settings file here.
+   */
+  private async runProjectStorageMigrations(): Promise<void> {
+    const migration = await projectStorage.migrate(this.getDatabase(), {
+      hostId: this.storageHostId,
+      backupDirectories: [join(getZCodeDataRootDir(), "backup")],
+      warn: (message, details) =>
+        createServiceLogger("project-migration").warn(undefined, message, details),
+    });
+    this.migrationBackupSkipped = this.migrationBackupSkipped || migration.backupSkipped;
+    // Upstream seeds the owner Host row from settings; the fork passes no settings, so register the trusted owner directly.
+    if (this.storageHostId)
+      this.getDatabase()
+        .prepare(
+          "INSERT OR IGNORE INTO hosts(host_id,kind,position) VALUES(?,?,(SELECT count(*) FROM hosts))",
+        )
+        .run(this.storageHostId, this.storageHostId === "local" ? "local" : "server");
   }
 
   private hasColumn(table: string, column: string): boolean {
@@ -1088,7 +1141,7 @@ export class TaskIndexRepo {
           deleted,
           title_overridden,
           searchable_text,
-          meta_json
+          meta_json, cli_title, cli_title_source, cli_created_at, cli_updated_at, cli_last_outcome, cli_deleted, handoff_pending
         FROM tasks
         WHERE workspace_key = ? AND task_id = ?`,
       )
@@ -1857,6 +1910,79 @@ export class TaskIndexRepo {
    * The first snapshot must populate a new tasks-index.sqlite, but must not overwrite existing pin/archive/unread/manual-title state with summary defaults
    * or race with a later full snapshot write.
    */
+  /**
+   * Upstream CLI-fact writer (ported additively). Only the CLI syncer may call it: CLI facts are the sole source of
+   * these values, and organization writers must not synthesize them. No fork runtime caller is wired yet.
+   */
+  async applyCliFacts(params: {
+    meta: ZCodeTaskMeta;
+    titleSource?: string;
+    lastOutcome?: "completed" | "interrupted" | "error";
+    deleted?: boolean;
+  }): Promise<ZCodeTaskMeta> {
+    await this.ensureReady();
+    return this.enqueueWrite(params.meta, () => {
+      const db = this.getDatabase();
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const existing = this.getTaskRow(params.meta);
+        // A reserved row has no CLI facts yet. The first fact fills provider and display baseline, and keeps organization changes made after reservation.
+        if (!existing || (existing.cli_created_at == null && existing.created_at === 0))
+          this.writeRecord({
+            meta: {
+              ...params.meta,
+              ...(existing?.title_overridden === 1 ? { title: existing.title } : {}),
+            },
+            pinned: existing?.pinned === 1,
+            archived: existing?.archived === 1,
+            deleted: existing?.deleted === 1,
+            titleOverridden: existing?.title_overridden === 1,
+          });
+        // Upstream admits the task into project storage on every row write; this CLI-fact path does the same, and the
+        // fork's organization writer (syncTaskMeta) deliberately does not, so project membership is set only by CLI facts.
+        projectStorage.admitTaskIdentity(db, params.meta, this.storageHostId);
+        const source = params.titleSource ?? "default";
+        db.prepare(`UPDATE tasks SET
+          cli_title=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
+          cli_title_source=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title_source ELSE ? END,
+          cli_created_at=?,cli_updated_at=max(coalesce(cli_updated_at,0),?),
+          cli_last_outcome=coalesce(?,cli_last_outcome),cli_deleted=max(coalesce(cli_deleted,0),?),
+          title=CASE WHEN (handoff_pending & 2)<>0 THEN title WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
+          title_overridden=CASE WHEN (handoff_pending & 2)<>0 THEN title_overridden WHEN ?='custom' OR cli_title_source='custom' THEN 1 ELSE 0 END,
+          updated_at=?,created_at=?,task_status=coalesce(?,task_status),deleted=max(deleted,?),
+          handoff_pending=(handoff_pending & ~4) & CASE WHEN ?=1 THEN ~1 ELSE -1 END & CASE WHEN ?=title AND ?='custom' THEN ~2 ELSE -1 END
+          WHERE workspace_key=? AND task_id=?`).run(
+          source,
+          params.meta.title,
+          source,
+          source,
+          params.meta.createdAt,
+          params.meta.updatedAt,
+          params.lastOutcome ?? null,
+          params.deleted ? 1 : 0,
+          source,
+          params.meta.title,
+          source,
+          params.meta.updatedAt,
+          params.meta.createdAt,
+          params.lastOutcome ?? null,
+          params.deleted ? 1 : 0,
+          params.deleted ? 1 : 0,
+          params.meta.title,
+          source,
+          workspaceKey(params.meta),
+          params.meta.taskId,
+        );
+        const persisted = this.getTaskRow(params.meta)!;
+        db.exec("COMMIT");
+        return rowToMeta(persisted);
+      } catch (error) {
+        if (db.isTransaction) db.exec("ROLLBACK");
+        throw error;
+      }
+    });
+  }
+
   async seedTaskMetaIfMissing(meta: ZCodeTaskMeta): Promise<ZCodeTaskMeta> {
     await this.ensureReady();
     return this.enqueueWrite(meta, () => {
