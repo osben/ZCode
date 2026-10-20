@@ -16,6 +16,27 @@ import {
 } from "@zcode/shared";
 import { submissionModeSchema, type SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
+import type { ConversationSelectionReference } from "@/lib/conversationSelectionReference.js";
+import type { CodeCommentComposerAttachment } from "@/lib/codeCommentContext.js";
+import type { PptxElementReference } from "@/lib/pptxElementReference.js";
+import type { WebElementContextComposerAttachment } from "@/lib/webElementContext.js";
+import type { PluginUiModelContext } from "@/plugin-ui/domain/pluginUiModelContext.js";
+import {
+  readRecoveryAttachment,
+  readWorktreeIntent,
+  type V4ComposerRecoveryAttachment,
+  type V4ComposerWorktreeIntent,
+} from "./composerRecoveryRecord.js";
+
+/** Non-text context that must survive a worktree recovery round trip. */
+export interface V4ComposerRecoveryContexts {
+  conversationQuotes?: ConversationSelectionReference[];
+  codeComments?: CodeCommentComposerAttachment[];
+  webElements?: WebElementContextComposerAttachment[];
+  pptxElements?: PptxElementReference[];
+  pluginUiContexts?: PluginUiModelContext[];
+  sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
+}
 
 export interface V4ComposerDraft {
   text: string;
@@ -28,6 +49,11 @@ export interface V4ComposerDraft {
   mode?: SubmissionMode;
   planEnabled?: boolean;
   modelSelection?: ModelSelection;
+  /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
+  initializeFromNewTask?: true;
+  recoveryAttachments?: V4ComposerRecoveryAttachment[];
+  recoveryContexts?: V4ComposerRecoveryContexts;
+  worktreeIntent?: V4ComposerWorktreeIntent;
   updatedAt: number;
 }
 
@@ -189,7 +215,53 @@ function draftStorageKey(
     : getV4ComposerDraftStorageKey(path, identity);
 }
 export const V4_DRAFT_SCOPE_ROOT = "__draft__";
+export const V4_WORKTREE_RECOVERY_PENDING_SCOPE = "__worktree_recovery_pending__";
+
+export function getV4WorktreeRecoveryScope(sessionId: string, submissionId?: string): string {
+  return submissionId
+    ? `__worktree_recovery_v2__:${encodeURIComponent(sessionId)}:${submissionId}`
+    : `__worktree_recovery__:${sessionId}`;
+}
+
+export function readV4WorktreeRecoveryDrafts(
+  path: string,
+  identity: string | undefined,
+  sessionId: string,
+) {
+  const prefix = `__worktree_recovery_v2__:${encodeURIComponent(sessionId)}:`;
+  const legacy = getV4WorktreeRecoveryScope(sessionId);
+  return Object.entries(readDraftFile(getV4ComposerDraftStorageKey(path, identity)).scopes)
+    .filter(
+      ([scope]) =>
+        scope === legacy ||
+        scope.startsWith(prefix) ||
+        (sessionId === V4_DRAFT_SCOPE_ROOT &&
+          (scope === V4_WORKTREE_RECOVERY_PENDING_SCOPE ||
+            scope.startsWith(`${V4_WORKTREE_RECOVERY_PENDING_SCOPE}:`))),
+    )
+    .sort((a, b) => a[1].updatedAt - b[1].updatedAt)
+    .map(([scope, draft]) => ({ scope, draft }));
+}
+
 const warnedStorageKeys = new Set<string>();
+const DRAFT_CHANGE_EVENT = "zcode:v4-composer-draft-change";
+
+export function subscribeV4ComposerDrafts(listener: () => void) {
+  window.addEventListener(DRAFT_CHANGE_EVENT, listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    window.removeEventListener(DRAFT_CHANGE_EVENT, listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
+export function getV4ComposerDraftVersion(path: string, identity?: string) {
+  try {
+    return getStorage()?.getItem(getV4ComposerDraftStorageKey(path, identity)) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function warnStorageFailure(key: string, error: unknown) {
   if (warnedStorageKeys.has(key)) return;
@@ -252,7 +324,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readDraft(value: unknown): V4ComposerDraft | null {
-  if (!isRecord(value) || typeof value.text !== "string" || !value.text.trim()) return null;
+  if (!isRecord(value) || typeof value.text !== "string") return null;
+  const recoveryContexts = readRecoveryContexts(value.recoveryContexts);
+  const worktreeIntent = readWorktreeIntent(value.worktreeIntent);
+  const recoveryAttachments = Array.isArray(value.recoveryAttachments)
+    ? value.recoveryAttachments
+        .map(readRecoveryAttachment)
+        .filter((item): item is V4ComposerRecoveryAttachment => item !== null)
+    : undefined;
+  // 无正文的 worktree 恢复记录仍要保留附件/上下文，否则失败后的草稿会在读取时丢失。
+  const hasRecovery = Boolean(recoveryAttachments?.length) || hasRecoveryContexts(recoveryContexts);
+  if (!value.text.trim() && !hasRecovery) return null;
   const mode = submissionModeSchema.safeParse(value.mode);
   const selection = modelSelectionSchema.safeParse(value.modelSelection);
   // 坏 options 不应连带丢掉可确定的模型身份；不读取旧 provider/model/thought 别名。
@@ -278,6 +360,12 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     );
   return {
     text: value.text,
+    ...(recoveryContexts ? { recoveryContexts } : {}),
+    ...(worktreeIntent ? { worktreeIntent } : {}),
+    ...(recoveryAttachments ? { recoveryAttachments } : {}),
+    ...(value.initializeFromNewTask === true && !mode.success
+      ? { initializeFromNewTask: true as const }
+      : {}),
     ...(value.taskGroupId === null || typeof value.taskGroupId === "string"
       ? { taskGroupId: value.taskGroupId as string | null }
       : {}),
@@ -300,6 +388,61 @@ function readDraft(value: unknown): V4ComposerDraft | null {
   };
 }
 
+function readRecoveryContexts(value: unknown): V4ComposerRecoveryContexts | undefined {
+  if (!isRecord(value)) return undefined;
+  const ofObjects = (list: unknown): unknown[] | undefined => {
+    if (!Array.isArray(list)) return undefined;
+    const items = list.filter((item) => isRecord(item));
+    return items.length > 0 ? items : undefined;
+  };
+  const conversationQuotes = ofObjects(value.conversationQuotes);
+  const codeComments = ofObjects(value.codeComments);
+  const webElements = ofObjects(value.webElements);
+  const pptxElements = ofObjects(value.pptxElements);
+  const pluginUiContexts = ofObjects(value.pluginUiContexts);
+  const sharedContextRefs = Array.isArray(value.sharedContextRefs)
+    ? value.sharedContextRefs.filter(
+        (item): item is { kind: "shared_context_import"; context_id: string } =>
+          isRecord(item) &&
+          item.kind === "shared_context_import" &&
+          typeof item.context_id === "string" &&
+          item.context_id.length > 0,
+      )
+    : [];
+  if (
+    !conversationQuotes &&
+    !codeComments &&
+    !webElements &&
+    !pptxElements &&
+    !pluginUiContexts &&
+    sharedContextRefs.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    ...(conversationQuotes
+      ? { conversationQuotes: conversationQuotes as ConversationSelectionReference[] }
+      : {}),
+    ...(codeComments ? { codeComments: codeComments as CodeCommentComposerAttachment[] } : {}),
+    ...(webElements ? { webElements: webElements as WebElementContextComposerAttachment[] } : {}),
+    ...(pptxElements ? { pptxElements: pptxElements as PptxElementReference[] } : {}),
+    ...(pluginUiContexts ? { pluginUiContexts: pluginUiContexts as PluginUiModelContext[] } : {}),
+    ...(sharedContextRefs.length > 0 ? { sharedContextRefs: sharedContextRefs.slice(0, 1) } : {}),
+  };
+}
+
+function hasRecoveryContexts(contexts: V4ComposerRecoveryContexts | undefined): boolean {
+  return Boolean(
+    contexts &&
+    (contexts.conversationQuotes?.length ||
+      contexts.codeComments?.length ||
+      contexts.webElements?.length ||
+      contexts.pptxElements?.length ||
+      contexts.pluginUiContexts?.length ||
+      contexts.sharedContextRefs?.length),
+  );
+}
+
 function writeDraftFile(key: string, file: V4DraftFile) {
   const storage = getStorage();
   if (!storage) {
@@ -312,6 +455,8 @@ function writeDraftFile(key: string, file: V4DraftFile) {
     if (serialized === null) storage.removeItem(key);
     else storage.setItem(key, serialized);
     warnedStorageKeys.delete(key);
+    // 同页签内 storage 事件不会触发，恢复面板需要本地广播才能看到新草稿。
+    window.dispatchEvent(new Event(DRAFT_CHANGE_EVENT));
     return true;
   } catch (error) {
     // 配额/隐私模式失败只降级为不持久化，不影响输入。
@@ -369,7 +514,10 @@ export function persistV4ComposerDraft(
     delete next.taskGroupId;
   }
   // 空白页配置只留在 Composer 内存；不存在记录时也不执行无意义写盘。
-  if (!next.text.trim()) {
+  // worktree 恢复附件/上下文即使没有正文也必须保留，否则失败返回后的素材会丢失。
+  const hasRecoveryPayload =
+    Boolean(next.recoveryAttachments?.length) || hasRecoveryContexts(next.recoveryContexts);
+  if (!next.text.trim() && !hasRecoveryPayload) {
     delete file.scopes[scopeId];
   } else {
     file.scopes[scopeId] = { ...next, updatedAt: Date.now() };
@@ -424,5 +572,22 @@ export function clearV4ComposerDraft(
         ?.projectId === scope.projectId)
   )
     file.legacyClaimed = true;
+  return writeDraftFile(key, file);
+}
+
+/** Transfer one recovery record without temporarily duplicating its storage footprint. */
+export function moveV4ComposerDraft(
+  workspacePath: string,
+  workspaceIdentity: string | undefined,
+  source: string,
+  target: string,
+): boolean {
+  const key = getV4ComposerDraftStorageKey(workspacePath, workspaceIdentity);
+  const file = readDraftFile(key);
+  const draft = file.scopes[source];
+  if (!draft) return false;
+  if (source === target) return true;
+  file.scopes[target] = draft;
+  delete file.scopes[source];
   return writeDraftFile(key, file);
 }
