@@ -37,7 +37,7 @@ export function OffPeakEditActionsMenu({
           type="button"
           data-testid={TID_OFFPEAK_CARD_MENU}
           aria-label={intl.formatMessage({ id: "automations.moreActions" })}
-          className="flex size-8 items-center justify-center rounded-lg border-0 bg-white/[0.06] text-foreground-subtle shadow-none outline-none transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground focus-visible:ring-0"
+          className="flex size-8 items-center justify-center rounded-lg border-0 bg-surface text-foreground-subtle shadow-none outline-none transition-colors hover:bg-surface-hover hover:text-foreground data-[state=open]:bg-surface-hover data-[state=open]:text-foreground focus-visible:ring-0"
         >
           <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
         </button>
