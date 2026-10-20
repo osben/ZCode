@@ -540,3 +540,33 @@ The four bots files (18 tests) need the upstream bot workspace model end to end,
 - botsService.groups "preserves historical identity but does not offer tasks outside the current project execution scope" is the same project-scope filter.
 
 Recommendation recorded for the coordinator: decide whether the bot workspace id moves to `[hostId, projectId]` (upstream) or stays on the fork identity (`/remote`). Until then, `botsService.ts` is unchanged in this slice, so production bots behavior is unchanged. Production (`node.ts`) does not pass `projectService` to `createBotsService`, so the upstream bot path is test-only, as it was before this slice.
+
+## relay v2 server
+
+Scope: `packages/remote-relay` moves from the fork's V1 protocol (HMAC proof, `device_register_init`, `pass_hash`) to the V2 protocol (`/api/v1/remote/*`, `ws2`, relay-issued EdDSA JWTs). Spec: `specs/relay-v2-migration.md` section 12.
+
+### Deleted (owner-approved)
+
+- `packages/remote-relay/test/relay.test.ts`, `test/clientCompatibility.test.ts`, `test/sendPressure.test.ts`, `test/deviceStore.test.ts` (V1 tests). Reason: they assert V1 frames and HMAC proofs that V2 removes. Equivalent coverage now lives in `test/session.test.ts`, `tokens.test.ts`, `config.test.ts`, `deviceStore.test.ts` (V2 store), `http.test.ts`, `pairing.test.ts` (real HTTP and WebSocket, every server frame parsed with the shared V2 schema) and `sendPressure.test.ts` (V2 `data` frames, same budget and late-callback cases).
+- `packages/remote-relay/src/adapters/auth.ts` (V1 `relayCrypto` HMAC verify). Reason: V2 has no proof; identity is verified by `adapters/session.ts`.
+- `ZCODE_RELAY_STORAGE_KEY` (env). Reason: V2 device records hold no secret, so nothing is encrypted at rest.
+
+### Added
+
+- `src/adapters/session.ts`: login JWT verification (EdDSA, ES256, RS256; `none` and HMAC rejected) and relay JWT issue/verify with kid rotation.
+- `src/adapters/config.ts`: fail-closed configuration; errors name variables, never values.
+- `src/domain/tokens.ts`: one-time 60 s tokens, bound to user and role, cap 32 per user.
+- `src/domain/logger.ts`: `RelayLogger` moved out of `contract.ts` (re-exported). Reason: `contract.ts` exceeded the `maxPublicMethods` (12) architecture rule with 13 interface methods.
+- `test/support/keys.ts`, `test/support/relayHarness.ts`: key/JWT fixtures and a real-loopback harness.
+- `test/bundleSmoke.mjs`: rewritten for V2 (login exchange, pairing, restart) on the built `dist/entry.js`.
+
+### Changed
+
+- `src/CONTRACT.md`, `README.md`: describe V2 and the new variables. `docs/web-remote-control/self-hosted-remote-relay.md` still describes V1 and is not updated in this PR (follow-up).
+- `src/adapters/deviceStoreWorker.ts`, `nodeServer.ts`, `app/*`: V2 registry, HTTP API and WebSocket adapter.
+
+### Not covered
+
+- `packages/shared` is not modified here; the V2 contract is consumed as-is. The shared `test/fixtures/fake-relay-v2.ts` is used by client tests, not by the relay tests: the relay tests run against the real server.
+- The production login JWT issuer, JWK set and user claim are not in this repository. The relay fails closed without them.
+- The Docker image build was not run in this environment.

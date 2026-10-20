@@ -239,3 +239,189 @@ Compatibility: the desktop and web clients must remain compatible with upstream'
 - PR3 (server + e2e): `packages/remote-relay` V2, remove the `tsconfig.e2e.json` exclusion, re-enable
   the 12 `webAuthService` skips if they depend on the server (check first), delete remaining V1.
 - Every upstream comment and test copy is translated to English on import. `check-test-copy.mjs` must pass.
+
+## 12. S3 server: self-hosted relay V2 (`packages/remote-relay`)
+
+Status: implemented in PR "feat(relay): self-hosted relay v2 server (own JWT issuer)" (branch
+`claude/relay-v2-server-final`). Sections 10 and 11 remain the owner decisions; this section fixes the
+server details they leave open. Client slices (desktop, web) consume the wire contract below.
+
+### 12.1 Login identity and the trust boundary
+
+What the clients hold today (verified in code, not assumed):
+
+- The desktop and web login session carries a backend JWT under the credential key
+  `zcodejwttoken` (`packages/services/src/oauth/oauthService.ts`,
+  `packages/web/src/auth/browserOAuthCredentialRepo.ts`). The fork reads only its `exp` claim locally
+  (`resolveJwtExpiration` in `packages/shared/src/oauth.ts`); no signature is checked anywhere in this tree.
+- V1 relay auth did not use the login identity. It used a per-device `pass_hash` secret.
+
+Decision for the exchange input (`identity_token`):
+
+- The input is the existing login JWT (`zcodejwttoken`). It is the only identity the owner already has on
+  desktop and mobile, so no new login flow is introduced.
+- The relay verifies it locally, with no network call at runtime. Verification uses a public JWK set and
+  an issuer string from environment configuration (section 12.4). The relay never calls the account
+  service, zcode-server or any OAuth endpoint.
+- Accepted algorithms: `EdDSA` (Ed25519), `ES256`, `RS256`. `none` and HMAC algorithms are rejected, so no
+  shared secret with the account service is needed.
+- Required claims: `exp` (not expired, 30 s clock skew), `iss` equal to the configured issuer, and a
+  non-empty user claim (default `sub`). `aud` is checked only when configured.
+- The `kid` header selects the key from the JWK set. A token without `kid` is accepted only when the set
+  holds exactly one key.
+
+Open and external (owner): the issuer string, the public JWK set and the user claim of the production
+`zcodejwttoken` are not in this repository. The relay refuses to start without them (fail closed). This PR
+asserts nothing about whether production tokens verify; tests use an issuer the test creates.
+
+Rejected alternative: a desktop-minted HMAC or Ed25519 assertion signed with a per-device key pair. The
+desktop would choose its own account identity: the relay could check that the desktop holds its key, but
+not which account it belongs to. Mobile would also need that key pair, which the login session does not carry.
+
+Trust boundary (explicit):
+
+1. The account identity is trusted only at `POST /api/v1/remote/session`, and only through the configured
+   public key set.
+2. After the exchange, the relay JWT is the only credential for `/api/v1/remote/*`. The one-time WS token is
+   minted from it. The login JWT is never sent to `ws2`, never placed in a QR code and never logged.
+3. The relay trusts only tokens it signed itself (section 12.2).
+
+### 12.2 Relay JWT (fork-owned issuer)
+
+- Signed with EdDSA (Ed25519). Header: `alg: EdDSA`, `typ: JWT`, `kid`.
+- Claims: `iss = "zcode-remote-relay"`, `aud = "zcode-remote-relay"`, `sub` = user id from the identity
+  token, `iat`, `exp = iat + ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` (default 3600, maximum 86400).
+- Signing keys are private Ed25519 JWKs in `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS` (JSON array). The first
+  entry signs new tokens; every entry verifies. A `kid` not in the array is rejected.
+- Rotation: prepend the new key and restart. Keep the old key in the array for at least one TTL, then
+  remove it. The private keys live in memory only. Multi-replica deployments need the same array on every
+  replica; this PR is single-replica.
+- Expired or invalid relay JWTs return HTTP 401 before any handler runs.
+
+### 12.3 HTTP and WebSocket contract (server side)
+
+HTTP responses use the envelope `{code, msg, data?}`; `code: 0` is success. Every response carries
+`Cache-Control: no-store`. Unknown routes return 404.
+
+| Route                               | Auth                       | Success                              | Failure (HTTP / envelope `code`)                                                                          |
+| ----------------------------------- | -------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| POST `/api/v1/remote/session`       | none (identity token body) | `{jwt, expires_in}`                  | 400/3001 bad body; 401/401 identity invalid, expired or untrusted; 429/4029 rate limit                    |
+| POST `/api/v1/remote/device`        | relay JWT                  | device record (new SID every call)   | 400/3001 bad body; 401/401                                                                                |
+| GET `/api/v1/remote/device`         | relay JWT                  | array of the caller's device records | 401/401                                                                                                   |
+| POST `/api/v1/remote/device/delete` | relay JWT                  | `null`; unknown SID is idempotent    | 400/3001; 200/1006 other account's device; 400/3005 device online; 401/401                                |
+| POST `/api/v1/remote/token`         | relay JWT                  | `{token, expires_in: 60}`            | 400/3001; 401/401; 429/4029 too many outstanding tokens for this user                                     |
+| WS `/api/v1/remote/ws2?token=`      | one-time token             | upgrade                              | 401 before upgrade for missing, unknown, expired or reused token; 400 wrong path; 503 closing or capacity |
+
+Device record: `{device_sid, device_mid, online, created_at, meta}`. `meta` (`name`, `platform`, `version`)
+comes from the device's `auth_init` and is `{}` when offline. The relay keeps nothing else about a device.
+
+Token: 16 random bytes, Base64URL without padding (22 characters), bound to user and role (not SID), valid
+60 s, consumed atomically at upgrade. A failed upgrade does not restore it. Tokens live in memory; a restart
+invalidates them, which is safe because clients re-request.
+
+WebSocket messages follow the shared V2 schemas (`parseWebRemoteControlRelayV2OutgoingMessage`). Text frames
+only, 1 MiB maximum. Error codes are exactly `AUTH_FAILED | WRONG_PARAM | KICKED | INTERNAL | DEVICE_OFFLINE`:
+
+- `AUTH_FAILED`: unknown or foreign device SID in `auth_init`, or traffic before auth. Connection closed.
+- `WRONG_PARAM`: invalid frame, binary frame, second `auth_init`, or `pair_status_query` before auth.
+  Connection closed.
+- `KICKED`: a newer connection took the same `(SID, role)` slot. Sent only to the replaced socket, which is
+  then closed. The relay cannot tell this apart from owner loss; see `relay-v2-pairing.md` section 7.
+- `DEVICE_OFFLINE`: sent to the terminal when its device disconnects; the terminal is closed.
+- `INTERNAL`: `data` with no authenticated peer. Connection stays open.
+
+Time: `server_ts` is Unix seconds, always set by the relay. Client timestamps are accepted and ignored for
+authorization.
+
+Liveness: an unauthenticated socket is closed after 15 s without a successful `auth_init`
+(`ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`, default 15000, matching the client handshake deadline). Transport
+ping every 15 s, closed after 45 s without pong. The client heartbeat (`pair_status_query`, 5 s ±1 s, 15 s ACK)
+is application level and is answered by the relay with `pair_status_ack`.
+
+### 12.4 Environment variables (server)
+
+Kept from V1: `ZCODE_RELAY_HOST`, `ZCODE_RELAY_PORT`, `ZCODE_RELAY_ALLOWED_ORIGINS`,
+`ZCODE_RELAY_TRUSTED_PROXIES`, `ZCODE_RELAY_MAX_CONNECTIONS`, `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` (also
+applied per source IP to `/session`), `ZCODE_RELAY_MAX_BUFFERED_BYTES`, `ZCODE_RELAY_MAX_TOTAL_BUFFERED_BYTES`,
+`ZCODE_RELAY_DB_PATH`, `ZCODE_RELAY_MAX_REGISTRATIONS`.
+
+Removed: `ZCODE_RELAY_STORAGE_KEY` (V2 device records hold no secret, so nothing is encrypted).
+
+New:
+
+| Variable                                 | Required | Meaning                                                                                        |
+| ---------------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`    | yes      | JSON array of private Ed25519 JWKs (`kty: OKP`, `crv: Ed25519`, `kid`, `d`, `x`). First signs. |
+| `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`     | no       | Default 3600, maximum 86400.                                                                   |
+| `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER`     | yes      | Exact `iss` value of the login JWT.                                                            |
+| `ZCODE_REMOTE_RELAY_IDENTITY_JWKS`       | yes      | JSON JWK set of public keys (EdDSA, ES256, RS256). No network fetch.                           |
+| `ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE`   | no       | `aud` the login JWT must carry, when set.                                                      |
+| `ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM` | no       | Default `sub`.                                                                                 |
+| `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`     | no       | Default 15000.                                                                                 |
+
+Missing or malformed required values stop startup with a message that names the variable, never its value.
+
+### 12.5 Event order (server side)
+
+Owners: the relay registry (`app/relay.ts`) owns connections and the `(SID, role)` slot; the token store owns
+unconsumed tokens; the device store owns device records. Nothing else.
+
+```mermaid
+sequenceDiagram
+    participant C as Client (desktop or terminal)
+    participant H as HTTP API (app/http)
+    participant T as Token store
+    participant R as Registry (SID, role owner)
+    participant S as Device store
+    C->>H: POST /session {identity_token}
+    H-->>C: relay JWT (EdDSA, TTL)
+    C->>H: POST /device {device_mid} (Bearer)
+    H->>S: insert record (new SID)
+    H-->>C: device record
+    C->>H: POST /token {role} (Bearer)
+    H->>T: issue token (user, role, 60 s)
+    H-->>C: token
+    C->>R: WS /ws2?token (upgrade)
+    R->>T: consume token (atomic, once)
+    R-->>C: 401 before upgrade if missing, expired or reused
+    C->>R: auth_init {device_sid}
+    R->>S: look up SID owner
+    alt unknown or foreign SID
+        R-->>C: error AUTH_FAILED, close
+    else device role
+        R->>R: replace device slot; KICKED to old socket
+        R-->>C: auth_ack (waiting, or matched if terminal present)
+    else terminal role
+        R->>R: replace terminal slot; KICKED to old socket
+        R-->>C: auth_ack (terminal_sid, matched if device present)
+    end
+    loop application heartbeat
+        C->>R: pair_status_query
+        R-->>C: pair_status_ack
+    end
+    C->>R: data {payload}
+    R-->>C: data {payload, server_ts} to the other role of the same SID only
+    Note over R: Device socket closes: terminal gets pair_status_ack waiting, DEVICE_OFFLINE, then close.
+    Note over R: Terminal socket closes: device gets pair_status_ack waiting.
+    Note over R: A stale close removes the slot only if it still points to that exact connection.
+```
+
+Connection states: `pending` (token consumed, no `auth_init` yet) to `authenticated` (slot owned). Any other
+transition closes the socket. Reconnection always starts from a new token.
+
+### 12.6 Persistence
+
+SQLite (`node:sqlite`, one worker thread, as before). Table `relay_devices(device_sid TEXT PRIMARY KEY,
+user_id TEXT NOT NULL, device_mid TEXT NOT NULL, created_at INTEGER NOT NULL)` with indexes on `user_id`
+and `(user_id, device_mid)`. Delete removes the row, so the SID stops authenticating. Plaintext at rest by
+design, since no secret is stored; the package README requires the file to be readable only by the relay user.
+
+### 12.7 Verification (S3 acceptance)
+
+Unit: JWT sign/verify (algorithm allowlist, `kid`, expiry, issuer, audience, user claim); identity
+verification for each accepted algorithm; one-time token rules; device store operations and restart
+persistence; HTTP status and envelope rules. Integration (real loopback HTTP and WS, `ws` client): exchange,
+register and list, cross-account delete rejection, online delete rejection, token reuse, pairing in both
+orders, replacement with KICKED and a late close that must not drop the new owner, DEVICE_OFFLINE, waiting,
+invalid frames, and the auth deadline (short value in tests). Every server frame is parsed with the shared
+V2 schemas in the tests.

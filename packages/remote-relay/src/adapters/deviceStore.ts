@@ -1,33 +1,39 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
-import type { RelayDeviceStore, RelayRegistration } from "../contract.js";
+import type { RelayDeviceRecord, RelayDeviceStore } from "../contract.js";
 
+interface WorkerReply {
+  type?: string;
+  id?: number;
+  result?: unknown;
+  error?: string;
+}
+
+/**
+ * SQLite device records behind one worker thread, so blocking database IO never runs on the
+ * socket event loop. The worker returns fixed error text only.
+ */
 export async function createRelayDeviceStore(options: {
   path: string;
-  storageKey: string;
   maxRecords?: number;
 }): Promise<RelayDeviceStore> {
-  const bytes = Buffer.from(options.storageKey, "base64");
-  if (bytes.length !== 32 || bytes.toString("base64") !== options.storageKey) {
-    throw new Error("Relay storage key must be a canonical base64-encoded 32-byte key.");
-  }
   const maxRecords = options.maxRecords ?? 100_000;
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1)
-    throw new Error("Registration limit must be positive.");
+    throw new Error("Device record limit must be positive.");
   const path = resolve(options.path);
   await mkdir(dirname(path), { recursive: true });
   // Source tests use Node's TypeScript support; bundles load the adjacent JavaScript worker.
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
   const worker = new Worker(new URL(`./deviceStoreWorker.${extension}`, import.meta.url), {
-    workerData: { path, storageKey: options.storageKey, maxRecords },
+    workerData: { path, maxRecords },
   });
   let nextId = 0;
   let closing = false;
   let closePromise: Promise<void> | undefined;
   const pending = new Map<
     number,
-    { resolve: (result: RelayRegistration | null) => void; reject: (error: Error) => void }
+    { resolve: (result: unknown) => void; reject: (error: Error) => void }
   >();
   let readyResolve: () => void;
   let readyReject: (error: Error) => void;
@@ -37,9 +43,8 @@ export async function createRelayDeviceStore(options: {
   });
   const exited = new Promise<number>((resolveExit) => worker.once("exit", resolveExit));
   function failPending() {
-    readyReject(new Error("Registration store initialization failed."));
-    for (const request of pending.values())
-      request.reject(new Error("Registration store unavailable."));
+    readyReject(new Error("Device store initialization failed."));
+    for (const request of pending.values()) request.reject(new Error("Device store unavailable."));
     pending.clear();
   }
   worker.on("error", failPending);
@@ -47,29 +52,21 @@ export async function createRelayDeviceStore(options: {
     closing = true;
     failPending();
   });
-  worker.on(
-    "message",
-    (message: {
-      type?: string;
-      id?: number;
-      result?: RelayRegistration | null;
-      error?: string;
-    }) => {
-      if (message.type === "ready") {
-        readyResolve();
-        return;
-      }
-      if (message.type === "startup-error") {
-        readyReject(new Error("Registration store initialization failed."));
-        return;
-      }
-      const request = message.id === undefined ? undefined : pending.get(message.id);
-      if (!request || message.id === undefined) return;
-      pending.delete(message.id);
-      if (message.error) request.reject(new Error("Registration store operation failed."));
-      else request.resolve(message.result ?? null);
-    },
-  );
+  worker.on("message", (message: WorkerReply) => {
+    if (message.type === "ready") {
+      readyResolve();
+      return;
+    }
+    if (message.type === "startup-error") {
+      readyReject(new Error("Device store initialization failed."));
+      return;
+    }
+    const request = message.id === undefined ? undefined : pending.get(message.id);
+    if (!request || message.id === undefined) return;
+    pending.delete(message.id);
+    if (message.error) request.reject(new Error("Device store operation failed."));
+    else request.resolve(message.result ?? null);
+  });
   try {
     await ready;
   } catch (error) {
@@ -77,43 +74,49 @@ export async function createRelayDeviceStore(options: {
     throw error;
   }
 
-  function request(
-    method: "register" | "get" | "touch" | "close",
-    args: Record<string, string> = {},
-  ) {
-    if (closing && method !== "close")
-      return Promise.reject(new Error("Registration store is closed."));
-    if (pending.size >= 64)
-      return Promise.reject(new Error("Registration store capacity exceeded."));
-    return new Promise<RelayRegistration | null>((resolveRequest, reject) => {
+  function call(payload: Record<string, unknown> & { method: string }): Promise<unknown> {
+    if (closing && payload.method !== "close")
+      return Promise.reject(new Error("Device store is closed."));
+    if (pending.size >= 64) return Promise.reject(new Error("Device store capacity exceeded."));
+    return new Promise<unknown>((resolveRequest, reject) => {
       const id = ++nextId;
       pending.set(id, { resolve: resolveRequest, reject });
       try {
-        worker.postMessage({ id, method, ...args });
+        worker.postMessage({ id, ...payload });
       } catch {
         pending.delete(id);
-        reject(new Error("Registration worker unavailable."));
+        reject(new Error("Device store worker unavailable."));
       }
     });
   }
+
   return {
-    async register(mid, key) {
-      const record = await request("register", { mid, key });
-      if (!record) throw new Error("Registration store returned no registration.");
+    async register(userId, deviceMid, createdAt) {
+      const record = (await call({
+        method: "register",
+        userId,
+        deviceMid,
+        createdAt,
+      })) as RelayDeviceRecord | null;
+      if (!record) throw new Error("Device store returned no record.");
       return record;
     },
-    async get(sid) {
-      return (await request("get", { sid })) ?? undefined;
+    async listForUser(userId) {
+      return (await call({ method: "list", userId })) as RelayDeviceRecord[];
     },
-    async touch(sid) {
-      await request("touch", { sid });
+    async get(deviceSid) {
+      return ((await call({ method: "get", deviceSid })) as RelayDeviceRecord | null) ?? undefined;
+    },
+    async remove(deviceSid) {
+      const reply = (await call({ method: "remove", deviceSid })) as { removed: boolean };
+      return reply.removed;
     },
     close() {
       closePromise ??= (async () => {
         closing = true;
         try {
-          await request("close");
-          if ((await exited) !== 0) throw new Error("Registration worker shutdown failed.");
+          await call({ method: "close" });
+          if ((await exited) !== 0) throw new Error("Device store worker shutdown failed.");
         } catch (error) {
           await worker.terminate();
           throw error;

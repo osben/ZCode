@@ -1,8 +1,17 @@
-export type ConnectionPhase = "new" | "registering" | "loading" | "challenge" | "authenticated";
+/**
+ * A WebSocket is `pending` after its one-time token is consumed and until it sends a valid
+ * `auth_init`; then it is `authenticated` and owns one `(SID, role)` slot.
+ */
+export type ConnectionPhase = "pending" | "authenticated";
 
-export function permitsMessage(phase: ConnectionPhase, type: string): boolean {
-  if (phase === "new") return type === "device_register_init" || type === "auth_init";
-  if (phase === "challenge") return type === "auth_response";
-  if (phase === "authenticated") return type === "pair_status_query" || type === "data";
-  return false;
+export type ClientFrameType = "auth_init" | "pair_status_query" | "data";
+
+export function permitsFrame(phase: ConnectionPhase, type: ClientFrameType): boolean {
+  if (phase === "pending") return type === "auth_init";
+  return type === "pair_status_query" || type === "data";
+}
+
+/** Unix seconds as the wire carries them; never used for authorization. */
+export function unixSeconds(nowMs: number): number {
+  return Math.floor(nowMs / 1000);
 }

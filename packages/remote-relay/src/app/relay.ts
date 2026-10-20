@@ -1,237 +1,248 @@
 import type {
-  RelayClientMessage,
-  RelayServerMessage,
-  WebRemoteControlRelayErrorCode,
-  WebRemoteControlRelayRole,
+  WebRemoteControlRelayV2ErrorCode,
+  WebRemoteControlRelayV2Meta,
+  WebRemoteControlRelayV2OutgoingMessage,
+  WebRemoteControlRelayV2PairStatus,
+  WebRemoteControlRelayV2Role,
 } from "@zcode/shared/web-remote-relay";
-import type { RelayCrypto, RelayDeviceStore, RelayPeer, RelayRegistration } from "../contract.js";
-import { permitsMessage, type ConnectionPhase } from "../domain/connectionState.js";
+import type { RelayDeviceStore, RelayPeer } from "../contract.js";
+import type { RelayTokenGrant } from "../domain/tokens.js";
+import { permitsFrame, unixSeconds, type ConnectionPhase } from "../domain/connectionState.js";
+
+type Role = WebRemoteControlRelayV2Role;
+type Frame = WebRemoteControlRelayV2OutgoingMessage;
+type AuthInit = Extract<Frame, { type: "auth_init" }>;
 
 interface Connection {
   id: string;
   peer: RelayPeer;
+  userId: string;
+  role: Role;
   phase: ConnectionPhase;
   createdAt: number;
-  registeredSid?: string;
-  admittingSid?: string;
-  challenge?: {
-    nonce: string;
-    role: WebRemoteControlRelayRole;
-    record: RelayRegistration;
-    expiresAt: number;
-  };
-  auth?: { sid: string; role: WebRemoteControlRelayRole };
+  deviceSid?: string;
+  meta: WebRemoteControlRelayV2Meta;
 }
-interface Pair {
+
+/** The current owner of each role for one device SID. Only the registry writes it. */
+interface Slot {
   device?: Connection;
   terminal?: Connection;
-  pendingDevice?: Connection;
 }
 
-export function createRelayRegistry(options: {
-  store: RelayDeviceStore;
-  crypto: RelayCrypto;
+export interface RelayRegistryOptions {
+  devices: Pick<RelayDeviceStore, "get">;
   now: () => number;
   authTimeoutMs: number;
-}) {
+  randomId: () => string;
+}
+
+export interface RelayRegistry {
+  connect(peer: RelayPeer, grant: RelayTokenGrant): string;
+  receive(id: string, frame: Frame): Promise<void>;
+  reject(id: string, code: WebRemoteControlRelayV2ErrorCode, message: string): void;
+  disconnect(id: string): void;
+  sweep(): void;
+  close(): void;
+  isOnline(deviceSid: string): boolean;
+  metaOf(deviceSid: string): WebRemoteControlRelayV2Meta;
+  /** Reserves a device for deletion. Returns false when it is online. Rejects admissions until released. */
+  reserveDeletion(deviceSid: string): boolean;
+  releaseDeletion(deviceSid: string): void;
+}
+
+function pairStatus(slot: Slot): WebRemoteControlRelayV2PairStatus {
+  return slot.device && slot.terminal ? "matched" : "waiting";
+}
+
+/** Meta is device self-report; keep only the three declared string fields. */
+function cleanMeta(meta: WebRemoteControlRelayV2Meta | undefined): WebRemoteControlRelayV2Meta {
+  if (!meta) return {};
+  return {
+    ...(meta.name === undefined ? {} : { name: meta.name }),
+    ...(meta.platform === undefined ? {} : { platform: meta.platform }),
+    ...(meta.version === undefined ? {} : { version: meta.version }),
+  };
+}
+
+/**
+ * Sole owner of connections and the `(SID, role)` slots. Every transition that replaces or
+ * removes an owner checks the exact connection identity, so a late close cannot drop a newer owner.
+ */
+export function createRelayRegistry(options: RelayRegistryOptions): RelayRegistry {
   const connections = new Map<string, Connection>();
-  const pairs = new Map<string, Pair>();
+  const slots = new Map<string, Slot>();
+  // Deletion bookkeeping. `epochs` only grows, so an admission that read the record before a
+  // delete finished still sees a changed epoch and is rejected.
+  const inflightDeletions = new Set<string>();
+  const epochs = new Map<string, number>();
 
-  function isCurrent(connection: Connection) {
-    return connections.get(connection.id) === connection;
-  }
+  const isCurrent = (connection: Connection) => connections.get(connection.id) === connection;
+  const nowSeconds = () => unixSeconds(options.now());
 
-  function send(connection: Connection, message: RelayServerMessage, serialized?: string) {
+  function send(connection: Connection, message: Record<string, unknown>) {
     if (!isCurrent(connection)) return;
-    if (!connection.peer.send(message, serialized)) disconnect(connection.id);
+    if (!connection.peer.send(message)) disconnect(connection.id);
   }
 
-  function status(pair: Pair) {
-    return {
-      type: "pair_status_ack" as const,
-      pair_status: pair.device && pair.terminal ? ("matched" as const) : ("waiting" as const),
-      ...(pair.terminal ? { terminal_sid: pair.terminal.id } : {}),
-      server_ts: options.now(),
-    };
+  /** Sends a protocol error when given, then removes the connection and closes its socket. */
+  function drop(
+    connection: Connection,
+    error?: { code: WebRemoteControlRelayV2ErrorCode; message: string },
+  ) {
+    if (error && isCurrent(connection)) {
+      connection.peer.send({
+        type: "error",
+        code: error.code,
+        message: error.message,
+        server_ts: nowSeconds(),
+      });
+    }
+    disconnect(connection.id);
+    connection.peer.close();
+  }
+
+  function fail(connection: Connection, code: WebRemoteControlRelayV2ErrorCode, message: string) {
+    drop(connection, { code, message });
   }
 
   function disconnect(id: string) {
     const connection = connections.get(id);
     if (!connection) return;
     connections.delete(id);
-    connection.challenge = undefined;
-    const auth = connection.auth;
-    const sid = auth?.sid ?? connection.admittingSid;
-    if (!sid) return;
-    const pair = pairs.get(sid);
-    if (!pair) return;
-    if (pair.pendingDevice === connection) delete pair.pendingDevice;
-    const removedActive = auth && pair[auth.role] === connection;
-    if (removedActive) delete pair[auth!.role];
-    if (!pair.device && !pair.terminal && !pair.pendingDevice) pairs.delete(sid);
-    else if (removedActive) {
-      const other = pair.device ?? pair.terminal;
-      if (other) send(other, status(pair));
+    if (connection.phase !== "authenticated" || !connection.deviceSid) return;
+    const sid = connection.deviceSid;
+    const slot = slots.get(sid);
+    // A replaced socket finds another owner here and must leave the slot untouched.
+    if (!slot || slot[connection.role] !== connection) return;
+    delete slot[connection.role];
+    const other = connection.role === "device" ? slot.terminal : slot.device;
+    if (connection.role === "device" && other) {
+      send(other, {
+        type: "pair_status_ack",
+        terminal_sid: "",
+        pair_status: "waiting",
+        server_ts: nowSeconds(),
+      });
+      fail(other, "DEVICE_OFFLINE", "The device is offline.");
+    } else if (other) {
+      send(other, {
+        type: "pair_status_ack",
+        terminal_sid: "",
+        pair_status: "waiting",
+        server_ts: nowSeconds(),
+      });
     }
+    if (!slot.device && !slot.terminal) slots.delete(sid);
   }
 
-  function fail(
-    connection: Connection,
-    code: WebRemoteControlRelayErrorCode,
-    message: string,
-    close = true,
-  ) {
-    send(connection, { type: "error", code, message, server_ts: options.now() });
-    if (close) {
-      disconnect(connection.id);
-      connection.peer.close();
-    }
-  }
-
-  async function receive(id: string, message: RelayClientMessage, serialized: string) {
-    const connection = connections.get(id);
-    if (!connection) return;
-    if (!permitsMessage(connection.phase, message.type)) {
-      fail(connection, "WRONG_PARAM", "Message is not valid in the current state.");
+  async function authenticate(connection: Connection, frame: AuthInit) {
+    const sid = frame.device_sid;
+    if (inflightDeletions.has(sid)) {
+      fail(connection, "AUTH_FAILED", "Authentication failed.");
       return;
     }
-    if (message.type === "device_register_init") {
-      connection.phase = "registering";
-      const record = await options.store.register(message.device_mid, message.pass_hash);
-      if (!isCurrent(connection)) return;
-      connection.registeredSid = record.sid;
-      connection.phase = "new";
-      send(connection, {
-        type: "device_register_ack",
-        device_sid: record.sid,
-        server_ts: options.now(),
+    const epochBefore = epochs.get(sid) ?? 0;
+    const record = await options.devices.get(sid);
+    if (!isCurrent(connection)) return;
+    // Everything below is synchronous: a deletion reservation cannot interleave with the slot write.
+    if (
+      !record ||
+      record.userId !== connection.userId ||
+      inflightDeletions.has(sid) ||
+      (epochs.get(sid) ?? 0) !== epochBefore
+    ) {
+      fail(connection, "AUTH_FAILED", "Authentication failed.");
+      return;
+    }
+    const slot = slots.get(sid) ?? {};
+    const previous = slot[connection.role];
+    connection.phase = "authenticated";
+    connection.deviceSid = sid;
+    connection.meta = connection.role === "device" ? cleanMeta(frame.meta) : {};
+    slot[connection.role] = connection;
+    slots.set(sid, slot);
+    // Bind the replacement before closing the old socket; the old close finds the slot already changed.
+    if (previous) fail(previous, "KICKED", "Another browser replaced this connection.");
+    const status = pairStatus(slot);
+    send(connection, {
+      type: "auth_ack",
+      device_sid: sid,
+      terminal_sid: connection.role === "terminal" ? connection.id : "",
+      pair_status: status,
+      server_ts: nowSeconds(),
+    });
+    const other = connection.role === "device" ? slot.terminal : slot.device;
+    if (other) {
+      send(other, {
+        type: "pair_status_ack",
+        terminal_sid: "",
+        pair_status: status,
+        server_ts: nowSeconds(),
       });
-      return;
     }
-    if (message.type === "auth_init") {
-      if (connection.registeredSid && connection.registeredSid !== message.device_sid) {
-        fail(connection, "WRONG_PARAM", "Registration identity cannot change.");
-        return;
-      }
-      connection.phase = "loading";
-      const record = await options.store.get(message.device_sid);
-      if (!isCurrent(connection)) return;
-      if (!record) {
-        fail(connection, "AUTH_FAILED", "Authentication failed.");
-        return;
-      }
-      const nonce = options.crypto.randomId();
-      connection.challenge = {
-        nonce,
-        role: message.role,
-        record,
-        expiresAt: options.now() + options.authTimeoutMs,
-      };
-      connection.phase = "challenge";
-      send(connection, { type: "auth_challenge", nonce, server_ts: options.now() });
-      return;
-    }
-    if (message.type === "auth_response") {
-      const challenge = connection.challenge;
-      connection.challenge = undefined;
-      if (
-        !challenge ||
-        challenge.expiresAt <= options.now() ||
-        challenge.record.sid !== message.device_sid ||
-        !options.crypto.verify(
-          challenge.record.key,
-          challenge.nonce,
-          challenge.role,
-          challenge.record.sid,
-          message.proof,
-        )
-      ) {
-        fail(connection, "AUTH_FAILED", "Authentication failed.");
-        return;
-      }
-      const admission = pairs.get(message.device_sid) ?? {};
-      if (challenge.role === "device" && (admission.device || admission.pendingDevice)) {
-        fail(connection, "KICKED", "The device already has an active connection.");
-        return;
-      }
-      connection.phase = "loading";
-      if (challenge.role === "device") {
-        // Reserve the device slot across the store await so concurrent valid proofs cannot both win.
-        connection.admittingSid = message.device_sid;
-        admission.pendingDevice = connection;
-        pairs.set(message.device_sid, admission);
-      }
-      try {
-        await options.store.touch(message.device_sid);
-      } finally {
-        if (admission.pendingDevice === connection) delete admission.pendingDevice;
-        connection.admittingSid = undefined;
-        if (
-          !admission.device &&
-          !admission.terminal &&
-          !admission.pendingDevice &&
-          pairs.get(message.device_sid) === admission
-        ) {
-          pairs.delete(message.device_sid);
-        }
-      }
-      if (!isCurrent(connection)) return;
-      // Pair membership may change while persistence runs; never reuse a stale pair reference.
-      const pair = pairs.get(message.device_sid) ?? {};
-      const previous = pair[challenge.role];
-      connection.phase = "authenticated";
-      connection.auth = { sid: message.device_sid, role: challenge.role };
-      pair[challenge.role] = connection;
-      pairs.set(message.device_sid, pair);
-      // Bind the new browser before closing the old socket; its late close cannot detach the replacement.
-      if (previous) fail(previous, "KICKED", "Another browser replaced this connection.");
-      const pairStatus = status(pair);
-      send(connection, {
-        type: "auth_ack",
-        device_sid: message.device_sid,
-        terminal_sid: pairStatus.terminal_sid,
-        pair_status: pairStatus.pair_status,
-        server_ts: options.now(),
-      });
-      const other = challenge.role === "device" ? pair.terminal : pair.device;
-      if (other) send(other, pairStatus);
-      return;
-    }
-    const auth = connection.auth;
-    const pair = auth ? pairs.get(auth.sid) : undefined;
-    if (!auth || !pair || pair[auth.role] !== connection) return;
-    if (message.type === "pair_status_query") {
-      if (message.device_sid !== auth.sid) {
-        fail(connection, "WRONG_PARAM", "Identity cannot change.");
-        return;
-      }
-      send(connection, status(pair));
-      return;
-    }
-    const other = auth.role === "device" ? pair.terminal : pair.device;
-    if (!other) {
-      fail(connection, "INTERNAL", "Peer is temporarily unavailable.", false);
-      return;
-    }
-    send(other, message, serialized);
   }
 
   return {
-    connect(peer: RelayPeer) {
-      const id = options.crypto.randomId();
-      connections.set(id, { id, peer, phase: "new", createdAt: options.now() });
+    connect(peer, grant) {
+      const id = options.randomId();
+      connections.set(id, {
+        id,
+        peer,
+        userId: grant.userId,
+        role: grant.role,
+        phase: "pending",
+        createdAt: options.now(),
+        meta: {},
+      });
       return id;
     },
-    receive,
-    disconnect,
-    reject(id: string, code: WebRemoteControlRelayErrorCode, message: string) {
+    async receive(id, frame) {
+      const connection = connections.get(id);
+      if (!connection) return;
+      if (!permitsFrame(connection.phase, frame.type)) {
+        fail(connection, "WRONG_PARAM", "Frame is not valid in the current state.");
+        return;
+      }
+      if (frame.type === "auth_init") {
+        await authenticate(connection, frame);
+        return;
+      }
+      const sid = connection.deviceSid;
+      const slot = sid ? slots.get(sid) : undefined;
+      if (!sid || !slot || slot[connection.role] !== connection) return;
+      if (frame.type === "pair_status_query") {
+        send(connection, {
+          type: "pair_status_ack",
+          terminal_sid: connection.role === "device" && slot.terminal ? slot.terminal.id : "",
+          pair_status: pairStatus(slot),
+          server_ts: nowSeconds(),
+        });
+        return;
+      }
+      const other = connection.role === "device" ? slot.terminal : slot.device;
+      if (!other) {
+        send(connection, {
+          type: "error",
+          code: "INTERNAL",
+          message: "Peer is temporarily unavailable.",
+          server_ts: nowSeconds(),
+        });
+        return;
+      }
+      // Forward only the declared fields: the relay never copies client timestamps or extra keys.
+      send(other, { type: "data", payload: frame.payload, server_ts: nowSeconds() });
+    },
+    reject(id, code, message) {
       const connection = connections.get(id);
       if (connection) fail(connection, code, message);
     },
+    disconnect,
     sweep() {
+      // Map iteration tolerates deleting the current entry, which fail()/disconnect() do here.
       for (const connection of connections.values()) {
         if (
-          connection.phase !== "authenticated" &&
+          connection.phase === "pending" &&
           options.now() - connection.createdAt >= options.authTimeoutMs
         ) {
           fail(connection, "AUTH_FAILED", "Authentication deadline expired.");
@@ -239,10 +250,22 @@ export function createRelayRegistry(options: {
       }
     },
     close() {
-      for (const connection of [...connections.values()]) {
-        disconnect(connection.id);
-        connection.peer.close();
-      }
+      for (const connection of connections.values()) drop(connection);
+    },
+    isOnline(deviceSid) {
+      return Boolean(slots.get(deviceSid)?.device);
+    },
+    metaOf(deviceSid) {
+      return slots.get(deviceSid)?.device?.meta ?? {};
+    },
+    reserveDeletion(deviceSid) {
+      if (slots.get(deviceSid)?.device) return false;
+      inflightDeletions.add(deviceSid);
+      epochs.set(deviceSid, (epochs.get(deviceSid) ?? 0) + 1);
+      return true;
+    },
+    releaseDeletion(deviceSid) {
+      inflightDeletions.delete(deviceSid);
     },
   };
 }
