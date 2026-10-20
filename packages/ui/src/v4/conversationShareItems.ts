@@ -37,6 +37,8 @@ export function buildConversationShareItems(
             .slice(0, 320) || options.assistantEmptyPreview,
         assistantPreviewKind: "text" as const,
         isRunning: unit.isRunning,
+        // Mirrors the navigator helper: a turn counts as pinned when any assistant text row is pinned.
+        isPinned: unit.assistantTextRows.some((row) => row.pinnedAt !== undefined),
       },
     ];
   });
