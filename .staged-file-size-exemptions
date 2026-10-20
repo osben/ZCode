@@ -231,3 +231,4 @@ packages/zcode-server-cli/src/cli.ts
 
 packages/server/src/http.ts
 
+packages/ui/src/project-sidebar/grouped/task-row.tsx

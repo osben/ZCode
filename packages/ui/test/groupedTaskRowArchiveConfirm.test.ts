@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeTaskMeta } from "@zcode/shared";
-import { GroupedTaskRow } from "@/workspace-grouped-tasks/task-row.js";
+import { GroupedTaskRow } from "@/project-sidebar/grouped/task-row.js";
+import { TooltipProvider } from "@/components/ui/tooltip.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -54,32 +55,17 @@ const task: ZCodeTaskMeta = {
   provider: "codex",
 };
 
-function rowElement(rowTask: ZCodeTaskMeta, onCloseTask: (task: ZCodeTaskMeta) => void) {
-  return createElement(GroupedTaskRow, {
-    task: rowTask,
-    groups: [],
-    activeWorkspacePath: rowTask.workspacePath,
-    activeWorkspaceIdentity: undefined,
-    activeTaskId: null,
-    workspaceLabel: "workspace",
-    onSelectTask: () => {},
-    onCloseTask,
-    onMoveTaskToGroup: () => {},
-    onMoveTaskToTop: () => {},
-    onStartRenameTask: () => {},
-    onArchiveTask: () => {},
-    onMarkTaskAsUnread: () => {},
-    dragId: "grouped-archive-row",
-  });
+// Upstream rows rely on an ambient TooltipProvider (the app shell mounts one); mirror that here.
+function withTooltipProvider(child: ReturnType<typeof createElement>) {
+  return createElement(TooltipProvider, null, child);
 }
 
-function renderRow() {
-  const onCloseTask = vi.fn();
-  const view = render(
+function rowElement(rowTask: ZCodeTaskMeta, onCloseTask: (task: ZCodeTaskMeta) => void) {
+  return withTooltipProvider(
     createElement(GroupedTaskRow, {
-      task,
+      task: rowTask,
       groups: [],
-      activeWorkspacePath: task.workspacePath,
+      activeWorkspacePath: rowTask.workspacePath,
       activeWorkspaceIdentity: undefined,
       activeTaskId: null,
       workspaceLabel: "workspace",
@@ -92,6 +78,30 @@ function renderRow() {
       onMarkTaskAsUnread: () => {},
       dragId: "grouped-archive-row",
     }),
+  );
+}
+
+function renderRow() {
+  const onCloseTask = vi.fn();
+  const view = render(
+    withTooltipProvider(
+      createElement(GroupedTaskRow, {
+        task,
+        groups: [],
+        activeWorkspacePath: task.workspacePath,
+        activeWorkspaceIdentity: undefined,
+        activeTaskId: null,
+        workspaceLabel: "workspace",
+        onSelectTask: () => {},
+        onCloseTask,
+        onMoveTaskToGroup: () => {},
+        onMoveTaskToTop: () => {},
+        onStartRenameTask: () => {},
+        onArchiveTask: () => {},
+        onMarkTaskAsUnread: () => {},
+        dragId: "grouped-archive-row",
+      }),
+    ),
   );
   const row = view.container.querySelector<HTMLElement>("[data-grouped-task-key]")!;
   fireEvent.mouseEnter(row);
