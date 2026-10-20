@@ -13,30 +13,35 @@ import {
 import { CallCard } from "@/ModelTrajectoryPaneParts.js";
 import { TrajectorySearchRevealContext } from "@/ModelTrajectorySearch.js";
 import { trajectoryToolOutputs } from "@/ModelTrajectoryToolPayload.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
-const messages: Record<string, string> = {
-  "modelTrajectory.inputSection": "输入",
-  "modelTrajectory.attempt": "第 {attempt} 次尝试",
-  "modelTrajectory.outputSection": "输出",
-  "modelTrajectory.message": "消息",
-  "modelTrajectory.reasoning": "思考过程",
-  "modelTrajectory.role.assistant": "助手消息",
-  "modelTrajectory.role.system": "系统提示词",
-  "modelTrajectory.role.tool": "工具结果",
-  "modelTrajectory.role.user": "用户消息",
-  "modelTrajectory.source.main": "主会话",
-  "modelTrajectory.source.sessionTitle": "标题生成",
-  "modelTrajectory.finish.toolCalls": "工具调用",
-  "modelTrajectory.toolCall": "工具调用",
-  "modelTrajectory.toolId": "ID",
-  "modelTrajectory.toolInput": "输入",
-  "modelTrajectory.toolOutput": "输出",
-  "modelTrajectory.toolResult": "工具结果",
-  "modelTrajectory.showAll": "展开",
-  "modelTrajectory.collapseContent": "收起",
-  "modelTrajectory.copyContent": "复制内容",
-  "chat.message.copy": "复制",
-};
+const trajectoryMessageKeys = [
+  "modelTrajectory.inputSection",
+  "modelTrajectory.attempt",
+  "modelTrajectory.outputSection",
+  "modelTrajectory.message",
+  "modelTrajectory.reasoning",
+  "modelTrajectory.role.assistant",
+  "modelTrajectory.role.system",
+  "modelTrajectory.role.tool",
+  "modelTrajectory.role.user",
+  "modelTrajectory.source.main",
+  "modelTrajectory.source.sessionTitle",
+  "modelTrajectory.finish.toolCalls",
+  "modelTrajectory.toolCall",
+  "modelTrajectory.toolId",
+  "modelTrajectory.toolInput",
+  "modelTrajectory.toolOutput",
+  "modelTrajectory.toolResult",
+  "modelTrajectory.showAll",
+  "modelTrajectory.collapseContent",
+  "modelTrajectory.copyContent",
+  "chat.message.copy",
+] as const;
+
+const messages: Record<string, string> = Object.fromEntries(
+  trajectoryMessageKeys.map((id) => [id, expectedCopy(id)]),
+);
 
 const intl = {
   formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
@@ -55,7 +60,7 @@ describe("ModelTrajectoryPaneParts", () => {
     const props = {
       message: { role: "user" as const, parts: [{ kind: "text" as const, text: "hidden text" }] },
       role: "user" as const,
-      roleLabel: "用户消息",
+      roleLabel: expectedCopy("modelTrajectory.role.user"),
       callDurationLabel: "1.00s",
       callDatetimeLabel: "08:00:00 PM",
       callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -69,7 +74,10 @@ describe("ModelTrajectoryPaneParts", () => {
         createElement(ExpandableTrajectoryMessage, props),
       ),
     );
-    expect(screen.getByRole("button", { name: /用户消息/ }).dataset.state).toBe("open");
+    expect(
+      screen.getByRole("button", { name: new RegExp(expectedCopy("modelTrajectory.role.user")) })
+        .dataset.state,
+    ).toBe("open");
     expect(document.querySelector('[data-trajectory-message-content=""]')?.className).not.toContain(
       "max-h-64",
     );
@@ -81,7 +89,10 @@ describe("ModelTrajectoryPaneParts", () => {
         createElement(ExpandableTrajectoryMessage, props),
       ),
     );
-    expect(screen.getByRole("button", { name: /用户消息/ }).dataset.state).toBe("open");
+    expect(
+      screen.getByRole("button", { name: new RegExp(expectedCopy("modelTrajectory.role.user")) })
+        .dataset.state,
+    ).toBe("open");
   });
 
   it("uses error-text values for tool result summaries and expanded content", () => {
@@ -108,7 +119,7 @@ describe("ModelTrajectoryPaneParts", () => {
       createElement(ExpandableTrajectoryMessage, {
         message,
         role: "tool",
-        roleLabel: "工具结果",
+        roleLabel: expectedCopy("modelTrajectory.role.tool"),
         callDurationLabel: "1.00s",
         callDatetimeLabel: "08:00:00 PM",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -116,7 +127,9 @@ describe("ModelTrajectoryPaneParts", () => {
       }),
     );
     const trigger = screen.getByRole("button", {
-      name: /工具结果输出MCP tool returned an error/,
+      name: new RegExp(
+        `${expectedCopy("modelTrajectory.role.tool")}${expectedCopy("modelTrajectory.toolOutput")}MCP tool returned an error`,
+      ),
     });
     expect(trigger.querySelector('[data-trajectory-payload-error-icon=""]')).toBeTruthy();
     expect(trigger.querySelector('[data-trajectory-payload-direction=""]')?.className).toContain(
@@ -140,7 +153,7 @@ describe("ModelTrajectoryPaneParts", () => {
           ],
         },
         role: "assistant",
-        roleLabel: "工具调用",
+        roleLabel: expectedCopy("modelTrajectory.toolCall"),
         callDurationLabel: "1.00s",
         callDatetimeLabel: "08:00:00 PM",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -159,7 +172,7 @@ describe("ModelTrajectoryPaneParts", () => {
     const message = createElement(ExpandableTrajectoryMessage, {
       message: { role: "user", parts: [{ kind: "text", text: "full message" }] },
       role: "user",
-      roleLabel: "用户",
+      roleLabel: expectedCopy("modelTrajectory.role.user"),
       callDurationLabel: "1.00s",
       callDatetimeLabel: "12:00:00",
       callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -219,7 +232,7 @@ describe("ModelTrajectoryPaneParts", () => {
           ],
         },
         role: "assistant",
-        roleLabel: "工具调用",
+        roleLabel: expectedCopy("modelTrajectory.toolCall"),
         callDurationLabel: "1.00s",
         callDatetimeLabel: "12:00:00",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -260,7 +273,9 @@ describe("ModelTrajectoryPaneParts", () => {
 
     const systemContainer = container.querySelector('[data-trajectory-expandable-role="system"]');
     expect(systemContainer).toBeTruthy();
-    const systemTrigger = screen.getByRole("button", { name: /系统提示词system summary/ });
+    const systemTrigger = screen.getByRole("button", {
+      name: new RegExp(`${expectedCopy("modelTrajectory.role.system")}system summary`),
+    });
     expect(systemTrigger.dataset.state).toBe("open");
     expect(screen.getByText(/full system prompt/)).toBeTruthy();
     expect(
@@ -331,7 +346,9 @@ describe("ModelTrajectoryPaneParts", () => {
       }),
     );
 
-    const userTrigger = screen.getByRole("button", { name: /用户消息summary message/ });
+    const userTrigger = screen.getByRole("button", {
+      name: new RegExp(`${expectedCopy("modelTrajectory.role.user")}summary message`),
+    });
     expect(userTrigger.dataset.state).toBe("open");
     expect(userTrigger.querySelector('[data-trajectory-message-preview=""]')?.textContent).toBe(
       "summary message full user message",
@@ -366,19 +383,23 @@ describe("ModelTrajectoryPaneParts", () => {
     expect(userContainer?.querySelector('[data-trajectory-overflow-copy=""]')).toBeNull();
     fireEvent.click(copyButton as HTMLButtonElement);
     expect(writeText).toHaveBeenCalledWith("summary message\nfull user message");
-    fireEvent.click(screen.getByRole("button", { name: "展开" }));
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("modelTrajectory.showAll") }));
     expect(userContent?.className).not.toContain("max-h-64");
     expect(userContent?.hasAttribute("data-overflow-clipped")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "收起" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("modelTrajectory.collapseContent") }),
+    );
     expect(userContent?.className).toContain("max-h-64");
 
     const toolTrigger = screen.getByRole("button", {
-      name: /工具结果输出file body second output line/,
+      name: new RegExp(
+        `${expectedCopy("modelTrajectory.role.tool")}${expectedCopy("modelTrajectory.toolOutput")}file body second output line`,
+      ),
     });
     const toolName = toolTrigger.querySelector('[data-trajectory-tool-result-name=""]');
     const toolCallId = toolTrigger.querySelector('[data-trajectory-tool-result-id=""]');
     expect(toolTrigger.querySelector('[data-trajectory-payload-direction=""]')?.textContent).toBe(
-      "输出",
+      expectedCopy("modelTrajectory.toolOutput"),
     );
     expect(
       toolTrigger.querySelector('[data-trajectory-payload-direction=""]')?.className,
@@ -410,17 +431,23 @@ describe("ModelTrajectoryPaneParts", () => {
 
     expect(container.querySelector('[data-trajectory-assistant-title=""]')).toBeNull();
     expect(container.querySelector('[data-trajectory-assistant-detail-card=""]')).toBeNull();
-    const reasoningRow = screen.getByRole("button", { name: /思考过程inspect the file/ });
-    const assistantMessageRow = screen.getByRole("button", { name: /助手消息file inspected/ });
+    const reasoningRow = screen.getByRole("button", {
+      name: new RegExp(`${expectedCopy("modelTrajectory.reasoning")}inspect the file`),
+    });
+    const assistantMessageRow = screen.getByRole("button", {
+      name: new RegExp(`${expectedCopy("modelTrajectory.role.assistant")}file inspected`),
+    });
     const assistantToolRow = screen.getByRole("button", {
-      name: /工具调用输入.*path.*\/tmp\/a\.ts/,
+      name: new RegExp(
+        `${expectedCopy("modelTrajectory.toolCall")}${expectedCopy("modelTrajectory.toolInput")}.*path.*\\/tmp\\/a\\.ts`,
+      ),
     });
     expect(container.querySelector('[data-trajectory-role-line="assistant"]')).toBeNull();
     expect(container.querySelector('[data-trajectory-role-line="tool"]')).toBeNull();
     expect(assistantToolRow.textContent).toContain('{"path":"/tmp/a.ts"}');
     expect(
       assistantToolRow.querySelector('[data-trajectory-payload-direction=""]')?.textContent,
-    ).toBe("输入");
+    ).toBe(expectedCopy("modelTrajectory.toolInput"));
     expect(
       assistantToolRow.querySelector('[data-trajectory-payload-arrow=""]')?.className.baseVal,
     ).toContain("group-data-[state=open]:hidden");
@@ -455,8 +482,8 @@ describe("ModelTrajectoryPaneParts", () => {
       "tool-call-1",
     );
 
-    expect(screen.queryByText("工具结果 · Read")).toBeNull();
-    expect(screen.queryByText("工具调用 · Read")).toBeNull();
+    expect(screen.queryByText(`${expectedCopy("modelTrajectory.toolResult")} · Read`)).toBeNull();
+    expect(screen.queryByText(`${expectedCopy("modelTrajectory.toolCall")} · Read`)).toBeNull();
     expect(
       assistantToolRow
         .closest('[data-trajectory-message-collapsible=""]')
@@ -471,7 +498,37 @@ describe("ModelTrajectoryPaneParts", () => {
     expect(
       assistantToolContent?.querySelector('[data-trajectory-expanded-tool-id=""]')?.textContent,
     ).toBe("tool-call-1");
-    expect(assistantToolContent?.textContent).not.toContain("输入");
+    expect(assistantToolContent?.textContent).not.toContain(
+      expectedCopy("modelTrajectory.toolInput"),
+    );
+  });
+
+  it("renders response reasoning with the shared expandable row and purple role color", () => {
+    const html = renderToStaticMarkup(
+      createElement(CallCard, {
+        index: 0,
+        intl: intl as never,
+        inputMessages: [],
+        record: {
+          attempt: 1,
+          callSource: { kind: "main" },
+          model: { modelId: "glm-test" },
+          request: { messages: [], toolNames: [] },
+          requestId: "req-reasoning",
+          startedAt: "2026-06-03T12:00:00.000Z",
+          response: {
+            finishReason: "stop",
+            reasoningText: "inspect context\nverify result",
+            toolCalls: [],
+          },
+        },
+      }),
+    );
+
+    expect(html).toContain('data-trajectory-role-label="reasoning"');
+    expect(html).toContain("text-trajectory-reasoning/80");
+    expect(html).toContain('data-trajectory-message-trigger=""');
+    expect(html).toContain('data-trajectory-message-expanded=""');
   });
 
   it("shows full sidecar prompts instead of applying main-session deltas", () => {

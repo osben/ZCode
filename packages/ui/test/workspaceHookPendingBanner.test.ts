@@ -105,7 +105,7 @@ function renderBanner(props: {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkspaceHookPendingBanner, {
         sessionId: props.sessionId ?? "sess-1",
         workspacePath: props.workspacePath ?? "/workspace",
@@ -122,7 +122,7 @@ function renderInteractiveBanner(admission = sampleAdmission) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkspaceHookPendingBanner, {
         sessionId: "sess-1",
         workspacePath: "/workspace",
@@ -186,7 +186,7 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkspaceHookPendingBanner, {
           sessionId: "sess-1",
           workspacePath: "/workspace",

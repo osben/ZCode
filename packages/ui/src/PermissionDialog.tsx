@@ -720,8 +720,9 @@ export function PermissionDialog({
         }
 
         event.preventDefault();
+        // Number keys only move the selection; confirming needs an explicit Enter/click
+        // so a stray digit press cannot approve or deny a request.
         setSelectedIndex(shortcutIndex);
-        respondWithOption(shortcutOption);
         return;
       }
 
@@ -788,7 +789,6 @@ export function PermissionDialog({
       isWorkflowAsk,
       moveSelection,
       orderedOptions,
-      respondWithOption,
     ],
   );
 

@@ -19,6 +19,8 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 
 // eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
 import { PermissionDialog } from "@/PermissionDialog.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SCRIPT =
   'const x = 1;\nconst r = await agent("a").ask<string>("检查 " + String(args.target));';
@@ -231,8 +233,8 @@ describe("SaveWorkflowPermissionBlock", () => {
     expect(screen.getByText("Save this workflow to the project?")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
     expect(screen.getByText(SAVED_PATH)).toBeTruthy();
-    expect(screen.getByText("对本仓库做一次发布前检查")).toBeTruthy();
-    expect(screen.getByText("用户说要发版时")).toBeTruthy();
+    expect(document.body.textContent).toContain("对本仓库做一次发布前检查");
+    expect(document.body.textContent).toContain("用户说要发版时");
   });
 
   it("renders the args declaration table with type, required and default", () => {
@@ -319,14 +321,21 @@ describe("SaveWorkflowPermissionBlock", () => {
     expect(screen.queryByText("Show full script")).toBeNull();
   });
 
-  it("renders the overwrite gate in zh-CN", () => {
+  it("renders both locales", () => {
     renderDialog(buildSaveRequest({ overwrite: true }), "zh-CN");
-    expect(screen.getByText("覆盖已保存的同名工作流？")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.permission.workflow.save.overwriteTitle"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-overwrite-badge="true"]')?.textContent).toBe(
       "覆盖",
     );
-    expect(screen.getByText("落点")).toBeTruthy();
-    expect(screen.getByText("显示完整脚本")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.permission.workflow.save.path"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.permission.workflow.showScript"])).toBeTruthy();
+    cleanup();
+
+    renderDialog(buildSaveRequest({ overwrite: true }), "en-US");
+    expect(
+      screen.getByText(expectedCopy("chat.permission.workflow.save.overwriteTitle")),
+    ).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.permission.workflow.save.path"))).toBeTruthy();
   });
 
   it("never paints the save gate with destructive colour", () => {

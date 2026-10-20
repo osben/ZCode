@@ -225,6 +225,7 @@ vi.mock("@/lib/settingsNavigation.js", () => ({
   clearPendingSettingsPluginScopeKey: () => undefined,
   consumePendingSettingsModelProviderTarget: () => undefined,
   consumePendingSettingsUsageTab: () => undefined,
+  consumePendingSettingsSessionsScope: () => undefined,
   consumePendingSettingsSourceServerId: () => undefined,
   consumePendingSettingsSourceServerDetails: () => false,
   resolveSettingsSection: (section: string) => section,
