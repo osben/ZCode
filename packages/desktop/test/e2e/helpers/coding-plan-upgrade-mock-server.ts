@@ -1,5 +1,5 @@
 import { requestSecurityClientConfig } from "./request-security-edition/index.js";
-/* eslint-disable max-lines -- The E2E fixture server needs to centrally maintain the ZCode client config and BigModel purchase API responses */
+/* eslint-disable max-lines -- E2E fixture server 需要集中维护 ZCode client config 与 BigModel 购买接口响应 */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
@@ -79,9 +79,10 @@ export function shouldPrepareCodingPlanUpgradeMockForBuild(specs: readonly strin
 export async function resetCodingPlanUpgradeMockServer(
   baseUrl: string,
   scenario: CodingPlanUpgradeMockScenario,
+  options: { marketingTouch?: boolean } = {},
 ): Promise<void> {
   const response = await fetch(`${baseUrl}/__e2e/coding-plan/reset`, {
-    body: JSON.stringify({ scenario }),
+    body: JSON.stringify({ scenario, marketingTouch: options.marketingTouch === true }),
     headers: { "content-type": "application/json" },
     method: "POST",
   });
@@ -96,8 +97,7 @@ export async function startCodingPlanUpgradeMockServer(
   scenario: CodingPlanUpgradeMockScenario,
   options: { marketingTouch?: boolean } = {},
 ): Promise<CodingPlanUpgradeMockServer> {
-  // Reason for the fix: pnpm filter switches the E2E cwd to packages/desktop, so the repo-level fixture cannot be
-  // located via cwd.
+  // 修复原因：pnpm filter 会把 E2E cwd 切到 packages/desktop，不能用 cwd 定位仓库级 fixture。
   const clientConfigFixtureUrl = new URL(
     "../fixtures/coding-plan-client-configs.json",
     import.meta.url,
@@ -107,15 +107,35 @@ export async function startCodingPlanUpgradeMockServer(
   ) as CodingPlanClientConfigFixture;
   const requests: CodingPlanUpgradeMockRequest[] = [];
   const state = createCodingPlanUpgradeMockState(baseClientConfigPayload, scenario);
-  // The same-plan scenario is also reused by older tests, so a marketing-claim pause requiring release must not be
-  // injected implicitly.
-  const marketing = options.marketingTouch ? await createMarketingTouchFixture() : null;
+  // 同套餐场景也供旧测试复用，不能隐式注入需要 release 的营销领取暂停。
+  let marketing = options.marketingTouch ? await createMarketingTouchFixture() : null;
   const server = createServer((request, response) => {
     void (async () => {
-      if (
-        marketing &&
-        /^\/(cn|en)\/rewards$/.test(new URL(request.url ?? "/", "http://localhost").pathname)
-      ) {
+      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+      if (request.method === "POST" && pathname === "/__e2e/coding-plan/reset") {
+        const payload = await readJsonBody<{ scenario?: unknown; marketingTouch?: boolean }>(
+          request,
+        );
+        if (!isCodingPlanUpgradeMockScenario(payload.scenario)) {
+          sendJson(response, { code: 400, msg: "Invalid Coding Plan E2E scenario" }, 400);
+          return;
+        }
+        // 混合 suite 复用构建时的 origin；营销开关和投放也必须按 worker 重置，否则弹窗会遮挡购买入口。
+        const nextMarketing = payload.marketingTouch ? await createMarketingTouchFixture() : null;
+        marketing?.stop();
+        marketing = nextMarketing;
+        state.webviewWaiters.splice(0).forEach((release) => release());
+        state.customerInfoWaiters.splice(0).forEach((release) => release());
+        state.inventoryWaiters.splice(0).forEach((release) => release());
+        Object.assign(
+          state,
+          createCodingPlanUpgradeMockState(baseClientConfigPayload, payload.scenario),
+        );
+        requests.splice(0, requests.length);
+        sendJson(response, { ok: true, scenario: state.scenario });
+        return;
+      }
+      if (marketing && /^\/(cn|en)\/rewards$/.test(pathname)) {
         response.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
@@ -124,7 +144,18 @@ export async function startCodingPlanUpgradeMockServer(
         return;
       }
       if (await marketing?.handle(request, response)) return;
-      await handleRequest(baseClientConfigPayload, state, requests, request, response);
+      if (!marketing && pathname === "/api/v1/marketing/touch") {
+        sendJson(response, {
+          code: 0,
+          data: {
+            server_time: Math.floor(Date.now() / 1000),
+            language: request.headers["x-client-language"] === "zh-CN" ? "zh-CN" : "en-US",
+            deliveries: [],
+          },
+        });
+        return;
+      }
+      await handleRequest(state, requests, request, response, marketing !== null);
     })().catch((error) => {
       if (!response.headersSent) {
         sendJson(response, { code: 500, msg: formatErrorMessage(error) }, 500);
@@ -156,11 +187,11 @@ export async function startCodingPlanUpgradeMockServer(
 }
 
 async function handleRequest(
-  baseClientConfigPayload: CodingPlanClientConfigFixture,
   state: CodingPlanUpgradeMockState,
   requests: CodingPlanUpgradeMockRequest[],
   request: IncomingMessage,
   response: ServerResponse,
+  marketingTouch: boolean,
 ) {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/__e2e/coding-plan/webview-state") {
@@ -196,24 +227,6 @@ async function handleRequest(
     return;
   }
 
-  if (request.method === "POST" && url.pathname === "/__e2e/coding-plan/reset") {
-    const payload = await readJsonBody<{ scenario?: unknown }>(request);
-    if (!isCodingPlanUpgradeMockScenario(payload.scenario)) {
-      sendJson(response, { code: 400, msg: "Invalid Coding Plan E2E scenario" }, 400);
-      return;
-    }
-    // Bug root cause: the full suite's webview origin is fixed before build, but each worker's business scenario
-    // differs; when reusing an origin, the scenario, purchase state, and request ledger must be reset together.
-    state.webviewWaiters.splice(0).forEach((release) => release());
-    Object.assign(
-      state,
-      createCodingPlanUpgradeMockState(baseClientConfigPayload, payload.scenario),
-    );
-    requests.splice(0, requests.length);
-    sendJson(response, { ok: true, scenario: state.scenario });
-    return;
-  }
-
   if (
     request.method === "POST" &&
     url.pathname === "/__e2e/coding-plan/manual-claim-failure" &&
@@ -239,8 +252,7 @@ async function handleRequest(
     url.pathname === "/__e2e/coding-plan/manual-claim-next-window" &&
     state.scenario === "manual-claim-experience"
   ) {
-    // Bug cause: resetting only completed at the next period would leak a failing case's one-shot switch into later
-    // successful cases.
+    // Bug 原因：下一时段只重置 completed 会让失败用例的一次性开关泄漏到后续成功用例。
     state.manualClaimCompleted = false;
     state.manualClaimShouldFail = false;
     sendJson(response, { ok: true });
@@ -369,9 +381,8 @@ async function handleRequest(
     url.pathname === "/api/v1/zcode-plan/billing/balance" &&
     (state.scenario === "manual-claim-experience" || state.scenario === "webview-refresh-provider")
   ) {
-    // Bug cause: the claim fixture only mocked the legacy quota API; Start availability is now judged by
-    // billing/balance, and when it is missing a refresh would converge the just-written Start selectedKey back to
-    // Individual.
+    // Bug 原因：领取 fixture 只 mock 了旧 quota 接口；当前 Start 可用性以
+    // billing/balance 为准，缺失时刷新会把刚写入的 Start selectedKey 收敛回 Individual。
     sendJson(
       response,
       state.startPlanExpired
@@ -394,10 +405,8 @@ async function handleRequest(
 
   if (request.method === "POST" && url.pathname === "/api/biz/pay/batch-preview") {
     if (state.scenario === "personal-system-busy") {
-      // Reason for the fix: "system busy" is the API's whole-endpoint failure semantics and must not be faked as a
-      // sold-out product.
-      // The service layer converges WAF/HTML-style non-displayable responses into coding_plan_system_busy and then
-      // hands them to UI localization.
+      // 修复原因：系统繁忙是接口整体失败语义，不能伪造成商品售罄。
+      // 服务层会把 WAF/HTML 类不可展示响应收敛成 coding_plan_system_busy，再交给 UI 本地化。
       sendJson(response, {
         code: 503,
         msg: "<html>request has been blocked</html>",
@@ -462,10 +471,9 @@ async function handleRequest(
       });
       return;
     }
-    // Reason for the fix: the sidebar upgrade entry uses entitlement to tell an account that is connected but has no
-    // plan;
-    // the mock must carry the business-level no_plan over HTTP 200, otherwise readApiJson throws early and
-    // the purchase panel is treated as an unusable account and skips batch-preview.
+    // 修复原因：sidebar 升级入口通过 entitlement 判断账号是已连接但未开通套餐；
+    // mock 必须用 HTTP 200 承载业务 no_plan，否则 readApiJson 会提前抛错，
+    // 购买面板会被当成不可用账号并跳过 batch-preview。
     sendJson(response, {
       code: 404,
       msg: "当前用户不存在coding plan",
@@ -494,8 +502,7 @@ async function handleRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/api/biz/customer/getCustomerInfo") {
-    // Park the single-card provider at the network boundary, to verify the Subscribe loading feedback after the
-    // global query has completed.
+    // 将单卡 provider 同步停在网络边界，验证全局查询已完成后的 Subscribe 加载反馈。
     if (state.customerInfoHeld) {
       await new Promise<void>((resolve) => state.customerInfoWaiters.push(resolve));
     }
@@ -503,8 +510,13 @@ async function handleRequest(
       code: 200,
       data:
         state.purchaseCompleted ||
-        // The current account service obtains credentials via organization/project; in the inventory scenario the
-        // account already owns the personal plan before purchase, so faking only the subscription list is not enough.
+        // 营销升级先查询全部连接的权益；没有项目凭据会停在 unknown，无法打开升级页。
+        // 只补可查询项目，不把“尚未领取”伪造成已有订阅。
+        marketingTouch ||
+        // 无套餐仍需可查询的项目凭据；空项目会让 Account State 变为 unknown，遮蔽订阅入口。
+        state.scenario === "personal-sold-out" ||
+        state.scenario === "personal-system-busy" ||
+        // 当前账号服务通过组织/项目取得凭据；库存场景购买前已经拥有个人套餐，不能只伪造订阅列表。
         state.scenario === "webview-refresh-provider" ||
         (state.scenario === "manual-claim-experience" && state.manualClaimCompleted)
           ? {
@@ -525,8 +537,7 @@ async function handleRequest(
     url.pathname === "/api/biz/v1/organization/org-e2e/projects/proj-e2e/api_keys"
   ) {
     if (request.method === "POST" && recordedRequest) {
-      // Record only the creation purpose and name; never write an arbitrary request body that may contain credentials
-      // into the E2E ledger.
+      // 仅记录创建用途与名称，不把可能含凭据的任意请求体写入 E2E ledger。
       const { name, usageScene } = await readJsonBody<{
         name?: unknown;
         usageScene?: unknown;
@@ -581,9 +592,8 @@ async function handleRequest(
   ) {
     sendJson(response, {
       code: 200,
-      // Bug cause: Z.ai's resolver needs a copy secret, but BigModel's apiKey is already
-      // a complete credential. If the fixture unconditionally returns the Z.ai secret, the BigModel key gets wrongly
-      // assembled as key.secret.
+      // Bug 原因：Z.ai 的 resolver 需要 copy secret，但 BigModel 的 apiKey 本身已是
+      // 完整凭据。fixture 若无条件返回 Z.ai secret，会把 BigModel key 错拼成 key.secret。
       data: {
         secretKey:
           request.headers.authorization === "Bearer zai-webview-oauth-token"
@@ -677,8 +687,7 @@ function buildManualClaimStartPlanBalance(claimed: boolean, newBucketReady: bool
     ends_at: nowSeconds + 86_400,
     entitlements: [
       {
-        // The scheduled time has arrived but the quota bucket has not been generated yet, driving the settings page to
-        // show "刷新权益" (refresh entitlements).
+        // 已到达排期时间但额度桶尚未生成，驱动设置页显示「刷新权益」。
         effective_at: nowSeconds - 60,
         entitlement_id: "weekend-glm-flash",
         show_name: "GLM-5.3-Flash",
@@ -771,9 +780,9 @@ function enrichClientConfigPayloadForUpgradeE2E(
   scenario: CodingPlanUpgradeMockScenario,
 ) {
   if (scenario === "manual-claim-experience") {
-    // Bug cause: the claim fixture must deliver both Individual and Start; and BigModel's OAuth
-    // resolver picks the first Anthropic provider from the remote list of the same family, so Individual must come
-    // first, otherwise the Start model gets wrongly reused for Individual and the real switch path is not covered.
+    // Bug 原因：领取 fixture 需要同时下发 Individual 与 Start；且 BigModel OAuth
+    // resolver 会从同 family 的远端列表选择首个 Anthropic provider，Individual 必须排在前面，
+    // 否则会把 Start 模型错误复用到 Individual，无法覆盖真实切换链路。
     payload.data.builtinProviders = [
       {
         id: BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,

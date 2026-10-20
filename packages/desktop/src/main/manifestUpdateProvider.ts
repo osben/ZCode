@@ -124,9 +124,8 @@ function resolveManifestUrl(pathname: string, baseUrl: URL): URL {
 }
 
 function getLinuxUpdateExtensions(updater: AppUpdater): readonly string[] | null {
-  // The actual Linux updater depends on the package type; do not remove deb/rpm/pacman packages as
-  // if they all lacked update support. Reuse the existing updater instance to avoid reading the
-  // installation type again and getting a different result.
+  // Linux 的实际更新器由安装包类型决定，不能把 deb/rpm/pacman 统一当作
+  // 不支持更新的产物删除；复用已有 updater 实例，避免再次读取安装类型产生分歧。
   if (updater instanceof AppImageUpdater) return [".appimage"];
   if (updater instanceof DebUpdater) return [".deb"];
   if (updater instanceof RpmUpdater) return [".rpm"];
@@ -143,9 +142,8 @@ function resolveManifestFiles(
     const pathname = resolveManifestUrl(file.url, baseUrl).pathname.toLowerCase();
     return !linuxExtensions || linuxExtensions.some((extension) => pathname.endsWith(extension));
   });
-  // If the current format is missing, upstream findFile may fall back to another package or return
-  // undefined, leading to an invalid cache path/TypeError. Fail at the parsing boundary and forbid
-  // updating across installation formats.
+  // 缺少当前格式时，上游 findFile 会回退其他包或返回 undefined，
+  // 随后报非法缓存路径/TypeError；在解析边界失败，禁止跨安装格式更新。
   if (updateFiles.length === 0) {
     throw new Error(`Manifest contains no update file for ${linuxExtensions?.join(" / ")}`);
   }
@@ -155,8 +153,8 @@ function resolveManifestFiles(
     }
 
     const url = resolveManifestUrl(fileInfo.url, baseUrl);
-    // PacmanUpdater still uses the .pacman suffix to identify cache names; .pkg.tar.zst falls back to
-    // info.url. Provide only a filename for the cache to avoid embedding the full URL in pending/temp-https:/....
+    // PacmanUpdater 仍用 .pacman 后缀识别缓存名，.pkg.tar.zst 会退回
+    // info.url；只给缓存提供文件名，避免完整 URL 被拼进 pending/temp-https:/...。
     const info = linuxExtensions?.includes(".pkg.tar.zst")
       ? { ...fileInfo, url: posix.basename(decodeURIComponent(url.pathname)) }
       : fileInfo;
@@ -233,11 +231,10 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
     }
 
     return {
-      ...(parsed as UpdateInfo),
-      // When switching between preview/stable, an older manifest request may return after the new one.
-      // electron-updater's update-available event does not include the request channel by default, so
-      // main cannot identify stale results. Carry this request's channel in UpdateInfo to prevent an
-      // old channel from overwriting the update prompt.
+      ...(parsed as unknown as UpdateInfo),
+      // Bugfix: preview/stable 切换时旧 manifest 请求可能晚于新请求返回。
+      // electron-updater 的 update-available 事件默认不带请求通道，main 进程无法识别过期结果；
+      // 这里把本次请求通道随 UpdateInfo 带回去，避免旧通道覆盖更新弹窗内容。
       zcodeReleaseChannel: releaseChannel,
     } as UpdateInfo;
   }

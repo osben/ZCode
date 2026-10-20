@@ -101,3 +101,57 @@ Deferred in this slice, with reasons:
 - `pnpm typecheck`: green.
 - `pnpm test:unit`: green (2107 files passed, 2 skipped).
 - `pnpm lint`, `pnpm architecture:check`, `pnpm fmt`: green.
+
+## PART 4 (branch `claude/upstream-sync-desktop-4`, stacked on PART 3)
+
+Status: partial. Groups A, D, E (partial), F landed. Group C (source-server wiring) is blocked on the services exports in PR #214, so it is not in this PR. Target is `0a1fc56d`; `main` moved on and is not the target.
+
+Method (how the fork side was classified):
+
+- Fork changes are measured against the fork tip `origin/claude/upstream-sync-desktop-3` (cbffd950), not against HEAD. Once a commit lands, HEAD no longer shows the fork's intent.
+- A file whose only fork-side changes are comments (Chinese to English translation) takes upstream code verbatim. The spec's comment churn rule applies. The check counts changed lines that are not comment-only in the raw `git diff`; a transpile-based comparison misses type-only and formatting changes, so it is not used as the decision.
+- A test whose fork file equals base takes upstream. A test whose fork file has non-comment changes keeps the fork version.
+
+Landed:
+
+- Group A (`4d4b956c`): `browserScreenshotActivityController.ts` and `embeddedBrowserPermissionPolicy.ts` take upstream, because their fork-side changes are comment translations and formatting only. The fork's `onDisplayMediaRequest` reflow is dropped, which is formatting only. The `originFromUrl` origin normalization in `checkPermission` is upstream's change, and it is now in the file. Plugin sandbox (`main/pluginSandbox/*`, `preload/pluginSandbox/hostBridge.ts`, `renderer/src/plugin-sandbox/*`) and `main/embedded-browser-permission-contract/*` take upstream. No file in these groups imports relay modules.
+- Group D (`bd410fa4`): `browserGuestManager.ts` and its test take upstream, because the fork changed only comments. The viewport update no longer takes `desktopZoomFactor`. `desktopHostProcess.ts` adds the plugin telemetry dispatch and the `remoteAssets` init field, and forwards off-peak `lifecycleManaged`. The fork's `/remote` web-remote link handler and its three bot handlers stay. `main/index.ts` gets the 3-argument viewport call, `onPluginTelemetry`, `remoteAssets`, and `ApplicationLocaleChanged` posted to every window Host. `shared/validation.ts` gets additive schemas copied from `0a1fc56d`: `hostApplicationLocaleChangedMessageSchema`, `hostPluginTelemetryResponseSchema`, and the off-peak `lifecycleManaged` field, with a local `localeSchema` import.
+- Group E partial (`a8ba7771`, and the batch that followed): 24 source and test files take upstream where the fork had only comment changes, including the host attachment and telemetry helpers, desktop tray, crash capture, scheduler protocol, off-peak settlement, and their tests. `desktopBrowserViewIpc.test.ts`, `promptAttachmentTransferService.test.ts`, `startupWorkspace.test.ts`, `desktopClientConfigLanguageHeader.test.ts`, `desktopTrayBadge.test.ts`, `desktopWindowLifecycle.test.ts`, `fileApplicationOpening.test.ts`, `hostMessagePortGuard.test.ts`, `offPeakDispatchSettlement.test.ts`, `embeddedBrowserPermissionPolicy.test.ts`, and `e2eProviderConfigSeedBoundary.test.ts` take upstream and pass.
+- Group F (`07fc9a49`): `wdio.conf.ts` takes upstream and re-applies the fork's e2e wiring (see the wdio bullets below). `prepare-runtime-assets.mjs` takes upstream and re-applies the fork's `ZCODE_SKIP_REMOTE_ASSETS` gate and the `prepare:macos-apple-fm` step. `test/e2e/helpers/coding-plan-upgrade-mock-server.ts` takes upstream.
+
+Ownership (unchanged in this PART):
+
+- Bot `/remote` link: owned by the fork's window-Host bridge in `main/index.ts` and `desktopHostProcess.ts`. The bot reconnect, connection-status and runtime-port handlers stay in the fork's main process. Upstream moved them to the source-server resolver, which is group C.
+- Locale: `main/index.ts` owns `currentApplicationLocale` and posts `ApplicationLocaleChanged` to every window Host. The Host side (`host/index.ts`) does not handle the message yet, so the Host ignores it until group C lands.
+- Owner/event-order diagram for source-server connect and reconnect: not written. It lands with group C, after the code it describes is on this branch.
+
+Deferred (ledger):
+
+- Group C, blocked on #214: `host/connectDesktopSourceServer.ts`, `connectSourceServerTarget.ts`, `sourceServer*.ts`, `botRemoteWorkspaceResolver.ts`, `remoteWorkspaceRpcContract.ts`, `sourceSettingsServiceCollection.ts`, `windowHostAttachmentRpcPolicy.ts`, `windowHostControllerProjection.ts`, `windowHostControllerService.ts`, `windowHostSessionsIndexObserver.ts`. They import `ISourceServerWorkspaceService`, `UpdateConnectionProfileInput`, `migrateControllerRemoteWorkspaceIdentity`, `ControllerRemoteIdentityMigrationReport`, `WindowHostTaskUnreadSignal`, `ServiceExposurePolicy`, and the `source-server-workspace` and `window-controller` service modules. #214's tree provides them, and this branch does not have them. The attempt compiled with 60+ errors and was reverted.
+- `host/index.ts`: fork kept. Upstream diff is about 1361 lines added and 307 removed. Blocked by group C.
+- `main/index.ts`: `attachSourceSettings` deferred, because it needs the `source-settings` scope in `windowHostAttachmentRegistry`. Relay-coupled hunks stay on the fork side: `createNodeWebRemoteControlRelayAuthProvider`, `createWebRemoteControlRelayAuthStorageProvider`, `prepareProjectWorkspace`, `cancelProjectPreparation`, `restorePreviouslyEnabledWebRemoteControl`, `syncWebRemoteControlTasks`. The fork's bot handlers stay.
+- `windowHostAttachmentRegistry.ts`, `windowRemoteConnectionRegistry.ts`, `remoteWorkspaceServiceCollection.ts`, `renderer/src/remoteWorkspaceSessionServices.ts`, `preload/index.ts`, `renderer/src/desktopPlatform.ts`, `renderer/src/main.tsx`: fork kept. They are group C or relay-adjacent.
+- `remotePromptAttachments.ts`: fork kept. Upstream renamed `createRemotePromptAttachmentSessionService` and `createRemotePromptAttachmentTaskService`, and the fork `host/index.ts` still imports the old names.
+- `main/desktopRemoteSessions.ts`, `main/desktopMainIpcRemote.ts`, and their tests `desktopRemoteSessions.test.ts`, `desktopMainIpcRemoteTelemetry.test.ts`: fork kept. The upstream tests depend on the group C connect path, and 37 and 4 cases fail against the upstream sources.
+- `main/desktopCronScheduler.ts` and `desktopCronScheduler.test.ts`: fork kept. Upstream's cron-run message carries a frozen project snapshot that the fork shared `cron-run` schema does not accept.
+- `offPeakHostDispatch.test.ts`: fork kept. Upstream calls `zcodeTaskService.listTasks`, which the services on this branch do not provide.
+- `codingPlanUpgradeMockServer.test.ts`, `customOpenAIProviderStore.test.ts`, `desktopAppWorkspaceReadiness.test.ts`: fork kept. They fail against the synced sources. Not triaged further.
+- Upstream unit tests not added because they fail against this branch: `e2eConversationPreparation`, `e2eToolFullAccess`, `e2eUnreadContextContract`, `e2eV4WindowSize`, `modelProviderRestartWorkspace`, `pluginMarketStartupCredentials`.
+- `prepare-agent-node-bundle.mjs`: fork kept. Upstream moves the plugin list to `scripts/official-plugin-packages.mjs` and needs `apps/zcode-cli/packages/office-runtime`, which does not exist on this branch. The fork's Node 26 settings stay.
+- `autoUpdater.ts`: unchanged, per the decision to keep the fork's quit-and-install state machine.
+- `wdio.conf.ts`: web-remote-control auth-gate fixture (`prepareWebRemoteControlAuthGateFixture`) removed, because it is relay e2e and out of scope. The `createE2EStartupCredentialSeed` call drops `accountMock` and `remoteProfile`. The fork helper does not take them, and its accountless spec list and zai identity removal are fork behavior. Upstream's default-empty credential rule conflicts with that, so it needs a product decision. The fork's `seedDeleteAllArchivedTasksFixture` seed is restored with `await`; the fork called it without `await` although the helper is async.
+- `package.json`: untouched in this PART. Upstream's `imports` map, `test:auto-update-install-reentry-smoke`, and the removal of `prepare:remote-assets` are still pending, and they belong to PART 3's package.json decisions.
+- Relay: no relay file was touched. No file in this PART imports relay v2 types. `ws` dependencies are unchanged.
+
+Verification (this PART):
+
+- `pnpm typecheck`: green.
+- `pnpm lint`: 0 errors, 75 warnings. The baseline warning count was not captured before this PART.
+- `pnpm architecture:check`: OK, 0 violations.
+- `pnpm fmt:check`: green. `node scripts/fork-format-pending.mjs --fetch`: no pending upstream commit.
+- `pnpm test:pre-push`: green (13 passed).
+- `node scripts/check-test-copy.mjs`: green.
+- `node --test scripts/run-pre-commit-checks.test.mjs scripts/check-staged-file-tokens.test.mjs`: 26 passed.
+- Desktop unit tests excluding e2e: 323 files and 2497 tests passed.
+- Full `pnpm test`: run after the last commit; the result is recorded in the PR body.
+- wdio dry check: a plain `tsx` import fails on `istanbul-lib-coverage` named exports in `e2e-node-coverage.ts`, which this PART does not touch, so the pre-existing loader problem is not caused by the merge. The dry check is an esbuild bundle of `wdio.conf.ts`, which resolves every relative import.

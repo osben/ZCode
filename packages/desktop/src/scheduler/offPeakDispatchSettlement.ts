@@ -20,11 +20,10 @@ export interface OffPeakDispatchSettlementDeps {
 }
 
 /**
- * Settle the result of off-peak task dispatch.
+ * 闲时任务派发结果结算。
  *
- * Do not ignore failureKind: deterministic configuration errors such as a missing model or credential
- * must not be retried indefinitely, which would leave the task waiting for capacity and repeatedly
- * consume server tickets. Only transient failures may return to queued.
+ * 不能忽略 failureKind：缺模型/凭证等确定性配置错误若也无限退避，
+ * 导致任务永久显示等待算力并反复消耗服务端 ticket。只有 transient 才允许回 queued。
  */
 export async function settleOffPeakDispatchResult(
   deps: OffPeakDispatchSettlementDeps,
@@ -34,6 +33,8 @@ export async function settleOffPeakDispatchResult(
   if (msg.ok) {
     deps.retryAt.delete(msg.offPeakTaskId);
     deps.retryAttempts.delete(msg.offPeakTaskId);
+    // Host 在放行 CLI 生命周期通知前已落 running；迟到 ACK 不得覆写新票等待或接管状态。
+    if (msg.lifecycleManaged) return;
     const updated = await deps.repo.markRunning(msg.offPeakTaskId, {
       startedAt: now,
       ...(msg.conversationId ? { conversationId: msg.conversationId } : {}),
