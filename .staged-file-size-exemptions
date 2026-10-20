@@ -250,6 +250,12 @@ packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
 
+# Existing generated legal inventories; the generator verifies their inputs and hashes.
+THIRD-PARTY-NOTICES.md
+third-party/inventory.json
+# Existing upstream-sized documents: this migration only updates the pinned pnpm version.
+UI_PLUGIN.md
+UI_PLUGIN.en.md
 # Bounded repairs to existing centralized build and event-contract files.
 scripts/prepare-prebuilds.mjs
 apps/zcode-cli/packages/contracts/src/events/session.events.ts
