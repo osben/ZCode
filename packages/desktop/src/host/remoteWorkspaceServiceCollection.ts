@@ -215,6 +215,25 @@ export function resolveServerProjectService(params: {
 const runtimePreferencesLogger = createServiceLogger("remote-runtime-preferences");
 const ZCODE_JWT_TOKEN_KEY = "zcodejwttoken";
 
+/**
+ * Legacy remote Hosts expose no project RPC channel (see legacyRemoteWorkspaceRpcContract). Bots on them see an
+ * empty catalog and cannot bind a project; binding fails explicitly instead of silently picking a workspace.
+ */
+function botProjectServiceOrUnavailable(
+  connectionServices: IServiceAccessor,
+): Pick<IProjectService, "readProjects" | "readTree" | "prepareSession"> {
+  if (connectionServices.projectService) return connectionServices.projectService;
+  return {
+    readProjects: async () => [],
+    readTree: async () => ({ projects: [], tasks: [] }),
+    prepareSession: async () => {
+      throw new Error(
+        "Remote Bot project binding unavailable: the Host has no project RPC channel",
+      );
+    },
+  };
+}
+
 export function createRemoteWorkspaceServiceCollection(params: {
   clientConfigService: IClientConfigService;
   connectionServices: IServiceAccessor;
@@ -501,6 +520,9 @@ export function createRemoteWorkspaceServiceCollection(params: {
       createBotsService({
         credentialService: localCredentialService,
         zcodeTaskService: remoteZCodeTaskService,
+        // Bot candidates and bindings are project-catalog facts of the Host; without the project channel the bot cannot resolve them.
+        projectService: botProjectServiceOrUnavailable(params.connectionServices),
+        remoteProjectService: params.connectionServices.remoteProjectService,
         broadcastService: localBroadcastService,
         settingService: localSettingService,
         modelSelectionService: params.connectionServices.modelSelectionService,

@@ -17,6 +17,9 @@ export const BOTS_LEGACY_CONFIG_FILE = "bot-config.json";
 export const BOTS_LEGACY_STATE_FILE = "bot-state.json";
 export const BOTS_V2_STATE_FILE = "bot-state.v2.json";
 export const BOTS_STATE_FILE = "bot-state.v3.json";
+/** Pre-migration copies written once before the `[hostId, projectId]` identity rewrite; restore these to downgrade. */
+export const BOTS_CONFIG_PRE_PROJECT_IDENTITY_FILE = "bot-config.v3.pre-project-identity.json";
+export const BOTS_STATE_PRE_PROJECT_IDENTITY_FILE = "bot-state.v3.pre-project-identity.json";
 export const BOTS_LEGACY_MODEL_CACHE_FILE = "bots-model-cache.json";
 export const BOTS_MODEL_CACHE_FILE = "bots-model-cache.v2.json";
 const BOT_CREDENTIAL_PREFIX = "bot";
