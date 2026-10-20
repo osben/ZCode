@@ -1,4 +1,4 @@
-// M4 transcript→event synthesis golden (a subset of §9's reduce(transcript) ≡ reduce(events)).
+// M4 transcript→event 合成 golden（13 §9 reduce(transcript) ≡ reduce(events) 的子集）。
 import { describe, expect, it } from "vitest";
 import {
   CompactTimelineStatus,
@@ -335,7 +335,7 @@ describe("transcript→event 合成", () => {
       .filter((r) => r.kind === "userInput" || r.kind === "assistantText")
       .map((r) => (r.kind === "userInput" || r.kind === "assistantText" ? r.text : ""));
     expect(texts).toEqual(["问题一", "回答一", "问题二", "回答二"]);
-    // Both turns completedSuccess.
+    // 两轮都 completedSuccess。
     const turnHeaders = rows.filter((r) => r.kind === "turnHeader");
     expect(turnHeaders).toHaveLength(2);
     expect(
@@ -348,9 +348,8 @@ describe("transcript→event 合成", () => {
     ]);
     const userRows = rows.filter((row) => row.kind === "userInput");
     const assistantRows = rows.filter((row) => row.kind === "assistantText");
-    // Bugfix regression: cold synthesis must keep each assistant message's real creation time
-    // and must not degrade them all into synthetic sequence numbers near the first transcript
-    // time.
+    // Bugfix 回归：cold 合成必须保留各 assistant message 的真实创建时间，不能全部
+    // 退化成首条 transcript 时间附近的合成序号。
     expect(assistantRows.map((row) => row.createdAt)).toEqual([1001, 2001]);
     expect(userRows[0]?.actions?.canEdit).not.toBe(true);
     expect(userRows[1]?.actions?.canEdit).toBe(true);
@@ -533,7 +532,6 @@ describe("transcript→event 合成", () => {
     const { projection } = reduce([userMessage("u-latest", "继续", 1000), assistant]);
     const rows = projection.getSnapshot().rows.window;
     const userRow = rows.find((row) => row.kind === "userInput");
-    expect(userRow).toBeDefined();
     expect(userRow?.actions?.canEdit).toBe(true);
     expect(projection.isLatestEditableUserRow(userRow!.rowId)).toBe(true);
     expect(projection.getMessageIdForRow(userRow!.rowId)).toBe("u-latest");
@@ -927,7 +925,7 @@ describe("transcript→event 合成", () => {
           outputTokens: 120_000,
           durationMs: 881_000,
           savedDurationMs: 762_836,
-          // CR-02: fallbackAt is an authoritative metadata field; cold hydration must restore it verbatim.
+          // CR-02：fallbackAt 是权威 metadata 字段，cold hydration 必须原样恢复。
           fallbackAt: 1500,
         },
       },
@@ -989,7 +987,7 @@ describe("transcript→event 合成", () => {
     expect(
       projection.getSnapshot().rows.window.find((row) => row.kind === "userInput"),
     ).toMatchObject({
-      // CR-02: terminal metric updates are field-level merges; a payload without fallbackAt must not clear the persisted fallbackAt.
+      // CR-02：终态指标更新是字段级合并，不含 fallbackAt 的 payload 不得清掉已持久化的 fallbackAt。
       highspeed: { outputTokens: 130_000, savedDurationMs: 880_822, fallbackAt: 1500 },
     });
   });
@@ -1173,19 +1171,8 @@ describe("transcript→event 合成", () => {
     );
     for (const event of liveEvents) live.applyEvent(event);
 
-    const coldEntityResolver = (
-      cold as unknown as {
-        resolveEditTargetByEntityId?: (entityId: string) => unknown;
-      }
-    ).resolveEditTargetByEntityId;
-    const liveEntityResolver = (
-      live as unknown as {
-        resolveEditTargetByEntityId?: (entityId: string) => unknown;
-      }
-    ).resolveEditTargetByEntityId;
-    expect(coldEntityResolver).toBeTypeOf("function");
-    expect(liveEntityResolver).toBeTypeOf("function");
-    if (!coldEntityResolver || !liveEntityResolver) return;
+    const coldEntityResolver = cold.resolveEditTargetByEntityId;
+    const liveEntityResolver = live.resolveEditTargetByEntityId;
 
     const commandFacts = (
       projection: ProductProjection,
@@ -1256,24 +1243,22 @@ describe("transcript→event 合成", () => {
     const assistantRow = projection
       .getSnapshot()
       .rows.window.find((r) => r.kind === "assistantText");
-    expect(assistantRow).toBeDefined();
-    // The messageId side table uses the assistant message id from synthesis time.
+    // messageId 侧表用合成时的 assistant message id。
     expect(projection.getMessageIdForRow(assistantRow!.rowId)).toBe("a1");
   });
 
   it("eventsCoverTranscript：事件日志缺 user 轮 → false（应改走合成）", () => {
     const messages = [userMessage("u1", "a", 1000), assistantMessage("a1", "u1", "b", 1001)];
-    // Empty event log vs one user message → not covered.
+    // 空事件日志 vs 有 1 个 user 消息 → 不覆盖。
     expect(eventsCoverTranscript([], messages)).toBe(false);
-    // Synthesized events → covered.
+    // 合成出的事件 → 覆盖。
     const { events } = reduce(messages);
     expect(eventsCoverTranscript(events, messages)).toBe(true);
   });
 
   it("model-only 唤醒（goal continuation）开独立 model-only 轮，无可见气泡（S11/BG-wake-cold）", () => {
-    // 16-plan P2 semantic change (2026-07-08): a synthetic user triggered by wake/continuation
-    // opens a model-only turn exactly like live (the old cold path merged its following
-    // assistant into the previous turn — the pre-review F2 divergence).
+    // 16-plan P2 语义变更（2026-07-08）：wake/continuation 触发的 synthetic user
+    // 与 live 一致开 model-only 轮（旧冷路径把其后 assistant 并进上一轮——前审 F2 分叉）。
     const messages = [
       userMessage("u1", "a", 1000),
       assistantMessage("a1", "u1", "b", 1002),
@@ -1295,7 +1280,7 @@ describe("transcript→event 合成", () => {
     });
     expect(eventsCoverTranscript(events, messages)).toBe(true);
     const rows = projection.getSnapshot().rows.window;
-    // The wake turn has no visible user bubble; both turns' assistant content is present, each in its own turn.
+    // 唤醒轮无可见 user 气泡；两轮 assistant 内容都在、各归自己的轮。
     const userRows = rows.filter((row) => row.kind === "userInput");
     expect(userRows).toHaveLength(1);
     expect(userRows[0]?.kind === "userInput" ? userRows[0].text : "").toBe("a");
@@ -1381,10 +1366,9 @@ describe("transcript→event 合成", () => {
   });
 
   it("cold hydration strips the withdrawn refined names from a persisted CreateWorkflow display", () => {
-    // docs/dynamic-workflow/presentation.md: an old part's display still carries
-    // `refinedName` / `refinedLabel`, while the renderer validates every frame against a strict
-    // schema. All three events carrying a display must receive the same stripped copy, otherwise
-    // an old session's whole frame is rejected at subscription time.
+    // docs/dynamic-workflow/presentation.md：旧 part 的 display 里还带着
+    // `refinedName` / `refinedLabel`，而渲染端按严格 schema 校验每一帧。三个携带 display 的
+    // 事件都必须拿到剥离后的同一份，否则旧会话在订阅时整帧被拒。
     const plainGraph = {
       steps: [{ id: "ask#1", kind: "ask", label: "planner", lane: "actor#1", phase: "phase#1" }],
       lanes: [{ id: "actor#1", name: "planner" }],
@@ -1451,10 +1435,9 @@ describe("transcript→event 合成", () => {
   });
 
   it("cold hydration strips providerStop from a persisted GetWorkflowRun display", () => {
-    // docs/dynamic-workflow/launch.md "Their cards": an old part's display still carries the
-    // tool output's `error.providerStop`, while the renderer validates every frame against the
-    // mirror schema. All three events carrying a display must receive the same stripped copy,
-    // otherwise this session's very first subscription rejects the whole frame.
+    // docs/dynamic-workflow/launch.md「Their cards」：旧 part 的 display 里还带着工具输出
+    // 那份 `error.providerStop`，而渲染端按镜像 schema 校验每一帧。三个携带 display
+    // 的事件都必须拿到剥离后的同一份，否则这个会话一订阅就整帧被拒。
     const plainDisplay = {
       kind: "get_workflow_run",
       runId: "dwfrun_stopped",
@@ -1521,7 +1504,7 @@ describe("transcript→event 合成", () => {
     expect(displays).toHaveLength(3);
     for (const display of displays) {
       expect(display).toEqual(plainDisplay);
-      // Every hydrated frame must pass the renderer's ruler.
+      // 水合出来的每一帧都要过渲染端那把尺。
       const mirrored = toolCallGetWorkflowRunDisplaySchema.strict().safeParse(display);
       expect(mirrored.success ? [] : mirrored.error.issues).toEqual([]);
     }
@@ -1919,11 +1902,9 @@ describe("transcript→event 合成", () => {
     });
   });
 
-  // A dwf run's completion notification travels the same background pipeline, with
-  // backgroundSource as the third value "workflow". The cold-recovery originMeta filter
-  // previously only allowed bash|subagent; missing it would silently degrade the workflow's
-  // background result turn into an untitled model-only message (losing the workId correlation
-  // key from tool card to detail page along with it).
+  // dwf run 的完成通知走同一条后台管线，backgroundSource 是第三个取值 "workflow"。
+  // 冷恢复的 originMeta 过滤器此前只放行 bash|subagent，漏掉它会让 workflow 的后台结果轮
+  // 静默退化成一条无标题的 model-only 消息（工具卡→详情页的关联键 workId 一起丢掉）。
   it("cold hydration 恢复 workflow 后台结果的 originMeta", () => {
     const background = syntheticUserMessage("wake-workflow", "workflow result", 2000, {
       metadata: {
@@ -1954,10 +1935,8 @@ describe("transcript→event 合成", () => {
     });
   });
 
-  // The manifest payload (workflowNotification) must survive cold recovery too: the reader
-  // previously read back only the three base fields, so the payload would silently vanish after
-  // cold recovery and the manifest entry would degrade to a bare title row (the subtlest pit of
-  // this feature).
+  // manifest 载荷（workflowNotification）也要过冷恢复：读取器此前只回读三基字段，
+  // 载荷会在冷恢复后静默丢失，manifest 条目退回裸标题行（本特性最隐蔽的坑）。
   it("cold hydration 恢复 workflow originMeta 的 manifest 载荷（terminal）", () => {
     const workflowNotification = {
       kind: "terminal",
@@ -1994,8 +1973,70 @@ describe("transcript→event 合成", () => {
     });
   });
 
-  // Defensive reading: a malformed payload (status outside the enum) drops only the payload and
-  // keeps the three base fields, never crashing the whole cold recovery.
+  // 「主代理闲着、run 还欠着决定」的提醒走同一条读取器，载荷在它自己的键 `workflowBlocked` 上
+  // （docs/dynamic-workflow/transcript-and-notifications.md「The payload」）：冷恢复后仍是那一行，
+  // 而不是退回裸标题行。
+  it("cold hydration 恢复 workflow originMeta 的提醒载荷（workflowBlocked）", () => {
+    const workflowBlocked = { questions: 2, holes: 1, sinceMs: 1_020_000 };
+    const background = syntheticUserMessage("wake-workflow-blocked", "workflow reminder", 2000, {
+      metadata: {
+        originMeta: {
+          backgroundSource: "workflow",
+          title: "review the diff",
+          workId: "dwfrun-blocked",
+          workflowBlocked,
+        },
+        source: "background_task",
+        visibility: "model-only",
+      },
+      source: "background_task",
+      visibility: "model-only",
+    });
+    const { projection } = reduce([
+      background,
+      assistantMessage("a-wake-blocked", "wake-workflow-blocked", "answered", 2001),
+    ]);
+
+    const header = projection.getSnapshot().rows.window.find((row) => row.kind === "turnHeader");
+    expect(header).toMatchObject({
+      origin: "backgroundResult",
+      originMeta: { backgroundSource: "workflow", workId: "dwfrun-blocked", workflowBlocked },
+    });
+    expect(header).not.toHaveProperty("originMeta.workflowNotification");
+  });
+
+  // 提醒曾短暂地作为 `workflowNotification` 的一个 kind 落过盘（闭集多一个成员会让老客户端拒掉整帧）。
+  // 那样的行冷恢复时只丢载荷：绝不把闭集之外的 kind 再发上线。
+  it("cold hydration 不把闭集之外的 workflowNotification kind 发上线", () => {
+    const background = syntheticUserMessage("wake-workflow-legacy", "workflow reminder", 2000, {
+      metadata: {
+        originMeta: {
+          backgroundSource: "workflow",
+          title: "review the diff",
+          workId: "dwfrun-legacy",
+          workflowNotification: { kind: "blocked", questions: 2, holes: 1, sinceMs: 1_020_000 },
+        },
+        source: "background_task",
+        visibility: "model-only",
+      },
+      source: "background_task",
+      visibility: "model-only",
+    });
+    const { projection } = reduce([
+      background,
+      assistantMessage("a-wake-legacy", "wake-workflow-legacy", "answered", 2001),
+    ]);
+
+    const header = projection.getSnapshot().rows.window.find((row) => row.kind === "turnHeader");
+    expect(header).toMatchObject({
+      origin: "backgroundResult",
+      originMeta: { backgroundSource: "workflow", workId: "dwfrun-legacy" },
+    });
+    expect(header).not.toHaveProperty("originMeta.workflowNotification");
+    expect(header).not.toHaveProperty("originMeta.workflowBlocked");
+  });
+
+  // 防御性读取：畸形载荷（status 不在枚举内）只丢载荷、保三基字段，绝不打挂整条冷恢复。
   it("cold hydration 丢弃畸形 manifest 载荷但保留三基字段", () => {
     const background = syntheticUserMessage("wake-workflow-bad", "workflow result", 2000, {
       metadata: {
@@ -2003,7 +2044,7 @@ describe("transcript→event 合成", () => {
           backgroundSource: "workflow",
           title: "review the diff",
           workId: "dwfrun-bad",
-          // status is invalid (not in completed/failed/cancelled) → zod rejects → only the payload is dropped.
+          // status 非法（不在 completed/failed/cancelled 内）→ zod 拒收 → 只丢载荷。
           workflowNotification: { kind: "terminal", status: "running", summary: "x" },
         },
         source: "background_task",
@@ -2022,26 +2063,30 @@ describe("transcript→event 合成", () => {
       origin: "backgroundResult",
       originMeta: { backgroundSource: "workflow", title: "review the diff", workId: "dwfrun-bad" },
     });
-    // The payload is dropped and never enters the projection.
+    // 载荷被丢弃，不带进投影。
     expect(
       (header as { originMeta?: { workflowNotification?: unknown } }).originMeta
         ?.workflowNotification,
     ).toBeUndefined();
   });
 
-  // The user-facing artifacts chips payload
-  // (docs/dynamic-workflow/authoring.md "How the user sees them") goes through the same reader.
-  // The reader is a straight pass to `workflowNotificationMetaSchema.safeParse`, and that zod
-  // schema **strips** undeclared keys — so the symptom of "artifacts not added to the schema"
-  // is not an error, it is chips silently vanishing after cold recovery.
-  // This positive assertion is the pin for that pit.
+  // 用户面产物的 chips 载荷（docs/dynamic-workflow/authoring.md「How the user sees them」）走同一条读取器。
+  // 读取器本身是 `workflowNotificationMetaSchema.safeParse` 的直传，而那份 zod **剥离**未声明
+  // 的键——所以「schema 里没加 artifacts」的症状不是报错，是 chips 在冷恢复后无声消失。
+  // 这条正向断言就是那个坑的钉子。
   it("cold hydration 恢复 manifest 载荷里的 artifacts 与 artifactsTruncated", () => {
     const workflowNotification = {
       kind: "terminal",
       status: "completed",
       summary: "nightly audit",
       artifacts: [
-        { id: "audit", kind: "file", title: "审计报告", version: 2, contentType: "application/pdf" },
+        {
+          id: "audit",
+          kind: "file",
+          title: "审计报告",
+          version: 2,
+          contentType: "application/pdf",
+        },
         { id: "perf", kind: "chart", version: 1 },
       ],
       artifactsTruncated: true,
@@ -2072,9 +2117,8 @@ describe("transcript→event 合成", () => {
     expect(restored?.artifactsTruncated).toBe(true);
   });
 
-  // A malformed artifact entry (unknown kind) makes zod reject the whole payload → only the
-  // payload is dropped, the three base fields are kept. The emitting side must therefore filter
-  // unknown kinds before constructing the payload, not count on the reader to rescue it.
+  // 畸形产物条目（未知 kind）让整份载荷被 zod 拒掉 → 只丢载荷、保三基字段。发射侧因此必须
+  // 在构造前过滤未知 kind，而不是指望读取端救场。
   it("cold hydration 丢弃带未知 artifact kind 的载荷但保留三基字段", () => {
     const background = syntheticUserMessage("wake-workflow-art-bad", "workflow result", 2000, {
       metadata: {
@@ -2102,10 +2146,15 @@ describe("transcript→event 合成", () => {
 
     const header = projection.getSnapshot().rows.window.find((row) => row.kind === "turnHeader");
     expect(header).toMatchObject({
-      originMeta: { backgroundSource: "workflow", title: "nightly audit", workId: "dwfrun-art-bad" },
+      originMeta: {
+        backgroundSource: "workflow",
+        title: "nightly audit",
+        workId: "dwfrun-art-bad",
+      },
     });
     expect(
-      (header as { originMeta?: { workflowNotification?: unknown } }).originMeta?.workflowNotification,
+      (header as { originMeta?: { workflowNotification?: unknown } }).originMeta
+        ?.workflowNotification,
     ).toBeUndefined();
   });
 
@@ -2437,6 +2486,52 @@ describe("transcript→event 合成", () => {
     });
   });
 
+  it("失败 MCP 工具的字符串 modelContent 不丢失冷恢复展示信息", () => {
+    const display = {
+      kind: "mcp_tool",
+      serverName: "Document Service",
+      toolName: "get_page",
+      description: "Fetch page contents",
+    } as const;
+    const messages = [
+      userMessage("u1", "读取页面", 1000),
+      assistantMessageWithParts(
+        "a1",
+        "u1",
+        [
+          {
+            id: "a1-tool" as never,
+            sessionID: "s1" as never,
+            messageID: "a1" as never,
+            type: "tool",
+            callID: "call-mcp",
+            tool: "mcp__Document_Service__get_page",
+            state: {
+              status: "error",
+              input: {},
+              error: "Permission denied",
+              metadata: {
+                schemaVersion: 1,
+                modelContent: "MCP request failed: permission denied",
+                display,
+              },
+              time: { start: 1001, end: 1002 },
+            },
+          },
+        ],
+        1001,
+      ),
+    ];
+    const { projection } = reduce(messages);
+
+    expect(
+      projection.getSnapshot().rows.window.find((row) => row.kind === "toolCall"),
+    ).toMatchObject({
+      status: "error",
+      display,
+    });
+  });
+
   it("历史 pending/running tool 不复活 active work，冷恢复收口为 cancelled", () => {
     const messages = [
       userMessage("u1", "跑个长任务", 1000),
@@ -2638,7 +2733,7 @@ describe("transcript→event 合成", () => {
   });
 });
 
-// ── M5④ attachment rendering: FilePart → synthesized TurnStarted.attachments → row.attachments ──
+// ── M5④ 附件渲染：FilePart → 合成 TurnStarted.attachments → row.attachments ──
 describe("transcript 附件合成（M5④）", () => {
   function userMessageWithFile(id: string, text: string, created: number): MessageWithParts {
     const base = userMessage(id, text, created);
@@ -2675,7 +2770,7 @@ describe("transcript 附件合成（M5④）", () => {
           url: "/workspace/diagram.png",
           metadata: { sizeBytes: 2048 },
         },
-        // data URL: no stable reference → ref absent; filename absent → ordinal placeholder.
+        // data URL：无稳定引用 → ref 缺省；filename 缺省 → 序号占位。
         {
           id: `${id}-f2` as never,
           sessionID: "s1" as never,
@@ -2734,8 +2829,7 @@ describe("transcript 附件合成（M5④）", () => {
         verification: { passed: true, reason: "全部通过" },
       }),
     ];
-    // An empty event log is no longer misjudged as covered for a transcript containing a goal
-    // verify (the conservation criterion used to be fully blind to this).
+    // 空事件日志对含 goal verify 的 transcript 不再被误判为已覆盖（守恒判据曾对此全盲）。
     const turnOnlyEvents = synthesizeEventsFromMessages(
       [userMessage("u1", "修 lint", 1000), assistantMessage("a1", "u1", "修好了", 1001)],
       { sessionId: "s1" },
@@ -2747,13 +2841,12 @@ describe("transcript 附件合成（M5④）", () => {
     const marker = projection
       .getSnapshot()
       .rows.window.find((row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify");
-    expect(marker).toBeDefined();
     expect(marker?.kind === "timelineMarker" ? marker.marker : null).toMatchObject({
       type: "goalVerify",
       iteration: 1,
       outcome: "pass",
     });
-    // The synthesized event stream has no TargetChanged → goal state stays null, but the boundary is no longer dropped as a whole.
+    // 合成事件流没有 TargetChanged → goal 状态保持 null，但 boundary 不再被整条丢弃。
     expect(projection.getSnapshot().goal).toBeNull();
   });
 
@@ -2771,7 +2864,7 @@ describe("transcript 附件合成（M5④）", () => {
       outcome: "failed",
       detail: "cancelled",
     });
-    // Cold recovery must not resurrect active work / stop entries.
+    // 冷恢复不得复活 active work / stop 入口。
     expect(projection.getSnapshot().control.activeWorks).toEqual([]);
   });
 
@@ -2797,7 +2890,7 @@ describe("transcript 附件合成（M5④）", () => {
       toProvider: "p2",
       toModel: "m2",
     });
-    // The marker sits before the second turn's turnHeader (same turnId, appended first).
+    // marker 位于第二轮 turnHeader 之前（同 turnId、先 append）。
     const rows = projection.getSnapshot().rows.window;
     const markerIndex = rows.findIndex(
       (row) => row.kind === "timelineMarker" && row.marker.type === "modelChange",
@@ -2814,9 +2907,8 @@ describe("transcript 附件合成（M5④）", () => {
     const messages = [
       userMessageWithModel("u1", "普通模型执行", 1000, { providerId: "p1", modelId: "m1" }),
       assistantMessage("a1", "u1", "完成", 1001),
-      // The accelerated turn's persisted Selection points at the hidden speed-card built-in
-      // Provider; cold recovery must recognize and skip it by the Family predicate so it never
-      // joins the modelChange baseline.
+      // 加速轮持久化的 Selection 指向隐藏的加速卡内建 Provider，冷恢复必须按 Family 谓词
+      // 识别并跳过，不能参与 modelChange 基线。
       userMessageWithModel("u2", "加速执行", 2000, {
         providerId: "account:bigmodel-highspeed-card",
         modelId: "GLM-5.3",
@@ -2910,9 +3002,8 @@ describe("transcript 附件合成（M5④）", () => {
   });
 
   it("assistant-head-skip：首条真实用户消息之前的 assistant 回复不再整段消失", () => {
-    // The session head is a compact summary (providerContextOnly, not a real user) → the old
-    // implementation skipped all assistant replies after it: the cold-path vector of "the last
-    // turn's reply is gone" after a refresh.
+    // 会话头部是 compact summary（providerContextOnly，非真实用户）→ 其后的 assistant
+    // 回复旧实现整段跳过：刷新后「上一轮回复没了」的冷路径向量。
     const messages = [
       syntheticUserMessage("u_sum", "compact 摘要", 900, {
         semantics: { kind: "compact_summary" } as never,
@@ -2927,7 +3018,7 @@ describe("transcript 附件合成（M5④）", () => {
       .filter((row) => row.kind === "assistantText")
       .map((row) => (row.kind === "assistantText" ? row.text : ""));
     expect(assistantTexts).toEqual(["基于摘要继续的回复", "答"]);
-    // The preface turn is model-only: no visible user bubble, visible user turn count unaffected.
+    // preface 轮是 model-only：不产可见 user 气泡，可见 user 轮数不受影响。
     const userRows = rows.filter((row) => row.kind === "userInput");
     expect(userRows).toHaveLength(1);
     expect(rows.filter((row) => row.kind === "turnHeader")).toHaveLength(2);
@@ -2940,7 +3031,7 @@ describe("transcript 附件合成（M5④）", () => {
       userMessage("u2", "再看看测试", 2000),
       assistantMessage("a2", "u2", "测试也过了", 2001),
     ];
-    // Legacy shape: the same verification has one started and one terminal entry, no timeline part.
+    // legacy 形态：同一 verification 的 started/terminal 各一条 entry，无 timeline part。
     const goalVerificationEntries = [
       {
         payload: {
@@ -2966,7 +3057,7 @@ describe("transcript 附件合成（M5④）", () => {
         timeCreated: 1600,
       },
     ];
-    // The coverage criterion must see the entry source: an empty event log is no longer misjudged as covered.
+    // 覆盖判据必须看见 entry 源：空事件日志不再被误判为已覆盖。
     const turnOnlyEvents = synthesizeEventsFromMessages(messages, { sessionId: "s1" });
     expect(eventsCoverTranscript(turnOnlyEvents, messages, { goalVerificationEntries })).toBe(
       false,
@@ -2983,13 +3074,13 @@ describe("transcript 附件合成（M5④）", () => {
     const markers = rows.filter(
       (row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify",
     );
-    // Lifecycle: the two entries merge into a single marker; the terminal state overrides started.
+    // 生命周期两条 entry 合并为单一 marker，终态覆盖 started。
     expect(markers).toHaveLength(1);
     expect(markers[0]?.kind === "timelineMarker" ? markers[0].marker : null).toMatchObject({
       iteration: 1,
       outcome: "pass",
     });
-    // Anchor placement: the marker belongs to the first turn a1 lives in (turn tail), it does not drift past the second turn.
+    // 锚定落位：marker 归属 a1 所在的第一轮（turn tail），不漂到第二轮之后。
     const markerIndex = rows.findIndex(
       (row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify",
     );
@@ -3011,7 +3102,7 @@ describe("transcript 附件合成（M5④）", () => {
       }),
     ];
     const goalVerificationEntries = [
-      // Same key as the part (target-1_1): deduplicated, no second marker.
+      // 与 part 同 key（target-1_1）：去重，不产生第二个 marker。
       {
         payload: {
           targetId: "target-1",
@@ -3023,7 +3114,7 @@ describe("transcript 附件合成（M5④）", () => {
         },
         timeCreated: 1500,
       },
-      // Orphan entry without an anchor (iteration 2): lands at the end of the known timeline, not silently dropped.
+      // 无 anchor 的孤儿 entry（iteration 2）：落到已知时间线末尾，不静默丢。
       {
         payload: {
           targetId: "target-1",
@@ -3046,7 +3137,6 @@ describe("transcript 附件合成（M5④）", () => {
       .rows.window.filter(
         (row) => row.kind === "timelineMarker" && row.marker.type === "goalVerify",
       );
-    expect(markers).toHaveLength(2);
     expect(markers.map((row) => (row.kind === "timelineMarker" ? row.marker : null))).toEqual([
       expect.objectContaining({ iteration: 1, outcome: "pass" }),
       expect.objectContaining({ iteration: 2, outcome: "notSatisfied" }),
@@ -3074,7 +3164,7 @@ describe("transcript 附件合成（M5④）", () => {
     ];
     const { projection } = reduce(messages);
     const rows = projection.getSnapshot().rows.window;
-    // guide steer inlines: u_steer shares the turn with a1/a2; the queue item gets its own turn.
+    // guide steer 内联：u_steer 与 a1/a2 同轮；queue 项独立轮。
     const visible = rows
       .filter((row) => row.kind === "userInput" || row.kind === "assistantText")
       .map((row) => [
@@ -3090,7 +3180,7 @@ describe("transcript 附件合成（M5④）", () => {
       ["u_q2", "排队回答"],
     ]);
     expect(rows.filter((row) => row.kind === "turnHeader")).toHaveLength(2);
-    // The inline steer row registers a persistent messageId (derived from entityId).
+    // 内联 steer 行登记了持久 messageId（entityId 派生）。
     const steerRow = rows.find((row) => row.kind === "userInput" && row.text === "补充说明");
     expect(projection.getMessageIdForRow(steerRow!.rowId)).toBe("u_steer");
     const guideHeader = rows.find((row) => row.kind === "turnHeader" && row.turnId === "u1");
@@ -3202,9 +3292,9 @@ describe("transcript 附件合成（M5④）", () => {
     ];
     const { projection } = reduce(messages);
     const rows = projection.getSnapshot().rows.window;
-    // The host message itself has no renderable content: it produces no third turnHeader and no empty "was working" shell.
+    // 宿主消息本身无可渲染内容：不产生第三个 turnHeader，也不产生空「已工作」壳。
     expect(rows.filter((row) => row.kind === "turnHeader")).toHaveLength(2);
-    // The marker is still rebuilt from the selection fact (the host's defaultModelSelection placeholder takes no part in selection sources).
+    // marker 仍由选型事实重建（宿主的 defaultModelSelection 占位不参与选型来源）。
     expect(
       rows.filter((row) => row.kind === "timelineMarker" && row.marker.type === "modelChange"),
     ).toHaveLength(1);
@@ -3219,7 +3309,7 @@ describe("transcript 附件合成（M5④）", () => {
         source: "rewind",
         visibility: "model-only",
       }),
-      // Simulating old data: the user message still carries the previous turn's snapshot, but the timeline part has p2/m2 persisted.
+      // 模拟旧数据：user message 仍带上一轮快照，但 timeline part 已持久 p2/m2。
       userMessageWithModel("u2", "换 B", 2000, { providerId: "p1", modelId: "m1" }),
       assistantMessage("a2", "u2", "已切换", 2001),
     ];
@@ -3335,9 +3425,8 @@ function modelChangeHostMessage(id: string, parentId: string, created: number): 
 }
 
 function initialModelHostMessage(id: string, created: number): MessageWithParts {
-  // The first timeline fact has no previous conversation message, so the runtime pins parentID
-  // to itself. Tests must keep this real persistence shape, preventing cold recovery from
-  // passing only under ideal fixtures.
+  // 首条 timeline 事实没有上一条 conversation message，运行时会把 parentID
+  // 固定为自身。测试必须保持这一真实持久化形态，防止冷恢复只在理想夹具下通过。
   const base = assistantMessage(id, id, "", created);
   return {
     ...base,
@@ -3361,14 +3450,11 @@ function initialModelHostMessage(id: string, created: number): MessageWithParts 
   };
 }
 
-// The launch turn for starting a saved workflow directly from the hub
-// (docs/dynamic-workflow/launch.md): cold recovery rebuilds the visible controlOnly launch turn
-// from source "workflow_launch" + metadata.workflowLaunch. The message is synthetic yet
-// semantically a real user action; the shared policy would classify it as hiddenSynthetic, and
-// without a dedicated branch it would be skipped.
-// Assertion: the turnHeader/userInput rows produced by the cold path match the live projection
-// verbatim on the relevant fields (origin/executionKind/text/workflowLaunch), with no assistant
-// rows.
+// 中枢直接启动已保存工作流的启动轮（docs/dynamic-workflow/launch.md）：冷恢复由 source
+// "workflow_launch" + metadata.workflowLaunch 重建可见 controlOnly 启动轮。这条消息是 synthetic
+// 却语义上属用户真实动作，共享 policy 会把它归成 hiddenSynthetic；若无专用分支就会被跳过。
+// 断言：冷路径产出的 turnHeader/userInput 行在相关字段上与活投影逐字相等（origin/executionKind/
+// text/workflowLaunch），且无助手行。
 describe("workflow-direct-launch 启动轮冷恢复", () => {
   const workflowLaunch = {
     runId: "dwfrun-9",
@@ -3380,8 +3466,8 @@ describe("workflow-direct-launch 启动轮冷恢复", () => {
     description: "Deep-dive a topic",
   };
   const launchText = 'Started the saved workflow "deep-research" (global) as run dwfrun-9.';
-  // The GUI "configure" settings turn (docs/dynamic-workflow/launch.md "The settings turn"):
-  // the same cold path, metadata without scope / path, plus an amend block.
+  // GUI「配置」的设置轮（docs/dynamic-workflow/launch.md「The settings turn」）：同一条冷路径，元数据
+  // 没有 scope / path，多一块 amend。
   const settingsLaunch = {
     runId: "dwfrun-10",
     toolCallId: "settings-abc",
@@ -3409,7 +3495,7 @@ describe("workflow-direct-launch 启动轮冷恢复", () => {
     });
   }
 
-  // Relevant-field projection: stable across live/cold (excluding identity-difference fields such as rowId / turnId / createdAt).
+  // 相关字段投影：跨 live/cold 稳定（不含 rowId / turnId / createdAt 这些身份差异字段）。
   function relevantRow(row: Record<string, unknown>): Record<string, unknown> {
     return {
       kind: row.kind,
@@ -3489,7 +3575,7 @@ describe("workflow-direct-launch 启动轮冷恢复", () => {
         workflowLaunch,
       },
     ]);
-    // Cold and hot share the same shape: relevant fields equal verbatim (excluding identity fields such as rowId/turnId).
+    // 冷热同形：相关字段逐字相等（rowId/turnId 等身份字段除外）。
     expect(coldRows).toEqual(liveRows());
   });
 
@@ -3518,9 +3604,8 @@ describe("workflow-direct-launch 启动轮冷恢复", () => {
   });
 });
 
-// docs/dynamic-workflow/transcript-and-notifications.md: the cold path reads the boundary back
-// from user message metadata, landing on the same TurnStarted field as the hot path;
-// non-non-negative integers are treated as absent.
+// docs/dynamic-workflow/transcript-and-notifications.md：冷路径从用户消息 metadata 读回边界，
+// 与热路径落在同一个 TurnStarted 字段上；非非负整数按缺席处理。
 describe("epilogueStart 冷恢复", () => {
   function turnStartedOf(events: SessionEvent[], messageId: string) {
     return events.find(

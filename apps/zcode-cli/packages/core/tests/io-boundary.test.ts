@@ -59,8 +59,7 @@ describe("core I/O boundaries", () => {
     }
   });
 
-  // TEMPORARY (remove when slice 3 lands): bootstrap v4-bridge.ts and child-session-facts.ts still use node fetch/https until bootstrap is synced.
-  it.skip("keeps in-process HTTP egress behind adapter network boundaries", async () => {
+  it("keeps in-process HTTP egress behind adapter network boundaries", async () => {
     const packageSourceRoots = [
       "packages/adapters/src",
       "packages/bootstrap/src",

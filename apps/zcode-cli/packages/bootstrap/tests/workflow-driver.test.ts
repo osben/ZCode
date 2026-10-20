@@ -1,11 +1,9 @@
 /**
- * Deterministic integration tests (phase 1.5 step 7, the CI safety layer): a real AgentRuntime
- * driver + a scripted model, exercising the dynamic-workflow engine ↔ real runtime submit bridge.
- * See docs/execution-engine.md "The driver (Boundary B)" and "Typed asks and `submit_result`".
+ * 确定性集成测试（phase 1.5 步骤 7，CI 安全层）：真实 AgentRuntime driver + 脚本化模型，跑通
+ * dynamic-workflow 引擎↔真实 runtime 的 submit 桥接。见 docs/execution-engine.md「The driver (Boundary B)」「Typed asks and `submit_result`」。
  *
- * This file first establishes the minimal accept path, verifying the three-value → two-value
- * verdict mapping and submit → turn-stop; the remaining scenarios (same-turn repair, nudge,
- * untyped, world-read) are laid out in the later describes.
+ * 本文件先立最小的 accept 路径，验证三值→二值裁决映射与 submit→turn-stop；其余场景（同 turn repair、
+ * nudge、untyped、world-read）在后续 describe 里铺开。
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -60,15 +58,15 @@ describe("workflow driver — accept path", () => {
     const { settlement, journal, events, modelCalls } = await runDriverScript(script, {
       caps: { maxConcurrency: 16 },
       actorScripts: {
-        // actor#1@1's persistent runtime: the first model request already submits a valid result.
+        // actor#1@1 的持久 runtime：第一次模型请求即提交合法结果。
         "actor#1@1": [{ kind: "submit", result: artifact }],
       },
     });
 
-    // Settlement: the artifact the script returned surfaces as-is.
+    // 结算：脚本 return 的 artifact 原样冒出。
     expect(settlement).toEqual({ status: "completed", artifact });
 
-    // journal: the ask node is completed, with actorSeq / inputHash / result / actor ownership.
+    // journal：ask 节点 completed，带 actorSeq / inputHash / result / actor 归属。
     const node = journal.getNode(RUN, "ask#1", 1);
     expect(node?.status).toBe("completed");
     expect(node?.result).toEqual(artifact);
@@ -76,23 +74,20 @@ describe("workflow driver — accept path", () => {
     expect(node?.inputHash).toBe(inputHash("Summarize the repo"));
     expect(node?.actorSiteId).toBe("actor#1");
 
-    // stats come from the real turn's usage. On the accept path stats arrive later than settle
-    // (the real runtime only learns usage when the turn resolves, i.e. after submit), and the
-    // engine's post-settle backfill writes it onto the already-settled journal node.
+    // stats 来自真实 turn 的 usage。accept 路径下 stats 晚于 settle 到达（真实 runtime 只在 turn
+    // resolve、即 submit 之后才知道用量），引擎的 post-settle 回填把它写回已结算的 journal 节点。
     expect(node?.stats?.tokens ?? 0).toBeGreaterThan(0);
     expect(node?.stats?.turns).toBeGreaterThanOrEqual(1);
 
-    // Run-level usage is accumulated too (askStats unconditionally adds spentTokens), as extra
-    // coverage.
+    // run 级用量也被累计（askStats 无条件累加 spentTokens），作为额外覆盖。
     const usageEvents = events.filter((e) => e.type === "usage-updated");
     const lastUsage = usageEvents.at(-1);
     expect(lastUsage?.type === "usage-updated" && lastUsage.spentTokens).toBeGreaterThan(0);
 
-    // Done with a single model request (no repair, no nudge).
+    // 单次模型请求即完成（无 repair、无 nudge）。
     expect(modelCalls["actor#1@1"]?.calls).toBe(1);
 
-    // Event stream: run-started → actor-created → node-dispatched → node-settled(ok) →
-    // run-settled(completed).
+    // 事件流：run-started → actor-created → node-dispatched → node-settled(ok) → run-settled(completed)。
     const types = events.map((e) => e.type);
     expect(types[0]).toBe("run-started");
     expect(types).toContain("actor-created");
@@ -115,9 +110,8 @@ describe("workflow driver — in-session repair (reject)", () => {
     const valid = { title: "Repo", points: ["x"] };
     const { settlement, journal, events, modelCalls } = await runDriverScript(TYPED_ASK_SCRIPT, {
       actorScripts: {
-        // Within the same turn: submits invalid first (title wrong type, points missing) → the
-        // engine rejects → error tool_result → the model retries in-session → submits valid →
-        // accept.
+        // 同一 turn 内：先提交非法（title 类型错、points 缺失）→ 引擎 reject → error tool_result
+        // → 模型在会话内重试 → 提交合法 → accept。
         "actor#1@1": [
           { kind: "submit", result: { title: 42 } },
           { kind: "submit", result: valid },
@@ -126,28 +120,27 @@ describe("workflow driver — in-session repair (reject)", () => {
     });
 
     expect(settlement).toEqual({ status: "completed", artifact: valid });
-    // Repair is a real in-session tool_result retry: 2 model requests happened within one turn.
+    // repair 是真实的会话内 tool_result 重试：同一 turn 里发生了 2 次模型请求。
     expect(modelCalls["actor#1@1"]?.calls).toBe(2);
-    // The engine emitted one node-repairing (carrying the violation), finally settled(ok).
+    // 引擎发过一次 node-repairing（携违规），最终 settled(ok)。
     const repairing = events.filter((e) => e.type === "node-repairing");
     expect(repairing.length).toBe(1);
     expect(journal.getNode(RUN, "ask#1", 1)?.status).toBe("completed");
   });
 
   it("fails the ask with ValidationFailed after the repair attempts are exhausted", async () => {
-    // The repair attempt cap is 3: after 4 invalid submits are exhausted the engine does
-    // cancelAsk + settleFailed(ValidationFailed).
+    // repair 次数上限 3：4 次非法提交耗尽后引擎 cancelAsk + settleFailed(ValidationFailed)。
     const invalid = { kind: "submit" as const, result: { title: 1 } };
     const { settlement, journal, events } = await runDriverScript(TYPED_ASK_SCRIPT, {
       actorScripts: { "actor#1@1": [invalid, invalid, invalid, invalid] },
     });
 
-    // An ask rejection bubbles across Boundary A as a script throw → the run fails.
+    // ask 拒绝跨 Boundary A 冒泡为脚本抛错 → run 失败。
     expect(settlement.status).toBe("errored");
     const node = journal.getNode(RUN, "ask#1", 1);
     expect(node?.status).toBe("failed");
     expect(node?.error?.code).toBe("ValidationFailed");
-    // Exhausted after 3 repair attempts.
+    // 3 次 repair 尝试后耗尽。
     expect(events.filter((e) => e.type === "node-repairing").length).toBe(3);
   });
 });
@@ -157,8 +150,7 @@ describe("workflow driver — nudge", () => {
     const valid = { title: "Repo", points: ["x"] };
     const { settlement, events, modelCalls } = await runDriverScript(TYPED_ASK_SCRIPT, {
       actorScripts: {
-        // The first turn only sends text (no submit) → the engine nudges → a brand-new turn
-        // submits valid → accept.
+        // 第一 turn 只发文本（不提交）→ 引擎 nudge → 全新 turn 提交合法 → accept。
         "actor#1@1": [
           { kind: "text", text: "Here is the summary." },
           { kind: "submit", result: valid },
@@ -167,14 +159,13 @@ describe("workflow driver — nudge", () => {
     });
 
     expect(settlement).toEqual({ status: "completed", artifact: valid });
-    // A nudge is one fresh executeTurn on the same persistent runtime: 2 model requests in total.
+    // nudge 是同一持久 runtime 上的一次全新 executeTurn：共 2 次模型请求。
     expect(modelCalls["actor#1@1"]?.calls).toBe(2);
     expect(events.filter((e) => e.type === "node-nudged").length).toBe(1);
   });
 
   it("fails with ResultNotSubmitted when nudge is exhausted", async () => {
-    // The nudge budget is 1: both turns go without a submit → cancelAsk +
-    // settleFailed(ResultNotSubmitted).
+    // nudge 预算 1：两次 turn 都不提交 → cancelAsk + settleFailed(ResultNotSubmitted)。
     const { settlement, journal, events } = await runDriverScript(TYPED_ASK_SCRIPT, {
       actorScripts: {
         "actor#1@1": [
@@ -209,9 +200,8 @@ describe("workflow driver — untyped ask", () => {
   });
 
   it("guards submit_result called on an untyped ask without hanging", async () => {
-    // If the model mistakenly calls submit_result on an untyped ask: the driver intercepts locally
-    // and returns a synthesized rejection (not reported to the engine, no hang), the model falls
-    // back to plain text, and the untyped ask settles from the final text.
+    // untyped ask 若被模型误调 submit_result：driver 本地拦截并回合成 rejection（不上报引擎、不悬挂），
+    // 模型改用纯文本，untyped ask 据 final text 结算。
     const script = [
       'const worker = agent("worker");',
       'const answer = await worker.ask("Say hello.");',
@@ -228,42 +218,38 @@ describe("workflow driver — untyped ask", () => {
     });
 
     expect(settlement).toEqual({ status: "completed", artifact: "hello there" });
-    // The interception did not hang: within the first turn the submit was rejected → the model
-    // answered with text → 2 model requests in total.
+    // 拦截未悬挂：第一 turn 内 submit 被拒 → 模型再答文本 → 共 2 次模型请求。
     expect(modelCalls["actor#1@1"]?.calls).toBe(2);
   });
 });
 
 describe("workflow driver — lenient stringified submit", () => {
   it("accepts a submit whose result is a stringified JSON object and journals the parsed object", async () => {
-    // Found in production: real models (GLM-5.3 via an Anthropic-compatible endpoint) often pass
-    // submit_result's result as a JSON string rather than an object. The engine parses leniently,
-    // schema-aware (scheduler.normalizeSubmit); end to end it should accept and journal the parsed
-    // object.
+    // 实盘发现：真实模型（GLM-5.3 经 Anthropic 兼容端点）常把 submit_result 的 result 传成 JSON
+    // 字符串而非对象。引擎 schema-aware 地宽松解析（scheduler.normalizeSubmit），端到端应 accept
+    // 并把解析后的对象落 journal。
     const artifact = { title: "The Repo", points: ["a", "b"] };
     const { settlement, journal, modelCalls } = await runDriverScript(TYPED_ASK_SCRIPT, {
       actorScripts: {
-        // result is a STRING (the object's JSON encoding), not the object itself.
+        // result 是 STRING（对象的 JSON 编码），而非对象本身。
         "actor#1@1": [{ kind: "submit", result: JSON.stringify(artifact) }],
       },
     });
 
     expect(settlement).toEqual({ status: "completed", artifact });
-    // Accepted on the first model request (no repair).
+    // 单次模型请求即被 accept（无 repair）。
     expect(modelCalls["actor#1@1"]?.calls).toBe(1);
     const node = journal.getNode(RUN, "ask#1", 1);
     expect(node?.status).toBe("completed");
-    // What is journaled is the parsed object, not the raw string.
+    // 落库的是解析后的对象，而非原始字符串。
     expect(node?.result).toEqual(artifact);
-    expect(typeof node?.result).toBe("object");
   });
 });
 
 describe("workflow driver — actor tool surface", () => {
-  // The actor tool surface used to be ignored wholesale by the runtime factory — production
-  // transcripts showed judges receiving AskUserQuestion / CreateWorkflow too. What is asserted
-  // here is the tool names **actually** attached to the model request, not a config field, since
-  // core's filtering and the embedded-search branch sit in between.
+  // actor 的工具面此前被 runtime 工厂整个忽略——实盘 transcript 里裁判也拿到了
+  // AskUserQuestion / CreateWorkflow。这里断言的是模型请求里**实际**带上的工具名，
+  // 而不是配置字段，因为中间还叠着 core 的过滤与 embedded-search 分支。
   const PROFILE_SCRIPT = (persona: string) =>
     [
       "interface Verdict { approved: boolean; }",
@@ -272,30 +258,26 @@ describe("workflow driver — actor tool surface", () => {
       "return v;",
     ].join("\n");
 
-  /** Runs a single-ask typed script and returns the tool-name list of that actor's first model request. */
+  /** 跑一次单 ask 的 typed 脚本并取回该 actor 第一次模型请求的工具名列表。 */
   async function toolNamesForPersona(persona: string): Promise<string[]> {
     const { settlement, modelCalls } = await runDriverScript(PROFILE_SCRIPT(persona), {
       actorScripts: { "actor#1@1": [{ kind: "submit", result: { approved: true } }] },
     });
-    // First confirm the ask actually ran through: if the tool surface filtered out submit_result,
-    // the run would fail rather than yield an empty list.
+    // 先确认 ask 真的跑通了：工具面若把 submit_result 滤掉，run 会失败而不是给出空列表。
     expect(settlement).toEqual({ status: "completed", artifact: { approved: true } });
     const names = modelCalls["actor#1@1"]?.toolNames[0];
-    expect(names).toBeDefined();
     return names ?? [];
   }
 
   it("keeps the full working set for every actor, minus plan-mode and meta tools", async () => {
     const names = await toolNamesForPersona('agent("worker", "You do work.")');
-    // Every actor works as usual (no tool tiers since 2026-09-12,
-    // docs/dynamic-workflow/authoring.md).
-    // AskUserQuestion reaches the user via the parent session
-    // (docs/dynamic-workflow/launch.md "Permissions inside a run").
+    // 每个 actor 都照常干活（2026-09-12 起没有工具档位，docs/dynamic-workflow/authoring.md）。
+    // AskUserQuestion 经父会话送达用户（docs/dynamic-workflow/launch.md「Permissions inside a run」）。
     for (const expected of ["Bash", "Edit", "Write", "AskUserQuestion", SUBMIT_RESULT_TOOL_NAME]) {
       expect(names).toContain(expected);
     }
-    // Plan approval is not for subagents, CreateWorkflow would recursively submit a workflow, and
-    // ReadSessionContext crosses the boundary into the parent session — all removed.
+    // plan 审批不属于子代理，CreateWorkflow 会递归提交工作流，ReadSessionContext 越界读父会话——
+    // 全部减掉。
     for (const forbidden of [
       "EnterPlanMode",
       "ExitPlanMode",
@@ -320,7 +302,7 @@ describe("workflow driver — resume by replay", () => {
     const files = { glob: ["src/a.ts", "src/b.ts"] };
     const artifact = { count: 2, approved: true };
 
-    // First run: one live ask dispatch, journaled.
+    // 首次运行：live 派发一次 ask，落 journal。
     const first = await runDriverScript(script, {
       journal,
       files,
@@ -329,19 +311,17 @@ describe("workflow driver — resume by replay", () => {
     expect(first.settlement).toEqual({ status: "completed", artifact });
     expect(first.modelCalls["actor#1@1"]?.calls).toBe(1);
 
-    // Re-running the same script against the same journal: every node hits the journal
-    // short-circuit, the driver creates no actor sessions (the runtimeFactory is never called →
-    // modelCalls is empty) and does not startAsk either.
+    // 复用同一 journal 重跑同一脚本：所有节点命中 journal 短路，driver 不创建任何 actor 会话
+    // （runtimeFactory 从不被调用 → modelCalls 为空），也不 startAsk。
     const resumed = await runDriverScript(script, {
       journal,
       files,
-      // If resume wrongly triggered a live dispatch, the script would hang or fail for lack of an
-      // answer — the empty script is the "zero dispatches" assertion.
+      // 若 resume 误触发 live 派发，脚本会因缺应答而挂起/失败——空脚本即断言「零派发」。
       actorScripts: {},
     });
     expect(resumed.settlement).toEqual({ status: "completed", artifact });
     expect(Object.keys(resumed.modelCalls)).toHaveLength(0);
-    // Boundary C: the resumed ask's settlement event carries the cached flag.
+    // Boundary C：resume 的 ask 结算事件带 cached 标志。
     const cachedSettles = resumed.events.filter(
       (e) => e.type === "node-settled" && e.cached === true,
     );
@@ -369,7 +349,7 @@ describe("workflow driver — world reads", () => {
       status: "completed",
       artifact: { count: 2, first: "src/a.ts", approved: true },
     });
-    // world-reads land in the journal, with results.
+    // world-read 落 journal，带结果。
     const glob = journal.getNode(RUN, "world-read#1", 1);
     expect(glob?.kind).toBe("world-read");
     expect(glob?.result).toEqual(["src/a.ts", "src/b.ts"]);
@@ -380,14 +360,11 @@ describe("workflow driver — world reads", () => {
 
 describe("workflow driver — actor session ids", () => {
   /**
-   * The two properties of session ids (the spec's Invariants: no collisions, charset-safe with no
-   * `#`/`@`/`/`).
+   * 会话 id 的两条性质（spec 的 Invariants：无碰撞、字符集安全无 `#`/`@`/`/`）。
    *
-   * sanitize is two steps and the order is the contract: first escape literal `_` into `__`, then
-   * map every character outside `[A-Za-z0-9.-]` to a single `_`. Without the escaping step, `a_b`
-   * and `a#b` would collapse into the same string — not hypothetical: it would rest "no collisions"
-   * on the premise, owned by the analyzer rather than this file, that the site-id vocabulary
-   * contains no underscores.
+   * sanitize 是两步且顺序即契约：先把字面 `_` 转义成 `__`，再把 `[A-Za-z0-9.-]` 之外的字符
+   * 映射成单个 `_`。没有转义那一步，`a_b` 与 `a#b` 会折叠成同一个串——这不是假想：它把
+   * 「不碰撞」建立在「站点 id 词汇表里没有下划线」这个由分析器（而非本文件）拥有的前提上。
    */
   async function sessionIdsFor(runId: string): Promise<string[]> {
     const ids: string[] = [];
@@ -396,8 +373,7 @@ describe("workflow driver — actor session ids", () => {
       runId,
       runtimeFactory: ({ sessionId }) => {
         ids.push(sessionId);
-        // Minimal stub: the driver only needs an object that can executeTurn; this case only looks
-        // at the session id.
+        // 最小 stub：driver 只需要一个能 executeTurn 的对象；本用例只看会话 id。
         return {
           executeTurn: async () => ({ response: "ok", events: [], usage: undefined }),
         } as never;
@@ -411,7 +387,7 @@ describe("workflow driver — actor session ids", () => {
 
     expect(ids).toHaveLength(1);
     expect(ids[0]).toContain("dwfrun-plain");
-    // refToString(actor) is `actor#1@1` — both characters must already have been folded.
+    // refToString(actor) 是 `actor#1@1`——两个字符都必须已被折叠。
     expect(ids[0]).not.toMatch(/[#@/]/);
   });
 
@@ -419,20 +395,15 @@ describe("workflow driver — actor session ids", () => {
     const [underscore] = await sessionIdsFor("a_b");
     const [hash] = await sessionIdsFor("a#b");
 
-    expect(underscore).toBeDefined();
-    expect(hash).toBeDefined();
-    // Under a naive whitelist scheme these two would be equal; escaping first keeps them
-    // distinguishable.
+    // 朴素白名单方案下这两个会相等；转义先行使它们保持可区分。
     expect(underscore).not.toBe(hash);
     expect(underscore).toContain("a__b");
     expect(hash).toContain("a_b");
   });
 
-  // Adversarial pairs: every same-shape risk between the special characters of the site-id
-  // vocabulary (`#`/`@`) and a literal underscore.
-  // A naive whitelist (`_` both whitelisted and used as the replacement character) would collapse
-  // each pair into the same string — these three pairs are that scheme's counterexamples, and the
-  // entire reason the escape-first step exists.
+  // 对抗性对子：站点 id 词汇表里的特殊字符（`#`/`@`）与字面下划线的每一种同形风险。
+  // 朴素白名单（`_` 既在白名单里又当替换字符）会把每一对都折叠成同一个串——
+  // 这三对就是那个方案的反例，也是转义先行这一步存在的全部理由。
   it("对抗性对子逐对不碰撞（actor#1 vs actor_1 等）", async () => {
     const pairs: readonly [string, string][] = [
       ["actor#1", "actor_1"],
@@ -444,7 +415,7 @@ describe("workflow driver — actor session ids", () => {
       const [leftId] = await sessionIdsFor(left);
       const [rightId] = await sessionIdsFor(right);
       expect(leftId, `${left} vs ${right}`).not.toBe(rightId);
-      // And both are charset-safe (session ids end up in URLs / file paths / logs).
+      // 且两者都字符集安全（会话 id 会进 URL / 文件路径 / 日志）。
       expect(leftId).not.toMatch(/[#@/]/);
       expect(rightId).not.toMatch(/[#@/]/);
     }
@@ -476,8 +447,7 @@ describe("workflow driver — resume 会话身份互证", () => {
       runId: RUN,
       runtimeFactory: () => {
         onFactory?.();
-        // Minimal stub: after the cross-check passes, the driver only needs a holdable runtime
-        // object.
+        // 最小 stub：互证通过后 driver 只需要一个可持有的 runtime 对象。
         return {
           executeTurn: async () => ({ response: "ok", events: [], usage: undefined }),
         } as never;
@@ -487,11 +457,9 @@ describe("workflow driver — resume 会话身份互证", () => {
   }
 
   it("journal 记录的 sessionId 与铸造结果不一致时大声失败，且不构造 runtime", async () => {
-    // The journal's session id is a record; the minting function is the authority (the spec's
-    // Invariants). A mismatch means the minting rules drifted (a rename, or a second
-    // implementation); the consequences are rehydration reading the wrong session and the detail
-    // page opening a session that does not exist — far from the cause, so it must fail loudly at
-    // the first step of re-attachment, with a structured mismatch (same shape as a hash mismatch).
+    // journal 的会话 id 是记录、铸造函数才是权威（spec 的 Invariants）。两者不一致意味着
+    // 铸造规则漂移（改名/第二处实现），后果是重水化读错会话、详情页打开不存在的会话——
+    // 离成因很远，所以必须在重挂的第一步大声失败，携结构化 mismatch（与哈希不匹配同形）。
     const journal = new InMemoryJournalStore();
     journal.createRun({
       runId: RUN,
@@ -560,20 +528,17 @@ describe("workflow driver — resume 会话身份互证", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// The driver half of amend-resume: ask boundary bookkeeping + transcript truncation.
-// See the "Amend-resume" and "转录截断（driver）" (transcript truncation, driver) rows of
-// apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md.
+// amend-resume 的 driver 半身：ask 边界记账 + 转录截断
+// 见 apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Amend-resume」「转录截断（driver）」两行。
 //
-// These two families **must run against the real database**: what is under test is exactly
-// "whether the counted and the copied are the same set of messages", and messages only actually
-// persist when a real session store is attached. A stand-in that just returns a fixed number would
-// swap the semantics under test for a replica's.
+// 这两族**必须走真库**：被测的正是「数的与抄的是不是同一批消息」，而消息只有接上真实
+// session store 才会真的落库。用一个只会返回固定数字的替身，等于把被测语义换成复制品。
 // ————————————————————————————————————————————————————————————————
 
-/** A throwaway sqlite session store (the real persistence layer), deleted after use. */
+/** 一次性 sqlite session store（真实持久层），用完即删。 */
 async function withSessionStore(run: (store: SessionStorePort) => Promise<void>): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "zcode-dwf-transcript-"));
-  const store = createSqliteSessionStore({ dbPath: join(root, "session.sqlite") });
+  const store = await createSqliteSessionStore({ dbPath: join(root, "session.sqlite") });
   try {
     await run(store as unknown as SessionStorePort);
   } finally {
@@ -582,7 +547,7 @@ async function withSessionStore(run: (store: SessionStorePort) => Promise<void>)
   }
 }
 
-/** Polls until a condition holds (the fire-and-forget startAsk has no awaitable handle). */
+/** 轮询等一个条件成立（fire-and-forget 的 startAsk 没有可 await 的句柄）。 */
 async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -619,9 +584,8 @@ describe("workflow driver — ask 边界记账", () => {
 
       const first = journal.getNode(runId, "ask#1", 1);
       const second = journal.getNode(runId, "ask#2", 1);
-      // The boundary is a length counted by the **same** storage access surface: the driver counts,
-      // the seed copy, and core's rehydration all read `sessionStore.messages`; the three must
-      // agree, otherwise the same N has different lengths in two readers' eyes.
+      // 边界是**同一个存取面**数出来的长度：driver 计数、种子复制与 core 的重水化都读
+      // `sessionStore.messages`，三者口径必须一致，否则同一个 N 在两个读者眼里长度不同。
       const persisted = await store.messages({
         sessionID: mintActorSessionId(runId, ACTOR_ONE),
       });
@@ -629,8 +593,7 @@ describe("workflow driver — ask 边界记账", () => {
       expect(first?.messageBoundary).toBeGreaterThan(0);
       expect(second?.messageBoundary).toBeGreaterThan(first?.messageBoundary ?? 0);
 
-      // Read-modify-write (same family as the stats backfill): not one field the engine wrote may
-      // be dropped.
+      // 读改写（与 stats 回填同族）：引擎写下的字段一个不许掉。
       expect(first).toMatchObject({
         status: "completed",
         actorSeq: 0,
@@ -669,7 +632,7 @@ describe("workflow driver — ask 边界记账", () => {
       const aFirst = journal.getNode(runId, "ask#1", 1)?.messageBoundary;
       const bOnly = journal.getNode(runId, "ask#2", 1)?.messageBoundary;
       const aSecond = journal.getNode(runId, "ask#3", 1)?.messageBoundary;
-      // b asked only once, so its boundary must stop at its own round — not grow along with a's.
+      // b 只问过一次，所以它的边界必须停在自己那一轮上——而不是跟着 a 一起长。
       expect(bOnly).toBe(aFirst);
       expect(aSecond).toBe((aFirst ?? 0) * 2);
       const bPersisted = await store.messages({
@@ -690,8 +653,7 @@ describe("workflow driver — ask 边界记账", () => {
         ],
       },
     });
-    // Absent means absent: no 0 written, no guessed value either. The cost is that this run cannot
-    // serve as a revision predecessor (the service-side gate blocks it).
+    // 缺席即缺席：不写 0，也不写猜的值。代价是这个 run 不能作修订前驱（service 侧的门会挡）。
     expect(journal.getNode(runId, "ask#1", 1)?.messageBoundary).toBeUndefined();
     expect(journal.getNode(runId, "ask#2", 1)?.status).toBe("completed");
   }, 30_000);
@@ -712,7 +674,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
     runStalled: () => {},
   };
 
-  /** Runs one source run, leaving a real transcript plus its boundary bookkeeping. */
+  /** 跑一次源 run，留下一个真实转录 + 它的边界记账。 */
   async function recordSourceRun(
     store: SessionStorePort,
     runId: string,
@@ -737,7 +699,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
     };
   }
 
-  /** A write-counting transcript face (the observation point of the idempotency case: skipping the copy = zero writes happened). */
+  /** 数写入次数的转录面（幂等用例的观察点：跳过复制 = 一次写都没发生）。 */
   function countingTranscriptStore(store: SessionStorePort): {
     store: ActorTranscriptStore;
     writes: { messages: number; parts: number };
@@ -759,7 +721,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
     };
   }
 
-  /** The revision run's driver: a real runtime (on the real database) + recording the seeds the factory received and the model requests. */
+  /** 修订 run 的 driver：真 runtime（接真库）+ 记下工厂收到的种子与模型请求。 */
   function amendDriver(input: {
     journal: InMemoryJournalStore;
     runId: string;
@@ -808,8 +770,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
             sessionStore: input.store,
           },
         );
-        // As in production (persistActorSession): the session row is persisted first so the copy
-        // has an FK to lean on.
+        // 照生产（persistActorSession）：会话行先落库，复制才有 FK 可依。
         await runtime.ensureSessionPersistedForExternalActivity(
           `workflow actor ${refToString(actor)}`,
         );
@@ -841,7 +802,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
         store,
       });
 
-      // The first ask hits the cache, the second diverges: seed = the first ask's boundary.
+      // 第一条 ask 命中缓存、第二条分歧：种子 = 第一条 ask 的边界。
       const ref = await driver.createActorSession(
         ACTOR_ONE,
         { name: "worker" },
@@ -852,8 +813,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
         },
       );
 
-      // The new session id is minted as usual (the mint rule is unchanged); it is not the source
-      // session.
+      // 新会话 id 照常铸（mint 规则不变），不是源会话。
       expect(ref.id).toBe(mintActorSessionId(amendRunId, ACTOR_ONE));
       expect(ref.id).not.toBe(source.sessionId);
 
@@ -862,20 +822,17 @@ describe("workflow driver — 转录截断（会话种子）", () => {
       expect(copied.map((m) => m.info.role)).toEqual(
         sourceMessages.slice(0, source.boundaries[0]!).map((m) => m.info.role),
       );
-      // Each one is a **copy**: the id must be new, otherwise the upsert would move the
-      // predecessor's row into the new session.
+      // 每条都是**副本**：id 必须是新的，否则 upsert 会把前驱那一行搬进新会话。
       for (const [index, message] of copied.entries()) {
         expect(message.info.id).not.toBe(sourceMessages[index]!.info.id);
         expect(message.info.sessionID).toBe(ref.id);
         for (const part of message.parts) expect(part.sessionID).toBe(ref.id);
       }
-      // The predecessor is read-only: the source session still holds exactly the original four
-      // messages, no more no less, ids unchanged.
+      // 前驱只读：源会话还是原来那四条，一条不多不少、id 不变。
       const sourceAfter = await store.messages({ sessionID: source.sessionId });
       expect(sourceAfter.map((m) => m.info.id)).toEqual(sourceMessages.map((m) => m.info.id));
 
-      // The seed is handed to the runtime factory as-is — the seam where pin inheritance (the
-      // launch side computes pinnedModel from it) hooks in.
+      // 种子原样交到 runtime 工厂手上——pin 承袭（launch 侧据它算 pinnedModel）的接缝。
       expect(seeds).toEqual([
         {
           sourceSessionId: source.sessionId,
@@ -905,8 +862,7 @@ describe("workflow driver — 转录截断（会话种子）", () => {
         },
       );
 
-      // startAsk is fire-and-forget (the Boundary B contract), so the observation surface is the
-      // model request itself.
+      // startAsk 是 fire-and-forget（Boundary B 契约），所以观察面是模型请求本身。
       driver.startAsk(
         ref,
         { siteId: "ask#1", ordinal: 1 },
@@ -918,11 +874,10 @@ describe("workflow driver — 转录截断（会话种子）", () => {
       await waitFor(() => requests.length > 0);
 
       const conversation = JSON.stringify(requests[0]?.messages ?? []);
-      // The source transcript's first question must be in the context — the whole point of full
-      // fidelity truncation.
+      // 源转录的第一句问话必须在上下文里——全保真截断的全部意义。
       expect(conversation).toContain("first question");
       expect(conversation).toContain("continue from where we left off");
-      // The round after the boundary is not there (truncated, not a full copy).
+      // 边界之后的那一轮不在（截断，不是全量复制）。
       expect(conversation).not.toContain("second question");
     });
   }, 40_000);
@@ -942,10 +897,8 @@ describe("workflow driver — 转录截断（会话种子）", () => {
       const afterFirst = await store.messages({ sessionID: ref.id as SessionId });
       expect(afterFirst).toHaveLength(seed.messageCount);
 
-      // Re-attachment: the session id is purely determined by (runId, actorRef), so the second mint
-      // produces the same one, already holding the previous life's "copied + newly produced"
-      // content. Copying again would double the context — so this time not one byte may be
-      // written.
+      // 重挂：会话 id 由 (runId, actorRef) 纯确定，所以第二次铸出的是同一个，且已装着上一世
+      // 「复制来的 + 新产的」内容。再抄一遍就是把上文翻倍——所以这一次必须一个字都不写。
       journal.putActor({ ...ACTOR_ONE, runId: amendRunId, sessionId: ref.id });
       const counting = countingTranscriptStore(store);
       const second = amendDriver({
@@ -1019,11 +972,10 @@ describe("workflow driver — 转录截断（会话种子）", () => {
   }, 40_000);
 });
 
-// ── The ask quality epilogue (docs/dynamic-workflow/authoring.md "Each ask") ──
+// ── ask 质量尾注（docs/dynamic-workflow/authoring.md「Each ask」）──
 //
-// Every ask's instructions are followed by a content standard; when typed, the schema epilogue
-// follows it. Both are appended after the scheduler computes inputHash, so the cache identity is
-// unchanged — this also pins that the journaled inputHash matches the original instructions.
+// 每个 ask 的指令后面都跟一段内容标准；typed 时 schema 尾注紧随其后。两段都在 scheduler 算完
+// inputHash 之后追加，所以缓存身份不变——这里顺带钉住 journal 里的 inputHash 与原始指令一致。
 describe("workflow driver — quality epilogue on every ask", () => {
   const STANDARD = "Standard for this result:";
 
@@ -1040,11 +992,10 @@ describe("workflow driver — quality epilogue on every ask", () => {
     expect(instructions).toBeLessThan(standard);
     expect(standard).toBeLessThan(schema);
     expect(prompt).toContain("A check counts as passed only if you ran it during this ask.");
-    // 2026-09-08 follow-up: the default tier additionally requires running the check at the scale
-    // the ask names; a stand-in does not count.
+    // 2026-09-08 追记：default 档还要求按 ask 点名的尺度跑检查，替身不算。
     expect(prompt).toContain("Run the check the ask names, at the scale it names.");
     expect(prompt).toContain("call `escalate` instead of inventing a value");
-    // The schema has no evidence / confidence fields: the two lines must not appear.
+    // schema 没有 evidence / confidence 字段：两行不出现。
     expect(prompt).not.toContain("`evidence` field");
     expect(prompt).not.toContain("Rate `confidence`");
   });
@@ -1098,15 +1049,13 @@ describe("workflow driver — quality epilogue on every ask", () => {
     expect(prompts[0]).toContain(STANDARD);
     expect(prompts[1]).not.toContain(STANDARD);
     expect(prompts[1]).toContain("You ended your turn without submitting a result.");
-    // The cache identity = the hash of the original instructions, independent of the epilogue.
+    // 缓存身份 = 原始指令的哈希，与尾注无关。
     expect(journal.getNode(RUN, "ask#1", 1)?.inputHash).toBe(inputHash("Summarize the repo"));
   });
 
-  // docs/dynamic-workflow/transcript-and-notifications.md: the GUI folds the epilogue away, and
-  // the boundary is marked by the driver — it is the one who assembles this text. The boundary is
-  // persisted with the user message's metadata (the full text stays in the text part; the model
-  // history and transcript copying are unchanged); on a nudge round the whole message is engine
-  // text, so the boundary is 0.
+  // docs/dynamic-workflow/transcript-and-notifications.md：GUI 要把尾注折起来，边界由 driver 标记——
+  // 它是拼这段文本的人。边界随用户消息 metadata 落库（全文仍在 text part 里，模型历史与
+  // 转录复制不变）；nudge 轮整条都是引擎文本，边界为 0。
   it("marks where the epilogue starts on the persisted user message; nudge is all epilogue", async () => {
     await withSessionStore(async (store) => {
       const runId = "dwfrun-epilogue-fold";
@@ -1133,11 +1082,9 @@ describe("workflow driver — quality epilogue on every ask", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// Closing down actor runtimes after run settlement
-// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
-// After run-settled the engine calls driver.dispose exactly once; the driver runs the app's
-// session-close chain (closeBrowserSession) for every actor runtime, and a session with an
-// in-flight turn waits for it to land before closing.
+// run 结算后的 actor runtime 收口（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）
+// 引擎在 run-settled 之后恰好调一次 driver.dispose；driver 对每个 actor runtime 跑 app 关会话的
+// 同一条链（closeBrowserSession），有在飞 turn 的会话等它落地再关。
 // ————————————————————————————————————————————————————————————————
 
 describe("workflow driver — 结算后释放 actor runtime", () => {
@@ -1155,7 +1102,7 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
     runStalled: () => {},
   };
 
-  /** Stub runtime: executeTurn rejects on abort (simulating a cancelled in-flight turn); closeBrowserSession is spyable. */
+  /** 桩 runtime：executeTurn 在 abort 时 reject（模拟被取消的在飞 turn），closeBrowserSession 可被 spy。 */
   function stubRuntime(close: () => Promise<void> = async () => {}) {
     const closeBrowserSession = vi.fn(close);
     const executeTurn = vi.fn(
@@ -1213,8 +1160,7 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
     driver.startAsk(s2, instance, { instructions: "go", typed: false });
     expect(busy.executeTurn).toHaveBeenCalledTimes(1);
 
-    // Engine settlement: cancelAsk first (aborting the in-flight ask), then dispose — matching the
-    // order of engine.cancel / complete.
+    // 引擎结算：先 cancelAsk（在飞 ask 中止），再 dispose——与 engine.cancel / complete 的顺序一致。
     driver.cancelAsk(instance);
     driver.dispose?.();
     expect(idle.closeBrowserSession).not.toHaveBeenCalled(); // still queued behind Promise.resolve().then
@@ -1225,7 +1171,7 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
 
   it("在飞 turn 未落地前不关它的 runtime（等待是载荷性的：askStats 在 settle 之后才到）", async () => {
     const busy = stubRuntime();
-    // This stub's turn does not respond to abort: simulating a turn still wrapping up.
+    // 这个桩的 turn 不响应 abort：模拟一条仍在收尾的 turn。
     busy.executeTurn.mockImplementation(() => new Promise(() => {}));
     const driver = driverWith({ "actor#1@1": busy });
     const s1 = await driver.createActorSession(A1, {});
@@ -1275,10 +1221,8 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
       "return `${a.text}/${b.text}`;",
     ].join("\n");
 
-    // The counter does not use vi.spyOn: the spy registry is module-level and would root the
-    // spied instances, ruining the GC assertion.
-    // The wrapper hangs only on the instance itself and holds no external reference to the
-    // runtime.
+    // 计数器不用 vi.spyOn：spy 注册表是模块级的，会把被 spy 的实例根住，GC 断言就废了。
+    // 包装器只挂在实例自己身上，不从外部引用 runtime。
     const closes = new Map<string, number>();
     const refs = new Map<string, WeakRef<object>>();
     const { settlement } = await runDriverScript(script, {
@@ -1299,12 +1243,11 @@ describe("workflow driver — 结算后释放 actor runtime", () => {
     expect(settlement).toEqual({ status: "completed", artifact: "A/B" });
     expect([...closes.keys()].sort()).toEqual(["actor#1@1", "actor#2@1"]);
 
-    // The close chain runs only after the turn lands (on the accept path stats arrive later than
-    // settle, and the turn's wrap-up also waits on persistence): poll for it.
+    // 关闭链在 turn 落地后才跑（accept 路径 stats 晚于 settle，turn 的收尾还要等持久化）：轮询等它。
     await waitFor(() => [...closes.values()].every((count) => count >= 1));
     for (const [key, count] of closes) expect(count, key).toBe(1);
 
-    // GC collectability: after forcing a full GC, no root is holding any actor runtime.
+    // GC 可回收性：强制 full GC 后，没有任何根再握着 actor runtime。
     setFlagsFromString("--expose-gc");
     const gc = runInNewContext("gc") as () => void;
     for (
