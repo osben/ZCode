@@ -2,14 +2,14 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { PlatformChannels } from "@zcode/shared";
 import {
-  PlatformChannels,
   TID_BROWSER_RESPONSIVE_BUTTON,
   TID_SIDE_PANE_TOGGLE,
   TID_BROWSER_RESPONSIVE_VIEWPORT,
   TID_BROWSER_RESPONSIVE_ZOOM_OPTION,
   TID_BROWSER_RESPONSIVE_ZOOM_SELECT,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { clearAppData, clickTestIdByWebDriver } from "../../../helpers/desktop-app.js";
 import {
   prepareV4ConversationE2E,
@@ -64,7 +64,7 @@ const points = [
   [1000, 600],
 ] as const;
 
-// BU-E2E-020: only the model selection is replayed; actual input and screenshots must go through the product's Node REPL -> guest chain.
+// BU-E2E-020：只回放模型选择，实际输入和截图必须走产品的 Node REPL -> guest 链路。
 describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一致", () => {
   before(async () => {
     server = createServer((request, response) => {
@@ -74,7 +74,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
         request.on("end", () => {
           const result = JSON.parse(Buffer.concat(chunks).toString());
           if (request.url === "/recovery-prepare") {
-            // Pause the tool after the real background screenshot, and dispatch the click only after the Chromium guest is rebuilt and back in the foreground.
+            // 在真实后台截图之后暂停工具，待 Chromium guest 重建并恢复前台后再派发点击。
             releaseRecoveryPrepare = () => {
               releaseRecoveryPrepare = undefined;
               response.end("ok");
@@ -152,7 +152,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
   it("同一 guest 在 100% / 110% / reset / 缩小 / 放大以及 Fit / 100% / 200% / 50% 下均命中", async function () {
     this.timeout(300_000);
     await prepareV4ConversationE2E();
-    // Only observe the product's receipt to obtain the real tab scope, for the later normal-mode native surface regression.
+    // 只观察产品回执取得真实 tab scope，供后续普通模式 native surface 回归使用。
     await browser.electron.execute((electron, channel) => {
       const state = globalThis as unknown as {
         zoomReadyListener?: (...args: unknown[]) => void;
@@ -168,7 +168,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
     for (const [round, zoomLevel] of [0, 1, 0, -2, 2].entries()) {
       await desktopCommand("resetZoom");
       const previewZoom = ["fit", "fit", "100", "200", "50"][round]!;
-      // Set the preview at the baseline UI zoom first, then apply the zoom under test for this round, isolating scenario setup from guest coordinate assertions.
+      // 统一在基准 UI 缩放下设置预览，再施加本轮待测缩放，隔离场景设置与 guest 坐标断言。
       if (round >= 2) {
         await clickTestIdByWebDriver(TID_BROWSER_RESPONSIVE_ZOOM_SELECT);
         await clickTestIdByWebDriver(`${TID_BROWSER_RESPONSIVE_ZOOM_OPTION}-${previewZoom}`);
@@ -183,7 +183,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       });
       expect(appliedZoom.zoomLevel).toBe(zoomLevel);
       if (round > 0) {
-        // Use detached as the precondition, avoiding only covering the hot path where metrics still linger.
+        // 以 detached 为前置条件，避免只覆盖 metrics 仍驻留的热路径。
         await browser.waitUntil(
           () =>
             browser.electron.execute((electron, url) => {
@@ -194,13 +194,27 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
             }, fixtureUrl) as unknown as Promise<boolean>,
           { timeout: 15_000, timeoutMsg: "guest CDP 未进入 idle detach" },
         );
+        // detach 会清掉 per-session metrics；放大档曾因只靠 metrics scale 补偿，空闲时退回
+        // 1280 × zoom，Browser Use 每次操作页面都会变大又变回。空闲态必须已等于目标 viewport。
+        const idleViewport = (await browser.electron.execute(async (electron, url) => {
+          const guest = electron.webContents
+            .getAllWebContents()
+            .find((wc: Electron.WebContents) => wc.getURL() === url)!;
+          return guest.executeJavaScript("({ width: innerWidth, height: innerHeight })");
+        }, fixtureUrl)) as unknown as { width: number; height: number };
+        expect({ round, zoomLevel, ...idleViewport }).toEqual({
+          round,
+          zoomLevel,
+          width: 1280,
+          height: 720,
+        });
       }
       await sendV4Prompt(
         `E2E_BROWSER_ZOOM_COORDINATES E2E_ZOOM_ROUND_${round} E2E_BROWSER_FIXTURE_URL:${fixtureUrl} 截图并按固定坐标点击。`,
       );
       await browser.waitUntil(
         async () => {
-          // Only approve the single Node REPL permission prompt of the current case.
+          // 仅批准当前 case 的唯一 Node REPL 权限提示。
           await browser.execute(() => {
             const options = document.querySelectorAll<HTMLButtonElement>(
               'button[role="option"][data-permission-option-kind="allowOnce"]',
@@ -214,7 +228,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       const result = results.get(round)!;
       const artifactDir = join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "zoom-coordinates");
       await mkdir(artifactDir, { recursive: true });
-      // Windows has seen images with correct size and clicks but shifted content; save failing-round evidence before asserting.
+      // Windows 曾出现尺寸和点击均正确但图片内容偏移；断言前保存失败轮证据。
       await writeFile(join(artifactDir, `round-${round}.png`), Buffer.from(result.png, "base64"));
       await writeFile(
         join(artifactDir, `round-${round}.json`),
@@ -225,7 +239,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
         ),
       );
       const png = Buffer.from(result.png, "base64");
-      // Check the button's pixel position in the PNG, guarding against the false pass of "DOM coordinates hit but the screenshot content shifted".
+      // 检查 PNG 里的按钮像素位置，防止“DOM 坐标命中但截图内容已偏移”的假通过。
       const facts = (await browser.electron.execute(
         (electron, base64, url) => {
           const image = electron.nativeImage.createFromBuffer(Buffer.from(base64, "base64"));
@@ -238,7 +252,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
               bitmap[offset + 1]! - bitmap[offset + 2]! > 60
             );
           };
-          // Sampling only the button center would miss stretches smaller than the button's half width; also measure the color block center to bound image coordinate error.
+          // 只采按钮中心会漏掉小于按钮半宽的拉伸；同时量出色块中心，约束图片坐标误差。
           const pixelCenters = [
             [300, 200],
             [600, 400],
@@ -305,7 +319,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       guestId ??= facts.guestId;
       expect(facts.guestId).toBe(guestId);
       expect(facts.zoom).toBe(1);
-      // Electron's color management converts RGB; the green button must still cover the original screenshot coordinates, and a white background must not pass.
+      // Electron 的色彩管理会转换 RGB；绿色按钮必须仍覆盖原截图坐标，白底不能通过。
       for (const [blue, green, red] of facts.colors) {
         expect(green).toBeGreaterThan(150);
         expect(green! - red!).toBeGreaterThan(60);
@@ -333,7 +347,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       if (round >= 2) {
         const preview = await browser.$(`[data-testid="${TID_BROWSER_RESPONSIVE_ZOOM_SELECT}"]`);
         expect(await preview.getText()).toContain(`${previewZoom}%`);
-        // The dropdown also keeps the preference during screenshots; must verify the real release has removed the temporary Fit surface.
+        // 下拉框在截图期间也保留偏好；必须验证真实 release 已解除临时 Fit surface。
         await browser.waitUntil(
           () =>
             browser.execute(
@@ -374,7 +388,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       { timeout: 10_000, timeoutMsg: "普通 tab 尚未进入后台隐藏布局" },
     );
 
-    // Drive the production prepare/ready/release IPC directly, injecting a cached fallback request; do not simulate DOM size or ready.
+    // 直接驱动生产 prepare/ready/release IPC，注入缓存 fallback 请求；不模拟 DOM 尺寸或 ready。
     const result = (await browser.electron.execute(
       async (electron, channels, url) => {
         const state = globalThis as unknown as {
@@ -418,10 +432,8 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
             deviceScaleFactor: 1,
             mobile: false,
             dontSetVisibleSize: true,
-            // Same as main's buildViewportMetricsOverride, compensating the native compositor when zoomed in.
-            scale: Math.max(1, owner.webContents.getZoomFactor()),
           });
-          // Align with the guest zoom after main installs the fallback metrics; a later release must not turn it into the app zoom.
+          // 对齐 main 安装 fallback metrics 后的 guest zoom；后续 release 不应把它改成应用缩放。
           guest.setZoomFactor(1);
           const ready = await new Promise<typeof request & { surfaceScale: number }>(
             (resolve, reject) => {
@@ -468,26 +480,24 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
             };
             poll();
           })`);
-          // Keep the same CDP attach and do not reinstall metrics; check the real input immediately after release.
+          // 保持同一次 CDP attach，不重新安装 metrics，检查 release 后紧接着的真实输入。
           await guest.executeJavaScript("window.zoomEvents=[]");
           for (const [x, y] of [
             [300, 200],
             [600, 400],
             [1000, 600],
           ]) {
-            // The direct CDP probe reuses the metrics scale of the product's input boundary; the manager's conversion is covered by dedicated unit tests.
-            const inputScale = Math.max(1, owner.webContents.getZoomFactor());
             await guest.debugger.sendCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
-              x: x! * inputScale,
-              y: y! * inputScale,
+              x: x!,
+              y: y!,
               button: "left",
               clickCount: 1,
             });
             await guest.debugger.sendCommand("Input.dispatchMouseEvent", {
               type: "mouseReleased",
-              x: x! * inputScale,
-              y: y! * inputScale,
+              x: x!,
+              y: y!,
               button: "left",
               clickCount: 1,
             });
@@ -566,9 +576,15 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
     expect(result.error).toBeUndefined();
     expect(result.png).toBeDefined();
     await writeFile(join(artifactDir, "normal-background.png"), Buffer.from(result.png, "base64"));
-    expect(result.ready.viewport).toEqual({ width: 1280, height: 720 });
-    expect(result.layout.width).toBe(1280);
-    expect(result.layout.height).toBe(720);
+    // 放大档也按 1 / zoom 布局 webview；offset 是整数，还原后允许 1px 取整误差。
+    expect(Math.abs(result.ready.viewport.width - 1280)).toBeLessThanOrEqual(1);
+    expect(Math.abs(result.ready.viewport.height - 720)).toBeLessThanOrEqual(1);
+    expect(Math.abs(result.layout.width - 1280 / result.released.desktopZoom)).toBeLessThanOrEqual(
+      1,
+    );
+    expect(Math.abs(result.layout.height - 720 / result.released.desktopZoom)).toBeLessThanOrEqual(
+      1,
+    );
     expect(result.layout.innerWidth).toBeLessThan(1280);
     expect(result.layout.innerHeight).toBeLessThan(720);
     expect(result.ready.surfaceScale).toBeLessThan(1);
@@ -610,7 +626,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
   it("普通前台缩小后，真实截图和 release 不改变自然 viewport 或 media query 目标", async function () {
     this.timeout(120_000);
     await desktopCommand("resetZoom");
-    // Clear the metrics left by the previous native fallback probe and restore the natural viewport via the product's mode toggle.
+    // 清除上一条原生 fallback 探针留下的 metrics，通过产品模式切换恢复自然 viewport。
     await clickTestIdByWebDriver(TID_BROWSER_RESPONSIVE_BUTTON);
     await clickTestIdByWebDriver(TID_BROWSER_RESPONSIVE_BUTTON);
     expect(
@@ -687,7 +703,7 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       expect(event.target).toEqual(result.before.target);
       expect(event.dpr).toBe(result.before.dpr);
     }
-    // The natural-mode PNG keeps the original DPR; after converting the real color block center back to CSS units, it must still match the pre-screenshot target.
+    // 自然模式 PNG 保留原 DPR；将真实色块中心换回 CSS 单位后，必须仍与截图前目标一致。
     expect(
       Math.abs((pixels.center[0]! * result.before.width) / pixels.width - result.before.target.x),
     ).toBeLessThanOrEqual(1);
@@ -755,8 +771,8 @@ describe("ZCT-2096856609784438784：缩放后的截图坐标与真实点击一�
       await writeFile(join(artifactDir, "guest-recovery.png"), Buffer.from(prepared.png, "base64"));
       expect(prepared.before.dpr).toBeGreaterThan(1);
       expect(prepared.tabId).toBe(naturalResult!.tabId);
-      // The native E2E verifies the real click after rebuild; leftover fallback scale is covered by targeted manager red/green unit tests.
-      // Only the renderer crash is injected; destruction, rebuild, and URL restoration are done by the production chain.
+      // 原生 E2E 验证重建后的真实点击；fallback 倍率残留由 manager 红绿单测定向覆盖。
+      // 只注入 renderer 崩溃，销毁、重建和 URL 恢复由生产链路完成。
       await crashGuestAndWaitForReplacement();
       await clickTestIdByWebDriver(TID_SIDE_PANE_TOGGLE);
       await browser.waitUntil(

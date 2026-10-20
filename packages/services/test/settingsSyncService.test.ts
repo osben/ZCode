@@ -62,9 +62,6 @@ function createSettingService(): ISettingService {
     },
     async update() {},
     async updateDataBaseDir() {},
-    async ensureDefaultProject(path: string) {
-      return { path, created: false };
-    },
   };
 }
 
@@ -218,13 +215,6 @@ describe("settingsSyncService Claude AGENTS.md migration", () => {
 });
 
 describe("settingsSyncService commands import", () => {
-  it("uses file symlink type for command imports", async () => {
-    const { getCommandFileSymlinkType } =
-      await import("../src/settings-sync/settingsSyncService.js");
-
-    expect(getCommandFileSymlinkType()).toBe("file");
-  });
-
   it("does not scan external commands during first-run detection", async () => {
     const home = makeTempHome();
     const workspacePath = join(home, "workspace");
@@ -330,7 +320,7 @@ describe("settingsSyncService commands import", () => {
       },
     ]);
     expect(existsSync(importedPath)).toBe(true);
-    // Windows uses a hard link (regular file); non-Windows uses a symlink
+    // Windows 使用硬链接（普通文件），非 Windows 使用 symlink
     if (process.platform === "win32") {
       expect(lstatSync(importedPath).isFile()).toBe(true);
     } else {

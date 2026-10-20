@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Desktop renderer bridge 聚合平台、远端 attachment 与启动编排契约。 */
 import { DatabaseStartupAdmission } from "./databaseStartupAdmission.js";
 import { initializeDesktopLocalTtft } from "./localTtftBootstrap.js";
 import { createRoot } from "react-dom/client";
@@ -41,10 +42,8 @@ import { syncAppTelemetryContext } from "../appTelemetryBridge.js";
 import { createDesktopPlatform } from "./desktopPlatform.js";
 import { startPerformanceTimelineCleanup } from "./performanceTimelineCleanup.js";
 import { initializeDesktopUserActionTrace } from "./userActionTraceBootstrap.js";
-import {
-  buildRemoteWorkspaceSessionServices,
-  buildServerRemoteWorkspaceSessionServices,
-} from "./remoteWorkspaceSessionServices.js";
+import { buildRemoteWorkspaceSessionServicesForRegistration } from "./remoteWorkspaceSessionServices.js";
+import { handleSourceSettingsServicePortMessage } from "./sourceSettingsServicePortBridge.js";
 import {
   notifyRemoteWorkspaceServicePortReady,
   parseRemoteWorkspaceServicePortMessage,
@@ -110,8 +109,11 @@ document.documentElement.classList.toggle("platform-windows-desktop", isWindowsD
 // can avoid the title bar only on Linux.
 document.documentElement.classList.toggle("platform-linux-desktop", isLinuxDesktop);
 const isLocalDevelopmentRuntime =
-  (globalThis as typeof globalThis & { __ZCODE_LOCAL_DEVELOPMENT_RUNTIME__?: boolean })
-    .__ZCODE_LOCAL_DEVELOPMENT_RUNTIME__ === true;
+  (
+    globalThis as typeof globalThis & {
+      __ZCODE_LOCAL_DEVELOPMENT_RUNTIME__?: boolean;
+    }
+  ).__ZCODE_LOCAL_DEVELOPMENT_RUNTIME__ === true;
 
 function readBooleanFlag(name: string, defaultValue: boolean): boolean {
   const value = new URLSearchParams(window.location.search).get(name);
@@ -216,12 +218,18 @@ function registerRemoteWorkspaceServicePort(params: RemoteWorkspaceServicePortRe
 
   const remoteConnection = createMessagePortServiceConnection(params.port);
   const remoteServices = remoteConnection.services;
-  const services =
-    params.target.kind === "server"
-      ? buildServerRemoteWorkspaceSessionServices(baseServicesForRemoteSessions, remoteServices)
-      : buildRemoteWorkspaceSessionServices(baseServicesForRemoteSessions, remoteServices);
+  const services = buildRemoteWorkspaceSessionServicesForRegistration({
+    baseServices: baseServicesForRemoteSessions,
+    remoteServices,
+    targetKind: params.target.kind,
+    sourceServerId: params.sourceServerId,
+  });
   registerRemoteWorkspaceSession({
     sessionId: params.sessionId,
+    ...(params.sourceServerId ? { sourceServerId: params.sourceServerId } : {}),
+    ...(params.workspacePath ? { workspacePath: params.workspacePath } : {}),
+    ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+    ...(params.workspacePurpose ? { workspacePurpose: params.workspacePurpose } : {}),
     target: params.target,
     services,
     dispose: (reason) =>
@@ -275,6 +283,8 @@ function handleServicePortMessage(event: MessageEvent): void {
     return;
   }
 
+  if (handleSourceSettingsServicePortMessage(event)) return;
+
   const remoteWorkspacePort = parseRemoteWorkspaceServicePortMessage(event);
   if (remoteWorkspacePort) {
     if (!baseServicesForRemoteSessions) {
@@ -303,7 +313,9 @@ function handleServicePortMessage(event: MessageEvent): void {
 
 function initializeBusinessRoot(port: MessagePort): void {
   appInitialized = true;
-  const services = connectViaMessagePort(port);
+  const services = connectViaMessagePort(port, {
+    sourceServerManagementService: true,
+  });
   baseServicesForRemoteSessions = services;
   registerBaseWorkspaceServices(services);
   flushPendingRemoteWorkspaceServicePorts();

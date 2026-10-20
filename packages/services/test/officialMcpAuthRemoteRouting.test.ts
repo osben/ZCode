@@ -1,14 +1,13 @@
-/* OMCP-011 — official MCP identity-header reverse-request routing for desktop-attached remotes (spec §7.2 / §7.4).
+/* OMCP-011 —— desktop-attached remote 的官方 MCP 身份头反向请求路由（spec §7.2 / §7.4）。
  *
- * Verification goals:
- *   1. Requests from a remote workspace (non-empty workspaceIdentity) are automatically resolved and answered by the host;
- *   2. Responses go back only to **the Agent client that issued the request**, never crossing to another workspace with
- *      the same workspacePath;
- *   3. The request produces no renderer event (no UI semantics) and writes no session/runtime state;
- *   4. Without a resolver (e.g. standalone CLI), it returns official_auth_unavailable and never degrades to an anonymous request.
+ * 验证目标：
+ *   1. 远端 workspace（workspaceIdentity 非空）发起的请求能被 host 自动解析并响应；
+ *   2. 响应只回到**发起请求的那个** Agent client，不按 workspacePath 串到同路径的其它 workspace；
+ *   3. 该请求不产生 renderer event（无 UI 语义），也不写入任何 session/runtime 状态；
+ *   4. 无 resolver 时（如 standalone CLI）返回 official_auth_unavailable，绝不降级为匿名请求。
  *
- * Note: credentials themselves are host-global state, not isolated per workspace (§7.1), so what is asserted here is
- * **routing** and the **response channel**, not per-workspace different credentials.
+ * 说明：凭证本身是 host 全局状态，不按 workspace 隔离（§7.1），因此这里断言的是**路由**与
+ * **响应通道**，不是 per-workspace 的不同凭证。
  */
 import { describe, expect, it, vi } from "vitest";
 import { zcodeProtocolMethods } from "@zcode/shared";
@@ -20,7 +19,7 @@ const LOCAL_WORKSPACE = {
 const REMOTE_WORKSPACE = {
   workspaceIdentity: "remote:wsl:ubuntu:/workspace/app",
   workspaceKey: "remote:wsl:ubuntu:/workspace/app",
-  // Same path as LOCAL: an implementation routing by workspacePath would cross wires — exactly what this case blocks.
+  // 与 LOCAL 同路径：若实现按 workspacePath 路由就会串台，这正是本用例要挡住的
   workspacePath: "/workspace/app",
 };
 
@@ -30,7 +29,7 @@ interface FakeClient {
   respondError: ReturnType<typeof vi.fn>;
 }
 
-/** Fake client pooled by workspaceKey, simulating the local host and desktop-attached remote host links. */
+/** 按 workspaceKey 分池的假 client，模拟 local host 与 desktop-attached remote host 两条链路。 */
 async function createServiceWithClients(options: {
   officialMcpAuthHeadersResolver?: {
     resolveHeaders(
@@ -40,14 +39,14 @@ async function createServiceWithClients(options: {
       | { ok: false; reason: "official_auth_unavailable" | "official_auth_plan_required" }
     >;
   };
-  /** Defaults to "trust everything" so existing routing cases can focus on the response channel. */
+  /** 缺省为"全部可信"，以便既有路由用例聚焦响应通道。 */
   officialMcpTrustedOrigins?: {
     isTrusted(input: { pluginId: string; mcpKey: string; origin: string }): Promise<{
       detail?: string;
       trusted: boolean;
     }>;
   };
-  /** Omits the validator for real (simulating a wiring miss); `undefined` falls back to the "trust everything" default and cannot express this scenario. */
+  /** 真正省略 validator（模拟装配遗漏）；`undefined` 会落回"全部可信"缺省，无法表达该场景。 */
   omitTrustedOrigins?: boolean;
 }): Promise<{
   clients: Map<string, FakeClient>;
@@ -120,8 +119,8 @@ async function createServiceWithClients(options: {
 
   const { createZCodeAgentService } = await import("../src/zcode-agent/zcodeAgentService.js");
   const service = createZCodeAgentService({
-    // initialize first confirms an executable model exists in the current model selection View; otherwise it returns
-    // early with provider_not_ready without creating a client.
+    // initialize 会先确认当前模型选择 View 中存在可执行模型，否则以
+    // provider_not_ready 提前返回、不建 client。
     modelSelectionReadinessSource: {
       async getView() {
         return {
@@ -200,7 +199,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
     try {
       await harness.initializeWorkspace(LOCAL_WORKSPACE);
       await harness.initializeWorkspace(REMOTE_WORKSPACE);
-      // Same workspacePath with different workspaceIdentity must be two independent clients
+      // 同 workspacePath、不同 workspaceIdentity 必须是两个独立 client
       expect(harness.clients.size).toBe(2);
 
       const remote = harness.clients.get(REMOTE_WORKSPACE.workspaceIdentity);
@@ -214,7 +213,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
         expect(remote?.respond).toHaveBeenCalledTimes(1);
       });
       expect(remote?.respond).toHaveBeenCalledWith("remote-1", { headers, ok: true });
-      // Key point: the same-path local client must receive nothing
+      // 关键：同路径的 local client 不能收到任何东西
       expect(local?.respond).not.toHaveBeenCalled();
     } finally {
       await harness.dispose();
@@ -245,7 +244,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
         expect(local?.respond).toHaveBeenCalledTimes(2);
         expect(remote?.respond).toHaveBeenCalledTimes(1);
       });
-      // Every response must return to its own request id; no crossing
+      // 每个响应都必须回到自己的 request id，不能交叉
       expect(local?.respond.mock.calls.map((call) => call[0])).toEqual(["local-1", "local-2"]);
       expect(remote?.respond.mock.calls.map((call) => call[0])).toEqual(["remote-1"]);
     } finally {
@@ -287,7 +286,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
       await vi.waitFor(() => {
         expect(remote?.respond).toHaveBeenCalledTimes(1);
       });
-      // Never degrade to anonymous: without a resolver it is explicitly unavailable
+      // 绝不降级为匿名：没有 resolver 就明确不可用
       expect(remote?.respond).toHaveBeenCalledWith("remote-1", {
         ok: false,
         reason: "official_auth_unavailable",
@@ -298,8 +297,8 @@ describe("official mcp auth headers over desktop-attached remote", () => {
   });
 
   it("CR-01: rejects an untrusted origin without invoking the resolver at all", async () => {
-    // The host is the identity-authority boundary: on an Origin mismatch it must reject **before reading credentials**,
-    // or the agent adapter's fetch wrapper becomes the only line of defense (bypassable by a remote runtime).
+    // host 是身份权威边界：Origin 不匹配时必须在**读取凭据之前**拒绝，
+    // 否则 agent adapter 的 fetch wrapper 就成了唯一防线（远端 runtime 可绕过）。
     const resolveHeaders = vi.fn(async () => ({
       headers: { Authorization: "Bearer must-not-leak" },
       ok: true as const,
@@ -322,9 +321,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
         ok: false,
         reason: "official_mcp_origin_untrusted",
       });
-      // The response must not contain any headers field
       const payload = remote?.respond.mock.calls[0]?.[1] as Record<string, unknown>;
-      expect(payload["headers"]).toBeUndefined();
       expect(JSON.stringify(payload)).not.toContain("must-not-leak");
     } finally {
       await harness.dispose();
@@ -354,7 +351,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
   });
 
   it("CR-01: validates all three dimensions, not just one", async () => {
-    // Each dimension is wrong in exactly one item and correct otherwise — prevents an implementation that only compares one of them.
+    // 逐维度只错一项，其余正确——防止实现只比较其中某一项。
     const seen: Array<{ mcpKey: string; origin: string; pluginId: string }> = [];
     const harness = await createServiceWithClients({
       officialMcpAuthHeadersResolver: {
@@ -395,8 +392,8 @@ describe("official mcp auth headers over desktop-attached remote", () => {
       for (const call of remote?.respond.mock.calls ?? []) {
         expect(call[1]).toEqual({ ok: false, reason: "official_mcp_origin_untrusted" });
       }
-      // The validator received all three fields. origin is the only decision basis; pluginId / mcpKey only serve logging
-      // and credential-attribution, but must still reach the host in full — otherwise logs cannot answer "which plugin asked for credentials".
+      // validator 三个字段都收全了。origin 是唯一的判定依据，pluginId / mcpKey 只用于日志
+      // 与凭证解析归属，但仍必须完整传到 host——否则日志答不出"是哪个插件在要凭证"。
       expect(seen).toHaveLength(3);
       expect(seen.every((input) => input.pluginId && input.mcpKey && input.origin)).toBe(true);
     } finally {
@@ -449,7 +446,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
       remote?.onRequestListener?.({
         id: "remote-bad",
         method: zcodeProtocolMethods.interactionRequestOfficialMcpAuthHeaders,
-        // Smuggled credential fields + missing targetOrigin: the strict schema must reject
+        // 走私凭证字段 + 缺 targetOrigin：strict schema 必须拒绝
         params: {
           jwt: "leaked",
           mcpKey: "image-search",
@@ -462,7 +459,7 @@ describe("official mcp auth headers over desktop-attached remote", () => {
       await vi.waitFor(() => {
         expect(remote?.respondError).toHaveBeenCalledTimes(1);
       });
-      // Schema failure goes through respondError rather than respond, and credential resolution must not be triggered
+      // schema 失败走 respondError 而非 respond，且凭证解析不得被触发
       expect(resolveHeaders).not.toHaveBeenCalled();
       expect(remote?.respond).not.toHaveBeenCalled();
       expect(remote?.respondError).toHaveBeenCalledWith(

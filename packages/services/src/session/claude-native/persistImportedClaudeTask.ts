@@ -1,12 +1,11 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { ZCodeSessionFile, ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeSessionFile } from "@zcode/shared";
 import { getLegacyTaskSessionSnapshotPath } from "#src/paths.js";
 import {
   parseLegacyTaskSessionFile,
   type LegacyTaskSessionFile,
 } from "#src/session/legacyTaskSessionFile.js";
-import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 
 const TASK_SEARCH_TEXT_MAX_CHARS = 200_000;
 
@@ -42,34 +41,6 @@ async function writeSessionFileAtomic(
   await rename(tempPath, filePath);
 }
 
-export async function persistImportedClaudeTask(params: {
-  taskIndexRepo: TaskIndexRepo;
-  sessionFile: LegacyTaskSessionFile;
-  /** Write only when the import target workspace matches the filtered workspace, so the current tab's identity is not applied to another path. */
-  workspaceIdentity?: string;
-}): Promise<ZCodeTaskMeta> {
-  const parsed = parseLegacyTaskSessionFile(params.sessionFile);
-  const meta: LegacyTaskSessionFile["meta"] = {
-    ...parsed.meta,
-    ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
-  };
-  const indexMeta: ZCodeTaskMeta = {
-    ...meta,
-    // The SQLite task index mode column is still NOT NULL; keep the imported snapshot at its filtered default.
-    mode: meta.mode ?? "default",
-  };
-
-  await writeImportedClaudeTaskSnapshot({ sessionFile: { ...parsed, meta } });
-  return params.taskIndexRepo.syncTaskMeta({
-    meta: indexMeta,
-    // If the user deletes or archives an imported session and then imports it again, the old index row retains archived/deleted state.
-    // Reimporting means restoring the session to the list, so explicitly clear its hidden state here.
-    archived: false,
-    deleted: false,
-    searchableText: buildSearchableTextFromMessages(parsed.messages),
-  });
-}
-
 export async function writeImportedClaudeTaskSnapshot(params: {
   sessionFile: LegacyTaskSessionFile;
 }): Promise<void> {
@@ -80,8 +51,8 @@ export async function writeImportedClaudeTaskSnapshot(params: {
     parsed.meta.workspaceIdentity,
   );
 
-  // After legacy ACP was retired, importClaudeSessions became a stub, so imports copied jsonl files without writing
-  // ~/.zcode/v2/sessions/{hash}/{taskId}.json. Real ZCode sessions now handle continued conversations; the legacy snapshot
-  // is saved only as a filtered migration backup to prevent the Claude source runtime from contaminating the current model selection.
+  // legacy ACP 下线后 importClaudeSessions 变成空桩，导入虽复制了 jsonl 却没有写
+  // ~/.zcode/v2/sessions/{hash}/{taskId}.json。现在真实 ZCode session 承担续聊，legacy snapshot
+  // 只保存过滤后的迁移备份，避免 Claude 来源运行态污染当前模型选择。
   await writeSessionFileAtomic(filePath, parsed);
 }

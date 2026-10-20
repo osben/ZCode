@@ -404,6 +404,7 @@ export interface ImportConversationShareInput {
 
 /** Public rows copy persisted during import; read-only blocks in the session render from it without fetching the source again. */
 export interface ImportedConversationShare {
+  contentBlocks?: unknown[];
   shareId: string;
   contextId: string;
   title: string;

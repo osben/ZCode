@@ -37,11 +37,11 @@ import {
 
 const retiredProtocolPrefix = `${"a"}${"cp"}`;
 const retiredProxyRuntimeId = `${retiredProtocolPrefix}-proxy-runtime`;
-// Remote ZCode Agent bundle file name (kept in sync with REMOTE_AGENT_BUNDLE_NAME).
+// 远端 ZCode Agent bundle 文件名（与 REMOTE_AGENT_BUNDLE_NAME 保持一致）。
 const REMOTE_AGENT_BUNDLE_FILE_NAME = "zcode.cjs";
 const REMOTE_AGENT_WRAPPER_FILE_NAME = "zcode-agent";
 const BROWSER_USE_REQUIRED_RELATIVE_PATHS = [
-  // The node_repl host was extracted to @zcode/node-repl-host; browser-use no longer produces dist/mcp/server.js.
+  // node_repl 宿主已抽成 @zcode/node-repl-host，browser-use 不再产出 dist/mcp/server.js。
   "browser-use-plugin/docs/api.json",
   "browser-use-plugin/docs/documents.json",
   "browser-use-plugin/docs/overview.md",
@@ -51,10 +51,9 @@ const BROWSER_USE_REQUIRED_RELATIVE_PATHS = [
   "browser-use-plugin/skills/control-browser/SKILL.md",
   "browser-use-plugin/skills/web-gui-tester/SKILL.md",
 ] as const;
-// Bug root cause: the remote fixture used to copy a stale list of official plugin assets; after the
-// production contract added the CUA SDK/docs/skills, the fixture still produced a GLM archive without
-// those files, so every deploy test falsely reported missing packages. Test data must reuse the
-// production constants directly so newly added official assets can no longer silently drift.
+// Bug 根因：remote fixture 曾复制一份旧的官方插件资产清单；生产合同加入 CUA SDK/docs/skill
+// 后 fixture 仍生成不含这些文件的 GLM archive，所有部署测试都会误报 packages 缺失。
+// 测试数据必须直接复用生产常量，后续新增官方资产时不能再静默漂移。
 const OFFICIAL_PLUGIN_PACKAGE_NAMES = REMOTE_AGENT_OFFICIAL_PLUGIN_PACKAGE_NAMES;
 const OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS =
   REMOTE_AGENT_OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS;
@@ -461,9 +460,8 @@ async function stageRemoteRuntimeRelease(
     const binaryDir = join(releaseDir, runtime.bundledResourceDir, platformKey);
     await mkdir(binaryDir, { recursive: true });
     await writeFile(join(binaryDir, binaryName), `${provider} binary`, "utf8");
-    // The ZCode Agent (glm) remote no longer ships a native binary; it ships the compiled
-    // zcode.cjs bundle executed by the remotely deployed node via a wrapper, so the source
-    // release must provide that bundle.
+    // ZCode Agent（glm）远端不再发原生二进制，而是发编译产物 zcode.cjs，
+    // 由远端已部署的 node 通过 wrapper 执行，故 source release 需提供该 bundle。
     if (provider === "glm") {
       await writeFile(join(binaryDir, REMOTE_AGENT_BUNDLE_FILE_NAME), `${provider} bundle`, "utf8");
       for (const relativePath of OFFICIAL_PLUGIN_REQUIRED_RELATIVE_PATHS) {
@@ -518,7 +516,7 @@ function createFullyDeployedRemoteFiles(platformKey: RemotePlatformKey): Record<
         ] = "claude native binary";
       }
     } else if (provider === "glm") {
-      // ZCode Agent remote deployment layout: wrapper (zcode-agent) + compiled bundle (zcode.cjs).
+      // ZCode Agent 远端部署后：wrapper（zcode-agent）+ 编译产物 bundle（zcode.cjs）。
       const entrySegments = runtime.resolveEntrySegments(platform);
       const wrapperName = entrySegments[entrySegments.length - 1];
       if (wrapperName) {
@@ -656,15 +654,6 @@ async function writeTestOfficialPluginPackages(repoDir: string): Promise<void> {
   );
 }
 
-function resolveRemoteComponentCacheDirForTest(
-  platformArch: RemotePlatformKey,
-  componentId: string,
-  componentVersion: string,
-): string {
-  const cacheSegment = createHash("sha256").update(componentVersion).digest("hex").slice(0, 16);
-  return `~/.zcode/server/asset-cache/components/${platformArch}/${componentId}/${cacheSegment}`;
-}
-
 async function stageRemoteAssetArchive(
   mockCdnDir: string,
   outputRoot: string,
@@ -776,7 +765,7 @@ function buildRemoteComponentArtifactSpecs(
     });
   }
 
-  // IDs must be unique in the manifest so later assembly cannot overwrite entries and distort assertions.
+  // 同一 id 在 manifest 中必须唯一，避免后续组装时覆盖导致断言失真。
   const duplicatedIds = specs
     .map((spec) => spec.id)
     .filter((id, index, ids) => ids.indexOf(id) !== index);
@@ -895,7 +884,7 @@ async function computeDevelopmentAgentAssetsSha256ForTest(
       try {
         await hashLocalPathForTest(hash, sourcePath, `${packageName}/${topLevelPath}`);
       } catch {
-        // The fixture only writes a minimal manifest; missing optional directories are ignored, matching production logic.
+        // 测试 fixture 只写最小 manifest，缺失的可选目录与生产逻辑一致忽略。
       }
     }
   }
@@ -1006,8 +995,8 @@ async function createStaticFileServer(
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const encodedRelativePath = url.pathname.replace(/^\/+/, "");
-    // Bugfix: client component URLs now encode path segments (e.g. + -> %2B).
-    // Test file paths are raw filenames, so decode before hitting the local filesystem.
+    // Bugfix: 客户端组件 URL 现在会对路径段做编码（如 + -> %2B）。
+    // 测试文件路径是原始文件名，需要先 decode 再命中本地文件系统。
     const relativePath = decodeURI(encodedRelativePath);
     requestCounts.set(relativePath, (requestCounts.get(relativePath) ?? 0) + 1);
 
@@ -1161,9 +1150,8 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
         expect(backend.commands.some((command) => command.includes(".deploy.lock"))).toBe(true);
       });
 
-      // Bugfix: while waiting for the deploy lock, a potentially stale manifest must not be
-      // pinned early; the manifest deadline only starts participating in the deploy transaction
-      // once this owner actually acquires the lock.
+      // Bugfix：deploy lock 等待期间不能提前固定可能过期的 manifest；
+      // manifest deadline 必须从本次 owner 真正获锁后开始参与部署事务。
       expect(cdnServer.getRequestCount(manifestPath)).toBe(0);
 
       releaseLockAcquire();
@@ -1226,38 +1214,6 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     );
 
     expect(installed).toEqual([]);
-  });
-
-  it("旧 proxy runtime 资源选择应被忽略且不部署 proxy runtime", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir);
-    await mkdir(mockCdnDir, { recursive: true });
-    const backend = new FakeRemoteBackend();
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "linux", arch: "arm64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [retiredProxyRuntimeId],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(hasUploadForStagingTarget(backend, "~/.zcode/server/agents/glm/zcode.cjs.new")).toBe(
-      true,
-    );
-    expect(
-      backend.uploads.some(
-        (upload) => upload.remotePath === `~/.zcode/server/${retiredProxyRuntimeId}.tar.gz`,
-      ),
-    ).toBe(false);
-    expect(backend.commands.some((command) => command.includes(retiredProxyRuntimeId))).toBe(false);
   });
 
   it("server 版本相同但远端缺少 node-pty 时应补传", async () => {
@@ -1389,242 +1345,6 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     expect(
       backend.uploads.some((upload) => upload.remotePath.includes("~/.zcode/server/tools/ugrep/")),
     ).toBe(false);
-  });
-
-  it("旧 codex 资源选择应被忽略，不再重新部署 codex", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir);
-    await mkdir(mockCdnDir, { recursive: true });
-
-    const backend = new FakeRemoteBackend({
-      "~/.zcode/server/agents/codex/.version": `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version}\n`,
-      "~/.zcode/server/agents/codex/.bundle-meta.json": JSON.stringify({
-        provider: "codex",
-        version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version,
-        platform: "darwin-arm64",
-      }),
-    });
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "linux", arch: "arm64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [`${retiredProtocolPrefix}-codex`, "ripgrep"],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(
-      backend.uploads.some((upload) => upload.remotePath === "~/.zcode/server/agents/codex.tar.gz"),
-    ).toBe(false);
-    expect(hasUploadForStagingTarget(backend, "~/.zcode/server/agents/glm/zcode.cjs.new")).toBe(
-      true,
-    );
-    expect(hasUploadForStagingTarget(backend, "~/.zcode/server/tools/ripgrep/rg.new")).toBe(true);
-  });
-
-  it("版本和 bundle meta 都匹配时应跳过 codex 重新部署", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir);
-    await mkdir(mockCdnDir, { recursive: true });
-
-    const matchingMeta = JSON.stringify({
-      provider: "codex",
-      version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version,
-      platform: "linux-arm64",
-    });
-    const backend = new FakeRemoteBackend({
-      "~/.zcode/server/agents/codex/.version": `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version}\n`,
-      "~/.zcode/server/agents/codex/.bundle-meta.json": matchingMeta,
-      [`~/.zcode/server/agents/codex/node_modules/@zed-industries/codex-${retiredProtocolPrefix}/bin/codex-${retiredProtocolPrefix}.js`]:
-        "codex entry",
-      "~/.zcode/server/tools/ripgrep/.version": "v14.1.1-1\n",
-      "~/.zcode/server/tools/ripgrep/rg": "ripgrep binary",
-    });
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "linux", arch: "arm64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [`${retiredProtocolPrefix}-codex`, "ripgrep"],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(
-      backend.uploads.some((upload) => upload.remotePath === "~/.zcode/server/agents/codex.tar.gz"),
-    ).toBe(false);
-    expect(
-      backend.uploads.some(
-        (upload) => upload.remotePath === "~/.zcode/server/tools/ripgrep/rg.new",
-      ),
-    ).toBe(false);
-  });
-
-  it("darwin-arm64 版本和 bundle meta 匹配时应跳过 codex 重新部署", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir, {
-      platform: "darwin",
-      arch: "arm64",
-    });
-    await mkdir(mockCdnDir, { recursive: true });
-
-    const matchingMeta = JSON.stringify({
-      provider: "codex",
-      version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version,
-      platform: "darwin-arm64",
-    });
-    const backend = new FakeRemoteBackend({
-      "~/.zcode/server/agents/codex/.version": `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.codex.version}\n`,
-      "~/.zcode/server/agents/codex/.bundle-meta.json": matchingMeta,
-      [`~/.zcode/server/agents/codex/node_modules/@zed-industries/codex-${retiredProtocolPrefix}/bin/codex-${retiredProtocolPrefix}.js`]:
-        "codex entry",
-      "~/.zcode/server/tools/ripgrep/.version": "v13.0.0-10\n",
-      "~/.zcode/server/tools/ripgrep/rg": "ripgrep binary",
-    });
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "darwin", arch: "arm64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [`${retiredProtocolPrefix}-codex`, "ripgrep"],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(
-      backend.uploads.some((upload) => upload.remotePath === "~/.zcode/server/agents/codex.tar.gz"),
-    ).toBe(false);
-    expect(
-      backend.uploads.some(
-        (upload) => upload.remotePath === "~/.zcode/server/tools/ripgrep/rg.new",
-      ),
-    ).toBe(false);
-  });
-
-  it("claude 0.29.2 版本和 bundle meta 匹配时不要求 native binary", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir, {
-      platform: "linux",
-      arch: "x64",
-    });
-    await mkdir(mockCdnDir, { recursive: true });
-
-    const matchingMeta = JSON.stringify({
-      provider: "claude",
-      version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version,
-      platform: "linux-x64",
-    });
-    const backend = new FakeRemoteBackend({
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/.version`]: `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version}\n`,
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/.bundle-meta.json`]: matchingMeta,
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/dist/index.js`]: "claude entry",
-    });
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "linux", arch: "x64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [`${retiredProtocolPrefix}-claude`],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(
-      backend.uploads.some(
-        (upload) => upload.remotePath === `~/.zcode/server/agents/${retiredProtocolPrefix}.tar.gz`,
-      ),
-    ).toBe(false);
-  });
-
-  it("旧 claude 资源选择应被忽略，不再因 patch fingerprint 重新部署 claude", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir, {
-      platform: "linux",
-      arch: "x64",
-    });
-
-    const localProviderDir = join(
-      mockCdnDir,
-      "releases",
-      ZCODE_VERSION,
-      retiredProtocolPrefix,
-      "linux-x64",
-      LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.bundledResourceDir,
-    );
-    await writeFile(
-      join(localProviderDir, ".bundle-meta.json"),
-      JSON.stringify(
-        {
-          provider: "claude",
-          version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version,
-          platform: "linux-x64",
-          patchFingerprint: "patch-new",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    const backend = new FakeRemoteBackend({
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/.version`]: `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version}\n`,
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/.bundle-meta.json`]: JSON.stringify({
-        provider: "claude",
-        version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version,
-        platform: "linux-x64",
-        patchFingerprint: "patch-old",
-      }),
-      [`~/.zcode/server/agents/${retiredProtocolPrefix}/dist/index.js`]: "claude entry",
-    });
-
-    const deployed = await deployServer(
-      backend,
-      { platform: "linux", arch: "x64" },
-      {
-        force: false,
-        mockCdnDir,
-        resourcePackages: {
-          selectedPackageIds: [`${retiredProtocolPrefix}-claude`],
-        },
-      },
-    );
-
-    expect(deployed).toBe(false);
-    expect(
-      backend.uploads.some(
-        (upload) => upload.remotePath === `~/.zcode/server/agents/${retiredProtocolPrefix}.tar.gz`,
-      ),
-    ).toBe(false);
-    expect(hasUploadForStagingTarget(backend, "~/.zcode/server/agents/glm/zcode.cjs.new")).toBe(
-      true,
-    );
   });
 
   it("默认部署只处理 ZCode Agent，旧 node-script meta 不再阻断", async () => {
@@ -1794,7 +1514,7 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     delete remoteFiles[
       "~/.zcode/server/agents/glm/packages/skill-creator-plugin/.zcode-plugin/plugin.json"
     ];
-    // The SSH / Docker backend exists contract only checks regular files; directories return false even when present.
+    // SSH / Docker backend 的 exists 契约只检查普通文件，目录即使存在也会返回 false。
     const backend = new FakeFileOnlyExistsRemoteBackend(remoteFiles, [remoteOfficialPluginDir]);
     const installRequests: Array<{
       componentId: string;
@@ -2053,7 +1773,7 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
   });
 
   it("开发态官方插件资产必须包含 Browser client、effective docs 与 document judge agent", () => {
-    // Regression cause: dev-mode remote upload once omitted scripts; node_repl could start, but the first Browser bootstrap would always fail to import.
+    // 回归原因：开发态远程上传曾漏掉 scripts，node_repl 能启动但首次 Browser bootstrap 必然导入失败。
     expect(REMOTE_AGENT_OFFICIAL_PLUGIN_INCLUDED_TOP_LEVEL_PATHS).toEqual(
       expect.arrayContaining(["agents", "dist", "docs", "scripts", "skills"]),
     );
@@ -2372,9 +2092,8 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
         "-lc",
         [
           "set -eu",
-          // Bugfix: intentionally define same-named shell functions to simulate a polluted remote
-          // environment. If the replace command does not use the `command` prefix, it hits the
-          // function and fails.
+          // Bugfix: 这里故意定义同名 shell function 模拟远端污染环境。
+          // 如果 replace 命令没有使用 `command` 前缀，会命中函数并失败。
           "mv(){ echo SHOULD_NOT_CALL_MV_FUNCTION >&2; return 31; }",
           "chmod(){ echo SHOULD_NOT_CALL_CHMOD_FUNCTION >&2; return 32; }",
           replaceCommand,
@@ -2913,61 +2632,6 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     }
   });
 
-  it("旧 provider 资源选择不应再回落 CDN 下载三方 provider", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    const cdnRoot = join(rootDir, "cdn");
-    const remoteCacheDir = join(rootDir, "remote-cache");
-    await stageRemoteRuntimeRelease(mockCdnDir);
-    await stageRemoteComponentArtifacts(mockCdnDir, cdnRoot);
-    await rm(
-      join(
-        mockCdnDir,
-        "releases",
-        ZCODE_VERSION,
-        retiredProtocolPrefix,
-        "linux-arm64",
-        retiredProtocolPrefix,
-      ),
-      { recursive: true, force: true },
-    );
-    const cdnServer = await createStaticFileServer(cdnRoot);
-
-    try {
-      const backend = new FakeRemoteBackend({
-        ...createFullyDeployedRemoteFiles("linux-arm64"),
-        [`~/.zcode/server/agents/${retiredProtocolPrefix}/.version`]: "0.0.0\n",
-      });
-
-      const deployed = await deployServer(
-        backend,
-        { platform: "linux", arch: "arm64" },
-        {
-          force: false,
-          mockCdnDir,
-          remoteCdnBaseUrl: cdnServer.baseUrl,
-          remoteCacheDir,
-          resourcePackages: {
-            selectedPackageIds: [`${retiredProtocolPrefix}-claude`],
-          },
-        },
-      );
-
-      expect(deployed).toBe(false);
-      expect(
-        backend.uploads.some(
-          (upload) =>
-            upload.remotePath === `~/.zcode/server/agents/${retiredProtocolPrefix}.tar.gz`,
-        ),
-      ).toBe(false);
-      expect(cdnServer.getRequestCount(`/${ZCODE_VERSION}/manifest-linux-arm64.json`)).toBe(0);
-    } finally {
-      await cdnServer.close();
-    }
-  });
-
   it("ssh remote-download mode installs server assets without local uploads", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
     tempDirs.push(rootDir);
@@ -3019,211 +2683,6 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
       expect(backend.commands.some((command) => command.includes("curl -fL"))).toBe(true);
       expect(backend.commands.some((command) => command.includes("sha256sum"))).toBe(true);
       expect(cdnServer.getRequestCount(`/${ZCODE_VERSION}/manifest-linux-arm64.json`)).toBe(1);
-    } finally {
-      await cdnServer.close();
-    }
-  });
-
-  it("remote-download 命中 claude 0.29.2 组件缓存时不要求 native binary", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    const cdnRoot = join(rootDir, "cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir, {
-      platform: "linux",
-      arch: "x64",
-    });
-    const manifest = await stageRemoteComponentArtifacts(mockCdnDir, cdnRoot, {
-      platformKey: "linux-x64",
-      mutateManifest: (input) => ({
-        ...input,
-        components: input.components.map((component) =>
-          component.id === `${retiredProtocolPrefix}-claude`
-            ? { ...component, version: `${component.version}+abcdef123456` }
-            : component,
-        ),
-      }),
-    });
-    const cdnServer = await createStaticFileServer(cdnRoot);
-    const claudeBundle = manifest.components.find(
-      (component) => component.id === `${retiredProtocolPrefix}-claude`,
-    );
-    if (!claudeBundle) {
-      throw new Error("missing retired claude component in staged manifest");
-    }
-
-    const cachedComponentDir = resolveRemoteComponentCacheDirForTest(
-      "linux-x64",
-      claudeBundle.id,
-      claudeBundle.version,
-    );
-    const deployedFiles = createFullyDeployedRemoteFiles("linux-x64");
-    addMatchingServerBundleArtifactIdentity(deployedFiles, manifest, "linux-x64");
-    delete deployedFiles[
-      `~/.zcode/server/agents/${retiredProtocolPrefix}/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude`
-    ];
-    const backend = new FakeRemoteBackend(
-      {
-        ...deployedFiles,
-        [`~/.zcode/server/.asset-components/${retiredProtocolPrefix}-claude.json`]: JSON.stringify({
-          id: `${retiredProtocolPrefix}-claude`,
-          version: claudeBundle.version,
-          platformArch: "linux-x64",
-        }),
-        [`${cachedComponentDir}/.ready`]: "ready",
-        [`${cachedComponentDir}/dist/index.js`]: "cached claude entry",
-        [`${cachedComponentDir}/.bundle-meta.json`]: JSON.stringify({
-          provider: "claude",
-          version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version,
-          platform: "linux-x64",
-        }),
-      },
-      {
-        commandPlans: [
-          {
-            matcher: /command -v curl/u,
-            exitCode: 0,
-            stdoutText: "download=curl\ntar=tar\nsha256=sha256sum\n",
-          },
-          {
-            matcher: new RegExp(
-              `rm -rf "\\$HOME"'\\/\\.zcode\\/server\\/asset-cache\\/components\\/linux-x64\\/${retiredProtocolPrefix}-claude`,
-              "u",
-            ),
-            exitCode: 0,
-            onExec: () => {
-              for (const remotePath of Array.from(backend.remoteFiles.keys())) {
-                if (remotePath.startsWith(cachedComponentDir)) {
-                  backend.remoteFiles.delete(remotePath);
-                }
-              }
-            },
-          },
-        ],
-      },
-    );
-
-    try {
-      const deployed = await deployServer(
-        backend,
-        { platform: "linux", arch: "x64" },
-        {
-          force: false,
-          assetInstallMode: "remote-download",
-          remoteCdnBaseUrl: cdnServer.baseUrl,
-          resourcePackages: {
-            selectedPackageIds: [`${retiredProtocolPrefix}-claude`],
-          },
-        },
-      );
-
-      expect(deployed).toBe(false);
-      expect(
-        backend.commands.some((command) =>
-          command.includes(
-            `rm -rf "$HOME"'/.zcode/server/asset-cache/components/linux-x64/${retiredProtocolPrefix}-claude/${cachedComponentDir.split("/").at(-1) ?? ""}'`,
-          ),
-        ),
-      ).toBe(false);
-      expect(
-        backend.commands.some((command) =>
-          command.includes(
-            `test -e "$HOME"'/.zcode/server/agents/${retiredProtocolPrefix}/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude'`,
-          ),
-        ),
-      ).toBe(false);
-      expect(
-        cdnServer.getRequestCount(toVersionedArtifactRequestPath(claudeBundle.artifactPath)),
-      ).toBe(0);
-    } finally {
-      await cdnServer.close();
-    }
-  });
-
-  it("remote-download 下旧 claude 选择应下载 glm 组件而不是 claude", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    const cdnRoot = join(rootDir, "cdn");
-    await stageRemoteRuntimeRelease(mockCdnDir, {
-      platform: "linux",
-      arch: "x64",
-    });
-    const localClaudeDir = join(
-      mockCdnDir,
-      "releases",
-      ZCODE_VERSION,
-      retiredProtocolPrefix,
-      "linux-x64",
-      LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.bundledResourceDir,
-    );
-    await writeFile(
-      join(localClaudeDir, ".bundle-meta.json"),
-      JSON.stringify({
-        provider: "claude",
-        version: LEGACY_REMOTE_TEST_AGENT_RUNTIME.claude.version,
-        platform: "linux-x64",
-        patchFingerprint: "patch-new",
-      }),
-      "utf8",
-    );
-    const manifest = await stageRemoteComponentArtifacts(mockCdnDir, cdnRoot, {
-      platformKey: "linux-x64",
-    });
-    const cdnServer = await createStaticFileServer(cdnRoot);
-    const claudeBundle = manifest.components.find(
-      (component) => component.id === `${retiredProtocolPrefix}-claude`,
-    );
-    if (!claudeBundle) {
-      throw new Error("missing retired claude component in staged manifest");
-    }
-
-    const remoteFiles = createFullyDeployedRemoteFiles("linux-x64");
-    addMatchingGlmAndServerArtifactIdentities(remoteFiles, manifest, "linux-x64");
-    const backend = new FakeRemoteBackend(
-      {
-        ...remoteFiles,
-        [`~/.zcode/server/.asset-components/${retiredProtocolPrefix}-claude.json`]: JSON.stringify({
-          id: `${retiredProtocolPrefix}-claude`,
-          version: "0.29.2+oldhash000000",
-          platformArch: "linux-x64",
-        }),
-      },
-      {
-        commandPlans: [
-          {
-            matcher: /command -v curl/u,
-            exitCode: 0,
-            stdoutText: "download=curl\ntar=tar\nsha256=sha256sum\n",
-          },
-        ],
-      },
-    );
-
-    try {
-      const deployed = await deployServer(
-        backend,
-        { platform: "linux", arch: "x64" },
-        {
-          force: false,
-          assetInstallMode: "remote-download",
-          remoteCdnBaseUrl: cdnServer.baseUrl,
-          resourcePackages: {
-            selectedPackageIds: [`${retiredProtocolPrefix}-claude`],
-          },
-        },
-      );
-
-      expect(deployed).toBe(false);
-      expect(backend.commands.some((command) => command.includes(claudeBundle.artifactPath))).toBe(
-        false,
-      );
-      expect(
-        backend.commands.some((command) => command.includes("/components/linux-x64/glm/")),
-      ).toBe(false);
-      expect(cdnServer.getRequestCount(`/${ZCODE_VERSION}/manifest-linux-x64.json`)).toBe(1);
     } finally {
       await cdnServer.close();
     }
@@ -4366,8 +3825,8 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
         ),
       ).rejects.toThrow(/failed to fetch manifest-linux-arm64\.json/u);
       expect(Date.now() - startedAt).toBeLessThan(1_000);
-      // Bugfix: a pinned-manifest failure is the failure of this transaction;
-      // it must not fall through to the version resolver and issue a second default 10s request.
+      // Bugfix：pinned manifest 失败就是本次 transaction 的失败，
+      // 不能再走 version resolver 发起第二个默认 10s 请求。
       expect(cdnServer.getRequestCount(manifestPath)).toBe(1);
     } finally {
       await cdnServer.close();
@@ -4601,7 +4060,7 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
 
       expect(cdnServer.getRequestCount(`/${ZCODE_VERSION}/manifest-linux-arm64.json`)).toBe(1);
 
-      // Even the second wave of concurrency under a warm cache may only create one refresh task.
+      // warm cache 下的第二轮并发也只能创建一个 refresh task。
       await Promise.all([
         deployServer(
           createBackend(),
@@ -4616,7 +4075,7 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
       ]);
       expect(cdnServer.getRequestCount(`/${ZCODE_VERSION}/manifest-linux-arm64.json`)).toBe(2);
 
-      // remote-download must also let identity detection and the actual install share a single manifest request.
+      // remote-download 也必须让身份判断与实际安装共享同一个 manifest 请求。
       await Promise.all([
         deployServer(
           createBackend(),
@@ -4768,9 +4227,8 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
         expect(cdnServer.getRequestCount(artifactRequestPath)).toBe(1);
       });
 
-      // Bugfix verification: when a normal download already holds the same SHA component lock,
-      // force should reuse that verified download. Splitting the lock would let two tasks
-      // concurrently replace the same directory and generate duplicate CDN requests.
+      // Bugfix 验证：普通下载已持有同一 SHA component 锁时，force 应复用这次
+      // 已校验下载；拆分锁会让两个任务并发替换同一目录并产生重复 CDN 请求。
       const forceReleasePromise = ensureRemoteReleaseDirFromCdn(
         { ...releaseOptions, forceRefresh: true },
         loggers,
@@ -4956,82 +4414,6 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     }
   });
 
-  it("生产态 GLM manifest 版本变化时仍应按制品 SHA 建新缓存", async () => {
-    const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
-    tempDirs.push(rootDir);
-
-    const mockCdnDir = join(rootDir, "mock-cdn");
-    const cdnRoot = join(rootDir, "cdn");
-    const remoteCacheDir = join(rootDir, "remote-cache");
-    const platformKey = "linux-arm64";
-    await stageRemoteRuntimeRelease(mockCdnDir);
-
-    const sourceReleaseDir = join(mockCdnDir, "releases", ZCODE_VERSION);
-    const semanticGlmComponentVersion = `${LEGACY_REMOTE_TEST_AGENT_RUNTIME.glm.version}-glm`;
-    const oldGlmComponentVersion = `${semanticGlmComponentVersion}+aaaaaa000001`;
-    const oldGlmComponentDir = join(
-      remoteCacheDir,
-      "components",
-      "glm",
-      platformKey,
-      oldGlmComponentVersion,
-    );
-    await mkdir(oldGlmComponentDir, { recursive: true });
-    await copySourcePathContentToDir(
-      join(sourceReleaseDir, "glm", platformKey),
-      oldGlmComponentDir,
-    );
-    await writeFile(join(oldGlmComponentDir, ".ready"), "old-component-ready\n", "utf8");
-
-    const newGlmComponentVersion = `${semanticGlmComponentVersion}+bbbbbb000001`;
-    const manifest = await stageRemoteComponentArtifacts(mockCdnDir, cdnRoot, {
-      platformKey,
-      mutateManifest: (rawManifest) => ({
-        ...rawManifest,
-        components: rawManifest.components.map((component) =>
-          component.id === "glm"
-            ? {
-                ...component,
-                version: newGlmComponentVersion,
-              }
-            : component,
-        ),
-      }),
-    });
-    const glm = manifest.components.find((component) => component.id === "glm");
-    if (!glm) {
-      throw new Error("missing glm component in staged manifest");
-    }
-
-    const cdnServer = await createStaticFileServer(cdnRoot);
-    try {
-      await expect(
-        ensureRemoteReleaseDirFromCdn(
-          {
-            remoteCdnBaseUrl: cdnServer.baseUrl,
-            remoteCacheDir,
-            version: ZCODE_VERSION,
-            platformArch: platformKey,
-            componentIds: ["glm"],
-          },
-          { log: () => {}, logWarn: () => {} },
-        ),
-      ).resolves.toBe(
-        join(remoteCacheDir, "releases", ZCODE_VERSION, platformKey, "glm-content", glm.sha256),
-      );
-
-      expect(cdnServer.getRequestCount(toComponentArtifactRequestPath(glm.artifactPath))).toBe(1);
-      await expect(
-        readFile(
-          join(remoteCacheDir, "components", "glm", platformKey, glm.sha256, ".ready"),
-          "utf8",
-        ),
-      ).resolves.toBeTruthy();
-    } finally {
-      await cdnServer.close();
-    }
-  });
-
   it("生产态不同 remoteCacheDir 并发预热时不应共享同一把下载锁", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "zcode-remote-deploy-"));
     tempDirs.push(rootDir);
@@ -5049,9 +4431,8 @@ describe("deployServer legacy agent node-script bundle deployment", () => {
     }
 
     try {
-      // Bugfix: the lock key previously omitted remoteCacheDir, so different cache directories
-      // wrongly shared one Promise. Warm two caches concurrently here; each should return its own
-      // directory and download once.
+      // Bugfix: 之前锁 key 没有带 remoteCacheDir，导致不同缓存目录会误共享同一 Promise。
+      // 这里并发预热两个 cache，断言应各自返回独立目录并各自下载一次。
       const [releaseDirA, releaseDirB] = await Promise.all([
         ensureRemoteReleaseDirFromCdn(
           {

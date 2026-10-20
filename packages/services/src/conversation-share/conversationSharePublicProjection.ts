@@ -1,10 +1,19 @@
-/* oxlint-disable eslint(max-lines) -- Keep public Row allowlist construction and closure validation within one policy boundary so builder and validator rules do not drift. */
-import type { ConversationShareArtifactDescriptor } from "@zcode/shared";
-import type { ArtifactRow, ConversationRow } from "@zcode/shared/zcode-protocol-v4";
+/* oxlint-disable eslint(max-lines) -- 公开 Row 的 allow-list 构建与闭包校验必须同处一个策略边界，拆分会让 builder/validator 规则漂移。 */
+import {
+  projectShareToolDisplay,
+  conversationShareContentBlockSchema,
+  type ConversationShareContentBlock,
+  type ConversationShareArtifactDescriptor,
+} from "@zcode/shared";
+import { toolCallDisplaySchema } from "@zcode/shared/zcode-protocol-v4";
+import type { ArtifactRow, ConversationRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 
 import { ConversationShareServiceError } from "./conversationShare.js";
 
+import type { ShareContentDraft } from "./conversationShareWorkflowSnapshot.js";
+
 export interface ConversationSharePublicProjection {
+  contentBlocks?: ConversationShareContentBlock[];
   rows: ConversationRow[];
   selectedProductTurnIds: string[];
   artifacts: ConversationSharePublicArtifact[];
@@ -65,6 +74,24 @@ function assertSafeString(value: string): void {
   if (/^(?:data|file):/iu.test(value)) {
     throwProjectionError("unsafe_structure", "Local and inline URLs cannot be shared");
   }
+}
+
+// display 的闭集独立于 row.kind 演进；复用正式 schema，避免浅拷贝把未知嵌套字段送到 confirm。
+function projectToolDisplay(row: ToolCallRow) {
+  const parsed = toolCallDisplaySchema.safeParse(row.display);
+  if (!parsed.success) {
+    throwProjectionError("invalid_conversation", "Invalid tool display in shared conversation", {
+      rowKind: row.kind,
+      rowId: row.rowId,
+      field: ["display", ...(parsed.error.issues[0]?.path ?? [])].join("."),
+    });
+  }
+  // 插件交互资源属于宿主能力，公开卡片只保留 MCP 的静态描述。
+  if (parsed.data.kind === "mcp_tool") {
+    const { ui: _ui, ...display } = parsed.data;
+    return display;
+  }
+  return parsed.data;
 }
 
 function isPublicArtifactRef(value: string): boolean {
@@ -136,13 +163,13 @@ function assertTerminalAndSafe(rows: ConversationRow[]): void {
         );
       }
     }
-    // artifact.ref is an internally authorized Host read reference and is replaced by the public projection; exclude it from generic URL-leak checks.
+    // artifact.ref 是 Host 内部授权的读取引用，公开投影会替换；它不能参与通用 URL 泄漏检查。
     if (row.kind === "artifact") {
       const { ref: _localRef, ...safeFields } = row;
       visitStrings(safeFields, assertSafeString);
-    } else if (row.kind === "toolCall" && row.output?.truncated) {
-      // truncated.ref is used only for local on-demand reads of large tool output; the public projection keeps only output.text.
-      // Security-checking this internal ref, which is absent from the request, would incorrectly block upload of a real artifact from the same turn.
+    } else if (row.kind === "toolCall" && row.output) {
+      // truncated.ref 只用于本地按需读取大工具输出，公开投影本来就只保留 output.text；
+      // 对不会出现在请求里的内部 ref 做安全校验会误阻断同一轮正式结果物上传。
       visitStrings({ ...row, output: { text: row.output.text } }, assertSafeString);
     } else if (row.kind === "userInput") {
       const { attachments: _attachments, ...safeFields } = row;
@@ -253,11 +280,11 @@ function projectTimelineMarker(
 }
 
 /**
- * Build a new object for each Row type using an allowlist.
+ * 每类 Row 用 allow-list 新建对象。
  *
- * This switch is intentionally exhaustive and has **no default**: because the return type is non-optional, adding a kind to conversationRowSchema
- * causes a compile error here. This is a deliberate gate: the public projection is a cross-version data-exchange format, so adding a kind
- * unreadable by older clients must be an explicit decision rather than silently passing through a default.
+ * 这个 switch 故意穷尽且**不带 default**：返回类型非可选，所以 conversationRowSchema 新增
+ * 一种 kind 时这里会编译失败。那是有意的闸门——公开投影是跨版本数据交换格式，往里加一种
+ * 老客户端读不了的 kind 必须是个显式决定，不能靠 default 悄悄放过去。
  */
 function projectRow(row: ConversationRow, index: number, ids: PublicIdMaps): ConversationRow {
   const base = projectBase(row, index, ids);
@@ -353,7 +380,7 @@ function projectRow(row: ConversationRow, index: number, ids: PublicIdMaps): Con
         inputText: row.inputText,
         ...(row.input === undefined ? {} : { input: row.input }),
         ...(row.output ? { output: { text: row.output.text } } : {}),
-        ...(row.display ? { display: { ...row.display } } : {}),
+        ...(row.display ? { display: projectToolDisplay(row) } : {}),
         ...(row.error ? { error: { ...row.error } } : {}),
         ...(row.backgrounded ? { backgrounded: row.backgrounded } : {}),
         ...(row.startedAt === undefined ? {} : { startedAt: row.startedAt }),
@@ -467,7 +494,7 @@ export function assertConversationSharePublicProjection(input: {
           "Conversation public entity identity is invalid",
         );
       }
-      // entityId is a persistent entity identity and may correspond to multiple Rows; collect reference closure here without requiring uniqueness across Rows.
+      // entityId 是持久实体身份，同一实体可以对应多个 Row；这里只收集引用闭包，不校验 Row 间唯一性。
       entityIds.add(row.entityId);
     }
     if (row.actions !== undefined) {
@@ -593,6 +620,10 @@ export function buildConversationSharePublicProjection(input: {
   rows: ConversationRow[];
   selectedProductTurnIds: string[];
   additionalArtifacts?: ConversationSharePublicArtifact[];
+  contentDrafts?: ShareContentDraft[];
+  toolPresentation?: boolean;
+  toolImages?: ReadonlyMap<number, Array<{ resourceId: string; mimeType: string }>>;
+  sourceRows?: readonly ConversationRow[];
 }): ConversationSharePublicProjection {
   assertTerminalAndSafe(input.rows);
   assertUnique(input.selectedProductTurnIds, "source product turn");
@@ -613,8 +644,8 @@ export function buildConversationSharePublicProjection(input: {
     );
   }
 
-  // The local runtime projection contains subagent details and write-state identifiers and cannot be used as a public payload.
-  // Filter out non-V1 Rows first, then generate a closed set of public IDs from the remaining content.
+  // 本地运行投影包含 subagent 详情和写入态标识，不能直接作为公开载荷；
+  // 必须先过滤非 V1 Row，再基于剩余内容生成一套闭合的公开 ID。
   const retainedRows = input.rows.filter(
     (row) => row.kind !== "subagent" && row.kind !== "hookInvocation",
   );
@@ -682,6 +713,84 @@ export function buildConversationSharePublicProjection(input: {
     ),
     artifacts: [...artifacts, ...additionalArtifacts],
   };
+  if (input.contentDrafts?.length) {
+    projection.contentBlocks = input.contentDrafts.map((draft, index) => {
+      const entityId = requiredMappedId(ids.entityIds, draft.entityId, "content fallback");
+      const fallback = rows.find((row) => row.entityId === entityId);
+      if (!fallback) throwProjectionError("invalid_conversation", "Content fallback is missing");
+      const contentArtifacts = draft.payload.artifacts.map((artifact) =>
+        "resource_id" in artifact && artifact.resource_id
+          ? {
+              ...artifact,
+              resource_id: requiredMappedId(
+                ids.artifactIds,
+                artifact.resource_id,
+                "content resource",
+              ),
+            }
+          : artifact,
+      );
+      return conversationShareContentBlockSchema.parse({
+        id: `share-content-${index + 1}`,
+        type: "workflow",
+        version: draft.version ?? 1,
+        product_turn_id: requiredMappedId(ids.productTurnIds, draft.productTurnId, "content turn"),
+        fallback_row_id: fallback.rowId,
+        captured_at: draft.capturedAt,
+        resource_ids: contentArtifacts.flatMap((artifact) =>
+          "resource_id" in artifact && artifact.resource_id ? [artifact.resource_id] : [],
+        ),
+        payload: { ...draft.payload, artifacts: contentArtifacts },
+      });
+    });
+  }
+  if (input.toolPresentation) {
+    const originalRows = new Map(input.sourceRows?.map((row) => [row.rowId, row] as const) ?? []);
+    const agentTypes = new Map(
+      input.sourceRows?.flatMap((row) =>
+        row.kind === "subagent" ? [[row.parentToolCallId, row.subagentType] as const] : [],
+      ) ?? [],
+    );
+    const toolBlocks = retainedRows.flatMap((sourceRow, index) => {
+      if (sourceRow.kind !== "toolCall") return [];
+      const display = projectShareToolDisplay(sourceRow.output?.display);
+      const images = (input.toolImages?.get(sourceRow.rowId) ?? []).flatMap((image) => {
+        const id = ids.artifactIds.get(image.resourceId);
+        return id ? [{ resource_id: id, mime_type: image.mimeType }] : [];
+      });
+      const agentType = agentTypes.get(sourceRow.toolCallId);
+      const original = originalRows.get(sourceRow.rowId);
+      const originalTool = original?.kind === "toolCall" ? original : sourceRow;
+      const appName =
+        originalTool.cuaApp?.name ??
+        (originalTool.output?.display?.kind === "cua"
+          ? originalTool.output.display.targetApp?.displayName
+          : undefined) ??
+        (originalTool.display?.kind === "node_repl_images"
+          ? originalTool.display.app?.displayName
+          : undefined);
+      if (!display && !images.length && !agentType && !appName) return [];
+      return [
+        conversationShareContentBlockSchema.parse({
+          id: `share-content-${(projection.contentBlocks?.length ?? 0) + index + 1}`,
+          type: "tool-presentation",
+          version: 1,
+          product_turn_id: rows[index]!.productTurnId,
+          fallback_row_id: rows[index]!.rowId,
+          captured_at: sourceRow.endedAt ?? sourceRow.createdAt,
+          resource_ids: [...new Set(images.map((image) => image.resource_id))],
+          payload: {
+            ...(display ? { display } : {}),
+            ...(images.length ? { images } : {}),
+            ...(agentType ? { agent_type: agentType } : {}),
+            ...(appName ? { app_name: appName } : {}),
+          },
+        }),
+      ];
+    });
+    if (toolBlocks.length)
+      projection.contentBlocks = [...(projection.contentBlocks ?? []), ...toolBlocks];
+  }
   assertConversationSharePublicProjection(projection);
   return projection;
 }

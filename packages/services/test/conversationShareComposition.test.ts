@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ServiceChannels } from "@zcode/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
@@ -75,7 +74,6 @@ describe("conversation share service composition", () => {
       });
       const service = services.get(servicesModule.IConversationShareService);
       expect(typeof service.getCapabilities).toBe("function");
-      expect(ServiceChannels.ConversationShare).toBe("conversation-share");
     } finally {
       // Fix rationale: deleting HOME right after a synchronous dispose lets still-draining init/dispose
       // tasks write logs late and race with the Vitest worker shutting down its log RPC; await service

@@ -233,3 +233,25 @@ packages/server/src/http.ts
 
 packages/ui/src/project-sidebar/grouped/task-row.tsx
 
+# TEMPORARY (upstream 3.16.1 final sync WIP): split these files below 20000 bytes, then remove this block.
+packages/desktop/src/host/sourceServerConnectionManager.ts
+packages/desktop/src/host/sourceServerDirectory.ts
+packages/desktop/src/host/windowRemoteConnectionRegistry.ts
+packages/desktop/src/main/browserView/browserPlaywrightLocatorExecutor.ts
+packages/desktop/src/main/desktopMainIpcRemote.ts
+packages/desktop/src/main/desktopRemoteSessions.ts
+packages/desktop/src/main/desktopRuntimeEnv.ts
+packages/desktop/src/main/editors.ts
+packages/desktop/src/main/taskRealtimeBus.ts
+packages/server/src/remote/remoteAssetCache.ts
+packages/server/src/remote/ssh-backend.ts
+packages/server/src/remote/wsl-backend.ts
+packages/services/src/conversation-share/conversationShareArtifactDiscovery.ts
+packages/services/src/conversation-share/conversationShareHttpClient.ts
+packages/services/src/conversation-share/conversationSharePublicProjection.ts
+packages/services/src/conversation-share/conversationShareService.ts
+packages/services/src/session/offPeakMockGateway.ts
+packages/services/src/session/offPeakTaskService.ts
+packages/services/src/zcode-agent/zcodeAgentProcessManager.ts
+packages/services/src/zcode-session/zcodeSessionService.ts
+scripts/architecture/upstream-snapshot.json

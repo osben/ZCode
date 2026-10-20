@@ -60,9 +60,9 @@ async function loadAliasParser() {
 }
 
 describe("sshConfigAlias fallback parser", () => {
-  // Bugfix: under full-suite pre-push concurrency, the dynamic import of services/node is affected by overall load.
-  // The old 5s budget passed in local unit runs but occasionally timed out in the full hook; relaxed here to match
-  // Windows so the case still catches genuinely hung setups without environment load causing false failures.
+  // Bugfix: pre-push 全量测试并发执行时，动态导入 services/node 会受整体负载影响。
+  // 旧的 5s 预算在本地单测能过，但全量 hook 中偶发超时；这里放宽到和 Windows 一致，
+  // 让用例仍然捕获真正挂起的问题，同时避免环境负载导致误失败。
   const testTimeout = 15000;
 
   it(
@@ -144,7 +144,6 @@ describe("sshConfigAlias fallback parser", () => {
       const aliasNames = aliases.map((item) => item.alias);
 
       expect(aliasNames).toEqual(["dev", "prod"]);
-      expect(aliases).toHaveLength(2);
       expect(aliases[0]).toMatchObject({
         alias: "dev",
         host: "dev.example.com",
@@ -208,7 +207,7 @@ describe("sshConfigAlias fallback parser", () => {
     testTimeout,
   );
 
-  // Unix shell scripts cannot run on Windows (chmod has no effect, the ssh command is unavailable); skip directly
+  // Unix shell 脚本在 Windows 上无法执行（chmod 不生效，ssh 命令不可用），直接跳过
   if (process.platform === "win32") {
     return;
   }

@@ -70,7 +70,7 @@ describe("botsService messageFlow", () => {
       bound.bots[actor.botId] = {
         botId: actor.botId,
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         updatedAt: Date.now(),
         mode: "task",
         activeTaskId: "task-1",
@@ -125,8 +125,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           weixinGetUpdatesBuf: "cursor-only",
@@ -170,7 +170,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "glm",
       }),
     );
@@ -208,7 +208,7 @@ describe("botsService messageFlow", () => {
     expect(replies[0]?.text).toContain("0. 取消");
     expect(replies[0]?.text).toContain("回复数字选择，0 取消。");
     expect(replies[0]?.text).not.toContain("/workspace");
-    expect(replies[0]?.text).not.toContain("ssh://host/tmp/workspace");
+    expect(replies[0]?.text).not.toContain("remote:server:test-owner:/tmp/workspace");
     service.disposeAll();
   });
 
@@ -243,7 +243,7 @@ describe("botsService messageFlow", () => {
           {
             kind: "remote",
             workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
+            workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           },
         ],
       }),
@@ -430,8 +430,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -470,8 +470,8 @@ describe("botsService messageFlow", () => {
     expect(switchReplies[0]?.text).toContain("任务: 草稿");
     expect((await repo.readState()).bots["weixin-1"]).toMatchObject({
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
-      workspaceId: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+      workspaceId: JSON.stringify(["remote:server:test-owner", "project-0"]),
       activeTaskId: null,
       mode: "draft",
     });
@@ -485,8 +485,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -518,7 +518,7 @@ describe("botsService messageFlow", () => {
           title: "First task",
           status: "completed",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           provider: "codex",
         },
         {
@@ -526,7 +526,7 @@ describe("botsService messageFlow", () => {
           title: "Second task",
           status: "completed",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           provider: "codex",
         },
       ]),
@@ -590,15 +590,15 @@ describe("botsService messageFlow", () => {
     service.disposeAll();
   });
 
-  it("switches remote task from the displayed /task selection when later listTasks misses it", async () => {
+  it("switches a retained Host task when CLI listTasks misses it", async () => {
     const repo = f.createMemoryRepo(f.weixinConfig, {
       version: 3,
       bots: {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -613,7 +613,7 @@ describe("botsService messageFlow", () => {
           title: "Remote first task",
           status: "completed",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           provider: "codex",
         },
         {
@@ -621,12 +621,28 @@ describe("botsService messageFlow", () => {
           title: "Remote second task",
           status: "completed",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           provider: "codex",
         },
       ])
       .mockResolvedValue([]);
+    const projectServices = f.createBotProjectServices();
+    const retainedTasks = await legacyTaskService.listTasks({
+      workspacePath: "/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+    });
+    projectServices.projectService.readTree.mockResolvedValue({
+      projects: [],
+      tasks: retainedTasks.map((task) => ({
+        ...task,
+        projectId: "project-0",
+        hostId: "remote:server:test-owner",
+        pinned: false,
+        archived: false,
+      })),
+    });
     const service = f.createBotsService({
+      ...projectServices,
       credentialService: f.createCredentialService({ "weixin-token": "token" }),
       legacyTaskService,
       repo: repo as never,
@@ -649,7 +665,7 @@ describe("botsService messageFlow", () => {
     expect((await repo.readState()).bots["weixin-1"]).toMatchObject({
       activeTaskId: "task-2",
       mode: "task",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
     });
     service.disposeAll();
   });
@@ -661,8 +677,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -676,7 +692,7 @@ describe("botsService messageFlow", () => {
         title: "Current task",
         status: "completed",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
       },
       {
@@ -684,7 +700,7 @@ describe("botsService messageFlow", () => {
         title: "hello",
         status: "completed",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
       },
     ]);
@@ -733,8 +749,8 @@ describe("botsService messageFlow", () => {
         "telegram-1": {
           botId: "telegram-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -748,7 +764,7 @@ describe("botsService messageFlow", () => {
         title: "Current task",
         status: "completed",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
       },
       {
@@ -756,7 +772,7 @@ describe("botsService messageFlow", () => {
         title: "Next task",
         status: "completed",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
       },
     ]);
@@ -801,8 +817,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -845,7 +861,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Active task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
         model: "gpt-5.3",
         mode: "default",
@@ -956,8 +972,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -980,7 +996,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Active task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "glm",
         model: "glm-4.6",
         status: "completed",
@@ -1090,6 +1106,7 @@ describe("botsService messageFlow", () => {
     const zcodeSessionService = f.createZCodeSessionService();
     const updateProviderRegistry = vi.mocked(zcodeSessionService.updateProviderRegistry);
     const service = f.createBotsService({
+      ...f.createBotProjectServices([{ workspacePath: "/tmp/workspace" }]),
       credentialService: f.createCredentialService({ "weixin-token": "token" }),
       zcodeTaskService,
       zcodeSessionService,
@@ -1144,83 +1161,15 @@ describe("botsService messageFlow", () => {
     service.disposeAll();
   });
 
-  it("renders /mode labels after normalizing legacy task provider to ZCode Agent", async () => {
+  it("returns the private mode lock without writing task config", async () => {
     const repo = f.createMemoryRepo(f.weixinConfig, {
       version: 3,
       bots: {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
-          mode: "task",
-          activeTaskId: "task-1",
-          updatedAt: Date.now(),
-        },
-      },
-    });
-    const legacyTaskService = f.createLegacyTaskService();
-    const configOptions = [
-      {
-        id: "mode",
-        category: "mode",
-        type: "select" as const,
-        currentValue: "agent",
-        options: [
-          { value: "read-only", name: "Read Only" },
-          { value: "auto", name: "Default" },
-          { value: "agent", name: "Agent" },
-          { value: "full-access", name: "Full Access" },
-          { value: "agent-full-access", name: "Agent (full access)" },
-        ],
-      },
-    ];
-    vi.mocked(legacyTaskService.getTaskConfigOptions).mockResolvedValue(configOptions);
-    vi.mocked(legacyTaskService.listTasks).mockResolvedValue([
-      {
-        taskId: "task-1",
-        title: "Active task",
-        workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
-        provider: "codex",
-        status: "completed",
-      },
-    ]);
-    const service = f.createBotsService({
-      credentialService: f.createCredentialService({ "weixin-token": "token" }),
-      legacyTaskService,
-      settingService: f.createSettingService({
-        locale: "en-US",
-        lastWorkspaceSession: [
-          {
-            kind: "remote",
-            workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
-          },
-        ],
-      }),
-      repo: repo as never,
-    });
-
-    const replies = await service.handleInboundMessage({
-      botId: "weixin-1",
-      text: "/mode",
-      actor: weixinActor,
-    });
-
-    expect(replies[0]?.text).toContain("yolo");
-    service.disposeAll();
-  });
-
-  it("loads /mode options from ZCode workspace state when active task has no mode option", async () => {
-    const repo = f.createMemoryRepo(f.weixinConfig, {
-      version: 3,
-      bots: {
-        "weixin-1": {
-          botId: "weixin-1",
-          workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -1234,7 +1183,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Active task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
         mode: "auto",
         status: "completed",
@@ -1249,7 +1198,7 @@ describe("botsService messageFlow", () => {
           {
             kind: "remote",
             workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
+            workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           },
         ],
       }),
@@ -1276,8 +1225,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -1291,7 +1240,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Active task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "codex",
         status: "completed",
       },
@@ -1320,8 +1269,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -1343,7 +1292,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Active task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "glm",
         model: "gpt-5.3",
         status: "completed",
@@ -1482,7 +1431,7 @@ describe("botsService messageFlow", () => {
 
   it("ignores persisted legacy Provider cache and uses Model Selection View", async () => {
     const workspacePath = "/tmp/workspace";
-    const workspaceIdentity = "ssh://host/tmp/workspace";
+    const workspaceIdentity = "remote:server:test-owner:/tmp/workspace";
     const repo = f.createMemoryRepo(f.weixinConfig, {
       version: 3,
       bots: {
@@ -1559,7 +1508,7 @@ describe("botsService messageFlow", () => {
 
   it("does not resolve Feishu model provider clicks from the persisted model cache", async () => {
     const workspacePath = "/tmp/workspace";
-    const workspaceIdentity = "ssh://host/tmp/workspace";
+    const workspaceIdentity = "remote:server:test-owner:/tmp/workspace";
     const providerId = "693f9c23-72a5-4f1f-bf4a-4b958add6472";
     const modelId = "deepseek-v4-flash";
     const repo = f.createMemoryRepo(f.feishuConfig, {
@@ -1646,7 +1595,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "glm",
         modelSelection: { providerId: "glm", modelId: "default" },
         v4Create: true,
@@ -1658,7 +1607,7 @@ describe("botsService messageFlow", () => {
     expect((await repo.readState()).bots["webhook-1"]).toMatchObject({
       activeTaskId: "task-1",
       mode: "task",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
     });
     expect(broadcastService.send).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1773,7 +1722,7 @@ describe("botsService messageFlow", () => {
       },
       taskId: "task-automation-1",
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
     });
     expect(legacyTaskService.onDynamicTaskEvent).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1889,7 +1838,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.onDynamicTaskEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         taskId: "task-1",
         deliveryKind: "bot-channel-continuous",
       }),
@@ -1897,8 +1846,8 @@ describe("botsService messageFlow", () => {
     await streamListeners[0]?.({
       type: "task_stream_mirror_batch",
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
-      workspaceKey: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+      workspaceKey: "remote:server:test-owner:/tmp/workspace",
       taskId: "task-1",
       traceId: "trace-1",
       runId: "run-1",
@@ -2107,7 +2056,6 @@ describe("botsService messageFlow", () => {
         ]),
       },
     });
-    expect(JSON.stringify(card)).toContain("我先检查项目。");
     const elements = (card.body as { elements?: Array<Record<string, unknown>> }).elements ?? [];
     const timeline = elements.map((element) =>
       element.tag === "collapsible_panel"
@@ -2122,7 +2070,6 @@ describe("botsService messageFlow", () => {
       "message:测试完成。",
       "message:✅ 已完成",
     ]);
-    expect(JSON.stringify(card)).toContain("✅ 已完成");
     service.disposeAll();
   });
 
@@ -2617,7 +2564,7 @@ describe("botsService messageFlow", () => {
       taskId: "task-1",
       title: "Task 1",
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
       provider: "codex",
       status: "completed",
     };
@@ -2767,7 +2714,7 @@ describe("botsService messageFlow", () => {
           event: "elicitation_request",
           taskId: "task-1",
           requestId: "elicit-1",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           elicitationRequest: expect.objectContaining({
             requestId: "elicit-1",
             message: "请选择方案",
@@ -2798,7 +2745,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.respondElicitation).toHaveBeenCalledWith({
       taskId: "task-1",
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
       runId: "trace-elicit",
       requestId: "elicit-1",
       action: "accept",
@@ -2811,7 +2758,7 @@ describe("botsService messageFlow", () => {
           event: "elicitation_resolved",
           taskId: "task-1",
           requestId: "elicit-1",
-          workspaceIdentity: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         }),
       }),
     );
@@ -2964,8 +2911,8 @@ describe("botsService messageFlow", () => {
         "feishu-1": {
           botId: "feishu-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -3169,8 +3116,8 @@ describe("botsService messageFlow", () => {
         "feishu-1": {
           botId: "feishu-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -3303,8 +3250,8 @@ describe("botsService messageFlow", () => {
         "feishu-1": {
           botId: "feishu-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -3665,8 +3612,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           pendingElicitation: {
@@ -3709,7 +3656,7 @@ describe("botsService messageFlow", () => {
       expect.objectContaining({
         requestId: "elicit-text",
         runId: "trace-text",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         content: expect.objectContaining({
           answer_0: ["tests", "docs"],
           answer: ["tests", "docs"],
@@ -3726,8 +3673,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           pendingElicitation: {
@@ -3811,8 +3758,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           pendingElicitation: {
@@ -3866,8 +3813,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           pendingElicitation: {
@@ -4074,7 +4021,8 @@ describe("botsService messageFlow", () => {
     ]);
     expect(isConnected).toHaveBeenCalledWith({
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+      hostId: "remote:server:test-owner",
     });
     expect(ensureConnected).not.toHaveBeenCalled();
     expect(getLegacyTaskService).not.toHaveBeenCalled();
@@ -4112,7 +4060,8 @@ describe("botsService messageFlow", () => {
     ]);
     expect(ensureConnected).toHaveBeenCalledWith({
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+      hostId: "remote:server:test-owner",
     });
     expect(legacyTaskService.createTask).not.toHaveBeenCalled();
     service.disposeAll();
@@ -4238,7 +4187,8 @@ describe("botsService messageFlow", () => {
     expect(replies[0]?.text).toContain("状态:");
     expect(ensureConnected).toHaveBeenCalledWith({
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+      hostId: "remote:server:test-owner",
     });
     expect(legacyTaskService.createTask).not.toHaveBeenCalled();
     service.disposeAll();
@@ -4438,8 +4388,8 @@ describe("botsService messageFlow", () => {
           "webhook-1": {
             botId: "webhook-1",
             workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
-            workspaceId: "ssh://host/tmp/workspace",
+            workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+            workspaceId: "remote:server:test-owner:/tmp/workspace",
             mode: "task",
             activeTaskId: missingSessionId,
             updatedAt: Date.now(),
@@ -4479,8 +4429,8 @@ describe("botsService messageFlow", () => {
         "webhook-1": {
           botId: "webhook-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           draftOptions: {
@@ -4568,8 +4518,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           draftOptions: {
@@ -4631,8 +4581,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           draftOptions: { provider: "glm" },
@@ -4671,7 +4621,7 @@ describe("botsService messageFlow", () => {
     expect(legacyTaskService.deleteTask).toHaveBeenCalledWith({
       taskId: "task-1",
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
     });
     expect((await repo.readState()).bots["weixin-1"]).toMatchObject({
       mode: "draft",
@@ -4763,8 +4713,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -4777,7 +4727,7 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Previous task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         provider: "claude",
         model: "fallback-model",
         mode: "fallback-mode",
@@ -4856,8 +4806,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           draftOptions: {
@@ -5015,8 +4965,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "draft",
           activeTaskId: null,
           draftOptions: {
@@ -5084,13 +5034,13 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Running task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
       },
       {
         taskId: "task-2",
         title: "Second task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         status: "completed",
       },
     ]);
@@ -5121,8 +5071,8 @@ describe("botsService messageFlow", () => {
         "weixin-1": {
           botId: "weixin-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -5135,13 +5085,13 @@ describe("botsService messageFlow", () => {
         taskId: "task-1",
         title: "Legacy task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
       },
       {
         taskId: "task-2",
         title: "Second task",
         workspacePath: "/tmp/workspace",
-        workspaceIdentity: "ssh://host/tmp/workspace",
+        workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
         status: "completed",
       },
     ]);
@@ -5191,8 +5141,8 @@ describe("botsService messageFlow", () => {
         "feishu-1": {
           botId: "feishu-1",
           workspacePath: "/tmp/workspace",
-          workspaceIdentity: "ssh://host/tmp/workspace",
-          workspaceId: "ssh://host/tmp/workspace",
+          workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+          workspaceId: "remote:server:test-owner:/tmp/workspace",
           mode: "task",
           activeTaskId: "task-1",
           updatedAt: Date.now(),
@@ -5320,8 +5270,8 @@ describe("botsService messageFlow", () => {
           [botId]: {
             botId,
             workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
-            workspaceId: "ssh://host/tmp/workspace",
+            workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
+            workspaceId: "remote:server:test-owner:/tmp/workspace",
             mode: "task",
             activeTaskId: "task-1",
             updatedAt: Date.now(),

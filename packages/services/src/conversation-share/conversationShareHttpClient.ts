@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- One method per endpoint plus a shared requestData for authentication, redaction, and error normalization; splitting this file would remove the single entry point for the HTTP contract. */
+/* oxlint-disable eslint(max-lines) -- 一个端点一个方法 + 统一的鉴权/脱敏/错误归一化 requestData，拆分会让 HTTP 契约失去单一入口。 */
 import {
   conversationShareArtifactDescriptorSchema,
   conversationShareArtifactUploadDataSchema,
@@ -9,7 +9,7 @@ import {
   conversationShareContinuationDataSchema,
   conversationShareContinuationRequestSchema,
   conversationShareErrorEnvelopeSchema,
-  conversationShareKnownErrorCodeSchema,
+  classifyConversationShareError,
   conversationSharePreparationDataSchema,
   conversationSharePreparationRequestSchema,
   conversationSharePreviewDataSchema,
@@ -18,7 +18,8 @@ import {
   isConversationShareSchemaVersionSupported,
   type ApiClient,
   type ApiRequestInit,
-  type ConversationShareApiErrorCode,
+  type ConversationShareErrorKind,
+  type ConversationShareRejection,
   type ConversationShareArtifactDescriptor,
   type ConversationShareArtifactUpload,
   type ConversationShareCapabilities,
@@ -30,44 +31,28 @@ import {
   type ConversationSharePreview,
   type ConversationShareRecord,
 } from "@zcode/shared";
-import type { z } from "zod";
+import { z } from "zod";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { REQUEST_ID_HEADER_NAME, withRequestIdHeader } from "../providers/api/requestIdHeaders.js";
 import { verifyConversationShareIntegrity } from "./conversationShareIntegrity.js";
 
 const log = createServiceLogger("conversation-share-http");
 
-export type ConversationShareClientErrorKind =
-  | "authentication_required"
-  | "feature_disabled"
-  | "invalid_contract"
-  | "invalid_conversation"
-  | "disclosure_required"
-  | "unsafe_structure"
-  | "artifact_not_allowed"
-  | "limit_exceeded"
-  | "upload_incomplete"
-  | "not_found"
-  | "expired"
-  | "import_not_allowed"
-  | "rate_limited"
-  | "network"
-  | "safety_check_pending"
-  | "unsupported_schema_version"
-  | "unknown";
+export type ConversationShareClientErrorKind = ConversationShareErrorKind;
 
 export class ConversationShareClientError extends Error {
   readonly kind: ConversationShareClientErrorKind;
   readonly status?: number;
-  readonly code?: ConversationShareApiErrorCode;
-  /** Request ID from the server response, used to correlate with backend logs. */
+  readonly code?: number;
+  /** 服务端响应的请求 ID，用于和后端日志对账。 */
   readonly requestId?: string;
-  /** Reuse the existing RPC details field to send safe diagnostic information to the Renderer. */
+  /** 复用现有 RPC details 字段，把安全诊断信息传到 Renderer。 */
   readonly details?: {
     requestId?: string;
     clientRequestId?: string;
     status?: number;
     code?: number;
+    rejection?: ConversationShareRejection;
   };
   declare readonly retryAfterMs?: number;
 
@@ -75,7 +60,8 @@ export class ConversationShareClientError extends Error {
     kind: ConversationShareClientErrorKind;
     message: string;
     status?: number;
-    code?: ConversationShareApiErrorCode;
+    code?: number;
+    rejection?: ConversationShareRejection;
     retryAfterMs?: number;
     requestId?: string;
     clientRequestId?: string;
@@ -102,32 +88,12 @@ export class ConversationShareClientError extends Error {
         ...(clientRequestId ? { clientRequestId } : {}),
         ...(options.status === undefined ? {} : { status: options.status }),
         ...(options.code === undefined ? {} : { code: options.code }),
+        ...(options.rejection ? { rejection: options.rejection } : {}),
       };
     }
     if (options.retryAfterMs !== undefined) this.retryAfterMs = options.retryAfterMs;
   }
 }
-
-const ERROR_KIND_BY_CODE: Record<ConversationShareApiErrorCode, ConversationShareClientErrorKind> =
-  {
-    3001: "invalid_contract",
-    3002: "rate_limited",
-    3200: "feature_disabled",
-    3201: "authentication_required",
-    3203: "invalid_contract",
-    3204: "invalid_contract",
-    3205: "invalid_conversation",
-    3206: "disclosure_required",
-    3207: "unsafe_structure",
-    3208: "artifact_not_allowed",
-    3209: "limit_exceeded",
-    3210: "upload_incomplete",
-    3211: "not_found",
-    3212: "expired",
-    3213: "authentication_required",
-    3214: "import_not_allowed",
-    3215: "safety_check_pending",
-  };
 
 const IMF_FIXDATE_PATTERN =
   /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (?:0[1-9]|[12]\d|3[01]) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d GMT$/u;
@@ -196,7 +162,7 @@ function parseRetryAfterMs(value: string | null, now = Date.now()): number | und
     const delayMs = Number(normalized) * 1_000;
     return Number.isSafeInteger(delayMs) && delayMs > 0 ? delayMs : undefined;
   }
-  // Date.parse accepts ISO/localized dates and normalizes nonexistent dates; validate strictly against HTTP-date syntax first.
+  // Date.parse 会接受 ISO/本地化日期并归一化不存在的日期；先按 HTTP-date 语法严格校验。
   const retryAt = parseHttpDate(normalized);
   if (retryAt === undefined) return undefined;
   const delayMs = retryAt - now;
@@ -204,13 +170,13 @@ function parseRetryAfterMs(value: string | null, now = Date.now()): number | und
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-// During confirm, the server runs safety checks synchronously and a single request can stay pending far beyond 30s (observed 50s+ before abort).
-// Relax the timeout only for this endpoint; raising it globally to 2min would make capability discovery hang for 2min when offline.
-// This is separate from confirmUntilReady's polling timeout, which controls retries after the server has returned pending and cannot help the request itself.
+// confirm 期间服务端同步跑安全检查，单次请求会被挂住远超 30s（实测 50s+ 被 abort）。只放宽这一个
+// 端点：全局抬到 2min 会让断网时的能力发现也僵 2min。与 confirmUntilReady 的轮询超时无关——
+// 后者管的是服务端已返回 pending 之后的重试窗口，救不了请求本身。
 const CONFIRM_TIMEOUT_MS = 120_000;
-// uploadArtifact cannot use the 30s default timeout: confirm alone may take 50s+, and larger
-// artifacts will time out on slow uploads. Uploads have no automatic retry, so a timeout fails the whole publish. Scale the timeout by size:
-// 30s for connection/server overhead plus a minimum assumed upload rate of 128KB/s, with the global default as the floor (small files are not shortened).
+// uploadArtifact 不能沿用 30s 默认超时——confirm 单请求会被挂 50s+，更大的
+// artifact 在慢速上行上必然超时，且上传无自动重试，超时即整个发布失败。按体积动态放宽：
+// 30s 建连/服务端处理余量 + 保底 128KB/s 上行带宽，下限仍是全局默认超时（小文件不被缩短）。
 const UPLOAD_TIMEOUT_BASE_MS = 30_000;
 const UPLOAD_MIN_THROUGHPUT_BYTES_PER_SEC = 128 * 1024;
 
@@ -231,7 +197,7 @@ export interface ConversationShareHttpClientOptions {
   baseUrl: string;
   tokenProvider: () => Promise<string | null>;
   timeoutMs?: number;
-  /** Timeout for a single confirm request; defaults to 2min. */
+  /** confirm 单次请求超时；缺省 2min。 */
   confirmTimeoutMs?: number;
 }
 
@@ -268,8 +234,8 @@ export class ConversationShareHttpClient {
     const { capabilities, unsupportedArtifactTypes, unsupportedAccessModes } =
       narrowConversationShareCapabilities(wire);
     if (unsupportedArtifactTypes.length > 0 || unsupportedAccessModes.length > 0) {
-      // Leave a searchable record when the backend adds an artifact type/access mode: capability discovery no longer fails,
-      // but we still need to know what support to add.
+      // 后端新增结果物类型/访问模式时留一条可检索的记录：能力发现不再被打死，
+      // 但需要知道该补哪一种。
       log.info(undefined, "conversation share capabilities dropped unsupported values", {
         types: unsupportedArtifactTypes,
         accessModes: unsupportedAccessModes,
@@ -297,7 +263,7 @@ export class ConversationShareHttpClient {
     file: Blob,
   ): Promise<ConversationShareArtifactUpload> {
     const parsedDescriptor = conversationShareArtifactDescriptorSchema.parse(descriptor);
-    // Security boundary: record only public IDs, types, and byte counts; never log descriptors, filenames, paths, content, or authorization headers.
+    // 安全边界：只记录公开 ID、类型与字节数，不记录 descriptor、文件名、路径、正文或鉴权头。
     log.debug(undefined, "conversation share artifact upload prepared", {
       preparationId,
       artifactId: parsedDescriptor.artifact_id,
@@ -351,16 +317,17 @@ export class ConversationShareHttpClient {
       `/shares/${encodeURIComponent(shareCode)}/continuation`,
       this.jsonRequest("POST", body),
       conversationShareContinuationDataSchema,
-      // Continuations for public_importable shares are authorized by share code + client request ID;
-      // the client must not block the request because ZCode has no local login session.
+      // public_importable 分享的 continuation 由 share code + client request id 授权，
+      // 不应因为 ZCode 本地没有登录态而在请求发出前被客户端拦截。
       "optional",
     );
     this.assertSupportedSchemaVersion(wire.schema_version, "continuation");
-    // Validate integrity against the exact values returned by the server, not parsed output. Otherwise, adding an optional field on the publisher
-    // would make every older client calculate a different hash (see verifyConversationShareIntegrity comments).
+    // 完整性对服务端原样发来的值校验，不对解析产物——否则发布端加一个 optional 字段就会
+    // 让所有老客户端算出不同的哈希（详见 verifyConversationShareIntegrity 的注释）。
     if (
       !verifyConversationShareIntegrity({
         rawRows: wire.rows,
+        rawContentBlocks: wire.content_blocks,
         rawArtifacts: wire.artifacts,
         integrity: wire.integrity,
       })
@@ -380,8 +347,8 @@ export class ConversationShareHttpClient {
   }
 
   /**
-   * If the version is newer than this client knows, do not guess its semantics or classify it as invalid_contract. The user should see "Please upgrade ZCode,"
-   * not "Invalid share format." Continue for versions at or below this client version; handle new kinds/enums through per-row fallback.
+   * 版本高于本端认知时不猜语义，也不混进 invalid_contract：用户该看到「请升级 ZCode」，
+   * 不是「分享格式无效」。低于或等于本端版本一律继续——新增 kind/enum 由逐行降级消化。
    */
   private assertSupportedSchemaVersion(version: number, endpoint: string): void {
     if (isConversationShareSchemaVersionSupported(version)) return;
@@ -401,7 +368,7 @@ export class ConversationShareHttpClient {
   ): ReturnType<typeof decodeConversationShareRows> {
     const decoded = decodeConversationShareRows(rows);
     if (decoded.unsupportedCount > 0) {
-      // Do not fail silently: an unrecognized row disappears from the display, so leave a searchable record of the row type that needs support.
+      // 不静默：认不出的行会从展示里消失，必须留一条可检索的记录说明该补哪种 row。
       log.info(undefined, "conversation share dropped rows this client cannot render", {
         endpoint,
         kinds: decoded.unsupportedKinds,
@@ -436,8 +403,8 @@ export class ConversationShareHttpClient {
       });
     }
 
-    // ApiClient injects a fallback request ID; generate and retain the same value here so nonstandard ApiClients
-    // (such as a remote Host facade or test double) can also correlate the request ID with the server response.
+    // ApiClient 会兜底注入 request id；在这里先生成并保留同一个值，确保非标准 ApiClient
+    //（例如远端 Host facade 或测试替身）也能把请求 ID 和服务端响应关联起来。
     const headers = withRequestIdHeader(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
     const url = joinUrl(this.baseUrl, path);
@@ -464,7 +431,7 @@ export class ConversationShareHttpClient {
     try {
       text = await response.text();
     } catch (cause) {
-      // Headers were already received, but an interrupted body read is still a network error; do not lose the status and request ID by falling into unknown.
+      // 响应头已经收到，读取中断仍是网络错误；不能丢失状态和请求 ID 后落进 unknown。
       log.warn(undefined, "conversation share response body interrupted", {
         path,
         method: init.method ?? "GET",
@@ -495,77 +462,48 @@ export class ConversationShareHttpClient {
         responseFormat: /^\s*</u.test(text) ? "html" : "other",
         redirected: response.redirected,
       });
-      if (response.status === 401 && !text.trim()) {
-        throw new ConversationShareClientError({
-          clientRequestId,
-          kind: "authentication_required",
-          message: "Conversation share authentication required",
-          status: 401,
-          requestId: responseRequestId,
-        });
-      }
       let parsedError: ReturnType<typeof conversationShareErrorEnvelopeSchema.safeParse> | null =
         null;
       if (text.trim()) {
         try {
           parsedError = conversationShareErrorEnvelopeSchema.safeParse(parseJson(text));
         } catch {
-          // Bug cause: when an LB/gateway 502/504 returns an HTML error page, the body cannot be parsed as JSON and was previously
-          // classified as invalid_contract (semantics: the server violated the contract), misleading troubleshooting and user messaging.
-          // A non-JSON 5xx response is an infrastructure failure, classified as network; only a non-JSON 2xx~4xx response can be a contract violation.
-          if (response.status >= 500) {
-            log.warn(undefined, "conversation share API upstream unavailable", {
-              path,
-              method: init.method ?? "GET",
-              status: response.status,
-              requestId: responseRequestId,
-            });
-            throw new ConversationShareClientError({
-              clientRequestId,
-              kind: "network",
-              message: `Conversation share API upstream failed with HTTP ${response.status}`,
-              status: response.status,
-              ...(responseRequestId === undefined ? {} : { requestId: responseRequestId }),
-            });
-          }
-          log.warn(undefined, "conversation share API returned invalid JSON", {
-            path,
-            method: init.method ?? "GET",
-            status: response.status,
-            requestId: responseRequestId,
-          });
-          throw new ConversationShareClientError({
-            clientRequestId,
-            kind: "invalid_contract",
-            message: "Conversation share API returned invalid JSON",
-            status: response.status,
-            ...(responseRequestId === undefined ? {} : { requestId: responseRequestId }),
-          });
+          // 网关 HTML/纯文本错误仍按 HTTP 分类，不把限流、鉴权或服务故障误报为内容问题。
+          parsedError = null;
         }
       }
       if (parsedError?.success) {
-        // An unknown business code must not fail parsing the entire envelope (which would discard the server msg and degrade to a context-free
-        // "HTTP 4xx"). Map known codes as before; classify unknown codes as unknown while preserving msg and status.
-        const knownCode = conversationShareKnownErrorCodeSchema.safeParse(parsedError.data.code);
-        const code = knownCode.success ? knownCode.data : undefined;
-        const kind = code === undefined ? "unknown" : ERROR_KIND_BY_CODE[code];
+        // 未知业务码不再让整条信封解析失败（那样会丢掉服务端 msg，退化成没有上下文的
+        // "HTTP 4xx"）。保留原始数字码，未知码按 HTTP 分类以区分服务故障。
+        const { code, data: rejection, logid } = parsedError.data;
+        const kind = classifyConversationShareError(response.status, code);
+        const millisecondHeader = response.headers.get("retry-after-ms")?.trim();
+        const milliseconds =
+          millisecondHeader && /^\d+$/u.test(millisecondHeader) ? Number(millisecondHeader) : NaN;
         const retryAfterMs =
-          code === 3215 ? parseRetryAfterMs(response.headers.get("retry-after")) : undefined;
+          code === 3215
+            ? Number.isSafeInteger(milliseconds) && milliseconds > 0
+              ? milliseconds
+              : parseRetryAfterMs(response.headers.get("retry-after"))
+            : undefined;
+        const requestId = responseRequestId ?? logid;
         log.warn(undefined, "conversation share API request rejected", {
           path,
           method: init.method ?? "GET",
           status: response.status,
           kind,
-          code: parsedError.data.code,
-          requestId: responseRequestId,
+          code,
+          requestId,
+          rejection,
         });
         throw new ConversationShareClientError({
           clientRequestId,
           kind,
           message: parsedError.data.msg,
           status: response.status,
-          ...(code === undefined ? {} : { code }),
-          requestId: responseRequestId,
+          code,
+          requestId,
+          rejection,
           ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
         });
       }
@@ -575,16 +513,9 @@ export class ConversationShareHttpClient {
         status: response.status,
         requestId: responseRequestId,
       });
-      // Fallback classification for an empty body or invalid error envelope: 5xx is an infrastructure failure (network),
-      // not unknown/invalid_contract; keep 429 as rate_limited, and treat the rest without a valid envelope as an interface contract violation.
       throw new ConversationShareClientError({
         clientRequestId,
-        kind:
-          response.status >= 500
-            ? "network"
-            : response.status === 429
-              ? "rate_limited"
-              : "invalid_contract",
+        kind: classifyConversationShareError(response.status),
         message: `Conversation share API failed with HTTP ${response.status}`,
         status: response.status,
         ...(responseRequestId === undefined ? {} : { requestId: responseRequestId }),
@@ -598,6 +529,48 @@ export class ConversationShareHttpClient {
       return envelope.data;
     } catch (error) {
       if (error instanceof ConversationShareClientError) throw error;
+      // 校验器消息可能包含响应值；只记录固定字段名和类型，动态键名也不能进入日志。
+      const diagnosticFields = new Set([
+        "code",
+        "msg",
+        "data",
+        "preparation_id",
+        "status",
+        "access_mode",
+        "expires_at",
+        "share",
+        "share_code",
+        "share_url",
+        "schema_version",
+        "artifact_id",
+        "size_bytes",
+        "sha256",
+        "safety_status",
+        "projection",
+        "rows",
+        "artifacts",
+        "integrity",
+      ]);
+      log.warn(undefined, "conversation share success response parsing failed", {
+        path,
+        method: init.method ?? "GET",
+        status: response.status,
+        requestId: responseRequestId,
+        clientRequestId,
+        responseBytes: new TextEncoder().encode(text).byteLength,
+        responseFormat: error instanceof z.ZodError ? "schema_mismatch" : "invalid_json",
+        ...(error instanceof z.ZodError
+          ? {
+              issueCount: error.issues.length,
+              issues: error.issues.slice(0, 10).map((issue) => ({
+                path: issue.path.map((part) =>
+                  typeof part === "number" || diagnosticFields.has(String(part)) ? part : "<field>",
+                ),
+                code: issue.code,
+              })),
+            }
+          : {}),
+      });
       throw new ConversationShareClientError({
         clientRequestId,
         kind: "invalid_contract",

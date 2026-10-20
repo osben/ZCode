@@ -19,7 +19,7 @@ import {
 import { sha256ConversationShareJson } from "../src/conversation-share/conversationShareIntegrity.js";
 
 const SHA_256 = "a".repeat(64);
-/** Continuation integrity is re-checked by the client, so the fixture must carry a real hash instead of a placeholder string. */
+/** continuation 的完整性由 client 复核，所以 fixture 必须带真哈希而不是占位串。 */
 const EMPTY_PROJECTION_SHA_256 = sha256ConversationShareJson([]);
 
 function success(data: unknown): Response {
@@ -72,6 +72,95 @@ function makeConfirmRequest() {
 }
 
 describe("ConversationShareHttpClient", () => {
+  it.each([
+    [3216, 422, "safety_check_rejected"],
+    [3217, 503, "safety_check_unavailable"],
+    [2001, 500, "service_unavailable"],
+    [2005, 500, "service_unavailable"],
+    [2009, 500, "service_unavailable"],
+    [9876, 422, "unknown"],
+  ])("preserves code %s and classifies the failure", async (code, status, kind) => {
+    const request = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code, msg: "server text", logid: "server-log-id" }), {
+          status,
+        }),
+    );
+    await expect(createClient(request).getCapabilities()).rejects.toMatchObject({
+      kind,
+      code,
+      status,
+      requestId: "server-log-id",
+      details: { code },
+    });
+  });
+
+  it.each([401, 429, 503])(
+    "classifies HTTP %s before parsing an HTML error page",
+    async (status) => {
+      const request = vi.fn(async () => new Response("<html>gateway</html>", { status }));
+      await expect(createClient(request).getCapabilities()).rejects.toMatchObject({
+        kind:
+          status === 401
+            ? "authentication_required"
+            : status === 429
+              ? "rate_limited"
+              : "service_unavailable",
+        status,
+      });
+    },
+  );
+
+  it("keeps bounded validation coordinates and strips raw payload fields", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            code: 3205,
+            msg: "invalid",
+            data: {
+              rule: "field_type",
+              path: "projection.rows[0].state",
+              field: "state",
+              row_index: 0,
+              row_kind: "assistantText",
+              text: "secret-content",
+            },
+          }),
+          { status: 422 },
+        ),
+    );
+    const error = await createClient(request)
+      .getCapabilities()
+      .catch((error: unknown) => error);
+    expect(error).toMatchObject({
+      kind: "invalid_conversation",
+      details: {
+        rejection: {
+          rule: "field_type",
+          path: "projection.rows[0].state",
+          field: "state",
+          row_index: 0,
+          row_kind: "assistantText",
+        },
+      },
+    });
+    expect(JSON.stringify(error)).not.toContain("secret-content");
+  });
+
+  it("prefers millisecond retry advice for pending safety checks", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 3215, msg: "pending" }), {
+          status: 409,
+          headers: { "Retry-After-Ms": "1250", "Retry-After": "2" },
+        }),
+    );
+    await expect(createClient(request).confirm("p1", makeConfirmRequest())).rejects.toMatchObject({
+      retryAfterMs: 1250,
+    });
+  });
+
   beforeEach(() => {
     debugLog.mockReset();
     warnLog.mockReset();
@@ -117,10 +206,9 @@ describe("ConversationShareHttpClient", () => {
     );
   });
 
-  // Production incident: the backend added a type to allowed_artifacts that the client enum did not have,
-  // the whole capabilities response failed validation and threw invalid_contract, killing publishing at
-  // the collecting stage — even publishes containing no artifacts at all went down. Unknown types must be
-  // dropped rather than rejecting the entire response.
+  // 线上故障：后端在 allowed_artifacts 里新增了一种客户端枚举没有的类型，
+  // 整个 capabilities 响应校验失败并抛 invalid_contract，把发布打死在 collecting 阶段
+  // ——连不含任何结果物的发布也一起挂掉。未知类型必须丢弃而不是拒绝整份响应。
   it("drops unknown allowed artifact types instead of rejecting capabilities", async () => {
     const request = vi.fn(async () =>
       success({
@@ -147,7 +235,7 @@ describe("ConversationShareHttpClient", () => {
   });
 
   it("still rejects capabilities whose allowed artifact shape changed", async () => {
-    // Shape changes (renamed/missing fields) must still fail loudly, otherwise the client would wrongly believe "nothing is allowed".
+    // 形状变化（字段改名/缺字段）仍要响亮失败，否则客户端会误以为「什么都不允许」。
     const request = vi.fn(async () =>
       success({
         schema_version: 1,
@@ -215,7 +303,6 @@ describe("ConversationShareHttpClient", () => {
 
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual(confirmRequest);
     expect(debugLog).not.toHaveBeenCalled();
-    expect(JSON.stringify(debugLog.mock.calls)).not.toContain("test-token");
   });
 
   it("uploads descriptor and binary as multipart fields", async () => {
@@ -385,11 +472,10 @@ describe("ConversationShareHttpClient", () => {
     );
   });
 
-  // Bug root cause: 5xx HTML error pages from the LB/gateway (502/504) were previously classified as
-  // invalid_contract (meaning: server violated the contract) because the body could not be parsed as
-  // JSON. This is an infrastructure failure; classifying it as network gives the right user guidance and
-  // troubleshooting direction, while the request id is still kept for reconciliation.
-  it("502 HTML 错误页归类 network 且保留 request id", async () => {
+  // Bug 根因：LB/网关返回的 5xx HTML 错误页（502/504）此前因 body 无法按 JSON 解析被归类为
+  // invalid_contract（语义：服务端违反契约）。这是基础设施故障，归类 network 才能给出正确的
+  // 用户提示与排障方向；request id 仍需保留用于对账。
+  it("502 HTML 错误页归类 service_unavailable 且保留 request id", async () => {
     const request = vi.fn(
       async () =>
         new Response("<html>not-json</html>", {
@@ -399,32 +485,32 @@ describe("ConversationShareHttpClient", () => {
     );
 
     await expect(createClient(request).getCapabilities()).rejects.toMatchObject({
-      kind: "network",
+      kind: "service_unavailable",
       status: 502,
       requestId: "server-request-malformed",
     });
   });
 
-  it("504 空 body 响应也归类 network 而不是 unknown", async () => {
+  it("504 空 body 响应也归类 service_unavailable 而不是 unknown", async () => {
     const request = vi.fn(async () => new Response(null, { status: 504 }));
 
     await expect(createClient(request).getCapabilities()).rejects.toMatchObject({
-      kind: "network",
+      kind: "service_unavailable",
       status: 504,
     });
   });
 
-  it.each([400, 405])("HTTP %s 的非 JSON 错误响应归类接口契约异常", async (status) => {
+  it.each([400, 405])("HTTP %s 的非 JSON 拒绝不归类为成功响应契约损坏", async (status) => {
     const request = vi.fn(async () => new Response("<html>bad-request</html>", { status }));
 
     await expect(createClient(request).getCapabilities()).rejects.toMatchObject({
-      kind: "invalid_contract",
+      kind: "unknown",
       status,
     });
   });
 
-  // Retry-After only accepts delay-seconds and IMF-fixdate; any other value is treated as "the backend
-  // gave no advice", letting the caller fall back to its own retry cadence — never parsed as 0 or NaN ms.
+  // Retry-After 只接受 delay-seconds 和 IMF-fixdate；其余取值一律当作「后端没给建议」，
+  // 由调用方回落到自己的重试节奏，不能解析成 0 或 NaN 毫秒。
   it.each([
     { label: "a positive delay-seconds value", header: "7", expected: 7_000 },
     {
@@ -534,6 +620,56 @@ describe("ConversationShareHttpClient", () => {
     });
   });
 
+  it.each([
+    [
+      JSON.stringify({
+        code: 0,
+        msg: "secret-message",
+        data: {
+          preparation_id: "p1",
+          status: "preparing",
+          access_mode: "private",
+          expires_at: "secret-value",
+        },
+      }),
+      "schema_mismatch",
+    ],
+    ["<html>secret-value</html>", "invalid_json"],
+  ])("logs safe diagnostics for invalid successful responses", async (body, responseFormat) => {
+    const request = vi.fn(
+      async () =>
+        new Response(body, {
+          headers: { "X-Request-Id": "server-contract-id" },
+        }),
+    );
+    await expect(
+      createClient(request).createPreparation({
+        client_request_id: "client-contract-id",
+        title: "secret-title",
+        schema_version: 1,
+        access_mode: "private",
+        payload_sha256: SHA_256,
+        artifact_count: 0,
+      }),
+    ).rejects.toMatchObject({ kind: "invalid_contract", status: 200 });
+    expect(warnLog).toHaveBeenCalledWith(
+      undefined,
+      "conversation share success response parsing failed",
+      expect.objectContaining({
+        path: "/shares/preparations",
+        method: "POST",
+        status: 200,
+        requestId: "server-contract-id",
+        clientRequestId: expect.any(String),
+        responseFormat,
+        ...(responseFormat === "schema_mismatch"
+          ? { issues: [{ path: ["data", "expires_at"], code: "invalid_type" }] }
+          : {}),
+      }),
+    );
+    expect(JSON.stringify(warnLog.mock.calls)).not.toMatch(/secret-|test-token/);
+  });
+
   it("does not attach a request id to network errors", async () => {
     const request = vi.fn(async () => {
       throw new Error("offline");
@@ -548,10 +684,9 @@ describe("ConversationShareHttpClient", () => {
   });
 
   it("confirm 用更长的单次超时，其它端点保持 30s", async () => {
-    // Bug root cause: the server runs safety checks synchronously inside confirm, requests hung 50s+ and
-    // hit the 30s cap and were aborted, so publishing failed at the checking stage with network. The
-    // polling timeout only governs retries after "the server has returned pending"; it cannot save the
-    // single request itself.
+    // Bug 根因：服务端在 confirm 里同步跑安全检查，请求被挂住 50s+ 撞上 30s 上限被 abort，
+    // 发布在 checking 阶段以 network 失败。轮询超时管的是「服务端已返回 pending」之后的重试，
+    // 救不了单次请求本身。
     const request = vi.fn(async (_url: string, init?: { timeoutMs?: number }) => {
       void init;
       return success({
@@ -567,7 +702,7 @@ describe("ConversationShareHttpClient", () => {
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(120_000);
 
     request.mockClear();
-    // Only the timeoutMs passed down matters here; a response body failing the preview schema errors after the request and does not affect the assertion.
+    // 只关心传下去的 timeoutMs；响应体不符合 preview schema 会在请求之后才报错，不影响断言。
     await client.getPreview("share-1").catch(() => undefined);
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(30_000);
   });
@@ -592,10 +727,9 @@ describe("ConversationShareHttpClient", () => {
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(5_000);
   });
 
-  // Bug root cause: uploadArtifact previously reused the 30s default timeout — confirm was already
-  // observed hanging a single request 50s+ (see above), so larger artifacts over a slow uplink would
-  // surely time out with no automatic retry. The timeout scales dynamically with size:
-  // 30s base margin + a guaranteed 128KB/s uplink, still floored at the global default timeout.
+  // Bug 根因：uploadArtifact 此前沿用 30s 默认超时——confirm 已实测过单请求被挂 50s+（见上），
+  // 更大的 artifact 在慢速上行上必然超时且上传无自动重试。超时按体积动态放宽：
+  // 30s 基础余量 + 保底 128KB/s 上行，下限仍为全局默认超时。
   it("uploadArtifact 按文件体积动态放宽超时", async () => {
     const request = vi.fn(async () =>
       success({
@@ -622,12 +756,12 @@ describe("ConversationShareHttpClient", () => {
       sha256: SHA_256,
     };
 
-    // Small file: base margin + 1s, still above the 30s default.
+    // 小文件：基础余量 + 1s，仍高于 30s 默认值。
     await client.uploadArtifact("preparation-1", descriptor, new Blob(["abc"]));
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(31_000);
 
     request.mockClear();
-    // 5 MiB: 30s + 40s (5 MiB ÷ 128KB/s, rounded up) = 70s.
+    // 5 MiB：30s + 40s（5 MiB ÷ 128KB/s 向上取整）= 70s。
     const fiveMiB = new Uint8Array(5 * 1024 * 1024);
     await client.uploadArtifact("preparation-1", descriptor, new Blob([fiveMiB]));
     expect((request.mock.calls[0]![1] as { timeoutMs: number }).timeoutMs).toBe(70_000);
@@ -710,7 +844,7 @@ it("非 JSON 错误诊断不记录响应正文或查询参数", async () => {
     .confirm("diagnostic-preparation", makeConfirmRequest())
     .catch((error: unknown) => error);
   expect(error).toMatchObject({
-    kind: "invalid_contract",
+    kind: "unknown",
     status: 405,
     details: { clientRequestId: expect.any(String) },
   });
