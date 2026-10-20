@@ -326,8 +326,8 @@ export class SqliteSessionStore
       });
     }
     try {
-      runSqliteSessionMigrationsSync(db, dbPath, startupLockTimeoutMs);
-      return new SqliteSessionStore(db, dbPath, options, undefined);
+      const result = runSqliteSessionMigrationsSync(db, dbPath, startupLockTimeoutMs);
+      return new SqliteSessionStore(db, dbPath, options, result);
     } catch (error) {
       try {
         db.close();

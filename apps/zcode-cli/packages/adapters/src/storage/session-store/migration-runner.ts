@@ -212,7 +212,7 @@ export function runSqliteSessionMigrationsSync(
   db: DatabaseSync,
   dbPath: string,
   lockTimeoutMs = DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
-): void {
+): MigrationResult {
   const deadline = Date.now() + Math.max(0, lockTimeoutMs);
   db.exec("pragma foreign_keys = on");
   retryBusySync(deadline, dbPath, () => {
@@ -228,9 +228,12 @@ export function runSqliteSessionMigrationsSync(
   retryBusySync(deadline, dbPath, () => db.exec("begin immediate"));
   try {
     ensureSqliteSchemaMigrationTable(db);
+    const applied: string[] = [];
     for (const migration of resolveSessionDatabaseMigrations(db))
-      applyLedgerStep(db, dbPath, migration);
+      if (applyLedgerStep(db, dbPath, migration)) applied.push(migration.id);
     db.exec("commit");
+    // Sync compat never takes the table backup, so the shape reports backupSkipped as true.
+    return { applied, backupSkipped: true };
   } catch (error) {
     if (db.isTransaction) db.exec("rollback");
     throw error instanceof SqliteSessionMigrationError ||
@@ -241,8 +244,11 @@ export function runSqliteSessionMigrationsSync(
   }
 }
 
-/** Applies one migration to a ledger inside the caller's write transaction (sync compat only). */
-function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigration): void {
+/**
+ * Applies one migration to a ledger inside the caller's write transaction (sync compat only).
+ * Returns true only when the migration SQL ran; a relocated previousIds row does not count as applied.
+ */
+function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigration): boolean {
   const current = migrationChecksum(migration.sql);
   const ids = [migration.id, ...(migration.previousIds ?? [])];
   const applied = ids
@@ -255,7 +261,7 @@ function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigr
     db.prepare(
       "insert into schema_migration (id, checksum, app_version, time_applied) values (?, ?, ?, ?)",
     ).run(migration.id, current, migration.appVersion, Date.now());
-    return;
+    return true;
   }
   if (!applied.some((entry) => entry.id === migration.id)) {
     // previousIds: the relocated row carries the same checksum and timestamp; its SQL is not re-run.
@@ -263,6 +269,7 @@ function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigr
       "insert into schema_migration (id, checksum, app_version, time_applied) select ?, checksum, app_version, time_applied from schema_migration where id = ?",
     ).run(migration.id, applied[0]!.id);
   }
+  return false;
 }
 
 function isSqliteBusyError(error: unknown): boolean {
