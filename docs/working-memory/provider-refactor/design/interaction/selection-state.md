@@ -99,7 +99,7 @@ Menu switching that has not yet produced a Submission does not update Recent. Go
 
 Creating or opening a Session does not require the model to already be bound. V4 creates the record and handles explicit Selection through native commands; it does not generate a legacy protocol snapshot that is subsequently discarded. The model field contract of the old snapshot is not relaxed by V4; requests truly starting still validate Selection and cannot automatically select other models or levels for creation success.
 
-Session Selection saves the ModelSelection that the Session continues to use for subsequent execution. Written when normal Submissions truly start the Agent Loop; written when the Guide is received by the current Loop.
+Session Selection saves the ModelSelection that the Session continues to use for subsequent execution. Written when normal Submissions truly start the Agent Loop; written when the Guide is received by the current Loop. A normal user message updates it when the CLI accepts the message through serial admission. A queued message executes with its own Submission snapshot and does not overwrite a continuation selection determined by newer input. Idle tasks temporarily maintain a continuation selection within their own lifecycle; after user input takes over, the user-submitted selection is adopted.
 
 Provider Config updates do not rewrite Session Selection. The next execution queries the latest Registry based on this Selection and creates a new Model. Only Selection is saved in the Session, so API Key, Endpoint, or model config updates take effect when new Models are created.
 
@@ -258,7 +258,7 @@ Prompt CLI restore existing Session:
 ```text
 Explicit --model / --reasoning
   >
-Session Selection
+cliDefaultSelection（从持久普通用户选择初始化）
 ```
 
 Configured Default belongs to the target Workspace's Host/domain config. Host `preferredSelection` already atomically includes the resolution result of Configured Default and Fallback Policy; the Renderer does not repeat this algorithm.
@@ -271,13 +271,13 @@ Old structures are only converted at the migration boundary by explicit facts, n
 
 ## Write Events
 
-| State             | Write Event                                         | Persistence Scope                 |
-| ----------------- | --------------------------------------------------- | --------------------------------- |
-| Draft Selection   | Composer editing                                    | Entry Draft                       |
-| App Recent        | App accepts user Submission                         | App x workspaceKey                |
-| Session Selection | Normal Submission starts Loop, or Guide is received | Session                           |
-| Active Model      | Loop starts, or Guide switches at Step boundary     | Current Agent Loop, not persisted |
+| State             | Write Event                                                                                 | Persistence Scope                         |
+| ----------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Draft Selection   | Composer editing                                                                            | Entry Draft                               |
+| App Recent        | App accepts user Submission                                                                 | App x workspaceKey                        |
+| Session Selection | Normal Submission admitted by CLI, Guide received, or idle execution sets a temporary value | Session (only normal selection persisted) |
+| Active Model      | Loop starts, or Guide switches at Step boundary                                             | Current Agent Loop, not persisted         |
 
 These states share ModelSelection semantics, but do not share write timing. After one state changes, another state can be updated by an explicit event; no state guesses what it should save by observing the current value of other states.
 
-Idle tasks' ModelSelection only belongs to its own execution context; it does not write App Recent, Configured Default, or Session Selection. Since Session Selection is not rewritten, there is no post-execution recovery step.
+Idle tasks temporarily update the in-memory Session Selection so that their owning background recovery/wake-up can read it. They do not write App Recent, Configured Default, or the persisted user selection. After the whole item completes without user takeover, the original normal selection is restored. Once user input is admitted, the user's selection prevails and the old idle wrap-up no longer overwrites it.

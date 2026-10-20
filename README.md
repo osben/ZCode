@@ -26,6 +26,7 @@ This is a personal fork of [zai-org/ZCode](https://github.com/zai-org/ZCode). I 
 
 ## Updates
 
+- 2026-10-16: Updated to ZCode v3.16.1.
 - 2026-10-13: Ported the upstream v3.15.2 auth fix and the v3.15.3 auto-update improvements.
 - 2026-10-10: Updated to ZCode v3.15.1.
 - 2026-9-23: Updated to ZCode v3.14.3.
@@ -114,6 +115,8 @@ When starting the general Web service's HTTP entry directly, it binds `127.0.0.1
 See Packaging below for build instructions. `pnpm build:zcode` only creates the distribution; it does not replace an existing `zcode` on `PATH`. If the command still points to an older installation or another checkout, check it with `command -v zcode` on macOS / Linux or `where.exe zcode` on Windows.
 
 ### CLI Source Development
+
+For CLI model configuration, non-interactive invocation, tools and extensions, batch evaluation, and trajectory recording, see the [CLI usage guide](apps/zcode-cli/docs/usage/README.md).
 
 Use the source entry when developing the TUI or Agent:
 

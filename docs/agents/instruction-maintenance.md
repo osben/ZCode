@@ -43,7 +43,31 @@ Whenever task boundaries, read conditions, or completion criteria change, check 
 | "Fix remote workspace task routing"                                                | Runtime boundaries, CLI instructions (if touching CLI), related contracts; draw state or sequence diagrams | Verify identity, owner, continuous/replayable boundaries; root unit tests cannot replace CLI/E2E        |
 | "Implement a confirmed interaction, but necessary E2E environment is unavailable"  | Complete executable implementation and verification, record failure reasons and unverified items           | Leave changes, do not auto-commit, do not claim verification completed                                  |
 
+Supplementary acceptance for unit test scope rules (2026-10-13):
+
+| Request/condition                                                         | Expected                                                                                       |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Workspace already has changes                                             | Record the task starting point; all existing uncommitted changes are included and preserved    |
+| Source deleted, dependency changed, or association unresolved             | Follow Vitest's official selection; do not add baseline consumers or source-based compensation |
+| Push target is not HEAD / no baseline / dirty workspace                   | Non-zero exit; block the push                                                                  |
+| Files brought in by an integration merge                                  | Participate in official selection normally; do not filter by source                            |
+| Configuration, shared setup, or shared dependency selects the whole suite | Explain and skip UT, exit 0; does not block Push                                               |
+| No tests selected                                                         | Explain, exit 0; do not claim all changes are verified                                         |
+| Targeted test failure                                                     | Fix and re-verify the corresponding scope; do not switch to a full retry                       |
+| Full run explicitly requested                                             | Use `pnpm test` / `pnpm test:unit`                                                             |
+| Task spans multiple commits                                               | Use the task starting-point SHA at the end; the push range is used only for push verification  |
+
 Two cross-scenario branches must also be checked: pure visual changes verify desktop/mobile and light/dark themes; refactors without behavior changes should优先 reuse existing tests, adding new ones only when coverage gaps exist.
+
+Supplementary acceptance for MR description rules (2026-10-16):
+
+| Request/condition                                               | Expected                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Writing or updating an MR description                           | Organize into five sections: TL;DR, goal, change scope, verification, risk and rollback; capability maps, module classification, and impact scans are not required                                                                                                                                             |
+| New feature, behavior adjustment, or pure refactor              | The goal explains background, original behavior, design intent, and expected behavior; if there is no existing defect, say so and do not fabricate a bug root cause                                                                                                                                            |
+| MR includes a bugfix (including mixed changes)                  | Each independent issue states the trigger scenario, expected/actual behavior, root cause, evidence, and fix mechanism, with matching regression cases; link an existing ticket directly where possible, keep an ID only when it can be confirmed, and state when there is no ticket without fabricating a link |
+| Root cause, feedback link, or introducing commit lacks evidence | Mark as pending confirmation or not located; same module or close timing may only be a lead, not written as a confirmed cause                                                                                                                                                                                  |
+| Calling the helper with a five-section description              | The full body can be read and passed through; old seven-section descriptions remain readable; an empty file or a missing any of the five sections is still rejected                                                                                                                                            |
 
 ## Actual Effect Observations
 
