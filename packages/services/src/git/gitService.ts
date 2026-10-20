@@ -467,11 +467,24 @@ export function createGitService(options?: {
       const branchComparisonPromise = params.includeBranchComparison
         ? repo.getBranchComparison(params.workspacePath)
         : Promise.resolve(null);
-      const [status, identity, branchComparisonSnapshot] = await Promise.all([
+      const [statusResult, identityResult, comparisonResult] = await Promise.allSettled([
         statusPromise,
         identityPromise,
         branchComparisonPromise,
       ]);
+      if (statusResult.status === "rejected") throw statusResult.reason;
+      if (identityResult.status === "rejected") throw identityResult.reason;
+      const status = statusResult.value;
+      const identity = identityResult.value;
+      // Comparison is auxiliary: disclose its failure without losing the current status snapshot.
+      const branchComparisonSnapshot =
+        comparisonResult.status === "fulfilled" ? comparisonResult.value : null;
+      const branchComparisonError =
+        comparisonResult.status === "rejected"
+          ? comparisonResult.reason instanceof Error
+            ? comparisonResult.reason.message || comparisonResult.reason.name
+            : String(comparisonResult.reason)
+          : null;
       const branchComparison: GitBranchComparison | null = branchComparisonSnapshot
         ? {
             baseRef: branchComparisonSnapshot.baseRef,
@@ -492,6 +505,7 @@ export function createGitService(options?: {
         unstagedChanges: getChangesForSource(status, "unstaged"),
         stagedChanges: getChangesForSource(status, "staged"),
         branchComparison,
+        branchComparisonError,
       };
     },
   };
