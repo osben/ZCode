@@ -1,17 +1,22 @@
 import { getDatabaseStartupPortPayload } from "./databaseStartupRelay.js";
 import { randomUUID } from "node:crypto";
-import { app, BrowserWindow, Menu, MessageChannelMain } from "electron";
+import { app, BrowserWindow, Menu, MessageChannelMain, nativeImage } from "electron";
 import type { UtilityProcess as ElectronUtilityProcess } from "electron";
 import { HostMessageTypes, InternalChannels, PlatformChannels, type Locale } from "@zcode/shared";
 import { scheduleArmsBrowserPerfLoadNudge } from "./armsBrowserPerfLoadNudge.js";
 import { createBrowserWindow } from "./desktopWindowChrome.js";
 import type { HostInitMessage, WindowBootstrapOptions } from "./desktopHostProcess.js";
 import type { StartupWorkspaceWarmupTarget } from "./startupWorkspace.js";
+import type { RemoteAssetDirs } from "./desktopRuntimeEnv.js";
 import { handleDarwinWindowCloseRequest } from "./desktopDarwinCloseBehavior.js";
+import { applyDesktopTrayUnreadBadge } from "./desktopTray.js";
 import {
+  createWindowsTaskbarOverlayApplier,
   parseWindowUnreadCount,
-  sumWindowUnreadCounts,
-  syncAppUnreadBadge,
+  renderTaskbarBadgePixels,
+  maxWindowUnreadCounts,
+  syncUnreadBadgeForPlatform,
+  TASKBAR_BADGE_IMAGE_SIZE,
 } from "./unreadBadge.js";
 import { attachDesktopWindowSizePersistence, type DesktopWindowSize } from "./desktopWindowSize.js";
 import {
@@ -31,7 +36,9 @@ export function createWindow(options: {
   spawnHostProcess: (
     win: BrowserWindow,
     label: string,
-    initMessage: HostInitMessage,
+    // Main 在包装层统一注入 zcodeBuiltinProviderConfigFilePath（Electron 安装布局只有 Main 知道），
+    // 窗口生命周期只负责组装其余 InitLocal 字段。
+    initMessage: Omit<HostInitMessage, "zcodeBuiltinProviderConfigFilePath">,
   ) => ElectronUtilityProcess;
   disposeHostProcess: (
     child: ElectronUtilityProcess,
@@ -48,23 +55,23 @@ export function createWindow(options: {
   agentWarmupTargets?: readonly StartupWorkspaceWarmupTarget[];
   agentSpawnFallbackCwd: string;
   deviceMid: string;
+  remoteAssets?: RemoteAssetDirs;
   initialDesktopZoomLevel?: number;
   initialWindowSize?: DesktopWindowSize;
   currentApplicationLocale?: () => Locale;
   persistWindowSize?: (state: DesktopWindowSize) => Promise<void>;
-  /** Asynchronous environment collection started during Main module initialization; usually completes before renderer dom-ready. */
+  /** Main 模块初始化期已开始的异步环境采集；通常在 renderer dom-ready 前完成。 */
   runtimeProcessEnvPatchPromise?: Promise<Record<string, string>>;
-  /** Complete fallback patch that can be computed without executing a shell; inject it into Local Host if warmup fails/times out. */
+  /** 不执行 shell 即可计算的完整降级 patch；预热失败/超时时仍要注入 Local Host。 */
   runtimeProcessEnvFallbackPatch: Record<string, string>;
-  /** Injected only for startup gating and tests; after this time, fail open and create Local Host. */
+  /** 仅供启动门禁和测试注入；超过该时间必须 fail-open 创建 Local Host。 */
   runtimeProcessEnvWaitTimeoutMs?: number;
   /**
-   * Bounded rollout decision gate before creating the first Local Host.
+   * 首个 Local Host 创建前的有界灰度裁决门。
    *
-   * When omitted (undefined), do not await at all; the dom-ready handler runs synchronously, keeping
-   * existing callers and tests unchanged. Only desktop main injects this: await one rollout decision
-   * before spawnLocalHost so a cold-start snapshot of { enabled:false } is not frozen into the first
-   * Host environment and made impossible to override with a later successful result.
+   * 缺省（undefined）时完全不触发 await，dom-ready handler 同步执行——保证既有调用方
+   * 与测试零回归。仅 desktop main 注入：在 spawnLocalHost 之前等待一次 rollout 裁决，
+   * 避免冷启动快照 { enabled:false } 被烤进首 Host env 后无法被异步成功结果覆盖。
    */
   awaitFirstHostSpawnDecision?: () => Promise<void>;
   /** Local Host map insertion completed; presentation facts can now be replayed safely. */
@@ -119,7 +126,7 @@ export function createWindow(options: {
 
   const wcId = win.webContents.id;
   const browserWindowId = win.id;
-  // Resource telemetry uses this to classify the main-window renderer as renderer_main and auxiliary windows/DevTools as chromium_other.
+  // 资源遥测据此把主窗口 renderer 归 renderer_main；辅助窗口与 DevTools 归 chromium_other。
   registerMainApplicationWindow(wcId);
   let domReadyGeneration = 0;
   let cancelRuntimeProcessEnvWait: (() => void) | null = null;
@@ -136,12 +143,12 @@ export function createWindow(options: {
     }
 
     const oldChild = options.windowHostProcessMap.get(wcId);
-    // Renderer reload used to unconditionally kill and recreate the Host process, also killing the
-    // CLI Agent and losing active sessions. That was the root cause of unstable session identity.
-    // Host/CLI lifetimes belong to the window, not the renderer load cycle: on reload, attach a new
-    // RPC MessagePort to the existing Host (reusing the web remote-control AttachServicePort channel)
-    // and let the renderer resubscribe to restore its projection. The old ChannelServer closes and
-    // cleans itself up when the renderer context is destroyed.
+    // renderer 刷新（reload）
+    // 曾经无条件杀掉旧 host 进程再重建——host 连带 CLI agent 一起死，运行中的会话直接消失，
+    // 这正是「会话身份易失」病根。host/CLI 的生命周期属于窗口而非
+    // renderer 加载周期：reload 只需给存活的 host 补挂一条新 RPC MessagePort
+    // （复用 web 远控的 AttachServicePort 通道），renderer 重新订阅即可恢复投影。
+    // 旧端口的 ChannelServer 会随 renderer 上下文销毁触发 close 自行回收。
     if (oldChild && oldChild.pid !== undefined) {
       try {
         const startupPayload = getDatabaseStartupPortPayload(oldChild);
@@ -180,10 +187,9 @@ export function createWindow(options: {
       options.disposeHostProcess(oldChild, `${label}:reload`, 150);
     }
 
-    // Bounded rollout decision gate before creating the first Local Host. Use an `if` guard instead
-    // of `await cb?.()` so a missing callback causes no await and the async handler completes
-    // synchronously, preserving existing callers and tests. Wait only when spawning a new Host; the
-    // reattach path returns above and does not trigger this gate.
+    // 首个 Local Host 创建前的有界灰度裁决门。用 `if` 守卫而非 `await cb?.()`——
+    // cb 缺省时不触发任何 await，async handler 同步跑完，保证既有调用方与测试零回归。
+    // 仅在需要 spawn 新 Host 的路径上等待（reattach 早退路径已在上方 return，不触发）。
     if (options.awaitFirstHostSpawnDecision) {
       await options.awaitFirstHostSpawnDecision();
     }
@@ -202,10 +208,12 @@ export function createWindow(options: {
           ? { agentWarmupTargets: [...options.agentWarmupTargets] }
           : {}),
         runtimeProcessEnvPatch,
-        // The same window indexes every restored workspace in the background, not just the active
-        // workspace at startup. The fallback must live for the Local Host's lifetime; otherwise,
-        // deleting a non-active historical directory could cause repeated spawns with a stale cwd.
+        // 同一窗口会后台索引所有已恢复 workspace，不只索引启动时的 active workspace。
+        // fallback 必须跟随 local Host 生命周期常驻，否则非 active 历史目录被删除后会用失效 cwd 反复 spawn。
         agentSpawnFallbackCwd: options.agentSpawnFallbackCwd,
+        remoteAssets: options.remoteAssets,
+        // Host 的 X-Client-Language 以 Main 的实时界面语言为准；与后续变更消息同端口按序到达。
+        ...(options.currentApplicationLocale ? { locale: options.currentApplicationLocale() } : {}),
       });
       options.windowHostProcessMap.set(wcId, child);
       options.onHostProcessReady?.(wcId);
@@ -257,9 +265,8 @@ export function createWindow(options: {
         `[createWindow] runtime env prewarm failed (${label}), using shell-free fallback:`,
         error,
       );
-      // The old rejection branch passed undefined, causing Host to synchronously run the same login
-      // shell and possibly move a Main white screen into a Host hang. The Main path always passes a
-      // precomputed fallback patch.
+      // 旧 rejection 分支传 undefined，Host 随后又同步执行同一个 login shell，
+      // 可能把 Main 的白屏转移成 Host 卡死。Main 路径始终传入预计算 fallback patch。
       completeWait(options.runtimeProcessEnvFallbackPatch);
     });
   });
@@ -320,14 +327,29 @@ export function focusWorkspaceInExistingWindow(
   return { activated: false };
 }
 
+// Windows 任务栏 overlay 的 electron 侧装配：像素渲染在 unreadBadge.ts（纯逻辑，可单测），
+// 这里只负责 BrowserWindow 枚举与 nativeImage 构造。spec 见 docs/desktop/windows-taskbar-unread-badge.md
+const applyWindowsTaskbarOverlay = createWindowsTaskbarOverlayApplier({
+  getAllWindows: () => BrowserWindow.getAllWindows(),
+  createBadgeImage: (label) =>
+    nativeImage.createFromBitmap(Buffer.from(renderTaskbarBadgePixels(label)), {
+      width: TASKBAR_BADGE_IMAGE_SIZE,
+      height: TASKBAR_BADGE_IMAGE_SIZE,
+    }),
+});
+
 export function syncApplicationUnreadBadge(windowUnreadCountMap: Map<number, number>) {
-  syncAppUnreadBadge({
+  const totalUnreadCount = maxWindowUnreadCounts(windowUnreadCountMap);
+  syncUnreadBadgeForPlatform({
     platform: process.platform,
-    totalUnreadCount: sumWindowUnreadCounts(windowUnreadCountMap),
+    totalUnreadCount,
     setBadgeCount: (count) => {
       app.setBadgeCount(count);
     },
+    applyOverlay: applyWindowsTaskbarOverlay,
   });
+  // 托盘角标：Windows/Linux 托盘右上角小徽章（macOS 无托盘，由 Dock 角标承担）。
+  applyDesktopTrayUnreadBadge(totalUnreadCount);
 }
 
 export function handleWindowUnreadCountSync(
@@ -376,10 +398,9 @@ export function handleDesktopWindowCloseRequest(options: {
   explicitQuitRequested?: boolean;
   closeToTray?: boolean;
   /**
-   * Tray capability for Linux close-to-tray (spec: docs/desktop/linux-close-to-tray.md).
-   * Desktops without a StatusNotifierWatcher, such as GNOME, silently do not render the tray, so the
-   * capability must be confirmed explicitly before hiding; a null value safely defaults to
-   * "unavailable" and takes the confirm-quit path to avoid losing the window after hiding it.
+   * Linux 关闭驻留的托盘能力（spec：docs/desktop/linux-close-to-tray.md）。
+   * GNOME 等无 StatusNotifierWatcher 的桌面托盘不渲染且不报错，必须在隐藏前显式确认能力；
+   * 空值按"不可用"安全默认，走确认退出路径，避免窗口隐藏后失联。
    */
   closeToTraySupported?: boolean;
   isLastWindow: boolean;
@@ -390,10 +411,9 @@ export function handleDesktopWindowCloseRequest(options: {
   requestQuit: () => void;
   hideWindow?: () => void;
 }) {
-  // CR fix: win32 must not short-circuit and drop closeToTraySupported—it carries
-  // resolveCloseToTraySupported's merged verdict (Windows = tray instance created successfully).
-  // Hiding the window after a tray creation failure loses it; this matches the spec that "the
-  // close-window branch and the settings-page capability query read the same merged result."
+  // CR 修复:win32 不能短路丢弃 closeToTraySupported——它承载 resolveCloseToTraySupported
+  // 的合并裁决(Windows=托盘实例创建成功)。托盘创建失败时隐藏窗口即失联,与 spec
+  // "关窗分支与设置页能力查询都读同一合并结果"保持一致。
   const canHideToTray =
     (options.platform === "win32" || options.platform === "linux") &&
     options.closeToTraySupported === true;
