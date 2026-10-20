@@ -58,6 +58,7 @@ The toolchain migration does not override policies supported by the synchronized
 The standalone Web share entry imports the existing Web theme seed module from its
 current location. Import-path repair must preserve initial theme selection behavior.
 
-Agent bundling resolves `@zcode/shared/sqlite-migrations` through its public source
-entrypoint before the generic shared alias. The bundler must not append that subpath
+Agent bundling derives shared aliases from the package's declared public exports.
+This resolves `@zcode/shared/sqlite-migrations` through its public source entrypoint
+before the generic shared alias. The bundler must not append that subpath
 to `src/index.ts`; migration definitions and checksum inputs remain unchanged.

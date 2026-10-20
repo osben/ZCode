@@ -2,6 +2,7 @@ import { chmod, readFile, rm } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import sharedPackage from "../../../../../packages/shared/package.json" with { type: "json" };
 import { stageBuiltinProviderConfig } from "../../../../../scripts/builtin-provider-config.mjs";
 import { stageThirdPartyNotices } from "../../../../../scripts/third-party-notices.mjs";
 
@@ -77,8 +78,8 @@ export function createZodDedupePlugin({ expectedV4Version }) {
     setup(builder) {
       const packages = new Map();
       const cache = new Map();
-      // A hoisted install can leave byte-identical copies of Zod at different paths for multiple consumers.
-      // Resolve versions and exports for each original consumer before merging installation roots; do not alias v3 as v4.
+      // hoisted 安装可能给多个消费者留下字节相同、路径不同的 Zod。
+      // 必须先按原消费者解析版本和 exports，再归并安装根，不能把 v3 alias 成 v4。
       builder.onResolve({ filter: /^zod(?:\/|$)/ }, async (args) => {
         if (args.pluginData?.zcodeZodResolving) return;
         const resolved = await builder.resolve(args.path, {
@@ -94,7 +95,7 @@ export function createZodDedupePlugin({ expectedV4Version }) {
         if (!packages.has(pkg.version)) packages.set(pkg.version, pkg.root);
         return {
           ...resolved,
-          // Preserve the subpath and .js/.cjs extension selected by exports; do not rewrite the conditions with require.resolve.
+          // 保留 exports 已选出的子入口和 .js/.cjs，不能再用 require.resolve 改写条件。
           path: resolve(packages.get(pkg.version), relative(pkg.root, resolved.path)),
           pluginData: args.pluginData,
         };
@@ -125,8 +126,8 @@ export const resolveBuildOptions = (args = [], env = process.env) => {
   const e2eCoverage = env.ZCODE_E2E_COVERAGE === "1";
 
   return {
-    // Normal desktop-agent releases must remain minified and omit maps. E2E coverage builds must
-    // preserve original symbols and source maps so c8 can map back to each package's TypeScript source.
+    // desktop-agent 正常发布仍需压缩且不携带 map；E2E coverage
+    // 专用构建必须保留原始符号和 source map，c8 才能回映到各 package 的 TS 源码。
     minify: desktopAgent && !e2eCoverage,
     sourcemap: e2eCoverage || !desktopAgent,
   };
@@ -137,82 +138,16 @@ export const resolveBuildAliases = ({
   rootDirectory = projectRoot,
 } = {}) => ({
   "@zcode/shared-types": resolve(cliDirectory, "../shared-types/dist/index.js"),
-  // The plugin host needs only these standalone entry points; do not route them through the generic alias and reevaluate the shared root entry.
-  "@zcode/shared/runtime-env": resolve(rootDirectory, "../../packages/shared/src/runtimeEnv.ts"),
-  "@zcode/shared/mcp": resolve(rootDirectory, "../../packages/shared/src/mcp.ts"),
-  "@zcode/shared/runtime-tool-runtime": resolve(
-    rootDirectory,
-    "../../packages/shared/src/runtime-tool-runtime.ts",
+  // esbuild 会按前缀改写。曾多次漏加新子路径，导致入口文件被误当成目录；
+  // 直接从包的公开 exports 派生，并将通用入口放在最后，避免两份清单漂移。
+  ...Object.fromEntries(
+    Object.entries(sharedPackage.exports)
+      .sort(([a], [b]) => Number(a === ".") - Number(b === "."))
+      .map(([subpath, target]) => [
+        subpath === "." ? "@zcode/shared" : `@zcode/shared/${subpath.slice(2)}`,
+        resolve(rootDirectory, "../../packages/shared", target),
+      ]),
   ),
-  // esbuild aliases rewrite import paths by prefix. Declare every shared subpath exactly before the
-  // generic entry, or it will resolve incorrectly as `src/index.ts/<subpath>` and break Desktop agent/SEA packaging.
-  "@zcode/shared/zcode-protocol-v4": resolve(
-    rootDirectory,
-    "../../packages/shared/src/zcode-protocol-v4/index.ts",
-  ),
-  // This subpath reference was added when the ModelSelection schema moved to a single source of truth
-  // in shared. esbuild rewrites aliases by prefix; unless declared exactly before the generic entry,
-  // it will incorrectly resolve to `src/index.ts/model-selection` and break Desktop agent packaging.
-  "@zcode/shared/model-selection": resolve(
-    rootDirectory,
-    "../../packages/shared/src/model-selection.ts",
-  ),
-  // The new shared Model Schema subpath must not be appended to index.ts by the generic alias.
-  "@zcode/shared/model-config": resolve(rootDirectory, "../../packages/shared/src/model-config.ts"),
-  // The process exception boundary uses this lightweight contract before bootstrap, so it must not
-  // match shared's generic prefix alias.
-  "@zcode/shared/process-diagnostic": resolve(
-    rootDirectory,
-    "../../packages/shared/src/process-diagnostic.ts",
-  ),
-  "@zcode/shared/config-schema": resolve(
-    rootDirectory,
-    "../../packages/shared/src/config-schema.ts",
-  ),
-  "@zcode/shared/workspace-hook-discovery": resolve(
-    rootDirectory,
-    "../../packages/shared/src/workspace-hook-discovery.ts",
-  ),
-  // The review controller imports WorkspaceHookMutationError directly, so it needs this exact alias.
-  // As above, omitting it breaks Desktop agent/SEA packaging because esbuild rewrites by prefix.
-  "@zcode/shared/workspace-hook-mutation": resolve(
-    rootDirectory,
-    "../../packages/shared/src/workspace-hook-mutation.ts",
-  ),
-  // The verdict's direct import needs this exact alias. Without it, the generic "@zcode/shared"
-  // prefix rewrites the path to `src/index.ts/workspace-hook-review-monotonicity`, breaking Desktop agent/SEA packaging.
-  "@zcode/shared/workspace-hook-review-monotonicity": resolve(
-    rootDirectory,
-    "../../packages/shared/src/workspace-hook-review-monotonicity.ts",
-  ),
-  // This subpath was added when the trust-store file schema moved to its single source of truth.
-  // Without an exact declaration, the generic "@zcode/shared" prefix rewrites it to
-  // `src/index.ts/workspace-hook-trust-store-file`, breaking Desktop agent/SEA packaging as above.
-  "@zcode/shared/workspace-hook-trust-store-file": resolve(
-    rootDirectory,
-    "../../packages/shared/src/workspace-hook-trust-store-file.ts",
-  ),
-  "@zcode/shared/zcodeEndpoint": resolve(
-    rootDirectory,
-    "../../packages/shared/src/zcodeEndpoint.ts",
-  ),
-  // Plugin UI (MCP Apps) protocol subpath: dist builds in adapters/core/contracts reference it, so declare it before the general entry.
-  "@zcode/shared/mcp-apps": resolve(rootDirectory, "../../packages/shared/src/mcp-apps/index.ts"),
-  "@zcode/shared/node": resolve(rootDirectory, "../../packages/shared/src/node.ts"),
-  // The general alias appends sub-entry paths to index.ts, so the release implementation must resolve this independently.
-  "@zcode/shared/request-security": resolve(
-    rootDirectory,
-    "../../packages/shared/src/request-security-edition/index.ts",
-  ),
-  "@zcode/shared/model-provider-types": resolve(
-    rootDirectory,
-    "../../packages/shared/src/model-provider-types.ts",
-  ),
-  "@zcode/shared/sqlite-migrations": resolve(
-    rootDirectory,
-    "../../packages/shared/src/sqlite-migrations/index.ts",
-  ),
-  "@zcode/shared": resolve(rootDirectory, "../../packages/shared/src/index.ts"),
   "@zcode/core": resolve(cliDirectory, "../core/dist/index.js"),
 });
 
@@ -247,17 +182,16 @@ export const buildCli = async ({
     entryPoints: [resolve(cliDirectory, "src/main.ts")],
     // Ink 7 and yoga-layout use top-level await, so the CJS CLI bundle loads the TUI
     // through Node's native dynamic import path instead of forcing esbuild to lower it.
-    // playwright-core depends on runtime package assets and require.resolve, so it must remain external rather than being bundled inline.
-    // The managed headless adapter is loaded lazily only with explicit --browser-use=headless; app-server and the regular CLI are unaffected.
-    // koffi dynamically requires native `.node` files for the current platform. Inlining it makes
-    // esbuild traverse artifacts for every platform and fail with "No loader is configured for .node".
-    // Runtime loading still comes from the dependency package; build-sea collects SEA native assets separately.
+    // playwright-core 依赖运行时 package assets 与 require.resolve，相比内联 bundle 必须保持外置。
+    // managed headless adapter 只在显式 --browser-use=headless 时延迟加载，不影响 app-server/普通 CLI。
+    // koffi 会按当前平台动态 require 原生 `.node` 文件；内联会让 esbuild 遍历所有
+    // 平台产物并直接报 "No loader is configured for .node"。运行时仍从依赖包加载，
+    // SEA 资源由 build-sea 的 native asset 收集阶段单独处理。
     external: resolveBuildExternal(),
     format: "cjs",
-    // Desktop app integration embeds only zcode.cjs. The old desktop-agent build reused the CLI
-    // debug artifact, which was unminified and left source maps pointing to files not copied into the package.
-    // Desktop agent mode minifies JavaScript while preserving function/class names so diagnostics
-    // and registration logic that depend on name are not affected by esbuild identifier mangling.
+    // 桌面 app 集成只内置 zcode.cjs，旧 desktop-agent 构建复用 CLI 调试产物，
+    // 未压缩且会留下指向未随包复制的 sourcemap。桌面 agent 模式压缩 JS，同时保留
+    // 函数/类名，避免依赖 name 的诊断与注册逻辑被 esbuild 标识符压缩影响。
     keepNames: minify,
     legalComments: "none",
     logLevel: "info",
@@ -267,9 +201,9 @@ export const buildCli = async ({
     outfile,
     platform: "node",
     sourcemap,
-    // Target the lowest Node version across all runtimes: Desktop uses Electron's bundled Node 24,
-    // while remote SSH uses the already-installed standalone Node v22.16 to run the same zcode.cjs.
-    // Targeting Node 22 keeps the artifact from using syntax or features unsupported by either runtime.
+    // target 取所有承载运行时里最低的 Node 版本：桌面用 Electron 内置 Node 24，
+    // 远端 SSH 复用已部署的独立 Node v22.16 跑同一份 zcode.cjs。降到 node22 保证这份产物
+    // 在两端都不会用到目标运行时不支持的语法/特性。
     target: "node22",
     alias: resolveBuildAliases({ cliDirectory, rootDirectory }),
   });
@@ -279,7 +213,7 @@ export const buildCli = async ({
   }
 
   await chmod(outfile, executableFileMode);
-  // zcode.cjs bundles third-party code; the adjacent declaration file is copied by the release CLI and unified distribution package (build-zcode).
+  // zcode.cjs 内联了第三方代码；dist 旁的伴随声明供发行 CLI 与统一分发包（build-zcode）复制。
   await stageThirdPartyNotices(resolve(cliDirectory, "dist"), resolve(rootDirectory, "../.."));
 };
 
