@@ -3,22 +3,24 @@ import {
   type AgentProfile,
   type AgentProfileParseDiagnostic,
   resolveSubagentRuntimeProfiles,
-  type SubagentRuntimeState,
   type SubagentRuntimeConfig,
 } from "@zcode/shared";
 
 /** 独立 CLI 的磁盘 loader 复用共享纯解析器，保留原文件配置来源。 */
-export function parseRuntimeSubagentConfig(configuration: {
-  documents: { content: string; path: string; source: "user" | "project" }[];
-  state: SubagentRuntimeState;
-}) {
+import type { RuntimeSubagentConfiguration } from "./contract.js";
+
+export function parseRuntimeSubagentConfig(configuration: RuntimeSubagentConfiguration) {
   const profiles: AgentProfile[] = [];
   const diagnostics: AgentProfileParseDiagnostic[] = [];
   for (const document of configuration.documents) {
     const result = parseAgentProfileFromMarkdown(document);
     if (result.diagnostic) diagnostics.push(result.diagnostic);
     if (!result.profile) continue;
-    profiles.push(result.profile);
+    profiles.push(
+      document.namespace
+        ? { ...result.profile, name: `${document.namespace}/${result.profile.name}` }
+        : result.profile,
+    );
   }
   return {
     ...resolveSubagentRuntimeProfiles(profiles, configuration.state),

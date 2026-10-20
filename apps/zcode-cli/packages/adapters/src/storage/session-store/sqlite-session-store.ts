@@ -78,10 +78,13 @@ import {
   updateSessionTargetStatus,
 } from "../session-target.js";
 import { SqliteSessionMigrationError } from "./errors.js";
+import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
   DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
-  runSqliteSessionMigrations,
   runSqliteSessionMigrationsAsync,
+  runSqliteSessionMigrationsSync,
   type AsyncSqliteMigrationOptions,
 } from "./migration-runner.js";
 import type {
@@ -225,8 +228,6 @@ function assertForkBundleChildLocal(bundle: ForkCommitBundle): void {
   }
 }
 
-const deferredStartup = Symbol("deferredSqliteStartup");
-
 export class SqliteSessionStore
   implements
     SessionStorePort,
@@ -240,33 +241,56 @@ export class SqliteSessionStore
   private readonly forkCommitFaultAt?: ForkCommitFaultStage;
   private dwfJournalStore?: JournalStorePort;
 
-  constructor(options: SqliteSessionStoreOptions = {}, startupToken?: symbol) {
-    this.dbPath = options.dbPath ?? getDefaultSessionDbPath();
+  private constructor(
+    db: DatabaseSync,
+    dbPath: string,
+    options: SqliteSessionStoreOptions,
+    readonly migrationResult: MigrationResult | undefined,
+  ) {
+    this.db = db;
+    this.dbPath = dbPath;
     this.forkCommitFaultAt = options.forkCommitFaultAt;
+  }
+
+  /**
+   * Production open. The repositories only ever receive a connection after the migration COMMIT;
+   * an unmigrated connection never leaves this factory.
+   */
+  static async open(
+    options: SqliteSessionStoreOptions = {},
+    migrationOptions?: AsyncSqliteMigrationOptions,
+  ): Promise<SqliteSessionStore> {
+    const dbPath = options.dbPath ?? getDefaultSessionDbPath();
     const startupLockTimeoutMs =
       options.startupLockTimeoutMs ?? DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS;
+    let db: DatabaseSync;
     try {
-      ensureParentDir(this.dbPath);
-      maybeThrowStorageFsFault({ operation: "sqliteOpen", path: this.dbPath });
-      // Multiple local or remote agents share the same session DB; set the timeout before running the first
-      // PRAGMA, or concurrent startup can fail with database is locked in the migration prelude.
-      this.db = new DatabaseSync(this.dbPath, { timeout: startupLockTimeoutMs });
+      if (dbPath !== ":memory:") {
+        maybeThrowStorageFsFault({ operation: "mkdir", path: dirname(dbPath) });
+        await mkdir(dirname(dbPath), { recursive: true });
+      }
+      maybeThrowStorageFsFault({ operation: "sqliteOpen", path: dbPath });
+      // Multiple local or remote agents share the same session DB; the timeout must be set before the
+      // first PRAGMA, or concurrent startup fails with "database is locked" in the migration prelude.
+      db = new DatabaseSync(dbPath, { timeout: startupLockTimeoutMs });
     } catch (error) {
-      throw new SqliteSessionMigrationError(
-        `Failed to open SQLite session database at ${this.dbPath}`,
-        {
-          cause: error,
-          dbPath: this.dbPath,
-          kind: "open_failed",
-        },
-      );
+      throw new SqliteSessionMigrationError(`Failed to open SQLite session database at ${dbPath}`, {
+        cause: error,
+        dbPath,
+        kind: "open_failed",
+      });
     }
     try {
-      if (startupToken !== deferredStartup)
-        runSqliteSessionMigrations(this.db, this.dbPath, startupLockTimeoutMs);
+      const result = await runSqliteSessionMigrationsAsync(
+        db,
+        dbPath,
+        migrationOptions ?? { lockWaitTimeoutMs: startupLockTimeoutMs },
+      );
+      return new SqliteSessionStore(db, dbPath, options, result);
     } catch (error) {
+      // Closing can also fail on I/O; the original migration cause is what the user must act on.
       try {
-        this.db.close();
+        db.close();
       } catch {
         /* Preserve the original migration failure. */
       }
@@ -278,15 +302,35 @@ export class SqliteSessionStore
     options: SqliteSessionStoreOptions = {},
     migrationOptions: AsyncSqliteMigrationOptions = {},
   ): Promise<SqliteSessionStore> {
-    // Keep the unmigrated instance inside this factory; repositories and application code can receive only a connection after COMMIT.
-    const store = new SqliteSessionStore(options, deferredStartup);
+    return SqliteSessionStore.open(options, migrationOptions);
+  }
+
+  /**
+   * Compatibility open for the synchronous factories (remove with them; see
+   * specs/session-database-migrations.md). Migrations run without the table backup.
+   */
+  static openSyncCompat(options: SqliteSessionStoreOptions = {}): SqliteSessionStore {
+    const dbPath = options.dbPath ?? getDefaultSessionDbPath();
+    const startupLockTimeoutMs =
+      options.startupLockTimeoutMs ?? DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS;
+    let db: DatabaseSync;
     try {
-      await runSqliteSessionMigrationsAsync(store.db, store.dbPath, migrationOptions);
-      return store;
+      ensureParentDir(dbPath);
+      maybeThrowStorageFsFault({ operation: "sqliteOpen", path: dbPath });
+      db = new DatabaseSync(dbPath, { timeout: startupLockTimeoutMs });
     } catch (error) {
-      // close can also fail due to I/O; the original migration cause is the error users need to address.
+      throw new SqliteSessionMigrationError(`Failed to open SQLite session database at ${dbPath}`, {
+        cause: error,
+        dbPath,
+        kind: "open_failed",
+      });
+    }
+    try {
+      runSqliteSessionMigrationsSync(db, dbPath, startupLockTimeoutMs);
+      return new SqliteSessionStore(db, dbPath, options, undefined);
+    } catch (error) {
       try {
-        store.close();
+        db.close();
       } catch {
         /* Preserve the original migration failure. */
       }
@@ -336,6 +380,12 @@ export class SqliteSessionStore
   }): Promise<{ erasedIds: SessionId[] }> {
     this.throwBeforeWrite();
     return sessionTreeRepository.deleteSessionTree(this.db, input.rootIds);
+  }
+
+  /** Upstream tombstone: keeps message/part rows; hidden from listings. Permanent erase is `deleteSessionTree`. */
+  async softDeleteSession(sessionID: SessionId, timeDeleted = Date.now()): Promise<void> {
+    this.throwBeforeWrite();
+    sessionRepository.softDeleteSession(this.db, sessionID, timeDeleted);
   }
 
   async deleteEmptySession(sessionID: SessionId): Promise<boolean> {
@@ -1054,16 +1104,21 @@ export class SqliteSessionStore
   }
 }
 
+/**
+ * Compatibility factory for synchronous callers (bootstrap sessions, tests, scripts). It runs migrations
+ * without the table backup. TEMPORARY: remove in the final PR, after callers use `SqliteSessionStore.open`.
+ */
 export function createSqliteSessionStore(
   options: SqliteSessionStoreOptions = {},
 ): SqliteSessionStore {
-  return new SqliteSessionStore(options);
+  return SqliteSessionStore.openSyncCompat(options);
 }
 
+/** TEMPORARY compatibility alias of `createSqliteSessionStore`; remove in the final PR. */
 export function openStartupSqliteSessionStore(
   options: SqliteSessionStoreOptions = {},
 ): SqliteSessionStore {
-  return new SqliteSessionStore(options);
+  return SqliteSessionStore.openSyncCompat(options);
 }
 
 export { getDefaultSessionDbPath };

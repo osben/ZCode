@@ -12,13 +12,20 @@ export function normalizeMcpToolDescriptor(
   tool: unknown,
   timeoutMs?: number,
   official?: boolean,
+  alwaysLoad?: boolean,
 ): McpToolDescriptor {
   const record = isRecord(tool) ? tool : {};
+  const meta = isRecord(record._meta) ? record._meta : {};
   const toolName = typeof record.name === "string" ? record.name : "unknown";
   // Plugin UI: read `tools/list` `_meta` once here and normalize it to descriptor.ui; downstream code never touches raw _meta.
   const ui = normalizeMcpToolUiMeta(record._meta);
   return {
     serverName,
+    alwaysLoad: alwaysLoad === true || meta["anthropic/alwaysLoad"] === true,
+    searchHint:
+      typeof meta["anthropic/searchHint"] === "string"
+        ? meta["anthropic/searchHint"].replace(/\s+/g, " ").trim()
+        : undefined,
     toolName,
     name: `mcp__${sanitizeMcpName(serverName)}__${sanitizeMcpName(toolName)}`,
     description: typeof record.description === "string" ? record.description : undefined,

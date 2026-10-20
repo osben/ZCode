@@ -74,6 +74,8 @@ falls back to the file name.
   and applies `options.runtimeConfig?.outputStyle ?? persistedOutputStyle`. Explicit
   per-session config always wins over disk.
 - Loading happens once per session start in `create-app.ts`.
+- `skipUserConfig` also skips this load (the same operator-file exclusion as `createConfig`), so
+  test and embedded sessions that opt out of user config never pick up a developer's active style.
 
 ## Rollback
 

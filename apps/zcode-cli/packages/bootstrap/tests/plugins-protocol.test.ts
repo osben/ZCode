@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The protocol handler derives storageRoot only from the workspace, while the user config still resolves to
-// ~/.zcode/cli/config.json (getDefaultConfigPath has no env override). To isolate the restore/overview user-config
-// round-trip, redirect node:os's homedir to a one-off temp directory; tmpdir and other implementations keep their
-// original values. That way resolvePath("~/.zcode/cli") lands in the isolated directory and never touches the real HOME.
-// Regression cause: vi.mock is hoisted above ordinary const initialization; the temporary HOME must also be
-// established early via vi.hoisted, otherwise the mock factory hits a TDZ reading FAKE_HOME and the whole suite fails to collect.
+// 协议 handler 只从 workspace 推导 storageRoot，user config 仍解析到 ~/.zcode/cli/config.json
+// （getDefaultConfigPath 无 env 覆盖）。为隔离 restore/overview 的 user-config 往返，把 node:os
+// 的 homedir 重定向到一次性临时目录；tmpdir 等其余实现保留原值。这样 resolvePath("~/.zcode/cli")
+// 落到隔离目录，绝不触碰真实 HOME。
+// 回归原因：vi.mock 会提升到普通 const 初始化之前；临时 HOME 也必须通过 vi.hoisted
+// 提前建立，否则 mock factory 读取 FAKE_HOME 时会命中 TDZ，导致整个 suite 无法收集。
 const FAKE_HOME = await vi.hoisted(async () => {
   const [{ mkdtemp }, { tmpdir }, { join }] = await Promise.all([
     import("node:fs/promises"),
@@ -54,8 +54,8 @@ afterAll(async () => {
   await rm(FAKE_HOME, { force: true, recursive: true });
 });
 
-// Protocol-contract-level regression: ensure plugins/list and plugins/setEnabled are registered with usable schemas.
-// The end-to-end discovery logic is covered by bootstrap/tests/plugins.test.ts (resolveZCodePlugins).
+// 协议契约层面的回归: 确保 plugins/list 与 plugins/setEnabled 已注册且 schema 可用。
+// 端到端发现逻辑由 bootstrap/tests/plugins.test.ts (resolveZCodePlugins) 覆盖。
 describe("plugins protocol contracts", () => {
   it("serializes marketplace mutations behind the workspace plugin storage lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-protocol-marketplace-lock-"));
@@ -191,11 +191,14 @@ describe("plugins protocol contracts", () => {
     try {
       await writeTestFile(
         join(root, ".zcode", "config.json"),
-        JSON.stringify({ plugins: { dirs: [pluginRoot] } }),
+        JSON.stringify({ plugins: { dirs: [pluginRoot], enabledPlugins: { "workspace-demo@inline": false } } }),
       );
       await writeTestFile(
         join(pluginRoot, ".claude-plugin", "plugin.json"),
-        JSON.stringify({ name: "workspace-demo" }),
+        JSON.stringify({
+          name: "workspace-demo", mcpServers: { panel: { command: "node", args: ["panel.mjs"] } },
+          ui: { surfaces: [{ id: "panel", title: "Panel", server: "panel", resourceUri: "ui://demo/panel", availability: "session" }] },
+        }),
       );
 
       const result = await listPlugins({} as ZCodeProtocolAgentServerContext, {
@@ -205,7 +208,10 @@ describe("plugins protocol contracts", () => {
       expect(result.plugins.find((plugin) => plugin.id === "workspace-demo@inline")).toMatchObject({
         rootPath: pluginRoot,
         rootSource: "workspace",
+        enabled: false,
+        uiSurfaces: [{ pluginId: "workspace-demo@inline", pluginName: "workspace-demo", id: "panel", title: "Panel", server: "plugin:workspace-demo:panel", resourceUri: "ui://demo/panel", availability: "session" }],
       });
+      expect(() => zcodePluginsListResultSchema.parse(result)).not.toThrow();
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -469,9 +475,9 @@ async function writeKnownMarketplaces(
   );
 }
 
-// updatePlugin goes through the real bootstrap path: it derives pluginStorageRoot from the workspace's config,
-// so use ZCODE_STORAGE_DIR to anchor the storage root to a temp directory (when storage.dir ends with "cli",
-// getCliStorageRoot returns it as-is, hence pluginStorageRoot = <storageDir>/plugins).
+// updatePlugin 走真实 bootstrap 路径：它从 workspace 的 config 推导 pluginStorageRoot，
+// 因此用 ZCODE_STORAGE_DIR 把存储根锚定到临时目录（storage.dir 以 "cli" 结尾时
+// getCliStorageRoot 原样返回，故 pluginStorageRoot = <storageDir>/plugins）。
 describe("updatePlugin handler diagnostics", () => {
   const noopContext = {} as unknown as ZCodeProtocolAgentServerContext;
   let previousStorageDir: string | undefined;
@@ -550,10 +556,10 @@ describe("updatePlugin handler diagnostics", () => {
   });
 });
 
-// restoreBuiltinPlugin / overview go through the real bootstrap path: storageRoot is anchored by ZCODE_STORAGE_DIR
-// (when storage.dir ends with "cli", getCliStorageRoot returns it as-is, pluginStorageRoot = <storageDir>/plugins);
-// suppressedBuiltins must be written to the user config the handler actually resolves, i.e. ~/.zcode/cli/config.json
-// (the file header already redirected homedir to FAKE_HOME, so it lands in the isolated directory).
+// restoreBuiltinPlugin / overview 走真实 bootstrap 路径：storageRoot 由 ZCODE_STORAGE_DIR
+// 锚定（storage.dir 以 "cli" 结尾时 getCliStorageRoot 原样返回，pluginStorageRoot =
+// <storageDir>/plugins）；suppressedBuiltins 必须写到 handler 实际解析的 user config，即
+// ~/.zcode/cli/config.json（文件头部已把 homedir 重定向到 FAKE_HOME，故落在隔离目录）。
 describe("restoreBuiltinPlugin handler", () => {
   const noopContext = {} as unknown as ZCodeProtocolAgentServerContext;
   const builtinId = "skill-creator@zcode-plugins-official";

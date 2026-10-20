@@ -92,6 +92,8 @@ export const lspToolEntry: ToolEntry = {
     sideEffectScope: "none",
     riskLevel: "low",
     needsApproval: false,
+    // Non-resident tools are deferred behind ToolSearch under the upstream tool-search design.
+    shouldDefer: true,
   },
   handler: lspHandler,
   inputSchema: LspInputJsonSchema,
