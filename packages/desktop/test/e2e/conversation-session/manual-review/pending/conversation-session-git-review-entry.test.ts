@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { open, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -16,6 +18,7 @@ import {
 import { PROVIDER_READINESS_HISTORY_SESSION_ID } from "../../../helpers/provider-readiness-history-fixture.js";
 import { selectV4TaskById } from "../../../helpers/v4-conversation.js";
 
+const execGit = promisify(execFile);
 const CASE_TIMEOUT_MS = 120_000;
 const FILE_NAME = "status-panel-review.txt";
 const CHANGES_LABELS = ["Changes", "更改"];
@@ -32,13 +35,10 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
     this.timeout(CASE_TIMEOUT_MS);
 
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await waitForTestIdByDom(
-      testId(TID_TASK_ITEM, PROVIDER_READINESS_HISTORY_SESSION_ID),
-      {
-        timeout: 30_000,
-        timeoutMsg: "SP13 预置的只读历史 session 没有出现在任务列表",
-      },
-    );
+    await waitForTestIdByDom(testId(TID_TASK_ITEM, PROVIDER_READINESS_HISTORY_SESSION_ID), {
+      timeout: 30_000,
+      timeoutMsg: "SP13 预置的只读历史 session 没有出现在任务列表",
+    });
     await selectV4TaskById(PROVIDER_READINESS_HISTORY_SESSION_ID);
     await waitForExpandedStatusPanel();
 
@@ -132,6 +132,80 @@ describe("SP13：status panel Git Changes 打开变更审阅", () => {
       expect(memory.deltaKb).toBeLessThan(96 * 1024);
     }
   });
+
+  it("GIT-REFRESH-01: retains Git rows after a missing tracking ref and recovers on Refresh", async function () {
+    this.timeout(CASE_TIMEOUT_MS);
+    await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
+    // This repository belongs to the isolated E2E HOME, never the developer checkout.
+    const git = (args: string[]) =>
+      execGit(process.env.ZCODE_GIT_BINARY?.trim() || "git", args, {
+        cwd: DEFAULT_WORKSPACE,
+        windowsHide: true,
+      });
+    await git([
+      "-c",
+      "user.name=E2E Tester",
+      "-c",
+      "user.email=e2e@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "E2E Git refresh baseline",
+    ]);
+    await git(["remote", "add", "e2e-refresh", "."]);
+    await git(["config", "branch.main.remote", "e2e-refresh"]);
+    await git(["config", "branch.main.merge", "refs/heads/missing"]);
+    try {
+      await selectV4TaskById(PROVIDER_READINESS_HISTORY_SESSION_ID);
+      await waitForExpandedStatusPanel();
+      if (!(await isGitPaneMounted())) await clickStatusPanelChanges();
+      await waitForTestIdByDom(TID_GIT_PANE, {
+        timeout: 30_000,
+        timeoutMsg: "GIT-REFRESH-01: Git Review must open before testing comparison failures",
+      });
+      const pane = $(`[data-testid="${TID_GIT_PANE}"]`);
+      const refresh = await findButtonByLabels(pane, ["Refresh", "刷新"]);
+      if (!refresh) throw new Error("Git Review Refresh button is missing");
+      await refresh.waitForEnabled();
+      await refresh.click();
+      await browser.waitUntil(
+        async () => {
+          const review = await readGitReviewSnapshot();
+          const alert = await pane.$('[role="alert"]');
+          return (
+            review.rowCount > 0 &&
+            review.text.includes(FILE_NAME) &&
+            (await alert.isExisting()) &&
+            (await alert.getText()).includes("bad revision")
+          );
+        },
+        {
+          timeout: 30_000,
+          timeoutMsg: "Missing tracking ref must preserve rows and disclose comparison failure",
+        },
+      );
+
+      await git(["update-ref", "refs/remotes/e2e-refresh/missing", "HEAD"]);
+      await refresh.waitForEnabled();
+      await refresh.click();
+      await browser.waitUntil(
+        async () => {
+          const review = await readGitReviewSnapshot();
+          return (
+            review.rowCount > 0 &&
+            review.text.includes(FILE_NAME) &&
+            !(await pane.$('[role="alert"]').isExisting())
+          );
+        },
+        {
+          timeout: 30_000,
+          timeoutMsg: "Restored tracking ref must clear the error and preserve rows",
+        },
+      );
+    } finally {
+      await git(["remote", "remove", "e2e-refresh"]);
+    }
+  });
 });
 
 async function waitForExpandedStatusPanel() {
@@ -141,7 +215,9 @@ async function waitForExpandedStatusPanel() {
   });
 
   const panel = $(`[data-testid="${TID_CHAT_SUMMARY_PANEL}"]`);
-  if ((await panel.getAttribute("data-state")) !== "expanded") {
+  // Auto mode reports expanded while CSS still shows the capsule on narrow windows.
+  // Inspect the visible action before deciding whether to expand the status panel.
+  if (!(await findButtonByLabels(panel, CHANGES_LABELS))) {
     const expandButton = await findButtonByLabels(panel, EXPAND_LABELS);
     if (!expandButton) {
       throw new Error("SP13 status panel 处于收起态，但没有可点击的展开入口");
@@ -170,20 +246,16 @@ async function clickStatusPanelChanges() {
   await changesButton.click();
 }
 
-async function findButtonByLabels(
-  root: ChainablePromiseElement,
-  labels: readonly string[],
-) {
+async function findButtonByLabels(root: ChainablePromiseElement, labels: readonly string[]) {
   const buttons = await root.$$("button");
   for (const button of buttons) {
+    if (!(await button.isDisplayed())) continue;
     const text = (await button.getText()).trim();
     const firstLine = text.split(/\r?\n/u, 1)[0] ?? "";
     const ariaLabel = (await button.getAttribute("aria-label"))?.trim() ?? "";
-    if (
-      labels.some(
-        (label) => ariaLabel === label || firstLine === label,
-      )
-    ) {
+    // The status capsule previews Changes but is named Expand status. Its explicit
+    // accessible name must win over preview text, or the click never opens Git Review.
+    if (labels.includes(ariaLabel || firstLine)) {
       return button;
     }
   }
@@ -192,8 +264,7 @@ async function findButtonByLabels(
 
 function isGitPaneMounted() {
   return browser.execute(
-    (gitPaneTestId) =>
-      Boolean(document.querySelector(`[data-testid="${gitPaneTestId}"]`)),
+    (gitPaneTestId) => Boolean(document.querySelector(`[data-testid="${gitPaneTestId}"]`)),
     TID_GIT_PANE,
   );
 }
@@ -223,25 +294,17 @@ async function waitForGitReview() {
     );
   } catch (error) {
     latest = await readGitReviewSnapshot().catch(() => latest);
-    throw new Error(
-      `SP13 Git review 断言失败: ${JSON.stringify(latest)}`,
-      { cause: error },
-    );
+    throw new Error(`SP13 Git review 断言失败: ${JSON.stringify(latest)}`, { cause: error });
   }
   return readGitReviewSnapshot();
 }
 
 function readGitReviewSnapshot(): Promise<GitReviewSnapshot> {
   return browser.execute((gitPaneTestId) => {
-    const pane = document.querySelector<HTMLElement>(
-      `[data-testid="${gitPaneTestId}"]`,
-    );
-    const sourceTrigger = pane?.querySelector<HTMLElement>(
-      '[data-slot="select-trigger"]',
-    );
+    const pane = document.querySelector<HTMLElement>(`[data-testid="${gitPaneTestId}"]`);
+    const sourceTrigger = pane?.querySelector<HTMLElement>('[data-slot="select-trigger"]');
     return {
-      rowCount:
-        pane?.querySelectorAll("[data-git-pane-change-virtual-row]").length ?? 0,
+      rowCount: pane?.querySelectorAll("[data-git-pane-change-virtual-row]").length ?? 0,
       sourceLabel: sourceTrigger?.textContent?.trim() ?? "",
       text: pane?.innerText ?? "",
     };

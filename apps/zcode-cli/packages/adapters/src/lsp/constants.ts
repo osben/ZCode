@@ -8,6 +8,8 @@ export const LSP_POSITION_ENCODING = "utf-16";
 export const LSP_DEFAULT_IDLE_SHUTDOWN_MS = 600_000;
 export const LSP_DEFAULT_MAX_RUNNING_SERVERS = 4;
 export const LSP_DEFAULT_NOT_INSTALLED_RETRY_MS = 30_000;
+/** After the restart budget runs out, the next acquire past this window makes one more start (spec §5). */
+export const LSP_DEFAULT_UNAVAILABLE_RETRY_MS = 30_000;
 
 /** Last bytes of server stderr kept for start-failure messages. Never logged in full. */
 export const LSP_STDERR_TAIL_MAX_CHARS = 2_048;
