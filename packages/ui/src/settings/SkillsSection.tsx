@@ -612,7 +612,7 @@ export function SkillsSection({
         <div
           role="button"
           tabIndex={0}
-          className="min-w-0 cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          className="min-w-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
           onClick={() => setSelectedSkill(skill)}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
@@ -727,7 +727,7 @@ export function SkillsSection({
       ) : null}
 
       {targetServiceResolution.rpcReady && diagnostics.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-amber-500/40 bg-amber-500/10 text-ui-base text-foreground">
+        <div className="overflow-hidden rounded-lg border border-warning/40 bg-warning/10 text-ui-base text-foreground">
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
@@ -748,11 +748,11 @@ export function SkillsSection({
             ) : (
               <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
             )}
-            <AlertTriangle className="size-3.5 shrink-0 text-amber-500" aria-hidden="true" />
+            <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
             <span className="flex-1 truncate font-medium">{diagnosticsSummary}</span>
           </button>
           {diagnosticsOpen ? (
-            <ul className="space-y-1 border-t border-amber-500/30 px-3 py-2">
+            <ul className="space-y-1 border-t border-warning/30 px-3 py-2">
               {diagnostics.map((diagnostic, index) => (
                 <li
                   key={`${diagnostic.code}-${diagnostic.path ?? "no-path"}-${index}`}
@@ -763,7 +763,7 @@ export function SkillsSection({
                       className={
                         diagnostic.severity === "error"
                           ? "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-destructive"
-                          : "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-amber-500"
+                          : "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-warning"
                       }
                     >
                       {diagnostic.severity}

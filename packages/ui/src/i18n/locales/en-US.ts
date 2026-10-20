@@ -3359,6 +3359,13 @@ const enUS: Record<string, string> = {
   "settings.migration.failedTitle": "Failures",
   "settings.migration.reason.session_not_found_or_workspace_mismatch":
     "The source session was not found, or it no longer matches the current workspace filter.",
+  "settings.instructions.title": "Instructions",
+  "settings.outputStyles.title": "Output Styles",
+  "settings.systemPrompt.title": "System Prompts",
+  "settings.incognito": "Incognito",
+  "settings.voiceDictation.title": "Voice dictation",
+  "settings.worktrees.title": "Worktrees",
+  "sessionManager.title": "Manage sessions",
   "settings.usageTitle": "Usage stats",
   "settings.usageDescription":
     "Review rough activity and model usage aggregated from local sessions.",

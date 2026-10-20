@@ -80,6 +80,8 @@ export interface V4WorkspaceChatAreaProps {
   /** primary pane 绑定的 CLI session（既有选择态 activeTaskId）；null = draft。 */
   sessionId: string | null;
   activeSelectionSideChatSessionId?: string | null;
+  readOnlySessionId?: string | null;
+  selectionSideChatSessionId?: string | null;
   provider?: ZCodeProvider;
   /** primary pane createSession/fork 后接入既有选择路径（handleSelectTask）。 */
   onSessionCreated?: (sessionId: string) => void;
@@ -102,8 +104,22 @@ export interface V4WorkspaceChatAreaProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
-  onPaneActiveSessionChange?: (scope: PaneWorkspaceScope, sessionId: string) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
+  onPaneActiveSessionChange?: (
+    scope: PaneWorkspaceScope,
+    sessionId: string,
+    capabilities?: {
+      selectionSideChat?: boolean;
+    },
+  ) => void;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -152,6 +168,8 @@ export function V4WorkspaceChatArea({
   compactForRemoteControl = false,
   sessionId,
   activeSelectionSideChatSessionId = null,
+  readOnlySessionId = null,
+  selectionSideChatSessionId = null,
   provider,
   onSessionCreated,
   onSessionDeleted,
@@ -167,6 +185,7 @@ export function V4WorkspaceChatArea({
   onRefreshGit,
   onOpenGitReview,
   onPaneActiveSessionChange,
+  onCreateTaskInWorkspace,
   onOpenBrowserUrl,
   onOpenAutomationsMain,
   onOpenCodeViewer,
@@ -264,10 +283,23 @@ export function V4WorkspaceChatArea({
     }),
     [remoteSessionId, workspacePath, workspaceIdentity],
   );
-  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+  const primarySessionBinding = useMemo<WorkbenchSessionBinding | null>(
     () =>
-      primaryPaneSessionId ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId } : null,
-    [primaryPaneSessionId, shellScope],
+      primaryPaneSessionId
+        ? {
+            workspaceScope: shellScope,
+            sessionId: primaryPaneSessionId,
+            ...(primaryPaneSessionId === readOnlySessionId ? { readOnly: true } : {}),
+            ...(primaryPaneSessionId === selectionSideChatSessionId
+              ? { selectionSideChat: true }
+              : {}),
+          }
+        : null,
+    [primaryPaneSessionId, readOnlySessionId, selectionSideChatSessionId, shellScope],
+  );
+  const placementShellBinding = useMemo<WorkbenchSessionBinding | null>(
+    () => primarySessionBinding,
+    [primarySessionBinding],
   );
 
   const shell = useMemo<WorkbenchShellBinding>(
@@ -279,6 +311,9 @@ export function V4WorkspaceChatArea({
       compactForRemoteControl,
       readOnly,
       allowEscapeStopOutsidePane,
+      onCreateTaskInWorkspace,
+      readOnlySessionId,
+      selectionSideChatSessionId,
       sessionId: primaryPaneSessionId,
       // primaryPaneSessionId 在 active task 被 split pane 接管时会刻意置空，
       // 辅助对话划词路由仍需保留 shell 真正的 active task id。
@@ -329,6 +364,8 @@ export function V4WorkspaceChatArea({
       compactForRemoteControl,
       readOnly,
       allowEscapeStopOutsidePane,
+      onCreateTaskInWorkspace,
+      readOnlySessionId,
       primaryPaneSessionId,
       activeSelectionSideChatSessionId,
       provider,
@@ -377,9 +414,7 @@ export function V4WorkspaceChatArea({
           return selectWorkbenchGroupPaneBinding(activeGroup, paneId);
         }
         if (paneId === V4_PRIMARY_PANE_ID) {
-          return primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+          return primarySessionBinding;
         }
         const binding = paneBindings[paneId];
         return binding?.sessionId
@@ -387,10 +422,11 @@ export function V4WorkspaceChatArea({
               workspaceScope: binding.workspaceScope,
               sessionId: binding.sessionId,
               ...(binding.readOnly ? { readOnly: true } : {}),
+              ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
             }
           : null;
       },
-    [activeGroup, paneBindings, primaryPaneSessionId, shellScope],
+    [activeGroup, paneBindings, primarySessionBinding],
   );
 
   const syncShellActiveSession = useCallback(
@@ -400,7 +436,13 @@ export function V4WorkspaceChatArea({
       }
       // readOnly subagent pane 只是 workbench 内观察视图，不是左侧
       // task 导航目标；反写 shell activeTaskId 会让左侧高亮/乐观 task 误切到 child。
-      onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      if (binding.selectionSideChat) {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId, {
+          selectionSideChat: true,
+        });
+      } else {
+        onPaneActiveSessionChange?.(binding.workspaceScope, binding.sessionId);
+      }
     },
     [onPaneActiveSessionChange],
   );
@@ -440,10 +482,7 @@ export function V4WorkspaceChatArea({
         // shell activeTaskId 必须回到关闭后的可导航 session，不能继续停在已关闭 session。
         syncShellActiveSession(nextActiveBinding);
       } else {
-        const nextActiveBinding =
-          focusedPaneId === paneId && primaryPaneSessionId
-            ? { workspaceScope: shellScope, sessionId: primaryPaneSessionId }
-            : null;
+        const nextActiveBinding = focusedPaneId === paneId ? primarySessionBinding : null;
         closePaneAction(paneId);
         syncShellActiveSession(nextActiveBinding);
       }
@@ -453,8 +492,7 @@ export function V4WorkspaceChatArea({
       closeGroupPaneAction,
       closePaneAction,
       focusedPaneId,
-      primaryPaneSessionId,
-      shellScope,
+      primarySessionBinding,
       syncShellActiveSession,
     ],
   );
