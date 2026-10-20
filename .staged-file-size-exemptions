@@ -336,3 +336,6 @@ packages/provider-node/test/provider-node-runtime.test.ts
 packages/provider/test/config-service.test.ts
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+
+# Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
+packages/services/test/highspeedCardService.test.ts
