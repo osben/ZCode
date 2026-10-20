@@ -86,7 +86,6 @@ describe("settingsPageConfig", () => {
       "commands",
       "hooks",
       "browser",
-      "remoteDevices",
       "shortcuts",
       "voiceDictation",
       "usage",
@@ -204,7 +203,6 @@ describe("settingsPageConfig", () => {
 
     expect(capabilities?.sections.map((section) => section.id).slice(-2)).toEqual([
       "browser",
-      "remoteDevices",
       "computerUse",
     ]);
     expect(

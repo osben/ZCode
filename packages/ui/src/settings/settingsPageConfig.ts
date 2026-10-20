@@ -1,5 +1,4 @@
 import {
-  Archive,
   Monitor,
   Moon,
   Settings,
@@ -17,7 +16,6 @@ import {
   Globe2,
   Cable,
   WandSparkles,
-  HardDrive,
   Keyboard,
   FileSearch,
   History,
@@ -161,14 +159,6 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.browser.title",
     groupId: "agentCapabilities",
   },
-  // 原型导航顺序：浏览器之后才是远程设备；电脑控制继续紧随其后并受灰度门禁。
-  {
-    id: "remoteDevices",
-    icon: HardDrive,
-    titleId: "settings.remoteDevicesTitle",
-    contentTitleId: "settings.remoteDevicesTitle",
-    groupId: "basics",
-  },
   // 电脑控制紧跟「浏览器」：两者都是给 Agent 用的本机操控入口，
   // 放在基础设置里让用户在同一处理解「控制浏览器 / 控制整台电脑」的关系。
   {
@@ -213,12 +203,6 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "sessions",
     icon: History,
     titleId: "sessionManager.title",
-    groupId: "dataAndStats",
-  },
-  {
-    id: "archives",
-    icon: Archive,
-    titleId: "archives.nav",
     groupId: "dataAndStats",
   },
   // 暂时隐藏设置页里的 Migration 入口，只保留页面实现，后续可以直接恢复这一项。
