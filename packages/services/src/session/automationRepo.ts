@@ -285,7 +285,7 @@ export class AutomationRepo {
     }
     // The Worker already performed the initial preparation for this path; the business connection must not repeat the full-table repair.
     if (isTasksStoragePrepared(path, this.db)) return;
-    if (!isTasksStorageMigrated(path, this.db)) runTasksDatabaseMigrations(this.db);
+    if (!isTasksStorageMigrated(path, this.db)) await runTasksDatabaseMigrations(this.db);
   }
 
   private getDatabase(): DatabaseSyncInstance {
