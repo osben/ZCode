@@ -17,6 +17,7 @@ const BIGMODEL_ACCESS_TOKEN_KEY = "oauth:bigmodel:access_token";
 const BIGMODEL_USER_INFO_KEY = "oauth:bigmodel:user_info";
 const OAUTH_PENDING_NONCE_KEY = "oauth_pending_nonce";
 const OAUTH_PENDING_PROVIDER_KEY = "oauth_pending_provider";
+const OAUTH_PENDING_REDIRECT_URI_KEY = "oauth_pending_redirect_uri";
 
 /** Login providers supported by this repository. Private share owner identity is provider-specific, so both providers must be supported. */
 export type WebOAuthProviderId = typeof ZAI_PROVIDER_ID | typeof BIGMODEL_PROVIDER_ID;
@@ -114,6 +115,24 @@ export class BrowserOAuthCredentialRepo {
     return result.status === "authenticated" ? result.userInfo : null;
   }
 
+  /**
+   * Read-only account display data for the device page account row. This is not a login gate: it does not
+   * validate the JWT or clear partial credentials, so rendering the list cannot sign the user out early.
+   * Login state is still decided by loadCachedSessionState and the JWT.
+   */
+  loadActiveAccount(): { provider: WebOAuthProviderId; userInfo: UserInfo } | null {
+    try {
+      const provider = this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
+      if (!isWebOAuthProviderId(provider)) return null;
+      const rawUserInfo = this.localStorage.getItem(providerKeys(provider).userInfo);
+      if (!hasText(rawUserInfo)) return null;
+      const userInfo = toUserInfo(JSON.parse(rawUserInfo));
+      return userInfo ? { provider, userInfo } : null;
+    } catch {
+      return null;
+    }
+  }
+
   loadCachedSessionState(): OAuthCachedSessionRestoreResult {
     const activeProvider = this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
     const zcodeJwtToken = this.localStorage.getItem(ZCODE_JWT_TOKEN_KEY);
@@ -206,5 +225,40 @@ export class BrowserOAuthCredentialRepo {
 
   clearPendingProvider(): void {
     this.sessionStorage.removeItem(OAUTH_PENDING_PROVIDER_KEY);
+  }
+
+  /** Stored with the nonce and provider for this login; the token exchange on the callback page must use the full redirect URI from authorization. */
+  savePendingRedirectUri(nonce: string, redirectUri: string): void {
+    this.sessionStorage.setItem(
+      OAUTH_PENDING_REDIRECT_URI_KEY,
+      JSON.stringify({ nonce, redirectUri }),
+    );
+  }
+
+  loadPendingRedirectUri(nonce: string): string | null {
+    const raw = this.sessionStorage.getItem(OAUTH_PENDING_REDIRECT_URI_KEY);
+    if (!raw) return null;
+    try {
+      const pending: unknown = JSON.parse(raw);
+      // Pages from older versions update only nonce and provider; a legacy redirect URI must match this nonce and must not be reused across logins.
+      if (
+        pending &&
+        typeof pending === "object" &&
+        "nonce" in pending &&
+        pending.nonce === nonce &&
+        "redirectUri" in pending &&
+        typeof pending.redirectUri === "string" &&
+        pending.redirectUri.trim()
+      ) {
+        return pending.redirectUri;
+      }
+    } catch {
+      // Corrupt optional metadata must never be treated as the redirect URI for this authorization.
+    }
+    return null;
+  }
+
+  clearPendingRedirectUri(): void {
+    this.sessionStorage.removeItem(OAUTH_PENDING_REDIRECT_URI_KEY);
   }
 }

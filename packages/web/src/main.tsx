@@ -12,7 +12,7 @@ import {
   setWebRemoteControlTerminalTransportState,
   type WebRemoteControlTerminalTransportState as UiWebRemoteControlTerminalTransportState,
 } from "@zcode/ui";
-import "@zcode/ui/styles.css";
+import "./styles.css";
 import {
   connectViaProtocol,
   connectViaWebSocket,
@@ -254,7 +254,8 @@ function isWebOAuthCallback(params: URLSearchParams): boolean {
       window.location.pathname,
     ) &&
     params.has("state") &&
-    (params.has("code") || params.has("error"))
+    // BigModel authCode must reach the callback page first, where the provider normalizes it to a code.
+    (params.has("code") || params.has("authCode") || params.has("error"))
   );
 }
 
