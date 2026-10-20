@@ -414,7 +414,7 @@ describe("v4 原生 createSession", () => {
       preparedActivation: "materialized",
     });
     const withPreparedWorktreeActivation = vi.fn(
-      async <T,>(_sessionId: string, body: () => Promise<T>) => body(),
+      async <T>(_sessionId: string, body: () => Promise<T>) => body(),
     );
     const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
     const host = makeHost(record, {

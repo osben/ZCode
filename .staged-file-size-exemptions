@@ -248,6 +248,7 @@ packages/server/src/remote/ssh-backend.ts
 packages/server/src/remote/wsl-backend.ts
 packages/services/src/conversation-share/conversationShareArtifactDiscovery.ts
 packages/services/src/conversation-share/conversationShareHttpClient.ts
+apps/zcode-cli/packages/core/src/tool/handlers/bash.ts
 packages/services/src/conversation-share/conversationSharePublicProjection.ts
 packages/services/src/conversation-share/conversationShareService.ts
 packages/services/src/session/offPeakMockGateway.ts

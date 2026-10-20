@@ -121,10 +121,13 @@ async function createSession(
           }
           throw error;
         }
-        host.logger?.warn?.("v4 createSession config apply failed; session keeps runtime defaults", {
-          error: error instanceof Error ? error.message : String(error),
-          sessionId,
-        });
+        host.logger?.warn?.(
+          "v4 createSession config apply failed; session keeps runtime defaults",
+          {
+            error: error instanceof Error ? error.message : String(error),
+            sessionId,
+          },
+        );
       }
     }
     let firstInput:
@@ -206,7 +209,10 @@ async function createSession(
  * this point, so a receipt-write failure must not fail the ACK; the next repeat activation heals
  * the receipt through the "input-admitted" outcome.
  */
-async function completePreparedActivation(host: V4CommandCoreHost, sessionId: string): Promise<void> {
+async function completePreparedActivation(
+  host: V4CommandCoreHost,
+  sessionId: string,
+): Promise<void> {
   if (!host.completePreparedWorktreeActivation) return;
   try {
     await host.completePreparedWorktreeActivation(sessionId);

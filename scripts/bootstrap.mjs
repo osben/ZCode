@@ -246,6 +246,10 @@ if (withRemoteAssets) {
   runBootstrapWithRemoteBuild();
   // Refresh the existing component manifests after the workspace build so they describe current outputs.
   runPnpm(["run", "prepare:remote-assets"]);
+  // Cause: first-run R3 consumes only the Source Server archive, while the legacy bootstrap produced only
+  // the legacy manifest and components, so development kept hitting the stale gitignored dist-release.
+  // Run after the final workspace build so the archive collects this run's fresh build outputs.
+  runPnpm(["--filter", "@zcode/server-cli", "stage:remote-assets"]);
 } else {
   runPnpm(["run", "build:bootstrap"]);
 }

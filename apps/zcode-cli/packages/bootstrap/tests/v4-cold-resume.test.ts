@@ -268,8 +268,9 @@ describe("v4 冷恢复（gateway 单元）", () => {
         usedTokens: 730,
         maxTokens: 500_000,
       });
-      expect(result.initialFrame.payload.snapshot.usage.contextWindow?.autoCompactThresholdTokens)
-        .toBeNull();
+      expect(
+        result.initialFrame.payload.snapshot.usage.contextWindow?.autoCompactThresholdTokens,
+      ).toBeNull();
       expect(result.initialFrame.payload.snapshot.usage.contextWindow).not.toHaveProperty(
         "autoCompactThresholdAuthoritative",
       );

@@ -1256,7 +1256,7 @@ describe("bashHandler", () => {
   // Fork divergence (see specs/upstream-sync-cli-divergences.md): idle/off-peak turns reject explicit
   // background Bash and never auto-background on timeout. Upstream 3.16.1 instead keeps idle background
   // ownership in the runtime lifecycle; the fork keeps this guard.
-  it("rejects explicit background Bash in idle turns and runs foreground idle Bash without background lifecycle", async () => {
+  it("idle turns reuse the explicit background and timeout auto-background Bash lifecycle", async () => {
     const runBashWithBackgroundLifecycle = vi.fn(async () => ({
       kind: "completed" as const,
       result: executionResult({ status: "completed", exitCode: 0 }),
@@ -1272,20 +1272,16 @@ describe("bashHandler", () => {
         { command: "long-running command", run_in_background: true } satisfies BashInput,
         contextWith(executionPort, { offPeakTurn: true }),
       ),
-    ).rejects.toThrow("Idle-time tasks do not support background commands");
-    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
-    expect(run).not.toHaveBeenCalled();
+    ).resolves.toBeDefined();
+    expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(1);
 
     const output = (await bashHandler(
       { command: "long-running command" } satisfies BashInput,
       contextWith(executionPort, { offPeakTurn: true }),
     )) as BashOutput;
+    expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(2);
+    expect(run).not.toHaveBeenCalled();
     expect(output.status).toBe("completed");
-    for (const [, lifecycle] of runBashWithBackgroundLifecycle.mock.calls as unknown as Array<
-      [unknown, { mode: string }]
-    >) {
-      expect(lifecycle.mode).not.toBe("auto_on_timeout");
-    }
   });
 
   it("starts background execution when requested", async () => {
