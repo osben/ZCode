@@ -382,3 +382,8 @@ packages/ui/test/workflowTimelineHoles.test.ts
 packages/ui/test/workflowTimelineModel.test.ts
 packages/ui/test/workflowTimelineTracks.test.ts
 packages/ui/test/zcodeSessionStore.test.ts
+
+# TEMPORARY upstream 3.16.1 sync (ui bucket 6)
+packages/ui/src/TaskListItem.tsx
+packages/ui/src/SettingsPage.tsx
+packages/ui/src/PermissionDialog.tsx
