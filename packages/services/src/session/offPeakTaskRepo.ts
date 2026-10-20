@@ -211,7 +211,7 @@ export class OffPeakTaskRepo {
     }
     // The Worker already completed initial preparation for this path, so the business connection does not repeat full-table repair.
     if (isTasksStoragePrepared(path, this.db)) return;
-    if (!isTasksStorageMigrated(path, this.db)) runTasksDatabaseMigrations(this.db);
+    if (!isTasksStorageMigrated(path, this.db)) await runTasksDatabaseMigrations(this.db);
     // awaiting_approval was reserved early, but the production path never wrote it while the UI presented it as a supported capability.
     // Confirmation now uses only a regular session; migrate legacy rows back to running, then let startup recovery use the actual process state.
     this.getDatabase()

@@ -194,6 +194,11 @@ packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
 
 
+# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
+
+
 # TEMPORARY upstream 3.16.1 sync - revert/split in final PR
 packages/shared/src/bots.ts
 packages/shared/src/channels.ts
@@ -223,6 +228,7 @@ packages/shared/test/zcodeProtocolV4WorkflowRunsReducer.test.ts
 packages/services/test/zcodeAgentService.test.ts
 
 
+
 # Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
 .agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
 config/provider/zcode-builtin.json
@@ -249,7 +255,6 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
-
 # TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
 apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
 apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
@@ -258,3 +263,6 @@ apps/zcode-cli/packages/adapters/tests/session-store.test.ts
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
+
+packages/services/src/session/automationRepo.ts
+packages/services/src/session/offPeakTaskRepo.ts
