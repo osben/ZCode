@@ -1,7 +1,7 @@
+import { formatPluralMessage } from "../i18n/formatPlural.js";
 import type { ZCodeTaskTreeCounts } from "@zcode/services";
 
 type TreeCountsIntl = {
-  formatPlural(descriptor: { id: string }, count: number): string;
   formatMessage(descriptor: { id: string }, values?: Record<string, string | number>): string;
 };
 
@@ -15,14 +15,14 @@ export function describeTreeChildren(
 ): string | null {
   const parts: string[] = [];
   if (counts.sideChats > 0) {
-    parts.push(intl.formatPlural({ id: "taskList.childSideChatsCount" }, counts.sideChats));
+    parts.push(formatPluralMessage(intl, "taskList.childSideChatsCount", counts.sideChats));
   }
   if (counts.subagents > 0) {
-    parts.push(intl.formatPlural({ id: "taskList.childSubagentsCount" }, counts.subagents));
+    parts.push(formatPluralMessage(intl, "taskList.childSubagentsCount", counts.subagents));
   }
   if (counts.workflowSessions > 0) {
     parts.push(
-      intl.formatPlural({ id: "sessionManager.delete.workflowSessions" }, counts.workflowSessions),
+      formatPluralMessage(intl, "sessionManager.delete.workflowSessions", counts.workflowSessions),
     );
   }
   return parts.length > 0 ? parts.join(", ") : null;

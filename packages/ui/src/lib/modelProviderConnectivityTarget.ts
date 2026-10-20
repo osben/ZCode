@@ -13,8 +13,8 @@ function isRemoteWorkspaceTab(tab: ConnectivityWorkspaceTab | null | undefined):
 }
 
 /**
- * Provider Settings belongs to the local Environment; when connectivity checks need a cwd, choose only a local workspace.
- * A remote tab's workspacePath belongs to a remote filesystem and cannot be passed directly to the Local Host.
+ * Provider Settings 属于本地 Environment；连通性探测需要 cwd 时，只能选择本地 workspace。
+ * 远程 tab 的 workspacePath 是远端文件系统路径，不能直接交给 Local Host。
  */
 export function resolveModelProviderConnectivityWorkspacePath(params: {
   activeWorkspacePath?: string | null;
@@ -27,8 +27,8 @@ export function resolveModelProviderConnectivityWorkspacePath(params: {
     return rememberedLocalPath;
   }
 
-  // Older tabs may have only remoteSessionId or remoteTarget and no workspaceIdentity.
-  // Their workspacePath is still a remote path and must not be passed to the Local Host just because identity is missing.
+  // 旧 tab 可能只有 remoteSessionId 或 remoteTarget，没有 workspaceIdentity。
+  // 这些 tab 的 workspacePath 仍是远端路径，不能因 identity 缺失而交给 Local Host。
   const activeWorkspaceIsRemote = Boolean(
     params.activeWorkspaceIdentity?.trim() || isRemoteWorkspaceTab(params.activeWorkspaceTab),
   );

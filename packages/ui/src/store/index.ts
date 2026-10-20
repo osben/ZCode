@@ -1,6 +1,11 @@
-/** Zustand Store — global state management. State that must sync across windows is broadcast through BroadcastService. The `state:` channel prefix identifies state-synchronization messages. */
+/**
+ * Zustand Store —— 全局状态管理
+ *
+ * 需要跨窗口同步的状态通过 BroadcastService 广播。
+ * 广播频道前缀 "state:" 表示状态同步类消息。
+ */
 import { create } from "zustand";
-import type { IBroadcastService } from "@zcode/services";
+import type { IBroadcastService, BroadcastMessage } from "@zcode/services";
 import type { OAuthProviderId, UserInfo } from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
@@ -9,7 +14,9 @@ import type {
   CodingPlanQuotaResetUiEntry,
 } from "@/lib/codingPlanQuotaResetUi.js";
 import {
+  applyCodingPlanQuotaResetAutoPlayedBroadcast,
   createCodingPlanQuotaResetStoreActions,
+  parseCodingPlanQuotaResetAutoPlayedBroadcastMessage,
   type CodingPlanQuotaResetAutomaticObservations,
   type CodingPlanQuotaResetAutoPlayReservation,
   type CodingPlanQuotaResetAutoPlayReservationAttempt,
@@ -23,22 +30,14 @@ import {
   normalizeUiFontSizePx,
   UI_FONT_SIZE_STORAGE_KEY,
 } from "@/lib/uiFontSize.js";
-import { createFontPreferencesSlice, type FontPreferencesState } from "@/store/fontPreferences.js";
-import { wireStateBroadcast } from "@/store/stateBroadcast.js";
 import {
   isTaskNotificationEnabled,
   isTaskNotificationSoundPreferenceEnabled,
   persistTaskNotificationEnabled,
   persistTaskNotificationSoundEnabled,
 } from "@/lib/taskNotificationPreferences.js";
-import type { Theme, ThemePalette } from "../useTheme.js";
-import {
-  THEME_PALETTE_STORAGE_KEY,
-  THEME_STORAGE_KEY,
-  applyTheme,
-  readStoredThemeSelection,
-} from "../useTheme.js";
-import { createSystemThemeSync } from "./systemThemeSync.js";
+import type { Theme } from "../useTheme.js";
+import { applyTheme, normalizeThemePreference, resolveTheme } from "../useTheme.js";
 
 import {
   INTERFACE_MODE_STORAGE_KEY,
@@ -49,8 +48,8 @@ import { logger } from "@/logger.js";
 
 export type LoginEntryPurpose = "app-login";
 
-// v4 refactor: types and defaults moved to @/lib/codePreviewSettings.ts,
-// so pure display components do not depend on the store; keep re-exports here for existing import paths.
+// v4 重构：类型与默认值下沉到 @/lib/codePreviewSettings.ts，
+// 让纯展示组件不依赖 store；这里保留 re-export 兼容既有 import 路径。
 export type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
 export { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 
@@ -70,7 +69,6 @@ export interface LoginEntryAttempt {
 
 const CODE_PREVIEW_SETTINGS_KEY = "zcode-code-preview-settings";
 const PERFORMANCE_MODE_STORAGE_KEY = "zcode-performance-mode";
-const TERMINAL_WEBGL_STORAGE_KEY = "zcode-terminal-webgl";
 
 function loadCodePreviewSettings(): CodePreviewSettings {
   try {
@@ -97,67 +95,54 @@ function loadPerformanceMode(): boolean {
   return readSafeLocalStorage(PERFORMANCE_MODE_STORAGE_KEY) === "true";
 }
 
-/** Terminal WebGL rendering is disabled by default; this is a local preference and is not synchronized with the server. */
-function loadTerminalWebglEnabled(): boolean {
-  return readSafeLocalStorage(TERMINAL_WEBGL_STORAGE_KEY) === "true";
-}
-
 // ============================================================================
-// State definition
+// State 定义
 // ============================================================================
 
-export interface ZCodeState extends FontPreferencesState {
-  /** Display-detail preference; does not change Agent permissions or execution capabilities. */
+export interface ZCodeState {
+  /** 展示详情偏好，不改变 Agent 权限或执行能力。 */
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
 
-  /** Current light/dark mode. */
+  /** 当前主题 */
   theme: Theme;
   setTheme: (theme: Theme) => void;
 
-  /** Current color scheme, independent of light/dark mode. */
-  palette: ThemePalette;
-  setPalette: (palette: ThemePalette) => void;
-
-  /** Current language. */
+  /** 当前语言 */
   locale: string;
   setLocale: (locale: string) => void;
 
-  /** Code-preview settings. */
+  /** 代码预览设置 */
   codePreviewSettings: CodePreviewSettings;
   setCodePreviewSettings: (patch: Partial<CodePreviewSettings>) => void;
 
-  /** Root UI font size in rem (px). */
+  /** UI 根 rem 字号（px） */
   uiFontSizePx: number;
   setUiFontSizePx: (fontSizePx: number) => void;
 
-  /** Whether performance mode is enabled. */
+  /** 是否启用性能模式 */
   performanceMode: boolean;
   setPerformanceMode: (enabled: boolean) => void;
 
-  /** Whether the terminal uses WebGL rendering (falls back to DOM automatically after failure or context loss). */
-  terminalWebglEnabled: boolean;
-  setTerminalWebglEnabled: (enabled: boolean) => void;
-
-  /** Whether task notifications are enabled (desktop notifications; sound is controlled by a sub-toggle). */
+  /** 是否启用任务通知（桌面通知；提示音由子开关控制） */
   notificationEnabled: boolean;
   setNotificationEnabled: (enabled: boolean) => void;
 
-  /** Whether task notification sounds are enabled (requires the task-notification master toggle). */
+  /** 是否启用任务通知声音（依附于任务通知总开关） */
   notificationSoundEnabled: boolean;
   setNotificationSoundEnabled: (enabled: boolean) => void;
 
-  /** Current user information. */
+  /** 当前用户信息 */
   user: UserInfo | null;
-  /** Incremented when the user moves from signed out to signed in; connecting an additional provider does not count as a new login. */
+  /** 用户由未登录进入登录态时递增；连接额外 provider 不会误判为重新登录。 */
   authSessionSeq: number;
   setUser: (user: UserInfo | null) => void;
 
-  /** Whether OAuth login restoration is still in progress during startup. */
+  /** 启动阶段是否仍在恢复 OAuth 登录态 */
   isRestoringOAuthSession: boolean;
   setIsRestoringOAuthSession: (restoring: boolean) => void;
 
-  /** OAuth callback error (written by the Root layer and read by the shared sign-in entry point). */
+  /** OAuth 回调错误（Root 层写入，统一登录入口读取） */
   oauthError: string | null;
   setOAuthError: (error: string | null) => void;
   oauthPollingActive: boolean;
@@ -168,13 +153,13 @@ export interface ZCodeState extends FontPreferencesState {
   apiKeyLoginSuccessSeq: number;
   lastApiKeyLoginModel: string | null;
   markApiKeyLoginSuccess: (preferredModel?: string | null) => void;
-  /** Request to open the shared sign-in entry point, optionally starting sign-in/connection for a provider automatically. */
+  /** 请求打开统一登录入口，可携带需要自动发起登录/连接的 provider */
   loginEntryRequest: {
     id: number;
     providerId?: OAuthProviderId;
     purpose?: LoginEntryPurpose;
   } | null;
-  /** Current shared sign-in attempt; follow-up actions such as purchase can continue only the OAuth flow they started, by ID. */
+  /** 当前统一登录尝试；购买等后续动作通过 id 只续接自己发起的 OAuth。 */
   loginEntryAttempt: LoginEntryAttempt | null;
   requestLoginEntry: (providerId?: OAuthProviderId, purpose?: LoginEntryPurpose) => number;
   clearLoginEntryRequest: (requestId?: number) => void;
@@ -183,38 +168,38 @@ export interface ZCodeState extends FontPreferencesState {
     status: Exclude<LoginEntryAttemptStatus, "requested">,
   ) => void;
 
-  /** Coding Plan quota-reset UI state; entries/observations are shared only within this window and are not persisted. */
+  /** Coding Plan 额度重置 UI 状态；entry/观察记录只在当前窗口内共享，不持久化。 */
   codingPlanQuotaResetUiBySource: Record<string, CodingPlanQuotaResetUiEntries>;
-  /** Auth session that first observed an automatic/operational completion, used to distinguish later mounts in the same session from a new login. */
+  /** 自动/运营完成首次被观察时所属的鉴权会话，用于区分同会话后挂载和重新登录。 */
   codingPlanQuotaResetAutomaticObservationsBySource: Record<
     string,
     CodingPlanQuotaResetAutomaticObservations
   >;
-  /** Used-at records for automatic completion messages already played once across windows; in-memory per window and mergeable through broadcasts. */
+  /** 自动完成提示"多窗口只播一次"的已播 used_at 记录；窗口内存态，可被广播合并。 */
   codingPlanQuotaResetAutoPlayedBySource: Record<string, CodingPlanQuotaResetAutoPlayedSlot>;
-  /** Record server status writes / reconciled manual uses; a null entry clears that type. */
+  /** 写入服务端 status / 手动 use 对账后的状态；entry 为 null 表示清空该类型。 */
   setCodingPlanQuotaResetUiEntry: (
     sourceKey: string,
     resetType: CodingPlanResetType,
     entry: CodingPlanQuotaResetUiEntry | null,
     authSessionSeq: number,
   ) => void;
-  /** Request a temporary reservation before the Composer shows; this phase does not write to played. */
+  /** Composer 展示前申请临时 reservation；此阶段不写 played。 */
   reserveCodingPlanQuotaResetAutoPlay: (
     sourceKey: string,
     resetType: CodingPlanResetType,
     completedAt: number,
   ) => Promise<CodingPlanQuotaResetAutoPlayReservationAttempt>;
-  /** Commit the reservation, played record, and broadcast while the component is still valid and about to display. */
+  /** 组件仍有效且即将展示时提交 reservation、played 与广播。 */
   commitCodingPlanQuotaResetAutoPlay: (
     reservation: CodingPlanQuotaResetAutoPlayReservation,
   ) => boolean;
-  /** Release a reservation that has not been committed if the component becomes invalid. */
+  /** 组件失效时释放尚未 commit 的 reservation。 */
   releaseCodingPlanQuotaResetAutoPlay: (
     reservation: CodingPlanQuotaResetAutoPlayReservation,
   ) => Promise<void>;
 
-  /** Request to open the onboarding dialog manually. */
+  /** 手动请求打开 onboarding 弹窗 */
   newUserOnboardingOpen: boolean;
   setNewUserOnboardingOpen: (open: boolean) => void;
   onboardingDialogRequested: boolean | "migration";
@@ -223,49 +208,60 @@ export interface ZCodeState extends FontPreferencesState {
 }
 
 // ============================================================================
-// Store factory
+// 需要广播的字段 —— 只有这些字段的变更会发送给其他窗口
 // ============================================================================
 
-/** Create a Zustand store connected to the broadcast service for cross-window state synchronization. @param broadcastService — broadcast service; Desktop uses RPC and Web may pass a no-op implementation. */
+const BROADCAST_FIELDS = new Set(["theme", "locale", "uiFontSizePx", "interfaceMode"]);
+
+type BroadcastField = "theme" | "locale" | "uiFontSizePx" | "interfaceMode";
+
+/** 广播频道名前缀 */
+const STATE_CHANNEL_PREFIX = "state:";
+
+// ============================================================================
+// Store 创建工厂
+// ============================================================================
+
+/**
+ * 创建 Zustand store，连接广播服务实现跨窗口状态同步
+ *
+ * @param broadcastService - 广播服务。Desktop 走 RPC，Web 可传 no-op 实现
+ */
 export function createZCodeStore(
   broadcastService: IBroadcastService,
   options: {
     initialIsRestoringOAuthSession?: boolean;
   } = {},
 ) {
+  /** 标记：正在应用来自广播的更新，此时不再重复广播（防止循环） */
+  let applyingBroadcast = false;
   let loginEntryRequestSeq = 0;
-  const syncSystemThemeListener = createSystemThemeSync(() => ({
-    mode: useStore.getState().theme,
-    palette: useStore.getState().palette,
-  }));
-  const initialThemeSelection = readStoredThemeSelection();
+  let cleanupSystemThemeListener: (() => void) | null = null;
+  let syncSystemThemeListener = (_theme: Theme) => {};
 
   const useStore = create<ZCodeState>()((set, get) => ({
     interfaceMode: normalizeInterfaceMode(readSafeLocalStorage(INTERFACE_MODE_STORAGE_KEY)),
     setInterfaceMode: (mode) => {
       const interfaceMode = normalizeInterfaceMode(mode);
       if (get().interfaceMode !== interfaceMode) {
-        logger.debug("[InterfaceMode] 切换界面模式", { interfaceMode });
+        logger.debug("[InterfaceMode] 切换界面模式", {
+          interfaceMode,
+          source: applyingBroadcast ? "broadcast" : "local",
+        });
       }
       writeSafeLocalStorage(INTERFACE_MODE_STORAGE_KEY, interfaceMode);
       set({ interfaceMode });
     },
-    // Older zcode-theme values may be stored as combinations such as zai-dark. migrateThemeSelection splits them into light/dark mode + zai color scheme,
-    // preserving the old appearance. When nothing is saved, default to dark mode + zai color scheme.
-    theme: initialThemeSelection.mode,
+    // 默认主题统一收敛到 Zai dark，避免首次启动时 store 与其他主题入口表现不一致。
+    // 仍然优先尊重 localStorage 中已保存的用户选择，不覆盖已有偏好。
+    theme: normalizeThemePreference((readSafeLocalStorage("zcode-theme") as Theme) || "zai-dark"),
     setTheme: (theme: Theme) => {
-      writeSafeLocalStorage(THEME_STORAGE_KEY, theme);
-      syncSystemThemeListener(theme);
-      applyTheme(theme, get().palette);
+      const normalizedTheme = normalizeThemePreference(theme);
+      writeSafeLocalStorage("zcode-theme", normalizedTheme);
+      syncSystemThemeListener(normalizedTheme);
+      applyTheme(normalizedTheme);
 
-      set({ theme });
-    },
-    palette: initialThemeSelection.palette,
-    setPalette: (palette: ThemePalette) => {
-      writeSafeLocalStorage(THEME_PALETTE_STORAGE_KEY, palette);
-      applyTheme(get().theme, palette);
-
-      set({ palette });
+      set({ theme: normalizedTheme });
     },
 
     locale: readSafeLocalStorage("zcode-locale") || "zh-CN",
@@ -297,18 +293,10 @@ export function createZCodeStore(
       set({ uiFontSizePx: normalizedFontSizePx });
     },
 
-    ...createFontPreferencesSlice((partial) => set(partial)),
-
     performanceMode: loadPerformanceMode(),
     setPerformanceMode: (enabled: boolean) => {
       writeSafeLocalStorage(PERFORMANCE_MODE_STORAGE_KEY, enabled ? "true" : "false");
       set({ performanceMode: enabled });
-    },
-
-    terminalWebglEnabled: loadTerminalWebglEnabled(),
-    setTerminalWebglEnabled: (enabled: boolean) => {
-      writeSafeLocalStorage(TERMINAL_WEBGL_STORAGE_KEY, enabled ? "true" : "false");
-      set({ terminalWebglEnabled: enabled });
     },
 
     notificationEnabled: isTaskNotificationEnabled(),
@@ -409,9 +397,104 @@ export function createZCodeStore(
     clearOnboardingDialogRequest: () => set({ onboardingDialogRequested: false }),
   }));
 
-  // Zustand v5 setState uses different overloads for replace=true/false, so the broadcast wiring
-  // lives in stateBroadcast.ts and only observes committed state changes.
-  wireStateBroadcast(useStore, broadcastService, syncSystemThemeListener);
+  syncSystemThemeListener = (theme: Theme) => {
+    cleanupSystemThemeListener?.();
+    cleanupSystemThemeListener = null;
+
+    if (theme !== "system" || typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleSystemThemeChange = () => {
+      if (useStore.getState().theme !== "system") {
+        return;
+      }
+
+      // system 模式需要持续订阅系统亮暗变化，不能只在切换到 system 的瞬间应用一次。
+      // 否则用户后续切系统主题时，DOM 上的 dark class 不会同步更新，看起来就像“跟随系统失效”。
+      applyTheme("system");
+    };
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleSystemThemeChange);
+      cleanupSystemThemeListener = () => {
+        mediaQuery.removeEventListener("change", handleSystemThemeChange);
+      };
+      return;
+    }
+
+    // 某些 Electron / Chromium 组合仍然只支持旧版 MediaQueryList listener API。
+    // 如果这里只调用 addEventListener，system 模式切系统主题时会完全收不到通知。
+    mediaQuery.addListener(handleSystemThemeChange);
+    cleanupSystemThemeListener = () => {
+      mediaQuery.removeListener(handleSystemThemeChange);
+    };
+  };
+
+  // Zustand v5 的 setState 在 replace=true/false 上使用了不同重载，
+  // 之前直接包一层并透传 replace，会在严格类型下落到互不兼容的签名分支。
+  // 这里改成订阅状态变化后再广播，只比较真正需要跨窗口同步的字段，逻辑更直观，也避免重载冲突。
+  useStore.subscribe((state, prevState) => {
+    if (applyingBroadcast) {
+      return;
+    }
+
+    for (const field of BROADCAST_FIELDS as Set<BroadcastField>) {
+      if (state[field] === prevState[field]) {
+        continue;
+      }
+
+      broadcastService.send({
+        channel: `${STATE_CHANNEL_PREFIX}${field}`,
+        payload: state[field],
+      });
+    }
+  });
+
+  // 监听来自其他窗口的广播
+  broadcastService.onMessage((msg: BroadcastMessage) => {
+    // 自动完成"多窗口只播一次"。其他窗口广播已播 used_at 后，本窗口合并
+    // played 记录并收起正在播放的同 used_at 提示；本地回声已在解析阶段被忽略。
+    const autoPlayed = parseCodingPlanQuotaResetAutoPlayedBroadcastMessage(msg);
+    if (autoPlayed) {
+      useStore.setState((state) => applyCodingPlanQuotaResetAutoPlayedBroadcast(state, autoPlayed));
+      return;
+    }
+
+    if (!msg.channel.startsWith(STATE_CHANNEL_PREFIX)) return;
+
+    const field = msg.channel.slice(STATE_CHANNEL_PREFIX.length) as BroadcastField;
+    if (!BROADCAST_FIELDS.has(field)) return;
+
+    applyingBroadcast = true;
+    try {
+      // 调用对应的 setter，确保副作用（localStorage、DOM）也执行
+      const state = useStore.getState();
+      if (field === "theme" && typeof msg.payload === "string") {
+        state.setTheme(msg.payload as Theme);
+      } else if (field === "locale" && typeof msg.payload === "string") {
+        state.setLocale(msg.payload);
+      } else if (
+        field === "interfaceMode" &&
+        (msg.payload === "office" || msg.payload === "coding")
+      ) {
+        state.setInterfaceMode(normalizeInterfaceMode(msg.payload));
+      } else if (field === "uiFontSizePx" && typeof msg.payload === "number") {
+        state.setUiFontSizePx(msg.payload);
+      }
+    } finally {
+      applyingBroadcast = false;
+    }
+  });
+
+  syncSystemThemeListener(useStore.getState().theme);
+  applyTheme(useStore.getState().theme);
+  applyUiFontSizePx(useStore.getState().uiFontSizePx);
+  document.documentElement.classList.toggle(
+    "dark",
+    resolveTheme(useStore.getState().theme) === "dark",
+  );
 
   return useStore;
 }

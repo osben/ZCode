@@ -1,28 +1,44 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useReducer } from "react";
 import type { PluginUiSurfaceEntry } from "@zcode/services";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import { usePluginStore } from "@/store/pluginStore.js";
+import {
+  isPluginManagementChangeRelevant,
+  subscribePluginManagementChanges,
+} from "@/store/pluginManagementStoreLoading.js";
 
 export interface UsePluginUiSurfacesInput {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** When false, do not fetch (no session / unsupported platform) and return an empty array. */
+  /** false 时不拉取（无会话 / 平台不支持），返回空数组。 */
   enabled?: boolean;
 }
 
 /**
- * Workspace-level surface entries (): read `plugins/listUiSurfaces` via the bridge.
- * The refresh signal reuses the plugin settings page's store: a change in the id+enabled fingerprint of
- * `installedPlugins` (install / uninstall / enable / disable) triggers a refetch; no separate event
- * channel is used, and nothing is cached across workspaces.
+ * 工作区级面板入口（）：经桥读 `plugins/listUiSurfaces`。
+ * 只订阅当前插件管理命令的成功变更；旧 pluginStore 不接收真实安装和启停结果。
  */
 export function usePluginUiSurfaces(input: UsePluginUiSurfacesInput): PluginUiSurfaceEntry[] {
   const bridge = useOptionalServices()?.pluginUiBridgeService;
-  const pluginFingerprint = usePluginStore((state) =>
-    state.installedPlugins.map((plugin) => `${plugin.id}:${plugin.enabled ? 1 : 0}`).join("|"),
-  );
+  const [pluginRevision, refresh] = useReducer((value: number) => value + 1, 0);
   const enabled = input.enabled !== false && Boolean(bridge);
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribePluginManagementChanges((change) => {
+      if (
+        isPluginManagementChangeRelevant(
+          {
+            workspacePath: input.workspacePath,
+            workspaceIdentity: input.workspaceIdentity?.trim() || null,
+            authorityKey: null,
+            configScope: null,
+          },
+          change,
+        )
+      )
+        refresh();
+    });
+  }, [enabled, input.workspacePath, input.workspaceIdentity]);
   const [surfaces, setSurfaces] = useState<PluginUiSurfaceEntry[]>([]);
 
   useEffect(() => {
@@ -49,13 +65,12 @@ export function usePluginUiSurfaces(input: UsePluginUiSurfacesInput): PluginUiSu
     return () => {
       cancelled = true;
     };
-    // pluginFingerprint serves only as a refresh signal.
-  }, [bridge, enabled, input.workspaceIdentity, input.workspacePath, pluginFingerprint]);
+  }, [bridge, enabled, input.workspaceIdentity, input.workspacePath, pluginRevision]);
 
   return surfaces;
 }
 
-/** Manifest title may be locale → string; resolved by locale, language prefix, en, then any value. */
+/** 清单 title 可为 locale → string；按 locale、语言前缀、en、任一值顺序取。 */
 export function resolvePluginUiSurfaceTitle(
   title: PluginUiSurfaceEntry["title"],
   locale: string,

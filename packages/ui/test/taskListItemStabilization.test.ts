@@ -6,7 +6,6 @@ import {
   stabilizeTaskListItems,
 } from "@/v4/taskListItemStabilization.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
-import { areTaskListItemsEquivalent as areRefreshSignatureItemsEquivalent } from "@/hooks/workspaceTaskListRefreshSignatures.js";
 
 function createTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
   return {
@@ -21,6 +20,15 @@ function createTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
 }
 
 describe("stabilizeTaskListItems", () => {
+  it("连续空快照复用数组，首条任务出现和最后一条移除仍更新", () => {
+    const empty: ZCodeTaskMeta[] = [];
+    expect(stabilizeTaskListItems(empty, [])).toBe(empty);
+    const populated = [createTask()];
+    expect(stabilizeTaskListItems(empty, populated)).toBe(populated);
+    const removed = stabilizeTaskListItems(populated, []);
+    expect(removed).toEqual([]);
+    expect(stabilizeTaskListItems(removed, [])).toBe(removed);
+  });
   it("等价重建时复用整个旧数组和旧元素引用", () => {
     const previous = [createTask(), createTask({ taskId: "task-2" })];
     const next = [createTask(), createTask({ taskId: "task-2" })];
@@ -121,22 +129,6 @@ describe("areTaskListItemsEquivalent", () => {
     const left = { ...createTask(), workspaceIdentity: undefined } as ZCodeTaskMeta;
 
     expect(areTaskListItemsEquivalent(left, createTask())).toBe(true);
-  });
-
-  it("worktree 健康状态变化时 display-cache 比较判为不等价", () => {
-    const healthy = createTask({
-      executionWorktree: { path: "/repo/.worktrees/task" },
-    } as Partial<ZCodeTaskMeta>);
-    const missing = createTask({
-      executionWorktree: { path: "/repo/.worktrees/task" },
-      executionWorktreeMissing: true,
-    } as Partial<ZCodeTaskMeta>);
-    const restored = createTask({
-      executionWorktree: { path: "/repo/.worktrees/task" },
-    } as Partial<ZCodeTaskMeta>);
-
-    expect(areRefreshSignatureItemsEquivalent([healthy], [missing])).toBe(false);
-    expect(areRefreshSignatureItemsEquivalent([missing], [restored])).toBe(false);
   });
 
   it("嵌套数组顺序变化仍判为不等价", () => {

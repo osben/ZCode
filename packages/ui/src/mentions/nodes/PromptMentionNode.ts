@@ -107,8 +107,8 @@ export class PromptMentionNode extends TextNode {
     dom.setAttribute("data-mention-category", this.__category);
     dom.setAttribute("data-mention-id", this.__mentionId);
     dom.setAttribute("spellcheck", "false");
-    // Root cause: a TextNode's firstChild chain must lead to the displayed text and cannot be interrupted by an icon.
-    // Keep the text DOM created by super; render the icon only as CSS decoration that is excluded from selection.
+    // 根因：TextNode 的 firstChild 链必须通向展示文字，不能被图标截断。
+    // 保留 super 创建的文本 DOM，图标只作为不参与选区的 CSS 装饰。
     decoratePromptMention(dom, this.__category, this.__value, this.__data);
     return dom;
   }
@@ -156,7 +156,7 @@ export class PromptMentionNode extends TextNode {
   }
 
   getMarkdown(): string {
-    // Editor offsets must use the displayed text; canonical content is only for sending and clipboard serialization.
+    // 编辑器 offset 必须使用展示文字；canonical 仅供发送和剪贴板序列化。
     return this.getLatest().__markdown;
   }
 

@@ -1,9 +1,9 @@
 import { useState } from "react";
+import { DesktopCommandIds } from "@zcode/shared";
 import {
-  DesktopCommandIds,
   TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER,
   TID_WORKSPACE_HELP_MENU_TRIGGER,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   ActivityIcon,
   BookOpenIcon,
@@ -40,8 +40,8 @@ export function WorkspaceHelpMenuButton({
 }: {
   className?: string;
   /**
-   * Whether this is Desktop. Inject this from the mount site instead of sniffing inside the component: the Web IPlatformService stub also implements
-   * executeDesktopCommand (as a no-op), so using it for detection would show a nonfunctional “File Explorer” entry on Web.
+   * 是否桌面端。由挂载处注入而不是在组件内嗅探：Web 的 IPlatformService 桩同样实现了
+   * executeDesktopCommand（no-op），拿它判定会让 Web 端出现一个点了没反应的「资源管理器」。
    */
   isDesktop?: boolean;
 }) {
@@ -78,8 +78,8 @@ export function WorkspaceHelpMenuButton({
             type="button"
             variant="ghost"
             size="icon-md"
-            // The Settings page positions the help button absolutely above Electron’s top drag region.
-            // With no-drag only on the outer container, the title-bar drag region could still swallow clicks on the actual trigger.
+            // Settings 页会把帮助按钮绝对定位在 Electron 顶部拖拽区上方。
+            // 只依赖外层容器 no-drag 时，真实 trigger 仍可能被标题栏 drag 区吞掉点击。
             className={cn(
               "text-foreground hover:bg-hover hover:text-foreground [app-region:no-drag]",
               className,
@@ -125,12 +125,12 @@ export function WorkspaceHelpMenuButton({
           <LightbulbIcon className="size-4" />
           {intl.formatMessage({ id: "workspaceHeader.help.productRequest" })}
         </DropdownMenuItem>
-        {/* Windows/Linux have no native menu bar, and the custom title-bar arrow menu has been removed,
-            so File Explorer is accessible only here; Web has no such window, so do not render it. */}
+        {/* Windows/Linux 没有原生菜单栏，自绘标题栏箭头菜单也已下线，
+            资源管理器只能从这里进；Web 端没有该窗口，不渲染。 */}
         {isDesktop ? (
           <>
             <DropdownMenuSeparator />
-            {/* The standalone export entry had been removed; reuse the original menu action to keep packaging, system location, and hints consistent. */}
+            {/* 独立导出入口曾被移除；复用原菜单动作，保持打包、系统定位与提示一致。 */}
             <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
               <DownloadIcon className="size-4" />
               {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}

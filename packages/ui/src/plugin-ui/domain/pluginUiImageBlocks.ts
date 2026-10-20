@@ -1,6 +1,6 @@
 import { MCP_APPS_IMAGE_MAX_BYTES, MCP_APPS_IMAGE_MIME_TYPES } from "@zcode/shared/mcp-apps";
 
-/** One validated image block: base64 body (no data: prefix), mimeType, and decoded byte count. */
+/** 一张已校验的图片块：base64 正文（无 data: 前缀）、mimeType 与解码后字节数。 */
 export interface PluginUiImageBlock {
   mimeType: string;
   dataBase64: string;
@@ -24,9 +24,8 @@ function base64ByteLength(dataBase64: string): number {
 }
 
 /**
- * Picks `{ type: "image", data, mimeType }` blocks out of MCP content (other blocks like text are ignored).
- * Any image outside the allowlist or over the limit fails the whole request — no partial acceptance;
- * the page can respond by sending smaller images.
+ * 从 MCP 内容块里挑出 `{ type: "image", data, mimeType }`（text 等其它块忽略）。
+ * 任一图片不在白名单或超限 → 整个请求失败，不做部分接受；页面据此改传更小的图。
  */
 export function readPluginUiImageBlocks(
   content: readonly Record<string, unknown>[] | undefined,
@@ -56,7 +55,7 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "image/webp": "webp",
 };
 
-/** Attachment filename: `plugin-<safe pluginId segment>-<index>.<ext>`, so both model and user can see the source. */
+/** 附件文件名：`plugin-<pluginId 安全段>-<序号>.<ext>`，模型与用户都能看出来源。 */
 export function buildPluginUiImageFileName(
   pluginId: string,
   index: number,

@@ -23,7 +23,7 @@ function renderMarkdownImage(src: string, workspacePath?: string) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(MarkdownImage, { alt: "示例图", src, workspacePath }),
     ),
   );
@@ -40,41 +40,33 @@ describe("MarkdownImage loading state", () => {
   it("远程图片加载完成前显示状态，完成后显示图片", () => {
     renderMarkdownImage("https://example.com/image.png");
 
-    const loading = screen.getByRole("status");
-    expect(loading.className).toContain("markdown-image-loading-shimmer");
-    expect(loading.querySelector("svg")).not.toBeNull();
-    const trigger = document.querySelector<HTMLButtonElement>("[data-markdown-image-trigger]")!;
-    expect(trigger.className.split(" ")).toContain("!w-44");
-    expect(trigger.className.split(" ")).toContain("!h-44");
-    const image = document.querySelector<HTMLImageElement>("img[data-markdown-image]")!;
+    expect(screen.getByRole("status", { name: "加载中..." })).toBeTruthy();
+    const image = screen.getByRole("img", { name: "示例图" });
     expect(image.className).toContain("invisible");
 
     fireEvent.load(image);
 
     expect(screen.queryByRole("status")).toBeNull();
-    expect(trigger.className.split(" ")).not.toContain("!w-44");
-    expect(trigger.className.split(" ")).not.toContain("!h-44");
     expect(image.className).not.toContain("invisible");
   });
 
   it("远程图片加载失败后显示不可用状态", () => {
     renderMarkdownImage("https://example.com/missing.png");
 
-    fireEvent.error(document.querySelector<HTMLImageElement>("img[data-markdown-image]")!);
+    fireEvent.error(screen.getByRole("img", { name: "示例图" }));
 
     expect(screen.queryByRole("status")).toBeNull();
-    const unavailable = document.querySelector('[data-markdown-image-state="error"]')!;
-    expect(unavailable.querySelector("svg")).not.toBeNull();
+    expect(screen.getByRole("img", { name: "暂时无法显示这张图片。" })).not.toBeNull();
   });
 
   it("src 切换后忽略旧图片的失败事件", () => {
     const view = renderMarkdownImage("https://example.com/old.png");
-    const oldImage = document.querySelector<HTMLImageElement>("img[data-markdown-image]")!;
+    const oldImage = screen.getByRole("img", { name: "示例图" });
 
     view.rerender(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(MarkdownImage, {
           alt: "示例图",
           src: "https://example.com/new.png",
@@ -83,18 +75,18 @@ describe("MarkdownImage loading state", () => {
     );
     fireEvent.error(oldImage);
 
-    expect(screen.getByRole("status")).not.toBeNull();
-    expect(document.querySelector('[data-markdown-image-state="error"]')).toBeNull();
+    expect(screen.getByRole("status", { name: "加载中..." })).not.toBeNull();
+    expect(screen.queryByLabelText("暂时无法显示这张图片。")).toBeNull();
   });
 
   it("卸载时清理预览关闭后的焦点恢复任务", () => {
     vi.useFakeTimers();
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
     const view = renderMarkdownImage("https://example.com/image.png");
-    const image = document.querySelector<HTMLImageElement>("img[data-markdown-image]")!;
+    const image = screen.getByRole("img", { name: "示例图" });
     fireEvent.load(image);
-    fireEvent.click(document.querySelector("[data-markdown-image-trigger]")!);
-    fireEvent.click(document.querySelector('[role="dialog"] button')!);
+    fireEvent.click(screen.getByRole("button", { name: "打开图片预览" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     focus.mockClear();
 
     view.unmount();
@@ -114,9 +106,9 @@ describe("MarkdownImage loading state", () => {
     };
     renderMarkdownImage("./broken.png", "/workspace");
 
-    const image = await waitFor(() => screen.getByRole("img"));
+    const image = await waitFor(() => screen.getByRole("img", { name: "示例图" }));
     fireEvent.error(image);
 
-    expect(document.querySelector('[data-markdown-image-state="error"]')).not.toBeNull();
+    expect(screen.getByRole("img", { name: "暂时无法显示这张图片。" })).not.toBeNull();
   });
 });

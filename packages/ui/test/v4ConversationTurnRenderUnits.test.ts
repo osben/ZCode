@@ -569,10 +569,9 @@ describe("buildConversationTurnRenderUnits", () => {
     expect(units[1]?.assistantHistoryDefaultOpen).toBe(false);
   });
 
-  // The "hidden markers do not enter rows" conservation has been pushed down to the projection layer
-  // (S7/S9/S10 zero out invisible rows, golden coverage on the bootstrap side): the UI no longer owns
-  // the judgment of "which markers are renderable", and every row it receives is treated as renderable.
-  // Here we only verify the fallback for a missing lane (degrade into the work group, no rows lost).
+  // 「hidden marker 不进 rows」的守恒已下沉到投影层（S7/S9/S10 隐形行清零，
+  // bootstrap 侧 golden 覆盖）：UI 不再拥有「哪些 marker 可渲染」的判断，
+  // 收到的每一行都视为可渲染。此处仅验证 lane 缺省的兜底（降级进工作组，不丢行）。
   it("keeps lane-less marker rows by folding them into the work group (degrade, not drop)", () => {
     const units = buildConversationTurnRenderUnits([
       turnHeader(1),
@@ -586,9 +585,8 @@ describe("buildConversationTurnRenderUnits", () => {
     expect(units[0]?.assistantTextRows.map((row) => row.rowId)).toEqual([4]);
   });
 
-  // S2 (16-plan, 2026-07-09 ordering correction): "has worked" only folds non-terminal content;
-  // on expand, earlier text and tools/thinking must keep the full row order and must not be bucketed
-  // behind the tools.
+  // S2（16-plan，2026-07-09 顺序纠偏）：已工作只折叠非最终内容；
+  // 展开时早段 text 与工具/思考必须保持 row 全序，不能被分桶搬到工具之后。
   it("keeps non-terminal assistant text in folded history order before the final text (S2)", () => {
     const units = buildConversationTurnRenderUnits([
       turnHeader(1),
@@ -601,46 +599,10 @@ describe("buildConversationTurnRenderUnits", () => {
     ]);
 
     expect(units[0]?.latestAssistantTextRow?.rowId).toBe(6);
-    // The single "has worked" control folds all rows before the final body text; the expand order is
-    // still the full row order.
+    // 单个「已工作」控件折叠的是最终正文之前的全部 row，展开顺序仍是 row 全序。
     expect(units[0]?.assistantHistoryRows.map((row) => row.rowId)).toEqual([3, 4, 5]);
     expect(units[0]?.assistantTextRows.map((row) => row.rowId)).toEqual([4, 6]);
     expect(units[0]?.assistantTailRows.map((row) => row.rowId)).toEqual([7]);
-  });
-
-  it("attaches turn output tokens only to the last segment of a completed turn", () => {
-    const guidedRows = [
-      userInput(2, "look"),
-      reasoning(3, "checking"),
-      toolCall(4, "Read"),
-      userInput(5, "more", { guided: true, entityId: "guide-1" }),
-      assistantText(6, "done"),
-    ];
-    const completed = buildConversationTurnRenderUnits([
-      turnHeader(1, { outputTokens: 12_345 }),
-      ...guidedRows,
-    ]);
-    const running = buildConversationTurnRenderUnits([
-      turnHeader(1, { state: "running", outputTokens: 12_345 }),
-      ...guidedRows,
-    ]);
-    const zeroTokens = buildConversationTurnRenderUnits([
-      turnHeader(1, { outputTokens: 0 }),
-      ...guidedRows,
-    ]);
-
-    expect(completed[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual([
-      undefined,
-      12_345,
-    ]);
-    expect(completed[0]?.workStatus?.outputTokens).toBe(12_345);
-    expect(running[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual([
-      undefined,
-      undefined,
-    ]);
-    expect(zeroTokens[0]?.workSegments?.map((segment) => segment.workStatus?.outputTokens)).toEqual(
-      [undefined, undefined],
-    );
   });
 
   it("P06：同一 turn 的 guided user 保持 CLI 全序并开启独立视觉工作段", () => {
@@ -774,8 +736,7 @@ describe("buildConversationTurnRenderUnits", () => {
     ]);
 
     expect(units[0]?.latestAssistantTextRow?.rowId).toBe(6);
-    // S12: only a contiguous suffix of markers belongs to the turn tail; markers in the middle must
-    // not be carried across rows.
+    // S12：只有连续后缀 marker 属于轮尾，中间 marker 不能被跨行搬运。
     expect(units[0]?.assistantHistoryRows.map((row) => row.rowId)).toEqual([3, 4, 5]);
     expect(units[0]?.assistantTextRows.map((row) => row.rowId)).toEqual([3, 6]);
     expect(units[0]?.assistantFollowingRows).toEqual([]);
@@ -870,7 +831,6 @@ describe("buildConversationTurnRenderUnits", () => {
     ]);
 
     expect(resolveAssistantCopyText(units[0]!)).toBe(`好的，直接写计划！\n\n${plan}`);
-    expect(resolveAssistantCopyText(units[0]!)).not.toContain("普通工具输出不能进入复制内容");
   });
 
   it("BTA01/BTA09：把 Browser 完成态截图单独放在轮尾内容分组", () => {
@@ -905,8 +865,7 @@ describe("buildConversationTurnRenderUnits", () => {
     ]);
 
     expect(units[0]?.latestAssistantTextRow?.rowId).toBe(5);
-    // The single "has worked" group of the turn: text/compact before the final body all go into
-    // history, expanded in full row order.
+    // 一轮唯一「已工作」组：最终正文前的 text/compact 都进 history，展开按 row 全序。
     expect(units[0]?.assistantHistoryRows.map((row) => row.rowId)).toEqual([3, 4]);
     expect(units[0]?.assistantTextRows.map((row) => row.rowId)).toEqual([3, 5]);
     expect(units[0]?.assistantTailRows).toEqual([]);
@@ -989,8 +948,7 @@ describe("buildConversationTurnRenderUnits", () => {
 
     expect(units).toHaveLength(1);
     expect(units[0]?.leadingBoundaryRows.map((row) => row.rowId)).toEqual([1]);
-    // Light boundaries do not enter the work group/history and are no longer "invisible rows that
-    // render null".
+    // 轻边界不进工作组/history，不再是「渲染 null 的隐形行」。
     expect(units[0]?.assistantHistoryRows).toEqual([]);
     expect(units[0]?.assistantTextRows.map((row) => row.rowId)).toEqual([4]);
   });
@@ -1065,11 +1023,9 @@ describe("buildConversationTurnRenderUnits", () => {
   });
 
   it("轮尾的 artifact 行不占用折叠锚点", () => {
-    // Root cause of the bug: the artifact row is an artifact appended to the turn tail by the share
-    // projection, yet it also belongs to AssistantWorkRow, so it becomes the last row of the flow.
-    // The public projection forbids actions, leaving the share page with only the fallback
-    // "the last row is assistantText"; the final reply then gets swept into "has worked" and the whole
-    // turn defaults to expanded — every share carrying a result was hit by this.
+    // Bug 根因：artifact 行是分享投影追加到轮尾的产出物，却同属 AssistantWorkRow，
+    // 会成为 flow 最后一行。公开投影禁止 actions，分享页只剩「最后一行是 assistantText」
+    // 这条兜底，于是最终答复被卷进「已工作」并整轮默认展开——任何带结果物的分享都中招。
     const artifactRow = {
       rowId: 6,
       turnId: "turn-1",

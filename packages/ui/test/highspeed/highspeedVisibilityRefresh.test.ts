@@ -102,6 +102,7 @@ vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useServices: () => ({
     botsService: mocks.botsService,
     broadcastService: mocks.broadcastService,
@@ -412,7 +413,7 @@ async function renderExpiredCardPane(cardId: string, sourceCommandId: string): P
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId: "session-vis",

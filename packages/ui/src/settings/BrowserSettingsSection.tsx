@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Browser Plugin, Chrome data import, and cleanup share one platform state machine; splitting it would expand pending/failure-recovery boundaries. */
+/* oxlint-disable eslint(max-lines) -- Browser Plugin、Chrome 数据导入与清理共享同一平台状态机，拆分会扩大 pending/失败回收边界。 */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { ChromeBrowserDataImportResult } from "@zcode/shared";
@@ -17,7 +17,6 @@ import { Switch } from "@/components/ui/switch.js";
 import { toast } from "@/components/ui/toast.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
-import { useZCodeSessionService } from "@/hooks/useZCodeSessionService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/zcodeDraftSkillInvalidation.js";
 import { logger } from "@/logger.js";
@@ -82,11 +81,6 @@ export function BrowserSettingsSection({
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
   const { pluginManagementService, skillsService } = useServices();
-  const zcodeSessionService = useZCodeSessionService(
-    workspacePath ?? undefined,
-    undefined,
-    workspaceIdentity,
-  );
   const browserUsePlugin = usePluginManagementStore((state) =>
     state.plugins.find((plugin) => plugin.id === OFFICIAL_BROWSER_USE_PLUGIN_ID),
   );
@@ -120,7 +114,6 @@ export function BrowserSettingsSection({
 
   const refreshAfterPluginChange = useCallback(async () => {
     await invalidateDeferredDraftSessionForSkillChange({
-      zcodeSessionService,
       workspacePath,
       workspaceIdentity: normalizedWorkspaceIdentity ?? undefined,
       reason: "settings-browser-use-plugin-enabled",
@@ -139,7 +132,6 @@ export function BrowserSettingsSection({
     skillStoreWorkspacePath,
     skillsService,
     workspacePath,
-    zcodeSessionService,
   ]);
 
   const handleBrowserEnabledChange = useCallback(
@@ -267,9 +259,9 @@ export function BrowserSettingsSection({
               ) : undefined
             }
           />
-          {/* Importing sign-in state is a follow-up to "Enable built-in browser control"; keeping it on the same card as the toggle expresses the order.
-              Destructive cleanup actions remain in the "Browser data" group.
-              The Windows App-Bound import path is not yet available, so hide its entry point while retaining the underlying implementation and cleanup capability. */}
+          {/* 导入登录状态是“开启内置浏览器控制”之后的配套动作，与开关同卡片表达先后关系；
+              清除类破坏性操作仍留在“浏览器数据”分组。
+              Windows App-Bound 导入链路暂未开放，先隐藏入口但保留底层实现和清理能力。*/}
           {!isWindowsDesktop ? (
             <SettingsRow
               label={intl.formatMessage({ id: "settings.browser.import.title" })}
@@ -298,7 +290,7 @@ export function BrowserSettingsSection({
         </SettingsGroupCard>
       </section>
 
-      {/* Certificate policy is configurable only when Desktop has a built-in browser; main applies changes to Session at startup, so a restart is required. */}
+      {/* 证书策略只在桌面端有内置浏览器时可配；改动由 main 在启动时装到 Session，需重启生效。 */}
       {isDesktop ? (
         <section className="space-y-3">
           <div className="text-ui-base font-medium text-foreground-subtle">

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Provider navigation on the settings page includes groups, card-style preset entry points, and drag sorting; keep interaction boundaries centralized for now. */
+/* eslint-disable max-lines -- 设置页 provider 导航同时承载分组、卡片化预置入口和拖拽排序，当前先集中维护交互边界。 */
 import {
   closestCenter,
   DndContext,
@@ -23,16 +23,15 @@ import { ProviderStatusIndicator } from "./ProviderStatusIndicator.js";
 import {
   resolveModelProviderFamilySpecByProviderId,
   isStartPlanModelProviderId,
-  TID_MODEL_PROVIDER_NAV_ITEM,
-  testId,
 } from "@zcode/shared";
+import { TID_MODEL_PROVIDER_NAV_ITEM, testId } from "@zcode/shared/test-ids";
 import { useCallback, useMemo, type KeyboardEvent } from "react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import type { ModelProviderNavGroup, ModelProviderNavItem } from "./constants.js";
 import { useOptimisticReorder } from "./useOptimisticReorder.js";
 import { renderModelProviderNavIcon } from "./utils.js";
 
-// The sidebar clips horizontal overflow; sorting changes only vertical position, so keep x=0 while dragging as well.
+// 侧栏会裁切水平溢出；排序只改变纵向位置，拖动时也必须保持 x=0。
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
 
 export function getSortableProviderId(
@@ -65,7 +64,7 @@ export function shouldShowModelProviderGroupLoadingIndicator(params: {
   presetLoading: boolean;
   customLoading: boolean;
 }): boolean {
-  if (params.groupId === "preset" || params.groupId === "chatgpt") {
+  if (params.groupId === "preset") {
     return params.presetLoading;
   }
   return params.customLoading;
@@ -401,7 +400,7 @@ export function ModelProviderSectionNavigation({
                 ) : null}
               </div>
 
-              {group.id === "preset" || group.id === "chatgpt" ? (
+              {group.id === "preset" ? (
                 <PresetProviderCardNavigation
                   group={group}
                   selectedNodeKey={selectedNodeKey}

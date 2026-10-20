@@ -148,8 +148,8 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        // cmdk's keyboard arrows only toggle data-selected; previously, the background color was not updated,
-        // so keyboard selection and mouse hover looked like different states. Use menu-hover for both.
+        // cmdk 键盘上下键只会切换 data-selected，之前没有同步背景色，
+        // 导致键盘选中态和鼠标 hover 态看起来不是同一个状态。这里让两者共用 menu-hover。
         "group/command-item relative flex min-h-7 cursor-default items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui-base/relaxed outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 hover:bg-menu-hover data-selected:bg-menu-hover data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 data-selected:*:[svg]:text-foreground",
         className,
       )}

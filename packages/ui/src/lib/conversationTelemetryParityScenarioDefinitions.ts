@@ -1,5 +1,5 @@
 import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
-/* eslint-disable max-lines -- the controlled inputs of the 19 differential cases must be kept in one place, so the new and legacy drivers cannot silently drift after copying. */
+/* eslint-disable max-lines -- 19 个差分 case 的受控输入必须集中保存，避免新旧驱动各自复制后悄悄漂移。 */
 
 export type ParityModelStatus =
   | "model_request_started"
@@ -363,8 +363,7 @@ function buildScenarios(): ConversationTelemetryParityScenario[] {
     chunkAt: 600,
     terminalAt: 700,
   });
-  // The second round's seed is admitted before the first round's terminal; duplicate seeds must
-  // be deduplicated at promotion.
+  // 第二轮 seed 在第一轮 terminal 前接纳；promotion 时重复 seed 必须被去重。
   const tdp03 = [
     ...tdp03First.slice(0, 7),
     ...tdp03Second.slice(0, 4),

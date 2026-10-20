@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-/** Highspeed composer entrance style: "activation" plays the activation animation, "restore" shows the stable state directly. */
+/** Highspeed 输入框入场方式：activation 播放激活动效，restore 直接呈现稳定态。 */
 export type HighspeedComposerEntrance = "activation" | "restore";
 
 function resolveEntrance(
@@ -11,11 +11,9 @@ function resolveEntrance(
 }
 
 /**
- * Latches the entrance style by cardId: the activation animation plays only when the host's
- * one-shot activation request hits the current card; switching back to a Task, snapshot restore,
- * and component remount always use restore (spec §9.2).
- * The request is consumed via callback immediately after latching, so later remounts cannot see it
- * and never replay.
+ * 按 cardId 锁定入场方式：仅宿主登记的一次性激活请求命中当前卡时播放激活动效，
+ * 切回 Task、快照恢复与组件重挂载一律 restore（spec §9.2）。
+ * 锁定后立即回调消费请求，之后的重挂载读不到请求，因而不会重播。
  */
 export function useHighspeedComposerEntrance({
   cardId,
@@ -32,8 +30,7 @@ export function useHighspeedComposerEntrance({
   }));
   let current = latch;
   if (latch.cardId !== cardId) {
-    // Re-latch during render when the card identity changes, so a new card never renders one
-    // frame with the old entrance style.
+    // 卡片身份变化时在渲染期重新锁定，避免新卡先以旧入场方式渲染一帧。
     current = { cardId, entrance: resolveEntrance(cardId, activationCardId) };
     setLatch(current);
   }

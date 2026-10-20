@@ -8,16 +8,15 @@ import {
   TID_WORKFLOW_CARD_MENU,
   TID_WORKFLOW_CARD_RUN,
   TID_WORKFLOW_ACTION_MOVE,
-  testId,
   type ZCodeSavedWorkflowEntry,
   type ZCodeSavedWorkflowRun,
 } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   SavedWorkflowCard,
   SavedWorkflowLastRunBadge,
 } from "@/settings/saved-workflows/SavedWorkflowCard.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -48,7 +47,7 @@ function run(overrides: Partial<ZCodeSavedWorkflowRun> = {}): ZCodeSavedWorkflow
 }
 
 function mount(node: ReactNode) {
-  return render(createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, node));
+  return render(createElement(ZCodeIntlProvider, { initialLocale: "zh-CN" }, node));
 }
 
 describe("SavedWorkflowLastRunBadge", () => {
@@ -56,7 +55,7 @@ describe("SavedWorkflowLastRunBadge", () => {
     const { unmount } = mount(
       createElement(SavedWorkflowLastRunBadge, { run: undefined, now: NOW }),
     );
-    expect(document.querySelector('[data-workflow-last-run="never"]')).not.toBeNull();
+    expect(screen.getByText("尚未运行").getAttribute("data-workflow-last-run")).toBe("never");
     unmount();
     for (const [status, kind] of [
       ["completed", "completed"],
@@ -172,7 +171,7 @@ describe("SavedWorkflowCard", () => {
       ctrlKey: false,
     });
     const moveItem = screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "release-check"));
-    expect(moveItem.textContent).toBe(expectedCopy("workflows.hub.card.promoteToGlobal"));
+    expect(moveItem.textContent).toBe("提升为全局");
     fireEvent.click(moveItem);
     expect(onMove).toHaveBeenCalledTimes(1);
     view.unmount();
@@ -195,7 +194,7 @@ describe("SavedWorkflowCard", () => {
       ctrlKey: false,
     });
     expect(screen.getByTestId(testId(TID_WORKFLOW_ACTION_MOVE, "release-check")).textContent).toBe(
-      expectedCopy("workflows.hub.card.moveToProject"),
+      "移到项目…",
     );
   });
 

@@ -5,7 +5,6 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ExecuteToolCallBlock } from "@/ToolCallBlocks/renderers/execute.js";
 import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-group.js";
 import { EditToolCallBlock } from "@/ToolCallBlocks/renderers/edit.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/fileSummaryTypes.js";
 
 function context(general: boolean, failed = false): ToolCallBlockRenderContext {
@@ -36,7 +35,7 @@ function context(general: boolean, failed = false): ToolCallBlockRenderContext {
     viewerSource: null,
     rawFileSummaries: [],
     isRunning: false,
-    statusLabel: failed ? "Failed" : "Completed",
+    statusLabel: failed ? "失败" : "已完成",
     errorText: failed ? "MODE_PRIVATE_ERROR" : undefined,
     childToolList: null,
     forceOpen: true,
@@ -46,7 +45,7 @@ function context(general: boolean, failed = false): ToolCallBlockRenderContext {
 
 function renderTool(component: typeof ExecuteToolCallBlock, props: ToolCallBlockRenderContext) {
   return renderToStaticMarkup(
-    createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, createElement(component, props)),
+    createElement(ZCodeIntlProvider, { initialLocale: "zh-CN" }, createElement(component, props)),
   );
 }
 
@@ -58,9 +57,7 @@ describe("通用模式工具展示", () => {
     expect(general).not.toContain("MODE_PRIVATE_COMMAND");
     expect(general).not.toContain("MODE_PRIVATE_OUTPUT");
     expect(general).not.toContain("MODE_PRIVATE_ERROR");
-    expect(general).toContain(
-      failed ? "Failed" : expectedCopy("chat.toolCall.execute.conciseCompleted"),
-    );
+    expect(general).toContain(failed ? "失败" : "已运行命令");
     expect(general).not.toContain('aria-expanded="true"');
     const coding = renderTool(ExecuteToolCallBlock, { ...props, isOfficeMode: false });
     expect(coding).toContain("MODE_PRIVATE_COMMAND");

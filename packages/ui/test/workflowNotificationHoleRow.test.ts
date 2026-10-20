@@ -19,7 +19,6 @@ import {
 } from "@/v4/WorkflowNotificationToolRow.js";
 // eslint-disable-next-line import/first -- 同上。
 import { holeRowState } from "@/v4/WorkflowNotificationHoleRow.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const HOLE = {
   kind: "hole" as const,
@@ -37,7 +36,7 @@ const HOLE = {
 
 function render(
   props: Partial<WorkflowNotificationToolRowProps>,
-  locale: "en-US" | "zh-CN" = "en-US",
+  locale: "en-US" | "zh-CN" = "zh-CN",
 ): string {
   return renderToStaticMarkup(
     createElement(
@@ -72,15 +71,19 @@ describe("WorkflowNotificationToolRow — hole", () => {
     const waiting = render({
       holes: [{ siteId: "hole#1", ordinal: 1, name: "决定分组", state: "waiting" }],
     });
-    expect(waiting).toContain(expectedCopy("chat.backgroundResult.workflow.hole.waiting"));
+    expect(waiting).toContain("工作流留白 · 等待补全");
     expect(waiting).toContain('data-hole-state="waiting"');
     expect(
       render({ holes: [{ siteId: "hole#1", ordinal: 1, name: "决定分组", state: "filled" }] }),
-    ).toContain(expectedCopy("chat.backgroundResult.workflow.hole.filled"));
-    expect(render({})).toContain(expectedCopy("chat.backgroundResult.workflow.hole.left"));
+    ).toContain("留白已补全");
+    expect(render({})).toContain("工作流留白");
+    expect(render({}, "en-US")).toContain("Workflow left a hole");
     expect(
-      render({ holes: [{ siteId: "hole#1", ordinal: 1, name: "决定分组", state: "waiting" }] }),
-    ).toContain(expectedCopy("chat.backgroundResult.workflow.hole.waiting"));
+      render(
+        { holes: [{ siteId: "hole#1", ordinal: 1, name: "决定分组", state: "waiting" }] },
+        "en-US",
+      ),
+    ).toContain("Workflow waiting for code");
   });
 
   it("主文本：run 名与留白名，不画类型；行永不 shimmer", () => {
@@ -100,20 +103,14 @@ describe("WorkflowNotificationToolRow — hole", () => {
       onOpenRun: () => undefined,
     });
     expect(html).toContain("侦察结果如下，请补全这一段。");
-    expect(html).toContain(
-      expectedCopy("chat.toolCall.workflow.hole.stands.between", { before: "探索", after: "执行" }),
-    );
+    expect(html).toContain("留白位于「探索」之后、「执行」之前；");
     expect(html).not.toContain("补全须返回");
     expect(html).not.toContain("Plan");
     expect(html).toContain("/w/.zcode/workflow-drafts/flaky.dwf.ts:L12");
     expect(html).toContain('data-testid="workflow-hole-notification-waited"');
-    expect(html).toContain(
-      expectedCopy("chat.toolCall.workflow.hole.waited", {
-        time: expectedCopy("sidePane.time.minutesAgo", { count: "3" }),
-      }),
-    );
+    expect(html).toContain("等待中 · 3 分钟前");
     // run 链接沿用既有词条 `chat.toolCall.workflow.openRunDetails`。
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.openRunDetails"));
+    expect(html).toContain("查看实例详情");
   });
 
   it("已补全的行不写等待时长；只有一侧邻站时换措辞", () => {
@@ -123,8 +120,6 @@ describe("WorkflowNotificationToolRow — hole", () => {
       holes: [{ siteId: "hole#1", ordinal: 1, name: "决定分组", state: "filled" }],
     });
     expect(filled).not.toContain('data-testid="workflow-hole-notification-waited"');
-    expect(filled).toContain(
-      expectedCopy("chat.toolCall.workflow.hole.stands.before", { after: "执行" }),
-    );
+    expect(filled).toContain("留白位于「执行」之前；");
   });
 });

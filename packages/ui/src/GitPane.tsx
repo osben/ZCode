@@ -1,13 +1,11 @@
-/* eslint-disable max-lines -- GitPane currently centralizes source switching, lazy diff loading, expanded state, and file-change search integration; any future split should follow Git panel boundaries. */
+/* eslint-disable max-lines -- GitPane 当前集中承载来源切换、diff 懒加载、展开状态和文件变更查找联动；后续拆分需按 Git 面板功能边界单独推进。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { GitChangeSourceId, GitDiffResult } from "@zcode/shared";
-import { TID_GIT_PANE } from "@zcode/shared";
+import { TID_GIT_PANE } from "@zcode/shared/test-ids";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
-import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { FileTextIcon, RefreshCw } from "lucide-react";
-import { GroupByDirectoryCheckbox } from "@/components/GroupByDirectoryCheckbox.js";
 import {
   Select,
   SelectContent,
@@ -28,18 +26,7 @@ import {
   getSourceMessageId,
 } from "@/GitPane/helpers.js";
 import { GitPaneChangeCard } from "@/GitPaneChangeCard.js";
-import {
-  buildGitPaneDisplayRows,
-  canShowGroupByDirectory,
-  getGitPaneRowIndexByPath,
-  type GitPaneRow,
-} from "@/GitPane/directoryRowModel.js";
-import { GitPaneDirectoryHeader } from "@/GitPane/GitPaneDirectoryHeader.js";
 import { getFileChangeFindState } from "@/GitPane/fileChangeFindSearch.js";
-import {
-  persistGitPaneGroupByDirectoryPreference,
-  readGitPaneGroupByDirectoryPreference,
-} from "@/lib/gitPaneGroupByDirectoryPreference.js";
 import { logger } from "@/logger.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
@@ -51,7 +38,6 @@ interface GitDiffLoadState {
 }
 
 const GIT_PANE_CHANGE_ROW_ESTIMATE_PX = 32;
-const GIT_PANE_DIRECTORY_ROW_ESTIMATE_PX = 28;
 const GIT_PANE_CHANGE_ROW_OVERSCAN = 14;
 
 export function GitPane({
@@ -104,9 +90,6 @@ export function GitPane({
   });
   const resolvedTheme = resolveTheme(theme);
   const [expandedPath, setExpandedPath] = useState<string | null>(null);
-  const [groupByDirectory, setGroupByDirectory] = useState<boolean>(() =>
-    readGitPaneGroupByDirectoryPreference(),
-  );
   const [diffStateByKey, setDiffStateByKey] = useState<Record<string, GitDiffLoadState>>({});
   const diffGenerationRef = useRef(0);
   const pendingDiffKeysRef = useRef(new Set<string>());
@@ -120,15 +103,6 @@ export function GitPane({
     () => currentDataset.sections.flatMap((section) => section.changes),
     [currentDataset],
   );
-  const paneRows = useMemo<GitPaneRow[]>(
-    () => buildGitPaneDisplayRows(currentChanges, groupByDirectory),
-    [currentChanges, groupByDirectory],
-  );
-  const rowIndexByPath = useMemo(() => getGitPaneRowIndexByPath(paneRows), [paneRows]);
-  const handleGroupByDirectoryChange = useCallback((next: boolean) => {
-    setGroupByDirectory(next);
-    persistGitPaneGroupByDirectoryPreference(next);
-  }, []);
   const normalizedFileChangeFindQuery = fileChangeFindQuery.trim();
 
   const emptyStateCopy = useMemo(() => {
@@ -237,10 +211,10 @@ export function GitPane({
             return;
           }
 
-          // For large-file diff stalls, first determine whether the delay is in fetching or rendering.
-          // Record the size of each diff fetched on expansion so logs can quickly show whether the fallback condition was reached.
-          // File-change search preloads diffs in batches; per-file size logs of this kind are useful only for development troubleshooting.
-          // Use debug logging to keep search activity from flooding production desktop logs while retaining clues for diagnosing large-diff stalls.
+          // 大文件 diff 卡顿问题需要先确认“卡在拉取还是卡在渲染”。
+          // 这里记录每次展开拿到的 diff 规模，便于从日志快速定位是否命中 fallback 条件。
+          // 文件变更查找会批量预加载 diff；这类逐文件规模日志只适合开发排查。
+          // 走 debug 可避免生产桌面日志被搜索行为刷大，同时保留定位大 diff 卡顿的线索。
           logger.debug("[GitPane] diff 已加载", {
             workspacePath,
             sourceId,
@@ -326,21 +300,13 @@ export function GitPane({
   );
   const activeFileChangeFindMatch = fileChangeFindState.activeMatch;
   const changeRowVirtualizer = useVirtualizer({
-    count: paneRows.length,
+    count: currentChanges.length,
     getItemKey: (index) => {
-      const row = paneRows[index];
-      if (!row) {
-        return `${currentDataset.id}:${index}`;
-      }
-      return row.kind === "file"
-        ? `${currentDataset.id}:file:${row.change.path}`
-        : `${currentDataset.id}:dir:${row.runIndex}:${row.directory}`;
+      const change = currentChanges[index];
+      return change ? `${currentDataset.id}:${change.path}` : `${currentDataset.id}:${index}`;
     },
     getScrollElement: () => changeListScrollRef.current,
-    estimateSize: (index) =>
-      paneRows[index]?.kind === "directory"
-        ? GIT_PANE_DIRECTORY_ROW_ESTIMATE_PX
-        : GIT_PANE_CHANGE_ROW_ESTIMATE_PX,
+    estimateSize: () => GIT_PANE_CHANGE_ROW_ESTIMATE_PX,
     overscan: GIT_PANE_CHANGE_ROW_OVERSCAN,
   });
   const virtualChangeRows = changeRowVirtualizer.getVirtualItems();
@@ -350,9 +316,9 @@ export function GitPane({
   }, [fileChangeFindState.total, onFileChangeFindMatchCountChange]);
 
   useEffect(() => {
-    // Opening the Review pane synchronously mounted hundreds of untracked files, causing 600ms+ click long tasks in CDP traces.
-    // Mount only visible rows; remeasure when expanding a diff changes its height
-    // so later virtual rows do not keep using the collapsed height.
+    // Review 面板打开时会把数百个未跟踪文件同步挂载，CDP trace 里 click
+    // 事件因此出现 600ms+ long task。这里只挂载可视行；展开 diff 后高度变化时重测，
+    // 避免后续虚拟行继续沿用折叠态高度。
     changeRowVirtualizer.measure();
   }, [changeRowVirtualizer, currentDataset.id, expandedPath]);
 
@@ -361,8 +327,8 @@ export function GitPane({
       return;
     }
 
-    // File-change search must find content inside collapsed files.
-    // Diffs are lazy-loaded when expanded by default, so load the diffs for the current source before searching and compute global matches from the same patch data.
+    // 文件变更查找需要命中折叠文件里的内容。
+    // diff 默认是展开时懒加载的，所以查找时先把当前来源的 diff 补齐，再用同一套 patch 数据计算全局命中。
     for (const change of currentChanges) {
       loadDiffForChange(change, currentDataset.id);
     }
@@ -381,8 +347,8 @@ export function GitPane({
     }
 
     if (expandedPath !== activeFileChangeFindMatch.path) {
-      // The current match may be inside a collapsed file.
-      // Expand the target file first, then let the text-highlighting hook scroll to the matching line after the real DOM renders.
+      // 当前命中可能位于折叠文件内。
+      // 先展开目标文件，再由文本高亮 hook 在真实 DOM 渲染后滚动到命中行。
       setExpandedPath(activeFileChangeFindMatch.path);
     }
     loadDiffForChange(activeChange, currentDataset.id);
@@ -400,8 +366,10 @@ export function GitPane({
       return;
     }
 
-    const activeMatchIndex = rowIndexByPath.get(activeFileChangeFindMatch.path);
-    if (activeMatchIndex === undefined) {
+    const activeMatchIndex = currentChanges.findIndex(
+      (change) => change.path === activeFileChangeFindMatch.path,
+    );
+    if (activeMatchIndex < 0) {
       return;
     }
 
@@ -409,7 +377,7 @@ export function GitPane({
   }, [
     activeFileChangeFindMatch,
     changeRowVirtualizer,
-    rowIndexByPath,
+    currentChanges,
     fileChangeFindNavigationRequestId,
   ]);
 
@@ -495,19 +463,7 @@ export function GitPane({
           </SelectContent>
         </Select>
 
-        <div className="flex min-w-0 items-center gap-2">
-          {canShowGroupByDirectory({
-            changeCount: currentChanges.length,
-            loading: gitState.loading,
-            error: gitState.error,
-          }) ? (
-            <GroupByDirectoryCheckbox
-              checked={groupByDirectory}
-              onCheckedChange={handleGroupByDirectoryChange}
-              label={intl.formatMessage({ id: "chat.changeSummary.treeView" })}
-              className="min-w-0 text-ui-base"
-            />
-          ) : null}
+        <div className="flex items-center gap-2">
           <Button
             type="button"
             variant="ghost"
@@ -521,16 +477,6 @@ export function GitPane({
         </div>
       </div>
 
-      {gitState.error && currentChanges.length > 0 ? (
-        <div className="px-3 pb-3">
-          <Alert variant="warning">
-            <AlertDescription className="break-words">
-              {intl.formatMessage({ id: "git.error.description" }, { message: gitState.error })}
-            </AlertDescription>
-          </Alert>
-        </div>
-      ) : null}
-
       <div className="min-h-0 flex-1">
         {currentChanges.length > 0 ? (
           <div ref={changeListScrollRef} className="h-full min-h-0 w-full overflow-auto">
@@ -539,27 +485,11 @@ export function GitPane({
               style={{ height: `${changeRowVirtualizer.getTotalSize()}px` }}
             >
               {virtualChangeRows.map((virtualRow) => {
-                const row = paneRows[virtualRow.index];
-                if (!row) {
+                const change = currentChanges[virtualRow.index];
+                if (!change) {
                   return null;
                 }
 
-                if (row.kind === "directory") {
-                  return (
-                    <div
-                      key={virtualRow.key}
-                      ref={changeRowVirtualizer.measureElement}
-                      className="absolute left-0 w-full min-w-0"
-                      data-git-pane-directory-virtual-row
-                      data-index={virtualRow.index}
-                      style={{ top: `${virtualRow.start}px` }}
-                    >
-                      <GitPaneDirectoryHeader row={row} />
-                    </div>
-                  );
-                }
-
-                const change = row.change;
                 const isExpanded = expandedPath === change.path;
                 const diffCacheKey = getDiffCacheKey(currentDataset.id, change.path);
                 const cachedDiffState = diffStateByKey[diffCacheKey];
@@ -574,13 +504,12 @@ export function GitPane({
                     className="absolute left-0 w-full min-w-0"
                     data-git-pane-change-virtual-row
                     data-index={virtualRow.index}
-                    // transform positioning breaks the inline sticky filename, so the heading no longer stays pinned after expanding a large diff.
-                    // Use a top offset to preserve virtual scrolling while keeping sticky positioning relative to the scroll container.
+                    // transform 定位会让行内 sticky 文件名失效，展开大 diff 后标题不再置顶。
+                    // 改用 top 偏移保留虚拟滚动布局，同时让 sticky 继续以滚动容器为参照。
                     style={{ top: `${virtualRow.start}px` }}
                   >
                     <GitPaneChangeCard
                       change={change}
-                      hideDirectoryPart={groupByDirectory}
                       contextMenuLabels={contextMenuLabels}
                       diffState={diffState}
                       isDiffLoading={isDiffLoading}

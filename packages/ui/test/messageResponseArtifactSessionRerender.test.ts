@@ -27,7 +27,7 @@ describe("MessageResponse artifact session changes", () => {
     const renderMessage = (sessionId: string, readAttachment: typeof readSessionA) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {

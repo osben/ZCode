@@ -23,8 +23,8 @@ export function hasWritableToolSemantic(source?: EditKindSource): boolean {
     return false;
   }
 
-  // Fixed tool names such as TodoWrite and AskUserQuestion must not be classified as file-writing by string fragments.
-  // Use tool identity consistently; keep compatibility with the old ZCode Agent kind/title/raw fields only in the resolver fallback.
+  // TodoWrite/AskUserQuestion 这类固定工具名不能再靠字符串片段判断写文件。
+  // 统一走 tool identity，旧 ZCode Agent 的 kind/title/raw 兼容只留在 resolver fallback 里。
   return resolveToolCallIdentity(source).family === "file-write";
 }
 
@@ -345,8 +345,8 @@ export function inferEditOperation(
   source?: EditKindSource,
 ): EditOperationKind | null {
   if (source && !hasWritableToolSemantic(source)) {
-    // Previously, non-writing tools such as search, explore, or execute could be misclassified as delete
-    // whenever their title or output contained delete/remove. First require file-writing semantics from the tool, then classify the operation.
+    // 之前 search / explore / execute 等非写类工具，只要标题或输出里带 delete/remove，
+    // 就可能被文本启发式误判成 delete。这里先要求工具本身具备“写文件”语义，再继续细分操作。
     return null;
   }
 

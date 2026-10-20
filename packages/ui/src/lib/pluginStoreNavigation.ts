@@ -8,7 +8,7 @@ export interface PluginStoreOpenTarget {
 
 let pendingTarget: PluginStoreOpenTarget | null = null;
 
-/** Centralizes the target plugin for the Store entry and the return location in Settings. Marketplace can return only to the User view. */
+/** 统一承载 Store 入口的目标插件与 Settings 返回位置。Marketplace 只允许返回 User 视图。 */
 export function requestPluginStoreOpen(value?: string | PluginStoreOpenTarget): void {
   const normalized = typeof value === "string" ? value.trim() : undefined;
   pendingTarget =

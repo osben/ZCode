@@ -1,6 +1,5 @@
-// The implementation moved up to @zcode/shared/workspaceFileEntriesCodec (the services/Host
-// side needs it too; layering rules no longer allow it in the ui package). This file remains
-// as a forwarding exit: the historical import paths used by workspaceFileSearchFilterBackend
-// and the worker keep working, and the git diff avoids showing "deleted code file" entries
-// that would trigger a full fallback in pre-push affected.
+// 实现已上移 @zcode/shared/workspaceFileEntriesCodec（services/Host 侧也要使用，
+// 分层上不能再留在 ui 包）。本文件保留为转发出口：workspaceFileSearchFilterBackend
+// 与 worker 的历史 import 路径继续可用，也避免 git diff 呈现"删除代码文件"
+// 触发 pre-push affected 的全量回退。
 export * from "@zcode/shared/workspaceFileEntriesCodec";

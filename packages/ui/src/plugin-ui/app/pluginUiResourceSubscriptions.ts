@@ -8,12 +8,10 @@ import type { IPluginUiBridgeService, PluginUiPluginScope } from "@zcode/service
 import type { PluginUiHostBridge } from "./pluginUiHostBridge.js";
 
 /**
- * Wires MCP resource requests initiated by a sandbox instance (read / list / templates / subscribe /
- * unsubscribe) to the official AppBridge: same plugin's server, attribution validated by the agent.
- * Subscription registration is accounted per uri → Agent generation: duplicate subscriptions from the
- * same instance (including in-flight) are merged; late successes (instance destroyed or guest replaced)
- * immediately unsubscribe; `unsubscribeAll` unsubscribes per uri when the guest is replaced and on dispose
- * (best effort; agent session close is the backstop).
+ * 一个沙箱实例发起的 MCP 资源请求（read / list / templates / subscribe / unsubscribe）接到官方 AppBridge：
+ * 同插件 server，归属由 agent 校验。订阅登记按 uri → Agent 代际记账：同实例重复订阅（含在途）合并；
+ * 迟到成功（实例已销毁或 guest 已换代）立即补退订；`unsubscribeAll` 在 guest 换代与 dispose 时逐 uri 退订
+ * （best effort，agent 会话关闭兜底）。
  */
 export interface PluginUiResourceSubscriptionsDeps {
   bridge: Pick<
@@ -26,15 +24,15 @@ export interface PluginUiResourceSubscriptionsDeps {
   >;
   pluginScope(): PluginUiPluginScope;
   scopeId: string;
-  /** Current Agent generation; undefined before the instance is prepared. */
+  /** 当前 Agent 代际；实例未准备时 undefined。 */
   currentGeneration(): number | undefined;
   isDisposed(): boolean;
 }
 
 export interface PluginUiResourceSubscriptions {
-  /** Attaches resources/read, list, templates/list, subscribe, unsubscribe handlers to the current AppBridge. */
+  /** 给当前 AppBridge 挂 resources/read、list、templates/list、subscribe、unsubscribe 处理器。 */
   install(bridge: PluginUiHostBridge): void;
-  /** Whether this instance subscribed to the uri (notifications are delivered only to subscribers). */
+  /** 本实例是否订阅了该 uri（通知只投递给已订阅的）。 */
   has(uri: string): boolean;
   unsubscribeAll(): void;
 }
@@ -107,7 +105,7 @@ export function createPluginUiResourceSubscriptions(
           ...(request?.cursor ? { cursor: request.cursor } : {}),
         })) as unknown as ListResourceTemplatesResult;
       };
-      // resources/subscribe is a ZCode extension (declared via experimental["zcode/resourceSubscribe"]); spec methods use the two-arg form.
+      // resources/subscribe 是 ZCode 扩展（宣告 experimental["zcode/resourceSubscribe"]），规范方法走二参形式。
       bridge.setRequestHandler("resources/subscribe", async (request) => {
         await subscribe(request.params.uri);
         return {};

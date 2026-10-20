@@ -11,12 +11,11 @@ import type { ReactNode } from "react";
 import type { PluginUiImageBlock } from "./domain/pluginUiImageBlocks.js";
 
 /**
- * Plugin UI presentation read from ToolCallRow.display.ui; isomorphic to the agent-side `display.ui`
- * schema, parsed by `readPluginUiPresentation`, which returns null on failure and falls back to the
- * plain McpToolCallBlock.
+ * 从 ToolCallRow.display.ui 读出的插件 UI 呈现信息；与 agent 侧 `display.ui` schema 同构，
+ * 由 `readPluginUiPresentation` 解析，解析失败返回 null 并回退到普通 McpToolCallBlock。
  */
 export interface PluginUiPresentation {
-  /** display.serverName: namespaced server when the UI calls back as a tool; attribution is validated on the agent side. */
+  /** display.serverName：UI 回调工具时的 namespaced server，归属由 agent 侧校验。 */
   serverName: string;
   pluginId: string;
   resourceUri: string;
@@ -25,27 +24,29 @@ export interface PluginUiPresentation {
   csp?: McpToolUiCsp;
   structuredContent?: string;
   widgetMeta?: string;
-  /** JSON text of the raw content array; when absent, tool-result falls back to the tool output plain text. */
+  /** 原始 content 数组的 JSON 文本；缺省时 tool-result 退回工具输出纯文本。 */
   content?: string;
   truncated?: boolean;
   truncatedBytes?: number;
-  /** MCP result isError (the v4 row is still success); tool-result carries isError so the pane does not overwrite a success snapshot with it. */
+  /** MCP 结果 isError（v4 行仍是 success）；tool-result 带 isError，面板不用它覆盖成功快照。 */
   isError?: true;
-  /** Tool-level forced inline (display.ui.showInline). */
+  /** 工具级强制常驻（display.ui.showInline）。 */
   showInline?: true;
-  /** Surface id the tool result belongs to; when it matches a surface tab already open in the session, the result is routed into the pane. */
+  /** 工具结果归属的面板 id；命中同会话已打开的面板 tab 时结果路由进面板。 */
   surface?: string;
 }
 
 /**
- * Request to open a side pane plugin-ui tab; tool cards provide toolCallId, surface entries
- * (launcher / surface routing) provide surfaceId + serverName. Exactly one of the two is present.
+ * 打开侧栏 plugin-ui tab 的请求；工具卡片给 toolCallId，面板入口（launcher / surface 路由）给 surfaceId + serverName。
+ * 两者恰有其一。
  */
 export type PluginUiOpenTarget =
   | { toolCallId: string; surfaceId?: never; serverName?: string }
   | { surfaceId: string; serverName: string; toolCallId?: never };
 
 export type OpenPluginUiSideTabRequest = PluginUiOpenTarget & {
+  /** 手动新建的文档窗口身份；恢复标签页时保持不变。 */
+  instanceId?: string;
   parentSessionId: string;
   pluginId: string;
   resourceUri: string;
@@ -56,10 +57,11 @@ export type OpenPluginUiSideTabRequest = PluginUiOpenTarget & {
 };
 
 /**
- * Side pane tab; tool card id is `plugin-ui:<ws>:<session>:<pluginId>:<toolCallId>`, surface is
- * `plugin-ui:<ws>:<session>:<pluginId>:surface:<surfaceId>`; visibility is scoped by parentSessionId.
+ * 侧栏 tab；工具卡片 id 为 `plugin-ui:<ws>:<session>:<pluginId>:<toolCallId>`，面板为 `plugin-ui:<ws>:<session>:<pluginId>:surface:<surfaceId>`；
+ * 按 parentSessionId 作用域可见。
  */
 export interface PluginUiSidePaneTab {
+  instanceId?: string;
   id: string;
   type: "plugin-ui";
   ownerTaskId?: string | null;
@@ -78,7 +80,7 @@ export interface PluginUiSidePaneTab {
 }
 
 export const PLUGIN_UI_CARD_DEFAULT_HEIGHT_PX = 240;
-/** DOM position belongs to the view, the page instance to the window owner; moving across containers goes only through the retained carrier layer. */
+/** DOM 位置属于视图，页面实例属于窗口 owner；跨容器移动只能走保活承载层。 */
 export interface SandboxPagePlacement {
   node: HTMLElement;
   kind: "flow" | "inline" | "sidebar";
@@ -88,9 +90,8 @@ export interface SandboxPagePlacement {
 export const PLUGIN_UI_CARD_MIN_HEIGHT_PX = 80;
 export const PLUGIN_UI_CARD_MAX_HEIGHT_PX = 1200;
 /**
- * Side pane title bar (AnimatedSidePanePanel's TabsList, `!h-12` = 48px). In fullscreen, hostContext.titleBar
- * tells the plugin page how much height above its viewport the host occupies; the page viewport itself does
- * not overlap it, so all insets are 0.
+ * 侧栏面板头部（AnimatedSidePanePanel 的 TabsList，`!h-12` = 48px）。fullscreen 时经 hostContext.titleBar
+ * 告诉插件页面视口上方被宿主占用的高度；页面视口本身不与它重叠，所以 inset 都是 0。
  */
 export const PLUGIN_UI_SIDE_PANE_TITLE_BAR = {
   height: 48,
@@ -98,16 +99,22 @@ export const PLUGIN_UI_SIDE_PANE_TITLE_BAR = {
   viewportLeftInset: 0,
 } as const;
 
-/** Scope of a request / tab: surfaceId wins, otherwise toolCallId; missing both is an invalid request. */
+/** 请求 / tab 的作用域：surfaceId 优先，否则 toolCallId；两者都缺视为非法请求。 */
 export function readPluginUiScopeRef(
-  input: Pick<OpenPluginUiSideTabRequest, "toolCallId" | "surfaceId">,
+  input: Pick<OpenPluginUiSideTabRequest, "toolCallId" | "surfaceId" | "instanceId">,
 ): PluginUiScopeRef | null {
-  if (input.surfaceId) return { kind: "surface", surfaceId: input.surfaceId };
+  if (input.surfaceId)
+    return {
+      kind: "surface",
+      surfaceId: input.instanceId
+        ? `${input.surfaceId}:instance:${input.instanceId}`
+        : input.surfaceId,
+    };
   if (input.toolCallId) return { kind: "toolCall", toolCallId: input.toolCallId };
   return null;
 }
 
-/** All host bindings use the same workspace identity; the path is only for execution and display. */
+/** 全部宿主绑定使用同一工作区身份；路径只用于执行和显示。 */
 export interface PluginUiSessionScope {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -116,12 +123,11 @@ export interface PluginUiSessionScope {
 }
 
 /**
- * Session actions SessionPane registers with plugin UI. Since 4a-0 only sending follow-up messages
- * remains: widgetState is host memory (`app/pluginUiWidgetStateStore`) and is no longer persisted
- * through session commands.
+ * SessionPane 登记给插件 UI 的会话动作。4a-0 起只剩发送后续消息：widgetState 是宿主内存
+ * （`app/pluginUiWidgetStateStore`），不再经会话命令持久化。
  */
 export interface PluginUiSessionActions {
-  /** images first become AttachmentRef via the session's attachment upload entry, then are sent with sendText. */
+  /** images 先经会话的附件上传入口变成 AttachmentRef，再随 sendText 发送。 */
   sendFollowUp(input: {
     prompt: string;
     source: ConversationInputSource;
@@ -129,13 +135,13 @@ export interface PluginUiSessionActions {
   }): Promise<void>;
 }
 
-/** Adapts the existing SessionPane send entry; admission / owner / ACK are not reimplemented. */
+/** 适配既有 SessionPane 发送入口，不重新实现 admission / owner / ACK。 */
 export interface PluginUiSessionCommandPort {
   sendText(
     prompt: string,
     options: { source: ConversationInputSource; attachments?: AttachmentRef[] },
   ): Promise<"sent" | "blocked" | "confirmationRequired" | undefined>;
-  /** Inline image → session attachment reference (goes through v4 attachmentPut, same path as composer paste-screenshot). */
+  /** 内联图片 → 会话附件引用（走 v4 attachmentPut，与 composer 粘贴截图同一条链路）。 */
   uploadAttachment(input: {
     fileName: string;
     mime: string;
@@ -165,7 +171,7 @@ export function buildPluginUiSurfaceKey(
   target: PluginUiSessionScope & { pluginId: string; serverName?: string; resourceUri?: string },
   scope: PluginUiScopeRef,
 ): string {
-  // Fix: surfaceId is named by the plugin itself, so workspace, session, and plugin must all be isolated.
+  // 修复：surfaceId 由插件自行命名，必须同时隔离工作区、会话和插件。
   return JSON.stringify([
     buildPluginUiSessionKey(target),
     target.pluginId,
@@ -192,6 +198,8 @@ export function buildPluginUiSidePaneTabId(request: OpenPluginUiSideTabRequest):
 }
 
 export interface PluginUiSidePaneViewProps {
+  /** 由宿主页面、侧栏展开状态与当前标签派生，不以保活 DOM 的几何相交替代。 */
+  visible: boolean;
   scopeRef: PluginUiScopeRef;
   host: {
     pageKey: string;
@@ -199,7 +207,7 @@ export interface PluginUiSidePaneViewProps {
     phase: "idle" | "preparing" | "mounted" | "running" | "error" | "disposed";
     height: number;
     error: string | null;
-    /** Error-state "reload". */
+    /** 错误态"重新加载"。 */
     reload(): void;
   };
   loadingLabel: string;
@@ -216,9 +224,9 @@ export interface PluginUiToolCallViewProps {
   sidePaneActive: boolean;
   host: PluginUiSidePaneViewProps["host"];
   prefersBorder: boolean;
-  /** Superseded by a newer successful result of the same logical UI; stays a plain tool result, no sandbox or auto side pane open. */
+  /** 被同一逻辑 UI 的较新成功结果替代；只留普通工具结果，不建沙箱或自动开侧栏。 */
   superseded: boolean;
-  /** Manual pin / collapse (undefined follows the default rule); when there is no toggle entry, no button is shown. */
+  /** 手动固定 / 收起（undefined 按默认规则）；缺省无入口时不显示按钮。 */
   pinned?: boolean;
   pinLabel: string;
   unpinLabel: string;
@@ -233,14 +241,20 @@ export interface PluginUiToolCallViewProps {
 }
 
 /**
- * Entry through which a sandbox instance receives server resource notifications. The host registers by
- * (session, plugin, scopeId, generation=initId), and `pluginUi.resourceUpdated / resourceListChanged`
- * deltas in the projection route to the matching instance via subscribers.
+ * 一个沙箱实例接收 server 资源通知的入口。宿主按 (会话, 插件, scopeId, generation=initId)
+ * 登记，投影里的 `pluginUi.resourceUpdated / resourceListChanged` 增量按 subscribers 路由到对应实例。
  */
 export interface PluginUiResourceNotificationTarget {
   notifyInstanceClosed?(): void;
   notifyResourceUpdated(uri: string): void;
   notifyResourceListChanged(): void;
-  /** Instance mailbox of App-Provided Tools: a model-initiated page tool call has arrived at this instance. */
+  /** App-Provided Tools 的实例信箱：模型发起的页面工具调用到达本实例。 */
   notifyAppToolCall(call: McpAppsAppToolCallRequest): void;
+}
+
+/** 文档查看器手动入口创建独立窗口；工具调用继续使用原有的显式 surface 路由。 */
+export function documentViewerInstance(resourceUri: string): { instanceId?: string } {
+  return /^ui:\/\/(documents|pdf|presentations|spreadsheets)\/panel\.html$/.test(resourceUri)
+    ? { instanceId: crypto.randomUUID() }
+    : {};
 }

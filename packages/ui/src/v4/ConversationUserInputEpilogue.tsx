@@ -3,15 +3,15 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * Engine-added text in a user message.
+ * 用户消息里的引擎附加文本。
  *
- * Every ask received by a dwf subagent = the instruction body written by the script + an engine-appended epilogue (result criteria, the `submit_result`
- * JSON Schema); the entire nudge turn is engine text. Readers opening a subagent transcript want to know “what the script asked it to
- * do”; the epilogue is repetitive technical boilerplate, so place it in a collapsed-by-default disclosure but **do not remove it**: debugging needs to confirm
- * exactly what the subagent was told. The engine marks the boundary on the row as `epilogueStart`; this component only splits and collapses it.
+ * dwf 子代理收到的每个 ask = 脚本写的指令正文 + driver 追加的尾注（结果标准、`submit_result`
+ * 的 JSON Schema），nudge 轮整条都是引擎文本。读者打开子代理 transcript 想看的是「脚本让它干
+ * 什么」，尾注是逐字重复的技术样板——所以折进一枚默认收起的披露，但**不抹掉**：调试时得能核对
+ * 子代理到底被告知了什么。边界由引擎标记在行的 `epilogueStart` 上，这里只切分与折叠。
  */
 
-/** Split the row into body and epilogue. Out-of-bounds or missing → no epilogue: prefer showing too much to hiding body text. */
+/** 把行拆成正文与尾注。越界或缺席 → 无尾注：宁可多显示，也不把正文吃掉。 */
 export function splitUserInputEpilogue(
   text: string,
   epilogueStart: number | undefined,
@@ -23,8 +23,8 @@ export function splitUserInputEpilogue(
 }
 
 /**
- * Remove blank lines and the `---` separator at the start of the epilogue: in the original text that divider means “the body ends here,” and the disclosure itself
- * already expresses that boundary, so drawing it again would be noise. Preserve the second `---` between paragraphs (between the quality epilogue and schema epilogue).
+ * 去掉尾注开头的空行与 `---` 分隔线：那根横杠在原文里是「正文到此为止」的记号，而披露本身
+ * 已经表达了这条边界，再画一根就是噪音。段落之间的第二根 `---`（质量尾注与 schema 尾注之间）保留。
  */
 function trimEpilogueLead(text: string): string {
   return text.replace(/^\s*(?:---[ \t]*\n)?/u, "").trimEnd();
@@ -50,7 +50,7 @@ export function ConversationUserInputEpilogue({ text }: { text: string }) {
         {label}
       </button>
       {open ? (
-        // The epilogue contains an indented JSON Schema; render it as preformatted monospace in a secondary color because it is reference material, not message body text.
+        // 尾注里有缩进的 JSON Schema，按等宽预格式排；次级色——它是参考材料，不是消息正文。
         <pre
           className="max-h-60 overflow-auto whitespace-pre-wrap break-words font-mono text-ui-sm text-foreground-subtle"
           data-v4-user-input-epilogue-body="true"

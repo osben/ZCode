@@ -8,8 +8,8 @@ export function useWorkspaceFileTreeRowDragState() {
       return;
     }
 
-    // Electron/browsers do not always dispatch dragend to the source row when a drag leaves the window.
-    // Also listen for the global end signal so the guide line is not left hidden after an interrupted drag.
+    // Electron/浏览器在拖拽离开窗口时不一定向源行派发 dragend。
+    // 同时监听全局结束信号，避免竖线在一次异常拖拽后永久隐藏。
     const resetDragging = () => setIsDragging(false);
     window.addEventListener("dragend", resetDragging);
     window.addEventListener("drop", resetDragging);

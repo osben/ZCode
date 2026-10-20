@@ -6,7 +6,11 @@ import {
 } from "@zcode/shared";
 const INSTALLABLE_AGENT_CLI_PROVIDERS: ZCodeProvider[] = [];
 
-export type BuiltinAgentCliStatus = "enabled" | "enabling" | "disabling" | "disabled";
+export type BuiltinAgentCliStatus =
+  | "enabled"
+  | "enabling"
+  | "disabling"
+  | "disabled";
 
 function normalizeEnabledBuiltinAgentCliProviders(
   providers?: ReadonlyArray<ZCodeProvider>,
@@ -17,7 +21,9 @@ function normalizeEnabledBuiltinAgentCliProviders(
 export function getEnabledBuiltinAgentCliProviders(
   settings: Pick<AppSettings, "enabledBuiltinAgentCliProviders"> | null | undefined,
 ): ZCodeProvider[] {
-  return normalizeEnabledBuiltinAgentCliProviders(settings?.enabledBuiltinAgentCliProviders);
+  return normalizeEnabledBuiltinAgentCliProviders(
+    settings?.enabledBuiltinAgentCliProviders,
+  );
 }
 
 export function requiresBuiltinAgentCliInstall(provider: ZCodeProvider): boolean {
@@ -30,10 +36,8 @@ export function resolveBuiltinAgentCliStatus(params: {
   enablingProvider: ZCodeProvider | null;
   disablingProvider: ZCodeProvider | null;
 }): BuiltinAgentCliStatus {
-  // Bugfix: non-install builtin agent providers are already supplied by the current runtime and
-  // do not depend on settings.enabledBuiltinAgentCliProviders. Always return enabled here, so a
-  // missing default, a hot update, or legacy config cannot misjudge glm as disabled and lock the
-  // send entry.
+  // Bugfix: 非安装型内置 agent provider 已经由当前运行时提供，不依赖 settings.enabledBuiltinAgentCliProviders。
+  // 这里统一返回 enabled，避免设置缺省、热更新或旧配置把 glm 误判成 disabled 并锁住发送入口。
   if (!requiresBuiltinAgentCliInstall(params.provider)) {
     return "enabled";
   }
@@ -53,9 +57,8 @@ export function getEffectiveBuiltinAgentCliProvider(
   _settings: Pick<AppSettings, "enabledBuiltinAgentCliProviders"> | null | undefined,
   provider: ZCodeProvider,
 ): ZCodeProvider {
-  // Bugfix: selectedProvider in the workspace/store may hold a stale third-party provider. If the
-  // UI keeps consuming that value directly, menus and task creation would treat the old agent as
-  // available. Fall back uniformly to the always-available glm so UI state and the agent server's
-  // single source of truth do not diverge.
+  // Bugfix: workspace/store 里的 selectedProvider 可能残留旧三方 provider。
+  // 如果 UI 继续直接消费这个值，菜单和任务创建会把旧 agent 当作可用状态。
+  // 这里统一回退到始终可用的 glm，避免 UI 状态和 agent server 单一事实源分叉。
   return normalizeAgentProviderToZCodeAgent(provider);
 }

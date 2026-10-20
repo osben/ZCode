@@ -186,7 +186,7 @@ describe("conversation share per-turn preflight cache", () => {
 
   it("host 未返回 turnResults 时回落到整体 issues，而不是抛异常", () => {
     const blockingIssues = [{ code: "running_turn" as const, scope: "turn" as const }];
-    // An older host (not restarted with the rebuilt services) returns results without the turnResults field.
+    // 老版本 host（未随 services 重建重启）返回的结果里没有 turnResults 字段。
     const legacyResult = {
       revision: 3,
       logEpoch: "epoch-1",
@@ -249,7 +249,7 @@ describe("conversation share per-turn preflight cache", () => {
       ]),
     );
 
-    // turn-1 has no details: fall back to the overall issues; turn-2 uses its own details.
+    // turn-1 没有明细：回落整体 issues；turn-2 用自己的明细。
     expect(entries[0]).toEqual({
       productTurnId: "turn-1",
       turnFingerprint: "fp-1",
@@ -310,4 +310,25 @@ it("内嵌图片变化会使轮次缓存失效", () => {
       "p",
     ),
   ).not.toBe(before);
+});
+
+it.each([499, 500, 501])("累计 %i 行在500上限的精确边界", (count) => {
+  const entries = [
+    { ...cached("a"), rowBudget: { count: 250, limit: 500 } },
+    { ...cached("b"), rowBudget: { count: count - 250, limit: 500 } },
+  ];
+  expect(aggregateConversationShareBlockingIssues(entries)).toEqual(
+    count > 500 ? [{ code: "rows_limit", scope: "conversation", actual: count, limit: 500 }] : [],
+  );
+});
+it("服务改变上限时取最小约束，保留非容量阻断项", () => {
+  const issue = { code: "running_turn" as const, scope: "turn" as const, turnOrdinal: 1 };
+  const entries = [
+    { ...cached("a"), rowBudget: { count: 200, limit: 500 }, blockingIssues: [issue] },
+    { ...cached("b"), rowBudget: { count: 51, limit: 250 } },
+  ];
+  expect(aggregateConversationShareBlockingIssues(entries)).toEqual([
+    issue,
+    { code: "rows_limit", scope: "conversation", actual: 251, limit: 250 },
+  ]);
 });

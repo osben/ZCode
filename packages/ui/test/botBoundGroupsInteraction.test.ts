@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotConfig, BotState } from "@zcode/shared";
 import { BoundGroupsCard, BoundGroupsList } from "@/BotsDialog/BoundGroupsCard.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const mocks = vi.hoisted(() => ({
   getBotStates: vi.fn(),
@@ -36,7 +35,7 @@ const show = (enabled = true) =>
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(BoundGroupsCard, { bot: { ...bot, enabled } }),
     ),
   );
@@ -81,9 +80,7 @@ describe("bound group controls", () => {
     );
     const view = show();
     const toggle = await screen.findByRole("switch");
-    expect(view.container.textContent).toContain(
-      expectedCopy("bots.boundGroups.count", { count: 0 }),
-    );
+    expect(view.container.textContent).toContain("0 个话题");
     expect(view.container.textContent).not.toContain("SECRET_TASK");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
@@ -150,8 +147,8 @@ describe("bound group controls", () => {
     mocks.getBotStates.mockRejectedValueOnce(new Error("offline")).mockResolvedValue([]);
     show();
     await screen.findByRole("alert");
-    expect(screen.queryByText(expectedCopy("bots.boundGroups.empty"))).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: expectedCopy("bots.boundGroups.refresh") }));
-    await screen.findByText(expectedCopy("bots.boundGroups.empty"));
+    expect(screen.queryByText(/暂无绑定群聊/)).toBeNull();
+    fireEvent.click(screen.getByText("刷新"));
+    await screen.findByText(/暂无绑定群聊/);
   });
 });

@@ -57,8 +57,7 @@ function createController(params: {
   };
 }
 
-/** percentage is the "used share": 0 means 100% remaining, i.e. the state right after a reset
- * has just refilled the quota. */
+/** percentage 是「已使用占比」：0 即剩余 100%，也就是重置刚把额度填满的状态。 */
 function createLimit(usedPercentage: number): UsageQuotaLimit {
   return {
     type: "TOKENS_LIMIT",
@@ -91,11 +90,9 @@ function createRemainingState(limits: UsageQuotaLimit[]): CodingPlanUsageRemaini
 
 describe("Coding Plan 重置机会的满额可见性", () => {
   it("重置后余量 100% 且同类型仍有多张机会时，弹框保留该重置行与剩余张数", () => {
-    // Regression: redeeming a ticket optimistically rewrites the remaining quota to 100%
-    // (percentage=0); the subsequent status polling then finds a still-valid opportunity and the
-    // entry returns to available. The old rule hid the whole row on "100% remaining means a reset
-    // has no benefit", so a user who just used one ticket could not see the remaining cards and
-    // thought the opportunity was swallowed.
+    // 回归：核销一张会把剩余额度乐观改写成 100%（percentage=0），随后 status 轮询发现
+    // 仍有有效机会，entry 回到 available。旧口径按「剩余 100% 则重置无收益」隐藏整行，
+    // 用户刚用掉一张就看不到余下的卡，以为机会被吞掉。
     const dialog = buildDialog(
       createController({
         fiveHour: {
@@ -112,8 +109,7 @@ describe("Coding Plan 重置机会的满额可见性", () => {
   });
 
   it("余量 100% 且只剩最后一张机会时同样保留重置行", () => {
-    // After "had 2 tickets, used 1", exactly 1 remains — this tier must not be hidden either,
-    // otherwise it is the same class of complaint.
+    // 「有 2 张、用掉 1 张」后剩余正好 1 张，这一档也不能隐藏，否则仍是同一类投诉。
     const dialog = buildDialog(
       createController({
         fiveHour: {
@@ -183,8 +179,7 @@ describe("Coding Plan 重置机会的满额可见性", () => {
   });
 
   it("聊天输入框机会徽标在余量 100% 时仍按剩余张数展示", () => {
-    // The badge and dialog rows share the same rule: after a reset zeroes percentage, the badge
-    // for remaining opportunities must not disappear.
+    // 徽标与弹框行共用同一口径：重置把 percentage 归零后，余下机会的徽标不得消失。
     const badge = resolveChatCodingPlanResetOpportunityBadge(
       createRemainingState([createLimit(0)]),
       {

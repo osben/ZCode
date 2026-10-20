@@ -8,7 +8,7 @@ export type OnboardingWizardStep =
   | "session"
   | "skills-import"
   | "mcp-import"
-  // The plugin import step is disabled.
+  // 插件导入步骤未启用。
   // | "plugins-import"
   | "commands-import"
   | "agents-file"
@@ -22,7 +22,7 @@ const WIZARD_STEPS: Array<{
   { key: "session", index: 1, titleId: "onboarding.step.session" },
   { key: "skills-import", index: 2, titleId: "onboarding.step.skillsImport" },
   { key: "mcp-import", index: 3, titleId: "onboarding.step.mcpImport" },
-  // The plugin import step is disabled.
+  // 插件导入步骤未启用。
   // { key: "plugins-import", index: 4, titleId: "onboarding.step.pluginsImport" },
   { key: "commands-import", index: 4, titleId: "onboarding.step.commandsImport" },
   { key: "agents-file", index: 5, titleId: "onboarding.step.agentsFile" },
@@ -127,7 +127,7 @@ export function OnboardingWizardFooter(props: {
   onNextStep: () => void;
   onBeginMigration: () => void;
   onFinish: () => void;
-  /** Disable “Start migration” when no sessions or external items are selected. */
+  /** 未选任何会话或外部导入项时禁用「开始迁移」 */
   beginMigrationDisabled?: boolean;
 }) {
   const { intl } = useZCodeIntl();
@@ -140,7 +140,7 @@ export function OnboardingWizardFooter(props: {
           { count: String(props.selectedWorkspaceCount) },
         )
       : /*
-         * Temporarily hide the provider-settings step in the data-migration wizard while retaining the original helper-copy branch for later restoration.
+         * 暂时隐藏数据迁移向导里的代理设置步骤，保留原 helper 文案分支以便后续恢复。
          * : props.currentStep === "agent-settings"
          *   ? intl.formatMessage(
          *       { id: "onboarding.footer.selection" },
@@ -150,7 +150,7 @@ export function OnboardingWizardFooter(props: {
         intl.formatMessage({ id: "onboarding.footer.helper" });
 
   /*
-   * Temporarily hide the provider-settings step in the data-migration wizard; hide the bulk-selection button with it.
+   * 暂时隐藏数据迁移向导里的代理设置步骤，批量选择按钮随步骤一起隐藏。
    * const showAgentSettingsBulk =
    *   props.currentStep === "agent-settings" && props.onAgentSettingsBulkToggle;
    */
@@ -160,8 +160,7 @@ export function OnboardingWizardFooter(props: {
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="min-w-0 truncate text-ui-base text-foreground-subtle">{helperText}</span>
         {/*
-          Temporarily hide the agent-settings step of the data-migration wizard; keep the original
-          bulk-select button for later restoration.
+          暂时隐藏数据迁移向导里的代理设置步骤，保留原批量选择按钮以便后续恢复。
           {showAgentSettingsBulk ? (
             <Button
               type="button"
@@ -226,8 +225,7 @@ export function OnboardingWizardFooter(props: {
         ) : null}
 
         {/*
-          Temporarily hide the agent-settings step of the data-migration wizard; keep the original
-          start-migration button branch for later restoration.
+          暂时隐藏数据迁移向导里的代理设置步骤，保留原开始迁移按钮分支以便后续恢复。
           {props.currentStep === "agent-settings" ? (
             <>
               <Button
@@ -295,7 +293,7 @@ function isOnboardingExternalImportStep(step: OnboardingWizardStep): boolean {
   return (
     step === "skills-import" ||
     step === "mcp-import" ||
-    // The plugin import step is disabled.
+    // 插件导入步骤未启用。
     // step === "plugins-import" ||
     step === "commands-import"
   );

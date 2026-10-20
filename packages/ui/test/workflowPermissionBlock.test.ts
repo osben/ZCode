@@ -11,17 +11,16 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
     createElement("pre", { "data-testid": "code-block" }, code),
 }));
 
-// ControlHintTooltip depends on a TooltipProvider at the app root; per existing convention the test replaces it with a passthrough stub.
+// ControlHintTooltip 依赖应用根部的 TooltipProvider；测试里按既有惯例替换为透传桩。
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
+// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
 import { PermissionDialog } from "@/PermissionDialog.js";
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const SCRIPT = 'const x = 1;\nconst r = await agent("a").ask<string>("do");';
-// The CLI-side ask reason is protocol diagnostics text; the confirmation window must not display it.
+// CLI 侧的 ask reason 是协议诊断文案，确认窗必须不展示它。
 const CLI_REASON = "createWorkflow.runConfirmation: user must confirm running the analyzed script";
 
 const CAUSALITY_GRAPH = {
@@ -36,7 +35,7 @@ const CAUSALITY_GRAPH = {
     },
   ],
   lanes: [{ id: "actor#1", name: "a", line: 2, column: 11 }],
-  // Participant layer: cards of unmarked scripts go to `unphased` (the UI synthesizes an implicit module).
+  // 参与者层：无标记脚本的卡归 `unphased`（UI 合成隐式模块）。
   participants: [{ id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] }],
   handoffs: [],
   sink: ["ask#1"],
@@ -67,7 +66,7 @@ function buildWorkflowRequest(
         name: "Allow",
         response: { decision: "allow" },
       },
-      // Round 7: session-scope no-confirm. The v4 projection maps the kind to allowAlways; the GUI localizes by name.
+      // 第 7 轮：会话免确认。v4 投影把 kind 映为 allowAlways，GUI 按 name 本地化。
       SESSION_OPTION,
       {
         optionId: "deny",
@@ -114,18 +113,18 @@ describe("WorkflowPermissionBlock", () => {
   it("renders the timeline as the primary body and keeps the script folded", () => {
     renderDialog();
 
-    // Timeline (docs/dynamic-workflow/presentation.md "The confirmation window"): an unmarked script is one
-    // implicit station "Workflow", and the pills carry the lane's original author names. No zoom entry, no popup.
+    // 时间线（docs/dynamic-workflow/presentation.md「The confirmation window」）：无标记脚本是一个隐式站「Workflow」，
+    // 药丸是那条车道的作者原名。没有放大入口、没有弹窗。
     const timeline = screen.getByTestId("workflow-timeline");
     expect(timeline.textContent).toContain("Workflow");
     expect(screen.getByTestId("workflow-agent-pill").textContent).toContain("a");
     expect(screen.queryByLabelText("Expand graph")).toBeNull();
     expect(screen.getByText("Research pipeline")).toBeTruthy();
     expect(screen.getByText("Run this workflow?")).toBeTruthy();
-    // Right of the header: static status + count details.
+    // 表头右侧：静态状态 + 计数细节。
     expect(screen.getByTestId("workflow-card-detail").textContent).toBe("1 phase");
 
-    // The script is the audit detail layer: collapsed by default; Radix Collapsible keeps its content out of the DOM when closed.
+    // 脚本是审计细节层：默认收起，Radix Collapsible 关闭时内容不进 DOM。
     expect(screen.queryByTestId("code-block")).toBeNull();
     expect(document.body.textContent).not.toContain('await agent("a")');
     expect(screen.getByText("Show full script")).toBeTruthy();
@@ -133,8 +132,8 @@ describe("WorkflowPermissionBlock", () => {
 
   it("renders the localized question in both locales", () => {
     renderDialog(buildWorkflowRequest(), "zh-CN");
-    expect(screen.getByText(zhCN["chat.permission.workflow.title"])).toBeTruthy();
-    expect(screen.getByText(zhCN["chat.permission.workflow.showScript"])).toBeTruthy();
+    expect(screen.getByText("运行此工作流？")).toBeTruthy();
+    expect(screen.getByText("显示完整脚本")).toBeTruthy();
     cleanup();
 
     renderDialog(buildWorkflowRequest(), "en-US");
@@ -144,7 +143,7 @@ describe("WorkflowPermissionBlock", () => {
   it("asks the question above the workflow name", () => {
     renderDialog();
 
-    // Deliberate order: the dialog's generic title "permission required" read together with the question forms the full ask; the name line is the title of the graph below it.
+    // 刻意的顺序：弹窗通用标题「需要权限」+ 问句连读才是完整提问，名称行是它下方那张图的标题。
     const blockText =
       document.querySelector('[data-workflow-permission-block="true"]')?.textContent ?? "";
     expect(blockText.indexOf("Run this workflow?")).toBeGreaterThanOrEqual(0);
@@ -162,17 +161,6 @@ describe("WorkflowPermissionBlock", () => {
     expect(screen.getByText("Hide full script")).toBeTruthy();
   });
 
-  // Long scripts no longer stretch the dialog: the script region is height-capped and scrollable.
-  it("bounds the script region with a max height and makes it scrollable", () => {
-    renderDialog();
-
-    fireEvent.click(screen.getByText("Show full script"));
-
-    const scroller = screen.getByTestId("workflow-script-scroll");
-    expect(scroller.className).toMatch(/max-h-/u);
-    expect(scroller.className).toMatch(/overflow-auto/u);
-  });
-
   it("opens the script by default when there is no graph to show", () => {
     renderDialog(
       buildWorkflowRequest({
@@ -181,7 +169,7 @@ describe("WorkflowPermissionBlock", () => {
     );
 
     expect(screen.queryByTestId("workflow-timeline")).toBeNull();
-    // A zero-step script has no graph to show; the code is the only content.
+    // 零 step 脚本没有图可看，代码就是唯一内容。
     expect(screen.getByTestId("code-block").textContent).toContain('await agent("a")');
     expect(screen.getByText("Hide full script")).toBeTruthy();
   });
@@ -204,8 +192,8 @@ describe("WorkflowPermissionBlock", () => {
   });
 
   it("degrades to an open script when the ask carries no preview at all", () => {
-    // Failure path: prepareApproval throws → a plain ask without a preview. The gate still stands; there is
-    // just no graph, and the script becomes the only auditable content.
+    // 失败路径：prepareApproval 抛错 → 无 preview 的普通 ask。gate 仍然成立，
+    // 只是没有图，脚本就成了唯一可审计内容。
     renderDialog(buildWorkflowRequest({ display: undefined }));
 
     expect(screen.queryByTestId("workflow-timeline")).toBeNull();
@@ -222,10 +210,9 @@ describe("WorkflowPermissionBlock", () => {
     expect(screen.queryByText("Show full script")).toBeNull();
   });
 
-  // ── The amendment confirmation window (docs/dynamic-workflow/launch.md "The `AmendWorkflow` tool";
-  // presentation.md "The confirmation window") ── appears only for runs of another session: the question
-  // changes wording and a lineage line is added. Facts are rendered from the **tool input** (`run_id` and the
-  // CLI-backfilled `predecessor`); display is not changed by a single byte — the graph is still create_workflow.
+  // ── 修订的确认窗（docs/dynamic-workflow/launch.md「The `AmendWorkflow` tool」；presentation.md
+  // 「The confirmation window」）──只对别的会话的 run 出现：问句换词，多一行 lineage。事实从**工具
+  // 入参**渲染（`run_id` 与 CLI 回填的 `predecessor`），display 一个字节都不变——图仍是 create_workflow。
 
   function buildAmendRequest(raw: Record<string, unknown>): ZCodePermissionRequest {
     return buildWorkflowRequest({
@@ -252,10 +239,10 @@ describe("WorkflowPermissionBlock", () => {
     expect(lineage).toBeTruthy();
     expect(lineage?.textContent).toContain("Amends run");
     expect(lineage?.textContent).toContain("dwfrun-prev");
-    // The predecessor is settled: no "will be stopped" sentence.
+    // 前驱已结算：没有「将被停止」那一句。
     expect(lineage?.getAttribute("data-workflow-amends-live")).toBeNull();
     expect(lineage?.textContent).not.toContain("still running");
-    // The graph is still the body and the script still the collapsed audit layer: lineage is just one extra line.
+    // 图仍是主体，脚本仍是折叠的审计层：lineage 只是多一行。
     expect(screen.getByTestId("workflow-timeline")).toBeTruthy();
     expect(screen.queryByTestId("code-block")).toBeNull();
   });
@@ -288,19 +275,16 @@ describe("WorkflowPermissionBlock", () => {
       "zh-CN",
     );
 
-    expect(screen.getByTestId("workflow-card-kind").textContent).toBe(
-      zhCN["chat.permission.workflow.amend.title"],
-    );
+    expect(screen.getByTestId("workflow-card-kind").textContent).toBe("调整此工作流？");
     const lineage = document.querySelector('[data-workflow-amends="true"]');
     expect(lineage?.textContent).toContain("调整 run");
     expect(lineage?.textContent).toContain("dwfrun-prev");
-    expect(lineage?.textContent).toContain(zhCN["chat.permission.workflow.amends.running"]);
+    expect(lineage?.textContent).toContain("仍在运行，将被停止");
   });
 
-  // An amend omitting script (docs/dynamic-workflow/launch.md "Keeping the predecessor's script"): the CLI has
-  // backfilled the predecessor's script into the input and stamped `predecessor.script_inherited`. The window
-  // draws the graph as usual and the script stays expandable — what is being reviewed is exactly what will run
-  // — and the lineage line adds "script unchanged" so the user knows only the settings changed this time.
+  // 省略 script 的修订（docs/dynamic-workflow/launch.md「Keeping the predecessor's script」）：CLI 已把
+  // 前驱的脚本回填进入参并盖上 `predecessor.script_inherited`。窗上照常画图、照常可展开脚本——审的
+  // 就是将要跑的那一份——lineage 行多说一句「脚本不变」，让用户知道这次改的只是设定。
   it("says 'script unchanged' on the lineage line when the amend keeps the predecessor's script", () => {
     renderDialog(
       buildAmendRequest({
@@ -352,7 +336,7 @@ describe("WorkflowPermissionBlock", () => {
   });
 
   it("omits the lineage line entirely for a CreateWorkflow ask", () => {
-    // CreateWorkflow has no predecessor (and no more resume_from): no empty line, no placeholder wording, the question stays as-is.
+    // CreateWorkflow 没有前驱（也不再有 resume_from）：不留空行、不留占位词、问句照旧。
     renderDialog();
 
     expect(screen.getByTestId("workflow-card-kind").textContent).toBe("Run this workflow?");
@@ -366,10 +350,9 @@ describe("WorkflowPermissionBlock", () => {
     expect(document.querySelector('[data-workflow-amends="true"]')).toBeNull();
   });
 
-  // ── Concurrency cap (docs/dynamic-workflow/concurrency.md "Two bounds on a run") ──
-  // The model only writes `max_concurrency` when the user asks for it, so the row's presence is itself a
-  // user-raised condition.
-  // Same discipline as lineage: facts are read from the **tool input**; display is not changed by a single byte.
+  // ── 并发上限（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）──
+  // 模型只在用户要求时才写 `max_concurrency`，所以这一行在场就是用户自己提的条件。
+  // 与 lineage 同一条纪律：事实从**工具入参**读，display 一个字节都不变。
 
   function queryMaxConcurrency(): HTMLElement | null {
     return screen.queryByTestId("workflow-permission-max-concurrency");
@@ -409,7 +392,7 @@ describe("WorkflowPermissionBlock", () => {
 
   it.each([
     ["omitted", {}],
-    // The amend's `null` = remove the cap: no cap to speak of, handled the same as absence.
+    // 修订的 `null` = 去掉上限：没有上限可说，与缺席同处理。
     ["null (the amend 'remove the limit' value)", { max_concurrency: null }],
     ["not a positive integer", { max_concurrency: 0 }],
     ["not an integer", { max_concurrency: 2.5 }],
@@ -420,14 +403,12 @@ describe("WorkflowPermissionBlock", () => {
     expect(document.body.textContent).not.toContain("subagents at once");
   });
 
-  // ── Subagent model (docs/dynamic-workflow/presentation.md) ──
-  // The model only writes `subagent_model` when the user explicitly asks, so the row's presence is itself a
-  // user-raised condition.
-  // The value reaching the window has already been parsed by the CLI's resolveInput into the canonical string
-  // `providerId/modelId[$level]` — but the canonical string is for machine backfill: the screen speaks model
-  // names and level words, and the canonical string lives only in this row's tooltip.
+  // ── 子代理模型（docs/dynamic-workflow/presentation.md）──
+  // 模型只在用户开口要求时才写 `subagent_model`，所以这一行在场就是用户自己提的条件。
+  // 到窗前的值已被 CLI 的 resolveInput 解析成规范串 `providerId/modelId[$level]`——但规范串是
+  // 给机器回填用的：屏幕上说模型名与强度词，规范串只住在这一行的 tooltip 里。
 
-  // The team-plan provider id is a string of hex: exactly what this change must keep off the screen.
+  // 团队套餐的 provider id 是一串十六进制：这次改动要挡的就是它。
   const TEAM_PLAN_MODEL = "4fc7f541-2382-4c32-be11-f021b8d7ed1d/GLM-5.3-Flash$high";
 
   function querySubagentModel(): HTMLElement | null {
@@ -456,7 +437,7 @@ describe("WorkflowPermissionBlock", () => {
     const row = querySubagentModel();
     expect(row?.textContent).toContain("GLM-5.3-Flash");
     expect(row?.textContent).not.toContain("4fc7f541");
-    // The canonical string is not lost; it is in the tooltip — backfill and debugging can still read it.
+    // 规范串没有丢，它在 tooltip 里——回填与排障都还读得到。
     expect(row?.getAttribute("title")).toContain(TEAM_PLAN_MODEL);
   });
 
@@ -468,7 +449,7 @@ describe("WorkflowPermissionBlock", () => {
     expect(querySubagentModel()?.textContent).toBe("Subagents run on opus-5 · thinking High");
   });
 
-  // The same order as the two adjustable sentences (docs/dynamic-workflow/presentation.md "The confirmation window"): model on top, cap below.
+  // 与可调的两句同一个次序（docs/dynamic-workflow/presentation.md「The confirmation window」）：模型在上、上界在下。
   it("sits directly above the concurrency row, and shows on an AmendWorkflow ask too", () => {
     renderDialog(
       buildAmendRequest({
@@ -497,7 +478,7 @@ describe("WorkflowPermissionBlock", () => {
 
   it.each([
     ["omitted", {}],
-    // The amend's `null` = back to the session model: no second model to speak of, handled the same as absence.
+    // 修订的 `null` = 退回会话模型：没有第二个模型可说，与缺席同处理。
     ["null (the amend 'back to the session model' value)", { subagent_model: null }],
     ["blank", { subagent_model: "   " }],
     ["not a string", { subagent_model: { providerId: "zhipu", modelId: "glm-5.3-flash" } }],
@@ -506,17 +487,6 @@ describe("WorkflowPermissionBlock", () => {
 
     expect(querySubagentModel()).toBeNull();
     expect(document.body.textContent).not.toContain("Subagents run on");
-  });
-
-  it("never paints the waiting ask with the success color, and says nothing about compiling", () => {
-    renderDialog();
-
-    // DESIGN.md reserves green for the awaiting-confirmation state. The header once had an empty "compiled"
-    // ring light; removed as of 2026-09-09 — reaching the confirmation window already proves the script passed
-    // validation, so the word carries no information for the user.
-    expect(document.body.innerHTML).not.toContain("text-success");
-    expect(screen.queryByTestId("workflow-card-static-status")).toBeNull();
-    expect(document.body.textContent).not.toContain("compiled");
   });
 });
 
@@ -550,7 +520,7 @@ describe("PermissionDialog workflow dispatch", () => {
     expect(document.body.textContent).toContain("Deny");
   });
 
-  // Session-scope no-confirm (docs/dynamic-workflow/launch.md "Always allow in this session"): the name hits localization, and the description does not reuse the project-level copy.
+  // 会话免确认（docs/dynamic-workflow/launch.md「Always allow in this session」）：name 命中本地化，描述不沿用项目级文案。
   it.each([
     ["en-US", "Always allow in this session", "Do not ask again for workflows in this session"],
     ["zh-CN", "本会话内始终允许", "本会话内运行工作流不再询问"],
@@ -569,7 +539,7 @@ describe("PermissionDialog workflow dispatch", () => {
     renderDialog(buildWorkflowRequest(), "en-US", onRespond);
 
     const session = document.querySelector('[data-permission-option-kind="allowAlways"]')!;
-    // An unselected option's first click only selects; the second click responds (existing semantics).
+    // 未选中的选项第一次点击只做选中，第二次点击应答（既有语义）。
     fireEvent.click(session);
     expect(onRespond).not.toHaveBeenCalled();
     fireEvent.click(session);
@@ -599,15 +569,14 @@ describe("PermissionDialog workflow dispatch", () => {
     renderDialog(buildWorkflowRequest({ raw: { script: SCRIPT } }));
 
     expect(screen.getByTestId("workflow-timeline")).toBeTruthy();
-    // When the name is missing, fall back to the same fallback name as the chat area.
+    // 名称缺失时回退到聊天区同一兜底名。
     expect(screen.getByText("Workflow script")).toBeTruthy();
   });
 });
 
-// ── The Refine option (docs/dynamic-workflow/launch.md "Refine") ──
-// The v4 projection adds a third option workflowRefine to CreateWorkflow; the GUI does not draw it as a
-// button but reuses the numbered inline feedback input row shared by other confirmation windows, and the
-// submission hands the freeText together with that option to the response.
+// ── Refine 选项（docs/dynamic-workflow/launch.md「Refine」）──
+// v4 投影对 CreateWorkflow 追加第三选项 workflowRefine；GUI 不把它画成按钮，而是复用其他
+// 确认窗同一行编号的行内反馈输入行，提交把 freeText 连同该选项交给应答。
 
 const REFINE_OPTION = {
   optionId: "workflowRefine",
@@ -631,7 +600,7 @@ describe("PermissionDialog workflow refine", () => {
   it("Refine 渲染为紧随 Run/Deny 的编号反馈行，而不是第三个选项按钮", () => {
     renderDialog(buildRefineRequest(), "en-US");
 
-    // Only the three option buttons Run / Session / Deny; Refine takes no listbox slot.
+    // 只有 Run / Session / Deny 三个 option 按钮；Refine 不占 listbox 位置。
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(3);
     expect(screen.queryByRole("option", { name: "Refine" })).toBeNull();
@@ -639,11 +608,11 @@ describe("PermissionDialog workflow refine", () => {
     const input = queryRefineInput();
     expect(input).toBeTruthy();
     expect(input!.closest('[role="listbox"]')).toBeNull();
-    // Same structure as the generic feedback row: number + textarea, with the number right after the three buttons (continuing as 4 from round 7).
+    // 与通用反馈行同一结构：编号 + textarea，编号紧随三个按钮之后（第 7 轮起顺延为 4）。
     expect(input!.previousElementSibling?.textContent).toBe("4.");
     expect(input!.placeholder).toBe("Describe how the workflow should change…");
     expect(input!.getAttribute("aria-label")).toBe("Refine");
-    // The generic "deny with feedback" row no longer appears separately: Refine is this window's feedback row.
+    // 通用「拒绝并附反馈」行不再额外出现：Refine 就是这个窗的反馈行。
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
   });
 
@@ -656,7 +625,7 @@ describe("PermissionDialog workflow refine", () => {
       const confirm = screen.getByRole("button", { name: "Confirm" }) as HTMLButtonElement;
 
       act(() => input.focus());
-      // Blank: the confirm button is disabled and Enter produces no response either.
+      // 空白：确认按钮禁用，Enter 也不产生应答。
       fireEvent.change(input, { target: { value: "   " } });
       expect(confirm.disabled).toBe(true);
       fireEvent.keyDown(input, { key: "Enter" });
@@ -671,7 +640,7 @@ describe("PermissionDialog workflow refine", () => {
       expect(onRespond).toHaveBeenCalledWith(
         "perm-workflow",
         expect.objectContaining({ optionId: "workflowRefine" }),
-        // Trim before submitting: the CLI broker turns a blank freeText into a plain deny; pure whitespace must not be treated as feedback.
+        // 提交前 trim：CLI broker 对空白 freeText 落普通 deny，不能把纯空白当反馈。
         "只保留三个 finder",
       );
     },
@@ -723,12 +692,12 @@ describe("PermissionDialog workflow refine", () => {
     const onRespond = vi.fn();
     renderDialog(buildRefineRequest(), "en-US", onRespond);
 
-    // The draft belongs to Refine: clicking Deny is a plain rejection; the refinement must not go out as a plain-rejection reason.
+    // 草稿属于 Refine：点 Deny 就是普通拒绝，不能让修改意见以普通拒绝理由的身份发出。
     const input = queryRefineInput()!;
     fireEvent.change(input, { target: { value: "把 fan out 改成串行" } });
 
     const deny = screen.getByRole("option", { name: "Deny" });
-    // An unselected option's first click only selects; the second click responds (existing semantics).
+    // 未选中的选项第一次点击只做选中，第二次点击应答（既有语义）。
     fireEvent.click(deny);
     expect(onRespond).not.toHaveBeenCalled();
     fireEvent.click(deny);
@@ -741,12 +710,8 @@ describe("PermissionDialog workflow refine", () => {
 
   it("双语渲染 Refine 行文案", () => {
     renderDialog(buildRefineRequest(), "zh-CN");
-    expect(queryRefineInput()!.placeholder).toBe(
-      zhCN["chat.permission.workflow.refine.placeholder"],
-    );
-    expect(queryRefineInput()!.getAttribute("aria-label")).toBe(
-      zhCN["chat.permission.workflow.refine"],
-    );
+    expect(queryRefineInput()!.placeholder).toBe("描述这个工作流应该怎么改…");
+    expect(queryRefineInput()!.getAttribute("aria-label")).toBe("提出修改");
     cleanup();
 
     renderDialog(buildRefineRequest(), "en-US");

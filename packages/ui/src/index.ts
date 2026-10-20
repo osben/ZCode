@@ -3,7 +3,7 @@ export { AppErrorBoundary, ScopedErrorBoundary } from "./ErrorBoundary.js";
 export type { ScopedErrorBoundaryVariant } from "./ErrorBoundary.js";
 export { Button, buttonVariants } from "./components/ui/button.js";
 export { DesktopWindowFrame } from "./DesktopWindowFrame.js";
-export { WebRemoteControlDialog } from "./WebRemoteControlDialog.js";
+export { WebRemoteControlDialog } from "@/web-remote-control/index.js";
 export {
   WebRemoteControlFeatureProvider,
   useWebRemoteControlFeatureEnabled,
@@ -30,7 +30,8 @@ export type {
   GitGraphRefKind,
 } from "./git-graph/layout.js";
 export { SSHDialog, RemoteConnectionDialog } from "./SSHDialog.js";
-export type { Theme, ThemePalette, ThemeSelection } from "./useTheme.js";
+export { useTheme } from "./useTheme.js";
+export type { Theme } from "./useTheme.js";
 export { useTestActions } from "./test-actions.js";
 export type { TestActions } from "./test-actions.js";
 export { StoreProvider, useZCodeStore } from "./store/StoreProvider.js";
@@ -48,8 +49,13 @@ export {
   REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE,
   createRemoteWorkspaceDisconnectedError,
 } from "./lib/remoteWorkspaceServiceError.js";
+export {
+  getSourceSettingsServices,
+  registerSourceSettingsServices,
+  useSourceSettingsServices,
+} from "./store/sourceSettingsServiceStore.js";
 
-// Hooks — shared access layer for services and platform operations
+// Hooks —— 统一的服务和平台操作访问层
 export {
   ServiceProvider,
   useServices,
@@ -93,14 +99,6 @@ export {
   loadUiFontSizePx,
   subscribeToUiFontSizeStorageChanges,
 } from "./lib/uiFontSize.js";
-export {
-  applyMonoFontFamily,
-  applyUiFontFamily,
-  loadMonoFontFamily,
-  loadUiFontFamily,
-  subscribeToMonoFontFamilyStorageChanges,
-  subscribeToUiFontFamilyStorageChanges,
-} from "./lib/uiFonts.js";
 export { reportUiLaunchToInput } from "./lib/uiPerfArmsTelemetry.js";
 export {
   RendererUserActionTelemetry,
@@ -120,3 +118,4 @@ export { generateMobileDeviceFingerprint, setStreamClientId } from "./lib/stream
 export { GlobalDatabaseStartupLoading } from "./root/GlobalDatabaseStartupLoading.js";
 
 export { LocalTtftObserver, setLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+export { ensurePendingTaskDraft } from "@/v4/composer/composerDraftStore.js";

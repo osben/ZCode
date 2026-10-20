@@ -9,30 +9,31 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { Locale, LocalePreference } from "@zcode/shared";
-import {
-  isLocale,
-  isLocalePreference,
-  resolveSystemLocale as resolveSystemLanguageTag,
-} from "@zcode/shared";
+import { DEFAULT_LOCALE } from "@zcode/shared";
 import type { BroadcastMessage, IBroadcastService, ISettingService } from "@zcode/services";
 import {
   readNavigatorLanguage,
   readSafeLocalStorage,
   writeSafeLocalStorage,
 } from "@/lib/browserEnvironment.js";
-import { createIntl, type IntlInstance } from "./createIntl.js";
 import zhCN from "./locales/zh-CN.js";
 import enUS from "./locales/en-US.js";
 import ukUA from "./locales/uk-UA.js";
 
-/** Language → translation-message mapping. */
+/** 语言 → 翻译消息映射 */
+// uk-UA translation is the fork's existing copy (specs/ukrainian-locale.md). It predates the
+// 3.16.1 key set, so missing keys fall back to en-US instead of showing raw ids.
+// Fallback is recorded in specs/ui-upstream-sync-ledger.md (uk-UA translation missing -> i18n PR).
 const MESSAGES: Record<Locale, Record<string, string>> = {
   "zh-CN": zhCN,
   "en-US": enUS,
-  "uk-UA": ukUA,
+  "uk-UA": { ...enUS, ...ukUA },
 };
 
-export type { IntlInstance };
+/** 简易 intl 工具：根据 id 查找翻译，支持 {key} 占位符替换 */
+export interface IntlInstance {
+  formatMessage(descriptor: { id: string }, values?: Record<string, string | number>): string;
+}
 
 const LOCALE_PREFERENCE_KEY = "zcode-locale-preference";
 const STATE_LOCALE_CHANNEL = "state:locale";
@@ -40,6 +41,14 @@ const STATE_LOCALE_CHANNEL = "state:locale";
 interface LocaleBroadcastPayload {
   preference: LocalePreference;
   resolvedLocale: Locale;
+}
+
+function isLocale(value: unknown): value is Locale {
+  return value === "zh-CN" || value === "en-US";
+}
+
+function isLocalePreference(value: unknown): value is LocalePreference {
+  return value === "system" || isLocale(value);
 }
 
 function resolveLocaleBroadcastPayload(payload: unknown): LocaleBroadcastPayload | null {
@@ -106,6 +115,22 @@ export function shouldApplyLocaleBroadcastMessage(
   return true;
 }
 
+function createIntl(locale: Locale): IntlInstance {
+  // noUncheckedIndexedAccess：用 ?? 回退到默认语言的翻译
+  const messages = MESSAGES[locale] ?? MESSAGES[DEFAULT_LOCALE]!;
+  return {
+    formatMessage({ id }, values) {
+      let msg = messages[id] ?? id;
+      if (values) {
+        for (const [key, val] of Object.entries(values)) {
+          msg = msg.replaceAll(`{${key}}`, String(val));
+        }
+      }
+      return msg;
+    },
+  };
+}
+
 interface IntlContextValue {
   intl: IntlInstance;
   locale: Locale;
@@ -116,7 +141,10 @@ interface IntlContextValue {
 
 const IntlContext = createContext<IntlContextValue | null>(null);
 
-/** Internationalization Provider — manages the current language and intl instance. If settingService is supplied, read the initial language from settings and persist changes. */
+/**
+ * 国际化 Provider —— 管理当前语言和 intl 实例。
+ * 如果传入 settingService，会从设置中读取初始语言并在切换时持久化。
+ */
 export function ZCodeIntlProvider({
   children,
   settingService,
@@ -135,10 +163,14 @@ export function ZCodeIntlProvider({
   const applyingBroadcastRef = useRef(false);
   const ignoredLocalLocaleBroadcastPayloadRef = useRef<LocaleBroadcastPayload | null>(null);
   const localePreferenceOperationSeqRef = useRef(0);
-  const resolveNavigatorSystemLocale = useCallback(
-    (): Locale => resolveSystemLanguageTag(readNavigatorLanguage()),
-    [],
-  );
+  const resolveNavigatorSystemLocale = useCallback((): Locale => {
+    const language = readNavigatorLanguage();
+    if (!language) {
+      return DEFAULT_LOCALE;
+    }
+
+    return language.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+  }, []);
   const resolveSystemLocale = useCallback(async (): Promise<Locale> => {
     const resolvedLocale = await resolveHostSystemLocale?.();
     if (isLocale(resolvedLocale)) {
@@ -169,22 +201,22 @@ export function ZCodeIntlProvider({
         return;
       }
 
-      // The Provider must not turn persistence RPCs into an unbounded wait chain.
-      // If one settingService.update remains pending forever, later language choices must still attempt to persist;
-      // settingService handles file-write order; this layer only validates the latest operation and handles errors.
+      // Provider 层不能把持久化 RPC 串成无界等待链。
+      // 一次 settingService.update 永久 pending 时，后续语言选择仍要继续尝试落盘；
+      // 底层 settingService 负责文件写入顺序，这里只做最新操作校验和错误收口。
       void settingService
         ?.update({
           locale: resolvedLocale,
           localePreference: preference,
         })
         .catch(() => {
-          // Persistence failures do not block UI state or cross-window broadcasts; the next language change will try writing again.
+          // 持久化失败不阻断 UI 状态和跨窗口广播，下一次语言操作会再次尝试写入。
         });
     },
     [settingService],
   );
 
-  // Read the persisted locale from settingService.
+  // 从 settingService 读取持久化的 locale
   useEffect(() => {
     if (!settingService) return;
     let disposed = false;
@@ -203,8 +235,8 @@ export function ZCodeIntlProvider({
         return;
       }
       if (nextPreference) {
-        // Mobile remote control and Desktop share the same settingService, but the mobile browser may retain a local
-        // en-US/system preference. The remote entry point must use the Desktop setting.json or the Desktop may show Chinese while the phone shows English.
+        // 手机远控和桌面连接到同一个 settingService，但手机浏览器本地可能残留
+        // en-US/system 偏好。远控入口必须以桌面 setting.json 为准，否则会出现桌面中文、手机英文。
         setLocalePreferenceState(nextPreference);
         if (preferSettingServiceLocale) {
           persistLocalePreference(nextPreference);
@@ -216,9 +248,9 @@ export function ZCodeIntlProvider({
           }
           setSystemLocale(resolvedLocale);
           if (settings.locale !== resolvedLocale) {
-            // The locale in setting.json is the actual language for main-process menus, remote control, and other non-browser contexts.
-            // System mode must use the host OS language; Electron renderer navigator.language may differ from
-            // macOS app.getLocale(), and writing it back directly could persist English for a Chinese system.
+            // setting.json 里的 locale 是 main 进程菜单、远控等非浏览器上下文的实际语言。
+            // system 模式必须使用宿主系统语言；Electron renderer 的 navigator.language 可能和
+            // macOS app.getLocale() 不一致，直接写回会把中文系统错误持久化成英文。
             enqueueLocalePreferenceUpdate(initialOperationSeq, resolvedLocale, "system");
           }
         }
@@ -260,8 +292,8 @@ export function ZCodeIntlProvider({
           resolvedLocale,
         };
         if (!applyingBroadcastRef.current && broadcastService) {
-          // Cross-window language sync must not wait for the settingService persistence RPC.
-          // Persistence may time out or reject, but the local UI and other windows should first sync to the user’s latest choice.
+          // 跨窗口语言同步不能等待 settingService 持久化 RPC。
+          // 持久化可能超时或拒绝，但本地 UI 与其他窗口应先按用户最后一次选择同步。
           ignoredLocalLocaleBroadcastPayloadRef.current = broadcastPayload;
           void broadcastService
             .send({
@@ -306,8 +338,8 @@ export function ZCodeIntlProvider({
       }
       applyingBroadcastRef.current = true;
       try {
-        // The actual language change occurs in IntlProvider; do not rely only on the locale field in the store.
-        // Structured broadcasts must carry both the user preference and resolved language, so another window does not downgrade system to a fixed language.
+        // 语言切换真实发生在 IntlProvider，不能只依赖 store 里的 locale 字段。
+        // 结构化广播需要同时携带用户偏好和解析语言，避免 system 被其他窗口降级成固定语言。
         localePreferenceOperationSeqRef.current += 1;
         setLocalePreferenceState(payload.preference);
         persistLocalePreference(payload.preference);
@@ -327,7 +359,7 @@ export function ZCodeIntlProvider({
     [setLocalePreference],
   );
 
-  const intl = useMemo(() => createIntl(locale, MESSAGES), [locale]);
+  const intl = useMemo(() => createIntl(locale), [locale]);
 
   const value = useMemo<IntlContextValue>(
     () => ({ intl, locale, localePreference, setLocale, setLocalePreference }),
@@ -337,7 +369,7 @@ export function ZCodeIntlProvider({
   return <IntlContext value={value}>{children}</IntlContext>;
 }
 
-/** Get the intl context. */
+/** 获取 intl 上下文 */
 export function useZCodeIntl(): IntlContextValue {
   const ctx = useContext(IntlContext);
   if (!ctx) {

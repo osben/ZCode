@@ -8,18 +8,19 @@ import type {
 } from "./types.js";
 
 /**
- * Pure selectors for the phase layer. Phases are a quotient layer **over the graph**:
- * this does not modify the graph; it only buckets steps by `Step.phase`. Selectors for the second layer (participants and handoffs) are in
- * participant-model.ts. The old drill-down filter (`filterGraphToPhase`) and roster (`phaseActors`) were retired with step-level rendering.
+ * 阶段层的纯选择器。阶段是图**上面的一层商**：
+ * 这里一个字都不改图本身，只按 `Step.phase` 把 step 分桶。第二层（参与者与交接）的选择器在
+ * participant-model.ts；旧的下钻过滤（`filterGraphToPhase`）与名册（`phaseActors`）随
+ * step 级渲染退役。
  *
- * No React or DOM.
+ * 无 React、无 DOM。
  */
 
 export { hasPhaseVocabulary };
 
 /**
- * Phase ID → member steps, bucketed in `phases` order (the phase table order defines visual sequence).
- * A cross-phase copy belongs to the phase where it appears.
+ * 阶段 id → 成员 step，按 `phases` 的顺序建桶（阶段表的顺序就是画面上的先后语义）。
+ * 跨阶段拷贝各自算它所在阶段的成员。
  */
 export function phaseMembers(graph: WorkflowCausalityGraphData): Map<string, WorkflowStepData[]> {
   const members = new Map<string, WorkflowStepData[]>(
@@ -33,8 +34,8 @@ export function phaseMembers(graph: WorkflowCausalityGraphData): Map<string, Wor
 }
 
 /**
- * Fold member-step statuses again (see `aggregateRunStatuses` for the grid): members without an entry do not participate.
- * If no member has an entry, this is static rendering or the whole station was unobserved; return undefined.
+ * 成员 step 状态的再折叠（格见 `aggregateRunStatuses`）：没有条目的成员不参与，一个条目都
+ * 没有 = 静态渲染或整站没被观察到，返回 undefined。
  */
 export function collapsePhaseStatus(
   members: readonly WorkflowStepData[],
@@ -46,7 +47,7 @@ export function collapsePhaseStatus(
   );
 }
 
-/** Get a phase by ID; inspectors and hosts use it to obtain display-name data. */
+/** 按 id 取阶段；检视器与宿主要用它拿显示名素材。 */
 export function findPhase(
   graph: WorkflowCausalityGraphData,
   phaseId: string,

@@ -310,7 +310,7 @@ describe("IntlProvider locale preference sync", () => {
       localePreference: "en-US",
     });
     expect(settingService.update).not.toHaveBeenCalledWith({
-      locale: "en-US",
+      locale: "zh-CN",
       localePreference: "system",
     });
     expect(broadcastService.send).toHaveBeenCalledWith({
@@ -366,7 +366,7 @@ describe("IntlProvider locale preference sync", () => {
     const broadcastService = createBroadcastService();
     renderIntlProvider({
       settings: {
-        locale: "en-US",
+        locale: "zh-CN",
         localePreference: "zh-CN",
       },
       update,
@@ -429,17 +429,20 @@ describe("IntlProvider locale preference sync", () => {
       localePreference: "en-US",
     });
     expect(update).not.toHaveBeenCalledWith({
-      locale: "en-US",
+      locale: "zh-CN",
       localePreference: "system",
     });
   });
 
   it("首次 settingService update 永久 pending 后再次选择仍会尝试持久化", async () => {
     const pendingUpdate = createDeferred<void>();
-    const update = vi.fn().mockReturnValueOnce(pendingUpdate.promise).mockResolvedValue(undefined);
+    const update = vi
+      .fn()
+      .mockReturnValueOnce(pendingUpdate.promise)
+      .mockResolvedValue(undefined);
     renderIntlProvider({
       settings: {
-        locale: "en-US",
+        locale: "zh-CN",
         localePreference: "zh-CN",
       },
       resolveSystemLocale: () => "zh-CN",

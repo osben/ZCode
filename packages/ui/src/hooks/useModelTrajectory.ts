@@ -23,10 +23,10 @@ function getErrorMessage(error: unknown): string {
 }
 
 /**
- * Read the model-call trajectory (model-io) for a task/session.
+ * 读取某个 task/session 的模型调用轨迹（model-io）。
  *
- * Path resolution and file reading are handled by zcodeTaskService.getModelTrajectory (on the host);
- * desktop reads locally, mobile remote control reads from the remote host, and the UI consumes only the structured result.
+ * 路径解析与文件读取都收口在 zcodeTaskService.getModelTrajectory（host 侧），
+ * 桌面读本机、手机远控读远端 host，UI 只消费结构化结果。
  */
 export function useModelTrajectory(
   workspacePath: string,

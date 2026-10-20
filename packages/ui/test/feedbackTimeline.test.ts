@@ -6,7 +6,7 @@ import { FeedbackTimeline } from "@/feedback/feedbackTimeline.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { FeedbackTicketEvent } from "@zcode/shared";
 
-function renderTimeline(events: FeedbackTicketEvent[], locale: "en-US" | "zh-CN" = "en-US") {
+function renderTimeline(events: FeedbackTicketEvent[], locale: "zh-CN" | "en-US" = "en-US") {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,

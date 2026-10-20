@@ -34,7 +34,7 @@ export function usePlugins(workspacePath: string | null, workspaceIdentity?: str
 
   useEffect(() => {
     if (!workspacePath) {
-      // Keeping the previous plugin cache with no active workspace leaves Install clickable in Discover, but it silently fails because store.workspacePath is empty.
+      // 无活动工作区时保留上一份插件缓存，会让 Discover 仍可点安装但 store.workspacePath 为空而静默失败。
       resetWorkspaceContext();
       return;
     }

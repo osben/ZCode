@@ -10,7 +10,7 @@ export async function getEnterprisePricingProducts(
   services: IServiceAccessor,
   domain: ProviderFamilyDomain,
 ): Promise<EnterprisePricingProductsResult> {
-  // Query each of the two account domains by its own Family; distinguish failures from an explicit empty list and do not use either to change an existing connection automatically.
+  // 两个账号域均须按自身 Family 查询；失败与明确空列表分开，不能据此自动改掉已有连接。
   try {
     const pricing = await services.codingPlanSubscriptionService.getEnterprisePricing({
       authenticated: true,

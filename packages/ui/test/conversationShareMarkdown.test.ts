@@ -11,8 +11,6 @@ describe("normalizeConversationShareMarkdown", () => {
     );
 
     expect(result).toBe("结论见 report.pdf。");
-    expect(result).not.toContain("zcode-file-citation");
-    expect(result).not.toContain("/Users/demo");
   });
 
   it("does not rewrite citation-looking text inside a fenced code block", () => {
@@ -21,9 +19,9 @@ describe("normalizeConversationShareMarkdown", () => {
     expect(normalizeConversationShareMarkdown(markdown)).toBe(markdown);
   });
 
-  // Bug regression: without workspacePath/readAttachment the public share page's MarkdownImage falls back to
-  // <img src={remote}>, firing cross-origin requests automatically in anonymous visitors' browsers — equivalent
-  // to a publisher-controlled tracking pixel (leaking IP/UA/Referer). Remote images are downgraded to links; requests happen only on click.
+  // Bug 回归：公开分享页无 workspacePath/readAttachment，MarkdownImage 会 fallback 到
+  // <img src={远程}>，在匿名访客浏览器自动发起跨域请求，等价于发布者可控的 tracking
+  // pixel（泄露 IP/UA/Referer）。这里把远程图片降级成链接，点击才发请求。
   describe("远程图片降级", () => {
     it("把 http/https 图片降级为普通链接", () => {
       expect(normalizeConversationShareMarkdown("![图](https://evil.example/x.png)")).toBe(

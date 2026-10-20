@@ -11,7 +11,7 @@ const HOST_ATTRIBUTE = "data-zcode-pptx-print-host";
 const PAGE_ATTRIBUTE = "data-zcode-pptx-print-page";
 const STYLE_ATTRIBUTE = "data-zcode-pptx-print-style";
 
-/** A single image decode failure does not block export (preview would fail too); cap the total decode wait */
+/** 单图解码失败不阻塞导出（预览同样会失败），整体解码等待设上限 */
 const IMAGE_DECODE_TIMEOUT_MS = 10_000;
 
 export type PrintableFontScript = "latin" | "cjk" | "symbol";
@@ -38,7 +38,7 @@ const FONT_DETECTION_SAMPLES: Record<PrintableFontScript, string> = {
   symbol: "◆▶▥✦★☻♪—“”",
 };
 
-// Skia/PDF m146 can use PingFang for screen rendering on macOS but does not write the corresponding glyph run into the PDF.
+// Skia/PDF m146 在 macOS 上可用 PingFang 做屏幕绘制，但不会把对应 glyph run 写入 PDF。
 const PRINT_UNSAFE_FONT_FAMILIES = new Set(["pingfang sc"]);
 
 const CJK_SANS_FALLBACKS = [
@@ -197,7 +197,7 @@ function appendGenericFallback(
 }
 
 /**
- * Return the deterministic font stack to write into the print DOM; null means the original preferred font is already available and needs no change.
+ * 返回需要写入打印 DOM 的确定性字体栈；null 表示原首选字体已经可用，无需改动。
  */
 export function resolvePrintableFontFamily(
   fontFamily: string,
@@ -252,13 +252,13 @@ function createCanvasFontAvailability(hostDocument: Document): PrintableFontAvai
   ]);
   const cache = new Map<string, boolean>();
   return (family, script) => {
-    // CoreText replaces uninstalled Windows CJK family aliases with macOS fonts, which Canvas text measurement cannot distinguish;
-    // keeping the original family would make Skia printing drop glyphs again, so use the printable CJK fallback directly on macOS.
+    // CoreText 会把未安装的 Windows CJK family 别名替换成 macOS 字体，Canvas 量宽无法区分；
+    // 继续保留原 family 会让 Skia 打印再次丢字，因此 macOS 直接交给可打印 CJK fallback。
     if (isMacOS && macOSSubstitutedWindowsFonts.has(normalizeFontFamily(family).toLowerCase())) {
       return false;
     }
-    // If a CJK font is missing, the browser falls back to another system CJK font; measuring CJK sample text would mistake this implicit fallback
-    // for the candidate font being installed. Common CJK fonts include Latin glyphs, so Latin samples identify the actual family.
+    // CJK 字体缺失时浏览器会继续落到另一个 CJK 系统字体；用 CJK 样本文字量宽会把这次隐式回退
+    // 误判为候选字体已安装。常见 CJK 字体都包含 Latin glyph，用 Latin 样本才能识别具体 family。
     const detectionScript = script === "cjk" ? "latin" : script;
     const key = `${family}\u0000${detectionScript}`;
     const cached = cache.get(key);
@@ -279,8 +279,8 @@ function createCanvasFontAvailability(hostDocument: Document): PrintableFontAvai
 }
 
 /**
- * Screen preview allows an implicit fallback when a font is not installed, but Chromium/Skia printing does not reliably preserve this fallback,
- * causing the corresponding text to be omitted from the PDF. Change only the one-off print DOM by placing a genuinely available font first in the stack.
+ * 屏幕预览允许未安装字体走隐式 fallback，但 Chromium/Skia 打印不会稳定保留这层回退，
+ * 导致对应文字没有写入 PDF。这里只改一次性打印 DOM，把真实可用字体提升到字体栈首位。
  */
 export function materializePrintableFontFamilies(
   hostDocument: Document,
@@ -319,9 +319,9 @@ function formatCssPx(value: number): string {
 function buildPrintCss(pageSize: { width: number; height: number }): string {
   const width = formatCssPx(pageSize.width);
   const height = formatCssPx(pageSize.height);
-  // Do not use display:none / visibility:hidden on screen; canvas and img must be rendered to appear in print output.
-  // Under print media, fixed elements repeat on every page and must become static; height:100% on html/body creates a trailing blank page.
-  // Slight overflow inside slides shows native scrollbars that are printed into the PDF, so hide them throughout.
+  // screen 下不能用 display:none / visibility:hidden——canvas、img 需要真实绘制才能进入打印输出。
+  // print 下 fixed 元素会在每一页重复，必须反转为 static；html/body 的 height:100% 会撑出尾部空白页。
+  // 幻灯片内部元素的轻微溢出会露出原生滚动条并被画进 PDF，整体隐藏。
   return `
 [${HOST_ATTRIBUTE}] * {
   scrollbar-width: none;
@@ -384,10 +384,10 @@ function nextFrame(): Promise<void> {
 }
 
 async function waitForPrintReady(hostDocument: Document, host: HTMLElement): Promise<void> {
-  // Wait for fonts after all pages have rendered so font loads triggered during rendering are included.
+  // 全部页渲染完成后再等字体，保证渲染过程中新触发的字体加载都计入
   await hostDocument.fonts?.ready;
   materializePrintableFontFamilies(hostDocument, host);
-  // Font replacement may trigger newly registered web fonts; wait again before handing off to the print pipeline.
+  // 字体替换可能命中新注册的 web font；再次等待后才能交给打印管线。
   await hostDocument.fonts?.ready;
   const decodes = Array.from(host.querySelectorAll("img"), (image) =>
     typeof image.decode === "function" ? image.decode().catch(() => undefined) : undefined,
@@ -398,14 +398,14 @@ async function waitForPrintReady(hostDocument: Document, host: HTMLElement): Pro
       new Promise((resolve) => setTimeout(resolve, IMAGE_DECODE_TIMEOUT_MS)),
     ]);
   }
-  // Allow time for the first canvas/chart frame to render.
+  // 给 canvas/图表首帧绘制留渲染窗口
   await nextFrame();
   await nextFrame();
 }
 
 /**
- * Render every presentation page into a hidden print container on the same page for printToPDF to output with print media.
- * Preview uses lazySlides, so render all pages here for the exported PDF to include every page.
+ * 把演示文稿的全部页面渲染进同页面的隐藏打印容器，供 printToPDF 以 print 媒体输出。
+ * 预览是 lazySlides 懒渲染，这里必须全量逐页渲染，导出的 PDF 才包含所有页。
  */
 export async function renderPresentationToPrintHost(
   doc: PresentationPreviewDocument,
@@ -443,7 +443,7 @@ export async function renderPresentationToPrintHost(
       host.append(page);
       const handle = doc.renderPage(pageIndex, page);
       handles.push(handle);
-      // Await sequentially to smooth peak media-decoding memory; throw and stop promptly if the document is disposed midway.
+      // 顺序 await：摊平媒体解码内存峰值；document 中途被 dispose 时尽快抛错终止
       await handle.ready;
     }
     await waitForPrintReady(hostDocument, host);

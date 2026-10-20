@@ -9,13 +9,12 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { BotGroupDelivery } from "@zcode/shared";
 
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const render = (results: BotGroupDelivery[]) =>
   renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(BotGroupDeliveryAction, {
         turnId: "product-turn-a",
         sourceCommandIds: ["command-a"],
@@ -69,7 +68,7 @@ describe("group reply delivery action", () => {
       const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(
             DeliveryContext.Provider,
             { value },
@@ -81,7 +80,7 @@ describe("group reply delivery action", () => {
         ),
       );
       expect(html).not.toContain("data-bot-topic-details");
-      expect(html).not.toContain(expectedCopy("bots.topic.details"));
+      expect(html).not.toContain("话题详情");
       if (status === "sent") expect(html).toBe("");
       else expect(html).toContain('data-bot-group-delivery="turn"');
     },
@@ -97,15 +96,11 @@ describe("group reply delivery action", () => {
     (status) => {
       const html = render([result(status, "command-a")]);
       expect(html).toContain('data-bot-group-delivery="product-turn-a"');
-      expect(html).toContain(
-        status === "failed"
-          ? expectedCopy("bots.group.deliveryFailed")
-          : expectedCopy("bots.group.deliveryUnknown"),
-      );
+      expect(html).toContain(status === "failed" ? "飞书发送失败" : "飞书待确认");
       expect(html).not.toContain("SECRET_FULL_RESULT");
       expect(html).not.toContain("ou_sender");
       expect(html).not.toContain("<aside");
-      expect(html).not.toContain(expectedCopy("bots.group.confirmReceived"));
+      expect(html).not.toContain("已核对：已收到");
     },
   );
 });

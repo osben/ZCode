@@ -23,7 +23,12 @@ export function CodeCommentAttachmentChip({
   const { intl } = useZCodeIntl();
   if (comments.length === 0) return null;
 
-  const label = intl.formatPlural({ id: "chat.codeComments" }, comments.length);
+  const label = intl.formatMessage(
+    {
+      id: comments.length === 1 ? "chat.codeComments.one" : "chat.codeComments.many",
+    },
+    { count: String(comments.length) },
+  );
   const removeLabel = intl.formatMessage({ id: "chat.codeComments.remove" });
 
   return (

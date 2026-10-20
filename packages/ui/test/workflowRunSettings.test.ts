@@ -7,6 +7,7 @@ import {
   clampWorkflowRunSettingsBound,
   describeWorkflowRunSettingsRejection,
   initialWorkflowRunSettingsDraft,
+  isWorkflowRunConfigurable,
   workflowRunDefaultConcurrency,
   workflowRunSettingsChange,
   workflowRunSettingsConsequenceId,
@@ -51,6 +52,24 @@ function formatterFor(messages: Record<string, string>) {
     return text;
   };
 }
+
+describe("isWorkflowRunConfigurable", () => {
+  it.each([
+    ["pending", run({ status: "pending" }), true],
+    ["running", run(), true],
+    ["errored（换个模型重试）", run({ status: "errored" }), true],
+    ["stopped（可恢复）", run({ status: "stopped", stopReason: "user", resumable: true }), true],
+    [
+      "stopped · superseded（活的是后继）",
+      run({ status: "stopped", stopReason: "superseded", supersededBy: "run-b" }),
+      false,
+    ],
+    ["completed（每个 ask 都会从缓存重放）", run({ status: "completed" }), false],
+    ["不在投影里", undefined, false],
+  ] as const)("%s", (_case, state, expected) => {
+    expect(isWorkflowRunConfigurable(state)).toBe(expected);
+  });
+});
 
 describe("表单起点", () => {
   it("两项都取 run 自己的设置：模型拆出思考档，上限取本 run 的界", () => {
@@ -275,6 +294,25 @@ describe("后果句与拒绝", () => {
     );
     expect(describeWorkflowRunSettingsRejection({ status: "accepted" })).toBeUndefined();
     expect(describeWorkflowRunSettingsRejection({ status: "noop" })).toBeUndefined();
+  });
+
+  it("每个 reason 在两种语言里都有词条", () => {
+    for (const reason of [
+      "not_found",
+      "not_configurable",
+      "unchanged",
+      "script_missing",
+      "model_unavailable",
+      "compile_failed",
+      "missing_boundaries",
+      "start_failed",
+      "unsupported",
+      "generic",
+    ]) {
+      const id = `chat.toolCall.workflow.run.settings.rejection.${reason}`;
+      expect(enUS[id], id).toBeTruthy();
+      expect(zhCN[id], id).toBeTruthy();
+    }
   });
 });
 

@@ -1,8 +1,7 @@
-// The half of the "save workflow" popover below the thin divider (docs/dynamic-workflow/transcript-and-notifications.md
-// "The popover"): three fields, one consequence sentence, one "save as-is" button.
+// 「保存工作流」弹层里细线之下的那一半（docs/dynamic-workflow/transcript-and-notifications.md
+// 「The popover」）：三个字段、一句后果、一枚「直接保存」。
 //
-// A separate file from the popover shell only to keep the 400-line gate; it holds no state —
-// everything is passed in by WorkflowSavePopover.
+// 与弹层壳分文件只为守住 400 行的门；这里不持有任何状态，全部由 WorkflowSavePopover 传进来。
 import type { RefObject } from "react";
 import { FolderIcon, GlobeIcon } from "lucide-react";
 import type { ZCodeSavedWorkflowScope } from "@zcode/shared";
@@ -21,7 +20,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { SAVED_WORKFLOW_NAME_MAX_CHARS, type WorkflowSaveDraft } from "./workflowRunSave.js";
 
-/** The agent rejected this save: `reason` is a word-listed cause, `detail` is the diagnostics it brought back (already bounded). */
+/** agent 拒绝了这一次保存：`reason` 是词表里的原因，`detail` 是它带回来的诊断（已有界）。 */
 export interface WorkflowSaveFailure {
   reason: string;
   detail?: string;
@@ -51,7 +50,7 @@ export function WorkflowSaveFields({
   pathPreview: string;
   saving: boolean;
   scopeLocked: boolean;
-  /** Another scope also holds this name: shadowing will happen; say so before it is clicked. */
+  /** 另一个作用域也占着这个名字：遮蔽会发生，在点下去之前说出来。 */
   shadowing: boolean;
   showDivider: boolean;
   submitDisabled: boolean;
@@ -88,7 +87,7 @@ export function WorkflowSaveFields({
             ref={nameRef}
             value={draft.name}
           />
-          {/* The suffix is a **fact**, not input: the name is a file name, the extension is decided by the save path, and the user should not (and cannot) change it. */}
+          {/* 后缀是**事实**不是输入：名字是文件名，扩展名由保存路径决定，用户不该也不能改它。 */}
           <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center font-mono text-ui-xs text-foreground-subtlest">
             .dwf.ts
           </span>
@@ -120,7 +119,7 @@ export function WorkflowSaveFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {/* The icons say "where it lands": the folder is this project; the globe is every project on this machine. */}
+            {/* 图标说的是「落在哪」：文件夹是这个项目，地球是这台机器上的每个项目。 */}
             <SelectItem value="project">
               <FolderIcon aria-hidden className="size-3.5 text-foreground-subtle" />
               {format("chat.toolCall.workflow.save.scope.project")}
@@ -177,11 +176,9 @@ export function WorkflowSaveFields({
 }
 
 /**
- * Three-in-one for the same spot: the agent's rejection → the overwrite warning → the consequence
- * sentence. When a rejection is present the popover stays open, because not a single byte was
- * written. Both the overwrite warning and the consequence sentence append the shadowing sentence when
- * another scope also holds this name (the same sentence as the SaveWorkflow card) — shadowing and
- * overwriting are two things; mentioning only one would make users believe the other will not happen.
+ * 同一个位置的三选一：agent 的拒绝 → 覆盖警告 → 一句后果。拒绝在场时弹层不关，因为一个字节
+ * 都没写；覆盖警告与后果句都会在另一个作用域也占着这个名字时补上遮蔽那一句（与 SaveWorkflow
+ * 卡同一句话）——遮蔽与覆盖是两件事，只说其中一件会让用户以为另一件不会发生。
  */
 function WorkflowSaveConsequence({
   failure,
@@ -199,8 +196,7 @@ function WorkflowSaveConsequence({
   const { intl } = useZCodeIntl();
   const format = (id: string, values?: Record<string, string>) =>
     intl.formatMessage({ id }, values);
-  // The shadowing sentence borrows the SaveWorkflow card's wording (which itself carries no period);
-  // the period is added per language by the message entry.
+  // 遮蔽那一句借 SaveWorkflow 卡的原词（它本身不带句号），句号随语言由词条补上。
   const shadowingText = shadowing
     ? format("chat.toolCall.workflow.saveRun.shadowing", {
         text: format(
@@ -233,9 +229,8 @@ function WorkflowSaveConsequence({
       </div>
     );
   }
-  // The path is a technical value and needs monospace type (DESIGN.md reserves font-mono for
-  // technical values); the message engine only accepts strings, so a placeholder that never appears
-  // in copy splits the sentence into before/after, and the path is embedded back as a <code>.
+  // 路径是技术值，要等宽排印（DESIGN.md 把 font-mono 留给技术值）；词条引擎只收字符串，所以
+  // 用一个不会出现在文案里的占位符把句子切成前后两段，再把路径以 <code> 嵌回去。
   const [before, after = ""] = format("chat.toolCall.workflow.saveRun.consequence", {
     path: PATH_SLOT,
   }).split(PATH_SLOT);
@@ -252,5 +247,5 @@ function WorkflowSaveConsequence({
   );
 }
 
-/** Placeholder for the path inside the sentence: NUL never appears in any message entry. */
+/** 路径在句子里的占位：NUL 不会出现在任何词条里。 */
 const PATH_SLOT = "\u0000";

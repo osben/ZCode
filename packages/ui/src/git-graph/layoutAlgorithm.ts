@@ -61,7 +61,9 @@ export class LayoutVertex {
   }
 
   getNextParent() {
-    return this.nextParentIndex < this.parents.length ? this.parents[this.nextParentIndex]! : null;
+    return this.nextParentIndex < this.parents.length
+      ? this.parents[this.nextParentIndex]!
+      : null;
   }
 
   registerParentProcessed() {
@@ -104,7 +106,9 @@ export class LayoutVertex {
       (connection) => connection?.target === target && connection.branch === branch,
     );
 
-    return connectionIndex >= 0 ? { laneIndex: connectionIndex, rowIndex: this.id } : null;
+    return connectionIndex >= 0
+      ? { laneIndex: connectionIndex, rowIndex: this.id }
+      : null;
   }
 
   reservePoint(laneIndex: number, target: LayoutVertex, branch: LayoutBranch) {
@@ -214,7 +218,7 @@ function determineNormalPath(params: {
       vertex = parentVertex;
       parentVertex = vertex.getNextParent();
       if (parentVertex === missingParent) {
-        // A parent outside the paginated window has no visible node, so do not continue its edge to the bottom of the window.
+        // 分页窗口外的 parent 没有可见节点，不能继续把线画到窗口底部。
         vertex.registerParentProcessed();
         break;
       }

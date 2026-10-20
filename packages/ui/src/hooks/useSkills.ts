@@ -36,10 +36,10 @@ export interface UseSkillsOptions {
 }
 
 /**
- * Skill catalog for the Composer.
- * A draft without prewarm uses the current workspace scan as its authority; prewarmed or existing sessions use the corresponding
- * AgentRuntime frozen snapshot as the authority. When the workspace/session/remote attachment/runtime generation changes,
- * stale async results must never be applied.
+ * Composer 的 Skill catalog。
+ * 无 prewarm 的 draft 以 workspace 当前扫描为 authority；prewarm/已有 Session 以对应
+ * AgentRuntime 冻结快照为 authority。workspace/session/remote attachment/runtime 代次变化时，
+ * 旧异步结果一律不得回填。
  */
 export function useSkills(options: UseSkillsOptions): ConversationSkillCatalogState {
   const resolution = useWorkspaceServicesResolution(
@@ -62,15 +62,15 @@ export function useSkills(options: UseSkillsOptions): ConversationSkillCatalogSt
     if (!options.enabled || !options.sessionId || !rpcReady) return;
     const subscription = services.zcodeAgentService.onAgentRuntimeRestarted((event) => {
       if (event.workspaceKey !== workspaceKey) return;
-      // The workspace/session key stays the same after a runtime restart, so the old catalog would still match.
-      // Advance the generation explicitly so a cold-restored runtime must provide Session authority again.
+      // runtime 重建后 workspace/session key 不变，旧 catalog 会继续命中。
+      // 显式推进代次，使冷恢复后的新 runtime 必须重新提供一次 Session authority。
       setRuntimeRevision((current) => current + 1);
     });
     return () => subscription.dispose();
   }, [options.enabled, options.sessionId, rpcReady, services, workspaceKey]);
 
-  // Isolate rendering by scope identity: return an empty state even before the effect for a key change runs,
-  // so Skills from an old Session or remote attachment cannot leak into the new Composer for one frame.
+  // 用 scope 身份隔离渲染：key 切换后的 effect 尚未执行时也只返回空态，避免旧 Session
+  // 或旧 remote attachment 的 Skill 在一帧内泄漏到新 Composer。
   const requestScope = useMemo(
     () => ({}),
     [options.enabled, remoteSessionId, requestKey, rpcReady, services],
@@ -131,12 +131,7 @@ export function useSkills(options: UseSkillsOptions): ConversationSkillCatalogSt
     services,
   ]);
 
-  if (
-    !options.enabled ||
-    !options.workspacePath ||
-    !rpcReady ||
-    scopedState.scope !== requestScope
-  ) {
+  if (!options.enabled || !options.workspacePath || !rpcReady || scopedState.scope !== requestScope) {
     return EMPTY_STATE;
   }
   return scopedState.value;

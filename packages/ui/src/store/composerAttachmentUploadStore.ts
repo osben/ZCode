@@ -13,8 +13,8 @@ export type ComposerAttachmentUploadStatus =
 
 export interface ComposerAttachmentUploadItem extends ChatComposerAttachment {
   /**
-   * composer-owned remains in the upload/staging lifecycle; session-owned is an existing ref withdrawn from the authoritative queue.
-   * The latter has already been taken over by the session, so runtime restart, cleanup, and resend must not process reference ownership again.
+   * composer-owned 仍处于上传/暂存生命周期；session-owned 是从权威 queue 撤回的既有 ref。
+   * 后者已经由 session 接管，runtime restart、cleanup 和 resend 都不能再次处理引用所有权。
    */
   referenceOwnership: "composer" | "session";
   uploadStatus: ComposerAttachmentUploadStatus;
@@ -25,8 +25,8 @@ export interface ComposerAttachmentUploadItem extends ChatComposerAttachment {
   operationId: string;
   autoRetryCount: number;
   /**
-   * Retransmissions triggered by a runtime generation change are counted separately from retries after upload failure.
-   * A generation change is not an "upload failure"; sharing a counter would consume the user's visible retry allowance on the first generation change.
+   * 因 runtime 换代触发的重传次数，与上传失败重试分开计。
+   * 换代不是「上传失败」，共用计数器会让一次换代就烧掉用户可见的重试配额。
    */
   runtimeRebuildRetryCount: number;
   staged: boolean;
@@ -40,8 +40,8 @@ interface ComposerAttachmentUploadStoreState {
 }
 
 /**
- * Renderer in-memory state: File/object URLs are not persisted, but survive task/composer switches and partial unmounts.
- * The upload controller remains in the hook closure that started the operation; relay/main do not store business state.
+ * renderer 内存态：File/object URL 不落盘，但 task/composer 切换或局部卸载不会丢失。
+ * 上传控制器仍由发起该 operation 的 hook 闭包持有，relay/main 不保存业务状态。
  */
 export const useComposerAttachmentUploadStore = create<ComposerAttachmentUploadStoreState>()(
   () => ({ scopes: {} }),
@@ -55,7 +55,7 @@ declare global {
 }
 
 if (shouldExposeE2EStoreBridge()) {
-  // E2E exposes only the current attachment owner for scope-switch test setup; attachments are no longer put back into the legacy Session Store.
+  // E2E 只暴露当前唯一附件 owner，供 scope 切换用例准备状态；不再把附件塞回旧 Session Store。
   window.__zcodeComposerAttachmentUploadStoreE2E = useComposerAttachmentUploadStore;
 }
 
@@ -67,31 +67,6 @@ export function exposeComposerAttachmentScopeKeyForE2E(scopeKey: string): void {
 
 export function readComposerAttachmentScope(scopeKey: string): ComposerAttachmentUploadItem[] {
   return useComposerAttachmentUploadStore.getState().scopes[scopeKey] ?? [];
-}
-
-/** One atomic ownership transfer; File/object URLs are moved, never copied or re-created. */
-export function moveComposerAttachmentScopeItems(
-  source: string,
-  target: string,
-  ids: readonly string[],
-): void {
-  if (source === target) return;
-  const selected = new Set(ids);
-  useComposerAttachmentUploadStore.setState((state) => {
-    const owned = (state.scopes[source] ?? []).filter((item) => selected.has(item.id));
-    const remaining = (state.scopes[source] ?? []).filter((item) => !selected.has(item.id));
-    const scopes = {
-      ...state.scopes,
-      [target]: [
-        ...(state.scopes[target] ?? []).filter((item) => !selected.has(item.id)),
-        ...owned,
-      ],
-    };
-    if (remaining.length) scopes[source] = remaining;
-    else delete scopes[source];
-    if (!scopes[target]?.length) delete scopes[target];
-    return { scopes };
-  });
 }
 
 export function updateComposerAttachmentScope(

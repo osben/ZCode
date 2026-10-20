@@ -1,7 +1,7 @@
 /**
- * TabStoreProvider — initializes the Tab Zustand store and provides it through React Context.
+ * TabStoreProvider —— 初始化 Tab Zustand store 并通过 React Context 提供
  *
- * Mounted independently in each window; tab state is not broadcast across windows.
+ * 每个窗口独立挂载，tab 状态不跨窗口广播。
  */
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { useStore } from "zustand";
@@ -18,7 +18,7 @@ const TabStoreContext = createContext<TabStore | null>(null);
 const fallbackTabStore = createTabStore(null);
 
 export function TabStoreProvider({ children }: { children: ReactNode }) {
-  // Create the store only on the first render to avoid duplicates during HMR.
+  // 只在首次渲染时创建 store，避免 HMR 重复创建
   const storeRef = useRef<TabStore | null>(null);
   if (!storeRef.current) {
     storeRef.current = createTabStore();
@@ -30,9 +30,9 @@ export function TabStoreProvider({ children }: { children: ReactNode }) {
     }
 
     const store = storeRef.current;
-    // V4 drafts have no taskId; if E2E looks up the workspace using activeTaskId=null,
-    // it may match any draft bucket in a multi-workspace setup. Expose the current window's navigation store only in E2E builds, so helpers can
-    // read the current draft precisely by workspaceIdentity?.trim() || workspacePath.
+    // V4 draft 没有 taskId，E2E 若按 activeTaskId=null 反查 workspace，
+    // 多 workspace 会命中任意草稿桶。只在 E2E 构建暴露当前窗口导航 store，供 helper
+    // 按 workspaceIdentity?.trim() || workspacePath 精确读取当前草稿。
     window.__zcodeTabStoreE2E = store;
     return () => {
       if (window.__zcodeTabStoreE2E === store) {
@@ -45,9 +45,9 @@ export function TabStoreProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * Hook for consuming the Tab store.
+ * 消费 Tab store 的 hook
  *
- * Usage:
+ * 用法：
  *   const tabs = useTabStore(s => s.tabs);
  *   const addTab = useTabStore(s => s.addTab);
  */
@@ -59,14 +59,14 @@ export function useTabStore<T>(selector: (state: TabStoreState) => T): T {
   return useStore(store, selector);
 }
 
-/** For independently rendered presentational components; falls back to an empty tab state without a Root provider. */
+/** 供可独立渲染的展示组件读取；无 Root provider 时回退为空 tab 状态。 */
 export function useOptionalTabStore<T>(selector: (state: TabStoreState) => T): T {
   const store = useContext(TabStoreContext);
   return useStore(store ?? fallbackTabStore, selector);
 }
 
 /**
- * Gets the raw tab-store reference (for non-React contexts, such as subscriptions in useEffect).
+ * 获取 tab store 的原始引用（用于非 React 上下文，如 useEffect 中的订阅）
  */
 export function useTabStoreApi(): TabStore {
   const store = useContext(TabStoreContext);

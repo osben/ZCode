@@ -91,15 +91,15 @@ export function CodingPlanUpgradeAction({
           "button-gradient dark:bg-[#484A58] text-white hover:bg-transparent hover:opacity-90 dark:hover:bg-[#484A58] pr-[5px] rounded-full",
       )}
       onClick={() => {
-        // The purchase/upgrade entry must open the panel first. The panel handles expired OAuth after the user selects
-        // a plan/cycle, so clicking Upgrade does not jump straight to login and hide the purchase flow.
+        // 购买/升级入口必须先打开面板，OAuth 失效恢复由面板在用户选择
+        // plan/周期后处理，避免点击 Upgrade 直接跳登录导致用户看不到购买流程。
         onUpgradePlansVisibleChange(!upgradePlansVisible);
       }}
       disabled={loginLoading}
     >
       {loginLoading ? (
-        // Upgrade may first refresh the OAuth business token.
-        // Without a spinner while disabled, users may think the click did not register.
+        // Upgrade 可能先触发 OAuth 业务 token 刷新。
+        // 等待期间只有 disabled 没有 spinner，用户会误以为点击没有响应。
         <Loader2Icon className="size-3.5 animate-spin" />
       ) : upgradePlansVisible ? (
         <ArrowLeftIcon className="size-3.5" />
@@ -107,7 +107,9 @@ export function CodingPlanUpgradeAction({
         <RocketIcon className="size-3.5" />
       )}
       {intl.formatMessage({
-        id: upgradePlansVisible ? "settings.modelProvider.codingPlan.cancelUpgrade" : actionLabelId,
+        id: upgradePlansVisible
+          ? "settings.modelProvider.codingPlan.cancelUpgrade"
+          : actionLabelId,
       })}
       {billingDiscountButtonActive ? (
         <CodingPlanBillingDiscountBadgePill

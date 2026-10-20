@@ -1,11 +1,11 @@
-/* eslint-disable max-lines -- The CUA settings page coordinates the Plugin master toggle, two permission states, and the authorization-return recovery flow; split into components later. */
-// Settings section for "Computer Use":
-//  - One master toggle at the top: enable/disable the zcode-cua Plugin (including its MCP server and skill).
-//  - On macOS, also show Accessibility / Screen Recording permission rows (with authorization guidance and stale-state recovery).
-// Reuse SettingsGroupCard / SettingsRow / SettingsBadge / Switch to match other Settings sections.
+/* eslint-disable max-lines -- CUA 设置页同时编排插件总开关、双权限状态与授权返回恢复链；后续单独拆分组件。 */
+// 设置页「电脑控制 (Computer Use)」分区：
+//  - 顶部一个总开关：开/关 zcode-cua 插件（连带其 MCP server 与 skill 一起启用/禁用）。
+//  - macOS 下再展示 Accessibility / Screen Recording 两个权限行（含授权引导与 stale 恢复链）。
+// UI 复用 SettingsGroupCard / SettingsRow / SettingsBadge / Switch，与其它设置分区保持一致。
 //
-// Helper permission state uses useCuaPermissionStatus: event-driven checks on page entry / window refocus / explicit refresh,
-// with no periodic polling; state lives in a shared cache also read by the persistent input-toolbar entry.
+// Helper 权限状态走 useCuaPermissionStatus：事件驱动（进入页面 / 窗口重获焦点 / 显式 refresh）
+// 各查一次，不再定时轮询；状态存在共享缓存里，与输入框常驻入口读同一份。
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useSettings } from "@/hooks/useSettingService.js";
 import type { CuaOsSupport, CuaPermissionKind, RemoteTarget } from "@zcode/shared";
@@ -54,7 +54,7 @@ interface ComputerUseSectionProps {
   workspaceIdentity?: string;
   remoteSessionId?: string | null;
   remoteTarget?: RemoteTarget | null;
-  // In SSH remote Settings, workspacePath is a remote path; local Helper-state queries must use the local workspace path.
+  // SSH 远端设置页里 workspacePath 是远端路径；本机 Helper 状态查询必须使用本机 workspace 路径。
   localWorkspacePath?: string | null;
 }
 
@@ -72,13 +72,13 @@ export function ComputerUseSection({
   const services = useServices();
   const platform = usePlatform();
   const pluginManagementService = services.pluginManagementService;
-  // cuaPermissionService is optional in main (remote hosts have no CUA); handlers below exit early when it is absent.
+  // cuaPermissionService 在 main 是可选字段（远端 host 无 CUA）；下方各 handler 在缺失时早退。
   const cuaPermissionService = services.cuaPermissionService;
   const isLocalWorkspace =
     !remoteSessionId &&
     !remoteTarget &&
     !(workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim()));
-  // Windows uses only the Plugin master toggle; TCC permissions, Helper state, and additional settings are available only on macOS.
+  // Windows 只复用插件总开关；macOS 才具备 TCC 权限、Helper 状态和附加设置能力。
   const supportsLocalMacWorkspace =
     !isWindowsDesktop &&
     (isMacDesktop ?? supportsLocalMacCuaPermissionOnboarding(platform)) &&
@@ -93,16 +93,16 @@ export function ComputerUseSection({
     remoteTarget,
     workspaceIdentity,
   });
-  // CUA permissions are local macOS properties; only full macOS Settings needs the Helper workspace path.
+  // CUA 权限是 macOS 本机属性：仅完整 macOS 设置需要 Helper workspace 路径。
   const path = supportsLocalMacWorkspace ? (localWorkspacePath ?? workspacePath) : null;
-  // Display follows settled only: fresh returns to false at the start of each query, and rendering from it would switch the authorization button label
-  // between "Verifying…" and its terminal state, causing its width to jump.
+  // 展示只跟 settled：fresh 每次查询开始都会落回 false，跟着它渲染会让授权按钮的文案
+  // 在「验证中…」与终态之间切换、宽度随之跳变。
   const { status, settled, refresh } = useCuaPermissionStatus(path ?? null, workspaceIdentity);
   const availableStatus = status && isCuaPermissionStatusAvailable(status) ? status : null;
 
-  // macOS version requirement: on older systems, LaunchServices rejects Helper startup with -10825, appearing as an unresponsive authorization flow.
-  // Query the main process once (GetCuaOsSupport); below the supported floor, show a notice card and hide authorization actions.
-  // Treat query failure as no version restriction so Settings is not blocked; useCuaPermissionStatus polling remains, with only the interaction entry hidden.
+  // macOS 版本门槛：低版本系统上 Helper 被 LaunchServices -10825 拒启，表象是授权反复无响应。
+  // 查询一次主进程判定（GetCuaOsSupport），低于地板时渲染提示卡并隐藏授权操作区。
+  // 查询失败按无门槛处理，不阻塞设置页；useCuaPermissionStatus 轮询保留，仅隐藏交互入口。
   const [osSupport, setOsSupport] = useState<CuaOsSupport | null>(null);
   useEffect(() => {
     if (!supportsLocalMacWorkspace || typeof platform.executeDesktopCommand !== "function") return;
@@ -113,7 +113,7 @@ export function ComputerUseSection({
         if (!cancelled) setOsSupport(result as CuaOsSupport);
       })
       .catch(() => {
-        /* Treat query failure as no version restriction so Settings is not blocked. */
+        /* 查询失败按无门槛处理，不阻塞设置页 */
       });
     return () => {
       cancelled = true;
@@ -122,7 +122,7 @@ export function ComputerUseSection({
 
   const macOsBelowCuaFloor = osSupport?.kind === "macos-below-minimum";
 
-  // Master toggle = zcode-cua Plugin enabled state (read from the Plugin-management store; toggling also enables/disables its MCP + skill).
+  // 总开关 = zcode-cua 插件启用态（读自插件管理 store；切换即同步启用/禁用插件及其 MCP + skill）。
   const plugins = usePluginManagementStore((state) => state.plugins);
   const setPluginEnabled = usePluginManagementStore((state) => state.setEnabled);
   const initializePlugins = usePluginManagementStore((state) => state.initialize);
@@ -141,7 +141,7 @@ export function ComputerUseSection({
     )
       return;
     initRef.current = true;
-    // Reuse the same initialization path as the Plugins section to ensure the store has loaded zcode-cua's enabled state.
+    // 复用 Plugins 分区同一条初始化路径，确保 store 已加载 zcode-cua 的 enabled 态。
     void initializePlugins({
       workspacePath,
       workspaceIdentity,
@@ -156,7 +156,7 @@ export function ComputerUseSection({
   ]);
 
   const [restarting, setRestarting] = useState(false);
-  // Restart single-flight: authorization-return callbacks, double-clicks, and the manual button share one operation, avoiding concurrent broker-credential rotation.
+  // 重启 single-flight：授权返回回调、双击和手动按钮共享同一 operation，不并发轮换 broker 凭据。
   const restartPromiseRef = useRef<Promise<boolean> | null>(null);
   const pendingGrantSessionIdRef = useRef<string | undefined>(undefined);
   const returnRecoveryRef = useRef(createCuaPermissionReturnRecoveryState());
@@ -166,9 +166,9 @@ export function ComputerUseSection({
     );
     pendingGrantSessionIdRef.current = undefined;
   }, [path, workspaceIdentity]);
-  // If verification remains stale after restarting Helper, show the fallback "Restart ZCode" button. Auto-clear it when Accessibility becomes granted.
+  // 重启 Helper 后验证仍持续 stale → 显示"重启 ZCode"兜底按钮。accessibility 变 granted 时自愈清除。
   const [verifyTimedOut, setVerifyTimedOut] = useState(false);
-  // Unmount guard: skip setState when an async fetch / restart / toggle completes after the component unmounts.
+  // 卸载守卫：异步 fetch / 重启 / 切换完成时若组件已卸载，跳过 setState。
   const mountedRef = useRef(true);
   const pluginToggleGenerationRef = useRef(0);
   const pluginToggleContextKey = [
@@ -201,7 +201,7 @@ export function ComputerUseSection({
     };
   }, []);
 
-  // Also leave the old participant when the same Settings instance switches workspaces; otherwise an old request can restore the wrong Helper when it returns.
+  // 同一设置页实例切换 workspace 时也要退出旧 participant；否则旧调用返回后会恢复错误的 Helper。
   useEffect(
     () => () => {
       permissionStatusCheckTokenRef.current = null;
@@ -246,16 +246,16 @@ export function ComputerUseSection({
           }
           if (!result.ok) return false;
 
-          // A healthy Helper socket does not mean the tccd state has propagated; briefly poll to confirm whether stale has cleared.
+          // Helper socket 已健康不代表 tccd 状态已经传播完成；短轮询确认 stale 是否消失。
           const stillStale = await waitForAccessibilityNotStale(() =>
             cuaPermissionService.getStatus(targetPath, targetWorkspaceIdentity),
           );
-          // The workspace may change during authorization; complete required side effects for the old action without polluting upgrade notices on the new page.
+          // 授权过程中可能切换 workspace；旧操作仍完成必要副作用，但不能污染新页面的升级提示。
           if (mountedRef.current && helperContextKeyRef.current === targetContextKey) {
             setVerifyTimedOut(stillStale);
-            // Background permission polling must remain read-only; actual screenshots may follow only an explicit authorization return/restart.
-            // Restart single-flight already merges recovery of the same Helper into one operation, so queue only one active probe here;
-            // the hook continues to merge focus/refresh events and avoid duplicate macOS privacy collection.
+            // 后台权限轮询必须保持只读，真实截图只能跟随显式的授权返回/重启。
+            // restart single-flight 已经把同一 Helper 恢复合并为一次，这里只排一个主动探针；
+            // hook 会继续合并 focus/refresh，避免重复触发 macOS 隐私采集。
             refresh({ includeFunctionalProbes: true });
             queuedActiveProbe = true;
           }
@@ -276,7 +276,7 @@ export function ComputerUseSection({
           restartPromiseRef.current = null;
           if (mountedRef.current) {
             setRestarting(false);
-            // Failure still performs a readonly refresh; success has already queued one active probe for the current workspace.
+            // 失败路径仍只读刷新；成功路径已在当前 workspace 精确排入一次主动探针。
             if (!queuedActiveProbe) refresh();
           }
         }
@@ -297,12 +297,12 @@ export function ComputerUseSection({
       if (!claim || !isCuaPermissionReturnRecoveryCurrent(claim.state, claim)) {
         return false;
       }
-      // If a restart is already in progress before authorization, wait for it to finish, then launch a new Helper after authorization.
+      // 授权前若已有 restart，先等它结束，再启动一个真正位于授权之后的新 Helper。
       const existing = restartPromiseRef.current;
       if (existing) await existing;
       if (!isCuaPermissionReturnRecoveryCurrent(claim.state, claim)) return false;
-      // If authorization starts on A and the user switches to B, the result still belongs to A's runtime on the current renderer/host. Use the identity captured at click time
-      // to complete the required restart; only the later display refresh should follow current props. A UI-generation change must not drop the side effect.
+      // A 发起授权后切到 B，返回结果仍属于当前 renderer/host 的 A runtime。用点击时捕获的 identity
+      // 完成必要 restart；只让后续展示刷新服从当前 props，不能因 UI generation 变化丢掉副作用。
       const ok = await onRestart(target?.workspacePath, target?.workspaceIdentity, {
         reason: "permission_granted",
         ...((onboardingSessionId ?? pendingGrantSessionIdRef.current)
@@ -317,8 +317,8 @@ export function ComputerUseSection({
     [onRestart],
   );
 
-  // Fallback: if state remains stale after restarting Helper, the user can restart ZCode in one click (reusing the RelaunchApp flow used by OAuth sign-out).
-  // The new ZCode process starts Helper cleanly, bypassing restart mechanisms that may be stuck in the current process (orphan/socket/state pollution).
+  // 兜底:重启 Helper 后仍持续 stale 时,用户可一键重启 ZCode(复用 OAuth 登出同款 RelaunchApp)。
+  // 新 ZCode 进程会干净地重新拉起 Helper,绕过当前进程里可能卡住的重启机制(孤儿/socket/状态污染)。
   const onRelaunchApp = useCallback(async () => {
     if (typeof platform.executeDesktopCommand !== "function") return;
     await platform.executeDesktopCommand(DesktopCommandIds.RelaunchApp);
@@ -329,7 +329,7 @@ export function ComputerUseSection({
       if (!pluginManagementService) return;
       const operationGeneration = ++pluginToggleGenerationRef.current;
       const operationContextKey = pluginToggleContextKey;
-      // Toggling the zcode-cua Plugin also enables/disables its MCP server + skill.
+      // 切换 zcode-cua 插件 = 同步其 MCP server + skill 一起启用/禁用。
       const completed = await runAfterSuccessfulPluginEnabledChange({
         submit: () => setPluginEnabled(ZCODE_CUA_OFFICIAL_PLUGIN_ID, next, pluginManagementService),
         isCurrent: () =>
@@ -338,8 +338,8 @@ export function ComputerUseSection({
           pluginToggleContextKeyRef.current === operationContextKey,
         onSuccess: () => {
           if (supportsLocalMacWorkspace) {
-            // Show permission state and manual authorization entry points only on the macOS Computer Use settings page. Enabling the Plugin must not automatically open
-            // a macOS Permissions modal; refresh the status instead to avoid interrupting the user's current workflow.
+            // 权限状态和手动授权入口只在 macOS Computer Use 设置页展示。启用插件不得自动打开
+            // macOS Permissions modal；刷新状态即可，避免打断用户当前工作流。
             refresh();
           }
           if (!next) {
@@ -365,7 +365,7 @@ export function ComputerUseSection({
     ],
   );
 
-  // Open macOS System Settings to guide the user in granting the specified permission (Accessibility / Screen Recording).
+  // 打开 macOS 系统设置引导用户授权指定权限（Accessibility / Screen Recording）。
   const openPermissionSettings = useCallback(
     async (initialPermission: CuaPermissionKind): Promise<void> => {
       if (
@@ -391,15 +391,15 @@ export function ComputerUseSection({
           toast(intl.formatMessage({ id: "cuaPermission.modal.unavailable" }));
           return;
         }
-        // The settings-row button used to rely directly on lastKnown state; it could open an outdated pane after another window granted permission or while a refresh
-        // was in flight. Re-query Helper on click and allow only the exact item currently denied/stale.
+        // 设置页行按钮过去直接使用 lastKnown 状态；另一窗口刚完成授权或当前刷新
+        // in-flight 时仍会打开过期 pane。点击边沿重新查询 Helper，只允许当前 denied/stale 的精确项。
         let currentStatus = await cuaPermissionService.getStatus(path, workspaceIdentity, {
           includeFunctionalProbes: false,
         });
-        // After returning from System Settings, the App must restart Helper to read the new TCC authorization. During this window, queries report
-        // unavailable (clicking the row immediately after authorization degrades preflight to "Temporarily unable to verify"
-        // instead of "Authorized"). When unavailable, retry briefly twice at 2s intervals until Helper is ready and reaches "Authorized"
-        // or the actual missing-permission branch; if the guard becomes invalid (unmount/double click/context switch), abandon without further retries.
+        // 从系统设置授权返回后 App 会重启 Helper 才能读到新 TCC 授权，这段窗口内查询拿到的是
+        // 不可用状态（授权完立刻点行按钮，预检查退化成「暂时无法确认」
+        // 而非「已授权」）。状态不可用时短重试 2 次、间隔 2s，等 Helper 就绪后走到「已授权」
+        // 或真实缺权分支；期间守卫失效（卸载/重复点击/上下文切换）直接放弃，不再重试。
         for (
           let attempt = 0;
           attempt < 2 && !isCuaPermissionStatusAvailable(currentStatus);
@@ -418,9 +418,9 @@ export function ComputerUseSection({
             includeFunctionalProbes: false,
           });
         }
-        // A React concurrent commit may receive the workspace A→B update before the passive effect cleans up A.
-        // The context ref updated synchronously during render is the only reliable invalidation signal in this window; yield one macrotask before checking,
-        // so a late A status cannot open native Settings for B.
+        // React concurrent commit 可能已经收到 workspace A→B 更新但 passive effect 尚未清理 A。
+        // render 同步更新的 context ref 是这段窗口内唯一可靠的失效信号；让出一个 macrotask后再判，
+        // 迟到的 A 状态不能为 B 打开原生设置页。
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         if (
           !mountedRef.current ||
@@ -472,7 +472,7 @@ export function ComputerUseSection({
             void applyPendingGrant(claim, recoveryTarget, result.sessionId);
           }
         } else if (result?.success && result.returnedFromSettings) {
-          // A duplicate join by the same renderer for the main session only refreshes; different windows each receive recovery for their host.
+          // 同一 renderer 对 main session 的重复 join 只刷新；不同窗口各自会拿到本 host 的 recovery。
           refresh();
         }
         if (result?.success === false && !result.canceled) {
@@ -516,7 +516,7 @@ export function ComputerUseSection({
     void (returnRecoveryRef.current.pending ? applyPendingGrant() : onRestart());
   }, [applyPendingGrant, onRestart]);
 
-  // Self-heal: when Accessibility becomes granted in any later query, clear the "Restart ZCode" fallback (the issue is resolved).
+  // 自愈:accessibility 在后续任一次查询里变成 granted 时,清除"重启 ZCode"兜底(说明问题已解决)。
   useEffect(() => {
     if (availableStatus?.accessibility === "granted") setVerifyTimedOut(false);
   }, [availableStatus?.accessibility]);
@@ -528,7 +528,7 @@ export function ComputerUseSection({
         type="button"
         variant="link"
         size="sm"
-        className="text-icon-blue hover:text-icon-blue/80"
+        className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"
         aria-label={intl.formatMessage({ id: labelId })}
         title={intl.formatMessage({ id: labelId })}
         disabled={!settled}
@@ -544,9 +544,9 @@ export function ComputerUseSection({
     );
   };
 
-  // Permission state → { dot color tone, label text }, keeping the dot and label in sync (granted green/stale yellow/denied red/unknown gray).
-  // TCC=granted consistently displays granted (green); the capability probe (functionalProbeOk) is used only to determine runtime readiness,
-  // and no longer flips the display to "verifying" on every poll (which caused granted↔verifying oscillation).
+  // 权限状态 → { 圆点颜色 tone, 文案 text }，保证圆点与文案同源（granted 绿/stale 黄/denied 红/unknown 灰）。
+  // TCC=granted 即稳定显示 granted（绿）；功能探针（functionalProbeOk）只用于 runtime 就绪判断，
+  // 不再让它在每次轮询时把显示态翻成 "verifying"（否则会 granted↔verifying 反复横跳）。
   const statusView = (
     state: "granted" | "stale" | "denied" | "unknown" | undefined,
   ): { tone: StatusDotTone; text: string } => {
@@ -557,7 +557,7 @@ export function ComputerUseSection({
       };
     }
     if (state === "stale") {
-      // Legacy Helper compatibility only: this may be process lag or an old ad-hoc CDHash entry, so UI offers both restart and reauthorization.
+      // 仅兼容旧 Helper：可能是进程 lag，也可能是旧 ad-hoc CDHash 行，UI 同时提供重启与重新授权。
       return {
         tone: "amber",
         text: intl.formatMessage({ id: "cuaPermission.status.stale" }),
@@ -575,8 +575,8 @@ export function ComputerUseSection({
     };
   };
 
-  // A stale state in legacy Helper may come from process cache or an old ad-hoc CDHash. Restart and verify first; if it still fails,
-  // keep both reauthorization and the "Restart ZCode" fallback so a state that one Helper restart cannot fix is not presented as resolved.
+  // 旧 Helper 的 stale 可能来自进程缓存，也可能来自旧 ad-hoc CDHash；先重启并验证，仍失败时同时
+  // 保留重新授权入口与“重启 ZCode”兜底，避免把不可由单次 Helper 重启修复的状态误导成已解决。
   const renderRestartDetail = (): ReactNode => (
     <div className="flex flex-col items-start gap-2">
       <Button
@@ -592,7 +592,7 @@ export function ComputerUseSection({
       </Button>
       {verifyTimedOut && !restarting ? (
         <div className="flex flex-col items-start gap-1">
-          <span className="text-ui-sm text-foreground-subtlest">
+          <span className="text-xs text-foreground-subtlest">
             {intl.formatMessage({ id: "cuaPermission.modal.relaunchAppHint" })}
           </span>
           <Button type="button" variant="ghost" size="sm" onClick={() => void onRelaunchApp()}>
@@ -605,20 +605,20 @@ export function ComputerUseSection({
     </div>
   );
 
-  // Status view for both permissions (dot tone + label), using the same source to prevent text/color drift.
+  // 两项权限的状态视图（圆点 tone + 文案），与圆点同源，避免文案/颜色不同步。
   const acc = statusView(availableStatus?.accessibility);
   const screenPerm = statusView(availableStatus?.screenRecording);
 
-  // Visibility of the persistent input-toolbar entry. Write the hide toggle through useSettings().update
-  // (calling settingService directly only persists it and does not refresh the shared snapshot, so the input button would not see the new value).
-  // Optimistically update the local toggle; roll back and show a notice on failure.
+  // 输入框常驻入口的显隐。隐藏开关用 useSettings().update 写入
+  // （直连 settingService 只落盘不刷新共享 snapshot，输入框按钮读不到新值）。
+  // 乐观更新本地开关，失败回滚并提示。
   const { settings: appSettings, update: updateAppSettings } = useSettings();
   const [composerEntryHiddenOverride, setComposerEntryHiddenOverride] = useState<boolean | null>(
     null,
   );
   const [composerEntrySaving, setComposerEntrySaving] = useState(false);
-  // Hidden by default, matching useCuaComposerEntry: show it only when false has been explicitly persisted.
-  // These two places must agree or the Settings toggle will not match the actual input-toolbar button visibility.
+  // 默认隐藏，与 useCuaComposerEntry 同口径：只有显式存过 false 才算展示。
+  // 两处必须一致，否则设置页开关的显示状态会和输入框按钮的实际显隐对不上。
   const persistedComposerEntryHidden = appSettings?.computerUseComposerEntryHidden !== false;
   const composerEntryVisible = !(composerEntryHiddenOverride ?? persistedComposerEntryHidden);
   useEffect(() => {
@@ -651,8 +651,8 @@ export function ComputerUseSection({
     [intl, updateAppSettings],
   );
 
-  // Product requirement: when denied (not authorized), the status badge on the right is itself clickable,
-  // with the same effect as the "Open System Settings" authorization button; granted/stale/unknown remain display-only.
+  // 产品需求：denied（未授权）时右侧状态徽章本身可点击，
+  // 效果同「打开系统设置」授权按钮；granted/stale/unknown 保持纯展示。
   const renderPermissionBadge = (
     kind: CuaPermissionKind,
     view: { tone: StatusDotTone; text: string },
@@ -681,8 +681,8 @@ export function ComputerUseSection({
   };
 
   if (!supportsComputerUseSettings) {
-    // Returning null directly in remote/Linux environments would leave only the settings-page title and make users think the page failed to load.
-    // Keep the entry point and explain the capability boundary, without rendering controls that trigger local CUA writes.
+    // 远端 / Linux 环境若直接 return null，设置页只剩标题，会让用户误以为页面加载失败。
+    // 保留入口并明确能力边界，且不渲染任何会触发本地 CUA 写操作的控件。
     return (
       <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-ui-base text-warning">
         <p className="font-medium">
@@ -703,7 +703,7 @@ export function ComputerUseSection({
 
   return (
     <div className="space-y-4">
-      {/* Master toggle: enable/disable the zcode-cua Plugin (including its MCP + skill). */}
+      {/* 总开关：开/关 zcode-cua 插件（同步其 MCP + skill） */}
       <SettingsGroupCard>
         <SettingsRow
           label={intl.formatMessage({ id: "settings.computerUse.toggleLabel" })}
@@ -721,10 +721,10 @@ export function ComputerUseSection({
             />
           }
         />
-        {/* Visibility toggle for the persistent input-toolbar entry: off is a persisted hidden marker
-              and is not reset by restart or upgrade. It controls only whether the button renders, not Plugin enablement or running tasks.
-              When Computer Use is off, the button is hidden regardless (Plugin gate in cuaComposerEntryState),
-              so disable the toggle and explain the prerequisite; a clickable switch with no visible effect looks broken. */}
+        {/* 输入框常驻入口的显隐开关：关闭是持久化 hidden 标记，
+            重启与版本更新都不会自愈。只管按钮渲不渲染，不影响插件启用态与进行中任务。
+            电脑控制关闭时按钮无论如何都不渲染（cuaComposerEntryState 的插件门），
+            此时把开关置灰并改文案说明前置条件——留一个可点却看不到效果的开关会被当成坏了。 */}
         <SettingsRow
           label={intl.formatMessage({ id: "settings.computerUse.composerEntry.label" })}
           description={intl.formatMessage({
@@ -745,13 +745,13 @@ export function ComputerUseSection({
         />
       </SettingsGroupCard>
 
-      {/* Hide permission settings below when CUA is disabled, leaving only the master toggle instead of a set of disabled controls. */}
+      {/* CUA 未启用时隐藏下方权限配置，只留总开关，避免一堆禁用项。 */}
       {cuaEnabled && supportsLocalMacWorkspace ? (
         <>
-          {/* When macOS is below the CUA Helper support floor, authorization cannot complete
-                  (LaunchServices rejects Helper startup with -10825); replace the entire card with an upgrade notice. */}
+          {/* macOS 版本低于 CUA Helper 承诺地板时，授权在低版本系统上无法完成
+              （Helper 被 LaunchServices -10825 拒启），整卡替换为升级提示。 */}
           {macOsBelowCuaFloor ? (
-            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-ui-base text-warning">
+            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
               <p className="font-medium">
                 {intl.formatMessage(
                   { id: "cuaPermission.osFloorTitle" },
@@ -764,7 +764,7 @@ export function ComputerUseSection({
               <p>{intl.formatMessage({ id: "cuaPermission.osFloorDescription" })}</p>
             </div>
           ) : null}
-          {/* Keep macOS permission guidance inside Settings; CUA actions and tool approvals no longer open the permission modal automatically. */}
+          {/* macOS 权限引导只保留在 Settings 内，CUA 操作与工具审批流不再自动弹权限 modal。 */}
           {!macOsBelowCuaFloor ? (
             <SettingsGroupCard>
               <SettingsRow

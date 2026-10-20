@@ -33,7 +33,7 @@ describe("highspeed turn store", () => {
     const sourceCommandId = "command-fallback-toast-once";
 
     expect(claimHighspeedFallbackToast(sourceCommandId)).toBe(true);
-    // A second pane or a component remount must not toast again for the same fallback event.
+    // 第二个 pane 或组件重挂载不能为同一降级事件再次弹 Toast。
     expect(claimHighspeedFallbackToast(sourceCommandId)).toBe(false);
   });
 
@@ -42,7 +42,7 @@ describe("highspeed turn store", () => {
 
     expect(claimHighspeedHealthyAttempt(cardId, false)).toBe(true);
     expect(claimHighspeedHealthyAttempt(cardId, false)).toBe(false);
-    // After SessionPane remounts, the card-level dedupe state in the store is still reused.
+    // SessionPane 重挂载后仍复用 store 里的卡级防重状态。
     expect(claimHighspeedHealthyAttempt(cardId, false)).toBe(false);
     expect(claimHighspeedHealthyAttempt(cardId, true)).toBe(true);
     expect(claimHighspeedHealthyAttempt(cardId, true)).toBe(false);
@@ -87,11 +87,9 @@ describe("highspeed turn store", () => {
   });
 
   it("merges late authoritative metadata into an already registered turn", () => {
-    // CR-04 regression: the remote-control Renderer registers the record from the running user row first;
-    // the desktop then finishes persisting the CLI statistics and projects them into the transcript. The old
-    // implementation skipped when the same sourceCommandId already existed, so the remote never got the
-    // completed state and card-level TPS, saved time, and auto-share candidates could never settle.
-    // Hydration must merge authoritative fields idempotently by sourceCommandId.
+    // CR-04 回归：远控 Renderer 先按运行中的 user row 登记记录；桌面端随后完成 CLI 统计持久化并
+    // 投影到 transcript。旧实现发现同 sourceCommandId 已存在就跳过，远端永远缺完成态，卡级 TPS、
+    // 节省时间与自动分享候选都无法收口。水合必须按 sourceCommandId 幂等合并权威字段。
     const sessionId = "session-late-merge";
     const sourceCommandId = "command-late-merge";
     const cardId = "hsc-late-merge";
@@ -127,7 +125,7 @@ describe("highspeed turn store", () => {
       },
     };
     expect(hydrateHighspeedTurnsFromTranscript(sessionId, [completedRow])).toBe(1);
-    // The late complete metadata produces exactly one store notification.
+    // 迟到的完整 metadata 只产生一次 store 通知。
     expect(getHighspeedTurnVersion()).toBe(versionBefore + 1);
     expect(getHighspeedTurnByCommandId(sourceCommandId)).toMatchObject({
       metrics: {
@@ -149,7 +147,7 @@ describe("highspeed turn store", () => {
       savedDurationMs: 500,
     });
 
-    // An identical re-hydration is an idempotent no-op: no record change, no notification.
+    // 完全相同的再次水合是幂等 no-op：不改记录、不通知。
     const versionAfter = getHighspeedTurnVersion();
     expect(hydrateHighspeedTurnsFromTranscript(sessionId, [completedRow])).toBe(0);
     expect(getHighspeedTurnVersion()).toBe(versionAfter);
@@ -163,8 +161,7 @@ describe("highspeed turn store", () => {
     completeHighspeedTurn({ sourceCommandId, outputTokens: 90, durationMs: 700 });
 
     const versionBefore = getHighspeedTurnVersion();
-    // The transcript is still running (no completion fields): running-state fields must not overwrite
-    // completed fields, and no notification should be produced.
+    // transcript 仍是运行态（无完成字段）：运行态字段不得覆盖已完成字段，也不应产生通知。
     expect(
       hydrateHighspeedTurnsFromTranscript(sessionId, [
         {
@@ -273,9 +270,8 @@ describe("highspeed turn store", () => {
       { cardId: expiringCard.cardId, allTurnsCompleted: true },
     ]);
     setHighspeedCardTps(expiringCard.cardId, 100);
-    // Two turns each save 400ms, 800ms total / 1500ms total duration → about 1.53x, above the 1.2x
-    // release bar, ensuring this case verifies the "expired + all completed + claim once" mechanism
-    // rather than being blocked by the eligibility gate.
+    // 两轮各节省 400ms，合计 800ms / 总耗时 1500ms → 约 1.53x，超过 1.2x 发布门槛，
+    // 保证本用例验证的是「到期 + 全部完成 + claim 一次」机制，而不是被资格门禁挡下。
     markHighspeedTurnMetricsPersisted("command-auto-share-1", 400);
     markHighspeedTurnMetricsPersisted("command-auto-share-2", 400);
 
@@ -331,9 +327,8 @@ describe("highspeed turn store", () => {
       durationMs: 1_000,
     });
     setHighspeedCardTps(lowCard.cardId, 100);
-    // 100ms saved / 1000ms → about 1.1x, below the 1.2x release bar: the card has output, TPS, and is
-    // persisted, so the only reason it is held back is the eligibility gate — verifying "below the bar
-    // does not pop the bottom-left card" (spec §9).
+    // 节省 100ms / 1000ms → 约 1.1x，未达 1.2x 发布门槛：卡有输出、有 TPS、已持久化，
+    // 唯一被挡下的原因就是资格门禁，验证「未达标不弹左下角卡」（spec §9）。
     markHighspeedTurnMetricsPersisted("command-below-speedup", 100);
 
     expect(listHighspeedCardAutoShareCandidates(lowCard.taskId)).toEqual([]);

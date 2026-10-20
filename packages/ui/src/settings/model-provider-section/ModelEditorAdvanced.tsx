@@ -31,7 +31,7 @@ export function ModelEditorAdvanced({
       setExpanded(false);
       return;
     }
-    // Error placement depends on layout: maximum output is already in the basic section; reasoning level and mapping require expansion to fix.
+    // 错误位置随布局变化：最大输出已在基础区；推理等级和映射必须展开才能修正。
     if (errorField && errorField !== "maxOutputTokens" && ERROR_TARGETS[errorField]) {
       setExpanded(true);
     }
@@ -43,7 +43,7 @@ export function ModelEditorAdvanced({
       ?.closest("[data-model-settings-scroll]")
       ?.querySelector<HTMLElement>(selector);
     let cancelled = false;
-    // Focus after the actual expand animation ends to avoid scrolling to an input that is still clipped; do not rely on a guessed delay.
+    // 等实际展开动画结束再聚焦，避免滚动到尚被裁切的输入；不依赖猜测的延时。
     const animations = ref.current?.getAnimations({ subtree: true }) ?? [];
     void Promise.all(animations.map((animation) => animation.finished.catch(() => {}))).then(() => {
       if (!cancelled) target?.focus();
@@ -68,8 +68,7 @@ export function ModelEditorAdvanced({
         />
         {intl.formatMessage({ id: "settings.modelProvider.advancedConfig" })}
       </button>
-      {/* Keep the control mounted to preserve the reasoning-level editor's local draft; when
-          collapsed, remove it from keyboard and screen-reader navigation. */}
+      {/* 保持控件挂载，保留推理等级编辑器的局部草稿；收起时退出键盘及读屏导航。 */}
       <div
         id={contentId}
         inert={!expanded}

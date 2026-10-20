@@ -31,7 +31,7 @@ export function resolveOAuthProviderIdByPreset(
 }
 
 export function resolveModelProviderNavLogo(item: ModelProviderNavItem) {
-  // The brand's primary entry reuses the Start navigation ID, but must not show the trial-plan icon as a result.
+  // 品牌主入口沿用 Start 导航 ID，但不能因此显示体验套餐图标。
   if (item.type === "preset") return item.logo;
   return "provider" in item ? item.provider?.config.logo : undefined;
 }

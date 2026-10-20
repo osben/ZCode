@@ -2,8 +2,8 @@ import type { ZCodeProvider } from "@zcode/shared";
 import { GlmMonochromeIcon } from "@/components/ui/GlmMonochromeIcon.js";
 
 export function renderProviderCliIcon(_provider: ZCodeProvider = "glm", className?: string) {
-  // Only the glm provider remains; preserve the original logo silhouette and apply grayscale only.
-  // The previous outlined version was more purely monochrome but reduced brand recognition too much.
-  // A shared filter keeps the original logo while making its colors more subdued.
+  // 仅剩 glm provider；保留原始 logo 轮廓，只做灰白化处理。
+  // 之前的线框化虽然更“纯黑白”，但品牌辨识度下降太明显；
+  // 改成统一滤镜后，页面里仍然是原 logo，同时颜色更克制。
   return <GlmMonochromeIcon className={className} />;
 }

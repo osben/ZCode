@@ -4,43 +4,41 @@ import type {
 } from "@/components/workflow-timeline/timeline-model.js";
 
 /**
- * Spine layout (docs/dynamic-workflow/presentation.md, “The spine”): translate the timeline model
- * into the vertical rails to draw for **each phase** and the **joint rows** between phases. This is
- * a pure function of indexes and pixels, with no React or DOM; renderers simply draw its output.
+ * 脊线的排布（docs/dynamic-workflow/presentation.md「The spine」）：把时间线模型翻译成**每一节**
+ * 要画的竖轨，以及节与节之间的**接头行**。纯函数、只有下标与像素，没有 React、没有 DOM——渲染件
+ * 照着画就行。
  *
- * Track t's vertical line is at `x = 21 + 12t`; a branch track in a band leaves the main track from 13px above the first segment via a fork curve, runs
- * vertically down, then returns to the main track with a mirrored curve at the merge segment's top (or at the last segment's bottom if there is no merge). The main track
- * still passes through branch segments, and its stroke is the main segment spanning that row — control flow really passes through there, even though that segment's node is off the main track.
+ * 像提交图一样排：左边是轨道，右边是文字，两者不共用一列。轨道 t 的竖轨在 `x = 21 + pitch·t`，
+ * 整根脊线的文字从同一列起（`39 + gutter`，`gutter = pitch·(T − 1)`，T 是最宽的带的轨道数）——站在
+ * 哪条轨道只挪它的灯，不挪它的字。此前节头只给**自己**的轨道让路（`39 + 12·track`），别的轨道穿过
+ * 这一节时就从站名上压过去；轨道多了，主线上的站名一个个被穿。
  *
- * Branches and merges happen **between** stations, so each gets its own joint row (`SPINE_JOINT_PX`)
- * instead of being squeezed into an adjacent phase header: every band has a branch row before its
- * first phase and a merge row after its last phase. Previously, curves were drawn 13px above the
- * first phase, above the merge station, or below the band's **last** phase. A branch from the first
- * station then fell in from outside the list, while a merge at the final station appeared beneath
- * its pill and reconnected to a main rail that had already ended.
+ * 分叉与汇合发生在两站**之间**，所以各占一行接头（`SPINE_JOINT_PX`），而不是挤进相邻那一节的节头：
+ * 每条带都有一行分叉挂在带首节之前、一行汇合挂在带末节之后。此前曲线画在带首节的顶上 13px、
+ * 汇合站的顶上或带末节的**底**上——带从第一站起时分叉从清单之外落下来，带到最后一站时汇合画在
+ * 末节药丸的下面，接回一条早已结束的主轨。
  *
- * For a band with no predecessor, the branch row is **open**: the main rail does not come from the
- * previous station; it starts 4px above the row with a rounded cap—a root. A band with no merge
- * station also has an open merge row, where the main rail ends 4px below the row—a sink (TAIL/STUB
- * on the card). Root cause (observed on device 2026-09-24): the first version drew joint rows only
- * when a predecessor/merge station existed, and strands started/ended at their own lamps. When the
- * workflow was one band with one station per strand (four phases running in pairs), each strand
- * had zero length and only four floating lamps remained on the spine. Open joint rows occupy their
- * own space without overlapping phase headers or pills, so always draw them.
+ * 没有前驱的带，分叉行是**开口**的（`open`）：主轨不从上一站来，而是在行上方 4px 起一个圆头——一个根；
+ * 没有汇合站的带，汇合行同样开口，主轨在行下方 4px 收住——一个汇点（卡上的 TAIL / STUB）。
+ * Bug 原因（2026-09-24 实机）：第一版只在前驱 / 汇合站存在时才画接头行，strand 改为在自己的灯上
+ * 起止；整个工作流就是一条带、每条 strand 只有一站时（四阶段两两并行），每条 strand 长度为零，
+ * 脊线上只剩四枚悬空的灯。开口的接头行住在自己的行里，不会压到节头或药丸上，所以一律画出来。
  *
- * A strand's vertical rail runs from the bottom of its branch row to the top of its merge row. The
- * rail is still split by phase into upper/lower segments and `full` segments that cross a whole
- * phase; they expand and collapse with the phase, so no measurement is needed.
+ * 一条 strand 的竖轨从分叉行的底到汇合行的顶。竖轨仍按节拆成上下两截与整节穿过的 `full`，随节的
+ * 展开收起自己伸缩，不用量。
  */
 
-/** Height of a joint row. */
+/** 接头行的高度。 */
 export const SPINE_JOINT_PX = 16;
-/** Center x-coordinate of the main vertical rail. */
+/** 主线竖轨的 x（中心）。 */
 export const SPINE_TRACK_X = 21;
-/** Branch rails use a 12px pitch up to this count, then compress to 8px. */
+/** 分支轨不多于这么多条时轨距 12，多了收到 8。 */
 const WIDE_PITCH_BRANCHES = 4;
 
-/** A vertical track segment. `from` / `to` override the default start/end (px from the segment top / bottom) only when making room for a curve. */
+/**
+ * 一段竖轨：`above` = 节顶到灯，`below` = 灯到节底，`full` = 整节穿过。`stream` = 它是一条流轨的一半：
+ * 在节边界让出 chevron 的缺口，`below` 那一半负责把 chevron 画在缺口里（presentation.md「The spine」）。
+ */
 export interface SpineRailPiece {
   track: number;
   ink: TimelineInk;
@@ -48,26 +46,26 @@ export interface SpineRailPiece {
   stream?: true;
 }
 
-/** A joint row: the main rail passes straight through (using the ink of the main-line segment crossing it), with one curve per branch. */
+/** 一行接头：主轨直穿（墨是跨过它的那条主线段的墨），每条分支一条曲线。 */
 export interface SpineJoint {
   main: TimelineInk;
   branches: { track: number; ink: TimelineInk }[];
-  /** Open row: a branch row has no predecessor (root), or a merge row has no merge station (sink); the main rail extends only a short stub outside the row. */
+  /** 开口：分叉行没有前驱（根）、汇合行没有汇合站（汇点）——主轨只在行外伸出一截短头。 */
   open?: true;
 }
 
 export interface SpineSection {
   rails: SpineRailPiece[];
-  /** Branch row attached **before** this phase (the first phase in a band). */
+  /** 挂在这一节**之前**的分叉行（这一节是某条带的首节）。 */
   fork?: SpineJoint;
-  /** Merge row attached **after** this phase (the last phase in a band). */
+  /** 挂在这一节**之后**的汇合行（这一节是某条带的末节）。 */
   merge?: SpineJoint;
 }
 
 export interface SpineLayout {
-  /** Spacing between adjacent rails. */
+  /** 相邻两条轨道的间距。 */
   pitch: number;
-  /** Extra width reserved for the text column when bands exist: `pitch·(T − 1)`; 0 when there are none. */
+  /** 文字列比没有带时多让出的宽度：`pitch·(T − 1)`；没有带时 0。 */
   gutter: number;
   sections: SpineSection[];
 }
@@ -77,9 +75,8 @@ export function spineLayout(model: WorkflowTimelineModel): SpineLayout {
   const widest = Math.max(1, ...bands.map((band) => band.tracks.length));
   const pitch = widest - 1 <= WIDE_PITCH_BRANCHES ? 12 : 8;
   const bandAt = (i: number) => bands.find((band) => band.from <= i && i <= band.to);
-  // A double segment only says “these two stations run in parallel,” so draw no spine. Branch/merge
-  // segments are drawn by joint rows, not inside phases either. Stream rails use the same two-half
-  // rendering as regular segments, with one additional gap.
+  // 双线段只说「这两站并行」，脊线不画；分叉 / 汇合段由接头行画，也不在节里画。流轨与普通段
+  // 一样按两半画，只多一个缺口。
   const plain = rails.filter((rail) => rail.kind === undefined || rail.kind === "stream");
   const railOf = (from: number, to: number) =>
     plain.find((rail) => rail.from === from && rail.to === to);
@@ -90,9 +87,8 @@ export function spineLayout(model: WorkflowTimelineModel): SpineLayout {
   const sections: SpineSection[] = stations.map((_, i) => {
     const band = bandAt(i);
     if (band === undefined) {
-      // Stations outside bands keep the existing behavior: draw the previous station's lower half
-      // and the next station's upper half; leave gaps when there is no adjacent edge. The main
-      // branch/merge rail (with no kind) connects here as usual; branch rails belong to joint rows.
+      // 带外的站：与从前一样，上一站画下半截、下一站画上半截；相邻无边就留空。汇合 / 分叉段的
+      // 主线那一条（kind 缺席）照常接在这里，分支那几条归接头行。
       const pieces: SpineRailPiece[] = [];
       const above = plain.find((rail) => rail.to === i);
       const below = plain.find((rail) => rail.from === i);
@@ -107,7 +103,7 @@ export function spineLayout(model: WorkflowTimelineModel): SpineLayout {
       const members = track.stations;
       const at = members.indexOf(i);
       if (at >= 0) {
-        // This strand's rail: the upper half connects to the previous member or branch row; the lower half connects to the next member or merge row.
+        // 自己的轨道：上半截接前一个成员或分叉行，下半截接后一个成员或汇合行。
         const previous = members[at - 1];
         const next = members[at + 1];
         pieces.push({
@@ -124,9 +120,8 @@ export function spineLayout(model: WorkflowTimelineModel): SpineLayout {
         });
         return;
       }
-      // Another rail crosses this entire phase: use incoming ink before its first member, outgoing
-      // ink after its last member, and the segment's ink between them. This also applies to the main
-      // rail passing through a branch station.
+      // 别的轨道整节穿过这一节：首个成员之前是进入墨，末个成员之后是离开墨，其间是那一段的墨。
+      // 主轨穿过分支站也是这一条。
       const before = members.filter((member) => member < i).pop();
       const after = members.find((member) => member > i);
       const ink =

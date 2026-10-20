@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Keep task-query cache descriptors, membership, and mutations in the same Zustand transaction; splitting them would raise cache-consistency risk. */
+/* eslint-disable max-lines -- task query cache 的 descriptor、membership 与 mutation 必须在同一 Zustand 事务里维护，拆散会增加缓存一致性风险。 */
 import { create } from "zustand";
 import type { ZCodeTaskListItem } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -25,7 +25,7 @@ export interface TaskListMembershipState {
 interface TaskQueryCacheState {
   resultsByQueryKey: Record<TaskListCacheKey, CachedTaskListResult>;
   taskMetaByEntityKey: Record<TaskEntityKey, CachedTaskListItem>;
-  /** Override unreadAt while it is being submitted or awaiting membership confirmation; null means clear it. */
+  /** 覆盖正在提交或等待 membership 确认的 unreadAt 字段；null 表示清除。 */
   taskUnreadOverlayByEntityKey: Record<TaskEntityKey, number | null>;
   setQueryResult: (params: {
     queryKey: TaskListCacheKey;
@@ -49,7 +49,7 @@ interface TaskQueryCacheState {
       partial?: boolean;
       loadingShardKeys?: string[];
       failedShardKeys?: string[];
-      /** invalidationVersion observed when this async query started; discard the entire result if it no longer matches. */
+      /** 该异步查询启动时观察到的 invalidationVersion；不匹配时整条结果丢弃。 */
       expectedInvalidationVersion?: number;
     }>,
   ) => void;
@@ -164,10 +164,10 @@ function sortTaskKeysByDescriptor(params: {
   });
 }
 
-// Items produced by republish (membership refresh, sessions-index frame) are all new object references.
-// Even if the contents did not change, replacing the references would refresh taskMetaByEntityKey and derived items memo for the whole list,
-// causing every list row to rerender unnecessarily. Compare fields and retain the old reference when equivalent.
-// Compare nested fields (lastError/target, etc.) using JSON; task metadata objects are small enough for this cost.
+// republish（membership 重拉、sessions-index 帧）产出的 item 都是全新对象引用。
+// 内容没变时如果照样换引用，taskMetaByEntityKey 和派生 items memo 会整列表换新，
+// 所有列表行无效重渲染。这里做逐字段等价判断，等价则保留旧引用。
+// 嵌套字段（lastError/target 等）用 JSON 比较；task meta 是小对象，代价可接受。
 function areCachedTaskListItemsEquivalent(
   left: CachedTaskListItem,
   right: CachedTaskListItem,
@@ -212,8 +212,8 @@ function mergeIncomingTaskListItem(params: {
 }): CachedTaskListItem {
   const incomingActivity = getTaskListRowActivity(params.item);
   const existingActivity = params.existingItem ? getTaskListRowActivity(params.existingItem) : null;
-  // Search results come from tasks-index, but the entity cache may already contain sessions-index activity.
-  // Preserve that sidecar when merging; otherwise running/waiting-for-confirmation state disappears as soon as the user types a search term.
+  // 搜索结果来自 tasks-index，但实体缓存可能已有 sessions-index activity。
+  // 合并时保留 sidecar，否则用户一输入搜索词，running/等待确认就会消失。
   const incomingWithActivity =
     params.descriptor.search && params.existingItem && existingActivity && !incomingActivity
       ? (mergeTaskListMembershipFields(params.existingItem, params.item) as CachedTaskListItem)
@@ -225,9 +225,9 @@ function mergeIncomingTaskListItem(params: {
       params.item.title.trim().toLocaleLowerCase() === "new session") &&
     params.existingItem.title.trim().length > 0 &&
     params.existingItem.title.trim().toLocaleLowerCase() !== "new session";
-  // For non-search lists, incoming items combine sessions-index activity with the latest membership join.
-  // Do not choose a whole-meta winner by tasks-index updatedAt; a rename/unread response could overwrite live
-  // phase/lastActivityAt. Preserve only the initial title and non-activity display fields until sessions-index catches up.
+  // 非搜索列表的 incoming item 是 sessions-index activity + 最新 membership join，
+  // 不能再按 tasks-index updatedAt 做 whole-meta winner；否则 rename/unread 响应会覆盖实时
+  // phase/lastActivityAt。只保留 sessions-index 尚未补齐时的首发标题和非 activity 展示字段。
   const mergedItem = params.descriptor.search
     ? incomingWithActivity
     : ({
@@ -251,15 +251,15 @@ function mergeIncomingTaskListItem(params: {
           searchSnippet: params.existingItem.searchSnippet,
           searchSnippets: params.existingItem.searchSnippets,
         };
-  // Preserve references: when the merged result equals the current value, reuse the old object so downstream memoization/shallow comparisons can short-circuit.
+  // 引用保持：合并结果与现值等价时沿用旧对象，让下游 memo/浅比较短路。
   return params.existingItem && areCachedTaskListItemsEquivalent(nextItem, params.existingItem)
     ? params.existingItem
     : nextItem;
 }
 
-// If republished content is equivalent to the current cache, skip the entire setState,
-// avoiding needless reference changes to resultsByQueryKey/taskMetaByEntityKey and rerenders of the whole list.
-// fetchedAt/stale are excluded from comparison (retaining their old values is safe and only makes the preserve window more conservative).
+// republish 内容与现缓存完全等价时，直接跳过整个 setState，
+// 避免 resultsByQueryKey/taskMetaByEntityKey 换新引用引发全列表无效重渲染。
+// fetchedAt/stale 不参与比较（保留旧值不影响正确性，preserve 窗口只会更保守）。
 function isQueryResultEquivalent(params: {
   previousResult: CachedTaskListResult | undefined;
   taskKeys: TaskEntityKey[];
@@ -330,8 +330,8 @@ function preserveFreshLocalTaskKeys(params: {
   }
 
   const sortedTaskKeys = sortTaskKeysByDescriptor({
-    // A SQLite list refresh may arrive after the optimistic insertion of a newly created task.
-    // Temporarily preserve only keys locally updated after the previous list snapshot, so an older refresh does not remove the new task from the sidebar.
+    // sqlite 列表刷新可能晚于首发 optimistic 插入。
+    // 只有本地更新时间新于上一轮列表快照的 key 才临时保留，避免旧刷新把新 task 从侧栏抹掉。
     taskKeys: [...params.incomingTaskKeys, ...preservedTaskKeys],
     taskMetaByEntityKey: params.taskMetaByEntityKey,
     descriptor: params.descriptor,
@@ -397,8 +397,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
             ? typeof item.unreadAt !== "number"
             : item.unreadAt === unreadAtOverlay)
         ) {
-          // RPC success does not mean every in-flight membership query has refreshed.
-          // Release the overlay only after a query actually publishes the same field value; older responses must not overwrite the new state before or after that.
+          // RPC 成功不等于所有在途 membership 查询都已更新。
+          // overlay 只有在 query 真正发布出同一字段值后才可释放，旧回包前后都不能覆盖新状态。
           delete nextTaskUnreadOverlayByEntityKey[entityKey];
           taskUnreadOverlayChanged = true;
         }
@@ -439,7 +439,7 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
         failedShardKeys,
         invalidationVersion: state.resultsByQueryKey[queryKey]?.invalidationVersion ?? 0,
       };
-      // If contents are equivalent to the current cache, skip setState so republishing does not rerender the whole list unnecessarily.
+      // 内容与现缓存完全等价时跳过 setState，republish 不再引发全列表无效重渲染。
       if (
         !taskMetaChanged &&
         !taskUnreadOverlayChanged &&
@@ -492,9 +492,9 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           entry.expectedInvalidationVersion !== undefined &&
           entry.expectedInvalidationVersion !== currentInvalidationVersion
         ) {
-          // sessions-index activity and tasks-index membership are joined asynchronously.
-          // If invalidated again while a request is in flight, the old result must not update the entity, release the unread overlay, or mark the query fresh;
-          // the hook will recompute using the latest activity/membership revision.
+          // sessions-index activity 与 tasks-index membership 是异步 join。
+          // 在途期间再次失效时，旧结果不能写 entity、释放 unread overlay 或把 query 标 fresh；
+          // hook 会按最新 activity/membership revision 自动重算。
           continue;
         }
         const searchSnippetsByTaskKey: Record<TaskEntityKey, string> = {};
@@ -565,7 +565,7 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           failedShardKeys: entry.failedShardKeys,
           invalidationVersion: currentInvalidationVersion,
         };
-        // Same equivalence short-circuit as setQueryResult for a single item; retain old result references for unchanged entries.
+        // 与单条 setQueryResult 同一等价短路——内容没变的条目保留旧结果引用。
         if (
           isQueryResultEquivalent({
             previousResult,
@@ -602,8 +602,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
     set((state) => {
       const entityKey = buildTaskEntityKey(task);
       const existingTask = state.taskMetaByEntityKey[entityKey];
-      // During restart recovery, a raw session snapshot may update the query cache before the list refresh.
-      // Merge it with indexed metadata here so a snapshot without titleOverridden does not overwrite a user-renamed title.
+      // 重启恢复时 raw session snapshot 可能先于列表刷新写入 query cache。
+      // 这里必须和已有 indexed meta 合并，避免缺少 titleOverridden 的 snapshot 把用户手动标题覆盖掉。
       const mergedTask = mergeTaskMetaCandidates(task, existingTask) ?? task;
       const nextTask = getTaskListRowActivity(task)
         ? mergeTaskListMembershipFields(task, mergedTask)
@@ -622,12 +622,12 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
     set((state) => {
       const entityKey = buildTaskEntityKey(task);
       const existingTask = state.taskMetaByEntityKey[entityKey];
-      // workspace_task_list_changed may include a projected title from the runtime snapshot.
-      // Preserve the existing manual-rename source of truth in the query cache; use the new metadata only for runtime fields such as status/updatedAt.
+      // workspace_task_list_changed 可能携带 runtime snapshot 投影标题。
+      // 保留 query cache 里已存在的手动重命名事实源，只用新 meta 补 status/updatedAt 等运行态字段。
       const mergedTask = mergeTaskMetaCandidates(task, existingTask) ?? task;
-      // updatedAt from tasks-index in workspace_task_list_changed
-      // is a metadata update, not real session activity. When a sessions-index sidecar exists,
-      // merge only membership/metadata fields; otherwise a rename/unread update could incorrectly move the task to the top.
+      // workspace_task_list_changed 带来的 tasks-index updatedAt
+      // 只是 metadata 更新，不是用户真实会话活动。已有 sessions-index sidecar 时
+      // 只合并 membership/meta 字段，否则 rename/unread 会让任务错误跳到顶部。
       const nextTask = existingTask
         ? mergeTaskListMembershipFields(existingTask, mergedTask)
         : mergedTask;
@@ -642,8 +642,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           continue;
         }
 
-        // A metadata delta from workspace_task_list_changed indicates a task content/status change,
-        // not a change in pinned/archived membership. Reorder only lists that already contain the task; do not move it out of pinned.
+        // workspace_task_list_changed 的 meta 增量只说明任务内容/状态变化，
+        // 不代表 pinned/archived 成员关系变化；因此只重排已经包含该任务的列表，不能把它从 pinned 区移走。
         nextResultsByQueryKey[queryKey] = {
           ...result,
           taskKeys: sortTaskKeysByDescriptor({
@@ -679,8 +679,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
       const nextResultsByQueryKey = { ...state.resultsByQueryKey };
       for (const [queryKey, result] of Object.entries(state.resultsByQueryKey)) {
         if (result.descriptor.search) {
-          // The server's SQLite searchable_text determines body-search matches, while the frontend cache has only task metadata/title.
-          // It cannot use title-only rules to decide membership in incremental results; that would make locally cached conversations with body matches appear not to match.
+          // 正文搜索结果由服务端 sqlite searchable_text 决定，前端缓存只有 task meta/title，
+          // 不能用 title-only 规则判断增量列表成员资格；否则正文命中的会话会被本地缓存误判为不匹配。
           nextResultsByQueryKey[queryKey] = {
             ...result,
             invalidationVersion: result.invalidationVersion + 1,
@@ -772,8 +772,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
     set((state) => {
       const entityKey = buildTaskEntityKey(task);
       const existingTask = state.taskMetaByEntityKey[entityKey];
-      // The server response only confirms that the mutation was persisted; an older membership request may still return later.
-      // Update the overlay to the server value until setQueryResult observes that same value and releases it automatically.
+      // 服务端回包只确认 mutation 已持久化；旧 membership 请求仍可能稍后返回。
+      // 把 overlay 更新成服务端值，直到 setQueryResult 观察到同值后再自动释放。
       return {
         taskUnreadOverlayByEntityKey: {
           ...state.taskUnreadOverlayByEntityKey,
@@ -838,8 +838,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
 
         const taskKeys = result.taskKeys.filter((taskKey) => taskKey !== entityKey);
         removedFromVisibleCache = true;
-        // Task deletion used to require a full-table refresh; here, decrement total only for lists where the task is actually present in visible cache.
-        // Do not guess membership for hidden items outside the collapsed visible area, which could incorrectly decrement another list's count.
+        // 删除 task 以前只能整表刷新；这里只对实际可见缓存命中的列表扣减 total。
+        // 对未出现在折叠可见区的隐藏项不猜 membership，避免误扣其它列表计数。
         const total = Math.max(0, result.total - 1);
         nextResultsByQueryKey[queryKey] = {
           ...result,
@@ -876,8 +876,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
           continue;
         }
 
-        // When deleting a collapsed/page-hidden task, taskId alone is not enough to safely decrement total.
-        // Keep the current visible lists and mark only matching workspaces dirty so the hook's next effect really refreshes counts from the source.
+        // 删除折叠/分页隐藏 task 时无法只靠 taskId 安全扣 total。
+        // 这里保留当前可见列表，只标脏匹配 workspace，让 hook 的下一轮 effect 真正回源刷新计数。
         nextResultsByQueryKey[queryKey] = {
           ...result,
           invalidationVersion: result.invalidationVersion + 1,
@@ -924,8 +924,8 @@ export const useTaskQueryCacheStore = create<TaskQueryCacheState>()((set) => ({
     }),
   clearAll: () =>
     set(() => ({
-      // clearAll is a Zustand action and must write back to the store through set.
-      // Previously it returned an object only, leaving old task metadata behind when clearing the query cache in tests or development.
+      // clearAll 是 Zustand action，必须通过 set 写回 store。
+      // 之前只返回对象，测试和开发态清理 query cache 时旧 task meta 会继续残留。
       resultsByQueryKey: {},
       taskMetaByEntityKey: {},
       taskUnreadOverlayByEntityKey: {},
@@ -1016,7 +1016,7 @@ export function removeTaskFromTaskQueryCaches(
   return removed;
 }
 
-// In-memory diagnostic counter: versioned queryKeys only grow, so log them first.
+// 内存诊断计数器：版本化 queryKey 只增不删，先落日志。
 uiMemoryDiagnosticsRegistry.register("taskQueryCache", () => {
   const state = useTaskQueryCacheStore.getState();
   return {

@@ -99,6 +99,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => servicesMock,
 }));
@@ -354,7 +355,7 @@ describe("SessionPane followupMode app setting sync", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "en-US" },
+            { initialLocale: "zh-CN" },
             createElement(SessionPane, {
               paneId: "workspace-main",
               sessionId: "session-1",
@@ -409,7 +410,7 @@ describe("SessionPane followupMode app setting sync", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: "session-1",

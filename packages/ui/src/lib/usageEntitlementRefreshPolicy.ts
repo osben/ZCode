@@ -44,7 +44,7 @@ const entitlementFailureBackoff = new WeakMap<
 >();
 const entitlementAccessRequests = new WeakMap<IUsageStatsService, Map<string, number>>();
 
-// A purchase invalidates all prior requests for the same identity; a requestVersion from one hook alone is insufficient.
+// 购买使同一身份的所有旧请求失效，不能仅依赖单个 hook 的 requestVersion。
 const entitlementGenerations = new WeakMap<IUsageStatsService, Map<string, number>>();
 
 export function beginSharedEntitlementRequest(params: {
@@ -184,7 +184,7 @@ export function recordSharedEntitlementFailure(params: {
     failureCount,
     nextAllowedAt,
   });
-  // Query failure is shared state too; otherwise the recommendation entry could still treat an old quota query as successful after settings failed.
+  // 查询失败也是共享事实；否则设置页失败后，推荐入口仍认为旧余额查询成功。
   for (const listener of entitlementSubscribers
     .get(params.usageStatsService)
     ?.get(params.freshnessKey) ?? []) {

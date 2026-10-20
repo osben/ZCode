@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import type { ActiveWorkSummary, PendingInteraction } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   hasChatLoadingBlockingActiveWork,
   hasChatLoadingBlockingInteraction,
@@ -14,7 +13,7 @@ function renderChatLoading() {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(ChatLoading, { loading: true }),
     ),
   );
@@ -24,11 +23,10 @@ describe("ChatLoading", () => {
   it("只展示旋转 loading 图标，不渲染可见文案", () => {
     const html = renderChatLoading();
 
-    expect(html).toContain("animate-spin");
-    expect(html).toContain('data-zcode-chat-loading-animate="true"');
     expect(html).toContain('role="status"');
-    expect(html).toContain(`aria-label="${expectedCopy("common.loading")}"`);
+    expect(html).toContain('aria-label="加载中..."');
     expect(html).not.toContain('data-testid="chat-loading-text"');
+    expect(html).not.toContain("正在思考");
   });
 
   it.each([
@@ -72,9 +70,8 @@ describe("ChatLoading", () => {
     },
   );
 
-  // Under the soft gate (workspace-hook-trust-soft-gate.md D4), workspaceHookReview no longer
-  // blocks chat loading — the review became a non-blocking persistent banner, so the user can
-  // keep chatting.
+  // 软门禁（workspace-hook-trust-soft-gate.md D4）下 workspaceHookReview 不再阻塞
+  // 聊天 loading——审核改为非阻塞的常驻提示条，用户可继续对话。
   it("does not treat workspaceHookReview as a ChatLoading blocker (soft gate)", () => {
     const interaction = {
       interactionId: "workspace-review-1",

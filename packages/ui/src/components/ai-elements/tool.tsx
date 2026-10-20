@@ -57,13 +57,13 @@ const statusLabels: Record<ToolPart["state"], string> = {
 };
 
 const statusIcons: Record<ToolPart["state"], ReactNode> = {
-  "approval-requested": <ClockIcon className="size-4 text-warning" />,
-  "approval-responded": <CheckCircleIcon className="size-4 text-icon-blue" />,
+  "approval-requested": <ClockIcon className="size-4 text-yellow-600" />,
+  "approval-responded": <CheckCircleIcon className="size-4 text-blue-600" />,
   "input-available": <ClockIcon className="size-4 animate-pulse" />,
   "input-streaming": <CircleIcon className="size-4" />,
-  "output-available": <CheckCircleIcon className="size-4 text-success" />,
-  "output-denied": <XCircleIcon className="size-4 text-foreground-subtle" />,
-  "output-error": <XCircleIcon className="size-4 text-destructive" />,
+  "output-available": <CheckCircleIcon className="size-4 text-green-600" />,
+  "output-denied": <XCircleIcon className="size-4 text-orange-600" />,
+  "output-error": <XCircleIcon className="size-4 text-red-600" />,
 };
 
 export const getStatusBadge = (status: ToolPart["state"]) => (
@@ -158,9 +158,9 @@ export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutpu
         )}
       >
         {errorText ? (
-          // On tool failure, many providers put the error in both output.error and the raw payload.
-          // This used to show the error and still render the entire JSON result, making it look as if parameters buried the error.
-          // In the failure state, keep only readable error text so users do not read invalid structured data.
+          // 工具失败时很多 provider 会把错误同时塞进 output.error 和原始 payload。
+          // 之前这里会一边显示错误，一边继续把 JSON result 整块渲染出来，视觉上像“报错被参数淹没”。
+          // 失败态只保留可读错误文本，避免用户继续读无效结构化数据。
           <div className="whitespace-pre-wrap p-3">{errorText}</div>
         ) : null}
         {Output}

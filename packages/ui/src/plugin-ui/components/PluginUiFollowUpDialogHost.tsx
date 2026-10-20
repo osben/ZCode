@@ -22,8 +22,7 @@ export const TID_PLUGIN_UI_FOLLOW_UP_TEXT = "plugin-ui-follow-up-text";
 export const TID_PLUGIN_UI_FOLLOW_UP_SEND = "plugin-ui-follow-up-send";
 
 /**
- * Confirmation dialog for plugin-sent messages without a user gesture. The prompt is editable;
- * mounted at RootShell, alongside ConfirmDialogHost.
+ * 无用户手势时插件代发消息的确认框。prompt 可编辑；挂在 RootShell，与 ConfirmDialogHost 并列。
  */
 export function PluginUiFollowUpDialogHost() {
   const { intl } = useZCodeIntl();
@@ -43,23 +42,25 @@ export function PluginUiFollowUpDialogHost() {
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : cancel())}>
       <DialogContent
-        className="max-w-xl overflow-hidden rounded-2xl p-0"
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl p-0 sm:max-w-md"
         data-testid={TID_PLUGIN_UI_FOLLOW_UP_DIALOG}
       >
-        <div className="flex min-w-0 flex-col gap-6 p-6">
-          <DialogHeader className="space-y-2">
+        <div className="flex min-w-0 flex-col gap-3 p-5">
+          <DialogHeader className="gap-1 pr-7">
             <DialogTitle>{intl.formatMessage({ id: "pluginUi.followUp.title" })}</DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-ui-caption leading-relaxed">
               {intl.formatMessage({ id: "pluginUi.followUp.description" }, { name })}
             </DialogDescription>
           </DialogHeader>
           <Textarea
             data-testid={TID_PLUGIN_UI_FOLLOW_UP_TEXT}
             value={draft}
-            rows={5}
+            className="max-h-60 min-h-24 rounded-lg border-border bg-background px-3 py-2 text-ui-base leading-relaxed"
+            aria-label={intl.formatMessage({ id: "pluginUi.followUp.title" })}
+            rows={4}
             onChange={(event) => setDraft(event.target.value)}
           />
-          <DialogFooter>
+          <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={cancel}>
               {intl.formatMessage({ id: "pluginUi.followUp.cancel" })}
             </Button>

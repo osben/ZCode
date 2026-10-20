@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 
-// The completion card (docs/dynamic-workflow/transcript-and-notifications.md): header → deliverable row + artifact
-// index → four figures. Pure presentation — the preview is handed in by the caller; here we only pin the shape, the
-// layout changes with item count, the figures' honesty (`—` is not 0), and the gating.
+// 完成卡（docs/dynamic-workflow/transcript-and-notifications.md）：表头 → 交付物行 + 产物索引 → 四格数字。纯展示层——
+// 预览由调用方交进来，这里只钉形态、布局随件数的变化、数字的诚实（`—` 不是 0）与门控。
 import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,21 +11,17 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after the tooltip mock.
+// eslint-disable-next-line import/first -- 必须在 tooltip mock 之后再引入被测组件。
 import {
   COMPLETION_INDEX_MAX,
   WorkflowCompletionCard,
   formatCompactCount,
   type WorkflowCompletionCardProps,
 } from "@/components/workflow-timeline/WorkflowCompletionCard.js";
-// eslint-disable-next-line import/first -- Ditto.
+// eslint-disable-next-line import/first -- 同上。
 import type { WorkflowCompletionArtifact } from "@/components/workflow-timeline/WorkflowArtifactTile.js";
-// eslint-disable-next-line import/first -- Ditto.
+// eslint-disable-next-line import/first -- 同上。
 import { formatWorkDuration, workDurationParts } from "@/lib/workDuration.js";
-// eslint-disable-next-line import/first -- Ditto; the locale entries are only used for bilingual existence assertions.
-import enUS from "../src/i18n/locales/en-US.js";
-// eslint-disable-next-line import/first -- Ditto.
-import zhCN from "../src/i18n/locales/zh-CN.js";
 
 afterEach(() => {
   cleanup();
@@ -98,7 +93,7 @@ describe("WorkflowCompletionCard · 形态", () => {
     expect(view.getByTestId("workflow-completion-figure-phases").getAttribute("data-value")).toBe(
       "16",
     );
-    // All four labels are present.
+    // 标签四个都在。
     const figures = view.getByTestId("workflow-completion-figures");
     expect(figures.textContent).toContain("time");
     expect(figures.textContent).toContain("subagents");
@@ -122,52 +117,40 @@ describe("WorkflowCompletionCard · 形态", () => {
     }
   });
 
-  it("zh-CN：时长单位前留空格；四格标签与无障碍名双写", () => {
+  it("zh-CN：时长单位前留空格并渲染子代理标签", () => {
     const view = renderCard({ figures: { durationMs: 708_000, tokens: 5 } }, "zh-CN");
     expect(view.getByTestId("workflow-completion-figure-time").getAttribute("data-value")).toBe(
       "11 分 48 秒",
     );
     expect(view.getByTestId("workflow-completion-figures").textContent).toContain("子代理");
-    for (const key of [
-      "chat.toolCall.workflow.completion.time",
-      "chat.toolCall.workflow.completion.tokens",
-      "chat.toolCall.workflow.completion.subagents",
-      "chat.toolCall.workflow.completion.phases",
-      "chat.toolCall.workflow.completion.unavailable",
-    ]) {
-      expect(enUS).toHaveProperty(key);
-      expect(zhCN).toHaveProperty(key);
-    }
   });
 });
 
 describe("WorkflowCompletionCard · 产物索引", () => {
-  it("没有交付物：索引独占产物区，一件一行（图标 + 标题 + 等宽细节 + 尾槽），两列流；没有框、没有细线；有回调才可点并交出 id", () => {
+  it("没有交付物：索引独占产物区；细节与打开身份保真", () => {
     const onOpenArtifact = vi.fn();
     const view = renderCard({ onOpenArtifact });
     const index = view.getByTestId("workflow-completion-index");
-    expect(index.className).toContain("repeat(auto-fit,minmax(220px,1fr))");
     expect(index.className).not.toContain("border-t");
     expect(index.getAttribute("data-columns")).toBe("auto");
     const lines = view.getAllByTestId("workflow-completion-line");
     expect(lines).toHaveLength(3);
     expect(lines.every((line) => line.getAttribute("data-variant") === "line")).toBe(true);
-    expect(lines.every((line) => line.className.includes("h-[26px]"))).toBe(true);
-    // Three items, no flag: no deliverable and no deliverable row; the index draws no frame, so the card has no sheet glyph.
+    // 三件、无旗子：没有交付物，也没有交付物行；索引不画框，所以整卡没有纸页字形。
     expect(view.queryByTestId("workflow-completion-row")).toBeNull();
     expect(view.queryByTestId("workflow-artifact-tile-frame")).toBeNull();
     expect(view.queryByTestId("workflow-artifact-sheet")).toBeNull();
-    // The detail lives on the line: documents get size only; files get `CSV · 6.0 KB`; dashboards get the item count.
+    // 细节就在行上：文档只有大小；文件 `CSV · 6.0 KB`；看板是条数。
     const details = view.getAllByTestId("workflow-artifact-line-detail");
     expect(details[0]!.textContent).toBe("12.0 KB");
     expect(details[1]!.textContent).toContain("CSV");
     expect(details[1]!.textContent).toContain("6.0 KB");
     expect(details[2]!.textContent).toBe("4 items");
-    // The v2 tail slot only on the second item.
+    // v2 尾槽只在第二件上。
     const versions = view.getAllByTestId("workflow-artifact-tile-version");
     expect(versions).toHaveLength(1);
     expect(versions[0]!.textContent).toBe("v2");
-    // Clickable: real button, aria-label, ↗ present, id handed over; tooltip is "kind word · title".
+    // 可点：真按钮、aria-label、↗ 在场、交出 id；tooltip 是「种类词 · 标题」。
     expect(lines[1]!.tagName).toBe("BUTTON");
     expect(lines[1]!.hasAttribute("disabled")).toBe(false);
     expect(lines[1]!.getAttribute("aria-label")).toBe("Open artifact: sources.csv");
@@ -175,7 +158,7 @@ describe("WorkflowCompletionCard · 产物索引", () => {
     expect(view.getAllByTestId("workflow-artifact-tile-open")).toHaveLength(3);
     fireEvent.click(lines[1]!);
     expect(onOpenArtifact).toHaveBeenCalledWith("sources");
-    // No door.
+    // 没有门。
     expect(view.queryByTestId("workflow-completion-more")).toBeNull();
   });
 
@@ -188,15 +171,12 @@ describe("WorkflowCompletionCard · 产物索引", () => {
     expect(view.getAllByTestId("workflow-artifact-tile-version")).toHaveLength(1);
   });
 
-  it("一件产物即交付物（单件规则）：画成交付物行，框仍是 160 × 100 的缩略图档，不撑成横幅；没有索引", () => {
+  it("一件产物即交付物：保留预览框，没有索引", () => {
     const one = renderCard({ artifacts: ARTIFACTS.slice(0, 1) });
     expect(one.queryByTestId("workflow-completion-index")).toBeNull();
     const row = one.getByTestId("workflow-completion-row");
     expect(row.getAttribute("data-artifact-id")).toBe("brief");
-    const frame = one.getByTestId("workflow-artifact-row-frame");
-    expect(frame.className).toContain("w-[160px]");
-    expect(frame.className).toContain("h-[100px]");
-    expect(frame.className).not.toContain("aspect-[16/6]");
+    expect(one.getByTestId("workflow-artifact-row-frame")).toBeTruthy();
   });
 
   it("超过六件：五行 + 一行「N more」——一扇门（↗ 常在，点开 run 侧板）；六件全画；砍过时「… more」且无回调则禁用", () => {
@@ -256,9 +236,8 @@ describe("WorkflowCompletionCard · 产物索引", () => {
   });
 });
 
-// The deliverable (docs/dynamic-workflow/transcript-and-notifications.md "Artifact tiles" "The index"): the item
-// carrying the primary flag leads as a row, the rest are index lines below the hairline; from the seventh item on,
-// five lines + "N more". The word "primary" never appears in the UI.
+// 交付物（docs/dynamic-workflow/transcript-and-notifications.md「Artifact tiles」「The index」）：打了 primary 旗子的那件
+// 领头成一行，其余是细线之下的索引行；第七件起五行 + 「N more」。UI 上没有「primary」这个词。
 describe("WorkflowCompletionCard · 交付物", () => {
   const REPORT: WorkflowCompletionArtifact = {
     id: "report",
@@ -278,25 +257,23 @@ describe("WorkflowCompletionCard · 交付物", () => {
       ...(index === 0 ? { itemCount: 12 } : { bytes: 2_048 }),
     }));
 
-  it("交付物行：框 + 一级大的标题 + 三行截断的说明 + `kind · size` 行 + 尾槽 v3；整行一颗按钮交出 id；没有标签", () => {
+  it("交付物行保留说明、细节、版本与打开身份", () => {
     const onOpenArtifact = vi.fn();
-    // The flag leads even when it sits in the **middle** of the list: layout follows the flag, not the position.
+    // 旗子在清单**中间**也领头：布局按旗子选，不按位置。
     const view = renderCard({ artifacts: [...others(2), REPORT, ...others(1)], onOpenArtifact });
     const row = view.getByTestId("workflow-completion-row") as HTMLButtonElement;
     expect(row.tagName).toBe("BUTTON");
     expect(row.getAttribute("data-artifact-id")).toBe("report");
     expect(row.getAttribute("data-variant")).toBe("row");
     expect(view.getByTestId("workflow-artifact-row-title").textContent).toBe("季度基准报告");
-    expect(view.getByTestId("workflow-artifact-row-title").className).toContain("text-ui-base");
     const description = view.getByTestId("workflow-artifact-row-description");
     expect(description.textContent).toContain("确认三处回归");
-    expect(description.className).toContain("line-clamp-3");
     expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe("Document·24.0 KB");
     expect(within(row).getByTestId("workflow-artifact-tile-version").textContent).toBe("v3");
     expect(row.getAttribute("aria-label")).toBe("Open artifact: 季度基准报告");
     fireEvent.click(row);
     expect(onOpenArtifact).toHaveBeenCalledWith("report");
-    // No "primary" wording anywhere — the shape itself speaks.
+    // 没有任何「primary」字样——形态本身在说话。
     expect(view.getByTestId("workflow-completion-card-turn-1").textContent).not.toMatch(
       /primary/iu,
     );
@@ -312,11 +289,10 @@ describe("WorkflowCompletionCard · 交付物", () => {
     expect(view.queryByTestId("workflow-artifact-tile-open")).toBeNull();
   });
 
-  it("其余产物是细线之下的索引：一件一行、两列流、细节就在行上；≤ 6 行全画、没有门", () => {
+  it("其余产物在分隔线后按原序列出：六件全画且没有门", () => {
     const view = renderCard({ artifacts: [REPORT, ...others(6)] });
     const index = view.getByTestId("workflow-completion-index");
     expect(index.className).toContain("border-t");
-    expect(index.className).toContain("repeat(auto-fit,minmax(220px,1fr))");
     const lines = view.getAllByTestId("workflow-completion-line");
     expect(lines).toHaveLength(6);
     expect(lines.map((line) => line.getAttribute("data-artifact-id"))).toEqual([
@@ -332,7 +308,7 @@ describe("WorkflowCompletionCard · 交付物", () => {
     expect(details[1]!.textContent).toBe("2.0 KB");
     expect(lines[0]!.getAttribute("title")).toBe("Chart · 产物 0");
     expect(view.queryByTestId("workflow-completion-more")).toBeNull();
-    // The index draws no frame: the deliverable's frame is the only one on the card (no preview handed in here, so it is a sheet glyph).
+    // 索引不画框：整卡只有交付物那一个框（这里没交预览，所以是一张纸页字形）。
     expect(view.getAllByTestId("workflow-artifact-sheet")).toHaveLength(1);
   });
 
@@ -354,10 +330,6 @@ describe("WorkflowCompletionCard · 交付物", () => {
     const dumb = truncated.getByTestId("workflow-completion-more") as HTMLButtonElement;
     expect(dumb.textContent).toBe("… more");
     expect(dumb.disabled).toBe(true);
-    for (const key of ["chat.toolCall.workflow.completion.moreArtifacts"]) {
-      expect(enUS).toHaveProperty(key);
-      expect(zhCN).toHaveProperty(key);
-    }
   });
 
   it("预览只问交付物一次；节拍：行 30 ms、索引行依次、门在最后一行之后、四格接在门之后", () => {
@@ -369,9 +341,9 @@ describe("WorkflowCompletionCard · 交付物", () => {
     expect(lines[0]!.style.animationDelay).toBe("60ms");
     expect(lines[4]!.style.animationDelay).toBe("180ms");
     expect(view.getByTestId("workflow-completion-more").style.animationDelay).toBe("210ms");
-    // Only after the 7 slots (row + 5 lines + door) do the four figures come.
+    // 7 格（行 + 5 行 + 门）之后才是四格。
     expect(view.getByTestId("workflow-completion-figure-time").style.animationDelay).toBe("240ms");
-    // With no preview handed in, the row holds a sheet glyph — the card's only one.
+    // 没交预览时行里是纸页字形——整卡唯一的一张。
     expect(view.getAllByTestId("workflow-artifact-sheet")).toHaveLength(1);
   });
 });

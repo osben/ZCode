@@ -1,14 +1,11 @@
 /**
- * Pauses CSS animations while the page is hidden; spec in
- * docs/performance/hidden-document-motion-pause.md.
+ * 页面不可见时暂停 CSS 动画，spec 见 docs/performance/hidden-document-motion-pause.md。
  *
- * Bug root cause: when the window is hidden Chromium stops emitting animation frames, so CSS
- * transition/animation cannot settle. If an animated element is removed at that moment,
- * DocumentTimeline keeps a strong reference to it, and the parent pointer drags the entire
- * unmounted message subtree with it (measured: 230k DOM nodes after GC while hidden, falling back
- * to 45k within 1s of becoming visible). This marks <html> using document.visibilityState as the
- * single source of truth; styles.css disables animations based on that marker, guaranteeing no new
- * animation objects are created while hidden.
+ * Bug 根因：窗口 hidden 时 Chromium 不出动画帧，CSS transition/animation 无法结算；
+ * 带动画的元素此时被移除，DocumentTimeline 仍强引用它，并经 parent 指针拖住整棵已卸载的
+ * 消息子树（实测 hidden 期间 GC 后 23 万 DOM 节点，恢复可见 1s 内回落到 4.5 万）。
+ * 这里以 document.visibilityState 为唯一数据源给 <html> 打标记，styles.css 据此禁用动画，
+ * 保证 hidden 期间不创建新的动画对象。
  */
 export const DOCUMENT_HIDDEN_ATTRIBUTE = "data-document-hidden";
 

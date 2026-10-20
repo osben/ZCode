@@ -7,7 +7,6 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import { ToolCallBlock } from "../src/ToolCallBlocks.js";
 import { ReadSessionContextToolCallBlock } from "../src/ToolCallBlocks/renderers/read-session-context.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -59,7 +58,7 @@ function renderWithProviders(element: ReactElement) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(StoreProvider, { broadcastService: mockBroadcastService }, element),
     ),
   );
@@ -116,8 +115,8 @@ describe("ReadSessionContextToolCallBlock", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("chat.toolCall.kind.sessionContext"));
-    expect(html).toContain(expectedCopy("chat.toolCall.sessionContext.query"));
+    expect(html).toContain("会话上下文");
+    expect(html).toContain("查询");
     expect(html).toContain("能否操作浏览器 browser automation 结果 result");
     expect(html).toContain("结果");
     expect(html).toContain("不能直接操作浏览器");
@@ -151,7 +150,7 @@ describe("ReadSessionContextToolCallBlock", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("chat.toolCall.kind.sessionContext"));
+    expect(html).toContain("会话上下文");
     expect(html).toContain("总结迁移任务状态");
     expect(html).not.toContain("工具调用");
   });

@@ -1,9 +1,9 @@
 // ============================================================
-// Transcript row for a settings turn
+// 设置轮的那一行
 // ============================================================
-// A Configure change leaves a control turn in the transcript: no user bubble, just the new run card and this row above it describing
-// what changed. It uses the single-row tool style: sliders icon, "Settings changed", one segment per change, and timestamp separated by `·`.
-// It is a record, not a control.
+// 「配置」的一次修改在转写里留下一个控制轮：没有用户气泡，它的呈现是新 run 的卡，卡上方这一行说
+// 改了什么——工具行的单行样式：滑杆图标、「已调整设置」、每项改动一段、时刻，以 `·` 相隔。
+// 它是记录，不是控件。
 
 import { Fragment } from "react";
 import { SlidersHorizontalIcon } from "lucide-react";
@@ -17,9 +17,9 @@ export function WorkflowSettingsChangeRow({
   providerName,
 }: {
   amend: WorkflowSettingsAmendMeta;
-  /** Timestamp of the settings turn; absent means omit it. */
+  /** 设置轮的时刻；缺席即不写。 */
   at?: number;
-  /** providerId → provider name (same lookup as the model segment on the card); absent falls back to bare modelId. */
+  /** providerId → provider 名（与卡上的模型段同一个查找）；缺席退回裸 modelId。 */
   providerName?: (providerId: string) => string | undefined;
 }) {
   const { intl } = useZCodeIntl();

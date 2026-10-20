@@ -52,33 +52,51 @@ import {
   type TimelineRailKind,
 } from "./timeline-bands.js";
 
-/** Timeline model. One pure function folds the bounded display and `workflowRuns` projection into three things: stations (phases), track segments (between adjacent connected stations), and arcs (non-adjacent edges). Chat cards, confirmation dialogs, and sidebar lists all derive from this model—the invariant is “one model, three consumers.” No React, DOM, or time. Order is declaration order (`phases[]` follows the first `phase()` marker), not rank: sibling phases that share only a predecessor appear in declaration order, with their connecting edges shown as arcs. A back edge is determined by direction (its target station is left of its source), not by payload `back`: the analyzer treats re-entry (a second `phase("plan")` marker) as a forward edge, though it still points left on screen. */
+/**
+ * 时间线模型。
+ *
+ * 一个纯函数把有界 display 与 `workflowRuns` 投影折成三样东西：站（阶段）、轨道段（相邻且
+ * 有边的两站之间）、弧（非相邻的边）。聊天卡、确认窗与侧栏清单都从这里出发——不变式 1
+ * 「一个模型，三处消费」。无 React、无 DOM、无时间。
+ *
+ * 顺序是**声明序**（载荷 `phases[]` = 首个 `phase()` 标记的顺序），不再分秩：两个只共享前驱的
+ * 兄弟阶段照声明序排成一列，它们之间的边成为弧。回边按**方向**判定（目标站在左），不读载荷
+ * 的 `back`——分析器把再入（第二个 `phase("plan")` 标记）标成前向边，画面上它仍然向左。
+ */
 
 export type TimelineInk = "faint" | "strong" | "march";
 export type { TimelineRailKind } from "./timeline-bands.js";
-// Arc lane assignment is pure index combinatorics; it lives with track folding in timeline-bands.ts and is re-exported here to keep the renderer entry point unchanged.
+// 弧的分道是纯下标的组合学，与带的折叠同住 timeline-bands.ts；这里转出去，渲染层的入口不变。
 export { arcLaneCount, assignArcLanes } from "./timeline-bands.js";
 
 export interface TimelinePill {
-  /** Split participant ID (instance card `${participant}@${ordinal}`); used as the React key and when opening an instance. */
+  /** 拆分后的参与者 id（实例卡 `${participant}@${ordinal}`）；React key 与打开实例的抓手。 */
   key: string;
   lane: LaneRef;
   laneClass: LaneClass;
-  /** Runtime name emitted by the engine (persona may rewrite the name in the script); if absent, use the lane display name. */
+  /** 引擎发出的运行时名（persona 可能改写脚本里的名字）；缺席时渲染车道显示名。 */
   runtimeName?: string;
-  /** Avatar number assigned to this agent identity within a workflow; reused across phases. */
+  /** workflow 内按代理身份分配的头像编号，跨阶段复用。 */
   avatarIndex?: number;
-  /** undefined when there is no run (static pill, visually identical to pending). */
+  /** 无 run 时 undefined（静态药丸，与 pending 逐像素相同）。 */
   status: StepRunStatus | undefined;
-  /** Instance corresponding to this pill in the projection; synthetic lanes (workspace/unknown) have none. */
+  /** 该药丸在投影里对应的实例；合成车道（workspace / unknown）没有。 */
   instance?: { siteId: string; ordinal: number; sessionId?: string };
-  /** Slot identity exposed by the pill: the instance ordinal when an instance exists, or its future ordinal otherwise—member card `member.index + 1`, single and `many` cards use 1 (the engine numbers them in station order). Available only for an agent lane in a live run; this lets an unstarted subagent open a placeholder transcript tab. */
+  /**
+   * 药丸交出的槽位身份：有实例就是实例的序号；没有实例就是它**将来**
+   * 的序号——成员卡 `member.index + 1`，单卡与 `many` 卡 1（引擎按站点顺序发号）。只有活的 run
+   * 里的 agent 车道才有；有了它，还没启动的子代理也能开一个占位的 transcript tab。
+   */
   slot?: { siteId: string; ordinal: number };
-  /** Handle exposed by a script pill: it has no instance or session, so it can open only the transcript for the entire run, anchored on the first card in this station. Mutually exclusive with `slot`; available only for a workspace lane in a live run. Without a run, there is nothing to open. */
+  /**
+   * 脚本药丸交出的抓手：
+   * 它没有实例、没有会话，能开的是**整个 run 的脚本 transcript**，落到这一站的第一张卡。
+   * 与 `slot` 互斥：只有活的 run 里的 workspace 车道才有；没有 run 就没有可开的东西。
+   */
   workspace?: { phaseId: string };
-  /** This participant’s step ID in this phase (source for sidebar activity and counts). */
+  /** 该参与者在本阶段的 step id（侧栏行的活动与计数素材）。 */
   stepIds: string[];
-  /** Whether this instance has pending escalation questions (`run.pendingQuestions`); used by the roster pinning rule. */
+  /** 该实例有待答的升级问题（`run.pendingQuestions`）；名册的钉位规则读它。 */
   asking?: true;
 }
 
@@ -86,69 +104,75 @@ export interface TimelineStation {
   id: string;
   naming: PhaseNaming;
   pills: TimelinePill[];
-  /** Folded member step state; undefined when there is no run. */
+  /** 成员 step 状态的折叠；无 run 时 undefined。 */
   status: StepRunStatus | undefined;
-  /** Whether the projection contains any node in this station. */
+  /** 投影里存在任一节点落在该站的站点上。 */
   visited: boolean;
-  /** Maximum ordinal of a node in this station; 0 means not yet reached. */
+  /** 该站站点上节点的最大 ordinal；0 = 未到。 */
   rounds: number;
-  /** Whether this station is the source or target of any back edge (left-pointing arc); only such stations show `⟳ n`. */
+  /** 是任一回边（向左的弧）的源或目标——只有这样的站才显示 `⟳ n`。 */
   onLoop: boolean;
-  /** Track containing this station (`timeline-bands.ts`); stations outside a band use track 0 (the main track). */
+  /** 所在的轨道（`timeline-bands.ts`）；带外一律 0，也就是主线。 */
   track: number;
-  /** `settled / observed`; absent when no nodes have been observed. Settled instances outside the table are included too. */
+  /** `settled / observed`；一个节点都没观察到时缺席。表外已结算的实例也在这两个数里。 */
   fraction?: { settled: number; observed: number };
-  /** Number of out-of-table entries consumed at this station (`station-observation.ts`); absent when none were consumed. */
+  /** 界在这一站花掉的表外条目（`station-observation.ts`）；一条都没少时缺席。 */
   unlisted?: StationUnlisted;
-  /** Last station not yet closed in the streaming draft. */
+  /** 流式草稿里尚未闭合的最后一站。 */
   typing?: true;
-  /** This station is a hole (`timeline-holes.ts`): dashed lamp and type badge; it is the current station while waiting. */
+  /** 这一站是一处留白（`timeline-holes.ts`）：虚线灯、类型徽标；等待时是当前站。 */
   hole?: TimelineHole;
-  /** This station was added by a fill (the `fill` on a display phase); hovering highlights its filled region. */
+  /** 这一站是某次补全写进来的（display 阶段上的 `fill`）：悬停时它所在的补全区域亮起。 */
   fill?: string;
-  /** Neighboring station on a fill row's draft phase line: context only, rendered at 40% ink. */
+  /** 补全行的草稿阶段线里的邻站：只作上下文，40% 墨。 */
   ghost?: true;
 }
 
-/** Track segment between adjacent stations on one track; indices point into `stations`. */
+/** 一条轨道上前后相接的两站之间的一段轨道；下标指向 `stations`。 */
 export interface TimelineRail {
   from: number;
   to: number;
   ink: TimelineInk;
-  /** Absent means a normal segment on one track; track endpoints are `fork`/`merge`, while adjacent stations on different tracks within a band are `twin`. */
+  /**
+   * 缺席 = 一条轨道上的普通段；带的两端是 `fork` / `merge`，带内跨轨道的相邻两站是 `twin`，同一条
+   * 轨道上相邻两站之间的阶段流是 `stream`（墨：两端都在跑 `march`，有东西过去过 `strong`）。
+   */
   kind?: TimelineRailKind;
-  /** Touches an open/waiting hole: draw it as a dashed line because there is no code there yet. */
+  /** 触到开着 / 等着的留白：画成虚线（那里还不是代码）。 */
   dashed?: true;
 }
 
-/** A non-adjacent edge: `to < from` means a back edge. `lane` starts at 0, nearest the track; assign lanes only to arcs that intersect along x (see {@link assignArcLanes}), and keep unrelated arcs at the same height. */
+/**
+ * 非相邻的边：`to < from` 是回边。`lane` 从 0 起，贴近轨道的是 0；只有在 x 上**相交**的弧才分道
+ * （见 {@link assignArcLanes}），互不相干的弧同高。
+ */
 export interface TimelineArc {
   from: number;
   to: number;
   lane: number;
   ink: TimelineInk;
-  /** Track above which to draw the arc; lanes are assigned independently per air, so filter by `air` before computing `arcLaneCount`. */
+  /** 画在哪条轨道的空中；分道按空各算各的，所以 `arcLaneCount` 要先按 `air` 筛。 */
   air: number;
-  /** Non-adjacent phase stream: use stream ink, but do not animate it or add a ring to the station. */
+  /** 不相邻的阶段流：墨按流的规则，不行进，不让站上环。 */
   stream?: true;
 }
 
-/** One track within a band; `stations` are its members in declaration order. */
+/** 带内的一条轨道；`stations` 是它的成员，声明序。 */
 export interface TimelineTrack {
   stations: number[];
-  /** Ink entering this track from a fork; without a predecessor, use whether the first station has been reached. */
+  /** 分叉进入这条轨道的墨；没有前驱时按首站到没到过。 */
   entry: TimelineInk;
-  /** Ink leaving this track through a merge; without a merge station, use whether the last station has been reached. */
+  /** 这条轨道汇合出去的墨；没有汇合站时按末站到没到过。 */
   exit: TimelineInk;
 }
 
-/** A band: a declaration-order contiguous span of stations split across several tracks; arcs treat it as one node (`timeline-bands.ts`). */
+/** 一条带：声明序上连续的一段站，拆到若干轨道上；弧把它当一个节点（`timeline-bands.ts`）。 */
 export interface TimelineBand {
   from: number;
   to: number;
-  /** Predecessor station for the fork; when absent, the visual contains only a short tail. */
+  /** 分叉所在的前驱站；缺席时画面上只有一小截尾巴。 */
   pred?: number;
-  /** Successor station for the merge; when absent, the visual contains only a short stub. */
+  /** 汇合所在的后继站；缺席时画面上只有一小截残段。 */
   join?: number;
   tracks: TimelineTrack[];
 }
@@ -157,30 +181,33 @@ export interface WorkflowTimelineModel {
   stations: TimelineStation[];
   rails: TimelineRail[];
   arcs: TimelineArc[];
-  /** Bands folded from parallel phases, sorted by `from`; a timeline without `alongside` has none. */
+  /** 并行阶段折成的带，按 `from` 升序；没有 `alongside` 的时间线是空的。 */
   bands: TimelineBand[];
-  /** Currently running station (rightmost if there are several); undefined if none. */
+  /** 正在运行的站（多个时取最右）；无则 undefined。 */
   runningIndex: number | undefined;
-  /** Whether any run projection is present (determines whether status lights/ink have anything to show). */
+  /** 是否有 run 投影参与（决定灯 / 墨迹是否有话说）。 */
   live: boolean;
-  /** Streaming draft: stations are written as text arrives; subagents are counted but not drawn (`draft-scan.ts`). The analyzer model does not include this. */
+  /** 流式草稿：站由笔逐字写出，子代理只计数不画（`draft-scan.ts`）。分析器的模型没有它。 */
   draft?: { agents: number };
-  /** Hole headers left by fills with phases (`timeline-holes.ts`), sorted by `from`; empty when there are no fills. */
+  /** 有阶段的补全留下的头（`timeline-holes.ts`），按 `from` 升序；没有补全时为空。 */
   fills?: TimelineFill[];
-  /** Hole id → containing hole id (`holeParentsOf` in `timeline-holes.ts`); used to highlight outer regions on hover. */
+  /** 留白 id → 包着它的留白 id（`timeline-holes.ts` 的 holeParentsOf）；悬停时外层区域据此亮起。 */
   holeParents?: Readonly<Record<string, string>>;
-  /** The final station is a tail hole: `open` draws a 40px dashed segment that fades out; `filled` reserves only 40px of space. */
+  /** 末站是尾巴留白：`open` 画 40px 淡出的虚线残段，`filled` 只留 40px 余地。 */
   tailStub?: "open" | "filled";
 }
 
-/** One model, three consumers (invariant 1): the card, detail page, and sidebar list receive the same model object in the same frame. Memoize by (graph, run) object identity—see `timeline-cache.ts` for why identity is the right key. The model is read-only and no consumer mutates it, so sharing also provides stable references. */
+/**
+ * 一个模型，三处消费（不变式 1）：卡、详情页与侧栏清单在同一帧里拿到**同一个**模型对象，
+ * 按 (graph, run) 的对象身份记忆——为什么身份是正确的键见 `timeline-cache.ts`。模型是只读的，
+ * 没有消费者改它，所以共享顺带也是引用稳定性的来源。
+ */
 export function buildWorkflowTimeline(
   input: WorkflowCausalityGraphData,
   run: WorkflowRunState | undefined,
   /**
-   * Names and types of filled holes (docs/dynamic-workflow/presentation.md, “Holes on the timeline”):
-   * static graphs without a run (confirmation dialog, fill row) receive them from tool input. When
-   * provided, skip the shared cache, which is keyed by (graph, run).
+   * 补全过的留白的名与类型（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：没有 run 的
+   * 静态图（确认窗、补全行）从工具入参递进来。给了它就不走共享缓存——那张表是按 (graph, run) 键的。
    */
   holeLabels?: HoleLabels,
 ): WorkflowTimelineModel {
@@ -193,7 +220,7 @@ function computeWorkflowTimeline(
   run: WorkflowRunState | undefined,
   holeLabels: HoleLabels | undefined,
 ): WorkflowTimelineModel {
-  // A phase representing a hole header is not a station; the parent map comes from the uncollapsed graph so nesting remains intact (`timeline-holes.ts`).
+  // 头已代表的留白阶段不成站；父表从收缩之前的图算，嵌套才不断（timeline-holes.ts）。
   const { graph, parents, phases } = timelineHoleGraph(withImplicitPhase(input));
   const index = new Map(phases.map((phase, i) => [phase.id, i]));
   const members = phaseMembers(graph);
@@ -213,8 +240,8 @@ function computeWorkflowTimeline(
       .map((question) => `${question.actorSiteId}@${question.actorOrdinal}`),
   );
 
-  // Edges: deduplicate by index first (self-loops and edges to unlisted phases do not apply at this level), then collapse through lanes.
-  // Adjacent edges become track segments, the rest become arcs, and lanes absorb the fork/merge edges (`timeline-bands.ts`).
+  // 边：先按下标去重（自环与指向未列出阶段的边在这一粒度上没有话说），再交给带的折叠——
+  // 相邻的成轨道段，其余成弧，带把分叉与汇合那几条吃掉（`timeline-bands.ts`）。
   const edges: { from: number; to: number }[] = [];
   const seen = new Set<string>();
   for (const edge of graph.phaseEdges ?? []) {
@@ -226,7 +253,7 @@ function computeWorkflowTimeline(
     seen.add(key);
     edges.push({ from, to });
   }
-  // Phase streams (spec, “Streams”): also deduplicated by index; they take a stage on a line out of its band.
+  // 阶段流（spec「Streams」）：同样按下标去重；它们把一条线上的 stage 从带里拿出来。
   const streams = phaseStreamIndexes(graph.phaseStreams, index);
   const alongsideIndexes = phases.map((phase) =>
     (phase.alongside ?? []).flatMap((id) => {
@@ -239,7 +266,7 @@ function computeWorkflowTimeline(
   const arcPairs = [...fold.arcs].sort(
     (left, right) => Math.abs(left.from - left.to) - Math.abs(right.from - right.to),
   );
-  // Loop both endpoints of a back-edge; when an endpoint is in a lane, loop the whole lane because a lane is one node and is re-entered as a whole.
+  // 回边的两端上环；端点在带里时整条带都上环——带是一个节点，再入的是整条带。
   const onLoop = new Set<number>();
   for (const arc of arcPairs) {
     if (arc.to >= arc.from || arc.stream) continue;
@@ -250,7 +277,7 @@ function computeWorkflowTimeline(
     }
   }
 
-  // Name hashes can collide; assign sequential numbers by instance identity so the same agent keeps its avatar across phases.
+  // 名称哈希会碰撞；以实例身份分配连续编号，同一代理跨阶段保持同一头像。
   const avatarIndexes = new Map<string, number>();
   const nodeStatuses: (StepRunStatus | undefined)[] = [];
   const entered: boolean[] = [];
@@ -271,8 +298,8 @@ function computeWorkflowTimeline(
         id: participant.lane,
         laneClass: laneClassOf(participant.lane),
       };
-      // Empty after folding means this subagent did nothing in this station/run; the hollow marker is accurate.
-      // Reserve undefined for static pills with no run.
+      // 折叠为空 = 这个子代理在这一站、这一次 run 里什么都没做：空心是诚实的。undefined 只留给
+      // 无 run 的静态药丸。
       const status =
         run === undefined
           ? undefined
@@ -326,7 +353,7 @@ function computeWorkflowTimeline(
     nodeStatuses.push(nodeStatus);
     entered.push(observed.entered);
     hasMembers.push(memberSteps.length > 0);
-    // A run paused on a hole makes that station current (its incoming segment is in transit and the view focuses on it); `hole` determines the lamp style.
+    // 停在留白上的 run：那一站就是当前站（进入它的段行进、镜头对准它），灯的画法由 `hole` 说。
     const hole = holes.byPhase.get(phase.id);
     const waiting = hole?.state === "waiting";
     return {
@@ -349,7 +376,7 @@ function computeWorkflowTimeline(
     };
   });
 
-  // Stage lamp (spec, “Station status”): for a parallel or streaming station with member steps, use only its own nodes and the stations feeding it.
+  // stage 的灯（spec「Station status」）：并行或有流、且有成员 step 的站只看自己的节点与喂它的站。
   const staged = stageStatuses({
     alongside: alongsideIndexes,
     entered,
@@ -359,9 +386,8 @@ function computeWorkflowTimeline(
     sequential: stations.map((station) => station.status),
     streams,
   });
-  // A hole waiting to be filled remains running because the run is paused on it. Even in `future`,
-  // it is a parallel station; do not let the stage rule turn it into pending because it has no
-  // nodes. These rules were aligned when dwf-recursive and dwf-pipeline-display were merged.
+  // 等着补全的留白照旧是 running（run 停在它上面）：它在 future 里时也是并行站，不让 stage 规则
+  // 按「没有节点 → pending」把它改掉（dwf-recursive 与 dwf-pipeline-display 合并时对齐的两条规则）。
   stations.forEach((station, i) => {
     if (station.hole?.state !== "waiting") station.status = staged[i];
   });
@@ -407,13 +433,13 @@ function computeWorkflowTimeline(
     };
   });
 
-  // Moving edge: the edge from the last settled phase into a running phase. The projection has no timestamps, so choose the most accurate edge by priority:
-  // a re-entry back-edge > the track segment entering the station > any arc landing at the station.
-  // Process each running station; two tracks in a lane can run at once, and each fork should light up.
+  // 行进边：从上一个已结算的阶段进入正在运行的阶段的那一条。投影没有时间戳，所以按三条规则
+  // 取最诚实的一条：再入的回边 > 进入该站的轨道段 > 任一落在该站的弧。
+  // 每个正在运行的站各走一遍——带里两条轨道可以同时在跑，它们各自的分叉都该亮。
   for (let r = 0; r < stations.length; r += 1) {
     if (stations[r]?.status !== "running") continue;
     const entry = bandOf(folded, r)?.from ?? r;
-    // Stream rails and stream arcs do not participate (spec, “March” final segment): their ink already indicates whether anything is moving through.
+    // 流轨与流弧不参与（spec「March」末段）：它们的墨已经说了有没有东西在过。
     const reentry = arcs.find(
       (arc) =>
         !arc.stream &&
@@ -426,7 +452,7 @@ function computeWorkflowTimeline(
       reentry.ink = "march";
       continue;
     }
-    // A parallel segment is not a control-flow path; it only says the two stations run concurrently and never animates.
+    // 双线段不是控制流走的路，它只说「这两站并行」，永不行进。
     const inbound = rails.filter(
       (rail) =>
         rail.to === r && rail.kind !== "twin" && rail.kind !== "stream" && visited(rail.from),

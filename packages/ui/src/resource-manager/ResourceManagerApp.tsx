@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  TID_RESOURCE_MANAGER_TAB,
-  testId,
   type ResourceUsageCategory,
   type ResourceUsageSnapshot,
   type StorageManagementBridge,
   type NetworkCaptureBridge,
 } from "@zcode/shared";
+import { TID_RESOURCE_MANAGER_TAB, testId } from "@zcode/shared/test-ids";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useZCodeIntl } from "@/i18n/index.js";
 import { StorageSection } from "./storage/StorageSection.js";
@@ -21,14 +20,14 @@ import {
 } from "./resourceUsageView.js";
 
 export interface ResourceManagerAppProps {
-  /** Omitted means the bridge is unavailable (for example, outside the desktop environment) */
+  /** 缺省表示桥接不可用（例如非桌面环境） */
   getSnapshot?: () => Promise<ResourceUsageSnapshot>;
   setSamplingActive?: (active: boolean) => void;
-  /** Storage management bridge (window.resourceManager.storage); when omitted, the “Storage” tab shows that the interface is unavailable */
+  /** 存储管理桥（window.resourceManager.storage）；缺省时「存储」tab 显示接口不可用 */
   storage?: StorageManagementBridge;
   network?: NetworkCaptureBridge;
   refreshIntervalMs?: number;
-  /** Initial tab; defaults to CPU */
+  /** 初始 tab，默认 CPU */
   initialTab?: ResourceManagerTab;
 }
 
@@ -49,8 +48,8 @@ const CATEGORY_LABEL_IDS: Record<ResourceUsageCategory, string> = {
 };
 
 /**
- * Resource manager window UI.
- * The component lives in packages/ui so Tailwind scans it; the desktop separate renderer entry point only mounts it.
+ * 资源管理器窗口 UI。
+ * 组件放在 packages/ui 内是为了纳入 Tailwind 扫描；desktop 的独立 renderer 入口只负责挂载。
  */
 export function ResourceManagerApp({
   getSnapshot,
@@ -62,7 +61,7 @@ export function ResourceManagerApp({
 }: ResourceManagerAppProps) {
   const { intl } = useZCodeIntl();
   const [tab, setTab] = useState<ResourceManagerTab>(initialTab);
-  // CPU and memory share a process snapshot; stop polling while the Storage tab is active to avoid competing for disk-scan I/O.
+  // CPU / 内存共用一份进程快照；存储 tab 激活时停止轮询，避免和扫盘争抢 IO。
   const pollingActive = tab === "cpu" || tab === "memory";
   const [snapshot, setSnapshot] = useState<ResourceUsageSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +82,7 @@ export function ResourceManagerApp({
     let inFlight = false;
 
     async function refresh() {
-      // Serialize requests: do not start another while the previous one is pending (Host sampling may be slow).
+      // 请求串行：上一轮未返回（Host 采样慢）时不叠加新请求。
       if (inFlight) return;
       inFlight = true;
       try {
@@ -104,7 +103,7 @@ export function ResourceManagerApp({
     return () => {
       disposed = true;
       window.clearInterval(interval);
-      // Stopping the renderer timer is not enough; cancel in-flight Host sampling with the page lifecycle too.
+      // 停止 renderer 定时器还不够，Host 在途采样也必须随页面生命周期取消。
       setSamplingActive?.(false);
     };
   }, [getSnapshot, intl, pollingActive, refreshIntervalMs, setSamplingActive]);
@@ -171,7 +170,7 @@ export function ResourceManagerApp({
   );
 }
 
-/** Body of the CPU/memory tab: matching metric cards on the left, and grouped lists on the right showing only the current metric column. */
+/** CPU / 内存 tab 的正文：左侧对应指标卡，右侧分组列表只显示当前指标列。 */
 function UsageTabContent({
   metric,
   snapshot,

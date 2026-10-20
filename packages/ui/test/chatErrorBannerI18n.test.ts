@@ -21,6 +21,28 @@ function createIntl(messages: Record<string, string>): IntlInstance {
 }
 
 describe("ChatErrorBanner i18n", () => {
+  it("uses the remote wording for an empty remote workspace instead of local plan copy", () => {
+    const zhIntl = createIntl(zhCN);
+    const enIntl = createIntl(enUS);
+    const error = {
+      code: "model_config_missing",
+      message: "Model config is missing",
+    };
+
+    const zhRemote = resolveChatErrorBannerDisplayMessage(error, zhIntl, "remote");
+    const enRemote = resolveChatErrorBannerDisplayMessage(error, enIntl, "remote");
+
+    expect(zhRemote).toBe(zhCN["chat.error.remoteNoAvailableModel"]);
+    expect(zhRemote).not.toBe("chat.error.remoteNoAvailableModel");
+    expect(zhRemote).not.toBe(zhCN["chat.error.noAvailableModel"]);
+    expect(enRemote).toBe(enUS["chat.error.remoteNoAvailableModel"]);
+    expect(enRemote).not.toBe("chat.error.remoteNoAvailableModel");
+    expect(enRemote).not.toBe(enUS["chat.error.noAvailableModel"]);
+    expect(resolveChatErrorBannerDisplayMessage(error, zhIntl, "local")).toBe(
+      zhCN["chat.error.noAvailableModel"],
+    );
+  });
+
   it.each([
     [zhCN, "当前附件总量过大，请移除部分附件或压缩后重试。"],
     [
@@ -52,7 +74,7 @@ describe("ChatErrorBanner i18n", () => {
         },
         zhIntl,
       ),
-    ).toBe(zhCN["zcode.error.MEDIA_BUDGET_CURRENT_VIDEO_TOO_LARGE"]);
+    ).toBe("当前视频附件过大，请移除部分视频或压缩后重试。");
 
     expect(
       resolveChatErrorBannerDisplayMessage(
@@ -75,10 +97,9 @@ describe("ChatErrorBanner i18n", () => {
         { code: "3102", message: "off peak ticket is invaliad or expired" },
         zhIntl,
       ),
-    ).toBe(zhCN["zcode.error.providerBusiness.3102"]);
+    ).toBe("已超过单次最长运行时间，请创建新的闲时任务继续。");
 
-    // When the outer code has been collapsed into a wrapper code, fall back to the stable marker
-    // written by the adapter layer.
+    // 外层 code 被压成包装码时靠适配层写入的稳定标记兜底。
     expect(
       resolveChatErrorBannerDisplayMessage(
         {

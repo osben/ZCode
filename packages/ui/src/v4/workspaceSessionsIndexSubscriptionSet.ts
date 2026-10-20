@@ -37,11 +37,11 @@ function isSameBinding(
 }
 
 /**
- * Hold sessions-index subscriptions by endpoint + workspaceKey.
+ * 按 endpoint + workspaceKey 持有 sessions-index 订阅。
  *
- * The old hook put the entire scopes array in one effect with cleanup; when a workspace was removed,
- * React released all sibling subscriptions before reacquiring the rest, replacing existing snapshots/watermarks with empty state.
- * Treat the scope array as a desired set here and apply side effects only for keys actually added/removed or with a changed endpoint.
+ * 旧 hook 把整个 scopes 数组放进一个带 cleanup 的 effect；删除一个 workspace 时，
+ * React 会先释放全部 sibling 订阅，再重新 acquire 剩余项，导致已有 snapshot/水位被空状态替换。
+ * 这里把 scope 数组解释成 desired set，只对真正新增、删除或 endpoint 换代的 key 做副作用。
  */
 export class WorkspaceSessionsIndexSubscriptionSet {
   private readonly active = new Map<string, ActiveWorkspaceSessionsIndexEntry>();
@@ -68,9 +68,9 @@ export class WorkspaceSessionsIndexSubscriptionSet {
         (current.scope.endpointKey ?? LOCAL_SESSIONS_INDEX_ENDPOINT) !==
           LOCAL_SESSIONS_INDEX_ENDPOINT
       ) {
-        // If the unique lease is released before a remote service replacement, the registry immediately closes the old store,
-        // and the following acquire can only rebuild from an empty store. Acquire first so the registry can rebind transport in place while the old entry is alive,
-        // without interrupting the projection or consumer listeners; then release the old lease.
+        // 远程 service 换代若先 release 唯一 lease，registry 会立即关闭旧 store，
+        // 随后的 acquire 只能从空 store 重建。先 acquire 让 registry 在旧 entry 仍存活时
+        // 原地 rebind transport，再释放旧 lease，投影和 consumer listener 均不中断。
         const store = acquireSessionsIndex(next.scope, next.agentService);
         const sameStore = store === current.store;
         const unsubscribeStore = sameStore
@@ -136,7 +136,7 @@ export class WorkspaceSessionsIndexSubscriptionSet {
     return this.active.size;
   }
 
-  /** Release everything when the hook truly unmounts (including StrictMode cleanup); later reconciliation can establish them again. */
+  /** hook 真正卸载（含 StrictMode cleanup）时统一释放；后续 reconcile 仍可重新建立。 */
   dispose(): void {
     if (this.active.size > 0) {
       logger.info("[v4-sessions-index] workspace subscription set disposed", {

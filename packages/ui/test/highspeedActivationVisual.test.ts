@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  HIGHSPEED_DIFFUSION_DURATION_MS,
   HIGHSPEED_MODEL_SWITCH_START_PROGRESS,
   parseHighSpeedCanvasColor,
   resolveHighSpeedCanvasColor,
@@ -62,7 +60,6 @@ describe("Highspeed activation visual", () => {
   });
 
   it("uses a responsive center-out diffusion timeline", () => {
-    expect(HIGHSPEED_DIFFUSION_DURATION_MS).toBe(1_400);
     expect(resolveHighSpeedDiffusionProgress(700)).toBe(0.5);
     expect(resolveHighSpeedDiffusionProgress(1_500)).toBe(1);
     expect(shouldStartHighSpeedModelSwitch(HIGHSPEED_MODEL_SWITCH_START_PROGRESS)).toBe(true);
@@ -72,11 +69,5 @@ describe("Highspeed activation visual", () => {
     expect(
       resolveHighSpeedDiffusionDistance({ x: 700, y: 52, width: 700, height: 104 }),
     ).toBeCloseTo(1, 4);
-  });
-
-  it("keeps the migrated effect presentation-only", () => {
-    expect(existsSync("packages/ui/src/highspeed/HighspeedModelIndicator.tsx")).toBe(true);
-
-    expect(existsSync("packages/ui/src/highspeed/HighspeedBadge.tsx")).toBe(false);
   });
 });

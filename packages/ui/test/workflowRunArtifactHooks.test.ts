@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
-// The three data fetches for user-facing artifacts (docs/dynamic-workflow/authoring.md, "How the user sees them"):
+// 用户面产物的三条取数（docs/dynamic-workflow/authoring.md「How the user sees them」）：
 //
-//   metadata  useWorkflowRunArtifacts     live-projection summary + journal full set (only the latter has spec / versions)
-//   items     useWorkflowRunArtifactData  incremental continuation whenever itemCount rises (boards are a projection of the journal)
-//   bytes     useWorkflowRunArtifactBytes chunked assembly into Uint8Array -> Blob -> objectUrl (revoked on unmount)
+//   元数据  useWorkflowRunArtifacts     活投影摘要 ⊕ journal 全量（spec / versions 只有后者有）
+//   条目    useWorkflowRunArtifactData  itemCount 抬升即增量续拉（看板是 journal 的投影）
+//   字节    useWorkflowRunArtifactBytes 分块拼 Uint8Array → Blob → objectUrl（卸载 revoke）
 //
-// Terminology warning: artifact here means outputs the script publishes for the user to see via
-// `artifact.*`, not the engine's same-named "top-level return value of the script" (the spec's terminology table).
+// ⚠ 术语：这里的 artifact 是脚本经 `artifact.*` 发布给用户看的产出，不是引擎内部那个
+// 「脚本顶层返回值」的同名词（spec 的「术语」表）。
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -52,7 +52,7 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
   }),
 }));
 
-// eslint-disable-next-line import/first -- The hook under test must be imported after the context mock.
+// eslint-disable-next-line import/first -- 必须在 context mock 之后再引入被测 hook。
 import { useWorkflowRunArtifacts } from "@/hooks/useWorkflowRunArtifacts.js";
 // eslint-disable-next-line import/first
 import { useWorkflowRunArtifactData } from "@/hooks/useWorkflowRunArtifactData.js";
@@ -120,15 +120,14 @@ describe("useWorkflowRunArtifacts", () => {
       }),
     );
 
-    // What we wait for is the **journal half**: the live projection already provides both entries,
-    // so `toHaveLength(2)` holds on the first frame; using it as the gate would assert spec before
-    // the query returns under heavy load (a case that only turns red when fully loaded).
+    // 等的是 **journal 那一半**：活投影已经能给出两条，所以 `toHaveLength(2)` 在第一帧就成立，
+    // 用它当门会在负载高时抢在查询返回之前断言 spec（一条只在满载时红的用例）。
     await waitFor(() => expect(hook.result.current.artifacts[0]?.spec).toBeDefined());
     expect(hook.result.current.artifacts).toHaveLength(2);
-    // Order follows the live projection (perf first), not the order the journal returned.
+    // 顺序跟着活投影（perf 在前），不是 journal 返回的顺序。
     expect(hook.result.current.artifacts.map((artifact) => artifact.id)).toEqual(["perf", "book"]);
     expect(hook.result.current.source).toBe("live");
-    // itemCount comes from the live projection (the refresh signal — one beat behind means one fewer dot drawn); spec exists only in the journal.
+    // itemCount 取活投影（刷新信号，落后一拍就少画一个点）；spec 只有 journal 有。
     expect(hook.result.current.artifacts[0]?.itemCount).toBe(3);
     expect(hook.result.current.artifacts[0]?.spec).toEqual({
       x: { field: "round" },
@@ -157,7 +156,7 @@ describe("useWorkflowRunArtifacts", () => {
 
     await waitFor(() => expect(hook.result.current.artifacts).toHaveLength(1));
     expect(hook.result.current.source).toBe("journal");
-    // Journal entries carry no bytes (bytes hang on versions) — taken from the latest version.
+    // journal 的元素不带 bytes（字节挂在版本上）——从最新版上取。
     expect(hook.result.current.artifacts[0]?.bytes).toBe(4096);
     expect(hook.result.current.artifacts[0]?.version).toBe(2);
   });
@@ -177,7 +176,7 @@ describe("useWorkflowRunArtifacts", () => {
     expect(hook.result.current.artifacts.map((artifact) => artifact.id)).toEqual(["perf", "extra"]);
   });
 
-  // Deliverable (docs/dynamic-workflow/authoring.md, "Ids, tags and versions"): the live projection upserts in publication order; this is its only ordering point.
+  // 交付物（docs/dynamic-workflow/authoring.md「Ids, tags and versions」）：活投影按发布顺序 upsert，这里是它唯一的排序点。
   it("交付物带头（活投影把它排在第三也一样），旗子两个来源任一带上即算；其余保持发布顺序", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
@@ -196,12 +195,8 @@ describe("useWorkflowRunArtifacts", () => {
       useWorkflowRunArtifacts({
         sessionId: SESSION,
         runId: RUN,
-        // The live projection's summary **lacks** the primary flag (old CLI): after the journal fills it in, report still leads.
-        live: [
-          summary(),
-          summary({ id: "notes", kind: "markdown" }),
-          summary({ id: "report", kind: "markdown" }),
-        ],
+        // 活投影的摘要**没带**旗子（老 CLI）：journal 补上之后仍然领头。
+        live: [summary(), summary({ id: "notes", kind: "markdown" }), summary({ id: "report", kind: "markdown" })],
       }),
     );
     await waitFor(() => expect(hook.result.current.artifacts[0]?.id).toBe("report"));
@@ -214,7 +209,7 @@ describe("useWorkflowRunArtifacts", () => {
     expect(hook.result.current.artifacts[0]?.description).toBe("结论与修复建议");
     expect("primary" in hook.result.current.artifacts[1]!).toBe(false);
 
-    // Only the live projection carries the flag (journal not back yet): it leads from the first frame.
+    // 只有活投影带旗子（journal 还没回来）：第一帧就领头。
     const liveOnly = renderHook(() =>
       useWorkflowRunArtifacts({
         sessionId: SESSION,
@@ -244,7 +239,7 @@ describe("useWorkflowRunArtifacts", () => {
     expect(hook.result.current.artifacts[0]?.spec).toBeUndefined();
   });
 
-  // The completion card's `+N` uses it to decide between writing a number and an ellipsis (docs/dynamic-workflow/transcript-and-notifications.md, "The card").
+  // 完成卡的 `+N` 据它写数字还是省略号（docs/dynamic-workflow/transcript-and-notifications.md「The card」）。
   it("complete：活投影在场即完整（上界 32 = 引擎上限）；冷路径要等 journal 答过；能力缺席永不完整", async () => {
     const live = renderHook(() =>
       useWorkflowRunArtifacts({ sessionId: SESSION, runId: RUN, live: [summary()] }),
@@ -255,17 +250,13 @@ describe("useWorkflowRunArtifacts", () => {
     workflowRunArtifacts.mockImplementation(
       () => new Promise<{ artifacts: WorkflowRunArtifact[] }>((r) => (resolve = r)),
     );
-    const cold = renderHook(() =>
-      useWorkflowRunArtifacts({ sessionId: SESSION, runId: "dwfrun-c" }),
-    );
+    const cold = renderHook(() => useWorkflowRunArtifacts({ sessionId: SESSION, runId: "dwfrun-c" }));
     expect(cold.result.current.complete).toBe(false);
     resolve({ artifacts: [journalRecord()] });
     await waitFor(() => expect(cold.result.current.complete).toBe(true));
 
     workflowRunArtifacts.mockRejectedValue(new Error("fault.command.capabilityUnsupported"));
-    const old = renderHook(() =>
-      useWorkflowRunArtifacts({ sessionId: SESSION, runId: "dwfrun-o" }),
-    );
+    const old = renderHook(() => useWorkflowRunArtifacts({ sessionId: SESSION, runId: "dwfrun-o" }));
     await waitFor(() => expect(old.result.current.unavailable).toBe(true));
     expect(old.result.current.complete).toBe(false);
   });
@@ -316,7 +307,7 @@ describe("useWorkflowRunArtifactData", () => {
       artifactId: "perf",
       limit: 200,
     });
-    // The second page continues from the last sequence of the previous page — no overlap, no gaps.
+    // 第二页从上一页末尾的 sequence 续上——不重不漏。
     expect(workflowRunArtifactData).toHaveBeenNthCalledWith(2, {
       sessionId: SESSION,
       runId: RUN,
@@ -327,7 +318,7 @@ describe("useWorkflowRunArtifactData", () => {
   });
 
   it("翻页没有 16 页的上限：一个已结束、打了 5,000 条标签的 run 看板画出全部条目", async () => {
-    // Before the fix it stopped after at most 16 pages x 200 = 3,200 items, while a finished run never gets another itemCount change to continue pulling.
+    // 修复前最多翻 16 页 × 200 = 3,200 条就停，而已结束的 run 不会再有 itemCount 变化来续拉。
     const total = 5_000;
     const pages = Math.ceil(total / 200);
     for (let page = 0; page < pages; page += 1) {
@@ -347,7 +338,7 @@ describe("useWorkflowRunArtifactData", () => {
   it("一页没有让游标前进就停：一个总说 hasMore 的实现锁不死渲染线程", async () => {
     workflowRunArtifactData
       .mockResolvedValueOnce(itemsPage(1, 2, true))
-      // The same sequence range comes again and still claims more: the cursor did not advance.
+      // 同一段 sequence 又来一遍，且仍说还有：游标没有前进。
       .mockResolvedValueOnce(itemsPage(1, 2, true))
       .mockResolvedValue(itemsPage(1, 2, true));
     const hook = renderHook(() =>
@@ -384,7 +375,7 @@ describe("useWorkflowRunArtifactData", () => {
   });
 
   it("老 CLI 拒收 fields 时退回取整条 item，并记住这个会话", async () => {
-    // The old CLI's strict schema rejects the whole request containing fields; after crossing JSON-RPC only the zod message remains.
+    // 老 CLI 的 strict schema 整条拒收带 fields 的请求；错误跨 JSON-RPC 后只剩 zod 的 message。
     const rejection = new Error(
       '[{"code":"unrecognized_keys","keys":["fields"],"path":[],"message":"Unrecognized key: \\"fields\\""}]',
     );
@@ -403,7 +394,7 @@ describe("useWorkflowRunArtifactData", () => {
     });
     expect(workflowRunArtifactData).toHaveBeenNthCalledWith(2, { ...request, limit: 200 });
 
-    // The next board in the same session no longer hits the rejection once more.
+    // 同一会话的下一块看板不再撞一次拒绝。
     const second = renderHook(() =>
       useWorkflowRunArtifactData({ ...request, artifactId: "perf", fields: ["round"] }),
     );
@@ -454,9 +445,8 @@ describe("useWorkflowRunArtifactData", () => {
   });
 
   it("本地一条都还没有时，itemCount 抬升照样拉——脚本顶部声明的看板就是这样长出第一个点的", async () => {
-    // Regression: the old implementation had a "don't pull when items is empty" gate on the
-    // incremental effect, so a board that is "declared first, then reported each round" stayed
-    // empty forever (the full refetch on the first frame only retrieves zero items).
+    // 回归：旧实现在增量 effect 上有一条「items 为空就不拉」的门，于是一个「先声明、
+    // 后每轮 report」的看板永远停在空态（首帧的整份重取只会取到零条）。
     workflowRunArtifactData
       .mockResolvedValueOnce({ items: [], hasMore: false })
       .mockResolvedValueOnce(itemsPage(1, 1, false));
@@ -478,9 +468,8 @@ describe("useWorkflowRunArtifactData", () => {
   });
 
   it("拉取途中来的刷新信号不丢：收尾前补拉一轮", async () => {
-    // Regression: if the request blocked by the single-flight gate were simply dropped, a run's
-    // **final** report would never be drawn — no further itemCount change would come to trigger
-    // the next fetch.
+    // 回归：单飞门挡下的那一次如果直接丢掉，一个 run 的**最后一条** report 就永远画不出来
+    // ——它之后不会再有 itemCount 变化来触发下一次拉取。
     let releaseFirst: (() => void) | undefined;
     workflowRunArtifactData.mockImplementationOnce(
       async () =>
@@ -502,7 +491,7 @@ describe("useWorkflowRunArtifactData", () => {
     );
     await waitFor(() => expect(releaseFirst).toBeDefined());
 
-    // Another report arrives before the first page returns: this one is blocked by the single-flight gate but must be remembered.
+    // 第一页还没回来就又来了一条 report：这一次会被单飞门挡下，但必须被记住。
     hook.rerender({ itemCount: 2 });
     await act(async () => {
       releaseFirst?.();
@@ -575,7 +564,7 @@ describe("useWorkflowRunArtifactBytes", () => {
   beforeEach(() => {
     created.length = 0;
     revoked.length = 0;
-    // jsdom has no object URLs: stub them to observe the invariant "revoke on version switch / unmount".
+    // jsdom 没有 object URL：桩出来才能观察「换版本 / 卸载时 revoke」这条不变式。
     (URL as unknown as { createObjectURL: (blob: Blob) => string }).createObjectURL = (
       blob: Blob,
     ) => {
@@ -622,7 +611,7 @@ describe("useWorkflowRunArtifactBytes", () => {
     expect(hook.result.current.totalBytes).toBe(11);
     expect(hook.result.current.blob?.type).toBe("text/markdown");
     expect(hook.result.current.objectUrl).toBe(created[0]);
-    // The second chunk's offset comes from the first chunk's nextOffset, and limit is the existing chunking bound from the attachment path.
+    // 第二块的 offset 来自第一块的 nextOffset，limit 是附件那条既有的分块上界。
     expect(workflowRunArtifactRead).toHaveBeenNthCalledWith(2, {
       sessionId: SESSION,
       runId: RUN,

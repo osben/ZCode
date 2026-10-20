@@ -1,14 +1,15 @@
-/* eslint-disable max-lines -- The command-management panel centralizes the list, form, and external import entry point; splitting it would increase cross-state navigation costs. */
+/* eslint-disable max-lines -- 命令管理面板集中维护列表、表单和外部导入入口，拆分会增加跨状态跳转成本 */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import type { CommandConfig, UserCommand, ZCodeCommand } from "@zcode/shared";
+import type { IServiceAccessor } from "@zcode/services";
 import { isPluginCommand, isUserCommand, ZCODE_COMMAND_AGENT_SOURCE } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useCommands } from "@/hooks/useCommands.js";
-import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import { useConfigWorkspaceServicesResolution as useWorkspaceServicesResolution } from "@/workspace-config-catalog/index.js";
 import { CommandCard, isEditableUserCommand } from "@/settings/CommandCard.js";
 import { CommandForm } from "@/settings/CommandForm.js";
 import { getPluginWorkspaceKey } from "@/settings/PluginScopeMenu.js";
@@ -31,7 +32,7 @@ import {
   selectCommandsForScope,
   selectPluginsForScope,
 } from "@/settings/pluginCapabilityProjection.js";
-import type { WorkspaceTabState } from "@/store/tabStore.js";
+import type { ConfigWorkspaceTarget } from "@/workspace-config-catalog/index.js";
 import {
   resolveCommandScopeRecovery,
   resolveCommandStorageTarget,
@@ -43,11 +44,13 @@ interface CommandsSectionProps {
   workspaceIdentity?: string;
   scopeFilter: "user" | "workspace";
   parentScopeKey: string;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ConfigWorkspaceTarget[];
   searchQuery: string;
   onVisibleCountChange?: (count: number) => void;
   onEditorOpenChange?: (open: boolean) => void;
   onFormScopeKeyChange?: (scopeKey: string | null) => void;
+  unscopedServices?: IServiceAccessor;
+  cacheAuthorityKey?: string;
 }
 
 export function CommandsSection({
@@ -60,6 +63,8 @@ export function CommandsSection({
   onVisibleCountChange,
   onEditorOpenChange,
   onFormScopeKeyChange,
+  unscopedServices,
+  cacheAuthorityKey,
 }: CommandsSectionProps) {
   const { intl, locale } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
@@ -68,14 +73,15 @@ export function CommandsSection({
   const currentWorkspaceTab = workspaceTabs.find(
     (tab) => getPluginWorkspaceKey(tab) === currentWorkspaceKey,
   );
-  // The list receives workspacePath from the Scope target, but command and Plugin services still came from the current
-  // ServiceProvider, sending B's path to A's remote host. Resolve both through the target and pause RPC until the connection is ready;
-  // do not fall back to the current active workspace's service.
+  // 列表按 Scope target 收到 workspacePath，但命令与插件服务仍取自当前
+  // ServiceProvider，会把 B 的路径发往 A 的 remote host。两者统一走 target 解析结果，
+  // 并在连接就绪前暂停 RPC，不回退到当前激活 workspace 的 service。
   const listServiceResolution = useWorkspaceServicesResolution(
     currentWorkspaceTab?.workspacePath ?? workspacePath,
     currentWorkspaceTab?.remoteSessionId,
     currentWorkspaceTab?.workspaceIdentity ?? workspaceIdentity,
     currentWorkspaceTab?.remoteTarget,
+    { unscopedServices, forceUnscoped: Boolean(cacheAuthorityKey) },
   );
   const { commandsService, pluginManagementService, settingsSyncService } =
     listServiceResolution.services;
@@ -111,6 +117,10 @@ export function CommandsSection({
     formServiceTarget?.remoteSessionId,
     formServiceTarget?.workspaceIdentity ?? workspaceIdentity,
     formServiceTarget?.remoteTarget,
+    {
+      unscopedServices: formTargetWorkspace ? undefined : unscopedServices,
+      forceUnscoped: Boolean(cacheAuthorityKey && !formTargetWorkspace),
+    },
   );
   const formServices = formServiceResolution.services;
 
@@ -121,7 +131,7 @@ export function CommandsSection({
       workspaceTabs,
     });
     if (recovery === "keep") return;
-    // Do not write to an invalid path after the target Workspace closes; new entries fall back to User, while editing exits directly.
+    // 目标 Workspace 关闭后不能继续向失效路径写入；新建回退 User，编辑直接退出。
     if (recovery === "close-editor") {
       setEditingCommand(null);
       setShowForm(false);
@@ -143,11 +153,13 @@ export function CommandsSection({
     void initializePlugins({
       workspacePath,
       workspaceIdentity,
+      authorityKey: cacheAuthorityKey,
       configScope: scopeFilter,
       pluginService: pluginManagementService,
     });
   }, [
     initializePlugins,
+    cacheAuthorityKey,
     listServiceResolution.rpcReady,
     pluginManagementService,
     scopeFilter,
@@ -223,6 +235,7 @@ export function CommandsSection({
         return;
       }
       const confirmed = await confirmDialog({
+        confirmVariant: "destructive",
         title: intl.formatMessage({ id: "settings.commands.delete.title" }),
         description: intl.formatMessage(
           { id: "settings.commands.delete.description" },
@@ -301,9 +314,10 @@ export function CommandsSection({
     [onFormScopeKeyChange],
   );
 
-  // pluginManagementStore is a global singleton; when effectiveCommandScopeKey differs from selectedScopeKey, PluginList on the Plugins tab
-  // and this page can initialize it alternately with different targets. PluginList already protects itself with storeKey!==targetKey;
-  // use the same pattern here to prevent command groups contributed by Plugins from briefly using another target's projection.
+  // pluginManagementStore 是全局单例，Plugins tab 的 PluginList 与本页在
+  // effectiveCommandScopeKey ≠ selectedScopeKey 时会用不同 target 交替初始化它。
+  // PluginList 已用 storeKey!==targetKey 自保护，这里复用同一模式，避免插件贡献的
+  // 命令分组短暂取自别的 target 的插件投影。
   const pluginStoreMatchesTarget =
     (pluginStoreWorkspaceIdentity?.trim() || pluginStoreWorkspacePath || "") ===
       currentWorkspaceKey && pluginConfigScope === scopeFilter;

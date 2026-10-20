@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- The suggestion panel groups the virtual list and E2E selectors; do not split components just for a few test attributes yet. */
+/* oxlint-disable eslint(max-lines) -- 提示面板集中承载虚拟列表和 E2E 定位属性，暂不为少量测试属性拆组件。 */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -7,7 +7,7 @@ import {
   TID_PROMPT_SUGGESTION_SECTION,
   TID_PROMPT_SUGGESTION_STATUS,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { cn } from "@/components/lib/utils.js";
 import { Info, LoaderIcon } from "lucide-react";
 import {
@@ -23,9 +23,9 @@ export interface MentionPanelOption {
   description: string;
   content?: ReactNode;
   meta?: ReactNode;
-  /** Disabled state (for example, a same-name Plugin conflict that fails closed): visible but not clickable; the parent skips it during keyboard navigation. */
+  /** 禁选态（如同名 Plugin 冲突 fail closed）：可见但不可点击，键盘导航由上层跳过。 */
   disabled?: boolean;
-  /** Reason it is disabled; shown in the description slot when there is no custom content. */
+  /** 禁选原因；无自定义 content 时展示在描述位。 */
   disabledReason?: string;
 }
 
@@ -37,6 +37,8 @@ export interface MentionPanelSection {
   loadingText?: string;
   loading?: boolean;
   errorText?: string | null;
+  /** 项目名称在单组搜索结果中也需要可见。 */
+  showHeader?: boolean;
 }
 
 interface MentionPanelProps {
@@ -75,8 +77,8 @@ const OPTION_ROW_HEIGHT = 34;
 const STATUS_ROW_HEIGHT = 40;
 export const SECTION_HEADER_ROW_HEIGHT = 34;
 
-// After group headings switched to the base font size, the old 28px virtual row could not fit the default line height and 12px vertical padding.
-// Use the same 32px visible height and 34px virtual row height as command items to prevent clipping or overlapping the next row.
+// 分组标题改用 base 字号后，旧的 28px 虚拟行装不下默认行高与 12px 上下 padding。
+// 使用与命令项一致的 32px 可见高度和 34px 虚拟行高度，避免裁切或覆盖下一行。
 export const SECTION_HEADER_CLASS_NAME =
   "flex h-8 items-center px-3 text-ui-base font-semibold uppercase tracking-wide text-foreground-subtle";
 
@@ -86,7 +88,7 @@ export function buildVirtualRows(sections: MentionPanelSection[]): VirtualRow[] 
   const shouldRenderSectionHeader = sections.length > 1;
 
   for (const section of sections) {
-    if (shouldRenderSectionHeader && section.title.trim().length > 0) {
+    if ((shouldRenderSectionHeader || section.showHeader) && section.title.trim().length > 0) {
       rows.push({
         kind: "section_header",
         sectionId: section.id,
@@ -415,7 +417,7 @@ function OptionRow({
         )}
         onMouseDown={(event) => {
           event.preventDefault();
-          // Disabled items cannot be selected: fail closed so a conflicting plugin cannot be inserted.
+          // 禁选项不触发选择：fail closed，冲突 Plugin 不能被插入。
           if (isDisabled) {
             return;
           }

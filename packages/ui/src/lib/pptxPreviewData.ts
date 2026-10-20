@@ -66,8 +66,8 @@ export async function readPptxPreviewData({
       return null;
     }
     if (chunk.length === 0) {
-      // readFileRange may return an empty chunk if the file is truncated concurrently or the remote version differs.
-      // Previously, slicing the buffer and passing it to the ZIP parser lost the original read position and showed only a generic failure.
+      // readFileRange 可能在文件被并发截断或远端版本不一致时返回空 chunk。
+      // 之前这里直接裁剪已读 buffer 并交给 ZIP 解析器，导致原始读取位置丢失且只显示泛化失败。
       throw new PptxPreviewIncompleteFileError(fileSize, offset);
     }
     if (chunk.length > requestedLength) {

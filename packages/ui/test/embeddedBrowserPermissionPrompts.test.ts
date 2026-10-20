@@ -2,32 +2,30 @@
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type EmbeddedBrowserPermissionPromptEvent } from "@zcode/shared";
 import {
   TID_BROWSER_PERMISSION_ALLOW_ALWAYS,
   TID_BROWSER_PERMISSION_ALLOW_ONCE,
   TID_BROWSER_PERMISSION_DENY,
   TID_BROWSER_PERMISSION_DISMISS,
   TID_BROWSER_PERMISSION_PROMPTS,
-  type EmbeddedBrowserPermissionPromptEvent,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 // 与组件相同的 "@/..." 说明符：vitest alias 下相对路径与别名会解析成两个模块实例，
 // 导致 setState 与组件订阅落在不同 store 上。
 import { useEmbeddedBrowserPermissionStore } from "@/store/embeddedBrowserPermissionStore.js";
 
 /** 模拟 main 的设备列表热更新：同 requestId 的推送应替换列表而非追加。 */
-function pushDeviceListUpdate(
-  requestId: string,
-  devices: Array<{ deviceId: string; name?: string }>,
-) {
-  useEmbeddedBrowserPermissionStore.getState().receivePrompt({
-    requestId,
-    kind: "device",
-    origin: "https://example.com",
-    permission: "select-bluetooth-device",
-    devices,
-  });
+function pushDeviceListUpdate(requestId: string, devices: Array<{ deviceId: string; name?: string }>) {
+  useEmbeddedBrowserPermissionStore
+    .getState()
+    .receivePrompt({
+      requestId,
+      kind: "device",
+      origin: "https://example.com",
+      permission: "select-bluetooth-device",
+      devices,
+    });
 }
 
 const resolveEmbeddedBrowserPermissionPrompt = vi.fn();
@@ -40,8 +38,9 @@ vi.mock("@/hooks/usePlatform.js", () => ({
   }),
 }));
 
-const { EmbeddedBrowserPermissionPrompts } =
-  await import("@/browser-use/EmbeddedBrowserPermissionPrompts.js");
+const { EmbeddedBrowserPermissionPrompts } = await import(
+  "@/browser-use/EmbeddedBrowserPermissionPrompts.js"
+);
 
 function renderWithPrompts(
   prompts: EmbeddedBrowserPermissionPromptEvent[],
@@ -51,7 +50,7 @@ function renderWithPrompts(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(EmbeddedBrowserPermissionPrompts, { guestWebContentsId }),
     ),
   );
@@ -84,22 +83,14 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     renderWithPrompts([permissionPrompt]);
     expect(screen.getByText("https://example.com")).toBeTruthy();
     // mediaTypes: ["video"] → 摄像头，而不是笼统的「摄像头和麦克风」
-    expect(screen.getByText(expectedCopy("browser.permission.mediaVideo"))).toBeTruthy();
-    expect(screen.queryByText(expectedCopy("browser.permission.mediaBoth"))).toBeNull();
+    expect(screen.getByText("摄像头")).toBeTruthy();
+    expect(screen.queryByText("摄像头和麦克风")).toBeNull();
     // 平铺三选项：不允许 / 仅本次允许 / 访问此网站时允许
-    expect(
-      screen.getByRole("button", { name: expectedCopy("browser.permission.denyThisTime") }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: expectedCopy("browser.permission.allowOnce") }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: expectedCopy("browser.permission.allowAlways") }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "不允许" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "仅本次允许" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "访问此网站时允许" })).toBeTruthy();
     // 气泡头部带 ✕ 关闭（= 不允许·本次），仍不提供「永久阻止」
-    expect(
-      screen.queryByRole("button", { name: expectedCopy("browser.permission.blockAlways") }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "阻止" })).toBeNull();
     expect(screen.getByTestId(TID_BROWSER_PERMISSION_DISMISS)).toBeTruthy();
   });
 
@@ -107,7 +98,7 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     renderWithPrompts([
       { ...permissionPrompt, permission: "clipboard-read", mediaTypes: undefined },
     ]);
-    expect(screen.getByText(expectedCopy("browser.permission.clipboardRead"))).toBeTruthy();
+    expect(screen.getByText("读取剪贴板")).toBeTruthy();
   });
 
   it("「仅本次允许」回传 allow-session 并出队", () => {
@@ -141,12 +132,18 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
 
   it("permission 请求按 guest 归属过滤：后台 tab 的请求不在当前 tab 渲染", () => {
     // 当前 tab 的 guest id = 42；请求来自 99（后台 tab）
-    renderWithPrompts([{ ...permissionPrompt, guestWebContentsId: 99 }], 42);
+    renderWithPrompts(
+      [{ ...permissionPrompt, guestWebContentsId: 99 }],
+      42,
+    );
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
 
     // 请求来自当前 tab（42）：渲染
     cleanup();
-    renderWithPrompts([{ ...permissionPrompt, guestWebContentsId: 42 }], 42);
+    renderWithPrompts(
+      [{ ...permissionPrompt, guestWebContentsId: 42 }],
+      42,
+    );
     expect(screen.getByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeTruthy();
     expect(screen.getByText("https://example.com")).toBeTruthy();
 
@@ -173,9 +170,9 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
 
   it("media 同时申请摄像头与麦克风时能力列表列两行", () => {
     renderWithPrompts([{ ...permissionPrompt, mediaTypes: ["video", "audio"] }]);
-    expect(screen.getByText(expectedCopy("browser.permission.mediaVideo"))).toBeTruthy();
-    expect(screen.getByText(expectedCopy("browser.permission.mediaAudio"))).toBeTruthy();
-    expect(screen.queryByText(expectedCopy("browser.permission.mediaBoth"))).toBeNull();
+    expect(screen.getByText("摄像头")).toBeTruthy();
+    expect(screen.getByText("麦克风")).toBeTruthy();
+    expect(screen.queryByText("摄像头和麦克风")).toBeNull();
   });
 
   it("不同请求可并存渲染", () => {
@@ -183,8 +180,8 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
       permissionPrompt,
       { ...permissionPrompt, requestId: "req-2", permission: "geolocation" },
     ]);
-    expect(screen.getByText(expectedCopy("browser.permission.mediaVideo"))).toBeTruthy();
-    expect(screen.getByText(expectedCopy("browser.permission.geolocation"))).toBeTruthy();
+    expect(screen.getByText("摄像头")).toBeTruthy();
+    expect(screen.getByText("位置信息")).toBeTruthy();
   });
 });
 
@@ -198,7 +195,7 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
         screens: [
           {
             sourceId: "screen:1",
-            name: "Built-in Display",
+            name: "Entire Screen",
             kind: "screen",
             thumbnailDataUrl: "data:image/jpeg;base64,AAAA",
           },
@@ -214,13 +211,11 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
       ).length,
     ).toBeGreaterThan(0);
     // 分组标题
-    expect(screen.getByText(expectedCopy("browser.permission.screenGroup.screen"))).toBeTruthy();
-    expect(screen.getByText(expectedCopy("browser.permission.screenGroup.window"))).toBeTruthy();
+    expect(screen.getByText("整个屏幕")).toBeTruthy();
+    expect(screen.getByText("窗口")).toBeTruthy();
     expect(screen.getByText("Doc — Preview")).toBeTruthy();
     expect(screen.getByText("Terminal")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: expectedCopy("browser.permission.share") }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "共享" })).toBeTruthy();
   });
 
   it("同 requestId 的推送热更新设备列表（蓝牙扫描渐进出设备）", async () => {
@@ -261,9 +256,7 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
     expect(screen.getByText("Ledger Nano")).toBeTruthy();
     expect(screen.getByText("2c97:0001 · SN123")).toBeTruthy();
 
-    const connectButton = screen.getByRole("button", {
-      name: expectedCopy("browser.permission.connect"),
-    });
+    const connectButton = screen.getByRole("button", { name: "连接" });
     expect((connectButton as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByText("Ledger Nano"));

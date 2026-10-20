@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The skill management panel shares filtering, installation, and toggle interaction state; keeping it together makes behavior more consistent. */
+/* eslint-disable max-lines -- 技能管理面板需共享筛选、安装与开关交互状态，集中维护更便于一致性 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -23,16 +23,14 @@ import type {
   SkillsCapability,
   RemoteTarget,
 } from "@zcode/shared";
+import type { IServiceAccessor } from "@zcode/services";
 import { ZCODE_AGENT_PROVIDER } from "@zcode/shared";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
-import { useZCodeSessionService } from "@/hooks/useZCodeSessionService.js";
-import {
-  useBaseWorkspaceServices,
-  useWorkspaceServicesResolution,
-} from "@/hooks/useWorkspaceServices.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useConfigWorkspaceServicesResolution as useWorkspaceServicesResolution } from "@/workspace-config-catalog/index.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { buildSkillMentionMarkdown } from "@/mentions/mentionMarkdown.js";
 import { filterSkillsForProvider } from "@/lib/skillSourceFilter.js";
@@ -58,6 +56,7 @@ import { SkillsImportDialog } from "@/settings/ExternalAgentImportDialog.js";
 import { formatRemoteSkillSyncTarget } from "@/settings/RemoteSkillSyncDialog.js";
 import { RemoteSyncDialogs, shouldShowRemoteSyncActions } from "@/settings/RemoteSyncActions.js";
 import { refreshSharedSkillStoreForWorkspace } from "@/lib/skillStoreRefresh.js";
+import { buildSourceSettingsProjectionKey } from "@/settings/settingsSourceWorkspace.js";
 import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
 import {
   groupScopedSkillsBySource,
@@ -156,6 +155,8 @@ interface SkillsSectionProps {
   onOpenPluginStore?: () => void;
   showMarketplaceBreadcrumb?: boolean;
   reportDetailBreadcrumb?: boolean;
+  unscopedServices?: IServiceAccessor;
+  cacheAuthorityKey?: string;
 }
 
 export function SkillsSection({
@@ -172,6 +173,8 @@ export function SkillsSection({
   onOpenPluginStore,
   showMarketplaceBreadcrumb = false,
   reportDetailBreadcrumb = false,
+  unscopedServices,
+  cacheAuthorityKey,
 }: SkillsSectionProps) {
   const { intl, locale } = useZCodeIntl();
   const platform = usePlatform();
@@ -187,8 +190,8 @@ export function SkillsSection({
   const pluginWorkspaceIdentity = usePluginManagementStore((state) => state.workspaceIdentity);
   const pluginConfigScope = usePluginManagementStore((state) => state.configScope);
   const initializePlugins = usePluginManagementStore((state) => state.initialize);
-  // useConfirmDialog is a plain Zustand selector (no useState), so placing it here does not affect SkillsSection's
-  // existing unit-test mock based on useState call order (see the comment near selectedSkill below).
+  // useConfirmDialog 是纯 Zustand selector（不含 useState），放在这里不会影响 SkillsSection
+  // 既有的「按 useState 调用次序」单测桩（见下方 selectedSkill 附近的注释）。
   const confirmDialog = useConfirmDialog();
   const activeWorkspacePath = workspacePath ?? null;
   const activeWorkspaceIdentity = workspaceIdentity;
@@ -197,16 +200,12 @@ export function SkillsSection({
     remoteSessionId,
     activeWorkspaceIdentity,
     remoteTarget,
+    { unscopedServices, forceUnscoped: Boolean(cacheAuthorityKey) },
   );
-  // PluginsSection already passes a Scope target, but Skills still obtained services from the current ServiceProvider,
-  // causing misrouting across remote hosts. Use the same resolved target for skill reads/writes and remote sync.
+  // PluginsSection 已把 Scope target 传入，但 Skills 仍从当前 ServiceProvider
+  // 取服务，导致跨远程 host 误路由。技能读写和远端同步都改用同一 target 解析结果。
   const { pluginManagementService, skillSyncService, skillsService } =
     targetServiceResolution.services;
-  const zcodeSessionService = useZCodeSessionService(
-    activeWorkspacePath ?? undefined,
-    undefined,
-    activeWorkspaceIdentity,
-  );
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [capability, setCapability] = useState<SkillsCapability | null>(null);
   const [loadedSkillTargetKey, setLoadedSkillTargetKey] = useState("");
@@ -222,7 +221,11 @@ export function SkillsSection({
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [remoteSkillSyncOpen, setRemoteSkillSyncOpen] = useState(false);
   const latestRequestIdRef = useRef(0);
-  const activeSkillTargetKey = activeWorkspaceIdentity?.trim() || activeWorkspacePath || "";
+  const activeSkillTargetKey = buildSourceSettingsProjectionKey(
+    activeWorkspacePath,
+    activeWorkspaceIdentity,
+    cacheAuthorityKey,
+  );
   const projectionMatchesTarget =
     !activeWorkspacePath || loadedSkillTargetKey === activeSkillTargetKey;
 
@@ -231,12 +234,14 @@ export function SkillsSection({
     void initializePlugins({
       workspacePath: activeWorkspacePath,
       workspaceIdentity: activeWorkspaceIdentity,
+      authorityKey: cacheAuthorityKey,
       configScope: scopeFilter,
       pluginService: pluginManagementService,
     });
   }, [
     activeWorkspaceIdentity,
     activeWorkspacePath,
+    cacheAuthorityKey,
     initializePlugins,
     pluginManagementService,
     scopeFilter,
@@ -263,7 +268,7 @@ export function SkillsSection({
     (skill: SkillSummary): string => {
       switch (skill.scope) {
         case "workspace":
-          // Show the workspace name for workspace scope; use generic copy when there is no workspace.
+          // workspace 作用域显示 workspace 名，没有 workspace 时退回到通用文案。
           return (
             workspaceLabel ||
             intl.formatMessage({
@@ -308,7 +313,11 @@ export function SkillsSection({
         setLoadedSkillTargetKey("");
         return;
       }
-      const requestTargetKey = activeWorkspaceIdentity?.trim() || activeWorkspacePath;
+      const requestTargetKey = buildSourceSettingsProjectionKey(
+        activeWorkspacePath,
+        activeWorkspaceIdentity,
+        cacheAuthorityKey,
+      );
       setLoading(showBlockingLoading);
       setError(null);
       const requestId = ++latestRequestIdRef.current;
@@ -335,7 +344,13 @@ export function SkillsSection({
         setError(loadError instanceof Error ? loadError.message : String(loadError));
       }
     },
-    [activeWorkspaceIdentity, activeWorkspacePath, skillsService, targetServiceResolution.rpcReady],
+    [
+      activeWorkspaceIdentity,
+      activeWorkspacePath,
+      cacheAuthorityKey,
+      skillsService,
+      targetServiceResolution.rpcReady,
+    ],
   );
 
   useEffect(() => {
@@ -347,8 +362,8 @@ export function SkillsSection({
       setRemoteSkillSyncOpen(false);
       return;
     }
-    // Show blocking loading on first screen or when switching Scope target; manual refresh remains in the background
-    // to avoid flashing the whole view when current-target data is available.
+    // 首屏或切换 Scope target 时必须显示阻塞 loading；手动刷新仍走后台刷新，
+    // 避免有当前 target 数据时整块闪烁。
     void loadSkills(true);
   }, [activeWorkspacePath, loadSkills, targetServiceResolution.rpcReady]);
 
@@ -369,7 +384,7 @@ export function SkillsSection({
       if (!activeWorkspacePath) {
         return;
       }
-      // After removing third-party sources, store skill state consistently in the ZCode Agent context to avoid bucket drift from old provider prefixes.
+      // 移除三方来源后，技能状态统一写入 ZCode Agent 上下文，避免旧 provider 前缀带来分桶漂移。
       const targetSkill = skills.find((skill) => skill.id === skillId);
       const effectiveProvider: ZCodeProvider = ZCODE_AGENT_PROVIDER;
       try {
@@ -382,7 +397,6 @@ export function SkillsSection({
           enabled,
         });
         await invalidateDeferredDraftSessionForSkillChange({
-          zcodeSessionService,
           workspacePath: activeWorkspacePath,
           workspaceIdentity: activeWorkspaceIdentity,
           reason: "settings-skill-enabled",
@@ -401,18 +415,18 @@ export function SkillsSection({
       refreshSharedSkillStoreForCurrentWorkspace,
       skills,
       skillsService,
-      zcodeSessionService,
     ],
   );
 
-  // Delete a local skill: plugin-scoped skills cannot be deleted individually (uninstall the plugin instead), and callers already hide this entry in the UI.
-  // Reuse the confirmation-dialog store mounted at the app root (useConfirmDialog), matching the subagent deletion flow.
+  // 删除本地技能：plugin 作用域技能不可单独删除（由卸载插件管理），调用方已在 UI 层屏蔽其入口。
+  // 复用应用根部已挂载的确认弹窗 store（useConfirmDialog），与子智能体删除流程保持一致。
   const handleDeleteSkill = useCallback(
     async (skill: SkillSummary) => {
       if (!activeWorkspacePath || skill.scope === "plugin") {
         return;
       }
       const confirmed = await confirmDialog({
+        confirmVariant: "destructive",
         title: intl.formatMessage({ id: "settings.skills.delete.title" }),
         description: intl.formatMessage(
           { id: "settings.skills.delete.description" },
@@ -430,7 +444,6 @@ export function SkillsSection({
           skillId: skill.id,
         });
         await invalidateDeferredDraftSessionForSkillChange({
-          zcodeSessionService,
           workspacePath: activeWorkspacePath,
           workspaceIdentity: activeWorkspaceIdentity,
           reason: "settings-skill-delete",
@@ -451,7 +464,6 @@ export function SkillsSection({
       loadSkills,
       selectedSkill,
       skillsService,
-      zcodeSessionService,
     ],
   );
 
@@ -518,9 +530,9 @@ export function SkillsSection({
     );
     const markdown = buildSkillMentionMarkdown("skill-creator", skillCreator?.path);
 
-    // After the v4 migration removed the old pendingComposerPrefill, this entry still manipulated the session
-    // store manually and only navigated back to chat; skill-creator text never reached the new Composer. Delegate to
-    // Root's new-task entry so draft persistence, workspaceIdentity isolation, and Composer insertion share one path.
+    // v4 迁移删除旧 pendingComposerPrefill 后，这个入口仍手工操作 session
+    // store，只剩返回聊天页的导航，skill-creator 文本没有进入新 Composer。统一委托
+    // Root 的新任务入口，让草稿持久化、workspaceIdentity 隔离和 Composer 插入保持单一路径。
     onCreateTask({
       provider: effectiveProvider,
       initialPrompt: `${markdown} `,
@@ -557,8 +569,8 @@ export function SkillsSection({
     [intl, platform],
   );
 
-  // The number of diagnostics is not the number of failed skill loads; one scan can return usable skills and multiple directory-level warnings.
-  // Show accurate counts by severity instead of reporting warnings as “all skills failed to load.”
+  // 诊断条数不等于加载失败的技能数；同一次扫描可以返回可用技能和多个目录级警告。
+  // 按严重级别展示真实统计，避免把 warning 误报成“所有技能加载失败”。
   const diagnosticErrorCount = diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error",
   ).length;
@@ -600,7 +612,7 @@ export function SkillsSection({
         <div
           role="button"
           tabIndex={0}
-          className="min-w-0 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          className="min-w-0 cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused focus-visible:ring-offset-2 focus-visible:ring-offset-card"
           onClick={() => setSelectedSkill(skill)}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
@@ -682,8 +694,7 @@ export function SkillsSection({
 
   return (
     <div className="space-y-4">
-      {/* Bug cause: details in the standalone Skills section use a dialog, not page-level
-          navigation; only the plugin container needs to report the details level. */}
+      {/* Bug 原因：独立 Skills 分区的详情是弹窗，不属于页面级导航；只有插件容器需要上报详情层级。 */}
       {reportDetailBreadcrumb && detailSkill ? (
         <SettingsBreadcrumbReporter
           items={
@@ -716,7 +727,7 @@ export function SkillsSection({
       ) : null}
 
       {targetServiceResolution.rpcReady && diagnostics.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-warning/40 bg-warning/10 text-ui-base text-foreground">
+        <div className="overflow-hidden rounded-lg border border-amber-500/40 bg-amber-500/10 text-ui-base text-foreground">
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused"
@@ -737,11 +748,11 @@ export function SkillsSection({
             ) : (
               <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
             )}
-            <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
+            <AlertTriangle className="size-3.5 shrink-0 text-amber-500" aria-hidden="true" />
             <span className="flex-1 truncate font-medium">{diagnosticsSummary}</span>
           </button>
           {diagnosticsOpen ? (
-            <ul className="space-y-1 border-t border-warning/30 px-3 py-2">
+            <ul className="space-y-1 border-t border-amber-500/30 px-3 py-2">
               {diagnostics.map((diagnostic, index) => (
                 <li
                   key={`${diagnostic.code}-${diagnostic.path ?? "no-path"}-${index}`}
@@ -752,7 +763,7 @@ export function SkillsSection({
                       className={
                         diagnostic.severity === "error"
                           ? "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-destructive"
-                          : "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-warning"
+                          : "shrink-0 text-ui-xs font-semibold uppercase tracking-wide text-amber-500"
                       }
                     >
                       {diagnostic.severity}
@@ -971,7 +982,6 @@ export function SkillsSection({
         onOpenChange={setImportDialogOpen}
         onImported={async () => {
           await invalidateDeferredDraftSessionForSkillChange({
-            zcodeSessionService,
             workspacePath: activeWorkspacePath,
             workspaceIdentity: activeWorkspaceIdentity,
             reason: "settings-skill-import",
@@ -996,7 +1006,6 @@ export function SkillsSection({
         workspaceIdentity={activeWorkspaceIdentity}
         onSkillsSynced={async () => {
           await invalidateDeferredDraftSessionForSkillChange({
-            zcodeSessionService,
             workspacePath: activeWorkspacePath,
             workspaceIdentity: activeWorkspaceIdentity,
             reason: "settings-remote-skill-sync",

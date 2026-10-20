@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { OccupationOnboarding } from "@/onboarding/OccupationOnboarding.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const mocks = vi.hoisted(() => ({
   report: vi.fn(async (_event: unknown) => {}),
@@ -69,9 +68,7 @@ function mount() {
   );
 }
 function next() {
-  fireEvent.click(
-    screen.getByRole("button", { name: expectedCopy("occupationOnboarding.continue") }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: mocks.locale === "zh" ? "下一步" : "Next" }));
 }
 function preferences() {
   next();
@@ -84,7 +81,7 @@ beforeEach(() => {
   mocks.requested = true;
   mocks.needs = false;
   mocks.settingsReady = true;
-  mocks.locale = "en";
+  mocks.locale = "zh";
   mocks.store = {
     interfaceMode: "office",
     user: { id: "u1" },
@@ -101,10 +98,8 @@ describe("onboarding telemetry through real component interactions", () => {
     mount();
     preferences();
     fireEvent.click(screen.getAllByRole("checkbox")[1]!);
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.back") }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Office mode/i }));
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    fireEvent.click(screen.getByRole("button", { name: /办公模式/ }));
     fireEvent.keyDown(window, { key: "Escape" });
     expect(events("onboarding_end")[0]?.eventExtraDetail.workspace_memory_enabled).toBe("null");
   });
@@ -141,9 +136,7 @@ describe("onboarding telemetry through real component interactions", () => {
   ])("maps %s to a stable English work direction", (occupation, expected) => {
     mount();
     fireEvent.click(
-      screen.getByRole("button", {
-        name: enUS[`occupationOnboarding.${occupation}` as keyof typeof enUS] as string,
-      }),
+      screen.getByRole("button", { name: zhCN[`occupationOnboarding.${occupation}`] }),
     );
     fireEvent.keyDown(window, { key: "Escape" });
     expect(events("onboarding_end")[0]?.eventExtraDetail.work_direction).toBe(expected);
@@ -200,14 +193,7 @@ describe("onboarding telemetry through real component interactions", () => {
           finish = resolve;
         }),
     );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name:
-          action === "start"
-            ? expectedCopy("occupationOnboarding.start")
-            : expectedCopy("occupationOnboarding.skip"),
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: action === "start" ? "开始使用" : "跳过" }));
     expect(events("onboarding_end")).toHaveLength(0);
     mocks.locale = "en";
     await act(async () => {
@@ -215,10 +201,7 @@ describe("onboarding telemetry through real component interactions", () => {
     });
     expect(events("onboarding_end")).toEqual([
       expect.objectContaining({
-        eventText:
-          action === "start"
-            ? expectedCopy("occupationOnboarding.start")
-            : expectedCopy("occupationOnboarding.skip"),
+        eventText: action === "start" ? "开始使用" : "跳过",
         eventExtraDetail: {
           work_direction: "software_data_ai",
           ui_mode: "work",
@@ -238,7 +221,7 @@ describe("onboarding telemetry through real component interactions", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     const end = events("onboarding_end");
     expect(end).toHaveLength(1);
-    expect(end[0]?.eventText).toBe(expectedCopy("occupationOnboarding.close"));
+    expect(end[0]?.eventText).toBe("退出引导");
     expect(end[0]?.eventExtraDetail).toMatchObject({
       exit_action: "close",
       exit_step: String(step + 1),
@@ -253,14 +236,10 @@ describe("onboarding telemetry through real component interactions", () => {
   it("invalidates preferences after changing mode, even when switching back", () => {
     mount();
     preferences();
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.back") }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Coding mode/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Office mode/i }));
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.close") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    fireEvent.click(screen.getByRole("button", { name: /编程模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: /办公模式/ }));
+    fireEvent.click(screen.getByRole("button", { name: "退出引导" }));
     expect(events("onboarding_end")[0]?.eventExtraDetail).toMatchObject({
       ui_mode: "work",
       workspace_memory_enabled: "null",
@@ -271,13 +250,9 @@ describe("onboarding telemetry through real component interactions", () => {
   it("preserves skipped single-choice answers and code-only hidden preference", async () => {
     mocks.store.interfaceMode = "coding";
     mount();
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.skip") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "跳过" }));
     next();
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.start") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "开始使用" }));
     await waitFor(() => expect(events("onboarding_end")).toHaveLength(1));
     expect(events("onboarding_end")[0]?.eventExtraDetail).toMatchObject({
       work_direction: "null",
@@ -289,14 +264,10 @@ describe("onboarding telemetry through real component interactions", () => {
     mocks.update.mockRejectedValueOnce(new Error("save failed"));
     mount();
     preferences();
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.start") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "开始使用" }));
     await screen.findByRole("alert");
     expect(events("onboarding_end")).toHaveLength(0);
-    fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("occupationOnboarding.start") }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "开始使用" }));
     await waitFor(() => expect(events("onboarding_end")).toHaveLength(1));
   });
   it("English close text, reopen and reporting failure do not block UI", () => {

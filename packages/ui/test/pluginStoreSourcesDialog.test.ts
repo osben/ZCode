@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-
 import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -68,7 +67,7 @@ describe("PluginStoreSourcesDialog", () => {
           ],
           onUpdateMarketplace: () => {},
           onRemoveMarketplace: () => {},
-          operationId: null,
+          activeOperations: [],
         }),
       ),
     );
@@ -91,7 +90,7 @@ describe("PluginStoreSourcesDialog", () => {
           open: true,
           onOpenChange: () => {},
           onAddMarketplace: async () => false,
-          operationId: null,
+          activeOperations: [],
           error: "Invalid marketplace source",
         }),
       ),
@@ -149,7 +148,7 @@ describe("PluginStoreSourcesDialog", () => {
           ],
           onUpdateMarketplace: () => {},
           onRemoveMarketplace: () => {},
-          operationId: null,
+          activeOperations: [],
         }),
       ),
     );

@@ -1,8 +1,8 @@
 /**
- * usePlatform — provide IPlatformService through React Context
+ * usePlatform —— 通过 React Context 提供 IPlatformService
  *
- * Access platform operations (native dialogs, window lifecycle, etc.) through this hook
- * instead of calling window.zcode directly.
+ * 平台操作（native dialog、窗口生命周期等）通过此 hook 访问，
+ * 替代直接调用 window.zcode。
  */
 import { createContext, useContext, useCallback, type ReactNode } from "react";
 import type { IPlatformService, RemoteTarget } from "@zcode/shared";
@@ -32,13 +32,13 @@ export function useOptionalPlatform(): IPlatformService | null {
   return ctx;
 }
 
-/** Convenience hook for choosing a directory. */
+/** 选择目录的便捷 hook */
 export function useSelectDirectory() {
   const platform = usePlatform();
   return useCallback(() => platform.selectDirectory(), [platform]);
 }
 
-/** Convenience hook for connecting remotely. */
+/** 连接远程的便捷 hook */
 export function useConnectRemote() {
   const platform = usePlatform();
   return useCallback(

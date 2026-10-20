@@ -12,9 +12,8 @@ import { ArrowRightIcon, CheckIcon, CopyIcon, NotepadTextIcon } from "lucide-rea
 function isInteractiveDescendant(target: EventTarget | null, card: HTMLElement): boolean {
   if (!(target instanceof Element)) return false;
   const interactive = target.closest("button, a, input, textarea, select, [role='button']");
-  // The card itself has role=button, so the old closest check matched the card from anywhere inside
-  // it and "click card to open details" never ran. Intercept only actual child controls such as copy,
-  // expand, and links in the body.
+  // 卡片自身带 role=button，旧 closest 会让卡片任意位置都命中自己，
+  // 结果“点击卡片打开详情”从未执行。这里只拦截复制/展开/正文链接等真实子控件。
   return interactive !== null && interactive !== card;
 }
 
@@ -52,9 +51,8 @@ export function SwitchModeToolCallBlock(context: ToolCallBlockRenderContext) {
 
   const handleCardKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Enter" && event.key !== " ") return;
-    // keydown from an inner button also bubbles to the entire card, causing one keyboard action to
-    // open details twice. Reuse the click-path interaction check and let the card handle Enter / Space
-    // only when the card itself is the target.
+    // 内部按钮的 keydown 会继续冒泡到整卡，导致一次键盘操作重复打开详情。
+    // 与点击路径共用交互元素判定，只允许整卡自身接管 Enter / Space。
     if (isInteractiveDescendant(event.target, event.currentTarget)) return;
     event.preventDefault();
     openDetail();
@@ -112,8 +110,8 @@ export function SwitchModeToolCallBlock(context: ToolCallBlockRenderContext) {
             </div>
           </header>
           <div className="relative overflow-hidden">
-            {/* With max-height and mask on separate layers, long content computes its gradient from its full height,
-            leaving no bottom fade in the visible area; both must live on the same clipping node. */}
+            {/* max-height 与 mask 分层后，长正文会按完整内容高度计算渐变，
+            导致实际可见区域没有底部渐隐；两者必须落在同一个裁切节点。 */}
             <div className="max-h-64 overflow-hidden px-4 pt-2 pb-12 [mask-image:linear-gradient(to_bottom,black_0%,black_30%,transparent_100%)]">
               <MessageResponse
                 className="min-w-0 break-words text-foreground [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_li]:text-foreground-subtle [&_p]:text-foreground-subtle"
@@ -147,9 +145,8 @@ export function SwitchModeToolCallBlock(context: ToolCallBlockRenderContext) {
     );
   }
 
-  // The useful output of switch_mode is usually its markdown result; do not wrap it in another
-  // generic tool card. Fall back to a minimal output block only when the provider returned no
-  // markdown or the tool failed, so the UI does not become completely blank.
+  // switch_mode 的有效信息通常就是那段 markdown 结果，不应该再套一层通用工具卡片。
+  // 只有当 provider 没给出 markdown、或者当前是失败态时，才回退到最小输出块，避免 UI 彻底空白。
   if (toolCall.output !== undefined || errorText) {
     return (
       <>

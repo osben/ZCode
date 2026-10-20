@@ -18,7 +18,7 @@ import type {
 import type { HighspeedOutputFooterMark } from "@/highspeed/highspeedOutputFooter.js";
 
 export interface ConversationTurnRenderUnit extends HighspeedOutputFooterMark {
-  /** Display projection of unaccepted bot messages; not written to CLI rows or the navigation/share index. */
+  /** 未接受的 Bot 消息展示投影，不写入 CLI rows 或导航/分享索引。 */
   topicPreparations?: readonly BotTopicPreparation[];
   key: string;
   turnId: string;
@@ -26,43 +26,42 @@ export interface ConversationTurnRenderUnit extends HighspeedOutputFooterMark {
   visibleUserInputs: UserInputRow[];
   assistantWorkRows: AssistantWorkRow[];
   /**
-   * Aggregated history rows across all visual work segments, kept for copy, preview, and
-   * legacy-call compatibility. Actual collapse boundaries read workSegments, and each
-   * segment must preserve the CLI row total order internally.
+   * 所有 visual work segment 的历史行聚合，仅供复制、预览和旧调用兼容。
+   * 实际折叠边界读取 workSegments，且各段内部必须保持 CLI row 全序。
    */
   assistantHistoryRows: AssistantWorkRow[];
-  /** Rows after the action body anchor and before the real turn-end marker; rendered in place, preserving CLI total order. */
+  /** 操作正文锚点之后、真正轮尾 marker 之前的 row；保持 CLI 全序原位渲染。 */
   assistantFollowingRows: AssistantWorkRow[];
   assistantTailRows: AssistantWorkRow[];
-  /** Browser auto turn-end screenshots: rendered after the file diff summary and before the message actions bar in the completed state. */
+  /** Browser 自动轮尾截图：完成态渲染在 file diff 摘要之后、消息操作栏之前。 */
   browserTurnEndRows: AssistantWorkRow[];
-  /** Turn-local hook product rows; excluded from assistant work/collapse, used only by the turn-end details action. */
+  /** turn-local Hook product rows；不进入 assistant work/折叠，只供轮尾详情 action。 */
   hookInvocations: HookInvocationRow[];
-  /** S2: all assistant text segments in the turn, used for copy/preview aggregation; not a render position. */
+  /** S2：整轮全部 assistant text 段，用于复制/预览聚合，不代表渲染位置。 */
   assistantTextRows: AssistantTextRow[];
-  /** Lightweight boundary (modelChange, S13): turn-top divider rendered before user input. */
+  /** 轻边界（modelChange，S13）：渲染在 user 输入之前的轮顶分隔。 */
   leadingBoundaryRows: TimelineMarkerRow[];
-  /** Final completed-state body at the turn tail; fork/retry/action/preview attach only to this segment. */
+  /** 完成态轮尾最终正文；fork/retry/action/preview 只挂这一段。 */
   latestAssistantTextRow?: AssistantTextRow;
-  /** Visible interleaving order of user/assistant within one product turn; adjacent work rows stay grouped. */
+  /** 同一 product turn 内 user/assistant 的可见交错顺序；相邻工作行保持成组。 */
   flowItems: ConversationTurnFlowItem[];
-  /** The original input and each accepted guide each map to one distinct visual work segment. */
+  /** 原始输入与每条 accepted guide 分别对应一个独立视觉工作段。 */
   workSegments?: ConversationTurnWorkSegment[];
   renderRows: ConversationRow[];
   isLastTurn: boolean;
   isRunning: boolean;
   assistantHistoryDefaultOpen: boolean;
   timelineOnly: boolean;
-  /** Turn-level aggregated work status, kept for legacy-call compatibility; new components consume workSegments[].workStatus. */
+  /** turn 级聚合工作状态，仅供旧调用兼容；新组件消费 workSegments[].workStatus。 */
   workStatus?: ConversationTurnWorkStatus;
   startedAt?: number;
-  /** Launch metadata for turns started directly from the hub (rules in `workflowLaunchTurn.ts`); when present the turn renders as a run card with no user bubble. */
+  /** 中枢直接启动轮的启动元数据（规则见 `workflowLaunchTurn.ts`）；在场时轮由 run 卡呈现、无用户气泡。 */
   workflowLaunch?: WorkflowLaunchMeta;
 }
 
 export interface BuildConversationTurnRenderUnitsOptions {
   nowMs?: number;
   sessionPhase?: SessionPhase;
-  /** Plugin card collapse adjudication (the timeline is assembled from derived results + manual state). */
+  /** 插件卡片折叠裁决（时间线由推导结果 + 手动状态组装）。 */
   pluginUiPinResolver?: PluginUiRowPinResolver;
 }

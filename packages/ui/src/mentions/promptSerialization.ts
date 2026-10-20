@@ -8,7 +8,7 @@ import {
 } from "lexical";
 import { $isPromptMentionNode } from "@/mentions/nodes/PromptMentionNode.js";
 
-/** Editor text is used for cursor positioning; business output reads canonical explicitly and must not override TextNode text semantics. */
+/** 编辑器文本用于光标；业务输出显式读取 canonical，不能覆写 TextNode 文本语义。 */
 export function $getPromptMarkdown(node: LexicalNode = $getRoot()): string {
   if ($isPromptMentionNode(node)) return node.getMarkdown();
   if (!$isElementNode(node)) return node.getTextContent();
@@ -22,7 +22,7 @@ export function $getPromptMarkdown(node: LexicalNode = $getRoot()): string {
     .join("");
 }
 
-/** Follow Lexical RangeSelection paragraph/endpoint rules and replace only tokens that are actually selected with their canonical form. */
+/** 与 Lexical RangeSelection 的段落/端点规则一致，仅将实际选中的 token 换为 canonical。 */
 export function $getPromptSelectionMarkdown(selection: RangeSelection): string {
   if (selection.isCollapsed()) return "";
   const nodes = selection.getNodes();
@@ -43,7 +43,7 @@ export function $getPromptSelectionMarkdown(selection: RangeSelection): string {
     if ($isTextNode(node)) {
       let from = index === 0 ? start : 0;
       let to = index === nodes.length - 1 ? end : text.length;
-      // When two element points enclose the same text node, offset is a child index rather than a character index.
+      // 两个 element point 包住同一个文本节点时，offset 是子节点索引而不是字符。
       if (
         nodes.length === 1 &&
         selection.anchor.type === "element" &&
@@ -61,7 +61,7 @@ export function $getPromptSelectionMarkdown(selection: RangeSelection): string {
   return result;
 }
 
-/** Cut and copy treat any intersecting token as a whole, but must not expand a selection that only touches its boundary. */
+/** 剪切与复制都将相交 token 视为整体，但不能扩张仅触碰边界的选区。 */
 export function $getAtomicPromptSelection(selection: RangeSelection): RangeSelection {
   const normalized = selection.clone();
   if (normalized.isCollapsed()) return normalized;

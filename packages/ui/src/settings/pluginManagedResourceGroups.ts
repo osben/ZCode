@@ -18,7 +18,7 @@ export interface ResourceGroups<TLocal, TPlugin> {
   plugin: TPlugin[];
 }
 
-/** Display order for detail groups, consistent with describeResultToDisplayGroups / buildInstalledPluginDisplayGroups. */
+/** 详情分组的展示顺序，与 describeResultToDisplayGroups / buildInstalledPluginDisplayGroups 一致。 */
 const COMPONENT_KIND_ORDER: ZCodePluginComponentKind[] = [
   "agent",
   "command",
@@ -28,8 +28,8 @@ const COMPONENT_KIND_ORDER: ZCodePluginComponentKind[] = [
 ];
 
 /**
- * Map on-demand results from plugins/describe to shared display groups (name + description), sort in a fixed order,
- * and omit empty groups. Count items.length (describe is already the authoritative enumeration).
+ * 把 plugins/describe 的按需结果映射为共享展示分组（名称+描述），并按固定顺序排序、
+ * 省略空分组。数量取 items.length（describe 已是权威枚举）。
  */
 export function describeResultToDisplayGroups(
   result: ZCodePluginsDescribeResult,
@@ -52,12 +52,13 @@ export function describeResultToDisplayGroups(
 }
 
 /**
- * Map authoritative components (name + description) from plugins/list to shared display groups. Logic matches
- * describeResultToDisplayGroups: sort in a fixed order, omit empty groups, and count items.length.
+ * 把 plugins/list 下发的权威 components（名称+描述）映射为共享展示分组，逻辑与
+ * describeResultToDisplayGroups 一致：按固定顺序排序、省略空分组、数量取 items.length。
  *
- * The installed-details dialog previously used buildPluginComponentGroups — counts came from protocol skillCount and names from a
- * UI-side join (skillsService results filtered by pluginName). The separate sources made disabled plugins disappear entirely and enabled plugins show counts without names. The CLI now enumerates the plugin root authoritatively and sends components with list,
- * so use that directly and remove the fragile join.
+ * 已安装详情弹窗过去用 buildPluginComponentGroups —— 数量取协议 skillCount、名称靠
+ * UI 侧 join（skillsService 结果按 pluginName 过滤）。两数据源分离导致停用插件整组消失、
+ * 启用插件只有数量没有名称。现在 CLI 已对插件根目录做权威枚举并随 list 下发 components，
+ * 这里直接用它，彻底去掉脆弱的 join。
  */
 export function buildInstalledPluginDisplayGroups(
   plugin: ZCodePluginInfo,
@@ -228,9 +229,9 @@ export function buildPluginMcpServerItems(
     const declaredNames = (plugin.declaredMcpServerNames ?? plugin.mcpServerNames).map(
       (serverName) => toPluginMcpServerDisplayName(plugin, serverName),
     );
-    // The MCP management page should show an MCP bundled with a plugin even when the plugin is currently disabled, so its source remains visible.
-    // mcpServerNames still represents MCP servers injected into runtime; declaredMcpServerNames is for read-only display only.
-    // When plugin MCP is injected into runtime, it gets a plugin:<name>: prefix; display must use the declared name to determine active state and avoid incorrectly reporting “not loaded.”
+    // MCP 管理页要展示插件内置 MCP，即使插件当前未启用也应能看出来源。
+    // mcpServerNames 仍表示 runtime 已注入的 MCP；declaredMcpServerNames 只用于只读展示。
+    // 插件 MCP 注入 runtime 时会加 plugin:<插件名>: 前缀，展示层需要用声明名判定 active，避免误报“未加载”。
     const serverNames = Array.from(
       new Set([
         ...hostNames,

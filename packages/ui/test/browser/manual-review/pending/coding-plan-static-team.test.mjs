@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chromium } from "playwright-core";
 
-// Manual regression prerequisite: start an unsigned-in ZCode Dev and open the BigModel settings
-// page; the static config contains the real personal and team product catalogs.
-// Connects to the real App to verify the full hook/RPC/render chain; no plan data is injected and
-// the sign-in state is not modified.
+// 手工回归前置：启动未登录的 ZCode Dev，打开 BigModel 设置页；静态配置包含真实个人和团队商品目录。
+// 连接真实 App 验证完整 hook/RPC/渲染链路，不注入套餐数据或修改登录态。
 test("未登录使用静态目录展示个人和团队横幅", async () => {
   const browser = await chromium.connectOverCDP(
     process.env.ZCODE_E2E_CDP_URL ?? "http://localhost:9229",

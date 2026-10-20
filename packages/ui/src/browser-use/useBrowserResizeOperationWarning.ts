@@ -8,8 +8,8 @@ const AGENT_LAYOUT_SETTLE_QUIET_DURATION_MS = 100;
 const AGENT_LAYOUT_SETTLE_MAX_DURATION_MS = 500;
 
 /**
- * Observe browser area dimensions during the same Browser Use active interval as the tab cursor icon.
- * This only shows a low-priority renderer-local warning; it does not cancel tools, modify snapshots, or write state to the protocol.
+ * 在与 tab 鼠标图标相同的 Browser Use active 周期内监听浏览器区域尺寸。
+ * 这里只产生 renderer 本地弱提示，不取消工具、不修改 snapshot，也不把状态写入协议层。
  */
 export function useBrowserResizeOperationWarning({
   browserKey,
@@ -34,7 +34,7 @@ export function useBrowserResizeOperationWarning({
   const isVisibleRef = useRef(isVisible);
   const isAgentOperating = useBrowserUseOperationActive(operationUntil);
   const isAgentOperatingRef = useRef(isAgentOperating);
-  // ResizeObserver may callback before the effect refreshes; update the ref during render to keep it in sync with the icon state for that frame.
+  // ResizeObserver 可能在 effect 刷新前回调；render 时同步 ref，确保它和图标当帧状态一致。
   isVisibleRef.current = isVisible;
   isAgentOperatingRef.current = isAgentOperating;
 
@@ -74,10 +74,10 @@ export function useBrowserResizeOperationWarning({
     previousResizeBaselineVersionRef.current = resizeBaselineVersion;
     hasAppliedResizeBaselineVersionRef.current = true;
 
-    // A model newTab ready/visibility event mounts the view first, and the operation for the real tabId arrives later;
-    // after the marker, guest mounting and side-pane animation produce several ResizeObserver callbacks. Clearing the baseline once
-    // would ignore the first frame but misreport the second as a user resize. For a model layout marker, start a
-    // bounded stabilization period; ordinary initial mounts and user tab switches only reset the baseline and do not expand the quiet window.
+    // 模型 newTab 的 ready/visibility 先挂载 view，真实 tabId 对应的 operation 后到；
+    // marker 之后 guest 挂载和 side-pane 动画还会产生多帧 ResizeObserver 回调。只清一次
+    // baseline 会吞掉第一帧，却把第二帧误报成用户 resize。这里对模型布局 marker 开启
+    // 有界稳定期；普通初挂载/用户切 tab 仍只重建 baseline，不扩大静默窗口。
     lastSizeRef.current = null;
     if (hasInitialAgentMarker || agentMarkerChanged) beginAgentLayoutSettlement();
   }, [beginAgentLayoutSettlement, isVisible, resizeBaselineVersion]);
@@ -131,8 +131,8 @@ export function useBrowserResizeOperationWarning({
       });
       if (!sizeChanged || isAgentLayoutSettling) return;
 
-      // Coordinate-based actions may still rely on pre-resize visual information. Show only one warning per active interval,
-      // avoiding a flood of warnings during repeated dragging while preserving existing locator/CUA execution semantics.
+      // 坐标类动作可能仍基于 resize 前的视觉信息。同一 active 周期只提示一次，
+      // 避免连续拖拽产生提示风暴，同时保持 locator/CUA 的既有执行语义不变。
       warnForBrowserResize();
     });
     observer.observe(element);

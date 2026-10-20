@@ -83,9 +83,16 @@ for (const family of ["zai", "bigmodel"]) {
       });
       try {
         await page.goto(`${origin}fixture?${new URLSearchParams({ family, locale, theme })}`);
-        const retry = page.getByTestId("coding-plan-relogin-button");
+        const retry = page.getByRole("button", {
+          name: locale === "zh-CN" ? "重新登录" : "Sign in again",
+          exact: true,
+        });
         await retry.waitFor();
         await page.screenshot({ path: join(artifacts, `${family}-${width}-failed.png`) });
+        assert.match(
+          await page.locator("main").innerText(),
+          locale === "zh-CN" ? /获取失败/ : /Fetch failed/,
+        );
         for (const [count, status] of [
           [1, 503],
           [2, 200],
@@ -97,14 +104,15 @@ for (const family of ["zai", "bigmodel"]) {
           assert.equal(await retry.isDisabled(), true);
           assert.equal(await page.getByTestId("requests").textContent(), String(count));
           assert.equal(await page.getByTestId("logins").textContent(), String(count));
-          // The response is released after the assertions; do not mask state races with fixed
-          // waits.
+          // 响应由断言后释放，不用固定等待掩盖状态竞态。
           release(status);
           if (status === 503)
             await page.waitForFunction(() => !document.querySelector("button").disabled);
         }
         await retry.waitFor({ state: "hidden" });
-        await page.getByTestId("coding-plan-subscribe-button").waitFor();
+        await page
+          .getByRole("button", { name: locale === "zh-CN" ? "订阅" : "Subscribe", exact: true })
+          .waitFor();
         assert.equal(await page.getByTestId("logins").textContent(), "2");
         assert.deepEqual(errors, []);
         await page.screenshot({ path: join(artifacts, `${family}-${width}.png`) });

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { ApplicationIconRequest } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
-import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { useToolPresentationCapabilities } from "@/ToolCallBlocks/presentationCapabilities.js";
 import { CUA_TOOL_ICON } from "@/ToolCallBlocks/renderers/cuaIcon.js";
 
 export function CuaAppSummaryIcon({
@@ -13,16 +13,16 @@ export function CuaAppSummaryIcon({
 }: {
   bundleId?: string;
   /**
-   * What to show when the icon cannot be resolved (no platform resolver, no Linux locator, or a read failure).
-   * Defaults to the CUA icon; the node_repl tool card supplies its own icon so a failed lookup does not
-   * make the same card switch to a different pointer graphic.
+   * 图标取不到时显示什么（平台无 resolver、Linux 无 locator、读取失败）。
+   * 默认沿用 CUA 图标；node_repl 工具卡传入自己的图标，避免同一张卡在解析失败时
+   * 跳成另一个指针图形。
    */
   fallback?: ReactNode;
   iconRequest?: ApplicationIconRequest | string | null;
   name: string;
   className?: "size-4" | "size-5";
 }) {
-  const platform = useOptionalPlatform();
+  const platform = useToolPresentationCapabilities();
   const [iconDataUrl, setIconDataUrl] = useState<string | null>(null);
 
   useEffect(() => {

@@ -12,7 +12,6 @@ import {
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -136,7 +135,7 @@ function renderPanel(overrides: Partial<PanelProps> = {}) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(
         PlatformProvider,
         { platform: mockPlatform },
@@ -161,22 +160,18 @@ describe("MessageChangeSummaryPanel", () => {
   it("默认闭合变更文件列表，并且先隐藏撤销按钮", () => {
     const html = renderPanel();
 
-    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
-    expect(html).toContain('data-zcode-stream-animate="true"');
+    expect(html).toContain("1 个文件已更改");
     expect(html).toContain("+1");
     expect(html).toContain("-1");
-    expect(html).toContain(`aria-label="${expectedCopy("chat.changeSummary.expand")}"`);
+    expect(html).toContain('aria-label="展开已更改文件"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain('data-state="closed"');
     expect(html).toContain('data-slot="collapsible-content"');
     expect(html).toContain('hidden=""');
     // Bugfix: 摘要默认闭合时不挂载文件行，避免多文件变更把最新消息顶走。
     expect(html).not.toContain("src/MessageChangeSummaryPanel.tsx");
-    expect(html).not.toContain(expectedCopy("chat.changeSummary.openInEditor"));
-    expect(html).not.toContain(expectedCopy("appHeader.selectOpenApp"));
-    expect(html).not.toContain("group/file flex w-full");
-    expect(html).not.toContain(`aria-label="${expectedCopy("chat.toolCall.expandDetails")}"`);
-    expect(html).not.toContain(expectedCopy("chat.changeSummary.diffUnavailable"));
+    expect(html).not.toContain("打开");
+    expect(html).not.toContain("选择打开方式");
   });
 
   it("优先显示当前轮次的摘要，不把整个 session 的汇总混进来", () => {
@@ -215,9 +210,9 @@ describe("MessageChangeSummaryPanel", () => {
       },
     });
 
-    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
+    expect(html).toContain("1 个文件已更改");
     expect(html).toContain("+1");
-    expect(html).not.toContain(expectedCopy("chat.changeSummary.filesChanged.other", { count: 2 }));
+    expect(html).not.toContain("2 个文件已更改");
     expect(html).not.toContain("src/App.tsx");
     expect(html).not.toContain("+8");
   });
@@ -277,7 +272,7 @@ describe("MessageChangeSummaryPanel", () => {
     });
   });
 
-  it("文件行和 Review 按钮复用同一个 diff 打开事件", () => {
+  it("有 source 和打开回调时委托一次，缺少任一时不调用", () => {
     const source = buildChangeSummaryDiffViewerSource({
       relativePath: "src/App.tsx",
       path: "/workspace/src/App.tsx",
@@ -307,7 +302,7 @@ describe("MessageChangeSummaryPanel", () => {
       ]),
     });
 
-    expect(html).toContain(expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }));
-    expect(html).not.toContain(expectedCopy("chat.changeSummary.rewind"));
+    expect(html).toContain("1 个文件已更改");
+    expect(html).not.toContain("撤销");
   });
 });

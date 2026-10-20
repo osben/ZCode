@@ -1,7 +1,7 @@
-// Split-view drag divider (rAF + CSS-variable approach generalized per split node, supporting rows and columns):
-// driven by pointer capture; during drag, proportions update only through container CSS variables (ref + rAF frame batching),
-// not React state — pane content subtrees do not rerender while dragging;
-// pointerup commits once to paneLayoutStore (and persistence).
+// 分屏拖拽分隔条（rAF + CSS 变量方案按分割节点泛化，行/列双向）：
+// pointer capture 驱动，拖动中占比只走容器 CSS 变量（ref + rAF 合帧），
+// 不进 React state——pane 内容子树在拖动期间零重渲染；
+// pointerup 一次性提交到 paneLayoutStore（进持久化）。
 import {
   memo,
   useCallback,
@@ -12,14 +12,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import { TID_V4_SPLIT_DIVIDER } from "@zcode/shared";
+import { TID_V4_SPLIT_DIVIDER } from "@zcode/shared/test-ids";
 import { cn } from "@/components/lib/utils.js";
 import { clampSplitRatio, type SplitDirection } from "@/v4/paneLayoutTree.js";
 import { SPLIT_VAR_PREFIX } from "@/v4/workbenchLayout.js";
 
 interface SplitDividerDragState {
   pointerId: number;
-  /** Main-axis pixel length of this split-node region (containerRect main axis × regionFraction, constant during drag). */
+  /** 该分割节点区域主轴像素长度（containerRect 主轴 × regionFraction，拖动期间恒定）。 */
   regionPx: number;
   startClient: number;
   startRatio: number;
@@ -31,9 +31,9 @@ export interface WorkbenchSplitDividerProps {
   containerRef: RefObject<HTMLDivElement | null>;
   splitId: string;
   direction: SplitDirection;
-  /** Currently committed proportion (store value); used only as drag start, not needed to rerender during dragging. */
+  /** 当前已提交占比（store 值）；仅作为拖动起点，拖动过程不依赖它重渲染。 */
   ratio: number;
-  /** Numeric proportion of the container's main axis occupied by this split node (converts drag pixels → proportion). */
+  /** 该分割节点区域占容器主轴的数值比例（拖拽像素→占比换算）。 */
   regionFraction: number;
   style: CSSProperties;
   onCommitRatio: (splitId: string, ratio: number) => void;
@@ -49,7 +49,7 @@ export const WorkbenchSplitDivider = memo(function WorkbenchSplitDivider({
   onCommitRatio,
 }: WorkbenchSplitDividerProps) {
   const dragRef = useRef<SplitDividerDragState | null>(null);
-  // Highlight state belongs only to the divider itself; toggling it does not affect memoized pane subtrees.
+  // 仅分隔条自身的高亮态；切换时 memo pane 子树不受影响。
   const [dragging, setDragging] = useState(false);
   const isRow = direction === "row";
 
@@ -75,13 +75,14 @@ export const WorkbenchSplitDivider = memo(function WorkbenchSplitDivider({
       try {
         event.currentTarget.setPointerCapture(event.pointerId);
       } catch {
-        // Capturing throws when an e2e-synthesized PointerEvent has no active pointerId; drag logic does not depend on capture succeeding.
+        // e2e 合成 PointerEvent 无活跃 pointerId 时 capture 会抛错；拖动逻辑不依赖 capture 成立。
       }
       const containerRect = container.getBoundingClientRect();
       const client = isRow ? event.clientX : event.clientY;
       dragRef.current = {
         pointerId: event.pointerId,
-        regionPx: (isRow ? containerRect.width : containerRect.height) * regionFraction,
+        regionPx:
+          (isRow ? containerRect.width : containerRect.height) * regionFraction,
         startClient: client,
         startRatio: ratio,
         latestClient: client,
@@ -125,16 +126,19 @@ export const WorkbenchSplitDivider = memo(function WorkbenchSplitDivider({
       }
       drag.latestClient = isRow ? event.clientX : event.clientY;
       const finalRatio = ratioFromDrag(drag);
-      containerRef.current?.style.setProperty(`${SPLIT_VAR_PREFIX}${splitId}`, String(finalRatio));
+      containerRef.current?.style.setProperty(
+        `${SPLIT_VAR_PREFIX}${splitId}`,
+        String(finalRatio),
+      );
       dragRef.current = null;
       setDragging(false);
-      // Commit to the store (→ localStorage); the container style writes the same value on the next render with no visual jump.
+      // 提交进 store（→ localStorage）；容器 style 下次渲染写入同值，无视觉跳变。
       onCommitRatio(splitId, finalRatio);
     },
     [containerRef, isRow, onCommitRatio, ratioFromDrag, splitId],
   );
 
-  // Cancel any pending rAF on unmount (layout change / pane closed).
+  // 卸载（布局变化/关 pane）时清理未跑完的 rAF。
   useEffect(
     () => () => {
       const drag = dragRef.current;

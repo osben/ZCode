@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The Hook form centrally maintains runner types, Scope, and advanced compatibility fields. */
+/* eslint-disable max-lines -- Hook 表单集中维护 runner 类型、Scope 与高级兼容字段。 */
 import { useCallback, useState, type ReactNode } from "react";
 import { ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -17,7 +17,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { PluginScopeMenu, getPluginWorkspaceKey } from "@/settings/PluginScopeMenu.js";
-import type { WorkspaceTabState } from "@/store/tabStore.js";
+import type { ConfigWorkspaceTarget } from "@/workspace-config-catalog/index.js";
 
 interface HookFormProps {
   hook?: Hook;
@@ -27,7 +27,7 @@ interface HookFormProps {
   onCancel: () => void;
   onDelete?: (hook: Hook) => void;
   isEditing?: boolean;
-  workspaceTabs?: WorkspaceTabState[];
+  workspaceTabs?: ConfigWorkspaceTarget[];
   selectedScopeKey?: string;
   onScopeKeyChange?: (scopeKey: string) => void;
 }
@@ -54,7 +54,7 @@ function HookScopeMenu({
 }: {
   disabled: boolean;
   scopeKey: string;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ConfigWorkspaceTarget[];
   onChange: (scopeKey: string) => void;
 }) {
   const { intl } = useZCodeIntl();

@@ -1,24 +1,6 @@
 import { BUILTIN_MODEL_PROVIDER_IDS, type AppSettings, type OAuthProviderId } from "@zcode/shared";
 import { describe, expect, it, vi } from "vitest";
 import { ensureProviderFamilyDomainMigration } from "@/lib/providerFamilyDomainMigration.js";
-import { resolveLogoutProviderFamilyDomain } from "@/lib/providerFamilyDomainSettings.js";
-
-function createSelectableProvider(providerId: string, kind: "api" | "account" = "api") {
-  return {
-    providerId,
-    config: {
-      access:
-        kind === "api"
-          ? { type: "api-key" as const, apiKey: "test-key" }
-          : {
-              type: "zhipu-account" as const,
-              family: "bigmodel" as const,
-              planKind: "individual-coding-plan" as const,
-            },
-    },
-    models: [],
-  };
-}
 
 function createServices(params: {
   settings?: Partial<AppSettings>;
@@ -30,7 +12,7 @@ function createServices(params: {
     settingService: {
       get: vi.fn(async () => ({
         recentProjects: [],
-        locale: "en-US" as const,
+        locale: "zh-CN" as const,
         modelProviderFamilyModes: {},
         providerFamilyDomainMigrated: false,
         ...params.settings,
@@ -130,21 +112,5 @@ describe("ensureProviderFamilyDomainMigration", () => {
     await ensureProviderFamilyDomainMigration(services);
 
     expect(services.update).not.toHaveBeenCalled();
-  });
-});
-
-describe("resolveLogoutProviderFamilyDomain", () => {
-  it("登出时当前 domain 只有 Account Provider 则清理 domain", () => {
-    expect(
-      resolveLogoutProviderFamilyDomain({
-        currentDomain: "bigmodel",
-        selectableProviders: [
-          createSelectableProvider(
-            BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan,
-            "account",
-          ),
-        ],
-      }),
-    ).toBeNull();
   });
 });

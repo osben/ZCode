@@ -1,7 +1,9 @@
-// UI-side v4 data layer (M3 m3-ui-core, docs/v4-refactor/06-ui).
-// Purely additive: coexists with the old store/zcodeSessionStore*; deletion happens after the
-// vertical slice is usable (11-deletion-plan wave 1).
-export { conversationTopic, type ConversationTransport } from "@/v4/transport.js";
+// UI 侧 v4 数据层（M3 m3-ui-core，docs/v4-refactor/06-ui）。
+// 纯新增：与旧 store/zcodeSessionStore* 并存，删除发生在竖切可用后（11-deletion-plan 波次 1）。
+export {
+  conversationTopic,
+  type ConversationTransport,
+} from "@/v4/transport.js";
 export {
   ConversationProjectionStore,
   type ConversationStoreState,
@@ -17,7 +19,7 @@ export {
   createAgentConversationTransport,
   type AgentConversationTransportTarget,
 } from "@/v4/agentConversationTransport.js";
-// ── sessions-index read path (list liveness / detail data source; persisted rows come from tasks-index) ──
+// ── sessions-index 读路径（列表活性/detail 数据源；持久行来自 tasks-index）──
 export {
   applySessionsIndexFrame,
   SessionsIndexStore,
@@ -30,7 +32,10 @@ export {
   type AgentSessionsIndexTransportTarget,
   type SessionsIndexTransport,
 } from "@/v4/agentSessionsIndexTransport.js";
-export { useSessionsIndex, type UseSessionsIndexResult } from "@/v4/useSessionsIndex.js";
+export {
+  useSessionsIndex,
+  type UseSessionsIndexResult,
+} from "@/v4/useSessionsIndex.js";
 export {
   LOCAL_SESSIONS_INDEX_ENDPOINT,
   acquireSessionsIndex,
@@ -40,7 +45,11 @@ export {
   type SessionsIndexAgentService,
   type SessionsIndexScope,
 } from "@/v4/sessionsIndexRegistry.js";
-export { createCommandEnvelope, getV4ClientId, uuidv7 } from "@/v4/commandFactory.js";
+export {
+  createCommandEnvelope,
+  getV4ClientId,
+  uuidv7,
+} from "@/v4/commandFactory.js";
 export {
   V4ConversationProvider,
   V4PaneConversationProvider,
@@ -54,7 +63,7 @@ export { ConversationTimeline } from "@/v4/ConversationTimeline.js";
 export { ConversationComposer } from "@/v4/ConversationComposer.js";
 export { SessionPane, type SessionPaneProps } from "@/v4/SessionPane.js";
 export { V4ChatPane, type V4ChatPaneProps } from "@/v4/V4ChatPane.js";
-// ── Split panes phase 2: Layout/Focus layers (binary split tree) + workspace workbench host ──
+// ── 分屏二期：Layout/Focus 两层（二叉分割树）+ workspace 工作台宿主 ──
 export {
   bindPaneSession,
   canAddPane,
@@ -90,7 +99,10 @@ export {
   type WorkspaceConnectionLease,
   type WorkspaceConnectionScope,
 } from "@/v4/workspaceConnectionRegistry.js";
-export { V4WorkspaceChatArea, type V4WorkspaceChatAreaProps } from "@/v4/V4WorkspaceChatArea.js";
+export {
+  V4WorkspaceChatArea,
+  type V4WorkspaceChatAreaProps,
+} from "@/v4/V4WorkspaceChatArea.js";
 export { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
 export {
   pendingPermissionToLegacyRequest,

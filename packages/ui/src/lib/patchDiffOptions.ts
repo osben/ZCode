@@ -14,12 +14,10 @@ interface PatchDiffSettings {
 type PatchDiffSeparatorStyle = "line-info" | "simple";
 
 const PATCH_DIFF_UNSAFE_CSS = `
-/* Fix reason: PatchDiff renders inside a Shadow DOM, so outer Tailwind selectors cannot reach the
- * internal code nodes. This must be injected into the shadow root via unsafeCSS to actually
- * override the library's own code padding and background color.
- * Additionally, the library makes the left gutter sticky during horizontal scrolling; if the
- * background were transparent, body text would "show through" under the line-number column,
- * visually overlapping line numbers and text while dragging the scrollbar. */
+/* 修复原因：PatchDiff 渲染在 Shadow DOM 内，外层的 Tailwind 选择器无法命中内部 code 节点。
+ * 这里必须通过 unsafeCSS 注入到 shadow root，才能真正覆盖库自己的 code padding 和背景色。
+ * 另外库在横向滚动时会把左侧 gutter 做成 sticky；如果把底色设成 transparent，
+ * 正文就会从行号列下面“穿过去”，导致拖动滑块时行号和文字视觉重叠。 */
 :host {
   --diffs-light-bg: var(--color-background, #fff);
   --diffs-dark-bg: var(--color-background, #000);
@@ -69,10 +67,9 @@ export function createPatchDiffOptions(
     diffIndicators: "classic",
     disableFileHeader: true,
     disableLineNumbers: !codePreviewSettings.showLineNumbers,
-    // Bugfix: compact diffs like "changes from the previous round" prioritize quickly locating
-    // modifications and do not need the extra "123 unmodified lines" label. Callers may switch to
-    // simple here, degrading large unchanged regions into lightweight blank separators so they do
-    // not visually steal attention from the changes themselves.
+    // Bugfix: “上一轮更改”这类紧凑 diff 更关注快速定位修改点，
+    // 不需要额外展示“123 unmodified lines”标签。这里允许调用方切到 simple，
+    // 把大段未改动区域退化成轻量空白分隔，避免视觉上抢走改动本身的注意力。
     hunkSeparators: options?.separatorStyle ?? "line-info",
     overflow: codePreviewSettings.wrapLongLines ? "wrap" : "scroll",
     theme: {

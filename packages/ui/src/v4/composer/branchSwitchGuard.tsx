@@ -1,3 +1,4 @@
+import { formatPluralMessage } from "../../i18n/formatPlural.js";
 /**
  * Branch-switch guard (spec: specs/composer-branch-switcher-semantics.md §2): a confirm dialog
  * listing the active tasks a branch switch would disturb, shared by the draft send-time switch and
@@ -147,8 +148,9 @@ export function useBranchSwitchGuardShell({
                     { id: "branchSwitchGuard.descriptionPrefix" },
                     { branch: dialogState.request.targetBranchName },
                   )}{" "}
-                  {intl.formatPlural(
-                    { id: "branchSwitchGuard.taskCount" },
+                  {formatPluralMessage(
+                    intl,
+                    "branchSwitchGuard.taskCount",
                     dialogState.affected.length,
                   )}
                 </p>

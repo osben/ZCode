@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The test bridge only translates the unified 19-scenario inputs into V4 live facts; keeping the mapping in one place eases privacy auditing. */
+/* eslint-disable max-lines -- 测试桥只负责把统一的 19 个场景输入翻译成 V4 live fact，集中映射便于隐私审计。 */
 import type { IPlatformService } from "@zcode/shared";
 import type { ConversationTelemetryFact } from "@zcode/shared/zcode-protocol-v4";
 import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
@@ -173,9 +173,8 @@ async function applyCurrentOperation(input: {
     case "foreground.detach": {
       const owner = scope.foregroundOwners.get(operation.owner);
       if (owner) {
-        // No need to keep the disposer returned by attachForeground: binding the same owner to
-        // a sentinel session that never participates in the case decrements the old session
-        // first, and the scope dispose then cleans up the sentinel.
+        // attachForeground 返回的 disposer 不必额外保存：把同 owner 绑定到一个不会参与
+        // case 的 sentinel session，会先递减旧 session，随后 scope dispose 清理 sentinel。
         scope.supervisor.attachForeground(owner, `detached:${operation.owner}`);
       }
       return;
@@ -361,9 +360,8 @@ async function runCurrentWebNoopOperations(
     return created;
   };
 
-  // The web reporter's production boundary is a no-op. The full scenario still runs here; if
-  // any UI ARMS call accidentally reaches the desktop global reporter, TDP19's final
-  // inventory immediately gains an extra group and the differential fails.
+  // Web reporter 的 production 边界就是 no-op。这里仍执行完整场景；如果任何 UI ARMS
+  // 意外穿透到桌面全局 reporter，TDP19 的最终 inventory 会立刻多出一组并使差分失败。
   setUiPerfArmsReporter(null);
   try {
     for (const operation of operations) {

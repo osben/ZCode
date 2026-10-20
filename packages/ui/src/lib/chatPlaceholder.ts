@@ -13,15 +13,17 @@ export function resolveChatPlaceholderKey(options: {
 }): ChatPlaceholderMessageKey {
   const { compactNewTask = false, hasHistoryMessages, isTaskProcessing } = options;
 
-  // Branch by meaning:
-  // 1) No history -> newTask
-  // 2) Has history and idle -> followUpAsk
-  // 3) Has history and running -> followUpQueue
+  // 按语义分流：
+  // 1) 无历史 -> newTask
+  // 2) 有历史且空闲 -> followUpAsk
+  // 3) 有历史且处理中 -> followUpQueue
   if (!hasHistoryMessages) {
     return compactNewTask ? "chat.placeholder.newTaskMobile" : "chat.placeholder.newTask";
   }
 
-  return isTaskProcessing ? "chat.placeholder.followUpQueue" : "chat.placeholder.followUpAsk";
+  return isTaskProcessing
+    ? "chat.placeholder.followUpQueue"
+    : "chat.placeholder.followUpAsk";
 }
 
 export function shouldDeferChatPlaceholder(options: {
@@ -30,8 +32,8 @@ export function shouldDeferChatPlaceholder(options: {
 }): boolean {
   const { hasBoundTask, taskStatus } = options;
 
-  // Bugfix: Switching to a historical task first passes through creating/restoring before its messages and runtime state are ready.
-  // Rendering the placeholder during this transition causes a “follow-up -> new task -> follow-up” flicker.
-  // Hide the placeholder until the task becomes interactive, then show it once the runtime is ready.
+  // Bugfix: 切换历史 task 时会先经历 creating/restoring，再补齐消息和运行态。
+  // 这段过渡期如果继续渲染 placeholder，会出现“追问 -> 新任务 -> 追问”的闪变。
+  // 这里在任务进入可交互态前先隐藏 placeholder，等 runtime 就绪后再显示。
   return hasBoundTask && (taskStatus === "creating" || taskStatus === "restoring");
 }

@@ -240,8 +240,7 @@ describe("CodingPlanUpgradeDialogProvider", () => {
       },
     });
 
-    // The OAuth callback refreshes the user and purchase credentials and triggers a Root
-    // re-render, but must not rebuild the provider.
+    // OAuth callback 会刷新用户与购买凭据并触发 Root 重渲染，但不应重建 provider。
     view.rerender(
       createElement(
         CodingPlanUpgradeDialogProvider,

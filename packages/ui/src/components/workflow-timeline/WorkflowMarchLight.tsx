@@ -1,20 +1,19 @@
 /**
- * Light for the moving edge: the edge control flow used to enter a running station.
- * Overlay a 1.5px round-capped SVG path with a `userSpaceOnUse` gradient stroke, from transparent at the start to full warning color at 80%.
- * It is brightest near the light and fades toward the control-flow source, as if the light illuminated the path it traveled.
- * It does not move: the edge describes the past (control flow traversed it); motion belongs to the running light (`wf-lamp-running` pulse).
- * Previously, a warning-colored dashed line moved along the path, suggesting it was still traveling from the previous station.
+ * 行进边的光：控制流进入正在运行的站所走的那条边，
+ * 在 SVG 里叠一条 1.5px、圆头的路径，用一道 `userSpaceOnUse` 的渐变描边——从路径起点的全透明到 80% 处的
+ * 满警示色，于是它在灯那一头最亮、朝控制流来的方向淡去，像是灯照亮了自己来的路。它不动：行进边说的是
+ * 过去（控制流走了这条边），动作属于正在运行的灯（`wf-lamp-running` 的搏动）。之前是一条沿路径滚动的
+ * 警示色虚线，读起来像「还在从上一站往这一站赶路」。
  *
- * The gradient runs along x (the x-coordinates of the path endpoints); that is sufficient because timeline arcs, fork, and merge curves
- * are horizontal except for two short vertical segments. If endpoint x-coordinates match (not expected on the spine, but guard it), run along y instead.
- * The caller supplies `id`, which must be unique within the SVG.
+ * 渐变沿 x 铺（路径首尾两点的 x）；时间线的弧、分叉与汇合曲线除了两截短竖段都是横的，这就够了。
+ * 首尾 x 相同的路径（脊线里没有，但守一下）改沿 y 铺。`id` 由调用方给，同一张 SVG 里要唯一。
  */
 export interface MarchLightProps {
-  /** Path to light; arcs provide the path shortened by 6px to stop at the arrow base. */
+  /** 要点亮的路径；弧给的是截短 6px、停在箭头根部的那条。 */
   d: string;
-  /** Path start (the control-flow source). */
+  /** 路径起点（控制流来的那一头）。 */
   from: { x: number; y: number };
-  /** Path end (the running light's side). */
+  /** 路径终点（正在运行的灯那一头）。 */
   to: { x: number; y: number };
   id: string;
 }

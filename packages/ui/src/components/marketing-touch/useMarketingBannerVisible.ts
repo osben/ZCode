@@ -2,13 +2,12 @@ import { useContext, useSyncExternalStore } from "react";
 import { isMarketingBannerRenderable } from "@/components/marketing-touch/marketingTouchController.js";
 import { MarketingTouchContext } from "@/components/marketing-touch/MarketingTouchProvider.js";
 
-// When the controller is absent, use a noop subscription with a constant false snapshot, matching GlobalNoticeSurface's null-safe pattern.
+// controller 缺席时用 noop 订阅、快照恒为 false，与 GlobalNoticeSurface 的 null-safe 写法一致。
 const subscribeNoop = () => () => {};
 
 /**
- * Read-only subscription for the arbiter (SidebarBottomActivity) to whether the bottom-left
- * claim-token banner is visible; the judgment source is still controller.store and this hook holds
- * no state of its own.
+ * 仲裁层（SidebarBottomActivity）用它只读订阅左下角领 token banner 是否可见；
+ * 判断源仍是 controller.store，本 hook 不持有任何状态。
  */
 export function useMarketingBannerVisible(): boolean {
   const controller = useContext(MarketingTouchContext);

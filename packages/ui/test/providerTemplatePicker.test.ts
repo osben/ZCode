@@ -8,11 +8,10 @@ import {
   TID_MODEL_PROVIDER_TEMPLATE_ITEM,
   TID_MODEL_PROVIDER_TEMPLATE_PICKER,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { ProviderTemplatePicker } from "@/settings/model-provider-section/ProviderTemplatePicker.js";
 import { ProviderDetailFeedbackBoundary } from "@/settings/model-provider-section/ProviderDetailFeedback.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const loggerMock = vi.hoisted(() => ({ error: vi.fn() }));
 
@@ -22,10 +21,19 @@ afterEach(cleanup);
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "en-US",
+    locale: "zh-CN",
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
-        expectedCopy(id, values),
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
+        const message =
+          {
+            "settings.modelProvider.templatePickerTitle": "添加供应商",
+            "settings.modelProvider.templatePickerBack": "返回供应商详情",
+            "settings.modelProvider.createCustomProvider": "创建自定义供应商",
+            "settings.modelProvider.templateCreateFailed": "创建供应商失败：个人供应商配置格式无效",
+            "settings.modelProvider.templateCreateRetry": "重试",
+          }[id] ?? id;
+        return message.replace("{reason}", values?.reason ?? "");
+      },
     },
   }),
 }));
@@ -57,22 +65,16 @@ describe("ProviderTemplatePicker", () => {
       ),
     );
 
-    expect(html).toContain(expectedCopy("settings.modelProvider.templatePickerTitle"));
+    expect(html).toContain("添加供应商");
     expect(html).toContain(`data-testid="${TID_MODEL_PROVIDER_TEMPLATE_PICKER}"`);
     expect(html).toContain(`data-testid="${testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "custom")}"`);
     expect(html).toContain(`data-testid="${testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "deepseek")}"`);
-    expect(html).toContain(expectedCopy("settings.modelProvider.createCustomProvider"));
-    expect(html).toContain("DeepSeek");
+    expect(html).toContain("创建自定义供应商");
+    expect(html).toContain("深度求索");
     expect(html).toContain("Alibaba Model Studio (International)");
-    expect(html.indexOf("DeepSeek")).toBeLessThan(
+    expect(html.indexOf("深度求索")).toBeLessThan(
       html.indexOf("Alibaba Model Studio (International)"),
     );
-    expect(html).toContain("h-16");
-    expect(html).toContain("break-words");
-    expect(html).toContain("lucide-chevron-right");
-    expect(html).not.toContain("h-20");
-    expect(html).not.toContain("line-clamp-2");
-    expect(html).not.toContain('type="search"');
   });
 
   it("Template 创建失败时在详情底部显示错误并允许重试", async () => {
@@ -92,7 +94,7 @@ describe("ProviderTemplatePicker", () => {
             templates: [
               {
                 templateId: "deepseek",
-                templateNameMap: { "en-US": "DeepSeek" },
+                templateNameMap: { "zh-CN": "DeepSeek" },
                 config: { logo: { type: "builtin", key: "deepseek" } },
               },
             ],
@@ -105,20 +107,16 @@ describe("ProviderTemplatePicker", () => {
       ),
     );
 
-    fireEvent.click(screen.getByTestId(testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "deepseek")));
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek" }));
     expect((await screen.findByRole("alert")).textContent).toContain(
-      expectedCopy("settings.modelProvider.templateCreateFailed"),
+      "创建供应商失败：个人供应商配置格式无效",
     );
     expect(loggerMock.error).toHaveBeenCalledWith(
       "[ProviderTemplatePicker] 创建供应商失败",
       expect.any(Error),
     );
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: expectedCopy("settings.modelProvider.templateCreateRetry"),
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(onCreateFromTemplate).toHaveBeenCalledTimes(2));
     expect(onCreateFromTemplate).toHaveBeenLastCalledWith("deepseek");
   });

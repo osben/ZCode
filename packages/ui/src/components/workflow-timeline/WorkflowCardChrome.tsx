@@ -15,15 +15,15 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
 /**
- * Workflow-card header and footer.
+ * 工作流卡的表头与页脚。
  *
- * Does not use `ToolLayout`: its summary row is `inline-flex self-start` and cannot fit a right-aligned status cluster.
- * The header is one row: icon + kind label + name, with light + status label + monospaced details + [⤢] + chevron on the right.
- * When there are more stations than fit in one column, there is no rank lane; hidden stations are on the timeline's own ledge.
+ * 不走 `ToolLayout`：它的摘要行是 `inline-flex self-start`，右对齐的状态簇放不进去。表头一行：
+ * 图标 + 种类词 + 名字，右侧灯 + 状态词 + 等宽细节 + [⤢] + chevron。站数超过一列时不再有秩带：
+ * 看不见的站在时间线自己的边檐上。
  */
 export const WORKFLOW_CARD_ICON = <Workflow className="size-4 shrink-0 text-foreground-subtle" />;
 
-/** Kind label after joining to a run: the same run must have the same name on its card, end-of-turn summary, notification, and details page. */
+/** 联接到 run 之后的种类词：同一个 run 在卡上、轮尾摘要里、通知里、详情页里必须叫同一个名字。 */
 export const WORKFLOW_RUN_KIND_ID: Record<WorkflowRunState["status"], string> = {
   pending: "chat.toolCall.workflow.card.started",
   running: "chat.toolCall.workflow.card.running",
@@ -32,17 +32,17 @@ export const WORKFLOW_RUN_KIND_ID: Record<WorkflowRunState["status"], string> = 
   stopped: "chat.toolCall.workflow.card.stopped",
 };
 /**
- * Neutral kind label when the run is absent from the live projection (evicted by the eight-item cap / no journal hit during cold recovery):
- * the card says only that a run existed here and does not claim a terminal state.
+ * run 不在活投影里（八条上限淘汰 / 冷恢复无 journal 命中）时的中性种类词：卡只说「这里曾有一条 run」，
+ * 不冒充某个终态。
  */
 export const WORKFLOW_RUN_ENDED_KIND_ID = "chat.toolCall.workflow.card.ended";
 
-/** Kind label for a run superseded by a revision. */
+/** 被修订替代的 run 的种类词。 */
 export const WORKFLOW_RUN_SUPERSEDED_KIND_ID = "chat.toolCall.workflow.card.superseded";
 
 /**
- * The sole entry point for kind labels: stopped ∧ superseded means "superseded"; otherwise look up by status.
- * All three consumers (card, end-of-turn summary, legacy host run card) use this so a superseded run is not labeled "stopped" in one place and "superseded" in another.
+ * 种类词的唯一入口：stopped ∧ superseded 说「已被替代」，其余按状态查表。三处消费（卡、轮尾摘要、
+ * 旧宿主运行卡）都走这里，否则同一个被替代的 run 会在一处叫「已停止」、另一处叫「已被替代」。
  */
 export function workflowRunKindMessageId(run: {
   status: WorkflowRunState["status"];
@@ -53,21 +53,21 @@ export function workflowRunKindMessageId(run: {
     : WORKFLOW_RUN_KIND_ID[run.status];
 }
 
-/** Run-level status: light + label, always paired (invariant 3). */
+/** run 级状态：灯 + 词，永远成对出现（不变式 3）。 */
 export function WorkflowRunStatus({
   className,
   status,
   run,
   testId,
 }: {
-  /** Falls back to `run.status` when absent; at least one is supplied. */
+  /** 缺席时取 `run.status`（两者至少给一个）。 */
   status?: WorkflowRunState["status"];
   /**
-   * Source object with `stopReason` (projected run/join summary): when `stopped`, the reason label follows the status label.
-   * Read by shape rather than depending on a specific protocol type.
+   * 带 `stopReason` 的来源对象（投影 run / 联接摘要）：`stopped` 时原因词跟在状态词后。
+   * 按结构读，不绑死某个协议类型。
    *
-   * `resumable` is a **state bit** supplied with the run from CLI.
-   * When present and true, add a label after the reason. The UI must never infer it from status: "stopped" does not imply resumable.
+   * `resumable` 是**状态位**，跟着 run 从 CLI 过来，
+   * 在场即为 true 时在原因词之后再加一个词。UI 绝不按 status 推导它——「已停止」并不蕴含可恢复。
    */
   run?:
     | { status: WorkflowRunState["status"]; stopReason?: unknown; resumable?: unknown }
@@ -85,7 +85,7 @@ export function WorkflowRunStatus({
         aria-hidden
         className={cn("wf-lamp size-2 shrink-0 rounded-full", RUN_STATUS_DOT[effectiveStatus])}
       />
-      {/* Transition status labels by value: the old label exits and the new one enters (see the “Hover and motion” note, Kind section). */}
+      {/* 状态词按值换：旧词退场新词进场（追记「悬停与运动」的 Kind 一节）。 */}
       <span
         className={cn("wf-swap text-ui-sm", RUN_STATUS_TEXT[effectiveStatus])}
         data-testid={testId}
@@ -101,8 +101,8 @@ export function WorkflowRunStatus({
           · {intl.formatMessage({ id: workflowRunStopReasonMessageId(reason) })}
         </span>
       ) : null}
-      {/* The third label says this run can continue. “Stop” describes only the action, not its consequence; put that consequence back
-          in the status row so users know they have not lost anything without opening the details first. */}
+      {/* 第三个词：这条 run 还能接着跑。「停止」这个动词只说了动作，说不了后果——把后果放回
+          状态行，用户就不必先点开详情页才知道自己没有丢掉什么。 */}
       {run?.resumable === true ? (
         <span
           className="text-ui-sm text-foreground-subtlest"
@@ -115,7 +115,7 @@ export function WorkflowRunStatus({
   );
 }
 
-/** Static status (not yet joined to a run): hollow ring + one label ("compiled"). */
+/** 静态（尚未联接 run）的状态：空环灯 + 一个词（「compiled」）。 */
 export function WorkflowStaticStatus({ word }: { word: string }) {
   return (
     <span className="flex shrink-0 items-center gap-1.5">
@@ -141,24 +141,24 @@ export function WorkflowCardHeader({
   toggleLabel: toggleLabelOverride,
   trailing,
 }: {
-  /** Kind label; when it is a string, key by its text (a text change remounts and plays wf-swap). */
+  /** 种类词；字符串时按文案换词（换字即重挂，播 wf-swap）。 */
   kind: ReactNode;
   name: string;
-  /** Shimmer for a running kind label (same expression as ToolLayout's isRunning). */
+  /** 运行中的种类词扫光（与 ToolLayout 的 isRunning 同一表达）。 */
   live?: boolean;
   status?: ReactNode;
   detail?: string;
-  /** Tooltip for details; supplied only when the subagent model exists (reasoning level and canonical string are shown here). */
+  /** 细节串的 tooltip；只有子代理模型在场时才给（强度与规范串住在这里）。 */
   detailTitle?: string;
-  /** Slot before status (the pending-question chip in the end-of-turn summary). */
+  /** 状态之前的插槽（轮尾摘要的待答问题芯片）。 */
   leading?: ReactNode;
-  /** Slot after details and before ⤢ (the end-of-turn summary places Resume in the header). */
+  /** 细节之后、⤢ 之前的插槽（轮尾摘要把 Resume 放进表头）。 */
   trailing?: ReactNode;
   onOpenDetails?: () => void;
   expanded: boolean;
-  /** Absent means it cannot collapse (forceOpen / canToggle=false). */
+  /** 缺席即不可折叠（forceOpen / canToggle=false）。 */
   onToggle?: () => void;
-  /** Accessible name for the chevron; absent means "Expand/Collapse tool details" on tool cards. */
+  /** chevron 的无障碍名；缺席时是工具卡的「展开 / 收起工具详情」。 */
   toggleLabel?: string;
 }) {
   const { intl } = useZCodeIntl();
@@ -170,35 +170,37 @@ export function WorkflowCardHeader({
     });
   return (
     <div
-      className="flex min-w-0 items-center gap-2 text-ui-base"
+      className="flex min-w-0 flex-wrap items-center gap-2 text-ui-base"
       data-testid="workflow-card-header"
     >
       {WORKFLOW_CARD_ICON}
-      {/* Swap kind labels by text (keyed by label, with the old label exiting as the new one enters). Wrap the wf-swap transition around the shimmer’s
-          animated-gradient-text **outside**: background-clip:text clips only this layer’s text.
-          Once a child is promoted to its own layer by a transform/opacity animation, its text becomes transparent and the header shows only a blank gap. */}
+      {/* 种类词按文案换（key=文案，旧词退场新词进场）。换词的 wf-swap 必须包在扫光的
+          animated-gradient-text **外面**：background-clip:text 只裁到自己这一层的文字，
+          子元素一旦被 transform/opacity 动画提到独立图层，字就成了透明——表头上只剩一段空白。 */}
       <span className="shrink-0 whitespace-nowrap font-medium" data-testid="workflow-card-kind">
         <span className="wf-swap" key={typeof kind === "string" ? kind : undefined}>
           <span className={live ? "animated-gradient-text" : "text-foreground"}>{kind}</span>
         </span>
       </span>
       <span
-        // This is UI text; card headers shared by tool summaries and cancellation statuses need the same adjustment.
-        className="min-w-0 flex-1 truncate text-foreground-subtle"
+        // 名称是 UI 文本；工具摘要与取消等状态共用的卡片表头都要经过同一修正。
+        // 手机分享页的状态簇曾把名称挤到 0 宽；名称保留最小宽度，空间不足时状态整组换行。
+        className="min-w-20 flex-1 truncate text-foreground-subtle"
         data-testid="workflow-card-name"
         title={name}
       >
         {name}
       </span>
-      {/* The right group can shrink, and only the details string should give way: chips, status, and buttons are shrink-0 (built into the Button base class).
-          Set min-w-0 + truncate on the details string so all negative space falls there and Configure / Stop / ⤢ stay inside the card.
-          The group’s min-w-0 is required; do not remove it as redundant. A flex item’s automatic minimum size equals
-          min-content, and truncate’s `white-space:nowrap` makes the details string’s min-content equal its full text width.
-          Neither `overflow:hidden` nor the child’s min-w-0 makes it smaller. Without min-w-0 on the group, its minimum width
-          is the full details string plus the buttons; it will not shrink at all, and the buttons still overflow the card (the issue fixed here).
-          Browser measurements while narrowing the card: before the fix, buttons overflowed below 520px; after the fix, there is no overflow above 290px.
-          With a pending-question chip, the threshold is 380px; the chip is also shrink-0 and raises the overall minimum width. */}
-      <span className="flex min-w-0 items-center gap-2">
+      {/* 右簇可压缩，簇里只有细节串会让位：芯片、状态与按钮都是 shrink-0（Button 基类自带），
+          细节串 min-w-0 + truncate，于是负空间全落在它身上，Configure / Stop / ⤢ 留在卡内。
+          簇上的 min-w-0 是必需的，别当成冗余删掉：flex item 的 automatic minimum size 等于
+          min-content，而 truncate 的 `white-space:nowrap` 让细节串的 min-content 就是整串字宽
+          ——`overflow:hidden` 与子元素的 min-w-0 都不会把它算小。不写簇的 min-w-0，簇的地板
+          就是「整串细节 + 按钮」，它一个像素都不会缩，按钮照样被顶出卡外（本次修复的起因）。
+          浏览器实测（卡宽逐档收窄）：修复前 520px 起按钮就出界；修复后 290px 以上零溢出，
+          带待答问题芯片时 380px——芯片也是 shrink-0，它把地板整体抬高。
+          ml-auto 只在右簇换行到独立行时生效（分享页窄屏）：名称是 flex-1，同行时它没有作用。 */}
+      <span className="ml-auto flex min-w-0 items-center gap-2">
         {leading}
         {status}
         {detail === undefined || detail.length === 0 ? null : (
@@ -245,14 +247,14 @@ export function WorkflowCardHeader({
   );
 }
 
-/** Footer summary row: light + status label + checklist icon + segments separated by `·` + trailing control (Resume for failures). */
+/** 页脚摘要行：灯 + 状态词 + 清单图标 + 各段用 `·` 隔开 + 末尾控件（失败态的 Resume）。 */
 export function WorkflowCardFooter({
   parts = [],
   status,
   trailing,
 }: {
   status: WorkflowRunState["status"];
-  /** Summary segments; if absent or empty, render only the light, status label, and trailing control. */
+  /** 摘要各段；缺席或为空时只画灯、状态词与 trailing。 */
   parts?: readonly string[];
   trailing?: ReactNode;
 }) {

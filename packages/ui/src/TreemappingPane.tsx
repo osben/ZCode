@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Treemapping combines the activity tree, rectangle layout, and details area in one view; split it into subcomponents after the interactions stabilize. */
+/* eslint-disable max-lines -- Treemapping 需要在同一视图里组合活动树、矩形布局和详情区；等交互稳定后再拆分子组件。 */
 import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { FolderIcon, Loader2Icon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -310,9 +310,9 @@ export function TreemappingPane({
 }) {
   const { intl } = useZCodeIntl();
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  // Store cleanup: the message source moved from the old zcodeSessionStore to v4 conversation projection rows.
-  // The old source.kind === "message" entry (anchored to a legacy messageId) was removed with the old
-  // ChatView; this now consistently uses activity from the last assistant turn.
+  // store 收尾：消息源从旧 zcodeSessionStore 迁 v4 conversation 投影 rows。
+  // 旧 source.kind === "message"（按 legacy messageId 锚定某条消息）的入口随旧
+  // ChatView 一起删除，这里统一取最后一个 assistant 轮的活动。
   const message: TaskChatMessage | null = useTreemappingConversationMessage({
     sessionId: activeTaskId,
     workspacePath,
@@ -541,9 +541,9 @@ function DirectoryBox({
   const summary = summarizeNode(node);
   const weight = getDirectoryWeight(node);
   const style: CSSProperties = {
-    // Directories have no status color, but their area should reflect the aggregated diff of their subtree.
-    // Previously, width grew linearly with weight, so the visual proportion depended almost entirely on width. Use sqrt(weight) for both dimensions
-    // so rectangle area better reflects activity weight rather than turning heavily changed directories into long strips.
+    // 目录本身没有状态色，但面积要反映子树聚合 diff。
+    // 之前宽度按 weight 线性增长，视觉比例几乎只看宽度；这里用 sqrt(weight) 同时影响宽高，
+    // 让矩形面积更接近活动权重，而不是把大改动目录挤成长条。
     flexGrow: weight,
     flexBasis:
       depth === 0
@@ -559,8 +559,8 @@ function DirectoryBox({
     <section
       style={style}
       className={cn(
-        // CSS :hover matches all ancestor directories, so hovering a child file also changes its parents' colors.
-        // Directory containers express only hierarchy and selection; keep hover feedback on the current file block so parents are unaffected.
+        // CSS 的 :hover 会同时命中所有祖先目录，子文件 hover 时父目录也会变色。
+        // 目录容器只表达层级和选中态，悬停反馈留给当前文件块，避免父级被子级 hover 牵连。
         "flex min-w-0 flex-col rounded-lg border-2 border-border p-2 transition-colors duration-150",
         depth > 0 && "flex-1",
         selectedPath === node.path && "!border-primary",
@@ -626,8 +626,8 @@ function FileBox({
   const style: CSSProperties = {
     flexGrow: weight,
     flexBasis: `${clampSize(getAreaSideWeight(weight) * FILE_BASIS_SCALE, 88, 260)}px`,
-    // Use sqrt(weight) for both width and height of file leaves so diff size is not reflected only in horizontal proportion.
-    // The parent still distributes actual height with stretch; this only provides a minimum area-weight signal.
+    // 文件叶子用 sqrt(weight) 同时影响宽高，避免 diff 大小只体现在横向占比上。
+    // 实际高度仍由父级 stretch 分配，这里只提供面积权重的下限信号。
     minHeight: `${clampSize(getAreaSideWeight(weight) * FILE_HEIGHT_SCALE, 58, 156)}px`,
   };
 
@@ -642,11 +642,11 @@ function FileBox({
         "relative min-w-20 flex-1 self-stretch rounded-md border-2 p-2 text-left text-ui-base transition-colors duration-150 hover:border-primary/60 focus-visible:border-primary focus-visible:outline-none",
         "animate-in fade-in zoom-in-95",
         getFileTone(node.kind),
-        // Recent-activity highlighting previously used a ring (box-shadow), which focus reset cleared after clicking.
-        // Use border color so recent activity, hover, and selection share one visual language.
+        // 最近触达高亮之前使用 ring（box-shadow），点击后的 focus reset 会把它清掉；
+        // 改为边框色后，近期触达、hover、选中都走同一种视觉语言。
         recentlyTouched && !selected && "border-primary/60",
-        // After clicking, the file block itself receives focus and the global focus reset clears
-        // outline/box-shadow with !important. Tailwind ring is also box-shadow, so selection cannot keep relying on ring.
+        // 点击后文件块本身会获得 focus，而全局 focus reset 会用 !important 清掉
+        // outline/box-shadow；Tailwind ring 也是 box-shadow，所以选中态不能继续依赖 ring。
         selected && "!border-primary",
       )}
       onClick={(event) => {

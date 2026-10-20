@@ -1,5 +1,3 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type {
   AssistantTextRow,
@@ -9,16 +7,12 @@ import type {
   TurnHeaderRow,
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
-import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { ConversationTurnNavigator } from "@/v4/ConversationTurnNavigator.js";
 import { buildConversationTurnRenderUnits } from "@/v4/conversationTurnRenderUnits.js";
 import {
   buildConversationTurnNavigatorItems,
   resolveConversationTurnNavigatorActiveQueryRowId,
   resolveConversationTurnNavigatorActiveUnitIndex,
-  resolveConversationTurnNavigatorBarVisualState,
   resolveConversationTurnNavigatorHydrationRetryDelayMs,
-  resolveConversationTurnNavigatorVisualFocusItemIndex,
   shouldHydrateConversationTurnNavigatorDirectory,
 } from "@/v4/conversationTurnNavigatorHelpers.js";
 
@@ -70,19 +64,13 @@ function userInput(
   });
 }
 
-function assistantText(
-  rowId: number,
-  turnId: string,
-  text: string,
-  overrides: Partial<AssistantTextRow> = {},
-): AssistantTextRow {
+function assistantText(rowId: number, turnId: string, text: string): AssistantTextRow {
   return baseRow<AssistantTextRow>({
     rowId,
     turnId,
     kind: "assistantText",
     text,
     state: "complete",
-    ...overrides,
   });
 }
 
@@ -129,11 +117,6 @@ describe("conversation turn navigator helpers", () => {
         containerWidthPx: 863,
       }),
     ).toBe(false);
-    expect(
-      shouldHydrateConversationTurnNavigatorDirectory({
-        ...base,
-      }),
-    ).toBe(true);
     expect(
       shouldHydrateConversationTurnNavigatorDirectory({
         ...base,
@@ -204,31 +187,6 @@ describe("conversation turn navigator helpers", () => {
     expect(items[1]?.assistantPreview).toBe(items[0]?.assistantPreview);
     expect(items.map((item) => item.userPreview).join(" ")).not.toContain("Assistant paragraph");
     expect(new Set(items.map((item) => item.key)).size).toBe(3);
-  });
-
-  it("marks an item pinned from its query row or the turn's pinned answer", () => {
-    const items = buildConversationTurnNavigatorItems(
-      units([
-        turnHeader(1, "turn-pinned-query"),
-        userInput(2, "turn-pinned-query", "Pinned query", "realUser", {
-          pinnedAt: 1_700_000_050_000,
-        }),
-        assistantText(3, "turn-pinned-query", "Answer to pinned query"),
-        turnHeader(4, "turn-pinned-answer"),
-        userInput(5, "turn-pinned-answer", "Query with pinned answer"),
-        assistantText(6, "turn-pinned-answer", "Pinned answer", { pinnedAt: 1_700_000_060_000 }),
-        turnHeader(7, "turn-unpinned"),
-        userInput(8, "turn-unpinned", "Plain query"),
-        assistantText(9, "turn-unpinned", "Plain answer"),
-      ]),
-      {
-        assistantEmptyPreview: "No assistant text yet",
-        assistantRunningPreview: "Assistant is still working",
-        userFallbackPreview: "User turn",
-      },
-    );
-
-    expect(items.map((item) => item.isPinned)).toEqual([true, true, false]);
   });
 
   it("TN05：只为 realUser turn 建目录，排除 assistant-only 与系统 role=user", () => {
@@ -334,122 +292,5 @@ describe("conversation turn navigator helpers", () => {
         viewportHeightPx: 120,
       }),
     ).toBe(12);
-  });
-
-  it("keeps scroll active compact until hover or focus creates a mountain", () => {
-    expect(
-      resolveConversationTurnNavigatorVisualFocusItemIndex({
-        activeItemIndex: 3,
-        interactionItemIndex: undefined,
-      }),
-    ).toBeUndefined();
-    expect(
-      resolveConversationTurnNavigatorVisualFocusItemIndex({
-        activeItemIndex: 3,
-        interactionItemIndex: 1,
-      }),
-    ).toBe(1);
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 3,
-        visualFocusItemIndex: undefined,
-      }),
-    ).toMatchObject({ tone: "idle", scaleX: 1 });
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 3,
-        visualFocusItemIndex: 3,
-      }),
-    ).toMatchObject({ colorTone: "focus", tone: "peak", scaleX: 2.6 });
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 2,
-        visualFocusItemIndex: 3,
-      }),
-    ).toMatchObject({ colorTone: "muted", tone: "near", scaleX: 1.7 });
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 1,
-        visualFocusItemIndex: 3,
-      }),
-    ).toMatchObject({ colorTone: "muted", tone: "mid", scaleX: 1.25 });
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 0,
-        visualFocusItemIndex: 3,
-      }),
-    ).toMatchObject({ tone: "idle", scaleX: 1 });
-    expect(
-      resolveConversationTurnNavigatorBarVisualState({
-        itemIndex: 0,
-        visualFocusItemIndex: undefined,
-      }),
-    ).toMatchObject({ tone: "idle", scaleX: 1 });
-  });
-
-  it("positions the compact rail at the owning timeline vertical center", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(ConversationTurnNavigator, {
-          onJumpToQuery: () => {},
-          renderUnits: units([
-            turnHeader(1, "turn-1"),
-            userInput(2, "turn-1", "First query"),
-            assistantText(3, "turn-1", "First answer"),
-            turnHeader(4, "turn-2"),
-            userInput(5, "turn-2", "Second query"),
-            assistantText(6, "turn-2", "Second answer"),
-          ]),
-          scrollOffsetPx: 0,
-          viewportHeightPx: 500,
-          virtualItems: [
-            { index: 0, size: 120, start: 0 },
-            { index: 1, size: 120, start: 120 },
-          ],
-        }),
-      ),
-    );
-
-    expect(html).toContain("top-1/2");
-    expect(html).toContain("-translate-y-1/2");
-    expect(html).not.toContain("top-12");
-    expect(html).toContain("invisible");
-    expect(html).toContain("opacity-0");
-    expect(html).toContain("-translate-x-2");
-    expect(html).toContain("@min-[864px]/conversation:visible");
-    expect(html).toContain("@min-[864px]/conversation:opacity-100");
-    expect(html).toContain("@min-[864px]/conversation:translate-x-0");
-    expect(html).toContain("transition-[opacity,transform,visibility]");
-    expect(html).toContain("motion-reduce:transition-none");
-  });
-
-  it("TN03：rail 只允许纵向滚动，山峰放大不产生横向滚动条", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(ConversationTurnNavigator, {
-          onJumpToQuery: () => {},
-          renderUnits: units([
-            turnHeader(1, "turn-1"),
-            userInput(2, "turn-1", "First query"),
-            turnHeader(3, "turn-2"),
-            userInput(4, "turn-2", "Second query"),
-          ]),
-          scrollOffsetPx: 0,
-          viewportHeightPx: 500,
-          virtualItems: [
-            { index: 0, size: 120, start: 0 },
-            { index: 1, size: 120, start: 120 },
-          ],
-        }),
-      ),
-    );
-
-    expect(html).toContain("overflow-x-hidden");
-    expect(html).toContain("overflow-y-auto");
-    expect(html).toContain("!scrollbar-hide");
   });
 });

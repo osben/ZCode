@@ -37,19 +37,11 @@ it("按能力目录渲染整表，并把持久层 allow/deny 投影为下拉初�
   };
   h.platform.getEmbeddedBrowserSitePermissions.mockResolvedValue(snapshot);
   await openPage();
-  expect(screen.getByTestId("browser-site-permissions").querySelector("h1")).toBeTruthy();
+  expect(screen.getByText(origin)).toBeTruthy();
+  expect(screen.getByText("browser.permission.media")).toBeTruthy();
+  expect(screen.getByText("browser.permission.geolocation")).toBeTruthy();
   expect(
-    screen.getByTestId("browser-site-permissions").querySelector("[data-permission-key=media]"),
-  ).toBeTruthy();
-  expect(
-    screen
-      .getByTestId("browser-site-permissions")
-      .querySelector("[data-permission-key=geolocation]"),
-  ).toBeTruthy();
-  expect(
-    screen
-      .getByTestId("site-permission-setting-geolocation")
-      .getAttribute("data-permission-setting"),
+    screen.getByTestId("site-permission-setting-geolocation").getAttribute("data-permission-setting"),
   ).toBe("allow");
   expect(
     screen
@@ -69,7 +61,7 @@ it("重置失败后点击重试会重发重置，成功后清除错误并展示�
   await act(async () => fireEvent.click(screen.getByTestId("browser-permission-reset")));
   expect(screen.queryByRole("alert")).not.toBeNull();
   expect(h.platform.resetEmbeddedBrowserSitePermission).toHaveBeenCalledTimes(1);
-  await act(async () => fireEvent.click(screen.getByRole("alert").querySelector("button")!));
+  await act(async () => fireEvent.click(screen.getByText("browser.permission.retry")));
   expect(h.platform.resetEmbeddedBrowserSitePermission).toHaveBeenCalledTimes(2);
   expect(h.platform.resetEmbeddedBrowserSitePermission).toHaveBeenLastCalledWith({ origin });
   expect(screen.queryByRole("alert")).toBeNull();
@@ -82,7 +74,7 @@ it("重置已成功而重新读取失败时，重试只读取且保留成功事�
   await act(async () => fireEvent.click(screen.getByTestId("browser-permission-reset")));
   expect(screen.queryByRole("alert")).not.toBeNull();
   expect(screen.queryByTestId("browser-permission-reset-done")).not.toBeNull();
-  await act(async () => fireEvent.click(screen.getByRole("alert").querySelector("button")!));
+  await act(async () => fireEvent.click(screen.getByText("browser.permission.retry")));
   expect(h.platform.resetEmbeddedBrowserSitePermission).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.queryByTestId("browser-permission-reset-done")).not.toBeNull();
@@ -95,9 +87,7 @@ it("平台能力缺失时展示不支持提示，不发起读取", async () => {
     render(
       createElement(BrowserSitePermissionsPage, { origin: "https://web.test", isVisible: true }),
     );
-    await waitFor(() =>
-      expect(screen.getByTestId("browser-site-permissions").querySelector("p")).toBeTruthy(),
-    );
+    await waitFor(() => expect(screen.getByText("browser.permission.unsupported")).toBeTruthy());
     expect(read).not.toHaveBeenCalled();
   } finally {
     h.platform.getEmbeddedBrowserSitePermissions = read;

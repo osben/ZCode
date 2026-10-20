@@ -7,38 +7,38 @@ import type {
   ProviderSettingsProviderView,
 } from "@zcode/provider";
 
-/** Provider state used by the settings page during one edit session. */
+/** 设置页面在一次编辑会话中使用的 Provider 状态。 */
 export interface ProviderSettingsFormProvider extends Pick<
   ProviderSettingsProviderView,
   "providerName" | "templateId"
 > {
   providerId: string;
-  /** Patch for an explicit rename in this edit only; other edits must not materialize an inherited name as personal configuration. */
+  /** 仅本次显式改名的补丁；其他编辑不得把继承名称物化成个人配置。 */
   providerNameUpdate?: string | null;
-  /** Patch for explicit top-level enable/disable in this edit only; ordinary field edits must not copy inherited enabled state. */
+  /** 仅本次显式开关的外层补丁；普通字段编辑不复制继承启停值。 */
   enabledUpdate?: boolean;
   enabled: boolean;
-  /** State derived by Registry from current Official, Personal, and Account Facts. */
+  /** Registry 根据当前 Official、Personal 与 Account Facts 得出的状态。 */
   executable: boolean;
   accountState?: AccountProviderState;
   issues?: readonly ConfigValidationIssue[];
   hasPersonalConfig: boolean;
-  /** Renderer modifies and submits only this sparse Personal Overlay. */
+  /** Renderer 只修改并提交这一份稀疏 Personal Overlay。 */
   personalConfig: ProviderConfigObject;
-  /** Read-only inherited baseline and current form display values; not persisted directly. */
+  /** 只读继承基线与即时表单展示值，不直接持久化。 */
   config: ProviderConfigObject;
   models: ProviderSettingsFormModel[];
 }
 
-/** Model state used by the settings page during one edit session. */
+/** 设置页面在一次编辑会话中使用的 Model 状态。 */
 export interface ProviderSettingsFormModel {
   kind: "candidate";
   modelId: string;
   builtin: boolean;
-  /** Resolved Built-in Rule before the Personal Rule overlay, used by the editor to represent inheritance and sparse overrides. */
+  /** Personal Rule 叠加前的 Built-in Rule 解析结果，用于编辑器表达继承与稀疏覆盖。 */
   inheritedConfig?: ModelConfigObject;
   personalConfig: ModelConfigObject;
-  /** Missing or true means follow the Built-in recommendation; false means use fixed personal configuration. */
+  /** 缺省或 true 表示跟随 Built-in 推荐配置；false 表示固定个人配置。 */
   useRecommendedConfig?: boolean;
   config: ModelConfigObject;
   hasPersonalConfig: boolean;

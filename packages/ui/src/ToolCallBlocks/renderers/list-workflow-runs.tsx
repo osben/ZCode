@@ -21,11 +21,11 @@ import type { ToolCallBlockRenderContext } from "../shared.js";
 const LIST_WORKFLOW_RUNS_TOOL_ICON = <History className="size-4 shrink-0 text-foreground-subtle" />;
 
 /**
- * ListWorkflowRuns chat card.
+ * ListWorkflowRuns 的聊天卡。
  *
- * Collapsed row: kindLabel + count (following the existing convention of separate singular/plural keys). Expanded: a row list
- * [status dot and word | monospace label | short time | tokens], with a bordered badge for runs in this session. possiblyInterrupted
- * adds a warning at the row end—“possibly interrupted” is a presentation annotation, not a state change; the card follows the same rule.
+ * 折叠行：kindLabel + 计数（单复数独立 key 的既有惯例）。展开：行式列表
+ * ［状态点词 | label mono | 短时间 | tokens］，本会话 run 加边框小签，possiblyInterrupted
+ * 行尾给警示标注——「可能已中断」是读面标注不是状态改写，卡片上同样只标注。
  */
 export function ListWorkflowRunsToolCallBlock(context: ToolCallBlockRenderContext) {
   const { intl } = useZCodeIntl();
@@ -41,7 +41,15 @@ export function ListWorkflowRunsToolCallBlock(context: ToolCallBlockRenderContex
   });
   const emptyLabel = intl.formatMessage({ id: "chat.toolCall.workflow.listRuns.empty" });
   const runCount = listDisplay?.runs.length ?? 0;
-  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.listRuns.count" }, runCount);
+  const countLabel = intl.formatMessage(
+    {
+      id:
+        runCount === 1
+          ? "chat.toolCall.workflow.listRuns.countOne"
+          : "chat.toolCall.workflow.listRuns.count",
+    },
+    { count: runCount },
+  );
 
   const primaryText = useMemo(
     () => (

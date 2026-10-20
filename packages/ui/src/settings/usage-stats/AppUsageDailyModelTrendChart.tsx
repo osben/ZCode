@@ -16,8 +16,8 @@ import {
 } from "@/settings/usage-stats/usageStatsUiParts.js";
 import { getAppUsageModelChartColor } from "@/settings/usage-stats/appUsageChartPalette.js";
 
-// XAxis first/last ticks extend outward from the plot-area edges. The old 8px margin was less than half the date-label width,
-// so SVG clipped the outer labels; keep a 24px safe area on each side to show short dates fully on Desktop and mobile Web.
+// XAxis 首尾刻度以绘图区边界为中心向两侧延伸，原 8px margin 小于日期文本半宽，
+// SVG 会裁掉首尾文字；左右保留 24px 安全区，让桌面端与手机 Web 端都能完整显示短日期。
 export const APP_USAGE_TREND_CHART_MARGIN = {
   top: 8,
   right: 24,
@@ -42,8 +42,8 @@ type ChartTooltipContentProps = ComponentProps<typeof ChartTooltipContent>;
 export function filterDailyModelTooltipPayload<T extends { value?: unknown }>(
   payload: readonly T[] | undefined,
 ): T[] {
-  // Recharts tooltip payload for multiple series includes every model for that day;
-  // models with zero usage have no visible trend point, so showing them would mislead users into thinking the hover indicates real usage.
+  // Recharts 的多序列 tooltip payload 会包含当天所有模型；
+  // 0 用量模型没有可见趋势点，继续展示会误导用户以为 hover 到了有效用量。
   return (payload ?? []).filter((item) => {
     const value = typeof item.value === "number" ? item.value : Number(item.value);
     return Number.isFinite(value) && value > 0;
@@ -100,8 +100,8 @@ function buildDailyModelChartData({
 }): DailyModelChartRow[] {
   const rows = new Map<string, DailyModelChartRow>();
 
-  // App Usage's 30d protocol result is already a daily series; the old all-bucket logic aggregated
-  // 30 days by week into about 5 points, leaving "Last 30 days" without a continuous daily trend.
+  // App Usage 的 30d 协议结果已经是每日序列，旧 all 分桶残留把
+  // 30 天按周聚合成约 5 个点，导致“最近 30 天”没有连续每日趋势。
   for (const day of snapshot.dailyModelUsage) {
     const label = formatDay(locale, day.date);
     const row = rows.get(day.date) ?? createEmptyChartRow(label, label, modelKeys);
@@ -122,19 +122,14 @@ function buildDailyModelChartData({
     .map(([, row]) => row);
 }
 
-const PREVIOUS_TOTAL_KEY = "previousTotal";
-
 export function buildAppUsageDailyModelChartViewModel({
   intl,
   locale,
   snapshot,
-  previousDailyTotals,
 }: {
   intl: UsageIntl;
   locale: string;
   snapshot: AppUsageSnapshot;
-  /** Previous-period daily totals aligned index by index with the chart rows (comparison mode). */
-  previousDailyTotals?: readonly number[];
 }) {
   const topModels = snapshot.models.slice(0, 6);
   const modelKeys = topModels.map((model, index) => ({
@@ -159,24 +154,12 @@ export function buildAppUsageDailyModelChartViewModel({
     modelKeys,
     modelKeyById,
   });
-  if (previousDailyTotals) {
-    chartData.forEach((row, index) => {
-      row[PREVIOUS_TOTAL_KEY] = previousDailyTotals[index] ?? 0;
-    });
-    chartConfig[PREVIOUS_TOTAL_KEY] = {
-      label: intl.formatMessage({ id: "settings.usage.compare.previousPeriod" }),
-      color: "var(--color-foreground-subtle)",
-    };
-  }
   let maxTokens = 0;
-  // These are independent lines, not a stacked chart. Using daily totals would use the sum across models (including hidden ones)
-  // as the Y-axis maximum and compress visible lines at the bottom; scale only to the peak of visible series.
+  // 图中是独立折线而非堆叠图，使用每日总量会把多模型之和（以及未展示模型）
+  // 当作 Y 轴上限，导致实际可见曲线被压在底部；坐标范围只应跟随可见序列的单点峰值。
   for (const row of chartData) {
     for (const model of modelKeys) {
       maxTokens = Math.max(maxTokens, Number(row[model.key] ?? 0));
-    }
-    if (previousDailyTotals) {
-      maxTokens = Math.max(maxTokens, Number(row[PREVIOUS_TOTAL_KEY] ?? 0));
     }
   }
 
@@ -186,7 +169,6 @@ export function buildAppUsageDailyModelChartViewModel({
     chartConfig,
     chartData,
     maxTokens,
-    hasPrevious: Boolean(previousDailyTotals),
   };
 }
 
@@ -203,19 +185,13 @@ function DailyModelChartTooltipContent(props: ChartTooltipContentProps) {
   return <ChartTooltipContent {...props} payload={filteredPayload} />;
 }
 
-export function AppUsageDailyModelTrendChart({
-  snapshot,
-  previousDailyTotals,
-}: {
-  snapshot: AppUsageSnapshot;
-  previousDailyTotals?: readonly number[];
-}) {
+export function AppUsageDailyModelTrendChart({ snapshot }: { snapshot: AppUsageSnapshot }) {
   const { intl, locale } = useZCodeIntl();
-  const { topModels, modelKeys, chartConfig, chartData, maxTokens, hasPrevious } = useMemo(
-    // Recharts 3.8 writes data / legend / graphical-item props to its internal store.
-    // Keep derived arrays and config objects stable so parent re-renders do not repeatedly trigger internal dispatches due to reference changes.
-    () => buildAppUsageDailyModelChartViewModel({ intl, locale, snapshot, previousDailyTotals }),
-    [intl, locale, snapshot, previousDailyTotals],
+  const { topModels, modelKeys, chartConfig, chartData, maxTokens } = useMemo(
+    // Recharts 3.8 会把 data / legend / graphical item props 写入内部 store。
+    // 这里稳定派生数组和配置对象，避免父组件重渲染时因引用变化反复触发内部 dispatch。
+    () => buildAppUsageDailyModelChartViewModel({ intl, locale, snapshot }),
+    [intl, locale, snapshot],
   );
   const shouldShowAxisLabel = useCallback(
     (_value: string, index: number) =>
@@ -304,17 +280,6 @@ export function AppUsageDailyModelTrendChart({
                 </span>
               </div>
             ))}
-            {hasPrevious ? (
-              <div className="flex min-w-0 items-center gap-2 text-ui-sm" role="listitem">
-                <span
-                  className="h-0 w-3 shrink-0 border-t-2 border-dashed border-foreground-subtle"
-                  aria-hidden="true"
-                />
-                <span className="truncate text-foreground-subtle">
-                  {intl.formatMessage({ id: "settings.usage.compare.previousPeriod" })}
-                </span>
-              </div>
-            ) : null}
           </div>
           <ChartContainer config={chartConfig} className="h-60 w-full">
             <LineChart accessibilityLayer data={chartData} margin={APP_USAGE_TREND_CHART_MARGIN}>
@@ -341,17 +306,6 @@ export function AppUsageDailyModelTrendChart({
                   activeDot={{ r: 4 }}
                 />
               ))}
-              {hasPrevious ? (
-                <Line
-                  dataKey="previousTotal"
-                  type="monotone"
-                  stroke="var(--color-foreground-subtle)"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 4"
-                  dot={false}
-                  activeDot={{ r: 3 }}
-                />
-              ) : null}
             </LineChart>
           </ChartContainer>
         </div>

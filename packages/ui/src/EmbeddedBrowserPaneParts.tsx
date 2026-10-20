@@ -18,14 +18,13 @@ import {
   TID_BROWSER_DEVTOOLS_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_BUTTON,
   TID_BROWSER_FORWARD_BUTTON,
-  TID_BROWSER_GUEST_RETRY,
   TID_BROWSER_LOAD_ERROR,
   TID_BROWSER_LOAD_ERROR_CERT_HINT,
   TID_BROWSER_MORE_BUTTON,
   TID_BROWSER_OPEN_EXTERNAL_ITEM,
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_RESPONSIVE_BUTTON,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -61,7 +60,7 @@ export function BrowserToolbar({
 }: {
   addressValue: string;
   browserState: BrowserState;
-  /** Site settings entry to the left of the address bar; hidden while editing a focused URL, but not unmounted. */
+  /** 地址栏左侧的站点设置入口；聚焦编辑 URL 时隐藏但不卸载。 */
   permissionControl?: ReactNode;
   formatMessage: (descriptor: { id: string }) => string;
   onAddressChange: (value: string) => void;
@@ -123,7 +122,7 @@ export function BrowserToolbar({
           placeholder={formatMessage({ id: "browser.addressPlaceholder" })}
           spellCheck={false}
         />
-        {/* Hide the entry while editing the URL without unmounting it, so the hidden icon is not mistaken for a dismissed permission request. */}
+        {/* 编辑 URL 时隐藏入口但不卸载，避免将隐藏图标误当成关闭权限申请。 */}
         <div className="absolute top-1/2 left-0.5 -translate-y-1/2 group-has-[input:focus]/browser-address:hidden">
           {permissionControl}
         </div>
@@ -244,11 +243,11 @@ export function BrowserEmptyState({
 }
 
 /**
- * Readable error state when a page fails to load.
+ * 页面加载失败时的可读错误态。
  *
- * Electron's `<webview>` does not show Chrome's safety interstitial; a rejected navigation lands on a blank
- * chrome-error page. Previously, errorMessage was stored without a rendering consumer, while the empty state was disabled,
- * leaving users with a black screen. Certificate failures also include instructions for proceeding.
+ * Electron 的 `<webview>` 不带 Chrome 的安全插页，被拒的导航只落到一张空的
+ * chrome-error 页；过去 errorMessage 只写进 state 没有渲染消费者，空置态又同时被关掉，
+ * 用户最终只看到纯黑。证书类失败额外给出放行指引，避免用户无从下手。
  */
 export function BrowserLoadErrorState({
   errorMessage,
@@ -293,7 +292,7 @@ export function BrowserLoadErrorState({
   );
 }
 
-/** The host takes over the view when guest startup fails; automatic recreation would loop, so only explicit retry is offered. */
+/** guest 启动失败时由宿主接管画面；自动重建会形成失败循环，因此只提供显式重试。 */
 export function BrowserGuestFailureState({
   formatMessage,
   guestFailure,
@@ -319,13 +318,7 @@ export function BrowserGuestFailureState({
             { exitCode: guestFailure.exitCode, reason: guestFailure.reason },
           )}
         </p>
-        <Button
-          type="button"
-          variant="outline"
-          className="mt-6"
-          data-testid={TID_BROWSER_GUEST_RETRY}
-          onClick={onRetry}
-        >
+        <Button type="button" variant="outline" className="mt-6" onClick={onRetry}>
           <RefreshCw className="size-4" />
           {formatMessage({ id: "browser.guestFailed.retry" })}
         </Button>

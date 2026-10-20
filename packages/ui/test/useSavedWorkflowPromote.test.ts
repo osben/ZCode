@@ -31,7 +31,7 @@ const agentService = {} as never;
 const REQUEST = {
   name: "release-check",
   path: "/beta/.zcode/workflows/release-check.dwf.ts",
-  locale: "en-US",
+  locale: "zh-CN",
 };
 
 afterEach(() => {
@@ -59,7 +59,7 @@ describe("useSavedWorkflowPromote", () => {
     const payload = envelope.payload as { workspaceId: string; firstInput: { text: string } };
     expect(payload.workspaceId).toBe("/beta");
     // 首条消息即概括提示：带名字与路径、要求 scope global。
-    expect(payload.firstInput.text).toContain('"release-check"');
+    expect(payload.firstInput.text).toContain("「release-check」");
     expect(payload.firstInput.text).toContain("/beta/.zcode/workflows/release-check.dwf.ts");
     expect(payload.firstInput.text).toContain('scope: "global"');
     // 不发第二条命令（不是 startSavedWorkflow）。

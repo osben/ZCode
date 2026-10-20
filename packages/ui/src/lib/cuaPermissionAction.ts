@@ -6,22 +6,20 @@ function normalizeToolName(value: string | null | undefined): string {
 
 export function isZCodeCuaToolName(value: string | null | undefined): boolean {
   const normalized = normalizeToolName(value);
-  // The server key segment is computer-use. MCP tools use mcp__computer-use__*;
-  // main v3.5.3 adds a namespace to plugin servers according to its plugin MCP naming convention:
-  // mcp__plugin_zcode-cua_computer-use__* (the normalized server segment has a single hyphen
-  // before cua-computer-use, not a double hyphen). Both forms contain "computer-use", so includes
-  // supports both. Otherwise, main's namespace prefix would prevent CUA tool detection and make
-  // ToolCallBlock fall back to the generic renderer. "computer-use" is specific enough because
-  // only the CUA server uses this key; it does not match android-emulator or browser-use.
+  // server key 段为 computer-use。feat: mcp__computer-use__*；
+  // main v3.5.3 的 plugin MCP 命名约定给 plugin server 加 namespace：
+  // mcp__plugin_zcode-cua_computer-use__*（归一化后 server 段前是单连字符 cua-computer-use，
+  // 不是双连字符）。两种形态都包含 "computer-use" 串——用 includes 兼容，否则 main 的 namespace
+  // 前缀会让 cua 工具识别失败、ToolCallBlock 退化成 fallback 渲染。"computer-use" 足够特异
+  // （仅 cua server 用此 key，不会误判 android-emulator/browser-use 等）。
   return normalized === "computer-use" || normalized.includes("computer-use");
 }
 
 export function didReturnFromCuaPermissionSettings(
   result: CuaAccessibilitySettingsResult | null | undefined,
 ): boolean {
-  // main sets this to true only after the entire staged pane group finishes and a return to the
-  // ZCode application is observed. Renderer focus can come from a native TCC prompt, another
-  // window, or an ordinary app switch, so it is no longer a signal that authorization completed.
+  // main 只有在整组 staged pane 都完成并观察到 ZCode 应用级返回后才置 true。renderer focus
+  // 可能来自 TCC 原生 prompt、另一窗口或普通切换，不能再作为授权完成信号。
   return (
     result?.success === true &&
     result.returnedFromSettings === true &&
@@ -33,14 +31,13 @@ export function didReturnFromCuaPermissionSettings(
 export function shouldRestartHelperAfterCuaPermissionReturn(
   result: CuaAccessibilitySettingsResult | null | undefined,
 ): boolean {
-  // restartHelperAfterReturn is an additive main ABI field. Older main versions omit it and keep
-  // the previous single-window-owner behavior. Newer main versions return false only for duplicate
-  // joins from the same renderer/host; independent Helpers in different windows each recover.
+  // restartHelperAfterReturn 是 additive main ABI。旧版 main 不返回该字段，仍按过去的单窗口 owner
+  // 处理；新版 main 只对同一 renderer/host 的重复 join 返回 false，不同窗口的独立 Helper 各自恢复。
   return didReturnFromCuaPermissionSettings(result) && result?.restartHelperAfterReturn !== false;
 }
 
 export interface CuaPermissionReturnRecoveryState {
-  /** Monotonically unique across open/workspace resets; a local epoch alone cannot identify an async operation. */
+  /** 跨 open/workspace reset 单调唯一；局部 epoch 不能单独充当异步 operation 身份。 */
   generation: number;
   contextKey: string;
   epoch: number;
@@ -91,8 +88,7 @@ export function markCuaPermissionOnboardingOpened(
 export function claimCuaPermissionReturnRecovery(
   state: CuaPermissionReturnRecoveryState,
 ): CuaPermissionReturnRecoveryClaim | null {
-  // Ordinary focus, intermediate focus from a native prompt, and duplicate focus for the same
-  // authorization action have no effect.
+  // 普通 focus、原生 prompt 的中间 focus、同一授权动作的重复 focus 均无副作用。
   if (!state.pending || state.automaticAttempted) return null;
   state.automaticAttempted = true;
   return recoveryClaim(state);
@@ -121,10 +117,9 @@ export function completeCuaPermissionReturnRecovery(
   claim: CuaPermissionReturnRecoveryClaim,
   restartSucceeded: boolean,
 ): void {
-  // The ref points to a new state after a workspace/open switch, and the local epoch restarts at 0.
-  // If an old restart completes using `ref.current + epoch`, it could clear a matching event in the
-  // new workspace. A claim stays bound to the state/context where it began; completion can modify
-  // only that old object. On failure, pending remains available for a manual retry in that context.
+  // ref 在 workspace/open 切换时会指向新 state，局部 epoch 又从 0 重启。旧 restart 若拿
+  // `ref.current + epoch` 完成，会误清新 workspace 的同号事件。claim 永久绑定发起时 state/context；
+  // completion 只可能修改该旧对象，失败仍保留 pending 供同一上下文手动重试。
   const state = claim.state;
   if (
     restartSucceeded &&

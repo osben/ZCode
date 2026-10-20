@@ -1,42 +1,33 @@
-// Dedicated tool cards for escalate / ResolveWorkflowQuestion
-// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md).
+// escalate / ResolveWorkflowQuestion 专用工具卡（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。
 //
-// The filename is deliberately `.test.ts` rather than `.test.tsx`: the root vitest config only collects
-// `packages/*/test/**/*.test.ts` (vitest.config.ts); `.test.tsx` would collect zero cases.
-// So, like submitResultToolCallBlock.test.ts, this uses createElement + renderToStaticMarkup and writes no JSX.
+// 文件名刻意是 `.test.ts` 而不是 `.test.tsx`：根 vitest 配置只收
+// `packages/*/test/**/*.test.ts`（vitest.config.ts），`.test.tsx` 一个用例都不会被采集。
+// 所以这里和 submitResultToolCallBlock.test.ts 一样用 createElement + renderToStaticMarkup，不写 JSX。
 //
-// The main session and the subagent side pane share the same ToolCallBlocks pipeline (the side pane mounts a
-// nested read-only SessionPane), so
-// "walking the whole chain down from the ToolCallBlock entry lands on the dedicated card" pins both surfaces
-// at once.
+// 主会话与子代理侧板共用同一条 ToolCallBlocks 管线（侧板挂的是嵌套只读 SessionPane），所以
+// 「从 ToolCallBlock 入口整链走下来就是专用卡」这一条同时钉住两个面。
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
-// CodeBlock depends on shiki / the CodeViewer root provider and can't run under static rendering; following the
-// submit-result precedent it is replaced with a stub
-// (this card doesn't use CodeBlock, but the whole-chain entry may reach it indirectly; a stub is the least
-// hassle).
+// CodeBlock 依赖 shiki / CodeViewer 根 provider，静态渲染跑不动；照 submit-result 的先例替换为
+// 桩（本卡不用 CodeBlock，但整链入口可能间接触达，留桩最省心）。
 vi.mock("@/components/ai-elements/code-block.js", () => ({
   CodeBlock: ({ code, language }: { code: string; language?: string; children?: ReactNode }) =>
     createElement("pre", { "data-testid": "code-block", "data-language": language }, code),
 }));
 
-// eslint-disable-next-line import/first -- the renderer under test must be imported after the code-block mock.
+// eslint-disable-next-line import/first -- 必须在 code-block mock 之后再引入被测 renderer。
 import { EscalateToolCallBlock } from "../src/ToolCallBlocks/renderers/escalate.js";
-// eslint-disable-next-line import/first -- same as above.
+// eslint-disable-next-line import/first -- 同上。
 import { ResolveWorkflowQuestionToolCallBlock } from "../src/ToolCallBlocks/renderers/resolve-workflow-question.js";
-// eslint-disable-next-line import/first -- same as above; the routing assertion needs the workflow family's fallback renderer.
+// eslint-disable-next-line import/first -- 同上；路由断言要拿到 workflow family 的兜底 renderer。
 import { CreateWorkflowToolCallBlock } from "../src/ToolCallBlocks/renderers/create-workflow.js";
-// eslint-disable-next-line import/first -- same as above.
+// eslint-disable-next-line import/first -- 同上。
 import { resolveToolCallRenderer } from "../src/ToolCallBlocks/resolveRenderer.js";
-// eslint-disable-next-line import/first -- same as above; the whole-chain routing assertion must go through the real entry component.
+// eslint-disable-next-line import/first -- 同上；整链路由断言要走真实入口组件。
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
-// eslint-disable-next-line import/first -- same as above; the locales are only used for bilingual existence assertions.
-
-// eslint-disable-next-line import/first -- same as above.
 
 interface ToolCallOverrides {
   input?: unknown;
@@ -74,7 +65,7 @@ function buildContext(
         snapshotRefs: toolCall.snapshotRefs,
       },
       childToolCalls: [],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the test context only fills the fields the renderer reads.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 测试上下文只填 renderer 读取的字段。
     } as any,
     workspacePath: "/workspace",
     displayModel: {
@@ -86,7 +77,7 @@ function buildContext(
       showInput: false,
       showOutput: true,
       showKind: false,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
     } as any,
     viewerSource: null,
     rawFileSummaries: [],
@@ -104,7 +95,7 @@ function buildContext(
 function renderEscalate(
   toolCall: ToolCallOverrides,
   contextOverrides: ContextOverrides = {},
-  locale: "en-US" | "zh-CN" = "en-US",
+  locale: "en-US" | "zh-CN" = "zh-CN",
 ): string {
   return renderToStaticMarkup(
     createElement(
@@ -118,7 +109,7 @@ function renderEscalate(
 function renderResolve(
   toolCall: ToolCallOverrides,
   contextOverrides: ContextOverrides = {},
-  locale: "en-US" | "zh-CN" = "en-US",
+  locale: "en-US" | "zh-CN" = "zh-CN",
 ): string {
   return renderToStaticMarkup(
     createElement(
@@ -154,7 +145,7 @@ describe("升级问答工具卡路由", () => {
     const escalateHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -173,13 +164,13 @@ describe("升级问答工具卡路由", () => {
         }),
       ),
     );
-    expect(escalateHtml).toContain(expectedCopy("chat.toolCall.workflow.escalate.asked"));
+    expect(escalateHtml).toContain("已询问主代理");
     expect(escalateHtml).not.toContain("&quot;toolId&quot;");
 
     const resolveHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -198,7 +189,7 @@ describe("升级问答工具卡路由", () => {
         }),
       ),
     );
-    expect(resolveHtml).toContain(expectedCopy("chat.toolCall.workflow.resolveQuestion.answered"));
+    expect(resolveHtml).toContain("已回答问题");
     expect(resolveHtml).not.toContain("&quot;toolId&quot;");
   });
 });
@@ -209,11 +200,7 @@ describe("EscalateToolCallBlock 相位文案", () => {
     { name: "pending", status: "pending", isRunning: true, expected: "正在询问主代理" },
     { name: "completed", status: "completed", isRunning: false, expected: "已询问主代理" },
   ])("$name 相写「$expected」", ({ status, isRunning, expected }) => {
-    const html = renderEscalate(
-      { input: { question: "门坏了吗？" }, status },
-      { isRunning },
-      "zh-CN",
-    );
+    const html = renderEscalate({ input: { question: "门坏了吗？" }, status }, { isRunning });
     expect(html).toContain(expected);
   });
 
@@ -231,24 +218,20 @@ describe("EscalateToolCallBlock 相位文案", () => {
       "en-US",
     );
     expect(asked).toContain("Asked the main agent");
-    expect(asked).not.toContain(expectedCopy("chat.toolCall.workflow.escalate.asking"));
+    expect(asked).not.toContain("正在询问主代理");
   });
 });
 
 describe("EscalateToolCallBlock body 分支", () => {
   it("问题 + 背景 + 答案三段齐备", () => {
-    const html = renderEscalate(
-      {
-        input: { question: "门坏了吗？", context: "阈值 96，实际封顶 95。" },
-        output: "对，跳过它，用旁路。",
-      },
-      {},
-      "zh-CN",
-    );
+    const html = renderEscalate({
+      input: { question: "门坏了吗？", context: "阈值 96，实际封顶 95。" },
+      output: "对，跳过它，用旁路。",
+    });
     expect(html).toContain("门坏了吗？");
     expect(html).toContain("阈值 96，实际封顶 95。");
     expect(html).toContain("对，跳过它，用旁路。");
-    // All three subtitles are present.
+    // 三个小标题都在场。
     expect(html).toContain("问题");
     expect(html).toContain("背景");
     expect(html).toContain("答复");
@@ -258,24 +241,22 @@ describe("EscalateToolCallBlock body 分支", () => {
     const html = renderEscalate(
       { input: { question: "门坏了吗？" }, status: "in_progress" },
       { isRunning: true },
-      "en-US",
     );
     expect(html).toContain("门坏了吗？");
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.escalate.asking"));
-    // The answer subtitle must not appear; being parked is not a failure.
-    expect(html).not.toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).toContain("正在询问主代理");
+    // 答案小标题不该出现；停驻不是失败。
+    expect(html).not.toContain("执行失败");
     expect(html).not.toContain("text-destructive");
   });
 
   it("预算已尽的驳回是普通结果——照常渲染成答案，绝不当失败", () => {
-    // The handler's formatModelContent only returns the message; the budget-exhausted text goes out as
-    // ordinary output (status
-    // is still completed), and the card must never style it as an error based on its text content.
+    // handler 的 formatModelContent 只返回 message；预算已尽的文案走的是普通 output（status
+    // 仍是 completed），卡片绝不因文本内容把它样式成 error。
     const refusal =
       "You have used all 3 escalations for this ask. Proceed on your own best judgement.";
     const html = renderEscalate({ input: { question: "还能再问吗？" }, output: refusal });
     expect(html).toContain(refusal);
-    expect(html).not.toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).not.toContain("执行失败");
     expect(html).not.toContain("border-destructive");
   });
 
@@ -284,7 +265,7 @@ describe("EscalateToolCallBlock body 分支", () => {
       { input: {}, status: "pending" },
       { isRunning: true, forceOpen: true },
     );
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.escalate.asking"));
+    expect(html).toContain("正在询问主代理");
     expect(html).not.toContain('role="button"');
   });
 });
@@ -297,7 +278,6 @@ describe("ResolveWorkflowQuestionToolCallBlock 相位文案", () => {
     const html = renderResolve(
       { input: { question_id: "dwfq-run1-1", answer: "跳过它。" }, status },
       { isRunning },
-      "zh-CN",
     );
     expect(html).toContain(expected);
   });
@@ -309,7 +289,7 @@ describe("ResolveWorkflowQuestionToolCallBlock 相位文案", () => {
       "en-US",
     );
     expect(html).toContain("Answered question");
-    expect(html).not.toContain(expectedCopy("chat.toolCall.workflow.resolveQuestion.answering"));
+    expect(html).not.toContain("正在回答问题");
   });
 });
 
@@ -320,13 +300,13 @@ describe("ResolveWorkflowQuestionToolCallBlock body 分支", () => {
       output: "Answer delivered for question dwfq-run1-1. The run keeps going.",
     });
     expect(html).toContain("dwfq-run1-1");
-    // The qid is an identity key → mono.
+    // qid 是标识键 → mono。
     expect(html).toMatch(/font-mono[^>]*>dwfq-run1-1/u);
     expect(html).toContain("跳过那道门，用旁路。");
     expect(html).toContain("The run keeps going.");
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.resolveQuestion.questionId"));
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.resolveQuestion.answer"));
-    expect(html).toContain(expectedCopy("chat.toolCall.workflow.resolveQuestion.outcome"));
+    expect(html).toContain("问题 ID");
+    expect(html).toContain("答复");
+    expect(html).toContain("结果");
   });
 
   it("结构化拒绝走失败样式（status failed）", () => {
@@ -335,7 +315,7 @@ describe("ResolveWorkflowQuestionToolCallBlock body 分支", () => {
       { input: { question_id: "dwfq-run1-1", answer: "跳过它。" }, status: "failed" },
       { errorText: refusal },
     );
-    expect(html).toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).toContain("执行失败");
     expect(html).toContain(refusal);
     expect(html).toContain("border-destructive");
   });
@@ -345,7 +325,7 @@ describe("ResolveWorkflowQuestionToolCallBlock body 分支", () => {
       input: { question_id: "dwfq-run1-1", answer: "跳过它。" },
       output: "Answer delivered for question dwfq-run1-1.",
     });
-    expect(html).not.toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).not.toContain("执行失败");
     expect(html).not.toContain("border-destructive");
   });
 });
@@ -359,6 +339,6 @@ describe("升级问答工具卡快照字段提示", () => {
       },
       { onLoadFullToolCallFields: () => {} },
     );
-    expect(html).toContain(expectedCopy("chat.toolCall.snapshot.loadFull"));
+    expect(html).toContain("加载完整工具数据");
   });
 });

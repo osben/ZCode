@@ -11,7 +11,6 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const modelSelectionMock = vi.hoisted(() => ({ view: null as ModelSelectionView | null }));
 
@@ -227,15 +226,12 @@ describe("ConversationRowView timeline marker contract", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ConversationRowView, { context: currentContext(), row }),
       ),
     );
     expect(view.container.textContent).toContain(
-      expectedCopy("chat.modelChange.switched", {
-        from: "primary-provider/glm-5.2",
-        to: "alternate-provider/glm-5.2",
-      }),
+      "模型已切换 primary-provider/glm-5.2 → alternate-provider/glm-5.2",
     );
 
     act(() => {
@@ -246,17 +242,14 @@ describe("ConversationRowView timeline marker contract", () => {
       view.rerender(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(ConversationRowView, { context: currentContext(), row: { ...row } }),
         ),
       );
     });
 
     expect(view.container.textContent).toContain(
-      expectedCopy("chat.modelChange.switched", {
-        from: "Primary Coding Plan/glm-5.2",
-        to: "Alternate API/glm-5.2",
-      }),
+      "模型已切换 Primary Coding Plan/glm-5.2 → Alternate API/glm-5.2",
     );
     view.unmount();
   });

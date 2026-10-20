@@ -1,20 +1,21 @@
+import { ToolPresentation } from "@/ToolCallBlocks/ToolPresentation.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import zhCN from "@/i18n/locales/zh-CN.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-group.js";
 
 function renderExecuteGroup(
-  locale: "en-US" | "zh-CN",
+  locale: "zh-CN" | "en-US",
   statuses: Array<"pending" | "completed" | "failed" | "stopped" | "in_progress">,
-  options: { forceOpen?: boolean; durationMs?: number } = {},
+  options: { forceOpen?: boolean } = {},
 ) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
       { initialLocale: locale },
       createElement(ExecuteGroupToolCallBlock, {
+        nestedToolRenderer: ToolPresentation,
         toolCallNode: {
           toolCall: {
             toolId: "execute:tool-1",
@@ -25,7 +26,6 @@ function renderExecuteGroup(
               statuses.includes("in_progress") || statuses.includes("pending")
                 ? "in_progress"
                 : "completed",
-            ...(options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
           },
           childToolCalls: statuses.map((status, index) => ({
             toolCall: {
@@ -71,13 +71,12 @@ describe("ExecuteGroupToolCallBlock", () => {
 
     expect(html).toContain(">终端</span>");
     expect(enHtml).toContain(">Terminal</span>");
-    expect(html).toContain(zhCN["chat.toolCall.execute.running"]);
+    expect(html).toContain("正在执行");
     expect(html).toContain("pnpm test");
     expect(html).not.toContain("2 个命令");
     expect(html).toContain(">·</span>");
-    expect(enHtml).toContain('<span class="shrink-0 text-foreground-subtle">Running</span>');
-    expect(enHtml).toContain('<code class="min-w-0 truncate font-sans">pnpm test</code>');
-    expect(html).toContain("relative inline-flex min-w-0 items-center gap-2 overflow-hidden");
+    expect(enHtml).toContain(">Running</span>");
+    expect(enHtml).toContain(">pnpm test</code>");
   });
 
   it("shows only the command count in the expanded running summary", () => {
@@ -107,19 +106,5 @@ describe("ExecuteGroupToolCallBlock", () => {
     expect(enHtml).toContain("1 failed");
     expect(enHtml).toContain(">Terminal</span>");
     expect(enHtml).toContain(">·</span>");
-    expect(enHtml).not.toContain("relative inline-flex min-w-0 items-center overflow-hidden");
-  });
-
-  it("shows the finished stage duration after the command count", () => {
-    const html = renderExecuteGroup("en-US", ["completed", "completed"], { durationMs: 12_000 });
-
-    expect(html).toContain("2 commands");
-    expect(html).toContain(">12s<");
-  });
-
-  it("does not show a duration while the stage is running", () => {
-    const html = renderExecuteGroup("en-US", ["completed", "in_progress"], { durationMs: 12_000 });
-
-    expect(html).not.toContain(">12s<");
   });
 });

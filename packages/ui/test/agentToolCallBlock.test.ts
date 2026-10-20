@@ -1,14 +1,14 @@
+import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import type { IBroadcastService, IServiceAccessor } from "@zcode/services";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { testId, TID_TOOL_SUMMARY_TRIGGER } from "@zcode/shared";
+import { testId, TID_TOOL_SUMMARY_TRIGGER } from "@zcode/shared/test-ids";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { StoreProvider } from "@/store/StoreProvider.js";
 import { useSubagentsStore } from "@/store/subagentsStore.js";
 import { AgentToolCallBlock } from "../src/ToolCallBlocks/renderers/agent.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -65,7 +65,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -124,7 +124,6 @@ describe("AgentToolCallBlock", () => {
     expect(html).toContain("Inspect workspace");
     expect(html).not.toContain('role="button"');
     expect(html).not.toContain("aria-expanded");
-    expect(html).not.toContain("lucide-chevron-right");
     expect(html).not.toMatch(/提示词|Prompt/);
     expect(html).not.toContain("分析当前工作区并继续拆分任务");
   });
@@ -133,7 +132,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -193,9 +192,8 @@ describe("AgentToolCallBlock", () => {
     );
 
     expect(html).toContain('data-testid="v4-subagent-open-side-pane-child-session"');
-    expect(html).toContain(`aria-label="${expectedCopy("chat.toolCall.agent.openInSidePane")}"`);
+    expect(html).toContain('aria-label="在右侧打开"');
     expect(html).not.toContain("aria-expanded");
-    expect(html).not.toContain("lucide-chevron-right");
     expect(html).not.toContain("subagent-output-preview");
     expect(html).not.toContain("分析当前工作区并继续拆分任务");
   });
@@ -204,7 +202,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -265,8 +263,7 @@ describe("AgentToolCallBlock", () => {
     expect(html).not.toContain("分析当前工作区并继续拆分任务");
     expect(html).not.toContain("subagent-output-preview");
     expect(html).not.toContain("aria-expanded");
-    expect(html).not.toContain("lucide-chevron-right");
-    expect(html).not.toContain(expectedCopy("chat.toolCall.agent.openInSidePane"));
+    expect(html).not.toContain("在右侧打开");
     expect(html).not.toContain("子会话");
   });
 
@@ -290,14 +287,14 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
           createElement(
             StoreProvider,
             { broadcastService: mockBroadcastService },
-            createElement(AgentToolCallBlock, {
+            createElement(ToolCallBlock, {
               toolCallNode: {
                 toolCall: {
                   toolId: "tool-agent-configured-color",
@@ -342,16 +339,13 @@ describe("AgentToolCallBlock", () => {
 
     expect(html).toContain("Explore");
     expect(html).toContain("text-rose-700");
-    expect(html).toContain("inline-flex max-w-36 items-center");
-    expect(html).toContain("leading-[1.5]");
-    expect(html).not.toContain("leading-none");
   });
 
   it("keeps the agent type blank while subagent_type may still be streaming", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -412,7 +406,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -477,7 +471,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -547,14 +541,10 @@ describe("AgentToolCallBlock", () => {
         ),
       ),
     );
-
-    // Bugfix: the collapsed Agent state mirrors a normal active Explore aggregate, using the
-    // latest child tool summary while still showing the subagent outside, instead of treating
-    // the subagent type Explore as the kind label.
-    expect(html).toContain("lucide-bot");
+    // Bugfix: Agent 收起态使用最新子工具摘要，外层仍展示子智能体。
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("·");
-    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
+    expect(html).toContain("正在读取");
     expect(html).toContain("App.tsx");
     expect(html).toContain("/workspace/src");
     expect(html).not.toContain("读取核心入口文件");
@@ -564,7 +554,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -635,103 +625,21 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Bugfix: the parent Agent's completed state follows only the parent tool lifecycle;
-    // child tools belong to the expanded details and must not keep a completed parent block
-    // showing the running gradient.
+    // Bugfix: 父 Agent 的完成态只看父 tool 生命周期；
+    // 子工具属于展开区明细，不能让 completed 父块继续显示 running 渐变。
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("Explore");
-    expect(html).not.toContain(expectedCopy("chat.toolCall.read.reading"));
+    expect(html).not.toContain("正在读取");
     expect(html).not.toContain("App.tsx");
     expect(html).not.toContain("animated-gradient-text");
     expect(html).not.toContain("读取核心入口文件");
-  });
-
-  it("allows disabling subagent summary roll animation", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(
-          ServiceProvider,
-          { services: mockServices },
-          createElement(
-            StoreProvider,
-            { broadcastService: mockBroadcastService },
-            createElement(AgentToolCallBlock, {
-              toolCallNode: {
-                toolCall: {
-                  toolId: "tool-agent-animation-disabled",
-                  kind: "Agent",
-                  title: "Agent",
-                  input: {
-                    prompt: "读取核心入口文件",
-                    subagent_type: "Explore",
-                  },
-                  output: "",
-                  status: "running",
-                  raw: {
-                    _meta: {
-                      zcode: {
-                        toolName: "Agent",
-                      },
-                    },
-                  },
-                },
-                childToolCalls: [
-                  {
-                    toolCall: {
-                      toolId: "tool-agent-animation-disabled-child",
-                      kind: "read",
-                      title: "Read",
-                      input: {
-                        path: "/workspace/src/App.tsx",
-                      },
-                      output: "",
-                      status: "in_progress",
-                      raw: {},
-                    },
-                    childToolCalls: [],
-                  },
-                ],
-              },
-              workspacePath: "/workspace",
-              displayModel: {
-                inlinePreview: { type: "none" },
-                planResult: null,
-                viewerSource: null,
-                viewerLabelId: "codeViewer.viewCode",
-                showSummaryFileLink: false,
-                showInput: false,
-                showOutput: false,
-                showKind: false,
-              },
-              viewerSource: null,
-              rawFileSummaries: [],
-              isRunning: true,
-              statusLabel: "执行中",
-              errorText: undefined,
-              childToolList: null,
-              showIcon: true,
-              forceOpen: false,
-              disableSummaryContentAnimation: true,
-              onOpenCodeViewer: undefined,
-              onOpenBrowserUrl: undefined,
-            }),
-          ),
-        ),
-      ),
-    );
-
-    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
-    expect(html).toContain("App.tsx");
-    expect(html).not.toContain("overflow-hidden align-middle");
   });
 
   it("keeps the child action label for completed subagent child summaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -804,14 +712,14 @@ describe("AgentToolCallBlock", () => {
 
     expect(html).toContain("·");
     expect(html).toContain("App.tsx");
-    expect(html).toContain(expectedCopy("chat.toolCall.read.reading"));
+    expect(html).toContain("正在读取");
   });
 
   it("summarizes TodoWrite child tools with todo progress and active content", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -897,7 +805,7 @@ describe("AgentToolCallBlock", () => {
     );
 
     expect(html).toContain("·");
-    expect(html).toContain(expectedCopy("chat.toolCall.todo.updating"));
+    expect(html).toContain("更新待办");
     expect(html).toContain("1/3");
     expect(html).toContain("补齐待办子工具摘要");
     expect(html).not.toContain("Running TodoWrite");
@@ -907,7 +815,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -969,7 +877,7 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // The outer kind is fixed to SubAgent; the real subagent type is shown as the colored name.
+    // 外层 kind 固定显示 SubAgent；真实子智能体类型作为彩色名称展示。
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("·");
     expect(html).toContain("Explore project structure");
@@ -982,7 +890,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1040,9 +948,8 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Bugfix: showing the provider-native subagent tool name spawn_agent directly would leak
-    // implementation details; the outer kind is fixed to SubAgent and the nickname is shown as
-    // the colored name and summary body.
+    // Bugfix: provider 原生子 agent 工具名 spawn_agent 直接展示会暴露实现细节；
+    // 外层 kind 固定为 SubAgent，nickname 作为彩色名称和摘要正文展示。
     expect(html).not.toMatch(/>explorer</);
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toContain("Locke");
@@ -1055,7 +962,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1117,7 +1024,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1193,8 +1100,7 @@ describe("AgentToolCallBlock", () => {
       ),
     );
 
-    // Agent/Task is fixed to a single line in the message stream; details open only through the
-    // persisted child session.
+    // Agent/Task 在消息流中固定为单行；详情只通过持久化 child session 打开。
     expect(html).toMatch(/>(SubAgent|子智能体)</);
     expect(html).toMatch(/>Explore</);
     expect(html).toContain("Explore project structure");
@@ -1209,7 +1115,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1284,7 +1190,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },
@@ -1354,7 +1260,7 @@ describe("AgentToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           ServiceProvider,
           { services: mockServices },

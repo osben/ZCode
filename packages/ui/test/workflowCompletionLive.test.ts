@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 
-// The completion card's **live path** ("The card" / "Fetching data" in docs/dynamic-workflow/transcript-and-notifications.md): when the session is
-// present, the full list is completed on top of the notification payload (capped at 8 items) by the live projection / journal.
+// 完成卡的**活路径**（docs/dynamic-workflow/transcript-and-notifications.md「The card」「取数」）：会话在场时，通知
+// 载荷（砍在 8 件）之上由活投影 / journal 补齐整份清单。
 //
-// Bug cause (2026-09-14): completion cards for runs with many artifacts wrote "还有 … 个" (N more) instead of the number. `artifactsTruncated` is
-// the fact that the **payload** was capped, yet the card used it to decide between "还有 N 个" wordings, while the list had long been completed from
-// the journal and the number was clearly knowable. The ellipsis is honest only when the payload is the sole source: cold rendering, old CLIs, and
-// those first frames where the journal has not answered yet.
+// Bug 原因（2026-09-14）：产物多的 run 的完成卡写「还有 … 个」而不是数字。`artifactsTruncated` 是
+// **载荷**被砍的事实，卡却拿它决定「还有 N 个」的写法，而清单早已从 journal 补齐、数字明明可知。省略号
+// 只在载荷是唯一来源时才诚实：冷渲染、老 CLI、journal 还没答上来的那几帧。
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,15 +22,11 @@ const workflowRunArtifactRead = vi.fn();
 let hasConversation = true;
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
-  useV4Conversation: () => ({
-    workflowRunArtifacts,
-    workflowRunArtifactData,
-    workflowRunArtifactRead,
-  }),
+  useV4Conversation: () => ({ workflowRunArtifacts, workflowRunArtifactData, workflowRunArtifactRead }),
   useHasV4Conversation: () => hasConversation,
 }));
 
-// eslint-disable-next-line import/first -- the component under test must be imported after the mocks.
+// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowCompletion.js";
@@ -39,10 +34,6 @@ import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowComplet
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 // eslint-disable-next-line import/first
 import type { WorkflowTurnCompletion } from "@/v4/workflowTurnCompletion.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
-
-const moreArtifacts = (count: number | string) =>
-  expectedCopy("chat.toolCall.workflow.completion.moreArtifacts", { count });
 
 afterEach(() => {
   cleanup();
@@ -50,7 +41,7 @@ afterEach(() => {
 
 beforeEach(() => {
   hasConversation = true;
-  // The markdown-truncating renderer picks code block colors via matchMedia; jsdom lacks it.
+  // markdown 缩略的渲染器按 matchMedia 选代码块配色；jsdom 没有它。
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -74,17 +65,10 @@ beforeEach(() => {
   });
 });
 
-/** 12 artifacts: the deliverable + 11 notes; the payload carries only the first 8 (deliverable first) and sets artifactsTruncated. */
+/** 12 件产物：交付物 + 11 份笔记；载荷只带前 8 件（交付物在前）并置 artifactsTruncated。 */
 const IDS = Array.from({ length: 11 }, (_unused, index) => `note-${index + 1}`);
 const payloadArtifacts: WorkflowTurnCompletion["artifacts"] = [
-  {
-    id: "report",
-    kind: "markdown",
-    title: "审计报告",
-    version: 1,
-    primary: true,
-    description: "结论",
-  },
+  { id: "report", kind: "markdown", title: "审计报告", version: 1, primary: true, description: "结论" },
   ...IDS.slice(0, 7).map((id) => ({ id, kind: "markdown" as const, title: id, version: 1 })),
 ];
 const journalArtifacts: WorkflowRunArtifact[] = [
@@ -132,7 +116,7 @@ function renderCompletion(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(ConversationWorkflowCompletion, { completion, context, turnKey: "t1" }),
     ),
   );
@@ -143,7 +127,7 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: journalArtifacts });
     const view = renderCompletion(true);
     await waitFor(() =>
-      expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(6)),
+      expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 6 个"),
     );
     expect(view.getAllByTestId("workflow-completion-line")).toHaveLength(5);
     expect(view.getByTestId("workflow-completion-card-t1").textContent).not.toContain("…");
@@ -155,10 +139,10 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
       () => new Promise<{ artifacts: WorkflowRunArtifact[] }>((r) => (resolve = r)),
     );
     const view = renderCompletion(true);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
     resolve({ artifacts: journalArtifacts });
     await waitFor(() =>
-      expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(6)),
+      expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 6 个"),
     );
     cleanup();
 
@@ -166,28 +150,28 @@ describe("ConversationWorkflowCompletion · 载荷砍过之后的 `+N`", () => {
     const old = renderCompletion(true);
     await waitFor(() => expect(workflowRunArtifacts).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 0));
-    expect(old.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
+    expect(old.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
   });
 
   it("冷渲染（没有会话上下文）只有载荷：省略号是诚实的", () => {
     hasConversation = false;
     const view = renderCompletion(true);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts("…"));
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 … 个");
     expect(workflowRunArtifacts).not.toHaveBeenCalled();
   });
 
   it("没砍过的载荷：数字从一开始就对，journal 补齐后也不变", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: journalArtifacts.slice(0, 8) });
     const view = renderCompletion(false);
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(2));
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 2 个");
     await waitFor(() => expect(workflowRunArtifacts).toHaveBeenCalled());
-    expect(view.getByTestId("workflow-completion-more").textContent).toBe(moreArtifacts(2));
+    expect(view.getByTestId("workflow-completion-more").textContent).toBe("还有 2 个");
   });
 });
 
-// Open request ("How the user sees them" in docs/dynamic-workflow/authoring.md): the host opens html artifacts directly as a browser tab
-// based on `contentType`, and locates the original file in the workspace based on `sourcePath`. The card's list has two variants —
-// cold state has only the notification payload (no provenance), the live path has the completed list — and the request must follow **whichever one was rendered at the time**.
+// 打开请求（docs/dynamic-workflow/authoring.md「How the user sees them」）：宿主据 `contentType`
+// 把 html 产物直接开成浏览器 tab，据 `sourcePath` 定位工作区里的原文件。卡上的清单有两份——
+// 冷态只有通知载荷（没有出处），活路径下补齐过——请求必须跟着**当时画出来的那一份**走。
 describe("ConversationWorkflowCompletion · 交付物行交出去的打开请求", () => {
   const PAYLOAD: WorkflowTurnCompletion["artifacts"] = [
     { id: "report", kind: "file", title: "审计报告", version: 1, primary: true },

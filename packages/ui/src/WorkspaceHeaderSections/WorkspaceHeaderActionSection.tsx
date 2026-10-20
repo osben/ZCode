@@ -15,7 +15,6 @@ export function WorkspaceHeaderActionSection({
   user,
   readOnlyReason,
   workspaceAbsPath,
-  executionWorktreePath,
   workspaceIdentity,
   remoteTarget,
   isWebRemoteControl = false,
@@ -35,21 +34,21 @@ export function WorkspaceHeaderActionSection({
     <div
       className={cn(
         "flex shrink-0 items-center [app-region:no-drag]",
-        // The Windows header content area has p-2, so regular toolbar button hover covers only 32px of height.
-        // Title-bar buttons must offset this vertical padding to keep the same 48px hover area as native window controls and the menu on the right.
+        // Windows header 内容区有 p-2，普通工具栏按钮 hover 只覆盖 32px 高度。
+        // 标题栏按钮需要抵消这层垂直内边距，和原生窗控/右侧菜单保持同一个 48px hover 面。
         useWindowsCaptionSpacing ? "-my-2 h-12 gap-0" : "gap-0.5",
       )}
     >
       {variant === "task" ? (
         <WorkspaceEditorButtonGroup
           disabledReason={readOnlyReason}
-          workspaceAbsPath={executionWorktreePath ?? workspaceAbsPath}
+          workspaceAbsPath={workspaceAbsPath}
           workspaceIdentity={workspaceIdentity}
           remoteTarget={remoteTarget}
           onSelectedEditorChange={onSelectedEditorChange}
         />
       ) : null}
-      {/* Share publishing requires authentication; hide the entry point when signed out so users do not open it only to get an authorization error. */}
+      {/* 分享发布接口依赖登录态；未登录时隐藏入口，避免用户打开后只能得到鉴权失败。 */}
       {activeTaskId &&
       user &&
       isDesktop !== false &&
@@ -63,7 +62,7 @@ export function WorkspaceHeaderActionSection({
       {!simplifyForNarrowRemote ? (
         <>
           {!hideHelpMenu ? <WorkspaceHelpMenuButton isDesktop={Boolean(isDesktop)} /> : null}
-          {/* Bugfix: The mobile remote-control header is too narrow, so the terminal entry competes for space with core actions. */}
+          {/* Bugfix: 远程控制移动端头部空间过窄，终端入口在这里会和核心操作争抢宽度。 */}
           <WorkspaceTerminalToggleButton
             isTerminalOpen={isTerminalOpen}
             onToggleTerminal={onToggleTerminal}
@@ -72,7 +71,7 @@ export function WorkspaceHeaderActionSection({
           />
         </>
       ) : null}
-      {/* Keep only the icon in the remote-control mobile view so the diff count does not widen the button and crowd the title. */}
+      {/* 远程控制移动端只保留图标，避免 diff 数字把按钮撑宽导致标题拥挤。 */}
       {!isSidePaneOpen ? (
         <WorkspaceSidePaneToggleButton
           isSidePaneOpen={isSidePaneOpen}

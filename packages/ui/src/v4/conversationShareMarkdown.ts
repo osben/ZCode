@@ -11,19 +11,19 @@ function resolveCitationFileName(path: string): string {
 }
 
 /**
- * Image syntax `![alt](dest ...)`. dest may be wrapped in `<...>` (and contain spaces) or be a bare URL;
- * preserve an optional trailing title verbatim — remove only the initial `!`, leaving all other bytes unchanged.
+ * `![alt](dest ...)` 的图片语法。dest 允许 `<...>` 包裹（可含空格）或裸 URL；
+ * 尾部可选 title 原样保留 —— 只去掉开头那个 `!`，其余字节不动。
  */
 const markdownImagePattern = /!(\[[^\]]*\]\((?:<[^>\n]*>|[^)\s]*)(?:[^)\n]*)\))/gu;
 
-/** Image addresses that make a visitor's browser request a third party: absolute http(s) and protocol-relative `//host`. */
+/** 会让访客浏览器向第三方发起请求的图片地址：绝对 http(s) 与协议相对 `//host`。 */
 function isRemoteImageDestination(destination: string): boolean {
   const trimmed = destination.trim().replace(/^<|>$/gu, "");
   return /^(?:https?:)?\/\//iu.test(trimmed);
 }
 
 function readImageDestination(imageSyntax: string): string {
-  // imageSyntax has the form `[alt](dest "title")`; take the part after the first `(` through the first whitespace or end.
+  // imageSyntax 形如 `[alt](dest "title")`，取第一个 `(` 之后到首个空白/结尾之间的部分。
   const open = imageSyntax.indexOf("(");
   const inner = imageSyntax.slice(open + 1, -1);
   if (inner.startsWith("<")) return inner.slice(0, inner.indexOf(">") + 1);
@@ -32,16 +32,16 @@ function readImageDestination(imageSyntax: string): string {
 }
 
 /**
- * Downgrade remote images to ordinary links.
+ * 把远程图片降级为普通链接。
  *
- * The public share page (ConversationShareReadonlyTimeline) does not pass workspacePath /
- * sessionId / readAttachment, so MarkdownImage falls back to `displaySrc = resolvedSrc`
- * and renders `<img src={remote} loading="lazy">`. Any anonymous visitor opening the page would then automatically request the publisher-selected third party,
- * leaking IP / UA / Referer — equivalent to a publisher-controlled tracking
- * pixel. This streamdown version has no allowedImagePrefixes option (and linkSafety is disabled),
- * so strip images at the only public projection choke point: `![alt](url)` → `[alt](url)`,
- * which avoids automatic requests without losing information; the visitor loads the image only by clicking, and this also applies immediately to existing shares.
- * Handle only http(s) and protocol-relative addresses: data: does not use the network, and relative paths resolve to the same origin.
+ * 公开分享页（ConversationShareReadonlyTimeline）不传 workspacePath /
+ * sessionId / readAttachment，MarkdownImage 会 fallback 到 `displaySrc = resolvedSrc`
+ * 并渲染 `<img src={远程} loading="lazy">`，于是任意匿名访客一打开页面就自动向
+ * 发布者指定的第三方发起请求，泄露 IP / UA / Referer —— 等价于发布者可控的 tracking
+ * pixel。这个版本的 streamdown 没有 allowedImagePrefixes 可用（linkSafety 也已关闭），
+ * 所以在唯一的公开投影 choke point 上剥离：`![alt](url)` → `[alt](url)`，
+ * 不发自动请求、信息不丢、访客点击才加载，且对已发布的旧分享立即生效。
+ * 只处理 http(s) 与协议相对地址：data: 不走网络，相对路径落在自身 origin。
  */
 function degradeRemoteImages(
   markdown: string,
@@ -53,7 +53,7 @@ function degradeRemoteImages(
       isRemoteImageDestination(readImageDestination(match[1]!)),
   );
   let result = markdown;
-  // Replace from right to left so earlier edits do not invalidate later indexes.
+  // 从后往前替换，避免前面的改写让后面的 index 失效。
   for (const match of matches.reverse()) {
     result = `${result.slice(0, match.index)}${match[1]!}${result.slice(match.index + match[0].length)}`;
   }
@@ -61,11 +61,11 @@ function degradeRemoteImages(
 }
 
 /**
- * Do not pass local citation directives in share content directly to MessageResponse: they expose paths
- * and may be interpreted as file operations when workspace authority is available. The public projection keeps only the uniquely matched
- * artifact display name; the directive parser protects protocol examples inside code blocks and preserves them verbatim.
+ * 分享正文不能把本地 citation directive 直接交给 MessageResponse：它既会暴露路径，
+ * 也会在拥有 workspace authority 的情况下被解释成文件操作。公开投影只保留唯一匹配
+ * 的 artifact display name；代码块里的协议示例由 directive parser 保护并保持原文。
  *
- * Also strip automatic loading of remote images; see degradeRemoteImages.
+ * 同时剥离远程图片的自动加载，见 degradeRemoteImages。
  */
 export function normalizeConversationShareMarkdown(
   markdown: string,
@@ -85,7 +85,7 @@ export function normalizeConversationShareMarkdown(
     const replacement = candidates.length === 1 ? candidates[0]!.trim() : "";
     result = `${result.slice(0, directive.start)}${replacement}${result.slice(directive.end)}`;
   }
-  // Citation removal only shortens the body and does not create new image syntax, but code fence ranges may shift left,
-  // so recompute protected ranges from the rewritten body before downgrading images.
+  // citation 剥离只会缩短正文且不产生新的图片语法，但代码围栏范围可能左移，
+  // 因此对改写后的正文重新求一次保护区间，再做图片降级。
   return degradeRemoteImages(result, findMarkdownCodeRanges(result));
 }

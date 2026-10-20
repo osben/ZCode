@@ -5,8 +5,8 @@ export function runContextPanelActionWithClose({
   action?: () => void;
   close: () => void;
 }) {
-  // Clicking a button inside HoverCard does not automatically close the panel like an outside hover leave.
-  // Entry actions navigate to settings or usage details; close the context panel first so the old overlay does not remain.
+  // HoverCard 内按钮点击不会像外部 hover leave 一样自动关闭面板。
+  // 入口动作会切到设置页或 usage 详情，必须先收起 context 面板，避免旧浮层残留。
   close();
   action?.();
 }

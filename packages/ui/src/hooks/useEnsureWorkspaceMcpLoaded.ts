@@ -21,9 +21,9 @@ export function useEnsureWorkspaceMcpLoaded(
 
   useEffect(() => {
     if (!rpcReady) {
-      // When restoring a remote tab, App first receives a disconnected proxy. Reading the MCP directory immediately would
-      // merely swallow the disconnection inside the store without respecting the workspace RPC isolation boundary.
-      // Wait until the real services are registered; do not cache or replay across transports.
+      // remote tab 恢复时 App 会先拿到断连代理；若立即
+      // 读取 MCP 目录，只是在 store 内吞掉了断连错误，并未遵守 workspace
+      // RPC 隔离边界。等待真实 services 注册后再执行，不缓存也不跨 transport 重放。
       return;
     }
     void useMcpStore

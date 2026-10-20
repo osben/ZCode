@@ -1,17 +1,18 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { type ZCodeAutomation, type ModelSelection } from "@zcode/shared";
 import {
   TID_AUTOMATION_SCHEDULE_ADD,
   TID_AUTOMATION_SCHEDULE_PREVIEW,
-  type ZCodeAutomation,
-  type ModelSelection,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const stableHookValues = vi.hoisted(() => ({
   configResult: { configOptions: [] },
   projectOptions: [] as Array<{
+    projectId?: string | null;
+    hostId?: string;
     workspacePath: string;
     workspaceIdentity?: string;
     remoteSessionId?: string;
@@ -29,12 +30,13 @@ const stableHookValues = vi.hoisted(() => ({
   selectRegistrations: 0,
   effectiveSelection: undefined as ModelSelection | null | undefined,
   selectionInputs: [] as Array<{ selection: ModelSelection | null } | undefined>,
-  locale: "en-US" as "en-US" | "fr-FR",
+  locale: "zh-CN" as "zh-CN" | "en-US",
   services: { zcodeAgentService: {} },
 }));
 
 vi.mock("@/components/ui/select.js", async () => {
-  const { createElement: h, useEffect } = await import("react");
+  const { createElement: h, useEffect, createContext, useContext } = await import("react");
+  const Selection = createContext<((value: string) => void) | undefined>(undefined);
   const passthrough = ({ children }: { children?: ReactNode }) => h("div", null, children);
   return {
     Select: ({
@@ -48,10 +50,9 @@ vi.mock("@/components/ui/select.js", async () => {
     }) => {
       useEffect(() => {
         const timer = window.setTimeout(() => {
-          // Simulate the empty value a Radix Select emits after form initialization, racing the
-          // controlled value against child registration: this is not a user action, and consumers
-          // must discard out-of-domain callbacks
-          // (regression: merely opening the detail view popped the unsaved-changes prompt).
+          // 模拟 Radix Select 受控值与子项注册竞争、在表单初始化完成后发出的空值：
+          // 这不是用户操作，消费方必须丢弃值域外的回调
+          // （回归：仅打开详情返回就弹未保存提示）。
           onValueChange?.("");
           if (
             value &&
@@ -63,10 +64,13 @@ vi.mock("@/components/ui/select.js", async () => {
         }, 0);
         return () => window.clearTimeout(timer);
       }, []);
-      return h("div", null, children);
+      return h(Selection.Provider, { value: onValueChange }, children);
     },
     SelectContent: passthrough,
-    SelectItem: passthrough,
+    SelectItem: ({ children, value }: { children?: ReactNode; value: string }) => {
+      const select = useContext(Selection);
+      return h("button", { type: "button", onClick: () => select?.(value) }, children);
+    },
     SelectTrigger: passthrough,
     SelectValue: passthrough,
   };
@@ -145,10 +149,8 @@ vi.mock("@/components/ui/tooltip.js", async () => {
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
-// The permission selector reuses the session composer's ConfigSelect: keep the real
-// implementation here so the registration-race empty value emitted by the Select mock above
-// passes through it, guarding the "out-of-domain callbacks must not mark unsaved changes"
-// protection.
+// 权限选择器复用会话 composer 的 ConfigSelect：这里保留真实实现，让上方 Select mock
+// 发出的注册竞争空值穿过它，守住“值域外回调不得标记未保存修改”的防护。
 vi.mock("@/chat-input-toolbar/RollingToolbarLabel.js", () => ({
   RollingToolbarLabel: ({ label }: { label: string }) => label,
 }));
@@ -162,34 +164,7 @@ vi.mock("@/ModelConfigSelect.js", async () => {
 vi.mock("@/chat-input-toolbar/ThoughtLevelCycleControl.js", () => ({
   ThoughtLevelCycleControl: () => null,
 }));
-vi.mock("@/ChatEmptyState.js", () => ({
-  ChatEmptyWorkspacePreviewMenu: ({
-    workspaceTabs,
-    onSelectWorkspace,
-  }: {
-    workspaceTabs: Array<{ workspacePath: string; workspaceIdentity?: string; label: string }>;
-    onSelectWorkspace: (workspace: {
-      workspacePath: string;
-      workspaceIdentity?: string;
-      label: string;
-    }) => void;
-  }) =>
-    createElement(
-      "div",
-      null,
-      workspaceTabs.map((workspace) =>
-        createElement(
-          "button",
-          {
-            key: workspace.workspaceIdentity ?? workspace.workspacePath,
-            type: "button",
-            onClick: () => onSelectWorkspace(workspace),
-          },
-          workspace.label,
-        ),
-      ),
-    ),
-}));
+
 vi.mock("@/hooks/useAutomationProjectOptions.js", () => ({
   useAutomationProjectOptions: () => stableHookValues.projectOptions,
 }));
@@ -200,21 +175,31 @@ vi.mock("@/hooks/useServices.js", () => ({
   useOptionalServices: () => null,
   useServices: () => stableHookValues.services,
 }));
-vi.mock("@/hooks/useModelSelectionView.js", () => ({
-  useModelSelectionView: (
+vi.mock("@/hooks/useWorkspaceServices.js", () => ({
+  useOptionalBaseWorkspaceServices: () => null,
+  useWorkspaceServicesResolution: (
     workspacePath: string | null | undefined,
     remoteSessionId?: string | null,
     workspaceIdentity?: string | null,
     remoteTarget?: unknown,
-    input?: { selection: ModelSelection | null },
   ) => {
-    stableHookValues.selectionInputs.push(input);
     stableHookValues.modelSelectionTargets.push({
       workspacePath,
       remoteSessionId,
       workspaceIdentity,
       remoteTarget,
     });
+    return { connectionKind: "local", services: stableHookValues.services };
+  },
+}));
+vi.mock("@/hooks/useModelSelectionView.js", () => ({
+  useModelSelectionServiceView: (
+    _service: unknown,
+    _enabled: boolean,
+    _reason: string,
+    input?: { selection: ModelSelection | null },
+  ) => {
+    stableHookValues.selectionInputs.push(input);
     return {
       state: stableHookValues.modelSelectionView
         ? {
@@ -241,9 +226,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (id === "automations.edit.titlePlaceholder") {
-          return stableHookValues.locale === "en-US"
-            ? "Untitled Automation"
-            : "Automatisation sans titre";
+          return stableHookValues.locale === "zh-CN" ? "未命名定时任务" : "Untitled Automation";
         }
         return id;
       },
@@ -252,7 +235,6 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 import { AutomationEditView } from "@/settings/AutomationEditView.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const modelSelectionView = {
   revision: 1,
@@ -331,7 +313,7 @@ const sessionCreatedUiResetAutomation: ZCodeAutomation = {
 
 beforeEach(() => {
   stableHookValues.selectRegistrations = 0;
-  stableHookValues.locale = "en-US";
+  stableHookValues.locale = "zh-CN";
   stableHookValues.projectOptions.length = 0;
   stableHookValues.modelSelectionView = null;
   stableHookValues.modelSelectionTargets.length = 0;
@@ -394,17 +376,17 @@ describe("AutomationEditView session-created dirty state", () => {
     const { rerender } = render(createElement(AutomationEditView, props));
     const titleInput = screen.getByLabelText<HTMLInputElement>("automations.form.title.label");
 
-    expect(titleInput.value).toBe(expectedCopy("automations.edit.titlePlaceholder"));
+    expect(titleInput.value).toBe("未命名定时任务");
 
-    stableHookValues.locale = "fr-FR";
+    stableHookValues.locale = "en-US";
     rerender(createElement(AutomationEditView, props));
-    expect(titleInput.value).toBe("Automatisation sans titre");
+    expect(titleInput.value).toBe("Untitled Automation");
 
     fireEvent.click(screen.getByTestId("automation-edit-breadcrumb-section"));
     expect(props.onBack).toHaveBeenCalledOnce();
 
     fireEvent.change(titleInput, { target: { value: "Keep my title" } });
-    stableHookValues.locale = "en-US";
+    stableHookValues.locale = "zh-CN";
     rerender(createElement(AutomationEditView, props));
     expect(titleInput.value).toBe("Keep my title");
   });
@@ -496,6 +478,7 @@ describe("AutomationEditView session-created dirty state", () => {
     });
     const conversationAutomation: ZCodeAutomation = {
       ...uiCreatedAutomation,
+      projectId: null,
       workspaceKey: conversationWorkspacePath,
       workspacePath: conversationWorkspacePath,
     };
@@ -535,8 +518,7 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.queryByText("automations.customRepeat.compactFrequency")).not.toBeNull();
     expect(stableHookValues.selectRegistrations).toBe(0);
 
-    // Wait for the Select registration-race empty callback to fire before returning, reproducing
-    // the "merely opening the detail view marks unsaved changes" regression.
+    // 等 Select 注册竞争的空值回调发出后再返回，复现“仅打开详情就被标记未保存”的回归。
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     });

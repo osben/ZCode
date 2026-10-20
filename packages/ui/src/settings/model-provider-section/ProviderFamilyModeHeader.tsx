@@ -1,11 +1,13 @@
 import {
-  TID_MODEL_PROVIDER_CONNECTION_MODE_ITEM,
-  TID_MODEL_PROVIDER_CONNECTION_MODE_TRIGGER,
   resolveModelProviderFamilySpecByProviderId,
   isStartPlanModelProviderId,
-  testId,
   type ProviderFamilyConnectionSelectionSettings,
 } from "@zcode/shared";
+import {
+  TID_MODEL_PROVIDER_CONNECTION_MODE_ITEM,
+  TID_MODEL_PROVIDER_CONNECTION_MODE_TRIGGER,
+  testId,
+} from "@zcode/shared/test-ids";
 import { InfoIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import {
@@ -83,9 +85,7 @@ export function ProviderFamilyHeader({
             : familySpec.label}
         </h3>
       </div>
-      {/* Fix reason: letting the full team name's intrinsic width drive outer wrapping can leave empty
-              space after the title while moving the whole group to the next line. Allocate space using
-              the actions' base width, then let the name shrink into the remainder. */}
+      {/* 修复原因：按团队全称的固有宽度参与外层换行，会让标题右侧空着却整组掉行；以操作区基础宽度参与分配，再让名称在剩余空间内收缩。 */}
       {trailingAction ? (
         <div className="min-w-0 max-w-full flex-1 basis-64">{trailingAction}</div>
       ) : null}
@@ -147,7 +147,7 @@ export function ProviderFamilyPlanModeSwitch({
     return null;
   }
 
-  // Team navigation entries may reuse a personal provider; the selected identity comes only from a saved/in-progress paid selection.
+  // 团队导航条目可能复用个人 provider；选中身份只来自已保存／提交中的付费选择。
   const selection = connectionSelections?.[familySpec.id];
   const selectedOption = selection
     ? options.find((option) =>
@@ -184,7 +184,7 @@ export function ProviderFamilyPlanModeSwitch({
       >
         <SelectTrigger
           size="lg"
-          // A fixed max width still truncates the full name on wide screens; use remaining space first and wrap only when less than the control's minimum width is available.
+          // 固定最大宽度会在宽屏仍截断全称；先占用剩余空间，只有不足控件基本宽度时才换行。
           className="min-w-0 max-w-fit flex-1 basis-12 justify-between"
           aria-label={connectionModeLabel}
           data-testid={TID_MODEL_PROVIDER_CONNECTION_MODE_TRIGGER}
@@ -267,6 +267,6 @@ function formatTeamPlanConnectionLabel(
   if (!normalized) {
     return fallbackLabel;
   }
-  // The entitlement API already provides the team project name; appending “Plan” would break Chinese and custom names.
+  // 团队项目名已由权益接口提供，额外拼接英文 Plan 会破坏中文和自定义名称。
   return normalized;
 }

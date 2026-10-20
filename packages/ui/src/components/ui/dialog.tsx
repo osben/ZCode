@@ -1,9 +1,15 @@
 import * as React from "react";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { cn } from "../lib/utils.js";
 import { Button } from "./button.js";
 import { XIcon } from "lucide-react";
+
+function DialogCloseText() {
+  const { intl } = useZCodeIntl();
+  return intl.formatMessage({ id: "common.close" });
+}
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -29,8 +35,8 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        // The legacy Linux title-bar offset started the modal overlay 48px below the top, leaving the window top highlighted and tooltips visible.
-        // Renderer-drawn window controls are in the same window; modal state should cover the full viewport as on other platforms.
+        // Linux 旧标题栏避让让模态遮罩从 48px 以下开始，窗口顶部仍保持高亮且 tooltip 可见。
+        // renderer 自绘窗控位于同一窗口，模态态应与其它平台一致覆盖完整视口。
         "fixed inset-0 isolate z-50 bg-black/60 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
@@ -39,7 +45,7 @@ function DialogOverlay({
   );
 }
 
-// Corner-radius migration: standardize the default shell on 2xl; three screenshot/attachment preview entry points explicitly retain xl, with content layers calculated independently.
+// 圆角规范迁移：默认外壳统一 2xl，三个截图/附件预览入口显式保留 xl，内容层级独立计算。
 function DialogContent({
   className,
   children,
@@ -58,8 +64,8 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          // With an Electron-drawn title bar, a dialog may overlap the window's top drag region.
-          // Unless all dialog content is marked no-drag, interactions such as the top-right close button may be intercepted as window drags.
+          // Electron 自绘标题栏下，弹窗可能会落进窗口顶部的 drag 区域。
+          // 如果不把弹窗内容整体标成 no-drag，右上角关闭按钮这类交互会被窗口拖拽命中吞掉。
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border border-popover-border bg-popover p-4 text-ui-base/relaxed text-foreground shadow-md duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 [app-region:no-drag]",
           className,
         )}
@@ -75,7 +81,9 @@ function DialogContent({
               size="icon-sm"
             >
               <XIcon />
-              <span className="sr-only">Close</span>
+              <span className="sr-only">
+                <DialogCloseText />
+              </span>
             </Button>
           </DialogPrimitive.Close>
         )}
@@ -107,7 +115,9 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
+          <Button variant="outline">
+            <DialogCloseText />
+          </Button>
         </DialogPrimitive.Close>
       )}
     </div>

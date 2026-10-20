@@ -1,5 +1,5 @@
-import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 import { memo, useEffect } from "react";
+import { ProjectDirectoryProvider } from "@/project-sidebar/index.js";
 import { App } from "@/App.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
@@ -13,7 +13,6 @@ import { ConversationTelemetryWorkspaceAttachment } from "@/v4/telemetry/Convers
 const StableWorkspaceApp = memo(App);
 
 interface RootWorkspaceContentProps {
-  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   workspaceScopedServices: IServiceAccessor;
   baseFeedbackService: IFeedbackService;
   workspaceShellPath: string;
@@ -31,7 +30,6 @@ interface RootWorkspaceContentProps {
   handleOpenWorkspace: AppProps["onOpenWorkspace"];
   handleOpenFolderFromWorkspaceMenu: AppProps["onOpenFolderFromWorkspaceMenu"];
   handleOpenRemoteWorkspace?: AppProps["onOpenRemoteWorkspace"];
-  handleCreateScratchWorkspace: AppProps["onCreateScratchWorkspace"];
   remoteConnectionInProgress?: AppProps["remoteConnectionInProgress"];
   remoteWorkspaceSessions: NonNullable<AppProps["remoteWorkspaceSessions"]>;
   allowRemoteWorkspace: NonNullable<RootProps["allowRemoteWorkspace"]>;
@@ -40,13 +38,14 @@ interface RootWorkspaceContentProps {
   onLogin?: () => void;
   user: AppProps["user"];
   reconnectingRemoteWorkspaceKeys: AppProps["reconnectingRemoteWorkspaceKeys"];
+  remoteWorkspaceRecoveryByWorkspaceKey: AppProps["remoteWorkspaceRecoveryByWorkspaceKey"];
   remoteWorkspaceErrorByWorkspaceKey: AppProps["remoteWorkspaceErrorByWorkspaceKey"];
-  reconnectingRemoteWorkspaceLogsByWorkspaceKey: AppProps["reconnectingRemoteWorkspaceLogsByWorkspaceKey"];
+
   remoteConnectionLogs?: AppProps["remoteConnectionLogs"];
   allowOpenWorkspace: NonNullable<RootProps["allowOpenWorkspace"]>;
   webRemoteControlWorkspaceSwitcher?: RootProps["webRemoteControlWorkspaceSwitcher"];
+  initialSidebarFileTreeOpen?: boolean;
   initialWebRemoteControlMobileNavigationIntent?: RootProps["initialWebRemoteControlMobileNavigationIntent"];
-  initialWebRemoteControlWorkspaceList?: RootProps["initialWebRemoteControlWorkspaceList"];
   webRemoteControlTerminalTransportState?: RootProps["webRemoteControlTerminalTransportState"];
   isDesktop?: RootProps["isDesktop"];
   isMacDesktop?: RootProps["isMacDesktop"];
@@ -56,7 +55,6 @@ interface RootWorkspaceContentProps {
 }
 
 export function RootWorkspaceContent({
-  onOpenSession,
   workspaceScopedServices,
   baseFeedbackService,
   workspaceShellPath,
@@ -74,7 +72,6 @@ export function RootWorkspaceContent({
   handleOpenWorkspace,
   handleOpenFolderFromWorkspaceMenu,
   handleOpenRemoteWorkspace,
-  handleCreateScratchWorkspace,
   remoteConnectionInProgress,
   remoteWorkspaceSessions,
   allowRemoteWorkspace,
@@ -83,13 +80,14 @@ export function RootWorkspaceContent({
   onLogin,
   user,
   reconnectingRemoteWorkspaceKeys,
+  remoteWorkspaceRecoveryByWorkspaceKey,
   remoteWorkspaceErrorByWorkspaceKey,
-  reconnectingRemoteWorkspaceLogsByWorkspaceKey,
+
   remoteConnectionLogs,
   allowOpenWorkspace,
   webRemoteControlWorkspaceSwitcher,
+  initialSidebarFileTreeOpen,
   initialWebRemoteControlMobileNavigationIntent,
-  initialWebRemoteControlWorkspaceList,
   webRemoteControlTerminalTransportState,
   isDesktop,
   isMacDesktop,
@@ -98,11 +96,6 @@ export function RootWorkspaceContent({
   windowsWindowControlsRightPaddingPx,
 }: RootWorkspaceContentProps) {
   const workspaceKey = workspaceIdentity?.trim() || workspaceShellPath;
-  // Settings covers the whole window with its own navigation sidebar, so the workspace surface is
-  // hidden and made inert under it (and conversation foreground telemetry treats the overlay as
-  // "chat not in front of the user"). Sessions management is a Settings section now and no longer
-  // overlays the workspace at all.
-  const isWorkspaceSurfaceHidden = isSettingsTabActive;
 
   useEffect(() => {
     logger.info("[RootWorkspaceContent] settings layer visibility changed", {
@@ -113,33 +106,33 @@ export function RootWorkspaceContent({
   }, [isSettingsTabActive, workspaceShellPath]);
 
   return (
-    <>
+    <ProjectDirectoryProvider isDesktop={isDesktop}>
       <div
-        className={isWorkspaceSurfaceHidden ? "h-full opacity-0 pointer-events-none" : "h-full"}
-        aria-hidden={isWorkspaceSurfaceHidden}
-        data-root-workspace-surface={isWorkspaceSurfaceHidden ? "inert" : "interactive"}
-        inert={isWorkspaceSurfaceHidden ? true : undefined}
+        className={isSettingsTabActive ? "h-full opacity-0 pointer-events-none" : "h-full"}
+        aria-hidden={isSettingsTabActive}
+        data-root-workspace-surface={isSettingsTabActive ? "inert" : "interactive"}
+        inert={isSettingsTabActive ? true : undefined}
       >
-        {/* Bugfix: Previously, a conditional branch replaced the entire App with the settings page, unmounting and rebuilding the whole main tree when settings closed.
-            Local UI state in the chat area, terminal, and elsewhere was therefore treated as if the workspace had been entered again.
-            Keep the workspace shell mounted and overlay only the settings page.
-            Adding a workspacePath-based key also unmounted and rebuilt the sidebar and task list when switching tasks across workspaces,
-            causing visible list flicker and many mount/unmount logs.
-            Keep the App instance continuous and synchronize only the workspace-local state that needs it, avoiding full-tree remounts when closing settings or switching workspaces.
-            Also, do not use hidden to set the underlying workspace shell to display:none while switching to settings.
-            The sidebar settings entry hosts a Radix DropdownMenu; if its anchor suddenly leaves layout during the menu's closing animation,
-            Floating UI briefly loses its positioning reference, making the menu flash in the top-left corner before disappearing.
-            We previously used invisible, which preserves geometry, but on some platforms the frame where the whole workspace shell becomes visibility:hidden
-            appears to the sidebar as an abrupt visibility change, causing a brief left-side flash when opening settings.
-            Use opacity-0 + pointer-events-none instead: layout and the menu anchor remain in place, preserving the DropdownMenu reference,
-            while the layer transition becomes a stable transparent overlay and reduces sidebar flicker.
-            Fix reason: Using hidden here would also make the quickpick overlay inherit display:none even though the workspace subtree remains mounted,
-            so Cmd/Ctrl+K in settings would open quickpick state without making it visible. Preserve layout while disabling interaction instead.
-            Fix reason: Opacity and pointer-events alone still let autofocus from underlying permission/AskUserQuestion cards
-            steal focus from the settings form; mark the whole workspace inert while settings overlays it, then restore interaction when the user explicitly returns. */}
+        {/* Bugfix: 设置页之前通过条件分支直接替换整个 App，关闭设置时会把主界面整棵树卸载再重建，
+            聊天区、终端等本地 UI 状态都会被当成一次“重新进入 workspace”。
+            这里改成让 workspace 壳层常驻挂载，只把设置页覆盖到上面。
+            之前再额外按 workspacePath 改 key，会让跨工作区切 task 时把侧边栏和任务列表整棵卸载重建，
+            用户看到的就是列表闪烁、日志里大量 mount/unmount。
+            现在保持 App 实例连续，只在内部按需同步 workspace 相关局部状态，关闭设置和切换工作区都不会再触发整树重挂载。
+            另外这里不能在切到设置页时直接用 hidden 把底层 workspace 壳层 display:none。
+            侧边栏设置入口本身挂着 Radix DropdownMenu，菜单关闭动画仍在跑时如果锚点节点突然退出布局，
+            Floating UI 会短暂失去定位参考，表现成菜单内容先闪到左上角再消失。
+            之前这里用 invisible，虽然也能保留几何信息，但部分平台在整棵 workspace 壳层切成 visibility:hidden
+            的那一帧会把 sidebar 视为一次突兀的可见性切换，切到 settings 时容易感觉“左侧闪一下”。
+            这里改成 opacity-0 + pointer-events-none：仍然保留布局和菜单锚点，避免 DropdownMenu 丢参考点，
+            同时把切层从“可见/不可见硬切”改成稳定的透明覆盖，减少 sidebar 闪烁。
+            修复原因：这里如果误用 hidden，workspace 子树虽然还挂载，但 quickpick 弹层也会继承 display:none，
+            用户在设置页按 Cmd/Ctrl+K 时状态已打开却完全不可见，所以必须保持布局占位只关闭交互。
+            修复原因：只用 opacity 和 pointer-events 仍会让底层权限/AskUserQuestion 卡片的 autofocus
+            抢走设置表单焦点；设置页覆盖期间必须把整棵 workspace 标为 inert，等用户显式返回后再恢复交互。 */}
         <ConversationTelemetryWorkspaceAttachment
           enabled={isDesktop === true}
-          foregroundEnabled={!isWorkspaceSurfaceHidden}
+          foregroundEnabled={!isSettingsTabActive}
           services={workspaceScopedServices}
           workspacePath={workspaceShellPath}
           workspaceIdentity={workspaceIdentity}
@@ -163,10 +156,8 @@ export function RootWorkspaceContent({
                 onLogin={onLogin}
                 user={user}
                 reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
+                remoteWorkspaceRecoveryByWorkspaceKey={remoteWorkspaceRecoveryByWorkspaceKey}
                 remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
-                reconnectingRemoteWorkspaceLogsByWorkspaceKey={
-                  reconnectingRemoteWorkspaceLogsByWorkspaceKey
-                }
                 remoteConnectionLogs={remoteConnectionLogs}
                 workspaceAbsPath={workspaceShellPath}
                 workspaceRemoteSessionId={workspaceRemoteSessionId}
@@ -177,15 +168,14 @@ export function RootWorkspaceContent({
                 onOpenWorkspace={handleOpenWorkspace}
                 onOpenFolderFromWorkspaceMenu={handleOpenFolderFromWorkspaceMenu}
                 onOpenRemoteWorkspace={handleOpenRemoteWorkspace}
-                onCreateScratchWorkspace={handleCreateScratchWorkspace}
                 remoteConnectionInProgress={remoteConnectionInProgress}
                 onReturnToWorkspace={handleBackFromSettings}
                 allowOpenWorkspace={allowOpenWorkspace}
                 webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
+                initialSidebarFileTreeOpen={initialSidebarFileTreeOpen}
                 initialWebRemoteControlMobileNavigationIntent={
                   initialWebRemoteControlMobileNavigationIntent
                 }
-                initialWebRemoteControlWorkspaceList={initialWebRemoteControlWorkspaceList}
                 webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
                 allowRemoteWorkspace={allowRemoteWorkspace}
                 remoteWorkspaceSessions={remoteWorkspaceSessions}
@@ -208,7 +198,6 @@ export function RootWorkspaceContent({
           className="absolute inset-0 z-10"
         >
           <WorkspaceSettingsLayer
-            onOpenSession={onOpenSession}
             workspaceScopedServices={workspaceScopedServices}
             isDesktop={isDesktop}
             isMacDesktop={isMacDesktop}
@@ -218,6 +207,7 @@ export function RootWorkspaceContent({
             onBack={activeWorkspacePath ? handleBackFromSettings : undefined}
             onCreateTask={handleCreateTask}
             onOpenWorkspace={handleOpenWorkspace}
+            onOpenRemoteWorkspace={handleOpenRemoteWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
             onLogin={onLogin}
             onLogout={handleLogout}
@@ -225,6 +215,6 @@ export function RootWorkspaceContent({
           />
         </ScopedErrorBoundary>
       ) : null}
-    </>
+    </ProjectDirectoryProvider>
   );
 }

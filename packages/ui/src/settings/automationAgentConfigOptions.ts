@@ -13,13 +13,13 @@ import {
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 import { resolveV4ModelTriggerLabel } from "@/v4/composer/modelTriggerDisplay.js";
 
-// The scheduled-task form must remain a local draft; do not call the workspace-default-config write API to retrieve options,
-// or merely opening or canceling the editor could change the current project's and draft session's runtime config.
+// 定时任务表单必须是纯本地草稿，不能借用 workspace 默认配置写接口来获取选项；
+// 否则仅打开或取消编辑也会改掉当前项目和 draft session 的运行配置。
 
-/** Default permission mode: Ask before changes. */
+/** 权限模式默认值：Ask before changes。 */
 export const AUTOMATION_DEFAULT_MODE = "build";
 
-/** A new task must persist the target Host's preferredSelection as a concrete model, not save a virtual "default model." */
+/** 新建任务必须把目标 Host 的 preferredSelection 固化为具体模型，而不是保存虚拟“默认模型”。 */
 export function resolveAutomationPreferredModelValue(
   view: Pick<ModelSelectionView, "preferredSelection">,
 ): string | null {
@@ -83,9 +83,9 @@ export function resolveAutomationModelItem(
     );
     if (providerMatches.length === 1) return providerMatches[0] ?? null;
   }
-  // Historical automations may store only a model name; when providers share a name, do not guess its source.
-  // Workspace runtime may also return wrapped values such as zcode-openai-compatible/model. If the provider does not match,
-  // fill in the menu item only when the model name is globally unique, preserving the associated reasoning metadata for the default model.
+  // 历史 automation 可能只保存纯模型名；同名模型跨 provider 时不能猜测来源。
+  // workspace runtime 也可能返回 zcode-openai-compatible/model 这类包装值，provider 对不上时
+  // 只有模型名全局唯一才允许回填菜单项，避免默认模型丢失对应的 think 元数据。
   return modelMatches.length === 1 ? (modelMatches[0] ?? null) : null;
 }
 
@@ -99,7 +99,7 @@ export function resolveAutomationModelTriggerLabel(params: {
   if (!selectedItem) {
     const decodedModel = decodeCustomModelValue(params.modelValue);
     if (decodedModel?.modelName) {
-      // Retain historical model names only for display; do not add them to current candidates or change save/dispatch behavior.
+      // 仅展示层保留历史模型名；模型不回填到当前候选列表，也不改变保存或派发逻辑。
       return decodedModel.modelName;
     }
 
@@ -115,9 +115,9 @@ export function resolveAutomationModelTriggerLabel(params: {
     params.modelSelectionView?.providers.find((provider) => provider.providerId === providerId)
       ?.providerName ?? undefined;
 
-  // Automations used to truncate provider/model protocol values and show only the final model name,
-  // making the same model's identity text inconsistent between conversations and scheduled tasks. Reuse the conversation-side rule here,
-  // retaining the same truncation semantics for built-in families and invalid values.
+  // Automations 曾自行截断 provider/model 协议值，只显示最后一级模型名，
+  // 导致同一模型在会话侧和定时任务侧身份文案不一致。这里直接复用会话侧规则，
+  // 同时保留内置 family 与失效值的统一裁剪语义。
   return resolveV4ModelTriggerLabel({
     modelGroups: params.modelGroups,
     normalizedValue: selectedItem.value,
@@ -134,7 +134,7 @@ export function buildAutomationThoughtLevelOption(
   const options = runtimeOption?.options ?? [];
   if (options.length === 0) return null;
   const validCurrentValue = options.some((option) => option.value === currentValue);
-  // Rationale: refreshing candidates is not a user choice; do not change an invalid level to the default/highest and save it.
+  // 原因：候选刷新不是用户选择，不能把失效档位改成默认/最高档并保存。
   const resolvedValue = validCurrentValue ? currentValue : "";
 
   return {
@@ -148,8 +148,8 @@ export function buildAutomationThoughtLevelOption(
 }
 
 /**
- * When updating an existing automation, use null to explicitly clear a stale value for a target model that does not support Think;
- * in the update protocol, undefined means “leave unchanged,” which would carry the source model’s level into the next dispatch.
+ * 更新已有定时任务时必须用 null 显式清掉不支持 Think 的目标模型旧值；
+ * undefined 在 update 协议里表示“不修改”，会把源模型的档位残留到下次派发。
  */
 export function resolveAutomationThoughtLevelUpdate(params: {
   editing: boolean;
@@ -169,7 +169,7 @@ export function resolveAutomationThoughtLevelUpdate(params: {
   return params.editing ? null : undefined;
 }
 
-/** Automation persists only the model choice; the execution chain determines the output budget for each request. */
+/** Automation 只持久化模型选择；输出预算由执行链按本次请求决定。 */
 export function buildAutomationModelSelection(params: {
   selected: ModelSelection;
   reasoningLevel?: string | null;

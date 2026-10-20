@@ -63,8 +63,8 @@ function finishSessionOpen(
   if (runtime.finished) return;
   runtime.finished = true;
   if (runtime.timeoutId !== undefined) clearTimeout(runtime.timeoutId);
-  // Bug cause: warm/keep-warm opens reuse an existing projection store, so timing in state belongs to the previous
-  // cold subscribe. Only a cold open that creates and subscribes to the store this time can report these phase durations.
+  // Bug 原因：warm/keep-warm 都复用已有 projection store，state 中的 timing 属于上一次
+  // cold subscribe；只有本次真正创建 store 并订阅的 cold 打开才能携带这些阶段耗时。
   const hasCurrentSubscribeTiming = runtime.identity.openKind === "cold";
   const openTiming = hasCurrentSubscribeTiming ? options.openTiming : undefined;
   const rendererTiming = hasCurrentSubscribeTiming ? options.rendererTiming : undefined;
@@ -115,8 +115,8 @@ export interface UseSessionOpenArmsTelemetryParams {
 }
 
 /**
- * Use the pane's first acquire as the renderer-observable open start; emit one start/result pair per logical open.
- * Even if mounted on Web/mobile, remain a no-op because the reporter is not installed there.
+ * 以 pane 首次 acquire 为 Renderer 可观测的打开起点；同一逻辑打开只发一组 start/result。
+ * Web/mobile 即使挂载，也因 reporter 未安装而保持 no-op。
  */
 export function useSessionOpenArmsTelemetry({
   sessionId,
@@ -175,8 +175,8 @@ export function useSessionOpenArmsTelemetry({
 
   useLayoutEffect(() => {
     const runtime = runtimeRef.current;
-    // Bug cause: runtime reconnect preserves the old snapshot; matching only by sessionId while connecting/error would record an open as successful
-    // even though it is not yet interactive or will ultimately fail. Successful terminal state must match the UI's live state.
+    // Bug 原因：runtime 重连会保留旧 snapshot；connecting/error 时仅凭 sessionId 命中会把
+    // 尚不可交互或最终失败的打开提前记成 success。成功终态必须与 UI 的 live 状态一致。
     if (
       !runtime ||
       runtime.finished ||

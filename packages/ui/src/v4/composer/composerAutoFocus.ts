@@ -1,22 +1,22 @@
 /**
- * Composer autofocus decision (pure function, independent of React/DOM for unit testing).
+ * composer 自动聚焦决策（纯函数，脱离 React/DOM 便于单测）。
  *
- * Creating a task (startDraft increments draftFocusVersion) / switching sessions (sessionId→scope changes) / mounting
- * all request focus to return to the input, but whether focus actually happens depends on three states:
- * - `skip`: disabled (for example, a vertically split background pane with autoFocusEnabled=false) or mobile viewport
- *   (autofocus opens the soft keyboard and can be disruptive) — do not focus or save the intent.
- * - `defer`: enabled, but the composer is temporarily not editable (briefly disabled when switching to a connecting session) — store the focus intent
- *   and fulfill it once when disabled→false makes editing possible.
- * - `focus-now`: enabled and editable; focus immediately.
+ * 新建任务（startDraft 递增 draftFocusVersion）/ 切换会话（sessionId→scope 变化）/ 挂载
+ * 都会请求把光标交还输入框，但是否真的聚焦取决于三态：
+ * - `skip`：未启用（竖切后台 pane，autoFocusEnabled=false）或移动端 viewport
+ *   （自动聚焦会弹出软键盘，体验较扰）——不聚焦，也不暂存意图。
+ * - `defer`：已启用但 composer 暂不可编辑（切到连接中会话时短暂 disabled）——聚焦意图
+ *   暂存，待 disabled→false 可编辑后兑现一次。
+ * - `focus-now`：已启用且可编辑，立即聚焦。
  */
 export type ComposerAutoFocusDecision = "focus-now" | "defer" | "skip";
 
 export interface ComposerAutoFocusOptions {
-  /** Host gate (SessionPane.focused): only the focused pane auto-focuses. */
+  /** 宿主门控（SessionPane.focused）：仅焦点 pane 自动聚焦。 */
   autoFocusEnabled: boolean;
-  /** Whether the composer is non-editable (v4: sessionId is connecting). */
+  /** composer 是否不可编辑（v4：sessionId 连接中）。 */
   disabled: boolean;
-  /** Whether this is a mobile text-input viewport. */
+  /** 是否移动端文本输入 viewport。 */
   isMobileViewport: boolean;
 }
 

@@ -10,14 +10,9 @@ export interface WorkspaceFileTreeProps {
   workspaceRemoteSessionId?: string;
   revealPath?: string;
   temporaryExternalDirectory?: boolean;
-  /**
-   * Active session's execution worktree: "open in file manager" and "copy path" lead to the
-   * worktree while the tree itself keeps listing the workspace checkout.
-   */
-  executionWorktreePath?: string;
   canOpenLocalFileManager?: boolean;
   activePreviewPath?: string | null;
-  onClose: () => void;
+  onClose?: () => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenPreview?: (source: CodeViewerSource) => void;
 }

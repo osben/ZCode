@@ -16,7 +16,7 @@ export const UI_PERF_EVENT_LAUNCH_RENDERER_LOAD = "perf_ui_launch_renderer_load_
 export const UI_PERF_EVENT_LAUNCH_REACT_COMMIT = "perf_ui_launch_react_commit_ms";
 export const UI_PERF_EVENT_LAUNCH_STARTUP_GATE = "perf_ui_launch_startup_gate_ms";
 
-// If total duration exceeds this value, treat it as a clock anomaly/process suspension and discard the entire batch to avoid skewing the distribution.
+// 总时长超过该值视为时钟异常/挂起，整批丢弃，避免污染分布。
 export const LAUNCH_TO_INPUT_SANITY_MAX_MS = 300000;
 
 export const UI_PERF_EVENT_FIRST_TOKEN = "perf_ui_first_token";
@@ -25,9 +25,9 @@ export const UI_PERF_EVENT_TURN_BREAKDOWN = "perf_ui_turn_breakdown";
 export const UI_PERF_EVENT_TOOL_CALL_DETAIL = "perf_ui_tool_call_detail";
 export const UI_PERF_EVENT_STREAM_STALL = "perf_ui_stream_stall";
 
-// If no new chunk arrives for longer than this interval (ms), treat it as a stall and report it; value remains the actual interval. Tighten based on production data if needed.
-// Do not count tool_call/tool_call_update: tool events clearStreamStallTracking,
-// and the first content chunk after a tool is treated as the first one; do not compare it with the chunk before the tool, which would mistake tool execution for a stall.
+// 超过该间隔(ms)未收到新 chunk 视为停顿并上报;value 仍为真实间隔。可据线上分布收紧。
+// 工具调用(tool_call/tool_call_update)期间不计入:工具事件会 clearStreamStallTracking,
+// 工具后第一个正文 chunk 视为首个,不与工具前的 chunk 比较,避免把工具执行误判为停顿。
 export const STREAM_STALL_REPORT_THRESHOLD_MS = 3000;
 
 type ArmsReporter = Pick<IPlatformService, "reportArmsCustomEvent">;
@@ -44,9 +44,9 @@ export function clearUiPerfArmsReporterForTest(): void {
 }
 
 /**
- * In this event group, `model` comes from `detail.model_name`, which is a user-named encoded value for custom providers.
- * Normalize it at the single reporting boundary to avoid missing newly added events in individual report functions; normalization affects only the reported value,
- * not the model selection returned to callers or local logs.
+ * `model` 在本组事件里来自 `detail.model_name`，自定义 provider 下是用户命名的编码值。
+ * 在唯一出口统一归一，避免每个 report 函数各自处理后漏掉新增事件；归一只影响上报值，
+ * 不改变调用方拿到的模型选择和本地日志。
  */
 function sanitizeModelProperty(
   properties: ArmsCustomEventPayload["properties"],
@@ -58,7 +58,7 @@ function sanitizeModelProperty(
   return { ...properties, model: model || undefined };
 }
 
-// Rationale: ARMS is an observability path; failures in telemetry must not interrupt the UI’s primary flows (launch/send/render).
+// 原因:ARMS 属观测链路,UI 主流程(启动/发送/渲染)不得因埋点失败而中断。
 function emit(payload: ArmsCustomEventPayload): void {
   if (!armsReporter) {
     return;
@@ -78,13 +78,13 @@ function emit(payload: ArmsCustomEventPayload): void {
 
 interface LaunchToInputTimings {
   marks: LaunchMarks;
-  /** Date.now() at the top of renderer/src/main.tsx (T4). */
+  /** renderer/src/main.tsx 模块顶部 Date.now()（T4） */
   rendererStart: number;
-  /** Date.now() when zcode-react-startup-ready fires (T5). */
+  /** zcode-react-startup-ready 触发时 Date.now()（T5） */
   reactCommit: number;
-  /** Date.now() when the startup gate clears and the input becomes available (T6). */
+  /** 启动门禁清除、输入框可用时 Date.now()（T6） */
   inputReady: number;
-  /** Correlation key for the same startup. */
+  /** 同一次启动的关联键 */
   sessionId: string;
 }
 
@@ -103,7 +103,7 @@ function optionalRoundedNumber(value: number | undefined): number | undefined {
 export function reportUiLaunchToInput(timings: LaunchToInputTimings): void {
   const { marks, rendererStart, reactCommit, inputReady, sessionId } = timings;
   const total = inputReady - marks.createdAt;
-  // Six raw durations (unclamped). Compute all before sending so the batch can be validated as a whole.
+  // 6 段原始时长(未钳)。在发送前全部算出,以便整批校验。
   const stageMs = {
     electronInit: marks.mainStart - marks.createdAt,
     appReady: marks.appReady - marks.mainStart,
@@ -112,13 +112,13 @@ export function reportUiLaunchToInput(timings: LaunchToInputTimings): void {
     reactCommit: reactCommit - rendererStart,
     startupGate: inputReady - reactCommit,
   };
-  // Sentinel: discard the entire batch if total duration is anomalous (clock jump/process suspension).
+  // 哨兵:异常总时长(时钟跳变/进程挂起)整批丢弃。
   if (total < 0 || total > LAUNCH_TO_INPUT_SANITY_MAX_MS) {
     logger.warn("[ui-perf] launch_to_input 总时长异常,丢弃", { total });
     return;
   }
-  // If any segment is negative (cross-process clock offset between main-process T0–T3 and renderer T4–T6), discard the whole batch,
-  // or sum(six segments) != total and breaks the invariant used by the dashboard. Keep the all-or-nothing rule from the total-duration sentinel.
+  // 任一段为负(主进程 T0–T3 与渲染进程 T4–T6 间跨进程时钟偏移)则整批丢弃,
+  // 否则 sum(6 段) != total,破坏看板依赖的恒等式。与总时长哨兵保持全有或全无。
   const negativeStage = Object.entries(stageMs).find(([, ms]) => ms < 0);
   if (negativeStage) {
     logger.warn("[ui-perf] launch_to_input 某段为负(跨进程时钟偏移/回拨),整批丢弃", {
@@ -128,7 +128,7 @@ export function reportUiLaunchToInput(timings: LaunchToInputTimings): void {
     return;
   }
   const properties = { session_id: sessionId };
-  // At this point each segment is guaranteed to be >= 0; clampMs max(0,...) is redundant protection, retained only for consistent Math.round behavior.
+  // 至此各段保证 >= 0,clampMs 的 max(0,...) 为冗余保险,仅用于一致的 Math.round 取整。
   const stages: { name: string; ms: number }[] = [
     { name: UI_PERF_EVENT_LAUNCH_TO_INPUT, ms: total },
     { name: UI_PERF_EVENT_LAUNCH_ELECTRON_INIT, ms: stageMs.electronInit },
@@ -307,14 +307,14 @@ export function reportUiToolCallDetail(params: {
   });
 }
 
-// Stream stall: track the last content chunk arrival time per task and report the actual interval when it exceeds the threshold.
+// 流式停顿:per-task 记录上一个正文 chunk 到达时刻,间隔超阈值则上报真实间隔。
 const lastChunkAtByTask = new Map<string, number>();
 
 export function recordStreamChunkArrival(
   taskId: string,
   options?: {
     waitingTool?: boolean;
-    /** The tracker may use an internal workspace-scoped key; reporting retains the real talk_id. */
+    /** tracker 可用 workspace-scoped 内部 key；上报仍保持真实 talk_id。 */
     talkId?: string;
     messageId?: string;
     model?: string;
@@ -342,7 +342,7 @@ export function recordStreamChunkArrival(
       model: options?.model,
       chunk_type: options?.chunkType,
       talk_id: options?.talkId ?? taskId,
-      // messageId of the chunk that ends the stall; content/thinking chunks often omit it, so leave empty when unavailable (consistent with other fields).
+      // 停顿结束时那个 chunk 的 messageId;正文/思考 chunk 常不带,取不到留空(与其它字段口径一致)。
       message_id: options?.messageId,
     },
   });
@@ -352,17 +352,17 @@ export function clearStreamStallTracking(taskId: string): void {
   lastChunkAtByTask.delete(taskId);
 }
 
-// Input lag: measure “single input processing duration” inside the Lexical update listener (the synchronous getEditorMarkdown + onChange section).
-// Unlike stream_stall (output-side), this is input-side. Report only threshold violations to minimize event volume.
+// 输入框卡顿:在 Lexical update listener 内测「单次输入处理耗时」(getEditorMarkdown+onChange 同步段)。
+// 与 stream_stall(输出侧)区分:此为输入侧。只上报超阈卡点,事件量最小。
 export const UI_PERF_EVENT_INPUT_LAG = "perf_ui_input_lag";
 
-// Conservative starting point: capture only the most severe stalls. Adjust downward based on production data.
+// 保守起点:只抓最严重卡顿。可据线上分布往下收紧。
 export const INPUT_LAG_REPORT_THRESHOLD_MS = 500;
-// Durations above this value are likely due to breakpoint debugging, a suspended tab, or waking from device sleep; discard them to avoid skewing the distribution.
+// 超此值大概率是断点调试/标签页挂起/设备休眠唤醒,丢弃避免污染分布。
 export const INPUT_LAG_SANITY_MAX_MS = 5000;
 
-// Extract the decision into a pure function for tests: programmatic updates (paste/setText/mention/history restore) and IME composition
-// do not count as typing stalls, even when they exceed the threshold.
+// 判定抽成纯函数便于单测:程序化改写(粘贴/setText/mention/历史回填)与 IME 组合态
+// 都不算打字卡顿,即使耗时超阈也跳过。
 export function shouldReportInputLag(args: {
   lagMs: number;
   isProgrammatic: boolean;
@@ -398,7 +398,7 @@ export function recordInputLag(params: {
     properties: {
       lag_ms: lagMs,
       text_length: params.textLength,
-      // Drafts have no taskId; leave it empty to match other ui_perf events.
+      // 草稿态无 taskId,留空与其它 ui_perf 事件口径一致。
       task_id: params.taskId,
     },
   });

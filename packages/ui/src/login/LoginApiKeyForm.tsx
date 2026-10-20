@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { isApiKeyAccess } from "@zcode/provider";
 import { Loader2Icon, TriangleAlertIcon } from "lucide-react";
+import { BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID } from "@zcode/shared";
 import {
-  BIGMODEL_PROVIDER_ID,
   TID_LOGIN_API_KEY_CANCEL_BUTTON,
   TID_LOGIN_API_KEY_CONTINUE_BUTTON,
   TID_LOGIN_API_KEY_ERROR,
@@ -10,9 +10,8 @@ import {
   TID_LOGIN_API_KEY_PROVIDER_ITEM,
   TID_LOGIN_API_KEY_PROVIDER_TRIGGER,
   TID_LOGIN_API_KEY_SKIP_BUTTON,
-  ZAI_PROVIDER_ID,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -68,7 +67,7 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
     (template) => template.templateId === templateId,
   )?.config.access;
   const apiKeyUrl = isApiKeyAccess(templateAccess) ? templateAccess.apiKeyManagementUrl : undefined;
-  // After the user enters or restores an API Key, the get-key link on the right crowds the password input area.
+  // 用户已经输入或回填 API Key 后，右侧获取入口会挤占密码输入区域。
   const showApiKeyLink = shouldShowLoginApiKeyLink(apiKeyValue, apiKeyUrl ?? undefined);
 
   const saveApiKeyProvider = async () => {
@@ -126,8 +125,8 @@ export function LoginApiKeyForm({ onCancel, onSaved, onSkipped }: LoginApiKeyFor
     setSkipping(true);
     setError(null);
     try {
-      // Skip only means the user confirmed the current provider family runtime domain. Do not write an empty API Key
-      // or emit an API Key login success event; otherwise model selection may assume usable credentials exist.
+      // 跳过只表示用户确认当前 provider family 运行域，不能写入空 API Key
+      // 或触发 API Key 登录成功事件，否则后续模型选择会误以为已有可用凭据。
       await settingService.update(buildLoginApiKeySkipSettings(providerChoice, Date.now()));
       await onSkipped();
     } catch (skipError) {

@@ -3,28 +3,27 @@ import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-/** A single component item in details: name (mono) + optional description (second line). */
+/** 详情中单个组件项：名称（mono）+ 可选描述（次行）。 */
 export interface PluginComponentDisplayItem {
   name: string;
   description?: string;
 }
 
-/** A group of components of the same kind: type + authoritative count + displayable name/description list. */
+/** 一组同类组件：类型 + 权威数量 + 可展示的名称/描述列表。 */
 export interface PluginComponentDisplayGroup {
   kind: ZCodePluginComponentKind;
-  /** Authoritative count: prefer the protocol count, falling back to items.length when missing. */
+  /** 权威数量：优先取协议计数，缺失时取 items.length。 */
   count: number;
   items: PluginComponentDisplayItem[];
 }
 
-/** Component-group badge colors: reuse the theme's existing Tailwind palette for a light background that works in light and dark themes. */
+/** 组件分组徽标配色：复用主题里已有的 Tailwind 调色板做轻量底色，深浅主题均正确。 */
 const COMPONENT_BADGE_STYLES: Record<ZCodePluginComponentKind, string> = {
-  agent: "bg-tag text-foreground",
-  command: "bg-command-node text-command-node-foreground",
-  skill: "bg-skill-node text-skill-node-foreground",
-  hook: "bg-warning/15 text-warning",
-  mcp: "bg-tag text-foreground-subtle",
-  lsp: "bg-success/15 text-foreground",
+  agent: "bg-violet-500/15 text-violet-500 dark:text-violet-300",
+  command: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  skill: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  hook: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  mcp: "bg-slate-500/15 text-slate-600 dark:text-slate-300",
 };
 
 const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
@@ -33,12 +32,11 @@ const COMPONENT_LABEL_IDS: Record<ZCodePluginComponentKind, string> = {
   skill: "settings.plugins.detail.component.skill",
   hook: "settings.plugins.detail.component.hook",
   mcp: "settings.plugins.detail.component.mcp",
-  lsp: "settings.plugins.detail.component.lsp",
 };
 
 /**
- * Shared rendering for "component group + name/description two-line item", used by marketplace detail views and installed-detail dialogs
- * to keep both presentations consistent. Each item has a mono name on the first line and a truncated description on the second (name only when no description exists).
+ * 共享的「组件分组 + 名称—描述两行体」渲染，供 marketplace 详情视图与已安装详情弹窗共用，
+ * 保证两处呈现一致。每个组件项：首行 mono 名称，次行截断描述（无描述时只显示名称）。
  */
 export function PluginComponentGroups({
   groups,

@@ -1,8 +1,4 @@
-import {
-  AppBridge,
-  type McpUiStyles,
-  type McpUiHostContext,
-} from "@modelcontextprotocol/ext-apps/app-bridge";
+import { AppBridge, type McpUiHostContext } from "@modelcontextprotocol/ext-apps/app-bridge";
 import { z } from "zod";
 import type { IGenUiService } from "@zcode/services";
 import type { PluginSandboxPlatformPort, PluginSandboxHandle } from "@zcode/shared/mcp-apps";
@@ -27,7 +23,7 @@ import {
 } from "@/plugin-ui/hostPrimitives.js";
 import type { GenUiCardTarget, GenUiPage, GenUiPageSnapshot } from "../contract.js";
 import { EMPTY_GEN_UI_SNAPSHOT } from "../contract.js";
-import { readGenUiStyleVariables } from "./theme.js";
+import { readGenUiStyleContext } from "./theme.js";
 import { createGenUiTweakRegistry } from "../app/tweaks.js";
 
 export interface GenUiPageInput {
@@ -79,7 +75,7 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
   const context: McpUiHostContext = {
     displayMode: "inline",
     theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
-    styles: { variables: readGenUiStyleVariables() as McpUiStyles },
+    ...readGenUiStyleContext(),
   };
   const pushContext = () => {
     bridge?.setHostContext({ ...context });
@@ -115,7 +111,7 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
   const offPorts = platform.onPorts((event) => {
     if (disposed || event.sandboxId !== handle?.sandboxId || event.initId !== handle.initId) return;
     void bridge?.close();
-    // The SDK keeps the previous context for diffing, so it must not share an object with the writable projection.
+    // SDK 持有上一份上下文用于差异比较，不能与可写投影共享同一对象。
     const active = new AppBridge(
       null,
       { name: "zcode-gen-ui", version: "1" },
@@ -130,7 +126,7 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
       pushContext();
     };
     active.onsizechange = ({ height }) => {
-      // The preview uses its own viewport; keep the body's placeholder height so the timeline does not jump beneath the overlay.
+      // 预览使用独立视口；保持正文占位高度，避免遮罩下的时间线跳动。
       if (
         context.displayMode !== "fullscreen" &&
         typeof height === "number" &&
@@ -149,7 +145,7 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
         throw new Error("External links require an absolute HTTP(S) URL");
       if (!(await platform.consumeUserGesture(handle!.sandboxId)))
         throw new Error("External links require a user gesture");
-      // By the time the gesture check returns across processes, the card may already be hidden or rebuilt; do not execute the old page's open request.
+      // 手势校验跨进程返回时，卡片可能已隐藏或重建，不能执行旧页面的打开请求。
       current();
       assertCurrent();
       await input.openExternal(link.href);
@@ -227,13 +223,13 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
       },
     );
     clearTimeout(handshake);
-    // Timeout only reports the handshake failure; it takes no part in syncing or recovery.
+    // 超时只报告握手失败，不参与同步或恢复。
     handshake = setTimeout(() => fail(new Error("Gen UI handshake timed out")), 15_000);
     void active.connect(createPluginUiMessagePortTransport(event.port)).catch(fail);
   });
   const themes = new MutationObserver(() => {
     context.theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
-    context.styles = { variables: readGenUiStyleVariables() as McpUiStyles };
+    Object.assign(context, readGenUiStyleContext());
     pushContext();
   });
   themes.observe(document.documentElement, {
@@ -263,7 +259,7 @@ export function createGenUiPage(input: GenUiPageInput): GenUiPage {
       return;
     }
     handle = prepared;
-    // The registered HTML contains a state snapshot; read the latest state afterwards, and never let a late query overwrite notifications received in the meantime.
+    // 登记 HTML 含状态快照；随后读取最新状态，且不以迟到查询覆盖期间已收到的通知。
     const revision = stateRevision;
     const latest = await input.state.getState(stateTarget);
     if (revision === stateRevision) context[GEN_UI_STATE_CONTEXT_KEY] = latest;

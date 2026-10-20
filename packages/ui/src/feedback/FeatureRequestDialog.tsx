@@ -2,10 +2,15 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
 import type { IFeedbackService } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.js";
 import { Input } from "@/components/ui/input.js";
 import { Textarea } from "@/components/ui/textarea.js";
-import { FeedbackErrorTip } from "@/feedback/feedbackBadges.js";
+import { FeedbackErrorTip, RequiredMarker } from "@/feedback/feedbackBadges.js";
 import {
   readFeedbackContactPreference,
   rememberFeedbackContactInput,
@@ -45,9 +50,8 @@ export const FeatureRequestDialog = memo(function FeatureRequestDialogComponent(
   const [solution, setSolution] = useState("");
   const [contact, setContact] = useState(() => readFeedbackContactPreference());
   const [submitting, setSubmitting] = useState(false);
-  const [submitProgress, setSubmitProgress] = useState<FeedbackSubmissionProgressState | null>(
-    null,
-  );
+  const [submitProgress, setSubmitProgress] =
+    useState<FeedbackSubmissionProgressState | null>(null);
   const [submissionJob, setSubmissionJob] = useState<FeedbackSubmissionJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -165,7 +169,16 @@ export const FeatureRequestDialog = memo(function FeatureRequestDialogComponent(
       setError(getErrorMessage(submitError));
       setSubmitting(false);
     }
-  }, [contact, copy, description, feedbackService, formatMessage, locale, openTickets, solution]);
+  }, [
+    contact,
+    copy,
+    description,
+    feedbackService,
+    formatMessage,
+    locale,
+    openTickets,
+    solution,
+  ]);
 
   return (
     <Dialog
@@ -306,7 +319,7 @@ function FeatureRequestTextarea({
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-ui-base font-semibold text-foreground">
-          {required ? <span className="mr-1 text-destructive">*</span> : null}
+          {required ? <RequiredMarker /> : null}
           {title}
         </h3>
         <span className="text-ui-xs tabular-nums text-foreground-subtle">
@@ -315,13 +328,16 @@ function FeatureRequestTextarea({
       </div>
       <Textarea
         autoFocus={autoFocus}
+        required={required}
+        aria-required={required}
+        aria-label={title}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         rows={4}
         maxLength={max}
         placeholder={placeholder}
-        // Textarea field-sizing-content expands to fit long unwrapped text by default.
-        // The feature request and issue feedback dialogs have the same width, so the input size must stay fixed and long words must wrap inside it.
+        // Textarea 默认的 field-sizing-content 会按无换行长文本扩张宽度。
+        // 产品需求弹窗和问题反馈弹窗同宽，必须固定输入框尺寸并允许长词在框内换行。
         className="field-sizing-fixed h-[136px] max-h-[136px] min-w-0 max-w-full resize-none overflow-y-auto rounded-xl border-input-border bg-input text-ui-base leading-6 whitespace-pre-wrap break-words text-foreground placeholder:text-foreground-subtlest hover:border-input-border-hover focus-visible:border-input-border-focused focus-visible:bg-input-focused"
       />
     </section>

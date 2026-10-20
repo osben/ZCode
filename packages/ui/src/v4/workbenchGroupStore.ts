@@ -1,7 +1,7 @@
-/* oxlint-disable eslint(max-lines) -- Keep the session workbench group model, localStorage sanitization, and Zustand wiring together for the initial feature so state is not scattered across files; split them later once the expanded tests are stable. */
+/* oxlint-disable eslint(max-lines) -- session workbench group 先把纯模型、localStorage sanitize 和 Zustand 装配收口在一处，避免新功能初版跨文件追状态；后续扩展测试稳定后再拆分。 */
 // v4 session workbench groups。
-// This is renderer-local shell state: it owns only session-to-pane/group membership and local persistence,
-// and does not flow into protocol, agent, main process, or web-remote replayable state.
+// 这里是 renderer-local 壳子状态：只管 session 到 pane/group 的归属与本地持久化，
+// 不下沉到协议、agent、main process 或 web-remote replayable 状态。
 import { create } from "zustand";
 import type { ZCodeTaskClientMode } from "@zcode/shared";
 import {
@@ -30,11 +30,9 @@ export const WORKBENCH_GROUP_STORAGE_KEY = "zcode-v4-session-workbench-groups:v1
 export interface WorkbenchSessionBinding {
   readonly workspaceScope: PaneWorkspaceScope;
   readonly sessionId: string;
-  /** Child sessions opened inline from a subagent row are read-only and do not render composer/input. */
+  /** subagent 行内侧开的 child session 只读，不渲染 composer/input。 */
   readonly readOnly?: boolean;
-  /** Side-chat child panes keep their composer but suppress restricted mutation controls. */
-  readonly selectionSideChat?: boolean;
-  /** Restored from persistence but not yet validated against the current scope's sessions-index; exists only in memory. */
+  /** 从持久化恢复、尚未经当前 scope sessions-index 验证。只存在于内存态。 */
   readonly restoredUnvalidated?: boolean;
 }
 
@@ -107,7 +105,6 @@ function paneBinding(binding: WorkbenchSessionBinding): PaneBinding {
     workspaceScope: binding.workspaceScope,
     sessionId: binding.sessionId,
     ...(binding.readOnly ? { readOnly: true } : {}),
-    ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
     ...(binding.restoredUnvalidated ? { restoredUnvalidated: true } : {}),
   };
 }
@@ -118,8 +115,9 @@ function workbenchBinding(binding: PaneBinding): WorkbenchSessionBinding | null 
         workspaceScope: binding.workspaceScope,
         sessionId: binding.sessionId,
         ...(binding.readOnly ? { readOnly: true } : {}),
-        ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
-        ...(binding.restoredUnvalidated ? { restoredUnvalidated: true } : {}),
+        ...(binding.restoredUnvalidated
+          ? { restoredUnvalidated: true }
+          : {}),
       }
     : null;
 }
@@ -277,7 +275,7 @@ export function closeWorkbenchGroupPane(
   updatedAt = Date.now(),
 ): WorkbenchGroup | null {
   if (paneId === V4_PRIMARY_PANE_ID) {
-    // There is no stable rule for promoting a new primary when the primary is deleted; dissolve the shell and let remaining sessions use the normal open path.
+    // primary 被删除时没有稳定的“提升谁为新的 primary”语义；直接解散壳子，让剩余 session 走普通打开路径。
     return null;
   }
   const next = closePane(group, paneId);
@@ -298,7 +296,7 @@ export function closeWorkbenchGroupPane(
     focusedPaneId: next.focusedPaneId,
     updatedAt,
   };
-  // The shell exists only with two or more sessions; hand back to the normal open path when one session remains.
+  // 壳子只在 2 个及以上 session 时存在；退回单 session 后交还给普通打开路径。
   return countPanes(candidate) < 2 ? null : candidate;
 }
 
@@ -310,7 +308,8 @@ export function confirmRestoredWorkbenchGroupPane(
     if (!group.primaryBinding.restoredUnvalidated) {
       return group;
     }
-    const { restoredUnvalidated: _restored, ...primaryBinding } = group.primaryBinding;
+    const { restoredUnvalidated: _restored, ...primaryBinding } =
+      group.primaryBinding;
     return { ...group, primaryBinding };
   }
   const binding = group.panes[paneId];
@@ -429,23 +428,7 @@ function focusSessionInSnapshot(
   if (!paneId) {
     return state;
   }
-  const focusedGroup = focusWorkbenchGroupPane(group, paneId);
-  let focused = focusedGroup;
-  if (binding.readOnly) {
-    if (paneId === V4_PRIMARY_PANE_ID) {
-      focused = {
-        ...focusedGroup,
-        primaryBinding: { ...focusedGroup.primaryBinding, readOnly: true },
-      };
-    } else {
-      const paneBinding = focusedGroup.panes[paneId];
-      if (!paneBinding) return state;
-      focused = {
-        ...focusedGroup,
-        panes: { ...focusedGroup.panes, [paneId]: { ...paneBinding, readOnly: true } },
-      };
-    }
-  }
+  const focused = focusWorkbenchGroupPane(group, paneId);
   return replaceGroup(
     {
       ...state,
@@ -471,7 +454,6 @@ function bindPaneSessionInSnapshot(
     workspaceScope: binding.workspaceScope,
     sessionId,
     ...(binding.readOnly ? { readOnly: true } : {}),
-    ...(binding.selectionSideChat ? { selectionSideChat: true } : {}),
   };
   const nextKey = bindingSessionKey(nextBinding);
   const existingGroupId = state.sessionIndex[nextKey];
@@ -551,15 +533,19 @@ function sanitizeBinding(value: unknown): WorkbenchSessionBinding | null {
   if (!isRecord(value) || typeof value.sessionId !== "string") {
     return null;
   }
+  if (value.readOnly === true) {
+    // 迁移说明：历史 readOnly binding 只由“在分屏打开 subagent”产生。子会话详情已迁到
+    // 右侧 tabs，恢复时丢弃包含该 binding 的旧 group，避免升级后继续占用 4-pane workbench；
+    // 普通 session binding 没有 readOnly 标记，不受影响。
+    return null;
+  }
   const workspaceScope = sanitizeWorkspaceScope(value.workspaceScope);
   return workspaceScope
     ? {
         workspaceScope,
         sessionId: value.sessionId,
-        ...(value.readOnly === true ? { readOnly: true } : {}),
-        ...(value.selectionSideChat === true ? { selectionSideChat: true } : {}),
-        // Group restoration used to bypass paneLayout's sessions-index guard, leaving deleted
-        // sessions as permanent empty panes; restored bindings must explicitly enter a pending-validation state.
+        // group 恢复过去绕过了 paneLayout 的 sessions-index 守卫，已删除
+        // session 会永久留下空 pane；恢复 binding 必须显式进入待验证态。
         restoredUnvalidated: true,
       }
     : null;
@@ -610,7 +596,7 @@ function sanitizeWorkbenchGroup(value: unknown): WorkbenchGroup | null {
     focusedPaneId,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : 0,
   };
-  // If restore finds only one session, discard the shell to avoid a “fake split view” after refresh.
+  // 恢复时发现只剩一个 session，直接丢弃壳子，避免刷新后出现“假分屏”。
   return countPanes(group) < 2 ? null : group;
 }
 
@@ -656,7 +642,10 @@ export function persistWorkbenchGroups(snapshot: WorkbenchGroupSnapshot): void {
   try {
     const groups = Object.fromEntries(
       Object.entries(snapshot.groups).map(([groupId, group]) => {
-        const { restoredUnvalidated: _primaryRestored, ...primaryBinding } = group.primaryBinding;
+        const {
+          restoredUnvalidated: _primaryRestored,
+          ...primaryBinding
+        } = group.primaryBinding;
         const panes = Object.fromEntries(
           Object.entries(group.panes).map(([paneId, binding]) => {
             const { restoredUnvalidated: _restored, ...persisted } = binding;
@@ -671,13 +660,13 @@ export function persistWorkbenchGroups(snapshot: WorkbenchGroupSnapshot): void {
       JSON.stringify({
         version: 1,
         activeGroupId: snapshot.activeGroupId,
-        // restoredUnvalidated is in-memory state for this hydration and must not be written back into the persisted schema.
+        // restoredUnvalidated 是本次 hydration 的内存状态，不能写回成为持久 schema。
         groups,
         sessionIndex: snapshot.sessionIndex,
       }),
     );
   } catch {
-    // localStorage quota/permission failures do not affect renderer memory state.
+    // localStorage 配额/权限失败不影响 renderer 内存态。
   }
 }
 
@@ -702,9 +691,9 @@ export const useWorkbenchGroupStore = create<WorkbenchGroupStore>()((set, get) =
 
   configureClientMode: (clientMode) => {
     if (clientMode === "web-remote-replayable") {
-      // Previously, remote hid activeGroup only in the chat area, while the store still restored it at module load,
-      // let sidebar/new-task consume it, and wrote the hidden state back. Switch the gate before clearing
-      // memory to ensure cleanup itself does not touch remote localStorage.
+      // 过去 remote 只在聊天区隐藏 activeGroup，store 仍会在模块加载时
+      // 恢复并由 sidebar/new-task 消费，还会把隐藏状态继续写回。先切换 gate 再清
+      // 内存，确保清理动作本身也不会触碰 remote 的 localStorage。
       workbenchGroupClientMode = clientMode;
       desktopGroupsHydrated = false;
       set(INITIAL_WORKBENCH_GROUP_STATE);
@@ -818,8 +807,8 @@ export const useWorkbenchGroupStore = create<WorkbenchGroupStore>()((set, get) =
       if (nextLayout.root === group.root) {
         return state;
       }
-      // After promotion, group is the sole owner of the visible layout; updating proportions replaces only the root,
-      // while workspaceIdentity/remoteSessionId bindings and sessionIndex must remain unchanged.
+      // promote 后可见布局的唯一 owner 是 group；占比更新只替换 root，
+      // workspaceIdentity/remoteSessionId binding 与 sessionIndex 必须原样保留。
       return replaceGroup(state, {
         ...group,
         root: nextLayout.root,

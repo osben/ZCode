@@ -1,13 +1,14 @@
-// React binding for sessions-index: one read-only SessionsIndexStore plus a transport
-// connection per consumer. The sidebar/task list consume this hook for session summaries,
-// replacing the zustand task state (08-phasing M5 step 2); when multiple list consumers share
-// one workspace subscription they go through sessionsIndexRegistry (reference-counted store
-// reuse).
+// sessions-index 的 React 绑定：每个消费者一个只读 SessionsIndexStore + 传输连接。
+// 侧栏/任务列表消费本 hook 拿会话摘要列表，替代 zustand 任务态（08-phasing M5 步骤 2）；
+// 多个列表消费者共享同一 workspace 订阅时改走 sessionsIndexRegistry（引用计数复用 store）。
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
 import { useServices } from "@/hooks/useServices.js";
 import { createAgentSessionsIndexTransport } from "@/v4/agentSessionsIndexTransport.js";
-import { SessionsIndexStore, type SessionsIndexStoreStatus } from "@/v4/sessionsIndexStore.js";
+import {
+  SessionsIndexStore,
+  type SessionsIndexStoreStatus,
+} from "@/v4/sessionsIndexStore.js";
 
 export interface UseSessionsIndexResult {
   sessions: SessionSummary[];
@@ -15,9 +16,8 @@ export interface UseSessionsIndexResult {
 }
 
 /**
- * Subscribes to a workspace's sessions-index and returns the session summary list (sorted by
- * lastActivityAt descending by default). Lifecycle: the store is rebuilt and reconnected when
- * the workspace changes; closed (unsubscribed + listeners removed) on unmount.
+ * 订阅某 workspace 的 sessions-index，返回会话摘要列表（默认按 lastActivityAt 降序）。
+ * 生命周期：workspace 变化时重建 store + 重连；卸载时 close（退订 + 解监听）。
  */
 export function useSessionsIndex(
   workspacePath: string,
@@ -27,7 +27,7 @@ export function useSessionsIndex(
 
   const store = useMemo(
     () => new SessionsIndexStore(),
-    // One store instance per workspace (dependency change → cold start with a fresh store).
+    // 每个 workspace 一个 store 实例（依赖变化 → 全新 store 冷启动）。
     [workspacePath, workspaceIdentity, zcodeAgentService],
   );
 
@@ -40,9 +40,9 @@ export function useSessionsIndex(
     return () => store.close();
   }, [store, workspacePath, workspaceIdentity, zcodeAgentService]);
 
-  // useSyncExternalStore: store.subscribe/getState are class-field arrow functions with stable references.
+  // useSyncExternalStore：store.subscribe/getState 是类字段箭头函数，引用稳定。
   const state = useSyncExternalStore(store.subscribe, store.getState);
-  // A state change means the list may have changed; getSessions caches a stable reference internally.
+  // state 变化即代表列表可能变化；getSessions 内部缓存稳定引用。
   const sessions = useMemo(() => store.getSessions(), [store, state]);
 
   return { sessions, status: store.getStatus() };

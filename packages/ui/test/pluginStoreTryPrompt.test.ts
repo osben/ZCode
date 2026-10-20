@@ -5,8 +5,6 @@ import {
   buildPluginStoreTryPrompt,
 } from "@/settings/pluginStoreTryPrompt.js";
 
-const LOCALE_ZH = "zh-CN";
-
 function pluginItem(overrides: Partial<StorePluginItem> = {}): StorePluginItem {
   return {
     id: "demo-plugin@demo-market",
@@ -42,31 +40,35 @@ describe("Plugin Store try prompt", () => {
         locale: "en-US",
         prompt: "  Summarize this workspace.  ",
       }),
-    ).toBe("[@Demo \\[Plugin\\]](plugin://demo-plugin@demo-market) Summarize this workspace.");
+    ).toBe(
+      "[@Demo \\[Plugin\\]](plugin://demo-plugin@demo-market) Summarize this workspace.",
+    );
   });
 
   it("uses the localized display label without changing the stable destination", () => {
     expect(
       buildPluginStoreTryPrompt({
         item: pluginItem(),
-        locale: LOCALE_ZH,
+        locale: "zh-CN",
         prompt: "帮我检查配置",
       }),
-    ).toBe("[@演示插件](plugin://demo-plugin@demo-market) 帮我检查配置");
+    ).toBe(
+      "[@演示插件](plugin://demo-plugin@demo-market) 帮我检查配置",
+    );
   });
 
   it("builds the same structured Plugin mention used by the @ picker", () => {
     expect(
       buildPluginStoreTryMention({
         item: pluginItem(),
-        locale: "en-US",
+        locale: "zh-CN",
       }),
     ).toEqual({
       id: "plugin:demo-plugin@demo-market",
       category: "plugins",
-      label: "Demo [Plugin]",
+      label: "演示插件",
       value: "demo-plugin@demo-market",
-      markdown: "[@Demo \\[Plugin\\]](plugin://demo-plugin@demo-market)",
+      markdown: "[@演示插件](plugin://demo-plugin@demo-market)",
       data: {
         pluginId: "demo-plugin@demo-market",
         icon: "https://cdn.example.com/demo-plugin.png",

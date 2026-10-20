@@ -7,11 +7,11 @@ export interface HighspeedOutputFooterTarget {
   metrics: HighspeedShareMetrics;
 }
 
-/** Marker fields written back to render units by the footer consolidation logic; host types only need to declare these two optional fields. */
+/** 由 footer 收口逻辑写回渲染单元的标记字段，宿主类型只需声明这两个可选字段。 */
 export interface HighspeedOutputFooterMark {
-  /** The current last turn for the same Highspeed cardId; only this group tail may show the attribution footer. */
+  /** 同一 Highspeed cardId 对应的当前最后一个 turn；仅该组尾可展示来源 footer。 */
   showHighspeedOutputFooter?: true;
-  /** Trustworthy share metrics aggregated on cold restore from all persisted turn metadata of the same card. */
+  /** 冷恢复时由同卡全部持久化 turn metadata 聚合出的可信分享参数。 */
   highspeedOutputFooterTarget?: HighspeedOutputFooterTarget;
 }
 
@@ -27,12 +27,10 @@ interface HighspeedCardFooterState {
 }
 
 /**
- * Marks the last render unit covered by the same card with the footer flag.
+ * 给同一张卡覆盖的最后一个渲染单元打上 footer 标记。
  *
- * Bug root cause: the footer was previously decided per turn by the accelerated flag, so a card
- * spanning multiple turns displayed it repeatedly. It must be consolidated before virtualization
- * by persisted cardId and expiry time, so the group tail moves back stably with new turns and the
- * countdown.
+ * Bug 根因：footer 过去在单个 turn 内按 accelerated 判定，一张卡覆盖多轮时会重复显示。
+ * 必须在虚拟化前按持久化 cardId 和过期时间统一收口，组尾才能随新 turn 与倒计时稳定后移。
  */
 export function markHighspeedOutputFooterUnits<T extends HighspeedFooterUnit>(
   units: readonly T[],
@@ -64,9 +62,8 @@ function resolveHighspeedOutputFooters(
       const current = cardStateById.get(card.cardId);
       cardStateById.set(card.cardId, {
         lastUnitIndex: index,
-        // Bug cause: an interrupted/errored group tail may have no body itself, while earlier
-        // accelerated turns already produced output. The footer belongs to the whole card and
-        // cannot look only at the last turn; a timeline boundary is not model output and is not counted.
+        // Bug 原因：组尾异常/中断可能自身没有正文，但前序 accelerated turn 已有输出。
+        // footer 属于整张卡，不能只看最后一轮；timeline 边界不是模型 output，不计入。
         hasOutput:
           (current?.hasOutput ?? false) ||
           (card.outputTokens ?? 0) > 0 ||
@@ -151,7 +148,7 @@ function aggregatePersistedHighspeedMetrics(
       : {}),
     savedDurationMs,
     regularTps: outputTokens / regularDurationSeconds,
-    // The healthy endpoint returns the card-level aggregate TPS; every turn of the same card persists the same authoritative value.
+    // healthy 返回卡级累计 TPS，同卡各 turn 持久化的是同一个权威值。
     highspeedTps: metas[0]!.highspeedTps!,
   };
 }

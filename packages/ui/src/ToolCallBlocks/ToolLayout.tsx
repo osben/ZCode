@@ -14,7 +14,7 @@ import { ToolSummaryRow, type ToolSummaryAction } from "@/ToolCallBlocks/ToolSum
 import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 const toolLayoutOpenState = new Map<string, boolean>();
-// In-memory diagnostic counter: this map only grows per toolId; log it first.
+// 内存诊断计数器：该表按 toolId 只增不减，先落日志。
 uiMemoryDiagnosticsRegistry.register("toolLayout", () => ({ openState: toolLayoutOpenState.size }));
 const TOOL_CONTENT_COLLAPSE_UNMOUNT_DELAY_MS = 300;
 const TOOL_CONTENT_SHELL_CLASSNAME = "text-popover-foreground outline-none";
@@ -50,8 +50,8 @@ interface ToolLayoutProps {
   statusLabel?: ReactNode;
   statusTooltip?: ReactNode;
   /**
-   * An indicator before the status word (such as the hollow ring in a compile feedback row) appears and disappears with the word. Keep it outside the tooltip trigger:
-   * the dotted underline and hover hint belong to the word; the indicator should not be underlined or become another hover target.
+   * 状态词之前的指示物（如编译反馈行的空环灯），与状态词同显同隐。放在提示触发区之外：
+   * 虚线下划线与悬停提示只属于词，灯不该被划线，也不该成为另一个悬停目标。
    */
   statusIndicator?: ReactNode;
   showStatusLabel?: boolean;
@@ -136,11 +136,11 @@ function ToolLayoutComponent({
   const resolvedSummaryContentKey =
     summaryContentKey ?? `${String(summaryTitle ?? "")}:${String(statusLabel ?? "")}`;
   const shouldShowDiffCount = diffCount != null && !(isExpanded && hideDiffCountWhenOpen);
-  // Many tool calls update continuously while streaming, so spinning loading icons
-  // would consume rendering resources for a long time; use a text shimmer and status label while running, and keep the icon static.
+  // toolcall 在流式期间数量多且持续更新，旋转 loading 图标会让
+  // 动画长期占用渲染资源；运行态改由文案扫光和状态文字表达，图标保持静态。
   const summaryIcon = icon;
-  // Keep the kind label shimmer while running to show that the tool is still active;
-  // outside the running state, retain the faintest text color so the summary stays understated.
+  // 运行态需要保留 kind 文案扫光，用来表达当前工具仍在进行中；
+  // 非运行态仍保持最浅文本色，避免摘要信息喧宾夺主。
   const kindLabelClassName = cn(
     "font-medium whitespace-nowrap shrink-0",
     isRunning ? "animated-gradient-text" : "text-foreground-subtlest",
@@ -152,9 +152,9 @@ function ToolLayoutComponent({
   }, [resolvedPersistOpenKey]);
 
   useEffect(() => {
-    // Tools such as edit/read should expand by default when completed,
-    // but forceOpen locks the card so it cannot be collapsed.
-    // Use a one-time autoOpen instead: expand once when the condition is first met, then let the user close it manually.
+    // edit/read 这类工具有“完成后默认自动展开”的需求，
+    // 但 forceOpen 会把卡片彻底锁死成不可收起。
+    // 这里改成一次性的 autoOpen：首次满足条件时自动展开一次，之后仍允许用户手动关闭。
     if (!autoOpen || hasAutoOpenedRef.current) {
       return;
     }
@@ -169,9 +169,9 @@ function ToolLayoutComponent({
     const wasRunning = previousIsRunningRef.current;
     previousIsRunningRef.current = isRunning;
 
-    // If a subagent stays expanded after completion, its long list of tool details remains open,
-    // quickly lengthening the conversation and conflicting with the interaction of expanding while running and returning to a summary when complete.
-    // Collapse once only on the running -> completed transition; the user can still expand it again later.
+    // 子智能体在执行完成后，如果继续保持展开，会把一长串子工具明细永久摊开，
+    // 聊天流里会迅速变得很长，也和“运行中自动展开、完成后回到摘要”这套交互不一致。
+    // 这里只在 running -> completed 的边沿自动收起一次，不影响用户后续手动再次展开查看细节。
     if (autoCollapseOnComplete && !isRunning && wasRunning) {
       toolLayoutOpenState.set(resolvedPersistOpenKey, false);
       setIsOpen(false);
@@ -192,10 +192,10 @@ function ToolLayoutComponent({
       return;
     }
 
-    // Do not unmount children immediately when collapsing tool details.
-    // Radix reads --radix-collapsible-content-height during the closed animation;
-    // if child content is removed first, the inner height variable disappears and inherits the outer historical message height,
-    // briefly stretching the details area into a huge blank block and making everything below appear to vanish.
+    // 收起工具详情时不能立刻卸载 children。
+    // Radix 会在 closed 动画里读取 --radix-collapsible-content-height；
+    // 如果子内容先被卸载，内层高度变量会消失并继承外层历史消息的高度，
+    // 导致详情区域短暂撑成超高空白块，下面内容看起来像全部闪没了。
     contentUnmountDelayRef.current = window.setTimeout(() => {
       setShouldRenderContent(false);
       contentUnmountDelayRef.current = null;
@@ -240,8 +240,8 @@ function ToolLayoutComponent({
   const statusWordNode =
     shouldShowStatusLabel && statusLabel != null ? (
       statusTooltip ? (
-        // Failed cards no longer force their content open; show error details in the status label tooltip instead,
-        // keeping edit cards' expansion behavior consistent with success while still exposing the error on hover.
+        // 失败态不再强制展开内容，错误详情改挂到状态文字 tooltip 上，
+        // 这样 edit 卡片保持和成功态一致的展开逻辑，同时仍然能在 hover 时拿到报错原因。
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -345,9 +345,9 @@ function ToolLayoutComponent({
       />
       {!hasSummaryAction && canToggle ? (
         <CollapsibleContent className={TOOL_CONTENT_SHELL_CLASSNAME}>
-          {/* When padding is attached directly to the height-animation node, the body still stops at 8px after its height reaches zero,
-              and disappears suddenly only when delayed unmount switches display:none. Moving it inside lets the outer overflow
-              clip it continuously to zero with the animation, preserving the original spacing and the 300ms measurement safeguard. */}
+          {/* padding 直接挂在高度动画节点上时，主体归零后仍会停在 8px，
+              直到延迟卸载切换 display:none 才瞬间消失。放入内部后会被外层 overflow
+              随动画高度连续裁切到 0，保留原间距且不改变 300ms 的测量保护。 */}
           <div className={TOOL_CONTENT_SPACING_CLASSNAME}>{resolvedContent}</div>
         </CollapsibleContent>
       ) : !hasSummaryAction && forceOpen ? (

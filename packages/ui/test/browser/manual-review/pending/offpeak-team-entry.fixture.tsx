@@ -70,13 +70,12 @@ const services = {
     },
   },
 } as unknown as IServiceAccessor;
-// Do not let an unrendered Team scenario steal another fixture's Registry subscription.
+// 不让未渲染的 Team 场景抢走另一个 fixture 的 Registry 订阅。
 if (new URLSearchParams(location.search).has("teamEntry")) {
   void connectProviderSettingsSnapshot(services.providerSettingsService).ready;
 }
 
-// Only external services are replaced; the real home components, template drafts, plan
-// categories, and gray-scale gating are validated together.
+// 只替换外部服务；实际首页组件、模板草稿、套餐分类和灰度门控一起验收。
 export function OffPeakTeamEntryFixture() {
   const [opened, setOpened] = useState(0);
   const state = useOffPeakTaskStore();

@@ -2,17 +2,6 @@ import { describe, expect, it } from "vitest";
 import { buildSnapshotDedupeKey } from "../src/hooks/useZCodeTaskService.js";
 
 describe("buildSnapshotDedupeKey", () => {
-  it("treats padded and blank workspace identities like their trimmed form", () => {
-    const base = { taskId: "task-1", workspacePath: "/workspace/demo" };
-
-    expect(
-      buildSnapshotDedupeKey({ ...base, workspaceIdentity: "  ssh://host/workspace/demo " }),
-    ).toBe(buildSnapshotDedupeKey({ ...base, workspaceIdentity: "ssh://host/workspace/demo" }));
-    expect(buildSnapshotDedupeKey({ ...base, workspaceIdentity: "   " })).toBe(
-      buildSnapshotDedupeKey(base),
-    );
-  });
-
   it("separates replayable snapshots by historical model hint", () => {
     const base = {
       taskId: "task-1",

@@ -1,14 +1,14 @@
 import type { ZCodePluginMarketplaceSummary } from "@zcode/shared";
 import { DEFAULT_MARKETPLACE_ID } from "@/settings/recommendedPlugins.js";
 
-// Source value used for official plugins on the agent side; treat all others (such as inline local directories) as “Built in.”
-// Note: plugins installed from a marketplace have source "cache"; their actual origin is in plugin.marketplace.
+// 官方插件在 agent 侧的 source 取值；其余取值（如 inline 本地目录）一律按「内置」处理。
+// 注意: 从市场安装的插件 source 为 "cache"，其真实归属在 plugin.marketplace 上。
 const MARKETPLACE_INSTALLED_SOURCE = "cache";
 
 /**
- * Resolve a marketplace id to a user-friendly display name:
- * prefer the name from the marketplaces overview, falling back to the raw id when missing.
- * Pure function so the catalog title bar and installed-source label can reuse the same naming logic.
+ * 把 marketplace id 解析为对用户友好的展示名：
+ * 优先用 marketplaces 概览里的 name，缺失时回落到原始 id。
+ * 纯函数，便于在目录标题栏与已安装来源标签间复用同一套命名。
  */
 export function resolveMarketplaceDisplayName(
   marketplaceId: string,
@@ -23,9 +23,9 @@ export function resolveMarketplaceDisplayName(
 }
 
 /**
- * Source label for an installed plugin; there are only two categories:
- * - Installed from a marketplace (source==="cache") → “Installed from {marketplace name}”;
- * - Everything else (official/inline, etc.) → “Built in.”
+ * 已安装插件的来源标签，只分两类：
+ * - 从市场安装 (source==="cache") → 「从 {市场名} 安装」；
+ * - 其它 (official / inline 等) → 「内置」。
  */
 export function resolvePluginSourceLabel(input: {
   source: string;

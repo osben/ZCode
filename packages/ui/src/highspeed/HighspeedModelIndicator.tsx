@@ -18,7 +18,7 @@ export function HighspeedModelIndicator({
   model: string;
   originalModel: string;
   sweepActive: boolean;
-  /** Play the flip-in entrance only for a fresh draw hit; switching back or resuming shows the static indicator directly. */
+  /** 仅 draw 新命中时播放翻页入场；切回或恢复时直接呈现静止标识。 */
   animateEntrance: boolean;
 }) {
   const { intl } = useZCodeIntl();

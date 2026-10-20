@@ -23,8 +23,8 @@ import { PluginMentionOptionContent } from "@/mentions/components/PluginMentionO
 import { usePluginsMentionProvider } from "@/mentions/providers/pluginsMentionProvider.js";
 
 /**
- * Command shortcuts in the “Add” section appear immediately after attachments; selecting one inserts the same command tag as the `/` panel.
- * Both are parsed/expanded only at the start of a message, so offer them only for a strictly empty draft.
+ * 「添加」分区里紧随附件之后的命令快捷项，选中即插入与 `/` 面板相同的命令标签。
+ * 两者都只在消息开头解析/展开，所以只对严格空草稿提供。
  */
 const QUICK_COMMANDS = {
   goal: { id: "add-goal", labelId: "chat.goalBanner.label", Icon: GoalIcon },
@@ -220,11 +220,11 @@ export function ChatPromptActionMenu({
       open={open && !disabled}
       onOpenChange={(nextOpen) => {
         if (nextOpen) {
-          // Take a snapshot when the menu opens so candidates do not shift while it is open and keyboard selection stays aligned.
-          // /goal remains a message-leading, session-level command; offer it only for a new session with an empty draft so it is not inserted mid-message and ignored.
-          // /workflow also expands only at the start of a message, but is not tied to session state; offer it for any session with an empty draft.
-          // The CLI catalog is authoritative. If it lacks workflow (for example, because the plugin is disabled), do not offer it;
-          // otherwise plain text that the CLI will not expand would be sent to the model.
+          // 打开瞬间快照，菜单打开期间候选不平移，键盘选择不会错位。
+          // /goal 仍是消息开头命令且是会话级目标：仅新会话空草稿提供，避免在消息中间插入后被忽略。
+          // /workflow 同样只在消息开头展开，但不绑定会话状态：任意会话空草稿都提供；
+          // 命令目录以 CLI catalog 为权威，catalog 缺 workflow（插件被禁用）时不提供，
+          // 否则会把 CLI 不会展开的裸文本发给模型。
           const emptyDraft = inputApiRef.current?.getText() === "";
           const offered = (command: QuickCommand, available: boolean) =>
             emptyDraft && available && !excludedSlashCommandNames?.includes(command);
@@ -261,14 +261,14 @@ export function ChatPromptActionMenu({
           </Button>
         </PopoverTrigger>
       </ControlHintTooltip>
-      {/* The default button anchor also registers on first mount; register the custom anchor afterward so the old button being unmounted cannot overwrite it. */}
+      {/* 默认按钮锚点在首次挂载时也会注册；自定义锚点必须随后注册，避免被即将卸载的旧按钮覆盖。 */}
       {container ? <PopoverAnchor virtualRef={anchorRef} /> : null}
       <PopoverContent
         ref={contentRef}
         align="start"
         side="top"
         sideOffset={0}
-        // Radix also writes the virtual anchor size to trigger-width; using a nonexistent anchor-width collapses the virtual list.
+        // Radix 将虚拟锚点尺寸也写入 trigger-width；使用不存在的 anchor-width 会让虚拟列表塌缩。
         className="w-(--radix-popover-trigger-width) max-w-[calc(100vw-1rem)] gap-0 overflow-visible border-0 bg-transparent p-0 shadow-none"
         tabIndex={-1}
         onOpenAutoFocus={(event) => {

@@ -1,4 +1,3 @@
-import type { IGitService } from "@zcode/services";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   GitBranchMutationResult,
@@ -24,27 +23,23 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
-import { worktreeDirectoryNameOf } from "@/components/WorktreeTaskMarker.js";
 
 interface UseGitBranchSwitcherOptions {
-  gitService?: IGitService;
   workspacePath: string;
-  // gitSummary is the source of truth for HEAD (updated by the file watcher). Its current
-  // branch/HEAD values are used to discard potentially stale local branch snapshots when HEAD changes.
+  // gitSummary 是 HEAD 的真实来源(由文件 watcher 实时回灌)。传入它的当前分支/HEAD 类型，
+  // 用于在底层 HEAD 变化时丢弃可能过期的本地分支快照。
   currentBranchName: string | null;
   headRefType: GitRepositorySummary["headRefType"];
   onRefreshGit: () => void;
 }
 
 export function useGitBranchSwitcher({
-  gitService: targetGitService,
   workspacePath,
   currentBranchName,
   headRefType,
   onRefreshGit,
 }: UseGitBranchSwitcherOptions) {
-  const contextServices = useServices();
-  const gitService = targetGitService ?? contextServices.gitService;
+  const { gitService } = useServices();
   const { intl, locale } = useZCodeIntl();
   const numberFormatter = new Intl.NumberFormat(locale);
   const [open, setOpen] = useState(false);
@@ -61,11 +56,6 @@ export function useGitBranchSwitcher({
   const [branchesResult, setBranchesResult] = useState<GitLocalBranchListResult | null>(null);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [mutationPending, setMutationPending] = useState(false);
-  // Branch name → worktree directory for branches checked out in ANOTHER worktree: git refuses to
-  // check them out here, so switch surfaces disable them with the directory as the hint.
-  const [worktreeOccupancy, setWorktreeOccupancy] = useState<ReadonlyMap<string, string>>(
-    new Map(),
-  );
 
   const resetSwitchAssistState = useCallback(() => {
     setSwitchAssistStep(null);
@@ -94,30 +84,23 @@ export function useGitBranchSwitcher({
     }
   }, [gitService, intl, workspacePath]);
 
-  // Remote workspaces on different hosts can share the same path, so the Git target service is
-  // part of the reset key; otherwise branch, occupancy, and switch-assist state from the previous
-  // host survive and a retried commit/switch would run against the new host.
   useEffect(() => {
     setOpen(false);
     setCreateDialogOpen(false);
     setCreateBranchName("");
     setBranchesResult(null);
-    setWorktreeOccupancy(new Map());
     resetSwitchAssistState();
-  }, [gitService, resetSwitchAssistState, workspacePath]);
+  }, [resetSwitchAssistState, workspacePath]);
 
   const openRef = useRef(open);
   openRef.current = open;
   useEffect(() => {
-    // Key behavior: when gitSummary's HEAD changes (for example, after an external branch switch
-    // or a watcher update), discard the local branch snapshot cached when the dropdown was last opened.
-    // The branch label then falls back to gitSummary.branchName. Otherwise, a stale
-    // branchesResult.currentBranchName can mask the real branch name indefinitely.
-    // Only reset local UI state here; do not trigger a refresh or RPC, which could reintroduce
-    // a refresh/watcher feedback loop.
+    // 关键业务逻辑：gitSummary 的 HEAD 一旦变化(例如外部命令切分支、watcher 实时回灌)，
+    // 就丢弃上一次展开下拉框时缓存的本地分支快照，让底部分支标签回落到 gitSummary.branchName。
+    // 否则 branchesResult.currentBranchName 的旧值会长期遮挡真实分支名，出现“切了不变”。
+    // 注意：这里只重置本地 UI state，不触发任何刷新 / RPC，避免重新引入 refresh<->watcher 自激回路。
     if (openRef.current) {
-      // Keep the live list while the dropdown is open to avoid flicker. Once closed,
-      // the next opening will fetch it again through loadBranches.
+      // 下拉框展开时正展示实时列表，不清空以免列表闪烁；关闭后下次展开会通过 loadBranches 重新拉取。
       return;
     }
     setBranchesResult(null);
@@ -127,31 +110,10 @@ export function useGitBranchSwitcher({
     if (!open) {
       return;
     }
-    let cancelled = false;
 
-    // Fetch the branch list every time the dropdown opens so a successful switch does not reuse
-    // the snapshot from the previous opening.
+    // 关键业务逻辑：分支列表每次展开都重新读取一次，避免切换成功后还复用上一次打开时的旧快照。
     void loadBranches();
-    // Occupancy is a hint: on failure the list behaves exactly as before (switchable, git rejects).
-    void gitService
-      .listWorktrees({ workspacePath })
-      .then((list) => {
-        if (cancelled) return;
-        const next = new Map<string, string>();
-        for (const entry of list.worktrees) {
-          if (entry.branchName && !entry.isCurrent) {
-            next.set(entry.branchName, worktreeDirectoryNameOf(entry.path));
-          }
-        }
-        setWorktreeOccupancy(next);
-      })
-      .catch(() => {
-        if (!cancelled) setWorktreeOccupancy(new Map());
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [gitService, loadBranches, open, workspacePath]);
+  }, [loadBranches, open]);
 
   const notifyMutationFailure = useCallback(
     (result: GitBranchMutationResult) => {
@@ -205,9 +167,8 @@ export function useGitBranchSwitcher({
         return false;
       }
 
-      // An overwrite-style blocker is no longer shown as a toast. Convert it into a
-      // "failure card -> commit -> retry switch automatically" flow so users can see the affected
-      // files before deciding whether to commit their current changes and continue.
+      // 关键业务逻辑：overwrite 型阻塞不再直接 toast，而是转成“失败卡片 -> 提交 -> 自动重试切换”流程。
+      // 这样用户能先看见真正受影响的文件，再决定是否提交当前更改继续。
       setOpen(false);
       setCreateDialogOpen(false);
       setCommitError(null);
@@ -266,8 +227,8 @@ export function useGitBranchSwitcher({
             }
           : current,
       );
-      // Refresh global Git state only when the branch actually changes.
-      // Switching to the current branch is already a successful no-op and needs no extra fetch.
+      // 关键业务逻辑：只有真正发生分支变更时才刷新全局 Git 状态。
+      // 切到当前分支这类 no-op 已经是成功结果，但没必要再触发一轮额外重拉。
       if (result.didChange || result.created) {
         onRefreshGit();
       }
@@ -434,7 +395,6 @@ export function useGitBranchSwitcher({
     branchesResult,
     loadingBranches,
     mutationPending,
-    worktreeOccupancy,
     switchBranch,
     createBranchAndSwitch,
     openSwitchCommitDialog,

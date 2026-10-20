@@ -4,8 +4,7 @@ import type { IntlInstance } from "@/i18n/IntlProvider.js";
 const MINUTE_MS = 60_000;
 const RELATIVE_MINUTES_LIMIT = 30;
 
-/** Local-midnight bucket used by the viewer to group Memory files by day. */
-export function startOfLocalDay(timestamp: number): number {
+function startOfLocalDay(timestamp: number): number {
   const date = new Date(timestamp);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
@@ -118,64 +117,5 @@ export function formatMemoryUpdatedAt({
       ),
       time,
     },
-  );
-}
-
-/** Header label for the workspace's last Dream consolidation time (absent → undefined). */
-export function formatMemoryLastDreamLabel({
-  formatMessage,
-  locale,
-  lastDreamConsolidatedAt,
-  now,
-}: {
-  formatMessage: IntlInstance["formatMessage"];
-  lastDreamConsolidatedAt: number | undefined;
-  locale: Locale;
-  now: number;
-}): string | undefined {
-  if (lastDreamConsolidatedAt === undefined) return undefined;
-  return formatMessage(
-    { id: "settings.memory.viewer.lastDream" },
-    {
-      time: formatMemoryUpdatedAt({
-        formatMessage,
-        locale,
-        now,
-        updatedAt: lastDreamConsolidatedAt,
-      }),
-    },
-  );
-}
-
-/**
- * Day-bucket header label for Memory file grouping: Today / Yesterday / locale date (no time).
- * Uses the same local-day math as formatMemoryUpdatedAt.
- */
-export function formatMemoryDayGroupLabel({
-  formatMessage,
-  locale,
-  now,
-  updatedAt,
-}: {
-  formatMessage: IntlInstance["formatMessage"];
-  locale: Locale;
-  now: number;
-  updatedAt: number;
-}): string {
-  const todayStart = startOfLocalDay(now);
-  const updatedDayStart = startOfLocalDay(updatedAt);
-  if (updatedDayStart === todayStart) {
-    return formatMessage({ id: "settings.memory.viewer.group.today" });
-  }
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1);
-  if (updatedDayStart === yesterdayStart.getTime()) {
-    return formatMessage({ id: "settings.memory.viewer.group.yesterday" });
-  }
-  return formatDate(
-    updatedAt,
-    locale,
-    new Date(updatedAt).getFullYear() !== new Date(todayStart).getFullYear(),
-    formatMessage,
   );
 }

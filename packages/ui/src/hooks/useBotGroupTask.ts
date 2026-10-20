@@ -37,8 +37,7 @@ export function useBotGroupTask(
         const savedProvider = Object.values(nextContext?.group?.inputs ?? {})[0]?.source.provider;
         setProvider(savedProvider);
         if (nextContext && !savedProvider) {
-          // First preparation has no accepted source yet; take the channel name from the current
-          // bot config instead of defaulting to Feishu.
+          // 首次准备还没有 accepted source，渠道名称取当前机器人配置，不默认猜作飞书。
           const config = await botsService.getConfig();
           if (disposed || revision !== requested) return;
           const configured = config.bots.find((bot) => bot.id === nextContext.botId)?.provider;

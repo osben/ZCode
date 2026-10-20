@@ -1,25 +1,25 @@
 import type { ConversationRow, ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import { resolvePluginUiLogicalScope } from "./pluginUiLogicalScope.js";
 
-/** Plugin cards from the most recent turns are expanded by default; earlier ones collapse into the folded area. */
+/** ：最近几个回合的插件卡片默认展开，更早的按默认收进折叠区。 */
 export const PLUGIN_UI_AUTO_EXPAND_TURNS = 3;
 
-/** One logical UI: merged only for an explicit surface or widgets whose permission scope is identical; other calls stay independent. */
+/** 一个逻辑 UI：仅显式 surface 或权限范围一致的 widgetSessionId 共用，其余调用独立。 */
 export interface PluginUiLogicalInstance {
   key: string;
-  /** Currently displayed call: the latest successful (non-isError) one; with no success, the latest row. */
+  /** 当前显示的调用：最新一次成功（非 isError）的；没有成功的就是最新一条。 */
   activeToolCallId: string;
-  /** Successful calls superseded by a newer success; they create no sandbox and stay as plain tool records. */
+  /** 被较新成功结果替代的成功调用；它们不建沙箱，只保留普通工具记录。 */
   supersededToolCallIds: string[];
 }
 
-/** Display disposition for a single plugin tool row; the render layer decides folding and sandbox creation from it. */
+/** 单条插件工具行的展示裁决；渲染层据此决定进不进折叠区、要不要建沙箱。 */
 export interface PluginUiRowDisposition {
   key: string;
   superseded: boolean;
-  /** The row's turn is within the last PLUGIN_UI_AUTO_EXPAND_TURNS turns. */
+  /** 所在回合在最近 PLUGIN_UI_AUTO_EXPAND_TURNS 个回合内。 */
   autoExpand: boolean;
-  /** Tool-level `openai/widgetShowCodexWidgetInline` (display.ui.showInline). */
+  /** 工具级 `openai/widgetShowCodexWidgetInline`（display.ui.showInline）。 */
   forcedInline: boolean;
 }
 
@@ -47,26 +47,19 @@ function isSuccessfulUiRow(row: ToolCallRow): boolean {
 }
 
 /**
- * Pure function: derives logical UI instances and per-row display dispositions from projection rows (V-a).
- * The key binds source, server, resource, permissions, and logical view together; within the same key the
- * newest successful result supersedes earlier successes, while running / failed / isError rows neither
- * supersede others nor are superseded (each shows its own state).
- * autoExpand takes the most recent N turns across all rows in turn order (a turn without plugin cards
- * still counts as a turn).
+ * 纯函数：从投影行推导逻辑 UI 实例与每行的展示裁决（V-a）。
+ * key 同时绑定来源、server、资源、权限与逻辑视图；同 key 内最新一次成功结果替代更早的成功结果，
+ * running / failed / isError 的行既不替代别人也不被替代（各自显示自己的状态）。
+ * autoExpand 按全部行的回合顺序取最近 N 个回合（回合里没有插件卡片也算一个回合）。
  */
 export function deriveLogicalUiInstances(
   rows: readonly ConversationRow[],
   options: { autoExpandTurns?: number } = {},
 ): PluginUiInstanceDerivation {
-  // Domain constraints prohibit Map/Set; use arrays and plain objects instead.
+  // domain 不用 Map / Set（模块边界约束），全部用数组与普通对象。
   const turnOrder: string[] = [];
-  // Repeated includes scans make history deduplication quadratic; a null-prototype index keeps it linear and handles keys such as __proto__.
-  const seenTurns: Record<string, true> = Object.create(null);
   for (const row of rows) {
-    if (!seenTurns[row.turnId]) {
-      seenTurns[row.turnId] = true;
-      turnOrder.push(row.turnId);
-    }
+    if (!turnOrder.includes(row.turnId)) turnOrder.push(row.turnId);
   }
   const recentTurns = turnOrder.slice(-(options.autoExpandTurns ?? PLUGIN_UI_AUTO_EXPAND_TURNS));
   const groupKeys: string[] = [];

@@ -83,7 +83,10 @@ async function open(params = {}, clipboard = "ok", width = 960) {
     });
   }, clipboard);
   await page.goto(`${origin}fixture?${new URLSearchParams(params)}`);
-  const trigger = page.getByTestId("login-trigger");
+  const trigger = page.getByRole("button", {
+    name: params.guest === "1" ? "连接使用" : "Alex",
+    exact: true,
+  });
   await trigger.waitFor();
   assert.equal(await trigger.getByText("Pro", { exact: true }).count(), 0);
   await trigger.click();
@@ -97,7 +100,7 @@ for (const theme of ["light", "dark"])
         const item = page.getByTestId("copy-user-id");
         await item.waitFor();
         assert.equal(
-          await page.getByTestId("sidebar-interface-zoom-trigger").count(),
+          await page.getByRole("menuitem", { name: "界面缩放", exact: true }).count(),
           mobile === "1" ? 0 : 1,
         );
         assert.equal(
@@ -151,7 +154,7 @@ for (const theme of ["light", "dark"])
           .getByRole("menu")
           .screenshot({ path: `${artifacts}/${theme}-${mobile}.png`, animations: "disabled" });
         await item.click();
-        await page.getByTestId("toast").waitFor();
+        await page.getByText("用户 ID 已复制", { exact: true }).waitFor();
         assert.deepEqual(await page.evaluate(() => window.copiedValues), ["12345678901234567890"]);
       } finally {
         await page.close();
@@ -171,7 +174,7 @@ test("长 ID 截断、英文和键盘复制", async () => {
     );
     await item.focus();
     await page.keyboard.press("Enter");
-    await page.getByTestId("toast").waitFor();
+    await page.getByText("User ID copied", { exact: true }).waitFor();
     assert.deepEqual(await page.evaluate(() => window.copiedValues), [id]);
   } finally {
     await page.close();
@@ -191,8 +194,9 @@ for (const mode of ["reject", "missing"])
     const page = await open({}, mode);
     try {
       await page.getByTestId("copy-user-id").click();
-      assert.equal(await page.getByTestId("toast").count(), 1);
+      await page.getByText("复制失败，请重试", { exact: true }).waitFor();
       assert.deepEqual(await page.evaluate(() => window.copiedValues), []);
+      assert.equal(await page.getByText("用户 ID 已复制", { exact: true }).count(), 0);
     } finally {
       await page.close();
     }

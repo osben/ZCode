@@ -5,10 +5,9 @@ import { buildPluginUiSessionKey } from "../contract.js";
 import type { PluginUiHostControllerDeps, PluginUiHostScope } from "./pluginUiHostController.js";
 
 /**
- * Routing table for server resource notifications (renderer memory).
- * Key = (session key, plugin, sandbox scope, instance generation); the subscribers in projection deltas
- * carry full run credentials, while session and plugin are filled in by the feeder (that session's
- * projection store). Unregistered subscribers are dropped outright — the instance was destroyed or replaced.
+ * server 资源通知的路由表（renderer 内存）。
+ * 键 = (会话键, 插件, 沙箱作用域, 实例代际)；投影增量里的 subscribers 携带完整运行凭证，
+ * 会话与插件由投喂方（该会话的投影 store）补上。没有登记的订阅者直接丢弃——实例已销毁或已换代。
  */
 const targets = new Map<string, PluginUiResourceNotificationTarget>();
 
@@ -45,7 +44,7 @@ export function registerPluginUiResourceTarget(
   };
 }
 
-/** Returns the number of instances actually delivered to (for unit tests and logs). */
+/** 返回实际投递到的实例数（单测与日志用）。 */
 export function dispatchPluginUiResourceDelta(
   sessionKey: string,
   delta: PluginUiInstanceDelta,
@@ -78,7 +77,7 @@ export function dispatchPluginUiResourceDelta(
   return delivered;
 }
 
-/** Registration entry for the controller: instance identity (session / plugin / scope) is fixed, the generation is supplied by the controller when the port arrives. */
+/** 给 controller 的登记入口：实例身份（会话 / 插件 / 作用域）固定，代际由 controller 在端口到达时给出。 */
 export function createPluginUiResourceNotificationRegistrar(
   scope: PluginUiHostScope,
   pluginId: string,

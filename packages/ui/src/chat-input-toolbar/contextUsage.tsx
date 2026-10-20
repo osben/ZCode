@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The context panel groups tightly coupled Context windows, Coding Plan, and Start Plan sections; splitting them later requires a separate review of overlay state boundaries. */
+/* eslint-disable max-lines -- context 面板聚合 Context windows、Coding Plan 和 Start Plan 三段紧耦合展示；后续拆分需要单独梳理弹层状态边界。 */
 import {
   useCallback,
   useEffect,
@@ -9,14 +9,11 @@ import {
   type CSSProperties,
 } from "react";
 import {
-  TID_CHAT_CONTEXT_USAGE_TRIGGER,
   type CodingPlanResetType,
-  getAutoCompactThresholdTokens,
-  resolveContextBudgetTone,
-  type ZCodeContextBudgetTone,
   type ZCodeContextUsageBreakdownItem,
   type ZCodeProvider,
 } from "@zcode/shared";
+import { TID_CHAT_CONTEXT_USAGE_TRIGGER } from "@zcode/shared/test-ids";
 import {
   Context,
   ContextContentBody,
@@ -65,7 +62,6 @@ import {
   resolveContextQuotaResetOpportunityTriggerTone,
   resolveContextTriggerTooltipKind,
   shouldDismissContextQuotaResetOpportunityReminder,
-  type ContextQuotaResetOpportunityTriggerTone,
 } from "@/chat-input-toolbar/contextQuotaResetOpportunityReminder.js";
 
 type ContextUsageBreakdownSource = ZCodeContextUsageBreakdownItem["source"];
@@ -74,8 +70,6 @@ interface ContextUsageBreakdownSegment {
   chars: number;
   percent: number;
   source: ContextUsageBreakdownSource;
-  /** Share of the reported used tokens; the runtime breakdown is measured in chars only. */
-  tokens: number;
 }
 
 const CONTEXT_PROGRESS_TONE_COLORS = [
@@ -129,9 +123,12 @@ export function formatContextCacheHitRateLabel(
     return null;
   }
 
-  // In production, show only clear cache savings so low hit rates do not distract from context capacity;
-  // in development, allow bypassing the 78% display threshold to observe the provider's real low-hit values.
-  if (!options.showBelowThreshold && hitRate < CACHE_HIT_RATE_DISPLAY_THRESHOLD) {
+  // 生产面板只露出明显缓存收益，避免低命中率分散对上下文容量的注意力；
+  // 开发环境需要观察 provider 的真实低命中值，因此允许绕过 78% 展示阈值。
+  if (
+    !options.showBelowThreshold &&
+    hitRate < CACHE_HIT_RATE_DISPLAY_THRESHOLD
+  ) {
     return null;
   }
 
@@ -144,8 +141,9 @@ export function formatContextCacheHitRateLabel(
 function getBreakdownToneStyle(index: number): CSSProperties {
   return {
     backgroundColor:
-      CONTEXT_PROGRESS_TONE_COLORS[Math.min(index, CONTEXT_PROGRESS_TONE_COLORS.length - 1)] ??
-      CONTEXT_PROGRESS_TONE_COLORS[0],
+      CONTEXT_PROGRESS_TONE_COLORS[
+        Math.min(index, CONTEXT_PROGRESS_TONE_COLORS.length - 1)
+      ] ?? CONTEXT_PROGRESS_TONE_COLORS[0],
   };
 }
 
@@ -171,17 +169,22 @@ const BREAKDOWN_SOURCE_ORDER: Record<ContextUsageBreakdownSource, number> = {
 
 export function buildContextUsageBreakdownSegments(
   breakdown: readonly ZCodeContextUsageBreakdownItem[] | undefined,
-  usedTokens: number,
 ): ContextUsageBreakdownSegment[] {
   const charsBySource = new Map<ContextUsageBreakdownSource, number>();
   for (const item of breakdown ?? []) {
     if (!Number.isFinite(item.chars) || item.chars <= 0) {
       continue;
     }
-    charsBySource.set(item.source, (charsBySource.get(item.source) ?? 0) + item.chars);
+    charsBySource.set(
+      item.source,
+      (charsBySource.get(item.source) ?? 0) + item.chars,
+    );
   }
 
-  const totalChars = [...charsBySource.values()].reduce((sum, chars) => sum + chars, 0);
+  const totalChars = [...charsBySource.values()].reduce(
+    (sum, chars) => sum + chars,
+    0,
+  );
   if (totalChars <= 0) {
     return [];
   }
@@ -191,14 +194,12 @@ export function buildContextUsageBreakdownSegments(
       chars,
       percent: chars / totalChars,
       source,
-      tokens: Number.isFinite(usedTokens)
-        ? Math.round((Math.max(usedTokens, 0) * chars) / totalChars)
-        : 0,
     }))
     .sort(
       (left, right) =>
         right.chars - left.chars ||
-        BREAKDOWN_SOURCE_ORDER[left.source] - BREAKDOWN_SOURCE_ORDER[right.source],
+        BREAKDOWN_SOURCE_ORDER[left.source] -
+          BREAKDOWN_SOURCE_ORDER[right.source],
     );
 }
 
@@ -212,15 +213,15 @@ export function buildContextUsageProgressSegments(
   }));
 }
 
-export function getRenderableTaskUsage<T extends { used: number; size: number }>(
-  taskUsage: T | null,
-): T | null {
+export function getRenderableTaskUsage<
+  T extends { used: number; size: number },
+>(taskUsage: T | null): T | null {
   if (!taskUsage) {
     return null;
   }
 
-  // The ZCode Protocol migration will provide real contextUsed/contextWindow separately.
-  // used=0 or an invalid value does not represent displayable context usage; do not render initialization/error fallbacks as a misleading 0%.
+  // ZCode Protocol 迁移后会单独补齐真实 contextUsed/contextWindow。
+  // used=0 或非法值不代表可展示的上下文占用，避免把初始化/异常兜底渲染成误导性的 0%。
   if (
     !Number.isFinite(taskUsage.used) ||
     !Number.isFinite(taskUsage.size) ||
@@ -237,29 +238,13 @@ export function getContextCompressionCommand(_provider: ZCodeProvider): string {
   return "/compact";
 }
 
-/**
- * Steady context-budget tone for the round trigger. A quota-reset opportunity tone is transient
- * and keeps priority; never render both on the same trigger.
- */
-export function resolveContextTriggerToneClassName(
-  contextTone: ZCodeContextBudgetTone,
-  quotaTriggerTone: ContextQuotaResetOpportunityTriggerTone | null,
-): string | null {
-  if (quotaTriggerTone !== null) {
-    return null;
-  }
-  if (contextTone === "warning") {
-    return "text-warning";
-  }
-  if (contextTone === "critical") {
-    return "text-destructive";
-  }
-  return null;
-}
-
-// Currently effective used_at for automatic/operational completion (startedAt is empty); manual completion does not participate in trigger interactions.
-function resolveAutomaticCompletedAt(entry: CodingPlanQuotaResetUiEntry | null): number | null {
-  return entry?.status === "completed" && entry.startedAt === null && entry.observedAt !== null
+// 自动/运营完成（startedAt 为空）当前生效的 used_at；手动完成不进入触发器交互。
+function resolveAutomaticCompletedAt(
+  entry: CodingPlanQuotaResetUiEntry | null,
+): number | null {
+  return entry?.status === "completed" &&
+    entry.startedAt === null &&
+    entry.observedAt !== null
     ? entry.completedAt
     : null;
 }
@@ -288,9 +273,6 @@ export function ChatContextUsage({
     size: number;
     cache?: { hitRate: number | null };
     breakdown?: ZCodeContextUsageBreakdownItem[];
-    autoCompactThresholdTokens?: number | null;
-    autoCompactThresholdAuthoritative?: boolean;
-    microcompactThresholdTokens?: number | null;
   } | null;
   selectedProvider: ZCodeProvider;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
@@ -298,8 +280,8 @@ export function ChatContextUsage({
   onSendCompressionCommand?: (command: string) => void;
   compressionDisabled?: boolean;
 }) {
-  const isWorkspaceVisible = useOptionalTabStore(
-    (state) => !state.tabs.some((tab) => tab.id === state.activeTabId && isSettingsTab(tab)),
+  const isWorkspaceVisible = useOptionalTabStore((state) =>
+    !state.tabs.some((tab) => tab.id === state.activeTabId && isSettingsTab(tab)),
   );
   const [contextOpen, setContextOpen] = useState(false);
   const [contextAccessRefreshing, setContextAccessRefreshing] = useState(false);
@@ -309,21 +291,22 @@ export function ChatContextUsage({
   const contextAccessRefreshSeqRef = useRef(0);
   const handleContextOpenChange = useCallback(
     (open: boolean) => {
-      // Opening the Dialog moves focus out of HoverCard, and Radix then requests that HoverCard close.
-      // Unmounting its content would also remove the reset dialog in the Portal, so refuse to close while that dialog is alive.
+      // Dialog 打开后会把焦点移出 HoverCard，Radix 随即请求关闭 HoverCard；
+      // 若此时卸载内容，Portal 中的重置弹框也会一起消失，因此弹框存活期间必须拒绝关闭。
       if (!open && quotaResetDialogOpenRef.current) {
         return;
       }
       setContextOpen(open);
-      // The hover refresh entry must not recognize only Coding Plan's onAccess: Start Plan (today's balance) and
-      // Coding Plan use mutually exclusive connection modes, so Start Plan users would not trigger the refresh chain on hover and would have to wait for
-      // settings/sidebar refresh. Start a silent access refresh if either configuration provides onAccess (only one exists at a time).
-      const accessRefresh = codingPlanUsageRemaining?.onAccess ?? startPlanBalance?.onAccess;
+      // hover 刷新入口不能只认 Coding Plan 的 onAccess：Start Plan（今日余额）与
+      // Coding Plan 连接方式互斥，start plan 用户 hover 时整条刷新链路都不触发，余额只能被动等
+      // 设置页/侧栏刷新。改为两段配置任一提供 onAccess 即发起本次静默 access 刷新（互斥下实际只有一个存在）。
+      const accessRefresh =
+        codingPlanUsageRemaining?.onAccess ?? startPlanBalance?.onAccess;
       if (!open || !accessRefresh) {
         return;
       }
-      // Silent access refresh does not set entitlement.loading when a cached snapshot exists.
-      // The Header refresh icon must follow the remote Promise triggered by this hover, not only snapshot loading.
+      // silent access refresh 有缓存快照时不会把 entitlement.loading 置 true。
+      // header 的刷新图标必须跟随本次 hover 触发的远端 promise，而不是只看快照 loading。
       const refreshSeq = contextAccessRefreshSeqRef.current + 1;
       contextAccessRefreshSeqRef.current = refreshSeq;
       setContextAccessRefreshing(true);
@@ -351,7 +334,8 @@ export function ChatContextUsage({
     }
     const base = {
       ...codingPlanUsageRemaining,
-      refreshing: contextAccessRefreshing || codingPlanUsageRemaining.refreshing === true,
+      refreshing:
+        contextAccessRefreshing || codingPlanUsageRemaining.refreshing === true,
     };
     if (!codingPlanUsageRemaining.onUsageClick) {
       return base;
@@ -366,15 +350,18 @@ export function ChatContextUsage({
         }),
     };
   }, [codingPlanUsageRemaining, contextAccessRefreshing]);
-  const startPlanBalanceWithClose = useMemo<ChatStartPlanBalanceConfig | undefined>(() => {
+  const startPlanBalanceWithClose = useMemo<
+    ChatStartPlanBalanceConfig | undefined
+  >(() => {
     if (!startPlanBalance) {
       return undefined;
     }
     const base: ChatStartPlanBalanceConfig = {
       ...startPlanBalance,
-      // Silent access refresh does not set entitlement.loading; the spinner next to today's balance heading must follow
-      // the Promise triggered by this hover (contextAccessRefreshing), matching the refreshing behavior in the Coding Plan section.
-      refreshing: contextAccessRefreshing || startPlanBalance.refreshing === true,
+      // 静默 access 刷新不置 entitlement.loading，今日余额标题旁 spinner 需要跟随
+      // 本次 hover 触发的 promise（contextAccessRefreshing），语义对齐 Coding Plan 段的 refreshing。
+      refreshing:
+        contextAccessRefreshing || startPlanBalance.refreshing === true,
     };
     if (!startPlanBalance.onUpgradeClick) {
       return base;
@@ -383,8 +370,8 @@ export function ChatContextUsage({
     return {
       ...base,
       onUpgradeClick: () => {
-        // Clicking a button inside HoverCard does not close the panel like leaving the hover area does.
-        // The upgrade entry navigates to settings, so close the context panel first to avoid leaving the old overlay on the new page.
+        // HoverCard 内按钮点击不会像外部 hover leave 一样自动关闭面板。
+        // 升级入口会切到设置页，必须先收起 context 面板，避免旧浮层残留在新页面上。
         setContextOpen(false);
         startPlanBalance.onUpgradeClick?.();
       },
@@ -393,24 +380,29 @@ export function ChatContextUsage({
   const hasCodingPlanUsageRemaining = codingPlanUsageRemainingWithClose
     ? hasChatCodingPlanUsageRemaining(codingPlanUsageRemainingWithClose)
     : false;
-  const hasStartPlanBalance = hasChatStartPlanBalance(startPlanBalanceWithClose);
+  const hasStartPlanBalance = hasChatStartPlanBalance(
+    startPlanBalanceWithClose,
+  );
 
-  // Automatic reset: the trigger and panel share the same complete Personal/Team scope and in-flight request to avoid duplicate requests.
+  // 自动重置：触发器和面板复用同一完整 Personal/Team scope；共享 in-flight 避免重复请求。
   const resetCodingPlanState = useMemo(
     () =>
       codingPlanUsageRemainingWithClose
-        ? resolveCodingPlanUsageRemainingState(codingPlanUsageRemainingWithClose)
+        ? resolveCodingPlanUsageRemainingState(
+            codingPlanUsageRemainingWithClose,
+          )
         : null,
     [codingPlanUsageRemainingWithClose],
   );
   const resetSourceKey = resetCodingPlanState?.displayedProviderId ?? null;
-  // Place MCP alongside the main quota cards when fewer than three are present; span it across the next row only when the main quotas fill all three columns, keeping the overlay width consistent.
+  // MCP 与不足三张的主额度同排；主额度占满三列时才在下一行贯穿，浮层始终保持统一宽度。
   const contextPanelWidthClass = "!w-80";
   const resetUi = useCodingPlanQuotaResetUi({
     sourceKey: resetSourceKey,
     preferredProviderId: resetCodingPlanState?.displayedEntitlement?.providerId,
     accountAccess: resetCodingPlanState?.displayedEntitlement?.accountAccess,
-    onEntitlementRefresh: codingPlanUsageRemainingWithClose?.onEntitlementRefresh,
+    onEntitlementRefresh:
+      codingPlanUsageRemainingWithClose?.onEntitlementRefresh,
   });
   const opportunityBadge = resolveChatCodingPlanResetOpportunityBadge(
     resetCodingPlanState,
@@ -450,15 +442,21 @@ export function ChatContextUsage({
       }
     };
     const untilUrgent =
-      opportunityBadge.expiresAt - now - CONTEXT_QUOTA_RESET_URGENT_SECONDS * 1_000;
+      opportunityBadge.expiresAt -
+      now -
+      CONTEXT_QUOTA_RESET_URGENT_SECONDS * 1_000;
     if (untilUrgent <= 0) {
       startUrgentCountdown();
     } else {
-      urgentThresholdTimer = window.setTimeout(startUrgentCountdown, untilUrgent);
+      urgentThresholdTimer = window.setTimeout(
+        startUrgentCountdown,
+        untilUrgent,
+      );
     }
     return () => {
       if (countdownTimer !== undefined) window.clearInterval(countdownTimer);
-      if (urgentThresholdTimer !== undefined) window.clearTimeout(urgentThresholdTimer);
+      if (urgentThresholdTimer !== undefined)
+        window.clearTimeout(urgentThresholdTimer);
     };
   }, [opportunityBadge.expiresAt, opportunityBadge.visible, resetSourceKey]);
   const opportunityReminder = resolveContextQuotaResetOpportunityReminder({
@@ -466,16 +464,18 @@ export function ChatContextUsage({
     now: opportunityNow,
     opportunity: { ...opportunityBadge, sourceKey: resetSourceKey },
   });
-  const opportunityTriggerTone = resolveContextQuotaResetOpportunityTriggerTone({
-    now: opportunityNow,
-    opportunity: { ...opportunityBadge, sourceKey: resetSourceKey },
-  });
+  const opportunityTriggerTone = resolveContextQuotaResetOpportunityTriggerTone(
+    {
+      now: opportunityNow,
+      opportunity: { ...opportunityBadge, sourceKey: resetSourceKey },
+    },
+  );
   const dismissOpportunityReminder = useCallback(() => {
     if (!opportunityReminder) return;
     contextQuotaResetOpportunityDismissalStore.dismiss(opportunityReminder);
   }, [opportunityReminder?.opportunityKey, opportunityReminder?.phase]);
   useEffect(() => {
-    // The settings overlay keeps the workspace mounted; background listeners must not count settings-page clicks as reading the reminder.
+    // 设置覆盖层保留工作区挂载；后台监听不能把设置页点击算作提醒已读。
     if (!isWorkspaceVisible || !opportunityReminder || contextOpen) return;
     const handleOutsidePointerDown = (event: PointerEvent) => {
       if (
@@ -496,14 +496,16 @@ export function ChatContextUsage({
     opportunityReminder?.opportunityKey,
     opportunityReminder?.phase,
   ]);
-  // Track confetti separately for five-hour and weekly quotas so completion of one does not suppress the other's trigger animation.
+  // 五小时与周额度各自维护撒花轨迹，避免一类完成压制另一类的触发器动效。
   const resetCelebrationStateByTypeRef = useRef<
     Record<CodingPlanResetType, CodingPlanQuotaResetCelebrationState | null>
   >({ FIVE_HOUR: null, WEEK: null });
   const fiveHourEntry = resetUi.entry;
   const weekEntry = resetUi.week.entry;
-  // Automatic/operational completion (startedAt is empty) is only a playback candidate; the status entry must not directly drive Tooltip/confetti.
-  const automaticCompletionCandidateByType = useMemo<Record<CodingPlanResetType, number | null>>(
+  // 自动/运营完成（startedAt 为空）只是播放候选；status 入口不能直接驱动 Tooltip/撒花。
+  const automaticCompletionCandidateByType = useMemo<
+    Record<CodingPlanResetType, number | null>
+  >(
     () => ({
       FIVE_HOUR: resolveAutomaticCompletedAt(fiveHourEntry),
       WEEK: resolveAutomaticCompletedAt(weekEntry),
@@ -527,11 +529,12 @@ export function ChatContextUsage({
     sourceKey: resetSourceKey,
     completedAtByType: automaticCompletionCandidateByType,
   };
-  const [autoPlayReservationRetryTick, setAutoPlayReservationRetryTick] = useState(0);
+  const [autoPlayReservationRetryTick, setAutoPlayReservationRetryTick] =
+    useState(0);
 
-  // Before Main returns the claim winner, Composer may already have unmounted or changed source. First get a temporary reservation with a token;
-  // commit played only if the component and candidate remain valid and are about to be displayed. Release an invalid winner;
-  // a busy loser retains observedAt and retries after a real played broadcast or reservation release.
+  // Main 返回 claim winner 前 Composer 可能已经卸载或切换 source。现在先获取带 token
+  // 的临时 reservation，只有组件与候选仍有效且即将展示时才 commit played；失效 winner release，
+  // busy loser 保留 observedAt，等待真实 played 广播或 reservation 释放后重试。
   useEffect(() => {
     let active = true;
     const retryTimers: Array<ReturnType<typeof setTimeout>> = [];
@@ -542,18 +545,22 @@ export function ChatContextUsage({
       completedAtByType: {
         FIVE_HOUR:
           sameSource &&
-          previous.completedAtByType.FIVE_HOUR === automaticCompletionCandidateByType.FIVE_HOUR
+          previous.completedAtByType.FIVE_HOUR ===
+            automaticCompletionCandidateByType.FIVE_HOUR
             ? previous.completedAtByType.FIVE_HOUR
             : null,
         WEEK:
-          sameSource && previous.completedAtByType.WEEK === automaticCompletionCandidateByType.WEEK
+          sameSource &&
+          previous.completedAtByType.WEEK ===
+            automaticCompletionCandidateByType.WEEK
             ? previous.completedAtByType.WEEK
             : null,
       },
     };
     if (
       previous.sourceKey !== synchronized.sourceKey ||
-      previous.completedAtByType.FIVE_HOUR !== synchronized.completedAtByType.FIVE_HOUR ||
+      previous.completedAtByType.FIVE_HOUR !==
+        synchronized.completedAtByType.FIVE_HOUR ||
       previous.completedAtByType.WEEK !== synchronized.completedAtByType.WEEK
     ) {
       claimedAutomaticCompletionRef.current = synchronized;
@@ -562,11 +569,15 @@ export function ChatContextUsage({
 
     for (const resetType of CODING_PLAN_QUOTA_RESET_TYPES) {
       const completedAt = automaticCompletionCandidateByType[resetType];
-      if (completedAt === null || synchronized.completedAtByType[resetType] === completedAt) {
+      if (
+        completedAt === null ||
+        synchronized.completedAtByType[resetType] === completedAt
+      ) {
         continue;
       }
       void coordinateCodingPlanQuotaResetAutoPlay({
-        reserve: () => resetUi.reserveAutomaticCompletion(resetType, completedAt),
+        reserve: () =>
+          resetUi.reserveAutomaticCompletion(resetType, completedAt),
         isCurrent: () => {
           const latest = latestAutomaticCompletionCandidateRef.current;
           return (
@@ -633,8 +644,10 @@ export function ChatContextUsage({
     resetUi.reserveAutomaticCompletion,
   ]);
 
-  // Tooltip/confetti consumes only used_at values successfully claimed in this window that still match the current candidate.
-  const automaticCompletedAtByType = useMemo<Record<CodingPlanResetType, number | null>>(() => {
+  // Tooltip/撒花只消费本窗口已经 claim 成功且仍对应当前候选的 used_at。
+  const automaticCompletedAtByType = useMemo<
+    Record<CodingPlanResetType, number | null>
+  >(() => {
     if (claimedAutomaticCompletion.sourceKey !== resetSourceKey) {
       return { FIVE_HOUR: null, WEEK: null };
     }
@@ -657,22 +670,25 @@ export function ChatContextUsage({
     resetSourceKey,
   ]);
   const [resetTooltipNow, setResetTooltipNow] = useState(() => Date.now());
-  // Automatically completed used_at values already dismissed by hover (tracked by type). A different used_at for a new completion is shown again,
-  // so completing one type does not need to clear the dismissed state for the other type.
+  // 已被 hover 收起的自动完成 used_at(按类型记录)；新的自动完成 used_at 不同会自动重新展示,
+  // 因此某一类型完成时无需清空另一类型的收起状态。
   const [resetTooltipDismissed, setResetTooltipDismissed] =
     useState<CodingPlanQuotaResetAutoConfettiArms>({
       FIVE_HOUR: null,
       WEEK: null,
     });
-  // Automatically completed used_at values awaiting replayed confetti (tracked by type); after hover opens the panel, each corresponding quota bar bursts once at its “Reset” position.
-  const [armedAutoConfetti, setArmedAutoConfetti] = useState<CodingPlanQuotaResetAutoConfettiArms>({
-    FIVE_HOUR: null,
-    WEEK: null,
-  });
+  // 待补播撒花的自动完成 used_at(按类型记录)；hover 展开面板后由对应额度条「已重置」位置各迸发一次。
+  const [armedAutoConfetti, setArmedAutoConfetti] =
+    useState<CodingPlanQuotaResetAutoConfettiArms>({
+      FIVE_HOUR: null,
+      WEEK: null,
+    });
   const isTypeDismissed = useCallback(
     (resetType: CodingPlanResetType): boolean => {
       const completedAt = automaticCompletedAtByType[resetType];
-      return completedAt !== null && resetTooltipDismissed[resetType] === completedAt;
+      return (
+        completedAt !== null && resetTooltipDismissed[resetType] === completedAt
+      );
     },
     [automaticCompletedAtByType, resetTooltipDismissed],
   );
@@ -706,7 +722,7 @@ export function ChatContextUsage({
       isTypeDismissed,
     ],
   );
-  // If both types are in the automatic-notice phase, show the one observed more recently (closer to “just happened”).
+  // 两类同时处于自动提示阶段时，优先展示更晚被观察到的那一类（更贴近“刚刚发生”）。
   const activeResetType = useMemo<CodingPlanResetType | null>(() => {
     const candidates = CODING_PLAN_QUOTA_RESET_TYPES.filter(
       (resetType) => phaseByType[resetType] !== null,
@@ -715,23 +731,31 @@ export function ChatContextUsage({
       return null;
     }
     return candidates.reduce((chosen, resetType) => {
-      const chosenObserved = (chosen === "WEEK" ? weekEntry : fiveHourEntry)?.observedAt ?? 0;
-      const currentObserved = (resetType === "WEEK" ? weekEntry : fiveHourEntry)?.observedAt ?? 0;
+      const chosenObserved =
+        (chosen === "WEEK" ? weekEntry : fiveHourEntry)?.observedAt ?? 0;
+      const currentObserved =
+        (resetType === "WEEK" ? weekEntry : fiveHourEntry)?.observedAt ?? 0;
       return currentObserved > chosenObserved ? resetType : chosen;
     });
   }, [phaseByType, fiveHourEntry, weekEntry]);
-  const resetTooltipPhase = activeResetType ? phaseByType[activeResetType] : null;
+  const resetTooltipPhase = activeResetType
+    ? phaseByType[activeResetType]
+    : null;
   const activeEntry =
-    activeResetType === "WEEK" ? weekEntry : activeResetType === "FIVE_HOUR" ? fiveHourEntry : null;
+    activeResetType === "WEEK"
+      ? weekEntry
+      : activeResetType === "FIVE_HOUR"
+        ? fiveHourEntry
+        : null;
   const triggerTooltipKind = resolveContextTriggerTooltipKind(
     resetTooltipPhase,
     opportunityReminder?.phase ?? null,
   );
-  // The Tooltip Portal is attached to body, so workspace opacity/inert cannot hide it; it must follow the visibility of Root's settings tab.
+  // Tooltip Portal 位于 body，工作区的 opacity/inert 隐藏不了它；必须跟随 Root 的设置标签可见性。
   const resetStatusTooltipOpen = isWorkspaceVisible && triggerTooltipKind !== null && !contextOpen;
 
-  // On a new automatic/operational completion, restart the per-type timer for the “Resetting” phase and arm replayed confetti for that quota bar.
-  // Track each type separately so one completion does not affect the other; record dismissed by used_at so a new used_at is shown again.
+  // 发现新的自动/运营完成：按类型重新计时合成“正在重置”,并 arm 对应额度条补播撒花。
+  // 每类各自记录,一类完成不影响另一类；dismissed 按 used_at 记录,新 used_at 会自动重新展示。
   useEffect(() => {
     const armedByType: Partial<Record<CodingPlanResetType, number>> = {};
     for (const resetType of CODING_PLAN_QUOTA_RESET_TYPES) {
@@ -756,27 +780,31 @@ export function ChatContextUsage({
     }
   }, [automaticCompletedAtByType, fiveHourEntry, weekEntry, resetSourceKey]);
 
-  // A cross-window “already played” broadcast clears observedAt for an automatic completion currently being displayed. Clear any armed
-  // replayed confetti at the same time, or hovering the panel in this window would still play it and violate “play once across windows.”
+  // 跨窗口"已播"广播会把正在展示的自动完成 observedAt 置空；此时已 arm 的
+  // 补播撒花必须同步清除，否则本窗口 hover 面板时仍会撒花，违背“多窗口只播一次”。
   useEffect(() => {
     setArmedAutoConfetti((prev) =>
       pruneCodingPlanQuotaResetConfettiArms(prev, automaticCompletedAtByType),
     );
   }, [automaticCompletedAtByType]);
 
-  // When the synthesized “Resetting” phase expires, switch to “Reset” and keep it until hover dismisses it.
+  // 合成“正在重置”阶段到期后切换为“已重置”（随后一直保留直到 hover 收起）。
   useEffect(() => {
     const observedAt = activeEntry?.observedAt ?? null;
     if (resetTooltipPhase !== "processing" || observedAt === null) {
       return;
     }
-    const remaining = observedAt + CODING_PLAN_QUOTA_RESET_AUTOMATIC_PROCESSING_MS - Date.now();
-    const timer = window.setTimeout(() => setResetTooltipNow(Date.now()), Math.max(0, remaining));
+    const remaining =
+      observedAt + CODING_PLAN_QUOTA_RESET_AUTOMATIC_PROCESSING_MS - Date.now();
+    const timer = window.setTimeout(
+      () => setResetTooltipNow(Date.now()),
+      Math.max(0, remaining),
+    );
     return () => window.clearTimeout(timer);
   }, [resetTooltipPhase, activeEntry?.observedAt]);
 
-  // When the user hovers the trigger to open the quota panel, mark **each type** currently in the automatic-notice phase as dismissed,
-  // and let its corresponding reset item replay confetti from the same position (both types may be in the notice phase simultaneously).
+  // 用户 hover 触发器展开额度面板：把当前处于自动提示阶段的**每一类**都标记收起,
+  // 交由面板内对应重置项从同一位置补播撒花(两类可能同时处于提示阶段)。
   useEffect(() => {
     if (!contextOpen) {
       return;
@@ -823,7 +851,10 @@ export function ChatContextUsage({
     });
   }, []);
 
-  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const numberFormatter = useMemo(
+    () => new Intl.NumberFormat(locale),
+    [locale],
+  );
   const contextUsageLabel = useMemo(() => {
     if (!renderableTaskUsage) {
       return null;
@@ -838,17 +869,17 @@ export function ChatContextUsage({
     );
   }, [intl, numberFormatter, renderableTaskUsage]);
   const cacheHitRateLabel = useMemo(() => {
-    return formatContextCacheHitRateLabel(renderableTaskUsage?.cache?.hitRate, locale, {
-      showBelowThreshold: import.meta.env.DEV,
-    });
+    return formatContextCacheHitRateLabel(
+      renderableTaskUsage?.cache?.hitRate,
+      locale,
+      {
+        showBelowThreshold: import.meta.env.DEV,
+      },
+    );
   }, [locale, renderableTaskUsage]);
   const breakdownSegments = useMemo(
-    () =>
-      buildContextUsageBreakdownSegments(
-        renderableTaskUsage?.breakdown,
-        renderableTaskUsage?.used ?? 0,
-      ),
-    [renderableTaskUsage?.breakdown, renderableTaskUsage?.used],
+    () => buildContextUsageBreakdownSegments(renderableTaskUsage?.breakdown),
+    [renderableTaskUsage?.breakdown],
   );
   const progressSegments = useMemo(
     () => buildContextUsageProgressSegments(breakdownSegments),
@@ -863,33 +894,6 @@ export function ChatContextUsage({
     [locale],
   );
 
-  // Tone mirrors the runtime compaction policy (see packages/shared/src/contextBudgetPolicy.ts):
-  // warning and critical report reached thresholds; runtime may still skip the compaction action.
-  const contextTone = renderableTaskUsage
-    ? resolveContextBudgetTone({
-        autoCompactThresholdTokens:
-          renderableTaskUsage.autoCompactThresholdAuthoritative === true
-            ? renderableTaskUsage.autoCompactThresholdTokens
-            : undefined,
-        contextWindow: renderableTaskUsage.size,
-        microcompactThresholdTokens: renderableTaskUsage.microcompactThresholdTokens,
-        usedTokens: renderableTaskUsage.used,
-      })
-    : "normal";
-  const autoCompactThresholdTokens = !renderableTaskUsage
-    ? null
-    : renderableTaskUsage.autoCompactThresholdAuthoritative === true
-      ? typeof renderableTaskUsage.autoCompactThresholdTokens === "number"
-        ? renderableTaskUsage.autoCompactThresholdTokens
-        : null
-      : getAutoCompactThresholdTokens({ contextWindow: renderableTaskUsage.size });
-  const autoCompactLabel =
-    renderableTaskUsage && autoCompactThresholdTokens !== null
-      ? `≈${formatContextUsageTokenCount(autoCompactThresholdTokens, locale)} (${percentageFormatter.format(
-          autoCompactThresholdTokens / renderableTaskUsage.size,
-        )})`
-      : null;
-
   if (
     (!renderableTaskUsage || !contextUsageLabel) &&
     !hasCodingPlanUsageRemaining &&
@@ -899,7 +903,10 @@ export function ChatContextUsage({
   }
 
   const usagePercent = renderableTaskUsage
-    ? Math.min(Math.max(renderableTaskUsage.used / renderableTaskUsage.size, 0), 1)
+    ? Math.min(
+        Math.max(renderableTaskUsage.used / renderableTaskUsage.size, 0),
+        1,
+      )
     : 0;
   const compactTokenUsageLabel = renderableTaskUsage
     ? formatContextUsageSummary({
@@ -916,12 +923,6 @@ export function ChatContextUsage({
       : intl.formatMessage({
           id: "settings.modelProvider.startPlan.balance.title",
         }));
-  const triggerAccessibleLabel =
-    contextTone === "warning"
-      ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.warning" })}`
-      : contextTone === "critical"
-        ? `${triggerLabel}. ${intl.formatMessage({ id: "chat.contextUsage.tone.critical" })}`
-        : triggerLabel;
   const contextUsedTokens = renderableTaskUsage?.used ?? 0;
   const contextMaxTokens = renderableTaskUsage?.size ?? 1;
 
@@ -934,7 +935,9 @@ export function ChatContextUsage({
     >
       <ControlHintTooltip
         className={
-          triggerTooltipKind === "reset-status" ? undefined : "bg-background py-0.5 pr-0.5"
+          triggerTooltipKind === "reset-status"
+            ? undefined
+            : "bg-background py-0.5 pr-0.5"
         }
         open={resetStatusTooltipOpen}
         side="top"
@@ -957,29 +960,30 @@ export function ChatContextUsage({
           ) : null
         }
       >
-        {/* Bugfix: The span hosts ControlHintTooltip’s asChild anchor while the inner ContextTrigger remains the HoverCard trigger, avoiding two Radix overlays attaching refs to the same DOM node. Manual-redemption processing is shown by the “Reset” button inside the popover, not as a spinner on the trigger. */}
+        {/* Bugfix：span 承载 ControlHintTooltip 的 asChild 锚点，内部 ContextTrigger 仍作为
+            HoverCard 触发器，避免两个 Radix 浮层在同一 DOM 上叠加 ref。手动核销的
+            processing 由弹层内「重置」按钮自身展示，触发器不转圈。 */}
         <span className="inline-flex shrink-0">
           <ContextTrigger
-            aria-label={triggerAccessibleLabel}
+            aria-label={triggerLabel}
             className={cn(
               "text-foreground-subtle",
-              resolveContextTriggerToneClassName(contextTone, opportunityTriggerTone),
               opportunityTriggerTone === "available" && "text-success",
-              opportunityTriggerTone === "urgent" && "bg-warning/10 text-warning",
+              opportunityTriggerTone === "urgent" &&
+                "bg-warning/10 text-warning",
             )}
             data-chat-toolbar-popover-trigger="true"
-            data-usage-tone={contextTone}
             data-testid={TID_CHAT_CONTEXT_USAGE_TRIGGER}
             onPointerDown={(event) => {
-              // Radix HoverCard prevents the following click during touchstart, so the panel cannot open on mobile.
-              // Open it during touch pointerdown while keeping the existing hover/focus behavior on desktop.
+              // Radix HoverCard 会在 touchstart 中阻止后续 click，手机端无法打开面板；
+              // 在触摸 pointerdown 阶段先打开，桌面端继续保持原有 hover/focus 语义。
               if (
                 !event.defaultPrevented &&
                 event.pointerType === "touch" &&
                 typeof window !== "undefined" &&
                 window.matchMedia?.("(hover: none)").matches
               ) {
-                // Use the controlled open handler so touch opening also triggers quota access refresh and refresh-state feedback.
+                // 统一走受控 open handler，确保触摸打开也会触发额度 access 刷新和刷新态反馈。
                 if (!contextOpen) {
                   handleContextOpenChange(true);
                 }
@@ -994,8 +998,8 @@ export function ChatContextUsage({
         sideOffset={2}
       >
         <ContextContentBody className="space-y-3">
-          {/* Bugfix: the default ai-elements Header hardcodes a title and splits the summary into a separate header.
-          The toolbar context hover needs only one compact info panel, with the summary and details together in the body. */}
+          {/* Bugfix: 默认 ai-elements Header 会硬编码标题并把摘要拆到独立头部。
+          工具栏上下文 hover 只需要一块紧凑信息面板，摘要和明细统一放在 body 里。 */}
           {renderableTaskUsage && compactTokenUsageLabel ? (
             <div className="space-y-2">
               <div className="flex min-w-0 mb-3 items-center gap-3">
@@ -1012,17 +1016,10 @@ export function ChatContextUsage({
                 segments={progressSegments}
                 value={usagePercent * PERCENT_MAX}
               />
-              {autoCompactLabel ? (
-                <div className="flex items-center justify-between gap-3 text-ui-sm">
-                  <span className="text-foreground-subtle">
-                    {intl.formatMessage({ id: "chat.contextUsage.autoCompact" })}
-                  </span>
-                  <span className="font-mono text-ui-sm text-foreground">{autoCompactLabel}</span>
-                </div>
-              ) : null}
             </div>
           ) : null}
-          {renderableTaskUsage && (breakdownSegments.length > 0 || cacheHitRateLabel) ? (
+          {renderableTaskUsage &&
+          (breakdownSegments.length > 0 || cacheHitRateLabel) ? (
             <>
               {breakdownSegments.length > 0 ? (
                 <div
@@ -1047,11 +1044,8 @@ export function ChatContextUsage({
                             id: BREAKDOWN_SOURCE_LABEL_ID[segment.source],
                           })}
                         </span>
-                        {/* Row tokens are the row's share of the header's used tokens, never raw chars, so rows sum to the header total. */}
-                        <span className="ml-auto min-w-12 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground-subtle">
-                          {formatContextUsageTokenCount(segment.tokens, locale)}
-                        </span>
-                        <span className="min-w-10 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground">
+                        {/* Bugfix: breakdown 行只展示占比，分项 token 数会和顶部总量口径混在一起造成误读。 */}
+                        <span className="ml-auto min-w-10 shrink-0 text-right font-mono text-ui-sm tabular-nums text-foreground">
                           {percentageFormatter.format(segment.percent)}
                         </span>
                       </div>
@@ -1063,7 +1057,8 @@ export function ChatContextUsage({
                 <div
                   className={cn(
                     "flex items-center justify-between gap-3 text-ui-sm",
-                    breakdownSegments.length > 0 && "border-t border-border pt-3",
+                    breakdownSegments.length > 0 &&
+                      "border-t border-border pt-3",
                   )}
                 >
                   <span className="text-foreground-subtle">
@@ -1071,7 +1066,9 @@ export function ChatContextUsage({
                       id: "chat.contextUsage.cacheHitRate",
                     })}
                   </span>
-                  <span className="font-mono text-ui-sm text-foreground">{cacheHitRateLabel}</span>
+                  <span className="font-mono text-ui-sm text-foreground">
+                    {cacheHitRateLabel}
+                  </span>
                 </div>
               ) : null}
             </>
@@ -1094,7 +1091,8 @@ export function ChatContextUsage({
               intl={intl}
               locale={locale}
               separated={Boolean(
-                (renderableTaskUsage && compactTokenUsageLabel) || hasCodingPlanUsageRemaining,
+                (renderableTaskUsage && compactTokenUsageLabel) ||
+                hasCodingPlanUsageRemaining,
               )}
             />
           ) : null}

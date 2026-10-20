@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The file-tree model centralizes path handling, sorting, and image/media preview source construction. */
+/* eslint-disable max-lines -- 文件树模型集中维护路径、排序、图片和媒体预览 source 构造。 */
 import type { FileEntry, GitFileChange, GitRepositorySummary } from "@zcode/shared";
 import { getPathLeaf } from "@/lib/path.js";
 import { inferImageMediaType, inferMediaPreview, type CodeViewerSource } from "@/lib/codeViewer.js";
@@ -72,8 +72,8 @@ export function buildWorkspaceFileGitStatusByPath(
     const pathKey = normalizeForGitStatusPath(change.path);
     const nextStatus = resolveWorkspaceFileGitStatus(change);
     const existingStatus = statusByPath.get(pathKey);
-    // Fix: The file tree previously collapsed all Git changes to M/U, losing staged added/deleted/renamed
-    // states in the tree. Preserve the higher-priority state here and support a file having both staged and unstaged records.
+    // 修复：文件树之前把 Git 改动统一压成 M/U，导致 staged added/deleted/renamed
+    // 在树里丢失真实状态。这里保留优先级更高的状态，兼容同一文件同时存在 staged/unstaged 记录。
     if (
       existingStatus &&
       WORKSPACE_FILE_GIT_STATUS_PRIORITY[existingStatus] >=
@@ -91,8 +91,8 @@ export function buildWorkspaceFileGitStatusByPath(
 export function isWorkspaceFileTreeGitStatusAvailable(
   summary: Pick<GitRepositorySummary, "isGitAvailable" | "isRepository">,
 ): boolean {
-  // Fix: `getChanges()` also returns an empty array outside a Git workspace, so “read succeeded”
-  // must not be treated as Git status being available. Show change filtering only when Git is executable and the current workspace is a repository.
+  // 修复：`getChanges()` 在非 Git workspace 里也会返回空数组，不能把“读取成功”
+  // 当成 Git 状态可用。文件树只在 Git 可执行且当前 workspace 属于仓库时展示变更过滤。
   return summary.isGitAvailable && summary.isRepository;
 }
 
@@ -124,8 +124,8 @@ export function isWorkspaceFileTreeDeletedFile(
 export function isWorkspaceFileTreeAutoFlattenableDirectory(
   node: Pick<WorkspaceFileTreeNode, "type" | "isSymbolicLink"> | undefined,
 ): node is WorkspaceFileTreeNode {
-  // A symlink directory can be displayed and opened manually, but must not participate in automatic empty-directory-chain expansion;
-  // self/parent symlinks can defeat path-string deduplication and cause endless loading of linked-dir/linked-dir/....
+  // 软链接目录可以展示并手动进入，但不能参与空目录链自动展开；
+  // self/parent symlink 会让路径字符串去重失效，持续加载 linked-dir/linked-dir/...。
   return node?.type === "directory" && node.isSymbolicLink !== true;
 }
 
@@ -147,9 +147,9 @@ export function getWorkspaceDirectoryGitStatuses(
 
   return [...statuses].sort(
     (left, right) =>
-      // Fix: directory descendants previously reused file-status merge priority, allowing U/A/D to override M.
-      // VS Code's Git resource priority puts modified above added/deleted/renamed/untracked;
-      // directory aggregation only determines the folder-dot style, so use this decoration priority separately.
+      // 修复：目录 descendant 之前沿用了文件状态合并优先级，导致 U/A/D 会盖过 M。
+      // VS Code 的 Git resource priority 是 modified 高于新增/删除/重命名/未跟踪，
+      // 目录聚合只决定文件夹圆点样式，因此单独使用这套 decoration 优先级。
       WORKSPACE_FILE_GIT_DIRECTORY_STATUS_PRIORITY[right] -
       WORKSPACE_FILE_GIT_DIRECTORY_STATUS_PRIORITY[left],
   );
@@ -198,8 +198,8 @@ export function addDeletedGitStatusRowsToWorkspaceFileTree(params: {
       return left.name.localeCompare(right.name);
     });
 
-    // Fix: deleted files are no longer in the filesystem, so readdir alone cannot create a row,
-    // leaving the file tree with only an aggregate directory dot and no individual D status.
+    // 修复：deleted 文件已不在文件系统里，单靠 readdir 无法生成行，
+    // 导致文件树只能在目录上显示聚合点，看不到具体文件的 D 状态。
     nextChildrenByDirectory ??= new Map(params.childrenByDirectory);
     nextChildrenByDirectory.set(parentDirectory, nextChildren);
   }

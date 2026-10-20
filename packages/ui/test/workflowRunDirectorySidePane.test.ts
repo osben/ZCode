@@ -1,28 +1,23 @@
 // @vitest-environment jsdom
 
-// The dwf run directory page (docs/dynamic-workflow/presentation.md "Other places a run appears"):
-// task island footer row → (this file) → the existing `workflow-run` detail page, isomorphic to the subagent's
-// three-step shape.
+// dwf run 目录页（docs/dynamic-workflow/presentation.md「Other places a run appears」）：
+// 任务岛页脚行 →（本文件）→ 已有的 `workflow-run` 详情页，与 subagent 的三步形状同构。
 //
-// The bucketing/pruning/truncation rules are exhaustively covered in workflowRunDirectoryModel.test.ts, and the
-// fetch/retry semantics in
-// useWorkflowRunJournalSummaries.test.ts; this file only pins "those results really reached the DOM",
-// what a row click emits, and that the three empty states are distinguishable on screen.
+// 分桶/剔除/截断的规则在 workflowRunDirectoryModel.test.ts 里穷举，取数与重试语义在
+// useWorkflowRunJournalSummaries.test.ts 里；这里只钉「那些结果真的接到了 DOM 上」、
+// 行点击发出什么，以及三种空态在屏幕上可分辨。
 import { createElement, useEffect, useState, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { V4ConversationWorkflowRunSummary } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowRunDirectorySidePaneTab } from "@/lib/workspaceSidePane.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), warn: vi.fn() },
 }));
 
-// Lease and projection: the page uses the projection **only as a freshness trigger** (rows still render only
-// journal summaries).
-// layer must be a stable reference — the lease effect depends on it, and a fresh object every render would
-// become an infinite loop.
+// 租约与投影：页面拿投影**只当新鲜度触发器**（行仍然只渲染 journal 摘要）。
+// layer 必须是稳定引用——租约 effect 以它为依赖，每次渲染换新对象会打成无限循环。
 const release = vi.fn();
 const acquire = vi.fn(() => ({ release }));
 const layer = { acquire };
@@ -33,11 +28,9 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
 }));
 
 let snapshot: { workflowRuns?: { revision: number; runs: unknown[] } } | null = null;
-// The projection stub must **really push**: the content component under test is memoized, so a rerender with
-// unchanged props won't re-render it at all.
-// A stub reading a module variable would therefore fake "the projection updated but the UI didn't react" —
-// exactly the shape of the bug this round fixes, and the stub must not manufacture it itself. A minimal
-// subscription is used here, matching production useConversationProjection's semantics.
+// 投影桩必须**真的会推**：被测内容组件是 memo 的，props 不变时 rerender 根本不会重渲染它。
+// 读模块变量的桩因此会假装「投影更新了但界面没反应」——那正好是本轮要修的 bug 的形状，
+// 桩不能自己制造它。这里用一个最小订阅，与生产里 useConversationProjection 的语义一致。
 const projectionListeners = new Set<() => void>();
 function pushProjection(next: typeof snapshot) {
   snapshot = next;
@@ -57,12 +50,9 @@ vi.mock("@/v4/useConversationProjection.js", () => ({
   },
 }));
 
-// The fetch hook is stubbed: its own behavior (capability-absent terminal state, live retry, refreshKey) has
-// dedicated cases;
-// what's pinned here is **what the page asks it for** (limit must be the same depth as the task island count,
-// otherwise the two places' scopes diverge;
-// refreshKey must really be wired, otherwise finished runs stay "running" forever) and what each of the three
-// returns looks like.
+// 取数 hook 换成桩：它自己的行为（能力缺席终局、live 重试、refreshKey）有专属用例，
+// 这里要钉的是**页面向它要了什么**（limit 必须与任务岛计数同深度，否则两处口径会分叉；
+// refreshKey 必须真的接上，否则跑完的 run 永远留在「运行中」）以及三种返回长什么样。
 let summaries: readonly V4ConversationWorkflowRunSummary[] | null = null;
 let optionsSeen:
   | { sessionId: string | null; live: boolean; limit?: number; refreshKey?: number | string }
@@ -81,7 +71,7 @@ vi.mock("@/hooks/useWorkflowRunJournalSummaries.js", () => ({
   },
 }));
 
-// eslint-disable-next-line import/first -- the component under test must be imported after all mocks.
+// eslint-disable-next-line import/first -- 必须在全部 mock 之后再引入被测组件。
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowRunDirectorySidePane } from "@/app-shell/WorkflowRunDirectorySidePane.js";
@@ -113,7 +103,7 @@ function summary(
   };
 }
 
-/** The trigger-side input: a run in the projection (only identity and status matter for the key). */
+/** 触发器那一侧的输入：投影里的 run（只有身份与状态对键有意义）。 */
 function projectionRun(runId: string, status: "running" | "pending" | "completed" | "errored") {
   return {
     runId,
@@ -168,11 +158,10 @@ describe("WorkflowRunDirectorySidePane", () => {
     expect(optionsSeen?.limit).toBe(WORKFLOW_RUN_DIRECTORY_LIMIT);
   });
 
-  // ── Auto-refresh (measured bug: a finished run doesn't move itself to "ended") ──
+  // ── 自动刷新（实测 bug：跑完的 run 不会自己挪到「已结束」）──
   //
-  // The broken shape is "the page has no signal at all": the hook settles on its first answer and that page
-  // freezes for the pane's remaining life.
-  // So what's pinned here is **the signal being wired**, not any specific key value.
+  // 失效的形状是「页面一个信号都没有」：hook 首答即收口，那一页在 pane 的余生里冻住。
+  // 所以这里钉的是**信号接上了**，而不是某个具体键值。
 
   it("把投影派生出的 refreshKey 交给取数 hook（缺了它那一页会永远冻住）", () => {
     summaries = [];
@@ -191,7 +180,7 @@ describe("WorkflowRunDirectorySidePane", () => {
     expect(rows(pane, "running").map((row) => row.getAttribute("data-run-id"))).toEqual(["r-1"]);
     const keyWhileRunning = optionsSeen?.refreshKey;
 
-    // Engine settles → projection flips to terminal; the journal's next answer then moves this run to ended.
+    // 引擎结算 → 投影翻终态；journal 的下一答随之把这条 run 归到已结束。
     act(() => {
       summaries = [summary({ runId: "r-1", status: "completed" })];
       pushProjection({ workflowRuns: { revision: 2, runs: [projectionRun("r-1", "completed")] } });
@@ -207,7 +196,7 @@ describe("WorkflowRunDirectorySidePane", () => {
     snapshot = { workflowRuns: { revision: 1, runs: [projectionRun("r-1", "running")] } };
     renderPane();
 
-    // The same run still running, just one more node settled (revision raised too) — the key must not move.
+    // 同一个 run 在跑，只是又结算了一个节点（revision 也抬了）——键必须不动。
     act(() => {
       pushProjection({
         workflowRuns: {
@@ -331,13 +320,12 @@ describe("WorkflowRunDirectorySidePane", () => {
     expect(onlyRunning.getByTestId("workflow-run-directory-ended-empty")).toBeTruthy();
     cleanup();
 
-    // Capability absent / not yet queried: the hook gives null. **Not** "nothing ran", so the empty-state copy
-    // must not be borrowed.
+    // 能力缺席 / 还没查到：hook 给 null。**不是**「没有运行」，所以不能借用空态文案。
     summaries = null;
     const unavailable = renderPane();
     expect(unavailable.getByTestId("workflow-run-directory-unavailable")).toBeTruthy();
     expect(unavailable.queryByTestId("workflow-run-directory-empty")).toBeNull();
-    // Not an error either: no alert, no failure tone on screen.
+    // 也不是报错：没有 alert，屏幕上不出现失败语气。
     expect(unavailable.container.querySelector("[role='alert']")).toBeNull();
   });
 
@@ -346,14 +334,13 @@ describe("WorkflowRunDirectorySidePane", () => {
       summary({ runId: "r-run", status: "running" }),
       summary({ runId: "r-fail", status: "errored" }),
     ];
-    const pane = renderPane();
+    const pane = renderPane("zh-CN");
 
-    // The section title is a combined "title · count" node, so match by substring (the count itself has its own
-    // testid).
-    expect(pane.container.textContent).toContain(expectedCopy("workflowDirectory.running"));
-    expect(pane.container.textContent).toContain(expectedCopy("workflowDirectory.ended"));
+    // 分区标题是「标题 · 计数」的组合节点，所以按子串匹配（计数本身另有 testid）。
+    expect(pane.getByText(/正在运行/)).toBeTruthy();
+    expect(pane.getByText(/已结束/)).toBeTruthy();
     expect(
       (pane.container.querySelector("[data-run-id='r-fail']") as HTMLElement).textContent,
-    ).toContain(expectedCopy("chat.toolCall.workflow.run.status.errored"));
+    ).toContain("出错");
   });
 });

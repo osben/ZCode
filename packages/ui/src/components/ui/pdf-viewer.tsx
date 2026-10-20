@@ -15,19 +15,19 @@ import { createPdfJsDocumentOptions } from "@/lib/pdfJsAssets.js";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
-// Matches the service layer's default readFileRange chunk size; each range request maps to one RPC call.
+// 与 service 层 readFileRange 的默认分段大小对齐，一次 range 请求对应一次 RPC 调用。
 const RANGE_CHUNK_BYTES = 256 * 1024;
 
-// ReportLab Type0 fonts such as STSong-Light declare only a predefined CMap and do not embed
-// the character mapping; native browser PDF previews include this resource, while PDF.js requires an explicit cMapUrl.
-// Resolve it using Vite base so Desktop file:// and Web/mobile remote-control subpath deployments each load their own static resources.
+// ReportLab 的 STSong-Light 等 Type0 字体只声明预定义 CMap，PDF 内并未嵌入
+// 字符映射；浏览器原生 PDF 预览自带该资源，而 PDF.js 必须显式传入 cMapUrl。
+// 使用 Vite base 解析，Desktop 的 file:// 与 Web/手机远控的子路径部署都读取各自静态资源。
 const DOCUMENT_OPTIONS = createPdfJsDocumentOptions(
   typeof import.meta.env?.BASE_URL === "string" ? import.meta.env.BASE_URL : "./",
   globalThis.location?.href ?? "http://localhost/",
 );
 
-// Range mode disables whole-document prefetch and streaming to keep the "fetch only needed pages" behavior; module-level constants keep references stable,
-// preventing react-pdf from reloading the document when the options reference changes.
+// range 模式关闭整档预取与流式加载，保持“只拉需要的页”；模块级常量保证引用稳定，
+// 避免 react-pdf 因 options 引用变化重新加载文档。
 const RANGE_DOCUMENT_OPTIONS = {
   ...DOCUMENT_OPTIONS,
   disableAutoFetch: true,
@@ -111,8 +111,8 @@ function normalizePdfSource(
     return source;
   }
 
-  // pdf.js transfers binary data to the worker, detaching the original buffer;
-  // make a copy so callers can reuse the same data to reopen the preview without errors.
+  // pdf.js 会把二进制数据 transfer 给 worker，导致原 buffer detached；
+  // 复制一份，保证调用方复用同一份数据重新打开预览时不会报错。
   if (source instanceof ArrayBuffer) {
     return { data: new Uint8Array(source.slice(0)) };
   }
@@ -124,8 +124,8 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pageInput, setPageInput] = useState("1");
-  // renderScale is the value actually passed to <Page>; displayScale is the target zoom shown to the user,
-  // update only displayScale during a zoom gesture (CSS transform preview), then commit it to renderScale after the gesture pauses.
+  // renderScale 是真正传给 <Page> 的值；displayScale 是用户看到的目标倍率，
+  // 缩放手势期间只更新 displayScale（CSS transform 预览），停顿后再提交给 renderScale。
   const [renderScale, setRenderScale] = useState(pdfZoom.DEFAULT_SCALE);
   const [displayScale, setDisplayScale] = useState(pdfZoom.DEFAULT_SCALE);
   const [pageIntrinsicSize, setPageIntrinsicSize] = useState<pdfZoom.PdfPageSize | null>(null);
@@ -158,7 +158,7 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
 
   useEffect(() => {
     return () => {
-      // Abort range transfers when switching or unmounting a document, so pdf.js stops waiting for unfinished chunk requests
+      // 文档切换/卸载时中止 range 传输，让 pdf.js 停止等待未完成的分段请求
       rangeTransport?.abort();
     };
   }, [rangeTransport]);
@@ -198,7 +198,7 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
 
   const handlePageRenderSuccess = useCallback(
     (completedScale: number, originalWidth: number, originalHeight: number) => {
-      // A prior react-pdf render task may call back after a new scale is committed; do not let the old callback remove the overlay early.
+      // react-pdf 的旧 render task 可能在新倍率提交后才回调，不能让旧回调提前移除覆盖层。
       if (Math.abs(completedScale - renderScaleRef.current) > 0.001) {
         return;
       }
@@ -231,7 +231,7 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
 
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      // Preserve arrow-key cursor behavior inside the page-number input.
+      // 页码输入框内保留方向键的光标语义
       if ((event.target as HTMLElement).tagName === "INPUT") {
         return;
       }
@@ -273,19 +273,19 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
     const pageViewport = pageViewportRef.current;
     pendingZoomAnchorRef.current = null;
     if (anchor && container && pageViewport) {
-      // Correct after committing the zoom layout so the content point under the pointer stays stable when crossing the "centered / horizontal-scroll" boundary.
+      // 缩放布局提交后再校正，跨越“居中 / 横向滚动”边界时也保持指针下的内容点稳定。
       pdfZoom.restorePdfZoomAnchor(container, pageViewport, anchor);
     }
   }, [displayScale, pageViewportRef]);
 
-  // After the gesture pauses, commit the preview scale once for <Page> to rerender; each displayScale change resets the timer.
+  // 手势停顿后把预览倍率一次性提交给 <Page> 重渲染；displayScale 每次变化都会重置计时器。
   useEffect(() => {
     if (displayScale === renderScale) {
       return;
     }
     const timer = window.setTimeout(() => {
-      // When the scale key changes, react-pdf unmounts the old canvas and hides the new canvas until drawing is complete.
-      // Copy the current bitmap as a double-buffer overlay before committing, and keep it until the new canvas fires onRenderSuccess.
+      // react-pdf 会在 scale key 变化时卸载旧 canvas，并隐藏尚未绘制完成的新 canvas。
+      // 提交前复制当前位图作为双缓冲覆盖层，直到新 canvas 的 onRenderSuccess 到达。
       const pageViewport = pageViewportRef.current;
       if (pageViewport) {
         stageZoomOverlay(pageViewport.offsetWidth, pageViewport.offsetHeight);
@@ -306,12 +306,12 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
 
     const zoomWithAppleModifier = isAppleKeyboardPlatform();
     const handleWheelZoom = (event: WheelEvent) => {
-      // Bind command on macOS and ctrl on other platforms (Windows/Linux).
+      // macOS 绑定 command，其余平台（Windows/Linux）绑定 ctrl
       const zoomModifierPressed = zoomWithAppleModifier ? event.metaKey : event.ctrlKey;
       if (!zoomModifierPressed) {
         return;
       }
-      // Modifier + wheel is reserved for zoom gestures and no longer scrolls page content.
+      // 修饰键 + 滚轮独占为缩放手势，不再滚动页面内容
       event.preventDefault();
       if (event.deltaY === 0) {
         return;
@@ -322,8 +322,8 @@ export function PdfViewer({ source, labels, onLoadError, className, ...props }: 
       );
     };
 
-    // React delegates onWheel as a passive listener on the root, so preventDefault has no effect;
-    // attach a non-passive native listener here to prevent the page from scrolling during zoom.
+    // React 的 onWheel 委托在 root 上是 passive 监听，preventDefault 不生效；
+    // 这里直接挂非 passive 的原生监听，避免缩放时页面同时滚动。
     container.addEventListener("wheel", handleWheelZoom, { passive: false });
     return () => {
       container.removeEventListener("wheel", handleWheelZoom);

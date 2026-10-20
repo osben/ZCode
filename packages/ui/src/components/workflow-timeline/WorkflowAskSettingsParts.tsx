@@ -1,11 +1,8 @@
 // ============================================================
-// Parts for the confirmation window's two setting sentences (docs/dynamic-workflow/presentation.md
-// "The confirmation window")
+// 确认窗两句设置的零件（docs/dynamic-workflow/presentation.md「The confirmation window」）
 // ============================================================
-// Split out of WorkflowAskSettingsLines.tsx (max-lines gate): the class names shared by both
-// sentences, the "· was X ↺" tail, the upper-bound sentence, and the plain-text conditional row used
-// when the block is absent (older agent). State lives in WorkflowAskSettings; the components here only
-// receive fully prepared values.
+// 从 WorkflowAskSettingsLines.tsx 拆出（max-lines 门）：两句共用的类名与「· 原为 X ↺」尾巴、上界那一句、
+// 以及块缺席（旧 agent）时的纯文本条件行。状态都在 WorkflowAskSettings 里，这里的组件只收烹熟的值。
 
 import { MinusIcon, PlusIcon, Undo2Icon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -19,14 +16,14 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { clampWorkflowRunSettingsBound } from "./workflowRunSettings.js";
 
-/** An in-sentence value rendered as a chip: normally a small surface; the border and input background appear only on hover (the composer model trigger's vocabulary). */
+/** 句中的值画成一枚芯片：平时是一小块 surface，悬停才出边框与输入底色（composer 模型触发器的语汇）。 */
 export const WORKFLOW_ASK_CHIP_CLASS_NAME =
   "h-6 min-w-0 max-w-[260px] gap-1 rounded-md border border-transparent bg-surface pl-[7px] pr-1 text-ui-sm text-foreground hover:border-border-hover hover:bg-input focus-visible:border-input-border-focused data-[state=open]:border-border-hover data-[state=open]:bg-input [&_svg]:size-3";
 export const WORKFLOW_ASK_LINE_CLASS_NAME =
   "flex min-h-6 min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-ui-sm text-foreground-subtle";
 export const WORKFLOW_ASK_TAIL_CLASS_NAME = "text-foreground-subtlest";
 
-/** "· was X ↺": only on changed rows; ↺ puts the row back to its starting value. */
+/** 「· 原为 X ↺」：改过的那一行才有；↺ 把这一行放回起点。 */
 export function WorkflowAskWasTail({
   disabled,
   onReset,
@@ -40,7 +37,7 @@ export function WorkflowAskWasTail({
 }) {
   const { intl } = useZCodeIntl();
   const resetLabel = intl.formatMessage({ id: "chat.permission.workflow.settings.reset" });
-  // Icon-only button: aria-label for screen readers, title for hover (spec: "restore original value").
+  // 按钮只有图标：aria-label 给读屏，title 给悬停（spec：「恢复原值」）。
   return (
     <span className={cn("inline-flex min-w-0 items-center gap-0.5", WORKFLOW_ASK_TAIL_CLASS_NAME)}>
       <span className="min-w-0 truncate" data-testid={`${testId}-was`}>
@@ -74,7 +71,7 @@ export function WorkflowAskBoundLine({
 }: {
   bound: number | null;
   changed: boolean;
-  /** Default concurrency D: only used to write "· default N" and to judge "= default", not the stepper's upper bound. */
+  /** 默认并发 D：只用来写「· 默认 N」与判「= 默认」，不是步进器的上界。 */
   defaultConcurrency: number | undefined;
   disabled: boolean;
   initial: number | null;
@@ -167,10 +164,8 @@ export function WorkflowAskBoundLine({
 }
 
 /**
- * Plain-text conditional rows when the block is absent (older agent): only fields set by the
- * invocation, model above and upper bound below, in the faintest `text-ui-xs`. Same order as the two
- * adjustable rows so old and new windows read as the same thing. The model shows its parsed name; the
- * canonical string goes only into the tooltip.
+ * 块缺席时的纯文本条件行（旧 agent）：只有调用设了的字段，模型在上、上界在下，`text-ui-xs` 最淡色。
+ * 与可调的两行同一个次序，好让新旧两种窗读起来是同一件事。模型说解析好的名字，规范串只进 tooltip。
  */
 export function WorkflowAskPlainSettings({
   maxConcurrency,
@@ -178,7 +173,7 @@ export function WorkflowAskPlainSettings({
   subagentModel,
 }: {
   maxConcurrency: number | undefined;
-  /** The script names a model for some subagents: the model sentence says "by default" (it no longer speaks for every subagent). */
+  /** 脚本给某些子代理点名了模型：模型那一句说「默认」（它不再替每一个子代理说话）。 */
   scriptNamesModels?: boolean;
   subagentModel: { text: string; tooltip: string } | undefined;
 }) {

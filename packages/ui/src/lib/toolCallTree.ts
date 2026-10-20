@@ -76,7 +76,6 @@ export function areTaskChatToolCallsRenderEqual(
     left.thought === right.thought &&
     left.error === right.error &&
     left.startedAt === right.startedAt &&
-    left.durationMs === right.durationMs &&
     areUnknownValuesEqual(left.input, right.input, { remaining: 500 }) &&
     areUnknownValuesEqual(left.output, right.output, { remaining: 500 }) &&
     areUnknownValuesEqual(left.raw, right.raw, { remaining: 500 }) &&
@@ -142,9 +141,8 @@ export function reconcileToolCallTree(
   for (const toolCall of toolCalls) {
     const previousNode = previousNodeById.get(toolCall.toolId);
     toolCallNodeById.set(toolCall.toolId, {
-      // Perf fix reason: streaming chunks rebuild the message array frequently. If a semantically
-      // unchanged toolCall got a new reference every round, ToolCallBlock's memo would be pierced
-      // by the fresh childToolCalls array.
+      // 性能修复原因：streaming chunk 会让消息数组频繁重建，语义未变的 toolCall
+      // 如果每轮都换引用，ToolCallBlock 的 memo 会被 childToolCalls 新数组击穿。
       toolCall:
         previousNode && areTaskChatToolCallsRenderEqual(previousNode.toolCall, toolCall)
           ? previousNode.toolCall
@@ -169,8 +167,7 @@ export function reconcileToolCallTree(
     if (parentNode) {
       parentNode.childToolCalls.push(node);
     } else {
-      // Fall back to root flattening when a child cannot find its parent, so a malformed parent id
-      // never makes the tool disappear.
+      // 子工具找不到父节点时回退到 root 平铺，避免异常 parent id 直接让工具消失。
       rootToolCalls.push(node);
     }
   }

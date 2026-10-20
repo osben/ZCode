@@ -36,8 +36,8 @@ export function resolveSidebarFooterProfilePlanBadge({
     return null;
   }
 
-  // The badge beside the avatar shows only confirmed entitlements. Show the individual plan tier when present; show the team only when there is no individual entitlement but a team entitlement exists.
-  // Do not use the current connection method or a stale selectedKey as a Team fallback, or switching families could show Team incorrectly.
+  // 头像旁徽标只展示已确认的权益。个人权益显示套餐等级；没有个人权益但有团队权益时才显示团队。
+  // 不能把当前连接方式或历史 selectedKey 当作 Team 兜底，否则切换 family 后会误显示 Team。
   return hasTeamPlanEntitlement ? { audience: "team" } : null;
 }
 

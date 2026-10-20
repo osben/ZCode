@@ -1,4 +1,4 @@
-/* oxlint-disable eslint(max-lines) -- Draft, validation, and sparse Overlay for the Model Config dialog must share one field mapping so the UI does not create a second set of rules. */
+/* oxlint-disable eslint(max-lines) -- Model Config 弹窗的 Draft、校验与稀疏 Overlay 必须共享同一字段映射，避免 UI 产生第二套规则。 */
 import type { ProviderSettingsFormModel } from "@/lib/providerSettingsFormTypes.js";
 import type { ModelInputFormatData } from "@zcode/shared/model-config";
 import {
@@ -17,9 +17,9 @@ export interface ProviderModelDraftValues {
   inputFormatValue: ProviderModelInputFormatDraft;
   enabledValue?: boolean;
   useRecommendedConfigValue?: boolean;
-  /** Clear the existing Overlay only when this Draft switches from fixed mode back to recommended mode. */
+  /** 仅在本次 Draft 从固定模式切回推荐模式时清空已有 Overlay。 */
   clearPersonalConfigValue?: boolean;
-  /** Field source represents user intent; it does not depend on whether the whole form is valid or the value happens to equal the recommendation. */
+  /** 字段来源是用户意图，不依赖整份表单是否有效或数值是否恰好等于推荐。 */
   overriddenFieldsValue?: readonly string[];
   supportsJsonSchemaOutputValue?: boolean;
   supportsNativeWebSearchValue?: boolean;
@@ -44,12 +44,12 @@ export type ProviderModelDraftCommitResult =
 export function createProviderModelDraftValues(
   model: ProviderSettingsFormModel,
 ): ProviderModelDraftValues {
-  // When configuration is incomplete, the editor is where users fix it, so do not throw before opening; keep numeric inputs empty and use conservative defaults for capability controls.
+  // 配置不完整时编辑器就是修复入口，不能在打开前抛错；数值保留空输入，能力控件用保守初值。
   const properties = model.config.properties ?? {};
   const inputFormat = properties?.inputFormat;
   return {
     idValue: model.modelId,
-    // The editor treats only Personal Overlay as real input; inherited values are displayed by the UI as placeholders.
+    // 编辑器只把 Personal Overlay 当作真实输入；继承值由 UI 作为 placeholder 展示。
     contextWindowValue:
       model.personalConfig.properties?.contextWindow == null
         ? ""
@@ -113,7 +113,7 @@ export function resolveProviderModelDraftCommit({
   draft: ProviderModelDraftValues;
 }): ProviderModelDraftCommitResult {
   if (draft.clearPersonalConfigValue && currentModel.inheritedConfig) {
-    // Switching back to recommended resets only the comparison baseline; do not unconditionally clear values at final submission, or edits made after reset would be lost.
+    // 切回推荐只重置比较基线，不能在最终提交时无条件清空，否则会吞掉重置后的新编辑。
     currentModel = {
       ...currentModel,
       personalConfig: clearManualModelConfig(currentModel.personalConfig),
@@ -168,7 +168,7 @@ export function resolveProviderModelDraftCommit({
   const effectiveEnabled = draft.enabledValue ?? currentModel.config.enabled ?? true;
   const currentEffectiveEnabled = currentModel.config.enabled ?? true;
   const effectiveProperties = {
-    // System fields are not produced by the edit draft; manual saves consistently extract fields according to the editable schema.
+    // 系统字段不由编辑草稿产生；手动保存统一按可编辑 schema 提取。
     requiresMfjsToolSchema: currentModel.config.properties?.requiresMfjsToolSchema,
     contextWindow,
     inputFormat: {
@@ -198,7 +198,7 @@ export function resolveProviderModelDraftCommit({
     currentEffective: currentModel.config.properties,
     effective: effectiveProperties,
   });
-  // Explicitly entered values count as overrides; keep them even when equal to the recommendation. Clearing the input removes the override.
+  // 数值显式填写即是覆盖；即使与推荐相等也保留，清空输入才表示撤销覆盖。
   if (draft.contextWindowValue.trim())
     assignMutable(personalProperties, "contextWindow", contextWindow);
   else deleteMutable(personalProperties, "contextWindow");
@@ -236,7 +236,7 @@ export function resolveProviderModelDraftCommit({
     deleteMutable(sparsePersonalConfig, "properties");
 
   const inheritedMaxOption = inherited?.optionSpecs?.maxOutputTokens;
-  // Option Spec no longer owns default; this input expresses only the model's hard limit max.
+  // Option Spec 不再拥有 default；该输入框唯一表达模型硬上限 max。
   const currentEffectiveMaxOption = {
     ...currentModel.config.optionSpecs?.maxOutputTokens,
   };
@@ -284,14 +284,8 @@ export function resolveProviderModelDraftCommit({
     deleteMutable(sparsePersonalConfig, "optionSpecs");
   }
   const effectiveOptionSpecs = { ...currentModel.config.optionSpecs };
-  const currentReasoningDefault = currentModel.config.optionSpecs?.reasoningLevel?.default;
   effectiveOptionSpecs.reasoningLevel = {
     values: [...reasoningLevelValues],
-    ...(currentReasoningDefault === null ||
-    (currentReasoningDefault !== undefined &&
-      reasoningLevelValues.includes(currentReasoningDefault))
-      ? { default: currentReasoningDefault }
-      : {}),
     map: effectiveReasoningMap,
   };
   if (resolvedMaxOutputSpec !== undefined) {
@@ -341,8 +335,8 @@ function materializeEditorManagedPersonalConfig({
   current: ModelConfigObject;
   effective: ModelConfigObject;
 }): ModelConfigObject {
-  // enabled is managed separately by the model-list row and is not materialized or cleared by “follow recommended configuration” mode.
-  // Extract only editable leaves; hidden request mappings must come from current identity rules, not be frozen from an old model draft.
+  // enabled 由模型列表行单独管理，不随“跟随推荐配置”模式物化或清除。
+  // 只提取可编辑叶子；隐藏请求映射必须来自当前身份规则，不能由旧模型草稿冻结。
   return extractManualModelConfig({
     ...preserveEnabledPersonalConfig(current),
     properties: effective.properties,
@@ -357,7 +351,7 @@ function resolvePersonalBoolean<K extends string>(
   inherited: unknown,
   currentPersonal: boolean | null | undefined,
 ) {
-  // Preserve existing sparse Overlay values for untouched controls; do not write false merely because it is the Effective default.
+  // 未触碰的控件必须保留现有的稀疏 Overlay，不能因为 Effective 默认值而凭空写入 false。
   if (value === currentEffective) {
     return currentPersonal === undefined || currentPersonal === null
       ? {}
@@ -455,9 +449,6 @@ function applyPersonalReasoning({
   }
   if (!map || map === inherited?.map) deleteMutable(next, "map");
   else assignMutable(next, "map", map);
-  if (typeof next.default === "string" && !values.includes(next.default)) {
-    deleteMutable(next, "default");
-  }
   if (Object.keys(next).length === 0) delete target.reasoningLevel;
   else target.reasoningLevel = next;
 }

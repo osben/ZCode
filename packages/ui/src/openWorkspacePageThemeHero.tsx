@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
-import type { ResolvedTheme } from "@/useTheme.js";
+import type { Theme } from "@/useTheme.js";
 
 interface ThemeHeroPalette {
   panel: string;
@@ -14,9 +14,20 @@ interface ThemeHeroPalette {
   description: string;
 }
 
-function getThemeHeroPalette(mode: ResolvedTheme): ThemeHeroPalette {
-  switch (mode) {
+function getThemeHeroPalette(theme: Theme): ThemeHeroPalette {
+  switch (theme) {
     case "light":
+      return {
+        meshBase: "#eff6ff",
+        meshLight: "#7dd3fc",
+        panel:
+          "bg-[linear-gradient(180deg,#eff6ff_0%,#dbeafe_34%,#bfdbfe_100%)] before:absolute before:inset-0 before:content-[''] before:bg-[radial-gradient(circle_at_18%_18%,rgba(255,255,255,0.9),transparent_24%),radial-gradient(circle_at_82%_16%,rgba(125,211,252,0.42),transparent_26%),radial-gradient(circle_at_68%_80%,rgba(96,165,250,0.24),transparent_28%)]",
+        glowPrimary: "bg-sky-200/70 mix-blend-screen",
+        glowSecondary: "bg-blue-200/70 mix-blend-multiply",
+        heading: "text-slate-900",
+        description: "text-slate-700/80",
+      };
+    case "zai-light":
       return {
         meshBase: "#f8f8f8",
         meshLight: "#80beff",
@@ -27,7 +38,7 @@ function getThemeHeroPalette(mode: ResolvedTheme): ThemeHeroPalette {
         heading: "text-[#0D0D0D]",
         description: "text-[#5C5C5C]",
       };
-    case "dark":
+    case "zai-dark":
       return {
         meshBase: "#001d3d",
         meshLight: "#80beff",
@@ -38,13 +49,28 @@ function getThemeHeroPalette(mode: ResolvedTheme): ThemeHeroPalette {
         heading: "text-[#F8F8F8]",
         description: "text-[#ADADAD]",
       };
+    case "dark":
+    case "system":
+    default:
+      return {
+        meshBase: "#060816",
+        meshLight: "#60a5fa",
+        panel:
+          "bg-[linear-gradient(180deg,#060816_0%,#0b1333_38%,#12245a_72%,#173474_100%)] before:absolute before:inset-0 before:content-[''] before:bg-[radial-gradient(circle_at_16%_20%,rgba(165,243,252,0.14),transparent_22%),radial-gradient(circle_at_82%_14%,rgba(96,165,250,0.18),transparent_24%),radial-gradient(circle_at_68%_84%,rgba(56,189,248,0.14),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0))]",
+        glowPrimary: "bg-cyan-300/22 mix-blend-screen",
+        glowSecondary: "bg-blue-400/18 mix-blend-screen",
+        heading: "text-slate-50",
+        description: "text-slate-200/72",
+      };
   }
 }
 
 export function useResolvedThemeHeroPalette(): ThemeHeroPalette {
   const theme = useZCodeStore((state) => state.theme);
+  const resolvedTheme =
+    theme === "system" ? (resolveTheme(theme) === "dark" ? "dark" : "light") : theme;
 
-  return getThemeHeroPalette(resolveTheme(theme));
+  return getThemeHeroPalette(resolvedTheme);
 }
 
 export function ThemeHeroVisual(props: {

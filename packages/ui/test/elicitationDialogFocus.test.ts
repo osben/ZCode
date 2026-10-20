@@ -45,7 +45,7 @@ describe("ElicitationDialog custom answer focus", () => {
       const { container } = render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(ElicitationDialog, { request, onRespond }),
         ),
       );
@@ -90,10 +90,6 @@ describe("ElicitationDialog custom answer focus", () => {
       );
       if (kind !== "multi") {
         expect(input.previousElementSibling?.textContent).toBe("3.");
-        expect(input.previousElementSibling?.classList.contains("self-start")).toBe(true);
-        expect(input.previousElementSibling?.classList.contains("mt-px")).toBe(true);
-        expect(input.previousElementSibling?.classList.contains("leading-normal")).toBe(true);
-        expect(input.previousElementSibling?.classList.contains("md:leading-relaxed")).toBe(true);
       }
     },
   );

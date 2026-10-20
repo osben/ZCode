@@ -37,11 +37,13 @@ function requiredIterationCount(goal: GoalState): number {
     goal.status === "active" ||
     goal.status === "notSatisfied" ||
     (goal.status === "paused" && latestVerification?.outcome === "notSatisfied");
-  const statusIteration = continuationIsOpen ? goal.iteration + 1 : Math.max(1, goal.iteration);
+  const statusIteration = continuationIsOpen
+    ? goal.iteration + 1
+    : Math.max(1, goal.iteration);
   return Math.max(1, statusIteration, maxTodoIteration, maxVerificationIteration);
 }
 
-/** Build the per-turn summary in the upper-right corner from the authoritative V4 goal projection; do not infer turns from the renderer timeline. */
+/** 从 V4 权威 goal 投影构造右上角逐轮摘要；不从 renderer timeline 反推轮次。 */
 export function buildConversationGoalIterationSummaries(
   goal: GoalState,
 ): ConversationGoalIterationSummary[] {
@@ -61,7 +63,7 @@ export function buildConversationGoalIterationSummaries(
       iteration,
       title:
         iteration === 1
-          ? goal.summaryTitle?.trim() || goal.objective.trim() || null
+          ? (goal.summaryTitle?.trim() || goal.objective.trim() || null)
           : visibleNextAction(previousVerification?.nextAction),
       items,
       completedCount,

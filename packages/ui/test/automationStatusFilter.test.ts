@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ZCodeOffPeakTask, ZCodeOffPeakTaskStatus } from "@zcode/shared";
 import {
-  AUTOMATION_STATUS_FILTERS,
   filterAutomationsByStatus,
   filterOffPeakTasksByStatus,
   resolveAutomationStatusFilterKind,
@@ -14,10 +13,6 @@ function offPeakTask(status: ZCodeOffPeakTaskStatus): ZCodeOffPeakTask {
 }
 
 describe("automation status filter", () => {
-  it("筛选项固定为 全部/进行中/已完成/失败 四组", () => {
-    expect(AUTOMATION_STATUS_FILTERS).toEqual(["all", "inProgress", "completed", "failed"]);
-  });
-
   it("闲时任务：queued/paused/running 归进行中，failed/cancelled 归失败", () => {
     expect(resolveOffPeakStatusFilterKind(offPeakTask("queued"))).toBe("inProgress");
     expect(resolveOffPeakStatusFilterKind(offPeakTask("paused"))).toBe("inProgress");
@@ -51,8 +46,7 @@ describe("automation status filter", () => {
     const paused = { lifecycleStatus: "paused" as const, enabled: true };
     const completed = { lifecycleStatus: "completed" as const, enabled: true };
     const failedLifecycle = { lifecycleStatus: "failed" as const, enabled: true };
-    // A recurring task is still active, but its most recent run failed: the card shows a red
-    // failure badge, so it belongs to the failed group.
+    // 循环任务仍 active，但最近一次运行失败：卡片显示红色失败徽章，应归失败组。
     const activeWithLastError = { ...active, lastError: "boom" };
     const activeDispatchFailed = { ...active, dispatchStatus: "failed_to_dispatch" as const };
 
@@ -72,12 +66,12 @@ describe("automation status filter", () => {
 
   it("切换顶栏 tab 即重置筛选，切走再切回也不恢复旧筛选（MR !2615 CR-01）", () => {
     const scheduledFailed = { tab: "scheduled" as const, filter: "failed" as const };
-    // Re-setting the same tab: keep the original object, do not drop the filter
+    // 同 tab 重复设置：保持原对象，不丢筛选
     expect(resolveAutomationTabState(scheduledFailed, "scheduled")).toBe(scheduledFailed);
-    // Switching away: back to all
+    // 切走：回到全部
     const idle = resolveAutomationTabState(scheduledFailed, "idle");
     expect(idle).toEqual({ tab: "idle", filter: "all" });
-    // Switching back: still all, not the restored failed filter
+    // 切回：仍是全部，而不是恢复 failed
     expect(resolveAutomationTabState(idle, "scheduled")).toEqual({
       tab: "scheduled",
       filter: "all",

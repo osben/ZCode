@@ -13,7 +13,12 @@ export interface PresentationRenderHandle {
   dispose(): void;
 }
 
-export type PresentationElementNodeType = "shape" | "picture" | "chart" | "table" | "table-cell";
+export type PresentationElementNodeType =
+  | "shape"
+  | "picture"
+  | "chart"
+  | "table"
+  | "table-cell";
 
 export interface PresentationElementBounds {
   x: number;
@@ -52,12 +57,12 @@ export interface PresentationPreviewEngine {
   open(data: ArrayBuffer): Promise<PresentationPreviewDocument>;
 }
 
-/** Marker boundary for future DOM editing capabilities; phase one defines no unverified edit-command semantics. */
+/** 后续 DOM 编辑能力的标记边界；第一期不定义尚未验证的编辑命令语义。 */
 export interface PresentationEditEngine {
   readonly capability: "dom-edit";
 }
 
-/** Marker boundary for future DOM → PPTX export capabilities; phase one makes no promise of lossless write-back to the original file. */
+/** 后续 DOM -> PPTX 导出能力的标记边界；第一期不承诺原文件无损写回。 */
 export interface PresentationExportEngine {
   readonly capability: "dom-to-pptx";
 }

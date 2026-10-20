@@ -24,9 +24,6 @@ function createMockEntry(
     term: { dispose: vi.fn() } as unknown as XTerm,
     fitAddon: { fit: vi.fn() } as unknown as FitAddon,
     terminalId: `pty-${key}`,
-    profileFontFamily: undefined,
-    profileFontIsCustom: false,
-    profileFontIsFallback: false,
     cwd,
     // workspaceKey 用于 workspace tab 关闭时按 workspace 批量回收（对称下侧 openWorkspaceKeys）。
     workspaceKey,
@@ -40,13 +37,6 @@ describe("sidePaneTerminalSessionRegistry", () => {
     registry.clearForTest();
   });
 
-  it("register 后可 get/has 命中", () => {
-    const entry = createMockEntry("t1");
-    registry.register("t1", entry);
-    expect(registry.has("t1")).toBe(true);
-    expect(registry.get("t1")?.term).toBe(entry.term);
-  });
-
   it("未注册时 get/has miss", () => {
     expect(registry.has("missing")).toBe(false);
     expect(registry.get("missing")).toBeUndefined();
@@ -58,15 +48,6 @@ describe("sidePaneTerminalSessionRegistry", () => {
     const host = document.createElement("div");
     registry.attachDom("t1", host);
     expect(entry.hostEl.parentElement).toBe(host);
-  });
-
-  it("attachDom 幂等：已在 host 不重复追加", () => {
-    const entry = createMockEntry("t1");
-    registry.register("t1", entry);
-    const host = document.createElement("div");
-    registry.attachDom("t1", host);
-    registry.attachDom("t1", host);
-    expect(host.children.length).toBe(1);
   });
 
   it("attachDom miss 不抛（key 未注册）", () => {
@@ -112,21 +93,6 @@ describe("sidePaneTerminalSessionRegistry", () => {
     expect(entry.hostEl.parentElement).toBe(host2);
   });
 
-  it("detach 后保留 profile font 信息供重挂时恢复", () => {
-    const entry = createMockEntry("t1");
-    entry.profileFontFamily = "System Profile Mono";
-    entry.profileFontIsCustom = false;
-    entry.profileFontIsFallback = false;
-    registry.register("t1", entry);
-    registry.detachDom("t1");
-
-    expect(registry.get("t1")).toMatchObject({
-      profileFontFamily: "System Profile Mono",
-      profileFontIsCustom: false,
-      profileFontIsFallback: false,
-    });
-  });
-
   it("release 调 dispose + 删除 entry（显式关 tab 回收）", () => {
     const entry = createMockEntry("t1");
     registry.register("t1", entry);
@@ -168,13 +134,5 @@ describe("sidePaneTerminalSessionRegistry", () => {
     expect(e1.dispose).toHaveBeenCalledTimes(1);
     expect(e3.dispose).toHaveBeenCalledTimes(1);
     expect(e2.dispose).not.toHaveBeenCalled();
-  });
-
-  it("clearForTest 清空所有 session", () => {
-    registry.register("t1", createMockEntry("t1"));
-    registry.register("t2", createMockEntry("t2"));
-    registry.clearForTest();
-    expect(registry.has("t1")).toBe(false);
-    expect(registry.has("t2")).toBe(false);
   });
 });

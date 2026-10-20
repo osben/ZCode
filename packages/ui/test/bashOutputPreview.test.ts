@@ -32,7 +32,7 @@ describe("Bash bounded output preview", () => {
       const html = renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(ExecuteToolCallBlock, {
             toolCallNode,
             workspacePath: "/workspace",
@@ -62,7 +62,6 @@ describe("Bash bounded output preview", () => {
       expect(html).not.toContain("1,234");
       expect(html).not.toContain("40,960");
       expect(html).not.toContain("约");
-      if (expanded) expect(html).toContain("whitespace-pre-wrap");
     },
   );
 });
@@ -85,7 +84,7 @@ describe("Bash final output content", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ExecuteToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",

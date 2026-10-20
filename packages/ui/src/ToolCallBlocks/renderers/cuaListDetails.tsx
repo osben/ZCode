@@ -1,6 +1,6 @@
 import { AppWindow } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { useToolPresentationCapabilities } from "@/ToolCallBlocks/presentationCapabilities.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 import { readToolResultDisplay } from "@/ToolCallBlocks/toolResultDisplay.js";
@@ -64,7 +64,7 @@ function readCuaResultList(
   toolCall: ToolCallBlockRenderContext["toolCallNode"]["toolCall"],
 ): unknown[] {
   const display = readToolResultDisplay(toolCall.raw);
-  // In v4/replayable, display is the stable source of truth; legacy text may already be truncated at the head or tail.
+  // v4/replayable 的稳定事实源是 display；legacy 文本可能已被 head/tail 裁剪。
   const displayRows =
     display?.kind === "cua" ? parseStructuredCuaResultList(display.structuredContent) : null;
   return (
@@ -118,7 +118,7 @@ export function buildCuaDetailList(
 
 function CuaAppList({ items }: { items: CuaAppItem[] }) {
   const { intl } = useZCodeIntl();
-  const platform = useOptionalPlatform();
+  const platform = useToolPresentationCapabilities();
   const [icons, setIcons] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -160,9 +160,9 @@ function CuaAppList({ items }: { items: CuaAppItem[] }) {
           ) : (
             <AppWindow className="size-4 shrink-0 text-foreground-subtle" />
           )}
-          <span className="min-w-0 flex-1 truncate text-ui-base text-foreground">{item.name}</span>
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{item.name}</span>
           {item.active ? (
-            <span className="shrink-0 text-ui-base text-foreground-subtle">
+            <span className="shrink-0 text-sm text-foreground-subtle">
               {intl.formatMessage({ id: "chat.toolCall.cua.details.active" })}
             </span>
           ) : null}
@@ -183,11 +183,11 @@ function CuaWindowList({ items }: { items: CuaWindowItem[] }) {
         >
           <AppWindow className="size-4 shrink-0 text-foreground-subtle" />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-ui-base text-foreground">
+            <div className="truncate text-sm text-foreground">
               {item.title ?? intl.formatMessage({ id: "chat.toolCall.cua.details.untitledWindow" })}
             </div>
             {item.main || item.focused ? (
-              <div className="flex flex-wrap gap-x-2 text-ui-base text-foreground-subtle">
+              <div className="flex flex-wrap gap-x-2 text-sm text-foreground-subtle">
                 {item.main ? (
                   <span>{intl.formatMessage({ id: "chat.toolCall.cua.details.mainWindow" })}</span>
                 ) : null}
@@ -198,7 +198,7 @@ function CuaWindowList({ items }: { items: CuaWindowItem[] }) {
             ) : null}
           </div>
           {item.width !== null && item.height !== null ? (
-            <span className="shrink-0 font-mono text-ui-base text-foreground-subtle">
+            <span className="shrink-0 font-mono text-sm text-foreground-subtle">
               {item.width} × {item.height}
             </span>
           ) : null}
@@ -212,7 +212,7 @@ export function CuaDetailListSection({ list }: { list: CuaDetailList }) {
   const { intl } = useZCodeIntl();
   return (
     <section className="space-y-2 border-t border-border pt-3">
-      <h4 className="text-ui-base text-foreground-subtle">
+      <h4 className="text-sm text-foreground-subtle">
         {intl.formatMessage({
           id:
             list.kind === "apps"

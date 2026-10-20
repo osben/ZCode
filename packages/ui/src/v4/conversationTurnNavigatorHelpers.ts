@@ -1,6 +1,9 @@
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
 
-export type ConversationTurnNavigatorAssistantPreviewKind = "empty" | "running" | "text";
+export type ConversationTurnNavigatorAssistantPreviewKind =
+  | "empty"
+  | "running"
+  | "text";
 
 export interface ConversationTurnNavigatorItem {
   key: string;
@@ -11,7 +14,6 @@ export interface ConversationTurnNavigatorItem {
   assistantPreview: string;
   assistantPreviewKind: ConversationTurnNavigatorAssistantPreviewKind;
   isRunning: boolean;
-  isPinned: boolean;
 }
 
 export interface BuildConversationTurnNavigatorItemsOptions {
@@ -174,29 +176,30 @@ export function buildConversationTurnNavigatorItems(
   const resolvedOptions: Required<BuildConversationTurnNavigatorItemsOptions> = {
     ...options,
     maxPreviewChars: options.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS,
-    maxPreviewParagraphs: options.maxPreviewParagraphs ?? DEFAULT_MAX_PREVIEW_PARAGRAPHS,
+    maxPreviewParagraphs:
+      options.maxPreviewParagraphs ?? DEFAULT_MAX_PREVIEW_PARAGRAPHS,
   };
 
   return units.flatMap((unit, unitIndex) => {
-    // The provider/store's physical role=user also includes system context such as background/goal/mailbox;
-    // the navigator represents user-initiated queries and must use only realUser, as explicitly classified by the projection.
-    const realUserInputs = unit.visibleUserInputs.filter((row) => row.origin === "realUser");
+    // provider/store 的物理 role=user 还包含 background/goal/mailbox
+    // 等系统上下文；目录代表用户主动 query，只能使用投影明确裁决的 realUser。
+    const realUserInputs = unit.visibleUserInputs.filter(
+      (row) => row.origin === "realUser",
+    );
     if (unit.timelineOnly || realUserInputs.length === 0) {
       return [];
     }
 
-    // Split navigator items by query, but preserve the old product semantics for the assistant hover summary:
-    // use the text result from the owning product turn; do not infer guide-response segments in the renderer.
-    const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(unit, resolvedOptions);
-    // Pinned lookup mirrors PinnedConversationRow (userInput/assistantText only); all of a unit's assistantText
-    // rows live in assistantTextRows, because turn-tail rows are only markers/artifacts.
-    const turnHasPinnedAssistantText = unit.assistantTextRows.some(
-      (row) => row.pinnedAt !== undefined,
+    // 导航项按 query 拆分，但 hover 的 assistant 摘要保持旧产品语义：
+    // 取所属 product turn 的文本结果，不在 renderer 猜测 guide 回复分段。
+    const { assistantPreview, assistantPreviewKind } = buildAssistantPreview(
+      unit,
+      resolvedOptions,
     );
     return realUserInputs.map((row, queryIndex) => ({
-      // Do not use product turns as navigator entries and concatenate every steer query from the same turn into one preview.
-      // The navigator represents user-visible queries, so create one entry per query using stable row identity;
-      // turnId only locates the owning container in the virtual list.
+      // 不能以 product turn 为目录粒度，并把同一 turn 的 steer query
+      // 全部拼进一个 preview。目录真正导航的是用户可见 query，必须用稳定 row
+      // 身份逐条建项，turnId 只负责把虚拟列表先定位到所属容器。
       key: `${unit.key}:query:${row.entityId ?? row.rowId}`,
       turnId: unit.turnId,
       unitIndex,
@@ -209,11 +212,9 @@ export function buildConversationTurnNavigatorItems(
       }),
       assistantPreview,
       assistantPreviewKind,
-      // One running product turn may already contain several completed guide segments; only the last
-      // query represents current work, preventing all old queries from appearing highlighted as running.
+      // 同一 running product turn 可能已有多个已结束 guide segment；只有最后一条
+      // query 仍代表当前工作，避免所有旧 query 一起呈现 running 强调。
       isRunning: unit.isRunning && queryIndex === realUserInputs.length - 1,
-      // A pinned answer marks the query that produced it, so pinned content stays findable from the rail.
-      isPinned: row.pinnedAt !== undefined || turnHasPinnedAssistantText,
     }));
   });
 }
@@ -234,7 +235,8 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
 
   const itemByUnitIndex = new Map(items.map((item) => [item.unitIndex, item]));
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
-  const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
+  const viewportEnd =
+    viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
 
   let activeUnitIndex: number | undefined;
   let activeDistance = Number.POSITIVE_INFINITY;
@@ -248,7 +250,8 @@ export function resolveConversationTurnNavigatorActiveUnitIndex({
     if (rowEnd < viewportStart || rowStart > viewportEnd) {
       continue;
     }
-    const distanceToViewportStart = rowStart <= viewportStart ? 0 : rowStart - viewportStart;
+    const distanceToViewportStart =
+      rowStart <= viewportStart ? 0 : rowStart - viewportStart;
     if (distanceToViewportStart < activeDistance) {
       activeUnitIndex = item.unitIndex;
       activeDistance = distanceToViewportStart;
@@ -283,7 +286,8 @@ export function resolveConversationTurnNavigatorActiveQueryRowId({
   if (positions.length === 0) return undefined;
 
   const viewportStart = resolveFiniteNonNegative(scrollOffsetPx);
-  const viewportEnd = viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
+  const viewportEnd =
+    viewportStart + Math.max(1, resolveFiniteNonNegative(viewportHeightPx));
   const normalized = positions
     .map((position) => {
       const start = resolveFiniteNonNegative(position.start);
@@ -300,7 +304,8 @@ export function resolveConversationTurnNavigatorActiveQueryRowId({
   );
   if (visible.length > 0) {
     return visible.reduce((nearest, candidate) =>
-      Math.abs(candidate.start - viewportStart) < Math.abs(nearest.start - viewportStart)
+      Math.abs(candidate.start - viewportStart) <
+      Math.abs(nearest.start - viewportStart)
         ? candidate
         : nearest,
     ).rowId;

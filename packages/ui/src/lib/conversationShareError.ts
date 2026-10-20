@@ -1,5 +1,5 @@
 import type { ConversationShareFailureIssue } from "@zcode/services";
-import { isLocale, type Locale } from "@zcode/shared";
+import { conversationShareRejectionSchema, type ConversationShareRejection } from "@zcode/shared";
 
 export interface ConversationShareErrorDetails {
   name: string;
@@ -10,6 +10,7 @@ export interface ConversationShareErrorDetails {
   code?: number;
   requestId?: string;
   clientRequestId?: string;
+  rejection?: ConversationShareRejection;
   issues?: readonly ConversationShareFailureIssue[];
   issueCount?: number;
   omittedIssueCount?: number;
@@ -22,6 +23,12 @@ const PUBLISH_ERROR_MESSAGE_BY_KIND: Readonly<Record<string, string>> = {
   limit_exceeded: "conversationShare.error.limitExceeded",
   rate_limited: "conversationShare.error.rateLimited",
   network: "conversationShare.error.network",
+  service_unavailable: "conversationShare.error.serviceUnavailable",
+  safety_check_rejected: "conversationShare.error.safetyCheckRejected",
+  safety_check_unavailable: "conversationShare.error.safetyCheckUnavailable",
+  not_found: "conversationShare.error.preparationNotFound",
+  expired: "conversationShare.error.preparationExpired",
+  unsupported_schema_version: "conversationShare.import.unsupportedVersion",
   safety_check_timeout: "conversationShare.error.safetyCheckTimeout",
   invalid_selection: "conversationShare.error.invalidSelection",
   invalid_conversation: "conversationShare.error.invalidConversation",
@@ -139,7 +146,7 @@ function sanitizeIssue(issue: unknown): ConversationShareFailureIssue | null {
     scope: value.scope as ConversationShareFailureIssue["scope"],
     ...(typeof value.rowId === "number" ? { rowId: value.rowId } : {}),
     ...(typeof value.turnOrdinal === "number" ? { turnOrdinal: value.turnOrdinal } : {}),
-    // productTurnId is the only reliable identifier for “deselect this turn” (turnOrdinal is only for display text).
+    // productTurnId 是「取消选择该轮」的唯一可靠定位依据（turnOrdinal 只用于文案）。
     ...(typeof value.productTurnId === "string" &&
     value.productTurnId.length > 0 &&
     value.productTurnId.length <= 128
@@ -221,9 +228,11 @@ export function getConversationShareErrorDetails(error: unknown): ConversationSh
     typeof omittedIssueCountValue === "number"
       ? omittedIssueCountValue
       : Math.max(0, issueCount - issues.length);
+  const rejection = conversationShareRejectionSchema.safeParse(readField("rejection"));
   return {
     name,
     kind,
+    ...(rejection.success ? { rejection: rejection.data } : {}),
     ...(reasonCode === undefined ? {} : { reasonCode }),
     ...(Object.keys(diagnostics).length === 0 ? {} : { diagnostics }),
     ...(status === undefined ? {} : { status }),
@@ -256,10 +265,20 @@ export function formatConversationShareErrorSummary(error: unknown): {
 }
 
 const ISSUE_MESSAGE_IDS: Readonly<Record<ConversationShareFailureIssue["code"], string>> = {
+  authentication_required: "conversationShare.error.authenticationRequired",
+  network: "conversationShare.error.network",
+  service_unavailable: "conversationShare.error.serviceUnavailable",
+  rate_limited: "conversationShare.error.rateLimited",
+  feature_disabled: "conversationShare.error.featureDisabled",
+  connection_unavailable: "conversationShare.error.connectionUnavailable",
+  invalid_contract: "conversationShare.issue.invalidServiceResponse",
+  disclosure_required: "conversationShare.error.disclosureRequired",
+
   artifact_type_not_allowed: "conversationShare.issue.artifactTypeNotAllowed",
   artifact_extension_missing: "conversationShare.issue.artifactExtensionMissing",
   artifact_outside_workspace: "conversationShare.issue.artifactOutsideWorkspace",
   artifact_changed: "conversationShare.issue.artifactChanged",
+  content_unavailable: "conversationShare.issue.contentUnavailable",
   artifact_read_failed: "conversationShare.issue.artifactReadFailed",
   input_attachment: "conversationShare.issue.inputAttachment",
   input_attachment_unavailable: "conversationShare.issue.inputAttachmentUnavailable",
@@ -294,45 +313,36 @@ export function resolveConversationShareIssueMessageId(
 }
 
 /**
- * Use separate copy for non-blocking notices: the issue variant has blocking language (“confirm the file still exists and retry”),
- * while the warning variant should say the item was skipped and publishing completed normally.
+ * 非阻断提示用独立文案：issue 版是「请确认文件仍存在后重试」的阻断语气，
+ * warning 版要表达「已跳过、发布照常完成」。
  */
 const WARNING_MESSAGE_IDS: Readonly<
   Partial<Record<ConversationShareFailureIssue["code"], string>>
 > = {
   artifact_type_not_allowed: "conversationShare.warning.artifactTypeSkipped",
   artifact_changed: "conversationShare.warning.artifactChangedSkipped",
+  content_unavailable: "conversationShare.issue.contentUnavailable",
   artifact_read_failed: "conversationShare.warning.artifactSkipped",
   input_attachment: "conversationShare.warning.inputAttachmentSkipped",
   input_attachment_unavailable: "conversationShare.warning.inputAttachmentUnavailable",
 };
 
-const ARTIFACT_TYPE_LABELS: Readonly<Record<string, Record<Locale, string>>> = {
-  pdf: { "zh-CN": "PDF", "en-US": "PDF", "uk-UA": "PDF" },
-  pptx: { "zh-CN": "PPT", "en-US": "PowerPoint", "uk-UA": "PowerPoint" },
-  docx: { "zh-CN": "Word 文档", "en-US": "Word document", "uk-UA": "документ Word" },
-  xlsx: { "zh-CN": "Excel 表格", "en-US": "Excel spreadsheet", "uk-UA": "таблиця Excel" },
-  image: { "zh-CN": "图片", "en-US": "image", "uk-UA": "зображення" },
-  html: { "zh-CN": "HTML", "en-US": "HTML", "uk-UA": "HTML" },
-  md: { "zh-CN": "Markdown", "en-US": "Markdown", "uk-UA": "Markdown" },
-  text: { "zh-CN": "纯文本", "en-US": "plain text", "uk-UA": "звичайний текст" },
-  video: { "zh-CN": "视频", "en-US": "video", "uk-UA": "відео" },
-  audio: { "zh-CN": "音频", "en-US": "audio", "uk-UA": "аудіо" },
+const ARTIFACT_TYPE_LABELS: Readonly<Record<string, { zh: string; en: string }>> = {
+  pdf: { zh: "PDF", en: "PDF" },
+  pptx: { zh: "PPT", en: "PowerPoint" },
+  docx: { zh: "Word 文档", en: "Word document" },
+  xlsx: { zh: "Excel 表格", en: "Excel spreadsheet" },
+  image: { zh: "图片", en: "image" },
+  html: { zh: "HTML", en: "HTML" },
+  md: { zh: "Markdown", en: "Markdown" },
+  text: { zh: "纯文本", en: "plain text" },
+  video: { zh: "视频", en: "video" },
+  audio: { zh: "音频", en: "audio" },
 };
-
-const UNAVAILABLE_LABEL: Record<Locale, string> = {
-  "zh-CN": "暂时无法获取",
-  "en-US": "temporarily unavailable",
-  "uk-UA": "тимчасово недоступно",
-};
-
-function resolveLabelLocale(locale: string): Locale {
-  return isLocale(locale) ? locale : "en-US";
-}
 
 function artifactLabel(value: string, locale: string): string {
   const key = value.replace(/^\./u, "").toLowerCase();
-  return ARTIFACT_TYPE_LABELS[key]?.[resolveLabelLocale(locale)] ?? value.toUpperCase();
+  return ARTIFACT_TYPE_LABELS[key]?.[locale === "en-US" ? "en" : "zh"] ?? value.toUpperCase();
 }
 
 export function formatConversationShareArtifactType(
@@ -351,12 +361,12 @@ export function formatConversationShareAllowedArtifacts(
     const labels = issue.allowedArtifacts.map((artifact) =>
       artifactLabel(artifact.displayName || artifact.type, locale),
     );
-    return [...new Set(labels)].join(locale === "zh-CN" ? "、" : ", ");
+    return [...new Set(labels)].join(locale === "en-US" ? ", " : "、");
   }
   if (issue.allowedFormats && issue.allowedFormats.length > 0) {
-    return issue.allowedFormats.join(locale === "zh-CN" ? "、" : ", ");
+    return issue.allowedFormats.join(locale === "en-US" ? ", " : "、");
   }
-  return UNAVAILABLE_LABEL[resolveLabelLocale(locale)];
+  return locale === "en-US" ? "temporarily unavailable" : "暂时无法获取";
 }
 
 export function resolveConversationShareWarningMessageId(
@@ -365,7 +375,7 @@ export function resolveConversationShareWarningMessageId(
   return WARNING_MESSAGE_IDS[issue.code] ?? resolveConversationShareIssueMessageId(issue);
 }
 
-/** The Host has already redacted this data; reuse the same validation as a fallback in case the progress payload is changed and leaks paths. */
+/** Host 侧已脱敏，这里仍复用同一套校验兜底，避免 progress 载荷被改动后泄漏路径。 */
 export function sanitizeConversationShareWarnings(
   value: unknown,
 ): readonly ConversationShareFailureIssue[] {
@@ -391,6 +401,10 @@ export function resolveConversationShareFallbackIssueCode(
   if (details.kind === "artifact_not_allowed") return "artifact_type_not_allowed";
   if (details.kind === "limit_exceeded") return "payload_limit";
   if (details.kind === "upload_incomplete") return "upload_incomplete";
+  // 预检可能在读取 capabilities 前因缺少登录态失败，不能把已知 kind 丢成 unknown。
+  if (Object.prototype.hasOwnProperty.call(ISSUE_MESSAGE_IDS, details.kind)) {
+    return details.kind as ConversationShareFailureIssue["code"];
+  }
   return "unknown";
 }
 

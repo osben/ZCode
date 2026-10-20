@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { createOnboardingMeshRenderer } from "@/onboarding/onboardingMeshRenderer.js";
 import { useResolvedThemeHeroPalette } from "@/openWorkspacePageThemeHero.js";
 
-/** The decorative background has its own rendering lifecycle and does not subscribe to or modify business state. */
+/** 装饰背景拥有自己的渲染生命周期，不订阅或修改业务状态。 */
 export function OnboardingMeshBackground() {
   const ref = useRef<HTMLCanvasElement>(null);
   const { meshBase, meshLight } = useResolvedThemeHeroPalette();
@@ -26,7 +26,7 @@ export function OnboardingMeshBackground() {
       if (disposed || lost || !visible || document.hidden || !desktop.matches) return;
       const { width, height } = canvas.getBoundingClientRect();
       if (!width || !height) return;
-      // Create the context only when first visible so the single-column mobile layout does not use the GPU.
+      // 首次真正可见时才创建上下文，手机单栏不占用 GPU。
       renderer ??= createOnboardingMeshRenderer(canvas);
       if (!renderer) return;
       if (!last || now - last >= 1000 / 24) {

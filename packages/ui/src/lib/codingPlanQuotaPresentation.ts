@@ -3,19 +3,19 @@ import type { UsageEntitlementSnapshot, UsageQuotaLimit } from "@zcode/shared";
 export type CodingPlanQuotaResetFormat = "date" | "dateTime" | "adaptive";
 
 /**
- * Equivalent types for Token / Credit quotas.
+ * Token / Credit 类配额的等价 type 集合。
  *
- * The zai business backend uses `CREDIT_LIMIT` as the type for Team Plan quota/limit,
- * while the bigmodel backend uses `TOKENS_LIMIT`. Their unit/number semantics are identical
- *(unit=3,number=5 → a 5-hour window; unit=6 → weekly); only the type enum names differ.
- * Treat these two types as equivalent here so zai/bigmodel team plans match in the same UI consumers.
- * This set remains compatible if the zai backend later aligns on TOKENS_LIMIT.
+ * zai 业务后端 Team Plan 的 quota/limit 用 `CREDIT_LIMIT` 作为 type，
+ * bigmodel 业务后端用 `TOKENS_LIMIT`。两者 unit/number 语义完全一致
+ *（unit=3,number=5 → 5 小时窗口；unit=6 → 每周），仅 type 枚举命名不同。
+ * 这里把两个 type 视为等价，让 zai/bigmodel team plan 在同一套 UI 消费方下都能命中。
+ * 若 zai 后端后续对齐到 TOKENS_LIMIT，此集合仍兼容。
  */
 const TOKEN_LIMIT_TYPES = new Set(["TOKENS_LIMIT", "CREDIT_LIMIT"]);
 
 /**
- * Type for Tool quotas.
- * Both bigmodel and zai backends currently use TIME_LIMIT for monthly tool-call quotas, so no equivalence set is needed.
+ * Tool 类配额的 type。
+ * 目前 bigmodel/zai 后端都用 TIME_LIMIT 表示每月工具调用配额，暂无需等价集合。
  */
 const TOOL_LIMIT_TYPES = new Set(["TIME_LIMIT"]);
 
@@ -26,7 +26,7 @@ export function isSameLimitCategory(
   if (limitType === queryType) {
     return true;
   }
-  // A zai team plan returns CREDIT_LIMIT, which must also match when consumers query by TOKENS_LIMIT.
+  // zai team plan 返回 CREDIT_LIMIT，消费方按 TOKENS_LIMIT 查询时也要命中。
   if (TOKEN_LIMIT_TYPES.has(queryType)) {
     return TOKEN_LIMIT_TYPES.has(limitType);
   }
@@ -53,10 +53,10 @@ export function findCodingPlanQuotaLimit(
 }
 
 /**
- * Official Server MCP quota (total quota sent by the server).
+ * 官方 Server MCP 额度（服务端下发的总额度）。
  *
- * The server places it in a separate field of the entitlement snapshot rather than quota.limits[], so it cannot use
- * findCodingPlanQuotaLimit; centralize it as the only read path here instead of duplicating the `?.` chain in each display.
+ * 服务端把它放在 entitlement 快照的独立字段而不是 quota.limits[]，因此不能用
+ * findCodingPlanQuotaLimit 查询；这里收口成唯一取数入口，避免各展示位各写一遍 `?.` 链路。
  */
 export function resolveMcpQuotaLimit(
   snapshot: UsageEntitlementSnapshot | null | undefined,
@@ -76,8 +76,8 @@ export function getQuotaRemainingPercentage(limit: UsageQuotaLimit | null): numb
     return null;
   }
 
-  // The quota API’s percentage represents the amount used, while Usage Remaining and
-  // usage-stat quota cards both represent “how much remains.” Invert it consistently here so the two displays agree.
+  // quota 接口的 percentage 表示已使用占比，而 Usage Remaining 与
+  // 使用统计的额度卡都表达“还剩多少”。这里统一反转，避免两处显示口径不一致。
   return Math.max(0, Math.min(100, 100 - limit.percentage));
 }
 
@@ -96,11 +96,11 @@ export function formatQuotaRemainingPercentage(
 }
 
 /**
- * The single formatting entry point for Start Plan quota-bucket renewal times (shared by the settings balance card and chat-input bubble).
+ * Start Plan 额度桶刷新时间的唯一格式化入口（设置页余额卡与聊天输入气泡共用）。
  *
- * Both surfaces once maintained identical copies of formatStartPlanBalanceRenewTime;
- * updating only one caused inconsistent displays. Match the Coding Plan format for bucket renewal times:
- * show only HH:mm for today and only the date for other days.
+ * 两端曾各自维护一份逐字相同的 formatStartPlanBalanceRenewTime，
+ * 格式调整漏改任一处就会重新出现两端展示不一致。桶刷新时间格式与 Coding Plan
+ * 对齐：当日仅 HH:mm，非当日仅日期。
  */
 export function formatStartPlanBucketResetTime(
   locale: string,
@@ -137,8 +137,8 @@ export function formatQuotaResetTime(params: {
     }).format(resetAt);
   }
 
-  // adaptive: show only HH:mm for today (the time is actionable), and only the date for other days
-  // (matching the display semantics of Coding Plan's 5-hour window and weekly/monthly resets).
+  // adaptive：当日只展示 HH:mm（时刻才可行动），非当日只展示日期
+  //（与 Coding Plan 五小时窗口 / 周·月重置的展示语义一致）。
   if (params.format === "adaptive") {
     if (isToday) {
       return new Intl.DateTimeFormat(params.locale, {

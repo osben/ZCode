@@ -5,7 +5,7 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { RosterCounts } from "./roster-model.js";
 
 /**
- * Two small pieces of the stage roster: the count row and the meter bar.
+ * 阶段名册的两件小零件：计数行与量条。
  */
 const COUNT_ORDER: readonly StepRunStatus[] = ["done", "running", "failed", "pending"];
 
@@ -24,7 +24,7 @@ function useCountLabels(counts: RosterCounts): Record<StepRunStatus, string> {
   };
 }
 
-/** Count row: `✓ n · ◌ n · ✕ n · ○ n`; omit zero counts and use a full sentence for each item's title. */
+/** 计数行：`✓ n · ◌ n · ✕ n · ○ n`，为零的项缺席；每项的 title 是整句。 */
 export function RosterTally({ className, counts }: { counts: RosterCounts; className?: string }) {
   const labels = useCountLabels(counts);
   return (
@@ -68,8 +68,8 @@ export function RosterTally({ className, counts }: { counts: RosterCounts; class
 }
 
 /**
- * Meter: segments are done · failed · running · pending and fill from left to right as the phase settles; use `--color-border`
- * for the pending segment track. Segment widths transition with counts (`.wf-meter-seg`). `mini` is the 44px version in collapsed section headers.
+ * 量条：段序 done · failed · running · pending，从左到右随阶段结算填满；pending 段用 `--color-border`
+ * 作轨道。段宽随计数过渡（`.wf-meter-seg`）。`mini` 是折叠节头上的 44 px 版本。
  */
 export function RosterMeter({
   className,

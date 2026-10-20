@@ -58,7 +58,7 @@ export function mergeMcpServerStatusSnapshots(
       if (markMissingConnectingAsError && server.enabled && server.status === "connecting") {
         return {
           ...server,
-          // If mcp/list returns successfully but omits the current row, keeping it in connecting state would make Settings spin forever.
+          // mcp/list 正常返回但缺少当前行时，继续保留 connecting 会让设置页无限转圈。
           status: "error",
           failureKind: "status_unavailable",
           toolCount: undefined,

@@ -17,9 +17,9 @@ export function resolveWorkspaceShellPanelRadiusPx({
   isWindowsDesktop,
   macOSMajorVersion,
 }: WorkspaceShellPlatformRadiusOptions): number {
-  if (isWindowsDesktop) return 5;
-  // Ignoring the macOS version would make Sequoia's inner 12px radius look inconsistent with the native window's smaller radius.
-  // Keep 4px of outer space; use 6px for older/unknown versions and 12px only when Tahoe 26+ is positively identified.
+  if (isWindowsDesktop) return 6;
+  // 忽略 macOS 版本会让 Sequoia 的内层 12px 圆角与原生窗口小圆角不协调。
+  // 保留 4px 外层留白，旧系统和未知版本用 6px，明确识别 Tahoe 26+ 才用 12px。
   if (isMacDesktop) return (macOSMajorVersion ?? 0) >= 26 ? 12 : 6;
   return 12;
 }
@@ -27,7 +27,7 @@ export function resolveWorkspaceShellPanelRadiusPx({
 export function resolveWorkspaceShellResizeHandleInsetPx(
   options: WorkspaceShellPlatformRadiusOptions,
 ): number {
-  return resolveWorkspaceShellPanelRadiusPx(options) + 4;
+  return resolveWorkspaceShellPanelRadiusPx(options) + (options.isWindowsDesktop ? 6 : 4);
 }
 
 export function resolveWorkspaceShellWindowChromeClass({
@@ -37,27 +37,27 @@ export function resolveWorkspaceShellWindowChromeClass({
   macOSMajorVersion,
   supportsNativeRoundedCorners,
 }: WorkspaceShellWindowChromeOptions): string {
-  // Linux uses xl to match the settings page; the panel already has its own spacing and does not form the outer edge of the system window.
+  // Linux 与设置页一致使用 xl；面板已有独立留白，不承担系统窗口外沿。
   if (isLinuxDesktop) return "rounded-xl border border-border";
   if (!isWindowsDesktop) {
     const radius = resolveWorkspaceShellPanelRadiusPx({ isMacDesktop, macOSMajorVersion });
-    return radius === 6 ? "rounded-[6px] border border-border" : "rounded-xl border border-border";
+    return radius === 6 ? "rounded-md border border-border" : "rounded-xl border border-border";
   }
 
   if (supportsNativeRoundedCorners === null) {
-    // When the bridge is unavailable or the initial query is incomplete, do not interpret “unknown” as Windows 10.
-    // Keep the previous style so Win11 does not permanently fall back to square corners on a failure path.
-    return "rounded-[5px] border border-border";
+    // bridge 不可用或首次查询尚未完成时，不能把“未知”直接解释成 Windows 10。
+    // 保持改动前样式，避免 Win11 在失败路径永久退化为直角外观。
+    return "rounded-md border border-border";
   }
 
   if (!supportsNativeRoundedCorners) {
-    // Drawing the same right-side corners for all Windows versions would fake a window frame on Windows 10,
-    // which does not support native rounded corners. Round only the right outer corners; do not remove the panel's three existing subtle borders.
-    return "rounded-l-[5px] border border-border";
+    // 仅按 Windows 平台统一绘制右侧圆角，会在不支持原生圆角的 Windows 10
+    // 上伪造一层窗口外形。只收直右侧外角，不能顺带删除面板原有的三条弱边框。
+    return "rounded-l-md border border-border";
   }
 
-  // The old maximized-window rule treated the panel as the outer edge of the system window and removed its corners and three borders.
-  // The panel has its own 4px spacing and must retain full corner rounding and borders when maximized.
-  // After insetting the Windows outer edge by 4px, a 12px radius creates an overly thick curved gap; use 5px for layout panels.
-  return "rounded-[5px] border border-border";
+  // 旧最大化规则把面板当成系统窗口外沿，清除了圆角和三条边框。
+  // 面板现有独立的平台留白，最大化时也必须保持完整圆角与边框。
+  // 直接写像素圆角会绕过设计 token；Windows 面板复用 rounded-md（默认 6px）。
+  return "rounded-md border border-border";
 }

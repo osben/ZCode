@@ -11,7 +11,6 @@ import { ConversationRowView } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
-  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnits.js";
@@ -23,7 +22,6 @@ interface ConversationTurnRowProps {
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
-  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -48,7 +46,6 @@ export function ConversationTurnRow({
   onFork,
   onRetry,
   onFeedbackChange,
-  onPinChange,
   onEdit,
   editWorkspaceRewindAvailability,
   hideAssistantActions,
@@ -68,7 +65,6 @@ export function ConversationTurnRow({
       onFork={onFork}
       onRetry={onRetry}
       onFeedbackChange={onFeedbackChange}
-      onPinChange={onPinChange}
       onEdit={onEdit}
       editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
       hideAssistantActions={hideAssistantActions}
@@ -98,8 +94,8 @@ export function resolveAssistantCopyText(unit: ConversationTurnRenderUnit): stri
     if (row.kind !== "toolCall" || row.toolName !== "ExitPlanMode") continue;
     const markdown = extractPlanToolCallContent(toolCallRowToLegacyNode(row).toolCall, "").markdown;
     if (!markdown || includedSegments.has(markdown)) continue;
-    // Product rule: copying the assistant represents the full visible answer for this turn. Plan text comes from the structured tool row in place;
-    // do not read card DOM clipped by max-height/mask or accidentally include ordinary tool output.
+    // 产品边界：assistant 复制代表本轮完整可见回答。计划正文来自原位结构化 tool row，
+    // 不能读取被 max-height/mask 裁切的卡片 DOM，也不能顺手混入普通工具输出。
     segments.push(markdown);
     includedSegments.add(markdown);
   }

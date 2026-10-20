@@ -13,7 +13,8 @@ export function normalizeRemoteConnectionLogMessage(message: string): string {
   return message
     .replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/u, "")
     .replace(/^\[pid:\d+\]\s*/u, "")
-    .replace(/^(?:\[[^\]]+\]\s*)+/u, "")
+    // Source Server phase 是 bootstrap UI 的正式状态，不是通用日志前缀，必须保留。
+    .replace(/^(?:\[(?!source-server:)[^\]]+\]\s*)+/u, "")
     .trim();
 }
 
@@ -22,11 +23,14 @@ function isRemoteDownloadProgressLog(message: string): boolean {
 }
 
 function getRemoteTransferProgressKey(message: string): string | null {
-  if (isRemoteDownloadProgressLog(message)) {
+  const progressMessage = message.replace(/^\[source-server:[^\]]+\]\s*/u, "");
+  if (isRemoteDownloadProgressLog(progressMessage)) {
     return "download";
   }
 
-  const uploadMatch = /^upload progress(?: \[([^\]]+)\])?(?: \((.+)\))?:/iu.exec(message);
+  const uploadMatch = /^upload progress(?: \[([^\]]+)\])?(?: \((.+)\))?:/iu.exec(
+    progressMessage,
+  );
   if (!uploadMatch) {
     return null;
   }
@@ -48,7 +52,10 @@ export function appendRemoteConnectionRuntimeLog(
     let matchingProgressIndex = -1;
     for (let index = currentLogs.length - 1; index >= 0; index -= 1) {
       const currentLog = currentLogs[index];
-      if (currentLog && getRemoteTransferProgressKey(currentLog.message) === incomingProgressKey) {
+      if (
+        currentLog &&
+        getRemoteTransferProgressKey(currentLog.message) === incomingProgressKey
+      ) {
         matchingProgressIndex = index;
         break;
       }
@@ -57,10 +64,9 @@ export function appendRemoteConnectionRuntimeLog(
     if (matchingProgressIndex >= 0) {
       const matchingLog = currentLogs[matchingProgressIndex];
       if (matchingLog) {
-        // Progress updates for multiple remote resources can interleave. Merging only adjacent
-        // progress rows caused later updates for the same file to append a long series of speed rows.
-        // Deduplicate across the entire log window by "transfer type + file identifier" and move the
-        // latest progress to the end, keeping one row per active transfer and the latest speed near the bottom.
+        // 上传多个 remote 资源时不同文件的进度会交错到达，只合并相邻进度行时，
+        // 同一文件稍后再更新就会追加成一长串速度行。这里按“传输类型 + 文件标识”在整个日志窗口内去重，
+        // 并把最新进度移到末尾，保证每个活跃传输只占一行且最新速度始终靠近可视区域底部。
         return [
           ...currentLogs.slice(0, matchingProgressIndex),
           ...currentLogs.slice(matchingProgressIndex + 1),
@@ -101,7 +107,9 @@ export function shouldAcceptRemoteConnectionRuntimeLog(
 export function useRemoteConnectionLogs(activeRequestId?: string | null) {
   const platform = usePlatform();
   const activeRequestIdRef = useRef(activeRequestId);
-  const [connectionLogs, setConnectionLogs] = useState<RemoteConnectionLogEntry[]>([]);
+  const [connectionLogs, setConnectionLogs] = useState<
+    RemoteConnectionLogEntry[]
+  >([]);
 
   useEffect(() => {
     activeRequestIdRef.current = activeRequestId;
@@ -135,7 +143,10 @@ export function useRemoteConnectionLogs(activeRequestId?: string | null) {
     setConnectionLogs([]);
   };
 
-  const appendConnectionLog = (level: RemoteConnectionLogEntry["level"], message: string) => {
+  const appendConnectionLog = (
+    level: RemoteConnectionLogEntry["level"],
+    message: string,
+  ) => {
     setConnectionLogs((currentLogs) => [
       ...currentLogs,
       {

@@ -20,7 +20,7 @@ import { logger } from "@/logger.js";
 import { DesktopWindowControls } from "@/DesktopWindowControls.js";
 import type { OnboardingRecordEntry } from "@zcode/shared";
 
-/** Append a local onboarding record (the host fills in userId); treat a missing channel that remains pending for 5 seconds as a write failure. */
+/** 追加本地引导记录（userId 由 host 补全）；channel 缺失挂起时 5 秒超时按写失败处理。 */
 async function appendOnboardingRecord(
   service: NonNullable<ReturnType<typeof useOnboardingRecordService>>,
   deviceMid: string,
@@ -40,9 +40,9 @@ export function OccupationOnboarding({
   isWindowsDesktop,
 }: {
   children: ReactNode;
-  /** Custom window controls on Windows/Linux: onboarding covers the full main window, including the title bar, so add minimize/maximize/close controls here. */
+  /** Windows/Linux 自绘窗控：引导全屏覆盖主界面（含标题栏），需在此补最小化/最大化/关闭。 */
   showWindowControls?: boolean;
-  /** The standalone settings page does not depend on onboarding settings loading, so the app-level onboarding overlay cannot cover its content. */
+  /** 独立设置页不依赖引导设置加载，避免应用级引导外层遮住设置内容。 */
   showChildrenWhileLoading?: boolean;
   isMacDesktop?: boolean;
   isWindowsDesktop?: boolean;
@@ -53,14 +53,14 @@ export function OccupationOnboarding({
   const shortcutBindings = useEffectiveShortcutBindings();
   const requested = useZCodeStore((state) => state.newUserOnboardingOpen);
   const setRequested = useZCodeStore((state) => state.setNewUserOnboardingOpen);
-  // Re-evaluate whether to show onboarding for the userId when auth state changes (setUser after a successful login in useRootOAuthEffects).
+  // 登录态变化（useRootOAuthEffects 登录成功后 setUser）时按 userId 重新判定是否触发引导。
   const userId = useZCodeStore((state) => state.user?.id) ?? null;
   const { intl } = useZCodeIntl();
   const t = (key: string) => intl.formatMessage({ id: `occupationOnboarding.${key}` });
   const [occupation, setOccupation] = useState<OccupationValue | null>("developer");
   const savedInterfaceMode = useZCodeStore((state) => state.interfaceMode);
   const setInterfaceMode = useZCodeStore((state) => state.setInterfaceMode);
-  // A null mode means the mode page was “skipped” (skipping is an explicit answer, so keep null in the record rather than a fallback value).
+  // mode 为 null 表示模式页被"跳过"（跳过是显式答案，记录里保留 null 而非兜底值）。
   const [mode, setMode] = useState<InterfaceMode | null>(savedInterfaceMode);
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const preferences = step === 2;
@@ -77,7 +77,6 @@ export function OccupationOnboarding({
   const [needsOnboarding, markOnboarded] = useOnboardingTrigger({
     onboardingRecord,
     userId,
-    hasStoredOccupation: Boolean(settings?.onboardingOccupation),
     loadDeviceMid,
     update,
   });
@@ -127,7 +126,7 @@ export function OccupationOnboarding({
         return;
       }
       if (event.key === "Escape" && onboardingVisible && !saving) {
-        // Exiting directly does not change preferences; persist dismissed for first-run onboarding to avoid showing it again at next startup.
+        // 直接退出不改偏好；首次引导会持久化 dismissed，避免下次启动重复展示。
         event.preventDefault();
         event.stopImmediatePropagation();
         closeOnboarding();
@@ -140,7 +139,7 @@ export function OccupationOnboarding({
       event.preventDefault();
       event.stopImmediatePropagation();
       if (saving) return;
-      // Closing debug onboarding does not save preferences or mark first-run onboarding complete.
+      // 关闭调试引导不保存偏好，也不把首次引导标记为已完成。
       if (onboardingVisible) {
         closeOnboarding();
       } else {
@@ -159,10 +158,10 @@ export function OccupationOnboarding({
     setInterfaceMode,
     mode,
   ]);
-  // When onboarding opens again (after an account switch or by keyboard shortcut), prefill from the user's latest answers in the record
-  // instead of starting from hard-coded defaults each time; use defaults for fields recorded as null from skipped pages.
+  // 引导再次打开（换账号触发 / 快捷键手动打开）时，用该用户在 record 里的最近作答预填，
+  // 而不是每次都从写死的默认选项开始；跳过页记 null 的字段落默认值。
   const [latestEntry, setLatestEntry] = useState<OnboardingRecordEntry | null>(null);
-  // A late async prefill must not overwrite a choice the user has already made.
+  // 预填异步后到时不得覆盖用户已经做出的选择。
   const userEditedRef = useRef(false);
   useEffect(() => {
     if (!onboardingRecord) return;
@@ -193,7 +192,7 @@ export function OccupationOnboarding({
     );
     const initialMode = entry?.interfaceMode ?? savedInterfaceMode;
     setMode(initialMode);
-    // Proactive work memory is off by default in coding mode; restore the user's previous choice only in office mode.
+    // 编程模式默认关闭主动工作记忆；办公模式才恢复该用户之前的勾选。
     setMemory(initialMode === "office" && (entry?.memoryEnabled ?? true));
     setSuggestions(entry?.proactiveSuggestionsEnabled ?? initialMode === "office");
     setMigration(false);
@@ -204,7 +203,7 @@ export function OccupationOnboarding({
     userEditedRef.current = false;
     suggestionsEditedRef.current = false;
     applyLatestEntry();
-    // If latestEntry arrives asynchronously while onboarding is open, prefill again and override defaults until the user interacts.
+    // latestEntry 异步到达时若引导已打开，重新预填一次（用户未交互前覆盖默认值）。
   }, [requested]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!onboardingVisible || userEditedRef.current) return;
@@ -212,9 +211,9 @@ export function OccupationOnboarding({
     // eslint-disable-line react-hooks/exhaustive-deps
   }, [latestEntry]);
   if (!settings) return showChildrenWhileLoading ? <>{children}</> : null;
-  // Render nothing while deciding to avoid a brief onboarding flash before it disappears or before entering the main view.
-  // Wait for the record check only for a suspected first run (no occupation in settings). Existing users (with
-  // onboardingOccupation) enter the main view without waiting for RPC, avoiding a black screen.
+  // 判定进行中先不渲染，避免引导闪现后立即消失（判定为需引导）或先闪引导再进主界面。
+  // 只有疑似首跑（settings 里也没有职业）才等待记录判定；存量用户（已有
+  // onboardingOccupation）不等 RPC 直接进主界面，杜绝黑屏。
   if (!requested && needsOnboarding === null && !settings.onboardingOccupation) return null;
   if (!onboardingVisible) return <>{children}</>;
   const save = async (skip = false) => {
@@ -227,14 +226,14 @@ export function OccupationOnboarding({
       if (mode) setInterfaceMode(mode);
       logger.info("[occupation-onboarding] 保存偏好", { interfaceMode: mode });
       await update({
-        // Keep the existing settings behavior: skipped pages use conservative defaults (occupation other / preferences off).
-        // The distinction that “skip is still an answer” is recorded only in onboarding-record.json.
+        // settings 侧保持既有语义：跳过落保守默认值（职业 other / 偏好关），
+        // "跳过也算答案"的区分度只体现在 onboarding-record.json 里。
         onboardingOccupation: occupation ?? "other",
         memoryEnabled: skip ? false : memory,
         proactiveSuggestionsEnabled: !skip && mode === "office" && suggestions,
       });
       reportEnd();
-      // Successful save ends this onboarding run; a local record failure must not leave a page that can be submitted again.
+      // 保存成功就是本次引导的终点；本地记录失败不应留下可再次上报的引导页面。
       setStep(0);
       setDismissed(true);
       setRequested(false);
@@ -242,10 +241,10 @@ export function OccupationOnboarding({
       logger.info("[occupation-onboarding] 偏好保存完成", { interfaceMode: mode });
       if (onboardingRecord) {
         try {
-          // Append the onboarding record locally (Host fills userId from login state) for later server upload.
-          // appendRecord uses RPC; protect against a missing channel hanging and leaving the save button spinning forever.
-          // Skipping is an explicit answer: store null for a skipped page (occupation is already null when step 1 is skipped,
-          // mode becomes null when step 2 is skipped, and both booleans are null when the whole preferences page is skipped).
+          // 追加本地引导记录（userId 由 host 按登录态补全），后续上传服务器。
+          // appendRecord 走 RPC，channel 缺失时会挂起导致保存按钮永远转圈，加超时保护。
+          // 跳过是显式答案：该页被跳过时记 null（occupation 在第 1 步跳过时已是 null，
+          // mode 在第 2 步跳过时置 null，偏好页整体跳过时两个布尔记 null）。
           await appendOnboardingRecord(onboardingRecord, platform.getDeviceId(), {
             occupation,
             interfaceMode: mode,
@@ -255,7 +254,7 @@ export function OccupationOnboarding({
           });
           markOnboarded();
         } catch (cause) {
-          // Preferences are saved; if writing the record fails, log a warning without interrupting the user. The record will trigger onboarding again at next startup.
+          // 偏好已保存成功，记录写失败只留 warn 日志，不打断用户；下次启动按记录会再次触发引导。
           logger.warn("[occupation-onboarding] 写入引导记录失败", { error: String(cause) });
         }
       }
@@ -274,7 +273,7 @@ export function OccupationOnboarding({
       className="relative flex h-dvh w-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-12 [app-region:drag]" />
-      {/* As in Settings, account for Workspace’s 4px outer spacing, 1px border, and 8px padding. */}
+      {/* 与 Settings 相同，计入 Workspace 的 4px 外层留白、1px 边框和 8px 内边距。 */}
       {showWindowControls ? (
         <div className="absolute right-1 top-1 z-30 mt-px mr-px flex h-12 items-center px-2">
           <DesktopWindowControls />
@@ -290,7 +289,7 @@ export function OccupationOnboarding({
             onClose={closeOnboarding}
           />
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4 sm:px-10">
-            {/* Automatic margins center short content while long content scrolls normally from the top, without affecting fixed navigation. */}
+            {/* 自动外边距让短内容居中，长内容从顶部正常滚动，不影响固定导航。 */}
             <div className="mx-auto my-auto w-full max-w-lg shrink-0">
               <section className="flex w-full flex-col">
                 <div className="w-full">
@@ -312,7 +311,7 @@ export function OccupationOnboarding({
                       saving={saving}
                       onSelect={(value) => {
                         markUserEdited();
-                        // Reselecting the current coding mode should also clear the default checkboxes from the old record.
+                        // 重选当前编程模式也应清除旧记录带来的默认勾选。
                         setMemory(value === "office");
                         if (value !== mode) {
                           if (value === "office" && !suggestionsEditedRef.current)

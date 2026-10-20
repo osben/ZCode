@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { type ZCodeConfigOption, type ZCodeProvider } from "@zcode/shared";
 import {
   TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM,
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
   testId,
-  type ZCodeConfigOption,
-  type ZCodeProvider,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select.js";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { restoreComposerInputFocusAfterPickerClose } from "@/lib/pickerFocus.js";
+import {
+  isCoarseTouchDevice,
+  shouldRestoreChatInputFocusAfterPickerClose,
+} from "@/lib/pickerFocus.js";
 import {
   getThoughtLevelLabel,
   isNoThoughtLevel,
@@ -43,7 +45,7 @@ export function ThoughtLevelCycleControl({
 }: {
   disabled?: boolean;
   disabledReason?: string;
-  /** The shared layout owner collapses the label in the chat input; other callers keep the original breakpoint behavior. */
+  /** 聊天输入框由统一布局 owner 收起文字，其他调用方保留原断点规则。 */
   composerCollapsePriority?: number;
   interactionMode?: ThoughtLevelInteractionMode;
   indicatorClassName?: string;
@@ -141,8 +143,8 @@ export function ThoughtLevelCycleControl({
     };
   }, [currentLabel, labelVisibilityClassName]);
 
-  // Configuration order is no longer sorted by name, and disabled items may be anywhere; count only enabled items before the current one.
-  // Unselected/invalid values and disabled entries always show zero progress; do not project a missing selection onto the first level.
+  // 配置顺序不再经过名称排序，关闭项可能位于任意位置；只计算当前项之前的非关闭项。
+  // 未选／失效及关闭值始终为零进度，不能把缺失选择投影成首档。
   const thinkingEntries = entries.filter((entry) => !isNoThoughtLevel(entry));
   const activeDotCount =
     !currentValueIsValid || !currentEntry || isNoThoughtLevel(currentEntry)
@@ -169,8 +171,8 @@ export function ThoughtLevelCycleControl({
       return;
     }
     pendingCurrentValueCommitRef.current = value;
-    // Radix does not select on Space during typeahead. Commit the current value only when the same interaction actually closes
-    // the Select; invalidate keyboard intent in a microtask if it did not close.
+    // Radix 对 typeahead Space 不执行选择。只在同一轮交互确实关闭
+    // Select 时提交当前值，未关闭的键盘意图在微任务中作废。
     queueMicrotask(() => {
       if (pendingCurrentValueCommitRef.current === value) {
         pendingCurrentValueCommitRef.current = null;
@@ -244,7 +246,7 @@ export function ThoughtLevelCycleControl({
           data-composer-collapse-priority={composerCollapsePriority}
           data-testid={TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER}
         >
-          {/* Bugfix: A single-level model has no state to switch between, so do not render a Select with an arrow. */}
+          {/* Bugfix: 单档模型（只有一个思考档位）没有可切换状态，不能继续渲染带箭头的 Select。 */}
           {triggerContent}
         </span>
       </ControlHintTooltip>
@@ -258,8 +260,8 @@ export function ThoughtLevelCycleControl({
         onOpenChange={handleSelectOpenChange}
         value={String(option.currentValue)}
         onValueChange={(value) => {
-          // When controlled values race with item registration, Radix Select may emit an empty or otherwise unrendered value.
-          // Forwarding it would make callers mistake it for a user-selected level. Accept only values in the rendered entries.
+          // Radix Select 在受控值与子项注册竞争时可能发出空值等未渲染值；
+          // 直接上抛会被调用方误当成用户切换档位。只接受已渲染 entries 中的值。
           if (!entries.some((entry) => entry.value === value)) {
             return;
           }
@@ -307,15 +309,20 @@ export function ThoughtLevelCycleControl({
           collisionPadding={8}
           onCloseAutoFocus={(event) => {
             if (!restoreFocusSelector) {
-              // Automations has no chat input to return focus to, so keep Radix's default behavior
-              // and return keyboard focus to the trigger instead of letting it fall to body after preventDefault.
+              // Automations 没有聊天输入框可恢复；保留 Radix 默认行为，
+              // 让键盘焦点回到触发器，而不是 preventDefault 后掉到 body。
               return;
             }
             event.preventDefault();
-            restoreComposerInputFocusAfterPickerClose({
-              anchor: triggerRef.current,
-              fallbackSelector: restoreFocusSelector,
-            });
+            if (
+              !shouldRestoreChatInputFocusAfterPickerClose({
+                isCoarseTouchDevice: isCoarseTouchDevice(),
+              })
+            ) {
+              return;
+            }
+            const input = document.querySelector<HTMLElement>(restoreFocusSelector);
+            input?.focus();
           }}
         >
           {entries.map((entry) => (

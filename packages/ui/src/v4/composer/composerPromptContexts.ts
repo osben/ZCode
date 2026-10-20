@@ -30,7 +30,7 @@ export interface ComposerPromptContexts {
   conversationSelections: readonly ConversationSelectionDisplayReference[];
   webElements: readonly WebElementContextComposerAttachment[];
   pptxElements: readonly PptxElementReference[];
-  /** Added by plugin UI through ui/update-model-context; treated as empty when absent. */
+  /** 插件 UI 经 ui/update-model-context 附加；缺省视为空。 */
   pluginUiContexts?: readonly PluginUiModelContext[];
 }
 
@@ -50,7 +50,10 @@ export function countComposerPromptContexts(contexts: {
   );
 }
 
-/** All four context parsers recognize only trailing prompt blocks, so serialization order must be exactly the reverse of parsing order. */
+/**
+ * 五类 context parser 都只识别 prompt 尾块，因此序列化顺序和解析顺序必须严格相反。
+ * 插件上下文最后序列化（最外层），解析时最先剥离。
+ */
 export function serializeComposerPromptContexts(
   text: string,
   contexts: ComposerPromptContexts,
@@ -59,9 +62,18 @@ export function serializeComposerPromptContexts(
     text,
     contexts.conversationSelections,
   );
-  const withCodeComments = buildPromptWithCodeComments(withSelections, contexts.codeComments);
-  const withWebElements = buildPromptWithWebElementContexts(withCodeComments, contexts.webElements);
-  const withPptx = buildPromptWithPptxElementReferences(withWebElements, contexts.pptxElements);
+  const withCodeComments = buildPromptWithCodeComments(
+    withSelections,
+    contexts.codeComments,
+  );
+  const withWebElements = buildPromptWithWebElementContexts(
+    withCodeComments,
+    contexts.webElements,
+  );
+  const withPptx = buildPromptWithPptxElementReferences(
+    withWebElements,
+    contexts.pptxElements,
+  );
   return buildPromptWithPluginUiContexts(withPptx, contexts.pluginUiContexts ?? []);
 }
 

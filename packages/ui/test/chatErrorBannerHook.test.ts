@@ -1,10 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-  TID_CHAT_ERROR_DETAILS_BUTTON,
-  TID_CHAT_ERROR_HOOK_ICON,
-  type IPlatformService,
-} from "@zcode/shared";
+import { type IPlatformService } from "@zcode/shared";
+import { TID_CHAT_ERROR_DETAILS_BUTTON, TID_CHAT_ERROR_HOOK_ICON } from "@zcode/shared/test-ids";
 import { describe, expect, it, vi } from "vitest";
 import { ChatErrorBanner } from "@/ChatErrorBanner.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
@@ -23,7 +20,7 @@ describe("ChatErrorBanner Hook errors", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           PlatformProvider,
           { platform: mockPlatform },
@@ -40,6 +37,7 @@ describe("ChatErrorBanner Hook errors", () => {
 
     expect(html).toContain("hooks_prompt_block: python3: missing file");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_DETAILS_BUTTON}"`);
+    expect(html).toContain("展开详情");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_HOOK_ICON}"`);
   });
 });

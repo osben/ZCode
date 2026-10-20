@@ -117,7 +117,7 @@ function XlsxPreviewError({
   }, [error, sourcePath]);
 
   return (
-    <div className="p-3 text-ui-base text-destructive" role="alert">
+    <div className="p-3 text-sm text-destructive" role="alert">
       {message}
     </div>
   );
@@ -139,8 +139,8 @@ export function PreviewPaneOfficeXlsxContent({
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const { intl } = useZCodeIntl();
   const sheetTabsLabel = intl.formatMessage({ id: "codeViewer.excel.sheetTabs" });
-  // react-xlsx’s default toolbar contains both editing actions and sheet tabs.
-  // Closing the default toolbar in preview removes multi-sheet navigation, so restore only read-only sheet tabs through the toolbar render prop.
+  // react-xlsx 的默认工具栏同时承载编辑动作和 sheet tabs。
+  // 预览关闭默认工具栏后会丢失多表导航，因此只通过 toolbar render prop 补回只读 sheet tabs。
   const renderSheetTabs = useCallback(
     (controller: XlsxViewerController) => (
       <XlsxSheetTabs controller={controller} label={sheetTabsLabel} />
@@ -178,7 +178,7 @@ export function PreviewPaneOfficeXlsxContent({
           <XlsxPreviewError error={error} message={errorMessage} sourcePath={sourcePath} />
         )}
         fileTooLargeState={() => (
-          <div className="p-3 text-ui-base text-destructive" role="alert">
+          <div className="p-3 text-sm text-destructive" role="alert">
             {errorMessage}
           </div>
         )}

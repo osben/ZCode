@@ -1,5 +1,5 @@
-// sessions-index transport (desktop/host implementation): bridges to the v4 sessions-index forwarding surface on IZCodeAgentService
-// (structured like agentConversationTransport; replace the implementation when Web connects directly to the relay).
+// sessions-index 传输面（desktop/host 实现）：桥到 IZCodeAgentService 的 v4 sessions-index 转发面
+// （与 agentConversationTransport 同构；web 直连 relay 时换实现即可）。
 import type { IZCodeAgentService } from "@zcode/services";
 import {
   sessionsIndexTopicFrameSchema,
@@ -63,7 +63,7 @@ type SessionsIndexV4AgentService = Pick<
     >
   >;
 
-/** sessions-index transport for one host connection (= one workspace). */
+/** 一条 host 连接（= 一个 workspace）上的 sessions-index 传输面。 */
 export function createAgentSessionsIndexTransport(
   agentService: SessionsIndexV4AgentService,
   target: AgentSessionsIndexTransportTarget,
@@ -82,7 +82,10 @@ export function createAgentSessionsIndexTransport(
   };
   const topic = sessionsIndexTopic(target.workspaceIdentity?.trim() || target.workspacePath);
   const listeners = new Set<
-    (frame: SessionsIndexTopicFrame, context?: { deliveryKind: TopicFrameDeliveryKind }) => void
+    (
+      frame: SessionsIndexTopicFrame,
+      context?: { deliveryKind: TopicFrameDeliveryKind },
+    ) => void
   >();
   const faultListeners = new Set<
     (fault: {
@@ -93,7 +96,9 @@ export function createAgentSessionsIndexTransport(
     }) => void
   >();
   const restartListeners = new Set<() => void>();
-  const runtimeLifecycleListeners = new Set<(state: "available" | "unavailable") => void>();
+  const runtimeLifecycleListeners = new Set<
+    (state: "available" | "unavailable") => void
+  >();
   const decoder = createTopicWireDecoder(
     new TopicWireFrameAssembler(sessionsIndexTopicFrameSchema),
     (frame: SessionsIndexTopicFrame, deliveryKind) => {
@@ -131,7 +136,7 @@ export function createAgentSessionsIndexTransport(
         try {
           barrier.bind(pending, result.ack.subscriptionId);
         } catch (error) {
-          // Do not activate the store with incomplete initial state if the physical batch exceeds limits before ACK.
+          // ACK 前 physical batch 越界后不能用残缺初始态激活 store。
           try {
             await agentService.unsubscribeSessionsIndexV4({
               ...workspace,
@@ -171,7 +176,7 @@ export function createAgentSessionsIndexTransport(
       });
     },
     async unsubscribe(subscriptionId) {
-      // Release local ownership first; do not forward frames when the old service proxy's handshake/RPC has already failed.
+      // 本地 ownership 先释放；旧 service proxy 的 handshake/RPC 已失败时也不能继续投帧。
       barrier.forget(subscriptionId);
       if (activeSubscriptionId === subscriptionId) activeSubscriptionId = null;
       decoder.discard(topic, subscriptionId);
@@ -222,17 +227,16 @@ export function createAgentSessionsIndexTransport(
           onRuntimeLifecycle(listener: (state: "available" | "unavailable") => void) {
             const lifecycleListeners = runtimeLifecycleListeners;
             lifecycleListeners.add(listener);
-            lifecycleUpstream ??=
-              agentService.onAgentRuntimeLifecycle?.((event) => {
-                if (event.workspaceKey !== targetWorkspaceKey) return;
-                runtimeGeneration += 1;
-                barrier.clear();
-                decoder.clear();
-                activeSubscriptionId = null;
-                for (const lifecycleListener of lifecycleListeners) {
-                  lifecycleListener(event.state);
-                }
-              }) ?? null;
+            lifecycleUpstream ??= agentService.onAgentRuntimeLifecycle?.((event) => {
+              if (event.workspaceKey !== targetWorkspaceKey) return;
+              runtimeGeneration += 1;
+              barrier.clear();
+              decoder.clear();
+              activeSubscriptionId = null;
+              for (const lifecycleListener of lifecycleListeners) {
+                lifecycleListener(event.state);
+              }
+            }) ?? null;
             return () => {
               lifecycleListeners.delete(listener);
               if (lifecycleListeners.size === 0) {

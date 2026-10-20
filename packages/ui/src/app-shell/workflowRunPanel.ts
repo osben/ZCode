@@ -1,8 +1,8 @@
 /**
- * Pure logic for the workflow-run details page: Cancel availability, result/failure-panel decisions, and event-log row summaries.
+ * workflow run 详情页的纯逻辑：Cancel 可用性、结果/失败面板判定、事件日志行摘要。
  *
- * These are the only rule-heavy parts of the details page and can all be covered by exhaustive unit tests
- * without rendering a React Flow canvas. The component only places these results in the DOM.
+ * 抽成纯函数是因为详情页里唯一有"规则"的部分就是这些，而它们全都能被穷举单测，
+ * 不必渲染一张 React Flow 画布。组件只负责把这里的结果贴到 DOM 上。
  */
 import {
   readWorkflowRunStopReason,
@@ -11,46 +11,46 @@ import {
 import type { WorkflowRunActor, WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import { workflowRunConcurrencyEventLine } from "@/app-shell/workflowRunThrottle.js";
 
-/** Maximum raw text for unknown event types; never load the entire journal into the event-log DOM. */
+/** 未知事件种类的兜底原文上限：事件日志绝不把整条 journal 灌进 DOM。 */
 const UNKNOWN_PAYLOAD_MAX_LENGTH = 200;
 
 /**
- * Cancel is available only for `running`.
+ * Cancel 只在 `running` 上可用。
  *
- * Cancellation uses the existing v4 `cancelBackgroundWork {workId: runId}` (one implementation for all three entry points,
- * with no second cancel RPC). It is already a no-op for terminal tasks, so disable the button in terminal states to avoid presenting
- * a control that does nothing, not as a fallback. A missing run (evicted by the eight-run limit or not yet projected at cold start)
- * cannot be cancelled either because its in-flight state is unknown.
+ * 取消走的是既有的 v4 `cancelBackgroundWork {workId: runId}`（三个入口一个实现，
+ * 没有第二条 cancel RPC），而它对已终结的任务本来就是 noop——按钮在终态禁用是为了
+ * 不给出一个点下去毫无反应的控件，不是为了兜底。run 缺席（被 8-run 上限淘汰或冷启动
+ * 尚未投影）时同样不可取消：此时我们对它的在飞状态一无所知。
  */
 export function isWorkflowRunCancellable(run: WorkflowRunState | undefined): boolean {
   return run?.status === "running";
 }
 
 /**
- * Resume availability. **Single source**: the projected run's `resumable` state bit, computed by the CLI in the `run-settled`
- * payload using the **same predicate** as the resume gate (live and cold replay use the same derivation path). The UI must not infer
- * it from status + failureCode because the predicates could drift, showing an enabled button for a command that is rejected.
+ * Resume 可用性。**一个信源**：投影 run 的 `resumable` 状态位——由 CLI 在 `run-settled`
+ * 载荷上按 resume 门的**同一个谓词**算好（live 与冷回放同一条铸造链），UI 绝不自行按
+ * status + failureCode 推导（两处谓词会漂移：按钮亮着但命令被拒）。
  *
- * A missing projection (evicted by the eight-run limit) is never resumable; omit the button rather than show a control guaranteed to be rejected.
+ * 投影缺席（被 8-run 上限淘汰）一律不可恢复：宁可少一个按钮，不给出一个点下去必被拒的控件。
  */
 export function isWorkflowRunResumable(run: WorkflowRunState | undefined): boolean {
   return run?.resumable === true;
 }
 
 type WorkflowRunResultView =
-  /** Run is absent from the projection; no result can be shown. */
+  /** run 不在投影里：不可能有结果可言。 */
   | { kind: "absent" }
-  /** pending/running: there is no result panel yet. */
+  /** pending / running：还没有结果面板。 */
   | { kind: "none" }
   /**
-   * Completed. `preview` is **always absent** at this stage: script artifacts exist only in `RunSettlement.artifact`, not in
-   * the `run-settled` event (which carries only status and error) or the journal. Therefore completion can point only to the background-result turn
-   * in the conversation; do not fabricate a result view. The schema retains the field and will display it if populated in the future.
+   * 完成。`preview` 本阶段**恒缺席**——脚本产物只在 `RunSettlement.artifact` 里，既不在
+   * `run-settled` 事件上（它只携 status 与 error），也不在 journal 里。所以完成态只能指向
+   * 会话里那条后台结果轮，绝不编造一个结果视图。schema 保留了该字段，真填上时如实展示。
    */
   | { kind: "completed"; preview?: string }
   /**
-   * errored/stopped. `message` is preformatted raw text from the projection (the schema defines it as a string);
-   * `stopReason` is present only for stopped runs when the projection includes that key.
+   * errored / stopped。`message` 是投影给出的预格式化
+   * 原文（schema 里就是一个 string）；`stopReason` 只在 stopped 且投影带该键时在场。
    */
   | {
       kind: "error";
@@ -76,7 +76,7 @@ export function workflowRunResultView(run: WorkflowRunState | undefined): Workfl
   return { kind: "none" };
 }
 
-/** One event-log input (an item in a v4 query result). */
+/** 事件日志的一条输入（= v4 query 结果里的一项）。 */
 export interface WorkflowRunEventItem {
   sequence: number;
   type: string;
@@ -87,11 +87,11 @@ export interface WorkflowRunEventItem {
 export interface WorkflowRunEventLine {
   sequence: number;
   type: string;
-  /** Localized primary label. */
+  /** 已本地化的主标签。 */
   label: string;
-  /** Identity and data (station instance, actor name, log body, raw error); not localized. */
+  /** 身份与数据（站点实例、actor 名、日志正文、错误原文）；不需要本地化。 */
   detail?: string;
-  /** Failure/cancellation color; all others use default (do not add visual vocabulary beyond the overlay's four values). */
+  /** 失败/取消着色；其余一律 default（叠加视图的四值词汇表之外不新增视觉词汇）。 */
   tone: "default" | "failed";
   truncated?: boolean;
 }
@@ -102,7 +102,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** `{siteId, ordinal}` → `site@ordinal` (same format as the engine's refToString, for comparison with logs). */
+/** `{siteId, ordinal}` → `site@ordinal`（与引擎的 refToString 同形，便于和日志对照）。 */
 function refText(value: unknown): string | undefined {
   if (!isRecord(value)) return undefined;
   const { siteId, ordinal } = value;
@@ -110,7 +110,7 @@ function refText(value: unknown): string | undefined {
   return typeof ordinal === "number" ? `${siteId}@${ordinal}` : siteId;
 }
 
-/** Return a non-empty string or undefined (joinDetail drops the whole segment rather than leaving an empty separator). */
+/** 非空字符串，否则 undefined（joinDetail 会把它整段丢掉，而不是留一截空分隔符）。 */
 function nonEmptyText(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -130,11 +130,11 @@ function truncate(text: string, max: number): string {
 }
 
 /**
- * **Short summary** of a report entry in the event log (not the full preview in the Results section).
+ * 事件日志里一条 report 条目的**短摘要**（不是 Results 区那份完整预览）。
  *
- * Deliberately compress it to one line here: the event log is monospaced, one line per event, and multi-line JSON would expand it into a second
- * artifact view. The CLI prepares the full form (raw string / pretty-printed object JSON) in `workflowRuns.reports[].preview`;
- * the Results section renders that version.
+ * 刻意在这里就地压成一行：事件日志是等宽的一行一条，多行 JSON 会把日志撑开成第二个
+ * 产物视图。完整形态（string 原样 / object pretty JSON）由 CLI 侧算好放在
+ * `workflowRuns.reports[].preview` 上，Results 区渲染的是那一份。
  */
 function reportItemSummary(item: unknown): string | undefined {
   if (item === undefined) return undefined;
@@ -145,18 +145,18 @@ function reportItemSummary(item: unknown): string | undefined {
     const serialized = JSON.stringify(item);
     return serialized === undefined ? undefined : truncate(serialized, UNKNOWN_PAYLOAD_MAX_LENGTH);
   } catch {
-    // The CLI already normalizes the payload into a JSON-serializable form; even if that guarantee fails, do not crash the entire log page.
+    // 载荷已在 CLI 侧规范化成可 JSON 序列化的形态；真到不了这里也不能打挂一整页日志。
     return undefined;
   }
 }
 
-/** Fallback for an unknown kind: type + truncated JSON. Do not crash or pretend to recognize it. */
+/** 未知种类的兜底：type + 截断 JSON。既不崩，也不假装认识它。 */
 function unknownDetail(payload: Record<string, unknown>): string | undefined {
   let serialized: string;
   try {
     serialized = JSON.stringify(payload);
   } catch {
-    // The CLI already normalizes the payload into a JSON-serializable form; even if that guarantee fails, do not let one log row crash the panel.
+    // 载荷已在 CLI 侧规范化成可 JSON 序列化的形态；真到不了这里也不能让一行日志打挂面板。
     return undefined;
   }
   if (serialized === undefined || serialized === "{}") return undefined;
@@ -166,18 +166,18 @@ function unknownDetail(payload: Record<string, unknown>): string | undefined {
 const EVENT_KEY_PREFIX = "chat.toolCall.workflow.run.event.";
 
 /**
- * Engine event → readable row.
+ * 引擎事件 → 可读一行。
  *
- * The vocabulary follows the kinds the **engine actually emits**: run-started / actor-created / node-queued /
+ * 词汇表按**引擎实际发出的**种类写：run-started / actor-created / node-queued /
  * node-dispatched / node-repairing / node-nudged / node-settled / usage-updated / log /
- * import-cache-closed / report / escalation-raised / escalation-resolved / run-settled, plus adaptive-concurrency
- * node-waiting / node-executing / concurrency-changed (the default branch is delegated to a related module first).
- * The driver emits the latter two inside the ask execution boundary (the engine core does not know about escalation), but they use the same two rails,
- * so they are grouped here with the related events. `payload` contains the event's fields other than `type` (the run service mapping contract),
- * so read engine field names directly without reshaping them.
+ * import-cache-closed / report / escalation-raised / escalation-resolved / run-settled，以及自适应并发的
+ * node-waiting / node-executing / concurrency-changed（default 分支先交给同族模块）。后两个由 driver 在执行 ask
+ * 的边界内发出（引擎核心不感知升级），但走的是完全相同的两条轨，所以在这里与其余同族。
+ * `payload` 是事件对象去掉 `type` 后的其余字段（run service 的映射契约），
+ * 所以这里的读法就是引擎的字段名，不做二次重塑。
  *
- * Each branch reads defensively by shape: payloads are bounded, so deep fields may have been truncated,
- * and an unreadable event must never crash the entire event log.
+ * 每个分支都对形状做防御性读取：载荷已经过有界化，深层字段可能被削掉，
+ * 而一条读不动的事件绝不能打挂整个事件日志。
  */
 export function workflowRunEventLines(
   events: readonly WorkflowRunEventItem[],
@@ -194,7 +194,7 @@ export function workflowRunEventLines(
 
     switch (event.type) {
       case "run-started":
-        // Do not show caps in this row; concurrency is not actionable information.
+        // caps 不进这一行：并发度不是可操作信息。
         return { ...base, label: formatMessage(key("runStarted")), tone: "default" };
 
       case "actor-created": {
@@ -259,13 +259,13 @@ export function workflowRunEventLines(
             outcome: outcomeLabel,
           }),
           ...(detail === undefined ? {} : { detail }),
-          // failed and cancelled differ in the journal, but this row only needs to say the step did not succeed.
+          // journal 里 failed 与 cancelled 语义不同，但这一行只需要「这步没成」。
           tone: outcome === "failed" || outcome === "cancelled" ? "failed" : "default",
         };
       }
 
       case "usage-updated": {
-        // The event carries the cumulative amount spent; the authoritative value is in the usage row of the status header.
+        // 事件直接携带已花总量；权威值在状态头的用量行上。
         const spentTokens =
           typeof payload.spentTokens === "number" ? payload.spentTokens : undefined;
         return {
@@ -288,10 +288,10 @@ export function workflowRunEventLines(
         };
       }
 
-      /** Control flow passed a `phase("…")` marker: include its name and entry number (replay exports still use this formatter). */
+      /** 控制流经过了一个 `phase("…")` 标记：给名字与第几次进入（回放导出仍用这条格式化器）。 */
       case "import-cache-closed": {
-        // Imported-cache closure during amend-resume: identify whose first write closed the gate.
-        // detail = subagent name when available + instance; world.run has no name, only an instance.
+        // amend-resume 的导入缓存关门：谁的第一笔写入关的门。
+        // detail = 子代理名（有则）+ 实例；world.run 关的门没有名字，只有实例。
         const actorName = typeof payload.actorName === "string" ? payload.actorName : undefined;
         const detail = joinDetail(actorName, refText(payload.instance));
         return {
@@ -314,9 +314,9 @@ export function workflowRunEventLines(
       }
 
       /**
-       * Both report and log are fire-and-forget, but report **has a site identity** (`report#N@k` in the journal),
-       * so this row includes the instance. The entry body belongs elsewhere (the full preview in Results); provide only a short summary here.
-       * The event log's role is "what the engine emitted and when", not a second artifact view.
+       * report 与 log 都是 fire-and-forget，但 report **有 site 身份**（`report#N@k` 进 journal），
+       * 所以这一行带实例。条目正文另有主场（Results 区的完整预览），这里只给一个短摘要——
+       * 事件日志的职责是"引擎发过什么、什么时候"，不是第二个产物视图。
        */
       case "report": {
         const detail = joinDetail(refText(payload.instance), reportItemSummary(payload.item));
@@ -329,19 +329,19 @@ export function workflowRunEventLines(
       }
 
       /**
-       * Escalated question: an actor hits a real blocker and escalates it to the main agent,
-       * then waits in its ask until answered. The actor resumes in place after the main agent responds by qid.
+       * 升级问答：actor 撞上真阻塞，把问题升级给主代理，
+       * 停在自己那次 ask 里等答案；主代理按 qid 作答后它就地继续。
        *
-       * Both rows start with **qid**, even though the raised row is about "who asked what": qid is the only join key between these events,
-       * which are often dozens of rows apart in the log (the wait is the whole point of the feature). Without it,
-       * "Answered" cannot be connected to its question.
+       * 两行都以 **qid 打头**，尽管 raised 那一行的主角是"谁问了什么"：qid 是这两条事件之间
+       * 唯一的关联键，而它们在日志里通常隔着几十行（等待就是这个特性的全部内容）。少了它，
+       * 一条 "已作答" 就无从知道答的是上面哪一问。
        *
-       * Truncate the body using the existing detail-column convention (same limit as report summaries): the event log is one line per event,
-       * and the full question belongs in the "Pending questions" section above.
+       * 正文按 detail 列的既有习惯截断（与 report 摘要同一个上限）：事件日志是一行一条，
+       * 完整的问题正文另有主场——上面的「待答问题」区。
        */
       case "escalation-raised": {
         const question = typeof payload.question === "string" ? payload.question : undefined;
-        // If the actor name is absent (anonymous actor), fall back to station instance; show `actor#1@1` rather than omitting who it was.
+        // actor 名缺席（匿名 actor）时退回站点实例：这一行宁可说 `actor#1@1`，也不能不说是谁。
         const actorName = typeof payload.actorName === "string" ? payload.actorName : undefined;
         const detail = joinDetail(
           nonEmptyText(payload.qid),
@@ -352,7 +352,7 @@ export function workflowRunEventLines(
           ...base,
           label: formatMessage(key("escalationRaised")),
           ...(detail === undefined ? {} : { detail }),
-          // Escalation is not failure: the actor did nothing wrong and is waiting for an answer. Reserve failure coloring for rows that actually failed.
+          // 升级不是失败：actor 没有出错，它在等一个答案。着色留给真正没成的那些行。
           tone: "default",
         };
       }
@@ -389,12 +389,12 @@ export function workflowRunEventLines(
       }
 
       default: {
-        // The four concurrency events (node-waiting / node-executing / concurrency-changed / run-caps-changed)
-        // live in the related workflowRunThrottle.ts module (max-lines limit).
+        // 并发的四条事件（node-waiting / node-executing / concurrency-changed / run-caps-changed）
+        // 住在同族的 workflowRunThrottle.ts（max-lines 门）。
         const concurrencyLine = workflowRunConcurrencyEventLine(event, formatMessage);
         if (concurrencyLine !== undefined) return concurrencyLine;
-        // For example, `compaction`, reserved by the engine for long-context compaction (never emitted in v1).
-        // If it appears later, this must still produce an informative row rather than a blank.
+        // 例如引擎为长上下文压缩预留的 `compaction`（v1 从不发出）。它将来一出现，
+        // 这里必须仍给出一条有信息量的行，而不是空白。
         const detail = unknownDetail(payload);
         return {
           ...base,
@@ -407,17 +407,18 @@ export function workflowRunEventLines(
   });
 }
 
-// ── Transcript entry point: step card → actor instance ──
+// ── Transcript 入口：step 卡片 → actor 实例──
 
 /**
- * An actor instance that can be opened.
+ * 一个可打开的 actor 实例。
  *
- * `siteId` + `ordinal` identify it (journal key); `name` is display-only. `sessionId` is the ID of the real persisted
- * session and the only value required by a nested read-only SessionPane.
+ * `siteId` + `ordinal` 是身份（journal 的键），`name` 只是展示；`sessionId` 是那条真实持久
+ * 会话的 id，也是嵌套只读 SessionPane 唯一需要的东西。
  *
- * `sessionId` **may be absent** (schema-optional): progress events can arrive before the actor session is persisted, older runs may not have one,
- * and slots that have not started never have one. An instance without it can still open a tab—the tab identity is (runId, siteId, ordinal),
- * while session ID is only the accompanying subscription target. Without it, the tab shows a "Not started" placeholder.
+ * `sessionId` **可缺席**（schema-optional）：进度事件可能先于 actor 会话落库到达，老 run
+ * 也可能根本没有；还没启动的槽位
+ * 更是从来没有。缺席的实例照样开 tab——tab 的身份是 (runId, siteId, ordinal)，会话 id 只是
+ * 随行的订阅目标，缺席时 tab 里是「尚未启动」占位。
  */
 export interface WorkflowActorInstance {
   siteId: string;
@@ -427,16 +428,16 @@ export interface WorkflowActorInstance {
   status: WorkflowRunActor["status"];
 }
 
-// ── Gate for actors that have not started ──
+// ── actor 未启动门──
 
 /**
- * Three possible states for an actor transcript tab with respect to whether its session exists.
+ * 一个 actor transcript tab 相对「会话是否已经存在」的三种处境。
  *
- * `unknown` is not an error; it is the **most common long-lived state**. Tabs are intentionally not garbage-collected and can outlive eviction from the eight-run projection.
+ * `unknown` 不是错误分支，而是**最常见的长期态**：tab 刻意没有 GC，比 8-run 投影淘汰活得久。
  */
 type WorkflowActorStartState = "notStarted" | "started" | "unknown";
 
-/** Identity passed from an actor transcript tab to the gate: slot + session ID known at open time (optional). */
+/** actor transcript tab 交给门的身份：槽位 + 打开时已知的会话 id（可缺席）。 */
 export interface WorkflowActorSlotRef {
   runId: string;
   siteId: string;
@@ -444,35 +445,40 @@ export interface WorkflowActorSlotRef {
   actorSessionId?: string;
 }
 
-/** Gate decision: state + session ID to subscribe to (absent means nothing can be subscribed to and the panel shows a placeholder). */
+/** 门的裁决：处境 + 该订阅的会话 id（缺席 = 没有可订阅的东西，面板只能占位）。 */
 interface WorkflowActorGate {
   state: WorkflowActorStartState;
   sessionId?: string;
 }
 
 /**
- * Slot → whether the actor has started and which session to subscribe to.
+ * 槽位 → 该 actor 是否已经启动，以及该订阅哪条会话。
  *
- * Actor sessions are **lazy-created**: the engine calls `createActorSession` only when the first ask is dispatched. Subscribing before then
- * always produces `fault.subscribe.sessionNotFound`, and the projection store remains in `error` waiting for manual retry—a dead panel.
- * This selector is the gate that prevents it.
+ * actor 会话是**懒创建**的：引擎在首个 ask 派发时才 `createActorSession`，所以在那之前
+ * 订阅这条会话必然 `fault.subscribe.sessionNotFound`，而投影 store 失败后停在 `error`
+ * 只等手动 retry——一个死面板。这个选择器就是那道门。
  *
- * Race-free decision: `createActorSession` is awaited until the session is persisted before the first dispatch (`workflow-driver.ts`
- * ordering is covered by tests), so **seeing dispatched in the projection ⇒ session row exists ⇒ subscription will succeed**.
- * Conversely, `queued` does not mean started: persistence is guaranteed before dispatch, so a queued node is not evidence that a session exists.
+ * 判定免竞态：`createActorSession` 在首个派发前就 `await` 完了会话落库（`workflow-driver.ts`
+ * 的时序由测试钉住），所以**投影里见到 dispatched ⇒ 会话行已存在 ⇒ 订阅必然命中**。
+ * 反过来 `queued` 不算启动：持久化顺序的保证挂在派发前，队列里的节点不构成会话存在的证据。
  *
- * Look up by **(runId, siteId, ordinal)**: a tab can be opened before the actor appears
- * (an unstarted pill), when there is no session ID to look up. The distinction between `unknown` and `notStarted` remains important:
+ * 查找按 **(runId, siteId, ordinal)**：tab 可以在 actor 出现之前就开
+ * （未启动的药丸），那时没有会话 id 可反查。三值里 `unknown` 与 `notStarted` 的分界仍是要紧
+ * 的那条：
  *
- * - Actor absent from projection, tab **has** a session ID → `unknown`, **never block**. After a run is evicted by the eight-run limit or
- *   cold recovery leaves the projection empty, direct subscription is the only path to the transcript; blocking it would close the only persisted view of a completed run.
- * - Actor absent from projection, tab has **no** session ID → `notStarted`: nothing can be subscribed to, so a placeholder is accurate
- *   (the script has not reached `agent()`, or the slot truly never started before the run was evicted).
- * - Actor is present, but has no non-`queued` nodes → `notStarted`; otherwise `started`. Use the projected session ID as the subscription target,
- *   falling back to the ID carried when the tab opened. This gate reads the live projection and heals as soon as the first node is dispatched.
+ * - actor 不在投影里、tab **有**会话 id → `unknown`，**绝不拦**。run 被 8-run 上限淘汰、
+ *   冷恢复后投影为空时，直接订阅是 transcript 唯一的路；拦住它等于把已完结 run 的唯一持久
+ *   视图关死。
+ * - actor 不在投影里、tab **没有**会话 id → `notStarted`：没有可订阅的东西，占位是诚实的
+ *   （脚本还没走到 `agent()`；run 若已被淘汰，这个槽位也确实从未启动过）。
+ * - actor 在、一个非 `queued` 节点都没有 → `notStarted`；有 → `started`，订阅目标取投影里的
+ *   会话 id，tab 打开时带的作兜底。门读的就是实时投影，首个节点派发即自愈。
  *
- * Documented exception: a completed cache hit during resume emits `node-settled` directly without `ensureSession`, so the actor session may truly be absent.
- * settled opens the gate, subscription fails, and the existing error+retry panel appears; that really is "session not found", so the existing fallback is correct.
+ * 缓存命中是另一条开门的路：它直接发 `node-settled`，不经 `ensureSession`，这一世没建会话。
+ * 门照样打开，因为投影里 actor 的 `sessionId` 就是**持有转录的那条**（shared 的
+ * workflow-runs-actor-session.ts）：普通 resume 的命中指回本 run 早先建好的会话，修订 run 的
+ * 导入命中指向前驱里被读取的会话。只有更早的 journal（命中不点名子代理）归属不上，门停在
+ * notStarted——那条命中本来也证明不了任何会话。
  */
 export function workflowActorStartState(
   runs: readonly WorkflowRunState[] | undefined,
@@ -487,14 +493,14 @@ export function workflowActorStartState(
   if (run === undefined || actor === undefined) {
     return { state: sessionId === undefined ? "notStarted" : "unknown", ...withSession };
   }
-  // Match ownership by `siteId` + `ordinal` (journal key): a different ordinal means a different instance.
-  // world-read nodes omit both fields, so they never open the gate for anyone.
+  // 归属按 `siteId` + `ordinal`（journal 的键）比对：序号错了就是另一个实例，而
+  // world-read 节点两个字段都缺席，于是从不给任何人开门。
   const started = run.nodes.some(
     (node) =>
       node.actorSiteId === actor.siteId &&
       node.actorOrdinal === actor.ordinal &&
-      // `queued` is the only phase that does **not** prove the session exists. Use the complement instead of listing dispatched/repairing/
-      // nudged/settled so future phases open the gate by default, consistent with `unknown` never blocking.
+      // `queued` 是唯一**不**证明会话存在的相位。取补集而不是列举 dispatched/repairing/
+      // nudged/settled，是为了让将来新增的相位默认开门——与 `unknown` 不拦同一个取向。
       node.phase !== "queued",
   );
   return { state: started ? "started" : "notStarted", ...withSession };

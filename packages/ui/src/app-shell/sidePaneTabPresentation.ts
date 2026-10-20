@@ -2,6 +2,7 @@ import { getSidePaneTabTitle } from "@/app-shell/SidePaneTabTrigger.js";
 import type { WorkspaceSidePaneTab } from "@/lib/workspaceSidePane.js";
 
 export interface SidePaneTabPresentationLabels {
+  fileManagerTitle?: string;
   browserTitle: string;
   reviewTitle: string;
   codeViewerTitle: string;
@@ -9,6 +10,8 @@ export interface SidePaneTabPresentationLabels {
   whiteboardTitle: string;
   modelTrajectoryTitle: string;
   developerToolsTitle: string;
+  pluginMarketTitle: string;
+  newTabTitle?: string;
   browserPermissionsTitle: string;
   terminalTitle: string;
   subagentTypeLabel: string;
@@ -36,14 +39,14 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
     return `${tab.parentSessionId} workflow runs directory history ended`;
   }
   if (tab.type === "workflow-actor-session") {
-    // Include the session ID in search; it is often the only identifier available during debugging (both logs and journals record it).
+    // 会话 id 也进搜索面：排查时手里往往只有它（日志与 journal 都记它）。
     return `${tab.actorName ?? ""} ${tab.siteId}@${tab.ordinal} ${tab.actorSessionId ?? ""} ${tab.runId} ${tab.parentSessionId} workflow subagent actor transcript`;
   }
   if (tab.type === "workflow-workspace") {
     return `${tab.workflowName ?? ""} ${tab.runId} ${tab.toolCallId} ${tab.parentSessionId} workflow script steps workspace transcript files git run`;
   }
   if (tab.type === "workflow-artifact") {
-    // Artifact IDs are hard-coded literals in scripts and are often the only identifier users and debuggers have.
+    // 产物 id 是脚本里写死的字面量，用户与排查者手里往往就是它。
     return `${tab.title ?? ""} ${tab.artifactId} ${tab.runId} ${tab.parentSessionId} workflow artifact deliverable`;
   }
   if (tab.type === "selection-side-chat") {
@@ -60,17 +63,20 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   if (tab.type === "browser-use") {
     return `${tab.title ?? ""} ${tab.sessionId} browser use`;
   }
+  if (tab.type === "new-tab") return "new tab launcher";
   if (tab.type === "git") return "git diff";
   if (tab.type === "treemapping") return "file activity diff map treemapping";
   if (tab.type === "whiteboard") return `${tab.title} whiteboard canvas draw sketch`;
   if (tab.type === "model-trajectory") {
     return `${tab.title ?? ""} ${tab.taskId} model trajectory call io`;
   }
+  if (tab.type === "plugin-market") return "plugin marketplace store plugins";
   if (tab.type === "developer-tools") {
     return "developer tools token debug network status request response headers";
   }
   if (tab.type === "terminal" || tab.type === "bash-output")
     return `${tab.title} terminal shell command`;
+  if (tab.type === "file-manager") return `${tab.target.workspacePath} ${tab.source?.path ?? ""}`;
   return tab.source.path ?? tab.source.title;
 }
 
@@ -80,6 +86,8 @@ export function getLocalizedSidePaneTabTitle(
 ): string {
   return getSidePaneTabTitle(tab, (descriptor) => {
     const titleByMessageId: Record<string, string> = {
+      "sidePane.newTab": labels.newTabTitle ?? "New tab",
+      "fileManager.title": labels.fileManagerTitle ?? labels.codeViewerTitle,
       "browser.title": labels.browserTitle,
       "browser.permission.settings": labels.browserPermissionsTitle,
       "sidePane.review": labels.reviewTitle,
@@ -88,6 +96,7 @@ export function getLocalizedSidePaneTabTitle(
       "whiteboard.title": labels.whiteboardTitle,
       "modelTrajectory.title": labels.modelTrajectoryTitle,
       "developerTools.title": labels.developerToolsTitle,
+      "workspace.openPluginsSettings": labels.pluginMarketTitle,
       "terminal.title": labels.terminalTitle,
       "sidePane.subagent": labels.subagentTypeLabel,
       "sidePane.subagentDirectory": labels.subagentDirectoryTitle,
@@ -106,6 +115,7 @@ export function getSidePaneTabTypeLabel(
   tab: WorkspaceSidePaneTab,
   labels: SidePaneTabPresentationLabels,
 ): string {
+  if (tab.type === "new-tab") return labels.newTabTitle ?? "New tab";
   if (tab.type === "plan-detail") return labels.planTitle;
   if (tab.type === "plugin-ui") return tab.title;
   if (tab.type === "workflow-run") return labels.workflowRunTitle;
@@ -120,6 +130,7 @@ export function getSidePaneTabTypeLabel(
   if (tab.type === "subagent-directory") return labels.subagentDirectoryTitle;
   if (tab.type === "browser" || tab.type === "browser-use") return labels.browserTitle;
   if (tab.type === "browser-permissions") return labels.browserPermissionsTitle;
+  if (tab.type === "file-manager") return labels.fileManagerTitle ?? labels.codeViewerTitle;
   if (tab.type === "git") return labels.reviewTitle;
   if (tab.type === "treemapping") return labels.treemappingTitle;
   if (tab.type === "whiteboard") return labels.whiteboardTitle;

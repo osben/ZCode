@@ -220,9 +220,9 @@ function appendDiffBodyWithLargeSegmentFallback(
   const anchors = findIncreasingAnchorMatches(collectUniqueLineMatches(beforeLines, afterLines));
 
   if (anchors.length === 0) {
-    // Previously, large regions degraded into one block of “all removed, then all added.”
-    // In cases like cli.ts with a few lines inserted at each end but far apart, this incorrectly rendered the entire unchanged region as large red/green blocks.
-    // Prefer unique line anchors to split large regions into smaller chunks, then recurse through the normal diff to preserve real hunk boundaries where possible.
+    // 之前大区间直接整块退化成“全删再全加”，
+    // 像 cli.ts 这种前后各插几行、但跨度很远的场景，会把整段未改内容误渲染成红绿大块。
+    // 这里优先用唯一行锚点把大区间拆成多个小段，再递归回到正常 diff，尽量保留真实 hunk 边界。
     appendLinesWithPrefix(patchLines, "-", beforeLines);
     appendLinesWithPrefix(patchLines, "+", afterLines);
     return;
@@ -368,13 +368,13 @@ export function buildUnifiedDiff(
   const afterRangeLineCount = limitedPrefixCount + afterMiddle.length + limitedSuffixCount;
 
   const patchLines = [
-    // With only `---/+++` file headers, deleting one SQL comment line (`-- ...`) produces a `--- ...` body line.
-    // @pierre/diffs splits unified diffs by that prefix, misclassifying the body as a second file and crashing FileDiff.
-    // Add Git file boundaries so the parser splits only on `diff --git`; body lines no longer affect the file count.
+    // 仅有 `---/+++` 文件头时，删除一行 SQL 注释（`-- ...`）会生成 `--- ...` 正文。
+    // @pierre/diffs 按该前缀切分 unified diff，会把正文误判为第二个文件并让 FileDiff 崩溃。
+    // 补上 Git 文件边界后，解析器只按 `diff --git` 切分，正文不再参与文件数量判断。
     `diff --git a/${fileLabel} b/${fileLabel}`,
-    // New files used to be emitted as --- a/file + @@ -0,0, which PatchDiff treated as
-    // an ordinary rename/change diff; adding a large file could freeze the right pane during line mapping and highlighting.
-    // Standard unified diff should use /dev/null for the missing side so the parser follows add/delete semantics.
+    // 新建文件之前会被输出成 --- a/file + @@ -0,0，PatchDiff 会把它当成
+    // 普通 rename/change diff 处理；大文件新增时右侧面板可能在行映射和高亮里卡死。
+    // 标准 unified diff 应该用 /dev/null 表示不存在的一侧，让解析器走新增/删除语义。
     isCreatedFile ? "--- /dev/null" : `--- a/${fileLabel}`,
     isDeletedFile ? "+++ /dev/null" : `+++ b/${fileLabel}`,
     hasContextLimit
@@ -382,10 +382,10 @@ export function buildUnifiedDiff(
       : `@@ -${formatDiffRange(beforeLines.length)} +${formatDiffRange(afterLines.length)} @@`,
   ];
 
-  // In context mode, message summaries/Git pane need only the window “around the changes.”
-  // Previously, even with only 3 context lines, the entire shared prefix/suffix was added to the patch before trimming;
-  // expanding a large file (such as a 1,500+ line Dockerfile) caused substantial useless string concatenation on the main thread and froze the UI.
-  // Truncate the shared prefix/suffix by context first, then pass it to trimPatchContext for final hunk normalization.
+  // 消息摘要/Git pane 在 context 模式下只需要“改动附近”窗口。
+  // 之前即使只看 3 行上下文，也会先把整份 shared prefix/suffix 塞进 patch 再 trim，
+  // 大文件（如 1500+ 行 Dockerfile）点展开时会在主线程做大量无效字符串拼接，导致界面卡死。
+  // 这里先按 context 截断前后公共区，再交给 trimPatchContext 做最终 hunk 规整。
   patchLines.push(
     ...beforeLines
       .slice(sharedPrefixCount - limitedPrefixCount, sharedPrefixCount)
@@ -405,10 +405,10 @@ export function buildUnifiedDiff(
 
   const patch = patchLines.join("\n");
   if (hasContextLimit) {
-    // Important behavior: the previous change built a patch from the full before/after snapshots.
-    // Passing the entire patch to the previewer made cases like “one or two lines changed in a large file” fill the whole page,
-    // making changes hard to locate at a glance. Normalize to a diff containing “changes + a fixed number of context lines”
-    // so message summaries and Git panes prioritize locating changes instead of replaying entire files.
+    // 关键业务逻辑：上一轮更改使用整份 before/after 快照构造 patch。
+    // 如果直接把整份 patch 交给预览器，像“大文件只改 1~2 行”这种场景会整页铺满，
+    // 用户很难第一眼定位修改点。这里统一裁成“变更附近 + 固定上下文行数”的 diff，
+    // 让消息摘要和 Git 面板都优先服务定位问题，而不是回放整份文件。
     return trimPatchContext(patch, normalizedContextLines);
   }
 

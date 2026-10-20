@@ -13,9 +13,9 @@ function resolveMergedTaskTitle(preferredTask: ZCodeTaskMeta, fallbackTask: ZCod
   if (fallbackTask.titleOverridden && !preferredTask.titleOverridden) {
     return fallbackTask.title;
   }
-  // session/send is acknowledged immediately, so readSession after the first ACK may arrive before the background first_input title projection.
-  // The snapshot may then return the agent's default placeholder "New session"; if its updatedAt is newer, the old merge logic would briefly overwrite
-  // the optimistic title from the user's query. Treat only empty/default-placeholder titles as unable to replace a real title; generated titles still overwrite normally.
+  // session/send 是立即 ACK，首发 ACK 后的 readSession 可能早于后台 first_input title 投影。
+  // 此时 snapshot 会带回 agent 默认占位 "New session"；如果它的 updatedAt 更新，旧合并逻辑会把
+  // 用户 query 乐观标题短暂盖掉。这里仅把空标题/默认占位视为不可覆盖真实标题，generated title 仍照常覆盖。
   if (isPlaceholderTaskTitle(preferredTask.title) && !isPlaceholderTaskTitle(fallbackTask.title)) {
     return fallbackTask.title;
   }
@@ -42,16 +42,14 @@ export function mergeTaskWithOptimisticMeta(
     changeSummary: preferredTask.changeSummary ?? fallbackTask.changeSummary,
     model: preferredTask.model ?? fallbackTask.model,
     provider: preferredTask.provider ?? fallbackTask.provider,
-    // Worktree sessions may carry the fact in one candidate (sessions-index join) only; do not swallow it.
-    executionWorktree: preferredTask.executionWorktree ?? fallbackTask.executionWorktree,
     title: resolveMergedTaskTitle(preferredTask, fallbackTask),
     titleOverridden:
       preferredTask.titleOverridden === true || fallbackTask.titleOverridden === true
         ? true
         : (preferredTask.titleOverridden ?? fallbackTask.titleOverridden),
-    // The remote-control home page relies on task.meta.status as a fallback for “running” when it has no runtime subscription.
-    // Previously, after optimistic metadata advanced updatedAt, if it had no status of its own, it overwrote the persisted status with undefined,
-    // making the list incorrectly show idle. Fall back to status here so the optimistic layer does not swallow running/completed/error.
+    // 远控首页“运行中”依赖 task.meta.status 作为未订阅 runtime 时的兜底。
+    // 之前乐观元数据 updatedAt 更新后，如果自身没带 status，会把持久化 status 覆盖成 undefined，
+    // 最终列表误显示 idle。这里补 status 回退，避免 running/completed/error 被乐观层吞掉。
     status: preferredTask.status ?? fallbackTask.status,
     unreadAt,
   };

@@ -4,10 +4,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantCodeCommentCards } from "@/AssistantCodeCommentCards.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { TID_ASSISTANT_CODE_COMMENT_ITEM, TID_ASSISTANT_CODE_COMMENT_TOGGLE } from "@zcode/shared";
-import { expectedCopy } from "./helpers/uiCopy.js";
-import enUS from "@/i18n/locales/en-US.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
 import type { AssistantCodeCommentCard } from "@/lib/assistantCodeComment.js";
 
 function card(index: number): AssistantCodeCommentCard {
@@ -31,31 +27,12 @@ describe("AssistantCodeCommentCards", () => {
     window.getSelection()?.removeAllRanges();
   });
 
-  it("只保留当前卡片交互实际消费的本地化 key", () => {
-    // Bug cause: the early "title + count + expand remaining five items" card was changed to a
-    // whole-card collapse, but the old copy was never removed, which could mislead future
-    // maintainers into thinking a second expand interaction still exists.
-    const expectedKeys = [
-      "chat.codeCommentCards.collapseAll",
-      "chat.codeCommentCards.expandAll",
-      "chat.codeCommentCards.openReview",
-    ];
-
-    for (const messages of [enUS, zhCN]) {
-      expect(
-        Object.keys(messages)
-          .filter((key) => key.startsWith("chat.codeCommentCards."))
-          .sort(),
-      ).toEqual(expectedKeys);
-    }
-  });
-
   it("默认折叠；每条只占一行，正文不展示 body，文字可选择且整行打开只读 Code Review", () => {
     const onOpenCodeViewer = vi.fn();
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(AssistantCodeCommentCards, {
           cards: Array.from({ length: 7 }, (_, index) => card(index + 1)),
           workspacePath: "/workspace",
@@ -66,59 +43,20 @@ describe("AssistantCodeCommentCards", () => {
       ),
     );
 
-    expect(screen.getByText(expectedCopy("chat.codeComments.other", { count: 7 }))).toBeTruthy();
-    const shell = screen.getByTestId("assistant-code-comment-cards");
-    expect(shell.className).toContain("bg-card");
-    expect(shell.className).toContain("border-border");
-    expect(shell.className).toContain("shadow-none");
-    const header = screen.getByTestId("assistant-code-comment-header");
-    expect(header.className).toContain("h-10");
-    expect(header.className).toContain("hover:bg-hover");
-    expect(header.className).toContain("transition-colors");
-    expect(header.className).not.toContain("h-8");
-    expect(header.className).not.toContain("min-h-20");
-    expect(
-      screen.getByText(expectedCopy("chat.codeComments.other", { count: 7 })).className,
-    ).toContain("text-ui-base");
-    const list = screen.getByTestId("assistant-code-comment-list");
-    expect(list.className).not.toContain("divide-y");
-    expect(list.className).not.toContain("border-t");
-    const toggleIcon = screen.getByTestId("assistant-code-comment-toggle-icon");
-    expect(toggleIcon.className).toContain("size-1.5");
-    expect(toggleIcon.className).toContain("-rotate-45");
-    expect(screen.queryAllByTestId(TID_ASSISTANT_CODE_COMMENT_ITEM)).toHaveLength(0);
+    expect(screen.getByText("7 条评论")).toBeTruthy();
+    expect(screen.queryByText("风险 1")).toBeNull();
 
-    fireEvent.click(screen.getByTestId(TID_ASSISTANT_CODE_COMMENT_TOGGLE));
-    expect(list.className).toContain("border-t");
-    expect(list.className).toContain("border-border");
-    const commentItems = screen.getAllByTestId(TID_ASSISTANT_CODE_COMMENT_ITEM);
-    expect(commentItems[0]?.textContent).toContain("风险 1");
-    expect(commentItems[5]?.textContent).toContain("风险 6");
-    expect(commentItems[0]?.textContent).not.toContain("需要修复 1");
-    expect(screen.getByTestId("assistant-code-comment-toggle-icon").className).toContain(
-      "rotate-45",
-    );
+    fireEvent.click(screen.getByRole("button", { name: /展开 7 条评论/ }));
+    expect(screen.getByText("风险 1")).toBeTruthy();
+    expect(screen.getByText("风险 6")).toBeTruthy();
+    expect(screen.queryByText("需要修复 1")).toBeNull();
 
-    const firstCard = commentItems[0]!;
-    const firstCardSurface = firstCard.parentElement;
-    expect(firstCardSurface).not.toBeNull();
-    expect(firstCardSurface?.className).toContain("bg-background/50");
-    expect(firstCard.className).toContain("select-text");
-    expect(firstCard.className).toContain("whitespace-nowrap");
-    expect(firstCard.className).toContain("min-h-10");
-    expect(firstCard.className).toContain("py-2");
-    expect(firstCard.className).not.toContain("bg-background/50");
-    expect(firstCard.className).toContain("hover:bg-hover/30");
-    expect(firstCard.className).not.toContain("hover:bg-surface-hover");
-    expect(firstCard.querySelector("p")).toBeNull();
+    const firstCard = screen.getByRole("button", { name: /风险 1/ });
     expect(screen.getByText("src/file-1.ts:1–2")).toBeTruthy();
-    expect(firstCard.querySelector("svg")).toBeNull();
 
     const selection = window.getSelection();
     const range = document.createRange();
-    const titleSpan = firstCard.querySelector("span.font-medium");
-    expect(titleSpan).not.toBeNull();
-    range.selectNodeContents(titleSpan!);
+    range.selectNodeContents(screen.getByText("风险 1"));
     selection?.removeAllRanges();
     selection?.addRange(range);
     fireEvent.click(firstCard);

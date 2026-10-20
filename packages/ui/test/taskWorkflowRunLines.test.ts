@@ -47,9 +47,6 @@ const intl = {
         return id;
     }
   },
-  // 与 createIntl 契约一致：解析 `${id}.${category}` 并注入 {count}。
-  formatPlural: ({ id }: { id: string }, count: number) =>
-    `${id}.${count === 1 ? "one" : "other"}:${count}`,
 };
 
 const SESSION = { workspacePath: "/ws", sessionId: "s1" };

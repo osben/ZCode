@@ -1,7 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TID_V4_TIMELINE, TID_V4_TIMELINE_BOTTOM } from "@zcode/shared";
+import { TID_V4_TIMELINE, TID_V4_TIMELINE_BOTTOM } from "@zcode/shared/test-ids";
 import type { ConversationRow, UserInputRow } from "@zcode/shared/zcode-protocol-v4";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import {
@@ -87,9 +87,8 @@ function createMinimalElement(ownerDocument: Document, tagName = "div"): TestEle
     },
     childNodes: [] as TestElement[],
     dispatchEvent: (event: Event) => {
-      // Bug regression: ConversationTimeline dispatches a standard scroll event after commit
-      // to sync the virtualizer; the minimal DOM must implement the real dependency and
-      // cannot only provide the test-only dispatchScroll.
+      // Bug 回归：ConversationTimeline 会在 commit 后派发标准 scroll 事件同步
+      // virtualizer；最小 DOM 必须实现真实依赖，不能只提供测试专用 dispatchScroll。
       const forwardedEvent = {
         bubbles: event.bubbles,
         cancelBubble: event.cancelBubble,
@@ -317,7 +316,7 @@ function renderTimeline(
   root.render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(ConversationTimeline, {
         canLoadOlder: options.canLoadOlder,
         onLoadOlder: options.onLoadOlder,
@@ -327,8 +326,7 @@ function renderTimeline(
         sessionKey,
         scrollMemoryKey,
         rowContext,
-        // Composer dock. The floating band above it is removed together with the floating
-        // island, and the round button returns to its own centered positioning.
+        // composer dock。它上方那条浮层带随浮岛一起删除，圆钮回到自己的居中定位。
         ...(options.withComposerDock
           ? {
               bottomDock: createElement("div", { "data-testid": "test-composer-dock" }),
@@ -403,8 +401,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const query = vi
         .spyOn(column, "querySelectorAll")
         .mockReturnValue([row] as unknown as NodeListOf<Element>);
-      // Simulate the library having measured the height while React has not yet committed
-      // the placeholder height; only a re-render can read the new layout.
+      // 模拟库已测高但 React 尚未提交占位高度；只有重新 render 才能读到新布局。
       const totalSize = vi.spyOn(virtualizer, "getTotalSize").mockImplementation(() => {
         layout.scrollHeight = measuredHeight;
         return measuredHeight;
@@ -438,8 +435,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
         for (const observer of observers) observer.callback([], {} as ResizeObserver);
       });
       expect(timeline.scrollTop).toBe(2100);
-      // The user scrolls up during batch height measurement; follow ownership must be
-      // re-checked after the commit.
+      // 用户在批量测高期间上滚，提交后必须再次检查跟随权。
       virtualizer.resizeItem.mockImplementationOnce(() => dispatchWheel(timeline, -120));
       const beforeInterrupt = timeline.scrollTop;
       act(() => {
@@ -521,8 +517,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       }),
     );
 
-    // The old anchor is beyond the viewport + 8 rows of overscan; neither the DOM query nor
-    // the old totalSize can provide a displacement.
+    // 旧锚点已在 viewport + 8 行 overscan 之外，DOM 查询和旧 totalSize 都无法给出位移。
     expect(timeline.querySelectorAll('[data-v4-turn-unit="true"]')).toHaveLength(0);
     expect(timeline.scrollTop).toBe(1500);
   });
@@ -902,21 +897,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     ).toBe(false);
   });
 
-  // After the floating island removal (docs/dynamic-workflow/presentation.md "Other places
-  // a run appears" item 1) there is no shared floating stack above the composer anymore:
-  // the `composerOverlay` slot disappears along with its only resident, and the
-  // back-to-bottom round button **returns to its own pre-change standalone positioning**
-  // (`bottom-full` + `mb-2` centered). This case pins exactly that geometry fallback — if
-  // the stack shell remained, the round button would be wrapped in a `pointer-events-none`
-  // container that no longer has any reason to exist.
-  //
-  // "The button is still clickable" can only be asserted here via the **class contract**,
-  // not by firing a click: this minimal DOM's dispatchEvent does not bubble, and React
-  // delegates click on the root container, so the event never arrives; switching to jsdom
-  // would be just as ineffective — jsdom does no pointer-events hit testing, and
-  // `fireEvent.click` succeeds on `pointer-events: none` all the same. In other words,
-  // only this class assertion turns red when `pointer-events-auto` is genuinely missing.
-  it("centers the back-to-bottom button on its own once the overlay stack is gone", () => {
+  it("hides the back-to-bottom button after its action while retaining the composer dock", () => {
     saveChatSessionScrollMemoryState("workspace::pane:a::session:1", {
       scrollTop: 240,
       scrollHeight: 1000,
@@ -939,14 +920,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     );
 
     const button = findByTestId(container, TID_V4_TIMELINE_BOTTOM)!;
-    // Neither the slot nor its stack shell exists anymore: the round button positions itself on the dock's anchor.
-    expect(findByTestId(container, "v4-composer-overlay")).toBeNull();
-    const buttonClass = button.getAttribute("class") ?? "";
-    expect(buttonClass).toContain("absolute bottom-full left-1/2");
-    expect(buttonClass).toContain("mb-2");
-    expect(buttonClass).toContain("-translate-x-1/2");
-    expect(buttonClass).toContain("pointer-events-auto");
-    // The dock is still there (the round button anchors to it); only the floating band is gone.
+    expect(button).not.toBeNull();
     expect(findByTestId(container, "test-composer-dock")).not.toBeNull();
 
     act(() => scrollToBottomActionRef.current?.());

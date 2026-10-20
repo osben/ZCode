@@ -5,7 +5,6 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { UserInputRow } from "@zcode/shared/zcode-protocol-v4";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { BotTopicPreparationList as PreparationList } from "@/v4/BotTopicPreparation.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const BotTopicPreparationList = (props: Parameters<typeof PreparationList>[0]) =>
   createElement(
@@ -19,7 +18,7 @@ describe("topic preparation presentation", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US", children: null },
+        { initialLocale: "zh-CN", children: null },
         createElement(BotTopicPreparationList, {
           items: [
             { messageId: "a", senderName: "Alice", text: "first", status: "preparing" },
@@ -37,11 +36,11 @@ describe("topic preparation presentation", () => {
     );
     expect(html).toContain("Alice");
     expect(html).toContain("Bob");
-    expect(html).toContain(expectedCopy("chat.topicPreparation.preparing"));
-    expect(html).toContain(expectedCopy("chat.topicPreparation.waitingStop"));
+    expect(html).toContain("正在准备材料");
+    expect(html).toContain("等待当前执行停止");
     expect(html).not.toContain("download failed");
     expect(html).not.toContain("Carol");
-    expect(html).not.toContain(expectedCopy("chat.topicPreparation.failed"));
+    expect(html).not.toContain("材料准备失败");
     expect(html).not.toContain("重试");
     expect(html.match(/data-topic-preparation-loading="true"/g)).toHaveLength(2);
   });
@@ -49,7 +48,7 @@ describe("topic preparation presentation", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US", children: null },
+        { initialLocale: "zh-CN", children: null },
         createElement(BotTopicPreparationList, {
           items: [
             { messageId: "a", senderName: "Alice", text: "first\nsecond", status: "preparing" },
@@ -60,7 +59,7 @@ describe("topic preparation presentation", () => {
     );
     expect(html.match(/data-v4-user-input-bubble="true"/g)).toHaveLength(1);
     expect(html.match(/data-v4-user-input-collapsible-content="true"/g)).toHaveLength(1);
-    expect(html).toContain(`${expectedCopy("bots.group.provider.feishu")} · Alice`);
+    expect(html).toContain("飞书 · Alice");
     expect(html).toContain('data-topic-preparation-loading="true"');
     expect(html).not.toContain("Alice ·");
     expect(html).toContain('data-v4-user-input-collapsible-content="true"');
@@ -101,7 +100,7 @@ describe("topic preparation presentation", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US", children: null },
+        { initialLocale: "zh-CN", children: null },
         createElement(BotTopicPreparationList, {
           provider: "lark",
           items: [{ messageId: "a", senderName: "Alice", text: "hello", status: "preparing" }],

@@ -3,8 +3,7 @@ import { logger } from "@/logger.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
 
 /**
- * The exported return type of useWorkspaceActiveTaskState indirectly references this interface,
- * so declaration generation requires it to be exported.
+ * useWorkspaceActiveTaskState 的导出返回类型间接引用此接口，声明生成要求它可导出。
  * @lintignore
  */
 export interface TaskSessionFilePathState {
@@ -37,12 +36,11 @@ function getErrorMessage(error: unknown): string {
 }
 
 /**
- * Read the persisted snapshot file path for the current task.
+ * 读取当前 task 对应的持久化快照文件路径。
  *
- * The UI previously accessed crypto.subtle in the browser to calculate the workspace hash.
- * In insecure contexts such as HTTP previews or remote access, subtle may be unavailable and throw
- * during the effect. Resolve the final path through zcodeTaskService instead, so the UI does not guess
- * directory rules and remote workspaces can use the remote home directory.
+ * UI 之前直接在浏览器里访问 crypto.subtle 计算 workspace hash，
+ * 在 http 预览或远程访问这类非安全上下文里 subtle 可能不存在，副作用阶段会直接抛错。
+ * 这里改成统一走 zcodeTaskService 解析最终路径，既不让 UI 猜目录规则，也能兼容 remote workspace 的远端 home 目录。
  */
 export function useTaskSessionFilePath(
   workspacePath: string,
@@ -60,8 +58,7 @@ export function useTaskSessionFilePath(
 
     if (!enabled || !workspacePath || !taskId) {
       requestVersionRef.current += 1;
-      // The task path is only used by the context menu. Avoid RPCs while the menu is closed,
-      // so drag-and-drop reordering does not trigger a storm of path queries.
+      // task 路径只服务右键菜单；菜单未打开时停止 RPC，避免拖拽重排放大为路径查询风暴。
       setState(INITIAL_STATE);
       return () => {
         disposed = true;

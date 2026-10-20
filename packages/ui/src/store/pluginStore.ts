@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Keep the plugin marketplace and install, uninstall, enable, and disable states centralized to avoid scattering concurrent-operation state. */
+/* eslint-disable max-lines -- 插件市场、安装、卸载、启停状态需要集中维护以避免并发操作状态分散 */
 import { create } from "zustand";
 import type {
   AvailablePluginSummary,
@@ -139,9 +139,9 @@ export const usePluginStore = create<PluginStoreState>((set, get) => ({
         currentState.availablePlugins.length > 0 ||
         currentState.installedPlugins.length > 0 ||
         currentState.capability !== null);
-    // Remote workspaces with the same path share a workspacePath.
-    // Reusing plugin caches by path alone would briefly show another machine's marketplace and enabled state on this remote.
-    // Include workspaceIdentity in the cache key to isolate hosts even when their paths match.
+    // 远程同路径 workspace 会共享同一个 workspacePath。
+    // 如果这里只按路径复用插件缓存，上一台机器的市场和开关状态会短暂显示到当前远端。
+    // 这里把 workspaceIdentity 一起纳入命中条件，保证同路径不同主机严格隔离。
     set({
       workspacePath,
       workspaceIdentity: normalizedWorkspaceIdentity,
@@ -190,8 +190,8 @@ export const usePluginStore = create<PluginStoreState>((set, get) => ({
       state.marketplaces.length > 0 ||
       state.availablePlugins.length > 0 ||
       state.installedPlugins.length > 0;
-    // Plugin toggles and uninstalls trigger refresh. Forcing loading=true previously emptied and restored the list, causing flicker.
-    // Keep the existing list during background refresh; show loading only on the first load without cached data.
+    // 插件开关/卸载后会走 refresh，之前强制 loading=true 会让列表切成空态再恢复，造成“闪一下”。
+    // 这里保留已有列表做后台刷新，只在首次无缓存数据时显示 loading。
     set({ loading: !hasCachedData, refreshing: true, error: null });
     try {
       const result = await pluginsService.getOverview({
@@ -295,8 +295,8 @@ export const usePluginStore = create<PluginStoreState>((set, get) => ({
         marketplace: marketplace || undefined,
       });
       await get().refresh(pluginsService, workspaceIdentityFromState);
-      // The retired legacy usePlugins entry point remains a public hook; it must share PluginManagementStore's partial-success semantics
-      // and must not report success unconditionally when the Agent returns an error diagnostic.
+      // legacy usePlugins 入口虽已退役，仍是公开 hook；它必须与 PluginManagementStore
+      // 共用部分成功语义，不能在 Agent 返回 error diagnostic 后无条件报告成功。
       const blockingDiagnostic = result?.diagnostics?.find(
         (diagnostic) => diagnostic.severity === "error",
       );
@@ -321,8 +321,8 @@ export const usePluginStore = create<PluginStoreState>((set, get) => ({
   ) {
     const workspacePath = get().workspacePath;
     if (!workspacePath) {
-      // Before the settings page is bound to a workspace, the store may still contain a cached list from the previous workspace.
-      // Returning false directly would make an install click appear to do nothing, so record an explicit error message first.
+      // 设置页尚未绑定 workspace 时 store 里可能还留着上一份缓存列表；
+      // 直接 return false 会让点击安装看起来毫无反应，这里先写入显式错误提示。
       set({ error: "请先打开一个工作区后再安装插件" });
       return false;
     }

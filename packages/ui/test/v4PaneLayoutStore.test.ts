@@ -58,13 +58,7 @@ describe("paneWorkspaceKey（身份/隔离口径）", () => {
 });
 
 describe("分割树纯状态机", () => {
-  it("初始态：单 primary 叶子，焦点在 primary", () => {
-    expect(INITIAL_PANE_LAYOUT.root).toEqual({
-      type: "leaf",
-      paneId: V4_PRIMARY_PANE_ID,
-    });
-    expect(INITIAL_PANE_LAYOUT.panes).toEqual({});
-    expect(INITIAL_PANE_LAYOUT.focusedPaneId).toBe(V4_PRIMARY_PANE_ID);
+  it("初始布局只计一个 pane", () => {
     expect(countPanes(INITIAL_PANE_LAYOUT)).toBe(1);
   });
 
@@ -322,11 +316,12 @@ describe("持久化（localStorage v2 + v1 迁移）", () => {
   });
 
   it("persist → read 闭环：树 + 绑定（含远程 scope）+ 焦点恢复，session 绑定带待验证标记", () => {
-    let state = splitPaneAt(INITIAL_PANE_LAYOUT, V4_PRIMARY_PANE_ID, "row", {
-      ...bound(SCOPE_B, "sess-b"),
-      readOnly: true,
-      selectionSideChat: true,
-    });
+    let state = splitPaneAt(
+      INITIAL_PANE_LAYOUT,
+      V4_PRIMARY_PANE_ID,
+      "row",
+      bound(SCOPE_B, "sess-b"),
+    );
     state = splitPaneAt(state, "pane-1", "column", draft(SCOPE_A));
     const splitId = state.root.type === "split" ? state.root.id : "";
     state = setSplitNodeRatio(state, splitId, 0.61);
@@ -339,24 +334,11 @@ describe("持久化（localStorage v2 + v1 迁移）", () => {
     expect(restored!.panes["pane-1"]).toEqual({
       workspaceScope: SCOPE_B,
       sessionId: "sess-b",
-      readOnly: true,
-      selectionSideChat: true,
       restoredUnvalidated: true,
     });
     // draft pane 恢复不带待验证标记
     expect(restored!.panes["pane-2"]).toEqual(draft(SCOPE_A));
     expect(restored!.focusedPaneId).toBe("pane-2");
-  });
-
-  it("restoredUnvalidated 不进持久化面", () => {
-    const state = splitPaneAt(
-      INITIAL_PANE_LAYOUT,
-      V4_PRIMARY_PANE_ID,
-      "row",
-      bound(SCOPE_A, "sess-x"),
-    );
-    persistPaneLayout(state);
-    expect(store.get(PANE_LAYOUT_STORAGE_KEY)).not.toContain("restoredUnvalidated");
   });
 
   it("v1 迁移：本地路径 workspaceKey → 双叶子树（保留 split id 与 splitRatio）", () => {

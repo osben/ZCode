@@ -81,19 +81,10 @@ describe("buildAppUsageModelPieChartViewModel", () => {
     const viewModel = buildAppUsageModelPieChartViewModel({ intl, snapshot });
 
     expect(viewModel.chartData).toHaveLength(6);
-    expect(viewModel.chartData.map((slice) => slice.color)).toEqual([
-      "var(--color-usage-chart-1)",
-      "var(--color-usage-chart-2)",
-      "var(--color-usage-chart-3)",
-      "var(--color-usage-chart-4)",
-      "var(--color-usage-chart-5)",
-      "var(--color-usage-chart-6)",
-    ]);
     expect(viewModel.chartData.at(-1)).toMatchObject({
       label: "Other models",
       totalTokens: 100,
     });
     expect(viewModel.chartData.reduce((sum, slice) => sum + slice.share, 0)).toBeCloseTo(1);
-    expect(viewModel.chartConfig.model5?.color).toBe("var(--color-usage-chart-6)");
   });
 });

@@ -1,9 +1,9 @@
 // ============================================================
-// Expanded panel for a script transcript entry.
+// 脚本 transcript 条目的展开面板
 // ============================================================
-// Fetch the body on mount (entries mount it only while expanded) and cache it when loaded. Three body types: Terminal (`$ command`, stdout,
-// stderr in its own pale-red block, and footer exit · duration · bytes + Copy), listings (glob / grep /
-// changed-files, with line numbers and bounded rows), and text (read / diff, coloring diff by its first character).
+// 挂载即取正文（条目只在展开时挂它），取回即缓存。三种正文：Terminal（`$ 命令行`、stdout、
+// 单独成段、淡红底的 stderr、页脚 exit · 耗时 · 字节 + Copy）、清单（glob / grep /
+// changed-files，带行号、按行有界）、文本（read / diff，diff 按首字符着墨）。
 
 import { memo, useCallback, useState, type ReactNode } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -16,7 +16,7 @@ import {
   type WorkspaceCardModel,
 } from "@/app-shell/workflowWorkspaceTranscript.js";
 
-/** Maximum body rows: the gateway bounds data at 32 KB, and this adds a row limit — anything too long for a screen stays in the journal. */
+/** 正文最多画多少行：网关按 32 KB 有界，这里再按行有界——一屏读不完的东西留在 journal 里。 */
 const WORKSPACE_RESULT_MAX_LINES = 200;
 
 const PRE_CLASS =
@@ -49,7 +49,7 @@ function isGrepMatch(value: unknown): value is { path: string; line: number; tex
   return typeof fields.path === "string" && typeof fields.line === "number";
 }
 
-/** Three diff colors for `+` / `-` / `@@`: color each diff line by its first character and preserve the rest as-is. */
+/** `+` / `-` / `@@` 三种墨：diff 的每一行按首字符着色，其余原样。 */
 function DiffLines({ text }: { text: string }) {
   return (
     <pre className={PRE_CLASS}>
@@ -95,7 +95,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-/** Footer: `exit 1 · 1.94 s · 1.3 KB` + Copy on the right; show truncation details on a separate line so footer metrics are not crowded. */
+/** 页脚：`exit 1 · 1.94 s · 1.3 KB` + 右侧 Copy；截断说明另起一行，不挤页脚的数字。 */
 function Footer({ parts, note, copy }: { parts: ReactNode[]; note?: string; copy: string }) {
   return (
     <div

@@ -8,27 +8,19 @@ import {
   ENABLE_CUA_TOOL_CALL_GROUPING,
   prepareCuaGroupFlowItems,
 } from "@/v4/conversationCuaGroups.js";
-import { isPluginUiPinnedToolRow, type PluginUiRowPinResolver } from "@/plugin-ui/index.js";
+// Bugfix：必须直接引用纯函数模块，不能走 `@/plugin-ui/index.js` 桶文件。本文件在分享只读
+// 时间线闭包里，桶文件会把 plugin-ui 全量组件 → V4ConversationContext → @zcode/services →
+// @zcode/provider 拖进 web-share 构建，导致 `@zcode/shared/mcp-apps` 等子路径无法解析、构建失败。
+import {
+  isPluginUiPinnedToolRow,
+  type PluginUiRowPinResolver,
+} from "@/plugin-ui/domain/pluginUiRowPolicy.js";
 import { buildConversationFlowItems } from "@/v4/conversationTurnFlowItems.js";
 import type { AssistantWorkRow, ConversationTurnFlowItem } from "@/v4/conversationTurnFlowItems.js";
 
 export interface ConversationTurnWorkStatus {
   state: "running" | "completed" | "interrupted";
   durationMs?: number;
-  /** Turn-level main-chain output tokens; set only on the last segment of a completed turn. */
-  outputTokens?: number;
-}
-
-/** `turnHeader.outputTokens` is a whole-turn total, so callers attach it only to the turn's final segment. */
-export function withTurnOutputTokens(
-  status: ConversationTurnWorkStatus | undefined,
-  header: TurnHeaderRow | undefined,
-): ConversationTurnWorkStatus | undefined {
-  const outputTokens = header?.outputTokens;
-  if (status?.state !== "completed" || outputTokens === undefined || outputTokens <= 0) {
-    return status;
-  }
-  return { ...status, outputTokens };
 }
 
 export interface ConversationTurnWorkSegment {
@@ -69,8 +61,8 @@ export function resolveConversationTurnWorkDurationMs(
   if (!header) return undefined;
   if (header.activeMs !== undefined) return header.activeMs;
   if (header.endedAt !== undefined) return Math.max(header.endedAt - header.startedAt, 0);
-  // The UI passes nowMs each second only for the live “working for N seconds” display. A completed state missing
-  // activeMs/endedAt must not keep using the current clock, or historical “worked” time will continue to grow.
+  // UI 每秒传入 nowMs 只用于运行中“工作中 N 秒”；完成态缺少
+  // activeMs/endedAt 时不能继续吃当前时钟，否则历史“已工作”会随时间增长。
   if (isRunning && options.nowMs !== undefined) {
     return Math.max(options.nowMs - header.startedAt, 0);
   }
@@ -135,8 +127,8 @@ function resolveSegmentDurationMs(options: {
       options.segmentRunning,
     );
   }
-  // Compatibility for old guide snapshots: the new CLI sends workSegments; restore from the guided row's stable time boundaries
-  // only when old data lacks that fact, so a refresh does not fall back to one duration for the entire turn.
+  // 兼容旧 guide snapshot：新 CLI 会下发 workSegments；仅旧数据缺事实时才按
+  // guided row 的稳定时间边界恢复，避免刷新后又退回整个 turn 的单一工时。
   const startedAt = options.triggerRow?.createdAt ?? options.header?.startedAt;
   const endedAt = options.nextTriggerRow?.createdAt ?? options.header?.endedAt;
   if (startedAt !== undefined && endedAt !== undefined) return Math.max(0, endedAt - startedAt);
@@ -158,7 +150,7 @@ export function buildConversationTurnWorkSegments(options: {
   forceOpenHistory: boolean;
   timelineOnly: boolean;
   nowMs?: number;
-  /** Decides whether plugin cards belong in the collapsed area; defaults to “keep all visible.” */
+  /** 插件卡片进不进折叠区的裁决；缺省沿用"全部常驻"。 */
   pluginUiPinResolver?: PluginUiRowPinResolver;
 }): ConversationTurnWorkSegment[] {
   const visualDrafts = splitVisualWorkSegments(options.orderedRows);
@@ -181,7 +173,7 @@ export function buildConversationTurnWorkSegments(options: {
     const visibleAssistantIndex = visibleAssistantTextRow
       ? segmentFlowRows.findIndex((row) => row.rowId === visibleAssistantTextRow.rowId)
       : -1;
-    // Plugin UI tool rows stay outside the collapsed area (at the same level as assistantText); progress rows still collapse normally. See isPluginUiPinnedToolRow.
+    // 插件 UI 工具行留在折叠区外（与 assistantText 同级），过程行照常折叠；见 isPluginUiPinnedToolRow。
     const segmentHistoryRows = (
       options.timelineOnly
         ? []
@@ -201,17 +193,13 @@ export function buildConversationTurnWorkSegments(options: {
       segmentCount: visualDrafts.length,
       nowMs: options.nowMs,
     });
-    const isLastSegment = segmentIndex === visualDrafts.length - 1;
-    const resolvedSegmentWorkStatus = resolveConversationTurnWorkStatus(
+    const segmentWorkStatus = resolveConversationTurnWorkStatus(
       options.header,
       segmentFlowRows,
       segmentRunning,
       segmentDurationMs,
-      options.isInterrupted && isLastSegment,
+      options.isInterrupted && segmentIndex === visualDrafts.length - 1,
     );
-    const segmentWorkStatus = isLastSegment
-      ? withTurnOutputTokens(resolvedSegmentWorkStatus, options.header)
-      : resolvedSegmentWorkStatus;
     const segmentKey =
       segmentIndex === 0
         ? options.key

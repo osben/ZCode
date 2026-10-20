@@ -37,8 +37,8 @@ interface SavedWorkflowMetaFormProps {
 }
 
 /**
- * Detail-page "Basic information" form: description / when to use / argument table.
- * Editable inline; Discard / Save appear only when dirty. State is owned by SavedWorkflowDetailView; this component only renders it.
+ * 详情页「基本信息」表单：说明 / 何时使用 / 参数表
+ * 行内可编，脏了才浮出「放弃 / 保存」。状态由 SavedWorkflowDetailView 持有，这里只渲染。
  */
 export function SavedWorkflowMetaForm({
   draft,

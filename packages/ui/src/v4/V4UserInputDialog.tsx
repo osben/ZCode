@@ -4,7 +4,7 @@ import {
   TID_V4_USER_INPUT_OPTION,
   TID_V4_USER_INPUT_TEXT,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import type { V4UserInputViewModel } from "@/v4/pendingInteractionAdapter.js";
@@ -15,18 +15,14 @@ export interface V4UserInputDialogProps {
   onSubmit: (answer: { optionId?: string; freeText?: string }) => void;
 }
 
-/** Minimal dialog for v4 userInput interaction (vertical split). */
+/** v4 userInput 交互最小弹窗（竖切）。 */
 export function V4UserInputDialog({ model, onSubmit }: V4UserInputDialogProps) {
   const [freeText, setFreeText] = useState("");
 
   const handleOption = useCallback(
     (optionId: string) => {
       runUserAction({
-        input: {
-          featureId: "conversation.blocking.user_input",
-          action: "select_option",
-          trigger: "button",
-        },
+        input: { featureId: "conversation.blocking.user_input", action: "select_option", trigger: "button" },
         operation: () => onSubmit({ optionId }),
         completed: { resultSource: "optimistic_projection" },
         failureStage: "user_input_submit",

@@ -14,8 +14,7 @@ export function ExecuteCommand({ command }: { command: string | undefined }) {
   useLayoutEffect(() => {
     const element = content.current;
     if (!element || expanded) return;
-    // The command area previously had only clamping and truncation with no way to read the full
-    // content; measure actual line wrapping to handle narrow screens and font-size changes.
+    // 原命令区域只有限高和截断，没有阅读完整内容的入口；按实际换行测量，兼容窄屏与字号变化。
     const measure = () => setOverflowing(element.scrollHeight > element.clientHeight + 1);
     measure();
     const observer = new ResizeObserver(measure);
@@ -30,12 +29,10 @@ export function ExecuteCommand({ command }: { command: string | undefined }) {
         ref={content}
         data-testid="execute-command"
         tabIndex={expanded ? 0 : undefined}
-        // The original scrollbar was limited by the card's 16px right padding; extending 12px to the
-        // right and restoring body padding keeps the scrollbar 4px from the inner edge.
+        // 原滚动条受卡片右侧 16px padding 限制；向右扩展 12px 并补回正文留白，使滚动条距内边缘 4px。
         className={`col-span-2 -mr-3 pr-3 min-w-0 leading-5 ${expanded ? "max-h-[10lh] overflow-y-auto" : "max-h-[3lh] overflow-hidden"}`}
       >
-        {/* The start marker previously sat outside the scroll container and stayed visible while
-            scrolled mid-command; sharing the viewport with the body preserves first-line semantics. */}
+        {/* 起始标记此前在滚动容器外，滚到命令中段仍显示；与正文共用视口，保持首行语义。 */}
         <div className="flex items-start gap-2">
           <span data-testid="execute-command-prompt" className="shrink-0 text-foreground-subtle">
             $
@@ -49,7 +46,7 @@ export function ExecuteCommand({ command }: { command: string | undefined }) {
           type="button"
           variant="link"
           size="default"
-          // Remove the base button's horizontal padding and border spacer so the text aligns with the command body.
+          // 去掉基础按钮的水平 padding 和边框占位，让文字直接对齐命令正文。
           className="col-start-2 justify-self-start border-0 px-0 font-sans text-ui-sm font-normal text-foreground-subtle focus-visible:underline"
           aria-expanded={expanded}
           aria-controls={id}

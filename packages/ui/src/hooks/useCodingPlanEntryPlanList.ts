@@ -20,7 +20,7 @@ export function useCodingPlanEntryPlanList(): CodingPlanEntryInventory {
   const loading = state.status === "loading";
   const { credentialService, codingPlanSubscriptionService } = useServices();
   const user = useZCodeStore((state) => state.user);
-  // Do not pass the currently selected team context; the four Start/personal-connection cases use their existing entitlement caches.
+  // 不传当前选中的团队上下文，四种 Start/个人连接分别使用已有权益缓存。
   const { entitlements, refresh } = useCodingPlanEntitlements({
     providerSettingsView,
     suppressProviderFingerprintAutoRefresh: true,
@@ -39,7 +39,7 @@ export function useCodingPlanEntryPlanList(): CodingPlanEntryInventory {
   useEffect(() => {
     if (!providerSettingsView) return;
     let cancelled = false;
-    // Use authenticated pricing for team subscriptions; do not infer purchased plans from the static product catalog.
+    // 团队订阅以 authenticated pricing 为准，不用静态商品目录推断已购套餐。
     void Promise.all([
       refresh({ force: true, silent: true }),
       Promise.all(
@@ -66,7 +66,7 @@ export function useCodingPlanEntryPlanList(): CodingPlanEntryInventory {
           view: providerSettingsView,
           generation,
           sources: sources.map((source, index) => {
-            // A refresh failure does not mean the plan was not purchased; reuse a successful result only when account, family, and credentials match.
+            // 刷新失败不等于未购；仅在账号、family 和凭据一致时复用成功结果。
             const cached = previous?.sources[index];
             return source.products === null &&
               source.token &&
@@ -98,13 +98,13 @@ export function useCodingPlanEntryPlanList(): CodingPlanEntryInventory {
     BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan,
     BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
   ];
-  // The account model has no Personal API Key. Reuse the entitlement hook's read-only Access check; do not filter out unselected/disabled plans.
+  // 账号模型没有 Personal API Key；沿用权益 hook 的只读 Access 判定，不能过滤未选中/禁用套餐。
   const required = planIds
     .filter((providerId) =>
       resolveAccountProviderInspectionAccess(providerSettingsView, providerId),
     )
     .map((providerId) => entitlements[providerId]);
-  // The error describes this refresh and cannot invalidate a still-usable historical snapshot (including a successful confirmation that no plan is active).
+  // 错误描述的是本次刷新，不能否定仍可用的历史快照（含成功确认未开通）。
   const missing = required.filter((item) => {
     const snapshot = item?.snapshot;
     return (

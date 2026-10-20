@@ -17,7 +17,13 @@ import { logger } from "@/logger.js";
 
 const RewardsContext = createContext<(() => Promise<void>) | null>(null);
 export const useOpenRewards = () => useContext(RewardsContext);
-export function RewardsProvider({ children, desktop }: { children: ReactNode; desktop: boolean }) {
+export function RewardsProvider({
+  children,
+  desktop,
+}: {
+  children: ReactNode;
+  desktop: boolean;
+}) {
   const [opened, setOpened] = useState(false);
   const platform = usePlatform();
   const { locale } = useZCodeIntl();
@@ -25,7 +31,7 @@ export function RewardsProvider({ children, desktop }: { children: ReactNode; de
   const user = useZCodeStore((s) => s.user);
   const loginAttempt = useZCodeStore((s) => s.loginEntryAttempt);
   const requestLogin = useZCodeStore((s) => s.requestLoginEntry);
-  // The marketing instance rebuilds after login; the carried-over intent is held by the window-level Provider, not the old controller.
+  // 登录后营销实例会重建；续接意图由窗口级 Provider 持有，不能挂在旧 controller 上。
   const pendingLogin = useRef<number | null>(null);
   const openPage = useCallback(async () => {
     if (desktop) setOpened(true);

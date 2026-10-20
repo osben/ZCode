@@ -90,9 +90,9 @@ export function useClientScenesResource(
 
   useEffect(() => {
     if (!enabled) return;
-    // On macOS, clicking close only hides BrowserWindow; the renderer and SWR cache remain alive.
-    // If the deduplication window is still active on show, built-in focus revalidation keeps reusing the old Scene.
-    // On hidden → visible, bypass deduplication and force revalidation, while coalescing concurrent consumers by Service/cache authority.
+    // macOS 点击关闭只 hide BrowserWindow，renderer 与 SWR 缓存不会销毁；
+    // 重新 show 时若仍在去重窗口内，内建 focus revalidate 会继续复用旧 Scene。
+    // hidden -> visible 必须绕过去重窗口强制重验，同时按 Service/cache authority 合并并发消费方。
     return getClientScenesVisibilityRecovery()?.subscribe(visibilityAuthority, () => {
       void resource.mutate().catch(() => undefined);
     });

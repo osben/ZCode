@@ -1,14 +1,12 @@
 // ============================================================
-// The two adjustable run settings in the confirmation window: pure rules
+// 确认窗里可调的两项 run 设置：纯规则
 // ============================================================
-// docs/dynamic-workflow/launch.md "Adjusting the settings in the window"; for appearance see
-// docs/dynamic-workflow/presentation.md "The confirmation window".
+// docs/dynamic-workflow/launch.md「Adjusting the settings in the window」；外观见
+// docs/dynamic-workflow/presentation.md「The confirmation window」。
 //
-// Same draft and same "what changed" judgment as the "configure" popover (workflowRunSettings.ts);
-// only the entry point and exit differ: the entry reads **this invocation's input** (values normalized
-// by the CLI's resolveInput), the exit is the Allow response's `content`, using the tool's own field
-// names and tri-state — so the agent side needs only one parser (contracts'
-// WorkflowSettingsAdjustmentSchema).
+// 与「配置」弹层是同一份草稿、同一条「改了什么」的判断（workflowRunSettings.ts），差别只在起点与出口：
+// 起点读的是**这次调用的入参**（CLI resolveInput 归一化过的值），出口是 Allow 应答的 `content`，用工具
+// 自己的字段名与三态——agent 侧据此只有一套解析（contracts 的 WorkflowSettingsAdjustmentSchema）。
 
 import {
   readWorkflowMaxConcurrency,
@@ -20,16 +18,15 @@ import {
   type WorkflowRunSettingsDraft,
 } from "./workflowRunSettings.js";
 
-/** The Allow response's `content`: only changed fields; `null` = back to default (session model / default concurrency). */
+/** Allow 应答的 `content`：只含改过的字段；`null` = 回到默认（会话模型 / 默认并发）。 */
 export interface WorkflowAskSettingsContent {
   subagent_model?: string | null;
   max_concurrency?: number | null;
 }
 
 /**
- * Entry point: the values from the input. No model means the session model; no upper bound means the
- * default concurrency ("no bound of its own" is that number on the stepper); when even the default is
- * unknown, null (the stepper stays empty; typing a number is what sets a bound).
+ * 起点：入参里的值。模型缺席即会话模型；上界缺席即默认并发（「没有自己的界」在步进器上就是那个数），
+ * 默认也未知则为 null（步进器留空，敲一个数才算设了界）。
  */
 export function initialWorkflowAskSettingsDraft(
   input: unknown,
@@ -42,10 +39,8 @@ export function initialWorkflowAskSettingsDraft(
 }
 
 /**
- * Exit: changed fields → response content; nothing changed means undefined (Allow keeps carrying only
- * the optionId). The rules are all the popover's: changing only the thinking level counts as changing
- * the model, an upper bound equal to the default concurrency sends `null` (above default is a real
- * number).
+ * 出口：改过的字段 → 应答 content；什么都没改即 undefined（Allow 照旧只带 optionId）。规则全是弹层的：
+ * 只改思考档也算改了模型，上界等于默认并发发 `null`（高于默认是一个真的数）。
  */
 export function workflowAskSettingsContent(
   initial: WorkflowRunSettingsDraft,
@@ -60,7 +55,7 @@ export function workflowAskSettingsContent(
   };
 }
 
-/** Which row changed (the changed row is bolded and carries "was …"). */
+/** 哪一行改了（改了的那一行加粗并带「原为 …」）。 */
 export function workflowAskSettingsChangedLines(
   initial: WorkflowRunSettingsDraft,
   draft: WorkflowRunSettingsDraft,

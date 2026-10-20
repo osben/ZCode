@@ -9,7 +9,7 @@
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible.js";
 import { cn } from "../lib/utils.js";
-import { TID_CHAT_REASONING_CONTENT, TID_CHAT_REASONING_TRIGGER } from "@zcode/shared";
+import { TID_CHAT_REASONING_CONTENT, TID_CHAT_REASONING_TRIGGER } from "@zcode/shared/test-ids";
 import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { QueuedSummaryContent } from "@/ToolCallBlocks/QueuedSummaryContent.js";
@@ -139,8 +139,8 @@ export const Reasoning = memo(
         startTimeRef.current = Date.now();
       }
 
-      // In the collapsed state, show a streaming summary without rerendering the whole reasoning block every second for a hidden elapsed time.
-      // When expanded, calculate from the same start time and keep updating it.
+      // 收起态展示流式摘要，不需要为了隐藏的耗时每秒触发整块 reasoning 重渲染；
+      // 展开时再按同一个开始时间补算并持续更新时间。
       if (!isOpen) {
         return;
       }
@@ -165,7 +165,7 @@ export const Reasoning = memo(
         return;
       }
 
-      // The output boundary is an additional signal to collapse after completion; automatic rules must not override the user's manual choice.
+      // 输出边界是结束收起的补充信号；用户手动操作后，自动规则不能覆盖选择。
       if (
         shouldAutoCollapseReasoning({
           autoCollapseKey,
@@ -191,8 +191,8 @@ export const Reasoning = memo(
         return;
       }
 
-      // Do not unmount children immediately when reasoning is collapsed. Radix's height animation needs
-      // access to the real content height during the closed phase; finish the 300ms collapse before unmounting the heavy DOM.
+      // 思考内容收起时不能立刻卸载 children。Radix 的高度动画需要
+      // closed 阶段仍能读到真实内容高度；先让 300ms 收起动画跑完，再卸载重 DOM。
       contentUnmountDelayRef.current = window.setTimeout(() => {
         setShouldRenderContent(false);
         contentUnmountDelayRef.current = null;
@@ -309,8 +309,8 @@ export const ReasoningTrigger = memo(
           const next = isReasoningSummaryOverflowing(viewport);
           return current === next ? current : next;
         });
-        // When a streaming summary exceeds available width, ordinary overflow-hidden keeps showing the old prefix
-        // and clips the latest token on the right. After content grows, move the single-line viewport to the end so old content shifts left.
+        // 流式摘要超过可用宽度后，普通 overflow-hidden 会固定显示旧前缀，
+        // 最新 token 被裁在右侧。每次内容增长后把单行视口推到末尾，让旧内容向左移。
         scrollReasoningSummaryToEnd(viewport);
       };
 
@@ -334,8 +334,8 @@ export const ReasoningTrigger = memo(
         </span>
       ) : duration === undefined ? (
         <span className="inline-flex items-center gap-2">
-          {/* The completed “Thinking” label used semibold, making it heavier than tool-type labels in the same column.
-              Use medium consistently to preserve the visual hierarchy of the conversation timeline. */}
+          {/* 完成态“思考”单独使用 semibold，比同列工具类型标签更粗。
+              统一为 medium，保持对话时间线的视觉层级一致。 */}
           <span className="font-medium text-foreground-subtlest">
             {intl.formatMessage({ id: "chat.reasoning.thought" })}
           </span>
@@ -370,11 +370,11 @@ export const ReasoningTrigger = memo(
       >
         {children ?? (
           <>
-            {/* Thinking can remain visible during long streaming replies, so a rotating loader would consume rendering resources for a long time.
-            Keep the text shimmer while running, and use a static thinking icon. */}
+            {/* thinking 会在长流式回复里持续存在，旋转 loader 会长期占用渲染资源；
+            运行态保留文案扫光，图标固定为静态思考语义。 */}
             <BrainIcon className="size-4 shrink-0 text-foreground-subtlest" />
-            {/* The streaming summary on the right can shrink; if the label on the left also shrinks,
-                a long summary can wrap the Thinking label onto multiple lines. Keep the semantic label fixed-width and let only the summary use the remaining space. */}
+            {/* 右侧流式摘要是可伸缩内容；如果左侧标签也参与 flex shrink，
+                长摘要会把思考状态标签挤成多行。固定语义标签宽度，只让摘要占剩余空间。 */}
             <span className="shrink-0 whitespace-nowrap" data-reasoning-label="true">
               {thinkingMessage}
             </span>
@@ -488,8 +488,8 @@ export const ReasoningContent = memo(
         return;
       }
 
-      // scrollHeight changes as thought content streams in; observe both container and content sizes.
-      // Follow the latest thought at the bottom by default; pause after the user scrolls away and resume only when they return to the bottom.
+      // thought 内容流式追加时 scrollHeight 会变化；同时监听容器和内容尺寸。
+      // 默认吸底跟随最新思考；用户主动离底后暂停，直到用户自己滚回底部再恢复。
       const syncScrollPosition = () => {
         if (autoFollowBottomRef.current) {
           scrollToReasoningBottom();
@@ -545,19 +545,19 @@ export const ReasoningContent = memo(
               ref={scrollRef}
               className={cn(
                 "max-h-60 space-y-2 overflow-auto text-ui-base text-foreground-subtlest",
-                // CUA Group already provides a clear parent boundary; another left guide/indent for nested reasoning would duplicate the hierarchy.
+                // CUA Group 已提供清晰的父级边界；子思考继续显示左导线与缩进会形成重复层级。
                 variant === "default" && "ml-2 border-border border-l pl-3.5",
               )}
               data-reasoning-scroll-mask={scrollMaskData}
               onScroll={handleScroll}
               style={scrollMaskStyle}
             >
-              {/* Previously, opening the thinking block mounted Radix content on demand and forced forceMount,
-                  so the content’s first frame was already open and the height animation could not transition from closed, making it appear to open suddenly.
-                  Keep this consistent with tool detailsconsistent: CollapsibleContent handles only Presence/height animation, while heavy content is unmounted separately after a delay;
-                  put spacing inside the animated content so removing the parent gap/padding at the end of a closed animation does not cause a final-frame jump.
-                  Performance fix: thought content can be very long and stream in incrementally. If expanded content continues through MessageResponse/Streamdown,
-                  each chunk reruns Markdown parsing and plugin rendering, and performance worsens as the text grows. Render plain text here and preserve line breaks. */}
+              {/* 思考块之前打开时把 Radix content 一起按需挂载并强制 forceMount，
+                  content 首帧已经是 open 状态，高度动画来不及从 closed 状态过渡，看起来像突然展开。
+                  这里和工具详情保持一致：CollapsibleContent 只负责 Presence/高度动画，重内容单独延迟卸载；
+                  间距放在动画内容内部，避免 closed 动画结束时父级 gap/padding 被移除造成末帧跳动。
+                  性能修复：thought 内容可能非常长且会流式追加，展开后如果继续走 MessageResponse/Streamdown，
+                  每次 chunk 都会重跑 Markdown 解析和插件渲染，字数越多越卡；这里按纯文本展示并保留换行。 */}
               <div
                 ref={contentRef}
                 className="min-w-0 whitespace-pre-wrap break-words text-foreground-subtlest"

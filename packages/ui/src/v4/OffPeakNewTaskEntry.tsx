@@ -1,12 +1,10 @@
 import { useCodingPlanEntryGate } from "@/settings/CodingPlanEntryButton.js";
-/* New task page idle-time task entry (Figma ⚫️ Z.ai - Zcode / node 5488-3978; spec §5 "Templates" / D30-4 second entry).
-   Guide banner "Use free run Idle-time task" + Client Scenes template cards (prefill the create form; Customize = blank).
-   No render when the staged rollout misses (D31); the banner is dismissible (within this session, D28 "after closing, reopens on next
-   login/restart" → session-level).
-   Clicking a card: stage the prefill draft → open the Automations main view (idle tab) where the create form consumes the draft.
-   The entry sits in the fixed bottom area of the draft page (38px from the bottom); templates use a desktop three-column row,
-   single column on narrow screens;
-   business logic (staged rollout, Coding Plan check, upgrade toast, draft prefill, telemetry) stays unchanged. */
+/* New task 页闲时任务入口（Figma ⚫️ Z.ai - Zcode / node 5488-3978；spec §5「模板」/ D30-4 第二入口）。
+   引导横幅「Use free run Idle-time task」+ Client Scenes 模板卡（预填创建表单，Customize=空白）。
+   灰度未命中不渲染（D31）；横幅可关闭（本会话内，D28「关闭后下次登录/重启再开」→ session 级）。
+   点击卡片：暂存预填草稿 → 打开 Automations 主视图（idle tab）创建表单消费草稿。
+   入口位于草稿页底部固定区（距底 38px），模板恢复为桌面三列横排、窄屏单列；
+   业务逻辑（灰度、Coding Plan 判定、Upgrade Toast、草稿预填、埋点）保持不变。 */
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import { Megaphone, Moon, X } from "lucide-react";
 import { ClientSceneLucideIcon } from "@/components/ClientSceneLucideIcon.js";
@@ -39,7 +37,7 @@ import { useOffPeakTaskStore, type OffPeakCreateDraft } from "@/store/offPeakTas
 import { useMemo } from "react";
 
 interface OffPeakNewTaskEntryProps {
-  /** Opens the Automations main view (idle tab); the prefill draft is staged before the card click is handled. */
+  /** 打开 Automations 主视图（idle tab）；点击卡片前会先暂存预填草稿。 */
   onOpenAutomations?: () => void;
 }
 
@@ -63,7 +61,7 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
   const dismiss = useOffPeakTaskStore((state) => state.dismissNewTaskBanner);
   const setPendingCreateDraft = useOffPeakTaskStore((state) => state.setPendingCreateDraft);
 
-  // Rollout miss / user dismissed → do not render (D31 exposure gating + D28 dismissible).
+  // 灰度未命中 / 用户已关闭 → 不渲染（D31 曝光门控 + D28 可关闭）。
   if (grayConfig?.enabled !== true || dismissed) return null;
 
   const entryPlanState = resolveCodingPlanEntryPlanStateFromProviderSettings(providerSettingsView);
@@ -96,9 +94,8 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
               const eventText = intl.formatMessage({
                 id: "settings.modelProvider.codingPlan.upgrade",
               });
-              // Why the funnel context was missing: the idle-time entry previously passed only providerId, so the purchase panel could not
-              // build a source-attributed funnel, and there was no attributable context that survived across OAuth. Freeze the context
-              // once at click time; the global dialog holds it across logins.
+              // 埋点缺失原因：闲时入口此前只传 providerId，购买面板无法建立来源明确的漏斗，
+              // OAuth 前后也没有可延续的归因上下文。点击时冻结一次 context，由全局弹窗跨登录持有。
               codingPlanUpgradeDialog?.openCodingPlanUpgrade({
                 providerId,
                 initialAudience: "personal",
@@ -115,8 +112,8 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
   };
 
   const handleCardClick = (template: OffPeakAutomationTemplate) => {
-    // Bug cause: the selected-connection gate conflated "no provider selected" with "no plan", wrongly blocking users who already had a plan.
-    // The homepage only navigates and admits on any Coding Plan; form submission is still strictly gated by Automations' selected support.
+    // Bug 原因：selected-connection 门禁把“未选 provider”和“没有套餐”混为一谈，误拦已有套餐用户。
+    // 主页只做导航，按任一 Coding Plan 放行；表单提交仍由 Automations 的 selected support 严格拦截。
     if (codingPlanUnavailable) {
       logger.debug("[off-peak] blocked home template without any Coding Plan", {
         templateId: template.id,
@@ -124,8 +121,8 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
       showCodingPlanRequiredToast();
       return;
     }
-    // Bugfix: the homepage copy went through i18n while the draft was hardcoded in English, producing mixed-language pages on Chinese
-    // systems after clicking a template. Generate the title and prompt from the current locale at click time; Customize still stays blank.
+    // Bugfix：首页文案走 i18n、草稿却曾写死英文，导致中文系统点击模板后创建页中英混排。
+    // 点击时按当前 locale 生成同源标题与指令；Customize 仍保持空白创建。
     const materialized = materializeOffPeakTemplateDraft(template, locale);
     const draft: OffPeakCreateDraft = {
       ...(template.customize ? {} : { title: materialized.title, prompt: materialized.prompt }),
@@ -139,14 +136,14 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
   };
 
   return (
-    // 5488-3978: the entry is a permanent fixture at the bottom of the draft page; pb-[38px] gives the fixed gap to the window bottom.
-    // Width does not expand on the @container/conversation breakpoints (that container is declared only inside the timeline).
+    // 5488-3978：入口常驻草稿页底部，pb-[38px] 给出与窗口底部的固定间距；
+    // 宽度不依赖 @container/conversation 断点外扩（该容器只声明在 timeline 内部）。
     <div
       data-off-peak-new-task-entry="true"
       className="flex w-full shrink-0 flex-col items-center gap-3 px-4 pb-[38px]"
     >
-      {/* Guide banner: 32px icon slot + 4px gap + main copy / description Tooltip, horizontally centered;
-          the close button is hidden this design round (see the comment below). */}
+      {/* 引导横幅：32px 图标位 + 4px 间距 + 主文案/说明 Tooltip，整体水平居中；
+          关闭钮本轮设计隐藏（见下方注释） */}
       <div
         data-off-peak-new-task-banner="true"
         className="flex w-full max-w-[580px] items-center justify-center"
@@ -155,13 +152,13 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
           <span className="flex size-8 shrink-0 items-center justify-center" aria-hidden="true">
             <Megaphone className="size-4" strokeWidth={2} />
           </span>
-          {/* Bug cause: joining the eligibility note and the main copy into one line triggered ellipsis, so users could neither read the
-              full main copy nor see the parenthesized limitation on its own. The main copy now wraps fully, and the whole copy area
-              carries the description Tooltip; the plain text hint does not use cursor-help, avoiding an extra question-mark cursor. */}
+          {/* Bug 原因：资格说明与主文案拼成单行后触发省略号，用户既看不全主文案，
+              也无法单独查看括号内限制。主文案完整换行，并由整个文案区域承接说明 Tooltip；
+              普通文本提示不使用 cursor-help，避免额外出现带问号的光标。 */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                {/* Fix reason: the caption font size scales with UI settings; use a relative line height so large font sizes are not clipped by a fixed 18px line box. */}
+                {/* 修复原因：caption 字号随 UI 设置缩放，使用相对行高避免大字号时文字被固定 18px 行盒裁切。 */}
                 <span
                   tabIndex={0}
                   className="min-w-0 cursor-default rounded-sm text-ui-caption font-normal leading-snug focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border-hover"
@@ -179,9 +176,9 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
             </Tooltip>
           </TooltipProvider>
         </div>
-        {/* 5488-3978: no close entry for now; per product, hide the implementation without deleting it,
-            keeping dismissNewTaskBanner and the offPeak.newTask close semantics usable;
-            to re-enable, change hidden back to flex (both are in the display group and cannot coexist). */}
+        {/* 5488-3978 暂不提供关闭入口：按产品要求只隐藏、不删除实现，
+            dismissNewTaskBanner 与 offPeak.newTask 关闭语义保持可用；
+            重新放开时把 hidden 换回 flex 即可（两者同属 display 组，不能并存）。 */}
         <button
           type="button"
           data-off-peak-new-task-dismiss="true"
@@ -193,8 +190,8 @@ export function OffPeakNewTaskEntry({ onOpenAutomations }: OffPeakNewTaskEntryPr
         </button>
       </div>
 
-      {/* Remote template buttons use an equal-width grid; a desktop row, single column on narrow screens.
-          Descriptions have no fixed height; cards stretch to the tallest content in the row. */}
+      {/* 远程模板按钮使用等宽栅格；桌面横排，窄屏单列，
+          描述不锁固定高度，由同一行最高内容拉伸卡片。 */}
       <div
         data-off-peak-template-grid="true"
         className="grid w-full max-w-[780px] grid-cols-1 gap-4 sm:grid-cols-3"

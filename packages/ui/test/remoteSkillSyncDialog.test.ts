@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createElement, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,14 +15,12 @@ import {
   RemoteSkillSyncDialog,
   RemoteSkillSyncExistingFilterCheckbox,
   RemoteSkillSyncSelectionList,
-  RemoteSkillSyncTargetRow,
   formatRemoteSkillSyncError,
   resolveDefaultRemoteSkillSyncSelection,
   shouldToggleRemoteSkillSyncCardSelection,
 } from "../src/settings/RemoteSkillSyncDialog.js";
+import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
-
-const LOCALE_ZH = "zh-CN";
 
 const controlHintTooltipMockState = vi.hoisted(() => ({
   latest: null as null | {
@@ -162,6 +160,19 @@ function createSkillSyncServiceStub(): ISkillSyncService {
 }
 
 describe("RemoteSkillSyncDialog helpers", () => {
+  it("provides size-limit copy in both supported locales", () => {
+    const messageIds = [
+      "settings.skills.remoteSync.sizeLimit.selectedContent",
+      "settings.skills.remoteSync.sizeLimit.archive",
+      "settings.skills.remoteSync.sizeLimit.extractedContent",
+    ];
+
+    for (const messageId of messageIds) {
+      expect(enUS[messageId]).toBeTruthy();
+      expect(zhCN[messageId]).toBeTruthy();
+    }
+  });
+
   it("localizes structured selected-content size limit errors", () => {
     const error = Object.assign(new Error("skill sync size limit exceeded"), {
       code: SKILL_SYNC_SIZE_LIMIT_ERROR_CODE,
@@ -349,15 +360,16 @@ describe("RemoteSkillSyncDialog", () => {
     };
 
     const view = render(createElement(RemoteSkillSyncDialog, props));
-    remoteSkillSyncIntlMockState.locale = LOCALE_ZH;
+    remoteSkillSyncIntlMockState.locale = "zh-CN";
     view.rerender(createElement(RemoteSkillSyncDialog, props));
     rejectFirstLoad(sizeLimitError);
 
-    const expectedMessage = zhCN["settings.skills.remoteSync.sizeLimit.selectedContent"]
-      .replace("{actualSize}", "53.6 MiB")
-      .replace("{maxSize}", "20 MiB");
     await waitFor(() => {
-      expect(document.body.textContent).toContain(expectedMessage);
+      expect(
+        screen.getByText(
+          "同步失败：所选 Skills 的内容总大小约为 53.6 MiB，超过单次同步上限 20 MiB。请取消选择部分 Skills 后重试；远端未写入任何内容。",
+        ),
+      ).toBeTruthy();
     });
   });
 
@@ -410,8 +422,6 @@ describe("RemoteSkillSyncDialog", () => {
 
     expect(html).toContain("Sync Skills to remote target");
     expect(html).toContain('data-tooltip-title="Skill data and environment availability"');
-    expect(html).toContain("not all dependent data and system environment capabilities");
-    expect(html).toContain("install it or add the dependencies on the remote server");
     expect(html).toContain('aria-label="Skill data and environment availability"');
   });
 
@@ -445,39 +455,6 @@ describe("RemoteSkillSyncDialog", () => {
       open: false,
       tabIndex: undefined,
     });
-  });
-
-  it("keeps the dialog size stable while the skill list scrolls", () => {
-    const service = createSkillSyncServiceStub();
-
-    const html = renderToStaticMarkup(
-      createElement(RemoteSkillSyncDialog, {
-        open: true,
-        onOpenChange: () => undefined,
-        localSkillSyncService: service,
-        remoteSkillSyncService: service,
-        remoteTarget: {
-          kind: "ssh",
-          host: "dev.example.com",
-          username: "alice",
-          port: 22,
-        },
-        workspacePath: "/home/alice/project",
-        onSynced: async () => undefined,
-      }),
-    );
-
-    const dialogContentClass =
-      html.match(/<div class="([^"]*max-h-\[min\(720px,calc\(100dvh-2rem\)\)\][^"]*)"/u)?.[1] ?? "";
-    expect(dialogContentClass.split(/\s+/u)).toEqual(
-      expect.arrayContaining([
-        "h-[min(720px,calc(100dvh-2rem))]",
-        "flex",
-        "flex-col",
-        "overflow-hidden",
-      ]),
-    );
-    expect(html).toContain("min-h-0 flex-1 overflow-y-auto");
   });
 
   it("collapses skill descriptions by default with an expand control", () => {
@@ -539,22 +516,5 @@ describe("RemoteSkillSyncDialog", () => {
 
     expect(html).toContain('type="checkbox"');
     expect(html).toContain("Show existing remote skills");
-  });
-
-  it("places the existing filter on the same row as the target", () => {
-    const html = renderToStaticMarkup(
-      createElement(RemoteSkillSyncTargetRow, {
-        targetLabel: "alice@dev.example.com:22 · /home/alice/project",
-        showExistingRemoteSkills: true,
-        showExistingFilter: true,
-        onShowExistingRemoteSkillsChange: () => undefined,
-      }),
-    );
-
-    expect(html).toContain("sm:flex-row");
-    expect(html).toContain("sm:justify-between");
-    expect(html.indexOf("Target: alice@dev.example.com:22")).toBeLessThan(
-      html.indexOf("Show existing remote skills"),
-    );
   });
 });

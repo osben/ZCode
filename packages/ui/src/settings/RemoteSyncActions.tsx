@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
-import { ChevronDown, UploadCloud } from "lucide-react";
+import { BlocksIcon, CableIcon, ChevronDown, UploadCloud, WandIcon } from "lucide-react";
 import type { RemoteTarget } from "@zcode/shared";
 import type {
   IMcpSyncService,
@@ -69,8 +69,8 @@ export function useRemoteSyncDialogIntent(params: { rpcReady: boolean; targetKey
     params.rpcReady && params.targetKey.length > 0 && openedTargetKey === params.targetKey;
 
   useEffect(() => {
-    // Dialog open was previously tied to the PluginList component lifecycle. When the remote disconnected or the target changed,
-    // the dialog was unmounted but the user's intent remained and reopened automatically after reconnecting.
+    // 弹窗 open 曾只绑定 PluginList 组件生命周期，远端断连或切换目标时
+    // Dialog 虽被卸载，用户意图仍会残留并在重连后自动恢复。
     setOpenedTargetKey(null);
   }, [params.targetKey]);
   useEffect(() => {
@@ -141,8 +141,8 @@ export function RemoteSyncMenuItems({
     <>
       {canSyncSkills ? (
         <DropdownMenuItem onMouseDown={handleMouseDown} onSelect={onOpenSkillSync}>
-          <UploadCloud className="size-3.5" />
-          {intl.formatMessage({ id: "settings.skills.remoteSync.open" })}
+          <WandIcon className="size-3.5" />
+          {intl.formatMessage({ id: "remote.syncSkills" })}
         </DropdownMenuItem>
       ) : null}
       {canSyncMcp ? (
@@ -151,14 +151,14 @@ export function RemoteSyncMenuItems({
           onMouseDown={handleMouseDown}
           onSelect={onOpenMcpSync}
         >
-          <UploadCloud className="size-3.5" />
-          {intl.formatMessage({ id: "settings.mcp.remoteSync.open" })}
+          <CableIcon className="size-3.5" />
+          {intl.formatMessage({ id: "remote.syncMcp" })}
         </DropdownMenuItem>
       ) : null}
       {canSyncPlugins ? (
         <DropdownMenuItem onMouseDown={handleMouseDown} onSelect={onOpenPluginSync}>
-          <UploadCloud className="size-3.5" />
-          {intl.formatMessage({ id: "settings.plugins.remoteSync.open" })}
+          <BlocksIcon className="size-3.5" />
+          {intl.formatMessage({ id: "remote.syncPlugins" })}
         </DropdownMenuItem>
       ) : null}
     </>
@@ -193,7 +193,7 @@ export function RemoteSyncDropdownButton({
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="secondary" size="sm" className="gap-1">
           <UploadCloud className="size-3.5" aria-hidden="true" />
-          {intl.formatMessage({ id: "settings.remoteSync.open" })}
+          {intl.formatMessage({ id: "remote.syncAll" })}
           <ChevronDown className="size-3.5 text-foreground-subtle" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>

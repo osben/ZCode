@@ -33,7 +33,12 @@ export function WebElementContextAttachmentChip({
     return null;
   }
 
-  const label = intl.formatPlural({ id: "chat.webElements" }, contexts.length);
+  const label = intl.formatMessage(
+    {
+      id: contexts.length === 1 ? "chat.webElements.one" : "chat.webElements.many",
+    },
+    { count: String(contexts.length) },
+  );
   const removeLabel = intl.formatMessage({ id: "chat.webElements.remove" });
 
   return (

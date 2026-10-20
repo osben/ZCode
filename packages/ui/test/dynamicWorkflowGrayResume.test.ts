@@ -1,11 +1,9 @@
 // @vitest-environment jsdom
-// When the gray release does not match, no path to start the engine remains (docs/dynamic-workflow/launch.md "Gray
-// release", DWG-07).
+// 灰度未命中时不留任何一条起引擎的路（docs/dynamic-workflow/launch.md「Gray release」DWG-07）。
 //
-// There is a single supply point: SessionPane puts the Resume callback into the session context. The tool card footer
-// and the end-of-turn digest card both gate their buttons on "is the callback present", so here the callback is
-// computed through the real gate (resolveWorkflowResumeHandler) and both surfaces are actually rendered to see whether
-// the button is there — instead of restating the rule in each place.
+// 供给点只有一个：SessionPane 把 Resume 回调放进会话上下文。工具卡页脚与轮尾摘要卡都以
+// 「回调在不在场」作为按钮门控，所以这里按真实的门（resolveWorkflowResumeHandler）算出回调，
+// 再把两处真的渲染出来看按钮在不在——而不是各自复述一遍规则。
 import { cleanup, render } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,21 +18,20 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
   CodeBlock: ({ code }: { code: string; children?: ReactNode }) =>
     createElement("pre", { "data-testid": "code-block" }, code),
 }));
-// ControlHintTooltip depends on the app root's TooltipProvider; following existing convention, the test replaces it
-// with a pass-through stub.
+// ControlHintTooltip 依赖应用根部的 TooltipProvider；测试里按既有惯例替换为透传桩。
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after the mocks above.
+// eslint-disable-next-line import/first -- 必须在上面的 mock 之后再引入被测组件。
 import { CreateWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/create-workflow.js";
-// eslint-disable-next-line import/first -- Same as above.
+// eslint-disable-next-line import/first -- 同上。
 import {
   WorkflowRunDigest,
   type WorkflowRunDigestProps,
 } from "@/components/workflow-timeline/WorkflowRunDigest.js";
 
-/** The callback in the session context: computed through the real gate; `undefined` means "this path is gone". */
+/** 会话上下文里那个回调：由真实的门算出来，`undefined` 就是「这条路没有了」。 */
 function resumeHandlerFor(dynamicWorkflowEnabled: boolean) {
   return resolveWorkflowResumeHandler({
     readOnly: false,
@@ -50,7 +47,7 @@ const GRAPH = {
   handoffs: [],
 } as const;
 
-/** Stopped and resumable: the kind of run where all three Resume affordances appear. */
+/** 停下且可恢复：这是三处 Resume 都会出现的那一种 run。 */
 function stoppedResumableRun(): WorkflowRunState {
   return {
     runId: "dwfrun-42",
@@ -83,7 +80,7 @@ function renderCard(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(CreateWorkflowToolCallBlock, {
         toolCallNode: {
           toolCall: {
@@ -94,7 +91,7 @@ function renderCard(
             status: "completed",
           },
           childToolCalls: [],
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- The test context only fills the fields the renderer reads.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 测试上下文只填 renderer 读取的字段。
         } as any,
         workspacePath: "/workspace",
         displayModel: {
@@ -106,7 +103,7 @@ function renderCard(
           showInput: false,
           showOutput: true,
           showKind: false,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 同上。
         } as any,
         viewerSource: null,
         rawFileSummaries: [],
@@ -127,7 +124,7 @@ function renderDigest(onResume: (() => void) | undefined) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(WorkflowRunDigest, {
         graph: GRAPH as unknown as WorkflowRunDigestProps["graph"],
         name: "implement-verify",
@@ -150,7 +147,7 @@ describe("resolveWorkflowResumeHandler", () => {
     expect(
       resolveWorkflowResumeHandler({ readOnly: false, dynamicWorkflowEnabled: true, handler }),
     ).toBe(handler);
-    // An absent readOnly (undefined) is equivalent to writable.
+    // readOnly 缺省（undefined）等同于可写。
     expect(
       resolveWorkflowResumeHandler({ readOnly: undefined, dynamicWorkflowEnabled: true, handler }),
     ).toBe(handler);
@@ -187,7 +184,7 @@ describe("灰度关掉后工具卡页脚与摘要卡的 Resume", () => {
   });
 
   it("灰度关只收走 Resume：卡与摘要本身照常渲染", () => {
-    // "Existing runs still render" — the kind word, the status, and so on are all still there, just untouched.
+    // 「已有的 run 照常渲染」——种类词、状态这些都还在，只是按不动。
     expect(renderCard(resumeHandlerFor(false))).toContain("workflow-card-kind");
     expect(
       renderDigest(resumeHandlerFor(false)).queryByTestId("workflow-card-kind"),

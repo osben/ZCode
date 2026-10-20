@@ -20,7 +20,6 @@ import {
   type PresetLabels,
   type TableSpec,
 } from "@/app-shell/workflow-artifacts/presets/index.js";
-import { fieldHeading } from "@/app-shell/workflow-artifacts/presets/parts.js";
 
 /**
  * 四个预置渲染器的冒烟：compact（run 侧板卡片里的小尺寸）与全尺寸两种形态各渲染一次
@@ -101,12 +100,12 @@ describe("ArtifactMetrics", () => {
     const values = screen.getAllByTestId("artifact-metric-value").map((node) => node.textContent);
     expect(values).toEqual(["9", "0"]);
     // 小卡不重复标题——卡片本身已经有标题了。
-    expect(screen.queryByText(spec.title)).toBeNull();
+    expect(screen.queryByText("性能")).toBeNull();
   });
 
   it("renders the title and tiles in the full form", () => {
     render(createElement(ArtifactMetrics, { items: items({ p99: 9 }), labels, spec }));
-    expect(screen.getByText(spec.title)).toBeTruthy();
+    expect(screen.getByText("性能")).toBeTruthy();
     expect(screen.getAllByTestId("artifact-metric-tile")).toHaveLength(2);
     // 从没出现过的字段显示破折号，而不是 0。
     expect(screen.getAllByTestId("artifact-metric-value")[1]!.textContent).toBe("—");
@@ -151,9 +150,8 @@ describe("ArtifactTable", () => {
         spec,
       }),
     );
-    expect(screen.getByText(spec.title)).toBeTruthy();
-    const msColumn = spec.columns[1]!;
-    expect(screen.getByText(fieldHeading(msColumn.label!, msColumn.unit))).toBeTruthy();
+    expect(screen.getByText("回合")).toBeTruthy();
+    expect(screen.getByText("耗时 (ms)")).toBeTruthy();
     expect(screen.getAllByTestId("artifact-table-row")).toHaveLength(3);
   });
 
@@ -194,9 +192,9 @@ describe("ArtifactBoard", () => {
     expect(screen.getAllByTestId("artifact-board-card")).toHaveLength(3);
     expect(screen.getByText("uart")).toBeTruthy();
     // 未列出的 status 落到「其他」，标题由 labels 提供（组件不查 i18n）。
-    expect(screen.getByText(labels.otherColumn)).toBeTruthy();
+    expect(screen.getByText("其他")).toBeTruthy();
     // 三张卡都带 detail 行（值可以为空，标签始终在场）。
-    expect(screen.getAllByText(spec.detail[0]!.label!)).toHaveLength(3);
+    expect(screen.getAllByText("负责人")).toHaveLength(3);
   });
 
   it("shows the empty state before any item arrives", () => {
@@ -236,11 +234,11 @@ describe("ArtifactChart", () => {
   it("renders axes, a legend and the x-axis caption in the full form", async () => {
     render(createElement(ArtifactChart, { items: stream, labels, spec }));
     await waitFor(() => expect(screen.getByTestId("artifact-chart")).toBeTruthy());
-    expect(screen.getByText(spec.title)).toBeTruthy();
+    expect(screen.getByText("查询耗时")).toBeTruthy();
     // 图例永远在场，且每条带最新值——身份不只靠颜色（见 palette.ts 的次级编码那段）。
     const legend = screen.getAllByTestId("artifact-chart-legend-item").map((n) => n.textContent);
     expect(legend).toEqual(["查询6 ms", "写入5 ms"]);
-    expect(screen.getByText(spec.x.label)).toBeTruthy();
+    expect(screen.getByText("轮次")).toBeTruthy();
     await waitFor(() =>
       expect(document.querySelector(".recharts-cartesian-axis-tick")).toBeTruthy(),
     );

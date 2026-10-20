@@ -9,50 +9,82 @@ import { orderArtifactsPrimaryFirst } from "@/app-shell/workflow-artifacts/artif
 import { logger } from "@/logger.js";
 import { useV4Conversation } from "@/v4/V4ConversationContext.js";
 
-/** Terminology: artifact in this module means output published for users through script `artifact.*`, not the engine-internal value returned by the script’s top level. */
+/**
+ * ⚠ 术语：本模块的 artifact 是
+ * **脚本经 `artifact.*` 发布给用户看的产出**，不是引擎内部那个「脚本顶层返回值」的同名词。
+ */
 
-/** Merged view of one artifact: fresh metadata from the live projection + complete metadata from the journal (version history and spec). Both sources are required, so this type is their union, not an either/or. The live projection (`workflowRuns[].artifacts`) deliberately includes only latest-version metadata: it is a high-frequency status key, and including the spec and all versions would resend unchanged data on every frame. Journal queries provide `versions` and `spec`; prebuilt boards cannot render without a spec, so query the journal even when the run is still in the live projection. */
+/**
+ * 一个产物的合并视图：活投影的**新鲜元数据** + journal 的**完整元数据**（版本历史与 spec）。
+ *
+ * 两个来源缺一不可，所以这个类型是它们的并集而不是二选一：
+ * - 活投影（`workflowRuns[].artifacts`）刻意只带最新版的元数据——它是一个高频状态键，
+ *   带上 spec 与全部版本会让每一帧都重发一遍不会变的东西；
+ * - journal 查询带 `versions` 与 `spec`，而**预置看板没有 spec 就画不出来**，
+ *   所以哪怕 run 就在活投影里也仍然要查一次 journal。
+ */
 export interface WorkflowRunArtifactView {
   id: string;
   kind: WorkflowRunArtifactKind;
   title?: string;
   description?: string;
   contentType?: string;
-  /** Size in bytes of the latest version (content artifacts only). */
+  /** 最新版的字节数（内容产物才有）。 */
   bytes?: number;
-  /** Workspace-relative original path (`file` only), used by “Show in workspace” to locate it. */
+  /** 工作区相对的原路径（`file` 才有）——「在工作区显示」按它定位。 */
   sourcePath?: string;
-  /** Latest version number. */
+  /** 最新版号。 */
   version: number;
-  /** Versions in ascending order. If the journal query is absent (older CLI/read failure), omit the whole field so the version stepper falls back to latest only. */
+  /** 版本升序；journal 查询缺席（老 CLI / 读失败）时整键缺席，版本步进器随之退化成只有最新版。 */
   versions?: readonly WorkflowRunArtifactVersion[];
-  /** Spec for a prebuilt board; also absent when the journal query is unavailable, so the board card falls back to “details unavailable.” */
+  /** 预置看板的 spec；journal 查询缺席时同样缺席，看板卡因此退回「读不到详情」。 */
   spec?: unknown;
-  /** Number of reports tagged with this ID; refresh signal for the board-data hook. */
+  /** 打了这个 id 标签的 report 条数——看板取数 hook 的**刷新信号**。 */
   itemCount: number;
-  /** Deliverables for the run; present if either source includes them. */
+  /** run 的交付物；两个来源任一带上即算。 */
   primary?: true;
 }
 
 interface WorkflowRunArtifactsViewState {
   artifacts: readonly WorkflowRunArtifactView[];
-  /** Primary metadata source. `live` means the run remains in the live projection (journal only fills spec/versions); `journal` means cold recovery or eviction by the eight-run limit, so the full list comes from the journal. This does not indicate whether the journal was queried—both cases query it. It is an observable signal for consumers/tests describing whether the list grew with the live run or was read back from logs later. */
+  /**
+   * 元数据的**主**来源。`live` = run 还在活投影里（此时 journal 只用来补 spec / versions）；
+   * `journal` = 冷恢复或被 8-run 上限淘汰，整份清单都来自 journal。
+   *
+   * 它不是「有没有查过 journal」的标记——两种情形都会查——而是给读者与测试一个可观察的
+   * 判据：这份清单是跟着 run 实时长出来的，还是事后从日志里读回来的。
+   */
   source: "live" | "journal";
   loading: boolean;
-  /** Session does not support artifact queries (older CLI): content artifacts can still be listed, but prebuilt boards cannot be rendered. */
+  /** 会话不支持产物查询（老 CLI）：内容产物仍能列出，预置看板画不出来。 */
   unavailable: boolean;
   error: string | null;
-  /** This list is complete: either the live projection is present (its 32-item bound matches the engine’s per-run maximum, so it is never truncated) or the journal has returned. Completed cards use this to decide whether to show a numeric +N or an ellipsis. Notification payload truncation at 8 items is a fact about the payload, not the list rendered here. When the capability is absent (older CLI), the list may truly be incomplete and remains false. */
+  /**
+   * 这份清单是**完整的**：活投影在场（它的上界 32 = 引擎的每 run 上限，所以从不被砍），或
+   * journal 已经答过。完成卡据它决定 `+N` 写数字还是省略号——通知载荷砍在 8 件，那是**载荷**
+   * 的事实，不是这里画的清单的事实；能力缺席（老 CLI）时清单可能确实不全，仍为 false。
+   */
   complete: boolean;
 }
 
-/** Distinguish a missing capability (CLI lacks the host-side `listArtifacts` query) from a run with no artifacts: the former should make prebuilt cards say “details unavailable,” while the latter omits the whole section. Uses the same error-reading pattern as `useWorkflowRunJournalSummaries`: after crossing JSON-RPC, only message is reliable, so accept both reasonCode and capability-name patterns. */
+/**
+ * 能力缺席（CLI 没有 `listArtifacts` 那套宿主查询）与「这个 run 没有产物」必须能区分：
+ * 前者要让预置卡说「读不到详情」，后者是整区缺席。判据与 `useWorkflowRunJournalSummaries`
+ * 同一读法——错误跨 JSON-RPC 之后只剩 message 可靠，所以 reasonCode 与能力名两个模式都收。
+ */
 function isWorkflowRunArtifactsCapabilityMissing(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("capabilityUnsupported") || message.includes("ArtifactRows");
 }
 
-/** Shape signature for the summaries in the live projection: concatenate `id:kind:version` for each item. Use this instead of the whole-array reference to decide when to re-query the journal. Every report projection creates a new array (itemCount changed), but a count change does not change artifact versions/spec; depending on the reference would make a board query the journal after every report. A new artifact or a new version for the same ID does change this signature, and both require another query (spec for a new artifact, versions for an update). */
+/**
+ * 活投影里那组摘要的**形状签名**：`id:kind:version` 逐条拼起来。
+ *
+ * journal 重查的触发条件用它而不是用整个数组的引用：投影每来一条 `report` 都会造一个新数组
+ * （`itemCount` 变了），但条目数变化**不改变**任何产物的版本或 spec——用引用当依赖会让一个
+ * 每轮 report 的看板每轮重查一次 journal。反过来，新产物出现与同 id 发布新版都会改这个签名，
+ * 而那两件事恰恰**必须**重查（新产物要 spec，新版要 versions）。
+ */
 function summariesSignature(summaries: readonly WorkflowRunArtifactSummary[] | undefined): string {
   if (summaries === undefined) return "";
   return summaries.map((summary) => `${summary.id}:${summary.kind}:${summary.version}`).join("|");
@@ -67,7 +99,7 @@ function viewFromJournal(record: WorkflowRunArtifact): WorkflowRunArtifactView {
     ...(record.contentType === undefined ? {} : { contentType: record.contentType }),
     ...(record.sourcePath === undefined ? {} : { sourcePath: record.sourcePath }),
     ...(record.spec === undefined ? {} : { spec: record.spec }),
-    // Journal entries do not contain bytes (they are stored on versions), so read them from the latest version.
+    // journal 的元素不带 bytes（字节挂在版本上），所以从最新版上取。
     ...(() => {
       const latest = record.versions.at(-1);
       return latest?.bytes === undefined ? {} : { bytes: latest.bytes };
@@ -93,13 +125,12 @@ function viewFromSummary(summary: WorkflowRunArtifactSummary): WorkflowRunArtifa
 }
 
 /**
- * Merge the two sources. **The live projection determines order and identity** because it reflects the run
- * as it grows; the journal fills only fields intentionally omitted by the live projection. IDs present in the
- * journal but absent from the live projection are appended at the end. These are real artifacts beyond the
- * projection's 32-item cap; dropping them would make artifacts disappear from a full run.
+ * 合并两个来源。**顺序与身份由活投影决定**（它是 run 正在长出来的那份），journal 只补
+ * 活投影刻意不带的字段；journal 里有而活投影里没有的 id 追加在末尾——那是投影上界 32
+ * 拒新之后仍然真实存在的产物，丢掉它们等于让一个满额 run 的产物凭空消失。
  *
- * The primary deliverable comes first, with the rest in first-publication order: the live projection upserts
- * in publication order, and the journal path is already sorted by the server. They converge here to one order.
+ * 之后交付物带头（其余仍按首次发布顺序）：活投影按发布顺序 upsert，journal 那条路端口已经
+ * 排过，两条路在这里汇成同一个顺序。
  */
 function mergeArtifacts(
   live: readonly WorkflowRunArtifactSummary[] | undefined,
@@ -120,8 +151,8 @@ function mergeArtifactSources(
     const record = byId.get(summary.id);
     if (record === undefined) return viewFromSummary(summary);
     byId.delete(summary.id);
-    // The live projection has the newer version (the journal query may lag one publication); only the journal has spec/versions.
-    // Take `itemCount` from the live projection too: it signals refreshes, and a stale value can omit an item.
+    // 活投影的版本号更新（journal 查询可能落后一次发布）；spec / versions 只有 journal 有。
+    // `itemCount` 也取活投影：它是刷新信号，落后一拍就少画一个点。
     return {
       ...viewFromJournal(record),
       ...viewFromSummary(summary),
@@ -135,27 +166,25 @@ function mergeArtifactSources(
 }
 
 /**
- * Artifact list for a workflow run.
+ * 一个 workflow run 的产物清单。
  *
  * ```
- * Live projection workflowRuns[].artifacts ─┐
- *   (fresh, no spec, capped at 32)           ├─▶ merge ─▶ artifacts[]
+ * 活投影 workflowRuns[].artifacts ─┐
+ *   （新鲜、无 spec、上界 32）      ├─▶ merge ─▶ artifacts[]
  * journal workflowRunArtifacts ───┘
- *   (complete, with versions + spec)
+ *   （完整、含 versions + spec）
  * ```
  *
- * Query the journal in **both cases**: when the live projection exists, it fills in spec/versions (the board
- * cannot render without a spec); when the live projection is absent, it is the only source (cold recovery or
- * eviction by the 8-run limit). Refetch when the summaries' **shape signature** changes, not the array reference;
- * see `summariesSignature`.
+ * journal 查询在**两种情形**下都发：活投影在场时用来补 spec / versions（看板没有 spec 就
+ * 画不出来），活投影缺席时它就是唯一来源（冷恢复 / 被 8-run 上限淘汰）。重查的触发是摘要的
+ * **形状签名**变化，不是数组引用——见 `summariesSignature`。
  */
 export function useWorkflowRunArtifacts(options: {
   sessionId: string;
   runId: string;
   /**
-   * Artifact summaries for this run in the live projection. `undefined` means the run is absent from the live
-   * projection (so `source` is journal); an empty array means the run is present with no artifacts. These differ
-   * semantically, so callers must not collapse the former into the latter.
+   * 活投影里该 run 的产物摘要。`undefined` = run 不在活投影里（此时 `source` 为 journal）；
+   * 空数组 = run 在场且零产物。两者语义不同，调用方不要把前者坍缩成后者。
    */
   live?: readonly WorkflowRunArtifactSummary[];
   enabled?: boolean;
@@ -165,7 +194,7 @@ export function useWorkflowRunArtifacts(options: {
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Request version: discard responses that arrive late after switching runs or sessions so they cannot pollute the new run's list.
+  // 请求版本号：切 run / 切会话后的迟到响应必须被丢弃，不能污染新 run 的清单。
   const requestVersionRef = useRef(0);
 
   const enabled =
@@ -187,7 +216,7 @@ export function useWorkflowRunArtifacts(options: {
       if (requestVersion !== requestVersionRef.current) return;
       setLoading(false);
       if (isWorkflowRunArtifactsCapabilityMissing(caught)) {
-        // Missing capability is not an error: content artifact cards can still render from the live projection; only the board is unavailable.
+        // 能力缺席不是错误：内容产物的卡片仍然从活投影画得出来，只有看板画不了。
         setJournal(undefined);
         setUnavailable(true);
         return;
@@ -199,7 +228,7 @@ export function useWorkflowRunArtifacts(options: {
   }, [runId, sessionId, workflowRunArtifacts]);
 
   useEffect(() => {
-    // On a run/session switch, clear the old run's list before refetching. Stale artifacts on screen are more dangerous than a blank state.
+    // 切 run / 切会话：先丢掉旧 run 的清单再重查。旧产物留在屏幕上比空白危险得多。
     requestVersionRef.current += 1;
     setJournal(undefined);
     setUnavailable(false);
@@ -209,7 +238,7 @@ export function useWorkflowRunArtifacts(options: {
       return;
     }
     void fetchArtifacts();
-    // The signature is an intentional dependency: refetch when an artifact appears or the same ID gets a new version, but not when `itemCount` changes.
+    // signature 是刻意的依赖：新产物出现 / 同 id 发新版都要重查，`itemCount` 变化不重查。
   }, [enabled, fetchArtifacts, signature]);
 
   return useMemo(

@@ -6,7 +6,7 @@ import { useZCodeIntl } from "@/i18n/index.js";
 
 const PAGE_SIZE = 100;
 
-/** The network page only polls a bounded projection; capture lifecycle belongs to the window in Main. */
+/** 网络页只轮询有界投影；采集生命周期属于 Main 中的窗口。 */
 export function NetworkSection({ bridge }: { bridge?: NetworkCaptureBridge }) {
   const { intl, locale } = useZCodeIntl();
   const timeFormat = useMemo(
@@ -65,7 +65,7 @@ export function NetworkSection({ bridge }: { bridge?: NetworkCaptureBridge }) {
   const currentPage = Math.min(page, pageCount - 1);
   const clear = async () => {
     if (!bridge) return;
-    // Snapshots already in flight before clearing must not write the old list back after the call returns.
+    // 清空前已发出的快照不能在返回后把旧列表写回来。
     generation.current++;
     setClearing(true);
     try {

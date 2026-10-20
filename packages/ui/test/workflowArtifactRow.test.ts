@@ -14,7 +14,6 @@ import {
   resolvePrimaryArtifact,
 } from "@/app-shell/workflow-artifacts/artifactPresentation.js";
 import { WorkflowArtifactRow } from "@/components/workflow-timeline/WorkflowArtifactRow.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 import type { WorkflowCompletionArtifact } from "@/components/workflow-timeline/WorkflowArtifactTile.js";
 
 afterEach(() => {
@@ -53,15 +52,13 @@ function renderRow(
 }
 
 describe("WorkflowArtifactRow", () => {
-  it("一颗按钮：框 160 × 100 在左，右侧标题一级大、说明三行截断、`kind · badge · size` 行、尾槽 v2 与 ↗", () => {
+  it("一颗按钮：预览框是 inert 兄弟节点；细节、版本与打开回调保真", () => {
     const onOpen = vi.fn();
     const view = renderRow(REPORT, { onOpen });
     const row = view.getByTestId("workflow-artifact-row") as HTMLButtonElement;
     expect(row.tagName).toBe("BUTTON");
     // 框与按钮是兄弟：markdown 缩略里的控件（表格的复制按钮）不能嵌进按钮；点击面由 ::after 铺满。
     const shell = row.parentElement!;
-    expect(shell.className).toContain("grid-cols-[160px_minmax(0,1fr)]");
-    expect(shell.className).toContain("@max-[380px]/wf-artifacts:grid-cols-[136px_minmax(0,1fr)]");
     expect(row.className).toContain("wf-tile-hit");
     const frame = view.getByTestId("workflow-artifact-row-frame");
     expect(frame.parentElement).toBe(shell);
@@ -69,10 +66,6 @@ describe("WorkflowArtifactRow", () => {
     expect(row.contains(frame)).toBe(false);
     expect(row.getAttribute("data-variant")).toBe("row");
     expect(row.getAttribute("title")).toBe("File · 季度基准报告");
-    expect(view.getByTestId("workflow-artifact-row-title").className).toContain("font-medium");
-    expect(view.getByTestId("workflow-artifact-row-description").className).toContain(
-      "line-clamp-3",
-    );
     const detail = view.getByTestId("workflow-artifact-row-detail");
     expect(detail.textContent).toBe("File·PDF·4.00 MB");
     expect(view.getByTestId("workflow-run-artifact-badge").textContent).toBe("PDF");
@@ -98,13 +91,11 @@ describe("WorkflowArtifactRow", () => {
   it("看板的细节是条数；说明缺席时那一行不画；v1 不写版本；zh-CN 的 kind 词", () => {
     const view = renderRow(
       { id: "perf", kind: "chart", title: "每轮耗时", version: 1, itemCount: 12 },
-      { locale: "en-US" },
+      { locale: "zh-CN" },
     );
     expect(view.queryByTestId("workflow-artifact-row-description")).toBeNull();
     expect(view.queryByTestId("workflow-artifact-tile-version")).toBeNull();
-    expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe(
-      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.chart")}·items`,
-    );
+    expect(view.getByTestId("workflow-artifact-row-detail").textContent).toBe("图表·items");
     cleanup();
     // 字节未知、无条数：只剩 kind 词，没有点。
     const bare = renderRow({ id: "notes", kind: "markdown", version: 1 });

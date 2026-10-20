@@ -5,10 +5,10 @@ export function resolveUpdateButtonResponsiveClasses({
   isMacDesktop: boolean;
   isWindowsDesktop: boolean;
 }) {
-  // Tailwind can collect only complete class names that appear in source.
-  // Previously, after composing the container-query prefix as `${responsiveExpandClass}:...`,
-  // the Windows branch’s `@min-[200px]/topoverlayer:*` classes never made it into the final CSS,
-  // so the platform-specific behavior appeared not to work.
+  // Tailwind 只能收集源码里出现的完整类名。
+  // 之前把容器查询前缀拼成 `${responsiveExpandClass}:...` 后，
+  // Windows 分支对应的 `@min-[200px]/topoverlayer:*` 根本不会进最终 CSS，
+  // 表现出来就是平台判断“看起来没生效”。
   if (isMacDesktop) {
     return {
       expandWidthClass: "@min-[280px]/topoverlayer:w-auto",

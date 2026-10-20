@@ -1,8 +1,7 @@
 import plugin from "tailwindcss/plugin";
 import flattenColorPalette from "tailwindcss/lib/util/flattenColorPalette";
 
-// Color classes also carry icon paint info so parent buttons, nested colors, and Tailwind
-// states all use the same inheritance chain.
+// 颜色类同时携带图标绘制信息，确保父按钮、嵌套颜色和 Tailwind 状态使用同一条继承链。
 export default plugin(({ matchUtilities, theme, addBase, addUtilities }) => {
   matchUtilities(
     {
@@ -18,7 +17,7 @@ export default plugin(({ matchUtilities, theme, addBase, addUtilities }) => {
         ) {
           return { "--lucide-stroke": "inherit", "--lucide-filter": "inherit" };
         }
-        // Tailwind passes color modifiers like /50 through as color-mix; keep its extra alpha.
+        // Tailwind 将 /50 等颜色修饰符传成 color-mix；保留它的额外 alpha。
         const mixed = value.match(
           /^color-mix\(in oklab, (var\(--color-foreground-subt(?:le|lest)\)) ([\d.]+)%, transparent\)$/,
         );
@@ -37,8 +36,7 @@ export default plugin(({ matchUtilities, theme, addBase, addUtilities }) => {
       },
     },
     {
-      // Judge the level by token identity, not by build-time expanded color values: light and
-      // dark themes override them at runtime.
+      // 用 token 身份判断层级，不能比较构建时展开的色值：深浅主题会在运行时覆盖它。
       values: Object.fromEntries(
         Object.keys(flattenColorPalette(theme("colors"))).map((name) => [
           name,
@@ -51,9 +49,8 @@ export default plugin(({ matchUtilities, theme, addBase, addUtilities }) => {
   const relativeColorSupport = "@supports (color: rgb(from red r g b / 1))";
   addBase({
     [relativeColorSupport]: {
-      // Strokes must be drawn fully opaque first, then composited onto the whole SVG. The
-      // filter opacity multiplies independently of existing opacity-* utilities. Scoped to
-      // Lucide's default stroke entry; other SVGs / custom strokes are unaffected.
+      // 描边必须先不透明绘制，再对整个 SVG 合成。filter opacity 与已有 opacity-* 独立相乘。
+      // 限定 Lucide 默认描边入口，其他 SVG / 自定义描边不参与。
       'svg.lucide[stroke="currentColor"]': {
         stroke: "var(--lucide-stroke, currentColor)",
         filter: "var(--lucide-filter, none)",
@@ -63,8 +60,7 @@ export default plugin(({ matchUtilities, theme, addBase, addUtilities }) => {
       },
     },
   });
-  // Solid status dots and stop buttons also need the opaque-fill-first treatment; non-Lucide
-  // fill-current keeps the original value.
+  // 实心状态点和停止按钮也要先用不透明填充；非 Lucide 的 fill-current 沿用原值。
   addUtilities({
     ".fill-current": {
       [relativeColorSupport]: {

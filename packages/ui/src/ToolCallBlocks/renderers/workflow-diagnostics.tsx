@@ -1,6 +1,6 @@
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-/** One TS diagnostic (CreateWorkflow and EvalWorkflowSnippet display share this shape). */
+/** 一条 TS 诊断（CreateWorkflow 与 EvalWorkflowSnippet 的 display 共用同一形状）。 */
 interface WorkflowDiagnosticEntry {
   line: number;
   column: number;
@@ -9,10 +9,9 @@ interface WorkflowDiagnosticEntry {
 }
 
 /**
- * Code range for analyzer-specific rules (starting at 9001).
- * Do not use "≥ 9000": TypeScript's own 18xxx codes (such as TS18048) are still TypeScript codes.
- * TypeScript uses 9xxx only for declaration-output diagnostics, and the workflow compiler does not
- * emit declarations, so this range belongs only to the analyzer on these cards.
+ * 分析器自有规则的码段（9001 起）。
+ * 不能写成「≥ 9000」：TypeScript 自己的 18xxx（如 TS18048）仍是 TypeScript 码；TypeScript 在 9xxx 只有
+ * 声明产出类诊断，而工作流编译器不产出声明，所以这一段在卡上只属于分析器。
  */
 const ANALYZER_RULE_CODE_MIN = 9001;
 const ANALYZER_RULE_CODE_MAX = 9099;
@@ -22,10 +21,9 @@ export function isWorkflowAnalyzerRuleCode(code: number): boolean {
 }
 
 /**
- * Wording for the feedback card's single sentence: state what did not happen and who acts next.
- * A saved source that does not compile is a **file** problem, so the sentence names the file and
- * matches the wording given to the model in the tool result.
- * The card and row hover tooltip use the same id so they stay consistent.
+ * 反馈卡那一句话的词条：说清楚什么没发生、谁接着动。保存的来源编不过是**文件**的问题，句子点名文件，
+ * 与工具结果里给模型的那句同一立场。
+ * 卡片与行的悬停提示读同一个 id，两处不会各说各话。
  */
 export function workflowFeedbackLedeMessageId(saved: boolean): string {
   return saved
@@ -34,13 +32,12 @@ export function workflowFeedbackLedeMessageId(saved: boolean): string {
 }
 
 /**
- * Compilation feedback card shared by CreateWorkflow and EvalWorkflowSnippet cards (same compiler
- * pipeline, diagnostic shape, and length limit; separate implementations would invite drift).
+ * 编译反馈卡：CreateWorkflow 卡与
+ * EvalWorkflowSnippet 卡共用（同一编译管线、同一诊断形状、同一道限长——分别实现两份是漂移温床）。
  *
- * A compile failure is not a run failure: nothing ran, and feedback went back to the model. Use a
- * neutral border and body foreground color, not destructive styling. In this feature, red is reserved
- * for failed runs; coloring the whole block red would make the least severe event the loudest thing
- * on the page. Render nothing when there are no diagnostics.
+ * 编不过不是失败：什么都没跑，反馈交回了模型。所以这张卡是中性边框、正文前景色，不用 destructive——
+ * 在这个特性里红色只属于出错的 run；整段红字会把最不致命的事件画成页面上最响的东西。
+ * 诊断为空时整段不渲染。
  */
 export function WorkflowDiagnosticsSection({
   diagnostics,
@@ -50,9 +47,9 @@ export function WorkflowDiagnosticsSection({
 }: {
   diagnostics: readonly WorkflowDiagnosticEntry[];
   truncated?: boolean;
-  /** Number of diagnostics; pass display.errorCount (total before truncation) when present, otherwise use the number of rows. */
+  /** 条数；display 带 `errorCount`（截断前的总数）时传它，缺席按行数算。 */
   count?: number;
-  /** Script came from a saved workflow file; the sentence names the file rather than this invocation. */
+  /** 脚本来自保存的工作流文件：那句话点名文件而不是这次调用。 */
   saved?: boolean;
 }) {
   const { intl } = useZCodeIntl();
@@ -61,8 +58,16 @@ export function WorkflowDiagnosticsSection({
   }
 
   const total = count ?? diagnostics.length;
-  const countLabel = intl.formatPlural({ id: "chat.toolCall.workflow.feedback.count" }, total);
-  // Pass the code to ICU as a string; numeric arguments are localized with grouping ("9,003").
+  const countLabel = intl.formatMessage(
+    {
+      id:
+        total === 1
+          ? "chat.toolCall.workflow.feedback.countOne"
+          : "chat.toolCall.workflow.feedback.count",
+    },
+    { count: total },
+  );
+  // 码按字符串交给 ICU：数字参数会被本地化分组（「9,003」）。
   const codeLabel = (code: number) =>
     isWorkflowAnalyzerRuleCode(code)
       ? intl.formatMessage({ id: "chat.toolCall.workflow.feedback.rule" }, { code: String(code) })

@@ -1,3 +1,4 @@
+import { toServiceLocale } from "../../i18n/serviceLocale.js";
 import type { ProviderSettingsView } from "@zcode/services";
 import { ArrowLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { resolveProviderTemplateName } from "@zcode/provider";
@@ -7,8 +8,7 @@ import {
   TID_MODEL_PROVIDER_TEMPLATE_ITEM,
   TID_MODEL_PROVIDER_TEMPLATE_PICKER,
   testId,
-  toServiceLocale,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -54,9 +54,9 @@ export function ProviderTemplatePicker({
     try {
       await create();
     } catch (error) {
-      // Template creation failures used to be logged only, leaving the user on the selection page with no visible result.
-      // On failure, stay on the current page and reuse the feedback banner at the bottom of the detail pane as a retry entry for the same creation.
-      // Full Schema issues go only to the shared UI log; the banner stays readable instead of filling the detail area with a raw array.
+      // Template 创建失败过去只写日志，用户留在选择页却看不到任何结果。
+      // 失败继续留在当前页，并复用详情栏底部反馈横幅提供同一次创建的重试入口。
+      // 完整 Schema issues 只进入统一 UI 日志；横幅保持可读摘要，避免原始数组撑满详情区。
       logger.error("[ProviderTemplatePicker] 创建供应商失败", error);
       const retry = () => void createWithFeedback(create);
       showFeedback({

@@ -6,11 +6,13 @@ export interface PendingGuideQueueProjection {
 }
 
 /**
- * CLI reliably carries guide and future queue entries in the same queue fact; the old UI rendered
- * queue.items directly, mistakenly showing a guide waiting for model-step injection as the next turn's message. This only separates display
- * by authoritative admitted delivery; it does not copy or rewrite accepted input state.
+ * CLI 用同一份 queue fact 可靠承载 guide 与 future queue；旧 UI 直接渲染
+ * queue.items，导致等待 model-step 注入的 guide 被误画成下一轮消息。这里只按权威
+ * admitted delivery 分流展示，不复制、不改写 accepted input 状态。
  */
-export function projectPendingGuideQueue(queue: QueueState): PendingGuideQueueProjection {
+export function projectPendingGuideQueue(
+  queue: QueueState,
+): PendingGuideQueueProjection {
   const pendingGuides: QueueItem[] = [];
   const visibleItems: QueueItem[] = [];
   for (const item of queue.items) {
@@ -23,6 +25,8 @@ export function projectPendingGuideQueue(queue: QueueState): PendingGuideQueuePr
   return {
     pendingGuides,
     visibleQueue:
-      visibleItems.length === queue.items.length ? queue : { ...queue, items: visibleItems },
+      visibleItems.length === queue.items.length
+        ? queue
+        : { ...queue, items: visibleItems },
   };
 }

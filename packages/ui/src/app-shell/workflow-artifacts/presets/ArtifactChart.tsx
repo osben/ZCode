@@ -1,13 +1,14 @@
 /**
- * **Entry point** for the `chart` preset renderer: lazy loading + local failure isolation; this module does not import recharts itself.
+ * `chart` 预置渲染器的**入口**：懒加载 + 局部故障隔离，本模块自己不碰 recharts。
  *
- * Why lazy loading is required: recharts triggers decimal.js-light's LN10 validation during module initialization, which can block the entire renderer startup
- * in Electron Linux containers (the fix is recorded in `AppUsagePanel.tsx`; the spec's “preset renderer” section also requires `lazy()`). Therefore:
- * - The chart view lives in `ArtifactChartView.tsx` and is reached only through `lazy()` dynamic import;
- * - Neither this file nor `index.ts` statically depends on recharts, so importing them does not put chart code in the first-screen bundle.
+ * 为什么必须懒：recharts 在模块初始化阶段会触发 decimal.js-light 的 LN10 校验，在 Electron
+ * Linux 容器里会阻断整个 renderer 启动（`AppUsagePanel.tsx` 里记着的那次修复；spec 的
+ * 「预置渲染器」行也把 `lazy()` 写成硬要求）。所以：
+ * - 绘图体在 `ArtifactChartView.tsx`，只经 `lazy()` 的动态 import 抵达；
+ * - 这个文件与 `index.ts` 的静态依赖里没有 recharts，谁 import 它们都不会把图表打进首屏。
  *
- * Callers can bypass this layer and use `lazy(() => import(".../ArtifactChartView.js"))` themselves, taking control of
- * Suspense / error boundaries — this file is only the default wrapper for that setup.
+ * 调用方也可以绕过这层，自己 `lazy(() => import(".../ArtifactChartView.js"))` 并接管
+ * Suspense / 错误边界——本文件只是那套接法的默认封装。
  */
 
 import { lazy, Suspense } from "react";
@@ -21,7 +22,7 @@ const ArtifactChartView = lazy(
   () => import("@/app-shell/workflow-artifacts/presets/ArtifactChartView.js"),
 );
 
-/** Loading placeholder: show space without text — a “Loading” message would only flash during a 200ms lazy load. */
+/** 加载中的占位：只占位不说话——一句「加载中」在 200ms 的懒加载里只会闪一下。 */
 function ChartSkeleton({ compact }: { compact: boolean }) {
   return (
     <div
@@ -49,7 +50,7 @@ export function ArtifactChart({
   className?: string;
 }) {
   return (
-    // If a chart crashes, collapse only this area while the rest of the run side pane keeps working — artifacts are a delivery surface and should not be a single point of failure.
+    // 图表崩了只塌这一块，run 侧板的其余部分照常——产物区是交付面，不该是单点故障。
     <ScopedErrorBoundary
       resetKeys={[spec, compact]}
       scope="workflow-artifact-chart"

@@ -100,7 +100,7 @@ export function CloudInteractiveBundleHero({
 
   useEffect(() => {
     if (!presentation || status !== "ready") return;
-    // The banner iframe must be click-isolated, so only visual hover is bridged; native pointers and actions are never released.
+    // Banner 的 iframe 必须隔离点击，因此只桥接视觉 hover，不放开原生指针或 action。
     const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const syncHover = () =>
       postToHero({

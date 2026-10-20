@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The remote Skill sync dialog centralizes loading, selection, preflight, and result state; splitting it would increase cross-state complexity. */
+/* eslint-disable max-lines -- 远端 Skill 同步弹窗集中维护加载、选择、预检和结果状态，拆分会增加跨状态传递复杂度。 */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, UploadCloud } from "lucide-react";
 import {
@@ -12,7 +12,11 @@ import {
 } from "@zcode/shared";
 import type { ISkillSyncService } from "@zcode/services";
 import { Button } from "@/components/ui/button.js";
-import { Dialog, DialogContent, DialogHeader } from "@/components/ui/dialog.js";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+} from "@/components/ui/dialog.js";
 import { useZCodeIntl, type IntlInstance } from "@/i18n/IntlProvider.js";
 import {
   RemoteSkillSyncSelectionList,
@@ -59,7 +63,9 @@ export function buildRemoteSkillSyncRows(
 export function resolveDefaultRemoteSkillSyncSelection(
   rows: readonly RemoteSkillSyncRow[],
 ): Set<string> {
-  return new Set(rows.filter((row) => !row.exists).map((row) => row.candidate.id));
+  return new Set(
+    rows.filter((row) => !row.exists).map((row) => row.candidate.id),
+  );
 }
 
 export function filterRemoteSkillSyncRows(
@@ -86,8 +92,8 @@ export function formatRemoteSkillSyncError(
   error: unknown,
   intl: Pick<IntlInstance, "formatMessage">,
 ): string {
-  // Byte counts and phase details from raw RPC errors are not suitable user-facing copy.
-  // Recognize only stable error codes and generate actionable, localized messages by phase; preserve the original text for other errors.
+  // RPC 原始错误中的字节数和阶段信息不能直接作为用户文案；
+  // 这里只识别稳定错误码，按阶段和当前语言生成可操作提示，其他错误保留原始信息。
   const normalizedError = normalizeUnknownError(error);
   if (normalizedError.code !== SKILL_SYNC_SIZE_LIMIT_ERROR_CODE) {
     return normalizedError.message;
@@ -189,7 +195,10 @@ export function RemoteSkillSyncTargetRow({
   return (
     <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <p className="min-w-0 break-words font-mono text-ui-base text-foreground-subtle">
-        {intl.formatMessage({ id: "settings.skills.remoteSync.target" }, { target: targetLabel })}
+        {intl.formatMessage(
+          { id: "settings.skills.remoteSync.target" },
+          { target: targetLabel },
+        )}
       </p>
       {showExistingFilter ? (
         <div className="shrink-0">
@@ -239,9 +248,7 @@ export function RemoteSkillSyncBulkSelectionCheckbox({
         className="size-4"
         checked={selectionState.checked}
         disabled={selectionState.disabled}
-        aria-checked={
-          selectionState.indeterminate ? "mixed" : selectionState.checked ? "true" : "false"
-        }
+        aria-checked={selectionState.indeterminate ? "mixed" : selectionState.checked ? "true" : "false"}
         onChange={(event) => {
           if (event.currentTarget.checked) {
             onSelectAll();
@@ -273,7 +280,7 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
   const [importResult, setImportResult] = useState<SkillSyncImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const syncInFlightRef = useRef(false);
-  // A load request may span a language change, making the intl in the effect closure stale; error messages must use the latest rendered instance.
+  // 加载请求可能跨越语言切换，effect 闭包中的 intl 会过期；错误提示必须读取最近一次渲染的实例。
   const latestIntlRef = useRef(intl);
   latestIntlRef.current = intl;
 
@@ -304,7 +311,10 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
         if (cancelled) {
           return;
         }
-        const nextRows = buildRemoteSkillSyncRows(localResult.candidates, remoteResult.statuses);
+        const nextRows = buildRemoteSkillSyncRows(
+          localResult.candidates,
+          remoteResult.statuses,
+        );
         setRows(nextRows);
         setSelectedIds(resolveDefaultRemoteSkillSyncSelection(nextRows));
         setStep("selection");
@@ -423,9 +433,8 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
           />
         </DialogHeader>
 
-        {/* Fix reason: filtering changes the number of visible rows. Keep DialogContent at a fixed
-            height and scroll within the list; otherwise, the dialog jumps when the empty state
-            shrinks to fit, and long lists push the footer controls out of the window. */}
+        {/* 修复原因：筛选会改变可见 rows 数量，DialogContent 固定高度后由列表区内部滚动；
+            否则空态按内容收缩会造成弹窗跳动，长列表也会把底部操作栏挤出窗口。 */}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {error ? (
             <div className="mb-3 rounded-lg border border-destructive/40 bg-surface px-3 py-2 text-ui-base text-destructive">
@@ -449,7 +458,9 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
               rows={visibleRows}
               selectedIds={selectedIds}
               emptyMessageId={
-                rows.length > 0 ? "settings.skills.remoteSync.filteredEmpty" : undefined
+                rows.length > 0
+                  ? "settings.skills.remoteSync.filteredEmpty"
+                  : undefined
               }
               onToggle={toggleSkill}
             />
@@ -460,7 +471,9 @@ export function RemoteSkillSyncDialog(props: RemoteSkillSyncDialogProps) {
               {intl.formatMessage({ id: "settings.skills.remoteSync.syncing" })}
             </div>
           ) : null}
-          {step === "complete" ? <RemoteSkillSyncResultList result={importResult} /> : null}
+          {step === "complete" ? (
+            <RemoteSkillSyncResultList result={importResult} />
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">

@@ -1,6 +1,6 @@
 /**
- * Shortcut display label — format a binding string for the platform.
- * Split out of bindings.ts (display is separate from matching/recording/conflicts, and bindings.ts has a max-lines limit).
+ * 快捷键展示 label——绑定串 → 平台展示格式化。
+ * 从 bindings.ts 拆出（展示层独立于匹配/录制/冲突，且 bindings.ts 有 max-lines 门禁）。
  */
 import { parseShortcutBinding } from "@zcode/shared";
 
@@ -9,17 +9,10 @@ import {
   type KeyboardShortcutPlatformInfo,
 } from "../lib/keyboardShortcuts.js";
 
-const NAMED_KEY_GLYPHS: Readonly<Record<string, string>> = {
-  ArrowUp: "↑",
-  ArrowDown: "↓",
-  ArrowLeft: "←",
-  ArrowRight: "→",
-};
-
 /**
- * Binding string → per-key tokens (for rendering keycaps in settings): macOS ["⇧","⌘","P"],
- * Windows/Linux ["Ctrl","Shift","P"]. Labels and keycaps share the same token sequence,
- * so ordering is defined in one place; rendering each token as a separate Kbd keycap keeps its size stable.
+ * 绑定串 → 逐键 token（设置页键帽渲染用）：macOS ["⇧","⌘","P"]、
+ * Windows/Linux ["Ctrl","Shift","P"]。label 展示与键帽渲染共用同一 token 序列，
+ * 顺序约定只有这一份；每个 token 独立渲染 Kbd 键帽，尺寸才不随内容漂移。
  */
 export function formatShortcutBindingLabelParts(
   binding: string,
@@ -31,12 +24,11 @@ export function formatShortcutBindingLabelParts(
   }
 
   const displayKey =
-    NAMED_KEY_GLYPHS[parsed.key] ??
-    (parsed.key === "=" ? "+" : parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key);
+    parsed.key === "=" ? "+" : parsed.key.length === 1 ? parsed.key.toUpperCase() : parsed.key;
   const isApple = isAppleKeyboardPlatform(platformInfo);
 
   if (isApple) {
-    // Apple-standard modifier order: ⌃ ⌥ ⇧ ⌘
+    // Apple 惯例修饰键顺序：⌃ ⌥ ⇧ ⌘
     const parts: string[] = [];
     if (parsed.altGr) {
       parts.push("⌃", "⌥");
@@ -75,8 +67,8 @@ export function formatShortcutBindingLabelParts(
 }
 
 /**
- * Binding string → platform display label. macOS uses symbols (⌘ K, ⌃ ⌥ ⇧ ⌘ P); Windows/Linux use
- * the Ctrl+Shift+P style; display "=" as "+" (zoom semantics), arrows as glyphs, and other named keys as text.
+ * 绑定串 → 平台展示 label。macOS 用符号风格（⌘ K、⌃ ⌥ ⇧ ⌘ P），Windows/Linux 用
+ * Ctrl+Shift+P 风格；"=" 显示为 "+"（zoom 语义），命名键原样。
  */
 export function formatShortcutBindingLabel(
   binding: string,

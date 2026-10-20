@@ -22,7 +22,7 @@ export const useAlertDialogStore = create<AlertDialogState>((set, get) => ({
   requestAlert: (payload) => {
     if (get().pendingRequest) {
       logger.warn("[AlertDialogStore] alert already in progress");
-      // Concurrent requests do not reuse an existing dialog; return false so destructive actions (such as restart) remain unconfirmed.
+      // 并发请求不会复用已有弹窗；返回 false 让破坏性动作（如重启）保持未确认状态。
       return Promise.resolve(false);
     }
 

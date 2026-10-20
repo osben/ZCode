@@ -21,9 +21,8 @@ function subscribeMediaQuery(query: string, listener: (matches: boolean) => void
   const update = () => listener(mediaQueryList.matches);
   update();
 
-  // Bugfix: some mobile WebViews / older Safari still only support addListener. Mirror the remote
-  // control shell's compatibility approach so the mobile input does not crash at mount when the
-  // listener API is missing.
+  // Bugfix: 部分移动端 WebView / 旧 Safari 仍只支持 addListener。
+  // 这里沿用远控 shell 的兼容方式，避免手机端输入框挂载时因监听 API 不存在而崩溃。
   if (typeof mediaQueryList.addEventListener === "function") {
     mediaQueryList.addEventListener("change", update);
     return () => mediaQueryList.removeEventListener("change", update);
@@ -102,8 +101,9 @@ export function resolveMobileInputTextSizeClassName({
 }: {
   avoidIosInputFocusZoom: boolean;
 }): "text-ui-base leading-5" | "text-mobile-input-safe leading-6" {
-  // Bugfix: iOS Safari / WKWebView auto-zooms the page when focusing an editable input below 16px.
-  // text-ui-lg can drop to 14px with user preferences, so mobile remote control must use the fixed
-  // 16px platform-compatible token.
-  return avoidIosInputFocusZoom ? "text-mobile-input-safe leading-6" : "text-ui-base leading-5";
+  // Bugfix: iOS Safari / WKWebView 聚焦低于 16px 的可编辑输入区时会自动放大页面。
+  // text-ui-lg 会随用户偏好降到 14px，因此手机远控必须使用固定 16px 的平台兼容 token。
+  return avoidIosInputFocusZoom
+    ? "text-mobile-input-safe leading-6"
+    : "text-ui-base leading-5";
 }

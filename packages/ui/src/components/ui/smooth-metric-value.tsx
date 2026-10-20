@@ -48,7 +48,8 @@ export function estimateSmoothMetricLinesPerSecond(input: {
 
   const sampledLinesPerSecond = (delta / input.elapsedMs) * 1_000;
   const smoothed =
-    input.previousLinesPerSecond * (1 - SPEED_EMA_ALPHA) + sampledLinesPerSecond * SPEED_EMA_ALPHA;
+    input.previousLinesPerSecond * (1 - SPEED_EMA_ALPHA) +
+    sampledLinesPerSecond * SPEED_EMA_ALPHA;
   return clampMetricSpeed(smoothed);
 }
 
@@ -225,9 +226,8 @@ export function SmoothMetricValue({
     };
 
     if (state.displayValue !== state.targetValue && state.frameId === null) {
-      // Fix rationale: the model streams params in irregular batches, so line counts reach the UI
-      // unevenly. The display layer chases the real target frame by frame, letting FlipMetricValue
-      // see continuous numbers instead of large jumps.
+      // 修复原因：模型流式参数会把行数按不规则批次推到 UI。
+      // 这里在展示层逐帧追赶真实目标，让 FlipMetricValue 看到连续数字而不是大跳变。
       state.frameId = window.requestAnimationFrame(tick);
     }
 

@@ -1,7 +1,7 @@
-// PLG (Picker half) UI unit tests (docs/plugin-reference-mention.md §2/§5,
-// docs/conversation-session-case-catalog.md PLG03/S01):
-// enabled filtering, same-name conflict blocking with reasons, canonical markdown carrier, identity only
-// on the destination, and the plugin branch of parseMentionMarkdown never landing as file/external link.
+// PLG（Picker 半区）UI 单测（docs/plugin-reference-mention.md §2/§5，
+// docs/conversation-session-case-catalog.md PLG03/S01）：
+// enabled 过滤、同名冲突禁选与原因、canonical markdown 载体、身份只在 destination、
+// parseMentionMarkdown 的 plugin 分支不落 file/外链。
 import { describe, expect, it } from "vitest";
 import type { ZCodePluginReferenceCatalogEntry } from "@zcode/shared";
 import { mapPluginCatalogToMentionItemsForTest } from "../src/mentions/providers/pluginsMentionProvider.js";
@@ -68,9 +68,8 @@ describe("plugins mention provider mapping", () => {
     expect(items[0]).toMatchObject({
       id: "plugin:demo@mkt-a",
       category: "plugins",
-      // label is fixed to entry.name (chip/markdown carrier); the panel display name displayLabel goes
-      // through the app-wide resolvePluginDisplayName, falling back to a canonicalized slug when there
-      // is no listing.
+      // label 固定 entry.name（chip/markdown 载体）；面板展示名 displayLabel 走全 app 统一的
+      // resolvePluginDisplayName，无 listing 时回退 canonical 化 slug。
       label: "demo",
       displayLabel: "Demo",
       value: "demo@mkt-a",
@@ -95,9 +94,8 @@ describe("plugins mention provider mapping", () => {
       "zh-CN",
     );
     expect(items[0]?.displayLabel).toBe("演示插件");
-    // Bugfix: the chip node reuses item.label and the message bubble is rebuilt from the markdown label;
-    // the two must share the same source. So label and the carrier label are fixed to entry.name and do
-    // not change with the locale — only the panel display name is localized.
+    // Bugfix：chip 节点复用 item.label、消息气泡按 markdown label 重建，二者必须同源；
+    // 因此 label 与载体 label 固定 entry.name，不随 locale 变化，只有面板展示名本地化。
     expect(items[0]?.label).toBe("demo");
     expect(items[0]?.markdown).toBe("[@demo](plugin://demo@mkt-a)");
   });
@@ -115,8 +113,7 @@ describe("plugins mention provider mapping", () => {
     );
     expect(items[0]?.displayLabel).toBe("Demo Plugin");
     expect(items[0]?.label).toBe("demo");
-    // Typing Chinese in an English UI still matches (both channels always on); the English name/id
-    // channel is unchanged.
+    // 英文界面下打中文也能搜到（常开双通道），英文 name/id 通道保持不变。
     expect(items[0]?.keywords).toEqual(
       expect.arrayContaining(["demo", "demo@mkt-a", "mkt-a", "Demo Plugin", "演示插件"]),
     );
@@ -176,8 +173,7 @@ describe("mention panel recalc during IME composition", () => {
   });
 
   it("keeps live filtering on Android where Gboard composes every Latin word", () => {
-    // Android Chrome + Gboard runs composition even for English words; freezing recalculation would
-    // make mobile Web lose per-character filtering.
+    // Android Chrome + Gboard 对英文单词也走 composition，冻结重算会让手机 Web 失去逐字过滤。
     expect(shouldFreezeMentionRecalcWhileComposing(true, ANDROID_UA)).toBe(false);
   });
 });

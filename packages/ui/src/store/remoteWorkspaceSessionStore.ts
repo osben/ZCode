@@ -1,23 +1,32 @@
 import { create } from "zustand";
-import type { RemoteTarget } from "@zcode/shared";
+import type { RemoteTarget, WorkspacePurpose } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import { remoteAgentServiceGeneration } from "@/lib/remoteAgentServiceGeneration.js";
 import { createRemoteWorkspaceDisconnectedError } from "@/lib/remoteWorkspaceServiceError.js";
 
 export interface RemoteWorkspaceSession {
   sessionId: string;
+  sourceServerId?: string;
+  workspacePath?: string;
+  workspaceIdentity?: string;
+  workspacePurpose?: WorkspacePurpose;
+  /** Desktop bind 返回的旧 route tab rekey 提示；不参与 remote session 路由。 */
+  previousWorkspaceIdentity?: string;
   target?: RemoteTarget;
   services: IServiceAccessor;
   dispose?: (reason?: Error) => void;
 }
 
+export type RemoteWorkspaceConnectionOverlay = "disconnected" | "reconnecting";
+
 interface RemoteWorkspaceSessionState {
   baseServices: IServiceAccessor | null;
   sessionsById: Record<string, RemoteWorkspaceSession>;
   sessionIdByWorkspacePath: Record<string, string>;
-  // Previously indexed only by workspacePath, so different remotes using the same path could overwrite each other.
-  // Add a workspaceIdentity → session mapping here so remote sessions are uniquely bound by "host + path."
+  // 之前只按 workspacePath 建索引，同路径不同远端会互相覆盖。
+  // 这里补充 workspaceIdentity -> session 的映射，保证远程会话按“主机+路径”唯一绑定。
   sessionIdByWorkspaceIdentity: Record<string, string>;
+  connectionOverlayByWorkspaceKey: Record<string, RemoteWorkspaceConnectionOverlay>;
   registerBaseServices: (services: IServiceAccessor) => void;
   registerSession: (session: RemoteWorkspaceSession) => void;
   unregisterSession: (sessionId: string) => void;
@@ -25,6 +34,8 @@ interface RemoteWorkspaceSessionState {
   unbindWorkspacePath: (workspacePath: string) => void;
   bindWorkspaceIdentity: (workspaceIdentity: string, sessionId: string) => void;
   unbindWorkspaceIdentity: (workspaceIdentity: string) => void;
+  setConnectionOverlay: (workspaceKey: string, state: RemoteWorkspaceConnectionOverlay) => void;
+  clearConnectionOverlay: (workspaceKey: string) => void;
 }
 
 export const useRemoteWorkspaceSessionStore = create<RemoteWorkspaceSessionState>()((set) => ({
@@ -32,6 +43,7 @@ export const useRemoteWorkspaceSessionStore = create<RemoteWorkspaceSessionState
   sessionsById: {},
   sessionIdByWorkspacePath: {},
   sessionIdByWorkspaceIdentity: {},
+  connectionOverlayByWorkspaceKey: {},
   registerBaseServices: (services) =>
     set({
       baseServices: services,
@@ -112,21 +124,37 @@ export const useRemoteWorkspaceSessionStore = create<RemoteWorkspaceSessionState
         sessionIdByWorkspaceIdentity: nextSessionIdByWorkspaceIdentity,
       };
     }),
+  setConnectionOverlay: (workspaceKey, overlay) =>
+    set((state) => ({
+      connectionOverlayByWorkspaceKey: {
+        ...state.connectionOverlayByWorkspaceKey,
+        [workspaceKey]: overlay,
+      },
+    })),
+  clearConnectionOverlay: (workspaceKey) =>
+    set((state) => {
+      if (!(workspaceKey in state.connectionOverlayByWorkspaceKey)) {
+        return state;
+      }
+      const next = { ...state.connectionOverlayByWorkspaceKey };
+      delete next[workspaceKey];
+      return { connectionOverlayByWorkspaceKey: next };
+    }),
 }));
 
 export function registerRemoteWorkspaceSession(session: RemoteWorkspaceSession): void {
-  // A proxy for the same remoteSessionId can change generations repeatedly, and effects from different React consumers
-  // may commit out of order. Session registration is the authoritative generation order, so allocate the monotonically increasing
-  // generation in the shared generation module first, preventing a late intermediate proxy from switching transport back from the latest generation.
-  // A Web/test fallback accessor may not provide agent transport yet; when it becomes subscribable, the registry still
-  // assigns a generation on first observation, so do not break this compatibility shape for pre-registration.
+  // 同一 remoteSessionId 的 proxy 可连续换代，而不同 React consumer 的 effect
+  // 提交顺序不可靠。session 注册是权威换代顺序，先在共享 generation 模块预分配
+  // 单调代际，避免迟到的中间 proxy 把 transport 从最新代切回去。
+  // Web/测试降级 accessor 可能暂未提供 agent transport；真正可订阅时 registry 仍会
+  // 按首次观察分配 generation，不能为了预注册破坏这种兼容形态。
   if (session.services.zcodeAgentService) {
     remoteAgentServiceGeneration(session.services.zcodeAgentService);
   }
   const previousSession = useRemoteWorkspaceSessionStore.getState().sessionsById[session.sessionId];
   if (previousSession && previousSession !== session) {
-    // When an attachment for the same remoteSessionId changes generation, the old MessagePort may still have pending RPCs.
-    // Finalize the old transport first so provider-sync in-flight Promises do not remain pending across generations forever.
+    // 同一 remoteSessionId 的 attachment 换代时，旧 MessagePort 仍可能有挂起 RPC。
+    // 先终结旧 transport，确保 provider sync 的 in-flight Promise 不会跨代永久悬置。
     previousSession.dispose?.(createRemoteWorkspaceDisconnectedError());
   }
   useRemoteWorkspaceSessionStore.getState().registerSession(session);
@@ -139,8 +167,8 @@ export function registerBaseWorkspaceServices(services: IServiceAccessor): void 
 export function unregisterRemoteWorkspaceSession(sessionId: string): void {
   const session = useRemoteWorkspaceSessionStore.getState().sessionsById[sessionId];
   useRemoteWorkspaceSessionStore.getState().unregisterSession(sessionId);
-  // Synchronization may happen before workspace binding, so the index alone cannot clean up in-flight work.
-  // The injected disposer finalizes the attachment directly, making ChannelClient fail closed for pending RPCs.
+  // 同步可能发生在 workspace bind 之前，无法仅靠索引清理 in-flight。
+  // 注入的 disposer 直接终结 attachment，使 ChannelClient 将挂起 RPC fail-closed。
   session?.dispose?.(createRemoteWorkspaceDisconnectedError());
 }
 
@@ -160,11 +188,28 @@ export function unbindRemoteWorkspaceIdentity(workspaceIdentity: string): void {
   useRemoteWorkspaceSessionStore.getState().unbindWorkspaceIdentity(workspaceIdentity);
 }
 
+export function setRemoteWorkspaceConnectionState(
+  workspaceKey: string,
+  state: RemoteWorkspaceConnectionOverlay,
+): void {
+  useRemoteWorkspaceSessionStore.getState().setConnectionOverlay(workspaceKey, state);
+}
+
+export function clearRemoteWorkspaceConnectionState(workspaceKey: string): void {
+  useRemoteWorkspaceSessionStore.getState().clearConnectionOverlay(workspaceKey);
+}
+
+export function getRemoteWorkspaceConnectionState(
+  workspaceKey: string,
+): RemoteWorkspaceConnectionOverlay | undefined {
+  return useRemoteWorkspaceSessionStore.getState().connectionOverlayByWorkspaceKey[workspaceKey];
+}
+
 export function getRemoteWorkspaceSession(sessionId: string): RemoteWorkspaceSession | null {
   return useRemoteWorkspaceSessionStore.getState().sessionsById[sessionId] ?? null;
 }
 
-/** Remote session identity of the currently registered proxy; proxies from old generations do not match. Used only for scope diagnostics. */
+/** 当前在册代理的远程 session 身份；旧代代理不匹配，仅用于 scope 诊断。 */
 export function findRemoteWorkspaceSessionIdForAgentService(agentService: object): string | null {
   for (const session of Object.values(useRemoteWorkspaceSessionStore.getState().sessionsById)) {
     if (session.services.zcodeAgentService === agentService) {

@@ -4,7 +4,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PrivateDeliveryRetry } from "@/BotsDialog/PrivateDeliveryRetry.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 const mocks = vi.hoisted(() => ({ retryPrivateDelivery: vi.fn() }));
 vi.mock("@/hooks/useServices.js", () => ({ useServices: () => ({ botsService: mocks }) }));
 afterEach(() => {
@@ -15,7 +14,7 @@ const show = () =>
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: "zh-CN" },
       createElement(PrivateDeliveryRetry, { botId: "bot", deliveryId: "failed-1" }),
     ),
   );
@@ -24,11 +23,8 @@ describe("private delivery retry", () => {
     mocks.retryPrivateDelivery.mockResolvedValue(undefined);
     show();
     expect(mocks.retryPrivateDelivery).not.toHaveBeenCalled();
-    const retryButton = screen.getByRole("button");
-    expect(retryButton.parentElement?.querySelector("p")?.textContent).toBe(
-      expectedCopy("bots.privateDelivery.retryHint"),
-    );
-    fireEvent.click(retryButton);
+    expect(screen.getByText(/可能重复/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "重新发送回复" }));
     await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
     expect(mocks.retryPrivateDelivery).toHaveBeenCalledWith({
       botId: "bot",

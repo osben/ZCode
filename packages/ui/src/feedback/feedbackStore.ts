@@ -30,19 +30,19 @@ interface FeedbackUiState {
   featureRequestOpen: boolean;
   tab: FeedbackTab;
   submitDraft: FeedbackSubmitDraft | null;
-  /** Set only when viewing a specific background submission; keep null when creating new feedback */
+  /** 仅查看指定后台提交时设置；新建反馈必须保持为 null */
   submissionJobId: string | null;
-  /** Optionally highlight a ticket when opening the “My Feedback” list */
+  /** 打开"我的反馈"列表时，可选地高亮某条工单 */
   selectedTicketId: string | null;
-  /** Focus the submission form immediately after opening */
+  /** 打开后立刻聚焦到提交表单 */
   openSubmit: (draft?: FeedbackSubmitDraft) => void;
-  /** Open the progress dialog for a specific background submission job */
+  /** 打开指定后台提交任务的进度弹窗 */
   openSubmissionJob: (jobId: string) => void;
-  /** Open the standalone feature request dialog */
+  /** 打开独立产品需求反馈弹窗 */
   openFeatureRequest: () => void;
-  /** Focus the ticket list immediately after opening; highlighting is optional */
+  /** 打开后立刻聚焦到工单列表，可选 highlight */
   openTickets: (ticketId?: string) => void;
-  /** Switch tabs without closing the dialog */
+  /** 切换 Tab，但不关闭 dialog */
   setTab: (tab: FeedbackTab) => void;
   setSelectedTicketId: (ticketId: string | null) => void;
   close: () => void;
@@ -57,8 +57,8 @@ export const useFeedbackStore = create<FeedbackUiState>((set) => ({
   selectedTicketId: null,
   openSubmit: (draft) =>
     set({
-      // “Report an issue” starts a new submission and must not implicitly resume the previous job that is still uploading,
-      // or the new form will inherit the old job’s submitting state and prevent another submission.
+      // “问题上报”是新建入口，不能隐式续接上一次仍在上传的 job，
+      // 否则新表单会继承旧 job 的 submitting 状态并阻止用户继续提交。
       open: true,
       featureRequestOpen: false,
       tab: "submit",
@@ -77,7 +77,7 @@ export const useFeedbackStore = create<FeedbackUiState>((set) => ({
     }),
   openFeatureRequest: () =>
     set({
-      // Feature requests and issue reports use separate dialogs and must open mutually exclusively to prevent background overlays or shortcuts from stacking two dialogs.
+      // 需求反馈和问题上报是两个独立 Dialog，必须互斥打开，避免后台浮层或快捷入口叠出双弹窗。
       open: false,
       featureRequestOpen: true,
       submitDraft: null,

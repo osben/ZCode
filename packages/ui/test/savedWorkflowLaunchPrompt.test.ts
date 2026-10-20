@@ -6,15 +6,13 @@ import {
   buildSavedWorkflowRevisePrompt,
 } from "@/settings/saved-workflows/savedWorkflowLaunchPrompt.js";
 
-const LOCALE_ZH = "zh-CN";
-
 describe("revise / create prompts", () => {
   it("修订文案带名字与路径，且以冒号结尾等用户接着写", () => {
     expect(
       buildSavedWorkflowRevisePrompt({
         name: "x",
         path: "/repo/.zcode/workflows/x.dwf.ts",
-        locale: LOCALE_ZH,
+        locale: "zh-CN",
       }),
     ).toBe("请修订已保存的工作流「x」（/repo/.zcode/workflows/x.dwf.ts）：");
     expect(buildSavedWorkflowRevisePrompt({ name: "x", path: "/p", locale: "en-US" })).toBe(
@@ -26,7 +24,7 @@ describe("revise / create prompts", () => {
     const zh = buildSavedWorkflowRevisePrompt({
       name: "x",
       path: "/p",
-      locale: LOCALE_ZH,
+      locale: "zh-CN",
       scope: "global",
     });
     expect(zh).toContain('它是全局工作流，保存时保持 scope: "global"。');
@@ -39,8 +37,8 @@ describe("revise / create prompts", () => {
     expect(en).toContain('keep scope: "global" when saving');
     // 项目档逐字不变。
     expect(
-      buildSavedWorkflowRevisePrompt({ name: "x", path: "/p", locale: "en-US", scope: "project" }),
-    ).toBe(buildSavedWorkflowRevisePrompt({ name: "x", path: "/p", locale: "en-US" }));
+      buildSavedWorkflowRevisePrompt({ name: "x", path: "/p", locale: "zh-CN", scope: "project" }),
+    ).toBe(buildSavedWorkflowRevisePrompt({ name: "x", path: "/p", locale: "zh-CN" }));
   });
 
   it("创建文案双语", () => {
@@ -66,7 +64,7 @@ describe("promote prompt", () => {
   const input = { name: "release-check", path: "/repo/.zcode/workflows/release-check.dwf.ts" };
 
   it("中文：带名字与路径、要求 scope global、允许改名、不动原文件、可拒绝", () => {
-    const zh = buildSavedWorkflowPromotePrompt({ ...input, locale: LOCALE_ZH });
+    const zh = buildSavedWorkflowPromotePrompt({ ...input, locale: "zh-CN" });
     expect(zh).toContain("「release-check」（/repo/.zcode/workflows/release-check.dwf.ts）");
     expect(zh).toContain('scope: "global"');
     expect(zh).toContain("`args`");

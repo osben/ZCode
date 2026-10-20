@@ -2,31 +2,30 @@ import type { StepRunStatus } from "@/components/workflow-graph/types.js";
 import type { TimelinePill, TimelineStation } from "./timeline-model.js";
 
 /**
- * Phase roster: when a station has more participants than the threshold, replace its row of pills
- * with "pinned pills + the rest." This performs only the pure partition—who is pinned, who remains, and counts by status—
- * using the same rule in four places: cards, timeline tail summary, confirmation dialog, and side pane (invariant 1).
- * A card folds "the rest" into one "N more" row (see "Five pills and a door," `rosterMore`); the side pane treats that row as a door
- * to a status-grouped list (see "A door and a scroll," `rosterRoll`).
+ * 阶段名册：一站的参与者过了阈值，药丸列
+ * 换成「钉住的几枚药丸 + 其余」。这里只做纯的划分——谁被钉住、谁是其余、各状态几人——卡、轮尾摘要、
+ * 确认窗与侧板四处同一条规则（不变式 1）。卡把「其余」折成一行「还有 n 个」（追记「五枚药丸与一扇门」，
+ * `rosterMore`）；侧板把同一行当门，门后是按状态分组的名单（追记「一扇门与一卷名单」，`rosterRoll`）。
  *
- * Subagents omitted from the visible roster (`station.unlisted`) have no pills, but still count toward the threshold, total,
- * status counts, and "N more" row: station totals must not shrink when subagents are omitted; only the visible rows decrease.
+ * 界上列不出来的子代理（`station.unlisted`）没有药丸，但阈值、总数、计数与「还有 n 个」都得算上
+ * 它们：一站的数字不随它的子代理离表而缩水，只有行会少。
  */
 
-/** Keep a pill row up to this many participants (six pills = 222 px, already taller than the roster). */
+/** 参与者 ≤ 这么多枚时仍是药丸列（六枚 = 222 px，已经比名册高）。 */
 export const ROSTER_THRESHOLD = 6;
-/** Number of pills pinned on a card: five plus one "N more" row = the height of six pills. */
+/** 卡上钉住的药丸数：五枚 + 「还有 n 个」一行 = 六枚药丸的高度。 */
 export const ROSTER_PINS_CARD = 5;
-/** Number of pills pinned in the side pane (fill a column while leaving room to show more names). */
+/** 侧板钉住的药丸数（拉满一列，有地方多说几个名字）。 */
 export const ROSTER_PINS_PANE = 5;
-/** Number of faces stacked in the "N more" row. */
+/** 「还有 n 个」那一行上叠着的脸数。 */
 export const ROSTER_DECK = 3;
 
 export type RosterCounts = Record<StepRunStatus, number>;
 
 /**
- * Omitted participants (`station.unlisted`): subagents folded out of the visible roster; they have no pills, faces, or rows.
- * The roster only **counts** them—station totals must not shrink when subagents are omitted. `settled` contains those known to have finished,
- * with `failed ⊆ settled`; the remaining `actors − settled` are still running.
+ * 表外的那些（`station.unlisted`）：归约在界上列不出来的子代理，没有药丸、没有脸、没有行。
+ * 名册只**数**它们——一站的数字不能随着它的子代理离表而缩水。`settled` 是其中已知跑完的，
+ * `failed ⊆ settled`；剩下的 `actors − settled` 还要跑。
  */
 export interface RosterUnlisted {
   actors: number;
@@ -37,23 +36,23 @@ export interface RosterUnlisted {
 const NO_UNLISTED: RosterUnlisted = { actors: 0, failed: 0, settled: 0 };
 
 export interface StationRoster {
-  /** Pinned pills: asking → running → failed → fill remaining slots in participant order; slots are never left empty. */
+  /** 钉住的药丸：asking → running → failed → 按参与者序补位，槽永不空。 */
   pinned: TimelinePill[];
-  /** Remaining participants (not pinned), in participant order. Omitted participants are excluded because they have no pills. */
+  /** 其余参与者（没被钉住的）：按参与者序。表外的不在这里——它们没有药丸。 */
   rest: TimelinePill[];
-  /** Counts by status for all participants, including pinned and omitted ones; static pills count as pending. */
+  /** 全部参与者（钉住的与表外的都算）按状态计数；静态药丸计作 pending。 */
   counts: RosterCounts;
-  /** Omitted participants; zero when none are omitted. */
+  /** 表外的那些；一条都没少时是零。 */
   unlisted: RosterUnlisted;
   total: number;
 }
 
-/** Static (no run) looks identical to pending and is grouped with it for counts. */
+/** 静态（无 run）与 pending 逐像素相同，计数上也归一类。 */
 export function pillStatusOf(pill: Pick<TimelinePill, "status">): StepRunStatus {
   return pill.status ?? "pending";
 }
 
-/** Instance key (`siteId@ordinal`): pending questions use it to attach to their asker; synthetic lanes do not have one. */
+/** 实例键（`siteId@ordinal`）：待答问题按它挂到提问者；合成车道没有。 */
 export function pillInstanceKey(pill: Pick<TimelinePill, "instance">): string | undefined {
   return pill.instance === undefined
     ? undefined
@@ -67,9 +66,9 @@ export function rosterCounts(pills: readonly TimelinePill[]): RosterCounts {
 }
 
 /**
- * Add omitted participants to the counts: only those in `settled` have an outcome (failed ones count as failed, the rest as done);
- * the rest have not finished and count as pending. Subagents rejected at creation or removed while queued are still in `actors`—
- * counting them as done would be the one false statement the UI must not make. The count row and station totals share this rule and always agree.
+ * 把表外的那些加进一份计数里：只有 `settled` 那部分有结局（失败的进 failed，其余 done），剩下的
+ * 还没跑完，进 pending。出生就被拒、或排队时被淘汰的子代理同样在 `actors` 里——把它们记成 done
+ * 是界唯一不能说的那句假话。计数行与整站的计数共用这一条，两处永远一致。
  */
 function addUnlisted(counts: RosterCounts, unlisted: RosterUnlisted): RosterCounts {
   counts.done += unlisted.settled - unlisted.failed;
@@ -78,7 +77,7 @@ function addUnlisted(counts: RosterCounts, unlisted: RosterUnlisted): RosterCoun
   return counts;
 }
 
-/** Attention order: show the most important faces first in the "N more" stack; order list groups the same way. */
+/** 注意力序：「还有 n 个」那一叠脸先露最要紧的；名单的组也按它排。 */
 export const ATTENTION_ORDER: readonly StepRunStatus[] = ["failed", "running", "pending", "done"];
 const ATTENTION_RANK: Record<StepRunStatus, number> = {
   failed: 0,
@@ -87,7 +86,7 @@ const ATTENTION_RANK: Record<StepRunStatus, number> = {
   done: 3,
 };
 
-/** Stable attention ordering: preserve participant order within each status tier. */
+/** 稳定的注意力排序：同一档内保持参与者序。 */
 function byAttention(pills: readonly TimelinePill[]): TimelinePill[] {
   return pills
     .map((pill, index) => ({ index, pill }))
@@ -100,17 +99,17 @@ function byAttention(pills: readonly TimelinePill[]): TimelinePill[] {
 }
 
 /**
- * Pinning order is asking → running → failed → participant order. Running participants have no cap, so any number of them can fill the pinned slots.
- * Preserve participant order within each tier, so a running slot opens only when that participant stops—one slot changes at a time, not the whole column.
- * A completed run has no asking or running pills, so this naturally reduces to failed → participant order without a separate liveness input.
+ * 钉位序 asking → running → failed → 参与者序：正在跑的一枚不设上限，多少个在跑都钉得满。桶内保持
+ * 参与者序，所以一枚 running 的钉位只在它自己停下来时让出——钉位一次只换一枚，不会整列翻。跑完的
+ * run 既没有 asking 也没有 running 药丸，这条序自己就退化成 failed → 参与者序，不需要额外的存活输入。
  */
 export function stationRoster(
   pills: readonly TimelinePill[],
   options: { pins: number; unlisted?: RosterUnlisted },
 ): StationRoster | undefined {
   const unlisted = options.unlisted ?? NO_UNLISTED;
-  // Apply the threshold to **visible + omitted** participants: four visible pills and 300 omitted participants are still a roster.
-  // Otherwise, once the row disappears, those 300 subagents vanish from the screen entirely.
+  // 阈值按**表内 + 表外**判：只剩四枚药丸、身后三百个已淘汰的站，仍然是一份名册——不然那一行
+  // 一消失，三百个子代理就在画面上不存在了。
   const total = pills.length + unlisted.actors;
   if (total <= ROSTER_THRESHOLD) return undefined;
   const counts = addUnlisted(rosterCounts(pills), unlisted);
@@ -129,8 +128,8 @@ export function stationRoster(
 }
 
 /**
- * Roster for one station: read omitted participants from the station (`station.unlisted`) so cards and the side pane use the same value;
- * neither has to inspect `run.unlistedByPhase` independently.
+ * 一站的名册：表外那一格从站上取（`station.unlisted`），所以卡与侧板读的是同一个值，
+ * 谁都不必自己去翻 `run.unlistedByPhase`。
  */
 export function stationRosterOf(
   station: Pick<TimelineStation, "pills" | "unlisted">,
@@ -138,7 +137,7 @@ export function stationRosterOf(
 ): StationRoster | undefined {
   return stationRoster(station.pills, {
     pins,
-    // `nodesSettled` on the station is about nodes, while the roster counts people; use it only in the fraction, not here.
+    // 站那一格里的 `nodesSettled` 说的是节点，名册数的是人：它只进 fraction，不进这里。
     ...(station.unlisted === undefined
       ? {}
       : {
@@ -151,18 +150,18 @@ export function stationRosterOf(
   });
 }
 
-/** Count row when the door is closed: everything behind it—the remaining visible participants plus omitted ones without pills. */
+/** 门关着时那一行的计数行：门后的一切——表内的其余，加上没有药丸的表外那些。 */
 export function rosterRestCounts(roster: StationRoster): RosterCounts {
   return addUnlisted(rosterCounts(roster.rest), roster.unlisted);
 }
 
-/** Content for the card’s “n more” row (see the “Five pills and a door” note). */
+/** 卡上「还有 n 个」那一行的内容（追记「五枚药丸与一扇门」）。 */
 export interface RosterMore {
-  /** Number of unpinned participants, including omitted ones, which are also behind this row. */
+  /** 没被钉住的参与者数（表外的也算——它们同样在这一行后面）。 */
   count: number;
-  /** Stacked faces: the first few remaining participants in attention order (failed → running → pending → done). Omitted participants have no faces. */
+  /** 叠着的脸：其余里按注意力序的前几个（failed → running → pending → done）。表外的没有脸。 */
   deck: TimelinePill[];
-  /** Number of failed participants behind this row (excluding pinned ones and including omitted failures)—the only status shown on this card row. */
+  /** 藏在这一行后面的 failed 数（钉住的不算，表外失败的算）——卡上这一行唯一会说的状态。 */
   failed: number;
 }
 
@@ -171,18 +170,18 @@ export function rosterMore(roster: StationRoster, deck: number = ROSTER_DECK): R
   return {
     count: roster.rest.length + roster.unlisted.actors,
     deck: byAttention(roster.rest).slice(0, deck),
-    // `counts.failed` already includes omitted failures; subtract the pinned ones to get the number still hidden behind this row.
+    // `counts.failed` 已经含表外失败的，减掉钉住的即「这一行后面还藏着几个」。
     failed: roster.counts.failed - pinnedFailed,
   };
 }
 
-/** One group in the side-pane list: remaining participants with the same status, in participant order. */
+/** 侧板名单里的一组：同一状态的其余参与者，参与者序。 */
 export interface RollGroup {
   status: StepRunStatus;
   pills: TimelinePill[];
 }
 
-/** List behind the door: group remaining participants by status in attention order; omit empty groups. */
+/** 门后的名单：其余按状态分组、组序即注意力序、空组缺席。 */
 export function rosterRoll(roster: StationRoster): RollGroup[] {
   return ATTENTION_ORDER.map((status) => ({
     pills: roster.rest.filter((pill) => pillStatusOf(pill) === status),

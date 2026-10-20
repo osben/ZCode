@@ -97,7 +97,7 @@ function parsePlanMarkdown(markdown: string): ParsedPlanPayload | null {
         return jsonPlan;
       }
     } catch {
-      // JSON parsing failed; keep processing as markdown text.
+      // JSON 解析失败时继续按 markdown 文本处理。
     }
   }
 
@@ -386,8 +386,7 @@ function normalizeSessionMode(mode: string, _provider?: ZCodeProvider): string {
       return "plan";
     case "guarded":
       return "guarded";
-    // Fix reason: a newly added mode once absorbed the old full-auto alias; the historical
-    // full-permission semantics must still be YOLO.
+    // 修复原因：新增模式曾吸收旧 full-auto 别名；历史全权限语义仍必须是 YOLO。
     case "full-auto":
     case "full_auto":
     case "yolo":

@@ -1,43 +1,42 @@
 /**
- * Device identifier — singleton cache within the renderer process.
+ * 设备标识符 —— renderer 进程内单例缓存
  *
- * Generation strategy:
- * - Desktop: use deviceMid from the main process (stable and unique SHA-256 based on the userData path).
- * - Mobile (Web remote control): use a hardware-property fingerprint (browserPlatform + screen.width/height + colorDepth),
- *   resistant to browser/network/language/time-zone changes and changes only when the phone changes.
+ * 生成策略：
+ * - 桌面端：使用 main 进程提供的 deviceMid（基于 userData 路径的 SHA-256，稳定且唯一）
+ * - 手机端（Web 远程控制）：使用物理属性指纹（browserPlatform + screen.width/height + colorDepth），
+ *   抗浏览器/网络/语言/时区变化，换手机才会变
  */
 import { createUuid } from "@zcode/shared";
 
 let cachedStreamClientId: string | null = null;
 
 /**
- * Get a stable device ID.
+ * 获取稳定的设备 ID。
  *
- * Desktop: deviceMid (process singleton)
- * Mobile: hardware fingerprint (browserPlatform | screen.width | screen.height | colorDepth)
+ * 桌面端：deviceMid（进程内单例）
+ * 手机端：物理属性指纹（browserPlatform | screen.width | screen.height | colorDepth）
  */
 export function getStreamClientId(): string {
   if (cachedStreamClientId) {
     return cachedStreamClientId;
   }
-  // Bugfix: each hook instance used to generate its own streamClientId, so the same device could
-  // send messages with different clientIds on different pages/instances and be mistaken for
-  // “another device” when switching tasks. Use a renderer-process singleton so all tasks on this
-  // device share one clientId. On mobile, use a hardware fingerprint instead of a random UUID so
-  // the ID stays stable across browsers, networks, languages, and time zones.
+  // Bugfix: 之前每个 hook 实例各自生成 streamClientId，同一台设备在不同页面/实例下
+  // 可能用不同 clientId 发消息，切回任务时会被误判成"另一台设备"。
+  // 这里改成 renderer 进程内单例，确保本设备所有 task 共用同一个 clientId。
+  // 对于手机端，使用物理属性指纹而非随机 UUID，换浏览器/网络/语言/时区均保持稳定。
   cachedStreamClientId = `renderer:${createUuid()}`;
   return cachedStreamClientId;
 }
 
 /**
- * Set the stable device ID (provided by platform.getDeviceId()).
- * Must be called before the first getStreamClientId() call.
+ * 设置稳定的设备 ID（由 platform.getDeviceId() 提供）。
+ * 必须在首次调用 getStreamClientId() 之前调用。
  */
 export function setStreamClientId(deviceId: string): void {
   const normalizedDeviceId = deviceId.trim();
   if (!normalizedDeviceId) {
-    // If deviceId injection fails and we store an empty string, all instances share "renderer:",
-    // causing owner/observer filtering to mistake them for the same client. Fall back to a stable random value within the process to prevent collisions between instances.
+    // deviceId 注入异常时如果写入空字符串，所有实例会共享 "renderer:"，
+    // owner/observer 过滤会误判成同一客户端。这里回退到进程内稳定随机值，避免跨实例碰撞。
     cachedStreamClientId = cachedStreamClientId ?? `renderer:fallback-${createUuid()}`;
     return;
   }
@@ -45,8 +44,8 @@ export function setStreamClientId(deviceId: string): void {
 }
 
 /**
- * Generate a mobile hardware-property fingerprint.
- * Used by mobile to create a stable device ID before platform.getDeviceId() returns.
+ * 生成手机端物理属性指纹。
+ * 用于手机端在 platform.getDeviceId() 返回之前自行生成稳定的设备 ID。
  */
 export function generateMobileDeviceFingerprint(): string {
   const nav = globalThis.navigator as Navigator & { platform?: string };

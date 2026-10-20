@@ -1,10 +1,10 @@
 /**
- * Cleanup of persisted localStorage data for legacy composer drafts.
+ * 旧 composer 草稿的 localStorage 持久化清理。
  *
- * Store cleanup: the composer draft in-memory state (composerDraftByScopeId) and persistence operations
- * (persistComposerDraft/readPersistedComposerDraft) were removed with the old ChatView/composer;
- * the v4 composer does not persist locally. This keeps only the janitor logic that removes legacy draft keys when deleting a task,
- * preventing drafts for deleted tasks from lingering in localStorage after an upgrade.
+ * store 收尾：composer 草稿的内存态（composerDraftByScopeId）与持久化写入
+ * （persistComposerDraft/readPersistedComposerDraft）已随旧 ChatView/composer 删除，
+ * v4 composer 不做本地持久化。这里仅保留删除 task 时清理历史版本残留草稿键的
+ * janitor 逻辑，避免旧安装升级后 localStorage 里的已删任务草稿永久残留。
  */
 import { logger } from "@/logger.js";
 

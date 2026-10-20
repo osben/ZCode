@@ -14,8 +14,8 @@ import {
 
 interface UseWebElementPickerOptions {
   /**
-   * Transport-independent script execution entry point: sends the selection script to the target page and returns the result.
-   * UnifiedBrowserView uses main IPC (executeJavaScript).
+   * 传输无关的脚本执行出口：把选择脚本送到目标网页并回传结果。
+   * UnifiedBrowserView 走 main IPC（executeJavaScript）。
    */
   executeJs: (script: string) => Promise<unknown>;
   workspacePath: string;
@@ -68,7 +68,7 @@ export function useWebElementPicker({
 }: UseWebElementPickerOptions) {
   const [isPicking, setIsPicking] = useState(false);
   const activePickerRunRef = useRef(0);
-  // executeJs may change on every render; keep it in a ref so useCallback does not need frequent recreation.
+  // executeJs 引用可能随每次渲染变化；用 ref 固定，避免 useCallback 依赖它而频繁重建。
   const executeJsRef = useRef(executeJs);
   executeJsRef.current = executeJs;
 
@@ -155,8 +155,8 @@ export function useWebElementPicker({
       }
 
       event.preventDefault();
-      // The injected script handles Esc when the controlled view has focus. If focus is still on the outer toolbar,
-      // cancel here as a fallback so the picker cannot get stuck due to the focus location.
+      // 受控视图获得焦点时由注入脚本处理 Esc；焦点还在外层工具栏时，
+      // 这里兜底取消，保证选择态不会因为焦点位置不同而卡住。
       void cancelPicking();
     };
 

@@ -14,7 +14,7 @@ function pageIdentity(input: UsePluginUiHostInput): { key: string; input: UsePlu
   return { key, input: { ...input, scope: { ...input.scope, scope } } };
 }
 
-/** Single window-level owner of anchor subscriptions; moving position, re-renders, and card unmounts do not destroy the page. */
+/** 锚点订阅唯一窗口 owner；切位置、重渲染和卡片卸载不销毁页面。 */
 export function usePluginUiHost(input: UsePluginUiHostInput): UsePluginUiHostResult {
   const platform = useOptionalPlatform();
   const services = useOptionalServices();
@@ -36,7 +36,7 @@ export function usePluginUiHost(input: UsePluginUiHostInput): UsePluginUiHostRes
     }),
     [key, platform, services, failure, local],
   );
-  // Creation happens only in effects; the external store snapshot identity is stable and controllers are not written during render.
+  // 创建只发生在 effect；外部 store 的快照身份稳定，不在 render 写入 controller。
   const [subscribe, read] = useMemo(
     () =>
       [

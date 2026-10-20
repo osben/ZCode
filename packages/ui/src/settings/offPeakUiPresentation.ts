@@ -4,11 +4,11 @@ import type { OffPeakTakeNumberAvailabilityStatus } from "@/store/offPeakTaskSto
 
 export type OffPeakCreateBlockReason = "plan" | "quota" | "unavailable";
 
-/** Off-peak creation disable reasons are long messages and cannot use the generic one-line tooltip layout. */
+/** 闲时创建禁用原因属于长提示，不能沿用通用短 Tooltip 的单行布局。 */
 export const OFF_PEAK_CREATE_TOOLTIP_CLASSNAME =
   "max-w-[220px] [&>span]:break-words [&>span]:whitespace-normal [&>span]:text-wrap-pretty";
 
-/** Allow creation only after the server confirms that a queue position can be assigned; fail closed for all other eligibility/dependency states. */
+/** 只有服务端成功确认可取号才放行创建，其余资格与依赖状态全部 fail-closed。 */
 export function resolveOffPeakCreateBlockReason({
   availabilityStatus,
   canTakeNumber,
@@ -29,7 +29,7 @@ export function resolveOffPeakCreateBlockReason({
   return canTakeNumber === true ? null : "quota";
 }
 
-/** Convert the server's absolute recovery time to a localized remaining duration containing only hours/minutes. */
+/** 将服务端绝对恢复点转换成只包含小时/分钟的本地化剩余时长。 */
 export function formatOffPeakRemainingWait(
   nextTakeAt: number,
   now: number,
@@ -42,18 +42,27 @@ export function formatOffPeakRemainingWait(
     });
   }
 
-  // The old tooltip displayed a full date/time, making the copy too long and requiring users to calculate the remaining wait themselves.
-  // Round minutes up to avoid showing 0 minutes or underestimating the server recovery time while dozens of seconds remain.
+  // 旧 Tooltip 直接展示年月日，文案过长且用户还要自行换算等待时间。
+  // 向上取整分钟，避免在仍需等待几十秒时显示 0 分钟或低估服务端恢复点。
   const totalMinutes = Math.ceil(remainingMs / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (hours > 0 && minutes > 0) {
-    return intl.formatMessage({ id: "offPeak.create.remaining.hoursMinutes" }, { hours, minutes });
+    return intl.formatMessage(
+      { id: "offPeak.create.remaining.hoursMinutes" },
+      { hours, minutes },
+    );
   }
   if (hours > 0) {
-    return intl.formatMessage({ id: "offPeak.create.remaining.hours" }, { hours });
+    return intl.formatMessage(
+      { id: "offPeak.create.remaining.hours" },
+      { hours },
+    );
   }
-  return intl.formatMessage({ id: "offPeak.create.remaining.minutes" }, { minutes });
+  return intl.formatMessage(
+    { id: "offPeak.create.remaining.minutes" },
+    { minutes },
+  );
 }
 
 export type OffPeakStatusIconKind =
@@ -72,8 +81,8 @@ export interface OffPeakStatusFooterPresentation {
 }
 
 /**
- * Synchronize only the creation title that still uses its automatic default.
- * A locale change must not overwrite user input, template drafts, or a saved task title.
+ * 只同步仍保持自动默认值的创建态标题。
+ * locale 切换后不能覆盖用户输入、模板草稿或已保存任务标题。
  */
 export function resolveLocalizedOffPeakCreateTitle({
   currentTitle,
@@ -90,13 +99,18 @@ export function resolveLocalizedOffPeakCreateTitle({
   previousDefaultTitle: string;
   titleTouched: boolean;
 }): string {
-  if (isEditing || hasInitialTitle || titleTouched || currentTitle !== previousDefaultTitle) {
+  if (
+    isEditing ||
+    hasInitialTitle ||
+    titleTouched ||
+    currentTitle !== previousDefaultTitle
+  ) {
     return currentTitle;
   }
   return nextDefaultTitle;
 }
 
-/** Single mapping for off-peak card status icon and copy, preventing a paused item with a position from being shown with the queued moon icon. */
+/** 闲时卡片状态图标与文案的唯一映射，避免带位次的 paused 被误画成 queued 月亮。 */
 export function resolveOffPeakStatusFooter(
   task: Pick<ZCodeOffPeakTask, "queuePosition" | "status">,
 ): OffPeakStatusFooterPresentation {
@@ -118,7 +132,7 @@ export function resolveOffPeakStatusFooter(
       return task.queuePosition
         ? {
             icon: "pause",
-            // Paused and Queued both represent positions that still need attention; the design uses the same subtle brand pill for both.
+            // Paused 与 Queued 都是仍需关注的排队状态，设计稿使用同一品牌弱强调胶囊。
             className: "text-idle-task",
             labelId: "offPeak.badge.pausedPosition",
             labelValues: { position: String(task.queuePosition) },
@@ -137,7 +151,7 @@ export function resolveOffPeakStatusFooter(
     case "completed":
       return {
         icon: "success",
-        // Completed is a static terminal state that needs no further attention; highlighting it as success would make it more prominent than active tasks.
+        // 完成是无需继续关注的静态终态，success 高亮会让它比活跃任务更抢眼。
         className: "text-foreground-subtle",
         labelId: "offPeak.status.completed",
       };
@@ -156,7 +170,7 @@ export function resolveOffPeakStatusFooter(
   }
 }
 
-/** Terminal tasks will not be scheduled again; do not show an invalid historical selection as a current error that needs fixing. */
+/** 终态任务不会再被调度，不能把历史选择失效显示成当前待修复错误。 */
 export function shouldShowOffPeakModelSelectionIssue(
   status: Pick<ZCodeOffPeakTask, "status">["status"],
 ): boolean {
@@ -164,8 +178,8 @@ export function shouldShowOffPeakModelSelectionIssue(
 }
 
 /**
- * Render a subdued queue position separately when a failed task still retains a position returned by the server.
- * The main status mapping returns only one footer; failed state needs a separate way to preserve queue context instead of replacing it with Failure.
+ * 失败任务仍保留服务端返回的排队位次时，单独渲染弱化位次。
+ * 主状态映射只能返回一个 footer；失败状态需额外保留队列上下文，避免被 Failure 覆盖。
  */
 export function resolveFailedOffPeakQueueFooter(
   task: Pick<ZCodeOffPeakTask, "queuePosition" | "status">,

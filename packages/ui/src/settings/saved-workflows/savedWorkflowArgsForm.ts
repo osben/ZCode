@@ -1,6 +1,6 @@
-// Argument form and metadata argument table for saved workflows.
-// Pure functions: expand frontmatter args declarations into editable fields, then collect fields into an argument bag / declaration;
-// validation rules match the CLI's validateWorkflowArgs (required checks, type parsing, and default filling are handled by the server).
+// 已保存工作流的实参表单与元数据实参表。
+// 纯函数：把 frontmatter 的 args 声明铺成可编辑字段，再把字段收回成实参袋 / 声明；
+// 校验规则与 CLI 的 validateWorkflowArgs 同源（required、按类型解析、default 回填由服务端做）。
 import type { ZCodeSavedWorkflowArgType, ZCodeSavedWorkflowArgsDeclaration } from "@zcode/shared";
 
 export interface SavedWorkflowArgField {
@@ -9,13 +9,13 @@ export interface SavedWorkflowArgField {
   description?: string;
   required: boolean;
   hasDefault: boolean;
-  /** Text in the editor; booleans use "true" / "false". */
+  /** 编辑器里的文本；boolean 用 "true" / "false"。 */
   value: string;
 }
 
 export type SavedWorkflowArgFieldError = "required" | "invalid_number" | "invalid_json";
 
-/** Convert a default / existing value to editor text according to its type. */
+/** 把一个默认值 / 已有值按类型转成编辑器文本。 */
 export function formatSavedWorkflowArgValue(
   type: ZCodeSavedWorkflowArgType,
   value: unknown,
@@ -34,11 +34,10 @@ export function formatSavedWorkflowArgValue(
 }
 
 /**
- * Convert declarations into editable fields. When `initialArgs` is present, **prefer** its value
- * for each declared field. “Run again” on a completion card prefills the arguments used by that run
- * (docs/dynamic-workflow/transcript-and-notifications.md, “Run again”): what worked last time is
- * likely what the user wants to run next. Do not add keys absent from the declaration; declarations
- * determine the form shape, and old arguments should not invent new fields.
+ * 声明 → 可编辑字段。`initialArgs` 在场时逐个字段**优先**用它的值（完成卡「再次运行」把这次
+ * run 跑过的那一份实参预填进来，docs/dynamic-workflow/transcript-and-notifications.md「Run again」）：
+ * 上一次跑成了什么，下一次多半还要跑什么。声明里没有的键不进表单——表单的形状由声明决定，
+ * 一份旧实参不该凭空长出字段。
  */
 export function buildSavedWorkflowArgFields(
   declaration: ZCodeSavedWorkflowArgsDeclaration | undefined,
@@ -64,8 +63,8 @@ type SavedWorkflowArgParse =
   | { ok: false; error: SavedWorkflowArgFieldError };
 
 /**
- * Single field → argument value. Empty text means “omit” for string / number / json: the server fills in a default if present,
- * and otherwise an optional field is simply absent; an empty required field is the only required error. Boolean always has a value.
+ * 单个字段 → 实参值。空文本对 string / number / json 意味着「不传」：有默认值的由服务端回填，
+ * 无默认值又非必填的就是缺席；必填而空是唯一的 required 错误。boolean 永远有值。
  */
 export function parseSavedWorkflowArgField(field: SavedWorkflowArgField): SavedWorkflowArgParse {
   const raw = field.value;
@@ -81,7 +80,7 @@ export function parseSavedWorkflowArgField(field: SavedWorkflowArgField): SavedW
       return { ok: true, omitted: false, value: raw };
     case "number": {
       const parsed = Number(raw.trim());
-      // NaN / Infinity are invalid JSON and fail the CLI's number validation; reject them here.
+      // NaN / Infinity 过不了 JSON，也过不了 CLI 的 number 校验；在这里就拦下来。
       if (!Number.isFinite(parsed)) return { ok: false, error: "invalid_number" };
       return { ok: true, omitted: false, value: parsed };
     }
@@ -99,7 +98,7 @@ type SavedWorkflowArgsCollect =
   | { ok: true; args: Record<string, unknown> }
   | { ok: false; errors: Record<string, SavedWorkflowArgFieldError> };
 
-/** Whole form → argument bag; collect all errors at once (matching validateWorkflowArgs, which does not report them one by one). */
+/** 整张表单 → 实参袋；一次收齐全部错误（照 validateWorkflowArgs 的「不逐个报」）。 */
 export function collectSavedWorkflowArgs(
   fields: readonly SavedWorkflowArgField[],
 ): SavedWorkflowArgsCollect {
@@ -116,15 +115,15 @@ export function collectSavedWorkflowArgs(
   return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, args };
 }
 
-// ── Metadata editing: argument declaration table ──
+// ── 元数据编辑：实参声明表 ──
 
 export interface SavedWorkflowArgRow {
-  /** Stable row identity (new rows also need one; the name may be empty). */
+  /** 行的稳定身份（新增行也要有，名字可空）。 */
   key: string;
   name: string;
   type: ZCodeSavedWorkflowArgType;
   required: boolean;
-  /** Editable text for the default value; empty means no default (booleans use "" / "true" / "false"). */
+  /** 默认值的编辑文本；空即无默认值（boolean 用 "" / "true" / "false"）。 */
   defaultText: string;
   description: string;
 }
@@ -182,8 +181,8 @@ type SavedWorkflowArgRowsCollect =
   | { ok: false; errors: Record<string, SavedWorkflowArgRowError> };
 
 /**
- * Argument table → declaration. Names need only be non-empty and unique (the declaration is a record, and `args.x` access does not require identifier syntax);
- * return undefined for an empty table (omit the args key in frontmatter instead of writing `args: {}`).
+ * 实参表 → 声明。名字只要求非空且唯一（声明本就是 record，`args.x` 的读法不限定标识符）；
+ * 空表回 undefined（frontmatter 里就没有 args 键，而不是 `args: {}`）。
  */
 export function rowsToArgsDeclaration(
   rows: readonly SavedWorkflowArgRow[],

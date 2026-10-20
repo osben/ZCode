@@ -1,20 +1,18 @@
 import {
-  ZCODE_AGENT_PROVIDER,
+  isZCodeAgentProvider,
   resolveModelProviderFamilySpecByProviderId,
   zcodeProviderAccountAccessSchema,
   type ZCodeProviderAccountAccess,
+  type ZCodeProvider,
 } from "@zcode/shared";
-import type { ProviderConfigObject } from "@zcode/provider";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
-import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.js";
 import { shouldShowModelVisionBadge } from "@/lib/modelVisionBadge.js";
 
 export interface ModelProviderGroupLabelOptions {
   apiKeyLabel?: string;
   apiKeyBadgeLabel?: string;
-  chatgptPlanBadgeLabel?: string;
   codingPlanLabel?: string;
   codingPlanBadgeLabel?: string;
   startPlanLabel?: string;
@@ -24,22 +22,16 @@ export interface ModelProviderGroupLabelOptions {
 }
 
 function supportsRegistryApiFormat(
-  selectedProvider: string,
+  selectedProvider: ZCodeProvider,
   apiFormat: string | null | undefined,
 ): boolean {
   if (!apiFormat) return false;
-  // Only the glm (ZCode Agent) provider remains; third-party CLI api-format differences became irrelevant when those providers were removed.
-  // The ChatGPT plan runs through the same bundled agent (SIWC wiring in the CLI), so its
-  // sessions must keep the registry picker; otherwise selecting a gpt model collapses the
-  // menu to "Manage models" with no way back.
-  return (
-    selectedProvider === ZCODE_AGENT_PROVIDER ||
-    isChatGptPlanSubscriptionProviderId(selectedProvider)
-  );
+  // 仅剩 glm（ZCode Agent）provider；三方 CLI 的 api format 差异已随 provider 下线。
+  return isZCodeAgentProvider(selectedProvider);
 }
 
 export function buildRegistryModelSelectGroups(
-  selectedProvider: string,
+  selectedProvider: ZCodeProvider,
   view: ModelSelectionView,
   labels: ModelProviderGroupLabelOptions = {},
 ): ModelSelectGroup[] {
@@ -52,23 +44,21 @@ export function buildRegistryModelSelectGroups(
     const accountPresentation = accountAccess.success
       ? getRegistryAccountProviderGroupPresentation(provider.providerId, accountAccess.data, labels)
       : null;
-    // Visual distinction inside the picker: the ChatGPT plan is subscription-backed while the
-    // api.openai.com API-key provider uses a personal key — both share the OpenAI models.
-    const accessTypeBadge = getAccessTypeGroupBadge(
-      provider.config.access,
-      provider.config.api?.baseUrl,
-      labels,
-    );
+
+    // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
+    const labelBadge =
+      accountPresentation?.labelBadge ??
+      (provider.config.access?.type === "api-key" ||
+      provider.config.access?.type === "zhipu-coding-plan-api-key"
+        ? (labels.apiKeyBadgeLabel ?? "API")
+        : undefined);
 
     return [
       {
         key: `registry-provider:${provider.providerId}`,
         label: accountPresentation?.label || provider.providerName?.trim() || provider.providerId,
-        ...(accountPresentation?.labelBadge
-          ? { labelBadge: accountPresentation.labelBadge }
-          : accessTypeBadge
-            ? { labelBadge: accessTypeBadge }
-            : {}),
+        ...(provider.config.logo ? { logo: provider.config.logo } : {}),
+        ...(labelBadge ? { labelBadge } : {}),
         ...(accountPresentation ? { directItems: true } : {}),
         items: provider.models.map(({ modelId, config }) => ({
           key: `registry-provider:${provider.providerId}:${modelId}`,
@@ -85,30 +75,6 @@ export function buildRegistryModelSelectGroups(
       },
     ];
   });
-}
-
-function getAccessTypeGroupBadge(
-  access: ProviderConfigObject["access"],
-  baseUrl: string | null | undefined,
-  labels: ModelProviderGroupLabelOptions,
-): string | undefined {
-  if (access?.type === "chatgpt-account") {
-    return labels.chatgptPlanBadgeLabel ?? "Subscription";
-  }
-  if (access?.type === "api-key" && isApiOpenAiBaseUrl(baseUrl)) {
-    return labels.apiKeyBadgeLabel ?? "API";
-  }
-  return undefined;
-}
-
-function isApiOpenAiBaseUrl(baseUrl: string | null | undefined): boolean {
-  if (!baseUrl) return false;
-  try {
-    const hostname = new URL(baseUrl).hostname.toLowerCase();
-    return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
-  } catch {
-    return false;
-  }
 }
 
 function getRegistryAccountProviderGroupPresentation(

@@ -1,10 +1,10 @@
+import { toServiceLocale } from "../i18n/serviceLocale.js";
+import type { Locale } from "@zcode/shared";
 import {
   DEFAULT_FEEDBACK_TICKET_FRAMEWORK,
-  toServiceLocale,
   type FeedbackTicketModule,
   type FeedbackTicketSeverity,
   type FeedbackTicketType,
-  type Locale,
 } from "@zcode/shared";
 import type { IFeedbackService } from "@zcode/services";
 import { persistFeedbackContactPreference } from "@/feedback/feedbackContactPreference.js";

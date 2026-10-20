@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
 
-// Source of truth for the tool-card join fallback: the journal-backed discovery query
-// (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Discovery queries" + "Retry semantics of the
-// UI fallback").
+// 工具卡 join 回退的信源：journal-backed 的发现查询（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
+// 「发现查询」+「UI 回退的重试语义」）。
 //
-// This hook exists because of an observed failure: the query used to be fired once and silently resolve to null on
-// failure, and it happened to fire while the session was still cold (effect declaration order + the CLI's serial
-// dispatch), so after a restart tool cards fell back to the compiled state forever. The cold-session prewarming was
-// fixed on the CLI side; this pins the second half — the retryable hop actually retries.
+// 这个 hook 存在的理由就是一个实测失效：查询原本一次性发出、失败即静默 null，而它恰好
+// 在会话还冷的时候发出（effect 声明顺序 + CLI 串行派发），于是重启后工具卡永远退回编译态。
+// 冷会话前置已在 CLI 侧修好；这里钉住第二半——可重试的那一跳真的重试了。
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -26,7 +24,7 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
   useV4Conversation: () => ({ workflowRuns }),
 }));
 
-// eslint-disable-next-line import/first -- The hook under test must be imported after the context mock.
+// eslint-disable-next-line import/first -- 必须在 context mock 之后再引入被测 hook。
 import {
   isWorkflowRunsCapabilityMissing,
   useWorkflowRunJournalSummaries,
@@ -78,7 +76,7 @@ describe("useWorkflowRunJournalSummaries", () => {
   it("冷开首查失败 → live 抬升时重试并补上摘要（这就是那个失效的修复）", async () => {
     workflowRuns.mockReset();
     workflowRuns
-      // The session is not registered yet: the CLI side returns a structured sessionNotFound.
+      // 会话还没在册：CLI 侧回结构化的 sessionNotFound。
       .mockRejectedValueOnce(new Error("fault.workflowRuns.sessionNotFound: sess-1"))
       .mockResolvedValueOnce(result("dwfrun-1"));
     const hook = renderHook(
@@ -122,11 +120,10 @@ describe("useWorkflowRunJournalSummaries", () => {
   });
 
   it("enabled=false（嵌套只读 transcript）不发请求：journal 按父会话建键，拿 actor id 去问只会造出幽灵 runtime", async () => {
-    // Bug root cause (observed 2026-08-24): the actor transcript's nested SessionPane used to send this query with
-    // the actor session id, and the CLI's cold-session prewarming then materialized a second runtime for a
-    // **running** detached session, freezing the live view at "worked for xx seconds". The CLI side was closed off
-    // via hasLiveConversation; this pins the UI-side half: read-only nested panes (actor / subagent transcript)
-    // must never issue this parent-session-only query.
+    // Bug 根因（2026-08-24 实测）：actor transcript 的嵌套 SessionPane 曾带着 actor 会话 id
+    // 发这条查询，CLI 的冷会话前置随即对一条**正在运行**的 detached 会话物化第二个 runtime，
+    // 直播冻结在「已工作 xx 秒」。CLI 侧已按 hasLiveConversation 收口；这里钉住 UI 侧的那半：
+    // 只读嵌套 pane（actor / subagent transcript）根本不该发出这条父会话专属的查询。
     workflowRuns.mockReset();
     const hook = renderHook(() =>
       useWorkflowRunJournalSummaries({ sessionId: "sess-actor-1", live: true, enabled: false }),
@@ -153,10 +150,9 @@ describe("useWorkflowRunJournalSummaries", () => {
   });
 
   it("切回一个问过的会话：重查一次而不是空着（收口记的是会话 + 答案，不是一个裸的「问过了」）", async () => {
-    // The close-out records only the **most recent** session and its answer: if we recorded just an id while leaving
-    // the answer in state, switching back would fail both ways — the early return skips requerying, and switching
-    // sessions clears the state, so the card would never get an entry point. Requerying one journal page is cheap;
-    // a missing entry point is not.
+    // 收口只记**最近**那个会话及其答案：只记一个 id 而把答案丢在 state 里的话，切回来会
+    // 两头落空——早退不重查，换会话又清了状态，卡片于是永远没有入口。重查一页 journal 很便宜，
+    // 空着的入口不便宜。
     workflowRuns.mockReset();
     workflowRuns
       .mockResolvedValueOnce(result("dwfrun-1"))
@@ -176,10 +172,9 @@ describe("useWorkflowRunJournalSummaries", () => {
     expect(workflowRuns).toHaveBeenCalledTimes(3);
   });
 
-  // ── refreshKey: the freshness source for the run catalog page and the task island count ──
-  // Summaries change mid-session too (finishing a run adds one more ended run), yet the close-out semantics must
-  // block pointless requeries. `refreshKey` is that seam: the caller supplies "a monotonic count of settled runs",
-  // raised once per finished run.
+  // ── refreshKey：run 目录页与任务岛计数的新鲜度来源 ──
+  // 摘要是会话中途也会变的（跑完一个 run 就多一条已结束），但收口语义又必须挡住无谓重查。
+  // `refreshKey` 就是这条缝：调用方按「已结算 run 的单调计数」给，跑完一个才抬一次。
 
   it("refreshKey 不变：仍然只查一次（渲染再多也不多打 RPC）", async () => {
     workflowRuns.mockReset();

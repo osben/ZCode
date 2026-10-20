@@ -1,6 +1,5 @@
 import type { Locale } from "@zcode/shared";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
-import { workDurationUnitSeparator } from "@/lib/workDuration.js";
 
 function formatDurationUnit(
   value: number,
@@ -9,11 +8,11 @@ function formatDurationUnit(
   locale: Locale,
 ): string {
   const unit = intl.formatMessage({ id: messageId });
-  // Share the same spacing rule as the workflow completion card so the same duration is not styled differently in two places.
-  return `${value}${workDurationUnitSeparator(locale)}${unit}`;
+  // 中文时长单位需要空格；英文单位本身已带缩写，不额外插入空格。
+  return `${value}${locale === "zh-CN" ? " " : ""}${unit}`;
 }
 
-/** Work-duration copy shared by Desktop and Share so the same turn does not use different units across surfaces. */
+/** Desktop 与 Share 共用的工作时长文案，避免同一轮在两个 surface 显示不同单位。 */
 export function formatConversationWorkDuration(
   durationMs: number | undefined,
   intl: IntlInstance,

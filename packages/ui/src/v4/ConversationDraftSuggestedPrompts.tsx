@@ -9,8 +9,8 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from "@/components/ui/alert-dialog.js";
-/* Recommended prompt entry point for the New task draft page.
-   The recommended configuration comes from the draft-suggestion scene in Client Scenes. */
+/* New task 草稿页推荐提示词入口。
+   推荐配置来自 Client Scenes 的 draft-suggestion scene。 */
 import type { CSSProperties } from "react";
 import { X, Check, Info, LoaderCircle, SquareCode, TriangleAlert } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -47,9 +47,9 @@ function DraftSuggestedPromptIcon({ name }: { name?: string }) {
 interface ConversationDraftSuggestedPromptsProps {
   className?: string;
   layout?: "chips" | "list";
-  /** Recommended items, mapped from Client Scenes and passed down by the parent. */
+  /** 推荐项列表；由上层从 Client Scenes 映射后下发。 */
   items?: DraftSuggestedPromptItem[];
-  /** Click callback; the parent receives the full configuration to resolve the prompt and Plugin catalog. */
+  /** 点击回调；完整配置交给上层解析 prompt 与 Plugin catalog。 */
   onSelect?: (item: DraftSuggestedPromptItem) => void;
   disabled?: boolean;
   onRefresh?: () => void;
@@ -116,14 +116,12 @@ function DraftSuggestedPluginActionPopoverContent({
       data-draft-suggested-plugin-popover-offset="9"
       data-anchor-item-id={state.anchorItemId}
       className={cn(
-        // The fixed 80px confirmation state fits only one title line; a long localized Plugin name can wrap,
-        // push the button out, and get clipped.
+        // 固定 80px 确认态只容得下一行标题，较长的本地化 Plugin 名称换行后会把按钮挤出并被裁切。
         "h-auto w-60 max-w-[calc(100vw-2rem)] border-popover-border bg-popover p-3 shadow-md",
         isConfirmation ? "gap-3" : "gap-0",
       )}
     >
-      {/* Keep the Plugin name, status, and button out of one horizontal row, and do not expand above the anchor:
-          follow the design's separate confirmation and result layouts. */}
+      {/* Plugin 名称、状态和按钮不压进同一横排、不从锚点上方展开：遵循设计稿的确认/结果两种结构。 */}
       <div
         role={state.phase === "error" ? "alert" : "status"}
         aria-live={state.phase === "error" ? "assertive" : "polite"}
@@ -140,8 +138,8 @@ function DraftSuggestedPluginActionPopoverContent({
             {statusContent}
           </div>
         ) : (
-          // The old CSS rotateX only flipped the success content into view, so it could not show progress being replaced by success like the model label does.
-          // The steady key covers confirmation, progress, failure, and retry, and triggers a vertical in/out scroll only when entering success.
+          // 旧 CSS rotateX 只让成功内容自身翻入，无法像模型标签一样表达“进度被成功替换”。
+          // steady key 覆盖确认、进度、失败和重试，仅在进入成功态时触发一出一入的纵向滚动。
           <AnimatePresence initial={false} mode="popLayout">
             <motion.div
               key={state.phase === "success" ? "success" : "steady"}
@@ -266,7 +264,7 @@ export function ConversationDraftSuggestedPrompts({
                         draggable={false}
                         className={cn(
                           "shrink-0 rounded-sm object-contain",
-                          // The GitHub asset has a white square background; shrink it slightly to leave the same outer spacing as the other icons.
+                          // GitHub 素材自带白色方形底，再缩小一圈以露出与其他图标一致的外层留白。
                           item.iconUrl?.includes("/github/icon.png") ? "size-4.5" : "size-full",
                         )}
                       />
@@ -304,8 +302,8 @@ export function ConversationDraftSuggestedPrompts({
           const isPopoverAnchor = pluginActionPopover?.anchorItemId === item.id;
           return (
             <Popover key={item.id} open={isPopoverAnchor} modal={false}>
-              {/* Wrapping Root/Anchor only while the Popover is open remounts the button and replays the waterfall;
-                  Radix then repeatedly measures an anchor with translateY. Keep all recommended items in the same structure from the first render. */}
+              {/* 只在 Popover 打开时才包 Root/Anchor 会重挂按钮并重播 waterfall，
+                  Radix 因而连续测量到带 translateY 的锚点。所有推荐项从首次渲染起保持同一结构。 */}
               <PopoverAnchor
                 asChild
                 data-slot="button"

@@ -1,4 +1,5 @@
 import {
+  Archive,
   Monitor,
   Moon,
   Settings,
@@ -8,7 +9,6 @@ import {
   Palette,
   Sun,
   BarChart3,
-  History,
   Terminal,
   AlarmClock,
   Anchor,
@@ -17,14 +17,9 @@ import {
   Globe2,
   Cable,
   WandSparkles,
+  HardDrive,
   Keyboard,
   FileSearch,
-  ScrollText,
-  MessageSquareText,
-  FileText,
-  GitBranchPlus,
-  Mic,
-  VenetianMask,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -34,8 +29,8 @@ export const THEME_MODES: Array<{
   icon: typeof Sun;
 }> = [
   { mode: "system", icon: Monitor },
-  { mode: "dark", icon: Moon },
-  { mode: "light", icon: Sun },
+  { mode: "zai-dark", icon: Moon },
+  { mode: "zai-light", icon: Sun },
 ];
 
 export type SettingsSectionGroupId = "basics" | "agentCapabilities" | "dataAndStats";
@@ -81,37 +76,9 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     groupId: "basics",
   },
   {
-    id: "instructions",
-    icon: ScrollText,
-    titleId: "settings.instructions.title",
-    groupId: "agentCapabilities",
-  },
-  // Output Styles shape the agent's response tone; they sit right after Instructions because
-  // both edit user-scoped prompt material on the host of the active workspace.
-  {
-    id: "outputStyles",
-    icon: MessageSquareText,
-    titleId: "settings.outputStyles.title",
-    groupId: "agentCapabilities",
-  },
-  {
-    id: "systemPrompt",
-    icon: FileText,
-    titleId: "settings.systemPrompt.title",
-    groupId: "agentCapabilities",
-  },
-  {
     id: "memory",
     icon: Brain,
     titleId: "settings.memory",
-    groupId: "agentCapabilities",
-  },
-  // Defaults for incognito sessions (specs/incognito-session.md); after Memory because both decide
-  // what context a new session starts with.
-  {
-    id: "incognito",
-    icon: VenetianMask,
-    titleId: "settings.incognito",
     groupId: "agentCapabilities",
   },
   {
@@ -161,41 +128,32 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "browser",
     icon: Globe2,
     titleId: "settings.browser.title",
-    groupId: "agentCapabilities",
+    groupId: "basics",
   },
-  // Computer Use follows Browser: both are local-control entry points for the Agent
-  // ("control the browser / control the whole computer"), so they sit together after Hooks.
+  // 原型导航顺序：浏览器之后才是远程设备；电脑控制继续紧随其后并受灰度门禁。
+  {
+    id: "remoteDevices",
+    icon: HardDrive,
+    titleId: "settings.remoteDevicesTitle",
+    contentTitleId: "settings.remoteDevicesTitle",
+    groupId: "basics",
+  },
+  // 电脑控制紧跟「浏览器」：两者都是给 Agent 用的本机操控入口，
+  // 放在基础设置里让用户在同一处理解「控制浏览器 / 控制整台电脑」的关系。
   {
     id: "computerUse",
     icon: Monitor,
     titleId: "settings.computerUse.title",
-    groupId: "agentCapabilities",
+    groupId: "basics",
   },
-  // Keyboard Shortcuts is an app-level preference and starts the tail of Basic Settings.
+  // 键盘快捷键紧跟「电脑控制」：同属本机操控/效率配置，收纳在基础设置尾部。
   {
     id: "shortcuts",
     icon: Keyboard,
     titleId: "settings.shortcuts.title",
     groupId: "basics",
   },
-  // Voice input follows shortcuts: the recording shortcut can be changed in the Shortcuts section, while models, microphone, and recording mode are managed here.
-  {
-    id: "voiceDictation",
-    icon: Mic,
-    titleId: "settings.voiceDictation.title",
-    groupId: "basics",
-  },
-  // Worktree defaults configure the “New task in worktree” flow (location, branch prefix,
-  // per-project overrides); they are an app-level preference, so they live in Basics.
-  // Desktop-only, mirroring the flow's supportsWorktreeTasks boundary; filtered for Web in
-  // createSettingsPageConfig.
-  {
-    id: "worktrees",
-    icon: GitBranchPlus,
-    titleId: "settings.worktrees.title",
-    groupId: "basics",
-  },
-  // Workspace search scope (.zcodeignore) is a basic workspace-behavior setting for all users, placed at the end of Basic Settings.
+  // 工作区搜索范围（.zcodeignore）：面向所有用户的基础工作区行为配置，收在基础设置末尾。
   {
     id: "workspaceFileSearch",
     icon: FileSearch,
@@ -208,24 +166,24 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     titleId: "settings.usageTitle",
     groupId: "dataAndStats",
   },
-  // Manage sessions lives next to Usage: both are cross-workspace "data and statistics"
-  // management surfaces. The title reuses the sessionManager.* namespace the table already localizes.
   {
-    id: "sessions",
-    icon: History,
-    titleId: "sessionManager.title",
+    id: "archives",
+    icon: Archive,
+    titleId: "archives.nav",
     groupId: "dataAndStats",
   },
+  // 暂时隐藏设置页里的 Migration 入口，只保留页面实现，后续可以直接恢复这一项。
+  // {
+  //   id: "migration",
+  //   icon: ArrowLeftRight,
+  //   titleId: "settings.migration.title",
+  // },
 ];
 
-// Compatibility for existing readonly consumers: the default config represents a Web view without Desktop platform capabilities;
-// macOS/Windows/Linux must continue to add Computer Use dynamically through createSettingsPageConfig.
-// Worktrees follows the same Desktop-only boundary as the “New task in worktree” flow (supportsWorktreeTasks).
+// 兼容既有只读消费者：默认配置代表不带桌面平台能力的 Web 视图；
+// macOS/Windows/Linux 必须继续通过 createSettingsPageConfig 动态加入 Computer Use。
 export const SETTINGS_SECTIONS = BASE_SETTINGS_SECTIONS.filter(
-  (section) =>
-    section.id !== "computerUse" &&
-    section.id !== "worktrees" &&
-    isSettingsSectionEnabled(section.id),
+  (section) => section.id !== "computerUse" && isSettingsSectionEnabled(section.id),
 );
 
 export interface SettingsPageConfigOptions {
@@ -240,10 +198,8 @@ export function createSettingsPageConfig({
   isWindowsDesktop = false,
 }: SettingsPageConfigOptions = {}) {
   const showComputerUse = isDesktop || isMacDesktop || isWindowsDesktop;
-  const showWorktrees = isDesktop || isMacDesktop || isWindowsDesktop;
   const settingsSections = BASE_SETTINGS_SECTIONS.filter((section) => {
     if (section.id === "computerUse" && !showComputerUse) return false;
-    if (section.id === "worktrees" && !showWorktrees) return false;
     return isSettingsSectionEnabled(section.id);
   });
   const settingsSectionGroups = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({
@@ -266,4 +222,16 @@ export function resolveSettingsSectionForPlatform(
   return visibleSections[0]?.id ?? "general";
 }
 
+export const SETTINGS_SECTION_GROUPS = BASE_SETTINGS_SECTION_GROUPS.map((group) => ({
+  ...group,
+  sections: SETTINGS_SECTIONS.filter((section) => section.groupId === group.id),
+})).filter((group) => group.sections.length > 0);
+
 export type { SettingsSectionId };
+
+export function isSettingsSectionAvailable(
+  section: SettingsSectionId,
+  isDesktop: boolean,
+): boolean {
+  return isDesktop || section !== "remoteDevices";
+}

@@ -13,7 +13,7 @@ describe("MessageResponse share-safe links", () => {
         null,
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(
             MessageResponse,
             { onOpenExternalUrl: vi.fn() },

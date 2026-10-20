@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The installed Plugin list and details dialog share component groups and Hook-detail rendering; maintaining them together helps match the reference design. */
+/* eslint-disable max-lines -- 已安装插件列表与详情弹窗共享组件分组/Hook 明细渲染，集中维护更利于与参考图保持一致。 */
 import type { ReactNode } from "react";
 import { AlertTriangle, Cable, ChevronRight, Trash2 } from "lucide-react";
 import type {
@@ -33,14 +33,14 @@ export function InstalledPluginDetailDialog({
   onRequestUpdate,
   onSavePluginOptions,
   open,
-  operationId,
+  activeOperations,
   plugin,
   renderPluginSource,
   setPluginOptionDraft,
   uninstallable,
   updateStatus,
 }: {
-  /** List/overview diagnostics aggregated by the plugin-management store; passed to the panel to show warnings for the current plugin. */
+  /** 插件管理 store 聚合的 list/overview 诊断；透传给面板展示当前插件自身的 warning。 */
   diagnostics?: ZCodePluginDiagnostic[];
   getPluginOptionValue: PluginOptionValueGetter;
   configScope: ZCodePluginScope;
@@ -51,7 +51,7 @@ export function InstalledPluginDetailDialog({
   onRequestUpdate?: (pluginId: string) => void;
   onSavePluginOptions: (plugin: ZCodePluginInfo) => void;
   open: boolean;
-  operationId: string | null;
+  activeOperations: ReadonlyArray<{ id: string }>;
   plugin: ZCodePluginInfo | null;
   renderPluginSource: (plugin: ZCodePluginInfo) => string;
   setPluginOptionDraft: (pluginId: string, key: string, value: string | number | boolean) => void;
@@ -72,7 +72,7 @@ export function InstalledPluginDetailDialog({
           configScope={configScope}
           installedAt={installedAt}
           latestVersion={latestVersion}
-          operationId={operationId}
+          activeOperations={activeOperations}
           plugin={plugin}
           renderPluginSource={renderPluginSource}
           setPluginOptionDraft={setPluginOptionDraft}
@@ -96,14 +96,14 @@ export function InstalledPluginDetailPanel({
   onRequestUninstall,
   onRequestUpdate,
   onSavePluginOptions,
-  operationId,
+  activeOperations,
   plugin,
   renderPluginSource,
   setPluginOptionDraft,
   uninstallable,
   updateStatus,
 }: {
-  /** List/overview diagnostics aggregated by the plugin-management store; the panel shows warnings for the current plugin only. */
+  /** 插件管理 store 聚合的 list/overview 诊断；面板只展示当前插件自身的 warning。 */
   diagnostics?: ZCodePluginDiagnostic[];
   getPluginOptionValue: PluginOptionValueGetter;
   configScope: ZCodePluginScope;
@@ -112,7 +112,7 @@ export function InstalledPluginDetailPanel({
   onRequestUninstall?: (pluginId: string) => void;
   onRequestUpdate?: (pluginId: string) => void;
   onSavePluginOptions: (plugin: ZCodePluginInfo) => void;
-  operationId: string | null;
+  activeOperations: ReadonlyArray<{ id: string }>;
   plugin: ZCodePluginInfo | null;
   renderPluginSource: (plugin: ZCodePluginInfo) => string;
   setPluginOptionDraft: (pluginId: string, key: string, value: string | number | boolean) => void;
@@ -130,9 +130,9 @@ export function InstalledPluginDetailPanel({
 
   const componentGroups = buildInstalledPluginDisplayGroups(plugin);
   const hookDetails = plugin.hookDetails ?? [];
-  // Bugfix (silent failure): plugin warnings (such as an empty scan of declared skill paths) had
-  // no UI location. Users saw “Installed successfully, enabled, 0 skills” with no way to diagnose
-  // it. List the plugin's own warnings directly in its details panel; display the CLI message as-is, including paths.
+  // Bugfix（静默失败）：插件 warning 诊断（如声明的技能路径扫描为空）此前在 UI 无任何
+  // 渲染位置，用户看到「安装成功、启用生效、技能数 0」却无从排查。这里在详情面板
+  // 直接列出该插件自身的 warning；正文直出 CLI 下发的 message（含具体路径）。
   const pluginWarnings = diagnostics.filter(
     (diagnostic) => diagnostic.pluginId === plugin.id && diagnostic.severity === "warning",
   );
@@ -184,9 +184,8 @@ export function InstalledPluginDetailPanel({
           {componentGroups.length > 0 ? (
             <PluginComponentGroups groups={componentGroups} />
           ) : (
-            // components are authoritatively enumerated by the CLI from the plugin root, independent
-            // of enabled state, so disabled plugins can still show their actual components. Reaching
-            // this branch means the plugin declares no components; show an accurate empty state.
+            // components 由 CLI 对插件根目录权威枚举得出（与启用态无关），停用插件也能展示真实组件。
+            // 走到这里说明该插件确实未声明任何组件，给出诚实空态即可。
             <p className="text-ui-base text-foreground-subtle">
               {intl.formatMessage({
                 id: "settings.plugins.detail.componentsEmpty",
@@ -232,7 +231,7 @@ export function InstalledPluginDetailPanel({
                 getValue={getPluginOptionValue}
                 onSave={onSavePluginOptions}
                 onSetDraft={setPluginOptionDraft}
-                operationId={operationId}
+                activeOperations={activeOperations}
                 plugin={plugin}
                 scope={configScope}
               />
@@ -264,7 +263,9 @@ export function InstalledPluginDetailPanel({
                 type="button"
                 variant="outline"
                 size="sm"
-                disabled={operationId === `plugin:update:${plugin.id}`}
+                disabled={activeOperations.some(
+                  (operation) => operation.id === `plugin:update:${plugin.id}`,
+                )}
                 onClick={() => onRequestUpdate(plugin.id)}
               >
                 {intl.formatMessage({ id: "settings.plugins.detail.update" })}
@@ -280,7 +281,9 @@ export function InstalledPluginDetailPanel({
               variant="ghost"
               size="sm"
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              disabled={operationId === `plugin:uninstall:${plugin.id}`}
+              disabled={activeOperations.some(
+                (operation) => operation.id === `plugin:uninstall:${plugin.id}`,
+              )}
               onClick={() => onRequestUninstall(plugin.id)}
             >
               <Trash2 className="size-3.5" aria-hidden="true" />
@@ -303,9 +306,9 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
 }
 
 /**
- * Plugin warning diagnostics list. If the CLI only writes diagnostics for issues such as an empty scan of declared skill paths,
- * the UI has nowhere to render them and users cannot investigate. The message comes from the CLI and includes the specific path
- * (the protocol wire has no path field), so render the message directly.
+ * 插件 warning 诊断列表。CLI 对「声明的技能路径扫描为空」等异常
+ * 只写 diagnostics 的话 UI 无渲染位置，用户无从排查。message 由 CLI 下发并包含
+ * 具体路径（协议 wire 不携带 path 字段），因此正文直出 message 即可。
  */
 export function PluginWarningList({ warnings }: { warnings: ZCodePluginDiagnostic[] }) {
   return (

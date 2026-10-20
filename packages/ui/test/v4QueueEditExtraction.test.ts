@@ -108,72 +108,6 @@ describe("v4 queue edit extraction", () => {
     expect(inputApi.setText).not.toHaveBeenCalled();
   });
 
-  it("插件 Skills 与独立 Skills 的 New 入口从共享草稿恢复 skill node", () => {
-    const mention = {
-      id: "skill:skill-creator",
-      category: "skills" as const,
-      label: "skill-creator",
-      value: "skill-creator",
-      markdown: "[$skill-creator](./.agents/skills/skill-creator/SKILL.md)",
-      data: {
-        path: ".agents/skills/skill-creator/SKILL.md",
-        scope: "workspace" as const,
-      },
-    };
-    const inputApi = {
-      getMarkdown: vi.fn(() => "unused"),
-      setEditorStateJson: vi.fn(),
-      setMention: vi.fn(),
-      setText: vi.fn(),
-    };
-    const text = `${mention.markdown} `;
-
-    expect(
-      restorePersistedComposerDraftIntoInput({
-        draft: { text, mention },
-        inputApi,
-      }),
-    ).toBe(text);
-    expect(inputApi.setMention).toHaveBeenCalledWith(mention, " ");
-    expect(inputApi.setText).not.toHaveBeenCalled();
-  });
-
-  it("新建技能把 canonical 前缀恢复为结构化 Skill mention 并保留尾空格", () => {
-    const mention = {
-      id: "skill:skill-creator",
-      category: "skills" as const,
-      label: "skill-creator",
-      value: "skill-creator",
-      markdown: "[$skill-creator](./.agents/skills/skill-creator/SKILL.md)",
-      data: {
-        path: ".agents/skills/skill-creator/SKILL.md",
-        scope: "workspace" as const,
-      },
-    };
-    const inputApi = {
-      setMention: vi.fn(),
-      setText: vi.fn(),
-    };
-    const updateText = vi.fn();
-    const requestFocus = vi.fn();
-    const scheduleDraftPersist = vi.fn();
-    const text = `${mention.markdown} `;
-
-    expect(
-      applyExternalTextInsertRequestToComposer({
-        appliedRequestId: null,
-        inputApi,
-        request: { requestId: 6, text, mention },
-        requestFocus,
-        scheduleDraftPersist,
-        updateText,
-      }),
-    ).toBe(6);
-    expect(inputApi.setMention).toHaveBeenCalledWith(mention, " ");
-    expect(inputApi.setText).not.toHaveBeenCalled();
-    expect(updateText).toHaveBeenCalledWith(text);
-  });
-
   it("商店试用把 canonical 前缀恢复为结构化 Plugin mention", () => {
     const mention = {
       id: "plugin:demo@mkt",
@@ -312,6 +246,41 @@ describe("v4 queue edit extraction", () => {
     });
   });
 
+  it("旧 Highspeed 队列项撤回编辑时不得把临时 Provider 恢复到 Composer", () => {
+    const snapshot = makeSnapshot();
+    Object.assign(snapshot.queue.items[0]!, {
+      highspeed: {
+        schemaVersion: 1,
+        cardId: "card-1",
+        taskId: "session-1",
+        provider: "bigmodel",
+        model: "GLM-5.3",
+        issuedAt: 1,
+        expiresAt: Date.now() + 60_000,
+      },
+      mode: "yolo",
+      modelSelection: {
+        providerId: "account:bigmodel-highspeed-card",
+        modelId: "GLM-5.3",
+      },
+    });
+
+    expect(resolveQueuedComposerRestore(snapshot, "q-1")?.config).toEqual({ mode: "yolo" });
+  });
+
+  it("旧队列项只带临时 Provider、不带卡元数据时，撤回编辑同样不得恢复该 Provider", () => {
+    const snapshot = makeSnapshot();
+    Object.assign(snapshot.queue.items[0]!, {
+      mode: "yolo",
+      modelSelection: {
+        providerId: "account:bigmodel-highspeed-card",
+        modelId: "GLM-5.3",
+      },
+    });
+
+    expect(resolveQueuedComposerRestore(snapshot, "q-1")?.config).toEqual({ mode: "yolo" });
+  });
+
   it("提取完整输入并保持附件顺序，供权威删除后恢复 composer", () => {
     expect(resolveQueuedComposerRestore(makeSnapshot(), "q-1")).toEqual({
       baseRevision: 7,
@@ -446,89 +415,5 @@ describe("v4 queue edit extraction", () => {
     ).toBeNull();
     expect(inputApi.setText).toHaveBeenCalledTimes(1);
     expect(restoreDraftConfig).toHaveBeenCalledExactlyOnceWith(request.config);
-  });
-
-  it("prepend-text 在草稿为空时直接写入任务文本", () => {
-    const inputApi = {
-      getMarkdown: vi.fn(() => "  \n"),
-      setText: vi.fn(),
-      setTextWithPluginMentions: vi.fn(),
-    };
-    const updateText = vi.fn();
-
-    expect(
-      applyExternalTextInsertRequestToComposer({
-        appliedRequestId: null,
-        inputApi,
-        request: { requestId: 11, text: "Task plan", mode: "prepend-text" },
-        requestFocus: vi.fn(),
-        scheduleDraftPersist: vi.fn(),
-        updateText,
-      }),
-    ).toBe(11);
-    expect(inputApi.setText).toHaveBeenCalledWith("Task plan");
-    expect(updateText).toHaveBeenCalledWith("Task plan");
-  });
-
-  it("prepend-text 保留用户未发送的草稿，把任务文本放在前面并空一行", () => {
-    const inputApi = {
-      getMarkdown: vi.fn(() => "my unsent notes"),
-      setText: vi.fn(),
-      setTextWithPluginMentions: vi.fn(),
-    };
-    const updateText = vi.fn();
-
-    applyExternalTextInsertRequestToComposer({
-      appliedRequestId: null,
-      inputApi,
-      request: { requestId: 12, text: "Task plan", mode: "prepend-text" },
-      requestFocus: vi.fn(),
-      scheduleDraftPersist: vi.fn(),
-      updateText,
-    });
-
-    expect(inputApi.setText).toHaveBeenCalledWith("Task plan\n\nmy unsent notes");
-    expect(updateText).toHaveBeenCalledWith("Task plan\n\nmy unsent notes");
-  });
-
-  it("prepend-text 草稿含 plugin mention 时走 mention 还原路径", () => {
-    const existing = "[@Demo](plugin://demo@mkt) keep me";
-    const inputApi = {
-      getMarkdown: vi.fn(() => existing),
-      setText: vi.fn(),
-      setTextWithPluginMentions: vi.fn(),
-    };
-
-    applyExternalTextInsertRequestToComposer({
-      appliedRequestId: null,
-      inputApi,
-      request: { requestId: 13, text: "Task plan", mode: "prepend-text" },
-      requestFocus: vi.fn(),
-      scheduleDraftPersist: vi.fn(),
-      updateText: vi.fn(),
-    });
-
-    expect(inputApi.setTextWithPluginMentions).toHaveBeenCalledWith(`Task plan\n\n${existing}`);
-    expect(inputApi.setText).not.toHaveBeenCalled();
-  });
-
-  it("prepend-text 对同一 requestId 只应用一次", () => {
-    const inputApi = {
-      getMarkdown: vi.fn(() => ""),
-      setText: vi.fn(),
-      setTextWithPluginMentions: vi.fn(),
-    };
-
-    expect(
-      applyExternalTextInsertRequestToComposer({
-        appliedRequestId: 14,
-        inputApi,
-        request: { requestId: 14, text: "Task plan", mode: "prepend-text" },
-        requestFocus: vi.fn(),
-        scheduleDraftPersist: vi.fn(),
-        updateText: vi.fn(),
-      }),
-    ).toBe(14);
-    expect(inputApi.setText).not.toHaveBeenCalled();
   });
 });

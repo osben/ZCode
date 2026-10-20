@@ -21,8 +21,13 @@ const TEST_CODE_PREVIEW_SETTINGS = {
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
-        id === "diff.preview.truncatedLines" ? `omitted ${values?.count ?? ""}` : id,
+      formatMessage: (
+        { id }: { id: string },
+        values?: Record<string, string>,
+      ) =>
+        id === "diff.preview.truncatedLines"
+          ? `omitted ${values?.count ?? ""}`
+          : id,
     },
   }),
 }));
@@ -41,9 +46,12 @@ describe("EditInlineDiffContent", () => {
       code: " return next;",
       marker: " ",
     });
-    expect(buildInlineDiffHighlightCode(["+  const next = 1;", "-  const prev = 0;"])).toBe(
-      "  const next = 1;\n  const prev = 0;",
-    );
+    expect(
+      buildInlineDiffHighlightCode([
+        "+  const next = 1;",
+        "-  const prev = 0;",
+      ]),
+    ).toBe("  const next = 1;\n  const prev = 0;");
   });
 
   it("renders lightweight hunk code without diff protocol markers", () => {
@@ -64,7 +72,7 @@ describe("EditInlineDiffContent", () => {
     const html = renderToStaticMarkup(
       createElement(EditInlineDiffContent, {
         preview,
-        theme: "dark",
+        theme: "zai-dark",
         codePreviewSettings: TEST_CODE_PREVIEW_SETTINGS,
       }),
     );

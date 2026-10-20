@@ -5,6 +5,15 @@ import { formatFeedbackStatusLabel, STATUS_META } from "@/feedback/feedbackMeta.
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
+export function RequiredMarker() {
+  // 两个反馈弹窗曾各自维护星号，导致读屏语义分叉；统一隐藏装饰符号，必填由输入框声明。
+  return (
+    <span aria-hidden="true" className="mr-1 text-destructive">
+      *
+    </span>
+  );
+}
+
 export function StatusIndicator({
   status,
   withDot = true,
@@ -35,10 +44,10 @@ export function StatusIndicator({
 export function FeedbackErrorTip({ message }: { message: string }) {
   return (
     <div
-      className="flex items-start gap-2 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-ui-base text-destructive"
+      className="flex items-start gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2 text-ui-base text-red-300"
       role="alert"
     >
-      <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+      <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-red-400" />
       <span className="break-words leading-relaxed">{message}</span>
     </div>
   );

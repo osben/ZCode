@@ -1,4 +1,4 @@
-/* The mask retains only a 1px outline so the rotating light field does not affect the brand icon itself. */
+/* 掩膜只保留 1px 描边，旋转光场不影响品牌图标本体。 */
 .onboarding-logo-sweep {
   position: absolute;
   inset: 0;

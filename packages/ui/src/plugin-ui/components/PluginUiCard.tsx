@@ -1,5 +1,5 @@
 import { cn } from "@/components/lib/utils.js";
-import { TID_PLUGIN_UI_CARD } from "@zcode/shared";
+import { TID_PLUGIN_UI_CARD } from "@zcode/shared/test-ids";
 import type { PluginSandboxHandle } from "@zcode/shared/mcp-apps";
 import { useLayoutEffect, useRef } from "react";
 import { bindPluginUiPage } from "../adapters/pluginUiPageRegistry.js";
@@ -12,23 +12,26 @@ export interface PluginUiCardProps {
   height: number;
   prefersBorder: boolean;
   error: string | null;
-  /** Side pane mode fills the container; inline mode is fixed by height. */
+  /** 侧栏模式撑满容器；内联模式按 height 固定。 */
   fill?: boolean;
+  visible?: boolean;
   loadingLabel: string;
   errorLabel: string;
-  /** Error-state "reload"; no button shown when absent. */
+  /** 错误态的"重新加载"；缺省不显示按钮。 */
   retryLabel?: string;
   onRetry?: () => void;
   onWidthChange?: (width: number) => void;
 }
 
-/** The card only registers a layout anchor; the live webview is held by the window page manager. */
+/** 卡片只注册布局锚点；活 webview 由窗口页面管理器持有。 */
 export function PluginUiCard(props: PluginUiCardProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const node = containerRef.current;
-    if (node) return bindPluginUiPage(props.pageKey, node, props.fill === true);
-  }, [props.pageKey, props.fill]);
+    // 侧栏收起仍保留锚点，独立浮层不会继承其裁剪与透明度；同步解绑使页面隐藏，实例继续保活。
+    if (node && props.visible !== false)
+      return bindPluginUiPage(props.pageKey, node, props.fill === true);
+  }, [props.pageKey, props.fill, props.visible]);
 
   useLayoutEffect(() => {
     const node = containerRef.current;

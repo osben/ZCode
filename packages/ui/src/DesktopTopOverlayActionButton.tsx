@@ -34,15 +34,15 @@ export function DesktopTopOverlayActionButton({
         type="button"
         variant="ghost"
         size="icon-md"
-        // The base Button defaults to transition-all, which also animates title-bar button size and position changes while the window is resizing,
-        // making buttons appear to reset before following the window during continuous resizing on Windows; overlay buttons need only a hover-color transition.
+        // 基础 Button 默认 transition-all，缩放窗口时会把标题栏按钮的尺寸/位置变化也动画化，
+        // Windows 连续缩放下会像按钮先复位再跟随；这里的浮层按钮只需要 hover 色彩过渡。
         className={cn("[app-region:no-drag] transition-colors", buttonClassName)}
         data-testid={testId}
         aria-label={ariaLabel}
         disabled={disabled}
-        // The top overlay’s new-task entry reuses a business function with an optional provider parameter.
-        // Passing it directly to React onClick would pass MouseEvent as the provider and throw when the logging IPC tries to clone it.
-        // Discard the DOM event here and call the no-argument action expected by the component.
+        // 顶部浮层的新建任务入口会复用带可选 provider 参数的业务函数。
+        // 如果直接交给 React onClick，MouseEvent 会被当成 provider 传下去，并在日志 IPC 克隆时抛错。
+        // 这里统一丢弃 DOM 事件，只调用组件约定的无参动作。
         onClick={() => onClick()}
         onMouseEnter={onMouseEnter}
       >

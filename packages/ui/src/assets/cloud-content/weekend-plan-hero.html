@@ -228,7 +228,7 @@
         transform: translateZ(0.5px);
       }
 
-      /* Front and back must share the ticket notch; after flipping it must not revert to a full rectangular back panel. */
+      /* 正反面必须共用票券缺口，翻转后不能退回完整矩形背板。 */
       .ticket-face,
       .ticket-back,
       .ticket-entrance-back {
@@ -428,7 +428,7 @@
       }
 
       .ticket-flip.is-entering .ticket-back {
-        /* Hidden only during the entrance keyframes; hiding it permanently would make the later Y-axis flip lose the back panel. */
+        /* 只在入场关键帧隐藏；永久隐藏会让后续 Y 轴翻转丢失背板。 */
         animation: ticket-native-back-visibility 900ms steps(1, end);
       }
 
@@ -694,7 +694,7 @@
             if (typeof value !== "string") return;
             const row = document.createElement("div");
             row.className = "benefit";
-            // A character placeholder is not the same as a benefit icon; clone only the bundled fixed SVG, never parse remote HTML.
+            // 原字符占位不等同于权益图标；只克隆包内固定 SVG，不解析远端 HTML。
             const icon = document
               .getElementById("benefit-icon-template")
               .content.firstElementChild.cloneNode(true);
@@ -838,7 +838,7 @@
         ticket.addEventListener("click", (event) => {
           if (reducedMotion || typeof ticketFlip.animate !== "function") return;
           ticketFlip.getAnimations().forEach((animation) => animation.cancel());
-          // An entrance interrupted by a click never fires animationend, so the native back face must be restored here too.
+          // 入场被点击打断不会触发 animationend，也必须恢复原生背面。
           ticketFlip.classList.remove("is-entering");
           const bounds = ticket.getBoundingClientRect();
           const direction = event.clientX < bounds.left + bounds.width / 2 ? -1 : 1;

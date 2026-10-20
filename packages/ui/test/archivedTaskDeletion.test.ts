@@ -6,76 +6,53 @@ import {
   type ArchivedTaskDeletionWorkspace,
 } from "@/lib/archivedTaskDeletion.js";
 
-function workspace(path = "/repo", count = 25, identity?: string): ArchivedTaskDeletionWorkspace {
+function workspace(identity?: string, count = 25): ArchivedTaskDeletionWorkspace {
   return {
-    workspacePath: path,
+    workspacePath: "/repo",
     workspaceIdentity: identity,
-    label: identity ?? path,
-    gitService: { getChanges: vi.fn(async () => []) },
+    label: identity ?? "local",
     service: {
-      getDeletionCapability: vi.fn(async () => ({ supported: !identity })),
       listArchivedTasks: vi.fn(async () =>
-        Array.from({ length: count }, (_, i) => ({
-          taskId: `task-${i}`,
-          title: `Task ${i}`,
-          workspacePath: path,
+        Array.from({ length: count }, (_, index) => ({
+          taskId: `task-${index}`,
+          workspacePath: "/repo",
+          workspaceIdentity: identity,
         })),
       ) as unknown as IZCodeTaskService["listArchivedTasks"],
-      countTaskTrees: vi.fn(async ({ taskIds }) => ({
-        total: taskIds.length,
-        sideChats: 0,
-        subagents: 0,
-        workflowSessions: 0,
-        workflowRuns: 0,
-        running: 0,
-      })),
-      deleteArchivedTasks: vi.fn(async ({ taskIds }) => ({
+      deleteArchivedTasks: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
         deletedTaskIds: taskIds,
         skippedTaskIds: [],
         failedTaskIds: [],
-      })),
-      eraseTasks: vi.fn(async ({ taskIds }) => ({
-        erasedTaskIds: taskIds,
-        skippedTaskIds: [],
-        blockedRunningTaskIds: [],
-        failedTaskIds: [],
-        fileFailureCount: 0,
-        filesRetainedCount: 0,
-        worktreeCleanup: {
-          removed: [],
-          retained: [],
-          failed: [],
-          removedCount: 0,
-          retainedCount: 0,
-          failedCount: 0,
-        },
       })),
     },
   };
 }
 
-describe("archived permanent deletion", () => {
-  it("collects complete local sets without mutations, deduplicating workspaces", async () => {
+describe("归档任务批量删除", () => {
+  it("完整收集跨 workspace 目标，重复 workspace 去重，超过 20 条也不截断；收集不写入", async () => {
     const local = workspace();
-    const other = workspace("/other", 2);
-    const selection = await collectArchivedTaskDeletion([local, local, other]);
+    const remote = workspace("remote:ssh:host:/repo", 2);
+    const selection = await collectArchivedTaskDeletion([local, local, remote]);
     expect(selection.count).toBe(27);
     expect(local.service!.listArchivedTasks).toHaveBeenCalledTimes(1);
     expect(local.service!.deleteArchivedTasks).not.toHaveBeenCalled();
-    expect(local.service!.eraseTasks).not.toHaveBeenCalled();
+    expect(remote.service!.listArchivedTasks).toHaveBeenCalledWith({
+      workspacePath: "/repo",
+      workspaceIdentity: remote.workspaceIdentity,
+    });
   });
 
-  it("excludes unsupported remote and unavailable workspaces", async () => {
-    const remote = workspace("/repo", 2, "remote:ssh:host:/repo");
-    const offline = { ...workspace("/offline"), service: undefined };
-    const selection = await collectArchivedTaskDeletion([workspace(), remote, offline]);
+  it("不连接不可访问项目，单 source 查询失败不阻断其它 source", async () => {
+    const failed = workspace("remote:ssh:failed:/repo");
+    vi.mocked(failed.service!.listArchivedTasks).mockRejectedValue(new Error("offline"));
+    const offline = { ...workspace("remote:ssh:offline:/repo"), service: undefined };
+    const selection = await collectArchivedTaskDeletion([workspace(), failed, offline]);
     expect(selection.count).toBe(25);
-    expect(selection.unavailableWorkspaces).toEqual([remote.label, offline.label]);
-    expect(remote.service!.deleteArchivedTasks).not.toHaveBeenCalled();
+    expect(selection.unavailableWorkspaces).toEqual([failed.label, offline.label]);
   });
 
-  it("erases only successfully tombstoned IDs, preserving restored/skipped and failed rows", async () => {
-    const local = workspace("/repo", 4);
+  it("只提交确认时的集合；跳过项和失败项不移除，后续项继续处理", async () => {
+    const local = workspace(undefined, 4);
     const selection = await collectArchivedTaskDeletion([local]);
     vi.mocked(local.service!.listArchivedTasks).mockResolvedValue([]);
     vi.mocked(local.service!.deleteArchivedTasks).mockResolvedValueOnce({
@@ -85,51 +62,42 @@ describe("archived permanent deletion", () => {
     });
     const onDeleted = vi.fn();
     const result = await deleteArchivedTaskSelection(selection, onDeleted);
-    expect(result).toMatchObject({ tombstoned: 2, erased: 2, skipped: 1, failed: 1 });
+    expect(result).toMatchObject({ deleted: 2, skipped: 1, failed: 1 });
     expect(onDeleted.mock.calls.map(([target]) => target.taskId)).toEqual(["task-0", "task-3"]);
-    expect(local.service!.eraseTasks).toHaveBeenCalledWith({
-      workspacePath: "/repo",
-      taskIds: ["task-0", "task-3"],
-    });
     expect(local.service!.listArchivedTasks).toHaveBeenCalledTimes(1);
+    expect(local.service!.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+      workspacePath: "/repo",
+      workspaceIdentity: undefined,
+      taskIds: ["task-0", "task-1", "task-2", "task-3"],
+    });
   });
 
-  it("batches per workspace and isolates a failed workspace", async () => {
-    const local = workspace("/repo", 72);
-    const failed = workspace("/other", 8);
-    vi.mocked(failed.service!.deleteArchivedTasks).mockRejectedValueOnce(new Error("offline"));
-    const selection = await collectArchivedTaskDeletion([local, failed]);
-    expect(await deleteArchivedTaskSelection(selection, vi.fn())).toMatchObject({
-      erased: 72,
+  it("每个 workspace 只提交一次批次；一个 source 失败不阻断同路径其它 identity", async () => {
+    const local = workspace(undefined, 72);
+    const remote = workspace("remote:ssh:host:/repo", 8);
+    vi.mocked(remote.service!.deleteArchivedTasks).mockRejectedValueOnce(new Error("offline"));
+    const selection = await collectArchivedTaskDeletion([local, remote]);
+    const onDeleted = vi.fn();
+    expect(await deleteArchivedTaskSelection(selection, onDeleted)).toMatchObject({
+      deleted: 72,
+      skipped: 0,
       failed: 8,
     });
+    expect(onDeleted).toHaveBeenCalledTimes(72);
     expect(local.service!.deleteArchivedTasks).toHaveBeenCalledTimes(1);
-    expect(failed.service!.eraseTasks).not.toHaveBeenCalled();
+    expect(remote.service!.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+      workspacePath: "/repo",
+      workspaceIdentity: remote.workspaceIdentity,
+      taskIds: Array.from({ length: 8 }, (_, i) => `task-${i}`),
+    });
   });
 
-  it("blocks running trees before tombstoning", async () => {
-    const local = workspace();
-    const selection = await collectArchivedTaskDeletion([local]);
-    vi.mocked(local.service!.countTaskTrees!).mockResolvedValueOnce({
-      total: 25,
-      sideChats: 0,
-      subagents: 0,
-      workflowSessions: 0,
-      workflowRuns: 0,
-      running: 1,
-    });
-    expect(await deleteArchivedTaskSelection(selection, vi.fn())).toMatchObject({
-      running: 25,
-      tombstoned: 0,
-    });
-    expect(local.service!.deleteArchivedTasks).not.toHaveBeenCalled();
-  });
-
-  it("makes no mutation for an empty selection", async () => {
-    const empty = workspace("/repo", 0);
+  it("空 workspace 不发送删除请求", async () => {
+    const empty = workspace(undefined, 0);
     const selection = await collectArchivedTaskDeletion([empty]);
     expect(await deleteArchivedTaskSelection(selection, vi.fn())).toMatchObject({
-      erased: 0,
+      deleted: 0,
+      skipped: 0,
       failed: 0,
     });
     expect(empty.service!.deleteArchivedTasks).not.toHaveBeenCalled();

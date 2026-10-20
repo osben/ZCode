@@ -11,7 +11,6 @@ import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable.js";
 export function AnimatedTerminalPanel({
   services,
   workspaceAbsPath,
-  terminalCwd,
   workspaceIdentity,
   openWorkspaceKeys,
   isVisible,
@@ -24,7 +23,6 @@ export function AnimatedTerminalPanel({
 }: {
   services: IServiceAccessor;
   workspaceAbsPath: string;
-  terminalCwd: string;
   workspaceIdentity?: string;
   openWorkspaceKeys?: string[];
   isVisible: boolean;
@@ -51,8 +49,8 @@ export function AnimatedTerminalPanel({
         return;
       }
 
-      // Dragging the terminal panel produces a stream of ResizeObserver callbacks.
-      // Mark the drag window explicitly so TerminalSession resizes infrequently during dragging, then flushes the final size on release.
+      // 终端面板拖拽时会产生连续 ResizeObserver 回调。
+      // 显式标记拖拽窗口，让 TerminalSession 在拖拽中低频 resize，松手后再 flush 最终尺寸。
       setIsTerminalPanelResizing(true);
     },
     [isVisible],
@@ -60,9 +58,9 @@ export function AnimatedTerminalPanel({
 
   useEffect(() => {
     if (isVisible) {
-      // Do not create a terminal session before the terminal is first expanded, or xterm and a backend terminal process are created
-      // even if the user never opens it. Render only after the first expansion, then hide rather than unmount on collapse,
-      // preserving the session while avoiding repeated initialization.
+      // Terminal 首次展开前不应该提前创建会话，否则即使用户从未打开终端，
+      // 也会白白创建 xterm 和后端 terminal 进程。这里改成首次展开后再渲染，
+      // 后续收起只隐藏不卸载，这样既保留会话，又避免重复初始化。
       setHasRenderedTerminal(true);
     }
   }, [isVisible]);
@@ -94,7 +92,7 @@ export function AnimatedTerminalPanel({
         <ResizableHandle
           data-workspace-terminal-resize-handle="true"
           className={cn(
-            "aria-[orientation=horizontal]:h-1 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:mx-0 aria-[orientation=horizontal]:translate-y-0 aria-[orientation=horizontal]:[mask-image:none] aria-[orientation=horizontal]:[-webkit-mask-image:none] hover:bg-transparent data-[separator=hover]:bg-transparent data-[separator=active]:bg-transparent focus-visible:bg-transparent after:pointer-events-none after:absolute after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-x-[var(--workspace-panel-radius,var(--radius-xl))] after:h-0.5 hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100",
+            "aria-[orientation=horizontal]:h-1 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:mx-0 aria-[orientation=horizontal]:translate-y-0 aria-[orientation=horizontal]:[mask-image:none] aria-[orientation=horizontal]:[-webkit-mask-image:none] hover:bg-transparent data-[separator=hover]:bg-transparent data-[separator=active]:bg-transparent focus-visible:bg-transparent after:pointer-events-none after:absolute after:rounded-full after:bg-foreground-subtlest/50 platform-mac-desktop:after:bg-resize-handle platform-windows-desktop:after:bg-resize-handle platform-linux-desktop:after:bg-resize-handle after:opacity-0 after:transition-opacity after:content-[''] after:inset-x-[var(--workspace-panel-radius,var(--radius-xl))] after:h-0.5 hover:after:opacity-100 data-[separator=hover]:after:opacity-100 data-[separator=active]:after:opacity-100 focus-visible:after:opacity-100",
             isTerminalPanelResizing && "after:opacity-100",
           )}
           onPointerCancel={finishTerminalPanelResize}
@@ -110,11 +108,11 @@ export function AnimatedTerminalPanel({
         minSize="140px"
         maxSize="50%"
         collapsedSize="0px"
-        // Previously, dragging the terminal panel to minimum height collapsed it, sharing the same trigger as manual close.
-        // Allow collapse only on explicit close here, keeping the existing toggle animation while removing “collapse automatically at minimum height.”
+        // 终端面板之前拖到最小高度就会直接进入 collapsed，和手动关闭共用了同一触发条件。
+        // 这里只在显式关闭终端时允许折叠，保留原有开关动画，同时去掉“拖到最小自动收起”。
         collapsible={isDragCollapsible}
-        // Although ResizableHandle is not rendered when collapsed, the library still treats the collapsed panel's edge as a draggable hot zone.
-        // Disable the resize target for the hidden terminal panel so users cannot drag it open from the edge.
+        // 收起后虽然不渲染 ResizableHandle，库仍会把 collapsed panel 边缘当成可拖拽热区。
+        // 禁用隐藏终端面板的 resize target，避免用户从边缘把 terminal 拖出来。
         disabled={isResizeDisabled}
         className={cn(
           "transition-opacity duration-200 ease-out",
@@ -127,8 +125,8 @@ export function AnimatedTerminalPanel({
         >
           {hasRenderedTerminal ? (
             <div aria-hidden={!isVisible} className="h-full">
-              {/* Do not render the terminal before its first expansion to avoid unnecessary initialization.
-                  Keep it mounted after the first expansion; hide it when collapsed instead of unmounting so the next expansion can reuse the existing session. */}
+              {/* terminal 首次展开前不渲染，避免无意义初始化；
+                  首次展开后保持挂载，收起时只隐藏不卸载，这样下一次展开就能直接复用现有会话。 */}
               <ScopedErrorBoundary
                 scope="workspace-terminal"
                 resetKeys={[workspaceKey]}
@@ -137,8 +135,8 @@ export function AnimatedTerminalPanel({
               >
                 <Terminal
                   services={services}
-                  cwd={terminalCwd}
-                  workspaceKey={workspaceKey}
+                  cwd={workspaceAbsPath}
+                  workspaceIdentity={workspaceIdentity}
                   openWorkspaceKeys={openWorkspaceKeys}
                   isVisible={isVisible}
                   isPanelResizing={isTerminalPanelResizing}

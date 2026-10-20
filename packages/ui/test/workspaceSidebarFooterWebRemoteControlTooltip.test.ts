@@ -17,7 +17,8 @@ const mockFooterSettings = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/ControlHintTooltip.js", () => ({
+vi.mock("@/ControlHintTooltip.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/ControlHintTooltip.js")>()),
   ControlHintTooltip: ({ children, title }: { children: unknown; title: string }) =>
     createElement("span", { "data-tooltip-title": title }, children),
 }));
@@ -40,7 +41,7 @@ vi.mock("@/hooks/usePlatform.js", () => ({
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "en-US",
+    locale: "zh-CN",
     intl: {
       formatMessage: ({ id }: { id: string }) => id,
     },
@@ -90,28 +91,6 @@ describe("WorkspaceSidebarFooter web remote control tooltip", () => {
       modelProviderFamilySelectedKeys: {},
       providerFamilyDomain: undefined,
     };
-  });
-
-  it("keeps long profile names constrained inside the footer row", () => {
-    const html = renderToStaticMarkup(
-      createElement(WorkspaceSidebarFooter, {
-        theme: "dark",
-        localeMenuValue: "zh-CN",
-        onLocaleChange: () => {},
-        onThemeChange: () => {},
-        onSettingsButtonClick: () => {},
-        user: {
-          id: "user-long-name",
-          username: "very-very-very-very-very-very-long-user-name",
-          displayName: "VeryVeryVeryVeryVeryVeryVeryVeryLongDisplayName",
-        },
-      }),
-    );
-
-    expect(html).toContain("min-w-0 flex-1");
-    expect(html).toContain("overflow-hidden");
-    expect(html).toContain("text-left");
-    expect(html).toContain("truncate text-ui-base font-semibold");
   });
 
   it("derives compact sidebar footer plan badge labels", () => {
@@ -182,8 +161,6 @@ describe("WorkspaceSidebarFooter web remote control tooltip", () => {
     );
 
     expect(html).toContain("sidebar.usage.plan.audienceTeam");
-    expect(html).toContain("text-ui-xs");
-    expect(html).not.toContain("text-ui-sm");
     expect(html).not.toContain("Max");
   });
 

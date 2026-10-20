@@ -1,16 +1,14 @@
-// Pure logic for the completion card's "save / run again" (docs/dynamic-workflow/transcript-and-notifications.md,
-// "Saving the run, and running it again"): name rules, landing preview, and the message handed to ZCode.
+// 完成卡「保存 / 再次运行」的纯逻辑（docs/dynamic-workflow/transcript-and-notifications.md
+// 「Saving the run, and running it again」）：名字规则、落点预览、交给 ZCode 的那条消息。
 //
-// Same reason as globalWorkflowGroupHelpers for splitting from components: these judgments have no
-// React and should be testable on their own.
+// 与组件分文件的理由同 globalWorkflowGroupHelpers：这些判定没有 React，也该能被单独测。
 import type { ZCodeSavedWorkflowScope } from "@zcode/shared";
 
 /**
- * The name's legal shape, **character-for-character identical** to the agent side's
- * `isValidSavedWorkflowName` (@zcode/contracts). Writing it again here is not duplication but a
- * **forward echo**: the user must know after every keystroke whether the name can be a file name, and
- * the rule itself (charset + length + not `.` / `..`) is the path-traversal defense — neither side
- * may loosen it. The real verdict stays with the agent: this only makes things clear before the click.
+ * 名字的合法形状，与 agent 侧 `isValidSavedWorkflowName`（@zcode/contracts）**逐字相同**。
+ * 这里再写一遍不是重复实现而是**前置回声**：用户每敲一个字符都要知道这个名字能不能当文件名，
+ * 而那条规则本身（字符集 + 长度 + 不是 `.` / `..`）是路径穿越的防线，两侧都不能松。
+ * 真正的裁决仍在 agent：这里只负责在点下去之前就把话说清楚。
  */
 const SAVED_WORKFLOW_NAME_PATTERN = /^[A-Za-z0-9_.-]+$/u;
 export const SAVED_WORKFLOW_NAME_MAX_CHARS = 64;
@@ -22,9 +20,8 @@ export function isValidSavedWorkflowNameText(name: string): boolean {
 }
 
 /**
- * Landing preview. Project scope writes a relative path (exactly what the user sees in their own
- * repo); global scope writes a `~`-prefixed home path — the **agent machine's** home, which is why
- * remote projects are not offered the global scope at all.
+ * 落点预览。项目档写相对路径（用户在自己的仓库里看到的就是它），全局档写 `~` 开头的家目录路径
+ * ——那是 **agent 机器**的家目录，远程项目因此根本不给全局档这个选项。
  */
 export function savedWorkflowPathPreview(scope: ZCodeSavedWorkflowScope, name: string): string {
   const file = `${name}.dwf.ts`;
@@ -38,13 +35,11 @@ export interface WorkflowSaveDraft {
 }
 
 /**
- * The draft at the moment the popover opens.
+ * 弹层打开那一刻的草稿。
  *
- * The name is pre-filled only when the run name **itself** satisfies the file-name rule: a run name is
- * a label the model wrote in the user's language ("PR layered review · security / performance /
- * architecture"); stuffing it into the name field would only yield a value guaranteed to error. The
- * description, conversely, is pre-filled with the run name — it is precisely the one-sentence "what
- * this workflow does" that the hub card asks for.
+ * 名字只在 run 名**本身**就满足文件名规则时预填：run 名是模型用用户的语言起的标签
+ * （「PR 分层评审 · 安全 / 性能 / 架构」），把它塞进名字框只会得到一个必然报错的值。
+ * 说明则反过来预填 run 名——它正是「这个工作流是做什么的」的一句话，而中枢的卡片上要的就是这句。
  */
 export function initialWorkflowSaveDraft(input: {
   runName?: string;
@@ -63,15 +58,12 @@ function isZh(locale: string): boolean {
 }
 
 /**
- * The user message sent by "let ZCode distill and save it" (docs/dynamic-workflow/transcript-and-notifications.md,
- * "The message the lead sends"). Same precedent as the hub's "promote to global": the GUI writes it,
- * it is sent automatically, and the user is not asked again.
+ * 「让 ZCode 帮我提炼保存」发出去的那条用户消息（docs/dynamic-workflow/transcript-and-notifications.md
+ * 「The message the lead sends」）。与中枢的「提升为全局」同一条先例：GUI 写、自动发、用户不再确认。
  *
- * Three things must be in the message: **distill**, not copy verbatim (otherwise this path is no
- * different from "save as-is"), the fields the user already filled in, and `run_id` — the **only**
- * persistent link between this run and the definition the model saves under its own name
- * (launch.md "`SaveWorkflow`"). The script does not go into the message: the model already holds the
- * call that started this run.
+ * 三件事必须在消息里：**提炼**而不是照抄（否则这条路径与「直接保存」没有分别）、用户已经填好的
+ * 那几个字段、以及 `run_id`——它是这次 run 与模型另起名字存下的那份定义之间**仅有的**持久联系
+ * （launch.md「`SaveWorkflow`」）。脚本不进消息：模型手上就有发起这次 run 的调用。
  */
 export function buildWorkflowSaveRequestPrompt(input: {
   locale: string;

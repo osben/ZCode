@@ -1,10 +1,16 @@
+import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
+import {
+  openFileManagerSidePane,
+  navigateFileManagerSidePane,
+  type FileManagerTarget,
+} from "@/lib/workspaceSidePane.js";
 /* eslint-disable max-lines */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createUuid } from "@zcode/shared";
 import type { EmbeddedBrowserOpenUrlRequest, IPlatformService } from "@zcode/shared";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
-// Keep-alive: move side-pane terminals into a module-level registry so they survive workspace sessions.
-// Explicitly release and kill the PTY when closing a terminal tab to avoid orphan processes in the persistent registry.
+// 保活：side pane terminal 跨 workspace 会话上移到模块级 registry。
+// 关闭 terminal tab 时必须显式 release，杀掉 PTY，避免常驻 registry 造成孤儿进程。
 import { sidePaneTerminalSessionRegistry } from "@/terminal/sidePaneTerminalSessionRegistry.js";
 import {
   buildTaskSidePaneMemoryKey,
@@ -14,10 +20,11 @@ import {
   saveTaskSidePaneMemoryState,
 } from "@/lib/taskSidePaneMemory.js";
 import {
+  ensureSidePaneTab,
   closeSidePaneTab,
-  closeSidePaneTabForParent,
-  closeVisibleOtherSidePaneTabs,
-  closeVisibleSidePaneTabs,
+  closeSidePaneTabForScope,
+  closeSidePaneTabs,
+  isSidePaneTabVisibleInScope,
   closeGitSidePane,
   closeCodeViewerSidePane,
   openWhiteboardSidePane,
@@ -34,6 +41,8 @@ import {
   openWorkflowWorkspaceSidePane,
   openWorkflowArtifactSidePane,
   activateDeveloperToolsSidePane,
+  activatePluginMarketSidePane,
+  activateNewTabSidePane,
   openBrowserSidePane,
   openBrowserPermissionsSidePane,
   openOrActivateBrowserSidePaneByUrl,
@@ -74,7 +83,6 @@ import {
   type WorkspaceSidePaneState,
   type WorkspaceSidePaneTab,
 } from "@/lib/workspaceSidePane.js";
-import { isSidePaneTabVisibleForParent } from "@/lib/workspaceSidePane.js";
 import { openPluginUiSidePane } from "@/plugin-ui/index.js";
 import type { OpenPluginUiSideTabRequest } from "@/plugin-ui/contract.js";
 import { logger } from "@/logger.js";
@@ -95,8 +103,8 @@ export interface BrowserNavigationRequest {
 }
 
 function isAgentOpenedBrowserPopup(payload: EmbeddedBrowserOpenUrlRequest): boolean {
-  // Human webviews use unclaimed-iab as their owner; legacy-iab and iab:<uuid> are Agent-controlled contexts.
-  // sourceTabId also prevents ordinary external/terminal links from being mistaken for model popups.
+  // human webview 的 owner 使用 unclaimed-iab；legacy-iab 与 iab:<uuid> 都是 Agent
+  // 控制上下文。sourceTabId 还可避免把普通外链/终端链接误判为模型 popup。
   return Boolean(payload.sourceTabId && payload.browserId && payload.browserId !== "unclaimed-iab");
 }
 
@@ -133,19 +141,19 @@ function createTerminalSidePaneTitle(
 
 export function useAppPanels(options: {
   workspaceAbsPath: string;
-  terminalCwd?: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string | null;
   activeTaskId: string | null;
-  /** Stable ID shared by draft state and real tasks, used as the side-pane conversation isolation boundary. */
+  /** 草稿态与正式任务共用稳定 id，作为侧栏对话隔离边界。 */
   sidePaneOwnerId: string | null;
   isDesktop?: boolean;
   /**
-   * Presentation semantics: whether the view is currently shown to the user (false when covered by Settings).
-   * This hook deliberately does not consume it: Browser View events are authoritatively forwarded by main, so subscriptions must not depend on visibility.
-   * See the timing-constraint comment on the subscription effect below.
-   * The only reason to retain this parameter is as a regression guard: four useAppPanelsBrowserViewLifecycle tests pass false to represent
-   * "covered by Settings". If visibility is added back to the subscription condition, those tests fail. Removing the parameter would remove that guard too.
+   * 展示语义：视图当前是否呈现给用户（设置页覆盖时为 false）。
+   * 本 hook 刻意不消费它——Browser View 事件是 main 侧权威转发，订阅不能受可见性影响，
+   * 详见下方订阅 effect 的时序约束注释。
+   * 入参保留的唯一理由是回归护栏：useAppPanelsBrowserViewLifecycle 的四条用例靠传 false 表达
+   * “设置页覆盖中”，一旦有人把可见性重新写回订阅条件，这些用例会立即失败。删掉入参，
+   * 那层保护也就跟着消失了。
    */
   isWorkspaceVisible?: boolean;
   supportsEmbeddedBrowser?: boolean;
@@ -165,7 +173,6 @@ export function useAppPanels(options: {
 }) {
   const {
     workspaceAbsPath,
-    terminalCwd = workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -190,22 +197,22 @@ export function useAppPanels(options: {
   );
   const initialSidePaneMemoryState = readTaskSidePaneMemoryState(sidePaneMemoryKey);
 
-  // Fix: the terminal area used to be fixed at the bottom of <main>, mounting Terminal as soon as the page opened.
-  // It consumed space by default and immediately created a terminal session. Use an explicit toggle that defaults to closed,
-  // and render Terminal only after the user clicks, so the terminal is not opened by default.
+  // 修复说明：之前终端区域被固定写死在 <main> 底部，页面一进入就会直接挂载 Terminal，
+  // 不仅默认占用高度，还会立刻创建终端会话。这里改成显式开关，默认关闭，
+  // 只有用户主动点击后才渲染 Terminal，这样就不会出现"terminal 不用默认打开"的问题。
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
-  // Fix: the shared right panel (browser/code-viewer) should be closed by default.
-  // Otherwise, it takes space from the main conversation as soon as a workspace opens, contrary to the expectation that it expands only when requested.
+  // 修复说明：右侧共享面板（browser / code-viewer）需要默认关闭。
+  // 否则一进工作区就会先占住主会话空间，和"只在用户主动查看时再展开"的预期相反。
   const [sidePaneState, setSidePaneState] = useState<WorkspaceSidePaneState | null>(
     initialSidePaneMemoryState.sidePaneState,
   );
-  const [isSidePaneCollapsed, setIsSidePaneCollapsed] = useState(
+  const [isSidePaneCollapsed, setIsSidePaneCollapsedState] = useState(
     getSidePaneCollapsedPreference(initialSidePaneMemoryState, sidePaneOwnerId) ??
       initialSidePaneMemoryState.isSidePaneCollapsed,
   );
-  // Interaction: place the sidebar visibility button outside Sidebar, at the App level.
-  // The entry remains in the upper-left when the sidebar is hidden, so users can reopen it;
-  // this also handles the macOS traffic-light safe area to keep the button clear of system window controls.
+  // 交互说明：侧栏显隐按钮放在 App 外层，而不是 Sidebar 内部。
+  // 这样即使侧栏被隐藏，入口也仍然留在左上角，不会出现"收起后没有地方再展开"的问题；
+  // 同时这里统一处理 macOS 红绿灯安全区，避免按钮和系统窗口控件重叠。
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const [browserNavigationRequest, setBrowserNavigationRequest] =
     useState<BrowserNavigationRequest | null>(null);
@@ -228,12 +235,26 @@ export function useAppPanels(options: {
     isSidePaneCollapsed,
   };
 
+  // 折叠态参与同一批事件的后续决策，统一同步 ref，避免 React 提交前读到旧值。
+  const setIsSidePaneCollapsed = useCallback((value: boolean | ((current: boolean) => boolean)) => {
+    const next =
+      typeof value === "function"
+        ? value(latestSidePaneMemoryRef.current.isSidePaneCollapsed)
+        : value;
+    latestSidePaneMemoryRef.current.isSidePaneCollapsed = next;
+    setIsSidePaneCollapsedState(next);
+  }, []);
+
+  const currentSidePaneScope = useCallback(
+    () => ({
+      workspaceKey: activeWorkspaceKeyRef.current,
+      ownerTaskId: sidePaneOwnerIdRef.current,
+    }),
+    [],
+  );
+
   const revealSidePaneForCurrentOwner = useCallback(() => {
     setIsSidePaneCollapsed(false);
-    latestSidePaneMemoryRef.current = {
-      ...latestSidePaneMemoryRef.current,
-      isSidePaneCollapsed: false,
-    };
     saveTaskSidePaneCollapsedPreference(
       activeSidePaneMemoryKeyRef.current,
       sidePaneOwnerIdRef.current,
@@ -244,9 +265,14 @@ export function useAppPanels(options: {
   const commitSidePaneState = useCallback(
     (updater: (current: WorkspaceSidePaneState | null) => WorkspaceSidePaneState | null) => {
       const next = updater(latestSidePaneMemoryRef.current.sidePaneState);
-      // Normal sidebar interactions and BrowserView IPC may arrive next to each other in the same React batch.
-      // If only BrowserView updates synchronize the ref, a later concrete value may overwrite an uncommitted open/activate/reorder update.
-      // All sidebar write paths first update the canonical ref so interactions and lifecycle events merge strictly in receive order.
+      // 关闭末标签必须收敛到收起态；在此补建入口会让 Cmd/Ctrl+W 永远关闭不完。
+      // 仅显式展开空面板时创建 new-tab，后台关闭也不能重新展开面板。
+      if (getVisibleSidePaneTabs(next?.tabs ?? [], currentSidePaneScope()).length === 0) {
+        setIsSidePaneCollapsed(true);
+      }
+      // 普通侧栏交互和 BrowserView IPC 可在同一 React batch 内相邻到达。
+      // 若只有 BrowserView 更新同步 ref，后到的具体值会覆盖尚未提交的打开、激活或排序更新。
+      // 所有侧栏写入口统一先提交 canonical ref，保证交互与 lifecycle 严格按接收顺序合并。
       latestSidePaneMemoryRef.current = {
         ...latestSidePaneMemoryRef.current,
         sidePaneState: next,
@@ -254,20 +280,44 @@ export function useAppPanels(options: {
       setSidePaneState(next);
       return next;
     },
-    [],
+    [currentSidePaneScope],
   );
 
   const commitOpenedSidePaneState = useCallback(
     (updater: (current: WorkspaceSidePaneState | null) => WorkspaceSidePaneState | null) => {
-      commitSidePaneState((current) =>
-        stampSidePaneTabsOwnership(updater(current), {
+      commitSidePaneState((current) => {
+        const next = stampSidePaneTabsOwnership(updater(current), {
           ownerTaskId: sidePaneOwnerIdRef.current,
           workspaceKey: activeWorkspaceKeyRef.current,
           remoteSessionId: workspaceRemoteSessionId ?? null,
-        }),
-      );
+        });
+        const launcher = getActiveSidePaneTab(current);
+        const opened = getActiveSidePaneTab(next);
+        const scope = currentSidePaneScope();
+        // 新标签页被内容替换，保留原位置；后台或其他对话的打开事件不能消费当前入口。
+        // 插件市场保留返回入口，不属于在新标签页内启动的工具。
+        if (
+          !next ||
+          launcher?.type !== "new-tab" ||
+          !opened ||
+          opened.type === "new-tab" ||
+          opened.type === "plugin-market" ||
+          !isSidePaneTabVisibleInScope(launcher, scope) ||
+          !isSidePaneTabVisibleInScope(opened, scope)
+        )
+          return next;
+        const alreadyOpen = current?.tabs.some((tab) => tab.id === opened.id);
+        return {
+          ...next,
+          tabs: alreadyOpen
+            ? next.tabs.filter((tab) => tab.id !== launcher.id)
+            : next.tabs.flatMap((tab) =>
+                tab.id === launcher.id ? [opened] : tab.id === opened.id ? [] : [tab],
+              ),
+        };
+      });
     },
-    [commitSidePaneState, workspaceRemoteSessionId],
+    [commitSidePaneState, currentSidePaneScope, workspaceRemoteSessionId],
   );
 
   useEffect(() => {
@@ -276,17 +326,17 @@ export function useAppPanels(options: {
       return;
     }
 
-    // Side-pane state used to be transient state inside the workspace component and was overwritten when switching workspaces.
-    // Save the old workspace's tabs/collapsed state to memory before changing the key, then restore the new workspace to prevent state leaking between workspaces.
-    // Switching tasks within the same workspace should not affect the side pane, so the key is no longer split by task.
+    // side pane 原来是 workspace 组件内的瞬时状态，跨 workspace 切换会被新渲染覆盖。
+    // 这里在 key 变更前先把旧 workspace 的 tabs/折叠态写入内存，再恢复新 workspace，避免不同 workspace 串状态。
+    // 同一 workspace 内切换 task 不应该影响 side pane，所以 key 已经不再按 task 维度切分。
     saveTaskSidePaneMemoryState(previousKey, latestSidePaneMemoryRef.current);
     const restored = readTaskSidePaneMemoryState(sidePaneMemoryKey);
     activeSidePaneMemoryKeyRef.current = sidePaneMemoryKey;
-    commitSidePaneState(() => restored.sidePaneState);
-    setIsSidePaneCollapsed(
+    const collapsed =
       getSidePaneCollapsedPreference(restored, sidePaneOwnerIdRef.current) ??
-        restored.isSidePaneCollapsed,
-    );
+      restored.isSidePaneCollapsed;
+    setIsSidePaneCollapsed(collapsed);
+    commitSidePaneState(() => restored.sidePaneState);
   }, [commitSidePaneState, sidePaneMemoryKey]);
 
   useEffect(() => {
@@ -297,29 +347,6 @@ export function useAppPanels(options: {
       );
     };
   }, []);
-
-  const hasVisibleSidePaneTabs = useCallback(
-    (next: WorkspaceSidePaneState | null) =>
-      Boolean(
-        next &&
-        getVisibleSidePaneTabs(next.tabs, {
-          workspaceKey: activeWorkspaceKey,
-          ownerTaskId: sidePaneOwnerId,
-        }).length,
-      ),
-    [activeWorkspaceKey, sidePaneOwnerId],
-  );
-
-  const syncSidePaneCollapsedWithTabs = useCallback(
-    (next: WorkspaceSidePaneState | null) => {
-      if (!hasVisibleSidePaneTabs(next)) {
-        // Lifecycle cleanup must not expand the panel just because other visible tabs remain; that would overwrite
-        // the current owner's explicit preference to collapse it. Force-close only when no visible content remains.
-        setIsSidePaneCollapsed(true);
-      }
-    },
-    [hasVisibleSidePaneTabs],
-  );
 
   useEffect(() => {
     commitSidePaneState((current) => {
@@ -349,6 +376,62 @@ export function useAppPanels(options: {
       return resolved.sidePaneState;
     });
   }, [activeTaskId, activeWorkspaceKey, commitSidePaneState, sidePaneOwnerId]);
+
+  const pendingFileManagerTarget = useOptionalTabStore((state) => state.pendingFileManagerTarget);
+  const requestFileManager = useOptionalTabStore((state) => state.requestFileManager);
+  const consumeFileManager = useOptionalTabStore((state) => state.consumeFileManager);
+  const handleOpenFileManager = useCallback(
+    (target?: FileManagerTarget) => {
+      if (
+        target &&
+        !target.temporaryExternalDirectory &&
+        (target.workspaceIdentity?.trim() || target.workspacePath) !== activeWorkspaceKeyRef.current
+      ) {
+        requestFileManager(target);
+        return;
+      }
+      revealSidePaneForCurrentOwner();
+      commitOpenedSidePaneState((current) =>
+        openFileManagerSidePane(
+          current,
+          target ?? {
+            workspacePath: workspaceAbsPath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            ...(workspaceRemoteSessionId ? { workspaceRemoteSessionId } : {}),
+          },
+        ),
+      );
+    },
+    [
+      requestFileManager,
+      commitOpenedSidePaneState,
+      revealSidePaneForCurrentOwner,
+      workspaceAbsPath,
+      workspaceIdentity,
+      workspaceRemoteSessionId,
+    ],
+  );
+
+  useEffect(() => {
+    if (!pendingFileManagerTarget) return;
+    const targetKey =
+      pendingFileManagerTarget.workspaceIdentity?.trim() || pendingFileManagerTarget.workspacePath;
+    if (targetKey !== activeWorkspaceKey) return;
+    // 必须在本 hook 恢复目标 workspace 的 pane memory 和 owner 之后消费，不能由子 Shell effect 抢先写入旧桶。
+    if (!consumeFileManager(pendingFileManagerTarget)) return;
+    logger.debug("[FileManager] 在目标工作区打开目录", {
+      workspaceKey: targetKey,
+      ownerTaskId: sidePaneOwnerIdRef.current,
+    });
+    handleOpenFileManager(pendingFileManagerTarget);
+  }, [pendingFileManagerTarget, activeWorkspaceKey, consumeFileManager, handleOpenFileManager]);
+
+  const handleNavigateFileManager = useCallback(
+    (tabId: string, source: CodeViewerSource) => {
+      commitSidePaneState((current) => navigateFileManagerSidePane(current, tabId, source));
+    },
+    [commitSidePaneState],
+  );
 
   const handleOpenCodeViewer = useCallback(
     (source: CodeViewerSource) => {
@@ -395,20 +478,20 @@ export function useAppPanels(options: {
         (sourceRemoteSessionId ?? "") === (workspaceRemoteSessionId ?? "") &&
         sourceSessionId === sidePaneOwnerIdRef.current;
       if (!supportsEmbeddedBrowser) {
-        // Web has no built-in browser panel; fall back to a new browser tab so the external link remains accessible.
+        // Web 端没有内置浏览器面板，这里退回浏览器新标签，至少保证外链是可访问的。
         window.open(payload.url, "_blank", "noopener,noreferrer");
         return;
       }
 
-      // The message area only emits the intent to "open this URL".
-      // Webview navigation, URL validation, and panel visibility are handled together by the browser panel.
+      // 交互说明：消息区只负责抛出"打开这个 URL"的意图，
+      // 真正的 webview 导航、地址校验和面板显隐仍统一收口在浏览器面板一侧处理。
       const isShareUrl = /^https?:\/\/[^/]+\/(?:cn\/)?share\/[^/]+$/u.test(payload.url);
       const targetTabId = `browser:${createUuid()}`;
-      // When an Agent-controlled guest triggers a popup, the new page is still part of the model operation.
-      // Do not treat it as a human-opened Browser tab or inherit the free-size/zoom preferences stored in setting.json.
+      // Agent 控制的 guest 触发 popup 时，新的页面仍属于模型操作链路；不能把它
+      // 当作人类新开的 Browser tab，继承 setting.json 中保存的自由尺寸/缩放偏好。
       const agentOpened = isAgentOpenedBrowserPopup(payload);
-      // Webview popup events used to carry only the URL, so a late event from conversation 1 could be claimed by conversation 2's owner.
-      // Preserve the source scope and steal focus only if the source is still the current owner.
+      // webview popup 事件原来只携带 URL，迟到的对话 1 事件会被当前对话 2
+      // 的 owner 接管。保留来源 scope，并且只有来源仍是当前 owner 时才抢焦点。
       if (!isShareUrl && isCurrentOwner) {
         setBrowserNavigationRequest({
           id: createUuid(),
@@ -433,8 +516,7 @@ export function useAppPanels(options: {
               initialUrl: payload.url,
               ownerTaskId: sourceSessionId,
               workspaceKey: sourceWorkspaceKey,
-              // Both paths include ownerTaskId, so stampSidePaneTabsOwnership will not add scope later.
-              // Freeze remoteSessionId at creation, or the tab cannot be closed in a remote session.
+              // 这两条路径已有 owner，remoteSessionId 不从当前 UI 借用；必须在创建时冻结。
               ...(sourceRemoteSessionId ? { remoteSessionId: sourceRemoteSessionId } : {}),
               activate: isCurrentOwner,
               agentOpened,
@@ -452,7 +534,7 @@ export function useAppPanels(options: {
 
   const handleToggleBrowser = useCallback(() => {
     if (!supportsEmbeddedBrowser) {
-      // Capability boundary: Web/mobile do not currently support Electron webviews, so do not create a Browser side pane.
+      // 能力边界：Web/mobile 当前不支持 Electron webview，不创建 Browser side pane。
       logger.info(`[App] 当前壳层不支持内嵌浏览器，忽略切换请求 workspace=${workspaceAbsPath}`);
       return;
     }
@@ -467,9 +549,7 @@ export function useAppPanels(options: {
         sidePaneOwnerIdRef.current,
         workspaceRemoteSessionId,
       );
-      if (closingActiveBrowser) {
-        syncSidePaneCollapsedWithTabs(next);
-      } else {
+      if (!closingActiveBrowser) {
         revealSidePaneForCurrentOwner();
       }
       const nextActiveTab = getActiveSidePaneTab(next);
@@ -482,14 +562,13 @@ export function useAppPanels(options: {
     commitOpenedSidePaneState,
     revealSidePaneForCurrentOwner,
     supportsEmbeddedBrowser,
-    syncSidePaneCollapsedWithTabs,
     workspaceAbsPath,
     workspaceRemoteSessionId,
   ]);
 
   const handleOpenBrowserTab = useCallback(() => {
     if (!supportsEmbeddedBrowser) {
-      // Capability boundary: Web/mobile do not currently support Electron webviews, so do not create a Browser side pane.
+      // 能力边界：Web/mobile 当前不支持 Electron webview，不创建 Browser side pane。
       logger.info(`[App] 当前壳层不支持内嵌浏览器，忽略新建请求 workspace=${workspaceAbsPath}`);
       return;
     }
@@ -525,20 +604,21 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, supportsEmbeddedBrowser],
   );
 
-  // The Browser View events below are authoritatively forwarded by main.
-  // Do not use isWorkspaceVisible (= !isSettingsTabActive) as a subscription gate. Settings is an overlay, so App stays mounted
-  // while this flag becomes false. If effect cleanup unsubscribes, main events disappear: a lost ready event makes
-  // waitForGuest time out after 10 seconds and delete the tab through closeTabDurably, leaving the sidebar empty when Settings closes.
-  // Visibility means only whether the user sees the view, not whether authoritative events should be received. shouldReveal's scope match
-  // still decides whether to take focus, so this code no longer depends on isWorkspaceVisible.
+  // 下面这组 Browser View 事件都是 main 侧的权威转发，
+  // 不能用 isWorkspaceVisible（= !isSettingsTabActive）当订阅门槛。设置页是覆盖层，App 不
+  // 卸载但该标志会变 false，effect cleanup 取消订阅后 main 发出的事件直接进黑洞：ready 丢了会让
+  // waitForGuest 10 秒超时并把 tab closeTabDurably 删掉，用户退出设置页就看到侧边栏空空如也。
+  // 可见性只表达“现在给不给用户看”，不能决定“要不要接收权威事件”；是否抢焦点仍由 shouldReveal
+  // 的 scope 匹配决定，因此这里不再依赖 isWorkspaceVisible。
   useEffect(() => {
     if (!supportsEmbeddedBrowser || !isDesktop || !platform?.onOpenBrowserUrl) {
       return;
     }
 
     return platform.onOpenBrowserUrl((request) => {
-      // target=_blank/window.open inside a webview used to be swallowed by popup policy or passed to Electron's default BrowserWindow creation.
-      // The main process now intercepts and validates the URL; the renderer places the controlled request in the current visible workspace's right-side Browser tab.
+      // webview 内 target=_blank/window.open 原来要么被 popup 策略吞掉，
+      // 要么交给 Electron 默认创建 BrowserWindow。main 进程已拦截并校验 URL，
+      // renderer 这里只把受控请求落到当前可见 workspace 的右侧 Browser tab。
       logger.info(
         `[App] webview 请求打开右侧浏览器 tab workspace=${workspaceAbsPath} url=${request.url} disposition=${request.disposition}`,
       );
@@ -546,7 +626,7 @@ export function useAppPanels(options: {
     });
   }, [handleOpenBrowserUrl, isDesktop, platform, supportsEmbeddedBrowser, workspaceAbsPath]);
 
-  // Browser Use events carry the workspace/session frozen at creation; late events mount in the background and cannot steal the current conversation's focus.
+  // Browser Use 事件携带创建时冻结的 workspace/session，迟到事件只后台挂载，不能抢当前对话焦点。
   const handleBrowserViewReady = useCallback(
     (
       payload: Parameters<NonNullable<IPlatformService["onBrowserViewReady"]>>[0] extends (
@@ -590,7 +670,7 @@ export function useAppPanels(options: {
           operationUntil,
         }),
       );
-      // Browser commands are as frequent as message events; do not write them to info logs in production.
+      // browser command 与消息流同数量级，生产环境不得落 info 日志。
       logger.debug("[App] browser-use operation", {
         operationUntil,
         sessionId: payload.sessionId,
@@ -619,7 +699,7 @@ export function useAppPanels(options: {
             `browser-use:${payload.tabId}`,
           );
         } else {
-          // Visibility events are as frequent as browser commands; log ignored late events only in development to avoid production disk churn.
+          // visibility 与 browser command 同数量级，忽略迟到事件只记开发日志，避免生产刷盘。
           logger.debug("[App] 忽略无现存 shell 的 browser-use visibility", {
             sessionId: payload.sessionId,
             tabId: payload.tabId,
@@ -662,12 +742,12 @@ export function useAppPanels(options: {
             (tab.type === "browser" && tab.id === payload.tabId),
         )?.id ?? null;
 
-      // Side-pane state is stored per workspace, so searching only the current active workspace can miss the target tab.
-      // The user may switch workspaces before the Agent closes a tab, silently dropping the notification and leaving the tab in persisted state.
-      // When they return, its main-side logical tab is gone but the × button cannot close the stale entry, leaving a ghost tab.
-      // With owner scope on the notification, route by workspaceKey and delete directly from that workspace's memory.
-      // Route only by workspaceKey, not session: main has already decided the tab is closed, so the renderer shell must converge regardless of task.
-      // tabId is globally unique, so this cannot delete a tab from another workspace by mistake.
+      // side pane 状态按 workspace 分开存放，只在「当前活跃 workspace」里查找目标 tab 会漏。
+      // Agent 关闭 tab 时用户可能已经切到别的 workspace，通知就被静默丢弃，原 workspace 的持久化状态
+      // 仍留着这个 tab —— 切回来后它对应的 main 侧 logical tab 早已不存在，点 × 也关不掉，成为幽灵 tab。
+      // 通知带上 owner scope 后，这里按 workspaceKey 路由到对应 workspace 的 memory 直接删除。
+      // 只用 workspaceKey 做路由、不再按 session 过滤：main 已判定该 tab 关闭，renderer 侧的壳
+      // 无论属于哪个 task 都应当收敛；tabId 本身全局唯一，不存在跨 workspace 误删。
       const targetWorkspaceKey = payload.workspaceKey;
       if (targetWorkspaceKey && targetWorkspaceKey !== activeSidePaneMemoryKeyRef.current) {
         const stored = readTaskSidePaneMemoryState(targetWorkspaceKey);
@@ -676,21 +756,18 @@ export function useAppPanels(options: {
         const nextState = closeSidePaneTab(stored.sidePaneState, targetId);
         saveTaskSidePaneMemoryState(targetWorkspaceKey, {
           sidePaneState: nextState,
-          isSidePaneCollapsed: nextState ? stored.isSidePaneCollapsed : true,
+          isSidePaneCollapsed: stored.isSidePaneCollapsed,
         });
         return;
       }
 
-      let didClose = false;
-      const next = commitSidePaneState((current) => {
+      commitSidePaneState((current) => {
         const targetId = findTargetId(current);
         if (!targetId) return current;
-        didClose = true;
-        return closeSidePaneTabForParent(current, targetId, sidePaneOwnerIdRef.current);
+        return closeSidePaneTabForScope(current, targetId, currentSidePaneScope());
       });
-      if (didClose) syncSidePaneCollapsedWithTabs(next);
     });
-  }, [commitSidePaneState, isDesktop, platform, syncSidePaneCollapsedWithTabs]);
+  }, [commitSidePaneState, currentSidePaneScope, isDesktop, platform]);
 
   useEffect(() => {
     if (!isDesktop || !platform?.onBrowserViewSuspend) return;
@@ -724,9 +801,7 @@ export function useAppPanels(options: {
       if (isOfficeMode && !current?.tabs.some((tab) => tab.type === "git")) return current;
       const closingActiveGit = getActiveSidePaneTab(current)?.type === "git";
       const next = toggleGitSidePane(current);
-      if (closingActiveGit) {
-        syncSidePaneCollapsedWithTabs(next);
-      } else {
+      if (!closingActiveGit) {
         revealSidePaneForCurrentOwner();
       }
       const activeTab = getActiveSidePaneTab(next);
@@ -735,20 +810,14 @@ export function useAppPanels(options: {
       );
       return next;
     });
-  }, [
-    isOfficeMode,
-    commitOpenedSidePaneState,
-    revealSidePaneForCurrentOwner,
-    syncSidePaneCollapsedWithTabs,
-    workspaceAbsPath,
-  ]);
+  }, [isOfficeMode, commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath]);
 
   const handleOpenGit = useCallback(() => {
     commitOpenedSidePaneState((current) => {
       if (isOfficeMode && !current?.tabs.some((tab) => tab.type === "git")) return current;
       const next = activateGitSidePane(current);
-      // File-change lookup only needs to ensure the Git panel is open; do not reuse toggle.
-      // If the Git tab is already active, toggle would close it and hide the file-change content.
+      // 文件变更查找只需要“确保 Git 面板打开”，不能复用 toggle。
+      // 如果当前已经在 Git tab 上，toggle 会把它关掉，导致切到文件变更范围反而看不到内容。
       revealSidePaneForCurrentOwner();
       logger.info(
         `[App] 打开右侧面板 mode=git workspace=${workspaceAbsPath} tabs=${next.tabs.length}`,
@@ -759,8 +828,8 @@ export function useAppPanels(options: {
 
   const handleOpenTreemapping = useCallback(
     (source?: TreemappingSidePaneTab["source"]) => {
-      // Treemapping must currently be hidden from the sidebar. Keep the callback shape for message-flow compatibility,
-      // but do not create a side-pane tab, preventing the header or old entry point from bypassing the menu hiding.
+      // Treemapping 功能当前需要从侧边栏隐藏。保留回调形状给消息链路兼容，
+      // 但不再创建 side pane tab，避免 header 或旧入口绕过菜单隐藏。
       logger.debug(
         `[App] 已隐藏 treemapping 侧边栏入口 workspace=${workspaceAbsPath} source=${source?.kind ?? "current"}`,
       );
@@ -793,6 +862,16 @@ export function useAppPanels(options: {
     workspaceIdentity,
   ]);
 
+  const handleOpenNewSidePaneTab = useCallback(() => {
+    revealSidePaneForCurrentOwner();
+    commitOpenedSidePaneState(activateNewTabSidePane);
+  }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner]);
+
+  const handleOpenPluginMarket = useCallback(() => {
+    revealSidePaneForCurrentOwner();
+    commitOpenedSidePaneState(activatePluginMarketSidePane);
+  }, [commitOpenedSidePaneState, revealSidePaneForCurrentOwner]);
+
   const handleOpenDeveloperTools = useCallback(() => {
     revealSidePaneForCurrentOwner();
     commitOpenedSidePaneState((current) => {
@@ -811,7 +890,7 @@ export function useAppPanels(options: {
       const title = createTerminalSidePaneTitle(current, workspaceAbsPath);
       const next = openTerminalSidePane(current, {
         title,
-        cwd: terminalCwd,
+        cwd: workspaceAbsPath,
         remoteSessionId: workspaceRemoteSessionId,
       });
       logger.info(
@@ -823,7 +902,6 @@ export function useAppPanels(options: {
     isOfficeMode,
     commitOpenedSidePaneState,
     revealSidePaneForCurrentOwner,
-    terminalCwd,
     workspaceAbsPath,
     workspaceRemoteSessionId,
   ]);
@@ -903,7 +981,7 @@ export function useAppPanels(options: {
 
   const handleSyncSubagentSessionTabs = useCallback(
     (request: import("@/lib/workspaceSidePane.js").SyncSubagentSessionTabsRequest) => {
-      // Stale tabs from branch edit/retry are projection cleanup and do not belong in "Recently closed".
+      // 分支 edit/retry 的失效 tab 属于投影清理，不进入“最近关闭”。
       commitSidePaneState((current) => syncSubagentSessionSidePaneTabs(current, request));
     },
     [commitSidePaneState],
@@ -977,7 +1055,7 @@ export function useAppPanels(options: {
   const handleOpenWorkflowRun = useCallback(
     (request: OpenScopedWorkflowRunSideTabRequest) => {
       const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
-      // In-place replacement after Configure is not a new open; keep a collapsed sidebar collapsed.
+      // 「配置」之后的原地替换不是一次打开：收起的侧栏保持收起。
       const replaceRunId = request.replaceRunId;
       if (replaceRunId === undefined) setIsSidePaneCollapsed(false);
       commitOpenedSidePaneState((current) =>
@@ -1054,14 +1132,14 @@ export function useAppPanels(options: {
   );
 
   /**
-   * Reuse a browser tab by URL (destination for opening HTML artifacts directly).
+   * 按 URL 复用的 browser tab（html 产物直开的落点）。
    *
-   * It differs from `handleOpenBrowserUrl` in three ways:
-   * 1. Claim a destination by URL instead of opening a new tab each time.
-   * 2. **Still** send a navigation request when an existing tab matches. The webview may still show old bytes and `initialUrl` has not changed,
-   *    so mount-time navigation will not run again (`UnifiedBrowserView` deduplicates by URL via `lastAppliedInitialUrlRef`) and v2 would never appear.
-   * 3. The caller specifies ownership and it is **always activated**. This path is triggered only by a user clicking an artifact,
-   *    with no background-mount case like `isCurrentOwner` (see the ownerTaskId comment below).
+   * 与 `handleOpenBrowserUrl` 有三条区别：
+   * ① 落点按 URL 认领而不是每次新开；② 命中已有 tab 时**仍然**发一次导航请求 —— webview
+   * 停在旧字节上，`initialUrl` 又没变，挂载时那次导航不会再跑
+   * （UnifiedBrowserView 的 `lastAppliedInitialUrlRef` 按 URL 去重），v2 就永远显示不出来；
+   * ③ 归属由调用方给定，且**恒激活**——这条路径只由用户点击产物触发，没有
+   * `isCurrentOwner` 那种后台挂载的情形（详见下面 ownerTaskId 处的注释）。
    */
   const openFileUrlInBrowserSidePane = useCallback(
     (params: { url: string; ownerTaskId: string; workspaceKey: string }) => {
@@ -1073,17 +1151,19 @@ export function useAppPanels(options: {
       });
       const targetTabId = existing?.id ?? `browser:${createUuid()}`;
       setBrowserNavigationRequest({ id: createUuid(), targetTabId, url: params.url });
-      // As with artifact tabs, update only the current collapsed state without persisting a preference: ownership comes from params.ownerTaskId,
-      // while revealSidePaneForCurrentOwner records false under the **current** owner, and the central path may have different owners.
+      // 与产物 tab 一样只置当前折叠态，不落盘偏好：归属写的是 params.ownerTaskId，
+      // 而 revealSidePaneForCurrentOwner 会把 false 记在**当前** owner 名下——中枢那条
+      // 路径上两者还不是同一个人。
       setIsSidePaneCollapsed(false);
       commitOpenedSidePaneState((current) =>
         openOrActivateBrowserSidePaneByUrl(current, {
           initialUrl: params.url,
           tabId: targetTabId,
-          // Freeze ownership explicitly instead of letting stampSidePaneTabsOwnership apply the current owner: the central artifact-chip path
-          // calls handleSelectTaskInChat before handleOpenWorkflowArtifact, and sidePaneOwnerIdRef still points to the previous session within that synchronous block.
-          // Browser-tab visibility is narrowed by ownerTaskId (the default branch in getVisibleSidePaneTabsByScope), so a wrong owner would make this tab disappear after the switch settles.
-          // Artifact tabs are unaffected because they are narrowed by parentSessionId.
+          // 归属显式冻结，不靠 stampSidePaneTabsOwnership 盖当前 owner：中枢的产物 chip
+          // 先 handleSelectTaskInChat 再 handleOpenWorkflowArtifact，同一个同步块里
+          // sidePaneOwnerIdRef 还停在上一条会话上。browser tab 的可见性按 ownerTaskId 收窄
+          // （isSidePaneTabVisibleInScope 的默认分支），盖错了这个 tab 切换落定后就再也看不见。
+          // 产物 tab 不怕这一手，是因为它按 parentSessionId 收窄。
           ownerTaskId: params.ownerTaskId,
           workspaceKey: params.workspaceKey,
         }),
@@ -1094,11 +1174,11 @@ export function useAppPanels(options: {
   );
 
   /**
-   * The **only** destination decision for artifact clicks: open HTML directly when an embedded browser is available; otherwise open an artifact tab.
+   * 产物点击的**唯一**落点裁决处：html 且开得起内嵌浏览器就直接开页面，其余一律开产物 tab。
    *
-   * The direct-open path may lack `sourcePath`: the run side pane has it (it already merged the journal), but the pill summary deliberately omits it
-   * to keep state frames small (see `workflowRunArtifactSummarySchema`). Query the journal once when it is missing.
-   * If the query fails, an older CLI lacks it, or the artifact has no source, fall back to the artifact tab so the click always works.
+   * 直开缺的那一段是 `sourcePath`：run 侧板带得到（它已经合过 journal），药丸摘要刻意不带
+   * （状态帧体积，见 `workflowRunArtifactSummarySchema`）。缺席时这里补查一次 journal。
+   * 查询失败、老 CLI 没有这条查询、产物根本没有出处，全部退回产物 tab —— 点击绝不落空。
    */
   const handleOpenWorkflowArtifact = useCallback(
     (request: OpenScopedWorkflowArtifactSideTabRequest) => {
@@ -1132,8 +1212,8 @@ export function useAppPanels(options: {
       }
 
       const openInBrowser = (sourcePath: string) => {
-        // A workspace-relative sourcePath becomes a real local path when joined with workspacePath; use the same path as
-        // "Open in browser" on the artifact card (WorkflowArtifactSidePane's localSourcePath).
+        // 工作区相对的 sourcePath 拼上 workspacePath 才是本机真实位置；与产物卡上
+        // 「在浏览器中打开」走同一条路径（WorkflowArtifactSidePane 的 localSourcePath）。
         const url = toFileUrl(joinFilePath(request.workspacePath, sourcePath));
         const tabId = openFileUrlInBrowserSidePane({
           url,
@@ -1157,7 +1237,8 @@ export function useAppPanels(options: {
 
       void (async () => {
         try {
-          // The condition already guarantees a local workspace (no workspaceIdentity/remoteSessionId), so pass only workspacePath.
+          // 判据已经保证是本地 workspace（无 workspaceIdentity / remoteSessionId），
+          // 这里只带 workspacePath。
           const result = await zcodeAgentService.conversationWorkflowRunArtifactsV4({
             workspacePath: request.workspacePath,
             sessionId: request.parentSessionId,
@@ -1232,9 +1313,8 @@ export function useAppPanels(options: {
         if (!current) return current;
         let next: WorkspaceSidePaneState | null = current;
         for (const tabId of closingIds) {
-          next = closeSidePaneTabForParent(next, tabId, activeTaskId);
+          next = closeSidePaneTabForScope(next, tabId, currentSidePaneScope());
         }
-        syncSidePaneCollapsedWithTabs(next);
         return next;
       });
       logger.info("[App] 父任务结束，清理框选副屏会话", {
@@ -1244,15 +1324,14 @@ export function useAppPanels(options: {
       });
     });
   }, [
-    activeTaskId,
+    currentSidePaneScope,
     closeSelectionSideChatRuntime,
     commitSidePaneState,
-    syncSidePaneCollapsedWithTabs,
     workspaceAbsPath,
     workspaceIdentity,
   ]);
 
-  // Subscribe to "open model call trace" requests: the menu deep in the tree uses a singleton store to dispatch them; match by workspaceKey and consume here.
+  // 订阅“打开模型调用轨迹”请求：菜单深处通过单例 store 发起，这里按 workspaceKey 匹配后消费。
   useModelTrajectoryOpenBridge(
     workspaceIdentity?.trim() || workspaceAbsPath,
     handleOpenModelTrajectory,
@@ -1275,43 +1354,36 @@ export function useAppPanels(options: {
   }, []);
 
   const handleToggleSidePaneCollapse = useCallback(() => {
-    setIsSidePaneCollapsed((collapsed) => {
-      const nextCollapsed = !collapsed;
-      // Tabs are reused by workspace, but collapsing the top-level panel is an explicit choice for the current conversation.
-      // Record the owner's preference so scope resolution after a conversation switch does not override it by auto-expanding visible tabs.
-      saveTaskSidePaneCollapsedPreference(
-        activeSidePaneMemoryKeyRef.current,
-        sidePaneOwnerIdRef.current,
-        nextCollapsed,
-      );
-      latestSidePaneMemoryRef.current = {
-        ...latestSidePaneMemoryRef.current,
-        isSidePaneCollapsed: nextCollapsed,
-      };
-      logger.info(
-        `[App] ${nextCollapsed ? "收起" : "展开"}右侧面板 workspace=${workspaceAbsPath} tabs=${sidePaneState?.tabs.length ?? 0}`,
-      );
-      return nextCollapsed;
-    });
-  }, [sidePaneState, workspaceAbsPath]);
+    const nextCollapsed = !latestSidePaneMemoryRef.current.isSidePaneCollapsed;
+    setIsSidePaneCollapsed(nextCollapsed);
+    saveTaskSidePaneCollapsedPreference(
+      activeSidePaneMemoryKeyRef.current,
+      sidePaneOwnerIdRef.current,
+      nextCollapsed,
+    );
+    // 与显隐在同一交互内提交，避免先显示特殊空态再由 effect 补建标签。
+    if (!nextCollapsed)
+      commitSidePaneState((current) => ensureSidePaneTab(current, currentSidePaneScope()));
+    logger.info(
+      `[App] ${nextCollapsed ? "收起" : "展开"}右侧面板 workspace=${workspaceAbsPath} tabs=${latestSidePaneMemoryRef.current.sidePaneState?.tabs.length ?? 0}`,
+    );
+  }, [commitSidePaneState, currentSidePaneScope, setIsSidePaneCollapsed, workspaceAbsPath]);
 
   const handleCloseCodeViewer = useCallback(() => {
     logger.info(`[App] 关闭右侧面板 mode=code-viewer workspace=${workspaceAbsPath}`);
     commitSidePaneState((current) => {
       const next = closeCodeViewerSidePane(current);
-      syncSidePaneCollapsedWithTabs(next);
       return next;
     });
-  }, [commitSidePaneState, syncSidePaneCollapsedWithTabs, workspaceAbsPath]);
+  }, [commitSidePaneState, currentSidePaneScope, setIsSidePaneCollapsed, workspaceAbsPath]);
 
   const handleCloseGit = useCallback(() => {
     logger.info(`[App] 关闭右侧面板 mode=git workspace=${workspaceAbsPath}`);
     commitSidePaneState((current) => {
       const next = closeGitSidePane(current);
-      syncSidePaneCollapsedWithTabs(next);
       return next;
     });
-  }, [commitSidePaneState, syncSidePaneCollapsedWithTabs, workspaceAbsPath]);
+  }, [commitSidePaneState, currentSidePaneScope, setIsSidePaneCollapsed, workspaceAbsPath]);
 
   const handleActivateSidePaneTab = useCallback(
     (tabId: string) => {
@@ -1323,9 +1395,9 @@ export function useAppPanels(options: {
         tab.residency === "suspended"
       ) {
         const logicalTabId = tab.type === "browser-use" ? tab.tabId : tab.id;
-        // Human-tab attachment uses `tab.remoteSessionId ?? workspaceRemoteSessionId` to freeze the owner as a fallback.
-        // Keep this consistent; existing tabs created without a frozen field would otherwise mismatch scope and never reopen.
-        // browser-use attachment has no such fallback, and adding it there would cause the opposite mismatch, so branch by type.
+        // human tab 的 attach 侧用 `tab.remoteSessionId ?? workspaceRemoteSessionId` 兜底冻结 owner，
+        // 这里必须同源，否则创建时没冻结该字段的存量 tab 会 scope 失配、点开永远恢复不了。
+        // browser-use 的 attach 侧没有这层兜底，跟着加反而会造成反向失配，故按类型区分。
         const scopedRemoteSessionId =
           tab.type === "browser-use"
             ? tab.remoteSessionId
@@ -1364,7 +1436,8 @@ export function useAppPanels(options: {
 
   const rememberClosedSidePaneTabs = useCallback((tabs: WorkspaceSidePaneTab[]) => {
     const restorableTabs = tabs.filter(
-      (tab) => tab.type !== "selection-side-chat" && tab.type !== "browser-use",
+      (tab) =>
+        tab.type !== "selection-side-chat" && tab.type !== "browser-use" && tab.type !== "new-tab",
     );
     if (restorableTabs.length === 0) {
       return;
@@ -1387,8 +1460,8 @@ export function useAppPanels(options: {
       );
       if (browserTabs.length === 0) return true;
       if (!platform?.browserViewCloseTab) {
-        // Desktop must have main delete the logical tab/recovery snapshot first; if the bridge is missing, do not remove only the UI shell,
-        // or the closed tab will reappear after restart. Web has no guest authority and keeps its original local-close behavior.
+        // Desktop 必须由 main 先删除 logical tab/recovery snapshot；bridge 缺失时不能只删 UI 壳，
+        // 否则重启后已关闭 tab 会复活。Web 端没有 guest authority，保持原本的本地关闭语义。
         if (isDesktop) {
           logger.warn("[App] 关闭 Browser tab 时缺少 main authority");
           return false;
@@ -1398,8 +1471,8 @@ export function useAppPanels(options: {
       try {
         await Promise.all(
           browserTabs.map((tab) => {
-            // Match the attachment path: human tabs fall back to workspaceRemoteSessionId; browser-use does not.
-            // A mismatch causes scope failure → main rejects authorization → UI shell never removes the tab → tab cannot close.
+            // 与 attach 侧同源：human tab 兜底到 workspaceRemoteSessionId，browser-use 不兜底。
+            // 不同源就会 scope 失配 → main 拒绝授权 → UI 壳永不移除 → tab 关不掉。
             const scopedRemoteSessionId =
               tab.type === "browser-use"
                 ? tab.remoteSessionId
@@ -1425,125 +1498,97 @@ export function useAppPanels(options: {
     [isDesktop, platform, workspaceRemoteSessionId],
   );
 
-  const handleCloseSidePaneTab = useCallback(
-    (tabId: string) => {
-      const closingTab = sidePaneState?.tabs.find((tab) => tab.id === tabId);
-      if (closingTab?.type === "selection-side-chat") {
-        closeSelectionSideChatRuntime(closingTab);
+  const closeSelectedSidePaneTabs = useCallback(
+    async (closingTabs: WorkspaceSidePaneTab[], preferredTabId?: string) => {
+      if (closingTabs.length === 0) return;
+      const scope = currentSidePaneScope();
+      if (!(await closeBrowserTabsWithAuthority(closingTabs))) return;
+      for (const tab of closingTabs) {
+        if (tab.type === "selection-side-chat") closeSelectionSideChatRuntime(tab);
+        if (tab.type === "terminal") sidePaneTerminalSessionRegistry.release(tab.id);
       }
-      void closeBrowserTabsWithAuthority(closingTab ? [closingTab] : []).then((authorized) => {
-        if (!authorized) return;
-        if (closingTab) rememberClosedSidePaneTabs([closingTab]);
-        // Keep-alive: explicitly closing a terminal tab must really release PTY/xterm (the registry persists and does not clean up on unmount).
-        if (closingTab?.type === "terminal") {
-          sidePaneTerminalSessionRegistry.release(tabId);
-        }
-        const next = commitSidePaneState((current) =>
-          closeSidePaneTabForParent(
+      rememberClosedSidePaneTabs(closingTabs);
+      const closingIds = closingTabs.map((tab) => tab.id);
+      // Bug 原因：main 确认关闭期间可能切换对话/工作区或新建 tab。归属与关闭目标在点击时
+      // 冻结，完成后写回原 registry；当前可见范围与活动标签则按完成时的 scope 解析。
+      if (scope.workspaceKey !== activeWorkspaceKeyRef.current) {
+        const stored = readTaskSidePaneMemoryState(scope.workspaceKey);
+        const next = closeSidePaneTabs(stored.sidePaneState, closingIds, scope, preferredTabId);
+        saveTaskSidePaneMemoryState(scope.workspaceKey, {
+          sidePaneState: next,
+          isSidePaneCollapsed: stored.isSidePaneCollapsed,
+        });
+      } else {
+        const liveScope = currentSidePaneScope();
+        commitSidePaneState((current) =>
+          closeSidePaneTabs(
             current,
-            tabId,
-            activeTaskId,
-            activeTaskId ? lastActiveSubagentTabByRootRef.current.get(activeTaskId) : null,
+            closingIds,
+            liveScope,
+            liveScope.ownerTaskId === scope.ownerTaskId
+              ? (preferredTabId ??
+                  (liveScope.ownerTaskId
+                    ? lastActiveSubagentTabByRootRef.current.get(liveScope.ownerTaskId)
+                    : null))
+              : undefined,
           ),
         );
-        syncSidePaneCollapsedWithTabs(next);
-        const activeTab = getActiveSidePaneTab(next);
-        logger.info(
-          `[App] 关闭右侧面板 tab=${tabId} mode=${activeTab?.type ?? "none"} workspace=${workspaceAbsPath} tabs=${next?.tabs.length ?? 0}`,
-        );
-      });
+      }
+      logger.info("[App] 关闭右侧面板标签", { tabIds: closingIds, ...scope });
     },
     [
-      activeTaskId,
-      closeSelectionSideChatRuntime,
       closeBrowserTabsWithAuthority,
+      closeSelectionSideChatRuntime,
       commitSidePaneState,
+      currentSidePaneScope,
       rememberClosedSidePaneTabs,
-      sidePaneState?.tabs,
-      syncSidePaneCollapsedWithTabs,
-      workspaceAbsPath,
     ],
+  );
+
+  const visibleSidePaneTabs = useCallback(
+    () =>
+      getVisibleSidePaneTabs(
+        latestSidePaneMemoryRef.current.sidePaneState?.tabs ?? [],
+        currentSidePaneScope(),
+      ),
+    [currentSidePaneScope],
+  );
+
+  const handleCloseSidePaneTab = useCallback(
+    (tabId: string) => {
+      void closeSelectedSidePaneTabs(visibleSidePaneTabs().filter((tab) => tab.id === tabId));
+    },
+    [closeSelectedSidePaneTabs, visibleSidePaneTabs],
   );
 
   const handleCloseOtherSidePaneTabs = useCallback(
     (tabId: string) => {
-      const visibleTabs =
-        sidePaneState?.tabs.filter((tab) => isSidePaneTabVisibleForParent(tab, activeTaskId)) ?? [];
-      const targetExists = visibleTabs.some((tab) => tab.id === tabId);
-      const closingTabs = targetExists ? visibleTabs.filter((tab) => tab.id !== tabId) : [];
-      void closeBrowserTabsWithAuthority(closingTabs).then((authorized) => {
-        if (!authorized) return;
-        for (const tab of closingTabs) {
-          if (tab.type === "selection-side-chat") closeSelectionSideChatRuntime(tab);
-        }
-        // Keep-alive: when bulk-closing other tabs, release persistent PTY/xterm for any terminal tabs in the set.
-        for (const tab of closingTabs) {
-          if (tab.type === "terminal") {
-            sidePaneTerminalSessionRegistry.release(tab.id);
-          }
-        }
-        rememberClosedSidePaneTabs(closingTabs);
-        commitSidePaneState((current) => {
-          const next = closeVisibleOtherSidePaneTabs(current, tabId, activeTaskId);
-          logger.info(
-            `[App] 关闭其他右侧面板 tab=${tabId} workspace=${workspaceAbsPath} tabs=${next?.tabs.length ?? 0}`,
-          );
-          return next;
-        });
-      });
+      const tabs = visibleSidePaneTabs();
+      if (!tabs.some((tab) => tab.id === tabId)) return;
+      void closeSelectedSidePaneTabs(
+        tabs.filter((tab) => tab.id !== tabId),
+        tabId,
+      );
     },
-    [
-      activeTaskId,
-      closeSelectionSideChatRuntime,
-      closeBrowserTabsWithAuthority,
-      commitSidePaneState,
-      rememberClosedSidePaneTabs,
-      sidePaneState?.tabs,
-      workspaceAbsPath,
-    ],
+    [closeSelectedSidePaneTabs, visibleSidePaneTabs],
   );
 
   const handleCloseAllSidePaneTabs = useCallback(() => {
-    const visibleTabs =
-      sidePaneState?.tabs.filter((tab) => isSidePaneTabVisibleForParent(tab, activeTaskId)) ?? [];
-    void closeBrowserTabsWithAuthority(visibleTabs).then((authorized) => {
-      if (!authorized) return;
-      for (const tab of visibleTabs) {
-        if (tab.type === "selection-side-chat") closeSelectionSideChatRuntime(tab);
-      }
-      // Keep-alive: when closing all tabs, release persistent PTY/xterm for any terminal tabs in the set.
-      for (const tab of visibleTabs) {
-        if (tab.type === "terminal") {
-          sidePaneTerminalSessionRegistry.release(tab.id);
-        }
-      }
-      rememberClosedSidePaneTabs(visibleTabs);
-      commitSidePaneState((current) => {
-        logger.info(`[App] 关闭全部右侧面板 tabs workspace=${workspaceAbsPath}`);
-        const next = closeVisibleSidePaneTabs(current, activeTaskId);
-        syncSidePaneCollapsedWithTabs(next);
-        return next;
-      });
-    });
-  }, [
-    activeTaskId,
-    closeSelectionSideChatRuntime,
-    closeBrowserTabsWithAuthority,
-    commitSidePaneState,
-    rememberClosedSidePaneTabs,
-    sidePaneState?.tabs,
-    syncSidePaneCollapsedWithTabs,
-    workspaceAbsPath,
-  ]);
+    void closeSelectedSidePaneTabs(visibleSidePaneTabs());
+  }, [closeSelectedSidePaneTabs, visibleSidePaneTabs]);
 
   const handleReopenClosedSidePaneTab = useCallback(
     (tabId: string) => {
       const item = allRecentClosedSidePaneTabs.find((entry) => entry.tab.id === tabId);
-      if (!item || (isOfficeMode && (item.tab.type === "terminal" || item.tab.type === "git")))
+      if (
+        !item ||
+        !isSidePaneTabVisibleInScope(item.tab, currentSidePaneScope()) ||
+        (isOfficeMode && (item.tab.type === "terminal" || item.tab.type === "git"))
+      )
         return;
 
-      // When a tab from Recently Closed is reopened, also expand the right panel.
-      // Otherwise the tab is restored while the user still sees a collapsed panel and may think the click did nothing.
+      // 交互说明：最近关闭列表里的 tab 被点回打开时，需要同步展开右侧面板。
+      // 否则 tab 状态已经恢复，但用户看到的还是折叠态，会误以为点击没有生效。
       revealSidePaneForCurrentOwner();
       commitSidePaneState((sidePaneCurrent) => {
         let restoredTab = item.tab;
@@ -1569,6 +1614,7 @@ export function useAppPanels(options: {
     [
       isOfficeMode,
       allRecentClosedSidePaneTabs,
+      currentSidePaneScope,
       commitSidePaneState,
       revealSidePaneForCurrentOwner,
       workspaceAbsPath,
@@ -1581,8 +1627,8 @@ export function useAppPanels(options: {
 
   const handleBrowserPageMetadataChange = useCallback(
     (tabId: string, metadata: BrowserSidePaneMetadata) => {
-      // Browser title/favicon come from webview events and must be written back by tab ID.
-      // With multiple Browser tabs, storing one global metadata object would let a later page overwrite other tab titles.
+      // 交互说明：Browser 的 title/favicon 来自 webview 事件，必须按 tab id 写回。
+      // 多 Browser tab 共存时如果只存一份全局元数据，会导致后加载的页面覆盖其他 tab 标题。
       commitSidePaneState((current) => updateBrowserSidePaneTab(current, tabId, metadata));
     },
     [commitSidePaneState],
@@ -1592,14 +1638,17 @@ export function useAppPanels(options: {
     () =>
       allRecentClosedSidePaneTabs.filter(
         (item) =>
-          isSidePaneTabVisibleForParent(item.tab, activeTaskId) &&
+          isSidePaneTabVisibleInScope(item.tab, {
+            workspaceKey: activeWorkspaceKey,
+            ownerTaskId: sidePaneOwnerId,
+          }) &&
           (!isOfficeMode || (item.tab.type !== "terminal" && item.tab.type !== "git")),
       ),
-    [activeTaskId, allRecentClosedSidePaneTabs, isOfficeMode],
+    [activeWorkspaceKey, sidePaneOwnerId, allRecentClosedSidePaneTabs, isOfficeMode],
   );
 
   return {
-    // Office mode hides only the creation entry; filtering panel state would make open terminals/reviews disappear during a switch.
+    // 办公模式只隐藏新建入口；过滤面板状态会让已打开的终端和审查在切换时消失。
     isTerminalOpen,
     setIsTerminalOpen,
     sidePaneState,
@@ -1609,7 +1658,9 @@ export function useAppPanels(options: {
     isSidebarVisible,
     browserNavigationRequest,
     setBrowserNavigationRequest,
-    // Callbacks
+    handleOpenFileManager,
+    handleNavigateFileManager,
+    // 回调
     handleOpenCodeViewer,
     handleOpenCodeViewers,
     handleOpenBrowserUrl,
@@ -1621,6 +1672,8 @@ export function useAppPanels(options: {
     handleOpenTreemapping,
     handleOpenWhiteboard,
     handleOpenDeveloperTools,
+    handleOpenPluginMarket,
+    handleOpenNewSidePaneTab,
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
     handleOpenSubagentSession,

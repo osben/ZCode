@@ -268,3 +268,24 @@ specs/manage-sessions-table.md
 
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+# TEMPORARY upstream 3.16.1 sync (ui): oversize upstream UI files that differ from the pending upstream blob; split or reconcile in the UI-2 / i18n PRs and remove these lines.
+packages/ui/src/command-center/worktreeTaskFlow.ts
+packages/ui/src/hooks/useVoiceDictation.ts
+packages/ui/src/i18n/locales/uk-UA.ts
+packages/ui/src/settings/CodingPlanEmbeddedWebviewDialog.tsx
+packages/ui/src/settings/ModelProviderSection.tsx
+packages/ui/src/settings/VoiceDictationSection.tsx
+packages/ui/src/v4/composer/ComposerDestinationControl.tsx
+packages/ui/src/v4/composer/composerWorktreePipeline.ts
+packages/ui/src/workspace-grouped-tasks/group-item.tsx
+packages/ui/src/workspace-grouped-tasks/task-row.tsx
+packages/ui/test/VoiceDictationSection.test.ts
+packages/ui/test/commandCenterWorktreeDialog.test.ts
+packages/ui/test/commandCenterWorktreeFlow.test.ts
+packages/ui/test/composerWorktreePipeline.test.ts
+packages/ui/test/offPeakFigmaLayout.test.ts
+packages/ui/test/systemPromptSection.test.ts
+packages/ui/test/useGroupedTaskView.test.ts
+packages/ui/test/useSystemPromptOverrides.test.ts
+packages/ui/test/useVoiceDictation.test.ts
+packages/ui/test/workspaceSidebarRemoteNotice.test.ts

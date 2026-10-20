@@ -2,9 +2,8 @@ import { formatPluginDisplayName } from "./pluginDisplayName.js";
 import type { PluginUiImageBlock } from "./pluginUiImageBlocks.js";
 
 /**
- * Next-turn model context attached by plugin UI via `ui/update-model-context`.
- * Isomorphic to code comments / web page elements: it exists only in the composer draft and the prompt
- * tail block, never in protocol fields; visible and removable by the user.
+ * 插件 UI 经 `ui/update-model-context` 附加的下一轮模型上下文。
+ * 与代码评论 / 网页元素同构：只存在于 composer 草稿与 prompt 尾块里，不进协议字段；用户可见、可删。
  */
 export interface PluginUiModelContext {
   id: string;
@@ -14,15 +13,14 @@ export interface PluginUiModelContext {
   text: string;
   structuredContent?: unknown;
   /**
-   * image blocks do not go into the prompt tail block; the composer turns them into image attachments
-   * under this context's name, sent with the next turn. When the same instance calls updateModelContext
-   * again, they are replaced together with the attachments.
+   * image 块不进 prompt 尾块，由 composer 转成本条上下文名下的图片附件随下一回合发送；
+   * 同一实例再次 updateModelContext 时连同附件一起替换。
    */
   images?: readonly PluginUiImageBlock[];
 }
 
 export const PLUGIN_UI_MODEL_CONTEXT_BLOCK_TITLE = "# Plugin context:";
-/** Per-context text cap; overlong text is truncated with an ellipsis so a plugin cannot stuff an entire page into the prompt. */
+/** 单条上下文文本上限；超出截断并追加省略号，避免插件把整页塞进 prompt。 */
 export const PLUGIN_UI_MODEL_CONTEXT_MAX_CHARS = 16 * 1024;
 
 const ITEM_HEADER = /^## Plugin (\S+) \(([^)]+)\)\s*$/m;
@@ -74,7 +72,7 @@ function parseItem(raw: string, index: number): PluginUiModelContext | null {
       structuredContent = JSON.parse(fence[1] ?? "");
       body = body.slice(0, fence.index).trim();
     } catch {
-      // Invalid JSON is kept as body text.
+      // 非法 JSON 当作正文保留。
     }
   }
   return {
@@ -87,7 +85,7 @@ function parseItem(raw: string, index: number): PluginUiModelContext | null {
   };
 }
 
-/** Recognizes only the prompt tail block; like the other four context kinds, serialization and parsing orders are exact inverses. */
+/** 只识别 prompt 尾块；与其它四类上下文一样，序列化顺序与解析顺序严格相反。 */
 export function parsePromptPluginUiContexts(content: string): ParsedPluginUiContextPrompt {
   const match = /(?:^|\n\n)# Plugin context:\s*\n\n([\s\S]*?)\s*$/.exec(content);
   if (!match || match[1] === undefined) return { visibleContent: content, pluginUiContexts: [] };

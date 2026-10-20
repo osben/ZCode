@@ -1,9 +1,9 @@
 /**
- * Types and defaults for code-preview settings.
+ * 代码预览设置的类型与默认值。
  *
- * Keep this in a standalone neutral module: if it were defined in the zustand store (@/store/index.ts),
- * pure display components (ai-elements / ToolCallBlocks) would depend on the store just to access the types and defaults.
- * The store only re-exports these values; display components receive them as props and use this module’s defaults as fallback.
+ * 独立的中立模块：若定义在 zustand store（@/store/index.ts）里，
+ * 纯展示组件（ai-elements / ToolCallBlocks）为了拿类型和默认值就要依赖 store。
+ * store 只做 re-export，展示组件改为 props 传入 + 本模块默认值兜底。
  */
 import type { BundledTheme } from "shiki";
 

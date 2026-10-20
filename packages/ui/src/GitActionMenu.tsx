@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Top-level Git actions currently combine the trigger, commit dialog, and push dialog; keep them together by workflow boundary rather than splitting the state machine just to reduce line count. */
+/* eslint-disable max-lines -- 顶部 Git 操作当前集中承载 trigger、commit dialog 和 push dialog；先按工作流边界收口，避免为了拆行数把状态机打散。 */
 import {
   useCallback,
   useEffect,
@@ -47,7 +47,6 @@ import {
 } from "@/git-action-menu/currentSessionFileScope.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
 import { formatCommandShortcutLabel, matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
@@ -70,7 +69,6 @@ interface GitActionMenuProps {
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
   commitMessageConversationContext?: GitCommitMessageConversationContext | null;
   onRefreshGit: () => void;
-  beforeSwitch?: (targetBranchName: string) => Promise<boolean>;
   className?: string;
   triggerIconOnly?: boolean;
   triggerLayout?: "header" | "status-row";
@@ -122,7 +120,6 @@ interface GitCommitDialogProps {
   includeUnstaged: boolean;
   pushEnabled: boolean;
   onRefreshGit: () => void;
-  beforeSwitch?: (targetBranchName: string) => Promise<boolean>;
   onOpenChange: (nextOpen: boolean) => void;
   onMessageChange: (nextValue: string) => void;
   onIncludeUnstagedChange: (nextValue: boolean) => void;
@@ -201,7 +198,6 @@ function GitCommitDialog({
   includeUnstaged,
   pushEnabled,
   onRefreshGit,
-  beforeSwitch,
   onOpenChange,
   onMessageChange,
   onIncludeUnstagedChange,
@@ -291,7 +287,7 @@ function GitCommitDialog({
     }
 
     const frameId = window.requestAnimationFrame(() => {
-      // After opening the dialog, focus the commit message by default so it can be edited immediately or refined after generation.
+      // 打开弹窗后的默认焦点要落在提交信息里，方便立即编辑或生成后微调。
       messageTextareaRef.current?.focus();
       messageInputFocusedOnOpenRef.current = true;
     });
@@ -299,7 +295,7 @@ function GitCommitDialog({
   }, [actionPending, loading, open, state]);
 
   useEffect(() => {
-    // The commit action is briefly unavailable before the dialog loads Git state; do not switch the default selection to push while loading.
+    // 弹窗加载 Git 状态前提交动作会短暂不可用，不能在 loading 阶段把默认选择跳到推送。
     if (!open || loading || !state || actionPending) {
       return;
     }
@@ -363,7 +359,7 @@ function GitCommitDialog({
         isCommitMessageTextAreaTarget(event.target) &&
         (event.key === "ArrowDown" || event.key === "ArrowUp")
       ) {
-        // Allow switching the Command action below while the input retains focus, preserving keyboard flow.
+        // 输入框保持焦点时也允许切换下方 Command 操作，避免键盘流断掉。
         event.preventDefault();
         event.stopPropagation();
         selectAdjacentAction(event.key === "ArrowDown" ? 1 : -1);
@@ -411,7 +407,6 @@ function GitCommitDialog({
                 gitSummary={state.summary}
                 dirtyFileCount={dirtyFileCount}
                 onRefreshGit={onRefreshGit}
-                beforeSwitch={beforeSwitch}
                 className="min-w-0 px-0 pt-0"
                 triggerClassName="h-7 max-w-64 justify-start rounded-lg px-1.5 text-foreground-subtle hover:bg-hover hover:text-foreground [&>span]:max-w-48"
                 popoverSide="bottom"
@@ -769,8 +764,8 @@ function GitPushDialog({
                   </Button>
                 </div>
                 <Textarea
-                  // Textarea defaults to field-sizing-content, so long error text expands it and stretches the dialog horizontally.
-                  // Use fixed sizing and allow long content to wrap so error details remain within the dialog width.
+                  // Textarea 默认带 field-sizing-content，长错误文本会按内容扩张并把弹窗横向撑爆。
+                  // 这里改成固定尺寸模式，并允许长内容换行，保证错误详情始终被限制在弹窗宽度内。
                   className="field-sizing-fixed w-full max-w-full min-h-56 rounded-lg border-input-border bg-background/50 px-3 py-3 text-ui-base text-foreground whitespace-pre-wrap break-words placeholder:text-foreground-subtlest focus-visible:border-input-border-focused focus-visible:bg-input-focused focus-visible:ring-0 md:text-ui-base"
                   readOnly
                 >
@@ -831,7 +826,6 @@ export function GitActionMenu({
   activeTaskChangeSummary = null,
   commitMessageConversationContext = null,
   onRefreshGit,
-  beforeSwitch,
   className,
   triggerIconOnly = false,
   triggerLayout = "header",
@@ -839,21 +833,6 @@ export function GitActionMenu({
   const { gitService } = useServices();
   const { intl, locale } = useZCodeIntl();
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
-  // BUG-GWT-006: async commit/push handlers must know at failure time whether the commit
-  // dialog is still open; state captured in the callback goes stale once the dialog is
-  // dismissed mid-mutation, so mirror the open flag in a ref owned by the dialog lifecycle.
-  const commitDialogOpenRef = useRef(false);
-  // BUG-GWT-006 (RT2-H5 live path): the status section hosting this menu can unmount while the
-  // commit/push mutation is still in flight, which makes the open dialog disappear without ever
-  // running closeCommitDialog — the ref stays true while nothing is on screen. Track the mount
-  // state so a failure never routes its error into setState on a dead component.
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
   const [commitDialogLoading, setCommitDialogLoading] = useState(false);
   const [commitDialogState, setCommitDialogState] = useState<GitCommitDialogState | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
@@ -891,9 +870,9 @@ export function GitActionMenu({
   const isStatusRowTrigger = triggerLayout === "status-row";
 
   useEffect(() => {
-    // After the top commit entry changed to “always visible, disabled on error,”
-    // record low-frequency availability logs to distinguish repository detection failures
-    // from UI interaction inconsistencies in enabled/disabled state.
+    // 顶部 commit 入口改成“始终展示、异常时置灰”后，
+    // 这里记录低频可用性日志，方便继续区分是仓库探测失败，
+    // 还是 UI 交互本身出现了禁用/启用状态不一致。
     logger.info("[GitActionMenu] 顶部 Git 操作入口可用性变化", {
       workspacePath,
       available: actionAvailable,
@@ -920,7 +899,6 @@ export function GitActionMenu({
   ]);
 
   const closeCommitDialog = useCallback(() => {
-    commitDialogOpenRef.current = false;
     setCommitDialogOpen(false);
     setCommitDialogLoading(false);
     setCommitDialogState(null);
@@ -995,7 +973,6 @@ export function GitActionMenu({
   );
 
   const openCommitDialog = useCallback(async () => {
-    commitDialogOpenRef.current = true;
     setCommitDialogOpen(true);
     setCommitDialogState(null);
     setCommitMessage("");
@@ -1154,22 +1131,6 @@ export function GitActionMenu({
         return;
       }
 
-      // A commit on a detached HEAD belongs to no branch and can be lost after switching away, so
-      // ask before any generation or Git mutation (specs/git-commit-detached-head-warning.md). The
-      // dialog's refreshed summary is authoritative; the menu's gitSummary prop can be stale.
-      if (commitDialogState.summary.headRefType === "detached") {
-        const confirmed = await useConfirmDialogStore.getState().requestConfirmation({
-          title: intl.formatMessage({ id: "git.actionMenu.commitDialog.detachedWarning.title" }),
-          description: intl.formatMessage({
-            id: "git.actionMenu.commitDialog.detachedWarning.description",
-          }),
-          confirmLabel: intl.formatMessage({
-            id: "git.actionMenu.commitDialog.detachedWarning.confirm",
-          }),
-        });
-        if (!confirmed) return;
-      }
-
       let nextCommitMessage = commitMessage.trim();
       if (!nextCommitMessage) {
         setCommitError(null);
@@ -1248,26 +1209,17 @@ export function GitActionMenu({
           committed,
           pushAfterCommit: Boolean(options?.pushAfterCommit),
         });
-        const errorMessage = intl.formatMessage(
-          {
-            id:
-              committed && options?.pushAfterCommit
-                ? "git.actionMenu.commitDialog.error.pushAfterCommitFailed"
-                : "git.actionMenu.commitDialog.error.requestFailed",
-          },
-          { error: message },
+        setCommitError(
+          intl.formatMessage(
+            {
+              id:
+                committed && options?.pushAfterCommit
+                  ? "git.actionMenu.commitDialog.error.pushAfterCommitFailed"
+                  : "git.actionMenu.commitDialog.error.requestFailed",
+            },
+            { error: message },
+          ),
         );
-        // BUG-GWT-006: the dialog may have been dismissed while the mutation was in flight;
-        // an inline error in a closed dialog is invisible and the failure would be lost, so
-        // route it to a toast instead. Exactly one surface shows the error. The dialog counts
-        // as open only while this component is still mounted: an unmounted menu (RT2-H5 live
-        // path — the status section unmounts mid-mutation) leaves commitDialogOpenRef stale
-        // true while nothing is visible, which used to swallow the error entirely.
-        if (commitDialogOpenRef.current && mountedRef.current) {
-          setCommitError(errorMessage);
-        } else {
-          toast(errorMessage);
-        }
         if (committed) {
           onRefreshGit();
         }
@@ -1355,10 +1307,10 @@ export function GitActionMenu({
       <div
         onClick={isStatusRowTrigger && !triggerIconOnly ? handleStatusRowContainerClick : undefined}
         className={cn(
-          // In small macOS/Windows windows, the Chinese label on the top Git primary button competes for space with the branch entry and window controls.
-          // When the Header container narrows, hide only the primary-button text and keep its icon so core Git actions remain available.
-          // transition-all also animates non-composited properties such as scrollbar-color,
-          // triggering a full-page UpdateLayoutTree. Git entries need only color feedback, not size or scrollbar-property animation.
+          // macOS/Windows 小窗口下，顶部 Git 主按钮的中文文案会和分支入口、窗口控制区挤在同一行。
+          // 在 header 容器变窄时只隐藏主按钮文字，保留图标入口，避免丢失核心 Git 操作。
+          // transition-all 会把 scrollbar-color 等非合成属性也启动动画，
+          // 进而触发整页 UpdateLayoutTree；Git 入口只需要颜色反馈，不动画尺寸和滚动条属性。
           "flex h-7 items-center overflow-hidden rounded-lg border border-border bg-input transition-colors hover:border-border-hover @max-[560px]/workspace-header:w-7 @max-[560px]/workspace-header:justify-center",
           triggerIconOnly && "w-7 justify-center",
           isStatusRowTrigger &&
@@ -1383,7 +1335,7 @@ export function GitActionMenu({
           )}
           onClick={isStatusRowTrigger && !triggerIconOnly ? undefined : handlePrimaryAction}
         >
-          {/* When the primary button enters pending, replace its leading action icon so an extra loading icon does not widen the compact header button.*/}
+          {/* 主按钮进入 pending 时直接替换左侧动作图标，避免在紧凑头部里额外追加 loading 图标把按钮挤宽。*/}
           {triggerPending ? (
             <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
           ) : primaryActionId === "push" ? (
@@ -1409,7 +1361,6 @@ export function GitActionMenu({
         includeUnstaged={commitIncludeUnstaged}
         pushEnabled={pushEnabled}
         onRefreshGit={refreshCommitDialogAfterBranchChange}
-        beforeSwitch={beforeSwitch}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) {
             closeCommitDialog();

@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 
-// The pen of the draft (docs/dynamic-workflow/presentation.md "The draft and the pen"): one station at a
-// time, 24 ms per character, a 120 ms pause between stations; stations the pen has not reached are not
-// revealed; a name that grows mid-write keeps being written; catching up with the stream means idle.
+// 草稿的笔（docs/dynamic-workflow/presentation.md「The draft and the pen」）：一次一站、每字 24 ms、
+// 站间停 120 ms；笔没到的站不揭示；名字中途变长接着写；追上流即 idle。
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -22,8 +21,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// Each character the pen writes is a setState → effect that schedules the next timer; one advance can
-// only take one step, so we move forward step by step in segments.
+// 笔每写一字都是 setState → effect 再排下一枚定时器；一次 advance 只能走一步，所以按步长逐段推进。
 function tick(ms: number) {
   let left = ms;
   do {
@@ -47,8 +45,7 @@ describe("useTypewriter", () => {
     tick(PEN_MS * 2);
     expect(view.result.current).toMatchObject({ idle: false, shown: [4], visible: 1 });
 
-    // Finished writing the plan: waits 120 ms before revealing verify (the second station is still off
-    // the track during that time).
+    // 写完 plan：停 120 ms 才揭示 verify（期间第二站仍不在轨道上）。
     tick(PEN_GAP_MS - 1);
     expect(view.result.current.visible).toBe(1);
     tick(1);
@@ -70,8 +67,7 @@ describe("useTypewriter", () => {
     tick(PEN_MS * 3);
     expect(view.result.current).toMatchObject({ idle: true, shown: [6] });
 
-    // The script swaps in a new array on every arriving chunk: the content is unchanged, so the pen's
-    // position neither moves nor resets.
+    // 脚本每来一块都换一个数组：内容不变，笔的位置不变、不重置。
     view.rerender({ names: ["verify"] });
     expect(view.result.current).toMatchObject({ idle: true, shown: [6], visible: 1 });
   });
@@ -90,7 +86,7 @@ describe("useTypewriter", () => {
     expect(view.result.current).toEqual({ idle: false, shown: [], visible: 0 });
   });
 
-  it("两站一起到：第二站等第一站写完；空站名的站也要揭示", () => {
+  it("两站一起到：第二站等第一站写完再揭示", () => {
     const view = renderHook(() => useTypewriter(["a", "b"]));
     tick(PEN_MS);
     expect(view.result.current).toMatchObject({ shown: [1], visible: 1 });
@@ -99,9 +95,8 @@ describe("useTypewriter", () => {
   });
 
   it("空草稿（还没有一站）笔静默：不揭示不存在的站，也不空转；第一站到了才揭示，站数回到 0 笔收回", async () => {
-    // Not using renderHook/act: this used to be an infinite loop (reveal station 1 → station count
-    // clipped back to 0 → reveal again…), and act would keep flushing the loop until the worker ran
-    // out of memory, never showing the actual failure. Real timers + a bare createRoot to count renders.
+    // 不用 renderHook/act：这条曾是无限循环（揭示第 1 站 → 站数为 0 被裁回 → 再揭示……），act 会把
+    // 循环一直冲下去直到 worker 内存耗尽，看不到失败本身。真实计时器 + 裸 createRoot 数渲染次数。
     vi.useRealTimers();
     const globalWithAct = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
     const previousAct = globalWithAct.IS_REACT_ACT_ENVIRONMENT;
@@ -155,7 +150,7 @@ describe("useTypewriter", () => {
         },
         { initialProps: { names: ["ver"] } },
       );
-      // Revealing the first station is the only setState; the name was already written in full.
+      // 揭示第一站是唯一一次 setState；名字已经整站写完。
       expect(renders).toBe(2);
       expect(view.result.current).toMatchObject({ idle: true, shown: [3], visible: 1 });
 
@@ -163,8 +158,7 @@ describe("useTypewriter", () => {
       expect(renders).toBe(3);
       expect(view.result.current).toMatchObject({ idle: true, shown: [6], visible: 1 });
 
-      // Still revealed station by station: the second station waits one beat before entering the
-      // track, and comes in fully written.
+      // 仍一站一站揭示：第二站停一拍才上轨道，上来就是整站。
       view.rerender({ names: ["verify", "publish"] });
       expect(view.result.current).toMatchObject({ idle: false, shown: [6], visible: 1 });
       tick(PEN_GAP_MS);

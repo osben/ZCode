@@ -17,7 +17,7 @@ export function useDesktopUpdateMenu(isDesktop: boolean) {
     if (!visible) return;
     let active = true;
     let eventReceived = false;
-    // Main owns update state; subscribe first so a slower initial snapshot cannot overwrite a newer state already received.
+    // main 持有更新状态；先订阅，避免较慢的初始快照覆盖已经收到的新状态。
     const dispose = platform.onUpdateStateChanged?.((payload) => {
       eventReceived = true;
       if (active) setState(payload);

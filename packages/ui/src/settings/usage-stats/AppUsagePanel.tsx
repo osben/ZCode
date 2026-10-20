@@ -1,40 +1,25 @@
 import { RefreshCcw } from "lucide-react";
-import { Fragment, lazy, useEffect, useMemo, useState } from "react";
-import type { AppUsageFilters, AppUsageSnapshot } from "@zcode/shared";
+import { Fragment, lazy, useState } from "react";
+import { APP_USAGE_RANGES } from "@zcode/shared";
+import type { AppUsageRange, AppUsageSnapshot } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { type AppUsageStatsQuery, useAppUsageStats } from "@/hooks/useUsageStats.js";
-import { AppUsageActivityPatterns } from "@/settings/usage-stats/AppUsageActivityPatterns.js";
-import { AppUsageDetailMetrics } from "@/settings/usage-stats/AppUsageDetailMetrics.js";
-import { AppUsageExportButtons } from "@/settings/usage-stats/AppUsageExportButtons.js";
-import { AppUsageFilterBar } from "@/settings/usage-stats/AppUsageFilterBar.js";
-import { AppUsageRangeControls } from "@/settings/usage-stats/AppUsageRangeControls.js";
-import { AppUsageToolsTable } from "@/settings/usage-stats/AppUsageToolsTable.js";
-import { AppUsageTopSessions } from "@/settings/usage-stats/AppUsageTopSessions.js";
+import { useAppUsageStats } from "@/hooks/useUsageStats.js";
 import { UsageChartLoadBoundary } from "@/settings/usage-stats/UsageChartLoadBoundary.js";
 import { UsageHeatmap } from "@/settings/usage-stats/UsageHeatmap.js";
 import { UsageStatsErrorNotice } from "@/settings/usage-stats/UsageStatsErrorNotice.js";
 import {
-  APP_USAGE_GRANULARITY_MIN_DAYS,
-  type AppUsageGranularity,
-  type AppUsagePreset,
-  bucketDailyModelUsage,
-  bucketNumberSeries,
-  buildAppUsageQuery,
-  formatLocalDate,
-  resolveEffectiveGranularity,
-  shiftLocalDate,
-  validateCustomRange,
-} from "@/settings/usage-stats/appUsageRangeViewModel.js";
-import {
+  USAGE_STATS_TABS_LIST_CLASS,
+  USAGE_STATS_TABS_TRIGGER_CLASS,
   UsageEmptyState,
   formatCompactNumber,
   formatSummaryCompactTokenUsage,
 } from "@/settings/usage-stats/usageStatsUiParts.js";
 
-// Recharts triggers decimal.js-light's LN10 validation during module initialization,
-// which blocks the entire renderer startup in Electron Linux containers. Loading charts on demand keeps
-// normal startup and the E2E home page independent of Usage-page chart dependencies; opening Usage also isolates them behind a local boundary.
+// Recharts 会在模块初始化阶段触发 decimal.js-light 的 LN10 校验，
+// 在 Electron Linux 容器里会阻断整个 renderer 启动。图表按需加载后，
+// 普通启动和 e2e 首页不会被 Usage 页图表依赖影响，打开 Usage 时也由局部边界隔离。
 const AppUsageDailyModelTrendChart = lazy(() =>
   import("@/settings/usage-stats/AppUsageDailyModelTrendChart.js").then((module) => ({
     default: module.AppUsageDailyModelTrendChart,
@@ -46,116 +31,23 @@ const AppUsageModelUsagePieChart = lazy(() =>
   })),
 );
 
-const DEFAULT_CUSTOM_RANGE_DAYS = 30;
-
 export function AppUsagePanel() {
   const { intl, locale } = useZCodeIntl();
-  const [preset, setPreset] = useState<AppUsagePreset>("7d");
-  const [today, setToday] = useState(() => formatLocalDate(new Date()));
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
-  const [compare, setCompare] = useState(false);
-  const [granularityOverride, setGranularityOverride] = useState<AppUsageGranularity | null>(null);
-  const [filters, setFilters] = useState<AppUsageFilters>({});
-
+  const [range, setRange] = useState<AppUsageRange>("7d");
   const { snapshot: lifetimeSnapshot, refresh: refreshLifetime } = useAppUsageStats("all");
-  // Hosts that return facets also understand the extra breakdowns; older hosts never see the field.
-  const supportsExtras = Boolean(lifetimeSnapshot?.facets);
-
-  const builtQuery = buildAppUsageQuery({
-    preset,
-    customFrom,
-    customTo,
-    compare,
-    today,
-    filters,
-    withBreakdowns: supportsExtras,
-  });
-  const builtQueryKey = JSON.stringify(builtQuery);
-  // An invalid custom range must not blank the page: keep requesting (and showing) the last valid query.
-  const [query, setQuery] = useState<AppUsageStatsQuery>(() => builtQuery ?? { range: "7d" });
-  useEffect(() => {
-    const next = JSON.parse(builtQueryKey) as AppUsageStatsQuery | null;
-    if (next) {
-      setQuery(next);
-    }
-  }, [builtQueryKey]);
-
-  const { snapshot, loading, error, refresh } = useAppUsageStats(query);
-
-  // Drilling into a heatmap day is just a one-day custom range.
-  const handleSelectDate = (date: string) => {
-    setCustomFrom(date);
-    setCustomTo(date);
-    setGranularityOverride(null);
-    setPreset("custom");
-  };
-
-  const handlePresetChange = (next: AppUsagePreset) => {
-    if (next === "custom" && !customFrom && !customTo) {
-      setCustomTo(today);
-      setCustomFrom(shiftLocalDate(today, 1 - DEFAULT_CUSTOM_RANGE_DAYS));
-    }
-    // A manual interval belongs to the range it was chosen for.
-    setGranularityOverride(null);
-    setPreset(next);
-  };
-
-  const dayCount = snapshot?.dailyModelUsage.length ?? 0;
-  const granularity = resolveEffectiveGranularity(granularityOverride, dayCount);
-  const chartSnapshot = useMemo(
-    () =>
-      snapshot
-        ? {
-            ...snapshot,
-            dailyModelUsage: bucketDailyModelUsage(snapshot.dailyModelUsage, granularity),
-          }
-        : null,
-    [snapshot, granularity],
-  );
-  const previousDailyTotals = useMemo(
-    () =>
-      snapshot?.previous
-        ? bucketNumberSeries(
-            snapshot.dailyModelUsage.map((day) => day.date),
-            snapshot.previous.dailyTokens,
-            granularity,
-          )
-        : undefined,
-    [snapshot, granularity],
-  );
-
-  const rangeControls = (
-    <AppUsageRangeControls
-      preset={preset}
-      onPresetChange={handlePresetChange}
-      customFrom={customFrom}
-      customTo={customTo}
-      onCustomChange={({ from, to }) => {
-        setCustomFrom(from);
-        setCustomTo(to);
-      }}
-      customValidation={validateCustomRange(customFrom, customTo, today)}
-      today={today}
-      compare={compare}
-      onCompareChange={setCompare}
-      granularity={granularity}
-      onGranularityChange={setGranularityOverride}
-      showGranularity={dayCount >= APP_USAGE_GRANULARITY_MIN_DAYS}
-    />
-  );
-  // Filter options come from the all-time snapshot; hosts without the rollup omit them, hiding the bar.
-  const filterBar = lifetimeSnapshot?.facets ? (
-    <AppUsageFilterBar facets={lifetimeSnapshot.facets} filters={filters} onChange={setFilters} />
-  ) : null;
+  const { snapshot, loading, error, refresh } = useAppUsageStats(range);
 
   if (loading && !snapshot) {
     return (
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
-        {rangeControls}
-        {filterBar}
-        {/* Bugfix: App Usage aggregates only local session history; it cannot reuse the Coding Plan monitor API loading description. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
+          </div>
+          <AppUsageRangeTabs range={range} onRangeChange={setRange} />
+        </div>
+        {/* Bugfix: App Usage 只聚合本地 session 历史，不能复用 Coding Plan 的 monitor API 加载说明。 */}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.loadingTitle" })}
           description={intl.formatMessage({
@@ -166,12 +58,16 @@ export function AppUsagePanel() {
     );
   }
 
-  if (!snapshot || !chartSnapshot) {
+  if (!snapshot) {
     return (
       <div className="space-y-5">
         <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
-        {rangeControls}
-        {filterBar}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-ui-base font-medium text-foreground">
+            {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
+          </div>
+          <AppUsageRangeTabs range={range} onRangeChange={setRange} />
+        </div>
         {error ? <UsageStatsErrorNotice error={error} /> : null}
         <UsageEmptyState
           title={intl.formatMessage({ id: "settings.usage.emptyTitle" })}
@@ -187,15 +83,14 @@ export function AppUsagePanel() {
     <div className="space-y-5">
       <AppUsageLifetimeSummaryStrip snapshot={lifetimeSnapshot} />
       {lifetimeSnapshot?.heatmap.weeks.length ? (
-        <UsageHeatmap
-          locale={locale}
-          intl={intl}
-          weeks={lifetimeSnapshot.heatmap.weeks}
-          onSelectDate={handleSelectDate}
-        />
+        <UsageHeatmap locale={locale} intl={intl} weeks={lifetimeSnapshot.heatmap.weeks} />
       ) : null}
-      {rangeControls}
-      {filterBar}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-ui-base font-medium text-foreground">
+          {intl.formatMessage({ id: "settings.usage.appUsageRangeTitle" })}
+        </div>
+        <AppUsageRangeTabs range={range} onRangeChange={setRange} />
+      </div>
       {error ? <UsageStatsErrorNotice error={error} /> : null}
 
       <UsageChartLoadBoundary
@@ -205,12 +100,8 @@ export function AppUsagePanel() {
           id: "settings.usage.appUsageLoadingDescription",
         })}
       >
-        <AppUsageDailyModelTrendChart
-          snapshot={chartSnapshot}
-          previousDailyTotals={previousDailyTotals}
-        />
+        <AppUsageDailyModelTrendChart snapshot={snapshot} />
       </UsageChartLoadBoundary>
-      <AppUsageDetailMetrics snapshot={snapshot} />
       <UsageChartLoadBoundary
         scope="settings.usage.app-model-pie-chart"
         resetKeys={[snapshot.range, snapshot.generatedAt, "model-pie"]}
@@ -220,20 +111,14 @@ export function AppUsagePanel() {
       >
         <AppUsageModelUsagePieChart snapshot={snapshot} />
       </UsageChartLoadBoundary>
-      <AppUsageToolsTable snapshot={snapshot} />
-      <AppUsageActivityPatterns hourlyTokens={snapshot.hourlyTokens} />
-      <AppUsageTopSessions snapshot={snapshot} />
 
-      <div className="flex flex-wrap justify-end gap-2">
-        <AppUsageExportButtons snapshot={snapshot} query={query} />
+      <div className="flex justify-end">
         <Button
           type="button"
           variant="outline"
           size="sm"
           className="h-8 rounded-md bg-background"
           onClick={() => {
-            // Roll the "today" anchor forward if the window stayed open past midnight.
-            setToday(formatLocalDate(new Date()));
             void Promise.all([refresh(), refreshLifetime()]);
           }}
         >
@@ -250,7 +135,9 @@ export function AppUsageLifetimeSummaryStrip({ snapshot }: { snapshot: AppUsageS
   const items = [
     {
       label: intl.formatMessage({ id: "settings.usage.lifetimeTotalTokens" }),
-      value: snapshot ? formatSummaryCompactTokenUsage(locale, snapshot.summary.totalTokens) : "--",
+      value: snapshot
+        ? formatSummaryCompactTokenUsage(locale, snapshot.summary.totalTokens)
+        : "--",
     },
     {
       label: intl.formatMessage({ id: "settings.usage.lifetimePeakTokens" }),
@@ -318,4 +205,29 @@ export function formatAppUsageDuration(
     parts.push(`${minutes} ${intl.formatMessage({ id: "settings.usage.duration.minute" })}`);
   }
   return parts.join(" ");
+}
+
+function AppUsageRangeTabs({
+  range,
+  onRangeChange,
+}: {
+  range: AppUsageRange;
+  onRangeChange: (range: AppUsageRange) => void;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <Tabs
+      value={range}
+      onValueChange={(value) => onRangeChange(value as AppUsageRange)}
+      className="shrink-0"
+    >
+      <TabsList className={USAGE_STATS_TABS_LIST_CLASS}>
+        {APP_USAGE_RANGES.filter((option) => option !== "all").map((option) => (
+          <TabsTrigger key={option} value={option} className={USAGE_STATS_TABS_TRIGGER_CLASS}>
+            {intl.formatMessage({ id: `settings.usage.range.${option}` })}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
 }

@@ -83,7 +83,7 @@ const scrollFocus = vi.hoisted(() => ({
   scrollToBottom: vi.fn(),
 }));
 
-// Never resolves: these tests do not exercise discovery queries; resolving would trigger setState after teardown (unhandled exception).
+// 永不 resolve：这些文件不测发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -131,9 +131,16 @@ const prewarmHookInputs = vi.hoisted(() => ({
 }));
 
 const servicesMock = vi.hoisted(() => ({
+  projectService: {
+    resolveSessionDirectories: vi.fn(async (task) => ({
+      ...task,
+      projectId: null,
+      additionalDirectories: [],
+    })),
+  },
   highspeedCardService: {
-    // This file uses a minimal DOM that is destroyed after the test case; keep unrelated Highspeed
-    // queries pending so their Promise callbacks do not wake the React scheduler after window cleanup.
+    // 本文件使用会在用例结束后销毁的极简 DOM；保持无关 Highspeed 查询 pending，
+    // 避免其 Promise 回调在 window 清理后再次唤醒 React scheduler。
     getSnapshot: vi.fn(() => new Promise(() => {})),
     prepareTurn: vi.fn(async () => ({
       kind: "fallback" as const,
@@ -143,7 +150,7 @@ const servicesMock = vi.hoisted(() => ({
     healthy: vi.fn(),
     share: vi.fn(),
   },
-  // Fix rationale: the readiness hook uses the service as an effect dependency; rebuilding it on every render causes infinite re-renders until OOM.
+  // 修复原因：readiness hook 将 service 作为 effect 依赖；每次 render 重建会导致无限重渲染直至 OOM。
   modelSelectionService: {
     getView: vi.fn(async () => ({
       revision: 1,
@@ -168,19 +175,19 @@ const servicesMock = vi.hoisted(() => ({
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
-// This group only verifies composer continuity; group delivery services are covered by dedicated component tests and real Host/CLI E2E.
+// 本组只验证输入框连续性；群同步服务由独立组件测试和真实 Host/CLI E2E 覆盖。
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
 }));
 
-// Bugfix: this file only verifies SessionPane composer continuity; isolate the off-peak entry's dependency on the real TabStore.
+// Bugfix：本文件只验证 SessionPane 的 composer 连续性，隔离闲时入口对真实 TabStore 的依赖。
 vi.mock("@/v4/OffPeakNewTaskEntry.js", () => ({
   OffPeakNewTaskEntry: () => null,
 }));
 
-// Isolate the suggested-prompts placeholder for the same reason: this file uses a minimal DOM that
-// only implements createElement; rendering lucide icons would hit createElementNS and crash outright, unrelated to composer continuity.
+// 同理隔离推荐提示词占位：本文件用的是只实现 createElement 的极简 DOM，
+// 渲染 lucide 图标会走 createElementNS 而直接崩掉，与 composer 连续性无关。
 vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
   ConversationDraftSuggestedPromptsContainer: () => null,
 }));
@@ -194,8 +201,8 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: conversationMock.currentLayer ?? conversationMock.layer,
     sendCommand: conversationMock.currentSendCommand ?? conversationMock.sendCommand,
     attachmentPut: vi.fn(),
-    // The run discovery query SessionPane pulls from the journal as a fallback on mount: without a stub the effect throws a TypeError;
-    // the stub must be a stable reference — the effect depends on workflowRuns, and a new function per render causes an infinite loop.
+    // SessionPane 挂载即拉 journal 兜底的 run 发现查询：缺桩会在 effect 里 TypeError；
+    // 桩必须是稳定引用——effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
     workflowRuns: workflowRunsQueryMock,
     fileChanges: vi.fn(),
     fileRewindPreview: vi.fn(),
@@ -217,12 +224,13 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => servicesMock,
 }));
 
-// This file only verifies the composer lifecycle; the target Host View's async subscription already has dedicated hook tests.
-// If the real hook runs against the minimal DOM, Promise resolution would leave React scheduling pending past window cleanup.
+// 本文件只验证 composer 生命周期；目标 Host View 的异步订阅已有独立 hook 测试。
+// 若让真实 hook 在极简 DOM 中运行，Promise 回流会把 React 调度留到 window 清理之后。
 vi.mock("@/hooks/useModelSelectionView.js", () => ({
   useModelSelectionServiceView: () => ({
     state: {
@@ -285,6 +293,13 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
     prewarmHookInputs.current.push(params);
     return {
       binding: prewarmHookInputs.binding,
+      waitForSession: async () => {
+        if (prewarmHookInputs.binding) return prewarmHookInputs.binding;
+        const ack = (await params.dispatchCommand("createSession", {}, null)) as {
+          result: { sessionId: string };
+        };
+        return { sessionId: ack.result.sessionId, beginPromotion: () => true, promote: vi.fn() };
+      },
     };
   },
 }));
@@ -515,7 +530,7 @@ function renderPane(root: Root, sessionId: string | null): void {
     root.render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(SessionPane, {
           paneId: "workspace-main",
           sessionId,
@@ -541,7 +556,12 @@ beforeEach(() => {
   conversationMock.lease.store.expectAcceptedInputProjection.mockClear();
   conversationMock.currentLayer = null;
   conversationMock.currentSendCommand = null;
-  conversationMock.sendCommand.mockClear();
+  conversationMock.sendCommand.mockReset();
+  conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+    commandId: envelope.commandId,
+    revisionAtDecision: 1,
+    status: "accepted" as const,
+  }));
   prewarmHookInputs.current = [];
   scrollFocus.composerProps = null;
   scrollFocus.queueProps = null;
@@ -585,10 +605,9 @@ describe("SessionPane composer continuity", () => {
       await act(async () => {
         await scrollFocus.composerProps?.onSendText("create session");
       });
-      // Highspeed unified the first-send path: first sends without attachments also go through the two-phase
-      // "empty createSession + sendText" flow so the gacha admission gets a real sessionId; therefore the first
-      // send's message_id is the sendText commandId (calls[1]), not the empty-create commandId (calls[0]).
-      // The telemetry invariant still holds: report exactly once after accepted.
+      // Highspeed 统一了首发链路：无附件首发也走「空 createSession + sendText」两段式，
+      // 好让抽卡 admission 拿到真实 sessionId，因此首发 message_id 是 sendText 的 commandId
+      // （calls[1]），不是空创建的 commandId（calls[0]）。埋点不变量仍成立：accepted 后只报一次。
       const firstSendCalls = conversationMock.sendCommand.mock.calls;
       expect(firstSendCalls).toHaveLength(2);
       expect(sessionCreateCapture.report).toHaveBeenCalledExactlyOnceWith(
@@ -772,7 +791,7 @@ describe("SessionPane composer continuity", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: null,
@@ -784,8 +803,8 @@ describe("SessionPane composer continuity", () => {
     const bindingA = prewarmHookInputs.current.findLast(
       (input) => input.workspaceKey === "/local/a",
     );
-    // Root cause: the single-flight coordinator now uses the stable SessionDataLayer to identify the transport,
-    // while the old assertion still treated the provider's re-creatable sendCommand wrapper as the identity.
+    // Bug 根因：single-flight 协调器已改用稳定的 SessionDataLayer 标识 transport，
+    // 旧断言仍把 provider 每次可重建的 sendCommand wrapper 当作 identity。
     expect(bindingA?.transportIdentity).toBe(layerA);
 
     conversationMock.currentLayer = layerB;
@@ -794,7 +813,7 @@ describe("SessionPane composer continuity", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(SessionPane, {
             paneId: "workspace-main",
             sessionId: null,
@@ -895,7 +914,12 @@ describe("SessionPane composer continuity", () => {
       loadingOlder: false,
     };
     renderPane(root, "session-1");
-    conversationMock.sendCommand.mockClear();
+    conversationMock.sendCommand.mockReset();
+    conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+    }));
 
     await act(async () => {
       await scrollFocus.composerProps?.onSendText("立即执行", {
@@ -912,9 +936,6 @@ describe("SessionPane composer continuity", () => {
           requestedDelivery: "startNow",
         }),
       }),
-    );
-    expect(conversationMock.sendCommand).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "sendQueuedNow" }),
     );
     expect(conversationMock.lease.store.expectAcceptedInputProjection).toHaveBeenCalledWith(
       conversationMock.sendCommand.mock.calls[0]?.[0].commandId,
@@ -970,7 +991,12 @@ describe("SessionPane composer continuity", () => {
       expect.objectContaining({ type: "compact", sessionId: "session-1" }),
     );
 
-    conversationMock.sendCommand.mockClear();
+    conversationMock.sendCommand.mockReset();
+    conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+    }));
     await act(async () => {
       await scrollFocus.composerProps?.onSendText("新消息", {
         heldQueueDisposition: "clearQueueAndSend",
@@ -1035,10 +1061,9 @@ describe("SessionPane composer continuity", () => {
     );
   });
 
-  // What is revealed when expanded must not be less than the pill (docs/dynamic-workflow/presentation.md "Other places a run appears"):
-  // when a live run appears (running count goes from 0 to >=1, including entering a session that already has live
-  // runs) the "Workflows" section opens; it folds when the last one ends. A manual fold stays folded until all
-  // runs end or the session changes.
+  // 展开后看到的不能比胶囊还少（docs/dynamic-workflow/presentation.md「Other places a run appears」）：
+  // 活的 run 出现时（在跑数从 0 变成 ≥1，包括进入一个本就有活 run 的会话）「工作流」分区打开；
+  // 最后一条结束时折起。读者手动折起后保持折起，直到 run 全部结束或换会话。
   it("opens the Workflows section while a run is live and respects a manual fold", () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
@@ -1068,18 +1093,18 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
 
-    // 0 → 1: open.
+    // 0 → 1：打开。
     projectionState.current = withRuns("session-1", [liveRun]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(true);
 
-    // After a manual fold, stay folded while runs are still live (another run arriving changes nothing).
+    // 手动折起后，run 还在跑（再来一条也一样）就保持折起。
     act(() => scrollFocus.statusPanelProps?.onWorkflowSectionOpenChange?.(false));
     projectionState.current = withRuns("session-1", [liveRun, { ...liveRun, runId: "dwfrun-2" }]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
 
-    // All ended: fold; next run appearing: reopen.
+    // 全部结束：折起；下一条 run 出现：重新打开。
     projectionState.current = withRuns("session-1", [{ ...liveRun, status: "completed" as never }]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
@@ -1087,7 +1112,7 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(true);
 
-    // Fold in a session with a live run, then enter another session that also has live runs: open in the new session.
+    // 在一个有活 run 的会话里折起，再进入另一个也有活 run 的会话：新会话里是打开的。
     act(() => scrollFocus.statusPanelProps?.onWorkflowSectionOpenChange?.(false));
     projectionState.current = withRuns("session-2", [liveRun]);
     renderPane(root, "session-2");

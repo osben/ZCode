@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
 /**
- * Reuse the 5-second operation deadline used by the browser-use tab cursor icon.
- * The icon and in-browser hint must share this check so one cannot show the tool as running while the other says it has finished.
+ * 复用 browser-use tab 鼠标图标的 5 秒 operation deadline。
+ * 图标和浏览器内提示必须共用这一个判断，避免出现一边认为工具仍在执行、另一边已经结束。
  */
 export function useBrowserUseOperationActive(operationUntil = 0): boolean {
   const [expiredOperationUntil, setExpiredOperationUntil] = useState(0);

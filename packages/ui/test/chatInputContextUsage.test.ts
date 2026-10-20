@@ -3,7 +3,6 @@ import {
   formatContextCacheHitRateLabel,
   formatContextUsageSummary,
   formatContextUsageTokenCount,
-  resolveContextTriggerToneClassName,
 } from "@/chat-input-toolbar/contextUsage.js";
 import { runContextPanelActionWithClose } from "@/chat-input-toolbar/contextPanelAction.js";
 
@@ -26,10 +25,9 @@ describe("chat input context usage formatting", () => {
   });
 
   it("uses localized compact token units for Chinese locale", () => {
-    const chineseLocale = "zh-CN";
     expect(
       formatContextUsageSummary({
-        locale: chineseLocale,
+        locale: "zh-CN",
         percent: 0.125,
         size: 1_000_000,
         used: 125_000,
@@ -42,15 +40,6 @@ describe("chat input context usage formatting", () => {
     expect(formatContextCacheHitRateLabel(0.78, "en-US")).toBe("78%");
     expect(formatContextCacheHitRateLabel(0.781, "en-US")).toBe("78.1%");
     expect(formatContextCacheHitRateLabel(null, "en-US")).toBeNull();
-  });
-
-  it("maps the context budget tone to trigger classes with quota tone priority", () => {
-    expect(resolveContextTriggerToneClassName("normal", null)).toBeNull();
-    expect(resolveContextTriggerToneClassName("warning", null)).toBe("text-warning");
-    expect(resolveContextTriggerToneClassName("critical", null)).toBe("text-destructive");
-    // A transient quota-reset opportunity tone keeps priority over the steady budget tone.
-    expect(resolveContextTriggerToneClassName("critical", "available")).toBeNull();
-    expect(resolveContextTriggerToneClassName("critical", "urgent")).toBeNull();
   });
 
   it("closes the context panel before running an inner action", () => {

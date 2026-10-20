@@ -18,7 +18,7 @@ export interface ProviderDetailFeedbackInput {
   key: string;
   message: string;
   state: ProviderDetailFeedbackState;
-  /** Successful connection tests use semantic green; save/delete keep neutral feedback, and the operation is not inferred from text or key. */
+  /** 连接测试成功使用语义绿；保存/删除沿用中性反馈，不按文案或 key 推断操作。 */
   successEmphasis?: boolean;
   durationMs?: number;
   actionLabel?: string;
@@ -97,7 +97,7 @@ export function ProviderDetailFeedbackBoundary({ children }: { children: ReactNo
   return (
     <ProviderDetailFeedbackContext.Provider value={contextValue}>
       {children}
-      {/* After page scrolling, the content bottom may be offscreen; the overlay takes no height, and sticky positions feedback within the main viewport. */}
+      {/* 整页滚动后，内容底部可能在屏外；覆盖层不占高度，sticky 以 main 视口定位反馈。 */}
       <div className="pointer-events-none absolute inset-3 flex flex-col justify-end sm:inset-4">
         <div
           className="sticky bottom-3 z-20 flex flex-col gap-2 sm:bottom-4"

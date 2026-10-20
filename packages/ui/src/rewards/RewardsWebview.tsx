@@ -1,3 +1,4 @@
+import { toServiceLocale } from "../i18n/serviceLocale.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildRewardsUrl,
@@ -11,7 +12,6 @@ import {
 import { useServices } from "@/hooks/useServices.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { toServiceLocale } from "@zcode/shared";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
 import { logger } from "@/logger.js";
@@ -22,8 +22,6 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
   const { credentialService, oauthService } = useServices();
   const platform = usePlatform();
   const { intl, locale } = useZCodeIntl();
-  // Rewards is an external site (only zh/en routes); injection and URL assembly both use ServiceLocale.
-  const serviceLocale = toServiceLocale(locale);
   const themePreference = useZCodeStore((s) => s.theme);
   const userId = useZCodeStore((s) => s.user?.id ?? null);
   const [systemDark, setSystemDark] = useState(
@@ -52,7 +50,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
             ? env.VITE_REWARDS_WEBVIEW_ORIGIN
             : undefined,
       }),
-      serviceLocale,
+      locale,
       theme,
     ),
   );
@@ -62,9 +60,9 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
   const ready = useRef(false);
   const injectedIdentity = useRef<string | null | undefined>(undefined);
   const authSnapshot = useRef({ fingerprint: "", revision: 0 });
-  const latest = useRef({ theme, locale: serviceLocale, userId });
-  // The post-read identity comparison covers the window where React effects have not run yet; an old account must not write into the new page.
-  latest.current = { theme, locale: serviceLocale, userId };
+  const latest = useRef({ theme, locale, userId });
+  // 读取后的身份比较覆盖 React effect 尚未执行的窗口，不能让旧账号写入新页面。
+  latest.current = { theme, locale, userId };
   const [error, setError] = useState(false);
   const [navigation, setNavigation] = useState({ loading: true, back: false, forward: false });
   const inject = useCallback(async () => {
@@ -76,12 +74,12 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
       const href = element.getURL();
       if (!isTrustedRewardsUrl(href, policy)) return;
       if (injectedIdentity.current !== identity) {
-        // Switching accounts cannot wait for async credential reads; revoke the current page's login state first.
+        // 切账号不能等异步凭据读取完才清旧账号，先撤销当前页面登录态。
         await element.executeJavaScript(
           createRewardsInjectionScript(
             {
               theme: latest.current.theme,
-              locale: latest.current.locale,
+              locale: toServiceLocale(latest.current.locale),
               auth: {
                 status: "anonymous",
                 provider: null,
@@ -118,7 +116,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
       }
       const snapshot: RewardsContext = {
         theme: latest.current.theme,
-        locale: latest.current.locale,
+        locale: toServiceLocale(latest.current.locale),
         auth: {
           provider,
           status: identity && (oauth || jwt) ? "ready" : "anonymous",
@@ -153,7 +151,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
     const stop = () => {
       sync();
       setNavigation((s) => ({ ...s, loading: false }));
-      // The Next language route triggers loading, but same-document navigations have no new dom-ready; restore bridge readiness.
+      // Next 语言路由会触发 loading，但同文档导航没有新的 dom-ready；恢复桥接就绪。
       ready.current = true;
       void injectRef.current();
     };
@@ -174,7 +172,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
     element.addEventListener("did-fail-load", failed);
     cleanup.current = () => {
       ++generation.current;
-      // Besides explicit close, Root unmount must also revoke credentials; failures from a destroying guest can be ignored.
+      // 除显式关闭外，Root 卸载也要撤销凭据；销毁中的 guest 失败可忽略。
       if (ready.current) {
         try {
           void element
@@ -182,7 +180,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
               createRewardsInjectionScript(
                 {
                   theme: latest.current.theme,
-                  locale: latest.current.locale,
+                  locale: toServiceLocale(latest.current.locale),
                   auth: {
                     status: "anonymous",
                     provider: null,
@@ -195,7 +193,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
             )
             .catch(() => {});
         } catch {
-          /* The guest is already destroyed. */
+          /* guest 已销毁。 */
         }
       }
       ready.current = false;
@@ -221,7 +219,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
           createRewardsInjectionScript(
             {
               theme,
-              locale: serviceLocale,
+              locale: toServiceLocale(locale),
               auth: { status: "anonymous", provider: null, revision: generation.current },
             },
             {},
@@ -229,7 +227,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
           ),
         );
     } catch {
-      /* Do not block closing when the WebView is already destroyed. */
+      /* WebView 已销毁时不阻塞关闭。 */
     }
     onClose();
   };
@@ -268,7 +266,7 @@ export function RewardsWebview({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
       )}
-      {/* The web viewport must fill the window; leave width limiting to the site content, otherwise the scrollbar is also inset and centered. */}
+      {/* 网页视口必须铺满窗口；限宽交给网站内容，否则滚动条也会被居中内缩。 */}
       <webview
         ref={attach}
         src={url}

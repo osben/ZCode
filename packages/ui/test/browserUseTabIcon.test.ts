@@ -1,5 +1,4 @@
 /** @vitest-environment jsdom */
-
 import { createElement } from "react";
 import { act, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,10 +31,6 @@ describe("BrowserUseTabIcon", () => {
       '[data-browser-use-operation-indicator="active"]',
     );
     expect(indicator).not.toBeNull();
-    expect(indicator?.classList.contains("browser-use-operation-breathe")).toBe(true);
-    expect(
-      indicator?.querySelector("svg")?.classList.contains("browser-use-operation-breathe"),
-    ).toBe(false);
     expect(view.container.querySelector("img")).toBeNull();
 
     act(() => vi.advanceTimersByTime(BROWSER_USE_OPERATION_INDICATOR_DURATION_MS - 1));

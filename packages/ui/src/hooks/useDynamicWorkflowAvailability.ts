@@ -8,13 +8,12 @@ import {
 } from "@/store/dynamicWorkflowAvailabilityStore.js";
 
 /**
- * Read the dynamic-workflow rollout snapshot.
- * Read-only and does not issue requests: the loader in Root is the sole data owner. Consumers (automation page, run panel)
- * may be inside a workspace-level ServiceProvider (with a remote Host accessor); letting them fetch independently could
- * overwrite the app-level snapshot.
+ * 读动态工作流灰度快照。
+ * 只读，不触发请求：取数由 Root 里的 loader 唯一负责。消费方（自动化页、run 面板）可能位于
+ * 工作区级 ServiceProvider 内（远程 Host 的 accessor），让它们各自取数会把 app 级那一份覆盖掉。
  */
 export function useDynamicWorkflowAvailability(): DynamicWorkflowAvailabilitySnapshot {
-  // Subscribe field by field: a selector returning an object literal creates a new reference each time, which useSyncExternalStore treats as a change.
+  // 逐字段订阅：返回对象字面量的 selector 每次都是新引用，useSyncExternalStore 会判定为变化。
   const status = useDynamicWorkflowAvailabilityStore((state) => state.status);
   const enabled = useDynamicWorkflowAvailabilityStore((state) => state.enabled);
   const config = useDynamicWorkflowAvailabilityStore((state) => state.config);
@@ -22,8 +21,8 @@ export function useDynamicWorkflowAvailability(): DynamicWorkflowAvailabilitySna
 }
 
 /**
- * Fetch at the app-session level, mounted once in Root. Retry when the service changes (for example, after mobile `/remote`
- * completes workspace bridging). Fetch and failure-retry rules are in dynamicWorkflowAvailabilityStore.
+ * app 会话级取数，挂在 Root 里一次。service 换了（手机 `/remote` 完成工作区桥接）会重试，
+ * 取数与失败重试的规则见 dynamicWorkflowAvailabilityStore。
  */
 export function useDynamicWorkflowAvailabilityLoader(
   service: ICodingPlanSubscriptionService,
@@ -35,13 +34,12 @@ export function useDynamicWorkflowAvailabilityLoader(
 }
 
 /**
- * Synchronize after the user's selection changes (docs/dynamic-workflow/launch.md, “The user's
- * choice”), registered once in Root. The settings file is the sole source of the selection. After
- * any window writes it, the shared settings broadcast lets every Root read the new value; each
- * notifies its Host (resend CLI policy and forward to the remote Host), then the Host rereads the snapshot.
- * - The first value is only a baseline: Host reads the settings file at startup, so no signal is needed.
- * - Serialize repeated changes: start the next “signal → reread” only after the previous one finishes, so a slow reread cannot overwrite a newer result.
- * - Reread even if Host synchronization fails: the snapshot reflects the result currently computed by Host.
+ * 用户选择变化后的同步（docs/dynamic-workflow/launch.md「The user's choice」），挂在 Root 里一次。
+ * 设置文件是选择的唯一来源；任何窗口写入后，共享设置广播让每个窗口的 Root 都读到新值，
+ * 各自通知本窗口的 Host（重发 CLI 策略、转发给远程 Host），Host 处理完再重读快照。
+ *   - 首次读到的值只是基线：启动时 Host 自己会读设置文件，不需要信号；
+ *   - 多次变化串行：上一轮「信号 → 重读」完成后才开始下一轮，慢的重读不会盖掉新结果；
+ *   - Host 同步失败仍重读：快照以 Host 当前算出的结果为准。
  */
 export function useDynamicWorkflowUserModeSync(params: {
   settingsLoaded: boolean;

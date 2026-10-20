@@ -41,11 +41,8 @@ export function HighspeedShareNoticeCard({
   const [open, setOpen] = useState(false);
   const payload = isHighspeedShareNoticePayload(notice.payload) ? notice.payload : null;
   if (!payload) return null;
-  // Bug root cause: metrics were previously rebuilt from second-rounded fields before rechecking
-  // eligibility, so borderline multipliers were systematically underestimated and the View button
-  // was hidden (spec §9). Now the publish gate and this recheck share the same millisecond facts,
-  // so the recheck always agrees with the publish decision and defense-in-depth no longer
-  // penalizes already-published cards.
+  // Bug 根因：此前由秒级取整字段重建指标再复检资格，边界倍率被系统性低估而隐藏 View（spec §9）。
+  // 现在与发布门禁共用同一份毫秒事实，复检只能与发布判定一致，纵深防御不再误伤已发布的卡。
   const metrics = resolveHighspeedShareNoticeMetrics(payload);
   const shareEligible = isHighspeedShareEligible(metrics);
   const openDetails = () => setOpen(true);
@@ -58,10 +55,8 @@ export function HighspeedShareNoticeCard({
           data-global-notice-type="highspeed-share"
           role="group"
         >
-          {/* Bug cause: the old implementation split the design mock's background into several
-           * approximate layers, which could double-stack or lose strokes on theme switches.
-           * Use the complete themed background delivered by design as-is; foreground elements
-           * still render independently at their Figma coordinates. */}
+          {/* Bug 原因：旧实现把设计稿背景拆成多个近似图层，主题切换时容易重复叠加或丢失描边。
+           * 直接使用设计交付的完整主题底图，前景元素仍按 Figma 坐标独立渲染。 */}
           <img
             src={shareCardLightBackgroundUrl}
             alt=""
@@ -119,7 +114,7 @@ export function HighspeedShareNoticeCard({
   );
 }
 
-/** Counts from 0 up to the target value; with reduced motion or when disabled, the final value is shown directly. Timing aligns with the staggered fade-up of the card sections. */
+/** 数字从 0 增长到目标值；reduced-motion 或禁用时直接呈现终值。节奏与卡片各区块的 fade-up 交错对齐。 */
 function useCountUpNumber(
   target: number,
   { enabled, delayMs, durationMs }: { enabled: boolean; delayMs: number; durationMs: number },
@@ -162,11 +157,9 @@ export function HighspeedShareDialog({
   const speedup = highspeedSpeedup(metrics);
   const savedDurationMs = metrics.savedDurationMs ?? calculateHighspeedSavedDurationMs(metrics);
   const savedSeconds = Math.max(0, Math.round(savedDurationMs / 1_000));
-  // Bug cause: this was previously 1 - highspeedTps/regularTps, which is always negative and got
-  // clamped to 0%.
+  // Bug 原因：此前写成 1 - highspeedTps/regularTps，结果恒为负数被 clamp 成 0%。
   const savedPercent = highspeedSavedPercent(metrics);
-  // The multiplier and percentage count up from 0 to their targets as the dialog enters; timing
-  // matches each section's fade-up delay of 230ms/300ms.
+  // 倍数与百分比在弹窗入场时从 0 增长到目标值；节奏对齐各自区块 fade-up 的 230ms/300ms 延迟。
   const countUpEnabled = open && !prefersReducedMotion;
   const speedupCount = useCountUpNumber(speedup, {
     enabled: countUpEnabled,
@@ -207,13 +200,10 @@ export function HighspeedShareDialog({
       .catch(() => toast(intl.formatMessage({ id: "globalNotice.highspeed.textCopyFailed" })));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* Bug cause: Radix Presence unmounts overlay/content only on the exiting CSS animation's
-       * animationend, with no timeout fallback; when the Electron window is invisible the
-       * compositor stalls and animationend never fires, so the bg-black/60 overlay lingers
-       * forever, graying out and swallowing clicks on the bottom-left view button. The closed
-       * state forces animation:none via highspeed-share.css, so Radix detects no animation name
-       * and unmounts synchronously (tw-merge does not merge tw-animate's animate-out, making a
-       * class-name approach unreliable). */}
+      {/* Bug 原因：Radix Presence 等 overlay/content 的退出 CSS 动画 animationend 才卸载，且无超时兜底；
+       * Electron 窗口不可见时 compositor 停摆，animationend 永不触发，bg-black/60 遮罩无限滞留，
+       * 把左下角查看按钮罩灰并吞掉点击。关闭态由 highspeed-share.css 强制 animation:none，
+       * Radix 检测不到动画名即同步卸载（tw-merge 不合并 tw-animate 的 animate-out，类名方案不可靠）。 */}
       <DialogContent
         className="highspeed-share-dialog__content"
         overlayClassName="highspeed-share-dialog__overlay"

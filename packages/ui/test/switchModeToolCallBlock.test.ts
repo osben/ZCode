@@ -6,7 +6,6 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { SwitchModeToolCallBlock } from "../src/ToolCallBlocks/renderers/switch-mode.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const localStorageState = new Map<string, string>();
 
@@ -60,7 +59,7 @@ function renderSwitchModeBlock(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(
         ServiceProvider,
         { services: mockServices },
@@ -124,12 +123,12 @@ describe("SwitchModeToolCallBlock", () => {
     expect(html).toContain("rosy-orbiting-backus.md");
     expect(html).toContain("计划");
     expect(html).not.toContain("3 行");
-    expect(html).toContain(expectedCopy("planTool.panel.copy"));
-    expect(html).toContain(expectedCopy("planTool.panel.open"));
-    expect(html).toContain(expectedCopy("planTool.panel.viewFull"));
-    expect(html.match(new RegExp(expectedCopy("planTool.panel.open"), "g"))).toHaveLength(1);
-    expect(html).not.toContain(expectedCopy("planTool.panel.expand"));
-    expect(html).not.toContain(expectedCopy("planTool.panel.collapse"));
+    expect(html).toContain("复制计划");
+    expect(html).toContain("在侧边栏查看计划");
+    expect(html).toContain("查看完整计划");
+    expect(html.match(/在侧边栏查看计划/g)).toHaveLength(1);
+    expect(html).not.toContain("展开计划");
+    expect(html).not.toContain("收起计划");
     expect(html).not.toContain("&quot;plan&quot;");
   });
 });

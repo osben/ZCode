@@ -1,10 +1,9 @@
+import { type McpServerStatus, type ZCodeMcpServer } from "@zcode/shared";
 import {
   TID_MCP_OPEN_AUTHORIZATION_BUTTON,
   TID_MCP_SERVER_ROW,
   testId,
-  type McpServerStatus,
-  type ZCodeMcpServer,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { Switch } from "@/components/ui/switch.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -33,13 +32,13 @@ export function McpStatusDot({
   const color = disabled
     ? "text-foreground-subtlest"
     : status === "connected"
-      ? "text-success"
+      ? "text-green-500"
       : status === "connecting"
-        ? "text-warning"
+        ? "text-yellow-500"
         : status === "error"
-          ? "text-destructive"
+          ? "text-red-500"
           : attention
-            ? "text-warning"
+            ? "text-yellow-500"
             : "text-foreground-subtlest";
 
   const icon =
@@ -142,7 +141,7 @@ function McpServerItem({
           <Button
             variant="link"
             size="sm"
-            className="text-icon-blue hover:text-icon-blue/80"
+            className="text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300"
             aria-label={openAuthorizationLabel}
             data-testid={testId(TID_MCP_OPEN_AUTHORIZATION_BUTTON, server.name)}
             title={openAuthorizationLabel}

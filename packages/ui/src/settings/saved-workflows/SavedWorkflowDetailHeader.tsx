@@ -1,11 +1,12 @@
 import {
   TID_WORKFLOW_DETAIL_MENU,
+  TID_WORKFLOW_DETAIL_PROJECT,
   TID_WORKFLOW_DETAIL_RUN,
   TID_WORKFLOW_ACTION_DELETE,
   TID_WORKFLOW_ACTION_MOVE,
-  testId,
   type ZCodeSavedWorkflowEntry,
 } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import {
   DropdownMenu,
@@ -23,20 +24,25 @@ import {
 
 interface SavedWorkflowDetailHeaderProps {
   name: string;
+  /** 标题旁的归属小标：项目名，全局档为「全局」。 */
+  projectLabel: string;
   description: string;
   entry: ZCodeSavedWorkflowEntry | undefined;
   busy: boolean;
   onRun: () => void;
   onRevise: () => void;
   onCopyPath: () => void;
-  /** Scope action: project-level "Promote to global" (AI summary) / global-level "Move to project…"; appears only when passed in. */
+  /** 作用域动作：项目档「提升为全局」（AI 概括）/ 全局档「移到项目…」；仅在传入时出现。 */
   onMove?: () => void;
   onDelete: () => void;
 }
 
-/** Detail-page header row: title + description + top-right Run and ⋯ menu. Extracted from the detail page to stay within max-lines (≤400). */
+/**
+ * 详情页头行：标题 + 归属小标 + 说明 + 右上「运行」与 ⋯ 菜单。从详情页拆出以守住 max-lines（≤400）。
+ */
 export function SavedWorkflowDetailHeader({
   name,
+  projectLabel,
   description,
   entry,
   busy,
@@ -50,7 +56,19 @@ export function SavedWorkflowDetailHeader({
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="flex min-w-0 flex-col gap-1.5">
-        <h1 className="text-ui-xl font-semibold text-foreground">{name}</h1>
+        {/* Bugfix：项目归属原先是面包屑的中间一级（自动化 › 项目 › 名字）。但项目只是列表里的一组，
+            不是一页，那一级没有去处，只能做成点不动的文字，颜色却和能点的那级一样，看着像坏掉的
+            链接。面包屑改回两级，归属挪到这里，写成一眼看得出不是控件的小标（与列表组头的
+            「当前」小标同一套样式）。 */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <h1 className="min-w-0 text-ui-xl font-semibold text-foreground">{name}</h1>
+          <span
+            data-testid={TID_WORKFLOW_DETAIL_PROJECT}
+            className="max-w-60 truncate rounded-sm border border-border px-1.5 text-ui-xs leading-4 text-foreground-subtlest"
+          >
+            {projectLabel}
+          </span>
+        </div>
         {description ? <p className="text-ui-base text-foreground-subtle">{description}</p> : null}
       </div>
       <div className="flex shrink-0 items-center gap-2">

@@ -20,7 +20,7 @@ export interface OffPeakCreateTelemetrySnapshot extends OffPeakCreateTelemetrySo
 
 type TelemetryPlatform = Pick<IPlatformService, "reportTelemetryEvent">;
 
-/** Freeze source/template/model during submit synchronization; later navigation or form changes must not alter this attempt. */
+/** submit 同步阶段冻结来源/模板/模型，后续导航或表单变化不得改写本次 attempt。 */
 export function freezeOffPeakCreateTelemetrySnapshot(params: {
   source?: OffPeakCreateTelemetrySource;
   model?: string | null;
@@ -78,7 +78,7 @@ export function reportOffPeakCreateResult(
   );
 }
 
-/** Business result and exactly-once report scheduling boundary for one submit. */
+/** 单次 submit 的业务结果与 exactly-once report 调度边界。 */
 export async function createAndReportOffPeakTask(
   platform: TelemetryPlatform,
   snapshot: OffPeakCreateTelemetrySnapshot,

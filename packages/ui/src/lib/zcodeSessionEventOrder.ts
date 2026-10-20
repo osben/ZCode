@@ -90,10 +90,9 @@ export function createZCodeSessionEventOrderGate(): ZCodeSessionEventOrderGate {
       }
       const nextSnapshotSeq = seq + 1;
       if (options.preservePendingEvents) {
-        // Bugfix: a running snapshot's eventSeq only means the control state has caught up to this
-        // point; it does not mean the streamed body/thought has been written into the snapshot.
-        // Deltas that arrived but were not yet released must keep flowing to the UI, otherwise
-        // switching sessions would swallow the first body segment before the snapshot watermark.
+        // Bugfix: running snapshot 的 eventSeq 只能说明控制状态追到这里，不代表
+        // 流式正文/思考已经写入 snapshot。已到达但尚未放行的 delta 需要继续交给
+        // UI 消费，否则切 session 时会吞掉快照水位之前的首段正文。
         const preservedEvents = Array.from(pendingEvents.values())
           .filter((event) => event.seq < nextSnapshotSeq)
           .sort((left, right) => left.seq - right.seq);

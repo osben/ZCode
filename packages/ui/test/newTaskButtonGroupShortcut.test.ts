@@ -22,7 +22,7 @@ function renderNewTaskButtonGroup() {
         { platform: {} as unknown as IPlatformService },
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(
             TabStoreProvider,
             null,

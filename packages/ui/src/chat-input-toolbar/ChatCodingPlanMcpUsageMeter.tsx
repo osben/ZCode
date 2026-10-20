@@ -22,8 +22,8 @@ export function ChatCodingPlanMcpUsageMeter({
   const boundedPercentage = Number.isFinite(percentage)
     ? Math.max(0, Math.min(100, percentage ?? 0))
     : 0;
-  // MCP does not need its own full-width row unconditionally; that wastes grid space when there are only one or two primary quota cards.
-  // Keep the spanning row only when primary quotas fill all three columns; otherwise use a regular quota card in the current row.
+  // MCP 不必无条件占据独立横行，只有一两张主额度时会浪费网格空位；
+  // 主额度占满三列时才保留贯穿行，否则沿用普通额度卡片结构补入当前行。
   const fullRow = primaryQuotaCount >= 3;
   const progressWidth = fullRow ? "calc((100% - 1rem) / 3)" : undefined;
   const labelContent = (
@@ -90,8 +90,8 @@ export function ChatCodingPlanMcpUsageMeter({
       data-primary-quota-count={primaryQuotaCount}
     >
       <span className="shrink-0">{labelContent}</span>
-      {/* Putting truncate on an inner inline span has no effect; long dates overflow and cover the fixed-width progress bar.
-          The truncation constraint must be on this container, which actually participates in flex shrinking. */}
+      {/* truncate 放在内层 inline span 不会生效，长日期会溢出并遮挡固定宽度进度条；
+          截断约束必须由这个实际参与 flex 收缩的容器承担。 */}
       <span className="ml-auto min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap">
         {valueContent}
       </span>

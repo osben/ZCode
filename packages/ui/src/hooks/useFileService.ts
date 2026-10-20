@@ -1,11 +1,11 @@
 /**
- * useFileService — file-service hooks
+ * useFileService —— 文件服务 hooks
  */
 import { useState, useEffect, useCallback } from "react";
 import type { FileEntry } from "@zcode/shared";
 import { useServices } from "./useServices.js";
 
-/** Read directory contents with loading/error/refresh state management. */
+/** 读取目录内容，自带 loading/error/refresh 状态管理 */
 export function useReaddir(path: string) {
   const { fileService } = useServices();
   const [entries, setEntries] = useState<FileEntry[]>([]);

@@ -20,10 +20,8 @@ export function resolveChatCodingPlanResetOpportunityBadge(
     resetUi.week.entry,
   );
 
-  // Bugfix: the badge used to hide when quota remaining was 100% (resetting would gain nothing).
-  // But redeeming rewrites remaining to 100%, making the badge for the remaining opportunities vanish
-  // and leaving users thinking the card was swallowed. Show the count whenever that quota exists and
-  // has available opportunities.
+  // Bugfix：徽标曾在额度剩余 100% 时隐藏（重置无收益）。但核销会把剩余改写成 100%，
+  // 余下机会的徽标随即消失，用户以为卡被吞掉。只要该额度存在且有可用机会就展示张数。
   return mergeCodingPlanQuotaResetOpportunityBadges([
     {
       count: resetUi.entry?.opportunityCount ?? 0,

@@ -5,10 +5,10 @@ import {
   normalizeDynamicWorkflowMode,
   TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_ITEM,
   TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_TRIGGER,
-  testId,
   type AppSettings,
   type DynamicWorkflowMode,
 } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import {
   DynamicWorkflowAlwaysOnIcon,
   DynamicWorkflowOffIcon,
@@ -36,10 +36,9 @@ const MODE_ICONS: Record<DynamicWorkflowMode, ComponentType<SVGProps<SVGSVGEleme
 };
 
 /**
- * What the settings row should display (docs/dynamic-workflow/launch.md "The user's choice"). Returns null
- * while the snapshot is loading, on read failure, or when the server does not offer the feature: the row
- * is not rendered and the staged rollout stays invisible to the user. Both the value and the "default"
- * come from the Host-computed result; the renderer does not apply the user's choice itself.
+ * 设置行要显示什么（docs/dynamic-workflow/launch.md「The user's choice」）。快照加载中、读取失败、
+ * 服务端未提供功能时都返回 null：行不渲染，灰度对用户不可见。值与「默认」都取 Host 算好的结果，
+ * renderer 不自己套用户选择。
  */
 export function resolveDynamicWorkflowModeSettingView(
   snapshot: DynamicWorkflowAvailabilitySnapshot,
@@ -49,7 +48,7 @@ export function resolveDynamicWorkflowModeSettingView(
   return { value: config.mode, offeredMode: config.offeredMode };
 }
 
-/** Selecting the server-provided mode equals deleting the choice (empty-string sentinel, normalized to deletion by the service layer); installs keep following server flips. */
+/** 选回服务端提供的模式等于删除选择（空串哨兵，服务层归一成删除），安装继续跟随服务端翻转。 */
 export function buildDynamicWorkflowModePatch(
   next: DynamicWorkflowMode,
   offeredMode: DynamicWorkflowMode,
@@ -63,8 +62,8 @@ export function DynamicWorkflowModeSetting() {
   const { intl } = useZCodeIntl();
   const { update } = useSettings();
   const view = resolveDynamicWorkflowModeSettingView(useDynamicWorkflowAvailability());
-  // Persist the choice → Root notifies the Host to re-push the policy → snapshot reread; the whole chain takes several hundred ms; the trigger shows the just-selected value meanwhile.
-  // A visible row means the feature is offered, so the effective mode must equal the user's choice; the optimistic and final values match.
+  // 选择落盘 → Root 通知 Host 重发策略 → 快照重读，整条链要几百毫秒；期间触发器先显示用户刚选的值。
+  // 行可见即功能已提供，此时生效模式必然等于用户所选，所以乐观值与最终值一致。
   const [pending, setPending] = useState<DynamicWorkflowMode | null>(null);
   const settledValue = view?.value;
   useEffect(() => {
@@ -88,13 +87,13 @@ export function DynamicWorkflowModeSetting() {
     }
   };
 
-  // No wrapping element: SettingsRow draws row separators via first:border-t-0; wrapping would make this the first row and drop the top border.
+  // 不包外层元素：SettingsRow 靠 first:border-t-0 画行间分隔线，包一层会让它变成首行而丢掉上边框。
   return (
     <SettingsRow
       label={label}
       description={intl.formatMessage({ id: "settings.dynamicWorkflowDescription" })}
-      // Bugfix: the default control column is only 192px and flex would squeeze the 260px trigger down to 192px, making the list that follows the trigger width too narrow;
-      // the wide layout gives a 280px control column (label moves below on phone widths), so trigger and list both render at the design's 260px.
+      // Bugfix：默认控件列只有 192px，flex 会把 260px 的触发器压到 192px，跟随触发器宽度的列表也随之过窄；
+      // wide 布局给 280px 控件列（手机宽度下换到标签下方），触发器与列表都按设计稿的 260px 显示。
       controlLayout="wide"
       control={
         <Select value={value} onValueChange={(next) => void handleValueChange(next)}>
@@ -106,9 +105,9 @@ export function DynamicWorkflowModeSetting() {
           >
             <SelectValue />
           </SelectTrigger>
-          {/* Two-line options expand with popper below the trigger; item-aligned would cover this row's label and description.
-              Bugfix: popper only sets min-width, so the list width would be blown out by the longest description line; fix it to the trigger width (260px),
-              letting descriptions wrap inside the list, matching the design. */}
+          {/* 两行选项用 popper 展开在触发器下方，item-aligned 会盖住本行的标签与说明。
+              Bugfix：popper 只给了 min-width，列表宽度会被最长的一行说明撑开；固定为触发器宽度（260px），
+              说明在列表内折行，与设计稿一致。 */}
           <SelectContent
             position="popper"
             align="end"

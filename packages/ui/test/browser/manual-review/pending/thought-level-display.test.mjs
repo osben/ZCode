@@ -126,8 +126,7 @@ for (const width of [390, 1200]) {
           await waitValue("ultra");
           assert.equal(await trigger.getAttribute("aria-label"), label[7]);
 
-          // Uses the production shortcut hook; this sequence can distinguish config order from
-          // the legacy name ordering.
+          // 使用生产快捷键 hook；这里的顺序能区分配置顺序与旧名称排序。
           await page.keyboard.press("Control+t");
           await waitValue("extra-high");
           assert.equal(await trigger.getAttribute("aria-expanded"), "false");
@@ -148,14 +147,12 @@ for (const width of [390, 1200]) {
           await activate(page.getByTestId("chat-thought-level-select-item-minimal"));
           await waitValue("minimal");
           assert.equal(await subagent.getAttribute("aria-label"), label[1]);
-          // Desktop uses real keyboard selection; mobile uses touch. Both should submit the raw
-          // "low" value.
+          // 桌面用真实键盘选择；手机用触控，均应提交 low 原值。
           if (width === 1200) {
             await trigger.focus();
             await page.keyboard.press("ArrowDown");
             await page.getByRole("listbox").waitFor();
-            // Radix focuses the current item after positioning; wait for the actual focus to land
-            // before sending the next key.
+            // Radix 在定位完成后聚焦当前项，需等实际焦点落定再发送下一次按键。
             await page.waitForFunction(
               () =>
                 document.activeElement?.getAttribute("data-testid") ===

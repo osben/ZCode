@@ -1,10 +1,16 @@
 /**
- * Empty-state greeting for drafts: time-based greeting plus the ZCode logo.
- * Restored from the old ChatView/ChatViewEmptyState.tsx (the component was removed with the old ChatView,
- * but the i18n keys `chat.empty.greeting.*` remained); preserves the automatic greeting change at time boundaries.
- * Mobile remote control reuses this component and keeps the compact 20px title; only the desktop draft home adapts to the title's own width.
+ * 草稿态空态问候：时间问候语 + ZCode Logo。
+ * 自旧版 ChatView/ChatViewEmptyState.tsx 恢复（该组件随旧 ChatView 删除，
+ * i18n key `chat.empty.greeting.*` 一直保留）；边界时刻自动换档逻辑保真。
+ * 手机远控复用同一组件，但继续保留 20px 紧凑标题；桌面草稿首页才按标题自身宽度适配。
  */
-import { type CSSProperties, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import darkEmptyStateLogoUrl from "@/assets/Z.svg";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -23,7 +29,9 @@ export type ChatEmptyGreetingMessageId =
   | "chat.empty.greeting.evening"
   | "chat.empty.greeting.lateNight";
 
-export function getChatEmptyGreetingMessageId(date: Date = new Date()): ChatEmptyGreetingMessageId {
+export function getChatEmptyGreetingMessageId(
+  date: Date = new Date(),
+): ChatEmptyGreetingMessageId {
   const hour = date.getHours();
 
   if (hour >= 5 && hour < 9) return "chat.empty.greeting.morningEarly";
@@ -46,7 +54,8 @@ export function getNextChatEmptyGreetingDelayMs(date: Date = new Date()) {
   tomorrowFirstBoundary.setHours(GREETING_BOUNDARY_HOURS[0], 0, 0, 0);
 
   const nextBoundary =
-    candidates.find((candidate) => candidate.getTime() > date.getTime()) ?? tomorrowFirstBoundary;
+    candidates.find((candidate) => candidate.getTime() > date.getTime()) ??
+    tomorrowFirstBoundary;
 
   return Math.max(1, nextBoundary.getTime() - date.getTime());
 }
@@ -77,7 +86,9 @@ export function resolveGreetingFontSizePx({
     GREETING_MIN_FONT_SIZE_PX,
     Math.min(
       GREETING_MAX_FONT_SIZE_PX,
-      Math.floor(GREETING_MAX_FONT_SIZE_PX * (availableWidthPx / naturalTextWidthPx)),
+      Math.floor(
+        GREETING_MAX_FONT_SIZE_PX * (availableWidthPx / naturalTextWidthPx),
+      ),
     ),
   );
 }
@@ -92,11 +103,15 @@ export function ConversationDraftEmptyState({
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const [greetingDate, setGreetingDate] = useState(() => new Date());
-  const [greetingFontSizePx, setGreetingFontSizePx] = useState(GREETING_MAX_FONT_SIZE_PX);
+  const [greetingFontSizePx, setGreetingFontSizePx] = useState(
+    GREETING_MAX_FONT_SIZE_PX,
+  );
   const greetingContainerRef = useRef<HTMLParagraphElement | null>(null);
   const greetingMeasurementRef = useRef<HTMLSpanElement | null>(null);
   const greeting = intl.formatMessage({
-    id: isOfficeMode ? "chat.empty.greeting.office" : getChatEmptyGreetingMessageId(greetingDate),
+    id: isOfficeMode
+      ? "chat.empty.greeting.office"
+      : getChatEmptyGreetingMessageId(greetingDate),
   });
 
   useEffect(() => {
@@ -169,9 +184,8 @@ export function ConversationDraftEmptyState({
       };
     }
 
-    // The title size used to be tied directly to the viewport width, forcing it down to 20px
-    // in the smallest window even when there was still ample space on either side. Observe the title container
-    // and the original 30px text separately, shrinking only when they actually collide.
+    // 标题字号曾直接绑定整个视口宽度，最小窗口里文字两侧仍有大量空间却被
+    // 强制缩到 20px。分别观察标题容器和 30px 原始文案，只在两者真实相撞时缩小。
     const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(container);
     observer.observe(measurement);
@@ -230,7 +244,7 @@ export function ConversationDraftEmptyState({
 function ZCodeEmptyStateLogo({ className }: { className?: string }) {
   return (
     <>
-      {/* Fix rationale: the night resource already ships its own gradient and opacity; the shared container mask would fade it twice. The fade effect belongs to the light outline only. */}
+      {/* 修复原因：夜间资源已自带渐变和透明度，公共容器叠加遮罩会让它重复变淡；渐隐效果只属于浅色线框。 */}
       <svg
         aria-hidden="true"
         className={cn(
@@ -252,8 +266,7 @@ function ZCodeEmptyStateLogo({ className }: { className?: string }) {
           stroke="currentColor"
         />
       </svg>
-      {/* Dark assets include dedicated gradients and blur that cannot be reproduced with currentColor.
-          Theme classes ensure that only one of the two logos is displayed. */}
+      {/* 深色资源包含专用渐变与模糊效果，不能通过 currentColor 复刻；主题类保证两套 Logo 互斥显示。 */}
       <img
         aria-hidden="true"
         className={cn(className, "hidden dark:block")}

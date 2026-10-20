@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Centralize Settings navigation intent, sessionStorage, event bridging, and parsing/validation; splitting these could make one-shot intent consumption order harder to guarantee. */
+/* eslint-disable max-lines -- 设置导航意图集中管理 sessionStorage、事件桥接和解析校验，拆分会让一次性意图消费顺序更难保证。 */
 import { logger } from "@/logger.js";
 
 export type SettingsSectionId =
@@ -7,56 +7,45 @@ export type SettingsSectionId =
   | "migration"
   | "browser"
   | "modelProvider"
-  | "instructions"
-  | "outputStyles"
-  | "systemPrompt"
+  | "remoteDevices"
   | "memory"
-  | "incognito"
   | "plugin"
   | "mcp"
   | "skill"
   | "plugins"
+  | "archives"
   | "usage"
-  | "sessions"
   | "subagents"
   | "commands"
   | "hooks"
   | "workspaceFileSearch"
   | "computerUse"
   | "automations"
-  | "shortcuts"
-  | "worktrees"
-  | "voiceDictation";
+  | "shortcuts";
 
 export type SettingsUsageTabTarget = "app" | "codingPlan";
 export type SettingsPluginTabTarget = "plugins" | "mcps" | "skills" | "commands";
 export type SettingsPluginNavigationOrigin = "plugin-store";
-export interface SettingsSessionsScope {
-  workspacePath: string;
-  workspaceIdentity?: string;
-}
 
 const SETTINGS_SECTION_INTENT_KEY = "zcode-settings-section-intent",
   SETTINGS_USAGE_TAB_INTENT_KEY = "zcode-settings-usage-tab-intent",
   SETTINGS_PLUGIN_TAB_INTENT_KEY = "zcode-settings-plugin-tab-intent",
   SETTINGS_PLUGIN_ORIGIN_INTENT_KEY = "zcode-settings-plugin-origin-intent",
-  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent",
-  SETTINGS_SESSIONS_SCOPE_INTENT_KEY = "zcode-settings-sessions-scope-intent";
+  SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY = "zcode-settings-plugin-scope-key-intent";
+const SETTINGS_SOURCE_SERVER_ID_INTENT_KEY = "zcode-settings-source-server-id-intent";
+const SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY = "zcode-settings-source-server-details-intent";
 const SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY = "zcode-settings-model-provider-id-intent";
 const SETTINGS_SECTION_INTENT_EVENT = "zcode:settings-section-intent",
   SETTINGS_LAST_SECTION_STORAGE_KEY = "zcode-settings-last-section";
 const HIDDEN_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
-  // Product behavior: Automations is a workspace main view and must not appear as a Settings section.
-  // Note: Hooks is already a formal Settings section, so it is not listed here.
+  // 产品语义：定时任务是 workspace 主视图，不能再作为设置页分区出现。
+  // 注意：hooks 已是正式设置页分区，不在此列。
   "automations",
-  // The old plugin marketplace has moved out of Settings; keep its ID only for migrating stored preferences and older callers.
+  // 旧插件市场已迁出设置页；保留 id 只用于迁移历史偏好和旧调用。
   "plugins",
-  // Hide the workspace search (.zcodeignore) entry for now. The rules file still applies and can be edited manually,
-  // and the editor code remains; remove this entry from here when it is enabled again.
+  // 工作区搜索（.zcodeignore）设置入口先隐藏：规则文件仍生效并可手动编辑，
+  // 编辑页代码保留，放开时从这里移除即可。
   "workspaceFileSearch",
-  // The Settings page has no entry or caller for Migration; onboarding owns that flow.
-  // Hiding it keeps a stale stored/explicit intent from landing on an unreachable page.
-  "migration",
 ]);
 
 export interface SettingsSectionIntentEventDetail {
@@ -66,7 +55,8 @@ export interface SettingsSectionIntentEventDetail {
   pluginScopeKey?: string;
   usageTab?: SettingsUsageTabTarget;
   modelProviderId?: string;
-  sessionsScope?: SettingsSessionsScope;
+  sourceServerId?: string;
+  sourceServerDetails?: boolean;
 }
 
 export interface SettingsModelProviderTarget {
@@ -80,26 +70,21 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "migration" ||
     value === "browser" ||
     value === "modelProvider" ||
-    value === "instructions" ||
-    value === "outputStyles" ||
-    value === "systemPrompt" ||
+    value === "remoteDevices" ||
     value === "memory" ||
-    value === "incognito" ||
     value === "plugin" ||
     value === "mcp" ||
     value === "skill" ||
     value === "plugins" ||
+    value === "archives" ||
     value === "usage" ||
-    value === "sessions" ||
     value === "subagents" ||
     value === "commands" ||
     value === "hooks" ||
     value === "workspaceFileSearch" ||
     value === "computerUse" ||
     value === "automations" ||
-    value === "shortcuts" ||
-    value === "worktrees" ||
-    value === "voiceDictation"
+    value === "shortcuts"
   );
 }
 
@@ -122,8 +107,8 @@ function getLocalStorage(): Storage | null {
   try {
     return window.localStorage;
   } catch (error) {
-    // Some WebView/mobile remote-control containers may disable localStorage.
-    // Remembering the Settings section is only a UI preference; use the default entry when storage is unavailable and do not block opening Settings.
+    // 部分 WebView / 移动远控容器可能禁用 localStorage。
+    // 设置页分区记忆只是 UI 偏好，存储不可用时回退默认入口，不应阻断打开设置页。
     logger.warn("[settingsNavigation] localStorage 不可用", {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -141,7 +126,7 @@ export function readLastSettingsSectionPreference(
 
   try {
     const raw = storage.getItem(SETTINGS_LAST_SECTION_STORAGE_KEY);
-    // The old section ID was merged into plugin; migrate persisted values to avoid propagating legacy routing behavior.
+    // 旧 section id 已并入 plugin；迁移持久化值，避免继续传播历史路由语义。
     if (raw === "plugins") {
       storage.setItem(SETTINGS_LAST_SECTION_STORAGE_KEY, "plugin");
       setPendingPluginTab("plugins");
@@ -151,7 +136,7 @@ export function readLastSettingsSectionPreference(
       storage.setItem(SETTINGS_LAST_SECTION_STORAGE_KEY, "skill");
       return "skill";
     }
-    // The old “Code Preview” section was merged into “Appearance”; preserve migration behavior for the user’s last visited section.
+    // 旧版“代码预览”已并入“外观”，保留用户上次停留位置的迁移语义。
     if (raw === "codePreview") {
       storage.setItem(SETTINGS_LAST_SECTION_STORAGE_KEY, "appearance");
       return "appearance";
@@ -191,9 +176,9 @@ export function consumeInitialSettingsSection(
   fallbackSection: SettingsSectionId = "general",
 ): SettingsSectionId {
   const lastSection = readLastSettingsSectionPreference(fallbackSection);
-  // Previously, a regular Settings open hard-coded modelProvider as the fallback for consumePendingSettingsSection,
-  // so without an explicit navigation intent it always opened “Model Providers.” Read the last visited section first,
-  // then let one-shot intents such as quickpick / model management override it, preserving direct navigation for explicit entry points.
+  // 普通打开设置页以前把 consumePendingSettingsSection 的 fallback 写死为
+  // modelProvider，导致没有显式跳转意图时也总进“模型供应商”。这里先读上次停留分区，
+  // 再让 quickpick / 管理模型这类一次性意图覆盖它，保留显式入口的直达语义。
   return resolveSettingsSection(consumePendingSettingsSection(lastSection), lastSection);
 }
 
@@ -202,13 +187,13 @@ export function setPendingSettingsSection(section: SettingsSectionId): void {
 }
 
 export function setPendingSettingsUsageIntent(): void {
-  // The Usage entry point opens only the Usage section; do not force a particular statistics tab.
+  // 使用统计入口只负责打开 Usage 分区，不强行覆盖用户要看的具体统计 tab。
   setPendingSettingsSectionIntent("usage");
 }
 
 export function setPendingSettingsUsageCodingPlanIntent(): void {
-  // The remaining-quota details entry should navigate directly to Coding Plan usage statistics;
-  // the avatar-menu entry only opens Usage so it does not override the last statistics tab the user viewed.
+  // 剩余额度详情入口需要直达 Coding Plan 使用统计；
+  // 头像菜单入口则只打开 Usage 分区，避免覆盖用户上次查看的统计 tab。
   setPendingSettingsSectionIntent("usage", { usageTab: "codingPlan" });
 }
 
@@ -241,8 +226,9 @@ export function setPendingSettingsSectionIntent(
     pluginOrigin?: SettingsPluginNavigationOrigin;
     pluginScopeKey?: string;
     modelProviderId?: string;
+    sourceServerId?: string;
+    sourceServerDetails?: boolean;
     usageTab?: SettingsUsageTabTarget;
-    sessionsScope?: SettingsSessionsScope;
   } = {},
 ): void {
   if (typeof window === "undefined") {
@@ -270,28 +256,34 @@ export function setPendingSettingsSectionIntent(
     if (options.usageTab) {
       window.sessionStorage.setItem(SETTINGS_USAGE_TAB_INTENT_KEY, options.usageTab);
     }
+    if (section === "remoteDevices" && options.sourceServerId?.trim()) {
+      window.sessionStorage.setItem(
+        SETTINGS_SOURCE_SERVER_ID_INTENT_KEY,
+        options.sourceServerId.trim(),
+      );
+    } else {
+      window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_ID_INTENT_KEY);
+    }
+    if (
+      section === "remoteDevices" &&
+      options.sourceServerId?.trim() &&
+      options.sourceServerDetails
+    ) {
+      window.sessionStorage.setItem(SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY, "true");
+    } else {
+      window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY);
+    }
     if (options.modelProviderId) {
       window.sessionStorage.setItem(SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY, options.modelProviderId);
     } else {
       window.sessionStorage.removeItem(SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY);
     }
-    if (options.sessionsScope?.workspacePath.trim()) {
-      window.sessionStorage.setItem(
-        SETTINGS_SESSIONS_SCOPE_INTENT_KEY,
-        JSON.stringify({
-          workspacePath: options.sessionsScope.workspacePath,
-          workspaceIdentity: options.sessionsScope.workspaceIdentity,
-        }),
-      );
-    } else {
-      window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
-    }
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
+    // 忽略浏览器存储异常，不影响主流程。
   }
 
-  // SettingsPage is already open and will not remount, so writing sessionStorage alone has no subscriber to react.
-  // Dispatch a same-window custom event so the open SettingsPage can immediately navigate to the quickpick section.
+  // 设置页已经打开时不会重新挂载，单纯写 sessionStorage 没有订阅者会响应。
+  // 同窗口补发自定义事件，让已打开的 SettingsPage 也能即时跳到 quickpick 指定分区。
   window.dispatchEvent(
     new CustomEvent<SettingsSectionIntentEventDetail>(SETTINGS_SECTION_INTENT_EVENT, {
       detail: {
@@ -301,9 +293,12 @@ export function setPendingSettingsSectionIntent(
         pluginScopeKey: options.pluginScopeKey?.trim() || undefined,
         usageTab: options.usageTab,
         modelProviderId: options.modelProviderId,
-        sessionsScope: options.sessionsScope?.workspacePath.trim()
-          ? options.sessionsScope
-          : undefined,
+        ...(section === "remoteDevices" && options.sourceServerId?.trim()
+          ? {
+              sourceServerId: options.sourceServerId.trim(),
+              ...(options.sourceServerDetails ? { sourceServerDetails: true } : {}),
+            }
+          : {}),
       },
     }),
   );
@@ -316,14 +311,15 @@ function clearPendingSettingsSectionIntent(): void {
 
   try {
     window.sessionStorage.removeItem(SETTINGS_SECTION_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_ID_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_USAGE_TAB_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_MODEL_PROVIDER_ID_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_TAB_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_ORIGIN_INTENT_KEY);
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY);
-    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
+    // 忽略浏览器存储异常，不影响主流程。
   }
 }
 
@@ -341,14 +337,14 @@ export function consumePendingSettingsSection(
     }
 
     if (raw === "skills") {
-      // Older Skills used a plural ID; migrate it to the current standalone Skill section.
+      // 旧 Skills 使用复数 id；迁移到当前独立 skill 分区。
       return "skill";
     }
     if (raw && isSettingsSectionId(raw)) {
       return resolveSettingsSection(raw, fallbackSection);
     }
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
+    // 忽略浏览器存储异常，不影响主流程。
   }
 
   return fallbackSection;
@@ -359,7 +355,7 @@ function setPendingPluginTab(tab: SettingsPluginTabTarget): void {
   try {
     window.sessionStorage.setItem(SETTINGS_PLUGIN_TAB_INTENT_KEY, tab);
   } catch {
-    // Ignore browser storage failures; they do not affect opening Settings.
+    // 忽略浏览器存储异常，不影响设置页打开。
   }
 }
 
@@ -399,7 +395,7 @@ export function clearPendingSettingsPluginScopeKey(): void {
   try {
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_SCOPE_KEY_INTENT_KEY);
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
+    // 忽略浏览器存储异常，不影响主流程。
   }
 }
 
@@ -408,7 +404,7 @@ export function clearPendingSettingsPluginOrigin(): void {
   try {
     window.sessionStorage.removeItem(SETTINGS_PLUGIN_ORIGIN_INTENT_KEY);
   } catch {
-    // Ignore browser storage failures; they do not affect opening Settings.
+    // 忽略浏览器存储异常，不影响设置页打开。
   }
 }
 
@@ -424,38 +420,7 @@ export function consumePendingSettingsUsageTab(): SettingsUsageTabTarget | undef
     }
     return raw === "app" || raw === "codingPlan" ? raw : undefined;
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
-    return undefined;
-  }
-}
-
-export function consumePendingSettingsSessionsScope(): SettingsSessionsScope | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-
-  try {
-    const raw = window.sessionStorage.getItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
-    window.sessionStorage.removeItem(SETTINGS_SESSIONS_SCOPE_INTENT_KEY);
-    if (!raw) {
-      return undefined;
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as SettingsSessionsScope).workspacePath === "string" &&
-      (parsed as SettingsSessionsScope).workspacePath.trim()
-    ) {
-      const scope = parsed as SettingsSessionsScope;
-      return {
-        workspacePath: scope.workspacePath,
-        workspaceIdentity: scope.workspaceIdentity?.trim() || undefined,
-      };
-    }
-    return undefined;
-  } catch {
-    // Ignore storage/JSON failures; an unparsable scope degrades to the unscoped view.
+    // 忽略浏览器存储异常，不影响主流程。
     return undefined;
   }
 }
@@ -477,7 +442,7 @@ export function consumePendingSettingsModelProviderTarget():
       providerId: providerId.trim(),
     };
   } catch {
-    // Ignore browser storage failures; they do not affect the main flow.
+    // 忽略浏览器存储异常，不影响主流程。
     return undefined;
   }
 }
@@ -493,8 +458,8 @@ export function shouldFallbackSettingsUsageTabToApp({
   loadingModelProviders: boolean;
   showCodingPlanTab: boolean;
 }): boolean {
-  // Coding Plan navigation intent may arrive before provider/entitlement data finishes loading.
-  // Fall back to App Usage only after loading ends and there is still no valid plan; avoid having the first frame undo a click on “More” by restoring the default tab.
+  // Coding Plan 跳转意图可能先于 provider/entitlement 数据完成加载。
+  // 只有确认不再 loading 且仍没有有效套餐时才回退到 App Usage，避免“更多”点击后被首帧误改回默认 tab。
   return (
     activeTab === "codingPlan" &&
     !showCodingPlanTab &&
@@ -513,9 +478,9 @@ export function addPendingSettingsSectionListener(
   const handleIntent = (event: Event) => {
     const detail = (event as CustomEvent<SettingsSectionIntentEventDetail>).detail;
     if (detail?.section && isSettingsSectionId(detail.section)) {
-      // When Settings is already open, the event has already carried this navigation intent.
-      // Clear sessionStorage synchronously here so that after the user switches sections and closes Settings,
-      // a later mount is not overridden by a stale pending intent instead of the last visited section.
+      // 设置页已打开时，事件已经承载了这次跳转意图。
+      // 这里同步清掉 sessionStorage，避免用户随后切到别的分区并退出后，
+      // 下次挂载又被陈旧 pending 意图覆盖“上次停留分区”。
       clearPendingSettingsSectionIntent();
       listener(detail.section, detail);
     }
@@ -525,4 +490,27 @@ export function addPendingSettingsSectionListener(
   return () => {
     window.removeEventListener(SETTINGS_SECTION_INTENT_EVENT, handleIntent);
   };
+}
+
+/** 设置页先消费分区，再消费卡片目标；已挂载页面由同一导航事件直接接收。 */
+export function consumePendingSettingsSourceServerId(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const id = window.sessionStorage.getItem(SETTINGS_SOURCE_SERVER_ID_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_ID_INTENT_KEY);
+    return id?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function consumePendingSettingsSourceServerDetails(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const details = window.sessionStorage.getItem(SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY);
+    window.sessionStorage.removeItem(SETTINGS_SOURCE_SERVER_DETAILS_INTENT_KEY);
+    return details === "true";
+  } catch {
+    return false;
+  }
 }

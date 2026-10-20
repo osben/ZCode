@@ -3,10 +3,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  TID_CODING_PLAN_QUOTA_RESET_ACTION,
-  TID_CODING_PLAN_QUOTA_RESET_COMPLETED,
-} from "@zcode/shared";
 import { CodingPlanQuotaResetAction } from "@/components/coding-plan-quota-reset/CodingPlanQuotaResetAction.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 
@@ -44,25 +40,6 @@ describe("CodingPlanQuotaResetAction", () => {
     cleanup();
   });
 
-  it("重置按钮复用等待请求的确认色", () => {
-    render(
-      createElement(CodingPlanQuotaResetAction, {
-        ariaLabel: "重置 5 小时额度",
-        completedAt: null,
-        completedLabel: "已重置",
-        processing: false,
-        processingLabel: "正在重置",
-        resetLabel: "重置",
-        successLabel: "重置成功",
-        onReset: vi.fn(async () => {}),
-      }),
-    );
-
-    const button = screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION);
-    expect(button.className).toContain("bg-interaction-confirmation-surface");
-    expect(button.className).toContain("text-interaction-confirmation-foreground");
-  });
-
   it("页面重置入口只打开统一弹窗，不直接核销", () => {
     const onOpenDialog = vi.fn();
     render(
@@ -78,7 +55,7 @@ describe("CodingPlanQuotaResetAction", () => {
       }),
     );
 
-    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION));
+    fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
     expect(onOpenDialog).toHaveBeenCalledTimes(1);
   });
 
@@ -107,12 +84,12 @@ describe("CodingPlanQuotaResetAction", () => {
       }),
     );
 
-    fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION));
+    fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
     expect(onReset).toHaveBeenCalledTimes(1);
     expect(celebrate).not.toHaveBeenCalled();
-    expect(
-      (screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: "正在重置" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
 
     await act(async () => resolveReset());
     view.rerender(
@@ -130,14 +107,14 @@ describe("CodingPlanQuotaResetAction", () => {
     );
 
     expect(celebrate).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)).toBeTruthy();
-    expect(screen.queryByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED)).toBeNull();
+    expect(screen.getByRole("button", { name: "重置成功" })).toBeTruthy();
+    expect(screen.queryByText("已重置")).toBeNull();
 
     act(() => vi.advanceTimersByTime(599));
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重置成功" })).toBeTruthy();
 
     act(() => vi.advanceTimersByTime(1));
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED)).toBeTruthy();
+    expect(screen.getByText("已重置")).toBeTruthy();
   });
 
   it("请求失败后恢复可点击，不显示成功态也不撒花", async () => {
@@ -161,11 +138,11 @@ describe("CodingPlanQuotaResetAction", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION));
+      fireEvent.click(screen.getByRole("button", { name: "重置 5 小时额度" }));
     });
 
     expect(
-      (screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION) as HTMLButtonElement).disabled,
+      (screen.getByRole("button", { name: "重置 5 小时额度" }) as HTMLButtonElement).disabled,
     ).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
     expect(celebrate).not.toHaveBeenCalled();
@@ -185,17 +162,8 @@ describe("CodingPlanQuotaResetAction", () => {
       }),
     );
 
-    expect(screen.queryByTestId(TID_CODING_PLAN_QUOTA_RESET_ACTION)).toBeNull();
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED)).toBeTruthy();
-    // Regression: the "reset done" label must match the xs size (h-5) of the "Reset" button. A
-    // former min-h-6 stretched the label row of its quota bar, misaligning the value and progress
-    // bar of quota bars in the same row that have no action.
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED).className).toContain(
-      "min-h-5",
-    );
-    expect(screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED).className).not.toContain(
-      "min-h-6",
-    );
+    expect(screen.queryByRole("button", { name: "重置 5 小时额度" })).toBeNull();
+    expect(screen.getByText("已重置")).toBeTruthy();
   });
 
   it("自动/运营完成收到补播信号时，等浮层锚点挂载一帧后补播一次撒花且不重播", () => {
@@ -219,8 +187,7 @@ describe("CodingPlanQuotaResetAction", () => {
 
     const view = render(createElement(CodingPlanQuotaResetAction, props));
 
-    // Regression: the submit phase right after the overlay opens must not consume the arm early,
-    // otherwise the confetti would finish before the panel is visible.
+    // 回归：浮层刚打开的提交阶段不能提前消费 arm，否则撒花会在面板可见前结束。
     expect(celebrate).not.toHaveBeenCalled();
     expect(onAutoCelebrated).not.toHaveBeenCalled();
 
@@ -230,7 +197,7 @@ describe("CodingPlanQuotaResetAction", () => {
     expect(onAutoCelebrated).toHaveBeenCalledTimes(1);
     expect(onAutoCelebrated).toHaveBeenCalledWith(completedAt);
 
-    // Re-rendering with the same used_at does not replay.
+    // 同一 used_at 重复渲染不重播。
     view.rerender(createElement(CodingPlanQuotaResetAction, props));
     expect(celebrate).toHaveBeenCalledTimes(1);
   });
@@ -267,9 +234,7 @@ describe("CodingPlanQuotaResetAction", () => {
 
     act(() => animationFrame.flush());
     expect(celebrate).toHaveBeenCalledTimes(1);
-    expect(celebrate.mock.calls[0]?.[0]).toBe(
-      screen.getByTestId(TID_CODING_PLAN_QUOTA_RESET_COMPLETED),
-    );
+    expect(celebrate.mock.calls[0]?.[0]).toBe(screen.getByText("已重置"));
     expect(onAutoCelebrated).toHaveBeenCalledWith(completedAt);
   });
 

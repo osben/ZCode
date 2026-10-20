@@ -1,10 +1,9 @@
 import type { McpAppsDownloadFileItem } from "@zcode/shared/mcp-apps";
 
 /**
- * Pure rules for ui/download-file — each item is normalized to `{ name, mimeType, source }`; the content
- * source is inline text / blob (base64) or a uri the host must first `resources/read`. The filename prefers
- * the item's name, otherwise the last uri segment; without an extension, a common one is added by mimeType,
- * and failing that `download-<index>`.
+ * ui/download-file 的纯规则——每项归一成 `{ name, mimeType, source }`，
+ * 内容来源是内联 text / blob（base64）或需要宿主先 `resources/read` 的 uri。文件名优先取项上的 name，
+ * 否则取 uri 最后一段；没有扩展名时按 mimeType 补一个常见扩展名，仍没有就 `download-<序号>`。
  */
 export interface PluginUiDownloadPlan {
   name: string;
@@ -45,7 +44,7 @@ function lastPathSegment(uri: string): string {
   }
 }
 
-/** Strips path separators and control characters; the length limit matches the desktop saveFile basename truncation (120). */
+/** 去掉路径分隔与控制字符，长度限制与桌面 saveFile 的 basename 截断一致（120）。 */
 export function sanitizePluginUiDownloadFileName(name: string): string {
   return name
     .replace(/[\\/\u0000-\u001f]/g, "_")
@@ -87,11 +86,11 @@ export function planPluginUiDownload(
   if (typeof resource.blob === "string") {
     return { name, mimeType: resource.mimeType, source: { kind: "blob", blob: resource.blob } };
   }
-  // Inline items with only a uri are treated as links: the host reads the same plugin's resource first.
+  // 只有 uri 的内联项按链接处理：宿主先读同插件资源。
   return { name, mimeType: resource.mimeType, source: { kind: "uri", uri: resource.uri } };
 }
 
-/** Byte length after base64 decoding (ignores whitespace and padding), without actually decoding. */
+/** base64 解码后的字节数（忽略空白与 padding），不真正解码。 */
 export function decodedBase64Length(value: string): number {
   const trimmed = value.replace(/\s+/g, "");
   if (trimmed.length === 0) return 0;

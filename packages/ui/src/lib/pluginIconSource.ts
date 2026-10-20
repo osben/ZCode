@@ -17,7 +17,7 @@ const OFFICIAL_PLUGIN_ICON_BY_ID: Readonly<Record<string, string>> = {
 
 const TRUSTED_BUNDLED_PLUGIN_ICONS = new Set(Object.values(OFFICIAL_PLUGIN_ICON_BY_ID));
 
-/** Resolve client-owned icons by full identity so the store, candidates, and messages do not maintain separate exceptions. */
+/** 按完整身份解析客户端自有图标，避免商店、候选和消息各自维护不同例外。 */
 export function resolvePluginIconSource(
   pluginId: string | undefined,
   icon?: string,
@@ -29,7 +29,7 @@ export function resolvePluginIconSource(
   return isTrustedImageUrl(icon) ? icon : undefined;
 }
 
-/** Session projection has already matched identity; allow only fixed bundled assets and do not permit arbitrary local URLs. */
+/** Session 投影已完成身份匹配；仅放行固定打包资源，不放宽任意本地 URL。 */
 export function isTrustedPluginIconSource(icon: string | undefined): icon is string {
   return Boolean(icon && TRUSTED_BUNDLED_PLUGIN_ICONS.has(icon)) || isTrustedImageUrl(icon);
 }

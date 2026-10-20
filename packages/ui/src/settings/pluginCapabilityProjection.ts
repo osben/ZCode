@@ -36,8 +36,8 @@ export interface PluginSettingsGroups {
 }
 
 /**
- * Settings shows only materialized plugins; missing projections returned by Agent to preserve target Host configuration must not
- * enter Installed / Built-in, or the UI would show contradictory rows with an “installed” group and “not installed” status.
+ * 设置页只展示已物化的插件；Agent 为保留目标 Host 配置而返回的 missing 投影不能
+ * 进入 Installed / Built-in，否则会出现“已安装分组 + 未安装状态”的矛盾行。
  */
 export function partitionPluginsForSettings(
   plugins: readonly ZCodePluginInfo[],
@@ -81,9 +81,9 @@ export function selectPluginsForScope(
   _installedPlugins: readonly ZCodeInstalledPluginSummary[],
   _scope: ZCodePluginScope,
 ): ZCodePluginInfo[] {
-  // User / Workspace configuration projections are already returned by plugins/list(configScope).
-  // Do not filter “ownership” again by enabledSource/rootSource here, or Workspace would lose Host inventory inherited from User
-  // and User entries could be incorrectly removed due to source fields polluted by the current Workspace override.
+  // User / Workspace 已经由 plugins/list(configScope) 返回各自的配置投影。
+  // 这里不能再按 enabledSource/rootSource 做“归属”过滤，否则 Workspace 会丢掉继承 User
+  // 的 Host inventory，User 也会被当前 Workspace override 污染后的来源字段误删。
   return [...plugins];
 }
 
@@ -107,7 +107,7 @@ export function selectSkillsForScope(
     const matchingIds = skill.pluginName
       ? scopedPluginIdsByName.get(canonicalPluginName(skill.pluginName))
       : undefined;
-    // When the legacy protocol has no pluginId, fall back only if the name is unique to avoid merging across marketplaces.
+    // 旧协议没有 pluginId 时，仅在名称唯一的兼容场景下回退，避免跨 marketplace 合并。
     return matchingIds?.length === 1;
   });
 }

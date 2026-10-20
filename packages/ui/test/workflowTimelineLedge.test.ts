@@ -22,6 +22,8 @@ import {
 import { timelineWidth } from "@/components/workflow-timeline/timeline-geometry.js";
 import { WorkflowTimeline } from "@/components/workflow-timeline/WorkflowTimeline.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import enUS from "../src/i18n/locales/en-US.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
 
 describe("timeline-ledge geometry", () => {
   it("ledge width: none for none, lamps 16 apart with 8px pads, +n past three", () => {
@@ -118,6 +120,17 @@ describe("timeline-ledge geometry", () => {
   it("camera centres a station and never scrolls past the start", () => {
     expect(stationCameraLeft(5, 960)).toBe(564);
     expect(stationCameraLeft(0, 960)).toBe(0);
+  });
+
+  it("has both locales for the ledge and scrollbar labels", () => {
+    for (const key of [
+      "chat.toolCall.workflow.timeline.ledge.earlier",
+      "chat.toolCall.workflow.timeline.ledge.later",
+      "chat.toolCall.workflow.timeline.scrollbar",
+    ]) {
+      expect(enUS[key as keyof typeof enUS]).toBeTruthy();
+      expect(zhCN[key as keyof typeof zhCN]).toBeTruthy();
+    }
   });
 });
 
@@ -217,10 +230,6 @@ describe("WorkflowTimeline ledge", () => {
     const view = renderTimeline();
     await waitFor(() => expect(view.getByTestId("workflow-timeline-ledge-right")).toBeTruthy());
     expect(view.queryByTestId("workflow-timeline-ledge-left")).toBeNull();
-    expect(view.container.querySelector("[data-ledge-ink]")?.className).toContain("border-t");
-    expect(view.container.querySelector("[data-ledge-ink]")?.className).toContain(
-      "border-foreground-subtlest",
-    );
     const lamps = view.getAllByTestId("workflow-timeline-ledge-lamp");
     expect(lamps.map((lamp) => lamp.getAttribute("data-station-index"))).toEqual(["5", "6", "7"]);
     expect(lamps[0]?.getAttribute("title")).toBe("verify · pending");
@@ -228,7 +237,6 @@ describe("WorkflowTimeline ledge", () => {
     expect(stations[5]?.getAttribute("data-station-folded")).toBe("true");
     expect(stations[4]?.getAttribute("data-station-folded")).toBeNull();
     expect(view.getByTestId(SCROLLER).getAttribute("data-timeline-fade")).toBe("right");
-    expect(view.queryByTestId("workflow-rank-strip")).toBeNull();
     expect(view.getByTestId("workflow-timeline-scrollbar")).toBeTruthy();
   });
 

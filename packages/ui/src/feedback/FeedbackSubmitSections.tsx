@@ -1,4 +1,4 @@
-import { TID_FEEDBACK_LOGS_OPT_IN } from "@zcode/shared";
+import { TID_FEEDBACK_LOGS_OPT_IN } from "@zcode/shared/test-ids";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch.js";
 import { Textarea } from "@/components/ui/textarea.js";
 import { cn } from "@/components/lib/utils.js";
 import { SubmitProgressView } from "@/feedback/FeedbackSubmitProgressView.js";
+import { RequiredMarker } from "@/feedback/feedbackBadges.js";
 import { rememberFeedbackContactInput } from "@/feedback/feedbackContactPreference.js";
 import type { FeedbackSubmissionProgressState } from "@/feedback/feedbackSubmissionJob.js";
 import { InboxIcon } from "lucide-react";
@@ -23,19 +24,27 @@ export function DescriptionSection({
 }) {
   return (
     <Section
-      title={formatMessage("feedback.submit.simple.descriptionTitle")}
+      title={
+        <>
+          <RequiredMarker />
+          {formatMessage("feedback.submit.simple.descriptionTitle")}
+        </>
+      }
       right={<Counter value={value.length} max={max} />}
     >
       <Field>
         <Textarea
           autoFocus
+          required
+          aria-required="true"
+          aria-label={formatMessage("feedback.submit.simple.descriptionTitle")}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           rows={5}
           maxLength={max}
           placeholder={formatMessage("feedback.submit.simple.descriptionPlaceholder")}
-          // Textarea field-sizing-content expands the input width to fit long unwrapped text by default.
-          // The feedback dialog has a fixed width, so use a fixed input size and allow long words to wrap to prevent horizontal overflow.
+          // Textarea 默认的 field-sizing-content 会让无换行长文本撑大输入框宽度。
+          // 反馈弹窗宽度固定，这里切到固定尺寸并允许长词换行，避免整窗横向溢出。
           className="field-sizing-fixed h-[136px] max-h-[136px] min-w-0 max-w-full resize-none overflow-y-auto rounded-xl border-input-border bg-input text-ui-base leading-6 whitespace-pre-wrap break-words text-foreground placeholder:text-foreground-subtlest hover:border-input-border-hover focus-visible:border-input-border-focused focus-visible:bg-input-focused"
         />
       </Field>
@@ -63,8 +72,8 @@ export function ContactSection({
           autoComplete="email"
           value={value}
           onChange={(event) => {
-            // Contact details are optional, but users expect them to be prefilled next time after entering them once.
-            // Persist changes as the user types instead of waiting for successful submission, so network failures or closing the dialog do not lose the saved details.
+            // 联系方式是可选项，但用户一旦填过就希望下次自动带出。
+            // 这里随输入实时持久化，不再依赖提交成功，避免网络失败或用户关闭弹窗导致记忆丢失。
             onChange(rememberFeedbackContactInput(event.target.value));
           }}
           maxLength={max}
@@ -177,7 +186,7 @@ export function Section({
   right,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   right?: ReactNode;
   children: ReactNode;
 }) {

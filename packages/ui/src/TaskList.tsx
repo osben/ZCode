@@ -1,8 +1,8 @@
-/* eslint-disable max-lines -- TaskList handles workspace list rendering, inline actions, and external data-source compatibility; keep it cohesive for now to avoid UI structure drift. */
+/* eslint-disable max-lines -- TaskList 同时承接 workspace 列表渲染、行内操作和外部数据源兼容，先集中收口避免 UI 结构漂移。 */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Settings2 } from "lucide-react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
-import { TID_TASK_LIST, TID_TASK_EMPTY, TID_TASK_SETTINGS_BUTTON } from "@zcode/shared";
+import { TID_TASK_LIST, TID_TASK_EMPTY, TID_TASK_SETTINGS_BUTTON } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { toast } from "@/components/ui/toast.js";
@@ -20,12 +20,12 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 
 export { deriveTaskLeadingIndicator } from "@/lib/taskListItemPresentation.js";
 
-// The [] default parameter creates a new array on every TaskList render;
-// during task-stream refreshes, this increases equivalent-data comparisons in memoized child components.
+// 默认参数里的 [] 会在每次 TaskList render 时创建新数组；
+// 任务流刷新期间这会放大 memo 子组件的等价数据判断成本。
 const EMPTY_PINNED_TASKS: ZCodeTaskMeta[] = [];
 
-// The parent App/Shell may rerender when stream state updates even though the list props themselves have not changed.
-// Memoize TaskList as a whole to avoid unrelated parent renders traversing the tasks and recalculating MemoTaskItem props.
+// 父级 App/Shell 可能因 stream 状态更新重渲，但列表 props 本身未变。
+// TaskList 先整体 memo，避免无关父 render 重新遍历任务并触发 MemoTaskItem props 计算。
 export const TaskList = memo(function TaskList({
   workspacePath,
   remoteSessionId,
@@ -39,17 +39,22 @@ export const TaskList = memo(function TaskList({
   showCreateButton = true,
   showFooter = true,
   showEmptyState = true,
+  taskRowVariant = "default",
+  hoverEnabled = true,
   loading: inputLoading,
   hasMore = false,
   onShowMore,
   onRenameTask,
   onSetTaskPinned,
   onArchiveTask,
-  onDeleteTask,
+  isArchived = false,
   onSetTaskUnread,
   mobileActiveTaskKey,
   readOnlyReason,
+  onOpenFileTree,
+  organizationActions,
 }: {
+  organizationActions?: React.ReactNode;
   workspacePath: string;
   remoteSessionId?: string;
   workspaceIdentity?: string;
@@ -62,16 +67,19 @@ export const TaskList = memo(function TaskList({
   showCreateButton?: boolean;
   showFooter?: boolean;
   showEmptyState?: boolean;
+  taskRowVariant?: "default" | "timeline";
+  hoverEnabled?: boolean;
   loading?: boolean;
   hasMore?: boolean;
   onShowMore?: () => void;
   onRenameTask: (taskId: string, title: string) => Promise<ZCodeTaskMeta | null>;
   onSetTaskPinned: (taskId: string, pinned: boolean) => Promise<ZCodeTaskMeta | null>;
   onArchiveTask: (taskId: string) => Promise<ZCodeTaskMeta | null>;
-  onDeleteTask?: (taskId: string) => void;
+  isArchived?: boolean;
   onSetTaskUnread: (taskId: string, unread: boolean) => Promise<ZCodeTaskMeta | null>;
   mobileActiveTaskKey?: string | null;
   readOnlyReason?: string;
+  onOpenFileTree?: () => void | Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   const pinnedTaskIdSet = useMemo(
@@ -111,8 +119,8 @@ export const TaskList = memo(function TaskList({
     onSelectTaskRef.current(taskId);
   }, []);
   const handleOpenTaskContextMenu = useCallback((taskId: string) => {
-    // Previously, every task row kept a Radix ContextMenu root/trigger mounted.
-    // Now each row reports only the target task, while a list-level singleton mounts the actual menu tree, avoiding per-row Popper/MenuProvider overhead in large conversations.
+    // 以前每个 task row 都常驻一个 Radix ContextMenu root/trigger。
+    // 现在 row 只上报目标 task，真正的菜单树由列表级单例挂载，避免大会话里按行放大 Popper/MenuProvider 成本。
     if (pendingArchiveTaskIdRef.current === taskId) {
       setPendingArchiveTaskId(null);
     }
@@ -123,9 +131,9 @@ export const TaskList = memo(function TaskList({
     if (readOnlyReason) {
       return;
     }
-    // If createTask ran immediately when the new-conversation button was clicked, it would persist an "empty task" in the list,
-    // so the sidebar would gain a record with no messages even when the user only wanted to open the input.
-    // Switch to a workspace-level draft here and create the task only when the user actually sends the first message.
+    // 新建会话如果在按钮点击时就立即 createTask，会把"空任务"也持久化到列表里，
+    // 用户只是想先打开输入框，侧边栏却会平白多出一条没有任何消息的记录。
+    // 这里改成进入 workspace 级草稿态，等用户真正发送首条消息时再自动创建 task。
     startDraft(workspacePath, undefined, workspaceIdentity, { createSource: "project" });
   }, [readOnlyReason, startDraft, workspaceIdentity, workspacePath]);
 
@@ -140,9 +148,9 @@ export const TaskList = memo(function TaskList({
       }
 
       if (pendingArchiveTaskIdRef.current !== taskId) {
-        // The sidebar hover action is now “Archive task,” but the task still disappears from the current list immediately,
-        // so executing on the first click could make users mistake “hide temporarily” for “the whole task is gone.”
-        // Use “first click enters confirmation state, second click confirms in place” to preserve the safeguard without leaving the current context.
+        // 侧边栏 hover 操作现在改成“归档任务”，但它依旧会让任务从当前列表立刻消失，
+        // 如果首击就直接执行，用户很容易把“临时收起”误触成“怎么整条任务没了”。
+        // 这里改成“首次点击进入待确认态，二次点击原位确认”，既保留保护，也不离开当前上下文。
         setPendingArchiveTaskId(taskId);
         return;
       }
@@ -232,8 +240,8 @@ export const TaskList = memo(function TaskList({
         return;
       }
 
-      // If a task title keeps leading or trailing spaces from user input, it can look misaligned or as if the title were missing in the list,
-      // while its persisted value has changed, making later debugging hard to reproduce. Trim before saving so display and storage match.
+      // task 标题如果直接保留用户输入的首尾空格，列表里看起来像“没对齐”或“标题丢了”，
+      // 但真实持久化内容又已经变化，后续排查很难复现。这里在提交前统一 trim，保证显示和存储一致。
       logger.info("[TaskList] rename submit calling onRenameTask", {
         taskId,
         workspacePath,
@@ -364,7 +372,10 @@ export const TaskList = memo(function TaskList({
         workspacePath={workspacePath}
         remoteSessionId={remoteSessionId}
         task={task}
+        variant={taskRowVariant}
+        hoverEnabled={hoverEnabled}
         isPinned={isPinned}
+        isArchived={isArchived}
         isActive={isWorkspaceActive && task.taskId === activeTaskId}
         isMobileActive={
           mobileActiveTaskKey ===
@@ -377,9 +388,9 @@ export const TaskList = memo(function TaskList({
         onTogglePinTask={handleTogglePinTask}
         onStartRenameTask={handleStartRenameTask}
         onArchiveTask={handleArchiveTask}
-        onDeleteTask={onDeleteTask}
         onMarkTaskAsUnread={handleMarkTaskAsUnread}
         onOpenTaskContextMenu={handleOpenTaskContextMenu}
+        onOpenFileTree={onOpenFileTree}
         actionsDisabled={Boolean(readOnlyReason)}
         actionsDisabledReason={readOnlyReason}
         intl={intl}
@@ -432,7 +443,7 @@ export const TaskList = memo(function TaskList({
         </div>
       ) : null}
 
-      {/* Task list */}
+      {/* 任务列表 */}
       <div>
         <div className="space-y-1">
           {Boolean(inputLoading) && visibleSourceTasks.length === 0 ? (
@@ -463,11 +474,12 @@ export const TaskList = memo(function TaskList({
                   remoteSessionId={remoteSessionId}
                   task={contextMenuTask}
                   isPinned={pinnedTaskIdSet.has(contextMenuTask.taskId)}
+                  isArchived={isArchived}
+                  organizationActions={organizationActions}
                   intl={intl}
                   onTogglePinTask={handleTogglePinTask}
                   onStartRenameTask={handleStartRenameTask}
                   onArchiveTask={handleArchiveTask}
-                  onDeleteTask={onDeleteTask ? (taskId) => onDeleteTask(taskId) : undefined}
                   onMarkTaskAsUnread={handleMarkTaskAsUnread}
                   disableTaskActions={Boolean(readOnlyReason)}
                   disabledReason={readOnlyReason}
@@ -477,13 +489,15 @@ export const TaskList = memo(function TaskList({
           )}
         </div>
         {hasMore && onShowMore ? (
-          <div className="cursor-pointer pl-8.5">
-            <span
-              className="text-ui-base text-foreground-subtlest hover:text-foreground-subtle"
+          <div className="pl-8.5">
+            <button
+              type="button"
+              data-task-list-show-more="true"
+              className="rounded-sm bg-transparent p-0 text-ui-sm text-foreground-subtle outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30"
               onClick={onShowMore}
             >
               {intl.formatMessage({ id: "taskList.showMore" })}
-            </span>
+            </button>
           </div>
         ) : null}
       </div>

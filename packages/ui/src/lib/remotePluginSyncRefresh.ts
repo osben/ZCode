@@ -3,7 +3,6 @@ import type {
   IMcpSyncService,
   ISkillsService,
   IZCodeAgentService,
-  IZCodeSessionService,
 } from "@zcode/services";
 import { logger } from "@/logger.js";
 import { invalidateDeferredDraftSessionForSkillChange } from "@/lib/zcodeDraftSkillInvalidation.js";
@@ -11,7 +10,7 @@ import { refreshSharedSkillStoreForWorkspace } from "@/lib/skillStoreRefresh.js"
 import { mergeSlashCommandsAfterCommandRefresh } from "@/settings/pluginSlashCommandRefresh.js";
 import { useCommandsStore } from "@/store/commandsStore.js";
 import { useMcpStore } from "@/store/mcpStore.js";
-import { usePluginManagementStore } from "@/store/pluginManagementStore.js";
+import { notifyPluginManagementChange } from "@/store/pluginManagementStoreLoading.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
 function toMessage(error: unknown): string {
@@ -55,9 +54,9 @@ async function refreshSlashCommandsAfterRemotePluginSync(params: {
       workspacePath,
       workspaceIdentityParam,
     ).slashCommands;
-    // Remote plugin sync may run before the command settings page has opened, so commandsStore may not be initialized.
-    // The input's `/` panel reads zcodeSessionStore.slashCommands, so after syncing, fetch commands from the current remote workspace
-    // and write them to slashCommands directly; refreshing only the settings-page store is insufficient.
+    // 远程插件同步入口不一定打开过命令设置页，commandsStore 可能尚未初始化。
+    // 输入框 `/` 面板读取的是 zcodeSessionStore.slashCommands，所以同步后必须直接
+    // 向当前远端 workspace 拉取 commands 并写回 slashCommands，不能只刷新设置页 store。
     zcodeSessionStore.setSlashCommands(
       workspacePath,
       mergeSlashCommandsAfterCommandRefresh(currentSlashCommands, result.commands),
@@ -91,7 +90,6 @@ export async function refreshWorkspacePluginCapabilitiesAfterRemoteSync(params: 
   workspaceIdentity?: string | null;
   workspacePath?: string | null;
   zcodeAgentService: IZCodeAgentService;
-  zcodeSessionService: Pick<IZCodeSessionService, "closeSession">;
 }): Promise<void> {
   const workspacePath = params.workspacePath;
   if (!workspacePath) {
@@ -99,17 +97,7 @@ export async function refreshWorkspacePluginCapabilitiesAfterRemoteSync(params: 
   }
   const workspaceIdentity = params.workspaceIdentity?.trim() || null;
   const workspaceIdentityParam = workspaceIdentity ?? undefined;
-  const pluginStore = usePluginManagementStore.getState();
-
-  if (
-    pluginStore.workspacePath === workspacePath &&
-    pluginStore.workspaceIdentity === workspaceIdentity
-  ) {
-    await pluginStore.refresh(params.zcodeAgentService);
-  }
-
   await invalidateDeferredDraftSessionForSkillChange({
-    zcodeSessionService: params.zcodeSessionService,
     workspacePath,
     workspaceIdentity: workspaceIdentityParam,
     reason: params.reason,
@@ -128,4 +116,11 @@ export async function refreshWorkspacePluginCapabilitiesAfterRemoteSync(params: 
   await useMcpStore
     .getState()
     .ensureLoadedForWorkspace(workspacePath, params.mcpSyncService, workspaceIdentityParam);
+  // 同步入口可能没有打开全局设置；按真实目标通知所有已挂载投影。
+  notifyPluginManagementChange({
+    workspacePath,
+    workspaceIdentity,
+    authorityKey: null,
+    scope: "user",
+  });
 }

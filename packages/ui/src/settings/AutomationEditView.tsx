@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The full scheduled-task editor keeps the Settings/History tabs, cron builder, project/model selectors, and run history together for consistent interactions. */
+/* eslint-disable max-lines -- 定时任务编辑整页集中维护 Settings/History 两个 tab、cron builder、项目/模型选择器与运行历史，集中更利于交互一致。 */
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { completeNewModelSelection } from "@zcode/provider";
@@ -16,7 +16,12 @@ import {
   X,
 } from "lucide-react";
 import {
-  resolveWorkspaceKey,
+  ZCODE_AGENT_PROVIDER,
+  type ZCodeAutomation,
+  type ZCodeAutomationRun,
+  type ZCodeAutomationScheduleRule,
+} from "@zcode/shared";
+import {
   testId,
   TID_AUTOMATION_CUSTOM_CONFIRM,
   TID_AUTOMATION_CUSTOM_INTERVAL_DECREMENT,
@@ -37,11 +42,7 @@ import {
   TID_AUTOMATION_YEAR_DAY_OPTION,
   TID_AUTOMATION_YEAR_MONTH_OPTION,
   TID_AUTOMATION_YEAR_MONTHDAY,
-  ZCODE_AGENT_PROVIDER,
-  type ZCodeAutomation,
-  type ZCodeAutomationRun,
-  type ZCodeAutomationScheduleRule,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   AutomationAddScheduleIcon,
   AutomationChevronDownIcon,
@@ -104,7 +105,6 @@ import { resolveLocalizedAutomationCreateTitle } from "@/settings/automationEdit
 import { ModelConfigSelect } from "@/ModelConfigSelect.js";
 import { ThoughtLevelCycleControl } from "@/chat-input-toolbar/ThoughtLevelCycleControl.js";
 import { ConfigSelect } from "@/chat-input-toolbar/display.js";
-import { ChatEmptyWorkspacePreviewMenu, type ChatEmptyWorkspaceMenuTab } from "@/ChatEmptyState.js";
 import {
   AUTOMATION_DEFAULT_MODE,
   buildAutomationModelSelectGroups,
@@ -127,7 +127,8 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useAutomationProjectOptions } from "@/hooks/useAutomationProjectOptions.js";
-import { useModelSelectionView } from "@/hooks/useModelSelectionView.js";
+import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import { resolveModelThoughtOption } from "@/lib/modelThoughtOption.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
@@ -165,18 +166,17 @@ const MODEL_ITEM_NEVER_LOCKED = () => false;
 const FREQUENCIES: CronFrequency[] = ["hourly", "daily", "weekdays", "weekly", "monthly", "custom"];
 const isCronFrequency = (value: string): value is CronFrequency =>
   FREQUENCIES.includes(value as CronFrequency);
-/** Number of run-history rows per page. */
+/** 运行历史每页条数。 */
 const RUNS_PAGE_SIZE = 8;
-/** Visual range allowed by the custom repeat-frequency input. */
+/** 自定义重复频率输入允许输入的视觉范围。 */
 const CUSTOM_REPEAT_INTERVAL_INPUT_MIN = 0;
-/** A cron step must be a positive integer; 0 cannot form a valid schedule. */
+/** cron 的步长必须为正整数，0 不能形成有效调度。 */
 const CUSTOM_REPEAT_INTERVAL_SCHEDULABLE_MIN = 1;
 const CUSTOM_REPEAT_INTERVAL_MAX = 200;
 
 /**
- * Generate the page-number sequence for pagination: keep the first and last three pages and one page on
- * either side of the current page; collapse the rest with ellipses.
- * Example: current=1,total=10 → [1,2,3,"ellipsis",8,9,10].
+ * 生成分页控件的页码序列：首尾各保留 3 页、当前页左右各 1 页，其余用省略号折叠。
+ * 例：current=1,total=10 → [1,2,3,"ellipsis",8,9,10]。
  */
 function buildRunsPageItems(current: number, total: number): Array<number | "ellipsis"> {
   if (total <= 7) {
@@ -232,9 +232,9 @@ function CustomRepeatCalendarIcon({ className }: { className?: string }) {
 }
 
 /**
- * Single-column scrolling list for time selection (hours or minutes); scroll the selected item into view when opened.
- * Time options are common interactive controls, so do not use the minimum text-size token reserved for badges and compact labels.
- * The selected time is a menu selection, not a primary action button; use menu hover semantics to avoid an abrupt black block in Light theme.
+ * 时间选择的单列滚动列表（小时或分钟），选中项打开时自动滚动到可见位置。
+ * 时间选项属于常用交互控件，不应沿用仅用于徽标和紧凑标签的最小字号 token。
+ * 已选时间属于菜单选中态，不是主操作按钮；使用菜单 hover 语义避免 Light 主题下出现突兀黑块。
  */
 function TimeUnitColumn({
   count,
@@ -274,8 +274,8 @@ function TimeUnitColumn({
 }
 
 /**
- * HH:MM time picker: a pill trigger plus two scrolling columns for hours and minutes in the popover.
- * The time-picker trigger is a common interactive control and should use the body base size, text-ui-base.
+ * HH:MM 时间选择器：一个 pill 触发器 + 弹层内小时/分钟两列滚动选择。
+ * 时间选择触发器属于常用交互控件，应使用正文基准字号 text-ui-base。
  */
 function TimeOfDayPicker({
   hour,
@@ -317,7 +317,7 @@ function TimeOfDayPicker({
   );
 }
 
-/** Single-column scrolling list for month/day (1-based values), styled to match TimeUnitColumn. */
+/** 月/日单列滚动列表（1-based 值），样式对齐 TimeUnitColumn。 */
 function ScrollNumberColumn({
   values,
   selected,
@@ -327,7 +327,7 @@ function ScrollNumberColumn({
   values: number[];
   selected: number;
   onSelect: (value: number) => void;
-  /** When provided, each number button gets a `${prefix}-${value}` data-testid (for E2E). */
+  /** 提供时每个数字按钮带 `${prefix}-${value}` 的 data-testid（e2e 用）。 */
   buttonTestIdPrefix?: string;
 }) {
   const selectedRef = useRef<HTMLButtonElement | null>(null);
@@ -359,14 +359,14 @@ function ScrollNumberColumn({
   );
 }
 
-/** Number of days in a month (use leap year 2024 so February can include 29); month is 1-12. */
+/** 某月天数（用闰年 2024 作参照，使 2 月可选到 29）；month 为 1-12。 */
 function daysInMonth(month: number): number {
   return new Date(2024, month, 0).getDate();
 }
 
 /**
- * Month/day picker (for custom → yearly): a pill trigger plus scrolling month/day columns in the popover,
- * styled to match TimeOfDayPicker. When the month changes, clamp the current day to that month's maximum.
+ * 月/日选择器（custom → yearly 用）：一个 pill 触发器 + 弹层内月/日两列滚动选择，
+ * 样式与 TimeOfDayPicker 对齐。切月后当前日超过该月最大天数时自动收敛。
  */
 function MonthDayPicker({
   month,
@@ -402,8 +402,7 @@ function MonthDayPicker({
           </span>
         </button>
       </PopoverTrigger>
-      {/* Match TimeOfDayPicker: flex-row overrides PopoverContent's default flex-col so month
-              and day appear side by side. */}
+      {/* 与 TimeOfDayPicker 一致：flex-row 覆盖 PopoverContent 默认的 flex-col，月/日两列并排。 */}
       <PopoverContent
         align="start"
         side="bottom"
@@ -428,7 +427,7 @@ function MonthDayPicker({
   );
 }
 
-/** Weekly day selector: keep the sentence-style trigger and prevent clearing the last selected day. */
+/** 每周日期选择：保持语句式 trigger，并禁止清空最后一个日期。 */
 function WeekdayPicker({
   weekdays,
   intl,
@@ -450,7 +449,7 @@ function WeekdayPicker({
           aria-label={intl.formatMessage({
             id: "automations.form.schedule.weekdaysLabel",
           })}
-          // Use the same highlight for the weekday multi-select trigger as the frequency and time tags at this level.
+          // 星期多选 trigger 与同层频率、时间 tag 使用相同高亮，避免亮度不一致。
           className="inline-flex h-auto max-w-full items-center gap-0.5 rounded-full bg-hover py-px pl-2 pr-0.5 text-ui-base leading-5 text-foreground transition-colors hover:bg-selected data-[state=open]:bg-selected focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
         >
           <span className="truncate">{label}</span>
@@ -472,8 +471,7 @@ function WeekdayPicker({
               }}
               className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ui-base text-foreground transition-colors hover:bg-menu-hover"
             >
-              {/* Bug cause: Putting the checkbox at the start of the row would move the weekday menu away from the
-                  standard trailing-status layout. */}
+              {/* Bug 原因：勾选位放在行首会让星期菜单偏离标准的尾部状态布局。 */}
               <span className="min-w-0 flex-1 truncate">
                 {intl.formatMessage({ id: `automations.weekday.${day}` })}
               </span>
@@ -736,14 +734,13 @@ function CustomRepeatDialog({
                   data-testid={TID_AUTOMATION_CUSTOM_INTERVAL_SELECT}
                   onChange={(event) => {
                     const value = event.target.value;
-                    // Number inputs allow empty values and scientific notation; keep empty values editable,
-                    // but accept only non-negative integer text to prevent invalid cron/scheduleRule values.
+                    // number 输入允许空值和科学计数法；保留空值便于编辑，
+                    // 但只接收非负整数文本，避免将无效值写进 cron / scheduleRule。
                     if (value === "" || /^\d+$/.test(value)) setIntervalInput(value);
                   }}
                 />
-                {/* Native number spinners vary in size and theme feedback across system browsers and
-                    WebViews. Use controlled step buttons for consistent interactions on desktop and
-                    mobile web. */}
+                {/* 原生 number spinner 在系统浏览器与 WebView 的尺寸、主题反馈不一致；
+                    使用受控步进按钮，统一桌面与手机 Web 的点击样式。 */}
                 <div className="absolute inset-y-px right-px flex w-8 flex-col overflow-hidden rounded-r-[7px] border-l border-input-border bg-input">
                   <button
                     type="button"
@@ -985,12 +982,10 @@ function CustomRepeatDialog({
                   <span
                     className={cn(
                       "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      !ends ? "border-icon-blue bg-icon-blue" : "border-border",
+                      !ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
                     )}
                   >
-                    {!ends ? (
-                      <span className="size-1.5 rounded-full bg-foreground-inverse" />
-                    ) : null}
+                    {!ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
                   </span>
                 </span>
                 {intl.formatMessage({
@@ -1006,10 +1001,10 @@ function CustomRepeatDialog({
                   <span
                     className={cn(
                       "flex size-4 items-center justify-center rounded-full border-[1.33px]",
-                      ends ? "border-icon-blue bg-icon-blue" : "border-border",
+                      ends ? "border-[#4099FF] bg-[#4099FF]" : "border-border",
                     )}
                   >
-                    {ends ? <span className="size-1.5 rounded-full bg-foreground-inverse" /> : null}
+                    {ends ? <span className="size-1.5 rounded-full bg-white" /> : null}
                   </span>
                 </span>
                 {intl.formatMessage({
@@ -1017,7 +1012,7 @@ function CustomRepeatDialog({
                 })}
               </button>
             </div>
-            {/* Fix reason: Native date inputs open an uncontrollable white system calendar in dark mode. */}
+            {/* 修复原因：原生 date input 会在暗色主题中弹出不可控的系统白色月历。 */}
             <EndDatePicker
               value={endDate}
               min={toDateInputValue(Date.now())}
@@ -1065,28 +1060,28 @@ function CustomRepeatDialog({
 
 export interface AutomationEditSubmit {
   input: CreateAutomationInput | UpdateAutomationInput;
-  /** Target project (may differ from the current list project when creating). */
+  /** 目标项目(创建时可能不同于当前列表项目)。 */
   workspacePath: string;
   workspaceIdentity?: string;
 }
 
 export interface AutomationEditViewProps {
-  /** null = create; otherwise edit. */
+  /** null = 新建；否则编辑。 */
   editing: ZCodeAutomation | null;
-  /** Creation prefill (from a More ideas template). */
+  /** 新建预填(来自 More ideas 模板)。 */
   initialDraft?: { title: string; cronExpr: string; prompt: string } | null;
-  /** Project containing the current list, used as the default target for creation. */
+  /** 当前列表所在项目,作为新建的默认目标项目。 */
   defaultWorkspacePath: string;
   defaultWorkspaceIdentity?: string;
   onManageModels?: () => void;
   saving: boolean;
   onSubmit: (params: AutomationEditSubmit) => Promise<boolean>;
   onBack: () => void;
-  /** Edit-mode actions: run now / enable or disable / delete. */
+  /** 编辑态:立即运行 / 启停 / 删除。 */
   onRunNow?: (automation: ZCodeAutomation) => Promise<void> | void;
   onToggle?: (automation: ZCodeAutomation, enabled: boolean) => void;
   onDelete?: (automation: ZCodeAutomation) => void;
-  /** Run history for the History tab. */
+  /** History tab 运行历史。 */
   runsEntry?: AutomationRunsEntry;
   onLoadRuns?: () => void;
   onDeleteRun?: (runId: string) => void;
@@ -1145,7 +1140,7 @@ function initialBuilder(
   };
 }
 
-// ---- Run-history status mapping (kept consistent with AutomationRunsDialog) ----
+// ---- 运行历史状态映射(与 AutomationRunsDialog 保持一致) ----
 type RunStatusKind = "running" | "succeeded" | "failed" | "stopped" | "skipped";
 function resolveRunStatus(run: ZCodeAutomationRun): RunStatusKind {
   if (run.dispatchStatus === "skipped") return "skipped";
@@ -1161,7 +1156,7 @@ function resolveRunStatus(run: ZCodeAutomationRun): RunStatusKind {
       return "running";
   }
 }
-// Present run status as “dot + colored text” (the density spec for the Scheduled history table).
+// 运行状态用「圆点 + 彩色文字」呈现（Scheduled 历史表密度规格）。
 const RUN_STATUS_DOT_CLASS: Record<RunStatusKind, string> = {
   running: "bg-primary",
   succeeded: "bg-success",
@@ -1241,12 +1236,12 @@ export function AutomationEditView({
   const modelManuallyChangedRef = useRef(false);
   const thoughtManuallyChangedRef = useRef(false);
   const thoughtTriggerRef = useRef<HTMLSpanElement | null>(null);
-  // Do not render the default “Every day at 09:00” on the first frame and restore the persisted schedule in an effect.
-  // Child schedule controls register value callbacks first and would treat the default as a dirty baseline; edit mode must use the real value on its first frame.
+  // 不能首帧先渲染默认的“每天 09:00”、再由 effect 回填持久化调度。
+  // 子级调度控件会先注册 value 回调，从而把默认值误记成 dirty baseline；编辑态必须首帧即使用真实值。
   const [builder, setBuilder] = useState<CronBuilderState>(() =>
     initialBuilder(editing, initialDraft),
   );
-  // New tasks have no schedule by default; add one explicitly with “Add schedule.” If removed and left incomplete, show the red validation hint.
+  // 新建任务默认不带日程，通过「Add schedule」显式添加；移除后未补齐标红提示。
   const [scheduleRemoved, setScheduleRemoved] = useState(!editing && !initialDraft);
   const [validationErrors, setValidationErrors] = useState<
     ReadonlySet<AutomationEditRequiredField>
@@ -1258,14 +1253,15 @@ export function AutomationEditView({
   const currentEditSignaturesRef = useRef<AutomationEditFieldSignatures | null>(null);
   const touchedFieldBaselinesRef = useRef<Partial<AutomationEditFieldSignatures>>({});
   const [endAt, setEndAt] = useState<number | undefined>(() => editing?.endAt);
-  // Target project key (editable only during creation; edit mode is locked to the automation's project).
+  // 目标项目 key(仅新建时可改;编辑锁定为 automation 所属项目)。
   const [workspaceKey, setWorkspaceKey] = useState<string | null>(null);
 
-  const localWorkspaceOptions = useAutomationProjectOptions({
-    includeConversationWorkspace: true,
-  });
+  const localWorkspaceOptions = useAutomationProjectOptions();
   const editingWorkspaceOption = editing
-    ? findAutomationWorkspaceOptionByKey(localWorkspaceOptions, editing.workspaceKey)
+    ? findAutomationWorkspaceOptionByKey(
+        localWorkspaceOptions,
+        resolveAutomationWorkspaceSelectionKey(editing),
+      )
     : undefined;
   const workspaceOptions = useMemo<AutomationWorkspaceOption[]>(
     () =>
@@ -1274,16 +1270,9 @@ export function AutomationEditView({
             {
               workspacePath: editing.workspacePath,
               workspaceIdentity: editing.workspaceIdentity,
-              label: workspaceLabelFromPath(editing.workspacePath),
-              ...(editingWorkspaceOption?.remoteSessionId
-                ? { remoteSessionId: editingWorkspaceOption.remoteSessionId }
-                : {}),
-              ...(editingWorkspaceOption?.remoteTarget
-                ? { remoteTarget: editingWorkspaceOption.remoteTarget }
-                : {}),
-              ...(editingWorkspaceOption?.workspacePurpose
-                ? { workspacePurpose: editingWorkspaceOption.workspacePurpose }
-                : {}),
+              projectId: editing.projectId,
+              hostId: editing.hostId,
+              label: editingWorkspaceOption?.label ?? workspaceLabelFromPath(editing.workspacePath),
             },
           ]
         : localWorkspaceOptions,
@@ -1292,7 +1281,7 @@ export function AutomationEditView({
   const workspaceOptionsRef = useRef(workspaceOptions);
   workspaceOptionsRef.current = workspaceOptions;
 
-  // Reset the form when opening or switching the item being edited.
+  // 打开/切换编辑对象时重置表单。
   useEffect(() => {
     setTab("settings");
     setRunsPage(1);
@@ -1319,15 +1308,10 @@ export function AutomationEditView({
       setThoughtLevel(editingThoughtLevel);
       setBuilder(initialBuilder(editing, initialDraft));
       setEndAt(editing.endAt);
-      setWorkspaceKey(
-        resolveWorkspaceKey({
-          workspacePath: editing.workspacePath,
-          workspaceIdentity: editing.workspaceIdentity,
-        }),
-      );
+      setWorkspaceKey(resolveAutomationWorkspaceSelectionKey(editing));
     } else {
       setScheduleRemoved(!initialDraft);
-      // The creation page's default title can follow locale changes; a template title is content the user explicitly chose.
+      // 新建页的默认标题可随 locale 更新；模板标题仍属于用户明确选择的内容。
       titleTouchedRef.current = false;
       modelManuallyChangedRef.current = false;
       thoughtManuallyChangedRef.current = false;
@@ -1367,8 +1351,8 @@ export function AutomationEditView({
 
   useEffect(() => {
     if (editing) return;
-    // Do not keep a default workspace and allow saving when there are no candidates or the default project is invalid.
-    // On every tab change, reconcile the selection with the currently valid projects; explicitly clear it when none are available.
+    // 候选为空或默认项目已失效时不能保留 default workspace 并允许落库。
+    // 任何 tab 变化都重新把选择收敛到当前有效项目；没有候选时必须明确置空。
     setWorkspaceKey((currentWorkspaceKey) =>
       reconcileAutomationWorkspaceSelectionKey(workspaceOptions, currentWorkspaceKey, {
         workspacePath: defaultWorkspacePath,
@@ -1396,7 +1380,7 @@ export function AutomationEditView({
   const handleRemoveSchedule = useCallback(() => {
     markFieldTouched("schedule");
     setScheduleRemoved(true);
-    // Deleting a schedule previously entered the destructive validation state, incorrectly treating an ordinary edit as a failed submission.
+    // 删除计划曾直接开启 destructive 校验态，把普通编辑误当成提交失败。
     clearRequiredFieldValidation("schedule");
     logger.debug("[AutomationEditView] 删除计划草稿", {
       automationId: editing?.automationId ?? null,
@@ -1408,9 +1392,9 @@ export function AutomationEditView({
     onLoadRunsRef.current = onLoadRuns;
   }, [onLoadRuns]);
 
-  // Load run history when switching to the History tab in edit mode, then refresh lightly while it remains open.
-  // The scheduler/host writes cron runs and outcomes asynchronously; loading only once could show an ended session with empty history.
-  // The parent passes onLoadRuns inline, so it cannot be a dependency or every runsCache update would restart the effect and create a request loop.
+  // 切到 History tab(编辑态)时加载运行历史，并在停留期间轻量刷新。
+  // cron run/outcome 由 scheduler/host 异步写入；只加载一次会让用户看到会话已结束但历史仍为空。
+  // onLoadRuns 由父组件 inline 传入，不能作为依赖，否则每次 runsCache 更新都会重启 effect 形成请求循环。
   useEffect(() => {
     if (tab !== "history" || !editing) {
       return;
@@ -1423,7 +1407,7 @@ export function AutomationEditView({
   }, [tab, editing?.automationId]);
 
   const isSessionCreatedAutomation = resolveIsSessionCreatedAutomation(editing);
-  // Keep legacy cron values from sessions read-only when the UI cannot safely echo them; an explicit user reset exits this path via a persisted marker.
+  // 会话来源但无法由 UI 安全回显的旧 cron 保持只读；用户显式重设后以持久化标记退出该路径。
   const preserveSessionCreatedSchedule =
     isSessionCreatedAutomation &&
     !editing?.scheduleEditedByUser &&
@@ -1442,27 +1426,18 @@ export function AutomationEditView({
     () => (cronExpr ? describeCronBuilder(builder, intl) : ""),
     [builder, cronExpr, intl],
   );
-  const selectedWorkspace =
+  const selectedWorkspace: AutomationWorkspaceOption | null =
     findAutomationWorkspaceOptionByKey(workspaceOptions, workspaceKey) ??
     (editing
       ? {
           workspacePath: editing.workspacePath,
           workspaceIdentity: editing.workspaceIdentity,
-          label: workspaceLabelFromPath(editing.workspacePath),
+          projectId: editing.projectId,
+          hostId: editing.hostId,
+          label: editingWorkspaceOption?.label ?? workspaceLabelFromPath(editing.workspacePath),
         }
       : null);
-  // Reuse the project-selection menu from the empty input state by mapping the form's project candidates to its tab structure.
-  const workspaceMenuTabs = useMemo<ChatEmptyWorkspaceMenuTab[]>(
-    () =>
-      workspaceOptions.map((option) => ({
-        workspacePath: option.workspacePath,
-        label: option.label,
-        ...(option.workspaceIdentity ? { workspaceIdentity: option.workspaceIdentity } : {}),
-        ...(option.workspacePurpose ? { workspacePurpose: option.workspacePurpose } : {}),
-      })),
-    [workspaceOptions],
-  );
-  // In creation mode, keep the target empty when no valid project exists so model configuration does not silently fall back to the conversation/default workspace.
+  // 新建态无有效项目时保留空目标，避免模型配置读取悄悄回退到 conversation/default workspace。
   const selectedWorkspacePath = selectedWorkspace?.workspacePath ?? "";
   const selectedWorkspaceIdentity = selectedWorkspace?.workspaceIdentity;
   const originalSelection = useMemo(() => {
@@ -1472,13 +1447,18 @@ export function AutomationEditView({
       ? { ...identity, ...(thoughtLevel ? { options: { reasoningLevel: thoughtLevel } } : {}) }
       : null;
   }, [model, thoughtLevel]);
-  // Model candidates belong to the Host targeted by the current form. Switch subscriptions immediately when the project changes;
-  // if the remote target is disconnected, useModelSelectionView remains unavailable and must never fall back to the settings page's Local Host.
-  const modelSelectionRead = useModelSelectionView(
+  // 模型候选属于当前表单目标 Host。项目切换时立即切换订阅；远程目标未连接时
+  // 等待远端时保持 unavailable；本地空项目直接读取同 Host 模型目录，不创建假 cwd。
+  const selectionOwner = useWorkspaceServicesResolution(
     selectedWorkspacePath || null,
     selectedWorkspace?.remoteSessionId,
     selectedWorkspaceIdentity,
     selectedWorkspace?.remoteTarget,
+  );
+  const modelSelectionRead = useModelSelectionServiceView(
+    selectionOwner.services.modelSelectionService,
+    Boolean(selectedWorkspace) && selectionOwner.connectionKind !== "remote-waiting",
+    selectedWorkspace ? "remote-waiting" : "missing-target",
     { selection: originalSelection },
   );
   const modelSelectionView =
@@ -1519,34 +1499,21 @@ export function AutomationEditView({
       registrySelectionView: modelSelectionView,
     });
   }, [intl, modelSelectionView]);
-  const isSelectedConversationWorkspace = selectedWorkspace?.workspacePurpose === "conversation";
-  // Automation data persists only workspaceKey/path. Edit mode previously showed the conversation's backing path as a project named default.
-  // Restore purpose by matching the current canonical candidate, then reuse the conversation-side label; unmatched historical targets still fall back to the path name.
+  const isSelectedConversationWorkspace =
+    selectedWorkspace?.projectId === null || selectedWorkspace?.workspacePurpose === "conversation";
+  // Bug 原因：automation 数据只持久化 workspaceKey/path，编辑态曾直接把 conversation
+  // backing path 当项目展示成 default。匹配当前 canonical 候选恢复 purpose 后，
+  // 继续复用会话侧文案；无法匹配的历史目标仍回退到路径名称。
   const selectedWorkspaceDisplayLabel = isSelectedConversationWorkspace
     ? intl.formatMessage({ id: "chat.empty.workOutsideProject" })
     : (selectedWorkspace?.label ?? workspaceLabelFromPath(defaultWorkspacePath));
-  const conversationWorkspace = workspaceOptions.find(
-    (option) => option.workspacePurpose === "conversation",
-  );
-  const handleSelectWorkspace = (workspace: ChatEmptyWorkspaceMenuTab) => {
+  const handleSelectProject = (key: string) => {
+    if (!findAutomationWorkspaceOptionByKey(workspaceOptions, key)) return;
     modelManuallyChangedRef.current = false;
     thoughtManuallyChangedRef.current = false;
     modelSelection.current = "";
     setModel("");
-    // Remote workspaces can share the same physical path; the old callback passed only path and find always returned the first
-    // candidate. Selection events must include identity so model preview, save, and dispatch use the workspaceKey the user selected.
-    setWorkspaceKey(resolveAutomationWorkspaceSelectionKey(workspace));
-  };
-  const handleSelectConversationWorkspace = () => {
-    if (!conversationWorkspace) return;
-    modelManuallyChangedRef.current = false;
-    thoughtManuallyChangedRef.current = false;
-    modelSelection.current = "";
-    setModel("");
-    // The conversation's backing workspace was previously downgraded to an ordinary project named default,
-    // exposing an internal directory name and Folder icon in the menu. Choose the canonical backing by purpose here,
-    // and let the conversation-side fixed “Work outside a project” menu item handle display.
-    setWorkspaceKey(resolveAutomationWorkspaceSelectionKey(conversationWorkspace));
+    setWorkspaceKey(key);
   };
   const modelTriggerLabel = resolveAutomationModelTriggerLabel({
     modelGroups: modelSelectGroups,
@@ -1554,7 +1521,7 @@ export function AutomationEditView({
     modelValue: effectiveModelValue,
     fallbackLabel: intl.formatMessage({ id: "chat.toolbar.model.label" }),
   });
-  // Initialize the highest tier only when the user actively selects a model; history restoration and View refresh preserve a missing tier.
+  // 主动选模型才初始化最高档；历史恢复和 View 刷新仍保留缺失档位。
   const handleModelValueChange = useCallback(
     (value: string) => {
       modelManuallyChangedRef.current = true;
@@ -1572,8 +1539,8 @@ export function AutomationEditView({
     },
     [markFieldTouched, modelSelectionView],
   );
-  // The scheduled-task editor only owns a form draft; do not call the workspace-default configuration API just to read options.
-  // Otherwise, opening and cancelling the form could change the current project's or draft session's model, mode, and reasoning effort.
+  // 定时任务编辑页只维护表单草稿，不能为了读取选项调用 workspace 默认配置接口；
+  // 否则用户仅打开后取消，也会改掉当前项目或 draft session 的模型、模式和思考强度。
   const modeOption = useMemo(() => buildAutomationModeOption(mode), [mode]);
   const selectedModelItem = useMemo(
     () => resolveAutomationModelItem(modelSelectGroups, effectiveModelValue),
@@ -1607,8 +1574,8 @@ export function AutomationEditView({
     )
       return;
     if (model) return;
-    // The old form saved “default model” as an empty value but also required a concrete candidate before submission,
-    // leaving the create button disabled forever. Select and persist preferredSelection as soon as the target Host is ready.
+    // 旧表单把“默认模型”保存为空值，却又要求提交前必须存在具体候选，
+    // 导致初次创建按钮永远禁用。目标 Host ready 后直接选中并固化 preferredSelection。
     modelSelection.current = preferredModelValue;
     setModel(preferredModelValue);
     thoughtManuallyChangedRef.current = false;
@@ -1621,8 +1588,8 @@ export function AutomationEditView({
     if (!selectedModelItem) return null;
     const decodedModel = decodeCustomModelValue(selectedModelItem.value);
     if (!decodedModel?.modelName) return null;
-    // Reuse the same static model facts as the conversation composer so a scheduled task does not show a reasoning-capable model
-    // as having no reasoning tiers when the workspace runtime catalog has not projected thought_level yet.
+    // 与会话 composer 复用同一模型静态事实，避免 workspace runtime catalog 暂未投影
+    // thought_level 时，定时任务把支持推理的模型误显示成无思考档位。
     return modelSelectionView
       ? resolveModelThoughtOption({
           modelSelectionView,
@@ -1631,7 +1598,7 @@ export function AutomationEditView({
         })
       : null;
   }, [modelSelectionView, selectedModelItem]);
-  // Option Specs for the selected model come only from the target Host View; do not create a deferred Session just for preview.
+  // 所选模型的 Option Specs 只来自目标 Host View；不能为预览再创建 deferred Session。
   const activeThoughtOption = selectedModelMetadataThoughtOption ?? undefined;
   const thoughtLevelOption = useMemo(
     () => buildAutomationThoughtLevelOption(activeThoughtOption, effectiveReasoningLevel),
@@ -1681,7 +1648,7 @@ export function AutomationEditView({
             anchorAt: editing?.scheduleRule?.anchorAt ?? Date.now(),
             weekdays: builder.customWeekdays,
             monthDays: builder.customMonthDays,
-            // months is meaningful only for yearly schedules; clear it for other units, and JSON.stringify drops undefined values.
+            // months 仅对 yearly 有意义；其它单位置空，JSON.stringify 会丢弃 undefined。
             months: builder.customUnit === "yearly" ? [builder.customMonth] : undefined,
             monthlyMode: builder.customMonthlyMode,
           }
@@ -1698,7 +1665,7 @@ export function AutomationEditView({
         title: title.trim(),
         cronExpr,
         prompt: prompt.trim(),
-        // When editing a finite task created within a conversation, do not unconditionally convert it to a recurring task.
+        // 编辑会话内创建的有限次任务时，不能固定改成循环任务。
         recurring: editing?.recurring ?? true,
         ...(editing ? { endAt: endAt ?? null } : endAt ? { endAt } : {}),
         ...(editing
@@ -1768,8 +1735,8 @@ export function AutomationEditView({
         : [],
     [currentEditSignatures, touchedFields],
   );
-  // Model metadata and the cron builder normalize asynchronously after the page opens. Only fields the user has actually changed
-  // should trigger the unsaved-changes prompt; otherwise merely opening and leaving an existing task looks like an edit.
+  // 模型元数据和 cron builder 会在打开页面后异步归一化；只有用户实际操作过的
+  // 字段才能触发未保存提示，否则仅打开已有任务再返回也会被误判为修改。
   const hasUnsavedChanges = Boolean(editing) && changedFields.length > 0;
 
   const recommendStartPlan = useStartPlanRecommendation(modelSelectionView);
@@ -1780,17 +1747,20 @@ export function AutomationEditView({
         return false;
       }
       if (!canSubmit) return false;
-      // Prevent a quick save from using the previous valid selection after a change but before its View arrives.
+      // 防止刚改选择尚未取得对应 View 时，快速保存采用上一个输入的有效结果。
       if (modelSelection.current !== model || thoughtLevelRef.current !== thoughtLevel)
         return false;
       const input: CreateAutomationInput | UpdateAutomationInput = {
-        // The permission dropdown and Save button are separate controls. After quickly selecting Plan and saving,
-        // React state may not have reached the submit closure yet; keep the latest selection in a ref so it is not saved as the default build.
+        ...(!editing && selectedWorkspace?.projectId
+          ? { projectId: selectedWorkspace.projectId }
+          : {}),
+        // Bugfix: 权限下拉和保存按钮是两个独立控件，快速选择 Plan 后立即保存时，
+        // React state 可能还没刷新到 submit 闭包；用 ref 保留最后一次选择，避免落库成默认 build。
         ...buildSubmitInput({
           modeValue: modeRef.current,
         }),
       };
-      // Edit mode is locked to the original project; creation uses the selected project.
+      // 编辑态锁定原项目;新建态用选中的项目。
       const target = editing
         ? {
             workspacePath: editing.workspacePath,
@@ -1802,7 +1772,7 @@ export function AutomationEditView({
               workspaceIdentity: selectedWorkspace.workspaceIdentity,
             }
           : null;
-      // Disabling the button does not cover keyboard shortcuts or async callbacks; the submit boundary must also reject creation without a valid project.
+      // 只禁用按钮无法覆盖快捷键或异步回调；提交边界也必须拒绝无有效项目的新建。
       if (!target) return false;
       if (input.modelSelection && (!editing || changedFields.includes("model"))) {
         const chosen = await recommendStartPlan(input.modelSelection);
@@ -1844,6 +1814,7 @@ export function AutomationEditView({
       thoughtLevel,
       selectedWorkspace?.workspaceIdentity,
       selectedWorkspace?.workspacePath,
+      selectedWorkspace?.projectId,
     ],
   );
 
@@ -1890,8 +1861,8 @@ export function AutomationEditView({
       return;
     }
 
-    // Scheduled tasks previously had a separate “save/discard changes” dialog that drifted in size and behavior
-    // from the idle-task confirmation dialog. Reuse the remote Automation presentation and retain only “cancel/discard” semantics.
+    // 定时任务曾单独维护“保存 / 放弃修改”弹窗，与闲时任务的确认弹窗
+    // 尺寸和动作持续漂移；统一复用远程 Automation presentation，仅保留“取消 / 丢弃”语义。
     const confirmed = await confirmDialog({
       title: intl.formatMessage({ id: "automations.unsaved.title" }),
       description: intl.formatMessage({
@@ -1922,7 +1893,7 @@ export function AutomationEditView({
 
   const handleTabChange = useCallback(
     (nextTab: AutomationSettingsHistoryTab) => {
-      // New scheduled tasks previously disabled the History trigger, unlike idle tasks where an empty history can be viewed.
+      // 新建定时任务曾直接禁用 History trigger，和闲时任务可查看空历史的交互不一致。
       logger.debug("[AutomationEditView] 切换设置页签", {
         automationId: editing?.automationId ?? null,
         nextTab,
@@ -1935,7 +1906,7 @@ export function AutomationEditView({
 
   const runs = runsEntry?.runs ?? [];
   const runsLoading = runsEntry?.status === "loading";
-  // Client-side run-history pagination: all data is already loaded, so slice it by page here. Clamp the page after deletion changes the row count.
+  // 运行历史客户端分页：数据已整份加载，这里按页切片展示。删除后条数变化时把页码收敛到有效范围。
   const runsTotalPages = Math.max(1, Math.ceil(runs.length / RUNS_PAGE_SIZE));
   const runsCurrentPage = Math.min(runsPage, runsTotalPages);
   const pagedRuns = runs.slice(
@@ -1975,7 +1946,7 @@ export function AutomationEditView({
           </p>
         </div>
 
-        {/* Tabs and actions on the right. */}
+        {/* tab + 右侧操作 */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <AutomationSettingsHistoryTabs
             value={tab}
@@ -1996,7 +1967,7 @@ export function AutomationEditView({
                     type="submit"
                     form="automation-edit-form"
                     data-testid={TID_AUTOMATION_FORM_SUBMIT}
-                    className="inline-flex h-8 items-center rounded-lg border-0 bg-primary px-3 text-ui-base font-medium text-primary-foreground shadow-none outline-none transition-colors hover:bg-primary/90 focus-visible:ring-0 disabled:pointer-events-none disabled:opacity-40"
+                    className="inline-flex h-8 items-center rounded-lg border-0 bg-white px-3 text-ui-base font-medium text-black shadow-none outline-none transition-colors hover:bg-white/90 focus-visible:ring-0 disabled:pointer-events-none disabled:opacity-40"
                     disabled={!submissionContextReady || saving}
                   >
                     {intl.formatMessage({
@@ -2008,7 +1979,7 @@ export function AutomationEditView({
                   <button
                     type="button"
                     data-testid={TID_AUTOMATION_RUN_NOW}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border-0 bg-surface px-3 text-ui-base font-medium text-foreground shadow-none outline-none transition-colors hover:bg-surface-hover focus-visible:ring-0 disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-foreground-subtlest disabled:opacity-40"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border-0 bg-white/[0.06] px-3 text-ui-base font-medium text-foreground shadow-none outline-none transition-colors hover:bg-white/10 focus-visible:ring-0 disabled:pointer-events-none disabled:cursor-not-allowed disabled:text-foreground-subtlest disabled:opacity-40"
                     disabled={!submissionContextReady || saving || saveAndRunPending}
                     onClick={() => void handleSaveAndRun()}
                   >
@@ -2023,14 +1994,13 @@ export function AutomationEditView({
                       aria-label={intl.formatMessage({
                         id: "automations.moreActions",
                       })}
-                      className="flex size-8 items-center justify-center rounded-lg border-0 bg-surface text-foreground-subtle shadow-none outline-none transition-colors hover:bg-surface-hover hover:text-foreground data-[state=open]:bg-surface-hover data-[state=open]:text-foreground focus-visible:ring-0"
+                      className="flex size-8 items-center justify-center rounded-lg border-0 bg-white/[0.06] text-foreground-subtle shadow-none outline-none transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground focus-visible:ring-0"
                     >
                       <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" sideOffset={4} className="min-w-[180px]">
-                    {/* Do not show Pause/Resume for terminal tasks (completed/failed): resuming a
-                        terminal task is meaningless, and saving edits would revive it. */}
+                    {/* 终态任务(completed/failed)不展示 pause/resume：Resume 对终态无意义，改存即复活。 */}
                     {onToggle &&
                     editing.lifecycleStatus !== "completed" &&
                     editing.lifecycleStatus !== "failed" ? (
@@ -2094,8 +2064,7 @@ export function AutomationEditView({
                   {intl.formatMessage({ id: "automations.form.status.label" })}
                 </div>
                 <div className="flex min-h-8 flex-wrap items-center gap-2">
-                  {/* Bug cause: The status dot and pill used oversized 8px / 36px dimensions instead of the
-                      6px glyph + 20px frame specification. */}
+                  {/* Bug 原因：状态圆点与胶囊沿用了偏大的 8px / 36px 尺寸，未遵循 6px glyph + 20px frame 的规格。 */}
                   <span className="inline-flex h-8 max-w-full items-center gap-1 rounded-lg bg-card pl-2 pr-4 text-ui-base leading-5 text-foreground">
                     <span className="flex size-5 shrink-0 items-center justify-center">
                       <span
@@ -2124,7 +2093,7 @@ export function AutomationEditView({
               >
                 {intl.formatMessage({ id: "automations.form.title.label" })}
               </label>
-              {/* Fix reason: Task title uses the standard Input; do not locally remove its global outline. */}
+              {/* 修复原因：Task title 是标准 Input，不能局部移除全局描边语义。 */}
               <Input
                 id="automation-title"
                 size="lg"
@@ -2148,8 +2117,7 @@ export function AutomationEditView({
               />
             </div>
 
-            {/* Legacy cron tasks sourced from a session cannot be displayed reliably; after
-                    deletion, switch to the standard UI scheduling flow. */}
+            {/* 会话来源的旧 cron 无法可靠回显；删除后切换到标准 UI 调度编辑流程。 */}
             {preserveSessionCreatedSchedule ? (
               <div className={AUTOMATION_FORM_FIELD_CLASSNAME}>
                 <label className="inline-flex items-center gap-1.5 text-ui-base font-normal leading-5 text-foreground-subtle">
@@ -2209,7 +2177,7 @@ export function AutomationEditView({
                         <DropdownMenuItem
                           key={frequency}
                           data-testid={testId(TID_AUTOMATION_FREQUENCY_OPTION, frequency)}
-                          // Raw white at 5% is visible only in dark menus; in Light theme the highlighted state is nearly transparent.
+                          // raw 白色 5% 只在深色菜单可见，Light 下高亮状态近似透明。
                           className="min-h-8 px-2 py-2 text-ui-base text-foreground-subtle data-[highlighted]:bg-menu-hover data-[highlighted]:text-foreground"
                           onSelect={() => {
                             markFieldTouched("schedule");
@@ -2235,16 +2203,14 @@ export function AutomationEditView({
                   </DropdownMenu>
                 ) : (
                   <>
-                    {/* Bugfix: Avoid min-height, wrapping, and a full-row summary in the schedule bar; a second
-                        row would make it taller when tags are added. After restoring the global 1px
-                        Input border, use 7px left padding to offset the border and keep the first tag
-                        8px from the edge. Add 1px vertical padding to tags while keeping them centered
-                        in the 36px input. */}
+                    {/* Bugfix：调度栏原先使用 min-height、换行布局和全行摘要，新增 tag 后会被第二行撑高。
+                        恢复全局 Input 的 1px 描边后，用 7px 左内边距抵消边框占位，保持首个 tag
+                        距外边缘仍为 8px；tag 增加上下各 1px padding 后仍在 36px input 内垂直居中。 */}
                     <div className="relative flex h-9 flex-nowrap items-center gap-1 overflow-hidden rounded-xl border border-input-border bg-input py-1 pl-[7px] pr-9 text-ui-base leading-5 text-foreground transition-colors hover:border-input-border-hover focus-within:border-input-border-focused focus-within:bg-input-focused">
                       <Select
                         value={builder.frequency}
                         onValueChange={(value) => {
-                          // Radix Select may emit an empty value while registering controls for an old cron in edit mode; do not overwrite the parsed frequency.
+                          // Radix Select 在编辑旧 cron 的控件注册阶段可能发出空值，不能覆盖已解析频率。
                           if (!isCronFrequency(value)) {
                             logger.warn("[AutomationEditView] 忽略非法的频率选择值", {
                               automationId: editing?.automationId,
@@ -2265,9 +2231,8 @@ export function AutomationEditView({
                           }));
                         }}
                       >
-                        {/* Fix reason: The frequency trigger once used a hard-coded dark color, reducing contrast
-                            in light mode. Use semantic hover/selected tokens and add 1px padding above
-                            and below the 20px line height. */}
+                        {/* 修复原因：频率触发器曾写死深色值，导致浅色主题下对比失真；
+                            改用 hover/selected 语义 token，并在 20px 行高外增加上下各 1px padding。 */}
                         <SelectTrigger
                           variant="ghost"
                           data-testid={TID_AUTOMATION_FREQUENCY_SELECT}
@@ -2337,12 +2302,11 @@ export function AutomationEditView({
                         />
                       ) : null}
 
-                      {/* Bugfix: The repeat interval once hard-coded #F8F8F8 and used inconsistent tag
-                            radii; use semantic text color and consistent pill rounding. */}
+                      {/* Bugfix：重复周期曾写死 #F8F8F8 且三段 tag 圆角不一致；统一语义文字色与 pill 圆角。 */}
                       {builder.frequency === "custom" ? (
                         <button
                           type="button"
-                          // A visual refactor accidentally removed the stable E2E selector, preventing Custom Repeat from being reopened after save to verify restored values.
+                          // 视觉重构误删了 E2E 稳定选择器，导致保存后无法重新打开 Custom Repeat 验证复原值。
                           data-testid={TID_AUTOMATION_CUSTOM_REPEAT_EDIT}
                           onClick={() => setCustomRepeatOpen(true)}
                           className="inline-flex h-auto items-center gap-0.5 rounded-full bg-hover py-px pl-2 pr-0.5 text-ui-base leading-5 text-foreground hover:bg-selected"
@@ -2378,8 +2342,7 @@ export function AutomationEditView({
 
                       {builder.frequency !== "custom" && builder.frequency !== "hourly" ? (
                         <>
-                          {/* Fix reason: The conjunction once used a secondary color, creating an unintended
-                              highlight break between the primary-colored neighboring tags. */}
+                          {/* 修复原因：连接词曾单独使用二级色，和相邻 tag 主文字形成错误的高亮断层。 */}
                           <span className="text-foreground">
                             {intl.formatMessage({
                               id: "automations.form.schedule.at",
@@ -2570,7 +2533,7 @@ export function AutomationEditView({
               </div>
             )}
 
-            {/* Instructions and the project/model selectors below. */}
+            {/* Instructions + 底部项目/模型选择器 */}
             <div className={AUTOMATION_FORM_FIELD_CLASSNAME}>
               <label
                 className="text-ui-base font-normal leading-5 text-foreground-subtle"
@@ -2597,8 +2560,7 @@ export function AutomationEditView({
                 />
                 <AutomationInstructionsToolbar>
                   <div className="flex min-w-0 flex-wrap items-center gap-0 text-foreground-subtle">
-                    {/* Project picker: creation reuses the project menu from the empty composer;
-                        editing is locked to the automation's project. */}
+                    {/* 项目选择器:新建复用输入框空态的项目菜单;编辑锁定为 automation 所属项目 */}
                     {editing ? (
                       <Button
                         type="button"
@@ -2614,29 +2576,29 @@ export function AutomationEditView({
                         )}
                         <span className="max-w-40 truncate">{selectedWorkspaceDisplayLabel}</span>
                       </Button>
-                    ) : workspaceMenuTabs.length > 0 ? (
-                      // Use rounded-lg consistently for Automations toolbar and conversation composer controls; regular conversation chips stay unchanged.
-                      <ChatEmptyWorkspacePreviewMenu
-                        workspacePath={selectedWorkspacePath}
-                        workspaceTabs={workspaceMenuTabs}
-                        // Scheduled tasks may select a canonical conversation backing but do not show the chip's quick X;
-                        // the menu reuses the conversation-side “Work outside a project” label and MessageCircle icon.
-                        allowConversationWorkspaceSelection={Boolean(conversationWorkspace)}
-                        allowConversationWorkspaceDetach={false}
-                        onSelectWorkspace={handleSelectWorkspace}
-                        onSelectConversationWorkspace={handleSelectConversationWorkspace}
-                        allowOpenWorkspace={false}
-                        allowRemoteWorkspace={false}
-                        onOpenFolder={() => {}}
-                        onConnectRemote={async () => ""}
-                        onSelectRemoteProject={async () => {}}
-                        onCancelRemoteProject={async (_sessionId) => {}}
-                        containerClassName="contents"
-                        triggerClassName={cn(
-                          AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME,
-                          "min-w-0 gap-1 px-2",
-                        )}
-                      />
+                    ) : workspaceOptions.length > 0 ? (
+                      <Select value={workspaceKey ?? ""} onValueChange={handleSelectProject}>
+                        <SelectTrigger
+                          data-testid="automation-project-select"
+                          variant="ghost"
+                          className={AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME}
+                        >
+                          <FolderOpen className="size-4" aria-hidden="true" />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {workspaceOptions.map((option) => (
+                            <SelectItem
+                              key={resolveAutomationWorkspaceSelectionKey(option)}
+                              value={resolveAutomationWorkspaceSelectionKey(option)}
+                              data-project-id={option.projectId}
+                              data-project-name={option.label}
+                            >
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     ) : (
                       <Button
                         type="button"
@@ -2652,9 +2614,8 @@ export function AutomationEditView({
                       </Button>
                     )}
 
-                    {/* Bugfix: Automations once duplicated the home-page permission menu, causing its icon,
-                        font size, and selected state to drift. Reuse the home-page ConfigSelect and
-                        override only the compact trigger layout. */}
+                    {/* Bugfix：自动化曾复制首页权限菜单，导致图标、字号和选中态逐渐分叉。
+                        直接复用首页 ConfigSelect，只覆盖紧凑 trigger 布局。 */}
                     <ConfigSelect
                       option={modeOption}
                       onValueChange={(value) => {
@@ -2677,8 +2638,7 @@ export function AutomationEditView({
                     />
                   </div>
 
-                  {/* Group model and reasoning controls on the right to separate them clearly from
-                        workspace and permission controls on the left. */}
+                  {/* 模型 / 推理强度在右侧成组，和左侧 workspace / 权限形成清晰分区。 */}
                   <div className="flex min-w-0 flex-wrap items-center justify-end gap-0 text-foreground-subtle">
                     <ModelConfigSelect
                       modelGroups={modelSelectGroups}
@@ -2732,7 +2692,7 @@ export function AutomationEditView({
                         onValueChange={(value) => {
                           if (!effectiveSelection) return;
                           markFieldTouched("thoughtLevel");
-                          // When the user changes the tier, form a new intent from the currently displayed model identity; read-only refreshes do not change the form.
+                          // 用户改档位时以正在显示的模型身份形成新意图；只读刷新不改表单。
                           modelSelection.current = effectiveModelValue;
                           setModel(effectiveModelValue);
                           thoughtManuallyChangedRef.current = true;
@@ -2747,10 +2707,9 @@ export function AutomationEditView({
             </div>
           </form>
         ) : (
-          // History tab: inline run-history table.
+          // History tab：运行历史内联表
           <div>
-            {/* Fix reason: The Settings entry already explains run conditions; repeating them on the history
-                  page would take up space above the table. */}
+            {/* 修复原因：运行条件已在设置入口说明，历史页重复提示会挤占表格上方空间。 */}
             {runsLoading && runs.length === 0 ? (
               <div className="flex h-32 items-center justify-center">
                 <Spinner className="size-5" />
@@ -2760,14 +2719,13 @@ export function AutomationEditView({
                 {runsEntry.error}
               </div>
             ) : runs.length === 0 ? (
-              // Scheduled tasks previously rendered only a transparent py-10 text block, missing the empty-state background, border, and height used by idle tasks.
+              // 定时任务曾仅渲染透明的 py-10 文本块，缺少与闲时任务一致的空态背景、边框和高度。
               <AutomationHistoryEmptyState>
                 {intl.formatMessage({ id: "automations.runs.empty" })}
               </AutomationHistoryEmptyState>
             ) : (
               <div className="overflow-x-auto rounded-[8px]">
-                {/* Fix reason: Run history uses a scalable font size and cannot keep a fixed 18px line
-                            height. */}
+                {/* 修复原因：运行历史使用可缩放字号，不能继续绑定固定 18px 行高。 */}
                 <table className="w-full text-left text-ui-base font-normal leading-normal tracking-[-0.08px]">
                   <thead className="bg-surface text-foreground-subtle">
                     <tr className="h-[30px] border-b border-border">
@@ -2863,7 +2821,7 @@ export function AutomationEditView({
                                       aria-label={intl.formatMessage({
                                         id: "automations.moreActions",
                                       })}
-                                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-surface-hover hover:text-foreground data-[state=open]:bg-surface-hover data-[state=open]:text-foreground"
+                                      className="flex size-6 items-center justify-center rounded-[6px] text-foreground-subtle transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground"
                                     >
                                       <AutomationMoreHorizontalIcon
                                         className="size-4"

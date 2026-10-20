@@ -6,12 +6,12 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 
 /**
- * Transcript rules for a turn started directly by the orchestrator.
+ * 中枢直接启动轮在转写里的规则。
  *
- * Prefer launch metadata on turnHeader (authoritative in the live projection), falling back to the same metadata on the user-visible row
- * (cold-recovery hydration also writes it to the userInput row). When metadata is present, the turn's workflowLaunch user row is **not** visible input:
- * its body is a canonical English sentence for the model, and the run card presents the turn. If metadata is absent from both places,
- * fall back to normal rendering (the sentence appears as a bubble).
+ * 启动元数据 turnHeader 优先（活投影权威），回落到用户可见行上的同一份（冷恢复 hydration 也写在
+ * userInput 行）。元数据在场时该轮的 workflowLaunch 用户行**不是**可见输入——它的正文是面向模型的
+ * 规范英文句，轮由 run 卡呈现；两处都缺席
+ * 即退回普通渲染（那句话成气泡）。
  */
 export function resolveWorkflowLaunchMeta(
   header: TurnHeaderRow | undefined,
@@ -24,7 +24,7 @@ export function resolveWorkflowLaunchMeta(
   );
 }
 
-/** User row for a launch turn: when metadata is present, the run card represents it; it is omitted from visible input and the stream. */
+/** 启动轮的用户行：元数据在场时由 run 卡代言，不进可见输入也不进流。 */
 export function isWorkflowLaunchUserInputRow(row: ConversationRow): boolean {
   return row.kind === "userInput" && row.origin === "workflowLaunch";
 }

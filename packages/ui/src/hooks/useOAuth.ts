@@ -1,8 +1,8 @@
 /**
- * useOAuth — OAuth login-flow hook
+ * useOAuth —— OAuth 登录流程 hook
  *
- * Responsible only for starting login and managing UI state.
- * OAuth callbacks are observed by the persistent Root/App layer, not by this hook.
+ * 仅负责发起登录和 UI 状态管理。
+ * OAuth 回调监听在 Root/App 常驻层，不在此 hook 中。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OAuthProviderId, OAuthProviderMeta } from "@zcode/shared";
@@ -45,13 +45,13 @@ export function useOAuth() {
         const active = await oauthService.getActiveProvider();
         setActiveProvider(active);
       } catch (err) {
-        // Only failure to decrypt local OAuth credentials can recover to the logged-out state; RPC/storage-permission errors must use the outer error path.
+        // 只有本地 OAuth 凭据解密失败才可恢复为未登录态；RPC/存储权限等错误需要走外层错误路径。
         if (!isCredentialDecryptError(err)) {
           throw err;
         }
 
-        // The active provider is only a pointer to login state, and the service clears OAuth credentials when decryption fails.
-        // The provider list is still available; do not show the user that no login providers exist.
+        // active provider 只是登录态指针，解密失败时服务层会清理 OAuth 凭据。
+        // provider 列表仍然可用，不能让用户看到“没有登录渠道”。
         logger.warn("[useOAuth] 加载 active provider 凭据失败，已按未登录处理:", err);
         setActiveProvider(null);
       }
@@ -98,7 +98,7 @@ export function useOAuth() {
             eventRegion: "app",
             eventType: "ck",
             eventExtraDetail: {
-              // The authorization URL contains state/credential parameters; telemetry records only the hostname while the browser uses the full URL above.
+              // 授权 URL 含 state/凭据参数；埋点只取 hostname，浏览器仍使用上面的完整地址。
               login_url: resolveSafeTelemetryHostname(authorizeUrl),
             },
           },
@@ -110,15 +110,15 @@ export function useOAuth() {
           purpose: options.purpose ?? "app-login",
         });
       } catch (err) {
-        // Failure from an older init may arrive after a newer login succeeds; it must not stop the new flow's polling or overwrite its UI.
+        // 旧 init 的失败可能晚于新登录成功返回，不能反向关闭新 flow 的轮询或覆盖 UI。
         if (loginAttemptRef.current !== loginAttempt) {
           return;
         }
         logger.error("[useOAuth] 启动 OAuth 失败:", err);
         setOAuthPollingActive(false);
         setStatus("error");
-        // An OAuth startup failure is still a login failure; do not show raw server/platform errors to the user.
-        // Render a localized message instead of exposing provider/token details on the login page.
+        // OAuth 启动失败也属于登录失败，不把服务端或平台错误原文展示给用户。
+        // 原文通过 i18n 渲染，避免登录页出现 provider/token 等具体失败原因。
         setError(intl.formatMessage({ id: "login.oauth.loginFailure" }));
         setPendingProvider(null);
       }
@@ -144,7 +144,7 @@ export function useOAuth() {
     setPendingProvider(null);
   }, []);
 
-  /** Called by the Root/App callback listener to update UI state. */
+  /** 由 Root/App 层的回调监听器调用，更新 UI 状态 */
   const setOAuthError = useCallback((message: string) => {
     setStatus("error");
     setError(message);

@@ -11,7 +11,7 @@ import {
 import { useBrowserSitePermissions } from "@/hooks/useBrowserSitePermissions.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-/** Site permission settings tab: data comes from the main site permission store; "this time only" temporary states are not shown. */
+/** 站点权限设置标签页：数据源为 main 站点权限 store，「仅本次」临时态不展示。 */
 export function BrowserSitePermissionsPage({
   origin,
   isVisible,
@@ -21,23 +21,10 @@ export function BrowserSitePermissionsPage({
 }) {
   const { intl } = useZCodeIntl();
   const t = (id: string) => intl.formatMessage({ id: `browser.permission.${id}` });
-  const {
-    states,
-    error: readError,
-    refresh,
-    supported,
-    write,
-    setPermission,
-    reset,
-    retryWrite,
-  } = useBrowserSitePermissions(origin, isVisible);
+  const { states, error: readError, refresh, supported, write, setPermission, reset, retryWrite } =
+    useBrowserSitePermissions(origin, isVisible);
   const busy = write.status === "pending";
-  const notice =
-    write.status === "succeeded"
-      ? write.operation.kind === "reset"
-        ? "resetDone"
-        : "saved"
-      : null;
+  const notice = write.status === "succeeded" ? (write.operation.kind === "reset" ? "resetDone" : "saved") : null;
   return (
     <div
       className="h-full min-h-0 overflow-auto bg-background text-foreground"
@@ -63,15 +50,14 @@ export function BrowserSitePermissionsPage({
             <div className="flex flex-col gap-4" aria-busy={busy}>
               {BROWSER_PERMISSION_CAPABILITIES.map((capability) => {
                 const persisted = states?.[capability.key];
-                const setting =
-                  persisted === "allow" ? "allow" : persisted === "deny" ? "block" : "ask";
+                const setting = persisted === "allow" ? "allow" : persisted === "deny" ? "block" : "ask";
                 return (
                   <div
                     key={capability.key}
                     className="flex flex-wrap items-center justify-between gap-3"
                     data-permission-key={capability.key}
                   >
-                    {/* In narrow columns, reserve readable width for the name and let the control wrap, so the dropdown cannot squeeze English text into per-word breaks. */}
+                    {/* 窄栏给名称保留可读宽度，让控件换行，避免下拉框把英文挤成逐字断行。 */}
                     <div className="flex min-w-40 max-w-full flex-1 items-center gap-3">
                       <BrowserPermissionIcon capability={capability.iconKey} />
                       <div className="min-w-0 text-ui-base break-words">
@@ -120,9 +106,7 @@ export function BrowserSitePermissionsPage({
                 role="status"
                 className="text-ui-sm text-foreground-subtle"
                 data-testid={
-                  notice === "resetDone"
-                    ? "browser-permission-reset-done"
-                    : "browser-permission-saved"
+                  notice === "resetDone" ? "browser-permission-reset-done" : "browser-permission-saved"
                 }
               >
                 {t(notice)}

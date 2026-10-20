@@ -17,31 +17,26 @@ import { sortInstalledEditorsForOpenWith } from "@/lib/openWithEditors.js";
 import { logger } from "@/logger.js";
 
 /**
- * The "open as file" split button in the artifact tab header (docs/dynamic-workflow/authoring.md,
- * "How the user sees them").
+ * 产物 tab 头部的「作为文件打开」分段按钮（docs/dynamic-workflow/authoring.md「How the user sees them」）。
  *
- * ⚠ Terminology: artifact = output the script publishes to the user via `artifact.*`, not the
- * engine's `RunSettlement.artifact`.
+ * ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给用户看的产出，不是引擎的 `RunSettlement.artifact`。
  *
- * The file is a local copy the host writes from the bytes of the version **the tab has already
- * read** (`materializeWorkflowArtifactFile`), not the file in the CLI artifact store — rationale in
- * desktop's `workflowArtifactFile.ts`. The main button opens it with the system default app; the
- * chevron lists installed apps (the same list and preference as other "open with" menus, file
- * managers first), followed by location actions: "reveal in workspace" (when the artifact has a
- * locally reachable workspace provenance) and "copy absolute path".
- * "Reveal in workspace" is folded in here so the header keeps a single file control; when the host
- * cannot materialize a copy (mobile remote, plain web), the whole button is absent and the caller
- * uses {@link useCanOpenArtifactAsFile} to put "reveal in workspace" back into the header.
+ * 文件是宿主按 tab **已经读到的那一版字节**写出的本机副本（`materializeWorkflowArtifactFile`），
+ * 不是 CLI artifact store 里的文件——理由见 desktop 的 `workflowArtifactFile.ts`。主按钮用系统
+ * 默认 App 打开；chevron 列出已装 App（与其它「打开方式」同一份列表与偏好，文件管理器在前），
+ * 其后是位置类动作：「在工作区显示」（产物有本机可达的工作区出处时）与「复制绝对路径」。
+ * 「在工作区显示」收进这里，是为了头部只留一个文件控件；宿主不能落副本（手机远控、普通 Web）
+ * 时整个按钮缺席，调用方据 {@link useCanOpenArtifactAsFile} 把「在工作区显示」放回头部。
  */
 interface ArtifactOpenAsFileButtonProps {
   runId: string;
   artifactId: string;
   version: number;
-  /** The copy's file name (with extension; the extension decides which app the system opens it with). */
+  /** 副本的文件名（含扩展名，扩展名决定系统用哪个 App 打开）。 */
   fileName: string;
-  /** The bytes of **this version**; pass null when not yet read (or when what was read belongs to another version) and the button is disabled. */
+  /** **这一版**的字节；还没读到（或读到的属于别的版本）时传 null，按钮禁用。 */
   bytes: Uint8Array | null;
-  /** "Reveal in workspace": a file tree reveal with the path already bound; absent means the menu has no such entry. */
+  /** 「在工作区显示」：已绑定好路径的文件树 reveal；缺席即菜单里没有这一项。 */
   onReveal?: () => void;
 }
 
@@ -56,7 +51,7 @@ function canOpenAsFile(platform: IPlatformService | null): platform is Materiali
   );
 }
 
-/** Whether the current host can "open as file" — the header uses this to decide whether "reveal in workspace" goes into the menu or becomes its own button. */
+/** 当前宿主能不能「作为文件打开」——头部据此决定「在工作区显示」进菜单还是独立成按钮。 */
 export function useCanOpenArtifactAsFile(): boolean {
   return canOpenAsFile(useOptionalPlatform());
 }
@@ -79,9 +74,8 @@ function OpenAsFileSplitButton({
   const { intl } = useZCodeIntl();
   const [editors, setEditors] = useState<EditorInfo[] | null>(null);
 
-  // One copy path per version: reopening the same version does not re-send up to 20 MiB of bytes over
-  // IPC. A promise is stored, so double-clicks also land only once; a failure evicts the cache and the
-  // next click retries.
+  // 一版一个副本路径：同一版再打开不再把最多 20 MiB 的字节重传一遍 IPC。存的是 promise，
+  // 连点两下也只落一次；失败即出缓存，下一次点击重试。
   const pathsRef = useRef(new Map<string, Promise<string>>());
   const ensureLocalPath = useCallback((): Promise<string> => {
     const key = `${runId}\u0000${artifactId}\u0000${version}\u0000${fileName}`;
@@ -130,8 +124,7 @@ function OpenAsFileSplitButton({
 
   const handleOpenInEditor = (editor: EditorInfo) => {
     persistLastSelectedEditorId(editor.id);
-    // The copy always lives on the host's own machine: never pass remoteTarget, even for remote
-    // workspaces, or it would be treated as a remote path to open.
+    // 副本恒在宿主本机上：远程工作区也不带 remoteTarget，否则会被当成远端路径去开。
     openWith(`editor:${editor.id}`, (localPath) =>
       platform.openInEditor(editor.id, localPath, { pathKind: "file" }),
     );
@@ -162,7 +155,7 @@ function OpenAsFileSplitButton({
 
   return (
     <DropdownMenu onOpenChange={(open) => open && loadEditors()}>
-      {/* Split shell: main action on the left, menu on the right (DESIGN.md "Composite triggers"). Height matches the header's sm buttons. */}
+      {/* 分段外壳：主动作在左、菜单在右（DESIGN.md「Composite triggers」）。高度对齐头部的 sm 按钮。 */}
       <div className="flex h-6 shrink-0 items-center overflow-hidden rounded-md border border-border bg-input transition-colors hover:border-border-hover">
         <Button
           className="h-6 rounded-none border-0 pr-1.5"
@@ -208,7 +201,7 @@ function OpenAsFileSplitButton({
         )}
         <DropdownMenuSeparator />
         {onReveal === undefined ? null : (
-          // Reveals the original in the workspace without materializing a copy (same path as the button that used to live in the tab header).
+          // 显示的是工作区里的原件，不落副本（与 tab 头部原来那颗按钮同一条路径）。
           <DropdownMenuItem data-testid="workflow-artifact-open-as-file-reveal" onSelect={onReveal}>
             <FolderOpenIcon aria-hidden="true" className="size-4" />
             {intl.formatMessage({ id: "chat.toolCall.workflow.run.artifacts.reveal" })}

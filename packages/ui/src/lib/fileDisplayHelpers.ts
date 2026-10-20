@@ -1,4 +1,4 @@
-// Pure utility functions and constants extracted from fileDisplay.tsx to control its line count
+// 纯工具函数和常量，从 fileDisplay.tsx 提取以控制文件行数
 
 export const DEFAULT_FILE_ICON_NAME = "document";
 
@@ -69,16 +69,16 @@ const FILE_NAME_ICON_ALIASES: Record<string, string> = {
   yarn: "yarn",
 };
 
-// Icon names in material-icons do not always match file extensions one-to-one,
-// for example, the actual asset for tsx is react_ts, not react_tsx. Centralize aliases here so the mention panel and input tokens do not show mismatched icons.
+// material-icons 里的图标名和文件扩展名并不总是一一对应，
+// 比如 tsx 实际素材叫 react_ts 而不是 react_tsx。这里集中做 alias，避免 mention panel 和输入框 token 出现扩展名对不上图标的问题。
 const EXTENSION_ICON_ALIASES: Record<string, string> = {
   backup: "document",
   bash: "console",
   cjs: "javascript",
   cts: "typescript",
   css: "css",
-  // Office extensions do not match Material Icons asset names, so building a path directly from the extension selects the wrong icon;
-  // map them explicitly to shared product semantics here; legacy and modern Word files also share the word icon.
+  // Office 扩展名与 Material Icons 素材名不一致，直接用扩展名拼路径会选错图标；
+  // 这里显式收敛到同一套产品语义，旧版与新版 Word 文件也共用 word 图标。
   doc: "word",
   docx: "word",
   go: "go",
@@ -113,9 +113,6 @@ const EXTENSION_ICON_ALIASES: Record<string, string> = {
   sh: "console",
   snap: "snapcraft",
   svg: "svg",
-  // The icon set has no text.svg; without this alias resolveIconName falls back
-  // to the raw extension and the renderer requests a missing asset.
-  text: "document",
   toml: "toml",
   ts: "typescript",
   tsx: "react_ts",
@@ -148,9 +145,9 @@ export function resolveIconName(filePath: string): string {
 
   const fileNameAliasCandidates = new Set<string>([normalizedLeaf, fileNameWithoutExtension]);
 
-  // Previously, matching checked only the full filename and the result of removing the last extension,
-  // so multi-part names such as vitest.config.ts / tsconfig.base.json / .env.local fell back prematurely to an extension icon,
-  // losing the configuration-file meaning. Fall back through each stem segment here so common config files consistently get a more accurate icon.
+  // 之前只会匹配完整文件名和"去掉最后一个扩展名"的结果，
+  // 像 vitest.config.ts / tsconfig.base.json / .env.local 这类多段文件名会提前退回扩展名图标，
+  // 导致配置文件语义丢失。这里逐段回退 stem，让常见配置文件能稳定命中更准确的图标。
   let stemCandidate = fileNameWithoutExtension;
   while (stemCandidate.includes(".")) {
     stemCandidate = stemCandidate.slice(0, stemCandidate.lastIndexOf("."));

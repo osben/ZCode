@@ -56,8 +56,8 @@ export function useStartPlanPreview(options?: { enabled?: boolean }) {
         error: null,
       });
     } catch (error) {
-      // Start Plan preview and the plan list share client/configs.
-      // If the remote returns HTML/non-JSON, do not display the parsing error verbatim in the upgrade panel.
+      // Start Plan preview 和套餐列表共用 client/configs。
+      // 远端返回 HTML/非 JSON 时也不能把解析错误原样显示到升级面板。
       const message = normalizeCodingPlanErrorMessage(error);
       logger.warn("[useStartPlanPreview] 读取 Start Plan 预览失败", {
         error: message,
@@ -85,7 +85,9 @@ export function clearStartPlanPreviewCacheForTest() {
   previewRequest = null;
 }
 
-export function primeStartPlanPreviewCacheForTest(preview: StartPlanPreviewConfig | null) {
+export function primeStartPlanPreviewCacheForTest(
+  preview: StartPlanPreviewConfig | null,
+) {
   previewCache = {
     preview,
     expiresAt: Date.now() + START_PLAN_PREVIEW_CACHE_TTL_MS,
@@ -104,7 +106,7 @@ async function loadStartPlanPreview(
     return previewRequest;
   }
 
-  // Remote config changes infrequently, and the signed-out Settings page may mount repeatedly; deduplicate requests to avoid repeated calls to client/configs.
+  // 远端配置一天内变化频率低，未登录设置页可能反复挂载，合并请求避免重复打 client/configs。
   previewRequest = service.getStartPlanPreview();
   try {
     const preview = await previewRequest;

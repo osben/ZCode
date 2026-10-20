@@ -1,9 +1,9 @@
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import type { CodingPlanProviderId } from "@/settings/model-provider-section/constants.js";
 
-// Dead-code cleanup: the native purchase component CodingPlanPricingCards and its resolver were removed with
-// CodingPlanPurchasePanel (the purchase flow moved to an embedded official-site webview).
-// This file retains only the login parameter type and plan-product source resolution still used by settings.
+// 死代码清理：原生购买组件 CodingPlanPricingCards 及其配套 resolver 已随
+// CodingPlanPurchasePanel 一起下线（购买流程切换为内嵌官网 webview）。
+// 本文件仅保留仍被设置页使用的登录参数类型与套餐商品源解析。
 
 export type CodingPlanLoginOptions = {
   forceOAuth?: boolean;
@@ -12,14 +12,14 @@ export type CodingPlanLoginOptions = {
 export function resolveCodingPlanUpgradeProductsProviderId(
   providerId: CodingPlanProviderId,
 ): CodingPlanProviderId {
-  // Start Plan is a free entry point; the coding-plan list should display the original paid Z.AI Coding Plan products directly.
-  // Continuing to use the Start Plan providerId would show the free Start SKU again as a purchasable plan.
+  // Start Plan 是免费入口，编程套餐列表应直接展示原 Z.AI Coding Plan 付费套餐。
+  // 继续用 Start Plan providerId 会把免费 Start SKU 当成可购买套餐重复展示。
   if (providerId === BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan) {
     return BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan;
   }
 
-  // BigModel Start Plan is also a free entry point; when expanding upgrade options, use
-  // the BigModel paid Coding Plan product source instead of requesting free SKUs with the Start providerId.
+  // BigModel Start Plan 同样是免费入口，展开升级时必须使用
+  // BigModel paid Coding Plan 商品源，不能拿 Start providerId 请求免费 SKU。
   return providerId === BUILTIN_MODEL_PROVIDER_IDS.bigmodelStartPlan
     ? BUILTIN_MODEL_PROVIDER_IDS.bigmodelIndividualCodingPlan
     : providerId;

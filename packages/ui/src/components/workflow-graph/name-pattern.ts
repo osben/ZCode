@@ -1,25 +1,25 @@
 import type { WorkflowCausalityGraphData } from "./types.js";
 
 /**
- * The single rendering point for names that take shape only at runtime.
+ * 「名字只在运行时才成形」这件事的唯一渲染点。
  *
- * The analyzer provides a pattern, not a name: `` agent(`Researcher${i + 1}`) `` cannot become eight concrete names (that would require
- * expanding `map`, while `×N` exists specifically to avoid expansion). Only the literal template prefix/suffix are available.
- * The projection therefore carries only the two affixes; the ellipsis is added **here**, following the same rule as the anonymous fallback label
- * (see the header of lane-name.ts): the projection is a memoized pure function, so copy and glyphs should be formed during rendering and the projection should store only data.
+ * 分析器给的是形状而不是名字：`` agent(`研究员${i + 1}`) `` 折不成 8 个具体名字（那要求把
+ * `map` 展开，而 `×N` 存在的意义正是拒绝展开），能拿到的只有模板两端的字面量。投影因此
+ * 只搬两个 affix，省略号在**这里**才补上——与匿名兜底文案同一道理（见 lane-name.ts 头部）：
+ * 投影是被 memo 的纯函数，文案与字形都该在渲染时成型，投影里只存数据。
  *
- * The ellipsis (rather than `*` or `${…}`) is intentional: it still reads as a name and introduces no new visual vocabulary.
+ * 省略号（而不是 `*` 或 `${…}`）是刻意的：它读起来仍然是一个名字，不引入新的视觉词汇。
  */
 const ELLIPSIS = "…";
 
-/** Name pattern for a lane/card; the shape comes from the protocol and is not redefined here. */
+/** 一条车道 / 一张卡片的名字形状；形状取自协议，不在这里另立一套。 */
 export type NamePattern = NonNullable<WorkflowCausalityGraphData["lanes"][number]["namePattern"]>;
 
 /**
- * `{head: "Researcher"}` → `Researcher…`, `{tail: "-worker"}` → `…-worker`, both ends → `a…b`.
+ * `{head: "研究员"}` → `研究员…`，`{tail: "-worker"}` → `…-worker`，两端都有 → `a…b`。
  *
- * When both affixes are absent, return undefined rather than a lone `…`: the analyzer will not emit this pattern, but `{}` passes `.strict()`;
- * without this fallback, the UI would show a meaningless ellipsis.
+ * 两个 affix 都缺席时返回 undefined 而不是孤零零一个 `…`：分析器不会发这种 pattern，但契约
+ * 上 `{}` 是能通过 `.strict()` 的，这里不替它兜着就会在画面上留一个没有意义的省略号。
  */
 export function formatNamePattern(pattern: NamePattern | undefined): string | undefined {
   if (pattern === undefined) return undefined;

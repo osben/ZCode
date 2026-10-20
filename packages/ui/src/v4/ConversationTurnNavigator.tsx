@@ -1,14 +1,17 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { PinIcon } from "lucide-react";
 import {
   TID_V4_TURN_NAVIGATOR,
   TID_V4_TURN_NAVIGATOR_ITEM,
   TID_V4_TURN_NAVIGATOR_TOOLTIP,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { cn } from "@/components/lib/utils.js";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card.js";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   buildConversationTurnNavigatorItems,
@@ -26,7 +29,10 @@ export interface ConversationTurnNavigatorProps {
   virtualItems: readonly ConversationTurnNavigatorVirtualItem[];
   activeQueryRowId?: number;
   isHydratingDirectory?: boolean;
-  onJumpToQuery: (target: { unitIndex: number; rowId: number }, behavior: ScrollBehavior) => void;
+  onJumpToQuery: (
+    target: { unitIndex: number; rowId: number },
+    behavior: ScrollBehavior,
+  ) => void;
 }
 
 function usePrefersReducedMotion() {
@@ -57,7 +63,9 @@ function ConversationTurnNavigatorImpl({
 }: ConversationTurnNavigatorProps) {
   const { intl } = useZCodeIntl();
   const prefersReducedMotion = usePrefersReducedMotion();
-  const [interactionItemIndex, setInteractionItemIndex] = useState<number | undefined>(undefined);
+  const [interactionItemIndex, setInteractionItemIndex] = useState<number | undefined>(
+    undefined,
+  );
   const items = useMemo(
     () =>
       buildConversationTurnNavigatorItems(renderUnits, {
@@ -73,7 +81,6 @@ function ConversationTurnNavigatorImpl({
       }),
     [intl, renderUnits],
   );
-  const pinnedLabel = intl.formatMessage({ id: "chat.turnNavigator.pinnedLabel" });
 
   const activeUnitIndex = useMemo(
     () =>
@@ -97,7 +104,9 @@ function ConversationTurnNavigatorImpl({
     return { byRowId, firstByUnitIndex };
   }, [items]);
   const activeItemIndex =
-    (activeQueryRowId === undefined ? undefined : itemIndexes.byRowId.get(activeQueryRowId)) ??
+    (activeQueryRowId === undefined
+      ? undefined
+      : itemIndexes.byRowId.get(activeQueryRowId)) ??
     (activeUnitIndex === undefined
       ? undefined
       : itemIndexes.firstByUnitIndex.get(activeUnitIndex)) ??
@@ -108,7 +117,10 @@ function ConversationTurnNavigatorImpl({
   });
   const railScrollRef = useRef<HTMLDivElement>(null);
   const getRailScrollElement = useCallback(() => railScrollRef.current, []);
-  const getRailItemKey = useCallback((index: number) => items[index]?.key ?? index, [items]);
+  const getRailItemKey = useCallback(
+    (index: number) => items[index]?.key ?? index,
+    [items],
+  );
   const railVirtualizer = useVirtualizer({
     count: items.length,
     estimateSize: () => 10,
@@ -125,9 +137,9 @@ function ConversationTurnNavigatorImpl({
     if (!element) return;
     window.queueMicrotask(() => {
       if (railScrollRef.current !== element) return;
-      // When the directory expands from the tail to thousands of items at once, scrollToIndex and virtualizer
-      // measurement updates occur in the same commit, and Chromium may coalesce scroll notifications. Send another notification
-      // only to synchronize the rail observer so the visible window for the active item mounts immediately.
+      // 目录从 tail 一次扩展到上千项时，scrollToIndex 与 virtualizer 的
+      // measurement 更新处于同一个 commit，Chromium 可能合并 scroll 通知。补发通知
+      // 只同步 rail observer，确保活动项对应的可视窗口立即挂载。
       element.dispatchEvent(new Event("scroll"));
     });
   }, [activeItemIndex, items.length, railVirtualizer]);
@@ -147,13 +159,16 @@ function ConversationTurnNavigatorImpl({
     >
       <div
         ref={railScrollRef}
-        // When only overflow-y-auto is declared, browsers compute overflow-x as auto.
-        // The hover peak's horizontal scaling could then trigger a horizontal scrollbar, so the rail must allow vertical scrolling only.
+        // 只声明 overflow-y-auto 时，浏览器会把 overflow-x 计算为 auto；
+        // hover 山峰横向放大后便可能触发横向滚动条，因此 rail 必须只开放纵向滚动。
         className="!scrollbar-hide pointer-events-auto absolute left-3 top-1/2 max-h-[calc(100%-6rem)] w-9 -translate-y-1/2 overflow-x-hidden overflow-y-auto py-1"
         onPointerLeave={() => setInteractionItemIndex(undefined)}
         onScroll={() => setInteractionItemIndex(undefined)}
       >
-        <div className="relative w-9" style={{ height: `${railVirtualizer.getTotalSize()}px` }}>
+        <div
+          className="relative w-9"
+          style={{ height: `${railVirtualizer.getTotalSize()}px` }}
+        >
           {virtualRows.map((virtualRow) => {
             const itemIndex = virtualRow.index;
             const item = items[itemIndex];
@@ -163,11 +178,8 @@ function ConversationTurnNavigatorImpl({
               itemIndex,
               visualFocusItemIndex,
             });
-            const showScrollActiveColor = visualFocusItemIndex === undefined && active;
-            const jumpToQueryLabel = intl.formatMessage(
-              { id: "chat.turnNavigator.jumpToQuery" },
-              { index: String(itemIndex + 1) },
-            );
+            const showScrollActiveColor =
+              visualFocusItemIndex === undefined && active;
             return (
               <div
                 key={item.key}
@@ -179,11 +191,10 @@ function ConversationTurnNavigatorImpl({
                     <button
                       type="button"
                       aria-current={active ? "location" : undefined}
-                      // The pinned state is color-only on the bar and the hover card is not part of the
-                      // accessible name, so pinned entries append the localized pin label here.
-                      aria-label={
-                        item.isPinned ? `${jumpToQueryLabel}, ${pinnedLabel}` : jumpToQueryLabel
-                      }
+                      aria-label={intl.formatMessage(
+                        { id: "chat.turnNavigator.jumpToQuery" },
+                        { index: String(itemIndex + 1) },
+                      )}
                       aria-posinset={itemIndex + 1}
                       aria-setsize={items.length}
                       data-testid={testId(TID_V4_TURN_NAVIGATOR_ITEM, item.key)}
@@ -193,7 +204,6 @@ function ConversationTurnNavigatorImpl({
                       data-query-row-id={item.rowId}
                       data-active={active ? "true" : "false"}
                       data-running={item.isRunning ? "true" : "false"}
-                      data-pinned={item.isPinned ? "true" : "false"}
                       data-visual-color-tone={visualState.colorTone}
                       data-visual-scale={String(visualState.scaleX)}
                       data-visual-tone={visualState.tone}
@@ -214,17 +224,17 @@ function ConversationTurnNavigatorImpl({
                           "block h-0.5 w-3 origin-left rounded-full transition-[height,opacity,transform,background-color] duration-150 ease-out motion-reduce:transition-none",
                           visualState.colorTone === "focus" && "bg-foreground",
                           visualState.colorTone === "muted" &&
-                            (showScrollActiveColor ? "bg-foreground" : "bg-foreground-subtlest"),
-                          // Pinned color wins over focus/muted (tailwind-merge keeps the last bg utility);
-                          // proximity scale/opacity still apply on top, keeping pinned bars findable at a glance.
-                          item.isPinned && "bg-pinned-turn",
+                            (showScrollActiveColor
+                              ? "bg-foreground"
+                              : "bg-foreground-subtlest"),
                         )}
                         style={{
-                          opacity: showScrollActiveColor
-                            ? 0.9
-                            : item.isRunning
-                              ? Math.max(visualState.opacity, 0.72)
-                              : visualState.opacity,
+                          opacity:
+                            showScrollActiveColor
+                              ? 0.9
+                              : item.isRunning
+                                ? Math.max(visualState.opacity, 0.72)
+                                : visualState.opacity,
                           transform: `scaleX(${visualState.scaleX})`,
                         }}
                       />
@@ -234,17 +244,13 @@ function ConversationTurnNavigatorImpl({
                     align="start"
                     side="right"
                     sideOffset={8}
-                    data-testid={testId(TID_V4_TURN_NAVIGATOR_TOOLTIP, item.key)}
+                    data-testid={testId(
+                      TID_V4_TURN_NAVIGATOR_TOOLTIP,
+                      item.key,
+                    )}
                     className="w-80 max-w-[calc(100vw-2rem)] border border-popover-border bg-popover p-3 text-popover-foreground shadow-lg"
                   >
                     <div className="space-y-2">
-                      {item.isPinned ? (
-                        <p className="flex items-center gap-1 text-ui-sm text-foreground-subtle">
-                          {/* Decorative icon; the adjacent text is the accessible label. */}
-                          <PinIcon className="size-3 text-pinned-turn" aria-hidden />
-                          {pinnedLabel}
-                        </p>
-                      ) : null}
                       <p className="line-clamp-2 whitespace-pre-line text-ui-base font-medium leading-5">
                         {item.userPreview}
                       </p>

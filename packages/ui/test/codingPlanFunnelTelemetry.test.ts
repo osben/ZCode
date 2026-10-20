@@ -59,11 +59,7 @@ function createAccountProviderView(
 }
 
 describe("codingPlanFunnelTelemetry", () => {
-  // The ChatGPT plan is a separate identity domain, not a coding-plan funnel member.
-  const codingPlanPresetIds = Object.values(BUILTIN_MODEL_PROVIDER_IDS).filter(
-    (id) => id !== BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
-  );
-  it.each(codingPlanPresetIds)(
+  it.each(Object.values(BUILTIN_MODEL_PROVIDER_IDS))(
     "%s 真实成功 builder 与漏斗 bootstrap 标签一致",
     async (presetId) => {
       const reportTelemetryEvent = vi.fn(async () => {});
@@ -259,19 +255,5 @@ describe("codingPlanFunnelTelemetry", () => {
         },
       }),
     );
-  });
-
-  it("account:chatgpt-plan success reports under its own label", async () => {
-    const reportTelemetryEvent = vi.fn(async () => {});
-    const platform = { reportTelemetryEvent } as unknown as IPlatformService;
-    await reportPresetSubscriptionSuccess({
-      platform,
-      presetId: BUILTIN_MODEL_PROVIDER_IDS.chatgptPlan,
-    });
-    expect(reportTelemetryEvent).toHaveBeenCalledTimes(1);
-    expect(reportTelemetryEvent.mock.calls[0][0]).toMatchObject({
-      elementName: "add_model_success",
-      eventExtraDetail: { model_provider: "account:chatgpt-plan" },
-    });
   });
 });

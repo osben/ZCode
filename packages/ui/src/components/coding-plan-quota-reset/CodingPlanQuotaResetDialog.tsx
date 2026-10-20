@@ -1,6 +1,5 @@
 import type { MouseEvent, UIEvent } from "react";
 import { useEffect, useRef, useState } from "react";
-import { TID_CODING_PLAN_QUOTA_RESET_ACTION } from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import { CheckIcon, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -39,8 +38,8 @@ function getRemainingSeconds(expiresAt: number, now: number): number {
 }
 
 /**
- * Whether a row still has a consumable opportunity; uses the same rule as
- * hasUsableCodingPlanQuotaResetOpportunity but includes processing rows so their loading state remains visible.
+ * 行是否仍持有可核销的机会；与 hasUsableCodingPlanQuotaResetOpportunity 同口径，
+ * 只是不排除 processing——核销中的行要保留展示 loading。
  */
 function isResetItemUsable(item: CodingPlanQuotaResetDialogResetItem, now: number): boolean {
   return item.count > 0 && item.expiresAt !== null && item.expiresAt > now;
@@ -110,7 +109,7 @@ export function CodingPlanQuotaResetDialog({
   const resetListRef = useRef<HTMLDivElement>(null);
   const timersRef = useRef<number[]>([]);
   const wasOpenRef = useRef(false);
-  // Decide whether the row remains using the latest config when success feedback ends; the item in the delayed task is the old snapshot from click time.
+  // 成功反馈结束时要按最新的 config 决定行去留，延时任务里的 item 是点击时的旧快照。
   const resetItemsRef = useRef(config.resetItems);
 
   useEffect(() => {
@@ -119,7 +118,7 @@ export function CodingPlanQuotaResetDialog({
 
   useEffect(() => {
     if (open !== wasOpenRef.current) {
-      // A delayed task collapses the row after success feedback; if the user closes and reopens meanwhile, the old task would contaminate the new dialog state.
+      // 成功反馈使用延时任务收起行；若用户中途关闭并重新打开，旧任务会污染新弹框状态。
       for (const timer of timersRef.current) window.clearTimeout(timer);
       timersRef.current = [];
     }
@@ -145,12 +144,10 @@ export function CodingPlanQuotaResetDialog({
     [],
   );
 
-  // Bugfix: the dialog used to keep a local “number redeemed” count, creating a second source of
-  // truth alongside the opportunity balance in entry. The completed state also cleared the balance,
-  // so after redeeming one opportunity, remaining rows had no expiry and displayed “expires in 0m
-  // 0s” until reopening the dialog corrected them from the new status. Completed now carries the
-  // remaining opportunities; count, expiry, and visibility read only from config. Keep a row
-  // temporarily during its click → success → collapse animation.
+  // Bugfix：弹框曾在本地另记一份「已核销张数」，与 entry 的机会余额形成两个数据源。
+  // 完成态又把余额清零，核销一张后余下的行拿到空到期，渲染成「0 分 0 秒后过期」，
+  // 重开弹框才被新 status 校正。现在 completed 如实携带余下机会，张数/到期/能否展示
+  // 只读 config；动画中的行（点击 → 成功 → 收起）临时保留。
   const visibleResetItems = config.resetItems.filter(
     (item) =>
       isResetItemUsable(item, now) ||
@@ -182,10 +179,9 @@ export function CodingPlanQuotaResetDialog({
       await item.onReset();
       setSuccessfulType(item.resetType);
       burstCodingPlanQuotaResetConfetti(origin);
-      // When success feedback ends, decide using the latest config: keep the row in place and make
-      // it clickable again if opportunities of the same type remain (the completed state carries
-      // their count and earliest expiry); otherwise collapse it. onReset resolves only after status
-      // reconciliation is written, so config already reflects the redeemed opportunity.
+      // 成功反馈结束时按最新 config 决定去留：同类型仍有余下机会则留在原位恢复可点击
+      // （张数与最早到期已由完成态携带），否则收起该行。onReset 在 status 对账写入后才
+      // resolve，此时 config 已是核销后的读数。
       const settleTimer = window.setTimeout(() => {
         const latest = resetItemsRef.current.find(
           (candidate) => candidate.resetType === item.resetType,
@@ -205,7 +201,7 @@ export function CodingPlanQuotaResetDialog({
       }, SUCCESS_DISPLAY_MS);
       timersRef.current.push(settleTimer);
     } catch {
-      // useCodingPlanQuotaResetUi handles failure reasons and toasts; the dialog only restores the clickable state.
+      // 失败原因与 toast 由 useCodingPlanQuotaResetUi 统一处理；弹框只恢复可点击状态。
       setResettingType(null);
     }
   };
@@ -265,11 +261,9 @@ export function CodingPlanQuotaResetDialog({
                   const success = successfulType === item.resetType;
                   const isExiting = exitingType === item.resetType;
                   const effectiveProcessing = item.processing || resettingType === item.resetType;
-                  // Multiple opportunities of the same type may be held, but server /use cannot
-                  // choose which one to redeem. entry stores only the count and earliest expiry (the
-                  // completed state carries the remaining count/expiry after redemption). When there
-                  // are multiple, show the count and “earliest” explicitly so users do not mistake
-                  // the earliest expiry for a deadline shared by every opportunity.
+                  // 同一类型可能持有多张机会，但服务端 /use 不支持指定核销哪一张，entry 只保留
+                  // 张数与最早到期时刻（核销一张后由完成态携带余下的张数/到期）。多张时显式
+                  // 标注张数与「最快」，避免用户把最早到期时间误读成全部机会的统一期限。
                   const hasMultipleOpportunities = item.count > 1;
                   return (
                     <div
@@ -297,10 +291,8 @@ export function CodingPlanQuotaResetDialog({
                               ) : null}
                             </div>
                             <div className="mt-0.5 truncate text-ui-sm text-foreground-subtle tabular-nums">
-                              {/* Bugfix: after the last opportunity is redeemed, the row is still
-                                  playing its success/collapse animation and has no expiry time; it
-                                  was previously rendered as 0 seconds and read as "expires in 0m 0s."
-                                  Use a non-breaking space placeholder to preserve the row height. */}
+                              {/* Bugfix：核销掉最后一张后行仍在播放成功/收起动画，此时没有到期时刻；
+                                  曾被当作 0 秒渲染成「0 分 0 秒后过期」。用不换行空格占位保持行高。 */}
                               {item.expiresAt === null
                                 ? "\u00a0"
                                 : intl.formatMessage(
@@ -320,8 +312,6 @@ export function CodingPlanQuotaResetDialog({
                           </div>
                           <Button
                             type="button"
-                            data-testid={TID_CODING_PLAN_QUOTA_RESET_ACTION}
-                            data-reset-type={item.resetType}
                             variant="default"
                             size="sm"
                             aria-label={

@@ -41,8 +41,7 @@ export function useBotGroupMemberNames(context: BotContextState | null) {
       window.removeEventListener("focus", refresh);
     };
   }, [botsService, botId, chatId, enabled, key]);
-  // Hide the stale cache immediately after switching groups or authorization, without waiting for
-  // effect cleanup.
+  // 切换群或授权后立即隐藏旧缓存，不等 effect 清理完成。
   return botId && chatId && enabled && resolved?.key === key
     ? { botId, chatId, names: resolved.names }
     : null;

@@ -186,7 +186,7 @@ export class RendererUserActionTelemetry implements UserActionTelemetry {
       try {
         await this.sendBatch(batch);
       } catch {
-        // Telemetry is strictly out-of-band; transport failures must not backpressure or change the result of a user action.
+        // Telemetry 是严格旁路；传输失败不能回压或改变用户操作结果。
       }
     }
   }

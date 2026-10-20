@@ -23,9 +23,9 @@ type WorkspaceShellZCodeState = Pick<
   ReturnType<typeof getWorkspaceDisplayedTaskState>;
 
 export function useWorkspaceShellZCodeState(workspaceAbsPath: string, workspaceIdentity?: string) {
-  // The app previously subscribed to all of workspaceZCodeState, where each streaming chunk updated taskMessagesByTaskId.
-  // This pulled the sidebar, Header, and derived Git logic into synchronous rerenders, amplifying the long tasks in performance traces.
-  // Narrow the selector to the fields the shell actually uses and compare them shallowly so message streams do not affect unrelated UI.
+  // App 之前直接订阅整个 workspaceZCodeState，streaming 每个 chunk 都会改 taskMessagesByTaskId。
+  // 这会把侧边栏、Header、Git 派生逻辑一起拖进同步重渲染，性能 trace 里那串 long task 就是这样被放大的。
+  // 这里把外壳真正依赖的字段收敛成浅比较选择器，避免消息流惊动无关 UI。
   const workspaceShellZCodeState = useZCodeSessionStore(
     useShallow((state): WorkspaceShellZCodeState => {
       const workspaceState = selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity);

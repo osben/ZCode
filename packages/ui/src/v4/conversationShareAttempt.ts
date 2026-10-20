@@ -19,12 +19,20 @@ export function ensureConversationShareAttempt(
   const disclosureAcceptedAt = now();
   const requestSuffix = factory.randomUUID?.() ?? `${sessionId}-${disclosureAcceptedAt}`;
 
-  // Retries must reuse the same idempotent request body. Previously, only clientRequestId was reused,
-  // while disclosureAcceptedAt was regenerated on each SessionPane click, changing payload_sha256
-  // and causing the server to reject the same idempotency key as a body conflict with 409.
+  // 重试时必须复用同一份幂等请求体。之前只复用了 clientRequestId，
+  // 却在 SessionPane 每次点击时重新生成 disclosureAcceptedAt，导致 payload_sha256 变化，
+  // 服务端将同一个幂等键识别为请求体冲突并返回 409。
   return {
     key: attemptKey,
     clientRequestId: `share-${requestSuffix}`,
     disclosureAcceptedAt,
   };
+}
+
+/** 只有服务端明确确认记录失效才能换幂等键；超时和审核等待不能据此判断发布失败。 */
+export function retainConversationShareAttemptAfterFailure(
+  attempt: ConversationShareAttempt,
+  code?: number,
+): ConversationShareAttempt | null {
+  return code === 3211 || code === 3212 ? null : attempt;
 }

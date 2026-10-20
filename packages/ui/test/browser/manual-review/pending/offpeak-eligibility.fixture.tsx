@@ -15,8 +15,7 @@ import {
 } from "@/store/offPeakTaskStore.js";
 import { resolveOffPeakCreateBlockReason } from "@/settings/offPeakUiPresentation.js";
 
-// Real Snapshot/Hook/Store/gating; only the Host RPC is replaced. No number is taken, and no
-// account or disk state is modified.
+// 真实 Snapshot/Hook/Store/门禁；只替换 Host RPC，不取号、不修改账号或磁盘。
 let revision = 1;
 let supported = false;
 let fail = false;
@@ -68,8 +67,7 @@ const services = {
     },
   },
 } as unknown as IServiceAccessor;
-// Multiple fixtures are statically imported from the same entry; only the current scenario may
-// own the global Snapshot to avoid connections overwriting each other.
+// 同一入口静态导入多个 fixture；只有当前场景可以占有全局 Snapshot，避免互相覆盖连接。
 if (new URLSearchParams(location.search).has("offpeak")) {
   void connectProviderSettingsSnapshot(services.providerSettingsService as IProviderSettingsService)
     .ready;

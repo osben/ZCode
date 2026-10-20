@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/select.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { PluginScopeMenu } from "@/settings/PluginScopeMenu.js";
-import type { WorkspaceTabState } from "@/store/tabStore.js";
+import type { ConfigWorkspaceTarget } from "@/workspace-config-catalog/index.js";
 import { SettingsFormTextarea } from "@/settings/SettingsFormTextarea.js";
 import { SettingsFormActions } from "@/settings/SettingsFormActions.js";
 import { ChevronDown, ChevronUpIcon as ChevronUp, Trash2 } from "lucide-react";
@@ -38,7 +38,7 @@ function McpScopeMenu({
 }: {
   disabled: boolean;
   scopeKey: string;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ConfigWorkspaceTarget[];
   onChange: (scopeKey: string) => void;
 }) {
   const { intl } = useZCodeIntl();
@@ -75,7 +75,7 @@ export function McpServerForm({
   editorMode: McpEditorMode;
   source?: McpSource;
   scopeKey: string;
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: ConfigWorkspaceTarget[];
   onScopeKeyChange: (scopeKey: string) => void;
   onEditorModeChange: (mode: McpEditorMode) => void;
   onSave: (form: FormState, prevServer?: ZCodeMcpServer) => void;
@@ -193,8 +193,8 @@ export function McpServerForm({
       : '{\n  "Authorization": "Bearer your-token"\n}';
   const updateEnvValue = (value: string) =>
     update(form.type === "stdio" ? { env: value } : { headers: value });
-  // Radix Select does not accept an empty-string value; use "auto" as a sentinel: an empty form value means unset/auto
-  // (so no extra field is written to the config file), and explicitly selecting auto also writes back an empty string.
+  // Radix Select 不接受空串 value；用 "auto" 作为哨兵值：表单里空串 = 未设置 = auto
+  // （配置文件不落多余字段），用户显式选 auto 时同样写回空串。
   const updateProtocolVersion = (value: string) =>
     update({ protocolVersion: value === "auto" ? "" : value });
   const scopeSelect = (
@@ -279,7 +279,7 @@ export function McpServerForm({
                 </SelectItem>
                 <SelectItem value="http">HTTP</SelectItem>
                 {/*
-                  Streamable HTTP transport is not enabled.
+                  Streamable HTTP 传输类型未启用。
                   <SelectItem value="streamableHttp">Streamable HTTP</SelectItem>
                 */}
                 <SelectItem value="sse">
@@ -305,8 +305,8 @@ export function McpServerForm({
           </div>
 
           {/*
-            Do not render this field for the SSE variant: deprecated SSE transport always uses legacy negotiation,
-            so this setting does not apply.
+            sse 形态不渲染该字段：deprecated SSE transport 固定走 legacy 协商，
+            该配置对其无效。
           */}
           {form.type !== "sse" && (
             <div className="w-full space-y-1.5 md:w-48">
@@ -324,7 +324,7 @@ export function McpServerForm({
                   <SelectItem value="legacy">
                     {intl.formatMessage({ id: "settings.mcp.form.protocolVersion.legacy" })}
                   </SelectItem>
-                  {/* The display name is "v2", but value must remain the protocol's official version (a config/wire value that must not follow the label). */}
+                  {/* 显示名用「v2」，但 value 必须保持协议正式版本号 " "（config/wire 值，不可随文案变）*/}
                   <SelectItem value="2026-07-28">
                     {intl.formatMessage({ id: "settings.mcp.form.protocolVersion.modern" })}
                   </SelectItem>

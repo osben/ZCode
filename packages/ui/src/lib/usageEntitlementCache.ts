@@ -1,6 +1,6 @@
 import type { UsageEntitlementSnapshot } from "@zcode/shared";
 
-// The old cache may contain subscriptions synthesized from quota levels; change the namespace to avoid restoring fake entitlements after an upgrade.
+// 旧缓存可能由 quota level 合成订阅；切换命名空间避免升级后恢复伪权益。
 const USAGE_ENTITLEMENT_CACHE_PREFIX = "zcode:usage-entitlement:subscription-v2:";
 export const USAGE_ENTITLEMENT_CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -81,6 +81,6 @@ export function writeCachedUsageEntitlementSnapshot(params: {
       } satisfies CachedUsageEntitlementSnapshot),
     );
   } catch {
-    // localStorage may be disabled or full; a cache failure does not affect refreshing entitlements remotely.
+    // localStorage 可能被禁用或配额已满；缓存失败不影响远端权益刷新。
   }
 }

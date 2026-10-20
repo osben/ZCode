@@ -1,6 +1,6 @@
-// Pure partitioning of the phase roster (docs/dynamic-workflow/presentation.md "Past six participants"): who is pinned, who is in the rest,
-// and how many are in each status; what the "n more" line reads (appendix "Five pills and a door") and how the list behind the door is
-// grouped (appendix "A door and a roll"). Four consumers share the same rule, so it is pinned here rather than in each rendering test.
+// 阶段名册的纯划分（docs/dynamic-workflow/presentation.md「Past six participants」）：谁被钉住、谁是其余、
+// 各状态几人；「还有 n 个」那一行读什么（追记「五枚药丸与一扇门」）、门后的名单怎么分组（追记「一扇门
+// 与一卷名单」）。四处消费同一条规则，所以钉在这里而不是各自的渲染测试里。
 import { describe, expect, it } from "vitest";
 import type { StepRunStatus } from "@/components/workflow-graph/types.js";
 import {
@@ -56,9 +56,9 @@ describe("stationRoster · 钉位", () => {
     const list = pills(["done", "running", "failed", "done", "running", "done", "failed", "done"]);
     list[3] = pill(4, "done", { asking: true });
     const roster = stationRoster(list, { pins: 5 })!;
-    // asking 4 → running 2, 5 → failed 3, 7.
+    // asking 4 → running 2、5 → failed 3、7。
     expect(keys(roster.pinned)).toEqual([4, 2, 5, 3, 7]);
-    // The rest in participant order.
+    // 其余按参与者序。
     expect(keys(roster.rest)).toEqual([1, 6, 8]);
     expect(roster.total).toBe(8);
   });
@@ -95,7 +95,7 @@ describe("stationRoster · 钉位", () => {
     list[7] = pill(8, "running", { asking: true });
     const roster = stationRoster(list, { pins: 5 })!;
     expect(keys(roster.pinned)).toEqual([8, 1, 2, 3, 4]);
-    // Neither failed pill makes it onto a pin; the red `✕ 2` speaks for them.
+    // 两个 failed 一枚也没上钉位，红色 `✕ 2` 替它们说话。
     expect(rosterMore(roster).failed).toBe(2);
   });
 
@@ -103,7 +103,7 @@ describe("stationRoster · 钉位", () => {
     const running: StepRunStatus[] = Array(6).fill("running").concat(Array(3).fill("done"));
     const before = stationRoster(pills(running), { pins: 5 })!;
     expect(keys(before.pinned)).toEqual([1, 2, 3, 4, 5]);
-    // The third running settles: it vacates its pin and the sixth running takes over.
+    // 第三个 running 结束：它让出钉位，第六个 running 顶上。
     const after = running.map((status, index) => (index === 2 ? "done" : status));
     const settled = stationRoster(pills(after), { pins: 5 })!;
     expect(keys(settled.pinned)).toEqual([1, 2, 4, 5, 6]);
@@ -164,7 +164,7 @@ describe("rosterCounts / pillInstanceKey", () => {
   });
 });
 
-// ── The "n more" line (docs/dynamic-workflow/presentation.md "Past six participants") ──
+// ── 「还有 n 个」那一行（docs/dynamic-workflow/presentation.md「Past six participants」）──
 describe("rosterMore", () => {
   it("卡上钉五枚：五枚 + 一行 = 六枚药丸的高度", () => {
     expect(ROSTER_PINS_CARD).toBe(5);
@@ -183,12 +183,12 @@ describe("rosterMore", () => {
       "failed",
       "done",
     ]);
-    // Pins 3: running 3, 8 → failed 2; rest 1 4 5 6 7 9 10 → failed 6, 9 first, pending 5 after.
+    // 钉 3：running 3、8 → failed 2；其余 1 4 5 6 7 9 10 → failed 6、9 在前，pending 5 次之。
     const more = rosterMore(stationRoster(list, { pins: 3 })!);
     expect(more.count).toBe(7);
     expect(keys(more.deck)).toEqual([6, 9, 5]);
     expect(more.failed).toBe(2);
-    // When the pins only fit running: all three failed hide, all are counted, and they sort to the front of the stack.
+    // 钉位只够 running 时：三个 failed 全藏起来，都计入，且排在叠的最前。
     const two = rosterMore(stationRoster(list, { pins: 2 })!);
     expect(two.count).toBe(8);
     expect(keys(two.deck)).toEqual([2, 6, 9]);
@@ -200,7 +200,7 @@ describe("rosterMore", () => {
     statuses[50] = "failed";
     statuses[55] = "running";
     statuses[57] = "failed";
-    // Pins 1: running 56; failed 51, 58 lead the rest.
+    // 钉 1：running 56；其余里 failed 51、58 领先。
     const roster = stationRoster(pills(statuses), { pins: 1 })!;
     const more = rosterMore(roster, 2);
     expect(more.count).toBe(59);
@@ -209,7 +209,7 @@ describe("rosterMore", () => {
   });
 });
 
-// ── The list behind the door (docs/dynamic-workflow/presentation.md "The spine") ──
+// ── 门后的名单（docs/dynamic-workflow/presentation.md「The spine」）──
 describe("rosterRoll", () => {
   it("其余按状态分组，组序 failed → running → pending → done，组内参与者序，空组缺席，钉住的不在", () => {
     const list = pills([
@@ -224,7 +224,7 @@ describe("rosterRoll", () => {
       "failed",
       undefined,
     ]);
-    // Pins 1: running 3; rest 1 2 4 5 6 7 8 9 10.
+    // 钉 1：running 3；其余 1 2 4 5 6 7 8 9 10。
     const groups = rosterRoll(stationRoster(list, { pins: 1 })!);
     expect(groups.map((group) => group.status)).toEqual(["failed", "running", "pending", "done"]);
     expect(groups.map((group) => keys(group.pills))).toEqual([[2, 6, 9], [8], [5, 10], [1, 4, 7]]);
@@ -239,8 +239,8 @@ describe("rosterRoll", () => {
   });
 });
 
-// ── The unlisted ones (docs/dynamic-workflow/presentation.md "Past six participants"): subagents pruned by
-// reduction have no pill, no face, no row, yet every number on this station must still count them.
+// ── 表外的那些（docs/dynamic-workflow/presentation.md「Past six participants」）：被归约淘汰的
+// 子代理没有药丸、没有脸、没有行，但这一站的每个数字都得把它们算回来。
 describe("stationRoster · 表外条目", () => {
   function station(list: TimelinePill[], unlisted?: TimelineStation["unlisted"]): TimelineStation {
     return {
@@ -257,7 +257,7 @@ describe("stationRoster · 表外条目", () => {
   }
 
   it("阈值按表内 + 表外判：四枚药丸加三百个被淘汰的仍是名册，表外的一枚药丸都不占", () => {
-    // Four pills alone do not form a roster; adding two unlisted reaches the threshold exactly, still not one.
+    // 四枚药丸自己不成名册；补上两个表外的正好到阈值，仍不是。
     expect(stationRoster(pills(Array(4).fill("done")), { pins: 5 })).toBeUndefined();
     expect(
       stationRoster(pills(Array(4).fill("done")), {
@@ -270,21 +270,21 @@ describe("stationRoster · 表外条目", () => {
       unlisted: { actors: 300, failed: 4, settled: 300 },
     })!;
     expect(roster.total).toBe(304);
-    // The unlisted have no pills: not one of them is found in pins or the rest.
+    // 表外的没有药丸：钉位与其余里一枚都找不到它们。
     expect(keys(roster.pinned)).toEqual([1, 2, 3, 4]);
     expect(roster.rest).toEqual([]);
-    // All 300 have finished running: the failed ones count as failed, the rest as done.
+    // 三百个全跑完了：失败的算 failed，其余算 done。
     expect(roster.counts).toEqual({ done: 296, failed: 4, pending: 0, running: 4 });
   });
 
-  // Unlisted ≠ finished: subagents rejected at birth or pruned while queued still have to run; recording them as done would be that lie.
+  // 表外 ≠ 已结束：出生就被拒、或排队时被淘汰的子代理还要跑，把它们记成 done 就是那句假话。
   it("只有 actorsSettled 那部分算结局，其余全进 pending", () => {
     const roster = stationRoster(pills(Array(4).fill("done")), {
       pins: 5,
       unlisted: { actors: 300, failed: 2, settled: 100 },
     })!;
     expect(roster.total).toBe(304);
-    // In-list four done, plus the unlisted settled 100 − 2; failed 2; the remaining 200 have not run yet.
+    // 表内四个 done，加表外结算的 100 − 2；失败 2；剩下的 200 个还没跑。
     expect(roster.counts).toEqual({ done: 102, failed: 2, pending: 200, running: 0 });
     const more = rosterMore(roster);
     expect(more.count).toBe(300);
@@ -306,9 +306,9 @@ describe("stationRoster · 表外条目", () => {
       { pins: 5, unlisted: { actors: 10, failed: 3, settled: 10 } },
     )!;
     const more = rosterMore(roster);
-    // The remaining two pills + ten unlisted.
+    // 其余两枚药丸 + 十个表外的。
     expect(more.count).toBe(12);
-    // One hidden failed + three unlisted failed.
+    // 藏起来的一个 failed + 表外失败的三个。
     expect(more.failed).toBe(4);
     expect(keys(more.deck)).toEqual([6, 7]);
   });
@@ -318,7 +318,7 @@ describe("stationRoster · 表外条目", () => {
       pins: 2,
       unlisted: { actors: 10, failed: 3, settled: 10 },
     })!;
-    // Pins running 1, failed 2; rest 3 4 done, 5 pending.
+    // 钉 running 1、failed 2；其余 3 4 done、5 pending。
     expect(rosterRestCounts(roster)).toEqual({ done: 9, failed: 3, pending: 1, running: 0 });
     expect(rosterRoll(roster).map((group) => keys(group.pills))).toEqual([[5], [3, 4]]);
   });
@@ -332,7 +332,7 @@ describe("stationRoster · 表外条目", () => {
     )!;
     expect(roster.total).toBe(304);
     expect(rosterMore(roster).count).toBe(300);
-    // The station carries subagents' outcomes, not nodes': `nodesSettled` only feeds fraction and counts no one.
+    // 站带的是子代理的结局，不是节点的：`nodesSettled` 只进 fraction，一个人都不算。
     expect(roster.counts).toEqual({ done: 102, failed: 2, pending: 200, running: 0 });
   });
 });

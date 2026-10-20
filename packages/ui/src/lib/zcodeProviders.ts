@@ -12,9 +12,8 @@ export const ZCODE_AGENT_PROVIDER_LABELS: Record<ZCodeProvider, string> = {
 
 export function supportsZCodeSessionFork(provider: ZCodeProvider): boolean {
   void provider;
-  // Feature flag: the fork entry point is restored for all ZCode providers; actual operability is
-  // still gated by task state, the assistant target, and the running-protection guard, so
-  // active/failed branches are never exposed as forkable.
+  // 功能开关：fork 入口恢复对所有 ZCode provider 开放；实际可操作性仍由 task 状态、
+  // assistant 目标和运行中保护 guard 控制，避免把 active/failed 分支暴露为可 fork。
   return true;
 }
 

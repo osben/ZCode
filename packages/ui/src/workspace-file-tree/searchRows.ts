@@ -10,7 +10,7 @@ export function createWorkspaceFileTreeRowsFromSearchEntries(
 ): WorkspaceFileTreeRow[] {
   return entries.map((entry) => ({
     path: entry.path,
-    // Search results come from the workspace-wide index, and a directory may not have been expanded in the lazy tree; show relative paths to distinguish Java classes with the same name.
+    // 搜索结果来自全 workspace 索引，目录可能未在懒加载树里展开过；显示相对路径能避免多个同名 Java 类看起来无法区分。
     name: entry.relativePath,
     type: entry.type,
     depth: 0,

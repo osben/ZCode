@@ -1,15 +1,15 @@
 /**
- * **Situation snapshot** for the GetWorkflowRun tool card: phase rail + health row (the roster is in
- * get-workflow-run-roster.tsx).
+ * GetWorkflowRun 工具卡的**情势截面**：阶段轨 + 健康行（花名册在
+ * get-workflow-run-roster.tsx）。
  *
- * The two rules exactly match the model-facing version
- * (apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run-format-roster.ts):
- *   1. **Omit missing values.** No timestamp means no age; no reading means no row. `0` is a fact,
- *      while "unknown" is another—never substitute 0 for the latter.
- *   2. Calculate all ages from the **snapshot time** `generatedAt`, not `Date.now()`: reopening a three-day-old card
- *      must not make its readings drift with today's time. If `generatedAt` is absent, show no ages.
+ * 两条纪律与模型面
+ * （apps/zcode-cli/packages/core/src/tool/handlers/get-workflow-run-format-roster.ts）一字不差：
+ *   1. **缺席即不画**。没有时刻就没有年龄，没有读数就没有那一格；`0` 是一件事实，
+ *      而「不知道」是另一件——绝不用 0 顶替后者。
+ *   2. 所有年龄对**快照时刻** `generatedAt` 算，不对 `Date.now()` 算：一张三天前的卡
+ *      重新打开时读数不能跟着今天漂。`generatedAt` 缺席就一个年龄都不画。
  *
- * Layout: all rows wrap (flex-wrap); there is no fixed-width table, so narrow phone screens wrap instead of overflowing horizontally.
+ * 布局：一律换行行（flex-wrap），没有定宽表格——手机窄屏下要能折行而不是横向溢出。
  */
 
 import type { ToolCallGetWorkflowRunDisplay } from "@zcode/shared/zcode-protocol-v4";
@@ -22,16 +22,16 @@ type WorkflowRunHealthView = NonNullable<ToolCallGetWorkflowRunDisplay["health"]
 
 const I18N_PREFIX = "chat.toolCall.workflow.getRun.";
 
-/** Container for the situation section, using the same low-level container as the log panel in this card—not a second card style. */
+/** 情势区块的容器：与同一张卡里的日志面板同款低层容器，不是第二种卡面。 */
 export const SITUATION_BLOCK_CLASS =
   "min-w-0 space-y-1 rounded-lg border border-border bg-surface px-2 py-1.5";
 
-/** A row in the situation section: wraps on narrow screens and aligns baselines so mixed numbers/text do not push each other out of alignment. */
+/** 情势区块里的一行：窄屏折行，基线对齐（数字与文字混排时才不会互相顶高）。 */
 export const SITUATION_ROW_CLASS = "flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5";
 
 /**
- * Semantic colors for phase-status words. Uses the same decision rules as overall run status (run-status-presentation.ts):
- * active uses warning, completed uses success, not-yet-started is weakest, and unsettled terminal state is neutral.
+ * 阶段状态词的语义色。与 run 整体状态同一套判断（run-status-presentation.ts）：
+ * 在动的用活动色 warning，完成用 success，还没发生的最弱，终态没结算的居中。
  */
 const PHASE_STATE_TEXT: Record<WorkflowRunPhaseView["state"], string> = {
   done: "text-success",
@@ -41,8 +41,8 @@ const PHASE_STATE_TEXT: Record<WorkflowRunPhaseView["state"], string> = {
 };
 
 /**
- * Phase rail: one row per phase in declaration order. An `ahead` row shows only its number, name, and status—it has not happened yet,
- * so there are no rounds or steps to report.
+ * 阶段轨：一行一个阶段，声明序。`ahead` 的行只有序号、名字和状态词——它还没发生过，
+ * 没有轮次也没有步数可说。
  */
 export function WorkflowRunPhaseTrack({
   phases,
@@ -59,9 +59,14 @@ export function WorkflowRunPhaseTrack({
     <div className={SITUATION_BLOCK_CLASS} data-testid="workflow-run-phases">
       {phases.map((phase, index) => {
         const cells: string[] = [];
-        // rounds can be 0 only for `ahead`; a phase that has not started cannot say how many times it was entered.
+        // rounds 为 0 只可能是 `ahead`：没进过的阶段说不出「进过几次」。
         if (phase.rounds > 0) {
-          cells.push(intl.formatPlural({ id: `${I18N_PREFIX}phase.rounds` }, phase.rounds));
+          cells.push(
+            intl.formatMessage(
+              { id: `${I18N_PREFIX}phase.${phase.rounds === 1 ? "roundsOne" : "rounds"}` },
+              { count: phase.rounds },
+            ),
+          );
         }
         if (phase.nodesSettled > 0) {
           cells.push(
@@ -72,7 +77,7 @@ export function WorkflowRunPhaseTrack({
           );
         }
         if (phase.nodesRunning > 0) {
-          // "Still running" in a terminal run means unsettled, not active.
+          // 终态 run 里的「还在跑」是没结算，不是在动。
           cells.push(
             intl.formatMessage(
               { id: `${I18N_PREFIX}phase.${terminal ? "unfinished" : "running"}` },
@@ -113,8 +118,8 @@ function phaseDuration(
 ): string | undefined {
   if (phase.enteredAt === undefined) return undefined;
   if (phase.exitedAt !== undefined) return formatWorkflowDuration(phase.exitedAt - phase.enteredAt);
-  // No exit time: a live run says "so far"; a terminal run says nothing. Its exit time was never recorded,
-  // and subtracting from the snapshot time would count hours after the process died as part of this phase.
+  // 没有离开时刻：活着的 run 说「到现在为止」；终态 run 什么也不说——它的离开时刻无人记录，
+  // 拿快照时刻去减等于把进程死后的那几个小时算进这个阶段。
   if (terminal) return undefined;
   const soFar = formatWorkflowAge(generatedAt, phase.enteredAt);
   return soFar === undefined
@@ -123,14 +128,14 @@ function phaseDuration(
 }
 
 /**
- * Health row: whether the overall run is active, presented as one line of readings.
+ * 健康行：run 整体还在不在动，一行读数。
  *
- * `stalled` matters only for a live run (a terminal run is obviously inactive); for a terminal run, show a **leftover explanation**
- * instead—the roster's rows marked running are leftovers from when the process died. This is the only place on this card that states the unknown
- * (the other is the hint for hidden pending questions); silence would be read as "they are still running."
+ * `stalled` 只对活着的 run 有意义（终态 run 当然不动了）；终态 run 换成一句 **leftover 说明**
+ * ——花名册里那些标着运行中的行是进程死在它们下面的残留。这是本张卡上唯一一处「把不知道
+ * 说出口」的地方（另一处是待答问题不可见的提示）：沉默会被读成「它们还在跑」。
  *
- * Show `consecutiveFailures` / `cachedSteps` only when greater than 0: a zero reading is not news,
- * and the card is more economical with rows than the model-facing output.
+ * `consecutiveFailures` / `cachedSteps` 只在大于 0 时出现：这两个读数为 0 时不是新闻，
+ * 而卡面比模型面更吝惜行。
  */
 export function WorkflowRunHealthLine({
   health,
@@ -154,8 +159,8 @@ export function WorkflowRunHealthLine({
   if (health.concurrency !== undefined) {
     const { effective, cap, reason, since } = health.concurrency;
     cells.push(intl.formatMessage({ id: `${I18N_PREFIX}health.concurrency` }, { effective, cap }));
-    // Put reason and start time in separate cells instead of parentheses: parentheses differ between Chinese and English, and this row is meant to be scanned cell by cell.
-    // reason is an open string; map known values to short labels and show unknown ones as-is.
+    // 原因与起始时刻各占一格，不塞进括号：括号的形状中英文不同，而这一行本来就是按格读的。
+    // reason 是开放字符串，认识的映射成短标签，不认识的原样显示。
     if (reason !== undefined) cells.push(throttleReasonLabel(reason, intl.formatMessage));
     const sinceAge = formatWorkflowAge(generatedAt, since);
     if (sinceAge !== undefined) {
@@ -178,11 +183,23 @@ export function WorkflowRunHealthLine({
 
   if (health.consecutiveFailures > 0) {
     cells.push(
-      intl.formatPlural({ id: `${I18N_PREFIX}health.failures` }, health.consecutiveFailures),
+      intl.formatMessage(
+        {
+          id: `${I18N_PREFIX}health.${health.consecutiveFailures === 1 ? "failuresOne" : "failures"}`,
+        },
+        { count: health.consecutiveFailures },
+      ),
     );
   }
   if (health.cachedSteps > 0) {
-    cells.push(intl.formatPlural({ id: `${I18N_PREFIX}health.cachedSteps` }, health.cachedSteps));
+    cells.push(
+      intl.formatMessage(
+        {
+          id: `${I18N_PREFIX}health.${health.cachedSteps === 1 ? "cachedStepsOne" : "cachedSteps"}`,
+        },
+        { count: health.cachedSteps },
+      ),
+    );
   }
 
   const leftover = terminal ? health.leftoverRunning : undefined;
@@ -198,7 +215,10 @@ export function WorkflowRunHealthLine({
       )}
       {leftover === undefined ? null : (
         <p className="break-words text-ui-sm text-warning" data-testid="workflow-run-leftover">
-          {intl.formatPlural({ id: `${I18N_PREFIX}health.leftover` }, leftover)}
+          {intl.formatMessage(
+            { id: `${I18N_PREFIX}health.${leftover === 1 ? "leftoverOne" : "leftover"}` },
+            { count: leftover },
+          )}
         </p>
       )}
     </div>

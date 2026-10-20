@@ -61,9 +61,9 @@ export function pdfJsCMapsPlugin(): Plugin {
           return;
         }
 
-        // PDF.js does not bundle predefined CMaps in its worker; ReportLab's STSong-Light
-        // references UniGB-UCS2-H without embedding the mapping. Development must provide local CMaps just like production,
-        // or the browser's native preview works while the in-app PDF.js view drops entire sections of Chinese text.
+        // PDF.js 不会把预定义 CMap 打进 worker；ReportLab 的 STSong-Light
+        // 又只引用 UniGB-UCS2-H 而不嵌入映射。开发态必须与生产构建一样提供本地 CMap，
+        // 否则浏览器原生预览正常，但应用内 PDF.js 会直接丢失整段中文。
         readFile(join(cMapsDirectory, fileName))
           .then((source) => {
             response.statusCode = 200;

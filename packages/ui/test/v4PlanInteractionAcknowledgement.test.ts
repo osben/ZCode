@@ -1,7 +1,10 @@
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CommandEnvelope, ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
+import type {
+  CommandEnvelope,
+  ConversationSnapshot,
+} from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { ElicitationDialog } from "@/ElicitationDialog.js";
 import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
@@ -97,17 +100,19 @@ afterEach(() => {
 
 describe("V4 mobile plan interaction acknowledgement", () => {
   it("reports an accepted ExitPlanMode response to the owning pane", async () => {
-    captured.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => ({
-      commandId: envelope.commandId,
-      revisionAtDecision: 1,
-      status: "accepted" as const,
-    }));
+    captured.sendCommand.mockImplementation(
+      async (envelope: CommandEnvelope) => ({
+        commandId: envelope.commandId,
+        revisionAtDecision: 1,
+        status: "accepted" as const,
+      }),
+    );
     const onPlanInteractionAccepted = vi.fn();
 
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(V4InteractionDialogs, {
           sessionId: "session-plan",
           workspacePath: "/workspace",
@@ -130,17 +135,19 @@ describe("V4 mobile plan interaction acknowledgement", () => {
   it.each(["duplicate", "noop"] as const)(
     "reports a %s ExitPlanMode response for authoritative reconciliation",
     async (status) => {
-      captured.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => ({
-        commandId: envelope.commandId,
-        revisionAtDecision: 1,
-        status,
-      }));
+      captured.sendCommand.mockImplementation(
+        async (envelope: CommandEnvelope) => ({
+          commandId: envelope.commandId,
+          revisionAtDecision: 1,
+          status,
+        }),
+      );
       const onPlanInteractionAccepted = vi.fn();
 
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "en-US" },
+          { initialLocale: "zh-CN" },
           createElement(V4InteractionDialogs, {
             sessionId: "session-plan",
             workspacePath: "/workspace",
@@ -159,18 +166,20 @@ describe("V4 mobile plan interaction acknowledgement", () => {
   );
 
   it("does not report rejected ExitPlanMode responses", async () => {
-    captured.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => ({
-      commandId: envelope.commandId,
-      reasonCode: "guard.interactionRejected",
-      revisionAtDecision: 1,
-      status: "rejected" as const,
-    }));
+    captured.sendCommand.mockImplementation(
+      async (envelope: CommandEnvelope) => ({
+        commandId: envelope.commandId,
+        reasonCode: "guard.interactionRejected",
+        revisionAtDecision: 1,
+        status: "rejected" as const,
+      }),
+    );
     const onPlanInteractionAccepted = vi.fn();
 
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(V4InteractionDialogs, {
           sessionId: "session-plan",
           workspacePath: "/workspace",
@@ -188,17 +197,19 @@ describe("V4 mobile plan interaction acknowledgement", () => {
   });
 
   it("does not report accepted AskUserQuestion responses as plan interactions", async () => {
-    captured.sendCommand.mockImplementation(async (envelope: CommandEnvelope) => ({
-      commandId: envelope.commandId,
-      revisionAtDecision: 1,
-      status: "accepted" as const,
-    }));
+    captured.sendCommand.mockImplementation(
+      async (envelope: CommandEnvelope) => ({
+        commandId: envelope.commandId,
+        revisionAtDecision: 1,
+        status: "accepted" as const,
+      }),
+    );
     const onPlanInteractionAccepted = vi.fn();
 
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(V4InteractionDialogs, {
           sessionId: "session-plan",
           workspacePath: "/workspace",

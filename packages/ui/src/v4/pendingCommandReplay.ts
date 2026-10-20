@@ -69,7 +69,7 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** Non-security validation digest; used only to identify a payload during reconciliation and never for authorization. */
+/** 非安全校验摘要；目的只是对账时识别 payload，绝不用于鉴权。 */
 function digestSensitivePayload(payload: unknown): string {
   const text = stableJson(payload);
   let hash = 0x811c9dc5;

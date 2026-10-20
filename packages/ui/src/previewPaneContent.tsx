@@ -1,5 +1,5 @@
 import type { MarkdownSelectionTarget } from "@/lib/conversationSelectionReference.js";
-/* eslint-disable max-lines -- PreviewPane content routing handles text, images, media, Office, PDF, and PPTX rendering. */
+/* eslint-disable max-lines -- PreviewPane 内容路由同时承载文本、图片、媒体、Office、PDF 和 PPTX 渲染。 */
 import type { BundledTheme } from "shiki";
 import { useMemo, type Ref, type SyntheticEvent, type UIEventHandler } from "react";
 import type { FileBinaryPreview, FileMediaPreview, FileTextSlice } from "@zcode/shared";
@@ -11,6 +11,7 @@ import type { CodeCommentLabels } from "@/components/ui/code-viewer.js";
 import { MarkdownPreviewContent } from "@/previewPaneMarkdownContent.js";
 import { CodeContent } from "@/previewPaneCodeContent.js";
 import { ImagePreviewContent, SvgPreviewContent } from "@/previewPaneImageContent.js";
+import type { WorkspaceFileDragPayload } from "@/lib/workspaceFileDrag.js";
 import { PreviewPaneMediaContent } from "@/previewPaneMediaContent.js";
 import { PdfPreviewContent } from "@/previewPanePdfContent.js";
 import { PptxPreviewContent } from "@/previewPanePptxContent.js";
@@ -33,6 +34,8 @@ interface PreviewPaneContentProps {
   loadingInitial: boolean;
   loadingImagePreview: boolean;
   imagePreview: FileMediaPreview | null;
+  imageFileReference?: WorkspaceFileDragPayload;
+  loadImageDownloadSource?: () => Promise<string>;
   mediaSource: MediaCodeViewerSource | null;
   loadingMediaPreview: boolean;
   mediaPreviewUrl: string | null;
@@ -54,7 +57,7 @@ interface PreviewPaneContentProps {
   codePreviewSettings: CodePreviewSettings;
   codeTheme: BundledTheme;
   resolvedTheme: "light" | "dark";
-  /** Applied theme (decoupled from the store): passed through to markdown/mermaid previews; defaults to "system". */
+  /** 应用主题（store 耦合剥离）：透传给 markdown/mermaid 预览，缺省按 "system" 兜底。 */
   theme?: Theme;
   workspacePath?: string;
   onOpenBrowserUrl?: (url: string) => void;
@@ -94,6 +97,8 @@ export function PreviewPaneContent({
   loadingInitial,
   loadingImagePreview,
   imagePreview,
+  imageFileReference,
+  loadImageDownloadSource,
   mediaSource,
   loadingMediaPreview,
   mediaPreviewUrl,
@@ -143,8 +148,8 @@ export function PreviewPaneContent({
       return null;
     }
 
-    // DiffViewer is memoized; when the preview pane parent refreshes its scroll/loading state,
-    // inline oldFile/newFile values in JSX create new objects and force the diff to rerender.
+    // DiffViewer 是 memo 组件，预览 pane 父级滚动/加载状态刷新时，
+    // JSX 内联 oldFile/newFile 会生成新对象并强制 diff 重新渲染。
     return {
       oldFile: {
         name: source.path ?? source.title,
@@ -167,7 +172,7 @@ export function PreviewPaneContent({
 
   if (source.type === "patch") {
     return (
-      // Fallback: render the patch separately when it is not markdown, code, or an image.
+      // 兜底分支：patch 既不是 markdown/code/image，但仍然需要独立渲染。
       <PatchFallbackContent
         patch={source.patch}
         codePreviewSettings={codePreviewSettings}
@@ -215,7 +220,15 @@ export function PreviewPaneContent({
     }
 
     if (isSvgSource && svgViewMode === "preview") {
-      return <SvgPreviewContent title={source.title} svgContent={source.content} />;
+      return (
+        <SvgPreviewContent
+          title={source.title}
+          svgContent={source.content}
+          fileReference={imageFileReference}
+          sourcePath={source.path}
+          loadDownloadSource={loadImageDownloadSource}
+        />
+      );
     }
 
     return (
@@ -265,6 +278,7 @@ export function PreviewPaneContent({
         title={source.title}
         imageSource={`data:${imagePreview.mediaType};base64,${imagePreview.dataBase64}`}
         sourcePath={source.path}
+        fileReference={imageFileReference}
       />
     );
   }
@@ -425,7 +439,15 @@ export function PreviewPaneContent({
   }
 
   if (source.type !== "code-review" && isSvgFile && svgViewMode === "preview") {
-    return <SvgPreviewContent title={source.title} svgContent={filePreview.content} />;
+    return (
+      <SvgPreviewContent
+        title={source.title}
+        svgContent={filePreview.content}
+        fileReference={imageFileReference}
+        sourcePath={source.path}
+        loadDownloadSource={loadImageDownloadSource}
+      />
+    );
   }
 
   return (

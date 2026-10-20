@@ -7,7 +7,7 @@ import {
 } from "@zcode/shared";
 import { PROMPT_MENTION_BASE_CLASS_NAME } from "@/mentions/mentionChip.js";
 
-/** Renders only trusted message nodes; plain @name text copied out cannot restore the platform identity. */
+/** 只渲染可信消息节点；复制出的 @name 普通文本不能恢复平台身份。 */
 export function ChannelMentionContent({
   parts,
   text,
@@ -40,7 +40,7 @@ export function ChannelMentionContent({
   );
 }
 
-/** The batch queue projects in original sender and body order; the last message's nodes must not be applied to the whole batch's text. */
+/** 合批队列按原发送者与正文顺序投影，不能把末条的节点套到整批文本上。 */
 export function BotChannelMessageContent({
   source,
   text,

@@ -1,12 +1,12 @@
-// Attachment command surface (UI side): ZCodePromptAttachment (composer serialization output) → AttachmentRef
-// (v4 sendText/createSession attachment reference model).
+// 附件命令面（UI 侧）：ZCodePromptAttachment（composer 序列化产物）→ AttachmentRef
+// （v4 sendText/createSession attachments 引用模型）。
 //
-// Dispatch rules (the inverse mapping of CLI attachment-refs.ts):
-// - localPath (common desktop case: native picker / drag-and-drop getPathForFile / temporary file for large paste /
-//   oversized-image path fallback) → ref carries the absolute path directly, no upload;
-// - dataBase64 (inline image such as a pasted screenshot) → high-level put (internally begin/chunk/commit) → artifact ref;
-// - textContent (pathless text, Web fallback) → encode and use put;
-// - none of the above (metadata only) → discard and warn (nothing to send; do not fabricate a reference).
+// 分派规则（与 CLI attachment-refs.ts 的映射对偶）：
+// - localPath（desktop 主流：native picker / 拖拽 getPathForFile / 长粘贴临时文件 /
+//   oversized 大图路径降级）→ ref 直接携带绝对路径，零上传；
+// - dataBase64（粘贴截图等内联图）→ 高层 put（内部 begin/chunk/commit）→ artifact ref；
+// - textContent（无路径文本，web 回退面）→ 编码后同走 put；
+// - 三者皆无（元信息-only）→ 丢弃并告警（无内容可发，不伪造引用）。
 import type { ZCodePromptAttachment } from "@zcode/shared";
 import type {
   AttachmentRef,
@@ -36,7 +36,7 @@ function base64ByteLength(dataBase64: string): number {
   return Math.floor((dataBase64.length * 3) / 4) - padding;
 }
 
-/** Single attachment → AttachmentRef (uses a chunk transaction when upload is needed). Returns null = nothing to send (discarded). */
+/** 单个附件 → AttachmentRef（需要上传时经 chunk transaction）。返回 null = 无内容可发（丢弃）。 */
 export async function uploadComposerAttachment(
   put: AttachmentPutFn,
   sessionId: string,
@@ -49,7 +49,7 @@ export async function uploadComposerAttachment(
     attachment.kind === "file" && attachment.sourceKind
       ? { sourceKind: attachment.sourceKind, messageCount: attachment.messageCount }
       : {};
-  // Audio variants have no sizeBytes field; use narrowed access for all variants.
+  // audio 变体无 sizeBytes 字段；统一经窄化读取。
   const sizeBytes =
     "sizeBytes" in attachment && typeof attachment.sizeBytes === "number"
       ? attachment.sizeBytes
@@ -86,7 +86,7 @@ export async function uploadComposerAttachment(
 }
 
 /**
- * Attachment array → AttachmentRef[] (preserving order). Propagate put failures unchanged so the caller can abort sending and keep the draft.
+ * 附件数组 → AttachmentRef[]（顺序保持）。put 失败原样抛出（调用方中止发送，草稿保留）。
  */
 export async function uploadComposerAttachments(
   put: AttachmentPutFn,

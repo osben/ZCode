@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  AppUsageFilters,
-  AppUsageInclude,
   AppUsageRange,
   AppUsageSnapshot,
-  AppUsageWindow,
   CodingPlanUsageRange,
   CodingPlanUsageSnapshot,
   UsageStatsRange,
@@ -113,8 +110,8 @@ export function useUsageStats(
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     setState((current) => ({
-      // App Usage and Coding Plan share the same hook instance. If the old snapshot is kept after
-      // switching tabs, local App Usage data appears while the Coding Plan request is pending or fails.
+      // App Usage 与 Coding Plan 共用同一个 hook 实例。
+      // 切 tab 后如果继续保留旧 snapshot，Coding Plan 请求期间或失败后会显示本地 App Usage 数据。
       snapshot: keepPreviousSnapshot ? current.snapshot : null,
       loading: true,
       error: null,
@@ -171,8 +168,8 @@ export function useUsageStats(
   useEffect(() => {
     if (!enabled) {
       setState({
-        // Usage stats queries are disabled after a Coding Plan provider is removed or disabled.
-        // Clear the old snapshot so Settings does not keep showing usage data from the previous account.
+        // Coding Plan provider 被移除或禁用后，使用统计查询会被关闭。
+        // 这里清空旧快照，避免设置页继续显示上一家账号的用量数据。
         snapshot: null,
         loading: false,
         error: null,
@@ -191,16 +188,7 @@ export function useUsageStats(
   };
 }
 
-/** Request fields for App Usage; a bare range keeps the legacy preset behavior. */
-export interface AppUsageStatsQuery {
-  range: AppUsageRange;
-  window?: AppUsageWindow;
-  compare?: boolean;
-  filters?: AppUsageFilters;
-  include?: AppUsageInclude[];
-}
-
-export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
+export function useAppUsageStats(range: AppUsageRange) {
   const { usageStatsService } = useServices();
   const [state, setState] = useState<AppUsageStatsState>({
     snapshot: null,
@@ -208,15 +196,11 @@ export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
     error: null,
   });
   const requestVersionRef = useRef(0);
-  // Callers pass fresh objects every render; key the request by value so only real changes refetch.
-  const queryKey = typeof query === "string" ? query : JSON.stringify(query);
 
   const refresh = useCallback(async () => {
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const request: AppUsageStatsQuery =
-      typeof query === "string" ? { range: query } : (JSON.parse(queryKey) as AppUsageStatsQuery);
     setState((current) => ({
       snapshot: current.snapshot,
       loading: true,
@@ -224,7 +208,7 @@ export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
     }));
     try {
       const snapshot = await usageStatsService.getAppUsageSnapshot({
-        ...request,
+        range,
         timeZone,
       });
       if (requestVersionRef.current !== requestVersion) {
@@ -237,8 +221,7 @@ export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
       }
       const message = getErrorMessage(error);
       logger.warn("[useAppUsageStats] 读取本地使用统计失败", {
-        range: request.range,
-        window: request.window,
+        range,
         timeZone,
         error: message,
       });
@@ -248,8 +231,7 @@ export function useAppUsageStats(query: AppUsageRange | AppUsageStatsQuery) {
         error: message,
       }));
     }
-    // `query` is intentionally omitted: `queryKey` is its by-value identity.
-  }, [queryKey, usageStatsService]);
+  }, [range, usageStatsService]);
 
   useEffect(() => {
     void refresh();
@@ -341,18 +323,16 @@ export function useCodingPlanUsageStats(
           timeZone,
         });
         serviceCache.set(requestScopeKey, {
-          // requestedAt must represent when a successful snapshot was generated. Prewriting an empty
-          // snapshot with the request start time would let a later instance for the same scope treat
-          // a pending request as fresh and miss the first request's success or failure.
+          // requestedAt 只能表示成功快照的生成时间。用请求开始时间预写空快照会
+          // 导致同 scope 的后挂载实例把 pending 当成 fresh，并错过首个请求的成功或失败结果。
           snapshot: cached?.snapshot ?? null,
           requestedAt: cached?.inFlight ? null : (cached?.requestedAt ?? null),
           inFlight: request,
         });
       }
       setState((current) => ({
-        // Do not keep the previous Coding Plan monitor snapshot when switching between Z.AI and BigModel.
-        // Keep it when changing today/7d/30d for the same provider to avoid blanking Quota Remaining
-        // and the trend area.
+        // 切换 Z.AI/BigModel 时不能保留上一家 Coding Plan 的 monitor 快照；
+        // 但同一 provider 切换 today/7d/30d 时保留旧快照，避免 Quota Remaining 和趋势区域闪空。
         snapshot: keepPreviousSnapshot ? current.snapshot : null,
         loading: true,
         error: null,
@@ -381,9 +361,8 @@ export function useCodingPlanUsageStats(
           timeZone,
           error: message,
         });
-        // A failed request must not keep the cache entry prewritten for this access.
-        // Otherwise, reopening the same organization within the TTL would skip the real request
-        // and show a stale snapshot from another source or silently hide the error.
+        // 失败请求不能保留本次 access 预写入的 cache entry。
+        // 否则 TTL 内重新打开同一组织会跳过真实请求，展示旧来源快照或静默空掉错误。
         if (serviceCache.get(requestScopeKey)?.inFlight === request) {
           serviceCache.delete(requestScopeKey);
         }

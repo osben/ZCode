@@ -12,7 +12,12 @@ export function SettingsResourceGroupHeader({
   title,
 }: SettingsResourceGroupHeaderProps) {
   const { intl } = useZCodeIntl();
-  const itemCountLabel = intl.formatPlural({ id: "settings.resourceGroup.item" }, count);
+  const itemCountLabel = intl.formatMessage(
+    {
+      id: count === 1 ? "settings.resourceGroup.item.one" : "settings.resourceGroup.item.other",
+    },
+    { count: String(count) },
+  );
 
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-1">

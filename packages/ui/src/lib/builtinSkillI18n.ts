@@ -43,13 +43,13 @@ const OFFICIAL_PLUGIN_PATH_MARKERS = [
   "/zcode-guide-plugin/",
 ];
 
-const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>> = {
+const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Record<Locale, string>> = {
   "android-dev": {
     "zh-CN": "通过 android-emulator MCP 工具构建、运行、检查并轻量自动化 Android 应用。",
     "en-US":
       "Build, run, inspect, and lightly automate Android apps through the android-emulator MCP tools.",
     "uk-UA":
-      "Збирайте, запускайте, перевіряйте й частково автоматизуйте Android-застосунки за допомогою MCP-інструментів android-emulator.",
+      "Build, run, inspect, and lightly automate Android apps through the android-emulator MCP tools.",
   },
   brainstorming: {
     "zh-CN":
@@ -57,21 +57,21 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Use before any creative work, including creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements, and design before implementation.",
     "uk-UA":
-      "Використовуйте перед будь-якою творчою роботою: створенням функцій, компонентів, додаванням можливостей або зміною поведінки. Спершу з'ясовує наміри користувача, вимоги та дизайн.",
+      "Use before any creative work, including creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements, and design before implementation.",
   },
   "control-browser": {
     "zh-CN": "控制 ZCode 内置浏览器，用于打开、检查、点击、输入、截图或验证网页和本地开发页面。",
     "en-US":
       "Control ZCode's built-in browser to open, inspect, click, type, screenshot, or verify webpages and local development targets.",
     "uk-UA":
-      "Керуйте вбудованим браузером ZCode: відкривайте, перевіряйте, натискайте, вводьте текст, робіть знімки екрана або перевіряйте вебсторінки й локальні сторінки розробки.",
+      "Control ZCode's built-in browser to open, inspect, click, type, screenshot, or verify webpages and local development targets.",
   },
   "dispatching-parallel-agents": {
     "zh-CN": "面对 2 个以上彼此独立、无共享状态或顺序依赖的任务时使用。",
     "en-US":
       "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies.",
     "uk-UA":
-      "Використовуйте, коли є 2+ незалежних завдання, які можна виконувати без спільного стану чи послідовних залежностей.",
+      "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies.",
   },
   docx: {
     "zh-CN":
@@ -79,28 +79,36 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Create, edit, and analyze DOCX documents with revisions, comments, formatting preservation, and text extraction. Use for new documents, edits, revision handling, comments, and professional Word document work.",
     "uk-UA":
-      "Створюйте, редагуйте й аналізуйте документи DOCX із виправленнями, коментарями, збереженням форматування та видобуванням тексту. Для нових документів, правок, роботи з виправленнями, коментарями й професійних документів Word.",
+      "Create, edit, and analyze DOCX documents with revisions, comments, formatting preservation, and text extraction. Use for new documents, edits, revision handling, comments, and professional Word document work.",
+  },
+  "docx-viewer": {
+    "zh-CN":
+      "在 Word 文档侧栏与用户一起查看和讨论 .docx 文件。适用于打开、阅读、审阅或询问工作区中的 Word 文档，用户提到在查看器中选中或引用的内容，或需要检查刚生成的文档。",
+    "en-US":
+      "View and discuss Word (.docx) files with the user in the Documents side panel. Use to open, read, review, or ask about a workspace Word document, when the user refers to a selection or reference in the viewer, or to check a document you just produced.",
+    "uk-UA":
+      "View and discuss Word (.docx) files with the user in the Documents side panel. Use to open, read, review, or ask about a workspace Word document, when the user refers to a selection or reference in the viewer, or to check a document you just produced.",
   },
   "executing-plans": {
     "zh-CN": "已有书面实现计划，并要在带评审检查点的独立会话中执行时使用。",
     "en-US":
       "Use when you have a written implementation plan to execute in a separate session with review checkpoints.",
     "uk-UA":
-      "Використовуйте, коли є письмовий план реалізації, який треба виконати в окремому сеансі з контрольними точками перевірки.",
+      "Use when you have a written implementation plan to execute in a separate session with review checkpoints.",
   },
   "finishing-a-development-branch": {
     "zh-CN": "实现已完成、测试通过、需要决定如何合并、发 PR 或清理分支时使用。",
     "en-US":
       "Use when implementation is complete, tests pass, and you need to decide how to integrate the work through merge, PR, or cleanup.",
     "uk-UA":
-      "Використовуйте, коли реалізацію завершено, тести проходять і треба вирішити, як інтегрувати роботу: злиття, PR чи прибирання.",
+      "Use when implementation is complete, tests pass, and you need to decide how to integrate the work through merge, PR, or cleanup.",
   },
   "ios-dev": {
     "zh-CN": "通过 ios-simulator MCP 工具构建、运行、检查并轻量自动化 iOS 模拟器应用。",
     "en-US":
       "Build, run, inspect, and lightly automate iOS Simulator apps through the ios-simulator MCP tools.",
     "uk-UA":
-      "Збирайте, запускайте, перевіряйте й частково автоматизуйте застосунки в iOS Simulator за допомогою MCP-інструментів ios-simulator.",
+      "Build, run, inspect, and lightly automate iOS Simulator apps through the ios-simulator MCP tools.",
   },
   pdf: {
     "zh-CN":
@@ -108,7 +116,15 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Professional PDF toolkit for reports, creative visuals, academic LaTeX, and existing-PDF workflows. Supports reports, posters, papers, resumes, extraction, merge, split, forms, and conversion.",
     "uk-UA":
-      "Професійний набір інструментів PDF для звітів, творчих макетів, академічного LaTeX і роботи з наявними PDF. Звіти, постери, статті, резюме, видобування, об'єднання, розділення, форми та конвертація.",
+      "Professional PDF toolkit for reports, creative visuals, academic LaTeX, and existing-PDF workflows. Supports reports, posters, papers, resumes, extraction, merge, split, forms, and conversion.",
+  },
+  "pdf-viewer": {
+    "zh-CN":
+      "在 PDF 侧栏与用户一起查看和讨论 PDF 文件。适用于打开、阅读、审阅或询问工作区中的 PDF，用户提到在查看器中选中或引用的内容，或需要检查刚生成的 PDF。",
+    "en-US":
+      "View and discuss PDF files with the user in the PDF side panel. Use to open, read, review, or ask about a workspace PDF, when the user refers to a selection or reference in the viewer, or to check a PDF you just produced.",
+    "uk-UA":
+      "View and discuss PDF files with the user in the PDF side panel. Use to open, read, review, or ask about a workspace PDF, when the user refers to a selection or reference in the viewer, or to check a PDF you just produced.",
   },
   pptx: {
     "zh-CN":
@@ -116,7 +132,15 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Inspect and narrowly update elements selected in PPTX Preview Pane. Verifies the whole-file fingerprint and OOXML locator for shape or table-cell text, and stops on conflicts instead of guessing.",
     "uk-UA":
-      "Перевіряйте й точково оновлюйте елементи, вибрані в панелі попереднього перегляду PPTX. Звіряє відбиток усього файлу та OOXML-локатор тексту фігури чи клітинки таблиці й зупиняється за конфлікту, а не вгадує.",
+      "Inspect and narrowly update elements selected in PPTX Preview Pane. Verifies the whole-file fingerprint and OOXML locator for shape or table-cell text, and stops on conflicts instead of guessing.",
+  },
+  "pptx-viewer": {
+    "zh-CN":
+      "在演示文稿侧栏与用户一起查看和讨论 .pptx 演示文稿。适用于一起打开、审阅或询问工作区中的演示文稿，用户提到在查看器中选中或引用的幻灯片或元素，或需要检查刚生成的演示文稿。",
+    "en-US":
+      "View and discuss PowerPoint (.pptx) decks with the user in the Presentations side panel. Use to open, review, or ask about a workspace deck together, when the user refers to a slide or shape selected or referenced in the viewer, or to check a deck you just produced.",
+    "uk-UA":
+      "View and discuss PowerPoint (.pptx) decks with the user in the Presentations side panel. Use to open, review, or ask about a workspace deck together, when the user refers to a slide or shape selected or referenced in the viewer, or to check a deck you just produced.",
   },
   "receiving-code-review": {
     "zh-CN":
@@ -124,25 +148,26 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Use when receiving code review feedback before implementing suggestions, especially when feedback is unclear or technically questionable.",
     "uk-UA":
-      "Використовуйте, коли отримали відгуки code review, ще до впровадження пропозицій, особливо якщо відгук неясний або технічно сумнівний.",
+      "Use when receiving code review feedback before implementing suggestions, especially when feedback is unclear or technically questionable.",
   },
   "requesting-code-review": {
     "zh-CN": "完成任务、实现重大功能或合并前，用于请求代码评审以确认满足需求。",
     "en-US":
       "Use when completing tasks, implementing major features, or before merging to verify work meets requirements.",
     "uk-UA":
-      "Використовуйте після завершення завдань, реалізації великих функцій або перед злиттям, щоб перевірити, що робота відповідає вимогам.",
+      "Use when completing tasks, implementing major features, or before merging to verify work meets requirements.",
   },
   "restore-legacy-sessions": {
     "zh-CN": "检查、规划或执行 ACP 时代 ZCode 旧 session 恢复到新的 ZCode 任务与会话库。",
     "en-US":
       "Inspect, plan, or restore old ACP-era ZCode sessions into the new ZCode task and session stores.",
+    "uk-UA":
+      "Inspect, plan, or restore old ACP-era ZCode sessions into the new ZCode task and session stores.",
   },
   "plugin-creator": {
     "zh-CN": "创建、校验 ZCode 插件，并指导本地安装与更新。",
     "en-US": "Create and validate ZCode plugins, and guide local installation and updates.",
-    "uk-UA":
-      "Створюйте й перевіряйте плагіни ZCode, а також отримуйте інструкції з локального встановлення та оновлення.",
+    "uk-UA": "Create and validate ZCode plugins, and guide local installation and updates.",
   },
   "skill-creator": {
     "zh-CN":
@@ -150,27 +175,26 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Create new skills, edit existing skills, and iterate wording. Use for writing SKILL.md from scratch, improving skills, capturing repeated workflows, or tuning descriptions for reliable triggering.",
     "uk-UA":
-      "Створюйте нові навички, редагуйте наявні та вдосконалюйте формулювання. Для написання SKILL.md з нуля, покращення навичок, фіксації повторюваних процесів або налаштування описів для надійного спрацьовування.",
+      "Create new skills, edit existing skills, and iterate wording. Use for writing SKILL.md from scratch, improving skills, capturing repeated workflows, or tuning descriptions for reliable triggering.",
   },
   "subagent-driven-development": {
     "zh-CN": "在当前会话中执行包含独立任务的实现计划时使用。",
     "en-US":
       "Use when executing implementation plans with independent tasks in the current session.",
     "uk-UA":
-      "Використовуйте для виконання планів реалізації з незалежними завданнями в поточному сеансі.",
+      "Use when executing implementation plans with independent tasks in the current session.",
   },
   "systematic-debugging": {
     "zh-CN": "遇到任何 bug、测试失败或异常行为时，在提出修复前使用。",
     "en-US":
       "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes.",
     "uk-UA":
-      "Використовуйте за будь-якої помилки, падіння тесту чи неочікуваної поведінки, ще до пропонування виправлень.",
+      "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes.",
   },
   "test-driven-development": {
     "zh-CN": "实现任何功能或 bugfix 时，在编写实现代码前使用。",
     "en-US": "Use when implementing any feature or bugfix, before writing implementation code.",
-    "uk-UA":
-      "Використовуйте під час реалізації будь-якої функції чи виправлення, ще до написання коду реалізації.",
+    "uk-UA": "Use when implementing any feature or bugfix, before writing implementation code.",
   },
   "using-git-worktrees": {
     "zh-CN":
@@ -178,7 +202,7 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Use when starting feature work that needs isolation or before executing implementation plans. Ensures an isolated workspace exists via native tools or git worktree fallback.",
     "uk-UA":
-      "Використовуйте на початку роботи над функцією, що потребує ізоляції, або перед виконанням планів реалізації. Забезпечує ізольований робочий простір нативними засобами або через git worktree.",
+      "Use when starting feature work that needs isolation or before executing implementation plans. Ensures an isolated workspace exists via native tools or git worktree fallback.",
   },
   "using-superpowers": {
     "zh-CN":
@@ -186,7 +210,7 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Use when starting any conversation. Establishes how to find and use skills, requiring Skill tool invocation before any response including clarifying questions.",
     "uk-UA":
-      "Використовуйте на початку будь-якої розмови. Визначає, як знаходити й використовувати навички: інструмент Skill треба викликати перед будь-якою відповіддю, зокрема перед уточнювальними запитаннями.",
+      "Use when starting any conversation. Establishes how to find and use skills, requiring Skill tool invocation before any response including clarifying questions.",
   },
   "verification-before-completion": {
     "zh-CN":
@@ -194,7 +218,7 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Use before claiming work is complete, fixed, or passing. Requires running verification commands and confirming output before success claims.",
     "uk-UA":
-      "Використовуйте, перш ніж стверджувати, що роботу завершено, виправлено чи тести проходять. Вимагає запустити команди перевірки й підтвердити результат.",
+      "Use before claiming work is complete, fixed, or passing. Requires running verification commands and confirming output before success claims.",
   },
   "web-gui-tester": {
     "zh-CN":
@@ -202,21 +226,29 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
     "en-US":
       "Run pure GUI black-box tests against websites and local web frontends with ZCode Browser Use, combining real user interactions, semantic DOM evidence, and inspected screenshots.",
     "uk-UA":
-      "Виконуйте суто GUI-тестування методом чорної скриньки для вебсайтів і локальних вебфронтендів за допомогою ZCode Browser Use: реальні дії користувача, семантичні дані DOM і перевірені знімки екрана.",
+      "Run pure GUI black-box tests against websites and local web frontends with ZCode Browser Use, combining real user interactions, semantic DOM evidence, and inspected screenshots.",
   },
   "writing-plans": {
     "zh-CN": "已有规格或多步骤任务需求，在动代码前用于编写实现计划。",
     "en-US":
       "Use when you have a spec or requirements for a multi-step task, before touching code.",
     "uk-UA":
-      "Використовуйте, коли є специфікація або вимоги до багатокрокового завдання, ще до зміни коду.",
+      "Use when you have a spec or requirements for a multi-step task, before touching code.",
   },
   "writing-skills": {
     "zh-CN": "创建新技能、编辑现有技能或在发布前验证技能是否有效时使用。",
     "en-US":
       "Use when creating new skills, editing existing skills, or verifying skills work before deployment.",
     "uk-UA":
-      "Використовуйте для створення нових навичок, редагування наявних або перевірки, що навички працюють, перед розгортанням.",
+      "Use when creating new skills, editing existing skills, or verifying skills work before deployment.",
+  },
+  "xlsx-viewer": {
+    "zh-CN":
+      "在电子表格侧栏与用户一起查看和讨论 .xlsx 工作簿。适用于一起打开、浏览或询问工作区中的工作簿，用户提到在查看器中选中或引用的单元格，或需要检查刚生成的工作簿。",
+    "en-US":
+      "View and discuss Excel (.xlsx) workbooks with the user in the Spreadsheets side panel. Use to open, browse, or ask about a workspace workbook together, when the user refers to cells selected or referenced in the viewer, or to check a workbook you just produced.",
+    "uk-UA":
+      "View and discuss Excel (.xlsx) workbooks with the user in the Spreadsheets side panel. Use to open, browse, or ask about a workspace workbook together, when the user refers to cells selected or referenced in the viewer, or to check a workbook you just produced.",
   },
 };
 
@@ -225,11 +257,6 @@ export function resolveSkillSourceLabel(scope: SkillScope, locale?: Locale): str
     if (scope === "workspace") return "工作区";
     if (scope === "plugin") return "插件";
     return "用户";
-  }
-  if (locale === "uk-UA") {
-    if (scope === "workspace") return "Робочий простір";
-    if (scope === "plugin") return "Плагін";
-    return "Користувач";
   }
   if (scope === "workspace") return "Workspace";
   if (scope === "plugin") return "Plugin";
@@ -240,11 +267,9 @@ export function resolveSkillDisplayDescription(
   skill: SkillDisplayCandidate,
   locale?: Locale,
 ): string {
-  const descriptions = isOfficialBuiltinSkill(skill)
-    ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]
+  const localized = isOfficialBuiltinSkill(skill)
+    ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]?.[locale ?? "en-US"]
     : undefined;
-  // For untranslated locales, fall back to the English description so the skill’s original description (which may be Chinese) is not exposed.
-  const localized = descriptions?.[locale ?? "en-US"] ?? descriptions?.["en-US"];
   return localized ?? skill.description;
 }
 

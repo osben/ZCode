@@ -14,7 +14,7 @@ import {
   Volume2,
 } from "lucide-react";
 
-/** Address bar and panel share the same capability glyphs; the icon signals a requested capability, not a device currently in use. */
+/** 地址栏与面板复用同一能力字形；图标表示申请能力，不表示设备正在使用。 */
 export function BrowserPermissionIcon({ capability }: { capability: string }) {
   const Icon =
     capability === "camera"

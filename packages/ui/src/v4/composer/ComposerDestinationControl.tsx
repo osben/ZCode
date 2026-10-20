@@ -1,3 +1,4 @@
+import { formatPluralMessage } from "../../i18n/formatPlural.js";
 /* eslint-disable max-lines -- One destination surface: rows, inline branch list, and the reused create/graph dialogs share one state machine; split by view when Stage 2 extends it. */
 /**
  * Unified destination control (specs/composer-branch-switcher-semantics.md §4, variant
@@ -577,8 +578,9 @@ export function ComposerDestinationControl({
                           </span>
                         ) : isCurrent && dirtyFileCount > 0 ? (
                           <span className="text-ui-sm text-foreground-subtle">
-                            {intl.formatPlural(
-                              { id: "git.branchSwitcher.currentDirty" },
+                            {formatPluralMessage(
+                              intl,
+                              "git.branchSwitcher.currentDirty",
                               dirtyFileCount,
                             )}
                           </span>

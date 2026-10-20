@@ -9,7 +9,7 @@ function validatedDelta(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Continue two-dimensional wheel scrolling from a guest that has reached its boundary into the free-size host canvas. */
+/** 把 guest 已到边界的二维 wheel 续接到自由尺寸宿主画布。 */
 export function useEmbeddedBrowserWheelChain({
   browserRegionRef,
   isResponsiveMode,
@@ -27,7 +27,7 @@ export function useEmbeddedBrowserWheelChain({
         return;
       }
       const payload = event.args[0] as Partial<EmbeddedBrowserWheelBoundaryPayload> | undefined;
-      // The IPC payload may omit fields or contain non-finite numbers, so do not pass it directly to the host canvas scroll handler.
+      // IPC payload 可能缺字段或携带非有限数，不能直接传给宿主滚动画布。
       const deltaX = validatedDelta(payload?.deltaX);
       const deltaY = validatedDelta(payload?.deltaY);
       if (deltaX === 0 && deltaY === 0) return;
@@ -36,10 +36,10 @@ export function useEmbeddedBrowserWheelChain({
         '[data-responsive-browser-mode="active"]',
       );
       if (!responsiveCanvas) return;
-      // Wheel events from an Electron `<webview>` guest do not bubble to the host DOM; the fixed preload
-      // sends a message only when the page cannot consume more scrolling on that axis, and the outer free-size canvas continues the scroll chain here.
+      // Electron `<webview>` guest 的 wheel 不会冒泡到宿主 DOM；固定 preload
+      // 仅在网页无法继续消费对应轴时发消息，在这里续接外层自由尺寸画布的滚动链。
       responsiveCanvas.scrollBy({ behavior: "auto", left: deltaX, top: deltaY });
-      // Wheel events are as frequent as message streams, so use debug only; production builds do not persist them.
+      // wheel 与消息流同量级，只用 debug，生产构建不会落盘。
       logger.debug("[browser-use] guest wheel 续接自由尺寸画布", {
         deltaX,
         deltaY,

@@ -5,9 +5,8 @@ import {
 } from "../domain/pluginUiInstancePolicy.js";
 
 /**
- * Each session's most recent timeline-derived logical UI disposition (renderer memory). The timeline
- * writes in an effect; tool cards read their own disposition by (sessionKey, toolCallId) (superseded,
- * forced inline). Holds no sandbox state.
+ * 每个会话最近一次由时间线推导出的逻辑 UI 裁决（renderer 内存）。时间线在 effect 里写入，
+ * 工具卡片按 (sessionKey, toolCallId) 读自己的裁决（是否被替代、是否强制常驻）；不持有任何沙箱状态。
  */
 const derivations = new Map<string, PluginUiInstanceDerivation>();
 const listeners = new Set<() => void>();
@@ -35,7 +34,7 @@ export function subscribePluginUiInstances(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-/** For tests: clear all records. */
+/** 测试用：清空全部记录。 */
 export function resetPluginUiInstancesForTest(): void {
   derivations.clear();
   listeners.clear();

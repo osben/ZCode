@@ -13,7 +13,7 @@ export const examplePresentation: PluginUiPresentation = {
   prefersBorder: true,
 };
 
-/** Payload when an inline card / surface entry requests opening the side pane, plus the tab created from it. */
+/** 内联卡片 / 面板入口请求打开侧栏时的载荷，以及据此创建的 tab。 */
 export function exampleOpenSideTab(request: OpenPluginUiSideTabRequest): PluginUiSidePaneTab {
   const scope = readPluginUiScopeRef(request);
   if (!scope) throw new Error("request needs toolCallId or surfaceId");

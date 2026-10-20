@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { MonitorUp, Paperclip, ShieldAlert, Usb, X } from "lucide-react";
 import {
+  type EmbeddedBrowserPermissionPromptEvent,
+  type EmbeddedBrowserPermissionResolution,
+} from "@zcode/shared";
+import {
   TID_BROWSER_PERMISSION_ALLOW_ALWAYS,
   TID_BROWSER_PERMISSION_ALLOW_ONCE,
   TID_BROWSER_PERMISSION_DENY,
   TID_BROWSER_PERMISSION_DISMISS,
   TID_BROWSER_PERMISSION_PROMPTS,
-  type EmbeddedBrowserPermissionPromptEvent,
-  type EmbeddedBrowserPermissionResolution,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { BrowserPermissionIcon } from "@/browser-use/BrowserPermissionIcon.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -25,15 +27,12 @@ import { logger } from "@/logger.js";
 import { useEmbeddedBrowserPermissionStore } from "@/store/embeddedBrowserPermissionStore.js";
 
 /**
- * Embedded browser permission prompt layer (spec:
- * docs/browser-use/2026-10-08-embedded-browser-permission-governance-spec.md).
- * permission → Chrome-style anchored bubble (below the address bar, left-aligned, shown automatically;
- * card is origin title + ✕ close + capability icon list + three stacked pills: allow on every visit
- * (persisted) / allow once / don't allow (this denial is not remembered); no "block forever" — a
- * mis-click would break the site with no easy recovery, so persistent deny is managed only in the
- * site permission settings);
- * screen-share / device → Dialog picker (sources grouped by "Entire screen / Window").
- * Cancel and timeout are settled by main; the renderer only reports the decision.
+ * 内置浏览器权限弹窗层（spec：docs/browser-use/2026-10-08-embedded-browser-permission-governance-spec.md）。
+ * permission → Chrome 式锚定气泡（地址栏下方左侧，自动弹出；卡片为 origin 标题 + ✕ 关闭 +
+ * 能力图标列表 + 竖排三胶囊：访问此网站时允许（持久）/ 仅本次允许 / 不允许（本次拒绝不记忆）；
+ * 不做「永久阻止」——误点后站点异常难以自愈，持久 deny 只保留在站点权限设置里管理）；
+ * screen-share / device → Dialog 选择器（源按「整个屏幕 / 窗口」分组）。
+ * 取消与超时统一由 main 结算，renderer 只回传决策。
  */
 
 const MEDIA_LABEL: Record<string, string> = {
@@ -70,7 +69,7 @@ function permissionLabelId(permission: string, mediaTypes?: string[]): string {
   return PERMISSION_LABEL[permission] ?? "browser.permission.unknownCapability";
 }
 
-/** Bubble capability list: media splits into separate camera/microphone rows by mediaTypes; everything else is one row per capability. */
+/** 气泡能力列表：media 按 mediaTypes 拆成摄像头/麦克风独立行，其余一类一行。 */
 function promptCapabilities(
   prompt: Extract<EmbeddedBrowserPermissionPromptEvent, { kind: "permission" }>,
 ): { key: string; labelId: string }[] {
@@ -92,12 +91,11 @@ function promptIcon(event: EmbeddedBrowserPermissionPromptEvent) {
 }
 
 /**
- * guestWebContentsId is the current tab's guest identity: when a permission request carries an owning
- * id that does not match the current tab, it does not render in this tab (background-tab requests are
- * not shown in the current tab, avoiding mis-approval). When the current tab has no guest (empty tab),
- * no request with an owner belongs to it and none render; requests without an owning id (device /
- * screen-share and other prompts without tab-anchoring semantics) render as a fallback, and the bubble
- * body always shows the origin so the user can confirm the source.
+ * guestWebContentsId 是当前 tab 的 guest 身份：permission 请求带归属 id 且不匹配
+ * 当前 tab 时不在本 tab 渲染（后台 tab 的请求不显示在当前 tab，避免误批准）。
+ * 当前 tab 无 guest（空 tab）时任何带归属的请求都不属于它，同样不渲染；
+ * 请求缺归属 id（device/screen-share 等无 tab 锚定语义的弹窗）兜底渲染，
+ * 气泡正文始终展示 origin 供用户确认来源。
  */
 export function EmbeddedBrowserPermissionPrompts({
   guestWebContentsId,
@@ -114,9 +112,8 @@ export function EmbeddedBrowserPermissionPrompts({
   const [selection, setSelection] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    // main does not notify the renderer after settling a timeout; the render layer also dequeues at
-    // 20s as a fallback so entries cannot linger (the next identical request is a new requestId and
-    // is unaffected).
+    // main 侧超时结算后不会主动通知 renderer；渲染层对超时同样按 20s 出队兜底，
+    // 避免条目残留（下次同请求是新的 requestId，不受影响）。
     const disposers = prompts.map((prompt) => {
       const timer = setTimeout(() => dropPrompt(prompt.requestId), 20_000);
       return () => clearTimeout(timer);
@@ -148,13 +145,14 @@ export function EmbeddedBrowserPermissionPrompts({
       ),
     [prompts, guestWebContentsId],
   );
-  // device prompts are filtered by guest ownership like permission prompts (serial/bluetooth expose
-  // an owner; hid/usb and screen-share render as a fallback when no owner id is present, with the
-  // body's origin marking the source).
+  // device 弹窗与 permission 同样按 guest 归属过滤（serial/蓝牙可取到归属；
+  // hid/usb 与屏幕共享缺省归属 id 时兜底渲染，正文 origin 标明来源）。
   const selectorPrompts = useMemo(
     () =>
       prompts.filter(
-        (prompt): prompt is Exclude<EmbeddedBrowserPermissionPromptEvent, { kind: "permission" }> =>
+        (
+          prompt,
+        ): prompt is Exclude<EmbeddedBrowserPermissionPromptEvent, { kind: "permission" }> =>
           prompt.kind !== "permission" &&
           (prompt.guestWebContentsId === undefined ||
             prompt.guestWebContentsId === guestWebContentsId),
@@ -206,9 +204,8 @@ export function EmbeddedBrowserPermissionPrompts({
                   </li>
                 ))}
               </ul>
-              {/* Three stacked pills (fix/missing_tool visual): allow persistently / allow once / don't allow (not remembered).
-                  No "block forever": a mis-click would leave the site broken with no easy recovery; persistent deny is managed
-                  only in the site permission settings. */}
+              {/* 竖排三胶囊（fix/missing_tool 视觉）：持久允许 / 仅本次允许 / 不允许（不记忆）。
+                  不提供「永久阻止」：误点后站点异常难自愈，持久 deny 只在站点权限设置管理。 */}
               <div className="mt-3 flex flex-col gap-2">
                 <Button
                   type="button"
@@ -272,80 +269,82 @@ export function EmbeddedBrowserPermissionPrompts({
               </DialogDescription>
             </DialogHeader>
             <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
-              {prompt.kind === "screen-share"
-                ? (["screen", "window"] as const).map((group) => {
-                    const screens = prompt.screens.filter((screen) => screen.kind === group);
-                    if (screens.length === 0) return null;
-                    return (
-                      <div key={group}>
-                        <p className="px-2 pb-1 pt-2 text-ui-xs text-foreground-subtlest">
-                          {formatMessage({
-                            id:
-                              group === "screen"
-                                ? "browser.permission.screenGroup.screen"
-                                : "browser.permission.screenGroup.window",
-                          })}
-                        </p>
-                        {screens.map((screen) => (
-                          <button
-                            type="button"
-                            key={screen.sourceId}
-                            className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-menu-hover data-[selected=true]:bg-selected"
-                            data-selected={selection[prompt.requestId] === screen.sourceId}
-                            onClick={() =>
-                              setSelection((current) => ({
-                                ...current,
-                                [prompt.requestId]: screen.sourceId,
-                              }))
-                            }
-                          >
-                            {screen.thumbnailDataUrl ? (
-                              <img
-                                src={screen.thumbnailDataUrl}
-                                alt=""
-                                className="h-[45px] w-20 rounded-sm border border-border object-cover"
-                              />
-                            ) : null}
-                            <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">
-                              {screen.name}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })
-                : prompt.devices.map((device) => (
-                    <button
-                      type="button"
-                      key={device.deviceId}
-                      className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-menu-hover data-[selected=true]:bg-selected"
-                      data-selected={selection[prompt.requestId] === device.deviceId}
-                      onClick={() =>
-                        setSelection((current) => ({
-                          ...current,
-                          [prompt.requestId]: device.deviceId,
-                        }))
-                      }
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-ui-sm text-foreground">
-                          {device.name ?? device.deviceId}
-                        </span>
-                        {device.vendorId !== undefined || device.serialNumber ? (
-                          <span className="block truncate font-mono text-ui-xs text-foreground-subtlest">
-                            {[
-                              device.vendorId !== undefined && device.productId !== undefined
-                                ? `${device.vendorId.toString(16).padStart(4, "0")}:${device.productId.toString(16).padStart(4, "0")}`
-                                : undefined,
-                              device.serialNumber,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
+              {prompt.kind === "screen-share" ? (
+                (["screen", "window"] as const).map((group) => {
+                  const screens = prompt.screens.filter((screen) => screen.kind === group);
+                  if (screens.length === 0) return null;
+                  return (
+                    <div key={group}>
+                      <p className="px-2 pb-1 pt-2 text-ui-xs text-foreground-subtlest">
+                        {formatMessage({
+                          id:
+                            group === "screen"
+                              ? "browser.permission.screenGroup.screen"
+                              : "browser.permission.screenGroup.window",
+                        })}
+                      </p>
+                      {screens.map((screen) => (
+                        <button
+                          type="button"
+                          key={screen.sourceId}
+                          className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-menu-hover data-[selected=true]:bg-selected"
+                          data-selected={selection[prompt.requestId] === screen.sourceId}
+                          onClick={() =>
+                            setSelection((current) => ({
+                              ...current,
+                              [prompt.requestId]: screen.sourceId,
+                            }))
+                          }
+                        >
+                          {screen.thumbnailDataUrl ? (
+                            <img
+                              src={screen.thumbnailDataUrl}
+                              alt=""
+                              className="h-[45px] w-20 rounded-sm border border-border object-cover"
+                            />
+                          ) : null}
+                          <span className="min-w-0 flex-1 truncate text-ui-sm text-foreground">
+                            {screen.name}
                           </span>
-                        ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })
+              ) : (
+                prompt.devices.map((device) => (
+                  <button
+                    type="button"
+                    key={device.deviceId}
+                    className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-menu-hover data-[selected=true]:bg-selected"
+                    data-selected={selection[prompt.requestId] === device.deviceId}
+                    onClick={() =>
+                      setSelection((current) => ({
+                        ...current,
+                        [prompt.requestId]: device.deviceId,
+                      }))
+                    }
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-ui-sm text-foreground">
+                        {device.name ?? device.deviceId}
                       </span>
-                    </button>
-                  ))}
+                      {device.vendorId !== undefined || device.serialNumber ? (
+                        <span className="block truncate font-mono text-ui-xs text-foreground-subtlest">
+                          {[
+                            device.vendorId !== undefined && device.productId !== undefined
+                              ? `${device.vendorId.toString(16).padStart(4, "0")}:${device.productId.toString(16).padStart(4, "0")}`
+                              : undefined,
+                            device.serialNumber,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                ))
+              )}
             </div>
             <DialogFooter>
               <Button

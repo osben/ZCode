@@ -69,7 +69,7 @@ describe("GlobalNoticeSurface", () => {
     const { container } = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(GlobalNoticeSurface, { store }),
       ),
     );
@@ -81,4 +81,5 @@ describe("GlobalNoticeSurface", () => {
 
     expect(container.querySelector('[data-global-notice-type="highspeed-share"]')).toBeNull();
   });
+
 });

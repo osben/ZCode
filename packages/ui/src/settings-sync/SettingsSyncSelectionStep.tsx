@@ -80,7 +80,7 @@ function formatCategoryDescription(
 }
 
 /**
- * Onboarding agent settings: selectable categories alongside MCP (currently only model providers), with each Agent listed under its category.
+ * Onboarding 代理设置：与 MCP 平级的可勾选分类列表（当前仅模型供应商）；每类下为各 Agent。
  */
 export function SettingsSyncSelectionStep(props: {
   discovery: SettingsSyncDiscoveryResult;

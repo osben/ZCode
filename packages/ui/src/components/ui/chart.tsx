@@ -54,8 +54,8 @@ function ChartContainer({
 }) {
   const uniqueId = React.useId();
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, "")}`;
-  // Recharts mirrors chart props to an internal store in an effect.
-  // Recreating the Provider value on every render amplifies those updates; a stable context avoids an unnecessary rerender chain.
+  // Recharts 会在 effect 里把图表 props 镜像到内部 store。
+  // Provider value 每次 render 都换引用会放大这些更新，稳定 context 可避免无意义的二次渲染链。
   const contextValue = React.useMemo(() => ({ config }), [config]);
 
   return (

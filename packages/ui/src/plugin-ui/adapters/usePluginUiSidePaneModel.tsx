@@ -40,11 +40,13 @@ const INLINE_AND_FULLSCREEN: readonly McpAppsDisplayMode[] = ["inline", "fullscr
 
 export function usePluginUiSidePaneModel({
   tab,
+  visible,
   scopeRef,
   onOpenBrowserUrl,
   onCloseTab,
 }: {
   tab: PluginUiSidePaneTab;
+  visible: boolean;
   scopeRef: PluginUiScopeRef;
   onOpenBrowserUrl?: (url: string) => void;
   onCloseTab?: (tabId: string) => void;
@@ -60,7 +62,7 @@ export function usePluginUiSidePaneModel({
     return () => nextLease.release();
   }, [layer, tab.parentSessionId]);
   const state = useConversationProjection(lease);
-  // 4b-2 R4: the side pane is outside the SessionPane tree, so it attaches this session projection's resource notifications to the routing table itself (ref-counted per store, no duplicate delivery).
+  // 4b-2 R4：侧栏不在 SessionPane 树内，自己把会话投影的资源通知接到路由表（按 store 引用计数，不重复投递）。
   const feedScope = useMemo<PluginUiSessionScope>(
     () => ({
       workspacePath: tab.workspacePath,
@@ -75,7 +77,7 @@ export function usePluginUiSidePaneModel({
   const surfaceKey = buildPluginUiSurfaceKey({ ...tab, sessionId: tab.parentSessionId }, scopeRef);
 
   const rows = state.snapshot?.rows.window ?? null;
-  // Tool card tab: feed this row.
+  // 工具卡片 tab：投喂本行。
   const row = useMemo(
     () =>
       scopeRef.kind === "toolCall" && rows ? findToolRowById(rows, scopeRef.toolCallId) : null,
@@ -86,8 +88,8 @@ export function usePluginUiSidePaneModel({
     () => (toolCall ? readPluginUiPresentation(toolCall.raw) : null),
     [toolCall],
   );
-  // Surface tab (H06): feed a "last successful result" snapshot, reduced by the projection window and merged into the renderer in-memory store;
-  // a newest running / failed row does not overwrite the previous good result, and the snapshot survives window trimming of old rows. The reduction is a pure function; reading the store during render has no side effects.
+  // 面板 tab（H06）：投喂"最后一次成功结果"快照，由投影窗口归约、合并进 renderer 内存 store；
+  // 最新一行 running / failed 不覆盖上一份好结果，窗口裁掉旧行后快照仍在。归约是纯函数，读 store 在渲染期无副作用。
   const feed = useMemo(
     () =>
       scopeRef.kind === "surface"
@@ -104,7 +106,7 @@ export function usePluginUiSidePaneModel({
   useEffect(() => {
     if (scopeRef.kind === "surface") offerPluginUiSurfaceFeed(surfaceKey, feed);
   }, [feed, scopeRef.kind, surfaceKey]);
-  // The surface tab's presentation comes from the tab (manifest entry) and does not change with tool rows; tool card tabs still use the row's display.ui.
+  // 面板的呈现信息来自 tab（清单入口），不随工具行变化；工具卡片 tab 仍以行上的 display.ui 为准。
   const presentation = useMemo<PluginUiPresentation | null>(() => {
     if (scopeRef.kind === "toolCall") return rowPresentation;
     return tab.serverName
@@ -132,7 +134,7 @@ export function usePluginUiSidePaneModel({
     scopeRef.kind === "surface"
       ? feed.latest?.status === "cancelled"
       : isPluginUiToolCancelled(toolCall);
-  // H10: return to inline only when the scope still has an inline card in the session flow to take over (the row is inside the projection window) and the host provided a close entry.
+  // H10：只有该作用域在会话流里仍有内联卡片可接管（行在投影窗口内）且宿主给了关闭入口，才能回 inline。
   const canReturnInline =
     Boolean(onCloseTab) && (scopeRef.kind === "surface" ? feed.latest !== null : row !== null);
   const handleDisplayModeRequest = useCallback(
@@ -163,7 +165,7 @@ export function usePluginUiSidePaneModel({
       tab.remoteSessionId,
     ],
   );
-  // widgetState initial value is read by usePluginUiHost from the host in-memory store under the same surfaceKey (4a-0); the pane does not fetch it separately.
+  // widgetState 初值由 usePluginUiHost 按同一 surfaceKey 从宿主内存 store 读取（4a-0），面板不另取。
   const host = usePluginUiHost({
     presentation: presentation ?? {
       serverName: "",
@@ -191,13 +193,14 @@ export function usePluginUiSidePaneModel({
     width,
     titleBar: PLUGIN_UI_SIDE_PANE_TITLE_BAR,
     interactions,
-    // Start barrier (H07): tool card tabs must wait until this row enters the projection (only then does rowPresentation have serverName, otherwise prepareSandbox is rejected by argument validation,
-    // and since identity is unchanged the controller would never restart afterwards); surface tabs must wait until the projection snapshot arrives (rows non-null),
-    // otherwise the first setWidgetData has no toolInput / toolResult and the page renders empty once before receiving notifications.
+    // 启动屏障（H07）：工具卡片 tab 要等本行进投影（rowPresentation 才有 serverName，否则 prepareSandbox 被参数校验拒绝，
+    // 而 identity 不变导致 controller 之后也不会重启）；面板 tab 要等投影快照到达（rows 非 null），
+    // 否则第一次 setWidgetData 没有 toolInput / toolResult，页面先空渲染一次再收通知。
     enabled: presentation !== null && (scopeRef.kind === "toolCall" || rows !== null),
   });
 
   return {
+    visible,
     scopeRef,
     host: {
       ...host,
@@ -211,7 +214,7 @@ export function usePluginUiSidePaneModel({
   };
 }
 
-/** The side pane is outside the SessionPane tree; this adapter reuses the original workspace's V4 layer and lease. */
+/** 侧栏不在 SessionPane 树内，由这个适配器复用原 workspace 的 V4 层与 lease。 */
 export function PluginUiConversationScope({
   tab,
   children,

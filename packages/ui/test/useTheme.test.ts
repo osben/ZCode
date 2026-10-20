@@ -20,8 +20,8 @@ afterEach(() => {
 
 describe("applyTheme", () => {
   it.each([
-    ["dark", "dark", "#161616"],
-    ["light", "light", "#f8f8f8"],
+    ["zai-dark", "dark", "#161616"],
+    ["zai-light", "light", "#f8f8f8"],
   ] as const)("把 %s 同步到已 opt-in 的浏览器主题表面", (theme, resolvedTheme, background) => {
     document.documentElement.setAttribute("data-zcode-browser-theme-surface", "light");
     document.documentElement.style.setProperty("--color-background", background);
@@ -66,7 +66,7 @@ describe("applyTheme", () => {
   });
 
   it("未 opt-in 的 Electron 页面只切换既有主题 class", () => {
-    applyTheme("dark");
+    applyTheme("zai-dark");
 
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(document.documentElement.classList.contains("theme-zai-dark")).toBe(true);
@@ -83,8 +83,7 @@ describe("applyTheme", () => {
       },
     });
 
-    expect(() => applyTheme("dark")).not.toThrow();
-    // dark + theme-zai-light + theme-zai-dark + 8 个强调色调色板 = 11 次 class 切换。
-    expect(toggle).toHaveBeenCalledTimes(11);
+    expect(() => applyTheme("zai-dark")).not.toThrow();
+    expect(toggle).toHaveBeenCalledTimes(3);
   });
 });

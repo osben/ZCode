@@ -15,24 +15,23 @@ import { LEDGE_PITCH, LEDGE_LAMP, ledgeLamps, railKey, scrollbarThumb } from "./
 import type { TimelineViewport } from "./use-timeline-viewport.js";
 
 /**
- * Ledge and scrollbar.
+ * 边檐与滚动条。
  *
- * Ledge: stations collapsed off one side of the viewport appear as a row of identical 10px lights (16px each), connected by short ink-colored track segments.
- * On the content side, a short track connects to the first open station; on the far side, show `+n` when more than five are hidden.
- * Each light is a button: click it to bring that station back into view. A collapsed station is not drawn in the content—the light on the ledge **is** that station.
+ * 边檐：折叠到视口一侧的站，画成一排同一枚 10px 灯（16px 一枚），之间是那条边的墨色小轨道段，
+ * 靠内容的一端一段短轨道接到第一个开着的站，远端是超出五枚时的 `+n`。每枚灯是按钮：点一下，
+ * 镜头把那一站带回来。折叠的站在内容里不画——檐上那枚灯**就是**它。
  *
- * Scrollbar: a 2px bar at the bottom of the timeline, with a border-colored track and foreground-subtlest thumb.
- * It is opacity 0 at rest and appears while the pointer is over a card or scrolling; hover thickens the track to 4px.
- * The thumb can be dragged and clicking the track pages. Hide the native scrollbar.
+ * 滚动条：时间线底部 2px 一根，轨道 border 色、拇指 foreground-subtlest；静止时 opacity 0，指针在
+ * 卡上或正在滚时露出，悬停轨道加粗到 4px；拇指可拖，点轨道翻页。原生滚动条隐藏。
  */
 
-/** Station light: `STATUS_DOT` vocabulary; running adds a 3px breathing glow, the only glowing element on screen. */
+/** 站灯：`STATUS_DOT` 词汇表，running 外加 3px 光晕（呼吸）——它是画面上唯一发光的东西。 */
 export function stationLampClass(
   status: StepRunStatus | undefined,
   /**
-   * Hole indicator (docs/dynamic-workflow/presentation.md, “Holes on the timeline”): an open or waiting hole is a
-   * 1.5px dashed, unfilled indicator; while waiting, its stroke uses the warning color with a steady 3px glow—**no pulsing**, since nothing is running there.
-   * After completion it becomes a regular indicator. All three drawing locations (track row, band indicator layer, and ledge) use this component, so holes look the same everywhere.
+   * 留白灯（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：开着 / 等着的留白是一枚
+   * 1.5px 虚线、无填充的灯；等待时描边换警示色、外加 3px 常亮的光晕——**不搏动**，那里没有东西在跑。
+   * 补全后就是普通的灯。三处画灯的地方（轨道行、带的灯层、边檐）都经这里，留白在哪都长一样。
    */
   hole?: TimelineHole,
 ): string {
@@ -60,9 +59,10 @@ export function prefersReducedMotion(): boolean {
   );
 }
 
-// The connector must match the static main track at 1px to avoid a width seam at the scroll edge.
-// Parallel segment: when two stations on the ledge run concurrently, show two 1px lines 2px apart instead of one.
-// The ledge flattens the lane so forks and merges do not fit; two parallel lines are the only remaining way to indicate simultaneity.
+// 补线需与静态主轨道同为 1px，避免滚动边缘出现粗细接缝。
+// 双线段：檐上两站并行时不是一条线，
+// 而是两条 1px、相距 2px——檐把带压扁了，分叉与汇合画不下，两条并排的线是这里唯一还说得出
+// 「同时」的记号。
 function Segment({ rail, width }: { rail: TimelineRail | undefined; width: number }) {
   if (rail?.kind === "twin") {
     return (
@@ -108,14 +108,14 @@ export function WorkflowLedge({
   top,
 }: {
   side: "left" | "right";
-  /** Stations collapsed to this side, in ascending order. */
+  /** 折叠到这一侧的站（升序）。 */
   indexes: readonly number[];
   stations: readonly TimelineStation[];
-  /** Track segments between adjacent stations, indexed by **station pair** (`railKey`); a station in a lane can produce several segments. */
+  /** 相邻站之间的轨道段，按**一对站**索引（`railKey`）：带里一站会长出好几条段。 */
   rails: ReadonlyMap<string, TimelineRail>;
-  /** Width of the short track from the ledge to the first open station; 0 means do not draw. */
+  /** 檐到第一个开着的站之间那段短轨道的宽；0 = 不画。 */
   stubWidth: number;
-  /** Top of the track row (same height as the ledge and lights). */
+  /** 轨道行的顶（檐与灯同高）。 */
   top: number;
   nameOf: (index: number) => string;
   onSelect: (index: number) => void;
@@ -190,9 +190,9 @@ export function WorkflowLedge({
 }
 
 /**
- * After dragging the thumb or clicking the track, the browser also dispatches a click that bubbles up to the host card.
- * End-of-turn summary cards treat a click on empty space as collapse/expand, and their child-control predicate recognizes only button/a/form elements, not scrollbars.
- * Dragging the slider therefore collapsed the card. Stop the scrollbar click here because the scrollbar has already consumed this interaction.
+ * 拖完拇指或点完轨道，浏览器还会补发一次 click，它会沿着 DOM 冒到宿主卡片——轮尾摘要卡把
+ * 「空白处点一下」当成折叠 / 展开，而它的子控件谓词只认 button / a / 表单件，不认 scrollbar。
+ * 用户拖一下滑块，卡片就折起来了。滚动条的点击到此为止：它已经把这次交互消费掉了。
  */
 function stopClick(event: ReactMouseEvent<HTMLDivElement>) {
   event.stopPropagation();

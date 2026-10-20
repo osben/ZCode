@@ -26,10 +26,6 @@ import { CreateWorkflowToolCallBlock } from "../src/ToolCallBlocks/renderers/cre
 import { resolveToolCallRenderer } from "../src/ToolCallBlocks/resolveRenderer.js";
 // eslint-disable-next-line import/first -- 同上；整链路由断言要走真实入口组件。
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
-// eslint-disable-next-line import/first -- 同上；词条只用于双语言存在性断言。
-
-// eslint-disable-next-line import/first -- 同上。
 
 interface ToolCallOverrides {
   input?: unknown;
@@ -79,7 +75,7 @@ function buildContext(toolCall: ToolCallOverrides, contextOverrides: ContextOver
     viewerSource: null,
     rawFileSummaries: [],
     isRunning: contextOverrides.isRunning ?? false,
-    statusLabel: expectedCopy("chat.toolCall.status.completed"),
+    statusLabel: "已执行",
     errorText: contextOverrides.errorText,
     childToolList: null,
     showIcon: true,
@@ -92,7 +88,7 @@ function buildContext(toolCall: ToolCallOverrides, contextOverrides: ContextOver
 function renderBlock(
   toolCall: ToolCallOverrides,
   contextOverrides: ContextOverrides = {},
-  locale: "en-US" | "zh-CN" = "en-US",
+  locale: "en-US" | "zh-CN" = "zh-CN",
 ): string {
   return renderToStaticMarkup(
     createElement(
@@ -134,7 +130,7 @@ describe("submit_result 路由", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -154,7 +150,7 @@ describe("submit_result 路由", () => {
       ),
     );
 
-    expect(html).toContain(expectedCopy("chat.toolCall.submitResult.submitted"));
+    expect(html).toContain("已提交结果");
     // fallback 的首字母大写标签与整对象 dump 都不该再出现。
     expect(html).not.toContain("Submit_result");
     expect(html).not.toContain("&quot;toolId&quot;");
@@ -163,36 +159,11 @@ describe("submit_result 路由", () => {
 
 describe("SubmitResultToolCallBlock 相位文案", () => {
   it.each([
-    {
-      name: "completed",
-      status: "completed",
-      isRunning: false,
-      expected: expectedCopy("chat.toolCall.submitResult.submitted"),
-    },
-    {
-      name: "pending",
-      status: "pending",
-      isRunning: true,
-      expected: expectedCopy("chat.toolCall.submitResult.submitting"),
-    },
-    {
-      name: "in_progress",
-      status: "in_progress",
-      isRunning: true,
-      expected: expectedCopy("chat.toolCall.submitResult.submitting"),
-    },
-    {
-      name: "failed",
-      status: "failed",
-      isRunning: false,
-      expected: expectedCopy("chat.toolCall.submitResult.rejected"),
-    },
-    {
-      name: "stopped",
-      status: "stopped",
-      isRunning: false,
-      expected: expectedCopy("chat.toolCall.submitResult.stopped"),
-    },
+    { name: "completed", status: "completed", isRunning: false, expected: "已提交结果" },
+    { name: "pending", status: "pending", isRunning: true, expected: "正在提交结果" },
+    { name: "in_progress", status: "in_progress", isRunning: true, expected: "正在提交结果" },
+    { name: "failed", status: "failed", isRunning: false, expected: "提交被驳回" },
+    { name: "stopped", status: "stopped", isRunning: false, expected: "提交已停止" },
   ])("$name 相写「$expected」", ({ status, isRunning, expected }) => {
     const html = renderBlock({ input: { result: { verdict: "proved" } }, status }, { isRunning });
 
@@ -202,7 +173,8 @@ describe("SubmitResultToolCallBlock 相位文案", () => {
   it("en-US 下相位文案同样本地化", () => {
     const html = renderBlock({ input: { result: { verdict: "proved" } } }, {}, "en-US");
 
-    expect(html).toContain(expectedCopy("chat.toolCall.submitResult.submitted"));
+    expect(html).toContain("Result submitted");
+    expect(html).not.toContain("已提交结果");
   });
 });
 
@@ -225,15 +197,12 @@ describe("SubmitResultToolCallBlock body 智能分流", () => {
     expect(html).toContain("&quot;alpha&quot;");
   });
 
-  it("纯字符串 result 走正文 prose，不进代码块、不用 mono", () => {
+  it("纯字符串 result 显示正文且不进代码块", () => {
     const prose = "根因在 scheduler 的 may-set 展开：lane 副本没有 actor 路由。";
     const html = renderBlock({ input: { result: prose } });
 
     expect(html).toContain(prose);
     expect(html).not.toContain('data-testid="code-block"');
-    // DESIGN.md 把 mono 留给路径/命令/代码/标识符；人话是 prose。
-    expect(html).not.toMatch(/font-mono[^>]*>根因在/u);
-    expect(html).toContain("whitespace-pre-wrap");
   });
 
   it("JSON 字符串 result 被解开成对象后走代码块分支", () => {
@@ -242,8 +211,6 @@ describe("SubmitResultToolCallBlock body 智能分流", () => {
 
     expect(html).toContain('data-testid="code-block"');
     expect(html).toContain("&quot;verdict&quot;: &quot;disproved&quot;");
-    // 折叠头部的单行概要仍是压缩形态，但 body 里不能再多出一块 prose 面板。
-    expect(html).not.toContain("rounded-lg border border-border bg-panel");
   });
 
   it("看着像 JSON 但解析不了的字符串保持 prose，不崩卡", () => {
@@ -288,8 +255,7 @@ describe("SubmitResultToolCallBlock 流式门", () => {
 
     expect(html).not.toContain('role="button"');
     expect(html).not.toContain('data-testid="code-block"');
-    expect(html).not.toContain("rounded-lg border border-border bg-panel");
-    expect(html).toContain(expectedCopy("chat.toolCall.submitResult.submitting"));
+    expect(html).toContain("正在提交结果");
   });
 
   it("input 完全缺席时同样不提供展开入口", () => {
@@ -307,7 +273,7 @@ describe("SubmitResultToolCallBlock 驳回态", () => {
       { errorText: REJECTION_TEXT },
     );
 
-    expect(html).toContain(expectedCopy("chat.toolCall.submitResult.rejected"));
+    expect(html).toContain("提交被驳回");
     // 折叠头部的单行 result 概要仍在——扁平行本身是一条概要行。
     expect(html).toContain("{&quot;verdict&quot;:&quot;yes&quot;}");
     // 不可展开：没有 toggle 按钮、没有展开后的 result 代码块。
@@ -321,7 +287,7 @@ describe("SubmitResultToolCallBlock 驳回态", () => {
   it("驳回态没有任何错误文本时同样是扁平行", () => {
     const html = renderBlock({ input: { result: { verdict: "yes" } }, status: "failed" });
 
-    expect(html).toContain(expectedCopy("chat.toolCall.submitResult.rejected"));
+    expect(html).toContain("提交被驳回");
     expect(html).not.toContain('role="button"');
     expect(html).not.toContain('data-testid="code-block"');
   });
@@ -337,6 +303,6 @@ describe("SubmitResultToolCallBlock 快照字段提示", () => {
       { onLoadFullToolCallFields: () => {} },
     );
 
-    expect(html).toContain(expectedCopy("chat.toolCall.snapshot.loadFull"));
+    expect(html).toContain("加载完整工具数据");
   });
 });

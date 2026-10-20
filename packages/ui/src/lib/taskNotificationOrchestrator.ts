@@ -103,8 +103,8 @@ function pendingInteractionPayload(params: {
   const taskId = snapshot.sessionId;
   const taskTitle = snapshot.meta.title;
 
-  // Settings is the only entry point for workspace Hook review; do not present it as
-  // a permission/elicitation system notification.
+  // workspace Hook review 的唯一入口是 Settings；不得把它伪装成
+  // permission/elicitation 系统通知。
   if (interaction.payload.kind === "workspaceHookReview") {
     return null;
   }

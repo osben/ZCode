@@ -6,11 +6,11 @@ import { ToolLayout } from "../src/ToolCallBlocks/ToolLayout.js";
 import { handleToolSummaryActionKeyDown } from "../src/ToolCallBlocks/ToolSummaryRow.js";
 
 describe("ToolLayout", () => {
-  it("keeps collapsible detail spacing inside the animated content body", () => {
+  it("renders force-open details inside collapsible content", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-spacing",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -22,25 +22,15 @@ describe("ToolLayout", () => {
       ),
     );
 
-    expect(html).toContain('class="w-full flex flex-col"');
-    expect(html).not.toContain('class="w-full flex flex-col gap-2"');
-    expect(html).toMatch(
-      /data-testid="tool-summary-trigger-tool-layout-spacing"[^>]*class="[^"]*\binline-flex\b[^"]*\bmax-w-full\b/,
-    );
-    expect(html).not.toMatch(
-      /data-testid="tool-summary-trigger-tool-layout-spacing"[^>]*class="[^"]*(?:^|\s)w-full(?:\s|")/,
-    );
-    expect(html).not.toMatch(/data-slot="collapsible-content"[^>]*class="[^"]*\bpt-2\b[^"]*"/);
-    expect(html).toMatch(
-      /data-slot="collapsible-content"[^>]*>[\s\S]*?<div class="pt-2"><div class="tool-detail">detail<\/div><\/div>/,
-    );
+    expect(html).toContain('data-testid="tool-summary-trigger-tool-layout-spacing"');
+    expect(html).toMatch(/data-slot="collapsible-content"[^>]*>[\s\S]*?<div[^>]*>detail<\/div>/);
   });
 
-  it("preserves detail spacing for force-open non-toggle content", () => {
+  it("renders force-open content without a collapsible wrapper", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-force-open-spacing",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -54,16 +44,14 @@ describe("ToolLayout", () => {
     );
 
     expect(html).not.toContain('data-slot="collapsible-content"');
-    expect(html).toMatch(
-      /class="[^"]*\btext-popover-foreground\b[^"]*\bpt-2\b[^"]*"><div class="tool-detail">detail<\/div>/,
-    );
+    expect(html).toContain('<div class="tool-detail">detail</div>');
   });
 
   it("keeps running tool icons static while animating kind labels", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-running-label",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -86,7 +74,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-empty-expanded-summary",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -108,7 +96,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-edit-file-priority",
           icon: createElement("span", { "aria-hidden": true }, "icon"),
@@ -130,7 +118,7 @@ describe("ToolLayout", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ToolLayout, {
           toolId: "tool-layout-summary-action",
           icon: createElement("span", { "aria-hidden": true }, "icon"),

@@ -20,8 +20,8 @@ import { cn } from "@/components/lib/utils.js";
 type AutomationSvgIconProps = SVGProps<SVGSVGElement>;
 
 /**
- * Automations consistently use Lucide's native 24×24 viewBox and 2px stroke.
- * The old design glyphs were cropped to 14.6667px and then enlarged, which also thickened their strokes.
+ * Automations 统一使用 Lucide 原生 24×24 viewBox 与 2px 描边。
+ * 旧设计稿 glyph 先裁切到 14.6667px 再放大，会连同描边一起放粗。
  */
 const AUTOMATION_ICON_PROPS = {
   size: 16,

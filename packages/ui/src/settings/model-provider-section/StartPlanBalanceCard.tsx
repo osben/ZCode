@@ -1,5 +1,8 @@
 import { Loader2Icon } from "lucide-react";
-import type { UsageEntitlementSubscriptionDetail, UsageQuotaLimit } from "@zcode/shared";
+import type {
+  UsageEntitlementSubscriptionDetail,
+  UsageQuotaLimit,
+} from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { formatStartPlanBucketResetTime } from "@/lib/codingPlanQuotaPresentation.js";
 import { formatStartPlanExpireDate } from "./CodingPlanStatusMeta.js";
@@ -22,8 +25,8 @@ export function StartPlanBalanceCard({
     const remaining = resolveLimitRemaining(limit);
     return total > 0 || remaining > 0;
   });
-  // The backend already returns balances for Today's balance in product-priority order.
-  // Reversing them again in the UI would put GLM-5.2 last, contrary to server configuration and user expectations.
+  // Today's balance 后端已经按产品优先级返回 balances。
+  // UI 继续反转会把 GLM-5.2 放到最后，和服务端配置及用户预期不一致。
   const displayLimits = visibleLimits;
   if (!isChecking && visibleLimits.length === 0) {
     return null;
@@ -34,7 +37,9 @@ export function StartPlanBalanceCard({
     locale,
   });
   return (
-    <div className={embedded ? "" : "rounded-lg border border-border bg-card p-4"}>
+    <div
+      className={embedded ? "" : "rounded-lg border border-border bg-card p-4"}
+    >
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <div className="flex min-w-0 items-center gap-2">
           <h4 className="min-w-0 truncate text-ui-base font-medium text-foreground">
@@ -47,7 +52,9 @@ export function StartPlanBalanceCard({
           ) : null}
         </div>
         {expireTimeLabel ? (
-          <span className="shrink-0 text-ui-xs text-foreground-subtle">{expireTimeLabel}</span>
+          <span className="shrink-0 text-ui-xs text-foreground-subtle">
+            {expireTimeLabel}
+          </span>
         ) : null}
       </div>
       {displayLimits.length > 0 ? (
@@ -57,9 +64,12 @@ export function StartPlanBalanceCard({
               key={resolveLimitKey(limit)}
               limit={limit}
               locale={locale}
-              // Bucket refresh time comes only from that bucket's expires_at (limit.nextResetTime);
-              // do not fall back to plan-level renewTime, which would copy the same time to every bucket.
-              renewTimeLabel={formatStartPlanBucketResetTime(locale, limit.nextResetTime)}
+              // 桶刷新时间只来自本桶的 expires_at（limit.nextResetTime），
+              // 不再用套餐级 renewTime 兜底，避免把同一时间复制到所有桶。
+              renewTimeLabel={formatStartPlanBucketResetTime(
+                locale,
+                limit.nextResetTime,
+              )}
             />
           ))}
         </div>
@@ -79,7 +89,8 @@ function StartPlanBalanceLimit({
 }) {
   const total = resolveLimitTotal(limit);
   const remaining = resolveLimitRemaining(limit);
-  const remainingRatio = total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
+  const remainingRatio =
+    total > 0 ? Math.max(0, Math.min(1, remaining / total)) : 0;
   const remainingPercent = formatRemainingPercent(locale, remainingRatio);
 
   return (
@@ -149,8 +160,8 @@ export function resolveStartPlanQuotaCardEntries({
 }): StartPlanQuotaCardEntry[] {
   return plans.map((plan) => ({
     plan,
-    // Assign quota buckets only by exact plan_id. The server contract guarantees that every bucket has a plan_id;
-    // do not fall back to a single plan for buckets without one, or a multi-plan setup would duplicate the same bucket across every card.
+    // 额度桶只按 plan_id 精确归属。服务端契约保证每个桶都带 plan_id，
+    // 不再对无 plan_id 的桶做单套餐兜底，否则多套餐下会把同一桶复制进每张卡片。
     limits: limits.filter((limit) => limit.planId?.trim() === plan.productId.trim()),
   }));
 }
@@ -180,7 +191,9 @@ function formatLimitModels(limit: UsageQuotaLimit): string {
   const modelNames = limit.usageDetails
     .map((detail) => {
       const displayName = detail.displayName?.trim();
-      return formatQuotaModelDisplayName(displayName || formatModelCode(detail.modelCode.trim()));
+      return formatQuotaModelDisplayName(
+        displayName || formatModelCode(detail.modelCode.trim()),
+      );
     })
     .filter((modelName) => modelName.length > 0);
   if (modelNames.length === 0) {

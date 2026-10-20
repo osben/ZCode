@@ -1,5 +1,4 @@
-// HK08/HK11: real component interactions under desktop and mobile display parameters; the full
-// chain is verified separately by the Hooks lifecycle Electron E2E.
+// HK08/HK11：桌面及手机展示参数下的真实组件交互；全链路另由 Hooks lifecycle Electron E2E 验证。
 import assert from "node:assert/strict";
 import { before, after, test } from "node:test";
 import { fileURLToPath } from "node:url";

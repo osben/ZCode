@@ -90,8 +90,8 @@ export function conversationSharePreflightCacheKey(
 }
 
 /**
- * When aggregating preflight results from multiple turns, remove duplicate global errors that cannot be located to a specific turn/file.
- * Preserve turn/file-level issues with their location fields so distinct issues the user must address are not merged.
+ * 聚合多个 turn 的预检结果时，去掉同一条无法定位到具体轮次/文件的全局错误。
+ * 轮次或文件级问题保留各自定位字段，避免把用户真正需要处理的多个问题合并掉。
  */
 export function dedupeConversationShareIssues(
   issues: readonly ConversationShareFailureIssue[],
@@ -102,8 +102,8 @@ export function dedupeConversationShareIssues(
       issue.rowId !== undefined ||
       issue.turnOrdinal !== undefined ||
       issue.artifactDisplayName !== undefined;
-    // Transport/conversation issues are global by nature; when turn/artifact issues have no location fields,
-    // preserve them even if their content matches so multiple pending turns are not mistakenly merged into one.
+    // transport/conversation 问题本身就是全局状态；turn/artifact 问题没有定位字段时，
+    // 即使内容相同也要保留，避免把多个待处理轮次误合并成一条。
     if (!hasLocator && issue.scope !== "transport" && issue.scope !== "conversation") {
       return true;
     }
@@ -131,11 +131,11 @@ export function dedupeConversationShareIssues(
 }
 
 /**
- * Split one preflight result into cache entries keyed by turn.
+ * 把一次预检结果拆成按 turn 的缓存条目。
  *
- * In dev, the host process does not restart when services are rebuilt, so an older host may return results without turnResults;
- * callers invoking `.map` directly throw, and a downstream catch reports “server-side preflight failed.” Degrade gracefully when the field is missing:
- * fall back to the overall issues when turn details are unavailable; coarser results are preferable to calling a successful preflight a failure.
+ * dev 下 host 进程不会随 services 重建重启，老 host 返回的结果没有 turnResults，
+ * 调用方直接 `.map` 会抛异常并被下游 catch 报成「服务端预检失败」。这里对字段缺失做降级：
+ * 找不到某个 turn 的明细就回落到整体 issues，宁可粒度粗一点也不能把成功的预检说成失败。
  */
 export function buildConversationSharePreflightCacheEntries(
   result: ConversationSharePreflightResult,
@@ -178,7 +178,7 @@ export function getMissingConversationSharePreflightTurnIds(
   });
 }
 
-/** The line limit applies to the entire selected set; recalculate after removing or adding turns instead of reusing a batch RPC total. */
+/** 行数是整组选中项的约束，取消/新增轮次后必须重算，不能沿用某一批 RPC 的合计。 */
 export function aggregateConversationShareBlockingIssues(
   entries: readonly ConversationShareTurnPreflightResult[],
 ): ConversationShareFailureIssue[] {

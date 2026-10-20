@@ -1,5 +1,9 @@
+import { Slot } from "radix-ui";
 import {
   cloneElement,
+  createContext,
+  useContext,
+  type ReactElement,
   isValidElement,
   useCallback,
   type ComponentProps,
@@ -13,7 +17,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip.js";
-import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
+import { ControlShortcutBadge } from "@/ControlShortcutBadge.js";
 
 interface ControlHintTooltipProps {
   children: ReactNode;
@@ -35,9 +39,6 @@ type TriggerChildProps = {
   className?: string;
   ref?: Ref<HTMLElement>;
 };
-
-const shortcutKbdBaseClassName =
-  "rounded-md h-4 inline-flex items-center border border-b-2 border-border bg-tooltip-tag px-1.5 text-ui-xs font-medium text-tooltip-tag-foreground";
 
 function setRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (!ref) {
@@ -65,18 +66,10 @@ export function ControlHintTooltip({
   triggerClassName,
   triggerRef,
 }: ControlHintTooltipProps) {
-  const useAppleShortcutFont = isAppleKeyboardPlatform();
-  const shortcutFontClassName = useAppleShortcutFont ? "tracking-normal" : "font-mono";
-  const shortcutFontStyle = useAppleShortcutFont
-    ? {
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif',
-      }
-    : undefined;
   const isTriggerElement = isValidElement<TriggerChildProps>(children);
   const childRef = isTriggerElement ? children.props.ref : undefined;
-  // Radix Tooltip/Dropdown/Popper asChild triggers synchronously call setState when the ref changes.
-  // Keep the callback ref identity stable; otherwise every render detaches and reattaches the ref, causing an update loop.
+  // Radix Tooltip/Dropdown/Popper 的 asChild trigger 会在 ref 变化时同步 setState。
+  // 这里必须稳定 callback ref 身份，否则每次 render 都会触发 ref detach/attach 并形成更新循环。
   const composedTriggerRef = useCallback(
     (value: HTMLElement | null) => {
       setRef(childRef, value);
@@ -86,8 +79,8 @@ export function ControlHintTooltip({
   );
   const trigger = isTriggerElement ? (
     cloneElement(children, {
-      // Previously, an extra span caused events and refs to land on different DOM nodes when Radix Tooltip/Select/Popover used nested asChild elements,
-      // triggering a SlotClone render-stack error. Attach directly to the actual trigger instead.
+      // 以前额外包一层 span，Radix Tooltip/Select/Popover 多层 asChild 组合时，
+      // 事件和 ref 会落到不同 DOM 上，触发 SlotClone 渲染栈错误。这里直接合到真实触发器。
       className: cn("shrink-0", children.props.className, triggerClassName),
       ref: composedTriggerRef,
     })
@@ -100,8 +93,8 @@ export function ControlHintTooltip({
     </span>
   );
 
-  // Large conversations render many ControlHintTooltip instances for message actions. Creating a Provider for each one
-  // would grow the Radix context tree with the message count; Root provides a shared Provider instead.
+  // 大会话会为每条消息动作渲染大量 ControlHintTooltip，逐个创建 Provider
+  // 会把 Radix 上下文树放大到消息数量级；共享 Provider 统一放在 Root。
   const tooltip = (
     <Tooltip open={open} onOpenChange={onOpenChange}>
       <TooltipTrigger asChild>{trigger}</TooltipTrigger>
@@ -121,19 +114,11 @@ export function ControlHintTooltip({
             <span className="text-ui-sm font-medium leading-4 text-tooltip-foreground">
               {title}
             </span>
-            {shortcut ? (
-              <kbd
-                data-slot="kbd"
-                className={cn(shortcutKbdBaseClassName, shortcutFontClassName, "shrink-0")}
-                style={shortcutFontStyle}
-              >
-                {shortcut}
-              </kbd>
-            ) : null}
+            {shortcut ? <ControlShortcutBadge>{shortcut}</ControlShortcutBadge> : null}
           </div>
         ) : (
-          // Undescribed tooltips were constrained by both max-w-xs and nowrap, clipping long English and Chinese text.
-          // Keep short tooltips content-sized, allow wrapping beyond the viewport’s safe width, and use explicit line breaks for structured hints.
+          // 无描述的提示过去同时受 max-w-xs 和 nowrap 约束，长中英文文案会越界裁剪。
+          // 短提示继续按内容宽度展示，超过视口安全宽度时允许自然换行；显式换行用于结构化提示。
           <span className="text-ui-sm font-medium whitespace-pre-line break-words text-tooltip-foreground">
             {title}
           </span>
@@ -143,20 +128,59 @@ export function ControlHintTooltip({
             {description}
           </span>
         ) : null}
-        {!description && shortcut ? (
-          <kbd
-            data-slot="kbd"
-            className={cn(shortcutKbdBaseClassName, shortcutFontClassName, "shrink-0")}
-            style={shortcutFontStyle}
-          >
-            {shortcut}
-          </kbd>
-        ) : null}
+        {!description && shortcut ? <ControlShortcutBadge>{shortcut}</ControlShortcutBadge> : null}
       </TooltipContent>
     </Tooltip>
   );
 
-  // A few components need to render outside Root during SSR or unit tests; this wrapper adds a Provider on demand,
-  // avoiding business-layer recomposition of Tooltip primitives without creating duplicate contexts for regular list tooltips.
+  // 少数组件需要支持脱离 Root 的 SSR/单测渲染；由封装按需补 Provider，
+  // 避免业务层重新组合 Tooltip primitives，同时不让列表中的常规提示重复创建上下文。
   return standalone ? <TooltipProvider>{tooltip}</TooltipProvider> : tooltip;
+}
+
+const SidebarTooltipContext = createContext(false);
+
+export function SidebarTooltipProvider({ children }: { children: ReactNode }) {
+  // 侧栏原先继承全局零延迟，且连续划过按钮会跳过等待；在边界统一配置，每个提示都等待 300ms。
+  return (
+    <SidebarTooltipContext.Provider value>
+      <TooltipProvider
+        delayDuration={300}
+        skipDelayDuration={0}
+        alwaysDelay
+        disableHoverableContent
+      >
+        {children}
+      </TooltipProvider>
+    </SidebarTooltipContext.Provider>
+  );
+}
+
+/** 原生 title 无法配置延迟；只在侧栏范围内替换，复用组件在其它页面的行为不变。 */
+export function SidebarNativeTooltip({
+  children,
+  ...triggerProps
+}: Omit<ComponentProps<typeof Slot.Root>, "children"> & {
+  children: ReactElement<{ title?: string; disabled?: boolean; className?: string }>;
+}) {
+  const inSidebar = useContext(SidebarTooltipContext);
+  if (!inSidebar || !children.props.title)
+    return <Slot.Root {...triggerProps}>{children}</Slot.Root>;
+  const trigger = cloneElement(children, { title: undefined });
+  return (
+    <ControlHintTooltip
+      title={children.props.title}
+      // 原生标题所在元素可能需要收缩；不能继承图标按钮提示的 shrink-0。
+      triggerClassName={cn("shrink", children.props.className)}
+    >
+      {/* 菜单/树行的 asChild 会把事件和 ref 注入这个适配层，必须通过 Slot 合并回真实触发器。 */}
+      {children.props.disabled ? (
+        <span className="block min-w-0">
+          <Slot.Root {...triggerProps}>{trigger}</Slot.Root>
+        </span>
+      ) : (
+        <Slot.Root {...triggerProps}>{trigger}</Slot.Root>
+      )}
+    </ControlHintTooltip>
+  );
 }

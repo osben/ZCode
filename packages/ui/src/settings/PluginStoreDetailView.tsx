@@ -1,10 +1,9 @@
-/* eslint-disable max-lines -- The marketplace detail page organizes the hero, example prompts, component sections, information, and advanced disclosure into one cohesive page matching the reference screenshot 1:1. */
+/* eslint-disable max-lines -- 商店详情页把 hero/示例提示词/组件分区/信息区/高级折叠组织为一个连贯页面，与截图 1:1 对齐。 */
 import { useState, type ReactNode } from "react";
 import {
   Anchor,
   ArrowRight,
   Bot,
-  Braces,
   ChevronRight,
   ExternalLink,
   Loader2,
@@ -14,9 +13,13 @@ import {
   Terminal,
   TriangleAlert,
   WandSparkles,
+  Maximize2,
+  RotateCcw,
 } from "lucide-react";
 import type { ZCodePluginComponentKind, ZCodePluginsDescribeResult } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog.js";
+import { resolvePluginUiSurfaceTitle } from "@/plugin-ui/index.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { PluginStoreAvatar } from "@/settings/PluginStoreAvatar.js";
@@ -28,10 +31,13 @@ import {
   PluginStoreInstallButton,
   PluginStoreItemMenu,
   PluginStorePaidPlanBadge,
+  PluginStoreOpenUiButton,
+  PluginStoreUpdateButton,
   type PluginStoreActions,
 } from "@/settings/PluginStoreCard.js";
 import {
   isTrustedImageUrl,
+  isUiPluginItem,
   KNOWN_CATEGORY_LABEL_IDS,
   resolveItemDescription,
   resolveStoreCategory,
@@ -46,29 +52,20 @@ import {
 import type { PluginComponentDisplayGroup } from "@/settings/PluginComponentGroups.js";
 import type { PluginDescribeEntry } from "@/store/pluginManagementStore.js";
 
-// Component sections follow the screenshot order: MCP servers → skills → commands → subagents → Hooks.
-const SECTION_ORDER: ZCodePluginComponentKind[] = [
-  "mcp",
-  "lsp",
-  "skill",
-  "command",
-  "agent",
-  "hook",
-];
+// 组件分区顺序与截图一致：MCP 服务器 → 技能 → 命令 → 子智能体 → Hooks。
+const SECTION_ORDER: ZCodePluginComponentKind[] = ["mcp", "skill", "command", "agent", "hook"];
 
 const SECTION_TITLE_IDS: Record<ZCodePluginComponentKind, string> = {
   mcp: "settings.plugins.store.section.mcp",
-  lsp: "settings.plugins.detail.component.lsp",
   skill: "settings.plugins.store.section.skills",
   command: "settings.plugins.store.section.commands",
   agent: "settings.plugins.store.section.agents",
   hook: "settings.plugins.store.section.hooks",
 };
 
-// Share icon semantics with each resource settings list to avoid recognition differences from similar-looking icons on the detail page.
+// 与各资源设置列表共用同一图标语义，避免详情页用近似图标造成识别不一致。
 const SECTION_ICONS: Record<ZCodePluginComponentKind, typeof Server> = {
   mcp: Server,
-  lsp: Braces,
   skill: WandSparkles,
   command: Terminal,
   agent: Bot,
@@ -100,18 +97,15 @@ export function PluginStoreDetailView({
   onRetryDescribe,
   onUsePrompt,
   advanced,
-  languageServers,
 }: {
   item: StorePluginItem;
   actions: PluginStoreActions;
   describeEntry?: PluginDescribeEntry;
   onRetryDescribe: () => void;
-  /** Try: create a standard new task prefilled with the canonical Plugin reference + example prompt (do not auto-send); guide installation first if not installed. */
+  /** 试用：标准新建任务并预填 canonical Plugin 引用 + 示例提示词（不自动发送）；未安装时先引导安装。 */
   onUsePrompt: (item: StorePluginItem, prompt: string) => void;
-  /** Advanced disclosure (rootPath/Hook details/config options), injected by the parent only when installed and runtime information is available. */
+  /** 高级折叠区（rootPath/Hook 明细/配置项），仅已安装且有运行时信息时由父级注入。 */
   advanced?: ReactNode;
-  /** Installed-plugin language server status and per-server switches; supplied only by the installed detail page. */
-  languageServers?: ReactNode;
 }) {
   const { intl, locale } = useZCodeIntl();
   const displayName = resolveItemDisplayName(item, locale);
@@ -136,7 +130,7 @@ export function PluginStoreDetailView({
 
   return (
     <div className="space-y-8" data-testid="plugin-store-detail" data-plugin-id={item.id}>
-      {/* Header: after the large icon, place the display name beside the menu/primary button; show description and source notice on a separate line. */}
+      {/* 头部：大图标后，显示名与菜单/主按钮同排；简介和来源提示另起一行。 */}
       <div className="space-y-3">
         <PluginStoreAvatar item={item} className="size-16 rounded-2xl" iconClassName="size-6" />
         <div
@@ -144,12 +138,13 @@ export function PluginStoreDetailView({
           data-testid="plugin-store-title-actions"
         >
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-foreground">
+            <h1 className="min-w-0 truncate text-ui-xl font-semibold tracking-tight text-foreground">
               {displayName}
             </h1>
             <PluginStorePaidPlanBadge item={item} />
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            <PluginStoreUpdateButton item={item} actions={actions} />
             {item.installed ? (
               <>
                 <PluginStoreItemMenu
@@ -158,29 +153,26 @@ export function PluginStoreDetailView({
                   triggerVariant="outline"
                   triggerSize="icon-lg"
                 />
-                {/* Top-level Try and example prompts share the same canonical construction; an empty prompt means prefill only the Plugin mention. */}
-                <Button
-                  type="button"
-                  variant="default"
-                  size="lg"
-                  data-testid="plugin-store-try-now"
-                  data-plugin-id={item.id}
-                  onClick={() => onUsePrompt(item, "")}
-                >
-                  <MessagesSquare className="size-3.5" aria-hidden="true" />
-                  {intl.formatMessage({ id: "settings.plugins.store.tryNow" })}
-                </Button>
+                {/* 顶部试用与示例提示词共用同一 canonical 构造；空 prompt 表示只预填 Plugin mention。 */}
+                {/* 只有会话右侧市场提供 onOpenUi；主导航详情保留普通插件的「立即试用」。 */}
+                {isUiPluginItem(item) && actions.onOpenUi ? (
+                  <PluginStoreOpenUiButton item={item} actions={actions} />
+                ) : (
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="lg"
+                    data-testid="plugin-store-try-now"
+                    data-plugin-id={item.id}
+                    onClick={() => onUsePrompt(item, "")}
+                  >
+                    <MessagesSquare className="size-3.5" aria-hidden="true" />
+                    {intl.formatMessage({ id: "settings.plugins.store.tryNow" })}
+                  </Button>
+                )}
               </>
             ) : (
               <>
-                {actions.onResetConfig ? (
-                  <PluginStoreItemMenu
-                    item={item}
-                    actions={actions}
-                    triggerVariant="outline"
-                    triggerSize="icon-lg"
-                  />
-                ) : null}
                 <PluginStoreInstallButton item={item} actions={actions} size="lg" />
               </>
             )}
@@ -203,7 +195,7 @@ export function PluginStoreDetailView({
         ) : null}
       </div>
 
-      {/* Hero area: stack example-prompt pills vertically over the banner image; with prompts but no image, show only the pills; render nothing when neither exists. */}
+      {/* Hero 区：横幅图上垂直堆叠示例提示词胶囊；无图但有提示词 → 纯胶囊列表；两者皆无 → 不渲染。 */}
       {isTrustedImageUrl(heroImage) || examplePrompts.length > 0 ? (
         <HeroSection
           item={item}
@@ -214,7 +206,7 @@ export function PluginStoreDetailView({
         />
       ) : null}
 
-      {/* Component sections: installed Plugins use the authoritative ZCodePluginInfo.components enum; candidates fetch on demand through plugins/describe. */}
+      {/* 组件分区：已安装走权威枚举（ZCodePluginInfo.components），候选走 plugins/describe 按需拉取。 */}
       {componentsLoading ? (
         <div
           className="flex items-center gap-2 py-2 text-ui-base text-foreground-subtle"
@@ -246,10 +238,32 @@ export function PluginStoreDetailView({
         orderedGroups.map((group) => <ComponentSection key={group.kind} group={group} />)
       )}
 
-      {languageServers}
-
-      {/* Information area: prefer listing, fall back to manifest (runtime/describe), and omit a row entirely when no value exists (ADR-0001). */}
+      {/* 信息区：listing 优先，manifest（运行时/describe）回退；无值整行省略（ADR-0001）。 */}
       <InfoSection item={item} describeMetadata={describeMetadata} />
+
+      {isUiPluginItem(item) ? (
+        <section data-testid="plugin-store-ui-capability" className="space-y-2">
+          <h2 className="text-ui-lg font-semibold">
+            {intl.formatMessage({ id: "settings.plugins.store.ui.capability" })}
+          </h2>
+          {item.info?.uiSurfaces?.map((surface) => (
+            <p key={surface.id} className="text-ui-base text-foreground-subtle">
+              {resolvePluginUiSurfaceTitle(surface.title, locale)}
+            </p>
+          ))}
+        </section>
+      ) : null}
+      {actions.onResetConfig ? (
+        <Button
+          variant="outline"
+          data-testid="plugin-store-reset-config"
+          disabled={actions.activeOperations.length > 0 || actions.togglingPluginId === item.id}
+          onClick={() => actions.onResetConfig?.(item.id)}
+        >
+          <RotateCcw className="size-3.5" aria-hidden="true" />
+          {intl.formatMessage({ id: "settings.plugins.scope.restoreUserDefault" })}
+        </Button>
+      ) : null}
 
       {advanced}
     </div>
@@ -269,7 +283,9 @@ function HeroSection({
   heroImage: string | undefined;
   onUsePrompt: (item: StorePluginItem, prompt: string) => void;
 }) {
+  const { intl } = useZCodeIntl();
   const [heroFailed, setHeroFailed] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const showHeroImage = isTrustedImageUrl(heroImage) && !heroFailed;
   const prompts = examplePrompts.map((prompt) => {
     const documentIcon = resolveExamplePromptDocumentIcon(prompt);
@@ -279,7 +295,7 @@ function HeroSection({
         type="button"
         data-testid="plugin-store-example-prompt"
         data-plugin-id={item.id}
-        // Use the reference's dark translucent pill consistently on the colored Hero, without switching to a regular card when the background image is absent.
+        // 彩色 Hero 上统一使用参考图的深色半透明胶囊，不随底图有无切换为普通卡片。
         className="group/prompt flex w-fit max-w-2xl items-center gap-2.5 rounded-3xl bg-black/75 px-3.5 py-2.5 text-left text-ui-base text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
         onClick={() => onUsePrompt(item, prompt)}
       >
@@ -304,32 +320,51 @@ function HeroSection({
   if (!showHeroImage && prompts.length === 0) return null;
 
   return (
-    <div
-      className="relative min-h-72 overflow-hidden rounded-3xl sm:aspect-[3/1] sm:min-h-0"
-      data-testid="plugin-store-hero"
-    >
-      <ThemeHeroVisual className="pointer-events-none absolute inset-0" />
-      {showHeroImage ? (
-        <img
-          src={heroImage}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="absolute inset-0 size-full select-none object-cover opacity-80"
-          onError={() => setHeroFailed(true)}
-        />
-      ) : null}
+    <Dialog open={previewOpen && showHeroImage} onOpenChange={setPreviewOpen}>
       <div
-        className="absolute inset-0 bg-black/15"
-        data-testid="plugin-store-hero-overlay"
-        aria-hidden="true"
-      />
-      {prompts.length > 0 ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-5 sm:p-8">
-          {prompts}
-        </div>
-      ) : null}
-    </div>
+        className="relative min-h-72 overflow-hidden rounded-xl sm:aspect-[3/1] sm:min-h-0"
+        data-testid="plugin-store-hero"
+      >
+        <ThemeHeroVisual className="pointer-events-none absolute inset-0" />
+        {showHeroImage ? (
+          <img
+            src={heroImage}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="absolute inset-0 size-full select-none object-cover opacity-80"
+            onError={() => setHeroFailed(true)}
+          />
+        ) : null}
+        <div
+          className="absolute inset-0 bg-black/15"
+          data-testid="plugin-store-hero-overlay"
+          aria-hidden="true"
+        />
+        {prompts.length > 0 ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-5 sm:p-8">
+            {prompts}
+          </div>
+        ) : null}
+        {showHeroImage ? (
+          <DialogTrigger asChild>
+            <Button
+              variant="secondary"
+              className="absolute right-3 top-3"
+              size="icon-md"
+              data-testid="plugin-store-preview-open"
+              aria-label={intl.formatMessage({ id: "settings.plugins.store.ui.preview" })}
+            >
+              <Maximize2 className="size-4" aria-hidden="true" />
+            </Button>
+          </DialogTrigger>
+        ) : null}
+      </div>
+      <DialogContent className="max-w-5xl" aria-describedby={undefined}>
+        <DialogTitle>{displayName}</DialogTitle>
+        <img src={heroImage} alt={displayName} className="max-h-[80vh] w-full object-contain" />
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -478,7 +513,7 @@ function InfoSection({
   );
 }
 
-/** Allow only https external links (enforced by the info-section renderer; the schema does not validate them). */
+/** 外链只放行 https（信息区渲染层统一收口，schema 不做校验）。 */
 function pickHttpsUrl(...candidates: Array<string | undefined>): string | undefined {
   return candidates.find(
     (candidate): candidate is string =>
@@ -486,7 +521,7 @@ function pickHttpsUrl(...candidates: Array<string | undefined>): string | undefi
   );
 }
 
-/** Advanced collapsible section shell: "More details" at the bottom of the detail page; content is provided by the parent (rootPath/Hook details/config). */
+/** 高级折叠区外壳：详情页底部的「更多详情」，内容由父级注入（rootPath/Hook 明细/配置）。 */
 export function PluginStoreAdvancedSection({ children }: { children: ReactNode }) {
   const { intl } = useZCodeIntl();
   return (

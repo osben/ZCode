@@ -1,3 +1,4 @@
+import { isPublicZCodeErrorCode } from "@zcode/shared";
 export const REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE = "ZCODE_REMOTE_WORKSPACE_DISCONNECTED";
 
 export function createRemoteWorkspaceDisconnectedError(): Error & {
@@ -11,8 +12,8 @@ export function createRemoteWorkspaceDisconnectedError(): Error & {
 }
 
 export function isRemoteWorkspaceDisconnectedError(error: unknown): boolean {
-  // The RPC/Proxy boundary may preserve Error or only the code/message fields.
-  // Accept exact error codes only; using includes could mistake a real business error for an initialization-pending state.
+  // RPC/Proxy 边界可能保留 Error，也可能只保留 code/message 字段。
+  // 只接受精确错误码，避免用 includes 把真实业务错误误判成初始化等待态。
   if (error === REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE) {
     return true;
   }
@@ -26,4 +27,12 @@ export function isRemoteWorkspaceDisconnectedError(error: unknown): boolean {
     candidate.code === REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE ||
     candidate.message === REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE
   );
+}
+
+/** 仅识别远程协议的结构化码，不能把模型网络报错或普通业务文案猜成设备断线。 */
+export function getRemoteConnectionFailureCode(error: unknown): string | undefined {
+  if (isRemoteWorkspaceDisconnectedError(error)) return REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE;
+  if (!error || typeof error !== "object" || !("code" in error) || typeof error.code !== "string")
+    return undefined;
+  return isPublicZCodeErrorCode(error.code) ? error.code : undefined;
 }

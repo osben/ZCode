@@ -14,9 +14,8 @@ import {
   resolveCodingPlanProductsFailureSnapshot,
 } from "@/settings/model-provider-section/useCodingPlanProducts.js";
 
-// The native purchase panels (CodingPlanPurchasePanel / CodingPlanProductCards) have been taken
-// offline and purchase moved to a webview dialog; this file keeps only the cases that still target
-// live code.
+// 原生购买面板（CodingPlanPurchasePanel / CodingPlanProductCards）已下线，
+// 购买流程改为 webview 弹窗；本文件只保留仍针对活代码的用例。
 
 afterEach(() => {
   clearCodingPlanProductsCacheForTest();
@@ -134,6 +133,39 @@ describe("CodingPlanProductCards", () => {
     expect(
       forced.productList.find((product) => product.productId === "product-e68d08")?.payAmount,
     ).toBe(50);
+  });
+
+  it("isolates product snapshots for the same provider across service instances", async () => {
+    const createService = (payAmount: number) => ({
+      batchPreview: vi.fn(async () => ({
+        productList: [
+          {
+            productId: "product-e68d08",
+            productName: "GLM Coding Lite",
+            payAmount,
+            priceCurrency: "USD",
+          },
+        ],
+        isSubscribed: false,
+        isAuthenticated: true,
+      })),
+    });
+    const serviceA = createService(10);
+    const serviceB = createService(20);
+    const first = await loadCodingPlanProductsForTest(
+      BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
+      serviceA as never,
+      false,
+    );
+    const second = await loadCodingPlanProductsForTest(
+      BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
+      serviceB as never,
+      false,
+    );
+    expect(serviceA.batchPreview).toHaveBeenCalledOnce();
+    expect(serviceB.batchPreview).toHaveBeenCalledOnce();
+    expect(first.productList[0]?.payAmount).toBe(10);
+    expect(second.productList[0]?.payAmount).toBe(20);
   });
 
   it("prevents stale in-flight previews from replacing a forced refresh cache", async () => {

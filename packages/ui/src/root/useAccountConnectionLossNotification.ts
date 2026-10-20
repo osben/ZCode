@@ -9,7 +9,7 @@ import {
 import { prepareAccountConnectionSwitch } from "@/root/accountConnectionLossSuggestion.js";
 import { logger } from "@/logger.js";
 
-/** Observe only once at the root; page/copy changes do not establish a new account baseline. */
+/** 根层只观察一次；页面/文案变化不重新建立账号基线。 */
 export function useAccountConnectionLossNotification(
   services: IServiceAccessor,
   intentKey: string,
@@ -23,7 +23,7 @@ export function useAccountConnectionLossNotification(
   );
   const noticeRef = useRef<{ id: number; event: AccountConnectionLoss } | null>(null);
   useEffect(() => {
-    // Settings/login intent can change before the Account query returns; even after navigating away and back, an old button must not become valid again.
+    // 设置/登录意图先于 Account 查询回包变化；即使切走又切回，旧按钮也不能重新有效。
     observerRef.current?.invalidate();
     if (noticeRef.current) dismissToast(noticeRef.current.id);
     noticeRef.current = null;
@@ -67,7 +67,7 @@ export function useAccountConnectionLossNotification(
               );
               return;
             }
-            // The conditional write succeeded; only refresh the display here and do not describe a refresh failure as a save failure.
+            // 条件写入已成功；这里只刷新显示，不把刷新失败说成保存失败。
             try {
               await latest.current.refreshAppSettings?.();
             } catch (error) {
@@ -76,7 +76,7 @@ export function useAccountConnectionLossNotification(
           } catch (error) {
             logger.lifecycle.warn("[AccountConnection] 手动切换套餐失败", { error });
             if (!event.isCurrent()) return;
-            // Clicking a toast closes it automatically. On failure, provide an explicit retry for the same suggestion; do not choose a new target in the background.
+            // Toast 点击会自动关闭。失败时给同一建议的显式重试，不能后台选新目标。
             id = toast(
               latest.current.intl.formatMessage({
                 id: "settings.modelProvider.connectionSwitchFailed",

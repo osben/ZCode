@@ -51,8 +51,8 @@ export interface CodeViewerProps extends HTMLAttributes<HTMLDivElement> {
   focusedRange?: CodeCommentRange | null;
   focusRequestId?: string;
   /**
-   * Line numbers to highlight (1-based, in the same coordinate system as `firstLineNumber`): tint only these rows' **line numbers** with a warning color;
-   * leave the code itself unchanged. Compilation feedback cards use this to mark the lines referenced by diagnostics.
+   * 需要点名的行号（1 起，与 `firstLineNumber` 同一坐标）：只把这些行的**行号**染成警示色，
+   * 代码本身不动。编译反馈卡用它标出被诊断指到的行。
    */
   markedLines?: readonly number[];
   enableLineSelection?: boolean;
@@ -136,9 +136,9 @@ const CODE_VIEWER_UNSAFE_CSS = [
 ].join("");
 
 /**
- * Coloring rules for highlighted line numbers. @pierre/diffs renders the line-number cell as `[data-column-number="<line number>"]` inside Shadow DOM;
- * outer classes cannot reach it, so inject styles with unsafeCSS. Use the application color token (custom properties pass through the shadow root)
- * to follow light/dark themes. Discard non-positive integers and duplicates; return an empty string for an empty set.
+ * 被点名行号的着色规则。行号格是 @pierre/diffs 在 Shadow DOM 里画的 `[data-column-number="<行号>"]`，
+ * 外层 class 进不去，只能随 unsafeCSS 注入；颜色走应用 token（自定义属性穿透 shadow root），
+ * 深浅主题自动跟随。非正整数与重复值丢弃，空集合返回空串。
  */
 export function codeViewerMarkedLinesCss(lines: readonly number[] | undefined): string {
   const unique = [...new Set(lines ?? [])].filter((line) => Number.isInteger(line) && line > 0);
@@ -263,8 +263,8 @@ function createCodeViewerFile(params: {
     name,
     contents: params.code,
     lang,
-    // @pierre/diffs reuses tokens by file.cacheKey. The old key omitted the theme, so switching app light/dark within
-    // the same task kept using stale highlighting until switching tasks caused a rebuild.
+    // @pierre/diffs 会按 file.cacheKey 复用 token；旧 key 没带主题，导致同一 task 内
+    // 切换 app light/dark 时继续命中旧高亮，只有切换 task 触发重建后才恢复。
     cacheKey: `${themeCacheKey}:${name}:${lang}:${params.code.length}:${hashCodeViewerContent(params.code)}`,
   };
 }
@@ -472,8 +472,8 @@ export function CodeViewer({
   const [activeDraftRange, setActiveDraftRange] = useState<CodeCommentRange | null>(null);
   const [draftText, setDraftText] = useState("");
   const canCreateComment = Boolean(onSubmitCodeComment);
-  /* Markdown code blocks also use CodeViewer. Previously, hiding only the comment button while keeping line hover
-       made read-only code look like it still supported commenting; keep the built-in interaction enabled only when commenting is available. */
+  /* markdown 代码块也复用 CodeViewer。之前只关闭评论按钮但保留行 hover，
+     会让只读代码看起来仍可进入评论交互；这里把官方交互开关收敛到评论能力上。 */
   const canUseCommentLineSelection = canCreateComment && enableLineSelection;
   const canUseCommentGutterUtility = canCreateComment && enableGutterUtility;
   const labels = useMemo(
@@ -606,8 +606,8 @@ export function CodeViewer({
       });
     }
 
-    // @pierre/diffs creates the built-in gutter button through its internal InteractionManager.
-    // Add only title/aria-label here; do not take over rendering or pointer events, which could break drag selection for multi-line comments.
+    // @pierre/diffs 的内建 gutter button 由内部 InteractionManager 生成。
+    // 这里只补充 title/aria-label，不接管渲染或 pointer 事件，避免破坏拖拽选择多行评论。
     observeRoot(root);
     patch();
     schedulePatch();
@@ -645,8 +645,8 @@ export function CodeViewer({
         const commentRect = comment.getBoundingClientRect();
         const horizontalScrollLeft = container.scrollLeft;
         const commentBottom = container.scrollTop + commentRect.bottom - containerRect.top;
-        // Let comments follow code scrolling, but when the card is clicked place the comment bottom at the viewport's
-        // lower edge so both the target line and comment are visible. Set only scrollTop to avoid scrollIntoView changing horizontal position.
+        // 评论跟随代码滚动，但点击卡片时把评论底部放在可视区下沿，
+        // 让目标行和其下评论同时出现；只写 scrollTop，避免 scrollIntoView 改变横向位置。
         container.scrollTop = Math.max(0, commentBottom - container.clientHeight + 12);
         container.scrollLeft = horizontalScrollLeft;
         return;
@@ -668,14 +668,14 @@ export function CodeViewer({
       }
     };
 
-    // The real code lines from @pierre/diffs live in an asynchronously created Shadow DOM; passing only selectedLines
-    // highlights them but does not scroll to them. Retry briefly when requestId changes so a new comment in the same tab can be brought into view.
+    // @pierre/diffs 的真实代码行位于异步创建的 Shadow DOM 中；仅传
+    // selectedLines 会高亮但不会定位。requestId 变化时短暂重试，确保同 tab 新评论可滚动。
     animationFrame = window.requestAnimationFrame(scrollToFocusedLine);
     return () => {
       window.cancelAnimationFrame(animationFrame);
     };
   }, [file.cacheKey, firstLineNumber, focusedEndLine, focusedStartLine, focusRequestId]);
-  // Depend on the CSS string content, not the array reference: callers may create a new array on each render, but options should not change (File would reorder).
+  // 依赖是 CSS 字符串（内容）而不是数组引用：调用方每次渲染给一个新数组时，options 不该跟着换（File 会重排）。
   const markedLinesCss = codeViewerMarkedLinesCss(markedLines);
   const options = useMemo<FileOptions<CodeViewerAnnotationMetadata>>(
     () => ({
@@ -689,11 +689,11 @@ export function CodeViewer({
       lineHoverHighlight:
         canUseCommentLineSelection || canUseCommentGutterUtility ? "both" : "disabled",
       onLineSelectionEnd: handleLineSelectionEnd,
-      // Custom renderGutterUtility receives only the hovered line, so dragging the comment + control would degrade to a single line.
-      // Use @pierre/diffs' gutter selection callback so clicks and drags use the same range calculation.
+      // 自定义 renderGutterUtility 只能拿 hover 行，拖拽 comment + 时会退化成单行。
+      // 使用 @pierre/diffs 的 gutter selection 回调，让点击和拖拽都走同一套 range 计算。
       onGutterUtilityClick: canUseCommentGutterUtility ? handleGutterUtilitySelection : undefined,
-      // The built-in comment + sits immediately to the right of the line number by default and can be confused with the code start while dragging.
-      // Adjust only the position of the gutter utility inside the Shadow DOM; do not take over pointer events or break multi-line drag ranges.
+      // 内建 comment + 默认贴在行号右侧，用户拖拽时容易和代码起点混在一起。
+      // 这里只调整 Shadow DOM 内 gutter utility 的位置，不接管 pointer 事件，避免破坏多行拖拽 range。
       unsafeCSS: CODE_VIEWER_UNSAFE_CSS + markedLinesCss,
     }),
     [
@@ -709,15 +709,15 @@ export function CodeViewer({
   );
   const viewerStyle = useMemo<CodeViewerStyle>(
     () => ({
-      // A mobile remote-control page may use a dark theme while the browser's system preference remains light.
-      // @pierre/diffs token colors depend on color-scheme/light-dark(), so set it explicitly to match the code theme;
-      // otherwise a text code block on a dark card gets dark text from the light theme and appears to have lost its content.
+      // 手机远控页面可能是深色主题，但浏览器系统偏好仍是浅色。
+      // @pierre/diffs 的 token 颜色依赖 color-scheme/light-dark()，必须跟随代码主题显式指定，
+      // 否则 text 代码块会在深色卡片上渲染成浅色主题的深色文字，看起来像正文丢失。
       colorScheme: resolveCodeViewerColorScheme(theme),
       "--diffs-bg": "var(--color-background)",
       "--diffs-light-bg": "var(--color-background)",
       "--diffs-dark-bg": "var(--color-background)",
-      // @pierre/diffs uses its own monospace fallback inside the Shadow DOM, which can fall back to SimSun for CJK text on Windows.
-      // Pass through the app token explicitly so Markdown code blocks, file previews, and inline code share the same CJK fallback.
+      // @pierre/diffs 在 Shadow DOM 内使用自己的等宽 fallback，Windows 中文会落到宋体。
+      // 显式透传应用 token，让 Markdown code block、文件预览和 inline code 使用同一 CJK fallback。
       "--diffs-font-family": "var(--font-mono)",
       "--diffs-font-size": `${fontSizePx}px`,
       "--code-comment-add-tooltip": toCssString(

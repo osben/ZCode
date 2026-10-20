@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { buildPluginUiSessionKey, type PluginUiSessionScope } from "@/plugin-ui/contract.js";
 import type { PluginUiModelContext } from "@/plugin-ui/domain/pluginUiModelContext.js";
 
-// Receivers register without saving drafts: the Composer hook is the single owner; unregistering immediately revokes delivery.
+// 接收端登记不保存草稿：Composer hook 是唯一 owner；卸载立即撤销投递能力。
 const receivers = new Map<string, (context: PluginUiModelContext) => void>();
 
 export function registerPluginUiModelContextReceiver(
@@ -16,7 +16,7 @@ export function registerPluginUiModelContextReceiver(
   };
 }
 
-/** Fix: window events filter by sessionId only, which would deliver context to other workspaces of the same session. */
+/** 修复：window 事件只按 sessionId 过滤，会把相同 session 的上下文投给其它 workspace。 */
 export function dispatchPluginUiModelContextAdd(
   scope: PluginUiSessionScope,
   context: PluginUiModelContext,

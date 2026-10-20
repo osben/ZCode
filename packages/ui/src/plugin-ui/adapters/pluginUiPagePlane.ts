@@ -12,7 +12,7 @@ function parkingRoot(): HTMLElement {
   return root;
 }
 
-/** Instances are decoupled from anchors; plain inline pages share the scroll tree with the body, so screen coordinates are not needed to chase scrolling. */
+/** 实例与锚点分离；普通内联与正文在同一滚动树内，不用屏幕坐标追赶滚动。 */
 export function createPluginUiPagePlane(events: {
   onVisibility(visible: boolean): void;
   onCrash(): void;
@@ -28,6 +28,8 @@ export function createPluginUiPagePlane(events: {
   let stopLayout: (() => void) | undefined;
   let stopPreview: (() => void) | undefined;
   let preview: HTMLElement | null = null;
+  let executionActive = false;
+  let backgroundSize = { width: 640, height: 480 };
   let disposed = false,
     loaded = false,
     pluginLoaded = false,
@@ -41,7 +43,7 @@ export function createPluginUiPagePlane(events: {
     if (root.parentElement === parent) return;
     if (!frame) parent.append(root);
     else {
-      // appendChild triggers a disconnect-rebuild of the Electron guest. Migration is allowed only after preload registers the move callback for the sandbox.
+      // appendChild 会触发 Electron guest 的断开重建。preload 为沙箱注册移动回调后才允许迁移。
       if (
         typeof parent.moveBefore !== "function" ||
         typeof (frame as HTMLElement & { connectedMoveCallback?: unknown })
@@ -52,7 +54,7 @@ export function createPluginUiPagePlane(events: {
     }
   };
   const resetStyle = () => {
-    // After the webview is released the container may still cover the error-state button; the container only positions, clicks are received explicitly by the webview.
+    // webview 释放后容器仍可能覆盖错误态按钮；容器只负责定位，点击由 webview 显式接收。
     root.style.cssText =
       "display:flow-root;position:relative;width:100%;height:100%;margin:0;border:0;padding:0;overflow:hidden;pointer-events:none";
   };
@@ -79,7 +81,7 @@ export function createPluginUiPagePlane(events: {
     preview = null;
   };
   const track = (node: HTMLElement, update: () => void) => {
-    // The carrier's size is fully determined by the anchor; observing the carrier back would form a ResizeObserver loop on popover switches.
+    // 承载层尺寸完全由锚点决定；反向观察承载层会在 popover 切换时形成 ResizeObserver 回环。
     const stop = autoUpdate(node, root, update, { elementResize: false });
     const resize = new ResizeObserver(update);
     resize.observe(node);
@@ -90,10 +92,23 @@ export function createPluginUiPagePlane(events: {
   };
   const layout = () => {
     if (disposed) return;
-    const candidates = [...anchors].filter(([, a]) => a.placement.node.isConnected);
+    // forceMount 的隐藏 tab 仍连接 DOM，但尺寸为零；不能让它夺走后台初始化的承载表面。
+    const candidates = [...anchors].filter(([, a]) => {
+      const node = a.placement.node;
+      const rect = node.getBoundingClientRect();
+      return (
+        node.isConnected &&
+        node.checkVisibility({ visibilityProperty: true }) &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    });
     const chosen = candidates.find(([, a]) => a.placement.kind === "sidebar") ?? candidates.at(-1);
     visibility(Boolean(chosen && (chosen[1].visible || preview)));
     if (chosen && chosen[0] === current) return;
+    const bounds = root.getBoundingClientRect();
+    if (bounds.width > 0 && bounds.height > 0)
+      backgroundSize = { width: bounds.width, height: bounds.height };
     current = chosen?.[0];
     stopLayout?.();
     stopLayout = undefined;
@@ -103,6 +118,18 @@ export function createPluginUiPagePlane(events: {
       move(parkingRoot());
       root.style.display = "none";
       root.inert = true;
+      if (executionActive) {
+        // display:none 会停止编辑器依赖的 rAF；保留的 MCP 页面始终需要可执行且不接收输入的表面。
+        Object.assign(root.style, {
+          display: "block",
+          position: "fixed",
+          top: "0",
+          left: "0",
+          width: `${backgroundSize.width}px`,
+          height: `${backgroundSize.height}px`,
+          opacity: "0.001",
+        });
+      }
       return;
     }
     root.inert = false;
@@ -110,7 +137,14 @@ export function createPluginUiPagePlane(events: {
     const parent = kind === "sidebar" ? parkingRoot() : (container ?? node);
     move(parent);
     if (kind !== "flow" && parent !== node)
-      stopLayout = track(node, () => position(node, parent, kind === "sidebar", layer));
+      stopLayout = track(node, () => {
+        const rect = node.getBoundingClientRect();
+        if (!node.checkVisibility({ visibilityProperty: true }) || !rect.width || !rect.height) {
+          layout();
+          return;
+        }
+        position(node, parent, kind === "sidebar", layer);
+      });
   };
   const intersection = new IntersectionObserver((entries) => {
     for (const entry of entries)
@@ -146,6 +180,11 @@ export function createPluginUiPagePlane(events: {
     handleId = null;
   };
   return {
+    setExecutionActive(active: boolean) {
+      if (executionActive === active) return;
+      executionActive = active;
+      layout();
+    },
     bind(placement: SandboxPagePlacement) {
       const token = Symbol();
       anchors.set(token, { placement, visible: true });
@@ -155,7 +194,7 @@ export function createPluginUiPagePlane(events: {
         anchors.delete(token);
         if (![...anchors.values()].some((a) => a.placement.node === placement.node))
           intersection.unobserve(placement.node);
-        // Must migrate synchronously before React removes the anchor; this cannot be deferred to RAF / passive effects.
+        // 必须同步迁移，再让 React 删除锚点；不能放到 RAF / passive effect。
         layout();
       };
     },

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -11,27 +11,20 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   collectArchivedTaskDeletion,
-  countArchivedTaskDeletionTrees,
   deleteArchivedTaskSelection,
-  loadArchivedTaskDeletionWorktreePreview,
   type ArchivedTaskDeletionWorkspace,
   type ArchivedTaskDeletionTarget,
-  type ArchivedTaskDeletionSelection,
 } from "@/lib/archivedTaskDeletion.js";
-import { formatTaskDeletionResult } from "@/task-deletion/taskDeletion.js";
-import { TaskDeleteConfirmationDialog } from "@/task-deletion/TaskDeleteConfirmationDialog.js";
-import type { TaskDeleteTarget } from "@/task-deletion/taskDeletion.js";
-import type { TaskDeleteDialogRow } from "@/task-deletion/taskDeletionTypes.js";
 import { logger } from "@/logger.js";
 
 export function DeleteAllArchivedTasksButton({
   workspaces,
   count,
   disabled,
-  disabledReason,
   actionsContainer,
   onDeleted,
   onRefresh,
@@ -39,19 +32,16 @@ export function DeleteAllArchivedTasksButton({
   workspaces: ArchivedTaskDeletionWorkspace[];
   count: number;
   disabled: boolean;
-  disabledReason?: string;
   actionsContainer?: HTMLElement | null;
   onDeleted: (target: ArchivedTaskDeletionTarget) => void;
   onRefresh?: () => Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
+  const confirmDialog = useConfirmDialog();
   const inFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
-  const [pendingSelection, setPendingSelection] = useState<ArchivedTaskDeletionSelection | null>(
-    null,
-  );
 
   async function handleDeleteAll() {
     if (inFlight.current) return;
@@ -71,7 +61,34 @@ export function DeleteAllArchivedTasksButton({
         setResultMessage(unavailable || intl.formatMessage({ id: "taskList.noArchivedTasks" }));
         return;
       }
-      setPendingSelection(selection);
+      const confirmed = await confirmDialog({
+        title: intl.formatMessage(
+          { id: "taskList.deleteAllArchivedTitle" },
+          { count: selection.count },
+        ),
+        description: [
+          intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteDescription" }),
+          unavailable,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        confirmLabel: intl.formatMessage({ id: "taskList.deleteAllArchived" }),
+        confirmVariant: "destructive",
+      });
+      if (!confirmed) return;
+      const result = await deleteArchivedTaskSelection(selection, onDeleted);
+      setResultMessage(
+        [
+          intl.formatMessage(
+            { id: "taskList.deleteAllArchivedResult" },
+            { deleted: result.deleted, skipped: result.skipped, failed: result.failed },
+          ),
+          unavailable,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+      await onRefresh?.();
     } catch (error) {
       logger.error("[ArchivedTaskDeletion] 批量删除或刷新失败", error);
       setResultMessage((current) =>
@@ -85,46 +102,13 @@ export function DeleteAllArchivedTasksButton({
     }
   }
 
-  async function handleConfirmDelete(rows: readonly TaskDeleteTarget[]) {
-    const selection = pendingSelection;
-    if (!selection || inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    setPendingSelection(null);
-    try {
-      const result = await deleteArchivedTaskSelection(selection, onDeleted, rows);
-      const unavailable =
-        result.unavailableWorkspaces.length > 0
-          ? intl.formatMessage(
-              { id: "taskList.deleteAllArchivedUnavailable" },
-              { projects: result.unavailableWorkspaces.join("、") },
-            )
-          : "";
-      setResultMessage(
-        [
-          formatTaskDeletionResult(result, (id, values) => intl.formatMessage({ id }, values)),
-          unavailable,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
-      await onRefresh?.();
-    } catch (error) {
-      logger.error("[ArchivedTaskDeletion] permanent delete or refresh failed", error);
-      setResultMessage(intl.formatMessage({ id: "taskDelete.error" }));
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  }
-
   const actionLabel = intl.formatMessage({
     id: busy ? "taskList.deleteAllArchivedBusy" : "taskList.archivedActions",
   });
   const menu = (
     <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-      <ControlHintTooltip title={disabledReason || actionLabel}>
-        <DropdownMenuTrigger asChild disabled={disabled || busy}>
+      <ControlHintTooltip title={actionLabel}>
+        <DropdownMenuTrigger asChild>
           <Button
             type="button"
             variant="ghost"
@@ -165,28 +149,9 @@ export function DeleteAllArchivedTasksButton({
     </DropdownMenu>
   );
 
-  // Stable identities: the dialog re-fetches (and disables confirm) whenever a loader changes.
-  const loadPendingTreeCounts = useCallback(
-    (rows: readonly TaskDeleteDialogRow[]) =>
-      pendingSelection
-        ? countArchivedTaskDeletionTrees(pendingSelection, rows as readonly TaskDeleteTarget[])
-        : Promise.resolve(null),
-    [pendingSelection],
-  );
-  const loadPendingWorktreePreview = useCallback(
-    (rows: readonly TaskDeleteDialogRow[]) =>
-      pendingSelection
-        ? loadArchivedTaskDeletionWorktreePreview(
-            pendingSelection,
-            rows as readonly TaskDeleteTarget[],
-          )
-        : Promise.resolve([]),
-    [pendingSelection],
-  );
-
   return (
     <>
-      {/* Only the control’s render position moves; querying, confirmation, and deletion remain alive with the archived-task list, so closing the menu does not unmount this state. */}
+      {/* 只移动控件的渲染位置，查询/确认/删除仍随归档列表存活，菜单关闭不会卸载这些状态。 */}
       {actionsContainer === undefined
         ? menu
         : actionsContainer
@@ -199,24 +164,6 @@ export function DeleteAllArchivedTasksButton({
         >
           {resultMessage}
         </p>
-      ) : null}
-      {pendingSelection ? (
-        <TaskDeleteConfirmationDialog
-          rows={pendingSelection.targets}
-          supported
-          notice={
-            pendingSelection.unavailableWorkspaces.length > 0
-              ? intl.formatMessage(
-                  { id: "taskList.deleteAllArchivedUnavailable" },
-                  { projects: pendingSelection.unavailableWorkspaces.join("、") },
-                )
-              : undefined
-          }
-          loadTreeCounts={loadPendingTreeCounts}
-          loadWorktreePreview={loadPendingWorktreePreview}
-          onCancel={() => setPendingSelection(null)}
-          onConfirm={(rows) => void handleConfirmDelete(rows as readonly TaskDeleteTarget[])}
-        />
       ) : null}
     </>
   );

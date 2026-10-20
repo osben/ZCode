@@ -1,6 +1,5 @@
-/* Styles and animations for the Highspeed share card (bottom-left sidebar card) and share dialog;
- * visuals migrated from the ui/highspeed branch. Theme tokens are decoupled from structure:
- * Light lives in :root, Dark overrides in .dark/.theme-zai-dark. */
+/* Highspeed 分享卡（左下角侧栏卡）与分享弹窗的样式与动效，视觉迁移自 ui/highspeed 分支。
+ * 主题 token 与结构解耦：Light 在 :root，Dark 在 .dark/.theme-zai-dark 覆盖。 */
 :root {
   --highspeed-sidebar-model-icon: #6041ff;
   --highspeed-sidebar-model-gradient: linear-gradient(90deg, #4830c8 0%, #6041ff 50%, #8955db 100%);
@@ -76,7 +75,7 @@
 }
 
 .highspeed-sidebar-share-card-frame {
-  /* Shares the slot dimensions with the marketing banner, avoiding shrinkage from a fixed width and outer padding in wide sidebars. */
+  /* 与营销 Banner 共用槽位尺寸，避免宽侧栏下固定宽度和外层留白造成内缩。 */
   width: 100%;
   height: 96px;
   flex: none;
@@ -91,7 +90,7 @@
   height: 96px;
   overflow: visible;
   border: 0;
-  /* The border radius aligns with the new background SVG's rx=12, avoiding a radius mismatch between container and layers. */
+  /* 圆角与新底图 SVG 的 rx=12 对齐，避免容器与图层圆角不一致。 */
   border-radius: 12px;
   background: var(--highspeed-sidebar-card-surface);
   box-shadow: inset 0 0 0 1px var(--highspeed-sidebar-card-outline);
@@ -110,7 +109,7 @@
 }
 
 .highspeed-sidebar-share-card__background--light {
-  /* The background image's native size is 230x96; it is proportionally cropped to the slot while keeping its radius, and foreground content does not scale. */
+  /* 底图原尺寸为 230x96；随槽位等比裁切并保持圆角，前景内容不缩放。 */
   opacity: var(--highspeed-share-card-light-background-opacity);
 }
 
@@ -173,7 +172,7 @@
 
 @supports (background-clip: text) or (-webkit-background-clip: text) {
   .highspeed-sidebar-share-card__model-text {
-    /* The gradient spans the text width, keeping the purple text readable in both light and dark themes. */
+    /* 渐变按文字宽度铺开，深浅主题分别保持紫色文字的可读性。 */
     width: fit-content;
     background: var(--highspeed-sidebar-model-gradient);
     background-clip: text;
@@ -232,18 +231,16 @@
   box-shadow: none !important;
 }
 
-/* Bug cause: Radix unmounts only on the exit animation's animationend with no timeout fallback;
- * when the Electron window is invisible the compositor stalls and the event never fires, so the
- * bg-black/60 overlay lingers, graying the UI and swallowing clicks.
- * The closed state forces no animation (entrance animations are kept); Radix detects no animation
- * name and unmounts synchronously. */
+/* Bug 原因：Radix 等退出动画 animationend 才卸载且无超时兜底；Electron 窗口不可见时
+ * compositor 停摆事件永不触发，bg-black/60 遮罩滞留把界面罩灰并吞掉点击。
+ * 关闭态强制无动画（入场动画保留），Radix 检测不到动画名即同步卸载。 */
 .highspeed-share-dialog__overlay[data-state="closed"],
 .highspeed-share-dialog__content[data-state="closed"] {
   animation: none !important;
 }
 
 .highspeed-share-dialog__card {
-  /* The remote dialog already provides a unified mask; the card only handles its own stacking so the whole page is no longer washed out. */
+  /* 远程 Dialog 已提供统一 mask；卡片只负责自身层级，避免再把页面整体洗白。 */
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -286,7 +283,7 @@
   gap: 12px;
 }
 
-/* The title row becomes a brand group: Z logo tile + benefit copy + HighSpeed pill (Figma 6403:11193). */
+/* 标题行改为品牌组：Z logo 方块 + 权益文案 + HighSpeed 胶囊（Figma 6403:11193）。 */
 .highspeed-share-dialog__brand {
   display: inline-flex;
   min-width: 0;
@@ -374,7 +371,7 @@
   transform: translateY(4px);
 }
 
-/* In the design the x suffix is smaller than the number (52:24 ratio) and follows the baseline. */
+/* 设计稿中 x 后缀小于数字（52:24 比例），跟随基线排布。 */
 .highspeed-share-dialog__metric-suffix {
   font-size: 24px;
   letter-spacing: normal;
@@ -462,13 +459,13 @@
   position: absolute;
   top: -2px;
   bottom: -2px;
-  /* The marker's landing point is written to a CSS variable by the component, as the ratio of accelerated time to regular time. */
+  /* 指针落点由组件按加速耗时占常规耗时的比例写入 CSS 变量。 */
   left: var(--highspeed-share-marker-left, calc(72% + 1px));
   width: 4px;
   border-radius: 1px;
   background: #00a640;
   box-shadow: 0 0 12px var(--color-highspeed-share-dialog-marker-glow);
-  /* Uses the same timeline as the fill bar, keeping the visuals in sync for dynamic duration ratios. */
+  /* 与填充条使用相同时间轴，保持动态耗时比例下的视觉同步。 */
   animation:
     highspeed-share-dialog-marker-sweep 1200ms cubic-bezier(0.33, 0, 0.16, 1) 520ms both,
     highspeed-share-dialog-marker-rise 1200ms cubic-bezier(0.33, 0, 0.16, 1) 520ms both;
@@ -564,7 +561,7 @@
   }
 }
 
-/* The progress fill only reveals up to the current highspeed segment's endpoint, keeping the color gradient stable so its proportions are not compressed during the animation. */
+/* 进度填充只显示到当前高速段终点，颜色渐变保持稳定，避免动画过程中渐变比例被压缩。 */
 @keyframes highspeed-share-dialog-fill-grow {
   from {
     clip-path: inset(0 100% 0 0);
@@ -575,10 +572,8 @@
   }
 }
 
-/* Bug cause: the old keyframes overshot the landing point by 6% at 78% and then bounced back,
- * making the green marker look like it "overshot and snapped back".
- * It now advances monotonically with the same duration and easing as the fill bar, so the marker
- * stays glued to the right edge of the green fill. */
+/* Bug 原因：旧关键帧在 78% 冲过落点 6% 再弹回，绿色指针看起来会"超出又回弹"。
+ * 改为单调推进，且与填充条同时长同缓动，指针始终贴在绿色填充的右边缘。 */
 @keyframes highspeed-share-dialog-marker-rise {
   0% {
     opacity: 0;

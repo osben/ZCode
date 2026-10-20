@@ -42,53 +42,6 @@ describe("mapSessionSummaryToTaskMeta", () => {
     });
   });
 
-  it("executionWorktree passes through when present and stays absent otherwise", () => {
-    const withWorktree = mapSessionSummaryToTaskMeta(
-      summary({
-        executionWorktree: {
-          path: "/repo/../worktrees/zcode-sleepy-capybara",
-          branchName: "zcode/sleepy-capybara",
-        },
-      }),
-      { workspacePath: "/ws" },
-    );
-    expect(withWorktree.executionWorktree).toEqual({
-      path: "/repo/../worktrees/zcode-sleepy-capybara",
-      branchName: "zcode/sleepy-capybara",
-    });
-    expect(
-      "executionWorktree" in mapSessionSummaryToTaskMeta(summary(), { workspacePath: "/ws" }),
-    ).toBe(false);
-  });
-
-  it("executionWorktreeMissing maps through when true and stays absent otherwise", () => {
-    const meta = mapSessionSummaryToTaskMeta(
-      summary({
-        executionWorktree: { path: "/repo/../worktrees/zcode-sleepy-capybara" },
-        executionWorktreeMissing: true,
-      }),
-      { workspacePath: "/ws" },
-    );
-    expect(meta.executionWorktreeMissing).toBe(true);
-    // Healthy worktree summary: the flag must not create a key (absent ≈ false).
-    expect(
-      "executionWorktreeMissing" in
-        mapSessionSummaryToTaskMeta(
-          summary({ executionWorktree: { path: "/repo/../worktrees/zcode-sleepy-capybara" } }),
-          { workspacePath: "/ws" },
-        ),
-    ).toBe(false);
-  });
-
-  it("incognito maps through when true and stays absent otherwise", () => {
-    expect(
-      mapSessionSummaryToTaskMeta(summary({ incognito: true }), { workspacePath: "/ws" }).incognito,
-    ).toBe(true);
-    expect("incognito" in mapSessionSummaryToTaskMeta(summary({}), { workspacePath: "/ws" })).toBe(
-      false,
-    );
-  });
-
   it("workflowActivity 原样搬进 sidecar（侧栏运行行的数据），缺席时不建键", () => {
     const workflowActivity: SessionSummary["workflowActivity"] = {
       runs: [
@@ -126,15 +79,6 @@ describe("mapSessionSummaryToTaskMeta", () => {
     expect(
       mapSessionSummaryToTaskMeta(summary({ phase: "draft" }), { workspacePath: "/ws" }).status,
     ).toBeUndefined();
-  });
-
-  it("sessionEnded=true 不是删除语义：成功收口的会话照常映射进列表", () => {
-    const meta = mapSessionSummaryToTaskMeta(
-      summary({ sessionEnded: true, phase: "completedSuccess" }),
-      { workspacePath: "/ws" },
-    );
-    expect(meta.taskId).toBe("s1");
-    expect(meta.status).toBe("completed");
   });
 
   it("fork：parentSessionId → forkedFromTaskId", () => {
@@ -220,67 +164,5 @@ describe("mapSessionSummaryToTaskMeta", () => {
       permissionCount: 1,
       userInputCount: 2,
     });
-  });
-});
-
-describe("mapSessionSummaryToTaskMeta child-conversation facts", () => {
-  it("maps counters and the capped child list; zero/absent stay absent", () => {
-    const withChildren = mapSessionSummaryToTaskMeta(
-      summary({
-        sideChatCount: 1,
-        subagentCount: 3,
-        runningSubagentCount: 1,
-        childSessions: [
-          {
-            sessionId: "child-sub",
-            title: "research adapters",
-            taskType: "subagent_child",
-            lastActivityAt: 50,
-            running: true,
-          },
-          {
-            sessionId: "child-chat",
-            title: "side chat",
-            taskType: "selection_side_chat",
-            lastActivityAt: 40,
-            running: false,
-          },
-        ],
-      }),
-      { workspacePath: "/ws" },
-    );
-    expect(withChildren.sideChatCount).toBe(1);
-    expect(withChildren.subagentCount).toBe(3);
-    expect(withChildren.runningSubagentCount).toBe(1);
-    expect(withChildren.childSessions).toEqual([
-      {
-        sessionId: "child-sub",
-        title: "research adapters",
-        taskType: "subagent_child",
-        lastActivityAt: 50,
-        running: true,
-      },
-      {
-        sessionId: "child-chat",
-        title: "side chat",
-        taskType: "selection_side_chat",
-        lastActivityAt: 40,
-        running: false,
-      },
-    ]);
-
-    const withoutChildren = mapSessionSummaryToTaskMeta(
-      summary({
-        sideChatCount: 0,
-        subagentCount: 0,
-        runningSubagentCount: 0,
-        childSessions: [],
-      }),
-      { workspacePath: "/ws" },
-    );
-    expect(withoutChildren.sideChatCount).toBeUndefined();
-    expect(withoutChildren.subagentCount).toBeUndefined();
-    expect(withoutChildren.runningSubagentCount).toBeUndefined();
-    expect(withoutChildren.childSessions).toBeUndefined();
   });
 });

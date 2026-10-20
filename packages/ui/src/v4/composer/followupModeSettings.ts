@@ -11,7 +11,7 @@ export function resolveAppFollowupMode(
 export function resolveOppositeFollowupDelivery(
   mode: SessionConfigState["followupMode"],
 ): "startNow" | "queue" {
-  // A modifier-key send in queue mode used to be interpreted as guide; "send immediately" is the queue's existing preemption behavior.
+  // queue 模式的修饰键发送曾被解释成 guide；“立即发送”实际是队列既有的抢占语义。
   return mode === "guide" ? "queue" : "startNow";
 }
 
@@ -24,9 +24,9 @@ export function shouldEnableModifiedEnterSubmit({
   isMobileTextInputViewport: boolean;
   isWebRemoteControl: boolean;
 }): boolean {
-  // Bug cause: The old gate treated drafts and the generic mobile media query as “mobile,” so desktop new tasks and
-  // narrow Windows windows/touch devices did not register Ctrl+Enter, and the event fell back to Lexical’s default newline behavior.
-  // This behavior is for mobile Web remote control; viewport size or pointer capability must not change desktop continuous-link semantics.
+  // Bug 原因：旧门禁把 draft 和通用移动媒体查询当成了“手机端”，导致桌面新任务以及
+  // Windows 窄窗口/触屏设备都没有注册 Ctrl+Enter，事件最终退回 Lexical 默认换行。
+  // 产品边界是手机 Web 远控；桌面 continuous 链路不应被视口或指针能力改变语义。
   return inputRoutingMode !== "reject" && !(isWebRemoteControl && isMobileTextInputViewport);
 }
 

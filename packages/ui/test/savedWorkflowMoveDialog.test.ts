@@ -9,7 +9,6 @@ import {
   TID_WORKFLOW_MOVE_DIALOG_TARGET,
 } from "@zcode/shared";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import {
   resolveAutomationWorkspaceSelectionKey,
   type AutomationWorkspaceOption,
@@ -43,7 +42,7 @@ function mount(props: Partial<Parameters<typeof SavedWorkflowMoveDialog>[0]> = {
   render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: "zh-CN" },
       createElement(SavedWorkflowMoveDialog, merged),
     ),
   );
@@ -59,7 +58,7 @@ describe("SavedWorkflowMoveDialog", () => {
   it("渲染标题与目标选择器，默认选中 defaultTargetKey", () => {
     mount({ defaultTargetKey: resolveAutomationWorkspaceSelectionKey(BETA) });
     expect(screen.getByTestId(TID_WORKFLOW_MOVE_DIALOG)).toBeTruthy();
-    expect(screen.getByText(expectedCopy("workflows.hub.moveDialog.title"))).toBeTruthy();
+    expect(screen.getByText("移到项目")).toBeTruthy();
     expect(screen.getByTestId(TID_WORKFLOW_MOVE_DIALOG_TARGET).textContent).toContain("Beta");
   });
 
@@ -73,7 +72,7 @@ describe("SavedWorkflowMoveDialog", () => {
   it("没有候选时提示并禁用提交", () => {
     mount({ targets: [] });
     expect(screen.queryByTestId(TID_WORKFLOW_MOVE_DIALOG_TARGET)).toBeNull();
-    expect(screen.getByText(expectedCopy("workflows.hub.moveDialog.noLocalProject"))).toBeTruthy();
+    expect(screen.getByText("打开一个本地项目以移动")).toBeTruthy();
     expect(
       (screen.getByTestId(TID_WORKFLOW_MOVE_DIALOG_SUBMIT) as HTMLButtonElement).disabled,
     ).toBe(true);

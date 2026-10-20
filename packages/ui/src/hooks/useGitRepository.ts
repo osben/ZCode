@@ -39,11 +39,6 @@ interface GitLiveDataRefreshInput {
   includeExtendedData: boolean;
   refreshToken: string | number | boolean | null;
   workspaceRpcEnabled: boolean;
-  // BUG-GWT-013: resolved snapshot and current pending request for this exact target.
-  // Optional for legacy refresh-decision callers.
-  summaryResolved?: boolean;
-  refreshPending?: boolean;
-  retryTick?: number;
 }
 
 export interface GitPaneFileChange extends GitFileChange {
@@ -73,7 +68,6 @@ export interface GitPaneSourceOption {
 
 export interface GitPaneRepositoryState {
   workspaceKey: string;
-  workspacePath: string;
   summary: GitRepositorySummary;
   identity: GitIdentity;
   placeholder: {
@@ -211,7 +205,6 @@ function createInitialState(
   const datasets = createEmptyDatasets();
   return {
     workspaceKey: options?.workspaceKey ?? workspacePath,
-    workspacePath,
     summary: createEmptySummary(workspacePath),
     identity: EMPTY_IDENTITY,
     placeholder: {
@@ -223,13 +216,6 @@ function createInitialState(
     sourceOptions: buildSourceOptions(datasets),
     datasets,
   };
-}
-
-export function matchesGitRepositoryTarget(
-  state: Pick<GitPaneRepositoryState, "workspaceKey" | "workspacePath">,
-  target: Pick<GitLiveDataRefreshInput, "workspaceKey" | "workspacePath">,
-): boolean {
-  return state.workspaceKey === target.workspaceKey && state.workspacePath === target.workspacePath;
 }
 
 function toPaneFileChange(
@@ -341,8 +327,8 @@ function buildLastTurnDataset(options: {
     id: "last-turn",
     readonly: true,
     turnIndex: options.turnIndex,
-    // Key behavior: continue preferring the per-turn file snapshot already persisted by the ZCode Agent,
-    // so the agent’s read-only review path remains stable after the Git pane starts using real repository data.
+    // 关键业务逻辑：上一轮更改继续优先复用 ZCode Agent 已持久化的单轮文件快照，
+    // 这样 Git pane 接入真实仓库数据后，agent 视角的只读审阅链路仍然保持独立稳定。
     sections: options.summary
       ? [
           {
@@ -376,30 +362,18 @@ export function shouldRefreshLiveGitData(
     return true;
   }
 
-  if (previous.retryTick !== next.retryTick) {
-    return true;
-  }
-
   if (previous.refreshToken !== next.refreshToken) {
     return true;
   }
 
-  // BUG-GWT-013: recover an unresolved target only after its current request settles.
-  // Strict checks preserve callers that omit these optional recovery inputs.
-  if (next.summaryResolved === false && next.refreshPending === false) {
-    return true;
-  }
-
-  // Only opening the pane requests extras; closing it and last-turn switches need no Git IO.
+  // 关键业务逻辑：Git pane 关闭时不应该因为“少拿 branch/identity”反向触发一轮真实 Git。
+  // 只有从关闭 -> 打开时，才补拉扩展数据；task/last-turn 的切换则只走本地数据重组。
   return !previous.includeExtendedData && next.includeExtendedData;
 }
-
-const MAX_INITIAL_REFRESH_RETRIES = 2;
 
 export function useGitRepository(options: {
   workspacePath: string;
   activeTaskId: string | null;
-  enabled?: boolean;
   includeExtendedData?: boolean;
   refreshToken?: string | number | boolean | null;
   remoteSessionId?: string | null;
@@ -408,7 +382,6 @@ export function useGitRepository(options: {
 }): GitPaneRepositoryState {
   const {
     workspacePath,
-    enabled = true,
     includeExtendedData = false,
     refreshToken = null,
     remoteSessionId: preferredRemoteSessionId = null,
@@ -428,27 +401,16 @@ export function useGitRepository(options: {
     remoteTarget,
   });
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
-  // Store cleanup: the write path for the per-turn change-summary map (setPerTurnSummaries/setPerTurnFileChanges)
-  // was removed with the old ChatView stream subscription, so the store no longer persists this derived state (it was always empty before removal).
-  // Keep the “last-turn” dataset’s empty-state structure until the v4 projection supplies per-turn change data.
+  // store 收尾：per-turn 变更摘要 map（setPerTurnSummaries/setPerTurnFileChanges）
+  // 的写入链路随旧 ChatView 流订阅删除，store 不再保存该派生态（删除前也恒为空）。
+  // "last-turn" 数据集保留空态骨架，待 v4 投影的 per-turn 变更面接入后回填。
   const [repositoryState, setRepositoryState] = useState<GitPaneRepositoryState>(() =>
     createInitialState(workspacePath, { workspaceKey }),
   );
   const requestVersionRef = useRef(0);
-  const pendingRequestVersionRef = useRef<number | null>(null);
-  // A retry tick admits bounded recovery even when a confirmed snapshot remains resolved.
-  // The counter is scoped to both identity and path so another target gets its own budget.
-  const [retryTick, setRetryTick] = useState(0);
-  const consecutiveFailuresRef = useRef({ workspaceKey: "", workspacePath: "", count: 0 });
   const lastLiveRefreshInputRef = useRef<GitLiveDataRefreshInput | null>(null);
   const lastFileChangeEntry = null;
   const lastSummaryEntry = null;
-  // A successful snapshot resolves the target even while refreshing or when comparison fails.
-  // Loading must not flip this flag: that would clean up an in-flight same-target refresh
-  // and misidentify its completion as a service-instance swap needing another request.
-  const summaryResolved =
-    matchesGitRepositoryTarget(repositoryState, { workspacePath, workspaceKey }) &&
-    repositoryState.revision > 0;
 
   useEffect(() => {
     const nextRefreshInput: GitLiveDataRefreshInput = {
@@ -457,31 +419,13 @@ export function useGitRepository(options: {
       includeExtendedData,
       refreshToken,
       workspaceRpcEnabled,
-      summaryResolved,
-      retryTick,
-      refreshPending:
-        pendingRequestVersionRef.current !== null &&
-        pendingRequestVersionRef.current === requestVersionRef.current,
     };
-
-    if (!enabled) {
-      requestVersionRef.current += 1;
-      lastLiveRefreshInputRef.current = null;
-      setRepositoryState((current) =>
-        createInitialState(workspacePath, {
-          workspaceKey,
-          loading: false,
-          error: null,
-          revision: current.revision,
-        }),
-      );
-      return;
-    }
 
     if (!workspaceRpcEnabled) {
       requestVersionRef.current += 1;
       lastLiveRefreshInputRef.current = nextRefreshInput;
-      // Wait for remote session recovery before querying Git.
+      // 断连远端 workspace 可以展示 Git 面板空壳，但不能在 session 未恢复前
+      // 主动查询远端 Git，否则会把断连代理错误放大成每次首屏挂载的日志噪音。
       setRepositoryState((current) =>
         createInitialState(workspacePath, {
           workspaceKey,
@@ -505,10 +449,9 @@ export function useGitRepository(options: {
     let disposed = false;
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
-    pendingRequestVersionRef.current = requestVersion;
 
     setRepositoryState((current) =>
-      matchesGitRepositoryTarget(current, nextRefreshInput)
+      current.workspaceKey === workspaceKey
         ? {
             ...current,
             loading: true,
@@ -517,39 +460,21 @@ export function useGitRepository(options: {
         : createInitialState(workspacePath, { workspaceKey }),
     );
 
-    // One refresh derives summary and changes from the same status snapshot.
+    // agent 写文件会触发 Git 自动刷新。这里不能拆成 summary/unstaged/staged
+    // 三个 RPC，因为服务端每个 RPC 都会重新跑 git status，日志里会形成一轮一组三连。
+    // 统一走 refresh，让一次状态快照产出 header 和 Git pane 需要的基础数据。
     const refreshPromise = gitService.refresh({
       workspacePath,
       includeIdentity: includeExtendedData,
       includeBranchComparison: includeExtendedData,
     });
 
-    // Identity and comparison are requested only for an open Git pane.
+    // 关键业务逻辑：header 常驻时只需要 summary + staged/unstaged 统计；
+    // branch comparison 与 identity 只在真正展开 Git pane 后再拉取，避免首屏预取整套 Git pane 数据。
     void refreshPromise
-      .then((result) => {
-        const {
-          summary,
-          identity,
-          unstagedChanges,
-          stagedChanges,
-          branchComparison,
-          branchComparisonError,
-        } = result;
-        if (pendingRequestVersionRef.current === requestVersion) {
-          pendingRequestVersionRef.current = null;
-        }
-
-        // BUG-GWT-013: service replacement must not drop a current result. Logical target
-        // changes advance the version, so only the current identity/path can apply it.
-        if (requestVersionRef.current !== requestVersion) {
+      .then(({ summary, identity, unstagedChanges, stagedChanges, branchComparison }) => {
+        if (disposed || requestVersionRef.current !== requestVersion) {
           return;
-        }
-        // Stale results cannot reset another target's retry budget.
-        consecutiveFailuresRef.current = { workspaceKey, workspacePath, count: 0 };
-
-        if (disposed) {
-          // Re-establish the baseline through the replacement service instance.
-          lastLiveRefreshInputRef.current = null;
         }
 
         const repositoryDatasets = buildRepositoryDatasets({
@@ -564,27 +489,20 @@ export function useGitRepository(options: {
 
         setRepositoryState({
           workspaceKey,
-          workspacePath,
           summary,
           identity: identity ?? EMPTY_IDENTITY,
           placeholder: {
             enabled: false,
           },
           loading: false,
-          error: branchComparisonError ?? null,
+          error: null,
           revision: requestVersion,
           sourceOptions: buildSourceOptions(datasets),
           datasets,
         });
       })
       .catch((error: unknown) => {
-        if (pendingRequestVersionRef.current === requestVersion) {
-          pendingRequestVersionRef.current = null;
-        }
-
-        // Apply the same stale-result guard on failure. The retry tick also handles
-        // targets whose confirmed snapshot remains visible after a failed refresh.
-        if (requestVersionRef.current !== requestVersion) {
+        if (disposed || requestVersionRef.current !== requestVersion) {
           return;
         }
 
@@ -593,32 +511,14 @@ export function useGitRepository(options: {
           workspacePath,
           error: message,
         });
-        setRepositoryState((current) =>
-          matchesGitRepositoryTarget(current, nextRefreshInput) &&
-          current.summary.isGitAvailable &&
-          current.summary.isRepository
-            ? { ...current, loading: false, error: message }
-            : createInitialState(workspacePath, {
-                workspaceKey,
-                loading: false,
-                error: message,
-              }),
-        );
-        // Exhausted retries leave the error visible until an external refresh trigger.
-        const failures = matchesGitRepositoryTarget(
-          consecutiveFailuresRef.current,
-          nextRefreshInput,
-        )
-          ? consecutiveFailuresRef.current.count
-          : 0;
-        if (failures < MAX_INITIAL_REFRESH_RETRIES) {
-          consecutiveFailuresRef.current = {
+        setRepositoryState((current) => ({
+          ...createInitialState(workspacePath, {
             workspaceKey,
-            workspacePath,
-            count: failures + 1,
-          };
-          setRetryTick((tick) => tick + 1);
-        }
+            loading: false,
+            error: message,
+            revision: current.revision,
+          }),
+        }));
       });
 
     return () => {
@@ -628,23 +528,19 @@ export function useGitRepository(options: {
     gitService,
     includeExtendedData,
     refreshToken,
-    retryTick,
-    summaryResolved,
     workspaceIdentity,
     workspaceKey,
     workspacePath,
     workspaceRpcEnabled,
-    enabled,
   ]);
 
   return useMemo(() => {
-    // Hide another identity/path's snapshot during render, before effect cleanup.
-    const currentRepositoryState = matchesGitRepositoryTarget(repositoryState, {
-      workspaceKey,
-      workspacePath,
-    })
-      ? repositoryState
-      : createInitialState(workspacePath, { workspaceKey });
+    // useEffect 在 workspace 切换后的 commit 才会清理旧状态。render 阶段先按
+    // workspaceKey 投影为空状态，避免旧机器的 Git 路径通过新远端 fileWatcherService 注册。
+    const currentRepositoryState =
+      repositoryState.workspaceKey === workspaceKey
+        ? repositoryState
+        : createInitialState(workspacePath, { workspaceKey });
     const datasets = {
       ...currentRepositoryState.datasets,
     };

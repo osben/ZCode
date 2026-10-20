@@ -1,3 +1,4 @@
+import type { Locale } from "@zcode/shared";
 import type { ICloudContentService } from "@zcode/services";
 import type { MarketingAsset, MarketingVisual } from "@zcode/shared";
 import type { CloudDialogHero } from "@/components/cloud-content-dialog/cloudContentDialogTypes.js";
@@ -71,7 +72,7 @@ function heroData(args: Record<string, unknown> | undefined, locale: string) {
 export async function prepareMarketingHero(
   visual: MarketingVisual | null | undefined,
   service: ICloudContentService | undefined,
-  locale: "zh-CN" | "en-US",
+  locale: Locale,
   desktop: boolean,
 ): Promise<PreparedMarketingHero> {
   if (!visual || !service) return empty();
@@ -86,7 +87,7 @@ export async function prepareMarketingHero(
     try {
       fallbackSrc = await prepareMarketingImage(fallback, service);
     } catch {
-      /* The primary resource can still succeed on its own. */
+      /* 主资源仍可独立成功。 */
     }
   }
   try {

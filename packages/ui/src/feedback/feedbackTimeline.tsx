@@ -17,17 +17,20 @@ import { getUserFacingEventSummary } from "@/feedback/feedbackTimelineSummary.js
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
-type MessageFormatter = (descriptor: { id: string }, values?: Record<string, string>) => string;
+type MessageFormatter = (
+  descriptor: { id: string },
+  values?: Record<string, string>,
+) => string;
 
 interface FeedbackTimelineItem {
   id: string;
   kind: "event" | "reply";
   createdAt: string;
-  // Event
+  // 事件
   type?: FeedbackTicketEventType;
   summary?: string;
   actor?: string | null;
-  // Reply
+  // 回复
   body?: string;
   attachments?: FeedbackCommentAttachment[];
   isStaff?: boolean;
@@ -47,8 +50,8 @@ export function getFeedbackTimelineItems(
   formatMessage?: MessageFormatter,
 ): FeedbackTimelineItem[] {
   const visibleComments = filterUserVisibleComments(comments);
-  // Dedupe by comment_id: if an event already carries staff_replied/user_replied pointing at a
-  // comment, the comment is presented as that event instead of adding an extra entry.
+  // 用 comment_id 去重：如果事件里已经有 staff_replied/ user_replied 指向某条评论，
+  // 评论就以事件形式呈现，不再额外加一条。
   const eventCommentIds = new Set<number>();
   for (const ev of events) {
     const payload = ev.payload as { comment_id?: number } | null | undefined;
@@ -68,7 +71,7 @@ export function getFeedbackTimelineItems(
       summary: getUserFacingEventSummary(ev, formatMessage),
       actor: getUserFacingEventActor(ev, formatMessage),
     });
-    // For reply events, attach the body (looked up from comments)
+    // 如果是回复事件，附带正文（从评论里查）
     const payload = ev.payload as { comment_id?: number } | null | undefined;
     if (payload?.comment_id) {
       const comment = visibleComments.find((c) => c.id === payload.comment_id);
@@ -80,7 +83,7 @@ export function getFeedbackTimelineItems(
     }
   }
 
-  // Fallback: comments without a matching event (older data) are shown too.
+  // 兜底：评论里没有对应 event 的（旧数据）也展示
   for (const c of visibleComments) {
     if (eventCommentIds.has(c.id)) continue;
     items.push({
@@ -99,21 +102,36 @@ export function getFeedbackTimelineItems(
   return items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
-function getUserFacingEventActor(event: FeedbackTicketEvent, formatMessage?: MessageFormatter) {
+function getUserFacingEventActor(
+  event: FeedbackTicketEvent,
+  formatMessage?: MessageFormatter,
+) {
   switch (event.type) {
     case "created":
     case "user_replied":
       return formatOptionalMessage(formatMessage, "feedback.actor.user", "用户");
     case "assignee_changed":
-      return formatOptionalMessage(formatMessage, "feedback.actor.productManager", "产品经理");
+      return formatOptionalMessage(
+        formatMessage,
+        "feedback.actor.productManager",
+        "产品经理",
+      );
     case "staff_replied":
-      return formatOptionalMessage(formatMessage, "feedback.actor.productManager", "产品经理");
+      return formatOptionalMessage(
+        formatMessage,
+        "feedback.actor.productManager",
+        "产品经理",
+      );
     case "status_changed": {
       const payload = event.payload as { to?: unknown } | null | undefined;
       const toStatus = typeof payload?.to === "string" ? payload.to : "";
       return ["开发中", "已解决", "已上线"].includes(toStatus)
         ? formatOptionalMessage(formatMessage, "feedback.actor.dev", "研发")
-        : formatOptionalMessage(formatMessage, "feedback.actor.productManager", "产品经理");
+        : formatOptionalMessage(
+            formatMessage,
+            "feedback.actor.productManager",
+            "产品经理",
+          );
     }
     default:
       return null;
@@ -215,7 +233,11 @@ export function FeedbackTimeline({
                             className="min-w-0 overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-border-hover"
                           >
                             {isImage && href ? (
-                              <img src={href} alt="" className="max-h-40 w-full object-cover" />
+                              <img
+                                src={href}
+                                alt=""
+                                className="max-h-40 w-full object-cover"
+                              />
                             ) : (
                               <span className="block truncate px-3 py-2 text-ui-base text-foreground-subtle">
                                 {attachment.filename}
@@ -251,20 +273,29 @@ function formatStepDuration(from: string, to: string, formatMessage?: MessageFor
     return formatOptionalMessage(formatMessage, "feedback.duration.lessThanMinute", "不到 1 分钟");
   }
   if (minutes < 60) {
-    return formatOptionalMessage(formatMessage, "feedback.duration.minutes", `${minutes} 分钟`, {
-      count: String(minutes),
-    });
+    return formatOptionalMessage(
+      formatMessage,
+      "feedback.duration.minutes",
+      `${minutes} 分钟`,
+      { count: String(minutes) },
+    );
   }
   const hours = Math.round(minutes / 60);
   if (hours < 24) {
-    return formatOptionalMessage(formatMessage, "feedback.duration.hours", `${hours} 小时`, {
-      count: String(hours),
-    });
+    return formatOptionalMessage(
+      formatMessage,
+      "feedback.duration.hours",
+      `${hours} 小时`,
+      { count: String(hours) },
+    );
   }
   const days = Math.round(hours / 24);
-  return formatOptionalMessage(formatMessage, "feedback.duration.days", `${days} 天`, {
-    count: String(days),
-  });
+  return formatOptionalMessage(
+    formatMessage,
+    "feedback.duration.days",
+    `${days} 天`,
+    { count: String(days) },
+  );
 }
 
 function formatOptionalMessage(

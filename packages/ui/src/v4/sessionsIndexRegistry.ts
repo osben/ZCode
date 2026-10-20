@@ -1,8 +1,9 @@
-// Reference-counted SessionsIndexStore registry keyed by endpoint + workspaceKey—the foundation for parallel subscriptions from multiple panes/lists:
-// multiple consumers of the same endpoint and workspace share one sessions-index subscription. Consumers such as useGlobalTaskList,
-// which handle a workspace-scope array when the sidebar switches data sources and cannot call a hook per scope, use this registry.
-// It mirrors SessionDataLayer's per-session acquire/release. The reuse key includes endpoint: remote shards (web/mobile remote control/SSH workspace)
-// access sessions-index through each endpoint's agentService proxy, so stores cannot be shared across endpoints even when workspaceKey matches.
+// 按 endpoint + workspaceKey 复用的 SessionsIndexStore 注册表（引用计数）——多 pane / 多列表
+// 消费者并行订阅的地基：同一 endpoint 同一 workspace 的多个消费者共享一条 sessions-index 订阅
+// （侧栏切数据源时，useGlobalTaskList 这类处理 workspace scope 数组、无法逐 scope 调 hook 的
+// 消费者走这里）。与 SessionDataLayer 的 per-session acquire/release 同构。
+// 复用键加 endpoint 维度——remote shard（web/手机远控/SSH workspace）的 sessions-index
+// 走各自 endpoint 的 agentService proxy，同 workspaceKey 不同 endpoint 不能共用 store。
 import type { IZCodeAgentService } from "@zcode/services";
 import { logger } from "@/logger.js";
 import { remoteAgentServiceGeneration } from "@/lib/remoteAgentServiceGeneration.js";
@@ -10,7 +11,7 @@ import { findRemoteWorkspaceSessionIdForAgentService } from "@/store/remoteWorks
 import { createAgentSessionsIndexTransport } from "@/v4/agentSessionsIndexTransport.js";
 import { SessionsIndexStore } from "@/v4/sessionsIndexStore.js";
 
-/** Narrow agentService interface required by the registry (= transport dependency surface, convenient for test injection). */
+/** 注册表需要的 agentService 窄面（= transport 的依赖面，便于测试注入）。 */
 export type SessionsIndexAgentService = Pick<
   IZCodeAgentService,
   | "subscribeSessionsIndexV4"
@@ -32,27 +33,27 @@ interface RegistryEntry {
 
 const registry = new Map<string, RegistryEntry>();
 const entriesByStore = new WeakMap<SessionsIndexStore, RegistryEntry>();
-/** Scopes with a reported endpoint mismatch; repeated acquire for the same scope (rerender/multiple consumers) logs only once. */
+/** 已上报过的 endpoint 不一致 scope；同一 scope 反复 acquire（重渲染/多消费者）只落一条日志。 */
 const reportedScopeEndpointMismatches = new Set<string>();
 
-/** Reserved key for the local endpoint (matching task-list shardKey semantics). */
+/** 本机 endpoint 的保留键（与 task list shardKey 口径一致）。 */
 export const LOCAL_SESSIONS_INDEX_ENDPOINT = "__base__";
 
 export interface SessionsIndexScope {
-  /** Workspace reuse key (= services resolveWorkspaceKey semantics: workspaceIdentity ?? workspacePath). */
+  /** workspace 复用键（= services resolveWorkspaceKey 口径：workspaceIdentity ?? workspacePath）。 */
   workspaceKey: string;
   workspacePath: string;
   workspaceIdentity?: string;
-  /** Endpoint dimension: remoteSessionId for remote shards; defaults to local __base__. */
+  /** endpoint 维度：remote shard 的 remoteSessionId；缺省 = 本机 __base__。 */
   endpointKey?: string;
 }
 
 /**
- * Diagnostics: the endpoint declared by the scope must match the remote session that owns agentService. Otherwise the same remote
- * workspace is registered twice and sends two subscriptions to the same topic, while the CLI keeps only the latest per connection/topic—the earlier
- * subscription is silently replaced, and the sidebar stops receiving frames with no error. These key mismatches
- * (for example, Root dropping remoteSessionId when a Settings tab overrides it) leave no renderer trace in production logs and can only be inferred from
- * RPC fingerprints. Record them on the lifecycle channel so users can see them directly in logs. Log only; do not rewrite the key.
+ * 诊断：scope 声明的 endpoint 必须与 agentService 实际所属的远程 session 一致，否则同一个
+ * 远程 workspace 会被登记成两个条目、对同一 topic 发两条订阅，而 CLI 对同 connection/topic 只保留
+ * 最新一条——先到的订阅被静默替换，侧栏从此收不到帧且没有任何错误。这类键不一致
+ * （如 Settings tab 覆盖时 Root 丢掉 remoteSessionId）在生产日志里没有任何 renderer 痕迹，只能靠
+ * RPC 指纹反推；这里用 lifecycle 通道落盘，让同类键不一致在用户日志里直接可见。只记录、不改键。
  */
 function reportScopeEndpointMismatch(
   scope: SessionsIndexScope,
@@ -89,7 +90,7 @@ function createSessionsIndexTransport(
   });
 }
 
-/** Registry entry key = endpoint + workspaceKey (different endpoints do not share a store even with the same workspaceKey). */
+/** 注册表条目键 = endpoint + workspaceKey（同 workspaceKey 不同 endpoint 不共用）。 */
 export function buildSessionsIndexEntryKey(
   scope: Pick<SessionsIndexScope, "workspaceKey" | "endpointKey">,
   agentService?: SessionsIndexAgentService,
@@ -100,7 +101,7 @@ export function buildSessionsIndexEntryKey(
     : entryKey;
 }
 
-/** Get or create the shared sessions-index store for an endpoint+workspace and increment refCount (the first acquire starts the subscription). */
+/** 取/建某 endpoint+workspace 的共享 sessions-index store，refCount++（首次 acquire 发起订阅）。 */
 export function acquireSessionsIndex(
   scope: SessionsIndexScope,
   agentService: SessionsIndexAgentService,
@@ -118,16 +119,16 @@ export function acquireSessionsIndex(
     (scope.endpointKey ?? LOCAL_SESSIONS_INDEX_ENDPOINT) !== LOCAL_SESSIONS_INDEX_ENDPOINT
   ) {
     existing.refCount += 1;
-    // During remote RPC proxy replacement, different React consumers may briefly hold old and new services.
-    // The CLI keeps only the latest subscription per connection/topic; if a second store is created here, the old store
-    // will continue to show a live/empty snapshot but never receive frames. Reuse the same store for a remote scope and switch transport
-    // serially in one direction by service generation; a late old consumer cannot switch transport back.
+    // 远程 RPC proxy 换代期间，不同 React consumer 可能短暂持有新旧 service。
+    // CLI 对同 connection/topic 只保留后一次订阅；若这里并行创建第二个 store，旧 store
+    // 会继续显示 live/空快照却永远收不到帧。远程 scope 固定复用同一 store，并按 service
+    // generation 单向、串行切换 transport；迟到的旧 consumer 不允许把 transport 切回去。
     if (incomingServiceGeneration > existing.agentServiceGeneration) {
       existing.agentService = agentService;
       existing.agentServiceGeneration = incomingServiceGeneration;
       const transport = createSessionsIndexTransport(scope, agentService);
-      // subscribe on any intermediate proxy may remain pending forever, so replacement cannot queue behind
-      // the previous I/O. The store generation synchronously detaches the old transport and invalidates late results.
+      // 任何中间 proxy 的 subscribe 都可能永久 pending，换代不能排队等待
+      // 前一条 I/O。store generation 会同步 detach 旧 transport，并让迟到结果自行失效。
       void existing.store.replaceTransport(transport).catch((error) => {
         logger.warn("[v4-sessions-index] remote transport replacement failed", error);
       });
@@ -135,8 +136,8 @@ export function acquireSessionsIndex(
     return existing.store;
   }
   if (existing) {
-    // Local __base__ retains its original lifecycle: create a new store when the service instance changes. Existing consumers
-    // release by store identity during cleanup and cannot decrement the new entry's refCount by mistake.
+    // 本地 __base__ 保持原生命周期：service 实例换代时创建新 store；旧 consumer
+    // 后续 cleanup 仍按 store 身份精确 release，不能误减新条目的 refCount。
     registry.delete(entryKey);
     if (existing.refCount <= 0) {
       existing.store.close();
@@ -145,8 +146,8 @@ export function acquireSessionsIndex(
   }
   const store = new SessionsIndexStore();
   const transport = createSessionsIndexTransport(scope, agentService);
-  // Initial subscribe may remain pending forever after the old RPC proxy is destroyed. The replacement queue cannot
-  // wait for that old I/O; replaceTransport invalidates late results using the store generation.
+  // 初始 subscribe 可能在旧 RPC proxy 被销毁后永久 pending。换代队列不能
+  // 等待这条旧 I/O；replaceTransport 会用 store generation 失效其迟到结果。
   void store.connect(transport, { forceSnapshot: true });
   const entry: RegistryEntry = {
     key: entryKey,
@@ -160,7 +161,7 @@ export function acquireSessionsIndex(
   return store;
 }
 
-/** Decrement refCount; when it reaches zero, close and remove the store (unsubscribe + detach listeners). */
+/** refCount--，归零则 close + 移除（退订 + 解监听）。 */
 export function releaseSessionsIndex(
   scope: Pick<SessionsIndexScope, "workspaceKey" | "endpointKey">,
   store: SessionsIndexStore,
@@ -176,7 +177,7 @@ export function releaseSessionsIndex(
   }
 }
 
-/** For tests/diagnostics only: number of currently registered endpoint+workspaceKey entries. */
+/** 仅测试/诊断用：当前注册的 endpoint+workspaceKey 条目数。 */
 export function sessionsIndexRegistrySize(): number {
   return registry.size;
 }

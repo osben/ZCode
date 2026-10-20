@@ -1,4 +1,7 @@
-/* Off-peak task list: two-column card grid. Cards share the scheduled-task card structure: title + instruction description + footer (moon + #N-in-queue position badge). Sort by creation time descending; hover menu actions vary by status. No Est. for position. */
+/* 闲时任务列表（Figma「Automations - Task list Idle-time task」/ node 4866-1735）：
+   2 列卡片网格，卡片结构与定时任务卡同源（MR 1622 设计）：标题 + 指令描述 +
+   底部（moon + #N in queue 位次徽章）。按创建时间倒序；hover 菜单按状态收敛（D29/D30）。
+   位次无 Est.（D30-1）。 */
 import {
   useCallback,
   useEffect,
@@ -9,6 +12,7 @@ import {
   type SVGProps,
 } from "react";
 import { CircleCheck, Loader2, TriangleAlert } from "lucide-react";
+import { type ZCodeOffPeakTask } from "@zcode/shared";
 import {
   TID_OFFPEAK_ACTION_CONTINUE,
   TID_OFFPEAK_ACTION_DELETE,
@@ -16,8 +20,7 @@ import {
   TID_OFFPEAK_CARD,
   TID_OFFPEAK_CARD_SESSION,
   TID_OFFPEAK_CARD_MENU,
-  type ZCodeOffPeakTask,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -57,15 +60,15 @@ interface OffPeakTaskListProps {
   onOpenSession: (task: ZCodeOffPeakTask) => void;
 }
 
-// Grouping by status would move tasks when they switch between running and terminal states, breaking users’ expectations for existing card positions;
-// sort only by immutable creation time descending so status changes do not affect order.
+// 按状态分组会让任务在运行和终态切换时跳位，破坏用户对已有卡片位置的预期；
+// 列表只按不可变的创建时间倒序，状态变化不再影响顺序。
 export function sortOffPeakTasksByCreatedAt(
   tasks: readonly ZCodeOffPeakTask[],
 ): ZCodeOffPeakTask[] {
   return [...tasks].sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Same scroll threshold as the scheduled-task list in AutomationsSection (the Figma spec shows at most 8 cards). */
+/** 与 AutomationsSection 定时任务列表相同的滚动阈值（Figma 规范最多露出 8 张卡片）。 */
 export const OFFPEAK_LIST_SCROLL_THRESHOLD = 8;
 
 const OFFPEAK_MENU_HINT_MAX_WIDTH = 320;
@@ -92,8 +95,8 @@ function OffPeakMenuHint({ children, title }: { children: ReactNode; title: stri
   const [side, setSide] = useState<OffPeakMenuHintSide>("right");
 
   const updateSide = useCallback(() => {
-    // The hint trigger is inside the menu. In narrow windows, Radix flips “right” to “left” automatically,
-    // which would make the left-side hint cross the entire menu; when horizontal space is limited, place it above the menu to avoid covering actions.
+    // 提示入口位于菜单内部。窄窗口下 Radix 会把 right 自动翻到 left，
+    // 左侧提示会穿过整个菜单；横向空间不足时改到菜单上方，避免提示与操作项互相覆盖。
     setSide(
       resolveOffPeakMenuHintSide(
         triggerRef.current?.getBoundingClientRect() ?? null,
@@ -134,7 +137,7 @@ function OffPeakMenuHint({ children, title }: { children: ReactNode; title: stri
 
 const STATUS_ICON: Record<OffPeakStatusIconKind, ComponentType<SVGProps<SVGSVGElement>>> = {
   moon: AutomationIdleTimeIcon,
-  // In the design, Paused uses a circular stop icon; the old pause bars looked like a media pause control.
+  // 设计稿中 Paused 状态是圆形停止图标，旧双竖线会被误读为媒体暂停控件。
   pause: AutomationPausedIcon,
   spinner: Loader2,
   success: CircleCheck,
@@ -167,7 +170,7 @@ export function OffPeakTaskList({
     <div
       className={cn(
         "grid auto-rows-[132px] grid-cols-1 gap-x-4 gap-y-4 lg:grid-cols-2",
-        // Same rule as the scheduled task list: show at most eight cards, with the grid itself scrolling for overflow so the page does not grow indefinitely.
+        // 与定时任务列表同一口径：最多露出 8 张卡片，超出由 grid 自身滚动，避免页面无限拉长。
         sorted.length > OFFPEAK_LIST_SCROLL_THRESHOLD &&
           "max-h-[1198px] overflow-y-auto overscroll-contain lg:max-h-[606px]",
       )}
@@ -201,9 +204,9 @@ export function OffPeakTaskList({
               }
             }}
             className={cn(
-              // An inset surface shadow does not convey a Card outline and creates a color mismatch with home-page cards across light/dark themes.
+              // inset surface shadow 不是 Card 描边语义，明暗主题下会与首页卡片产生色差。
               "group relative flex h-full min-h-0 cursor-pointer gap-3 overflow-hidden rounded-[10px] border border-card-border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-border-focused",
-              // Keep completed cards muted overall, but still show a hover background to indicate the card is clickable and its more menu is usable.
+              // 完成态保持整体置灰，但仍需用 hover 背景反馈卡片可点击、更多菜单可操作。
               task.status === "completed" ? "opacity-60 hover:bg-hover" : "hover:bg-hover",
             )}
           >
@@ -211,20 +214,19 @@ export function OffPeakTaskList({
               <span className="block truncate pr-14 text-ui-base font-medium leading-5 text-foreground">
                 {task.title || task.prompt}
               </span>
-              {/* Fix reason: task-card body and status font sizes can scale; a fixed 18px line-height would squeeze or clip text at larger font sizes. */}
+              {/* 修复原因：任务卡正文与状态字号可缩放，固定 18px 行高会在大字号下挤压或裁切文字。 */}
               <p className="line-clamp-2 h-9 text-ui-base font-normal leading-snug text-foreground-subtle">
                 {task.prompt}
               </p>
               <div className="mt-auto flex h-6 min-w-0 items-center gap-[10px] text-ui-base leading-snug">
-                {/* Bug cause: the status badge and right-side “Running session: …” may both shrink, letting
-                   a long session title compress the status to one character. Status is the primary footer
-                   information, so keep it shrink-0 and truncate only the session-title segment. */}
+                {/* Bug 原因：状态徽章与右侧「运行会话：…」都允许收缩，长会话标题会把状态文字压到只剩一个字。
+                   状态是脚注的主信息，改为 shrink-0 不可压缩，只让会话标题那一段 truncate。 */}
                 <div
                   className={cn(
                     "flex w-fit shrink-0 items-center gap-0.5 font-normal",
                     footer.className,
                     (task.status === "queued" || task.status === "paused") &&
-                      // Zai Dark uses white as its brand color; the off-peak queue Tag must use the dedicated purple semantic color from the design.
+                      // Zai Dark 的 brand 是白色，闲时排队 Tag 必须使用设计稿专用紫色语义。
                       "rounded-[8px] bg-idle-task-surface py-0.5 pl-1 pr-2 text-idle-task",
                   )}
                 >
@@ -257,7 +259,7 @@ export function OffPeakTaskList({
                   </div>
                 ) : null}
                 {task.sessionTitle ? (
-                  // Tasks created in a session are bound to and run in that session, so show its title in the footer.
+                  // 会话内创建的任务绑定并运行在创建它的会话里，脚注露出会话标题。
                   <span
                     data-testid={TID_OFFPEAK_CARD_SESSION}
                     className="ml-auto min-w-0 truncate text-foreground-subtle"
@@ -276,7 +278,7 @@ export function OffPeakTaskList({
               {task.sessionId ? (
                 <button
                   type="button"
-                  className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-surface-hover md:opacity-0 md:group-hover:opacity-100"
+                  className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-white/10 md:opacity-0 md:group-hover:opacity-100"
                   aria-label={intl.formatMessage({
                     id: "offPeak.goToSession",
                   })}
@@ -295,7 +297,7 @@ export function OffPeakTaskList({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-surface-hover md:opacity-0 md:group-hover:opacity-100 data-[state=open]:bg-surface-hover data-[state=open]:opacity-100"
+                    className="flex size-6 items-center justify-center rounded-md opacity-100 transition-colors hover:bg-white/10 md:opacity-0 md:group-hover:opacity-100 data-[state=open]:bg-white/10 data-[state=open]:opacity-100"
                     data-testid={TID_OFFPEAK_CARD_MENU}
                     aria-label={intl.formatMessage({
                       id: "automations.moreActions",
@@ -327,17 +329,15 @@ export function OffPeakTaskList({
                       <span className="flex-1">
                         {intl.formatMessage({ id: "offPeak.action.pause" })}
                       </span>
-                      {/* Fix reason: pause now takes effect immediately without a second confirmation.
-                         Keep the info entry to explain queue wait time and requeue behavior so users
-                         understand the outcome of the action. */}
+                      {/* 修复原因：暂停已改为立即执行，不再弹二次确认；保留信息入口承载
+                         排队等待时间与重新入队的产品提示，避免用户无从了解操作后果。 */}
                       <OffPeakMenuHint
                         title={intl.formatMessage({
                           id: "offPeak.action.pauseHint",
                         })}
                       >
-                        {/* Fix reason: the hint trigger is nested inside a selectable menu item; click
-                           bubbling would execute Pause / Continue. Stop only click propagation so
-                           pointerdown does not disrupt Radix selection timing. */}
+                        {/* 修复原因：提示入口嵌在可选择菜单项内，click 冒泡会直接执行
+                           Pause / Continue；只隔离 click，避免 pointerdown 干扰 Radix 选中时序。 */}
                         <span className="inline-flex" onClick={(event) => event.stopPropagation()}>
                           <AutomationInfoIcon
                             className="size-3.5 shrink-0 text-foreground-subtle"
@@ -377,7 +377,7 @@ export function OffPeakTaskList({
                   ) : null}
                   {task.status === "running" ? (
                     <DropdownMenuItem className="gap-1" onSelect={() => onCancel(task)}>
-                      {/* Fix reason: the thin-outline X is lighter than neighboring action icons and does not match the home Chat “stop generation” semantics. */}
+                      {/* 修复原因：细描边 X 比相邻操作图标轻，且与首页 Chat 的暂停生成语义不一致。 */}
                       <span className="flex size-5 items-center justify-center">
                         <AutomationCancelActionIcon
                           className="size-4 fill-current"
@@ -387,7 +387,7 @@ export function OffPeakTaskList({
                       {intl.formatMessage({ id: "offPeak.action.cancel" })}
                     </DropdownMenuItem>
                   ) : null}
-                  {/* Fix reason: when the terminal-state menu has only Delete, a fixed divider looks like a top rule with no grouping meaning. */}
+                  {/* 修复原因：终态菜单只有删除一项时，固定分割线会变成没有分组语义的顶线。 */}
                   {hasPrimaryMenuAction ? <DropdownMenuSeparator /> : null}
                   <DropdownMenuItem
                     className="gap-1 !text-destructive data-[highlighted]:!bg-menu-hover data-[highlighted]:!text-destructive focus:!text-destructive [&_svg]:!text-destructive"

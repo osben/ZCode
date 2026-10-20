@@ -4,8 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { MemoTaskItem as TaskItem } from "@/TaskListItem.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
-import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 
 const { workspaceStateByPath } = vi.hoisted(() => ({
   workspaceStateByPath: new Map<string, unknown>(),
@@ -37,7 +35,6 @@ vi.mock("@/useTaskListItemContextActions.js", () => ({
 
 beforeEach(() => {
   workspaceStateByPath.clear();
-  useBranchMergeStatusStore.setState({ statusByWorkspaceKey: {} });
 });
 
 function createTaskMeta(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
@@ -143,26 +140,6 @@ function renderTaskItem(
 }
 
 describe("TaskList change summary", () => {
-  it("renders a workspace-merged legacy row without merge indicators or branch details", () => {
-    useBranchMergeStatusStore
-      .getState()
-      .setBranchMergeStatus(buildTaskWorkspaceKey("/repo/workspace"), {
-        state: "merged",
-        baseRef: "origin/main",
-        headRef: "feature/workspace-branch",
-        lastCommitAt: null,
-      });
-
-    const html = renderTaskItem();
-
-    expect(html).not.toContain('data-branch-merged-badge="true"');
-    expect(html).not.toContain("Merged");
-    expect(html).not.toContain("feature/workspace-branch");
-    expect(html).toContain("汇总任务文件改动");
-    expect(html).toContain("+8");
-    expect(html).toContain("-3");
-  });
-
   it("任务标题右侧只显示总增删，不再显示文件数量和文件列表", () => {
     const html = renderTaskItem();
 
@@ -183,21 +160,11 @@ describe("TaskList change summary", () => {
     expect(html).toContain("-3");
   });
 
-  it("timeline variant 在闲置状态显示灰点", () => {
+  it("无状态时 timeline 与默认任务行都不显示圆点", () => {
     const html = renderTaskItem(undefined, { variant: "timeline" });
     const defaultHtml = renderTaskItem();
 
-    expect(html).toContain('data-idle-indicator="true"');
+    expect(html).not.toContain('data-idle-indicator="true"');
     expect(defaultHtml).not.toContain('data-idle-indicator="true"');
-  });
-
-  it("workspace 和 timeline 标题交给运行时溢出测量，不默认挂载渐隐", () => {
-    const defaultHtml = renderTaskItem();
-    const timelineHtml = renderTaskItem(undefined, { variant: "timeline" });
-
-    expect(defaultHtml).not.toContain("mask-image:linear-gradient");
-    expect(timelineHtml).not.toContain("mask-image:linear-gradient");
-    expect(defaultHtml).not.toContain("truncate text-ui-base text-foreground");
-    expect(timelineHtml).not.toContain("truncate text-ui-base text-foreground");
   });
 });

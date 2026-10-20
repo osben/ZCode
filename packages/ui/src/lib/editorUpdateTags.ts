@@ -1,12 +1,12 @@
-/** Generic tag for programmatic updates (setText, setEditorStateJson, etc.) */
+/** 程序化更新（setText、setEditorStateJson 等）的通用标记 */
 export const PROGRAMMATIC_UPDATE_TAG = "zcode-programmatic";
 
 /**
- * Dedicated tag for restoring history navigation.
- * Previously, PromptHistoryPlugin used the generic PROGRAMMATIC_UPDATE_TAG when restoring history entries,
- * so SlashCommandPlugin’s update listener could not distinguish “the user is typing a slash query” from
- * “history navigation wrote an old entry containing / back into the editor,” causing the panel to reopen and register a COMMAND_PRIORITY_CRITICAL
- * arrow-key handler that consumed all later ArrowUp/ArrowDown events, preventing further history navigation.
- * With a dedicated tag, SlashCommandPlugin can skip history-restoration updates precisely without affecting normal panel behavior when users type /.
+ * 历史导航回填专用标记。
+ * 此前 PromptHistoryPlugin 回填历史条目时使用通用 PROGRAMMATIC_UPDATE_TAG，
+ * SlashCommandPlugin 的 update listener 无法区分"用户正在输入 slash 查询"与
+ * "历史导航把含 / 的旧条目写回编辑器"，导致面板重新打开并以 COMMAND_PRIORITY_CRITICAL
+ * 注册方向键处理器，将后续 ArrowUp/ArrowDown 全部吞掉，历史索引无法继续翻阅。
+ * 使用独立标记后，SlashCommandPlugin 可精确跳过历史回填更新，不影响用户手输 / 时的正常面板行为。
  */
 export const HISTORY_NAVIGATION_UPDATE_TAG = "zcode-history-navigation";

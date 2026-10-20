@@ -1,7 +1,7 @@
 import { BotTopicPreparation } from "@/v4/BotTopicPreparation.js";
 import { useBotTopicInterruption } from "@/v4/botGroupDeliveryContext.js";
 import { ConnectedBotGroupDeliveryAction } from "@/v4/BotGroupDeliveryAction.js";
-/* eslint-disable max-lines -- The turn group must maintain the strict row order of regular assistant content and background results in one place; splitting it would duplicate the actions/preview/tail protocol. */
+/* eslint-disable max-lines -- turn group 需要在同一处维护普通 assistant 与后台结果的严格行序，拆分会重复 actions/preview/tail 协议。 */
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import {
   Fragment,
@@ -11,9 +11,9 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
+import { type HighspeedMessageMeta, type ZCodeApiRetryStatus } from "@zcode/shared";
 import {
   TID_CHAT_ASSISTANT_HISTORY_CONTENT,
   TID_CHAT_ASSISTANT_HISTORY_TRIGGER,
@@ -21,21 +21,17 @@ import {
   TID_CHAT_LOADING,
   TID_V4_ROW,
   testId,
-  type HighspeedMessageMeta,
-  type ZCodeApiRetryStatus,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import type {
   ApiRetryState,
   AttachmentRef,
   CommandAck,
   ConversationRowTarget,
-  WorkflowNotificationMeta,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ChatApiRetryStatus } from "@/chat-input-toolbar/display.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
-import { Checkbox } from "@/components/ui/checkbox.js";
 import { MessageActions } from "@/components/ai-elements/message.js";
 import {
   Collapsible,
@@ -85,7 +81,11 @@ import {
 import type { ConversationCuaGroupEvent } from "@/v4/conversationCuaGroups.js";
 import { ConversationAgentToolCallRow } from "@/v4/ConversationAgentToolCallRow.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
-import { WorkflowNotificationToolRow } from "@/v4/WorkflowNotificationToolRow.js";
+import {
+  WorkflowNotificationToolRow,
+  workflowRowNotification,
+  type WorkflowRowNotification,
+} from "@/v4/WorkflowNotificationToolRow.js";
 import { ConversationWorkflowDigests } from "@/v4/ConversationWorkflowDigests.js";
 import { ConversationWorkflowCompletion } from "@/v4/ConversationWorkflowCompletion.js";
 import { resolveWorkflowTurnDigests } from "@/v4/workflowTurnDigests.js";
@@ -95,7 +95,6 @@ import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
-  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import {
   isConversationReasoningRowVisible,
@@ -108,40 +107,26 @@ import type {
   ConversationTurnWorkSegment,
 } from "@/v4/conversationTurnRenderUnits.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
-import {
-  resolveSegmentStreamingContent,
-  useStreamingThroughput,
-} from "@/v4/conversationStreamingThroughput.js";
-import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
-import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 
 interface ConversationTurnGroupProps {
   unit: ConversationTurnRenderUnit;
-  /** Shared UI clock for the timeline; removes the running purple shimmer immediately at the Highspeed expiry boundary. */
+  /** Timeline 的共享 UI 时钟；用于在 Highspeed 过期边界立即撤销运行态紫色流光。 */
   nowMs?: number;
-  /** Injected by Timeline only for the current live turn; historical turns never carry runtime retry state. */
+  /** 仅由 Timeline 注入给当前 live turn；历史 turn 永远不携带运行时 retry。 */
   apiRetry?: ApiRetryState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
-  /** Display-only pin bookmark toggle (setRowPinned); threaded like onEdit so user rows can unpin. */
-  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
     attachments?: readonly AttachmentRef[],
     workspaceMode?: "preserve" | "rewind",
   ) => Promise<CommandAck | boolean | void> | CommandAck | boolean | void;
-  /** Show the selection control for this turn to the left of the body during the share-selection stage. */
-  shareSelection?: {
-    eligibleRowIds: ReadonlySet<number>;
-    selectedRowIds: ReadonlySet<number>;
-    onToggle: (rowId: number) => void;
-  };
 }
 
 interface CronAutomationTurnCard {
@@ -188,7 +173,7 @@ function HighspeedOutputFooter({
             type="button"
             variant="ghost"
             size="default"
-            className="h-7 gap-1 rounded-[8px] bg-surface px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-surface-hover"
+            className="h-7 gap-1 rounded-[8px] bg-black/5 px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10"
             data-highspeed-output-share="true"
             disabled={sharePending}
             aria-label={shareAriaLabel}
@@ -210,8 +195,8 @@ function HighspeedOutputFooter({
 
 function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
   const attempt = Math.max(1, Math.floor(apiRetry.attempt));
-  // v4 maxAttempts includes the initial request, while the UI shows retry count; displaying it directly would make
-  // the default 10 retries appear as 1/11.
+  // v4 maxAttempts 包含首次请求，而展示口径是重试次数；直接展示会把
+  // 默认 10 次重试写成 1/11。
   const maxRetries = Math.max(Math.floor(apiRetry.maxAttempts) - 1, attempt);
   return {
     kind: "api_retry",
@@ -232,9 +217,9 @@ function TurnChatLoadingSlot({
 }) {
   const { intl, locale } = useZCodeIntl();
   const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
-  // The first two brief recoveries are equivalent to normal loading from the user’s perspective. Keep the apiRetry runtime state, but show the counter only
-  // from the third retry onward. This must be settled before the retry/loading branch; otherwise it leaves an empty slot
-  // instead of falling back to ChatLoading.
+  // 前两次短暂恢复对用户等价于普通加载；保留 apiRetry 运行态，但只在
+  // 第三次重试开始后显示计数。必须在 retry/loading 分支前收敛，否则会留下空 slot，
+  // 而不是回退到 ChatLoading。
   const visibleRetryStatus =
     retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
   if (!visibleRetryStatus && !eligible) return null;
@@ -243,8 +228,8 @@ function TurnChatLoadingSlot({
       {visibleRetryStatus ? (
         <ChatApiRetryStatus apiRetry={visibleRetryStatus} intl={intl} locale={locale} />
       ) : (
-        // running is the authoritative fact for ChatLoading; a separate quiet timer would repeatedly restart visibility on projection
-        // updates and make the UI lag behind the actual state.
+        // running 是 ChatLoading 的权威事实；额外静默计时会让 projection
+        // 更新反复重启可见性，并使 UI 晚于真实状态。
         <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
       )}
     </div>
@@ -258,8 +243,8 @@ function ConversationExploreGroupRow({
   item: Extract<ConversationAssistantWorkRenderItem, { kind: "exploreGroup" }>;
   context: ConversationRowRenderContext;
 }) {
-  // The explore group row already sits inside the turn container’s shared padding; adding px-4 again
-  // would make some tools in the same sequence more indented than others.
+  // explore 分组行已经处在 turn 容器的统一边距内，单独再加 px-4
+  // 会让同一串工具调用有的内缩、有的不内缩。
   return (
     <div
       data-row-id={item.rowId}
@@ -335,8 +320,8 @@ function ConversationToolGroupRow({
         onOpenFileLink={context.onOpenFileLink}
         onOpenBrowserUrl={context.onOpenBrowserUrl}
         onOpenAutomationsMain={context.onOpenAutomationsMain}
-        // In the history/background compatibility path, passing only a virtual parent node means the grouped projection consumes these
-        // Assistant message/reasoning items without giving them to the renderer, permanently losing them when expanded.
+        // history/background 兼容路径只传虚拟父节点时，已被分组投影消费的
+        // Assistant message / reasoning 没有交给 renderer，展开后会永久丢失。
         cuaGroupEvents={visibleCuaEvents}
         renderCuaAssistantMessage={item.kind === "cuaGroup" ? renderAssistantMessage : undefined}
         renderCuaReasoning={item.kind === "cuaGroup" ? renderReasoning : undefined}
@@ -411,7 +396,7 @@ function ConversationAssistantWorkItems({
   rows: readonly AssistantWorkRow[];
   context: ConversationRowRenderContext;
   stageTailIsRunning?: boolean;
-  /** The body of a running turn may temporarily appear in the history renderer and still needs to hide specialized protocol text. */
+  /** running turn 的正文可能暂时落在 history renderer，仍需隐藏特化协议原文。 */
   assistantCodeCommentProjectionEnabled?: boolean;
   historyContainer?: {
     chunkKey: string;
@@ -452,15 +437,15 @@ function ConversationAssistantWorkItems({
     ],
   );
 
-  // The history shell cannot be created before projection here: when CUA consumes the original message
-  // or a running shell is classified later, it leaves pt-5 and an empty gap-4 container. Create CollapsibleContent only after confirming
-  // that the inner content contains renderable items, so the shell disappears with the content.
+  // history 外壳不能在这层投影前创建：当 CUA 消费原 message
+  // 或运行中 shell 被延迟分类时，会留下 pt-5 和空的 gap-4 容器。只有确认
+  // 内层存在可渲染项后才创建 CollapsibleContent，让外壳与内容一起消失。
   if (items.length === 0) {
     return null;
   }
 
-  // Group consecutive work items (tools/explore/reasoning) in a shared gap-4 container (matching the old tool-call-group),
-  // replacing the parent’s inherited gap-5/gap-2 plus per-row py-2, which produced double and inconsistent spacing.
+  // 连续工作项（工具/explore/reasoning）统一 gap-4 组容器（对齐旧版 tool-call-group），
+  // 取代继承父级 gap-5/gap-2 + 每行 py-2 的双重且不一致的间距。
   const content = (
     <div className="flex flex-col gap-4">
       {items.map((item) =>
@@ -511,8 +496,8 @@ function resolveCronAutomationTurnCards(
     if (normalizedToolName === "crondelete") {
       const deletedAutomationId = readCronDeleteAutomationId(row);
       if (deletedAutomationId) {
-        // Counting only successful Create/Update items this turn ignores a later CronDelete, leaving an already
-        // revoked intermediate result promoted as a successful turn-tail card.
+        // 只累计本轮成功的 Create/Update 会忽略后续 CronDelete，导致已经
+        // 撤销的中间结果仍被提升成轮尾成功卡片。
         cards = cards.filter((card) => card.automation.automationId !== deletedAutomationId);
       }
       continue;
@@ -541,8 +526,8 @@ function resolveCronAutomationTurnCards(
   return cards;
 }
 
-// Collect only this turn’s status === "success" OffPeakCreate items; for duplicate IDs, keep the latest.
-// Deliberately do not reuse resolveCronAutomationTurnCards: it includes CronDelete revocation filtering, which has no matching tool in OffPeak.
+// 只收本轮 status==="success" 的 OffPeakCreate；同 id 重复输出保留最新一次。
+// 刻意不复用 resolveCronAutomationTurnCards——那套带 CronDelete 撤销过滤语义，闲时无对应工具。
 function resolveOffPeakTurnCards(rows: readonly AssistantWorkRow[]): OffPeakTurnCard[] {
   let cards: OffPeakTurnCard[] = [];
 
@@ -649,14 +634,12 @@ function OffPeakTurnCards({
 function AssistantHistoryStatus({
   segment,
   open,
-  context,
   highspeed,
   highspeedMeta,
   sourceCommandIds,
 }: {
   segment: ConversationTurnWorkSegment;
   open: boolean;
-  context: ConversationRowRenderContext;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
   sourceCommandIds: readonly string[];
@@ -668,27 +651,6 @@ function AssistantHistoryStatus({
     intl,
     locale,
   );
-  const isRunning = segment.workStatus?.state === "running";
-  const { tokensPerSecond } = useSessionThroughput({
-    // Poll throughput only for running segments; do not backfill a final value for “worked N” on completed segments,
-    // which would leave stale facts from outside the polling period in history rows.
-    enabled: isRunning,
-    sessionId: context.sessionId,
-    workspaceIdentity: context.workspaceIdentity,
-    workspacePath: context.workspacePath,
-  });
-  // During streaming (including thinking), prefer a live estimate: an exact value is produced only when a request
-  // completes, so it will not refresh during a single long response. Estimate from the streaming row using the cumulative
-  // average (cumulative tokens / cumulative duration), display it with a ~ prefix, and fall back to the exact value after
-  // the character stream has been quiet (tool execution/request gap) longer than the window.
-  const segmentStreamingContent = resolveSegmentStreamingContent(segment.assistantWorkRows);
-  const streamingTokensPerSecond = useStreamingThroughput({
-    enabled: isRunning,
-    contentKey: segmentStreamingContent.key,
-    text: segmentStreamingContent.text,
-  });
-  const isEstimate = streamingTokensPerSecond !== null;
-  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
   const savedDurationLabel =
     segment.workStatus?.state === "completed" &&
     highspeedMeta?.savedDurationMs !== undefined &&
@@ -754,36 +716,6 @@ function AssistantHistoryStatus({
             {intl.formatMessage({ id: "chat.highspeed.statusTag" })}
           </span>
         </div>
-      ) : isRunning && throughputTokensPerSecond !== null ? (
-        // Right-aligned live throughput: during streaming, use the sliding-window estimate (~ prefix); otherwise,
-        // use exact tok/s from the most recently completed model request (same source as the developer-tools TPS).
-        // Hide the whole section when both are absent (the first request is unfinished and the sample span is too short).
-        <span
-          data-testid="chat-working-throughput"
-          data-throughput-estimated={isEstimate ? "true" : undefined}
-          title={intl.formatMessage({
-            id: isEstimate
-              ? "chat.history.workingThroughputEstimateTitle"
-              : "chat.history.workingThroughputTitle",
-          })}
-          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
-        >
-          {isEstimate ? "~" : ""}
-          {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
-        </span>
-      ) : !isRunning && segment.workStatus?.outputTokens !== undefined ? (
-        // Takes the live tok/s slot once the turn completes; the projection attaches the turn total
-        // only to the final segment, so guided segments never repeat it.
-        <span
-          data-testid="chat-worked-output-tokens"
-          title={intl.formatMessage({ id: "chat.history.outputTokensTitle" })}
-          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
-        >
-          {intl.formatMessage(
-            { id: "chat.history.outputTokens" },
-            { count: formatCompactTokenNumber(locale, segment.workStatus.outputTokens) },
-          )}
-        </span>
       ) : null}
     </div>
   );
@@ -796,7 +728,6 @@ function ConversationWorkSegmentFlow({
   onFork,
   onRetry,
   onEdit,
-  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantPreviewCards,
@@ -807,8 +738,6 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant,
   highspeed,
   highspeedMeta,
-  shareSelectionToggle,
-  shareSelectionRowId,
 }: {
   segment: ConversationTurnWorkSegment;
   sourceCommandIds: readonly string[];
@@ -816,7 +745,6 @@ function ConversationWorkSegmentFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
-  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantPreviewCards: AssistantPreviewCard[];
@@ -827,8 +755,6 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant: boolean;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
-  shareSelectionToggle?: ReactNode;
-  shareSelectionRowId?: number;
 }) {
   const [historyOpen, setHistoryOpen] = useState(segment.assistantHistoryDefaultOpen);
   useEffect(() => {
@@ -846,9 +772,9 @@ function ConversationWorkSegmentFlow({
     <Collapsible
       open={open}
       onOpenChange={segment.assistantHistoryDefaultOpen ? undefined : setHistoryOpen}
-      // The outer flex gap is not part of the content height measured by Radix, so after collapsing to 0 the final
-      // display:none frame would lose another 20px. Keep the original box model with margins for regular siblings,
-      // and put history spacing inside the animation layer.
+      // 外层 flex gap 不属于 Radix 测量的 content 高度，收起到 0 后会在
+      // display:none 的最后一帧再少 20px。普通兄弟用外边距保持原盒模型，history
+      // 的间距则放进动画层。
       className="history-message flex flex-col [&>*+*:not([data-slot='collapsible-content'])]:mt-5"
     >
       {segment.flowItems.map((item, index) => {
@@ -869,19 +795,10 @@ function ConversationWorkSegmentFlow({
               row={item.row}
               context={context}
               onEdit={item.row.actions?.canEdit === true ? onEdit : undefined}
-              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
             />
           );
-          content =
-            shareSelectionToggle && item.row.rowId === shareSelectionRowId ? (
-              <div className="relative">
-                {shareSelectionToggle}
-                {userRow}
-              </div>
-            ) : (
-              userRow
-            );
+          content = userRow;
         } else if (item.kind === "cuaGroup") {
           const group = <ConversationCuaGroupRow item={item} context={context} />;
           if (item.flowKind === "assistantHistory") {
@@ -947,7 +864,6 @@ function ConversationWorkSegmentFlow({
               <AssistantHistoryStatus
                 segment={segment}
                 open={open}
-                context={context}
                 highspeed={highspeed}
                 highspeedMeta={highspeedMeta}
                 sourceCommandIds={sourceCommandIds}
@@ -960,11 +876,10 @@ function ConversationWorkSegmentFlow({
       {shouldShowHistoryStatus && firstAssistantFlowItemIndex < 0 ? (
         <AssistantHistoryStatus
           segment={segment}
+          sourceCommandIds={sourceCommandIds}
           open={open}
-          context={context}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
-          sourceCommandIds={sourceCommandIds}
         />
       ) : null}
     </Collapsible>
@@ -978,7 +893,6 @@ function ConversationTurnFlow({
   onFork,
   onRetry,
   onEdit,
-  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantCodeCommentCards,
@@ -986,8 +900,6 @@ function ConversationTurnFlow({
   assistantPreviewCardsAutoOpenKey,
   highspeed,
   highspeedMeta,
-  shareSelectionToggle,
-  shareSelectionRowId,
 }: {
   unit: ConversationTurnRenderUnit;
   apiRetry: ApiRetryState | null;
@@ -995,7 +907,6 @@ function ConversationTurnFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
-  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantCodeCommentCards: AssistantCodeCommentCard[];
@@ -1003,11 +914,9 @@ function ConversationTurnFlow({
   assistantPreviewCardsAutoOpenKey?: string;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
-  shareSelectionToggle?: ReactNode;
-  shareSelectionRowId?: number;
 }) {
-  // Product semantics: visible text or tools do not mean the main turn has ended. ChatLoading follows the last turn's
-  // running lifecycle, but interactive UI owns progress feedback while waiting for a user answer/authorization.
+  // 产品语义：可见正文或工具不代表主轮已经结束；ChatLoading 跟随最后一轮
+  // running 生命周期，但等待用户回答/授权时由交互 UI 独占进度反馈。
   const showLoading = shouldShowTurnChatLoading({
     blockedByActiveWork: context.chatLoadingBlockedByActiveWork === true,
     blockedByInteraction: context.chatLoadingBlockedByInteraction === true,
@@ -1050,7 +959,7 @@ function ConversationTurnFlow({
         ? [
             {
               ...projectedWorkSegments[0]!,
-              // Compatibility for callers that still construct/override the old render unit directly; real multi-segment guides do not use this branch.
+              // 兼容仍直接构造/覆写旧 render unit 的调用方；真实 guide 多段不走这个分支。
               assistantHistoryDefaultOpen: unit.assistantHistoryDefaultOpen,
             },
           ]
@@ -1079,8 +988,8 @@ function ConversationTurnFlow({
   const canRetryLatestAssistant = latestAssistantTextRow?.actions?.canRetry === true;
   const canForkLatestAssistant = latestAssistantTextRow?.actions?.canFork === true;
 
-  // Even when the complete guide row order is restored, do not make all history chunks share one Collapsible.
-  // The CLI now bounds accepted guides with workSegments, and each segment component manages its own collapsed state.
+  // 即使恢复了 guide 的 row 全序，也不能让所有 history chunk 共享同一个
+  // Collapsible。accepted guide 现在由 CLI workSegments 定界，每段组件自行维护折叠状态。
   return (
     <div className="flex flex-col gap-5">
       {workSegments.map((segment) => (
@@ -1101,7 +1010,6 @@ function ConversationTurnFlow({
           onFork={onFork}
           onRetry={onRetry}
           onEdit={onEdit}
-          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantPreviewCards={assistantPreviewCards}
@@ -1112,8 +1020,6 @@ function ConversationTurnFlow({
           canRetryLatestAssistant={canRetryLatestAssistant}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
-          shareSelectionToggle={shareSelectionToggle}
-          shareSelectionRowId={shareSelectionRowId}
         />
       ))}
       <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
@@ -1122,23 +1028,22 @@ function ConversationTurnFlow({
 }
 
 /**
- * Allowlist of sources that support the “background result header” rendering.
+ * 能撑起「后台结果头」这套渲染的来源白名单。
  *
- * Keep an allowlist instead of trusting the schema directly: `originMeta` is optional on userInputRow,
- * and another value may appear across versions. Unknown sources do not have suitable title semantics, so falling back
- * to the regular assistant branch is better than reporting a false title.
+ * 这里刻意仍是白名单而不是直接信任 schema：`originMeta` 在 userInputRow 上是 optional，
+ * 跨版本仍可能出现第四个取值，而没见过的来源拿不到合适的标题语义，退回普通 assistant
+ * 分支比谎报一个标题好。
  *
- * A workflow run's `backgroundSource` is `"workflow"` (the CLI reports it at the CreateWorkflow terminal event in
- * `background-tasks.ts`, with the title created by `workflowTaskSubject`). It was previously outside the allowlist,
- * so after a run ended the turn **had no title and degraded to a regular assistant segment collapsed by work duration**—
- * the entire background-result grouping disappeared. The title does not need localization: the CLI is authoritative,
- * as it is for bash/subagent titles, which are also passed through directly.
+ * workflow run 的 `backgroundSource` 是 `"workflow"`（CLI 侧
+ * `background-tasks.ts` 在 CreateWorkflow 终态上报，title 由 `workflowTaskSubject` 铸造），
+ * 原本落在白名单外，于是一条 run 跑完之后那一轮**既没有标题、也退化成按工时折叠的普通
+ * assistant 段落**——后台结果分组整个消失。标题不需要本地化：它由 CLI 权威给出，
+ * bash / subagent 同样直接透传。
  */
 const BACKGROUND_RESULT_TITLE_SOURCES: ReadonlySet<string> = new Set([
   "bash",
   "subagent",
   "workflow",
-  "dream",
 ]);
 
 function resolveBackgroundResultTitle(unit: ConversationTurnRenderUnit): string | undefined {
@@ -1152,19 +1057,17 @@ function resolveBackgroundResultTitle(unit: ConversationTurnRenderUnit): string 
 }
 
 /**
- * Whether the turn starts with a workflow notification card (a ToolLayout row).
+ * 该轮是否以 workflow 通知卡（ToolLayout 行）开头。
  *
- * Used in two places: `ConversationBackgroundResultWork` chooses a notification row or plain title row, and the turn
- * container decides whether to remove top `pt-14`. Background-result turns have no visible user row, so the notification
- * card is their first node. Keeping the usual top padding would add about 76px of blank space above the card (56px + the
- * previous turn's pb-5), which looks unnecessary.
+ * 用于两处：`ConversationBackgroundResultWork` 决定渲染通知行还是裸标题行；轮容器决定是否
+ * 去掉轮顶 `pt-14`。后台结果轮没有可见的 user 行，通知卡就是轮内第一个节点——若照常保留
+ * 轮顶 padding，卡片上方会叠出 56px + 上一轮 pb-5 共约 76px 的空白，用户判为多余。
  */
 function resolveWorkflowNotification(
   unit: ConversationTurnRenderUnit,
-): WorkflowNotificationMeta | undefined {
+): WorkflowRowNotification | undefined {
   if (unit.header?.origin !== "backgroundResult") return undefined;
-  const originMeta = unit.header.originMeta;
-  return originMeta?.backgroundSource === "workflow" ? originMeta.workflowNotification : undefined;
+  return workflowRowNotification(unit.header.originMeta);
 }
 
 function ConversationBackgroundResultWork({
@@ -1214,16 +1117,15 @@ function ConversationBackgroundResultWork({
     fetchFileChanges: context.fetchFileChanges,
   });
 
-  // Background results have already been summarized in a separate wake-up turn. Reusing regular assistant work-duration
-  // collapsing would show inaccurate segment durations and create a pointless collapsed state for a short summary.
+  // 后台结果已经由独立唤醒轮总结过；复用普通 assistant 的工时折叠
+  // 会显示不准确的分段耗时，并让一段短总结产生没有意义的收起状态。
   //
-  // When a workflow notification for a workflow run has structured payload, render a notification row using existing
-  // tool-card syntax instead of the plain title row. Without payload (batch turns, old transcripts, bash/subagent), keep the title row.
+  // workflow run 的 workflow 通知带结构化载荷时改渲染既有工具卡语法的通知行（替换裸标题行）；
+  // 载荷缺席（批量轮、旧 transcript、bash/subagent）→ 原样退回标题行。
   const workflowNotification = resolveWorkflowNotification(unit);
   const workflowRunId = unit.header?.originMeta?.workId;
-  // Open run details only when the host injects onOpenWorkflowRun and the join resolves toolCallId. If cold restoration
-  // cannot find it, do not render a link in the expanded body. toolCallId comes from the projection/journal join table,
-  // matching the CreateWorkflow tool-card navigation path.
+  // 打开 run 详情：宿主注入 onOpenWorkflowRun + 联查到 toolCallId 才可点；冷恢复查不到时
+  // 展开体内不渲染链接。toolCallId 走投影/journal 联查表，与 CreateWorkflow 工具卡同一条打开路径。
   const workflowRunSummary =
     workflowNotification && workflowRunId
       ? context.workflowRunByRunId?.get(workflowRunId)
@@ -1246,15 +1148,15 @@ function ConversationBackgroundResultWork({
     workflowNotification && workflowRunId
       ? context.workflowRunPendingQuestionsByRunId?.get(workflowRunId)
       : undefined;
-  // Artifact chip → full-size viewer tab. This gate is looser than `openWorkflowRun`: an artifact tab needs only
-  // (parentSessionId, runId, artifactId), **not** toolCallId—it does not draw a causal graph or need to return to
-  // the CreateWorkflow tool row. A notification row whose toolCallId is missing after cold restoration can still open its artifact.
+  // 产物 chip → 全尺寸查看 tab。门比 `openWorkflowRun` 松一格：产物 tab 只需要
+  // (parentSessionId, runId, artifactId)，**不需要** toolCallId——它不画因果图，也就不必
+  // 回到那条 CreateWorkflow 工具行。冷恢复后联查不到 toolCallId 的通知行因此仍能开产物。
   const openWorkflowArtifact =
     workflowNotification && workflowRunId && context.onOpenWorkflowArtifact && context.sessionId
       ? (artifactId: string) => {
-          // Include the artifact's `contentType` from the payload when available (only terminal notifications include an artifact list).
-          // The host uses it to decide whether to open an HTML artifact in a browser tab or an artifact tab. The payload intentionally
-          // omits `sourcePath` to limit status-frame size; the host looks it up in the journal when necessary.
+          // 载荷里那一枚的 `contentType`（终态通知才有产物清单）：宿主据它决定 html 产物
+          // 直接开浏览器 tab 还是开产物 tab，所以这里带得到就带上。载荷刻意不带 `sourcePath`
+          // （状态帧体积），宿主缺席时自己查 journal 补。
           const contentType =
             workflowNotification.kind === "terminal"
               ? workflowNotification.artifacts?.find((candidate) => candidate.id === artifactId)
@@ -1280,9 +1182,8 @@ function ConversationBackgroundResultWork({
           onOpenRun={openWorkflowRun}
           onOpenArtifact={openWorkflowArtifact}
           pendingQids={workflowPendingQids}
-          // Three states for the hole row (docs/dynamic-workflow/transcript-and-notifications.md,
-          // “The hole row's live state”): pass its hole map when the run is in the live projection
-          // (possibly empty = completed/no record); if absent, use undefined → neutral wording.
+          // 留白行的三态（docs/dynamic-workflow/transcript-and-notifications.md「The hole row's live state」）：
+          // run 在活投影里就递它的留白表（可能为空 = 已补全 / 没记录），不在场即 undefined → 中性词。
           holes={
             workflowRunSummary?.run === undefined ? undefined : (workflowRunSummary.run.holes ?? [])
           }
@@ -1341,9 +1242,7 @@ function ConversationTurnGroupImpl({
   onFork,
   onRetry,
   onFeedbackChange,
-  onPinChange,
   onEdit,
-  shareSelection,
 }: ConversationTurnGroupProps) {
   const isOfficeMode = useIsOfficeMode();
   const { intl } = useZCodeIntl();
@@ -1351,19 +1250,17 @@ function ConversationTurnGroupImpl({
   useSyncExternalStore(subscribeHighspeedTurns, getHighspeedTurnVersion, getHighspeedTurnVersion);
   const sourceCommandId = unit.header?.sourceCommandId ?? visibleUserRows[0]?.sourceCommandId;
   const highspeedTurn = getHighspeedTurnByCommandId(sourceCommandId);
-  // Root cause: historical identification used to rely only on Renderer memory. After card expiry
-  // or cold restore, that record was unavailable, so accelerated output rendered as regular time
-  // even when the transcript persisted Highspeed metadata.
+  // Bug 根因：历史标识过去只依赖 Renderer 内存；卡过期或冷恢复后记录不可用，
+  // 即使 transcript 已持久化 highspeed metadata，也会把 accelerated output 渲染成普通工时。
   const isHighspeed = highspeedTurn !== null || visibleUserRows.some((row) => row.highspeed);
   const highspeedExpiresAt = Math.max(
     highspeedTurn?.card.expiresAt ?? Number.NEGATIVE_INFINITY,
     ...visibleUserRows.flatMap((row) => (row.highspeed ? [row.highspeed.expiresAt] : [])),
   );
-  // Root cause: the purple shimmer previously checked only whether the turn had used Highspeed.
-  // Metadata remains after card expiry, so a Tool still running in the fallback phase stayed purple
-  // forever. Running styles must also respect the card's validity period.
+  // Bug 根因：紫色流光过去只看“本轮曾使用 Highspeed”，卡过期后 metadata 仍会保留，
+  // 导致 fallback 阶段仍在执行的 Tool 被永久染成紫色。运行态样式必须同时服从卡片有效期。
   const showHighspeedAnimatedGradient = isHighspeed && unit.isRunning && highspeedExpiresAt > nowMs;
-  // Even if completed statistics arrive first through a replayable event, do not show them in the UI until the whole turn has stopped generating.
+  // 完成态统计即使因 replayable 事件先到，也必须等整轮停止生成后才能进入 UI。
   const highspeedMeta = unit.isRunning
     ? undefined
     : visibleUserRows.find((row) => row.highspeed)?.highspeed;
@@ -1390,14 +1287,13 @@ function ConversationTurnGroupImpl({
       highspeedMeta.regularTps !== undefined &&
       highspeedMeta.regularTps > 0
     ) {
-      // Root cause: after cold restore, Renderer memory is empty even though the transcript has
-      // persisted complete sharing metrics. Relying only on highspeedTurn would leave the visible
-      // historical Share button disabled forever.
+      // Bug 原因：冷恢复后 Renderer 内存记录为空，但 transcript 已持久化完整分享统计；
+      // 只依赖 highspeedTurn 会让可见的历史分享按钮永久 disabled。
       target = {
         cardId: highspeedMeta.cardId,
         metrics: {
           outputTokens: highspeedMeta.outputTokens,
-          // The sharing API does not require durationMs; if missing, fall back to 0 for local duration without blocking sharing.
+          // 分享接口不要求 durationMs；缺失时仅让本地耗时降级为 0，不阻塞分享。
           durationMs: highspeedMeta.durationMs ?? 0,
           regularTps: highspeedMeta.regularTps,
           highspeedTps: highspeedMeta.highspeedTps,
@@ -1407,7 +1303,7 @@ function ConversationTurnGroupImpl({
         },
       };
     }
-    // Keep the card and historical marker, but do not offer sharing when speedup is at most 1.2x or complete duration data is missing.
+    // 卡片和历史标识继续保留，但不超过 1.2x 或缺少完整耗时数据时不提供分享入口。
     return target && isHighspeedShareEligible(target.metrics) ? target : null;
   }, [highspeedMeta, highspeedTurn, unit.highspeedOutputFooterTarget]);
   const [highspeedShareDialogOpen, setHighspeedShareDialogOpen] = useState(false);
@@ -1453,8 +1349,8 @@ function ConversationTurnGroupImpl({
     () =>
       codeCommentCardsEnabled &&
       assistantRawCopyText !== undefined &&
-      // Match the zcode-file-citation preview card: project only the body while streaming and create the card only for a terminal row,
-      // avoiding a card that appears mid-run and then rolls back when the model continues.
+      // 卡片与 zcode-file-citation 的预览卡片保持一致：流式期间只投影正文，
+      // 只有终态 row 才生成卡片，避免运行中卡片先出现又因模型续写而回滚。
       (latestAssistantTextRow?.state === "complete" ||
         latestAssistantTextRow?.state === "interrupted")
         ? buildAssistantCodeCommentCards(assistantRawCopyText, context.workspacePath, 50, {
@@ -1473,9 +1369,9 @@ function ConversationTurnGroupImpl({
     () => (unit.isRunning ? [] : resolveCronAutomationTurnCards(unit.assistantWorkRows)),
     [unit.assistantWorkRows, unit.isRunning],
   );
-  // A tool summary is already above; show the run card below as soon as its join resolves instead of waiting for the main agent's reply to finish.
-  // Keep it live from the join table and let the parser deduplicate by runId. Direct-start turns also render their run card here:
-  // they have no user bubble or assistant content, so the run card is the entire presentation.
+  // 上方已是工具摘要；下方运行卡在联接到 run 后立即显示，不能再等主代理回复结束。
+  // 依赖联接表保持实时更新，并由解析器按 runId 去重。直接启动轮
+  // 的 run 卡也从这里出：那一轮没有用户气泡、没有助手内容，run 卡就是它的全部呈现。
   const workflowRunByToolCallId = context.workflowRunByToolCallId;
   const workflowRunByRunId = context.workflowRunByRunId;
   const workflowGraphByToolCallId = context.workflowGraphByToolCallId;
@@ -1496,8 +1392,8 @@ function ConversationTurnGroupImpl({
       workflowRunByToolCallId,
     ],
   );
-  // Completion card: render at the end of the turn where the main agent consumes the completed notification.
-  // Use the same gate (turn end); join only by byRunId because a notification turn has no CreateWorkflow row to join by toolCallId.
+  // 完成卡：主代理消化 completed 通知的那一轮，轮尾落卡。
+  // 同一条门（轮结束）；联接只认 byRunId——通知轮里没有 CreateWorkflow 行可按 toolCallId 联。
   const workflowTurnCompletion = useMemo(
     () =>
       unit.isRunning
@@ -1513,15 +1409,16 @@ function ConversationTurnGroupImpl({
     !unit.timelineOnly &&
     latestAssistantTextRow?.state === "complete" &&
     assistantCopyText !== undefined;
-  // The runtime turnId differs from the product turn ID; correlate delivery using command attribution on the CLI row, including headers for trimmed input.
+  // runtime turnId 与产品轮次 ID 不同；用 CLI 行上的命令归因关联投递，包含被裁剪输入的 header。
   const deliverySourceCommandIds = [
     ...(unit.header?.sourceCommandId ? [unit.header.sourceCommandId] : []),
     ...unit.visibleUserInputs.flatMap((row) => (row.sourceCommandId ? [row.sourceCommandId] : [])),
   ];
   const hasHookActions =
-    // Hook actions share turn eligibility with copy/feedback/fork.
-    // timelineOnly maintenance turns (compact/modelChange marker turns) must not show the icon even if they contain
-    // a legacy didExecute=true Hook row; otherwise a /compact turn could display an unexplained toolbar due to SessionStart Hook.
+    // Hook action 与 copy/feedback/fork 共用 turn eligibility；
+    // timelineOnly 维护 turn（compact/modelChange marker 轮）即使带历史遗留的
+    // didExecute=true Hook row 也不得露出图标，否则 /compact 轮会凭 SessionStart
+    // Hook 误挂出一个不可解释的操作栏。
     !unit.timelineOnly &&
     !unit.isRunning &&
     unit.hookInvocations.some((row) => row.executions.some((execution) => execution.didExecute));
@@ -1553,81 +1450,17 @@ function ConversationTurnGroupImpl({
     return { enabled: true, reason: "available" };
   }, [unit.header?.actions?.canRewindFiles, unit.header?.fileChanges, unit.isRunning]);
 
-  // Remove top padding from turns starting with a workflow notification card; the card uses only the normal flow spacing from the previous turn's pb-5.
+  // workflow 通知卡开头的轮去掉轮顶 padding：卡片只贴上一轮 pb-5 的常规流内间距。
   const startsWithWorkflowNotificationCard =
     backgroundResultTitle !== undefined && resolveWorkflowNotification(unit) !== undefined;
-  // The same rule applies to two other sources: a turn launched directly from the hub and a
-  // settings turn from “Configure” (docs/dynamic-workflow/presentation.md, “The run card”). Their
-  // user rows are canonical sentences for the model and are removed by conversationTurnRenderUnits,
-  // making the card or “Settings updated” row the first node in the turn.
+  // 同一条规则的另外两个来源：中枢直接启动轮与「配置」的设置轮（docs/dynamic-workflow/presentation.md
+  // 「The run card」）。它们的用户行是写给模型的规范句，conversationTurnRenderUnits 会裁掉，
+  // 卡 / 「已调整设置」那一行于是成了轮内第一个节点。
   //
-  // Root cause: `pt-14` reserves space for a user bubble, but the condition checked whether a turn
-  // existed rather than whether it had a bubble. Without a bubble, these 56px stacked with the
-  // previous turn's pb-5 and left about 76px of blank space above the row (especially noticeable
-  // because settings turns appear mid-conversation).
+  // Bug 根因：`pt-14` 是给用户气泡留的呼吸，判据却一直是「有没有轮」而不是「有没有气泡」；
+  // 没有气泡时这 56px 叠上一轮的 pb-5，在行上方堆出约 76px 空白（设置轮总落在对话中段，最显眼）。
   const startsWithoutUserBubble =
     startsWithWorkflowNotificationCard || unit.workflowLaunch !== undefined;
-
-  const shareSelectionRows = shareSelection
-    ? unit.visibleUserInputs.filter(
-        (row) => row.origin === "realUser" && shareSelection.eligibleRowIds.has(row.rowId),
-      )
-    : [];
-  // A turn can have multiple realUser inputs (steer/queued messages), but only one turn-level checkbox is rendered.
-  // Reducing them to a boolean with every() would make a partially selected turn appear “unselected,”
-  // so one click would make the count jump by 2. Show partial selection explicitly as indeterminate.
-  const shareSelectionSelectedCount = shareSelection
-    ? shareSelectionRows.filter((row) => shareSelection.selectedRowIds.has(row.rowId)).length
-    : 0;
-  const shareSelectionChecked: boolean | "indeterminate" =
-    shareSelection === undefined || shareSelectionRows.length === 0
-      ? false
-      : shareSelectionSelectedCount === shareSelectionRows.length
-        ? true
-        : shareSelectionSelectedCount === 0
-          ? false
-          : "indeterminate";
-  const shareSelectionToggle =
-    shareSelectionRows.length > 0 ? (
-      <div
-        data-conversation-share-turn-toggle="true"
-        data-conversation-share-turn-toggle-state={
-          shareSelectionChecked === true
-            ? "selected"
-            : shareSelectionChecked === "indeterminate"
-              ? "partial"
-              : "unselected"
-        }
-        className="absolute left-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center"
-      >
-        <label className="flex size-8 cursor-pointer items-center justify-center">
-          <Checkbox
-            checked={shareSelectionChecked}
-            aria-label={
-              shareSelectionRows[0]?.text ||
-              intl.formatMessage({ id: "conversationShare.partial.panelLabel" })
-            }
-            onCheckedChange={(checked) => {
-              if (!shareSelection) return;
-              // Radix returns true when an indeterminate checkbox is clicked, so a partial selection completes the whole turn.
-              if (checked === true) {
-                for (const row of shareSelectionRows) {
-                  if (!shareSelection.selectedRowIds.has(row.rowId))
-                    shareSelection.onToggle(row.rowId);
-                }
-              } else if (checked === false) {
-                for (const row of shareSelectionRows) {
-                  if (shareSelection.selectedRowIds.has(row.rowId))
-                    shareSelection.onToggle(row.rowId);
-                }
-              }
-            }}
-            checkIconStrokeWidth={1.33}
-            className="size-4 rounded-sm border-foreground bg-transparent data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background data-[state=indeterminate]:border-foreground data-[state=indeterminate]:bg-foreground data-[state=indeterminate]:text-background"
-          />
-        </label>
-      </div>
-    ) : null;
 
   return (
     <section
@@ -1648,35 +1481,21 @@ function ConversationTurnGroupImpl({
         />
       ))}
       {hasAssistantTurnContent ? (
-        // After deferAssistantActions moves the toolbar below the file summary, the hover group previously wrapped
-        // only the toolbar, so the user had to hover over an invisible button to reveal it.
-        // Put assistant work, summary, and toolbar in the same turn-level hover container, matching the old behavior.
+        // deferAssistantActions 后工具栏被移到文件 summary 之后，
+        // 之前 hover group 只包住工具栏自己，导致必须悬停到不可见按钮位置才出现。
+        // 这里把 assistant work、summary 和工具栏放进同一轮 hover 容器，对齐旧版。
         <div className="group/assistant-turn flex w-full flex-col gap-5">
           {backgroundResultTitle ? (
             <>
-              {visibleUserRows.map((row) =>
-                shareSelectionToggle && row.rowId === shareSelectionRows[0]?.rowId ? (
-                  <div className="relative" key={`${row.rowId}:${row.entityId ?? ""}`}>
-                    {shareSelectionToggle}
-                    <ConversationTurnRow
-                      row={row}
-                      context={context}
-                      onEdit={row.actions?.canEdit === true ? onEdit : undefined}
-                      onPinChange={onPinChange}
-                      editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
-                    />
-                  </div>
-                ) : (
-                  <ConversationTurnRow
-                    key={`${row.rowId}:${row.entityId ?? ""}`}
-                    row={row}
-                    context={context}
-                    onEdit={row.actions?.canEdit === true ? onEdit : undefined}
-                    onPinChange={onPinChange}
-                    editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
-                  />
-                ),
-              )}
+              {visibleUserRows.map((row) => (
+                <ConversationTurnRow
+                  key={`${row.rowId}:${row.entityId ?? ""}`}
+                  row={row}
+                  context={context}
+                  onEdit={row.actions?.canEdit === true ? onEdit : undefined}
+                  editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
+                />
+              ))}
               <ConversationBackgroundResultWork
                 unit={unit}
                 apiRetry={apiRetry}
@@ -1702,10 +1521,7 @@ function ConversationTurnGroupImpl({
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={onRetry}
               onEdit={onEdit}
-              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
-              shareSelectionToggle={shareSelectionToggle}
-              shareSelectionRowId={shareSelectionRows[0]?.rowId}
               assistantCopyText={assistantCopyText}
               assistantCodeCommentCards={assistantCodeCommentCards}
               assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
@@ -1718,8 +1534,7 @@ function ConversationTurnGroupImpl({
               }
             />
           )}
-          {/* Completion card: show what the run handled in this turn and how long it took, immediately
-              after the final text segment. */}
+          {/* 完成卡：这一轮消化的那条 run 做了什么、花了多少，紧跟最后一段正文。 */}
           {workflowTurnCompletion === undefined ? null : (
             <ConversationWorkflowCompletion
               completion={workflowTurnCompletion}
@@ -1727,16 +1542,14 @@ function ConversationTurnGroupImpl({
               turnKey={unit.key}
             />
           )}
-          {/* Turn-end summary: show runs still in progress for this turn after the completion card and
-              before the other turn-end blocks. */}
+          {/* 轮尾摘要：这一轮留下在跑的 run，排在完成卡之后、其余轮尾块之前。 */}
           <ConversationWorkflowDigests
             context={context}
             digests={workflowTurnDigests}
             turnKey={unit.key}
           />
-          {/* Fix reason: CronCreate/CronUpdate tools remain ordinary tool rows. The success card summarizes the
-              result after the whole turn completes, so show it after the final assistant text only
-              when the reply has ended. */}
+          {/* 修复原因：CronCreate/CronUpdate 工具本身仍按普通工具行展示；成功卡片属于整轮
+              完成后的结果摘要，必须等回复结束再跟随最终 assistant 正文收尾。 */}
           <CronAutomationTurnCards cards={cronAutomationTurnCards} context={context} />
           <OffPeakTurnCards cards={offPeakTurnCards} context={context} />
           {!isOfficeMode && unit.header?.fileChanges ? (
@@ -1747,8 +1560,8 @@ function ConversationTurnGroupImpl({
             />
           ) : null}
           {unit.browserTurnEndRows.length > 0 ? (
-            // The automatic screenshot represents the page's final state at the end of the turn. If placed inside assistant work,
-            // it would appear between the Website preview and file-diff summary. It should be the last content block before the toolbar.
+            // 自动截图表达轮次结束时页面最终状态；放在 assistant work 内会
+            // 穿插到 Website 预览和 file diff 摘要之间。它应是操作栏之前的最后一个内容块。
             <ConversationAssistantWorkItems
               rows={unit.browserTurnEndRows}
               context={assistantRowContext}
@@ -1756,8 +1569,8 @@ function ConversationTurnGroupImpl({
             />
           ) : null}
           {canRenderAssistantActions && latestAssistantTextRow ? (
-            // The file summary aggregates results after the entire turn. If the turn-tail toolbar renders inline with assistant text,
-            // it appears before the summary and makes the summary look like it is not the turn's conclusion.
+            // 文件 summary 是整轮完成后的聚合结果；轮尾工具栏如果跟着
+            // assistant text 内联渲染，会插到 summary 前面，读起来像 summary 不是本轮收尾。
             <ConversationAssistantTextActions
               rowId={latestAssistantTextRow.rowId}
               entityId={latestAssistantTextRow.entityId}
@@ -1765,28 +1578,23 @@ function ConversationTurnGroupImpl({
               createdAt={latestAssistantTextRow.createdAt}
               compactForRemoteControl={context.compactForRemoteControl}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
-              pinnedAt={latestAssistantTextRow.pinnedAt}
               sessionId={context.sessionId}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={canRetryLatestAssistant ? onRetry : undefined}
               onFeedbackChange={onFeedbackChange}
-              onPinChange={onPinChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
               sourceCommandIds={deliverySourceCommandIds}
               className={cn(
                 "flex items-center gap-1",
-                // A pinned turn keeps the toolbar visible so the pin state stays discoverable and
-                // unpin stays reachable without hover (same rule as the inline assistant toolbar).
-                context.compactForRemoteControl || latestAssistantTextRow.pinnedAt !== undefined
+                context.compactForRemoteControl
                   ? "opacity-100"
                   : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
               )}
             />
           ) : (hasHookActions || !unit.isRunning) && !canRenderAssistantActions ? (
-            // A conflict merge once attached this fallback to the Highspeed footer's else branch,
-            // duplicating the entry for regular replies and removing it from Highspeed turns with
-            // no body. It is mutually exclusive only with the regular action bar; the footer renders independently.
+            // 冲突合并曾把此兜底接到 Highspeed 页脚的 else，导致普通回复重复入口，
+            // Highspeed 无正文轮又丢失入口；它只与普通操作栏互斥，页脚独立渲染。
             <MessageActions
               className={cn(
                 context.compactForRemoteControl
@@ -1821,9 +1629,9 @@ function ConversationTurnGroupImpl({
             />
           ) : null}
           {unit.assistantTailRows.length > 0 ? (
-            // turnTailBoundary was split from work history but still rendered inside the flow,
-            // making CronCreate, file summary, and toolbar appear below the fork divider. Move the boundary after
-            // all turn-local auxiliary UI so it marks the actual logical end of the turn.
+            // turnTailBoundary 之前虽然从工作历史中拆出，却仍在 flow 内渲染，
+            // 使 CronCreate、文件 summary 与操作栏看起来落在 fork 分割线之后。boundary
+            // 必须统一收在全部 turn-local 附属 UI 之后，才是真正的 logical turn 结尾。
             <ConversationAssistantWorkItems
               rows={unit.assistantTailRows}
               context={assistantRowContext}
@@ -1837,10 +1645,7 @@ function ConversationTurnGroupImpl({
           apiRetry={apiRetry}
           context={assistantRowContext}
           onEdit={onEdit}
-          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
-          shareSelectionToggle={shareSelectionToggle}
-          shareSelectionRowId={shareSelectionRows[0]?.rowId}
           assistantCopyText={assistantCopyText}
           assistantCodeCommentCards={assistantCodeCommentCards}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}

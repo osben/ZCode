@@ -23,24 +23,25 @@ import type { WorkflowRunArtifactView } from "@/hooks/useWorkflowRunArtifacts.js
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 
 /**
- * Artifact section on the workflow run detail page.
+ * workflow run 详情页的产物区。
  *
- * ⚠ Terminology: artifacts in this section are outputs the script delivers to the **user** through `artifact.*`. They are **different from** the "Result"
- * panel above (the script's top-level return value for the model); the contract requires both to be visible at once with distinct labels.
+ * ⚠ 术语：这一节的 artifact 是脚本经 `artifact.*` 交付给**用户**的产出。它与上面那个「结果」
+ * 面板（脚本的顶层返回值，给模型的）**是两件事**，约定要求两者在屏幕上同时可见且措辞
+ * 可区分。
  *
- * The header follows the phase-list rhythm (same height, same inset, same chevron). Two body layouts:
- * - **With a deliverable** (the item marked primary, or the only item): a deliverable row (same `WorkflowArtifactRow` as the completion card;
- *   when the panel is under 380px wide, its frame shrinks to 136 × 85 based on the body container query), then a thin divider and an **index** of
- *   remaining artifacts: one per row, one column, all listed (same `WorkflowArtifactIndex` as the completion card, which caps at six rows; this section does not).
- *   Twelve artifacts means twelve rows, all visible at once.
- * - **Without a deliverable**: a **gallery**, one tile per artifact (preview frame + caption, `WorkflowArtifactTile`), with the column count
- *   adapting to panel width—one column from 130px and at most 180px for a single column, which keeps thumbnails readable.
- * The preview frame shows the artifact itself: boards centered at natural size and growing with live report entries; documents scaled to show the beginning;
- * the first few CSV rows; and page glyphs for PDFs and binary files. The list already puts the deliverable first and the rest in first-published order (sorted by the hook).
+ * 节头走阶段清单的节奏（同一高度、同一内缩、同一枚 chevron）。节身两种画法：
+ * - **有交付物**（打了 primary 旗子的那件，或清单只有一件）：交付物行（与完成卡同一条
+ *   `WorkflowArtifactRow`；面板窄于 380px 时框收成 136 × 85，由节身的容器查询决定），细线之下
+ *   其余产物作**索引**：一件一行、单列、全部列出（与完成卡同一条 `WorkflowArtifactIndex`，卡上
+ *   六行封顶、这里不封）。十二件产物是十二行，一屏之内。
+ * - **没有交付物**：一片**画廊**：一件产物一张瓦片（预览框 + 说明行，`WorkflowArtifactTile`），列数
+ *   随面板宽度自适应——130px 起一列、单列至多 180px，这个尺寸的缩略读得清，所以留着它。
+ * 预览框里是产物本身：看板按自然尺寸居中、随 report 条目实时长；文档缩放着露出开头；CSV 前几行；
+ * PDF 与二进制画纸页字形。清单已经是交付物在前、其余按首次发布顺序（hook 排过）。
  *
- * **Expanded by default** (unlike the phase section): artifacts are what this run **delivered to the user**; collapsing by default would hide them,
- * even though they are a common reason for opening this panel. Users can still collapse the section; the header then shows the count.
- * **Render failed and cancelled runs too**: a run that failed at step 12 may already have published a PDF.
+ * **默认展开**（与阶段节相反）：产物是这次运行**交付给用户的东西**，收起等于把交付物藏起来，
+ * 而它恰恰是用户打开这个面板最常见的目的。仍可手动收起，收起时节头带件数。
+ * **失败与取消的 run 一样渲染**：一个死在第 12 步的 run 仍然可能已经发布了一份 pdf。
  */
 export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSection({
   artifacts,
@@ -48,19 +49,19 @@ export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSec
   runId,
   onOpenArtifact,
 }: {
-  /** Confirmed non-empty; the caller does not render this section when there are zero items (omit absent sections instead of showing an empty shell). */
+  /** 已确认非空；零件时调用方整区不渲染（「无则缺席」惯例，不留空壳）。 */
   artifacts: readonly WorkflowRunArtifactView[];
   sessionId: string;
   runId: string;
-  /** If absent, tiles are disabled (the host did not provide the open-tab capability). */
+  /** 缺席即瓦片禁用（宿主没注入打开 tab 的能力）。 */
   onOpenArtifact?: (artifactId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const [expanded, setExpanded] = useState(true);
-  // Markdown thumbnails need theme-specific code-block colors; hosts without a Provider (tests) use system theme.
+  // markdown 缩略要按 theme 选代码块配色；无 Provider 的宿主（单测）拿到 system。
   const theme = useZCodeStoreWithDefault((state) => state.theme, "system");
   const title = intl.formatMessage({ id: "chat.toolCall.workflow.run.artifacts.title" });
-  // Stable reference: all four renderers are memoized; creating a new labels object every frame would always defeat their comparison.
+  // 稳定引用：四个渲染器都是 memo 的，labels 每帧换一个新对象会让那层比较永远命中不了。
   const labels = useMemo(
     () => buildPresetLabels((descriptor, values) => intl.formatMessage(descriptor, values)),
     [intl],
@@ -76,7 +77,7 @@ export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSec
       theme={theme}
     />
   );
-  // Put the workspace source in a tooltip: it is a path that does not fit in the caption and should not compete with the title.
+  // 工作区出处进 tooltip：它是一条路径，说明行放不下，也不该抢标题的位置。
   const tooltipOf = (
     artifact: Pick<WorkflowRunArtifactView, "id" | "kind" | "title" | "sourcePath">,
   ) => {
@@ -108,14 +109,14 @@ export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSec
         <span className="min-w-0 shrink-0 truncate text-ui-base font-medium text-foreground">
           {title}
         </span>
-        {/* Keep the item count visible even when **collapsed**; collapsing must not hide what this run delivered. */}
+        {/* 件数在**收起时也在场**——折叠不能让「这个 run 到底交付了什么」不可见。 */}
         <span
           className="shrink-0 font-mono text-ui-xs tabular-nums text-foreground-subtlest"
           data-testid="workflow-run-artifacts-count"
         >
           {artifacts.length.toLocaleString()}
         </span>
-        {/* Keep artifact names in the section header while collapsed; they are the information users most often open the panel to find. */}
+        {/* 收起时交付物的名字仍在节头上：它是用户打开面板最常要找的那一件。 */}
         {!expanded && primary !== undefined ? (
           <span
             className="min-w-0 truncate text-ui-sm text-foreground-subtle"
@@ -133,7 +134,7 @@ export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSec
         />
       </button>
       {expanded && primary !== undefined ? (
-        // `@container/wf-artifacts`: the deliverable-row frame uses this container's width to choose 160 × 100 or 136 × 85.
+        // `@container/wf-artifacts`：交付物行的框按这个容器的宽度选 160 × 100 或 136 × 85。
         <div
           className="wf-unfold @container/wf-artifacts flex max-h-[50vh] flex-col gap-2.5 overflow-auto px-3 pb-3 pt-0.5"
           data-testid="workflow-run-artifact-primary-body"
@@ -143,13 +144,13 @@ export const WorkflowRunArtifactsSection = memo(function WorkflowRunArtifactsSec
             enterDelayMs={PILL_STAGGER_MS}
             labels={labels}
             preview={preview(primary)}
-            // Same testid as the tile (`data-variant="row"` distinguishes the form): it remains a card for one artifact.
+            // 与瓦片同一个 testid（`data-variant="row"` 区分形态）：它仍是「一件产物的卡」。
             testId={TID_WORKFLOW_ARTIFACT_CARD}
             title={tooltipOf(primary)}
             {...(onOpenArtifact === undefined ? {} : { onOpen: onOpenArtifact })}
           />
           {rest.length > 0 ? (
-            // One column, no cap: the side panel promises to list all artifacts. Each row is also a card for one artifact (`data-variant="line"`).
+            // 单列、不封顶：侧板是承诺列出全部产物的地方。行也是「一件产物的卡」（`data-variant="line"`）。
             <WorkflowArtifactIndex
               artifacts={rest}
               columns="one"

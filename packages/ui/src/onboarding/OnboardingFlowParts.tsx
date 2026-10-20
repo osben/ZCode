@@ -209,7 +209,7 @@ export function OnboardingSessionsStep(props: {
                         )}
                       </Badge>
                     </div>
-                    {/* A long path is continuous text. If the parent flex item cannot shrink, it pushes the whole card outside its container, so add min-w-0 here to make truncate work. */}
+                    {/* 长路径是连续文本，父级 flex 子项如果不允许收缩，会把整张卡片横向撑出容器，所以这里补齐 min-w-0 让 truncate 真正生效。 */}
                     <div className="w-full truncate text-ui-base text-foreground-subtlest">
                       {workspace.workspacePath}
                     </div>

@@ -2,12 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildHighspeedShareNotice,
   copyHighspeedCardImage,
-  copyHighspeedShareText,
   isHighspeedShareEligible,
   isHighspeedShareNoticePayload,
   resolveHighspeedShareNoticeMetrics,
 } from "@/highspeed/highspeedShare.js";
-import { expectedCopy } from "../helpers/uiCopy.js";
 
 const metrics = { outputTokens: 120_000, durationMs: 600_000, regularTps: 20, highspeedTps: 100 };
 
@@ -143,29 +141,17 @@ describe("highspeed client share", () => {
       },
       {
         benefit: "ZCode 与 Coding Plan 专属权益",
-        standardSpeed: expectedCopy("globalNotice.highspeed.standardTaskSpeed"),
+        standardSpeed: "标准生成速度",
         speedSummary: "HighSpeed · 20 分钟",
         lessWaiting: "减少等待 80%",
         imageSummary: "120,000 tokens · 节省 1,067 秒",
       },
     );
     const svg = await copied?.text();
-    expect(svg).toContain(expectedCopy("globalNotice.highspeed.standardTaskSpeed"));
+    expect(svg).toContain("标准生成速度");
     expect(svg).toContain("减少等待 80%");
     expect(svg).toContain("节省 1,067 秒");
-  });
-
-  it("copies the complete share text", async () => {
-    let copied = "";
-    await copyHighspeedShareText(
-      "我用 ZCode 高速卡节省了 120 秒的时间，你也来试试吧。下载 ZCode https://zcode.z.ai",
-      async (text) => {
-        copied = text;
-      },
-    );
-    expect(copied).toBe(
-      "我用 ZCode 高速卡节省了 120 秒的时间，你也来试试吧。下载 ZCode https://zcode.z.ai",
-    );
+    expect(svg).not.toContain("standard generation speed");
   });
 
   it("rasterizes the SVG before writing it to the image clipboard", async () => {

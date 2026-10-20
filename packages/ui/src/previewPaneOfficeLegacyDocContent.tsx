@@ -48,8 +48,8 @@ function ResponsiveDocxEditorViewer({
   onOpenBrowserUrl?: (url: string) => void;
   sourcePath: string;
 }) {
-  // The lightweight ReactDocxViewer does not use the editor’s full pagination and layout pipeline, so its preview would differ from the editing canvas.
-  // Use the same editor controller to drive the document canvas, but keep it read-only so no editing capabilities are exposed.
+  // 轻量 ReactDocxViewer 不走编辑器的完整分页与排版链路，预览结果会和编辑画布不一致。
+  // 使用同一个 editor controller 驱动文档画布，但固定为只读模式，避免暴露任何编辑能力。
   const editor = useDocxEditor({
     starterModel: model,
     initialFileName: sourcePath,
@@ -58,8 +58,8 @@ function ResponsiveDocxEditorViewer({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [fit, setFit] = useState<DocxPreviewFit | null>(null);
-  // The outer layer scales the page with transform, but react-docx’s virtual list does not detect transforms automatically.
-  // Pass the same zoomScale too; otherwise scroll coordinates use the unscaled page height, causing flashes or preventing the last page from mounting.
+  // 外层使用 transform 缩放页面，但 react-docx 的虚拟列表不会自动识别 transform。
+  // 必须同步传入相同 zoomScale，否则滚动坐标会按未缩放页高计算，导致闪白或末页无法挂载。
   const pageVirtualization = useMemo<DocxPageVirtualizationOptions>(
     () => ({ zoomScale: fit?.scale ?? 1 }),
     [fit?.scale],
@@ -85,8 +85,8 @@ function ResponsiveDocxEditorViewer({
       if (isSameDocxPreviewFit(current, next)) {
         return current;
       }
-      // Debug note: dragging the Preview Pane triggers ResizeObserver every frame; high-frequency size traces use debug only,
-      // which is not persisted in production builds, preventing responsive layout from generating logs at the rate of resize events.
+      // 调试说明：拖动 Preview Pane 时会按帧触发 ResizeObserver；高频尺寸轨迹只走 debug，
+      // 生产构建不落盘，避免响应式布局把日志量放大到和 resize 事件同数量级。
       logger.debug("[PreviewPane] DOCX 预览宽度已同步", {
         path: sourcePath,
         availableWidth: viewport.clientWidth,
@@ -125,8 +125,8 @@ function ResponsiveDocxEditorViewer({
         data-docx-fit-frame
         style={fit ? { width: fit.width, height: fit.height } : undefined}
       >
-        {/* react-docx renders at the paper’s original pixel width, so a 794px page overflows a narrow Preview Pane.
-            Only scale down, never up, and sync the wrapper dimensions to avoid retaining an unscaled horizontal scroll area after applying transform alone. */}
+        {/* react-docx 按纸张原始像素宽度渲染，窄 Preview Pane 会被 794px 页面撑破。
+            只缩小不放大，并同步包装层宽高，避免单独 transform 后仍保留未缩放的横向滚动区。 */}
         <div
           ref={contentRef}
           className="theme-zai-light min-w-max text-foreground"

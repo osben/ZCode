@@ -1,50 +1,34 @@
-// Prefill text for "Create via chat / Revise in chat" in the hub.
-// These are ordinary user messages: prefill the draft without sending, so the user can continue writing what to change/create.
-// The "Promote to global" text (buildSavedWorkflowPromotePrompt) is an exception: as createSession.firstInput it is
-// **sent automatically**, so it must be a complete instruction rather than a starter.
+// 中枢的「通过对话创建 / 在对话里修订」预填文案。
+// 它们是普通 user message：只预填草稿、不自动发送，用户接着写要改什么 / 要建什么。
+// 「提升为全局」的文案（buildSavedWorkflowPromotePrompt）例外：它作为 createSession.firstInput
+// **自动发送**，所以是完整的指令而不是开头。
 
 function isZh(locale: string): boolean {
   return locale.toLowerCase().startsWith("zh");
 }
 
-function isUk(locale: string): boolean {
-  return locale.toLowerCase().startsWith("uk");
-}
-
-/** "Revise in chat": prefill only, do not send; the user continues by writing what to change. */
+/** 「在对话里修订」：只预填、不自动发送——用户接着写要改什么。 */
 export function buildSavedWorkflowRevisePrompt(input: {
   name: string;
   path: string;
   locale: string;
   scope?: "project" | "global";
 }): string {
-  // When revising a global workflow, append "keep scope: \"global\"" so the model saves the replacement at the same scope.
+  // 全局档修订时追加一句「保持 scope: "global"」，让模型覆盖保存时落回同一档。
   const globalReminderZh =
     input.scope === "global" ? '它是全局工作流，保存时保持 scope: "global"。' : "";
   const globalReminderEn =
     input.scope === "global" ? 'It is a global workflow; keep scope: "global" when saving. ' : "";
-  if (isUk(input.locale)) {
-    const globalReminderUk =
-      input.scope === "global"
-        ? 'Це глобальний робочий процес; під час збереження залиш scope: "global". '
-        : "";
-    return `Доопрацюй збережений робочий процес «${input.name}» (${input.path}): ${globalReminderUk}`;
-  }
   return isZh(input.locale)
     ? `请修订已保存的工作流「${input.name}」（${input.path}）：${globalReminderZh}`
     : `Please revise the saved workflow "${input.name}" (${input.path}): ${globalReminderEn}`;
 }
 
-/** Empty state / header "Create through conversation": prefill an opening prompt. */
+/** 空态 / 顶栏「通过对话创建」：预填一个开头。 */
 export function buildSavedWorkflowCreatePrompt(
   locale: string,
   scope?: "project" | "global",
 ): string {
-  if (isUk(locale)) {
-    return scope === "global"
-      ? 'Допоможи спроєктувати робочий процес і, коли він запрацює, збережи його через SaveWorkflow як глобальний (scope: "global"): '
-      : "Допоможи спроєктувати робочий процес і, коли він запрацює, збережи його в цьому проєкті: ";
-  }
   if (scope === "global") {
     return isZh(locale)
       ? '帮我设计一个工作流，跑通后用 SaveWorkflow 保存为全局工作流（scope: "global"）：'
@@ -56,11 +40,11 @@ export function buildSavedWorkflowCreatePrompt(
 }
 
 /**
- * "Promote to global": summarize a project workflow as a complete instruction for a global workflow (sent automatically, not a prefilled opening).
+ * 「提升为全局」：把项目档概括成全局档的完整指令（自动发送，不是预填开头）。
  *
- * Provide only the name and path; the model reads the file. The checklist is user-approved: read → find repository-specific references → extract them as args or neutral
- * wording → preserve the causal structure → SaveWorkflow(scope: "global", name may be changed) → summarize; decline if it is inherently tied to the project.
- * Explicitly say "do not modify the original file": both copies coexist, and the user may delete either one (invariant 9).
+ * 只给名字与路径，模型自己读文件。清单是用户裁定的：读 → 找仓库特有引用 → 抽成 args 或中性
+ * 表述 → 保持因果结构 → SaveWorkflow(scope: "global"，名字可改) → 总结；天然绑定项目时可以说不。
+ * 明说「不要改动原文件」：两份并存、用户自删是既定边界（不变式 9）。
  */
 export function buildSavedWorkflowPromotePrompt(input: {
   name: string;
@@ -76,17 +60,6 @@ export function buildSavedWorkflowPromotePrompt(input: {
       '4. 用 SaveWorkflow 以 scope: "global" 保存。名字可以沿用，也可以取一个更贴切的名字。不要改动原来的项目工作流文件。',
       "5. 最后用几句话总结你概括了什么、哪些点被抽成了参数。",
       "如果这个工作流本质上就绑定在这个项目上、无法有意义地概括，请说明原因并停下，不要保存。",
-    ].join("\n");
-  }
-  if (isUk(input.locale)) {
-    return [
-      `Перетвори збережений робочий процес проєкту «${input.name}» (${input.path}) на глобальний. Глобальні робочі процеси видно в усіх проєктах і їх можна запускати з будь-якого з них, тому він не повинен залежати ні від чого в цьому репозиторії. Виконай такі кроки:`,
-      "1. Прочитай файл і зрозумій його причинно-наслідкову структуру (які субагенти, в якому порядку, як передають роботу).",
-      "2. Знайди все, що посилається на цей репозиторій: конкретні шляхи, команди, структуру каталогів, правила іменування, назви гілок тощо.",
-      "3. Винеси це в оголошення `args` (з описами й розумними значеннями за замовчуванням) або переформулюй нейтрально щодо проєкту, зберігши причинно-наслідкову структуру.",
-      '4. Збережи його через SaveWorkflow із scope: "global". Назву можна залишити або вибрати точнішу. Не змінюй початковий файл робочого процесу проєкту.',
-      "5. Наприкінці коротко підсумуй, що саме узагальнено і які пункти стали аргументами.",
-      "Якщо робочий процес за своєю суттю прив'язаний до цього проєкту й узагальнити його осмислено не можна, поясни чому й зупинись, нічого не зберігаючи.",
     ].join("\n");
   }
   return [

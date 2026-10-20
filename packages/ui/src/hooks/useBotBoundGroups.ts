@@ -58,7 +58,7 @@ export function useBotBoundGroups(bot: BotConfig) {
     try {
       await refresh();
     } catch (cause) {
-      // A late failure must not overwrite the fresh read triggered by the broadcast.
+      // 迟到的失败不能覆盖广播触发的新读取结果。
       if (!alive.current || requested !== revision.current) return;
       logger.warn("读取已绑定群聊失败", { error: String(cause) });
       setError("load");
@@ -86,8 +86,7 @@ export function useBotBoundGroups(bot: BotConfig) {
       try {
         await botsService.setGroupEnabled({ botId: bot.id, chatId, enabled });
         const next = await refresh();
-        // The legacy API may report success without changing the authorization; re-read the
-        // authoritative state to confirm.
+        // 旧接口可能返回成功但未改变授权，必须读取权威状态再确认。
         const actual = projectBoundGroups(next, bot.id, bot.providerUserId).find(
           (row) => row.chatId === chatId,
         );

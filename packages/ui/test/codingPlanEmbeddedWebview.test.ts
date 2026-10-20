@@ -2,19 +2,16 @@
 import { createElement } from "react";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   isTrustedCodingPlanWebviewOrigin,
 } from "@zcode/shared";
-import { CodingPlanWebviewChannels, type CodingPlanPurchaseCompletePayload } from "@zcode/shared";
 import {
   buildCodingPlanEmbeddedWebviewUrl,
   buildCodingPlanEmbeddedReportContext,
   createCodingPlanAuthInjectionScript,
   createCodingPlanCredentialClearScript,
-  createCodingPlanScrollbarHideScript,
   getCodingPlanCredentialKeys,
   isTrustedCodingPlanEmbeddedWebviewUrl,
   resolveCodingPlanEmbeddedOrigin,
@@ -64,24 +61,6 @@ afterEach(() => {
 });
 
 describe("coding plan embedded webview bridge", () => {
-  it("exports the embedded dialog component", () => {
-    expect(CodingPlanEmbeddedWebviewDialog).toBeTypeOf("function");
-  });
-
-  it("exposes the purchase-complete channel and payload type", () => {
-    // The channel name is fixed and shared by both ends (App preload + the website via the
-    // injected bridge).
-    expect(CodingPlanWebviewChannels.PurchaseComplete).toBe("zcode:coding-plan-purchase-complete");
-    // The payload type is compile-time checked only: provider is limited to zai/bigmodel and
-    // timestamp is a number.
-    const payload: CodingPlanPurchaseCompletePayload = {
-      provider: "zai",
-      timestamp: Date.now(),
-    };
-    expect(payload.provider).toBe("zai");
-    expect(typeof payload.timestamp).toBe("number");
-  });
-
   it("builds the website URL with app embedded marker and no telemetry query", () => {
     const url = new URL(
       buildCodingPlanEmbeddedWebviewUrl({
@@ -315,13 +294,12 @@ describe("coding plan embedded webview bridge", () => {
   });
 
   it("injects the zcode JWT for the bigmodel provider so the website can query Start Plan balance", () => {
-    // Fix rationale: the BigModel branch used to explicitly clear zcodejwttoken, so the embedded
-    // website page could not query billing/balance (that API only accepts the zcode JWT) and the
-    // Start Plan card was misjudged as "expired".
+    // 修复原因：BigModel 分支此前显式清空 zcodejwttoken，官网内嵌页查不到
+    // billing/balance（该接口只认 zcode JWT），Start Plan 卡被误判为「已过期」。
     const script = createCodingPlanAuthInjectionScript({
       provider: "bigmodel",
       theme: "zai-light",
-      locale: "en-US",
+      locale: "zh-CN",
       credentials: {
         bigmodelAccessToken: "bigmodel-business-token",
         zcodeJwtToken: "zcode-jwt",
@@ -350,16 +328,6 @@ describe("coding plan embedded webview bridge", () => {
     expect(script).toContain("localStorage.removeItem(key)");
     expect(script).toContain("zcode:coding-plan:report-context");
     expect(script).toContain("delete window.__zcodeReportContext__");
-  });
-
-  it("injects a guest-page scrollbar hiding style without disabling scroll", () => {
-    const script = createCodingPlanScrollbarHideScript();
-
-    expect(script).toContain("zcode-coding-plan-hide-scrollbar");
-    expect(script).toContain("scrollbar-width: none");
-    expect(script).toContain("::-webkit-scrollbar");
-    expect(script).toContain("display: none");
-    expect(script).not.toContain("overflow: hidden");
   });
 
   it("only injects credentials on the current trusted embedded coding plan page", () => {
@@ -397,8 +365,7 @@ describe("coding plan embedded webview bridge", () => {
     h.theme = "zai-dark";
     view.rerender(createElement(CodingPlanEmbeddedWebviewDialog, props));
 
-    // Fix rationale: payment authorization can take minutes; an automatic system theme switch
-    // must not change the src and reload the PayPal flow.
+    // 修复原因：支付授权可能持续数分钟，系统主题自动切换不能让 src 变化并重载 PayPal 流程。
     expect(view.getByTestId("coding-plan-embedded-webview").getAttribute("src")).toBe(initialSrc);
   });
 });

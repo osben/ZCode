@@ -9,11 +9,11 @@ import { cn } from "@/components/lib/utils.js";
 import type { StepRunStatus } from "@/components/workflow-graph/types.js";
 
 /**
- * Tile face: an application-icon rounded square without the Z, with two eyes added.
- * It is the subagent avatar shared by pills, roster cells, and collapsed sidebar avatar groups.
+ * 瓦片脸：应用图标的圆角方块去掉 Z、
+ * 加上两只眼。子代理的头像就是它——药丸、名册格、侧栏折叠头像串共用这一张脸。
  *
- * Identity is encoded by body color: choose from nine fixed HEX colors by `avatarIndex`, cycling after nine; without an index, fall back to a name hash.
- * Status determines the base expression; independent random motions update only SVG attributes.
+ * 身份是机身色：九个固定 HEX 颜色按 `avatarIndex` 取，第十个起循环；没有编号退回名字散列。
+ * 状态定义基础表情，独立随机动作仅更新 SVG 属性。
  */
 export const FACE_COLORS = [
   "#54B9A6",
@@ -27,14 +27,14 @@ export const FACE_COLORS = [
   "#EA4045",
 ] as const;
 
-/** Choose a color from a name hash (base-31 modulo 360, then mapped to the nine-color palette); used only when `avatarIndex` is absent. */
+/** 名字散列选色（31 进制取模 360 后映射到九色板）；只在没有 `avatarIndex` 时兜底。 */
 export function avatarColor(name: string): string {
   let hash = 0;
   for (const char of name) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360;
   return FACE_COLORS[hash % FACE_COLORS.length]!;
 }
 
-/** Agent color: prefer the index (cycling through nine colors), falling back to the name hash. Pill hover border and face share this color. */
+/** 代理的颜色：编号优先（九色环循环），缺席时退回名字散列。药丸悬停描边与脸共用它。 */
 export function agentColor(avatarIndex: number | undefined, name: string): string {
   if (avatarIndex === undefined) return avatarColor(name);
   return FACE_COLORS[
@@ -44,7 +44,7 @@ export function agentColor(avatarIndex: number | undefined, name: string): strin
 
 const EXPRESSIONS = ["pill", "happy", "sleepy", "focused", "sad", "confused"] as const;
 
-// Draw reference eye shapes directly in the 20-cell grid; share left/right start points to keep the baseline and gaze aligned when changing expressions.
+// 直接在 20 格内绘制参考眼型；共享左右起点，换脸时保持底部和视线位置。
 function Eyes() {
   return (
     <g className="wf-face-eyes">
@@ -78,7 +78,7 @@ function Eyes() {
             </g>
           ))}
         </g>
-        {/* Draw closed eyes as a separate horizontal capsule so vertical scaling does not flatten the rounded ends into thin lines. */}
+        {/* 闭眼单独画横胶囊，避免纵向缩放把端部圆角压成细线。 */}
         <g className="wf-face-closed" fill="var(--wf-face-eye)">
           {[7, 13].map((x) => (
             <rect key={x} x={x} y={8} width={4} height={2} rx={1} />

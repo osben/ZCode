@@ -51,7 +51,8 @@ describe("buildDraftSuggestedPromptPrefill", () => {
         category: "plugins",
         label: "文档技能",
         value: "document-skills@zcode-plugins-official",
-        markdown: "[@文档技能](plugin://document-skills@zcode-plugins-official)",
+        markdown:
+          "[@文档技能](plugin://document-skills@zcode-plugins-official)",
         data: {
           pluginId: "document-skills@zcode-plugins-official",
           icon: "https://cdn.example.com/document-skills.png",
@@ -98,7 +99,8 @@ describe("buildDraftSuggestedPromptPrefill", () => {
       buildDraftSuggestedPromptPrefill({
         prompt: "制作一份 PDF",
         plugin: DOCUMENT_SKILLS_PLUGIN,
-        loadPluginCatalog: async () => Promise.reject(new Error("remote disconnected")),
+        loadPluginCatalog: async () =>
+          Promise.reject(new Error("remote disconnected")),
       }),
     ).resolves.toEqual({ text: "制作一份 PDF" });
   });

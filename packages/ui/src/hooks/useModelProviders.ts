@@ -5,8 +5,6 @@ import type { ProviderSettingsView } from "@zcode/services";
 import { useServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
 import { useProviderSettingsServiceView } from "@/hooks/useProviderSettingsView.js";
-import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
-import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import {
   projectProviderSettingsViewToFormProviders,
   resolveProviderSettingsFormProviders,
@@ -20,30 +18,17 @@ import type { ProviderOrderView } from "@/lib/modelProviderOrdering.js";
 export function useModelProviders(target: {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** Local cwd for connectivity tests in Provider Settings; do not reuse a remote activation path. */
+  /** 本地 Provider Settings 的连通性测试使用的本地 cwd；不复用远程激活路径。 */
   connectivityWorkspacePath?: string;
-  /** If no local cwd exists during remote activation, fail closed; do not fall back to remote workspacePath. */
+  /** 远程激活时没有本地 cwd 必须 fail-closed，不能回退到远程 workspacePath。 */
   connectivityWorkspaceRequired?: boolean;
-  /** Localized error message shown when there is no local workspace. */
+  /** 没有本地 workspace 时展示给用户的本地化错误文案。 */
   connectivityUnavailableMessage?: string;
 }) {
   const { providerSettingsService } = useServices();
-  // Optional on purpose: bare hook tests render without a PlatformProvider; the gate then
-  // rides on the build mode alone (`import.meta.env.DEV`).
-  const platform = useOptionalPlatform();
   const providerSettingsRead = useProviderSettingsServiceView(providerSettingsService);
-  // Stabilization gate (specs/acp-agent-runtime.md "Dev-only visibility"): outside development
-  // runtimes the whole ACP surface is hidden, so an agent enabled in dev must not leak into
-  // provider lists, navigation, or detail views as the `acp:<agentId>` personal provider.
-  const providerSettingsView = useMemo(() => {
-    const view =
-      providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
-    if (!view || isLocalDevelopmentRuntime(platform ?? {})) return view;
-    return {
-      ...view,
-      providers: view.providers.filter((provider) => !provider.providerId.startsWith("acp:")),
-    };
-  }, [providerSettingsRead.state, platform]);
+  const providerSettingsView =
+    providerSettingsRead.state.status === "ready" ? providerSettingsRead.state.view : null;
   const effectiveModelProviders = useMemo(
     () =>
       resolveProviderSettingsFormProviders({
@@ -61,9 +46,9 @@ export function useModelProviders(target: {
   );
   const commitProviderSettingsView = useCallback(
     (view: ProviderSettingsView): void => {
-      // The remote mutation's return value is the authoritative View after the target Environment was refreshed.
-      // Relying only on onDidChange can leave a pre-deletion UI snapshot after an attachment replacement or lost event.
-      // Commit the returned View at the hook boundary; useProviderSettingsServiceView still guards by Service/revision.
+      // 远端 mutation 的返回值是目标 Environment 已刷新后的权威 View，
+      // 只依赖 onDidChange 会在 attachment 换代/事件丢失时留下删除前的 UI 快照。
+      // 统一在 Hook 边界提交返回 View，仍由 useProviderSettingsServiceView 做 Service/revision 守卫。
       providerSettingsRead.commit(view);
     },
     [providerSettingsRead.commit],
@@ -81,8 +66,8 @@ export function useModelProviders(target: {
     } catch (err) {
       logger.error("[useModelProviders] 加载模型供应商失败", err);
     } finally {
-      // If the user triggers refresh repeatedly, an older request may return first.
-      // Without a token guard, its finally block can clear refreshing early and make the title's loading indicator flicker off.
+      // 用户连续触发刷新时，旧请求可能先返回。
+      // 若不做 token 守卫，旧请求 finally 会把 refreshing 提前置 false，导致标题 loading 提示闪灭。
       if (refreshToken === latestRefreshTokenRef.current) {
         setRefreshing(false);
       }
@@ -91,8 +76,8 @@ export function useModelProviders(target: {
 
   const saveProvider = useCallback(
     async (provider: ProviderSettingsFormProvider) => {
-      // A newly created Provider is not yet in the Registry, so it cannot appear in the current Settings View.
-      // The save boundary permits a missing inherited layer and builds the full configuration directly from the create form.
+      // 新建 Provider 尚未进入 Registry，自然也不会出现在当前 Settings View。
+      // 保存边界允许缺少继承层，并直接从新建表单构造完整配置。
       const savedView = await persistPersonalProvider({ provider, providerSettingsService });
       commitProviderSettingsView(savedView);
       return projectProviderSettingsViewToFormProviders(savedView);

@@ -6,9 +6,8 @@ interface BrowserTabRestoreScopeState {
 }
 
 /**
- * Browser shell cold restore deduplicates per workspace scope and isolates late promises with an
- * attempt token. cleanup may only revoke the in-flight it created; an old attempt must not
- * overwrite a newer attempt's completion state.
+ * Browser shell 冷恢复按 workspace scope 去重，同时用 attempt token 隔离迟到 promise。
+ * cleanup 只能撤销自己创建的 in-flight；旧 attempt 不得覆盖新 attempt 的完成状态。
  */
 export class BrowserTabRestoreScopeRegistry {
   private readonly scopes = new Map<string, BrowserTabRestoreScopeState>();

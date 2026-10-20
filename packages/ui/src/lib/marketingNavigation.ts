@@ -25,7 +25,7 @@ export const marketingNavigation = createStore<{ request: Request | null }>(() =
 }));
 let sequence = 0;
 
-/** Correlates only a navigation of the current window; a stale page must not confirm the next request. */
+/** 只关联当前窗口的一次导航，迟到页面不能确认下一次请求。 */
 export function finishMarketingNavigation(id: number, error?: Error) {
   const request = marketingNavigation.getState().request;
   if (request?.id === id) {

@@ -44,7 +44,7 @@ export function ProviderModelReasoningLevelEditor({
     ) {
       return;
     }
-    // Blurring after opening without changes is not a user override; otherwise simply viewing a level would write the whole group as a personal config.
+    // 打开后原样失焦不是用户覆盖；否则仅查看档位就会把整组写成个人配置。
     if (editingIndex < values.length && nextValue === values[editingIndex]) {
       cancelEdit();
       return;
@@ -60,7 +60,7 @@ export function ProviderModelReasoningLevelEditor({
     const next = [...values];
     const [value] = next.splice(from, 1);
     next.splice(to, 0, value!);
-    // Commit the local order immediately on drop, avoiding a jump back and then forward while waiting for the external refresh.
+    // drop 时立即提交本地顺序，避免等待外部刷新后先回位再跳转。
     onChange(next);
   };
   const handleChipKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -80,8 +80,8 @@ export function ProviderModelReasoningLevelEditor({
     setDraggingIndex(null);
   };
 
-  // The level wrapper is a regular div; with content-box, h-8 would have another 2px of border added,
-  // making the actual heights of static levels, the editor, and Add button inconsistent.
+  // 档位外层是普通 div；若沿用 content-box，h-8 会再叠加 2px 边框，
+  // 导致静态档位、编辑框和新增按钮的实际高度不一致。
   return (
     <div
       className="flex flex-wrap items-center gap-1.5"

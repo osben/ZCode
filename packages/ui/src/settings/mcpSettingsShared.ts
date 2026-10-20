@@ -75,8 +75,8 @@ export function serverToForm(server: ZCodeMcpServer): FormState {
     headers: cfg.headers ? JSON.stringify(cfg.headers, null, 2) : "",
     timeoutMs: typeof cfg.timeoutMs === "number" ? String(cfg.timeoutMs) : "",
     oauth: isRecord(cfg.oauth) ? JSON.stringify(cfg.oauth, null, 2) : "",
-    // Normalize invalid enum values to unset (equivalent to auto), matching the shared DTO's isMcpProtocolVersion
-    // behavior of silently discarding invalid values; otherwise a typo in config would leave the protocol-version dropdown blank.
+    // 非法枚举值归一为未设置（等价 auto），与 shared DTO 的 isMcpProtocolVersion
+    // 静默丢弃行为对齐；否则 config 里的手滑值会让协议版本下拉显示空白。
     protocolVersion: isMcpProtocolVersion(cfg.protocolVersion) ? cfg.protocolVersion : "",
   };
 }
@@ -205,24 +205,24 @@ export function jsonDraftToForm(jsonText: string, fallback: FormState): FormStat
     env: normalizedConfig.env ? JSON.stringify(normalizedConfig.env, null, 2) : "",
     url: normalizedConfig.url ?? "",
     headers: normalizedConfig.headers ? JSON.stringify(normalizedConfig.headers, null, 2) : "",
-    // JSON mode is converted to FormState before saving; preserve timeoutMs here,
-    // or MCP tool timeout configuration pasted by the user will be dropped by the form save path.
+    // JSON 模式会先转成 FormState 再保存；这里必须保留 timeoutMs，
+    // 否则用户粘贴的 MCP tool 超时配置会被表单保存链路吞掉。
     timeoutMs:
       typeof normalizedConfig.timeoutMs === "number" ? String(normalizedConfig.timeoutMs) : "",
-    // JSON mode has no OAuth form control, but saving still passes through FormState;
-    // preserve oauth invisibly so authorization-based MCPs such as Notion are not saved as unauthenticated connections.
+    // JSON 模式没有 OAuth 表单控件，但保存仍会走 FormState；
+    // 需要隐藏保留 oauth，避免 Notion 等授权型 MCP 被保存成裸连配置。
     oauth: isRecord(normalizedConfig.oauth) ? JSON.stringify(normalizedConfig.oauth, null, 2) : "",
-    // Preserve manually configured protocolVersion compatibility options too; otherwise editing/saving in the UI
-    // drops them through the form path and silently resets compatibility settings for non-standard legacy servers to auto.
-    // Normalize invalid enum values to unset as well instead of deferring an immediately detectable configuration error until connection time.
+    // 手工配置的 protocolVersion 兼容开关也必须保留，否则 UI 编辑保存后
+    // 会被表单链路吞掉，非标 legacy server 的兼容配置被静默还原成 auto。
+    // 非法枚举值同样归一为未设置，不把可立即发现的配置错误留给连接阶段。
     protocolVersion: isMcpProtocolVersion(normalizedConfig.protocolVersion)
       ? normalizedConfig.protocolVersion
       : "",
   };
 }
 
-// Match the semantics of the shared layer's isMcpProtocolVersion guard in convertToZCodeAgentMcpServer:
-// normalize invalid enum values to unset (equivalent to auto) when read by the UI rather than leaving them for connection time.
+// 与 shared 层 convertToZCodeAgentMcpServer 的 isMcpProtocolVersion 守卫保持同一语义：
+// 非法枚举值在 UI 读取侧就归一为未设置（等价 auto），不留给连接阶段。
 function isMcpProtocolVersion(value: unknown): value is "legacy" | "auto" | "2026-07-28" {
   return value === "legacy" || value === "auto" || value === "2026-07-28";
 }

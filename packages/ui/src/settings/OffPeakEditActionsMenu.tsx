@@ -1,7 +1,8 @@
-/* Top-bar action menu for the Off-Peak task editor: "⋯" next to Save → Pause/Resume + Delete based on state.
-   Matches the list-card menu so actions are available directly in the editor; queued → pause, paused → resume, terminal states show only Delete.
-   Styling is shared with the scheduled-task editor's top-bar menu. */
-import { TID_OFFPEAK_CARD_MENU, type ZCodeOffPeakTask } from "@zcode/shared";
+/* 闲时任务编辑页顶栏动作菜单：Save 右侧「⋯」→ 按状态给 暂停/继续 + 删除。
+   与列表卡片菜单同义，供编辑页内直接操作；queued→暂停、paused→继续，终态只留删除。
+   样式与定时任务编辑页顶栏菜单同源。 */
+import { type ZCodeOffPeakTask } from "@zcode/shared";
+import { TID_OFFPEAK_CARD_MENU } from "@zcode/shared/test-ids";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,7 +37,7 @@ export function OffPeakEditActionsMenu({
           type="button"
           data-testid={TID_OFFPEAK_CARD_MENU}
           aria-label={intl.formatMessage({ id: "automations.moreActions" })}
-          className="flex size-8 items-center justify-center rounded-lg border-0 bg-surface text-foreground-subtle shadow-none outline-none transition-colors hover:bg-surface-hover hover:text-foreground data-[state=open]:bg-surface-hover data-[state=open]:text-foreground focus-visible:ring-0"
+          className="flex size-8 items-center justify-center rounded-lg border-0 bg-white/[0.06] text-foreground-subtle shadow-none outline-none transition-colors hover:bg-white/10 hover:text-foreground data-[state=open]:bg-white/10 data-[state=open]:text-foreground focus-visible:ring-0"
         >
           <AutomationMoreHorizontalIcon className="size-4" aria-hidden="true" />
         </button>

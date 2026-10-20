@@ -45,8 +45,8 @@ export function getWorkspaceFileTreeRowDisplayGitStatus({
   gitStatus: WorkspaceFileGitStatus | null;
   directoryGitStatuses: WorkspaceFileGitStatus[];
 }): WorkspaceFileGitStatus | undefined {
-  // Fix: Directory text color previously hard-coded untracked as the priority, which differed from the priority used by descendant dots
-  // and caused the directory text and dot to convey conflicting states.
+  // 修复：目录文字颜色之前硬编码优先使用 untracked，和 descendant 圆点的
+  // 聚合状态优先级不一致，导致同一个目录文字和圆点颜色表达冲突。
   return gitStatus ?? directoryGitStatuses[0];
 }
 

@@ -16,8 +16,8 @@ export async function openFolderFromWorkspaceEntry({
       logger.warn("[openWorkspaceFolderEntry] directory browser preferred but unavailable");
       return;
     }
-    // Web/server roots have no system directory picker; continuing to call selectDirectory would only return null.
-    // Switch explicitly to the server-side directory browser so the user selects a path on the target host.
+    // Web/server 根节点没有系统目录选择框，继续调用 selectDirectory 只会返回 null。
+    // 这里显式切到服务端目录浏览器，确保用户选择的是目标 host 上的路径。
     logger.info("[openWorkspaceFolderEntry] opening service directory browser...");
     openDirectoryBrowser();
     return;

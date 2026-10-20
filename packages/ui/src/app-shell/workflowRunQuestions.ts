@@ -1,9 +1,9 @@
 /**
- * Pure display rules for pending questions (workflow escalations).
+ * 待答问题（升级问答）的纯展示规则。
  *
- * Split from workflowRunPanel.ts to meet the eslint 400-line max-lines rule, following the precedent in WorkflowRunSidePaneSections.tsx:
- * that file already contains four groups of detail-page rules (budget math, Cancel availability, result classification, and event-row
- * summaries), and escalation questions are a new vocabulary family that would push it over the limit.
+ * 从 workflowRunPanel.ts 拆出（eslint max-lines 400 行门，与 WorkflowRunSidePaneSections.tsx
+ * 同一先例）：那个文件承载详情页既有的四组规则（预算数学、Cancel 可用性、结果判定、事件行
+ * 摘要），升级问答是一族新词汇，加在那里正好把它推过门。
  */
 
 const WAITED_MINUTE_MS = 60_000;
@@ -11,27 +11,27 @@ const WAITED_HOUR_MS = 60 * WAITED_MINUTE_MS;
 const WAITED_DAY_MS = 24 * WAITED_HOUR_MS;
 
 /**
- * Declare the small amount of intl capability this module needs locally instead of borrowing it from workflowRunPanel.
+ * 本模块要的那点 intl 能力，就地声明而不是从 workflowRunPanel 借。
  *
- * It is a structural type, so declaring it in both places will not drift (its shape is determined by react-intl's formatMessage); importing
- * a type would add an unnecessary module dependency — avoiding that dependency is the reason for splitting the file.
+ * 它是结构类型，两边各写一份不会漂移（形状由 react-intl 的 formatMessage 决定），而 import
+ * 一个类型换来的是一条本不需要的模块依赖——拆文件的目的正是不要那条依赖。
  */
 type FormatMessage = (descriptor: { id: string }, values?: Record<string, string>) => string;
 
 /**
- * “How long has this question been waiting?” — the first thing readers ask when they see a pending question.
+ * 「这个问题已经等了多久」——读者看到一条待答问题时问的第一件事。
  *
- * Pure function; the caller injects `now` (the component supplies updated timestamps at a fixed interval): a waiting run **does not emit events**,
- * so it cannot rely on “recompute on the next projection update” — a question stuck for half an hour would keep showing “just now.”
+ * 纯函数，`now` 由调用方注入（组件按固定间隔喂新的时刻）：等待中的 run **恰恰不发事件**，
+ * 所以不能靠"下一次投影更新时顺手重算"——那会让一个卡了半小时的问题一直显示成"刚刚"。
  *
- * Reuse the existing `sidePane.time.*` copy family (available in both languages); do not create a new set of keys for the same meaning.
+ * 文案复用既有的 `sidePane.time.*` 族（两个语言都已有），不为同一个意思新造一套键。
  *
- * Record these three boundaries:
- *   - If `askedAt` is missing (events replayed from older journals do not include it), return undefined and do not render the label,
- *     rather than inventing a “just now” value.
- *   - If clock skew puts `askedAt` in the future (the CLI process stamps the question, and in remote sessions it may be on a different
- *     machine from the renderer), clamp it to “just now.” A negative duration is worse than hiding the label.
- *   - Stop the scale at “days”: pending questions may wait indefinitely by design (there is no timeout), so the range needs an upper bound.
+ * 三条边界值得记下来：
+ *   - `askedAt` 缺席（老 journal 重放出的事件没有这个字段）→ 返回 undefined，整个标签不渲染，
+ *     而不是显示一个编出来的"刚刚"。
+ *   - 时钟偏斜导致 `askedAt` 落在未来（提问时刻由 CLI 进程铸造，远端会话下与渲染进程根本
+ *     不是同一台机器）→ 钳到"刚刚"。负数时长比不显示更糟。
+ *   - 阶梯止于"天"：停驻问题按设计可以无限期等下去（不设超时），所以上界必须有个说法。
  */
 export function workflowRunQuestionWaitedLabel(
   askedAt: number | undefined,

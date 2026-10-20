@@ -4,22 +4,24 @@ import {
   TID_V4_BACKGROUND_WORK_CANCEL,
   TID_V4_BACKGROUND_WORK_ITEM,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import type { BackgroundWorkSummary } from "@zcode/shared/zcode-protocol-v4";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
 
 export interface ConversationBackgroundWorksProps {
   works: readonly BackgroundWorkSummary[];
-  /** M4 cancelBackgroundWork: cancel a background work (only running items can be cancelled). */
+  /** M4 cancelBackgroundWork：取消某后台工作（仅 running 可取消）。 */
   onCancel: (workId: string) => void;
 }
 
 /**
- * M4 background works panel: renders projection.backgroundWorks with a cancel entry on running items.
- * memo: does not re-render with other pane state while works is unchanged (callbacks are stabilized
- * by the parent's useCallback).
+ * M4 后台工作面板：渲染 projection.backgroundWorks + running 项 cancel 入口。
+ * memo：works 不变时不随 pane 其他状态重渲染（回调由父层 useCallback 稳定）。
  */
-function ConversationBackgroundWorksImpl({ works, onCancel }: ConversationBackgroundWorksProps) {
+function ConversationBackgroundWorksImpl({
+  works,
+  onCancel,
+}: ConversationBackgroundWorksProps) {
   if (works.length === 0) return null;
   return (
     <div
@@ -38,7 +40,7 @@ function ConversationBackgroundWorksImpl({ works, onCancel }: ConversationBackgr
   );
 }
 
-/** Each row is a memo component so the whole list does not fully re-render when any single item changes. */
+/** 单项抽成 memo 组件，避免整表随任一项变化全量重渲染。 */
 const BackgroundWorkRow = memo(function BackgroundWorkRow({
   work,
   onCancel,
@@ -56,13 +58,17 @@ const BackgroundWorkRow = memo(function BackgroundWorkRow({
       <span className="min-w-0 flex-1 truncate text-[var(--color-foreground)]">
         {work.kind} · {work.title}
       </span>
-      <span className="shrink-0 text-[var(--color-foreground-subtle)]">{work.status}</span>
-      {work.status === "running" ? <CancelButton workId={work.workId} onCancel={onCancel} /> : null}
+      <span className="shrink-0 text-[var(--color-foreground-subtle)]">
+        {work.status}
+      </span>
+      {work.status === "running" ? (
+        <CancelButton workId={work.workId} onCancel={onCancel} />
+      ) : null}
     </li>
   );
 });
 
-/** The cancel button is extracted with the workId closure inside; the parent passes a stable onCancel. */
+/** cancel 按钮抽出，内部封装 workId 闭包，父传稳定 onCancel。 */
 const CancelButton = memo(function CancelButton({
   workId,
   onCancel,
@@ -92,4 +98,6 @@ const CancelButton = memo(function CancelButton({
   );
 });
 
-export const ConversationBackgroundWorks = memo(ConversationBackgroundWorksImpl);
+export const ConversationBackgroundWorks = memo(
+  ConversationBackgroundWorksImpl,
+);

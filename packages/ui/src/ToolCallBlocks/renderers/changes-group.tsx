@@ -2,7 +2,6 @@ import { PencilIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getFileDisplayPath } from "@/lib/fileDisplay.js";
-import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import { buildEditCodeViewerSource } from "@/ToolCallBlocks/renderers/edit.js";
 import {
@@ -44,8 +43,8 @@ export function resolveResponsiveFileChipCount({
   gap: number;
 }) {
   if (chipWidths.length === 0) return 0;
-  // Zero available width means no chip fits; it must not be mistaken for a need to truncate nothing.
-  // Returning 0 preserves the full +N indicator so narrow screens do not show only a truncated filename.
+  // 零可用宽度表示当前一枚 chip 都放不下，不能误解为无需裁剪。
+  // 返回 0 才会保留完整的 +N 提示，避免窄屏只露出被截断的文件名。
   if (availableWidth <= 0) return 0;
   const allChipsWidth =
     chipWidths.reduce((total, width) => total + width, 0) +
@@ -57,7 +56,7 @@ export function resolveResponsiveFileChipCount({
   for (const chipWidth of chipWidths) {
     const nextCount = visibleCount + 1;
     const nextVisibleWidth = visibleWidth + chipWidth;
-    // When items remain hidden, the layout includes visible chips, +N, and every gap between them.
+    // 仍有隐藏项时，布局包含 visible chips、+N 和两者之间的所有 gap。
     const requiredWidth = nextVisibleWidth + gap * nextCount + overflowWidth;
     if (requiredWidth > availableWidth) break;
     visibleWidth = nextVisibleWidth;
@@ -87,8 +86,8 @@ function ResponsiveFileChipList({
     if (!container) return;
     const boundary = container.closest<HTMLElement>("[data-tool-call-id]");
     const updateVisibleCount = () => {
-      // summary is shrink-to-content, so measuring its own width keeps shrinking after chips are hidden.
-      // Measure against the right edge of the full ToolCall row to get the actual available space consistently.
+      // summary 是 shrink-to-content，按自身宽度测量会在隐藏 chip 后继续收缩。
+      // 以整行 ToolCall 的右边界计算，才能稳定得到当前真正可用的空间。
       const containerRect = container.getBoundingClientRect();
       const boundaryRight = boundary?.getBoundingClientRect().right ?? containerRect.right;
       const nextVisibleCount = resolveResponsiveFileChipCount({
@@ -158,6 +157,7 @@ function ResponsiveFileChipList({
 }
 
 export function ChangesGroupToolCallBlock(context: ToolCallBlockRenderContext) {
+  const ToolCallBlock = context.nestedToolRenderer;
   const { intl } = useZCodeIntl();
   const { toolCall, childToolCalls } = context.toolCallNode;
   const childSummaries = useMemo(
@@ -185,13 +185,19 @@ export function ChangesGroupToolCallBlock(context: ToolCallBlockRenderContext) {
   const latestFile = latest?.summaries.at(-1);
   const hasResolvedFiles = files.length > 0;
   const count = hasResolvedFiles ? files.length : childToolCalls.length;
-  // Streaming JSON for Write/Edit may deliver content before file_path.
-  // Until the path can be parsed, count tools already in the group to avoid a dangling separator and a misleading 0 files.
-  const countText = intl.formatPlural(
+  // Write/Edit 的流式 JSON 可能先到 content、后到 file_path。
+  // 路径尚不可解析时按已进入分组的 tool 计数，避免悬空分隔符和误导性的 0 files。
+  const countText = intl.formatMessage(
     {
-      id: hasResolvedFiles ? "chat.toolCall.changesGroup.file" : "chat.toolCall.changesGroup.tool",
+      id: hasResolvedFiles
+        ? files.length === 1
+          ? "chat.toolCall.changesGroup.file.one"
+          : "chat.toolCall.changesGroup.file.other"
+        : count === 1
+          ? "chat.toolCall.changesGroup.tool.one"
+          : "chat.toolCall.changesGroup.tool.other",
     },
-    count,
+    { count: String(count) },
   );
   const actionText = latest
     ? intl.formatMessage({

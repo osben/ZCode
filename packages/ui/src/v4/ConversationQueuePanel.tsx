@@ -23,7 +23,7 @@ import {
   TID_V4_QUEUE_PAUSED_BANNER,
   TID_V4_QUEUE_RESUME,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import type { QueueState } from "@zcode/shared/zcode-protocol-v4";
 import { ArrowUpFromLine, GripVertical, PencilIcon, Trash2Icon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -34,17 +34,17 @@ import { runUserAction, runUserActionAsync } from "@/lib/userActionTelemetry.js"
 
 export interface ConversationQueuePanelProps {
   queue: QueueState;
-  /** Delete a queue item (deleteQueueItem command). */
+  /** 删除队列项（deleteQueueItem command）。 */
   onDeleteItem?: (queueItemId: string) => void;
-  /** Return a queue item to the originating composer; restore the draft only after the authoritative delete succeeds. */
+  /** 撤回队列项到发起端 composer；权威删除成功后才恢复草稿。 */
   onEditItem?: (queueItemId: string) => Promise<void> | void;
-  /** Target item awaiting delete ACK / composer restore; lock only this row. */
+  /** 正在等待 delete ACK / composer restore 的目标项；仅锁该 row。 */
   pendingEditQueueItemId?: string | null;
-  /** Send a queue item immediately (sendQueuedNow command, stop the current turn, then consume this item). */
+  /** 立即发送队列项（sendQueuedNow command，stop 当前 + 消费该项）。 */
   onSendNow?: (queueItemId: string) => void;
-  /** Reorder an item by dragging (reorderQueueItem moves it before the anchor; null means the end of the queue). */
+  /** 拖拽排序项（reorderQueueItem，移动到锚点前；null=队尾）。 */
   onMoveItem?: (queueItemId: string, beforeQueueItemId: string | null) => void;
-  /** Resume queue draining: CLI setAutoDrain(true), which consumes immediately when idle and only arms while busy. */
+  /** 暂停队列恢复：CLI setAutoDrain(true)，idle 立即消费、busy 仅武装。 */
   onResume?: () => Promise<void> | void;
 }
 
@@ -168,8 +168,8 @@ const QueueRow = memo(function QueueRow({
         transform
           ? {
               ...transform,
-              // dnd-kit applies scaling based on the over node's size while sorting;
-              // queue rows are fixed-size touch targets, so scaling briefly distorts buttons and text during a drag.
+              // dnd-kit 排序时会按 over 节点尺寸附带 scale；
+              // 队列行是固定触控目标，缩放会让拖拽中的按钮和文本短暂变形。
               scaleX: 1,
               scaleY: 1,
             }
@@ -304,8 +304,8 @@ const QueueRow = memo(function QueueRow({
 });
 
 /**
- * Vertical split queue panel: renders projection.queue.items and an item-level delete action.
- * The queue exists during a running turn (sendText is queued) and is authoritative CLI projection state, not renderer-local.
+ * 竖切 queue 面板：渲染 projection.queue.items + 单项删除入口。
+ * queue 在运行中的 turn 期间存在（sendText 排队），是 CLI 投影权威态（非 renderer-local）。
  */
 function ConversationQueuePanelImpl({
   queue,
@@ -354,8 +354,7 @@ function ConversationQueuePanelImpl({
   }, [onResume, resumePending]);
 
   if (queue.items.length === 0) return null;
-  // Restore the old queue-panel blur layer that was missed during the v4 visual migration,
-  // keeping the list visually connected to the composer's frosted-glass background.
+  // 补回 v4 视觉迁移时漏掉的旧队列面板 blur 层，让列表保持贴合 composer 的磨砂背景。
   return (
     <div
       data-testid={TID_V4_QUEUE}

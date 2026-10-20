@@ -1,15 +1,15 @@
-// Replay export barrel.
+// 回放导出桶。
 //
-// The downstream browser replay page assembles the run detail page from **static data**: the board (WorkflowRunGraphSection), read-only
-// SessionPane, collapsible section headers, and the Providers and data-layer seams they need. These components were originally
-// used only by the App inside this package and not exported from index; export them together here without changing component behavior.
+// 下游浏览器端回放页面要在**静态数据**上装配 run 详情页：board（WorkflowRunGraphSection）、只读
+// SessionPane、折叠分区的表头栏，以及它们需要的 Provider 与数据层缝。这些组件本来
+// 只在包内被 App 使用、不在 index 导出；这里集中放出一份，不改任何组件行为。
 //
-// Rule: re-export only; define nothing here.
+// 纪律：只 re-export，不定义任何东西。
 //
-// The Results / event log /
-// Script sections have been removed from the product, so their three components and the corresponding exports are removed too. The pure
-// formatter `workflowRunEventLines` and its i18n keys are **retained**: they are not part of the removed UI,
-// but define how journal events are displayed, and browser replay still uses them with static data.
+// run 侧板的 Results / 事件日志 /
+// Script 三节已从产品里撤走，对应的三个组件随之删除，这里的条目也一并去掉。事件行的纯
+// 格式化器 `workflowRunEventLines` 与它那批 i18n 键**保留**：它不是被撤掉的那块 UI，
+// 而是 journal 事件的展示规则，浏览器端回放仍在静态数据上用它。
 export { SessionPane, type SessionPaneProps } from "./v4/SessionPane.js";
 export {
   V4ConversationContext,

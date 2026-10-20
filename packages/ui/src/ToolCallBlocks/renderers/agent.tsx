@@ -1,3 +1,4 @@
+import { useToolPresentationCapabilities } from "@/ToolCallBlocks/presentationCapabilities.js";
 import { BotIcon } from "lucide-react";
 import { useCallback, useMemo, type ReactNode } from "react";
 import type { AgentColor } from "@zcode/shared";
@@ -5,16 +6,12 @@ import { MessageResponse } from "@/components/ai-elements/message.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveSubagentColorFromName, SUBAGENT_TEXT_COLOR_CLASS } from "@/lib/subagentColors.js";
-import { useSubagentsContextStore } from "@/store/subagentsContextStore.js";
-import { useSubagentsStore } from "@/store/subagentsStore.js";
-import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import { ToolLayout } from "../ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "../shared.js";
 import { getLatestExploreChildSummaryFromChildren } from "./explore.js";
 import { AgentPromptSection } from "./agentPromptSection.js";
 import {
-  combineAgentSecondarySummary,
   formatAgentMessage,
   getAgentColor,
   getAgentKindLabel,
@@ -27,6 +24,7 @@ import {
 const AGENT_TOOL_ICON = <BotIcon className="size-4 shrink-0 text-foreground-subtle" />;
 
 function AgentChildToolList({
+  nestedToolRenderer,
   childToolCalls,
   workspacePath,
   theme,
@@ -37,6 +35,7 @@ function AgentChildToolList({
   onOpenAutomationsMain,
   onLoadFullToolCallFields,
 }: {
+  nestedToolRenderer: ToolCallBlockRenderContext["nestedToolRenderer"];
   childToolCalls: ToolCallBlockRenderContext["toolCallNode"]["childToolCalls"];
   workspacePath: string;
   theme?: ToolCallBlockRenderContext["theme"];
@@ -51,6 +50,7 @@ function AgentChildToolList({
     return null;
   }
 
+  const ToolCallBlock = nestedToolRenderer;
   return (
     <div className="space-y-2">
       {childToolCalls.map((childToolCallNode) => (
@@ -100,7 +100,7 @@ function AgentActivitySection({
           {label}
         </h4>
         <div className="overflow-auto max-h-64" data-markdown-table-sticky-scrollbar="disabled">
-          {/* Agent activity may also contain long code/paths; allow horizontal scrolling to avoid truncation on narrow screens. */}
+          {/* Agent 活动内容同样可能包含长代码/路径，允许横向滚动避免窄屏截断。*/}
           <MessageResponse
             className="px-3 py-2 min-w-0 break-words text-ui-base [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
             workspacePath={workspacePath}
@@ -131,8 +131,8 @@ function AgentNameText({ color, name }: { color: AgentColor; name: string }) {
   return (
     <span
       className={cn(
-        // Do not rely on font baseline alignment for the subagent name in the tool summary row.
-        // inline-flex vertically centers it, while a 1.5 line height matches the surrounding summary text.
+        // 子智能体名在 tool summary 行内不能依赖字体基线对齐。
+        // inline-flex 负责垂直居中，1.5 倍行高保持和周围摘要文字一致的阅读节奏。
         "inline-flex max-w-36 items-center truncate font-mono text-ui-base font-medium leading-[1.5]",
         SUBAGENT_TEXT_COLOR_CLASS[color],
       )}
@@ -141,10 +141,6 @@ function AgentNameText({ color, name }: { color: AgentColor; name: string }) {
       {name}
     </span>
   );
-}
-
-function normalizeAgentLookupValue(value: string): string {
-  return value.trim().toLowerCase();
 }
 
 function BackgroundAgentProcessSection({
@@ -218,57 +214,26 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
   const fallbackLabel = formatAgentMessage(intl, "chat.toolCall.agent.fallback", "SubAgent");
   const primaryText = getAgentPrimaryText(toolCall, fallbackLabel);
   const agentName = getAgentKindLabel(toolCall, "", context.authoritativeAgentType);
-  const configuredAgentsFromContext = useSubagentsContextStore((state) => {
-    const candidates = Object.values(state.contexts).filter(
-      (candidate) => candidate.workspacePath === context.workspacePath && candidate.loaded,
-    );
-    // The same remote path may correspond to multiple workspaceIdentity values. Without identity,
-    // fall back to the default color rather than guessing a bucket and mixing in an Agent config
-    // from another remote workspace.
-    return candidates.length === 1 ? candidates[0]?.agents : undefined;
-  });
-  const configuredAgentsFromHook = useSubagentsStore((state) => state.agents);
-  const configuredAgents =
-    configuredAgentsFromContext && configuredAgentsFromContext.length > 0
-      ? configuredAgentsFromContext
-      : configuredAgentsFromHook.length > 0
-        ? configuredAgentsFromHook
-        : useSubagentsStore.getState().agents;
-  const configuredAgentColor = useMemo(() => {
-    const lookupName = normalizeAgentLookupValue(agentName);
-    if (!lookupName) {
-      return undefined;
-    }
-    return configuredAgents.find((agent) => {
-      const name = normalizeAgentLookupValue(agent.name);
-      const id = normalizeAgentLookupValue(agent.id);
-      return name === lookupName || id === lookupName;
-    })?.color;
-  }, [agentName, configuredAgents]);
+  const configuredAgentColor = useToolPresentationCapabilities().agentColor?.(agentName);
   const agentColor = agentName
     ? (configuredAgentColor ?? getAgentColor(toolCall) ?? resolveSubagentColorFromName(agentName))
     : null;
   const agentNameDetail =
     agentName && agentColor ? <AgentNameText color={agentColor} name={agentName} /> : null;
-  // The parent Agent tool alone determines whether the Agent block is complete or running.
-  // Child tools are details in the expanded area and must not extend the parent block's running
-  // state. Otherwise, the block would still show a gradient and child-tool summary after the parent
-  // Agent completes, contradicting the parent tool lifecycle in the protocol.
+  // Agent 父块的完成/进行中边界只由父 Agent tool 决定。
+  // 子 tool 是展开区明细，不能反向续住父块运行态，否则父 Agent completed 后
+  // 仍会显示渐变和子工具摘要，和协议里的父工具生命周期不一致。
   const isAgentVisuallyRunning = context.isRunning;
   const collapsedChildSummary = isAgentVisuallyRunning
     ? getLatestExploreChildSummaryFromChildren(intl, childToolCalls, context, {
         includeChildActionKindLabel: true,
       })
     : null;
-  const summarySecondaryText = combineAgentSecondarySummary(
-    collapsedChildSummary?.secondaryText,
-    context.agentUsageSummary,
-  );
   const backgroundAgentInfo = readBackgroundAgentInfo(toolCall);
   const activityContent = getAgentActivityContent(toolCall);
   const activityThought = toolCall.thought?.trim();
-  // The Agent block and its nested tools already express their origin through hierarchy; showing a
-  // subagent-origin badge would add redundant noise.
+  // Agent 块和它内部的子工具都已经通过层级表达了来源，
+  // 继续显示子智能体来源 badge 会制造重复噪音。
   const sourceLabel = undefined;
   const collapsedPrimaryText = useMemo(
     () => <span className="truncate">{primaryText}</span>,
@@ -339,6 +304,7 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
           />
         ) : null}
         <AgentChildToolList
+          nestedToolRenderer={context.nestedToolRenderer}
           childToolCalls={childToolCalls}
           workspacePath={context.workspacePath}
           theme={context.theme}
@@ -379,9 +345,8 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
         canToggle={false}
         forceOpen={false}
         summaryAction={summaryAction}
-        // Product boundary: Agent/Task keeps only a one-line summary in the parent conversation.
-        // View the full child timeline in the right-side tab / mobile drawer, so do not auto-expand
-        // here or offer a manual expand control.
+        // 产品边界：Agent/Task 在父对话中只保留单行摘要；完整 child timeline 统一从
+        // 右侧 tab / 手机抽屉查看，因此这里既不自动展开，也不提供手动展开入口。
         kindLabel={fallbackLabel}
         expandedKindLabel={fallbackLabel}
         kindDetail={agentNameDetail}
@@ -392,12 +357,11 @@ export function AgentToolCallBlock(context: ToolCallBlockRenderContext) {
           collapsedChildSummary ? collapsedChildSummary.primaryText : collapsedPrimaryText
         }
         expandedPrimaryText={expandedPrimaryText}
-        secondaryText={summarySecondaryText}
+        secondaryText={collapsedChildSummary?.secondaryText}
         expandedSecondaryText={null}
         summaryContentSeparator="·"
         animateSummaryContent
         disableSummaryContentAnimation={context.disableSummaryContentAnimation}
-        summaryContentRefreshVersion={context.agentUsageSummaryVersion}
         summaryContentKey={
           collapsedChildSummary?.animationKey ?? `agent:${toolCall.toolId}:${primaryText}`
         }

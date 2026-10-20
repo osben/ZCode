@@ -41,7 +41,7 @@ export function BooleanModelOption({
   );
 }
 
-/** The outer button owns click and keyboard semantics; the indicator must not contain another focusable control. */
+/** 外层按钮负责完整点击与键盘语义；指示框不可再嵌一个可聚焦控件。 */
 export function ModelOptionCheckbox({ selected }: { selected: boolean }) {
   return (
     <span
@@ -49,7 +49,7 @@ export function ModelOptionCheckbox({ selected }: { selected: boolean }) {
       data-model-option-checkbox="true"
       className={cn(
         "flex size-4 shrink-0 items-center justify-center rounded-sm border",
-        // Do not invert the border with the checkmark, or the selected box gets an inverted outline; use the same color as the system Checkbox.
+        // 边框不能跟随勾号的反色，否则选中后框体出现反色描边；与系统 Checkbox 使用相同颜色。
         selected
           ? "border-primary bg-primary text-primary-foreground"
           : "border-input-border bg-input",
@@ -84,8 +84,8 @@ export function JsonSlotEditor({
       <Textarea
         {...TECHNICAL_INPUT_ATTRIBUTES}
         data-language="json"
-        // The shared Textarea auto-sizes to its content by default, so a long Effective JSON placeholder would expand the whole dialog.
-        // Keep the JSON slot at a fixed height and scroll overflow only inside the input.
+        // 共享 Textarea 默认按内容自适应高度，长 Effective JSON placeholder 会撑高整个弹窗。
+        // JSON 槽位保持固定高度，超出内容只在输入框内部滚动。
         className={cn(
           "field-sizing-fixed h-32 min-h-32 max-h-32 resize-none overflow-y-auto rounded-lg px-3 py-2 font-mono text-foreground placeholder:text-foreground-subtlest",
           modelEditorControlStyle(overridden),

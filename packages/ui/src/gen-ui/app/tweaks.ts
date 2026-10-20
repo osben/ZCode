@@ -10,7 +10,7 @@ import {
 
 type Registration = Extract<GenUiTweakMessage, { type: "register" | "update" }>;
 
-/** Acceptance state of the upstream helper belongs to the page owner; the guest only receives the bound projection via ACK. */
+/** 上游 helper 的接受状态归页面 owner；guest 只通过 ACK 得到绑定投影。 */
 export function createGenUiTweakRegistry() {
   const registrations = new Map<string, Registration>();
   let selection: GenUiTweakAnnotation["selection"] = null;

@@ -1,13 +1,14 @@
 import type { TimelineStation, WorkflowTimelineModel } from "./timeline-model.js";
 
 /**
- * Streaming draft: while the model is still writing the script and the analyzer has not run, draw the **phase line** on the card—
- * stations and faint track segments only, with no pills, arcs, or status. Count subagents only (`N phases · M agents` in the header),
- * leaving the visualization to the analyzer. This is a **regex-level scanner**, not a parser: it recognizes only `phase("…")` and `agent("…")`.
- * False matches are harmless because the analyzer replaces the whole model once display arrives (invariant 10).
+ * 流式草稿：模型还在写
+ * 脚本、分析器还没跑，卡上就先把**阶段线**画出来——只有站与淡墨轨道段，没有药丸、没有弧、没有
+ * 状态；子代理只计数（表头的 `N phases · M agents`），画面留给分析器。这是一个**正则级扫描器**，
+ * 不是解析器——它只认 `phase("…")` 与 `agent("…")`，认错了也无妨：display 一到整个模型就被
+ * 分析器的替换掉（不变式 10）。
  *
- * A second `phase("implement")` with the same name revisits that station (the analyzer folds it into a back-edge), not a new station.
- * Draft scanning only adds stations, so its count matches the analyzer and no station disappears at handoff. A final unfinished `phase("ver` gives the last station
+ * 同名的第二个 `phase("implement")` 是回到那一站（分析器会把它折成回边），不是新站——草稿
+ * 只加不减，站数与分析器的一致，交接时不会有站消失。最后一个未闭合的 `phase("ver` 给最后一站
  * `typing`。
  */
 export interface WorkflowDraftPhase {
@@ -17,7 +18,7 @@ export interface WorkflowDraftPhase {
 
 export interface WorkflowDraft {
   phases: WorkflowDraftPhase[];
-  /** Subagent names deduplicated in order of appearance (counted, not rendered). */
+  /** 按出现顺序去重的子代理名（只计数，不画）。 */
   agents: string[];
 }
 
@@ -29,11 +30,11 @@ export function scanWorkflowDraft(script: string): WorkflowDraft {
   for (const match of script.matchAll(TOKEN)) {
     const [, kind, quote, body, closing] = match;
     if (quote === undefined) continue;
-    // For template-literal interpolation, keep only the head: `Researcher${i}` becomes "Researcher"; a partial name is better than none.
+    // 模板字面量里的插值只取头部：`研究员${i}` 记成「研究员」——名字的形状比空着强。
     const name = (body ?? "").split("${")[0]!.trim();
     const closed = closing !== undefined;
     if (kind === "phase") {
-      // A station already being typed is this marker itself: streaming may scan the same occurrence repeatedly, so finish its name rather than opening another station.
+      // 已经在 typing 的站就是这个标记本身：流式下同一处会被扫到多次，定名而不是再开一站。
       const last = phases[phases.length - 1];
       if (last?.typing === true) {
         last.name = name;
@@ -50,7 +51,7 @@ export function scanWorkflowDraft(script: string): WorkflowDraft {
   return { agents, phases };
 }
 
-/** Draft → timeline model: stations and faint track segments only, with no pills, arcs, or status. */
+/** 草稿 → 时间线模型：只有站与淡墨轨道段，没有药丸、没有弧、没有状态。 */
 export function draftTimeline(draft: WorkflowDraft): WorkflowTimelineModel {
   const stations: TimelineStation[] = draft.phases.map((phase, i) => ({
     id: `draft:${i}`,

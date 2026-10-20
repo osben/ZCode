@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { QueueItem } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationPendingGuideList } from "@/v4/ConversationPendingGuideList.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/v4/ConversationTurnRow.js", async () => {
   const React = await import("react");
@@ -44,7 +43,7 @@ describe("ConversationPendingGuideList", () => {
     const markup = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ConversationPendingGuideList, {
           context: {} as never,
           items: [guide],
@@ -54,6 +53,6 @@ describe("ConversationPendingGuideList", () => {
     );
 
     expect(markup).toContain("请先检查这里");
-    expect(markup).toContain(expectedCopy("chat.message.turnSteer.pending"));
+    expect(markup).toContain("等待引导当前任务…");
   });
 });

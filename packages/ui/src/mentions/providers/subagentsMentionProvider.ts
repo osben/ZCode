@@ -95,9 +95,8 @@ export function useSubagentsMentionProvider(
   const items = useMemo(
     () =>
       filterMentionItemsWithOptions(allItems, query, {
-        // Bugfix: subagent candidates are usually few, and with an empty query this is still the
-        // execution entry. Reusing the generic mention's 3-item preview would hide agents beyond
-        // the third, making users think nothing loaded.
+        // Bugfix：subagent 候选通常数量很少，空 query 时也是执行入口。
+        // 复用通用 mention 的 3 条预览会把第 4 个之后的 agent 藏起来，用户误以为没加载。
         requireQuery: false,
       }),
     [allItems, query],

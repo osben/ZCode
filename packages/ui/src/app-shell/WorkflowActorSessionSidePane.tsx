@@ -19,10 +19,10 @@ interface WorkflowActorSessionSidePaneProps {
 }
 
 /**
- * Not-started placeholder. This is the landing view for a tab opened from a pill whose actor has not started yet.
+ * 未启动占位。从卡上一枚还没启动的药丸点开的 tab 落地就是它。
  *
- * The copy says only "not started yet" and explains that the view will appear automatically. This is accurate (the gate reads the live projection)
- * and avoids prompting the user to retry something that does not exist. Color is not the only status signal: icon, title, and body all convey the same state.
+ * 措辞只说「还没开始」并交代它会自己出现——这是实话（门读实时投影），也避免用户去点
+ * 一个并不存在的重试。状态不靠颜色单独表达：图标 + 标题 + 正文都在说同一件事。
  */
 function WorkflowActorNotStarted() {
   const { intl } = useZCodeIntl();
@@ -43,15 +43,15 @@ function WorkflowActorNotStarted() {
 }
 
 /**
- * Gate + nested read-only SessionPane.
+ * 门 + 嵌套只读 SessionPane。
  *
- * The gate reads the **parent session's** `workflowRuns` projection (as with `WorkflowRunSidePane`: run state is the parent's
- * authoritative projection, not a local cache in this panel). Leases are reference-counted, and the main panel usually already subscribes to the parent,
- * so this read does not create another connection.
+ * 门的输入是**父会话**的 `workflowRuns` 投影（照 `WorkflowRunSidePane`：运行态是父会话的
+ * 权威投影，不是这个面板的本地缓存）。租约是引用计数的，父会话通常已经被主面板订阅着，
+ * 所以这一份读取不额外建连。
  *
- * When `notStarted`, **do not mount the SessionPane at all**; do not render it hidden. Subscription occurs inside
- * SessionPane at `layer.acquire(actorSessionId)`, so only unmounting prevents a failed subscription
- * and avoids a projection store stuck in error waiting for manual retry.
+ * `notStarted` 时**整棵 SessionPane 不挂载**——不是渲染一个隐藏的它。订阅发生在
+ * SessionPane 内部的 `layer.acquire(actorSessionId)` 上，只有不挂载才真的没有失败订阅，
+ * 也就没有那个停在 error 只等手动 retry 的投影 store。
  */
 const WorkflowActorSessionContent = memo(function WorkflowActorSessionContent({
   tab,
@@ -62,12 +62,12 @@ const WorkflowActorSessionContent = memo(function WorkflowActorSessionContent({
 }: WorkflowActorSessionSidePaneProps) {
   const { layer } = useV4Conversation();
 
-  // Acquire the parent-session lease synchronously during render (`useMemo`, as in ReadyV4PaneConversationProvider),
-  // not with `WorkflowRunSidePane`'s `useEffect` + `setLease`. The distinction matters: the effect-based version has no projection on the **first frame**,
-  // so the gate can only report unknown and mounts SessionPane for one frame; it subscribes to a session that does not exist yet and fails.
-  // The failed store then remains in status:"error" in SessionDataLayer's keep-warm cache for 30 seconds, and when the gate opens,
-  // acquire reuses it (refCount++, no reconnect)—the stuck panel this change is meant to prevent.
-  // A detail page can tolerate one frame late because it first renders an empty state; this gate cannot.
+  // 父会话租约走**渲染期同步建连**（`useMemo`，同 `ReadyV4PaneConversationProvider`），
+  // 不是 `WorkflowRunSidePane` 的 `useEffect` + `setLease`。区别是要紧的：effect 版的**首帧**
+  // 没有投影，门只能判 unknown，SessionPane 于是挂上一帧、对着还不存在的会话订阅一次并失败。
+  // 而失败的 store 会带着 status:"error" 在 SessionDataLayer 的 keep-warm 里活满 30 秒，
+  // 门后来放行时的 acquire 直接复用它（refCount++，不再 connect）——那正是本要修掉的死面板。
+  // 详情页可以承受晚一帧（它只是先画个空态），这道门不行。
   const lease = useMemo(() => layer.acquire(tab.parentSessionId), [layer, tab.parentSessionId]);
   useEffect(() => () => lease.release(), [lease]);
 
@@ -83,9 +83,9 @@ const WorkflowActorSessionContent = memo(function WorkflowActorSessionContent({
     [snapshot?.workflowRuns, tab.actorSessionId, tab.ordinal, tab.runId, tab.siteId],
   );
 
-  // Continue subscribing for both `unknown` and `started`: the former is normal after a run is evicted/cold-recovered, and direct subscription is
-  // the only transcript path. Preserve the existing error + manual-retry panel for real failures. A slot without a session id
-  // (a tab opened from a not-started pill) can only show a placeholder; the gate reads the live projection and heals as soon as the actor appears with a session.
+  // `unknown` 与 `started` 都照旧订阅：前者是 run 被淘汰 / 冷恢复后的常态，直接订阅是
+  // transcript 唯一的路，真失败时既有的 error + 手动 retry 面板原样保留。没有会话 id 的
+  // 槽位（未启动的药丸开的 tab）只能占位——门读实时投影，actor 带着会话出现即自愈。
   if (gate.state === "notStarted" || gate.sessionId === undefined) {
     return <WorkflowActorNotStarted />;
   }
@@ -109,18 +109,18 @@ const WorkflowActorSessionContent = memo(function WorkflowActorSessionContent({
 });
 
 /**
- * Transcript for one dwf actor instance.
+ * 一个 dwf actor 实例的 transcript。
  *
- * Composed like `SubagentSessionSidePane`: pane scope + nested **read-only** `SessionPane`. Apart from the not-started
- * gate, this component has no data-fetching logic of its own; that is the benefit of persisting actor sessions as real sessions:
- * live streaming, cold recovery, and viewing after a run ends all use the existing SessionPane path.
+ * 组合方式照 `SubagentSessionSidePane`：pane scope + 嵌套**只读** `SessionPane`。除了未启动
+ * 门之外这里没有任何自己的取数逻辑，而这正是把 actor 会话落成真实持久会话换来的东西——
+ * 实时流、冷恢复、run 结束之后的回看，全部由既有 SessionPane 链路负责。
  *
- * Two **intentional** differences from the subagent panel:
+ * 与 subagent 面板的两处**刻意**不同：
  *
- * - Do not pass `onOpenSubagentSession`: the subagent tool is disabled in the actor's tool surface (the engine spec's
- *   "Actor tool surface"), so there is no nested drill-down to click and no entry point should be shown.
- * - Do not pass `rootSessionId`: an actor session is not part of any subagent tree. Inventing a root would make this read-only panel
- *   subscribe to an unrelated session.
+ * - 不传 `onOpenSubagentSession`：actor 的工具面里 subagent 是关掉的（引擎 spec 的
+ *   「Actor tool surface」），没有嵌套下钻可点，也就不该摆一个入口。
+ * - 不传 `rootSessionId`：actor 会话不在任何 subagent 树里。编一个根会让这个只读面板去
+ *   订阅一条与它无关的会话。
  */
 export const WorkflowActorSessionSidePane = memo(function WorkflowActorSessionSidePane({
   tab,

@@ -3,8 +3,8 @@ import {
   TID_WORKFLOWS_CREATE_VIA_CHAT,
   TID_WORKFLOWS_LIST,
   TID_WORKFLOW_GLOBAL_GROUP,
-  testId,
 } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -27,31 +27,31 @@ import type {
 } from "@/settings/saved-workflows/savedWorkflowContract.js";
 
 interface SavedWorkflowGlobalGroupProps {
-  /** Page-level refresh counter; when it changes (other than on initial mount), bypass the cache and refetch. */
+  /** 页级刷新计数器；变化（非首挂）时绕过缓存重拉。 */
   refreshSeq: number;
   mode: SavedWorkflowGroupMode;
   onStateChange: (key: "global", state: SavedWorkflowGroupState) => void;
   onOpenDetail: (name: string) => void;
   onBack: () => void;
-  /** “Run” launches directly from the GUI: switch to the new session after acceptance. */
+  /** 「运行」= GUI 直接启动：accepted 后切到新会话。 */
   onNavigateToLaunchedRun?: (target: SavedWorkflowLaunchTarget, sessionId: string) => void;
   onCreateViaChat?: (prompt: string, target: SavedWorkflowProjectTarget) => void;
   onOpenWorkflowRun?: (params: SavedWorkflowsOpenRunParams) => void;
-  /** Artifact chip → `workflow-artifact` tab. */
+  /** 产物 chip → `workflow-artifact` tab。 */
   onOpenWorkflowArtifact?: (params: SavedWorkflowsOpenArtifactParams) => void;
-  /** Local project candidates (remote remoteSessionId entries filtered out): target for run, revision, and move-to-project actions. */
+  /** 本机项目候选（已过滤远程 remoteSessionId）：运行落点、修订落点、移到项目的目标。 */
   localProjects: readonly AutomationWorkspaceOption[];
-  /** Active project key: default “Run in” for the arguments dialog and default target for revision / creation. */
+  /** 活动项目 key：实参窗默认「运行于」、修订 / 创建默认落点。 */
   activeProjectKey: string | null;
-  /** Notify the page to refresh both groups after a successful move. */
+  /** 移动成功后回调页刷新两组。 */
   onMoved: () => void;
 }
 
 /**
- * Global workflow group: pinned at the top and shown even when empty. Its carrier does not use
- * `useWorkspaceServicesResolution`; it directly uses `useServices().zcodeAgentService`, RPCs include `{ scope: "global" }`,
- * and the services layer selects the local runtime. Run uses the arguments dialog with “Run in”; cards / details can “Move to project…” to move back to a local project.
- * State and actions live in `useSavedWorkflowGlobalGroup`; this file handles rendering only.
+ * 全局工作流组：顶部固定的「全局」组，空也显示。载体不用
+ * `useWorkspaceServicesResolution`——直接用 `useServices().zcodeAgentService`，RPC 带 `{ scope: "global" }`，
+ * services 层自选本机运行时。运行走带「运行于」的实参窗；卡片 / 详情可「移到项目…」搬回本地项目。
+ * 状态与动作全在 `useSavedWorkflowGlobalGroup`，本文件只负责渲染。
  */
 export function SavedWorkflowGlobalGroup(props: SavedWorkflowGlobalGroupProps) {
   const {
@@ -230,7 +230,13 @@ export function SavedWorkflowGlobalGroup(props: SavedWorkflowGlobalGroupProps) {
           className="mt-4 space-y-0.5 rounded-lg border border-warning/40 px-2.5 py-2"
         >
           <p className="text-ui-sm text-warning">
-            {intl.formatPlural({ id: "workflows.hub.invalid" }, state.invalid.length)}
+            {intl.formatMessage(
+              {
+                id:
+                  state.invalid.length === 1 ? "workflows.hub.invalidOne" : "workflows.hub.invalid",
+              },
+              { count: String(state.invalid.length) },
+            )}
           </p>
           {state.invalid.map((entry) => (
             <p

@@ -1,16 +1,16 @@
-// Split-view layout calculation (pure function): split tree → absolute-position expressions for each leaf/divider.
-// Render leaves as flat direct children of the container (stable key = paneId) — splitting/closing changes only rects,
-// and React does not remount any surviving pane (preserving virtualizer measurements, scroll positions, and composer drafts).
-// Recursive tree rendering would remount the entire tree when a leaf is replaced by a split container.
-// Rect expressions reference CSS variables for split proportions: dragging changes one variable, and CSS reflows all affected panes/dividers
-// with zero React renders (generalizing the “container CSS variables” approach per split node).
+// 分屏布局计算（纯函数）：分割树 → 每个叶子/分隔条的绝对定位表达式。
+// 叶子扁平渲染为容器直接子元素（key = paneId 稳定）——拆分/关闭只是换 rect，
+// React 不重挂任何存活 pane（virtualizer 测高、滚动位置、composer 草稿全保留）；
+// 若按树递归嵌套渲染，叶子被替换成分割容器时会整棵重挂。
+// rect 表达式引用分割占比 CSS 变量：拖动中改一个变量，受影响的 pane/分隔条全部
+// 由 CSS 重排，零 React 渲染（「容器 CSS 变量」方案按分割节点泛化）。
 import type { CSSProperties } from "react";
 import type { PaneLayoutNode, SplitDirection } from "@/v4/paneLayoutTree.js";
 
-/** CSS variable prefix for split proportions (one `--v4-split-<nodeId>` per split node). */
+/** 分割占比 CSS 变量前缀（每个分割节点一个 `--v4-split-<nodeId>`）。 */
 export const SPLIT_VAR_PREFIX = "--v4-split-";
 
-/** Absolute-position expression (without calc() wrapper; the style layer consistently uses `calc(${expr})`). */
+/** 绝对定位表达式（不含 calc() 包裹；style 侧统一 `calc(${expr})`）。 */
 export interface RectExpr {
   left: string;
   top: string;
@@ -26,13 +26,13 @@ export interface LeafLayout {
 export interface DividerLayout {
   splitId: string;
   direction: SplitDirection;
-  /** Current store proportion (drag start value + initial container CSS variable). */
+  /** store 当前占比（拖拽起点 + 容器 CSS 变量初值）。 */
   ratio: number;
-  /** Numeric proportion of the container's main axis occupied by this split node (drag pixels → proportion; ancestor proportions come from the store). */
+  /** 该分割节点区域占容器主轴的数值比例（拖拽像素→占比换算；祖先占比取 store 数值）。 */
   regionFraction: number;
-  /** Divider expression (position along the main axis). */
+  /** 分割线（主轴位置）表达式。 */
   boundary: string;
-  /** Cross-axis start/length expression. */
+  /** 交叉轴起点/长度表达式。 */
   crossStart: string;
   crossLength: string;
 }

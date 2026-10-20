@@ -22,8 +22,8 @@ const LINE_CHART_COLORS = [
   "var(--color-usage-chart-5)",
   "var(--color-usage-chart-6)",
 ];
-// XAxis first/last ticks extend outward from the plot-area edges; if the horizontal safe area is too small,
-// the first/last date labels in charts such as System health are clipped.
+// XAxis 首尾刻度以绘图区边界为中心向两侧延伸，左右安全区太小会裁掉
+// System health 等折线图的首尾日期文本。
 const CODING_PLAN_LINE_CHART_MARGIN = { top: 8, right: 24, left: 24 } as const;
 
 type CodingPlanLineChartRow = {
@@ -96,8 +96,8 @@ export function CodingPlanUsageLineChart({
 }) {
   const { intl, locale } = useZCodeIntl();
   const visibleSeries = useMemo(
-    // Recharts is sensitive to reference changes in series, legend, and tooltip props.
-    // Keep derived data stable to avoid duplicate replace updates in the chart's internal store when the settings page refreshes.
+    // Recharts 对 series、legend、tooltip props 的引用变化很敏感。
+    // 稳定派生数据，避免设置页刷新时图表内部 store 出现重复 replace 更新。
     () =>
       series.slice(0, 6).map((item, index) => ({
         ...item,

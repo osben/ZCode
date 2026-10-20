@@ -125,7 +125,7 @@ export function GlobalDatabaseStartupLoading({
   );
 }
 
-/** Migration notices take precedence over this preparation; show save/finalization only after the last database to avoid cross-database reordering. */
+/** 迁移提示覆盖本次准备；最后一个库之前不展示保存/收尾，避免跨库倒序。 */
 function startupLabelId(state: DatabaseStartupState | null, visible: boolean): string {
   if (state?.phase === "failed") return "startup.global.failed";
   if (!visible) return "startup.global.silent";

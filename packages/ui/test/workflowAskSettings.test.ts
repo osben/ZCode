@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 
-// The two adjustable run settings in the confirmation window (docs/dynamic-workflow/launch.md "Adjusting the settings
-// in the window";
-// visuals and keyboard in docs/dynamic-workflow/presentation.md "The confirmation window"): the pure rules are
-// enumerated item by item, while on the real DOM this pins the two sentences, the changed row, the option descriptions,
-// the content the Allow reply carries out, the "unavailable" gate, and Shift+Tab.
+// 确认窗里可调的两项 run 设置（docs/dynamic-workflow/launch.md「Adjusting the settings in the window」；
+// 外观与键盘见 docs/dynamic-workflow/presentation.md「The confirmation window」）：纯规则逐条穷举，
+// 真实 DOM 上钉两句话、改过的那一行、选项描述、Allow 应答带出去的 content、「不可用」的门与 Shift+Tab。
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, type ZCodePermissionRequest } from "@zcode/shared";
+import { type ZCodePermissionRequest } from "@zcode/shared";
+import { TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER } from "@zcode/shared/test-ids";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +24,7 @@ vi.mock("@/hooks/useWorkflowSubagentModelProviderName.js", () => ({
   useWorkflowSubagentModelProviderName: () => undefined,
 }));
 
-/** The model catalog: one provider, two models, one of them with a thinking tier (the same fixture as the "configure" popover's tests). */
+/** 模型清单：一个 provider、两个模型，其中一个有思考档（与「配置」弹层的测试同一份）。 */
 const VIEW = {
   revision: 1,
   providers: [
@@ -53,8 +52,7 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
   useModelSelectionView: () => ({ state: modelRead.state, reload: vi.fn() }),
 }));
 
-// The model menu's selection goes through the real component; only its props are recorded: the test calls its
-// onValueChange directly instead of driving the Radix menu.
+// 模型菜单的选择走真实组件，只把 props 记下来：测试直接调它的 onValueChange，不去驱动 Radix 菜单。
 const capturedSelects = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 vi.mock("@/ModelConfigSelect.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/ModelConfigSelect.js")>();
@@ -76,7 +74,7 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
   useV4Conversation: () => ({ sendCommand }),
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after the mocks.
+// eslint-disable-next-line import/first -- 必须在 mock 之后再引入被测组件。
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { PermissionDialog } from "@/PermissionDialog.js";
@@ -95,8 +93,6 @@ import {
 import { encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 // eslint-disable-next-line import/first
 import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
-
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SCRIPT = 'const r = await agent("a").ask<string>("do");';
 const ALLOW = { optionId: "allowOnce", kind: "allowOnce", name: "Allow" };
@@ -217,7 +213,7 @@ describe("纯规则：起点、应答 content、改过的行", () => {
     expect(workflowAskSettingsContent(initial, { ...initial, bound: 13 }, 13)).toEqual({
       max_concurrency: null,
     });
-    // The default is a starting point, not a ceiling: values above it go out verbatim.
+    // 默认是起点不是上限：高于它的数原样发出去。
     expect(workflowAskSettingsContent(initial, { ...initial, bound: 40 }, 13)).toEqual({
       max_concurrency: 40,
     });
@@ -272,13 +268,13 @@ describe("确认窗里的两句话", () => {
     expect(boundValue().value).toBe("13");
     expect(boundLine().textContent).toContain("subagents at once");
     expect(boundLine().textContent).toContain("= default");
-    // The default is not a ceiling: parked at the default, the stepper can still go up.
+    // 默认不是天花板：停在默认上照样能往上加。
     expect(
       screen.getByTestId<HTMLButtonElement>("workflow-permission-settings-bound-increase").disabled,
     ).toBe(false);
     expect(screen.queryByTestId("workflow-permission-settings-model-was")).toBeNull();
     expect(screen.queryByTestId("workflow-permission-settings-bound-was")).toBeNull();
-    // The old plain-text line no longer appears.
+    // 旧的纯文本行不再出现。
     expect(screen.queryByTestId("workflow-permission-max-concurrency")).toBeNull();
     expect(option("Allow").textContent).toContain("Allow only this time");
   });
@@ -337,7 +333,7 @@ describe("确认窗里的两句话", () => {
 
   it("所选模型有思考档：模型芯片旁边出现思考档芯片；没有档位的模型没有它", () => {
     renderDialog(workflowRequest(ADJUSTABLE));
-    // The starting point is the session model glm-5.3 (the fixture has no tier).
+    // 起点是会话模型 glm-5.3（夹具里没有档位）。
     expect(screen.queryByTestId(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER)).toBeNull();
     pickModel(encodeCustomModelValue("zhipu", "glm-5.3-flash"));
     expect(screen.getByTestId(TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER)).toBeTruthy();
@@ -393,8 +389,7 @@ describe("确认窗里的两句话", () => {
         subagent_model: "zhipu/glm-5.3-flash",
       }),
     );
-    // The fixture's provider is not a built-in family: the name is "provider name/model id", the same naming rule as
-    // the menu.
+    // 夹具的 provider 不是内置家族：名字是「provider 名/模型 id」，与菜单同一条拼名规则。
     expect(modelLine().textContent).toBe("Subagents run on Zhipu/glm-5.3-flash");
   });
 
@@ -424,32 +419,20 @@ describe("确认窗里的两句话", () => {
   });
 
   it("zh-CN：两句与「原为」", () => {
-    renderDialog(workflowRequest(ADJUSTABLE));
-    expect(modelLine().textContent).toContain(
-      expectedCopy("chat.permission.workflow.settings.model.lead"),
-    );
-    expect(boundLine().textContent).toContain(
-      expectedCopy("chat.permission.workflow.settings.limit.lead"),
-    );
-    expect(boundLine().textContent).toContain(
-      expectedCopy("chat.permission.workflow.settings.limit.trail"),
-    );
-    expect(boundLine().textContent).toContain(
-      expectedCopy("chat.toolCall.workflow.run.settings.limit.atDefault"),
-    );
+    renderDialog(workflowRequest(ADJUSTABLE), { locale: "zh-CN" });
+    expect(modelLine().textContent).toContain("子代理运行在");
+    expect(boundLine().textContent).toContain("最多");
+    expect(boundLine().textContent).toContain("个子代理同时运行");
+    expect(boundLine().textContent).toContain("= 默认");
     fireEvent.click(screen.getByTestId("workflow-permission-settings-bound-decrease"));
-    expect(boundLine().textContent).toContain(
-      expectedCopy("chat.toolCall.workflow.run.settings.limit.default", { n: 13 }),
-    );
+    expect(boundLine().textContent).toContain("默认 13");
     expect(screen.getByTestId("workflow-permission-settings-bound-was").textContent).toBe(
-      `· ${expectedCopy("chat.permission.workflow.settings.was", { value: "13" })}`,
+      "· 原为 13",
     );
     expect(
       screen.getByTestId("workflow-permission-settings-bound-reset").getAttribute("title"),
-    ).toBe(expectedCopy("chat.permission.workflow.settings.reset"));
-    expect(option("Allow").textContent).toContain(
-      expectedCopy("chat.permission.workflow.allowOnce.adjusted"),
-    );
+    ).toBe("恢复原值");
+    expect(option("允许").textContent).toContain("按调整后的设置运行一次");
   });
 
   it("换请求：设置回到新入参的起点，上一个窗的改动不带进下一个", () => {
@@ -467,9 +450,8 @@ describe("确认窗里的两句话", () => {
   });
 });
 
-// The script names models for some subagents (docs/dynamic-workflow/launch.md "The window"): the window does not list
-// them name by name — that is the author model's decision — it only rewords the model sentence to "default"; the reply
-// never has a field to change them either.
+// 脚本给某些子代理点名了模型（docs/dynamic-workflow/launch.md「The window」）：窗不逐名列出——那是
+// 作者模型的选择——只把模型那一句改口「默认」；应答里也永远没有改它们的字段。
 describe("脚本点名了模型", () => {
   const BINDINGS = {
     model_bindings: { "GLM-5.3-Flash": "zhipu/glm-5.3-flash$low", judge: "zhipu/glm-5.3" },
@@ -510,10 +492,8 @@ describe("脚本点名了模型", () => {
   });
 
   it("zh-CN：「子代理默认运行在」", () => {
-    renderDialog(workflowRequest({ ...ADJUSTABLE, ...BINDINGS }), { locale: "en-US" });
-    expect(modelLine().textContent).toContain(
-      expectedCopy("chat.permission.workflow.settings.model.leadDefault"),
-    );
+    renderDialog(workflowRequest({ ...ADJUSTABLE, ...BINDINGS }), { locale: "zh-CN" });
+    expect(modelLine().textContent).toContain("子代理默认运行在");
   });
 
   it("旧 agent（纯文本）：同样不列名字，模型那一句说「默认」", () => {
@@ -535,8 +515,7 @@ describe("键盘", () => {
     const allow = option("Allow");
     allow.focus();
     fireEvent.keyDown(allow, { key: "Tab", shiftKey: true });
-    // The default is not a ceiling: parked at the default, the plus button is still pressable, so the last focusable
-    // control is the plus button.
+    // 默认不是天花板：停在默认上加号照样可按，所以最后一个可聚焦的控件是加号。
     expect(document.activeElement).toBe(
       screen.getByTestId("workflow-permission-settings-bound-increase"),
     );

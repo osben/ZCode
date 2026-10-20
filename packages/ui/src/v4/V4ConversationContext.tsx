@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useState,
   type ReactNode,
 } from "react";
 import type {
@@ -33,7 +34,11 @@ import type {
 import type { IServiceAccessor } from "@zcode/services";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
-import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import {
+  useWorkspaceServicesResolution,
+  type WorkspaceServicesResolution,
+} from "@/hooks/useWorkspaceServices.js";
+import { RemoteConversationAvailability } from "@/v4/RemoteConversationAvailability.js";
 import { createAgentConversationTransport } from "@/v4/agentConversationTransport.js";
 import type { ConversationAttachmentReadParams, ConversationTransport } from "@/v4/transport.js";
 import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
@@ -44,41 +49,44 @@ import { ConversationTelemetryPaneAttachment } from "@/v4/telemetry/Conversation
 
 export interface V4ConversationContextValue {
   layer: SessionDataLayer;
-  sendCommand(envelope: CommandEnvelope): Promise<CommandAck>;
+  sendCommand(
+    envelope: CommandEnvelope,
+    context?: { projectId?: string | null },
+  ): Promise<CommandAck>;
   fileChanges(params: V4ConversationFileChangesParams): Promise<V4ConversationFileChangesResult>;
   fileRewindPreview(
     params: V4ConversationFileRewindPreviewParams,
   ): Promise<V4ConversationFileRewindPreviewResult>;
-  /** Paginated workflow run event log (details-page audit surface); read-only, stateless, and safe to retry after timeout. */
+  /** workflow run 事件日志分页（详情页审计面）；只读、无状态、超时重发安全。 */
   workflowRunEvents(
     params: V4ConversationWorkflowRunEventsParams,
   ): Promise<V4ConversationWorkflowRunEventsResult>;
-  /** Enumerate workflow runs (journal-backed discovery surface after restart). */
+  /** workflow run 枚举（journal-backed 的重启后发现面）。 */
   workflowRuns(params: V4ConversationWorkflowRunsParams): Promise<V4ConversationWorkflowRunsResult>;
   /**
-   * List of **user-facing artifacts** for a workflow run (durable read path for cold recovery). ⚠ Terminology: artifact = output published to the user by a script through
-   * `artifact.*`, not the run’s top-level return value.
+   * workflow run 的**用户面产物**清单（冷恢复的 durable 读法）。⚠ 术语：artifact = 脚本经
+   * `artifact.*` 发布给用户看的产出，不是 run 的顶层返回值。
    */
   workflowRunArtifacts(
     params: V4ConversationWorkflowRunArtifactsParams,
   ): Promise<V4ConversationWorkflowRunArtifactsResult>;
-  /** Paginated preset dashboard items (cursor = journal sequence). */
+  /** 预置看板的条目分页（cursor = journal sequence）。 */
   workflowRunArtifactData(
     params: V4ConversationWorkflowRunArtifactDataParams,
   ): Promise<V4ConversationWorkflowRunArtifactDataResult>;
-  /** Read content artifact bytes one chunk at a time (≤ 512 KiB); the caller’s hook assembles them. */
+  /** 内容产物的字节，一次一块（≤ 512 KiB）；拼接归调用方的 hook。 */
   workflowRunArtifactRead(
     params: V4ConversationWorkflowRunArtifactReadParams,
   ): Promise<V4ConversationWorkflowRunArtifactReadResult>;
-  /** List of dwf script transcript entries (files.* / git.* / world.run rows, without bodies). */
+  /** dwf 脚本 transcript 的清单（files.* / git.* / world.run 行，不带正文）。 */
   workflowRunWorkspace(
     params: V4ConversationWorkflowRunWorkspaceParams,
   ): Promise<V4ConversationWorkflowRunWorkspaceResult>;
-  /** Bounded body for a workflow node (fetched only when expanded). */
+  /** 一个工作区节点的有界正文（展开时才取）。 */
   workflowRunNodeResult(
     params: V4ConversationWorkflowRunNodeResultParams,
   ): Promise<V4ConversationWorkflowRunNodeResultResult>;
-  /** High-level UI put semantics; the transport internally uses only begin/chunk/commit/abort. */
+  /** UI 高层 put 语义；transport 内部只走 begin/chunk/commit/abort。 */
   attachmentPut(
     params: V4AttachmentPutParams,
     options?: AttachmentUploadOptions,
@@ -91,20 +99,54 @@ export interface V4ConversationContextValue {
   ): ReturnType<ConversationTransport["attachmentReadRange"]>;
   onRuntimeRestart(listener: () => void): () => void;
   /**
-   * Exists only when the hosting transport exposes runtime liveness (see ConversationTransport.onRuntimeLifecycle).
-   * unavailable arrives at workspace-dispose and is the only reliable signal for rebuilding draft prewarm state across a generation change.
+   * 承载 transport 暴露 runtime 存活态时才存在（见 ConversationTransport.onRuntimeLifecycle）。
+   * unavailable 在 workspace-dispose 当场到达，是草稿预热重建唯一可依赖的换代信号。
    */
   onRuntimeLifecycle?(listener: (state: "available" | "unavailable") => void): () => void;
 }
 
-// Export the context itself: static replay views provide their own static transport,
-// and inject the assembled value directly through the Provider, without going through V4ConversationProvider’s workspace resolution.
+// 导出 context 本体：静态回放视图用静态 transport 自己
+// 装配 value 后直接 Provider 注入，不经 V4ConversationProvider 的 workspace 解析链路。
 export const V4ConversationContext = createContext<V4ConversationContextValue | null>(null);
 
 export interface V4ConversationProviderProps {
   workspacePath: string;
   workspaceIdentity?: string;
   children: ReactNode;
+  /** 显式传入才保留当前会话；未传的侧面板仍在断线时卸载。null 表示草稿。 */
+  sessionId?: string | null;
+  unavailableFallback?: ReactNode;
+  disconnectedBanner?: ReactNode;
+}
+
+function useRetainedReadyResolution(
+  workspaceKey: string,
+  resolution: WorkspaceServicesResolution,
+  retain: boolean,
+) {
+  const [retained, setRetained] = useState<{
+    key: string;
+    resolution: WorkspaceServicesResolution;
+  } | null>(null);
+  // 已挂载的数据层本身就是内容 owner。只保留其服务引用，不复制 snapshot；换项目或首次
+  // 挂回前没有 ready 引用，仍由原 rpcReady 门禁阻止远端订阅和本地 fallback。
+  // 未声明会话身份的侧面板不留存，避免其 debounce 查询在断线后继续调用旧服务。
+  if (
+    retain &&
+    resolution.rpcReady &&
+    (retained?.key !== workspaceKey ||
+      retained.resolution.services !== resolution.services ||
+      retained.resolution.remoteSessionId !== resolution.remoteSessionId)
+  ) {
+    setRetained({ key: workspaceKey, resolution });
+  } else if (retained && (!retain || (!resolution.rpcReady && retained.key !== workspaceKey))) {
+    setRetained(null);
+  }
+  return resolution.rpcReady
+    ? resolution
+    : retain && retained?.key === workspaceKey
+      ? retained.resolution
+      : null;
 }
 
 function ReadyV4ConversationProvider({
@@ -123,8 +165,8 @@ function ReadyV4ConversationProvider({
     const transport = createAgentConversationTransport(zcodeAgentService, {
       workspacePath,
       workspaceIdentity,
-      // The main workspace resolver already recognizes remote endpoints, but this code previously dropped
-      // remoteSessionId, causing remote absolute paths to be passed to local zcode-media. Inject the converter only for local endpoints.
+      // 主 workspace resolver 已识别远端 endpoint，但这里曾丢弃
+      // remoteSessionId，导致远端绝对路径被交给本机 zcode-media。仅本地 endpoint 注入转换器。
       ...(remoteSessionId === null && platform.createLocalMediaPreviewUrl
         ? { createLocalMediaPreviewUrl: platform.createLocalMediaPreviewUrl }
         : {}),
@@ -132,7 +174,8 @@ function ReadyV4ConversationProvider({
     const layer = new SessionDataLayer({ transport });
     return {
       layer,
-      sendCommand: (envelope: CommandEnvelope) => transport.sendCommand(envelope),
+      sendCommand: (envelope: CommandEnvelope, context?: { projectId?: string | null }) =>
+        transport.sendCommand(envelope, context),
       fileChanges: (params: V4ConversationFileChangesParams) => transport.fileChanges(params),
       fileRewindPreview: (params: V4ConversationFileRewindPreviewParams) =>
         transport.fileRewindPreview(params),
@@ -182,25 +225,35 @@ function ReadyV4ConversationProvider({
   );
 }
 
-/** One host connection and one SessionDataLayer per workspace. */
+/** 每个 workspace 一条 host 连接 + 一个 SessionDataLayer。 */
 export function V4ConversationProvider({
   workspacePath,
   workspaceIdentity,
   children,
+  sessionId,
+  unavailableFallback,
+  disconnectedBanner,
 }: V4ConversationProviderProps) {
   const resolution = useWorkspaceServicesResolution(workspacePath, undefined, workspaceIdentity);
-  if (!resolution.rpcReady) {
-    return null;
+  const ready = useRetainedReadyResolution(
+    `${workspaceIdentity?.trim() || workspacePath}\0${sessionId ?? "__draft__"}`,
+    resolution,
+    sessionId !== undefined,
+  );
+  if (!ready) {
+    return unavailableFallback ?? null;
   }
 
   return (
     <ReadyV4ConversationProvider
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
-      services={resolution.services}
-      remoteSessionId={resolution.remoteSessionId}
+      services={ready.services}
+      remoteSessionId={ready.remoteSessionId}
     >
+      <RemoteConversationAvailability available={resolution.rpcReady} banner={disconnectedBanner}>
       {children}
+      </RemoteConversationAvailability>
     </ReadyV4ConversationProvider>
   );
 }
@@ -214,55 +267,74 @@ export function useV4Conversation(): V4ConversationContextValue {
 }
 
 /**
- * Whether a conversation context is available. Used by components that **can** render inside a host without a session (static rendering, replay,
- * completed cards in transcripts) to decide whether to mount the data-fetching layer—if mounted, context must exist; otherwise render the cold state.
+ * 有没有会话上下文可用。给那些**可以**在没有会话的宿主里渲染的组件（静态渲染、回放、
+ * 转录里的完成卡）决定要不要挂上取数的那一层——挂了就得有上下文，没有就画冷态。
  */
 export function useHasV4Conversation(): boolean {
   return useContext(V4ConversationContext) !== null;
 }
 
 export interface V4PaneConversationProviderProps {
-  /** Primary workspace bound to the pane (connection-routing key, docs/v4-split-pane-workbench.md). */
+  /** pane 绑定的 primary workspace（连接路由键，docs/v4-split-pane-workbench.md）。 */
   scope: PaneWorkspaceScope;
   children: ReactNode;
+  /** 显式传入才保留当前会话；未传的侧面板仍在断线时卸载。null 表示草稿。 */
+  sessionId?: string | null;
+  unavailableFallback?: ReactNode;
+  disconnectedBanner?: ReactNode;
 }
 
 /**
- * Per-pane data surface: the connection is leased from workspaceConnectionRegistry
- * (panes with the same endpoint+workspaceKey share one transport + SessionDataLayer,
- * with refCount + 30s keep-warm), and the pane’s own services are injected into the subtree—hooks such as attachment upload
- * and sessions-index guards use the pane accessor instead of accidentally using the shell’s current workspace.
+ * per-pane 数据面：连接从 workspaceConnectionRegistry 租用
+ * （同 endpoint+workspaceKey 的 pane 共享一条 transport + SessionDataLayer，
+ * refCount + 30s keep-warm），并把 pane 自己的 services 注入子树——附件上传、
+ * sessions-index 守卫等 hook 用 pane 的 accessor，不误用 shell 当前 workspace 的。
  *
- * A remote target remains remote-waiting until the session store registers real services, and does not mount the child data layer,
- * so it cannot create a connection or subscribe through a disconnected proxy. It also never falls back to base services or starts a separate pane runtime (remote-control safety constraint). Once reconnection is ready, the services reference changes → the registry preserves
- * the original layer/transport identity and activates the latest proxy one-way during commit.
+ * 远程目标在 session store 尚未注册真实 services 时保持 remote-waiting，不挂载子数据层，
+ * 因而不会拿断连代理创建连接或发起订阅；同时绝不回落 base services，也不为 pane
+ * 另起独立 runtime（远控保护约束）。重连 ready 后 services 换新引用 → 注册表保持
+ * 原 layer/transport 身份，并在 commit 阶段单向激活最新 proxy。
  */
-export function V4PaneConversationProvider({ scope, children }: V4PaneConversationProviderProps) {
+export function V4PaneConversationProvider({
+  scope,
+  children,
+  sessionId,
+  unavailableFallback,
+  disconnectedBanner,
+}: V4PaneConversationProviderProps) {
   const targetResolution = useWorkspaceServicesResolution(
     scope.workspacePath,
     scope.remoteSessionId ?? null,
     scope.workspaceIdentity ?? null,
   );
+  const ready = useRetainedReadyResolution(
+    `${scope.workspaceIdentity?.trim() || scope.workspacePath}\0${sessionId ?? "__draft__"}`,
+    targetResolution,
+    sessionId !== undefined,
+  );
   const resolvedScope = useMemo<PaneWorkspaceScope>(
     () => ({
       workspacePath: scope.workspacePath,
       ...(scope.workspaceIdentity ? { workspaceIdentity: scope.workspaceIdentity } : {}),
-      ...(targetResolution.remoteSessionId
-        ? { remoteSessionId: targetResolution.remoteSessionId }
-        : {}),
+      ...(ready?.remoteSessionId ? { remoteSessionId: ready.remoteSessionId } : {}),
     }),
-    [scope.workspaceIdentity, scope.workspacePath, targetResolution.remoteSessionId],
+    [scope.workspaceIdentity, scope.workspacePath, ready?.remoteSessionId],
   );
-  if (!targetResolution.rpcReady) {
-    return null;
+  if (!ready) {
+    return unavailableFallback ?? null;
   }
 
-  // A remote pane being restored may have only workspaceIdentity. The resolver has already found the actual
-  // remoteSessionId; if the original scope is still passed to the registry, it creates one data layer under __base__ and another under the remote endpoint,
-  // so terminal state may land in the invisible store. Always use the resolved scope once ready.
+  // 恢复中的远端 pane 可能只有 workspaceIdentity。resolver 已解析出真实
+  // remoteSessionId 后若仍把原 scope 传给 registry，会以 __base__ 和远端 endpoint
+  // 各建一份数据层，终态可能落到非可见 store。ready 后统一使用解析后的 scope。
   return (
-    <ReadyV4PaneConversationProvider scope={resolvedScope} services={targetResolution.services}>
+    <ReadyV4PaneConversationProvider scope={resolvedScope} services={ready.services}>
+      <RemoteConversationAvailability
+        available={targetResolution.rpcReady}
+        banner={disconnectedBanner}
+      >
       {children}
+      </RemoteConversationAvailability>
     </ReadyV4PaneConversationProvider>
   );
 }
@@ -277,9 +349,9 @@ function ReadyV4PaneConversationProvider({
   const agentService = services.zcodeAgentService;
   const platform = usePlatform();
 
-  // Use the same synchronous useMemo connection setup as V4ConversationProvider (the renderer has no StrictMode,
-  // so memo is not invoked twice). When dependencies change, acquire the new lease before releasing the old one in effect cleanup—
-  // with the same key, the refCount never reaches zero, and keep-warm covers brief changes across keys.
+  // 与 V4ConversationProvider 相同的 useMemo 同步建连模式（renderer 无 StrictMode，
+  // memo 双调不存在）；dep 变化时先建新租约再在 effect cleanup 释放旧租约——
+  // 同 key 时 refCount 不落零，keep-warm 兜住跨 key 抖动。
   const bundle = useMemo(() => {
     const lease = acquireWorkspaceConnection(
       {
@@ -294,7 +366,8 @@ function ReadyV4PaneConversationProvider({
       lease,
       value: {
         layer: lease.layer,
-        sendCommand: (envelope: CommandEnvelope) => lease.transport.sendCommand(envelope),
+        sendCommand: (envelope: CommandEnvelope, context?: { projectId?: string | null }) =>
+          lease.transport.sendCommand(envelope, context),
         fileChanges: (params: V4ConversationFileChangesParams) =>
           lease.transport.fileChanges(params),
         fileRewindPreview: (params: V4ConversationFileRewindPreviewParams) =>
@@ -335,8 +408,8 @@ function ReadyV4PaneConversationProvider({
   ]);
 
   useLayoutEffect(() => {
-    // acquire runs during render and only creates a stable lease; store updates caused by remote-proxy changes and
-    // resubscription must wait until commit to avoid synchronously updating an existing pane during render.
+    // acquire 发生在 render，只负责稳定租约；远端 proxy 换代引发的 store 更新和
+    // 重订阅必须等到 commit，避免在渲染阶段同步更新现有 pane。
     bundle.lease.activateRemoteService();
   }, [bundle]);
 

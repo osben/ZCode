@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- codeViewer centralizes extraction for file, text, image, and diff previews; this change only consolidates tool identity and avoids splitting the file to limit regressions. */
+/* eslint-disable max-lines -- codeViewer 集中维护文件、文本、图片和 diff 预览提取；本次只收敛 tool identity，不顺手拆文件以免扩大回归面。 */
 import type { BundledLanguage } from "shiki";
 import { getMediaPreviewFormat, type MediaPreviewKind } from "@zcode/shared";
 import type { TaskChatToolCall as ChatToolCall } from "@/lib/taskChatMessageTypes.js";
@@ -443,8 +443,8 @@ export function createDiffSourceFilePreviewSource(
     return null;
   }
 
-  // The diff tab stores only the diff source; when opening “Original file preview,” preserve the workspace scope
-  // or a remote workspace/mobile remote-control view will read the file using local path boundaries.
+  // diff tab 只保存 diff source；打开“原文件预览”时必须保留 workspace scope，
+  // 否则远程 workspace 或手机远控会按本地路径边界去读文件。
   return {
     type: "file",
     title: getPathLeaf(path),
@@ -461,7 +461,7 @@ export function getToolCallCodePreview(
   toolCall: ChatToolCall,
   workspacePath: string,
 ): CodeViewerSource | null {
-  // A structured diff is explicit change data from the tool result and takes precedence over full-text previews in input/output.
+  // 结构化 diff 是工具结果的显式变更事实，优先于 input/output 中的全文预览。
   const structuredDiff = extractStructuredDiff(toolCall.raw);
   const resolvedPath = resolveViewerPath(
     structuredDiff?.path ?? extractRawPath(toolCall.input) ?? extractRawPath(toolCall.output),

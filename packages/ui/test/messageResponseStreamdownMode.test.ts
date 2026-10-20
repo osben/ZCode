@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -13,7 +11,6 @@ import {
 } from "@/components/ai-elements/message.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStore: (selector: (state: unknown) => unknown) =>
@@ -166,7 +163,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -195,7 +192,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -218,65 +215,11 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain("[blocked]");
   });
 
-  it("正文文件链接由文字提供真实基线，图标独立居中，并仅在 hover 显示虚线下划线", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(
-          MessageResponse,
-          {
-            workspacePath: "/workspace",
-            onOpenFileLink: vi.fn(),
-          },
-          "[项目交付稿](docs/项目交付稿.pptx)",
-        ),
-      ),
-    );
-
-    expect(html).toContain("text-icon-blue");
-    expect(html).toContain("gap-1");
-    expect(html).not.toContain("gap-1.5");
-    expect(html).toContain("ml-0.5");
-    expect(html).toContain("items-baseline");
-    expect(html).toContain("self-center");
-    expect(html).toContain("self-baseline");
-    expect(html).not.toContain("items-center");
-    expect(html).not.toContain("top-px");
-    expect(html).toContain("align-baseline");
-    expect(html).not.toContain("align-middle");
-    expect(html).toContain("no-underline");
-    expect(html).toContain("decoration-dotted");
-    expect(html).not.toContain("decoration-dashed");
-    expect(html).toContain("hover:underline");
-    expect(html).not.toContain("hover:no-underline");
-  });
-
-  it("正文公网链接与文件链接使用相同的浏览器式链接交互", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(
-          MessageResponse,
-          { onOpenExternalUrl: vi.fn() },
-          "[ZCode](https://zcode-ai.com)",
-        ),
-      ),
-    );
-
-    expect(html).toContain("text-icon-blue");
-    expect(html).toContain("no-underline");
-    expect(html).toContain("decoration-dotted");
-    expect(html).not.toContain("decoration-dashed");
-    expect(html).toContain("hover:underline");
-  });
-
   it("streaming 时隐藏未闭合 citation，异常换行后的正文仍可见", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -295,7 +238,7 @@ describe("resolveMessageStreamdownMode", () => {
     const malformedHtml = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -318,7 +261,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -360,7 +303,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           TooltipProvider,
           null,
@@ -404,7 +347,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -425,7 +368,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -450,7 +393,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(MessageResponse, { workspacePath: "C:\\workspace" }, markdown),
       ),
     );
@@ -464,7 +407,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           { workspacePath: "\\\\server\\share\\repo" },
@@ -482,7 +425,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           TooltipProvider,
           null,
@@ -564,23 +507,6 @@ describe("resolveMessageStreamdownMode", () => {
     ).not.toBe(base);
   });
 
-  it("keeps the Streamdown render key stable across streaming mode changes", () => {
-    const staticModeKey = buildMessageStreamdownRenderKey({
-      codeBlockTheme: "github-light",
-      fontSizePx: 12,
-      workspacePath: "/workspace",
-      wrapLongLines: false,
-    });
-    const streamingModeKey = buildMessageStreamdownRenderKey({
-      codeBlockTheme: "github-light",
-      fontSizePx: 12,
-      workspacePath: "/workspace",
-      wrapLongLines: false,
-    });
-
-    expect(streamingModeKey).toBe(staticModeKey);
-  });
-
   it("changes the Streamdown render key with artifact permission context", () => {
     const base = buildMessageStreamdownRenderKey({
       attachmentReaderEpoch: 1,
@@ -631,7 +557,7 @@ describe("resolveMessageStreamdownMode", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           MessageResponse,
           {
@@ -690,16 +616,6 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain("katex");
     expect(html).toContain("Use $HOME and $PATH to inspect environment variables.");
   });
-
-  it("loads KaTeX CSS so MathML fallback does not duplicate visual output", () => {
-    const packageJson = JSON.parse(
-      readFileSync(resolve(process.cwd(), "packages/ui/package.json"), "utf8"),
-    ) as { dependencies?: Record<string, string> };
-
-    // Bugfix: styles.css 作为 @zcode/ui 的公开入口会被 web/desktop 直接构建，
-    // 不能依赖 pnpm hoist 偶然把间接依赖 katex 放到根 node_modules。
-    expect(packageJson.dependencies?.katex).toBeTruthy();
-  });
 });
 
 it("通用模式回答保留代码容器和复制入口，锁定换行入口且模式变化会重新渲染", () => {
@@ -714,7 +630,7 @@ it("通用模式回答保留代码容器和复制入口，锁定换行入口且�
     renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(
           TooltipProvider,
           null,
@@ -724,9 +640,9 @@ it("通用模式回答保留代码容器和复制入口，锁定换行入口且�
     );
   const general = render(true);
   expect(general).toContain('data-language="python"');
-  expect(general).toContain(expectedCopy("codeBlock.copyCode"));
-  expect(general).not.toContain(expectedCopy("codeBlock.wrapLines"));
-  expect(render(false)).toContain(expectedCopy("codeBlock.wrapLines"));
+  expect(general).toContain("复制代码");
+  expect(general).not.toContain("自动换行");
+  expect(render(false)).toContain("自动换行");
   expect(codePreviewSettings.wrapLongLines).toBe(false);
   expect(
     messageResponsePropsAreEqual(

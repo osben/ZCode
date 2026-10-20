@@ -7,7 +7,7 @@ interface DelayPlan {
   consumed?: boolean;
   ackReleased?: boolean;
 }
-/** Public transport seam fault injection for E2E builds only; delays real commands/ACKs without fabricating events. */
+/** 仅 E2E build 的公开传输 seam 故障注入；只延迟真实命令/ACK，不伪造事件。 */
 export async function sendWithConversationDelayE2E(
   envelope: CommandEnvelope,
   send: () => Promise<CommandAck>,

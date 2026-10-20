@@ -1,6 +1,6 @@
 import type { KeyboardEvent, ReactNode } from "react";
 import { ChevronRightIcon } from "lucide-react";
-import { testId, TID_TOOL_SUMMARY_TRIGGER } from "@zcode/shared";
+import { testId, TID_TOOL_SUMMARY_TRIGGER } from "@zcode/shared/test-ids";
 import { cn } from "@/components/lib/utils.js";
 import { CollapsibleTrigger } from "@/components/ui/collapsible.js";
 import { QueuedSummaryContent } from "@/ToolCallBlocks/QueuedSummaryContent.js";
@@ -131,8 +131,8 @@ function SummaryContent({
     (node) => node != null && node !== false && node !== "",
   );
 
-  // The expanded state may intentionally clear the summary. Rendering an empty flex container would apply the title row's gap
-  // twice between the category, empty container, and arrow, creating an unusually large blank space.
+  // 展开态可能主动清空摘要，但渲染空 flex 容器的话，标题行的 gap
+  // 会在“类别—空容器—箭头”之间计算两次，视觉上形成一块异常大的空白。
   if (!hasSummaryContent) {
     return null;
   }
@@ -201,8 +201,8 @@ export function ToolSummaryRow(props: ToolSummaryRowProps) {
               return;
             }
 
-            // The summary may contain a file-preview button, so the entire row cannot be wrapped in a full-width button.
-            // Keep the div trigger and provide Enter/Space expansion here.
+            // 摘要内可能包含文件预览按钮，因此不能用满宽 button 包裹整行。
+            // 保留 div trigger，并在这里补齐 Enter/Space 的展开能力。
             event.preventDefault();
             event.currentTarget.click();
           }}

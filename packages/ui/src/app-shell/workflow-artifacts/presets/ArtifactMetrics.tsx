@@ -1,9 +1,9 @@
 /**
- * `metrics` preset renderer: a row of tiles, each showing the value from the **last entry containing that field**.
+ * `metrics` 预置渲染器：一排瓦片，每块显示**最后一条带该字段**的条目里的值。
  *
- * Two layouts:
- * - `compact`: a horizontal tile row in the run side-pane card, with values and labels only;
- * - full size: a grid in the `workflow-artifact` tab, with larger values and units.
+ * 两种形态：
+ * - `compact`：run 侧板卡片里的瓦片行，横向排，只有值和标签；
+ * - 全尺寸：`workflow-artifact` tab 里的网格，值更大、带单位。
  */
 
 import { memo, useMemo } from "react";
@@ -21,7 +21,7 @@ import {
 import type { MetricsSpec } from "@/app-shell/workflow-artifacts/presets/spec.js";
 import { cn } from "@/components/lib/utils.js";
 
-/** Tile with no value yet. Use a dash instead of 0: “not measured” is different from “measured as 0.” */
+/** 还没有值的瓦片。用破折号而不是 0——「没测到」和「测出来是 0」不是一回事。 */
 const EMPTY_VALUE = "—";
 
 function MetricTile({ tile, compact }: { tile: MetricTileModel; compact: boolean }) {
@@ -41,8 +41,8 @@ function MetricTile({ tile, compact }: { tile: MetricTileModel; compact: boolean
         {tile.label}
       </span>
       <span className="flex min-w-0 items-baseline gap-1">
-        {/* Include sequence in the key: when the value changes, remount and play the reveal animation on refresh;
-            tiles whose values did not change keep the same DOM node and do not flash with the others. */}
+        {/* key 带上 sequence：值换了就重新挂载，于是刷新那一下会播一次揭示动画；
+            值没换的瓦片保持同一个 DOM 节点，不会跟着别的瓦片一起闪。 */}
         <span
           className={cn(
             "truncate font-mono font-medium text-foreground tabular-nums",
@@ -99,7 +99,7 @@ export const ArtifactMetrics = memo(function ArtifactMetrics({
       {compact ? null : (
         <PresetHeading className="mb-3" description={spec.description} title={spec.title} />
       )}
-      {/* Tiles wrap in a narrow side pane (~372 px) instead of overflowing horizontally; at full size, fill the width based on content. */}
+      {/* 窄侧板（~372px）里瓦片会换行，不横向溢出；全尺寸下按内容宽度自动铺满。 */}
       <div
         className={cn(
           "grid gap-2",

@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Enterprise plan display models keep the static catalog, live pricing, and payment parameter conversion together; splitting them would blur their boundaries. */
+/* eslint-disable max-lines -- 企业套餐展示模型集中承载静态目录、实时定价与支付参数转换，拆分会模糊合并边界。 */
 import type {
   CodingPlanCampaignDiscountDetail,
   CodingPlanStaticTeamProduct,
@@ -36,16 +36,16 @@ export type EnterpriseCodingPlanProductDisplay = CodingPlanProductDisplay & {
   dynamicPricingAvailable?: boolean;
   staticCatalogAvailable?: boolean;
   /**
-   * Family for this enterprise plan (zai / bigmodel).
-   * The old UI hard-coded team plan items as derived from bigmodelCodingPlan,
-   * so the zai family could not render even with a subscription. The family marker lets downstream visibility logic find the matching
-   * codingPlanItem and team key prefix from product.family.
-   * Defaulting to bigmodel preserves backward compatibility.
+   * 该企业套餐所属的 family（zai / bigmodel）。
+   * 原 UI 层把 team plan items 硬编码为 bigmodelCodingPlan 派生，
+   * zai family 即使有订阅也无法渲染。加 family 标记后，下游可见性函数可按
+   * product.family 找到对应 family 的 codingPlanItem 和 team key 前缀。
+   * 缺省 bigmodel 保持向后兼容。
    */
   family?: ProviderFamilyDomain;
 };
 
-/** Interpret missing family on legacy products as BigModel only at this normalization boundary. */
+/** 旧商品缺少 family 时只在这一规范化边界解释为 BigModel。 */
 export function resolveEnterpriseCodingPlanProductFamily(
   product: Pick<EnterpriseCodingPlanProductDisplay, "family">,
 ): ProviderFamilyDomain {
@@ -135,9 +135,9 @@ export function mergeEnterpriseCodingPlanProductList(
     .filter((product) => product.subscribed === true && !staticProductIds.has(product.productId))
     .map((product) => ({
       ...buildEnterpriseCodingPlanProductList([product])[0]!,
-      // The static team catalog from client/configs is only for displaying purchasable SKUs;
-      // an existing Team Plan is identified by pricing/customerInfo. Do not hide actual team connection and usage-statistics entry points
-      // because the static catalog is empty in a rollout or a product was omitted.
+      // client/configs 的团队静态目录只负责可购买 SKU 展示；
+      // 已购 Team Plan 身份来自 pricing/customerInfo，不能因为静态目录灰度为空或漏发商品
+      // 就把真实团队连接方式和使用统计入口隐藏。
       staticCatalogAvailable: false,
     }));
   return [...mergedStaticProducts, ...purchasedPricingProducts];
@@ -147,8 +147,8 @@ export function resolveEnterpriseCodingPlanProductList(
   staticProducts: CodingPlanStaticTeamProduct[] | undefined,
   pricingProducts: EnterpriseCodingPlanPricingProduct[],
 ): EnterpriseCodingPlanProductDisplay[] {
-  // If the static catalog is missing or fails to load, pricing remains authoritative for team subscription identity and project context;
-  // hide all team SKUs according to configuration semantics only when an explicit empty array was read successfully.
+  // 静态目录缺失或读取失败时，pricing 仍是团队订阅身份与项目上下文的权威来源；
+  // 只有成功读取到显式空数组时，才按配置语义隐藏全部团队 SKU。
   return !Array.isArray(staticProducts)
     ? buildEnterpriseCodingPlanProductList(pricingProducts)
     : mergeEnterpriseCodingPlanProductList(staticProducts, pricingProducts);
@@ -159,16 +159,16 @@ function resolveEnterpriseCodingPlanDisplayPayAmount(
 ): number | undefined {
   const candidateAmounts = [product.payAmount, product.renewAmount].filter(hasPositiveOrZeroAmount);
   if (candidateAmounts.length > 0) {
-    // Real enterprise annual pricing products send payAmount=originalAmount and renewAmount=discounted price.
-    // The card should show “discounted price + strikethrough original price,” like personal plans, so use the lowest available payment amount as the display price.
+    // 真实企业 pricing 年付商品会下发 payAmount=originalAmount、renewAmount=折后价。
+    // 卡片要和个人套餐一致展示“折后价 + 原价划线”，因此显示价取可用支付金额里的最低值。
     return Math.min(...candidateAmounts);
   }
   if (
     hasPositiveOrZeroAmount(product.originalAmount) &&
     hasPositiveAmount(product.discountAmount)
   ) {
-    // Personal plan cards show discounted price + strikethrough original price; enterprise pricing's discountAmount is the discount amount,
-    // not a price to pass directly to the shared card, but annual products may send only originalAmount + discountAmount.
+    // 个人套餐卡片展示的是折后价 + 原价划线；企业 pricing 的 discountAmount 是优惠金额，
+    // 不能直接传给通用卡片当价格，但年付商品可能只下发 originalAmount + discountAmount。
     return roundCurrencyAmount(Math.max(0, product.originalAmount - product.discountAmount));
   }
   return undefined;
@@ -234,7 +234,7 @@ export function buildEnterpriseCodingPlanCreateOrderRequest({
 export function buildEnterpriseCodingPlanPaymentContent(
   order: Pick<EnterpriseCodingPlanCreateOrderResponse, "alipayJumpSchema" | "payUrl">,
 ): string {
-  // Bugfix: for enterprise plans, the desktop QR code must use payUrl as specified by the API. alipayJumpSchema is a mobile deep-link schema for launching Alipay and can be too long for QR generation.
+  // Bugfix: 企业套餐 PC 扫码二维码按接口文档使用 payUrl；alipayJumpSchema 是移动端拉起支付宝的 schema，内容过长时会导致二维码生成失败。
   return order.payUrl?.trim() || order.alipayJumpSchema?.trim() || "";
 }
 
@@ -244,9 +244,8 @@ export function isEnterpriseCodingPlanThirdPartyPaymentRequired(
     "alipayJumpSchema" | "payUrl" | "thirdPayAmount"
   >,
 ): boolean {
-  // Bugfix: when a gift balance/account balance fully covers an enterprise plan, the backend
-  // creates an order with no third-party payment content. Do not open the Alipay QR page for such
-  // orders, or the user will be stuck on “Complete payment on this page.”
+  // Bugfix: 企业套餐使用赠金/余额全额抵扣时，后端会创建无三方支付内容的订单。
+  // 这种订单不应该进入支付宝二维码页，否则用户会卡在“当前支付页完成支付”。
   return order.thirdPayAmount > 0 || buildEnterpriseCodingPlanPaymentContent(order) !== "";
 }
 
@@ -260,9 +259,8 @@ export function buildEnterpriseCodingPlanEstimateFromPendingOrder(
     totalOriginalAmount: order.totalAmount,
     campaignDiscountAmount: discountAmount,
     totalPayAmount: order.amount,
-    // Bugfix: the pending-orders API does not return thirdPayAmount, so the confirmation page must
-    // use the amount due as a placeholder. When payment starts, refresh the QR-dialog amount from
-    // the thirdPayAmount returned by the continue-payment API.
+    // Bugfix: 待支付订单列表接口没有 thirdPayAmount 字段，确认页必须用待支付实付金额占位；
+    // 真正拉起支付时会再用继续支付接口返回的 thirdPayAmount 刷新二维码弹窗金额。
     thirdPayAmount: order.amount,
   };
 }
@@ -337,9 +335,8 @@ export function calculateEnterpriseCodingPlanPricingDiscountAmount({
   }
   const periodCount = product.subscribeMode === "ONE_TIME" ? Math.max(1, duration) : 1;
   return roundCurrencyAmount(
-    // Root cause: enterprise pricing may report discountAmount as 0 even when the annual discount
-    // is represented by the difference between originalAmount and renewAmount. Reconstruct the
-    // per-seat discount from the price shown on the card for confirmation/payment details.
+    // 修复原因：企业 pricing 的 discountAmount 可能为 0，真实年付折扣体现在 originalAmount 与 renewAmount 差额；
+    // 这里按卡片展示价还原单席位优惠金额，参与确认/支付明细。
     displayDiscountAmount * Math.max(1, maxSeats) * periodCount,
   );
 }
@@ -398,10 +395,8 @@ function normalizePricingCampaignDiscountDetails(
     return [
       {
         ...detail,
-        // Root cause: enterprise pricing returns promotion details per seat and billing period,
-        // while quotes/orders return the total discount for the current seat count and duration.
-        // Keep the promotion name and description from pricing, but use the current order's total
-        // discount amount to avoid understating discounts on multi-seat purchases.
+        // 修复原因：企业 pricing 返回的是单席位/单周期活动信息，试算/下单返回的是当前席位和时长的总优惠；
+        // 展示时保留 pricing 的活动名与说明，但金额必须使用当前订单总优惠，避免多席位采购折扣显示偏小。
         campaignDiscountAmount: amount,
       },
     ];

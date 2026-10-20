@@ -26,8 +26,8 @@ function resolveFileManagerOpenPath(target: FileContextActionTarget): string {
     return target.path;
   }
 
-  // Interaction semantics: "Open in file manager" in the review panel returns to the file's directory.
-  // Do not pass the file path directly to the OS, or some platforms will open the default app instead of the folder.
+  // 交互语义：审查面板里的“在文件管理器中打开”用于回到文件所在目录，
+  // 不能把文件路径直接交给系统，否则部分平台会打开默认应用而不是文件夹。
   return getContainingDirectoryPath(target.path) ?? target.path;
 }
 
@@ -84,9 +84,9 @@ export function useFileContextActions(options: FileContextActionOptions = {}) {
       }
 
       const openPath = resolveFileManagerOpenPath(target);
-      // The review area previously disabled this for all remote workspaces. Simply enabling it would pass WSL Linux paths
-      // to the local file manager. Use Explorer only when the target resolves exactly to WSL, preserving the existing
-      // "open containing folder" behavior; main converts the path to UNC at the platform boundary.
+      // 审查区过去把所有远程工作区统一禁用；如果直接放开，又会把 WSL 的
+      // Linux 路径交给本机文件管理器。只有精确解析到 WSL target 时才走 Explorer，
+      // 并保留该入口“打开文件所在目录”的既有语义，由 main 在平台边界转换为 UNC。
       const result =
         remoteTarget?.kind === "wsl"
           ? await platform.openInEditor("explorer", openPath, {

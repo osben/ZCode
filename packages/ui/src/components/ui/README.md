@@ -1,1 +1,1 @@
-Do not inspect this directory; it contains a third-party library that does not need changes.
+不要检查这个目录，因为这是三方库，不需要修改

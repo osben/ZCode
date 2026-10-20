@@ -18,7 +18,7 @@ export function mergeLocalTtftFacts(
     if (details.has(detail.id) || details.size < LOCAL_TTFT_MAX_DETAILS)
       details.set(detail.id, detail);
   }
-  // Cumulative facts only fill gaps; do not let a retransmitted early snapshot erase a known boundary. Keep request IDs separately per attempt.
+  // 累计事实只填空，不让重传的早期快照擦掉已知边界；请求 ID 随 attempt 单独保留。
   const merged: LocalTtftFacts = { ...incoming, ...prior, details: [...details.values()] };
   for (const key of [
     "sessionId",
@@ -47,7 +47,7 @@ export function mergeLocalTtftFacts(
     (incoming.sendMode === "queued" && merged.sendMode !== "guided")
   )
     merged.sendMode = incoming.sendMode;
-  // A retry may update model request identity; fill the start point only when empty, so a late old revision cannot restore the previous winning attempt.
+  // 重试可更新模型请求身份；起点只填空，晚到旧 revision 不能把赢家改回旧 attempt。
   if (
     incoming.revision !== undefined &&
     (prior?.revision === undefined || incoming.revision >= prior.revision)

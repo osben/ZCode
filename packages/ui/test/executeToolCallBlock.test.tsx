@@ -9,7 +9,7 @@ describe("ExecuteToolCallBlock", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(ExecuteToolCallBlock, {
           toolCallNode: {
             toolCall: {

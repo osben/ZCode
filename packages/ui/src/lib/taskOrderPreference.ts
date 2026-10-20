@@ -62,24 +62,15 @@ export function persistTaskOrder(
   taskIds: readonly string[],
   storage: StorageLike | null = getBrowserStorage(),
 ) {
-  storage?.setItem(
-    getTaskOrderStorageKey(workspacePath),
-    JSON.stringify(normalizeTaskOrder(taskIds)),
-  );
+  storage?.setItem(getTaskOrderStorageKey(workspacePath), JSON.stringify(normalizeTaskOrder(taskIds)));
 }
 
-export function pruneTaskOrder(
-  taskOrder: readonly string[],
-  tasks: readonly ZCodeTaskMeta[],
-): string[] {
+export function pruneTaskOrder(taskOrder: readonly string[], tasks: readonly ZCodeTaskMeta[]): string[] {
   const taskIds = new Set(tasks.map((task) => task.taskId));
   return normalizeTaskOrder(taskOrder).filter((taskId) => taskIds.has(taskId));
 }
 
-export function sortTasksByOrder(
-  tasks: readonly ZCodeTaskMeta[],
-  taskOrder: readonly string[],
-): ZCodeTaskMeta[] {
+export function sortTasksByOrder(tasks: readonly ZCodeTaskMeta[], taskOrder: readonly string[]): ZCodeTaskMeta[] {
   const normalizedTaskOrder = normalizeTaskOrder(taskOrder);
   const orderedIndexByTaskId = new Map(
     normalizedTaskOrder.map((taskId, index) => [taskId, index] as const),
@@ -93,8 +84,7 @@ export function sortTasksByOrder(
       return right.updatedAt - left.updatedAt;
     }
 
-    // Newly appeared tasks that have never been manually ordered go first, so they are not fully
-    // buried by historical custom ordering.
+    // 新出现、还没被手动排过序的任务优先放在前面，避免被历史自定义顺序完全埋住。
     if (leftIndex == null) {
       return -1;
     }

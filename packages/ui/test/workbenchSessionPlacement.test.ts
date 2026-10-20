@@ -164,50 +164,7 @@ describe("workbench session placement", () => {
     layout = openSessionInNewPane(layout, SCOPE, "session-c");
     usePaneLayoutStore.setState(layout);
 
-    selectWorkbenchSession(binding("session-c"), { ...target("session-b"), readOnly: true });
+    selectWorkbenchSession(binding("session-c"), target("session-b"));
     expect(usePaneLayoutStore.getState().focusedPaneId).toBe("pane-1");
-    expect(usePaneLayoutStore.getState().panes["pane-1"]?.readOnly).toBe(true);
-  });
-
-  it("keeps subagent selection read-only in a draft pane", () => {
-    placeWorkbenchSessionInSplit(
-      null,
-      { ...target("subagent"), readOnly: true },
-      {
-        mode: "context-menu",
-        side: "right",
-      },
-    );
-
-    expect(usePaneLayoutStore.getState().panes["pane-1"]).toEqual({
-      workspaceScope: SCOPE,
-      sessionId: "subagent",
-      readOnly: true,
-    });
-  });
-
-  it("preserves selection-side-chat capability in a split pane", () => {
-    placeWorkbenchSessionInSplit(
-      null,
-      { ...target("side-chat"), selectionSideChat: true },
-      { mode: "context-menu", side: "right" },
-    );
-
-    expect(usePaneLayoutStore.getState().panes["pane-1"]).toMatchObject({
-      sessionId: "side-chat",
-      selectionSideChat: true,
-    });
-  });
-
-  it("upgrades an already-open group binding to read-only for subagent navigation", () => {
-    useWorkbenchGroupStore.setState(groupSnapshot());
-
-    selectWorkbenchSession(binding("session-a"), {
-      ...target("session-b"),
-      readOnly: true,
-    });
-
-    const group = useWorkbenchGroupStore.getState().groups["group-1"];
-    expect(group?.panes["pane-1"]).toMatchObject({ sessionId: "session-b", readOnly: true });
   });
 });

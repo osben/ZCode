@@ -30,9 +30,9 @@ import {
 
 interface SavedWorkflowMoveDialogProps {
   open: boolean;
-  /** Name of the workflow being moved (used in the dialog description); null omits title context. */
+  /** 被移动的工作流名（用作对话描述）；null 时不渲染标题上下文。 */
   entryName: string | null;
-  /** Destination project candidates for "Move to project…" (same options as "Run in"). */
+  /** 目标项目候选（「移到项目…」的落点，同「运行于」候选）。 */
   targets: readonly AutomationWorkspaceOption[];
   defaultTargetKey?: string | null;
   busy?: boolean;
@@ -41,8 +41,8 @@ interface SavedWorkflowMoveDialogProps {
 }
 
 /**
- * "Move to project" dialog: move a global workflow back into a local project.
- * One project picker + submit; disable submission and show a notice when there are no local projects. Structure and styling reuse the argument dialog.
+ * 「移到项目」窗：全局工作流搬回某个本地项目。
+ * 一个项目选择器 + 提交；没有本地项目时禁用提交并提示。结构 / 样式沿用实参窗。
  */
 export function SavedWorkflowMoveDialog({
   open,
@@ -56,7 +56,7 @@ export function SavedWorkflowMoveDialog({
   const { intl } = useZCodeIntl();
   const [targetKey, setTargetKey] = useState<string | null>(null);
 
-  // When candidates change, keep a still-valid selection; otherwise fall back to the default project, first candidate, or null.
+  // 候选变化时保留仍有效的选择，否则回落到默认项目、首个候选或 null。
   useEffect(() => {
     const defaultOption = defaultTargetKey
       ? findAutomationWorkspaceOptionByKey(targets, defaultTargetKey)

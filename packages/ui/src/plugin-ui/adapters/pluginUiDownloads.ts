@@ -12,9 +12,9 @@ import {
 } from "../domain/pluginUiDownloadFile.js";
 
 export interface PluginUiDownloadHandlerDeps {
-  /** Desktop IPlatformService.saveFile: native save dialog; main re-validates the 50 MiB limit and filename. */
+  /** 桌面 IPlatformService.saveFile：原生另存为对话框；main 侧再做一次 50 MiB 与文件名校验。 */
   saveFile(payload: SaveFileRequest): Promise<SaveFileResult>;
-  /** Items carrying only a uri (ResourceLink / EmbeddedResource without content) are read via the same plugin's server first. */
+  /** 只有 uri 的项（ResourceLink / 无内容的 EmbeddedResource）先经同插件 server 读取。 */
   readResource(uri: string): Promise<PluginUiReadResourceResult>;
 }
 
@@ -32,17 +32,13 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 /**
- * Host implementation of `ui/download-file { contents }`. Resolves each item's content, then shows a
- * save dialog per item (multiple items mean multiple dialogs). No user gesture required (decided:
- * the save dialog itself is the confirmation). Any item cancelled or write failure → `{ isError: true }`
- * (official SDK semantics); parameter-level errors (over 50 MiB, invalid blob, link resource without
- * content) → -32602; read-resource failures surface to the page as -32603.
+ * `ui/download-file { contents }` 的宿主实现。逐项解析内容 → 逐个弹保存框（多项多次），
+ * 不要求用户手势（已拍板：保存框本身就是确认）。任一项取消 / 写入失败 → `{ isError: true }`（官方 SDK 语义），
+ * 参数级错误（超 50 MiB、blob 非法、链接资源无内容）→ -32602；读资源失败按 -32603 抛给页面。
  */
 /**
- * downloadFile interaction for a host instance: provided only when the platform has a native saveFile
- * (desktop); link items are read via this plugin's server readResource. Returning undefined means this
- * instance does not declare the downloadFile capability and the port replies -32601 (same rule as the
- * other interaction callbacks).
+ * 宿主实例的 downloadFile 交互：平台有原生 saveFile（桌面）才提供；链接项经本插件 server 的 readResource 读取。
+ * 返回 undefined 表示本实例不声明 downloadFile 能力，端口回 -32601（与其它交互回调同一规则）。
  */
 export function createPluginUiDownloadInteraction(input: {
   platform: Pick<IPlatformService, "saveFile"> | null;
@@ -97,7 +93,7 @@ export function createPluginUiDownloadHandler(deps: PluginUiDownloadHandlerDeps)
     if (!content || (typeof content.text !== "string" && typeof content.blob !== "string")) {
       throw rpcError(-32602, `resource_not_found: ${source.uri} has no downloadable content`);
     }
-    // For link items, the filename / mimeType come from the fetched resource to fill in the extension.
+    // 链接项的文件名 / mimeType 以读到的资源为准补全扩展名。
     const name = resolvePluginUiDownloadFileName(
       { name: plan.name, mimeType: plan.mimeType ?? content.mimeType },
       0,

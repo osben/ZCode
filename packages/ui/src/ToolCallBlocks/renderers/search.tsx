@@ -66,8 +66,7 @@ export function getSearchPrimaryText(intl: IntlLike, input: unknown): string {
     "query",
     "pattern",
     "path",
-    // When WebFetch has both url and prompt, showing prompt in permission/tool summaries hides the
-    // destination address the user actually needs to confirm.
+    // WebFetch 同时带 url 和 prompt 时，权限/工具摘要展示 prompt 会遮住真正需要用户确认的目标地址。
     "url",
     "prompt",
     "target",
@@ -89,9 +88,46 @@ export function getSearchPrimaryText(intl: IntlLike, input: unknown): string {
 
 export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
   const { intl } = useZCodeIntl();
+  return (
+    <SearchToolCallLayout
+      {...context}
+      searchPrimaryText={getSearchPrimaryText(intl, context.toolCallNode.toolCall.input)}
+    />
+  );
+}
+
+export function ToolSearchToolCallBlock(context: ToolCallBlockRenderContext) {
+  const { intl } = useZCodeIntl();
+  const { input } = context.toolCallNode.toolCall;
+  const query = isPlainRecord(input) && typeof input.query === "string" ? input.query.trim() : "";
+  const selection = /^select:(.+)$/i.exec(query);
+  const label = selection
+    ? selection[1]!
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .join(", ")
+    : query;
+  const searchPrimaryText = label
+    ? intl.formatMessage({ id: "chat.toolCall.search.toolsWithQuery" }, { query: label })
+    : intl.formatMessage({ id: "chat.toolCall.search.tools" });
+  return (
+    <SearchToolCallLayout
+      {...context}
+      searchPrimaryText={searchPrimaryText}
+      kindLabelOverride=""
+      hideSnapshotNotice
+    />
+  );
+}
+
+function SearchToolCallLayout(
+  context: ToolCallBlockRenderContext & { searchPrimaryText: string; hideSnapshotNotice?: boolean },
+) {
+  const { intl } = useZCodeIntl();
   const { toolCallNode, isRunning, statusLabel, errorText } = context;
   const { toolCall } = toolCallNode;
-  const searchPrimaryText = getSearchPrimaryText(intl, toolCall.input);
+  const { searchPrimaryText } = context;
   const primaryText = useMemo(
     () => <span className="truncate">{searchPrimaryText}</span>,
     [searchPrimaryText],
@@ -111,8 +147,8 @@ export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
           })
         }
         sourceLabel={context.sourceLabel}
-        // Compose the search primary text as a complete summary instead of splitting out secondaryText.
-        // This avoids title interference and better suits list/catalog queries.
+        // search 的主文本直接拼成一句完整摘要，不再拆 secondaryText；
+        // 这样能避免 title 干扰，也更适合列表/目录查询这类操作。
         primaryText={primaryText}
         statusLabel={statusLabel}
         statusTooltip={toolCall.status === "failed" ? errorText : undefined}
@@ -121,15 +157,16 @@ export function SearchToolCallBlock(context: ToolCallBlockRenderContext) {
         title={toolCall.title}
         content={null}
       />
-      <ToolSnapshotFieldNotice
-        refs={toolCall.snapshotRefs ?? []}
-        onLoadFullToolCallFields={
-          context.onLoadFullToolCallFields
-            ? () => context.onLoadFullToolCallFields?.(toolCall.toolId)
-            : undefined
-        }
-      />
-      {/* <pre>{JSON.stringify(toolCall, null, 2)}</pre> */}
+      {!context.hideSnapshotNotice && (
+        <ToolSnapshotFieldNotice
+          refs={toolCall.snapshotRefs ?? []}
+          onLoadFullToolCallFields={
+            context.onLoadFullToolCallFields
+              ? () => context.onLoadFullToolCallFields?.(toolCall.toolId)
+              : undefined
+          }
+        />
+      )}
     </>
   );
 }

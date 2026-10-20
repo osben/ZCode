@@ -1,5 +1,5 @@
 import type { PluginUiToolBinding } from "@/plugin-ui/contract.js";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
@@ -9,6 +9,12 @@ import type { TaskChatToolCallTreeNode } from "@/lib/toolCallTree.js";
 import type { ToolDisplayModel } from "@/lib/toolDisplay.js";
 import type { Theme } from "@/useTheme.js";
 import type { OpenPlanDetailSideTabRequest } from "@/lib/workspaceSidePane.js";
+// Bugfix：这里曾写成类型位置的内联动态 import 写法（在 typeof 后跟圆括号包模块名）。
+// TS 编译期会擦除它，但 share 闭包守卫（shareBuildBoundary.test）的动态 import 正则
+// 不区分类型/值与注释，把它当成值导入后，整个 ToolCallBlocks.tsx 大桶（含 plugin-ui
+// 桶 → services/provider）被误判进 web-share 闭包。顶层 import type 同样不产生运行时
+// 边，且能被守卫正确跳过。注释里也不要出现该字面写法，正则同样会命中注释文本。
+import type { ToolCallBlock } from "@/ToolCallBlocks.js";
 
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -50,9 +56,9 @@ export function normalizeSingleFilePatch(
   }
 
   if (countPatchFileDiffs(trimmedPatch) > 1) {
-    // When a sub-agent edits the same file again, the tool layer may return multiple diffs concatenated in one field.
-    // PatchDiff can parse only single-file patches; rendering one directly throws and breaks “click the filename to view changes.”
-    // Discard multi-file patches here so the caller falls back to a single-file diff from old/newText (or a file-content preview).
+    // sub-agent 二次编辑同一文件时，工具层有时会把多段 diff 拼在同一个字段返回。
+    // PatchDiff 只能解析单文件 patch，直接渲染会抛错并让“点击文件名查看变更”失败。
+    // 这里先丢弃多文件 patch，让上层回退到 old/newText 生成的单文件 diff（或文件内容预览）。
     return undefined;
   }
 
@@ -65,9 +71,9 @@ export function normalizeSingleFilePatch(
     const deletedCount = Number(firstHeader?.[2] ?? firstHeader?.[1] ?? "1");
     const addedCount = Number(firstHeader?.[4] ?? firstHeader?.[3] ?? "1");
 
-    // The unified_diff returned by tools often contains only hunks, with no file headers.
-    // For a new file, adding --- a/file would make PatchDiff parse it as a normal change, which can freeze the page for large additions.
-    // Check the first hunk to detect a pure addition and use a /dev/null header instead.
+    // 工具返回的 unified_diff 经常只有 hunk 片段，没有文件头。
+    // 对“新建文件”场景，如果继续补成 --- a/file，PatchDiff 会按普通变更解析，
+    // 大整文件新增时更容易把页面拖死。这里根据首个 hunk 判断是否为纯新增，补成 /dev/null 头。
     return [
       deletedCount === 0 && addedCount > 0 ? "--- /dev/null" : `--- a/${fileLabel}`,
       addedCount === 0 && deletedCount > 0 ? "+++ /dev/null" : `+++ b/${fileLabel}`,
@@ -75,8 +81,8 @@ export function normalizeSingleFilePatch(
     ].join("\n");
   }
 
-  // Raw apply_patch content may also contain @@, but it is not a standard unified diff.
-  // Do not add ---/+++ headers to it, or opening the file summary will send a malformed patch to PatchDiff.
+  // apply_patch 原文也可能包含 @@，但它不是标准 unified diff。
+  // 不能给这类内容强行补 ---/+++ 头，否则 summary 打开文件时会把畸形 patch 送进 PatchDiff。
   return trimmedPatch;
 }
 
@@ -89,8 +95,8 @@ export function readRawToolCallInput(raw: unknown): unknown {
     return raw.rawInput;
   }
 
-  // The ZCode protocol schema puts tool arguments for permission/request payloads in input.
-  // The old UI read only the compatibility field rawInput, causing Write/Edit to display the full JSON instead of a file diff.
+  // ZCode protocol 的 permission/request payload 按 schema 把工具参数放在 input，
+  // 旧 UI 只读兼容输入字段 rawInput，Write/Edit 会退化成整段 JSON 展示而不是文件 diff。
   return "input" in raw ? raw.input : null;
 }
 
@@ -145,133 +151,131 @@ export interface RawToolCallFileSummary {
 }
 
 /**
- * All workflow-run facts needed to render a run-state tool card in chat. The host computes them while joining the `workflowRuns` projection by `toolCallId`.
+ * 聊天区工具卡渲染 run 态所需的全部 workflow run 事实。宿主按 `toolCallId` 联接 `workflowRuns` 投影时一并算好。
  *
- * Intentionally limited to these four fields: the card provides **an entry point and summary**; budgets, event logs, results, and failure panels belong to the detail page.
+ * 刻意只有这四个字段：卡片承担的是**入口与摘要**，预算、事件日志、结果与失败面板都归详情页。
  */
 export interface WorkflowRunCardSummary {
   runId: string;
   /**
-   * ID of the **CreateWorkflow row** that started this run (projection `run.toolCallId`). Requests to open the side-pane
-   * run view must include it—`WorkflowRunSidePane` uses this ID to find the initiating row in the row window (both causalityGraph
-   * and the original script are attached to that row). Populate it only in the byRunId join table (the byToolCallId table key is this value);
-   * the resume row's own toolCallId is **not** this value (the resume row's display has no graph).
+   * 发起这个 run 的 **CreateWorkflow 行** id（投影 `run.toolCallId`）。打开侧栏 run 视图的
+   * 请求必须带它——`WorkflowRunSidePane` 用这个 id 去行窗口找发起行（causalityGraph 与脚本
+   * 原文都挂在那条行上）。只在 byRunId 联接表里填充（byToolCallId 表的键即该值）；
+   * resume 行自己的 toolCallId **不是**这个值（resume 行的 display 里没有图）。
    */
   toolCallId?: string;
   status: WorkflowRunState["status"];
-  /** Reason for `stopped`; included only when present in the projection. */
+  /** `stopped` 的原因；投影带才带。 */
   stopReason?: WorkflowRunState["stopReason"];
-  /** Number of settled nodes (`phase === "settled"`), **including** those omitted from the table after reaching its limit. */
+  /** 已结算（`phase === "settled"`）的节点数，**含**撞界后没进表的那些。 */
   nodesSettled: number;
   /**
-   * Number of scheduled (observed) nodes, **not** the total for the run—dynamic workflow node counts are determined
-   * by the script at runtime, so no static total exists. Read progress as “how many of the scheduled nodes have settled,” never as a completion percentage.
+   * 已排程（observed）节点数，**不是**全程总数——动态工作流的节点数由脚本在运行时决定，
+   * 静态总数不存在。所以进度读作「已排程的里结算了几个」，绝不冒充完成百分比。
    *
-   * Both counts come from `workflowRunStepCounts` (@zcode/shared): `nodes` in the table + `usage.nodesUnlisted`
-   * outside it. A run that exceeds the 1024-node limit still reports its true step count here; what is omitted is **per-step detail**.
-   * The card and detail page each explain this with “Details shown for n/m steps only”.
+   * 两个数都出自 `workflowRunStepCounts`（@zcode/shared）：`nodes` 表内 + `usage.nodesUnlisted`
+   * 表外。撞过 1024 界的 run 在这里仍报真实步数，少的是**每一步的详情**，卡与详情页各有一句
+   * 「仅展示 n/m 步的详情」说这件事。
    */
   nodesTotal: number;
   /**
-   * Number of sub-agents (projection `run.actors.length`). The card count includes only phases and sub-agents.
+   * 子代理数（投影 `run.actors.length`）。卡上的计数只说阶段与子代理。
    *
-   * Still optional: both join-table builders always populate it, but the type does not require it. After cold replay landed,
-   * the two journal-fallback merges were removed, leaving no second producer today; consumers remain tolerant of absence and omit the count.
+   * 仍是可选的：联接表两个建表函数恒填它，但类型不强求——冷回放落地后
+   * journal 兜底的两条 merge 已删除，今天没有第二个生产者；消费侧照旧对缺席宽容，不写计数。
    */
   agents?: number;
   /**
-   * This run from the live projection, used by the card to build the timeline model (lights, pills, and ink).
-   * Absent for journal-fallback matches; those have only a status label and render a static timeline.
+   * 活投影里的这条 run：卡片据此建
+   * 时间线模型（灯、药丸、墨迹）。journal 兜底命中时缺席——那时只有状态词，时间线画静态的。
    */
   run?: WorkflowRunState;
   /**
-   * Whether it can resume (live projection `cancelled`, or `resumable` computed from the CLI resume gate in the journal summary).
-   * Render Resume in the card footer only when this is present; the UI must never derive it from status + failureCode.
+   * 可恢复（活投影 `cancelled`，或 journal 摘要按 CLI 的 resume 门算出的 `resumable`）。
+   * 卡片页脚的 Resume 只在它在场时渲染；UI 绝不自行按 status + failureCode 推导。
    */
   resumable?: true;
 }
 
 /**
- * Position of a CreateWorkflow/AmendWorkflow row in the compile-feedback loop. The host computes it in one pass over row order (`v4/workflowDraftJoin.ts`); the renderer is read-only.
+ * 一条 CreateWorkflow / AmendWorkflow 行在编译反馈循环里的位置。宿主按行序从行窗口一遍算好（`v4/workflowDraftJoin.ts`），renderer 只读。
  */
 export interface WorkflowDraftPosition {
-  /** Draft number: the submission count since the last compile in the same lineage and turn, starting at 1. */
+  /** 第几稿：同谱系、同一轮里自上次编过以来的第几次提交，从 1 起。 */
   ordinal: number;
-  /** Whether a later row exists in the same lineage; the feedback row's hollow-circle indicator fades from warning to neutral. */
+  /** 同谱系后面还有一行：反馈行的空环灯从警示色褪成中性。 */
   superseded: boolean;
 }
 
 export interface ToolCallBlockRenderContext {
+  nestedToolRenderer: ComponentType<Parameters<typeof ToolCallBlock>[0]>;
   isOfficeMode?: boolean;
   toolCallNode: TaskChatToolCallTreeNode;
   workspacePath: string;
   /**
-   * Plugin UI: scope is the session scope required for sandbox registration; onOpenSidePane is the
-   * “open in side pane” callback. Both are injected at the boundary by PluginUiSessionProvider.
-   * When absent, the host does not provide them, and tools with ui:// resources fall back to regular MCP cards.
+   * 插件 UI：scope 是沙箱登记需要的 session 范围，onOpenSidePane 是"在侧栏打开"回调；
+   * 由 PluginUiSessionProvider 在边界注入。缺省表示宿主不提供，带 ui:// 资源的工具回退普通 MCP 卡片。
    */
   pluginUi?: PluginUiToolBinding;
   /**
-   * App theme (store coupling removed): passed from higher-level state by the host building render context
-   * (ToolCallBlock / PermissionDialog, etc.) so display components such as MessageResponse / EditInlineDiffContent
-   * can select light/dark styling. Display components fall back to "system" when omitted.
+   * 应用主题（store 耦合剥离）：由构建 render context 的宿主
+   * （ToolCallBlock / PermissionDialog 等）从上层状态传入，供
+   * MessageResponse / EditInlineDiffContent 等展示组件做 light/dark 分流。
+   * 缺省时展示组件按 "system" 兜底。
    */
   theme?: Theme;
-  /** Code-preview settings (store coupling removed): same as above, passed by the host with a stable reference. */
+  /** 代码预览设置（store 耦合剥离）：同上，由宿主传入并保持引用稳定。 */
   codePreviewSettings?: CodePreviewSettings;
   displayModel: ToolDisplayModel;
   viewerSource: CodeViewerSource | null;
   rawFileSummaries: RawToolCallFileSummary[];
   isRunning: boolean;
-  /** Permission preview has not executed; show neither output nor an empty-output placeholder. */
+  /** 权限预览尚未执行，不展示任何输出或空输出占位。 */
   isPermissionPreview?: boolean;
   statusLabel: string;
   sourceLabel?: string;
   errorText?: string;
   childToolList: ReactNode;
   showIcon?: boolean;
-  /** Explicitly enlarge the App Icon for CUA Group children; standalone CUA keeps the default size. */
+  /** CUA Group 子项显式放大 App Icon；独立 CUA 保持默认尺寸。 */
   cuaAppIconClassName?: "size-4" | "size-5";
   kindLabelOverride?: ReactNode;
   showTodoToolCalls?: boolean;
   disableSummaryContentAnimation?: boolean;
-  /** Changes children may mount after a diff already exists; animate the initial count as it enters too. */
+  /** Changes 子项可能在 diff 已存在后才挂载，首次数字也需要播放进入动画。 */
   animateDiffCountOnMount?: boolean;
   canToggle?: boolean;
   forceOpen?: boolean;
   /**
-   * Read-only observation entry point for a v4 subagent child session. Agent renderers turn the summary row into
-   * an action that opens a right-side tab directly; non-Agent tools ignore it.
+   * v4 subagent child session 的只读观察入口。Agent renderer 将摘要行改成
+   * 直接打开右侧 tab 的动作；非 Agent 工具忽略。
    */
   agentSummaryAction?: {
     onActivate: () => void;
     testId?: string;
   };
-  /** Live, provider-reported token usage and elapsed time for a paired subagent row. */
-  agentUsageSummary?: ReactNode;
-  agentUsageSummaryVersion?: string;
-  /** Runtime-authoritative type from a paired v4 subagentRow projection; preferred while streaming input is incomplete. */
+  /** v4 已配对 subagentRow 投影出的 runtime 权威类型；流式 input 尚未完整时优先使用。 */
   authoritativeAgentType?: string;
-  /** ExitPlanMode plan card: open the Side Pane after the conversation host binds the parent/session scope. */
+  /** ExitPlanMode 计划卡片：由会话宿主绑定 parent/session scope 后打开 Side Pane。 */
   onOpenPlanDetail?: (request: Omit<OpenPlanDetailSideTabRequest, "parentSessionId">) => void;
   /**
-   * Entry point for CreateWorkflow run details.
+   * CreateWorkflow 运行详情入口。
    *
-   * The card provides only the display name—`toolCallId`, `runId`, and conversation identity are all bound by the host. **Its presence is itself the gate**:
-   * the host injects it only when this tool call has an openable run (run identity comes from the `workflowRuns` projection;
-   * see the `workflowRunSchema.toolCallId` comment: it is the “tool card → detail page join key”).
-   * Intentionally do not read `backgroundTaskId` from tool output: a v4 row's `output.text` contains only the `response` prose
-   * selected by `formatCreateWorkflowModelContent`; structured fields are not on the row.
+   * 卡片只发展示名——`toolCallId`、`runId` 与会话身份全部由宿主绑定。**它的存在本身就是门控**：
+   * 宿主只在该工具调用确实有一个可打开的 run 时才注入它（run 身份来自 `workflowRuns` 投影，
+   * 见 `workflowRunSchema.toolCallId` 那条注释：它就是「工具卡 → 详情页的关联键」）。
+   * 刻意不从工具输出里读 `backgroundTaskId`：v4 行的 `output.text` 只有
+   * `formatCreateWorkflowModelContent` 挑出来的那句 `response` 散文，结构化字段并不在行上。
    */
   onOpenWorkflowRun?: (request: { workflowName?: string; phaseId?: string }) => void;
   /**
-   * Resume action in the card footer: uses the same v4 `resumeWorkflowRun {workId}` command as the detail page,
-   * with runId and conversation bound by the host. Omission means no button is rendered.
+   * 卡片页脚的 Resume：与详情页同一条
+   * v4 `resumeWorkflowRun {workId}` 命令，宿主绑定 runId 与会话。缺席即不渲染按钮。
    */
   onResumeWorkflowRun?: (request: { workflowName?: string }) => void;
   /**
-   * Clicking a sub-agent pill opens its transcript directly. The card provides slot identity (run, station, ordinal, runtime name, and session ID when available;
-   * an unstarted pill can also open a placeholder tab); the host binds conversation and workspace identity. Omission means the pill is not clickable.
+   * 点一枚子代理药丸直接开它的 transcript：卡片交出槽位身份（run、站点、序号、运行时名，会话 id 有则随行；
+   * 还没启动的药丸也可开，落到占位 tab），会话与 workspace 身份由宿主绑定。缺席即药丸不可点。
    */
   onOpenWorkflowActor?: (request: {
     runId: string;
@@ -281,32 +285,33 @@ export interface ToolCallBlockRenderContext {
     actorName?: string;
   }) => void;
   /**
-   * Script pill → script-transcript tab: the card provides only this station's phase ID (destination) and display name;
-   * the host binds the run, initiating row, and conversation identity (same as `onOpenWorkflowRun`). Omission means the script pill is not clickable.
+   * 脚本药丸 → 脚本 transcript tab：卡片只交出
+   * 这一站的阶段 id（落点）与展示名，run、发起行与会话身份由宿主绑定（同 `onOpenWorkflowRun`）。
+   * 缺席即脚本药丸不可点。
    */
   onOpenWorkflowWorkspace?: (request: { phaseId: string; workflowName?: string }) => void;
   /**
-   * Artifact pill in the timeline → artifact tab:
-   * the card provides only the artifact ID; the host binds run and conversation identity. Omission disables the pill.
+   * 时间线下的产物药丸 → 产物 tab：
+   * 卡片只交出产物 id，run 与会话身份由宿主绑定。缺席即药丸禁用。
    */
   onOpenWorkflowArtifact?: (artifactId: string) => void;
   /**
-   * Summary of the workflow run joined to this tool call; when present, the card enters run state (a compact clickable card).
+   * 该工具调用已联接到的 workflow run 摘要；存在即卡片进入 run 态（紧凑可点卡）。
    *
-   * The card does not inspect the `workflowRuns` projection itself: the host computes the join (by `toolCallId`) and counts once
-   * (`workflowRunCardJoin.ts`), and the renderer is read-only. `nodesTotal` is the number of **scheduled** (observed) nodes—
-   * dynamic workflows have no static total, so progress means “how many scheduled nodes have settled,” not the percentage of the full run.
+   * 卡片不自己去翻 `workflowRuns` 投影：联接（按 `toolCallId`）与计数都在宿主侧一次算完
+   * （`workflowRunCardJoin.ts`），renderer 只读。`nodesTotal` 是**已排程**（observed）节点数——
+   * 动态工作流没有静态总数，所以进度读作「已排程的里结算了几个」，不是全程百分比。
    */
   workflowRun?: WorkflowRunCardSummary;
   /**
-   * Draft position for this tool call. If omitted (the host has no row window, as in a read-only share), the card has no number and keeps the warning-colored indicator.
-   * Like `workflowRun`, do not forward it to child tool cards: position is joined by toolCallId, and forwarding would give another row this row's draft number.
+   * 该工具调用的草稿位置；缺席（宿主没有行窗口，如只读分享）时卡片不编号、灯保持警示色。
+   * 与 `workflowRun` 一样不向子工具卡透传：位置按 toolCallId 联接，给别的行就是别人的稿号。
    */
   workflowDraft?: WorkflowDraftPosition;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenBrowserUrl?: (url: string) => void;
-  /** Scheduled-task tool card navigation to the management page; open details directly when automationId is present. */
+  /** 定时任务工具卡片跳转到管理页；automationId 存在时直接打开详情。 */
   onOpenAutomationsMain?: (automationId?: string) => void;
   onLoadFullToolCallFields?: (toolId: string) => Promise<boolean | void> | boolean | void;
 }

@@ -1,13 +1,12 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { BROWSER_VIEWPORT_LIMITS, type BrowserViewportSize } from "@zcode/shared";
 import {
-  BROWSER_VIEWPORT_LIMITS,
   TID_BROWSER_RESPONSIVE_HEIGHT_INPUT,
   TID_BROWSER_RESPONSIVE_TOOLBAR,
   TID_BROWSER_RESPONSIVE_WIDTH_INPUT,
   TID_BROWSER_RESPONSIVE_ZOOM_OPTION,
   TID_BROWSER_RESPONSIVE_ZOOM_SELECT,
-  type BrowserViewportSize,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
   BROWSER_VIEWPORT_ZOOM_OPTIONS,
   type BrowserViewportZoom,
@@ -87,8 +86,8 @@ export function BrowserViewportToolbar({
     const draft = dimension === "width" ? widthDraft : heightDraft;
     const value = Number(draft.trim());
     if (!isValidViewportDimension(dimension, value)) {
-      // Restoring the old value immediately when out of range would make it unclear whether Fit wrote it back or the input exceeded the limit.
-      // Keep the original draft and show the shared protocol range so the UI failure behavior matches the Agent viewport schema.
+      // 越界时直接恢复旧值会让用户无法判断是 Fit 回写还是输入超限。
+      // 保留原始草稿并展示共享协议范围，让 UI 与 Agent viewport schema 的失败语义一致。
       setDraftInvalid(dimension, true);
       return;
     }
@@ -140,8 +139,8 @@ export function BrowserViewportToolbar({
       className="flex h-8 shrink-0 items-center justify-center gap-1 overflow-x-auto border-y border-border bg-background px-2"
       data-testid={TID_BROWSER_RESPONSIVE_TOOLBAR}
     >
-      {/* TooltipContent is portaled to body; an invisible tab trigger has display:none,
-          so keeping the tooltip open gives it a 0×0 anchor and leaks it to the top-left of the window. Show it only when the current view is visible. */}
+      {/* TooltipContent 通过 Portal 挂到 body；不可见 tab 的触发器处于 display:none，
+          仍保持 open 会让浮层拿到 0×0 锚点并泄漏到窗口左上角。只在当前视图可见时展示。 */}
       <Tooltip open={isVisible && invalidDrafts.width}>
         <TooltipTrigger asChild>
           <Input

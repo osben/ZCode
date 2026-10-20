@@ -64,14 +64,16 @@ for (const width of [390, 1200])
         await options.first().waitFor();
         assert.equal(await options.count(), 4);
         assert.equal(
-          await options.nth(1).getAttribute("data-permission-option-kind"),
-          "allowAlways",
+          await options.nth(1).getAttribute("aria-label"),
+          mobile ? "始终允许此命令" : "Always allow this command",
         );
-        assert.equal(await options.nth(2).getAttribute("data-permission-option-kind"), "custom");
+        assert.equal(
+          await options.nth(2).getAttribute("aria-label"),
+          mobile ? "完全访问" : "Full access",
+        );
         await options.first().focus();
         await page.keyboard.press("5");
-        // Permission options move focus via RAF; wait for the real focus landing spot to avoid
-        // asserting too early in the same frame.
+        // 权限选项通过 RAF 转移焦点，等待真实焦点落点，避免在同帧抢先断言。
         await page.waitForFunction(() => document.activeElement?.tagName === "TEXTAREA");
         assert.equal(
           await page.getByRole("textbox").evaluate((el) => document.activeElement === el),
@@ -104,11 +106,8 @@ for (const width of [390, 1200])
         await page.goto(`${origin}fixture?theme=${theme}&command=long`);
         const command = page.getByTestId("execute-command");
         await command.waitFor();
-        assert.equal(
-          await page.getByTestId("execute-detail").getByTestId("bash-result-output").count(),
-          0,
-        );
-        const toggle = page.locator("[data-command-preview-toggle]");
+        assert.equal(await page.getByText("没有输出。", { exact: true }).count(), 0);
+        const toggle = page.getByRole("button", { name: "展开命令", exact: true });
         await toggle.waitFor();
         assert.equal(await toggle.getAttribute("aria-expanded"), "false");
         assert.equal(
@@ -158,7 +157,7 @@ for (const width of [390, 1200])
         await page.keyboard.press("Enter");
         assert.equal(
           await page
-            .locator('[data-command-preview-toggle][aria-expanded="true"]')
+            .getByRole("button", { name: "收起", exact: true })
             .getAttribute("aria-expanded"),
           "true",
         );
@@ -174,7 +173,7 @@ for (const width of [390, 1200])
         await page.keyboard.press("Shift+Tab");
         await page.keyboard.press("Shift+Tab");
         assert.equal(await command.evaluate((el) => document.activeElement === el), true);
-        const collapse = page.locator('[data-command-preview-toggle][aria-expanded="true"]');
+        const collapse = page.getByRole("button", { name: "收起", exact: true });
         await page.waitForFunction(() => {
           const button = document.querySelector('button[aria-expanded="true"]');
           return (
@@ -226,16 +225,13 @@ for (const width of [390, 1200])
           path: join(artifacts, `command-${width}-${theme}.png`),
           fullPage: true,
         });
-        await page.locator('[data-command-preview-toggle][aria-expanded="true"]').click();
-        await page.locator('[data-command-preview-toggle][aria-expanded="false"]').waitFor();
+        await page.getByRole("button", { name: "收起", exact: true }).click();
+        await page.getByRole("button", { name: "展开命令", exact: true }).waitFor();
         await page.getByRole("option").first().click();
         assert.equal(await page.getByTestId("response").textContent(), "allowOnce");
         await page.goto(`${origin}fixture?theme=${theme}`);
         await page.getByRole("option").first().waitFor();
-        assert.equal(
-          await page.locator('[data-command-preview-toggle][aria-expanded="false"]').count(),
-          0,
-        );
+        assert.equal(await page.getByRole("button", { name: "展开命令", exact: true }).count(), 0);
       } finally {
         await page.close();
       }

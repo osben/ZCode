@@ -47,7 +47,7 @@ export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactN
       nextTarget: CodingPlanUpgradeDialogTarget,
       observation?: { signal: AbortSignal; onResult: (opened: boolean) => void },
     ) => {
-      // Apply the same guard to all entry points; do not replay a previously blocked click automatically after the query completes.
+      // 所有入口统一守卫；查询完成后不自动重放之前被拦截的点击。
       const { status, entryPlanList } = inventoryRef.current;
       if (observation?.signal.aborted) return false;
       if (status !== "ready") {
@@ -67,7 +67,7 @@ export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactN
         opening.current = finish;
         observation.signal.addEventListener("abort", abort, { once: true });
       }
-      // The original entry point carried only the current card's plan; freeze the full connection list at click time so App and WebView share the same snapshot.
+      // 原入口只携带当前卡片的套餐；在点击时冻结全连接列表，App 与 WebView 共用同一快照。
       nextTarget = nextTarget.funnelContext
         ? {
             ...nextTarget,
@@ -78,7 +78,7 @@ export function CodingPlanUpgradeDialogProvider({ children }: { children: ReactN
         void reportCodingPlanUpgradeClick(platform, nextTarget.funnelContext);
       }
       setTarget(nextTarget);
-      // Isolate old WebView events on every explicit open; an old dom-ready must not confirm a new observation request.
+      // 每次显式打开隔离旧 webview 事件，旧 dom-ready 不能确认新的观察请求。
       setOpenVersion((version) => version + 1);
       return true;
     },
@@ -116,7 +116,9 @@ export function useCodingPlanUpgradeDialog() {
   return context;
 }
 
-/** A standalone conversation pane uses optional context; the full App Root still injects the real purchase panel. */
+/**
+ * 可独立挂载的 conversation pane 使用可选上下文；完整 App Root 仍会注入真实购买面板。
+ */
 export function useOptionalCodingPlanUpgradeDialog() {
   return useContext(CodingPlanUpgradeDialogContext);
 }

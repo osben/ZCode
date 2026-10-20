@@ -1,7 +1,10 @@
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { GitRepositorySummary, ZCodeTaskChangeSummary } from "@zcode/shared";
+import type {
+  GitRepositorySummary,
+  ZCodeTaskChangeSummary,
+} from "@zcode/shared";
 import { V4ChatPane } from "@/v4/V4ChatPane.js";
 import { V4_PRIMARY_PANE_ID } from "@/v4/paneLayoutStore.js";
 import type { WorkbenchShellBinding } from "@/v4/WorkbenchPane.js";
@@ -33,7 +36,9 @@ vi.mock("@/v4/V4ConversationContext.js", async () => {
   };
 });
 
-function gitSummary(overrides: Partial<GitRepositorySummary> = {}): GitRepositorySummary {
+function gitSummary(
+  overrides: Partial<GitRepositorySummary> = {},
+): GitRepositorySummary {
   return {
     workspacePath: "/repo",
     repoRoot: "/repo",
@@ -52,49 +57,6 @@ function gitSummary(overrides: Partial<GitRepositorySummary> = {}): GitRepositor
 }
 
 describe("v4 workspace status panel wiring", () => {
-  it("limits sidebar subagent read-only intent to the pane bound to that session", () => {
-    sessionPaneCapture.props = [];
-    const shell = {
-      workspacePath: "/repo",
-      workspaceIdentity: "local:/repo",
-      sessionId: "sess-child",
-      readOnlySessionId: "sess-child",
-    } as unknown as WorkbenchShellBinding;
-    const common = {
-      rect: { left: "0%", top: "0%", width: "50%", height: "100%" },
-      focused: true,
-      showFocusIndicator: true,
-      canSplit: true,
-      shellWorkspaceKey: "local:/repo",
-      shell,
-      onFocusRequest: vi.fn(),
-      onSplit: vi.fn(),
-      onClosePane: vi.fn(),
-      onConfirmRestoredSession: vi.fn(),
-      onBindSession: vi.fn(),
-    };
-
-    renderToStaticMarkup(
-      createElement(WorkbenchLeafPane, {
-        ...common,
-        paneId: V4_PRIMARY_PANE_ID,
-        binding: null,
-      }),
-    );
-    renderToStaticMarkup(
-      createElement(WorkbenchLeafPane, {
-        ...common,
-        paneId: "pane-writable",
-        binding: {
-          workspaceScope: { workspacePath: "/repo", workspaceIdentity: "local:/repo" },
-          sessionId: "sess-writable",
-        },
-      }),
-    );
-
-    expect(sessionPaneCapture.props.map((props) => props.readOnly)).toEqual([true, false]);
-  });
-
   it("passes shell git status props from the primary workbench pane to SessionPane", () => {
     sessionPaneCapture.props = [];
     const git = gitSummary();
@@ -224,61 +186,6 @@ describe("v4 workspace status panel wiring", () => {
     expect(sessionPaneCapture.props[0]).toMatchObject({
       readOnly: true,
       sessionId: "sess-child",
-    });
-  });
-
-  it("passes the worktree-open callback from the desktop workbench shell to each pane's SessionPane", () => {
-    sessionPaneCapture.props = [];
-    const onCreateTaskInWorkspace = vi.fn();
-    const shell = {
-      workspacePath: "/repo",
-      workspaceIdentity: "local:/repo",
-      sessionId: "sess-primary",
-      onCreateTaskInWorkspace,
-    } as unknown as WorkbenchShellBinding;
-
-    renderToStaticMarkup(
-      createElement(WorkbenchLeafPane, {
-        paneId: "pane-1",
-        rect: { left: "50%", top: "0%", width: "50%", height: "100%" },
-        focused: true,
-        showFocusIndicator: true,
-        canSplit: true,
-        shellWorkspaceKey: "local:/repo",
-        binding: {
-          sessionId: "sess-child",
-          workspaceScope: { workspacePath: "/repo", workspaceIdentity: "local:/repo" },
-        },
-        shell,
-        onFocusRequest: vi.fn(),
-        onSplit: vi.fn(),
-        onClosePane: vi.fn(),
-        onBindSession: vi.fn(),
-      }),
-    );
-
-    expect(sessionPaneCapture.props).toHaveLength(1);
-    expect(sessionPaneCapture.props[0]?.onCreateTaskInWorkspace).toBe(onCreateTaskInWorkspace);
-  });
-
-  it("passes the remote session ID and worktree-open callback through the single-pane workspace path", () => {
-    sessionPaneCapture.props = [];
-    const onCreateTaskInWorkspace = vi.fn();
-
-    renderToStaticMarkup(
-      createElement(V4ChatPane, {
-        workspacePath: "/home/dev/repo",
-        workspaceIdentity: "remote:ssh:devbox:22:dev:/home/dev/repo",
-        remoteSessionId: "session-devbox",
-        sessionId: "sess-primary",
-        onCreateTaskInWorkspace,
-      }),
-    );
-
-    expect(sessionPaneCapture.props).toHaveLength(1);
-    expect(sessionPaneCapture.props[0]).toMatchObject({
-      remoteSessionId: "session-devbox",
-      onCreateTaskInWorkspace,
     });
   });
 });

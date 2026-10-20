@@ -4,7 +4,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { MemoTaskItem as TaskItem } from "@/TaskListItem.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const { workspaceStateByPath } = vi.hoisted(() => ({
   workspaceStateByPath: new Map<string, unknown>(),
@@ -54,12 +53,26 @@ function createTaskMeta(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
 
 function createIntl() {
   return {
-    formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) => {
-      try {
-        return expectedCopy(id, values);
-      } catch {
-        return id;
+    formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
+      const messages: Record<string, string> = {
+        "taskList.mobileActive": "手机正在操作此任务",
+        "taskList.permissionTag": "等待确认",
+        "taskList.stopCountdown": "停止计时",
+        "taskList.untitled": "新对话",
+        "taskList.justNow": "刚刚",
+        "taskList.minutesAgo": "{minutes}分",
+        "taskList.hoursAgo": "{hours}小时",
+        "taskList.daysAgo": "{days}天",
+        "taskList.archive": "归档任务",
+        "common.confirm": "确认",
+      };
+      let message = messages[id] ?? id;
+      if (values) {
+        Object.entries(values).forEach(([key, value]) => {
+          message = message.replaceAll(`{${key}}`, value);
+        });
       }
+      return message;
     },
   };
 }
@@ -117,10 +130,10 @@ describe("TaskList mobile active indicator", () => {
     const html = renderTaskItem();
 
     expect(html).toContain('data-mobile-active-task="true"');
-    expect(html).toContain(expectedCopy("taskList.mobileActive"));
+    expect(html).toContain("手机正在操作此任务");
   });
 
-  it("renders unread dot with sky colors", () => {
+  it("renders unread dot with the prototype blue token", () => {
     const html = renderTaskItem({
       task: createTaskMeta({ unreadAt: 100 }),
       isMobileActive: false,
@@ -128,6 +141,8 @@ describe("TaskList mobile active indicator", () => {
     });
 
     expect(html).toContain('data-unread-indicator="true"');
+    // 原型 §2.D8：unread 点 7px + --blue 语义色（bg-icon-blue），不再用裸 sky 调色板。
+    expect(html).toContain("size-[7px]");
     expect(html).toContain("bg-icon-blue");
     expect(html).not.toContain("bg-brand");
   });
@@ -147,29 +162,17 @@ describe("TaskList mobile active indicator", () => {
   it("places the phone marker before the task title text", () => {
     const html = renderTaskItem();
 
-    expect(html.indexOf(`aria-label="${expectedCopy("taskList.mobileActive")}"`)).toBeLessThan(
+    expect(html.indexOf('aria-label="手机正在操作此任务"')).toBeLessThan(
       html.indexOf('data-task-title-copy="original"'),
     );
     expect(html).not.toContain('title="手机正在查看的任务"');
-  });
-
-  it("keeps the phone marker out of the title flex flow", () => {
-    const html = renderTaskItem();
-
-    expect(html).toMatch(
-      new RegExp(
-        `<span data-mobile-active-task="true" class="[^"]*absolute[^"]*" aria-label="${expectedCopy("taskList.mobileActive")}" data-state="closed" data-slot="tooltip-trigger">`,
-      ),
-    );
   });
 
   it("keeps the phone marker mounted until React interaction state replaces it", () => {
     const html = renderTaskItem();
 
     expect(html).toMatch(
-      new RegExp(
-        `<span data-mobile-active-task="true"[^>]*aria-label="${expectedCopy("taskList.mobileActive")}"[^>]*data-slot="tooltip-trigger">`,
-      ),
+      /<span data-mobile-active-task="true"[^>]*aria-label="手机正在操作此任务"[^>]*data-slot="tooltip-trigger">/,
     );
     expect(html).not.toContain("group-hover/task-item:hidden");
     expect(html).not.toContain('aria-label="taskList.pin"');
@@ -179,9 +182,7 @@ describe("TaskList mobile active indicator", () => {
     const html = renderTaskItem({ isPinned: true });
 
     expect(html).toMatch(
-      new RegExp(
-        `<span data-mobile-active-task="true"[^>]*aria-label="${expectedCopy("taskList.mobileActive")}"[^>]*data-slot="tooltip-trigger">`,
-      ),
+      /<span data-mobile-active-task="true"[^>]*aria-label="手机正在操作此任务"[^>]*data-slot="tooltip-trigger">/,
     );
     expect(html).not.toContain('aria-label="taskList.unpin"');
   });

@@ -1,7 +1,7 @@
-// Authoritative reads for persisted sidebar rows and pin/archive/groups. tasks-index.sqlite provides the row set and
-// membership; sessions-index adds real-time activity/details only in a later projection.
-// unread is also organizational state (setTaskUnread writes tasks-index), like pin/archive,
-// and is not part of the frozen sessions-index schema; fetch an unreadAt map in parallel and join it while building lists.
+// 侧栏持久行与 pin/archive/groups 权威读取。tasks-index.sqlite 提供行集合和
+// membership，sessions-index 只在后续投影中补充实时 activity/detail。
+// unread 同为组织态（setTaskUnread 写 tasks-index），与 pin/archive 同类，
+// 不进冻结的 sessions-index schema；这里平行拉取 unreadAt map，列表构建时 join。
 import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
@@ -18,19 +18,24 @@ export type TaskListMembershipService = Pick<
   Partial<Pick<IZCodeTaskService, "listDeletedTaskIds">>;
 
 export interface TaskListMembershipSets {
-  /** Union of complete task rows from the three persisted tasks-index partitions (active/pinned/archived). */
+  /** tasks-index 三个持久分区（active/pinned/archived）的完整 task 行并集。 */
   taskIndexItems: ZCodeTaskMeta[];
   pinnedIds: Set<string>;
   archivedIds: Set<string>;
-  /** Persisted deletion tombstones from tasks-index; take precedence over every list kind. */
+  /** tasks-index 持久删除 tombstone；优先于所有列表 kind。 */
   deletedIds: Set<string>;
-  /** taskId → unreadAt (tasks-index organizational state; absent from sessions-index and joined here). */
+  /** taskId → unreadAt（tasks-index 组织态；sessions-index 不携带，join 用）。 */
   unreadAtByTaskId: Map<string, number>;
-  /** taskId → terminal status (tasks-index historical state; used to restore the cold-start stored-summary indicator). */
+  /** taskId → terminal status（tasks-index 历史终态；用于冷启动 stored summary 补红点）。 */
   terminalStatusByTaskId: Map<string, Extract<ZCodeTaskMeta["status"], "completed" | "error">>;
-  /** Legacy manually assigned task titles by taskId. The v4 sessions-index primary list comes from the CLI session store, but old user renames exist only in tasks-index.title/titleOverridden. Include them alongside the existing membership read without migrating tables. */
+  /**
+   * taskId → 旧 task-index 手动标题。
+   *
+   * v4 sessions-index 主列表来自 CLI session store；老数据的用户重命名只在
+   * tasks-index.title/titleOverridden 中。这里在既有 membership 读取里顺手带出，不迁移表。
+   */
   titleOverrideByTaskId: Map<string, string>;
-  /** taskId → cronAutomationId (persisted identity in tasks-index; not included in the frozen sessions-index schema). */
+  /** taskId -> cronAutomationId（tasks-index 持久化身份；sessions-index 冻结 schema 不携带）。 */
   cronAutomationIdByTaskId: Map<string, string>;
 }
 
@@ -52,7 +57,11 @@ let taskListMembershipRefreshHoldState: TaskListMembershipRefreshHoldState = {
   released: true,
 };
 
-/** E2E only: pause a membership snapshot after reading finishes but before it is joined and returned to the renderer. TSL18 must deterministically create the window where an old running snapshot returns after the Stop terminal state; real SQLite is too fast for sleep-based timing. Exposed only through protected window.__testActions. */
+/**
+ * E2E-only：暂停已经读取完成、但尚未返回给 renderer join 的 membership 快照。
+ * TSL18 必须确定性制造“旧 running 快照在 Stop 终态之后返回”的窗口；
+ * 真实 SQLite 太快，不能用 sleep 碰运气。入口只由受保护的 window.__testActions 暴露。
+ */
 export function armTaskListMembershipRefreshHoldForE2E(): void {
   if (activeTaskListMembershipRefreshHold) {
     throw new Error("task list membership refresh hold 已经启动");
@@ -100,7 +109,7 @@ async function holdTaskListMembershipRefreshResultForE2E(): Promise<void> {
   await hold.released;
 }
 
-/** M5 ③: Remote shard ownership is recorded in each endpoint’s tasks-index; fetch by endpoint and merge the results. */
+/** M5 ③：remote shard 的归属在各自 endpoint 的 tasks-index，按 endpoint 分片拉取后求并。 */
 export interface TaskListMembershipEndpoint {
   service: TaskListMembershipService;
   scopes: TaskListMembershipScope[];
@@ -116,7 +125,7 @@ function scopeParams(scope: TaskListMembershipScope): {
   };
 }
 
-/** If an optional auxiliary-set read fails, fall back to an empty set. */
+/** 可选辅助集合读取失败时按空集降级。 */
 async function listOrEmpty<T>(list: () => Promise<T[]>): Promise<T[]> {
   try {
     return await list();
@@ -184,7 +193,7 @@ function mergeTaskIndexItems(lists: ZCodeTaskMeta[][]): ZCodeTaskMeta[] {
   return [...itemByEntityKey.values()];
 }
 
-/** Fetch authoritative server task rows, pinned/archived IDs, and other persisted metadata. */
+/** 拉取服务端权威 task 行、pinned/archived id 集与其它持久元数据。 */
 export async function fetchTaskListMembershipSets(params: {
   service: TaskListMembershipService;
   scopes: TaskListMembershipScope[];
@@ -202,7 +211,7 @@ export async function fetchTaskListMembershipSets(params: {
         listWithAvailability(() => params.service.listArchivedTasks(scopeParams(scope))),
       ),
     ),
-    // unread covers all three membership sets: active (listTasks = neither pinned nor archived), pinned, and archived.
+    // unread 覆盖三类成员：active（listTasks = 非 pinned 非 archived）、pinned、archived。
     Promise.all(
       params.scopes.map((scope) =>
         listWithAvailability(() => params.service.listTasks(scopeParams(scope))),
@@ -222,8 +231,8 @@ export async function fetchTaskListMembershipSets(params: {
     ),
   ]);
   await holdTaskListMembershipRefreshResultForE2E();
-  // Task rows are now the left table for all sidebar lists. A failure in any partition RPC must not
-  // be published as an authoritative empty set, which would clear the entire old cache; throw so the hook can preserve the previous view.
+  // task 行现在是所有侧栏列表的左表。任一分区 RPC 失败都不能
+  // 当作“权威空集”发布，否则会把旧缓存整组清空；抛出后由 hook 保留旧视图。
   if (
     activeListResults.some((result) => !result.available) ||
     archivedListResults.some((result) => !result.available) ||
@@ -247,21 +256,21 @@ export async function fetchTaskListMembershipSets(params: {
   collectTitleOverrides(titleOverrideByTaskId, archivedLists.flat());
   collectTitleOverrides(titleOverrideByTaskId, activeLists.flat());
   collectTitleOverrides(titleOverrideByTaskId, pinnedMetaLists.flat());
-  // After v4 sidebar data switched to sessions-index, frozen SessionSummary no longer contains
-  // cronAutomationId. Collect it from tasks-index here or a value that is present in persisted storage will be lost from UI tasks.
+  // V4 侧栏主数据源切到 sessions-index 后，冻结的 SessionSummary 不带
+  // cronAutomationId；如果这里不从 tasks-index 一并收集，持久化列虽有值，UI task 仍会丢身份。
   collectCronAutomationIds(cronAutomationIdByTaskId, archivedLists.flat());
   collectCronAutomationIds(cronAutomationIdByTaskId, activeLists.flat());
   collectCronAutomationIds(cronAutomationIdByTaskId, pinnedMetaLists.flat());
   return {
-    // Existence of persisted task rows must be decided by tasks-index. Previously this kept only membership
-    // sets and discarded task metadata already read, forcing every list to enumerate rows from sessions-index instead.
+    // 持久 task 行存在性必须由 tasks-index 决定。之前这里只保留 membership
+    // 集合并丢弃已经读取到的 task meta，迫使所有列表从 sessions-index 反向枚举行。
     taskIndexItems: mergeTaskIndexItems([
       activeLists.flat(),
       pinnedMetaLists.flat(),
       archivedLists.flat(),
     ]),
-    // A pinned task row is itself evidence of membership; even if the auxiliary ID RPC briefly fails,
-    // do not misclassify a successfully read pinned row into the timeline.
+    // pinned task 行本身也是 membership 证据；即使辅助 id RPC 短暂失败，
+    // 也不应把已经成功读到的 pinned 行误分到 timeline。
     pinnedIds: new Set([...pinnedList, ...pinnedMetaLists.flat().map((task) => task.taskId)]),
     archivedIds: new Set(archivedLists.flat().map((task) => task.taskId)),
     deletedIds: new Set(deletedIdLists.flat()),
@@ -272,14 +281,14 @@ export async function fetchTaskListMembershipSets(params: {
   };
 }
 
-// Incremental update fix: membership (pin/archive/unread) changes only with membership mutations (membershipVersion bump),
-// independently of sessions-index content frames (title/status/lastActivity). Previously each frame refetched: one title update
-// caused each list instance to send 1 + 3×scopes RPCs (over a hundred calls per frame with many workspaces/instances).
-// Cache the in-flight promise by membershipVersion + endpoint signature so hook instances share it;
-// a version bump or endpoint-topology change naturally uses a new key. Bound the cache to avoid retaining old versions.
+// 差量更新修正：membership（pin/archive/unread）只随归属 mutation 变化（membershipVersion bump），
+// 与 sessions-index 内容帧（title/status/lastActivity）无关。之前每帧都重拉——一次 title 变更
+// 会让所有列表实例各发一轮 1+3×scopes 的 RPC（多 workspace 多实例下每帧上百次调用）。
+// 这里按「membershipVersion + endpoints 签名」缓存 in-flight promise，跨 hook 实例共享；
+// 版本 bump 或 endpoint 拓扑变化时自然换 key 重拉。缓存有界，避免历史版本堆积。
 const membershipPromiseByCacheKey = new Map<string, Promise<TaskListMembershipSets>>();
 const MEMBERSHIP_CACHE_MAX_KEYS = 8;
-// Include service-instance identity in the key so different endpoint services (including test mocks and new proxies after reconnect) never share cached reads.
+// service 实例身份进 key：不同 endpoint service（含测试 mock、重连后的新 proxy）不得共享缓存。
 const membershipServiceIds = new WeakMap<TaskListMembershipService, number>();
 let nextMembershipServiceId = 1;
 
@@ -293,7 +302,7 @@ function membershipServiceIdOf(service: TaskListMembershipService): number {
 }
 
 export function fetchTaskListMembershipSetsForEndpointsCached(params: {
-  /** Suggested format: `${membershipVersion}::${endpoints signature}`. */
+  /** 建议形态：`${membershipVersion}::${endpoints 签名}`。 */
   cacheKey: string;
   endpoints: TaskListMembershipEndpoint[];
 }): Promise<TaskListMembershipSets> {
@@ -306,8 +315,8 @@ export function fetchTaskListMembershipSetsForEndpointsCached(params: {
   }
   const promise = fetchTaskListMembershipSetsForEndpoints(params.endpoints);
   membershipPromiseByCacheKey.set(fullCacheKey, promise);
-  // Auxiliary sets may fall back to empty, but incomplete reads for task-row partitions must reject. Do not cache failures,
-  // so a temporary RPC error is not stuck to the current version.
+  // 辅助集合可按空集降级，但 task 行分区读取不完整会 reject；不缓存失败，
+  // 避免一次短暂 RPC 异常被当前 version 粘住。
   promise.catch(() => membershipPromiseByCacheKey.delete(fullCacheKey));
   while (membershipPromiseByCacheKey.size > MEMBERSHIP_CACHE_MAX_KEYS) {
     const oldestKey = membershipPromiseByCacheKey.keys().next().value;
@@ -319,12 +328,12 @@ export function fetchTaskListMembershipSetsForEndpointsCached(params: {
   return promise;
 }
 
-/** Clear the membership cache for tests and error recovery. */
+/** 测试/异常恢复用：清空 membership 缓存。 */
 export function clearTaskListMembershipCache(): void {
   membershipPromiseByCacheKey.clear();
 }
 
-/** Fetch memberships concurrently by endpoint and compute their union (taskId is a sessionId and cannot collide across endpoints). */
+/** 按 endpoint 并行拉取归属并求并集（taskId 为 sessionId，跨 endpoint 不冲突）。 */
 export async function fetchTaskListMembershipSetsForEndpoints(
   endpoints: TaskListMembershipEndpoint[],
 ): Promise<TaskListMembershipSets> {

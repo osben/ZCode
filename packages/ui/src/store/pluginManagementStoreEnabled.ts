@@ -1,7 +1,11 @@
 import type { IPluginManagementService } from "@zcode/services";
 import type { ZCodePluginScope } from "@zcode/shared";
 import { logger } from "@/logger.js";
-import { loadInto } from "@/store/pluginManagementStoreLoading.js";
+import {
+  buildWorkspaceKey,
+  loadInto,
+  notifyPluginManagementChange,
+} from "@/store/pluginManagementStoreLoading.js";
 import type { PluginManagementState } from "@/store/pluginManagementStore.js";
 
 function toMessage(error: unknown): string {
@@ -9,15 +13,20 @@ function toMessage(error: unknown): string {
 }
 
 let nextToggleRequestId = 0;
-const activeToggleRequests = new Map<string, number>();
+const requestsByStore = new WeakMap<() => PluginManagementState, Map<string, number>>();
 
 function buildToggleRequestKey(input: {
   workspacePath: string;
   workspaceIdentity: string | null;
+  authorityKey: string | null;
   configScope: ZCodePluginScope | null;
   pluginId: string;
 }): string {
-  const workspaceKey = input.workspaceIdentity?.trim() || input.workspacePath;
+  const workspaceKey = buildWorkspaceKey(
+    input.workspacePath,
+    input.workspaceIdentity,
+    input.authorityKey,
+  );
   return `${workspaceKey}\u0000${input.configScope ?? "effective"}\u0000${input.pluginId}`;
 }
 
@@ -29,12 +38,18 @@ export async function setPluginEnabledOptimistically(
   pluginService: IPluginManagementService,
   scope: ZCodePluginScope = "user",
 ): Promise<boolean> {
-  const { workspacePath, workspaceIdentity, configScope } = get();
+  const { workspacePath, workspaceIdentity, authorityKey, configScope } = get();
   if (!workspacePath) return false;
+  let activeToggleRequests = requestsByStore.get(get);
+  if (!activeToggleRequests) {
+    activeToggleRequests = new Map();
+    requestsByStore.set(get, activeToggleRequests);
+  }
 
   const requestKey = buildToggleRequestKey({
     workspacePath,
     workspaceIdentity,
+    authorityKey,
     configScope,
     pluginId,
   });
@@ -46,14 +61,15 @@ export async function setPluginEnabledOptimistically(
       activeToggleRequests.get(requestKey) === requestId &&
       current.workspacePath === workspacePath &&
       current.workspaceIdentity === workspaceIdentity &&
+      current.authorityKey === authorityKey &&
       current.configScope === configScope &&
       current.togglingPluginId === pluginId
     );
   };
 
   const previousPlugin = get().plugins.find((plugin) => plugin.id === pluginId);
-  // Enable/disable RPCs and the subsequent list refresh have noticeable latency. Project the final state first so the toggle responds immediately;
-  // restore the snapshot in catch on failure so users do not mistake a normal async write for an unresponsive click.
+  // 启停 RPC 和后续列表刷新存在可感知延迟。先投影最终状态，让开关立刻响应；失败时
+  // 在 catch 中恢复快照，避免用户把正常的异步写入误判成“点了没反应”。
   set({
     togglingPluginId: pluginId,
     error: null,
@@ -75,7 +91,16 @@ export async function setPluginEnabledOptimistically(
       enabled,
       scope,
     });
-    if (!isCurrentRequest()) return false;
+    if (!isCurrentRequest()) {
+      notifyPluginManagementChange({
+        owner: get,
+        workspacePath,
+        workspaceIdentity,
+        authorityKey,
+        scope,
+      });
+      return false;
+    }
     set({
       plugins: get().plugins.map((plugin) =>
         plugin.id === pluginId ? { ...plugin, ...result.plugin, enabled: result.enabled } : plugin,
@@ -84,13 +109,22 @@ export async function setPluginEnabledOptimistically(
     await loadInto(set, get, {
       workspacePath,
       workspaceIdentity,
+      authorityKey,
       configScope,
       pluginService,
+      fresh: true,
+    });
+    notifyPluginManagementChange({
+      owner: get,
+      workspacePath,
+      workspaceIdentity,
+      authorityKey,
+      scope,
     });
     return isCurrentRequest();
   } catch (error) {
-    // On enable/disable failure, return false and restore the optimistic projection so callers do not
-    // continue refreshing other capabilities or report the failed toggle as successful.
+    // 启停失败时必须返回 false 并恢复 optimistic projection，避免
+    // 调用方继续刷新其它能力，或让界面把失败的切换误报成成功。
     logger.error("[plugins] setEnabled failed", { pluginId, enabled, error: toMessage(error) });
     if (isCurrentRequest()) {
       set({

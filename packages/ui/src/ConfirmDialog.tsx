@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox.js";
 import { XIcon } from "lucide-react";
-import { TID_CONFIRM_DIALOG_CONFIRM } from "@zcode/shared";
+import { TID_CONFIRM_DIALOG_CONFIRM } from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
@@ -19,9 +19,7 @@ import {
   AUTOMATION_CONFIRM_DIALOG_CONTENT_CLASS,
   AUTOMATION_CONFIRM_DIALOG_DESCRIPTION_CLASS,
 } from "@/settings/automationConfirmDialogPresentation.js";
-
-const CONFIRM_DIALOG_OWN_ENTER_SELECTOR =
-  'button,input,textarea,select,[role="checkbox"],[contenteditable="true"]';
+import { SourceServerBoundaryDialogContent } from "@/remote/SourceServerBoundaryDialogContent.js";
 
 export function ConfirmDialogHost() {
   const { intl } = useZCodeIntl();
@@ -32,9 +30,9 @@ export function ConfirmDialogHost() {
 
   const displayedRequestRef = useRef(pendingRequest);
   if (pendingRequest) {
-    // After the Promise settles, the store immediately clears pendingRequest, but Radix keeps the content layer for one frame during its close animation.
-    // Reading pendingRequest directly would clear the title and description first, briefly leaving only the “Confirm / Cancel” buttons.
-    // Keep the last visible content until closing finishes, and let the open state control the dialog exit.
+    // Promise 结算后 store 会立刻清空 pendingRequest，但 Radix 关闭动画还会保留一帧内容层。
+    // 如果这里直接读取 pendingRequest，退场动画期间标题/描述会先变空，只剩“确认 / 取消”按钮闪一下。
+    // 因此关闭完成前继续沿用最后一次可见内容，只让 open 状态控制弹窗退场。
     displayedRequestRef.current = pendingRequest;
   }
   const displayedRequest = pendingRequest ?? displayedRequestRef.current;
@@ -44,20 +42,24 @@ export function ConfirmDialogHost() {
   }>({ request: undefined, checked: false });
   const open = Boolean(pendingRequest);
   const isAutomationConfirmation = displayedRequest?.presentation === "automation-confirmation";
+  const isSourceServerBoundary = displayedRequest?.presentation === "source-server-boundary";
   const confirmLabel =
     displayedRequest?.confirmLabel ?? intl.formatMessage({ id: "common.confirm" });
   const cancelLabel = displayedRequest?.cancelLabel ?? intl.formatMessage({ id: "common.cancel" });
   const compact = displayedRequest?.compact === true;
+  const destructive = displayedRequest?.confirmVariant === "destructive";
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const requiredAcknowledgement = displayedRequest?.requiredAcknowledgement === true;
 
   const handleOpenChange = useCallback(
     (nextOpen: boolean) => {
-      // Radix calls only onOpenChange(false) when the overlay is clicked or Esc is pressed.
-      // Settle the Promise with false here; otherwise the caller remains suspended and subsequent delete operations can get stuck.
-      if (!nextOpen) {
+      // Bugfix: Radix 在点击遮罩或按 Esc 时只会回调 onOpenChange(false)。
+      // 选择对话框保留 dismiss 与取消的区别；required acknowledgement 必须保持打开，避免未确认却被记为已读。
+      if (!nextOpen && !requiredAcknowledgement) {
         settleChoice("dismiss");
       }
     },
-    [settleChoice],
+    [requiredAcknowledgement, settleChoice],
   );
 
   const handleConfirm = useCallback(() => {
@@ -65,7 +67,7 @@ export function ConfirmDialogHost() {
   }, [settleConfirmation]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || destructive) {
       return;
     }
 
@@ -74,15 +76,15 @@ export function ConfirmDialogHost() {
         return;
       }
 
-      // A focused control owns Enter: confirming here would turn Enter on Cancel/Close into a destructive confirm.
-      // The autofocused Confirm button still confirms through its native click.
+      // 带复选框的选择对话框保留焦点按钮的键盘语义，避免“不了”按 Enter 变成切换。
       if (
+        displayedRequest?.checkbox &&
         event.target instanceof HTMLElement &&
-        event.target.closest(CONFIRM_DIALOG_OWN_ENTER_SELECTOR)
+        event.target.closest("button,input")
       )
         return;
-      // Without Enter handling in a second-confirmation dialog, keyboard users would have to move focus to a button first,
-      // unlike the desktop confirmation dialog. Handle Enter consistently while the dialog is open to keep confirmation behavior predictable.
+      // 二次确认场景下如果不接 Enter，键盘用户会只能切到按钮再触发，
+      // 体验和桌面端的确认弹窗不一致。这里在弹窗打开时统一兜住 Enter，保持可预期的确认手势。
       event.preventDefault();
       event.stopPropagation();
       settleConfirmation(true);
@@ -92,20 +94,49 @@ export function ConfirmDialogHost() {
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [open, settleConfirmation, displayedRequest]);
+  }, [open, destructive, settleConfirmation, displayedRequest]);
+
+  if (isSourceServerBoundary) {
+    return (
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent
+          data-confirm-intent={displayedRequest?.intent}
+          data-testid="source-server-boundary-dialog"
+          showCloseButton={false}
+          // Bug 原因：continuity dialog 曾用 bg-popover/98 组件级拼接 alpha，主题表面 token 因而无法统一维护。
+          // 直接使用完整的 popover surface，保留对话框层级和专用 continuity panel。
+          className="gap-0 overflow-hidden rounded-2xl border-none bg-popover p-0 ring-border shadow-2xl sm:max-w-xl"
+        >
+          <SourceServerBoundaryDialogContent
+            title={displayedRequest?.title}
+            description={displayedRequest?.description}
+            confirmLabel={confirmLabel}
+            onConfirm={handleConfirm}
+          />
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
+        data-confirm-intent={displayedRequest?.intent}
         data-testid={displayedRequest?.testId}
+        onOpenAutoFocus={(event) => {
+          if (destructive) {
+            event.preventDefault();
+            cancelRef.current?.focus();
+          }
+        }}
         showCloseButton={false}
         overlayClassName={
           compact ? "bg-black/20 supports-backdrop-filter:backdrop-blur-[2px]" : undefined
         }
         className={cn(
           "gap-5 rounded-2xl border-none bg-popover/98 p-5 ring-border shadow-2xl",
-          // Relying only on the shared dialog’s responsive max-width makes the same delete confirmation look different across entry-point viewports.
-          // Scheduled-task deletion uses a fixed presentation by design.
+          // 仅依赖共享弹框的响应式 max-width 时，不同入口所在 viewport 会让
+          // 同一删除确认框看起来尺寸不一致。定时任务删除按设计固定同一 presentation。
           isAutomationConfirmation ? AUTOMATION_CONFIRM_DIALOG_CONTENT_CLASS : "sm:max-w-md",
           displayedRequest?.compact && "top-[44%] min-h-[161px] gap-4 sm:max-w-[400px]",
         )}
@@ -129,7 +160,7 @@ export function ConfirmDialogHost() {
           className={cn(
             "gap-2 sm:justify-end",
             displayedRequest?.checkbox && "flex-row flex-wrap items-center",
-            // The Automation dialog’s minimum height stretches the Grid footer row, leaving the buttons at its top and creating a visual bottom gap greater than 20px.
+            // Automation 弹窗的最小高度会拉伸 Grid footer 行，按钮停在行顶导致视觉底距超过 20px。
             isAutomationConfirmation && "mt-auto",
           )}
         >
@@ -150,25 +181,28 @@ export function ConfirmDialogHost() {
           <div
             className={displayedRequest?.checkbox ? "ml-auto flex items-center gap-2" : "contents"}
           >
+            {requiredAcknowledgement ? null : (
+              <Button
+                type="button"
+                ref={cancelRef}
+                variant={compact ? "outline" : "secondary"}
+                size={"lg"}
+                onClick={() => settleConfirmation(false)}
+                className={cn(
+                  "h-9 gap-3 px-4",
+                  displayedRequest?.showKeyboardHints !== false && "justify-between sm:min-w-28",
+                )}
+              >
+                <span>{cancelLabel}</span>
+                {displayedRequest?.showKeyboardHints !== false ? (
+                  <span className="font-mono text-ui-base text-foreground-subtle">esc</span>
+                ) : null}
+              </Button>
+            )}
             <Button
               type="button"
-              variant={compact ? "outline" : "secondary"}
-              size={"lg"}
-              onClick={() => settleConfirmation(false)}
-              className={cn(
-                "h-9 gap-3 px-4",
-                displayedRequest?.showKeyboardHints !== false && "justify-between sm:min-w-28",
-              )}
-            >
-              <span>{cancelLabel}</span>
-              {displayedRequest?.showKeyboardHints !== false ? (
-                <span className="font-mono text-ui-base text-foreground-subtle">esc</span>
-              ) : null}
-            </Button>
-            <Button
-              type="button"
-              autoFocus
-              // Regular confirmations use the primary button; use the danger color only for irreversible actions explicitly marked destructive.
+              autoFocus={!destructive}
+              // 普通确认沿用主按钮；仅显式声明 destructive 的不可恢复动作使用危险色。
               variant={displayedRequest?.confirmVariant ?? "default"}
               size={"lg"}
               data-testid={TID_CONFIRM_DIALOG_CONFIRM}
@@ -179,7 +213,7 @@ export function ConfirmDialogHost() {
               )}
             >
               <span>{confirmLabel}</span>
-              {displayedRequest?.showKeyboardHints !== false ? (
+              {!destructive && displayedRequest?.showKeyboardHints !== false ? (
                 <span
                   className={
                     displayedRequest?.confirmVariant === "destructive"
@@ -193,7 +227,7 @@ export function ConfirmDialogHost() {
             </Button>
           </div>
         </DialogFooter>
-        {displayedRequest?.showCloseButton ? (
+        {displayedRequest?.showCloseButton && !requiredAcknowledgement ? (
           <DialogClose asChild>
             <Button
               type="button"

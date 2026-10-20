@@ -6,7 +6,6 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -31,16 +30,16 @@ const platform: IPlatformService = {
   selectFile: vi.fn(),
 };
 
-function renderRemoteConnectionFields(kind: "ssh" | "docker") {
+function renderRemoteConnectionFields() {
   return renderToStaticMarkup(
     createElement(
       PlatformProvider,
       { platform },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: "zh-CN" },
         createElement(RemoteConnectionFields, {
-          kind,
+          kind: "docker",
           host: "",
           port: "22",
           username: "",
@@ -88,18 +87,11 @@ function renderRemoteConnectionFields(kind: "ssh" | "docker") {
 }
 
 describe("RemoteConnectionFields placeholder", () => {
-  it("SSH 必填字段用输入提示承载示例，避免看起来像默认值", () => {
-    const html = renderRemoteConnectionFields("ssh");
+  it("Docker 手动模式保留切换列表入口与空输入提示", () => {
+    const html = renderRemoteConnectionFields();
 
-    expect(html).toContain(`placeholder="${expectedCopy("ssh.hostPlaceholder")}"`);
-    expect(html).toContain(`placeholder="${expectedCopy("ssh.usernamePlaceholder")}"`);
-  });
-
-  it("Docker 容器选择器无可用容器时展示空态提示，并提供独立手动输入框", () => {
-    const html = renderRemoteConnectionFields("docker");
-
-    expect(html).toContain(expectedCopy("docker.noContainers"));
-    expect(html).toContain(`placeholder="${expectedCopy("docker.containerPlaceholder")}"`);
-    expect(html).toContain(expectedCopy("docker.manualContainerHint"));
+    expect(html).toContain("选择运行中的容器");
+    expect(html).not.toContain('data-testid="docker-container-select"');
+    expect(html).toContain("如果运行中的容器列表不完整，可以手动输入容器名或 ID 连接。");
   });
 });

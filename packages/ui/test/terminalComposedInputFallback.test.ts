@@ -8,7 +8,6 @@ import {
   recordTerminalInputFallbackRecentData,
   resolveTerminalInputFallbackAction,
 } from "@/terminal/terminalComposedInputFallback.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const MAX_HISTORY_AGE_MS = 150;
 const MAX_KEYDOWN_INPUT_DELAY_MS = 40;
@@ -315,12 +314,7 @@ describe("terminal composed input fallback", () => {
       pending,
     });
 
-    expect(
-      resolveTerminalInputFallbackAction({
-        pending,
-        textareaValue: expectedCopy("chat.toolbar.thoughtLevel.value.medium"),
-      }),
-    ).toEqual({
+    expect(resolveTerminalInputFallbackAction({ pending, textareaValue: "中" })).toEqual({
       shouldClearTextarea: true,
       shouldWrite: true,
     });
@@ -417,12 +411,7 @@ describe("terminal composed input fallback", () => {
   it("flushes composed text when xterm leaves it unhandled in textarea", () => {
     const pending = createPendingTerminalInputFallback("中");
 
-    expect(
-      resolveTerminalInputFallbackAction({
-        pending,
-        textareaValue: expectedCopy("chat.toolbar.thoughtLevel.value.medium"),
-      }),
-    ).toEqual({
+    expect(resolveTerminalInputFallbackAction({ pending, textareaValue: "中" })).toEqual({
       shouldClearTextarea: true,
       shouldWrite: true,
     });

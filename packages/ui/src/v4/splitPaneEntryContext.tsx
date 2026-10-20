@@ -1,7 +1,7 @@
-// Availability switch for the sidebar session entry points “Open in split view / Drag to split view.”
-// Session workbench groups are supported on desktop and regular web apps, but not on mobile or /remote web-remote.
-// Use context instead of threading props through each layer: session context menus and drag sources are shared by multiple
-// sidebar sections, so keep the decision source in WorkspaceShellLayout.
+// 侧栏会话项「在分屏打开 / 拖拽分屏」入口的可用性开关。
+// session workbench groups 支持桌面和普通 web app；手机与 /remote web-remote
+// 不启用。用 context 而不是逐层 props：会话项上下文菜单和 drag source 被多个
+// 侧栏 Section 共用，判定源收敛在 WorkspaceShellLayout 一处。
 import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 import type { WorkbenchSessionTarget } from "@/v4/workbenchSessionPlacement.js";
 
@@ -51,7 +51,7 @@ export function V4SplitPaneEntryProvider({
   );
 }
 
-/** The shell makes the right-click entry decision so task rows cannot bypass the active group/draft pane owner. */
+/** 右键入口由 shell 统一裁决，避免 task row 绕过 active group/draft pane owner。 */
 export function useV4SplitPaneEntry(): V4SplitPaneEntryContextValue {
   return useContext(V4SplitPaneEntryContext);
 }

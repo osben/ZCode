@@ -36,10 +36,9 @@ function parseCuaResultState(value: unknown): Record<string, unknown> | null {
   const structuredMarker = "Structured content:";
   const structuredStart = value.lastIndexOf(structuredMarker);
   const jsonStart = value.lastIndexOf("\n\n{");
-  // Some MCP results append only an empty `Structured content:` marker after valid main JSON.
-  // Unconditionally parsing the empty text after the marker loses app identity and falls back to
-  // Computer Use. Prefer real structured content when present; when it is empty or invalid, parse
-  // the main JSON before the marker.
+  // 部分 MCP 结果在有效主 JSON 后只追加空的 `Structured content:` 标记。
+  // 无条件解析标记后的空串会让应用身份丢失并降级成 Computer Use。
+  // 有真实 structured content 时仍优先使用；为空或无效时再解析标记前的主 JSON。
   const candidates =
     structuredStart >= 0
       ? [
@@ -58,8 +57,8 @@ function parseCuaResultState(value: unknown): Record<string, unknown> | null {
       const wrappedResult = parsed?.result;
       if (typeof wrappedResult === "string") {
         try {
-          // MCP structuredContent wraps the CUA JSON result again as a result string. Without another
-          // unwrap, structured fields such as the name are lost and the display incorrectly falls back to bundle_id.
+          // MCP structuredContent 会把 CUA 的 JSON 结果再包装为 result 字符串；
+          // 若不继续解包，名称等结构化字段会丢失并错误回退到 bundle_id。
           return asRecord(JSON.parse(wrappedResult)) ?? parsed;
         } catch {
           return parsed;
@@ -67,9 +66,8 @@ function parseCuaResultState(value: unknown): Record<string, unknown> | null {
       }
       return parsed;
     } catch {
-      // A successful get_app_state result may be model-facing text rather than JSON. Its stable app
-      // header already identifies the target app; ignoring it would incorrectly downgrade the
-      // summary to Computer Use.
+      // get_app_state 的成功结果可能是面向模型的文本状态而非 JSON；
+      // 其稳定 app 头部已包含唯一目标应用，忽略它会让摘要错误降级为 Computer Use。
       const textState = parseCuaTextAppState(candidate);
       if (textState) return textState;
     }
@@ -146,12 +144,10 @@ function readElementName(elementLine: string): string | null {
 
   const left = content.slice(0, separator).trim();
   const right = content.slice(separator + 3).trim();
-  // The text to the right of a textarea's equals sign may be a multiline body preview, not an
-  // accessible name. Treating it as a target would leak large amounts of document text into the
-  // context-menu summary, so use the control name after the role instead.
+  // textarea 的等号右侧是可能跨行的正文预览，不是可访问名称；
+  // 将正文当目标会让右键摘要泄露大段文档内容，因此应取角色后的控件名称。
   if (/^textarea\s+/iu.test(left)) return stripElementRole(left) || null;
-  // For value-like controls, the right side is a state such as 0/1, not the target name. For
-  // descriptive elements such as text nodes, use the right side as the readable name.
+  // 值型控件的右侧是 0/1 等状态，不是目标名称；文本节点等描述型元素则以右侧为可读名称。
   return /^(?:-?\d+(?:\.\d+)?|true|false|null)$/iu.test(right)
     ? stripElementRole(left) || null
     : right || null;
@@ -193,9 +189,8 @@ export function readCuaActionTargetName(
     childNames.push(childName);
   }
 
-  // CUA splits button names into following flat text nodes, leaving only a numeric index on the
-  // button itself. Read only consecutive text nodes and stop before the next interactive element so
-  // adjacent control names are not joined into this summary.
+  // CUA 会把按钮名称拆成紧随其后的扁平文本节点，按钮自身只留下数字索引。
+  // 只读取连续文本节点并在下一个可操作元素前停止，避免把相邻控件名称拼进当前摘要。
   return childNames.length > 0 ? childNames.join("") : directName;
 }
 
@@ -204,8 +199,8 @@ export function readCuaResultState(
 ): Record<string, unknown> | null {
   const display = readToolResultDisplay(toolCall.raw);
   if (display?.kind === "cua" && display.structuredContent) {
-    // Display for new sessions still retains the MCP `{ result: "...json..." }` wrapper. Reuse the
-    // legacy unwrapping logic; otherwise the display-first path cannot read the app name and status.
+    // 新 session 的 display 仍保留 MCP `{ result: "...json..." }` 包装；
+    // 必须复用 legacy 解包逻辑，否则 display 优先路径反而读不到 App 名称与状态。
     const structured = parseCuaResultState(display.structuredContent);
     if (structured) return structured;
   }
@@ -226,7 +221,7 @@ export function readCuaAppName(
     readText(inputApp, "name");
   if (name) return name;
   const bundleId = readText(resultApp, "bundle_id") ?? readText(inputApp, "bundle_id");
-  // Finder results such as list_windows return only a stable system bundle ID, not app.name.
-  // Use the standard macOS name here so summaries and details do not expose com.apple.finder.
+  // Finder 的 list_windows 等结果只返回稳定的系统 bundle ID，不返回 app.name；
+  // 这里使用 macOS 标准名称，避免摘要和详情暴露 com.apple.finder。
   return bundleId === "com.apple.finder" ? "Finder" : bundleId;
 }

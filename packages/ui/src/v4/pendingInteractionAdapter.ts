@@ -33,8 +33,8 @@ function permissionKindToResponse(
     const ruleContent = LEGACY_PERMISSION_RULE_INPUT_KEYS.map((key) => detail[key]).find(
       (value): value is string => typeof value === "string" && value.trim().length > 0,
     );
-    // Options in old v4 snapshots have no response; falling back only to allow would lose persisted project-level authorization rules.
-    // The compatibility path creates only a raw exact rule and does not recompute the CLI's AST prefix in the UI.
+    // 旧 v4 snapshot 的 option 没有 response；若只回退 allow，项目级授权会
+    // 丢失持久规则。兼容路径只生成原始 exact，不在 UI 重算 CLI 的 AST prefix。
     return {
       decision: "allow",
       permissionUpdates: [
@@ -54,7 +54,7 @@ function permissionKindToResponse(
   return { decision: "allow" };
 }
 
-/** Convert a v4 permission payload → ZCodePermissionRequest consumed by the legacy PermissionDialog. */
+/** v4 permission payload → 旧 PermissionDialog 可消费的 ZCodePermissionRequest。 */
 export function pendingPermissionToLegacyRequest(
   sessionId: string,
   interaction: PendingInteraction & { payload: PermissionRequestPayload },
@@ -80,11 +80,11 @@ export function pendingPermissionToLegacyRequest(
     title: payload.toolName,
     options,
     ...(payload.freeText ? { freeText: true } : {}),
-    // The subagent source is already present in the V4 permission's pendingInteraction;
-    // the legacy adapter omitted it, preventing PermissionDialog from showing the source and making users think the main Agent requested permission.
+    // V4 permission 的 subagent 来源已经存在于 pendingInteraction，
+    // 旧适配器漏传后 PermissionDialog 无法展示来源，用户会误以为是主 Agent 在申请权限。
     ...(payload.origin ? { origin: payload.origin } : {}),
-    // Tool-provided confirmation previews use a separate display channel, not raw/detail: all tools share detail's shape
-    // for preview parsing, so changing it would affect every permission dialog.
+    // 工具自报的确认预览走独立的 display 通道，不塞进 raw/detail：detail 的形状被所有
+    // 工具的预览解析共用，改一处会波及全部权限弹窗。
     ...(payload.display ? { display: payload.display } : {}),
     raw: payload.detail ?? {
       toolCallId: payload.toolCallId,

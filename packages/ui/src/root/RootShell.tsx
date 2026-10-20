@@ -2,12 +2,11 @@ import type { ReactNode } from "react";
 import { AlertDialogHost } from "@/AlertDialogHost.js";
 import { ConfirmDialogHost } from "@/ConfirmDialog.js";
 import { CuaPermissionObservationAttachment } from "@/cua-permission/CuaPermissionObservationAttachment.js";
-import { PluginUiFollowUpDialogHost } from "@/plugin-ui/index.js";
-import { WorktreeFailureModalHost } from "@/v4/composer/WorktreeCreationFailureModal.js";
+import { PluginUiBackgroundHost, PluginUiFollowUpDialogHost } from "@/plugin-ui/index.js";
 
 export function RootShell({ children }: { children: ReactNode }) {
-  // Web remote control cannot use fixed 100vh in mobile browsers,
-  // because showing/hiding the address bar can clip the bottom input area outside the viewport; use dynamic viewport height on the root.
+  // Web 远控在手机浏览器里不能用固定 100vh，
+  // 地址栏收放会让底部输入区被裁到视口外；根节点改用动态视口高度。
   return (
     <div className="relative h-dvh">
       {children}
@@ -15,7 +14,7 @@ export function RootShell({ children }: { children: ReactNode }) {
       <AlertDialogHost />
       <ConfirmDialogHost />
       <PluginUiFollowUpDialogHost />
-      <WorktreeFailureModalHost />
+      <PluginUiBackgroundHost />
     </div>
   );
 }

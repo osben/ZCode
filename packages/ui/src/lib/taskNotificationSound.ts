@@ -17,9 +17,9 @@ function getTaskNotificationAudio(): HTMLAudioElement | null {
 }
 
 export async function playTaskNotificationSound(): Promise<void> {
-  // Desktop/Web both trigger sound asynchronously after showing the notification.
-  // If the sound sub-toggle is not checked here, playback continues after it is disabled in settings,
-  // making the setting appear ineffective. Centralize the final decision at the player entry point so all callers behave consistently.
+  // Desktop/Web 都会在“通知已展示”后异步触发音效播放；
+  // 如果这里不再检查声音子开关，设置页里关闭提示音后运行时仍会继续响，
+  // 看起来就像设置没生效。把最终判定收口到播放器入口，能保证所有调用方行为一致。
   if (!isTaskNotificationSoundEnabled()) {
     return;
   }
@@ -30,13 +30,13 @@ export async function playTaskNotificationSound(): Promise<void> {
   }
 
   try {
-    // When the same Audio instance is reused for background notifications, failing to reset it first
-    // often makes the next notification silent because it is still at the end of the previous playback.
-    // Reset playback position explicitly and absorb autoplay-policy errors so sound failure does not affect the notification path.
+    // 同一个 Audio 实例在后台通知里反复复用时，若不先回到起点，
+    // 新一轮通知经常会因为还停留在上次播放结束态而直接静默。
+    // 这里显式重置播放位置，并吞掉自动播放限制异常，避免音效失败反过来影响通知主链路。
     audio.pause();
     audio.currentTime = 0;
     await audio.play();
   } catch {
-    // Sound is an enhancement; playback failure must not interrupt the notification flow.
+    // 音效属于增强体验，播放失败时不打断通知主流程。
   }
 }

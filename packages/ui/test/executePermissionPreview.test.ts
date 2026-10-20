@@ -4,13 +4,12 @@ import { describe, expect, it } from "vitest";
 import { ExecuteToolCallBlock } from "@/ToolCallBlocks/renderers/execute.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 function renderPreview(isPermissionPreview: boolean) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: "zh-CN" },
       createElement(ExecuteToolCallBlock, {
         toolCallNode: {
           toolCall: {
@@ -35,9 +34,9 @@ function renderPreview(isPermissionPreview: boolean) {
 
 describe("execute permission preview", () => {
   it("does not describe an unexecuted permission request as empty output", () => {
-    expect(renderPreview(true)).not.toContain(expectedCopy("chat.toolCall.execute.noOutput"));
+    expect(renderPreview(true)).not.toContain("没有输出。");
   });
   it("retains the empty-output hint for completed execution", () => {
-    expect(renderPreview(false)).toContain(expectedCopy("chat.toolCall.execute.noOutput"));
+    expect(renderPreview(false)).toContain("没有输出。");
   });
 });

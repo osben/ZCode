@@ -55,11 +55,11 @@ export async function buildDraftSuggestedPromptPrefill({
     return { text };
   }
 
-  const entry = catalog.find((candidate) => candidate.pluginId === plugin.stableId);
-  // Bug cause: missing and disabled previously shared the silent-degradation branch with
-  // conflicts, so callers could not distinguish states that require telling the user.
-  // A missing catalog entry means the plugin is not installed in this workspace; no separate
-  // installation-status query is needed.
+  const entry = catalog.find(
+    (candidate) => candidate.pluginId === plugin.stableId,
+  );
+  // Bug 原因：缺失和禁用此前与冲突共用静默降级分支，调用层无法区分需要告知用户的状态。
+  // catalog 无条目即代表当前 workspace 未安装，无需再发起一套安装状态查询。
   if (!entry || !entry.enabled) {
     return { text, pluginUnavailable: true };
   }

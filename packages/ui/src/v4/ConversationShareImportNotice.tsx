@@ -10,26 +10,27 @@ import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { CodePreviewSettings } from "@/lib/codePreviewSettings.js";
 import type { Theme } from "@/useTheme.js";
 import { ConversationShareReadonlyTimeline } from "@/v4/ConversationShareReadonlyTimeline.js";
-// Injection boundary: the readonly timeline is shared by the anonymous public share page and cannot statically depend on the open-with subtree.
-// OpenSplitButton (Desktop capabilities such as platform hooks, tab store, and file-tree models) may only be imported by the Desktop
-// consumer and injected through artifactOpenAction, keeping the subtree out of the public-page entry bundle.
+// 注入边界：只读时间线被匿名公开分享页共用，不能静态依赖 open-with 子树；
+// OpenSplitButton（platform hooks、tab store、文件树模型等 Desktop 能力）只能在本 Desktop
+// 消费侧引入并经 artifactOpenAction 注入，公开页入口图因此不含该子树。
 import { OpenSplitButton } from "@/OpenSplitButton.js";
 
 const EMPTY_ARTIFACT_NAMES: ReadonlyMap<string, string> = new Map();
 const EMPTY_ARTIFACT_WORKSPACE_RELATIVE_PATHS: ReadonlyMap<string, string> = new Map();
 
 /**
- * Readonly block and divider at the top of a conversation after importing a share.
- * Use the import icon to avoid confusing it with the Fork marker.
+ * 导入分享后，会话顶部的只读块 + 分割线。
+ * 使用导入图标，避免与 Fork 标记混淆。
  *
- * The readonly block reuses the share-page renderer directly, so public rows do not need to be mapped back into Message
- * (that direction is lossy and undefined; Fork is simple because it clones a real Message).
+ * 只读块直接复用分享页的渲染器，因此不需要把公开 rows 反向映射成 Message
+ * （那个方向有损且未定义；Fork 之所以简单是因为它克隆真实 Message）。
  *
- * Local artifacts do not use the share page's artifactUrls/window.open. Reuse the normal preview card's open control
- * only when the importer explicitly provides workspaceRelativePath and the Desktop open callback.
+ * 本地结果物不走分享页的 artifactUrls/window.open；只有导入端显式传入
+ * workspaceRelativePath 与 Desktop 打开回调时，才复用正常预览卡片的打开控件。
  */
 export const ConversationShareImportNotice = memo(function ConversationShareImportNotice({
   rows,
+  contentBlocks,
   locale,
   theme,
   codePreviewSettings,
@@ -44,6 +45,7 @@ export const ConversationShareImportNotice = memo(function ConversationShareImpo
   onOpenCodeViewer,
 }: {
   rows: readonly ConversationRow[];
+  contentBlocks?: readonly unknown[];
   locale: Locale;
   theme?: Theme;
   codePreviewSettings?: CodePreviewSettings;
@@ -63,6 +65,7 @@ export const ConversationShareImportNotice = memo(function ConversationShareImpo
     <div data-conversation-share-import-notice="true" className="flex w-full flex-col">
       <ConversationShareReadonlyTimeline
         rows={rows}
+        contentBlocks={contentBlocks}
         locale={locale}
         {...(theme ? { theme } : {})}
         {...(codePreviewSettings ? { codePreviewSettings } : {})}

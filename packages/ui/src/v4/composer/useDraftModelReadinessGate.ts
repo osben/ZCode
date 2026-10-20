@@ -10,19 +10,19 @@ import { logger } from "@/logger.js";
 type DraftModelReadinessStatus = "checking" | "ready" | "missing" | "check-failed";
 
 interface DraftModelReadinessState {
-  gateKey: string;
+  scope: object;
   status: DraftModelReadinessStatus;
   dismissed: boolean;
 }
 
 export interface DraftModelReadinessGate {
-  /** Allow workspace prepare/prewarm only after readiness is confirmed or the check itself is unavailable. */
+  /** 只有 readiness 已确认或检查本身不可用时，才允许进入 workspace prepare/prewarm。 */
   agentStartupAllowed: boolean;
   error: ModelConfigMissingUiError | null;
   dismissError(): void;
-  /** Authoritative recheck at first-send admission; false means keep the composer and return blocked. */
+  /** 首发 admission 的权威复查；false 表示应保留 composer 并返回 blocked。 */
   ensureReadyForSend(): Promise<boolean>;
-  /** Reproject the same error into the draft banner if the Host gate wins a race after the UI recheck. */
+  /** Host 门禁在 UI 复查后竞态命中时，将同一错误重新投影到草稿横幅。 */
   markProviderNotReady(): void;
 }
 
@@ -33,11 +33,11 @@ export function resolveModelSelectionReadinessStatus(
 }
 
 /**
- * Provider/model admission for V4 drafts.
+ * V4 草稿的 provider/model admission。
  *
- * The V4 migration removed the renderer readiness gate from the old useWorkspacePrepare; the first draft send
- * now registers a pending command before Host rejects it with provider_not_ready. The recovery ledger then misclassifies this deterministic rejection as
- * unknown. Restore a UI preflight gate here; the Host gate remains as process-level race protection.
+ * V4 迁移删除了旧 useWorkspacePrepare 的 renderer readiness 门禁，草稿首发
+ * 会先登记 pending command，再由 Host 以 provider_not_ready 拒绝。这个确定性拒绝随后会
+ * 被恢复账本误判成 unknown。这里恢复 UI 前置门禁；Host 门禁继续负责进程级竞态兜底。
  */
 export function useDraftModelReadinessGate(params: {
   workspacePath: string;
@@ -51,28 +51,40 @@ export function useDraftModelReadinessGate(params: {
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
   const enabled = sessionId === null && isZCodeAgentProvider(displayProvider);
   const gateKey = `${workspaceKey}\u0000${displayProvider}`;
+  const scope = useMemo(() => ({ gateKey }), [enabled, gateKey, modelSelectionService]);
   const [state, setState] = useState<DraftModelReadinessState>(() => ({
-    gateKey,
+    scope,
     status: enabled ? "checking" : "ready",
     dismissed: false,
   }));
+  // 进入新草稿的首帧不能沿用正式会话的 ready，否则先建预热、effect 再改 checking，
+  // 会立刻回收在途创建。检查结果只属于本次生命周期，旧复查也不能覆盖新草稿。
+  const effectiveState: DraftModelReadinessState =
+    state.scope === scope
+      ? state
+      : { scope, status: enabled ? "checking" : "ready", dismissed: false };
+  if (state.scope !== scope) setState(effectiveState);
 
   const commitStatus = useCallback(
     (status: DraftModelReadinessStatus, options: { revealMissing?: boolean } = {}) => {
-      setState((current) => ({
-        gateKey,
-        status,
-        dismissed:
-          status === "missing"
-            ? options.revealMissing
-              ? false
-              : current.gateKey === gateKey && current.status === "missing"
-                ? current.dismissed
-                : false
-            : false,
-      }));
+      setState((current) =>
+        current.scope !== scope
+          ? current
+          : {
+              scope,
+              status,
+              dismissed:
+                status === "missing"
+                  ? options.revealMissing
+                    ? false
+                    : current.status === "missing"
+                      ? current.dismissed
+                      : false
+                  : false,
+            },
+      );
     },
-    [gateKey],
+    [scope],
   );
 
   useEffect(() => {
@@ -96,7 +108,7 @@ export function useDraftModelReadinessGate(params: {
     void modelSelectionService
       .getView()
       .then((view) => {
-        // If a read starts before a change event but returns afterward, the event snapshot is newer; prevent the old read from overwriting it.
+        // 读取在变更事件之前发起、之后才返回时，事件快照更新；禁止旧读取覆盖新状态。
         if (registryEventVersion !== initialReadVersion) return;
         applyStatus(resolveModelSelectionReadinessStatus(view));
       })
@@ -106,8 +118,8 @@ export function useDraftModelReadinessGate(params: {
 
     function handleReadinessFailure(error: unknown) {
       if (disposed) return;
-      // Registry read failure does not mean “there are definitely no models.” Keep the Host gate as a fallback to avoid
-      // incorrectly showing a transient app-global service failure as a user configuration problem.
+      // registry 读取异常不等价于“确实没有模型”。保留 Host 门禁作为兜底，避免把
+      // app-global service 的瞬时故障错误显示成用户配置问题。
       commitStatus("check-failed");
       logger.warn("[v4-draft-readiness] provider registry 检查失败，回落 Host 门禁", {
         error: error instanceof Error ? error.message : String(error),
@@ -120,11 +132,6 @@ export function useDraftModelReadinessGate(params: {
       subscription?.dispose();
     };
   }, [commitStatus, enabled, modelSelectionService, workspaceKey]);
-
-  const effectiveState: DraftModelReadinessState =
-    state.gateKey === gateKey
-      ? state
-      : { gateKey, status: enabled ? "checking" : "ready", dismissed: false };
 
   const markProviderNotReady = useCallback(() => {
     commitStatus("missing", { revealMissing: true });
@@ -146,7 +153,7 @@ export function useDraftModelReadinessGate(params: {
       }
       return true;
     } catch (error) {
-      // Match the mount check: registry read failure does not masquerade as “no models”; let the Host launch gate decide.
+      // 与 mount 检查一致：读 registry 失败不冒充“没有模型”，继续由 Host 启动门禁裁决。
       commitStatus("check-failed");
       logger.warn("[v4-draft-readiness] 首发复查 provider registry 失败，回落 Host 门禁", {
         error: error instanceof Error ? error.message : String(error),
@@ -166,11 +173,11 @@ export function useDraftModelReadinessGate(params: {
 
   const dismissError = useCallback(() => {
     setState((current) =>
-      current.gateKey === gateKey && current.status === "missing"
+      current.scope === scope && current.status === "missing"
         ? { ...current, dismissed: true }
         : current,
     );
-  }, [gateKey]);
+  }, [scope]);
 
   return {
     agentStartupAllowed:

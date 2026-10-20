@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IServiceAccessor } from "@zcode/services";
 import type { IPlatformService, UpdateStatePayload } from "@zcode/shared";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const { buttonPropsCalls, dialogPropsCalls } = vi.hoisted(() => ({
   buttonPropsCalls: [] as Array<Record<string, unknown>>,
@@ -165,7 +164,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform: noopPlatform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform: noopPlatform,
                 version: null,
@@ -221,7 +220,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform,
                 version: null,
@@ -356,7 +355,7 @@ describe("UpdateStatusButton release notes cache", () => {
           { platform },
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "en-US" },
+            { initialLocale: "zh-CN" },
             createElement(UpdateStatusButton, {
               platform,
               version: null,
@@ -442,7 +441,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform,
                 version: null,
@@ -500,7 +499,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform,
                 version: null,
@@ -523,7 +522,7 @@ describe("UpdateStatusButton release notes cache", () => {
     });
 
     expect(useConfirmDialogStore.getState().pendingRequest?.description).toBe(
-      expectedCopy("updateReady.confirm.description"),
+      "应用将退出并重启以完成更新，进行中的任务会中断。",
     );
     expect(platform.quitAndInstallUpdate).not.toHaveBeenCalled();
 
@@ -552,7 +551,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform,
                 version: null,
@@ -599,7 +598,7 @@ describe("UpdateStatusButton release notes cache", () => {
             { platform },
             createElement(
               ZCodeIntlProvider,
-              { initialLocale: "en-US" },
+              { initialLocale: "zh-CN" },
               createElement(UpdateStatusButton, {
                 platform,
                 version: null,

@@ -81,6 +81,9 @@ function identityFromKnownToolName(
   value: string | null | undefined,
   source: ToolCallIdentitySource,
 ): ToolCallIdentity | null {
+  if (["fetch", "web_fetch"].includes(normalizeLegacyToken(value))) {
+    return identityFromLegacyFamily(value?.trim() ?? "WebFetch", "web-fetch", source);
+  }
   const toolName = normalizeZCodeToolName(value);
   if (!toolName) {
     return null;
@@ -186,6 +189,9 @@ function resolveLegacyKindFamily(kind: string): ToolCallPresentationFamily | nul
   if (/^(?:execute|run|exec|bash|shell|command|terminal)(?:_|$)/i.test(kind)) {
     return "shell";
   }
+  if (/^(?:fetch|web_fetch|webfetch)$/i.test(kind)) {
+    return "web-fetch";
+  }
   if (
     /^(?:search|grep|find|fetch|web_search|web_fetch|webfetch|query|lookup|glob|list|ls|dir|tree)(?:_|$)/i.test(
       kind,
@@ -239,9 +245,9 @@ export function resolveToolCallIdentity(toolCall: ToolIdentityLike): ToolCallIde
     );
   }
 
-  // `Task` is now an active Claude-compatible tool name, but historical ZCode Agent projections use
-  // kind="think" + title="Task" to represent subagent activity. Since title is only a display name, this must come after
-  // legacy-payload checks to avoid misclassifying an old session as a non-legacy tool identity.
+  // `Task` 现在是现役 Claude 兼容工具名，但历史 ZCode Agent 投影会用
+  // kind="think" + title="Task" 表示子 agent 活动。title 只是展示名，必须放在
+  // legacy payload 判断之后，避免把旧会话误升级成非 legacy 工具身份。
   const titleIdentity = identityFromKnownToolName(toolCall.title, "title");
   if (titleIdentity) {
     return titleIdentity;
@@ -263,8 +269,8 @@ export function resolveToolCallIdentity(toolCall: ToolIdentityLike): ToolCallIde
   }
 
   if (
-    // GoalCreate/GoalUpdate are no longer active model tools, but historical sessions may still have these
-    // tool calls; render them as legacy goals here instead of adding them back to the shared known tool list.
+    // GoalCreate/GoalUpdate 已不再是现役模型工具，但历史 session 仍可能有这些
+    // tool call；这里作为 legacy goal 渲染，避免重新把它们放回 shared known tool list。
     [
       toolCall.toolName,
       toolCall.kind,
@@ -292,8 +298,8 @@ export function resolveToolCallIdentity(toolCall: ToolIdentityLike): ToolCallIde
   }
 
   if (
-    // The current plan-mode exit tool sent by ZCode Agent is ExitPlanMode,
-    // which has no underscore after normalization; the old compatibility check recognized only switch_mode / Exited Plan Mode, causing plan cards to use the fallback.
+    // 当前 ZCode Agent 传给 app 的 plan mode 退出工具是 ExitPlanMode，
+    // normalize 后没有下划线；旧兼容只认 switch_mode / Exited Plan Mode，导致计划卡片走 fallback。
     [
       toolCall.toolName,
       toolCall.kind,

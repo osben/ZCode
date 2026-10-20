@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- The file-tree data hook needs to coordinate directory loading, watcher refreshes, and Git-status races. */
+/* eslint-disable max-lines -- 文件树数据 hook 需要集中维护目录加载、watcher 刷新和 Git 状态竞态。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { logger } from "@/logger.js";
@@ -127,7 +127,7 @@ export function useWorkspaceFileTreeData({
     (directoryPath: string) => {
       for (const path of directoryRequestVersionRef.current.keys()) {
         if (isWorkspaceFilePathInside(directoryPath, path)) {
-          // Do not delete the request sequence when a directory is pruned; recreating the same path could reuse the old sequence and revive a request from before deletion.
+          // 目录被裁剪时不能删除请求序号，否则同路径重建会复用旧序号，让删除前的旧请求重新生效。
           invalidateDirectoryRequest(path);
         }
       }
@@ -201,7 +201,7 @@ export function useWorkspaceFileTreeData({
       }
 
       const requestVersion = requestVersionRef.current;
-      // Manual refresh and the watcher may read the same directory concurrently; per-directory sequences prevent a late old snapshot from overwriting the new file tree.
+      // 手动刷新和 watcher 可能并发读取同一目录，目录级序号避免旧快照晚返回后覆盖新文件树。
       const directoryRequestVersion =
         (directoryRequestVersionRef.current.get(directoryPath) ?? 0) + 1;
       directoryRequestVersionRef.current.set(directoryPath, directoryRequestVersion);
@@ -276,7 +276,7 @@ export function useWorkspaceFileTreeData({
         setDirectoryLoaded(directoryPath, true);
 
         if (entries.length === 1 && isWorkspaceFileTreeAutoFlattenableDirectory(entries[0])) {
-          // Fix: flatten empty directories by preloading only ordinary single-child chains to avoid symlink directory recursion loops.
+          // 修复：flatten empty directories 只沿普通单子目录链预加载，避免软链接目录循环递归。
           void loadDirectory(entries[0].path, childDepth + 1, {
             silent: true,
             workspaceGeneration: expectedWorkspaceGeneration,
@@ -352,7 +352,7 @@ export function useWorkspaceFileTreeData({
           workspacePath,
           error: nextError.message,
         });
-        // Fix: do not retain the old change-filter entry when reading Git state fails, or users may filter the file tree using stale state.
+        // 修复：Git 状态读取异常时不能保留旧的变更过滤入口，否则用户会在过期状态下继续筛选文件树。
         setGitStatusAvailable(false);
         setGitStatusByPath(new Map());
       }
@@ -379,7 +379,7 @@ export function useWorkspaceFileTreeData({
       if (workspaceGenerationRef.current !== workspaceGeneration) {
         return;
       }
-      // When a watched directory is deleted or renamed, prune its old subtree first, then refresh the parent directory.
+      // 被监听目录被删除或重命名时先裁掉旧 subtree，再刷新父目录。
       pruneDirectorySubtree(directoryPath);
       const parentDirectoryPath = getWorkspaceFileParentDirectory(workspacePath, directoryPath);
       if (parentDirectoryPath) {
@@ -401,8 +401,8 @@ export function useWorkspaceFileTreeData({
       if (!isWorkspaceFilePathInside(workspacePath, directoryPath)) {
         return;
       }
-      // A readdir failure during manual refresh usually means remote disconnection, permissions, or a temporary I/O error.
-      // Failure does not mean the directory was deleted; do not reuse the watcher's subtree-pruning logic or the old tree/error state will be cleared.
+      // 手动刷新里的 readdir 失败通常是远程断连、权限或临时 I/O 错误；
+      // 失败不等价于目录被删除，不能复用 watcher 的 subtree 裁剪逻辑，否则会清空旧树和错误状态。
       try {
         await withWorkspaceFileTreeTimeout(
           loadDirectory(
@@ -474,9 +474,9 @@ export function useWorkspaceFileTreeData({
       expandedPaths,
       loadedDirectoryPaths: loadedDirectoryPathsRef.current,
     });
-    // Manual file-tree refresh previously reread only the workspace root, leaving loaded subdirectories on old children caches.
-    // If AI renamed/added a file inside those subdirectories, the old path remained visible and the new file did not appear.
-    // Refresh all loaded or expanded directories without recursively scanning the entire repository, keeping large-repository refresh costs bounded.
+    // 手动刷新文件树过去只重读 workspace 根目录，已加载子目录仍沿用旧 children 缓存；
+    // AI 重命名/新增文件发生在这些子目录时，旧路径会继续显示，新文件也不会出现。
+    // 这里刷新所有已加载或已展开目录，不做全仓递归扫描，避免大仓库刷新成本失控。
     try {
       await refreshDirectoryPaths(
         directoryPaths,
@@ -484,8 +484,8 @@ export function useWorkspaceFileTreeData({
         refreshBatchVersion,
         refreshDirectoryManually,
       );
-      // The user may switch workspaces while a manual refresh of the old workspace is running;
-      // when it completes, the old gitService must not overwrite the new workspace's Git state.
+      // 用户可能在手动刷新旧 workspace 期间切换 workspace；
+      // 旧刷新完成后不能再用旧 gitService 覆盖新 workspace 的 Git 状态。
       if (
         workspaceGenerationRef.current === workspaceGeneration &&
         refreshBatchVersionRef.current === refreshBatchVersion
@@ -606,7 +606,16 @@ export function useWorkspaceFileTreeData({
     });
     void loadGitStatus({ workspaceGeneration });
     return () => {
+      // 原因：卸载只释放 watcher 仍会留下排队刷新和迟到请求，关闭后不能继续读取旧工作区。
+      workspaceGenerationRef.current += 1;
+      requestVersionRef.current += 1;
+      gitStatusRequestVersionRef.current += 1;
       cancelRefreshBatch();
+      pendingWatchRefreshPathsRef.current.clear();
+      if (watchRefreshTimerRef.current) {
+        clearTimeout(watchRefreshTimerRef.current);
+        watchRefreshTimerRef.current = null;
+      }
     };
   }, [cancelRefreshBatch, loadDirectory, loadGitStatus, workspaceIdentity, workspacePath]);
 

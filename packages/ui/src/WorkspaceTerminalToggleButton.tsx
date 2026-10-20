@@ -1,4 +1,4 @@
-import { TID_TERMINAL_TOGGLE } from "@zcode/shared";
+import { TID_TERMINAL_TOGGLE } from "@zcode/shared/test-ids";
 import { SquareTerminalIcon } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
@@ -23,7 +23,7 @@ export function WorkspaceTerminalToggleButton({
   const { intl } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const label = intl.formatMessage({ id: "terminal.toggle" });
-  // Read the display label from the effective shortcut map so the tooltip updates when users rebind the key
+  // 展示 label 从快捷键生效表取，用户改键后 tooltip 跟随更新
   const toggleTerminalShortcutLabel = useShortcutCommandLabel("toggleTerminal");
 
   if (isOfficeMode) return null;

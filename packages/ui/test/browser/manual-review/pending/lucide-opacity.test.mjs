@@ -94,8 +94,7 @@ for (const width of [390, 1200]) {
               ...data.subarray((y * info.width + x) * 3, (y * info.width + x) * 3 + 3),
             ];
             assert.deepEqual(pixel(48, 48), pixel(32, 48), `${prefix}/${i}: 交点不应加深`);
-            // Remove the Lucide marker to get the original drawing and compare non-intersection
-            // pixels, guarding against a false pass from "make everything opaque".
+            // 去掉 Lucide 标记得到原始绘制，比较非交点，防止“全部改成不透明”造成假通过。
             const original = page.locator(`#${prefix}-${i} svg`);
             await original.evaluate((el) => el.classList.remove("lucide"));
             const reference = await sharp(await original.screenshot())

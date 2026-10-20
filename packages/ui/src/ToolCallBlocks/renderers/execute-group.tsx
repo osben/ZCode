@@ -1,17 +1,15 @@
 import { SquareTerminalIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolLayout } from "@/ToolCallBlocks/ToolLayout.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
 import { getExecuteSecondaryText } from "@/ToolCallBlocks/renderers/execute.js";
-import { useStageDurationText } from "@/ToolCallBlocks/useStageDurationText.js";
 
 const EXECUTE_GROUP_ICON = (
   <SquareTerminalIcon className="size-4 shrink-0 text-foreground-subtle" />
 );
 
-// V4 rows normalize inputStreaming/pendingApproval to pending before entering the shared renderer.
+// V4 row 进入共享 renderer 前会把 inputStreaming/pendingApproval 统一适配为 pending。
 const ACTIVE_STATUSES = new Set(["pending", "in_progress"]);
 
 function formatCompletedSummary(
@@ -19,7 +17,15 @@ function formatCompletedSummary(
   childStatuses: string[],
 ) {
   const parts = [
-    intl.formatPlural({ id: "chat.toolCall.executeGroup.command" }, childStatuses.length),
+    intl.formatMessage(
+      {
+        id:
+          childStatuses.length === 1
+            ? "chat.toolCall.executeGroup.command.one"
+            : "chat.toolCall.executeGroup.command.other",
+      },
+      { count: childStatuses.length },
+    ),
   ];
   const failedCount = childStatuses.filter((status) => status === "failed").length;
   const stoppedCount = childStatuses.filter((status) => status === "stopped").length;
@@ -37,6 +43,7 @@ function formatCompletedSummary(
 }
 
 export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
+  const ToolCallBlock = context.nestedToolRenderer;
   const { intl } = useZCodeIntl();
   const { toolCallNode, isRunning, statusLabel, isOfficeMode = false } = context;
   const { toolCall, childToolCalls } = toolCallNode;
@@ -59,8 +66,8 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
   const runningSecondaryText = useMemo(
     () =>
       latestCommand ? (
-        // Tailwind v4 preflight gives code a mono font by default. Without an explicit choice,
-        // running commands would not match the sans-font convention for collapsed execute/explore.
+        // Tailwind v4 preflight 会给 code 默认 mono 字体，
+        // 不显式指定时运行态命令会和 execute/explore 收起态的 sans 约定不一致。
         <code className="min-w-0 truncate font-sans">{latestCommand}</code>
       ) : undefined,
     [latestCommand],
@@ -69,7 +76,6 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
     intl,
     childToolCalls.map((child) => child.toolCall.status),
   );
-  const durationText = useStageDurationText(toolCall.durationMs, isRunning);
   const renderContent = useCallback(
     () => (
       <div className="ml-2 space-y-2 border-border border-l pl-3.5">
@@ -99,8 +105,7 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
     ],
   );
 
-  // Scroll newly added commands only while the Execute phase is running. Clear the old queue
-  // immediately when the phase ends and show the final statistics.
+  // 只在 Execute 阶段运行时滚动新增 command；阶段结束必须立即清空旧队列并显示最终统计。
   return (
     <ToolLayout
       toolId={toolCall.toolId}
@@ -112,13 +117,12 @@ export function ExecuteGroupToolCallBlock(context: ToolCallBlockRenderContext) {
         id: "chat.toolCall.executeGroup.label",
       })}
       primaryText={isRunning && runningActionLabel ? runningPrimaryText : completedSummary}
-      secondaryText={isRunning ? runningSecondaryText : durationText}
+      secondaryText={isRunning ? runningSecondaryText : undefined}
       summaryContentSeparator="·"
       expandedPrimaryText={completedSummary}
-      // ToolLayout reuses secondaryText by default in the expanded state, leaving the current
-      // command after the command count. The child tool summary represents the current command once
-      // the parent group is expanded, so explicitly clear it here (the finished-stage duration stays).
-      expandedSecondaryText={durationText ?? null}
+      // ToolLayout 默认会在展开态沿用 secondaryText，导致命令数量后残留当前命令。
+      // 父组展开后由子 tool summary 表达当前命令，因此这里必须显式清空。
+      expandedSecondaryText={null}
       animateSummaryContent={isRunning}
       disableSummaryContentAnimation={context.disableSummaryContentAnimation}
       summaryContentKey={

@@ -8,10 +8,7 @@ function Accordion({ className, ...props }: React.ComponentProps<typeof Accordio
   return (
     <AccordionPrimitive.Root
       data-slot="accordion"
-      className={cn(
-        "flex w-full flex-col overflow-hidden rounded-md border border-border",
-        className,
-      )}
+      className={cn("flex w-full flex-col overflow-hidden rounded-md border", className)}
       {...props}
     />
   );
@@ -24,7 +21,7 @@ function AccordionItem({
   return (
     <AccordionPrimitive.Item
       data-slot="accordion-item"
-      className={cn("not-last:border-b border-border data-open:bg-muted/50", className)}
+      className={cn("not-last:border-b data-open:bg-muted/50", className)}
       {...props}
     />
   );
