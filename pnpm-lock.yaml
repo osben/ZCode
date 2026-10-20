@@ -1908,8 +1908,8 @@ importers:
         specifier: ^1.2.2
         version: 1.2.2(@types/react@19.3.0)(react@19.3.0)
       '@rive-app/react-webgl2':
-        specifier: ^4.27.3
-        version: 4.28.0(react@19.3.0)
+        specifier: ^4.36.0
+        version: 4.37.0(react@19.3.0)
       '@streamdown/cjk':
         specifier: ^1.0.3
         version: 1.0.3(@types/mdast@4.0.4)(micromark-util-types@2.0.2)(micromark@4.0.2(supports-color@8.1.1))(react@19.3.0)(unified@11.0.5)
@@ -5743,18 +5743,10 @@ packages:
     peerDependencies:
       release-it: ^18.0.0 || ^19.0.0
 
-  '@rive-app/react-webgl2@4.28.0':
-    resolution: {integrity: sha512-YzuhkgpBCs/gZzN9jLexNNkO8NyST8XJ4WM3h9A7EEg/fjXGmhfE9dw5S5lk18MjEV+Vv4Rbe8IXoP3ko1jkDg==}
-    peerDependencies:
-      react: 19.3.0
-
   '@rive-app/react-webgl2@4.37.0':
     resolution: {integrity: sha512-+twr/lYc1PzrBuio/Gi3maIq1rFJHsQH+ZEffpvO6gGw6o2u0YhLFq6WTZzmmArAJnuxTJovRHhloqIS5pgKow==}
     peerDependencies:
       react: 19.3.0
-
-  '@rive-app/webgl2@2.37.1':
-    resolution: {integrity: sha512-ll7HBYQfhxKUPYspJpICajIrPfPyg63rj3obqulRjwrzlmwXljoOl8CQgUofZi/pNM1Cfz3Und+nB8irK8tuQg==}
 
   '@rive-app/webgl2@2.45.0':
     resolution: {integrity: sha512-uoPFjIeKMISabc9lPE5rXMEWCsnh3IZ4NErwmD0ag8wvM+8zDklcgr7P5C6u7ULnfzH5MkCw/hi00Kg1HhJe9g==}
@@ -16492,17 +16484,10 @@ snapshots:
       - conventional-commits-filter
       - conventional-commits-parser
 
-  '@rive-app/react-webgl2@4.28.0(react@19.3.0)':
-    dependencies:
-      '@rive-app/webgl2': 2.37.1
-      react: 19.3.0
-
   '@rive-app/react-webgl2@4.37.0(react@19.3.0)':
     dependencies:
       '@rive-app/webgl2': 2.45.0
       react: 19.3.0
-
-  '@rive-app/webgl2@2.37.1': {}
 
   '@rive-app/webgl2@2.45.0': {}
 
