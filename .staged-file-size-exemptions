@@ -385,6 +385,16 @@ packages/ui/test/sourceServerManagementPanel.test.ts
 packages/services/src/bots/botsService.ts
 packages/services/test/botsChannelRuntime.test.ts
 
+
+
+# TEMPORARY upstream 3.16.1 sync (zcode-server-cli): oversized files that differ from the pending upstream blob; split each later and remove its line.
+packages/zcode-server-cli/src/cli.ts
+packages/zcode-server-cli/test/coreHttp.test.ts
+
+# Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
+packages/services/test/highspeedCardService.test.ts
+
 packages/services/test/highspeedCardService.test.ts
 
 specs/upstream-sync-cli-divergences.md
+

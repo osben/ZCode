@@ -1,176 +1,44 @@
-/* eslint-disable max-lines -- Release-package staging is assembled linearly by step; splitting it would add cross-step state synchronization. */
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, chmod, cp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { builtinModules } from "node:module";
+import { access, chmod, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createRuntimeManifest, type ServerTarget } from "../runtime/manifest.js";
-import { isTarCommand, resolveHostTarCommand } from "./tarCommand.js";
+import {
+  collectBareModuleSpecifiers,
+  copyPackageDir,
+  ensureNodePtyPrebuild,
+  isNodePtyRuntimePath,
+  isTargetSpecificPackage,
+  pruneKoffiRuntime,
+  resolveProductionPackageClosure,
+} from "./stageDependencies.js";
+import { createComponentArchive, hashPaths, runPackagingCommand } from "./stageArchives.js";
 
-const NODE_BUILTIN_MODULES = new Set(builtinModules);
-
-/**
- * Extract top-level bare module references from bundle artifacts (`from "x"` / `import("x")` / `require("x")`).
- * The result is only syntactically normalized (scoped packages use the first two segments); callers intersect it with
- * workspace node_modules to decide whether a reference is a real npm package. Node built-ins are filtered here.
- */
-export function collectBareModuleSpecifiers(source: string): Set<string> {
-  const names = new Set<string>();
-  const specifierPattern =
-    /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)["']([^"'\n]+)["']/g;
-  let match: RegExpExecArray | null;
-  while ((match = specifierPattern.exec(source)) !== null) {
-    const specifier = match[1];
-    if (!specifier || specifier.startsWith(".") || specifier.startsWith("/")) continue;
-    if (specifier.startsWith("node:")) continue;
-    const segments = specifier.split("/");
-    const packageName = specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
-    if (!packageName || NODE_BUILTIN_MODULES.has(packageName)) continue;
-    names.add(packageName);
-  }
-  return names;
-}
-
-async function readPackageJson(packageDir: string): Promise<Record<string, unknown> | null> {
-  try {
-    return JSON.parse(await readFile(join(packageDir, "package.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Simplified Node resolution: walk upward from the dependent's real directory to locate `node_modules/<name>`.
- * Do not resolve main/exports entry points, so this also works for packages with restricted exports or types-only contents;
- * both pnpm (dependencies alongside `.pnpm/<pkg>/node_modules`) and flat npm layouts are supported.
- */
-async function findDependencyDir(fromDir: string, name: string): Promise<string | null> {
-  let current = resolve(fromDir);
-  while (true) {
-    const candidate = join(current, "node_modules", ...name.split("/"));
-    if ((await readPackageJson(candidate)) !== null) {
-      return await realpath(candidate);
-    }
-    const parent = dirname(current);
-    if (parent === current) return null;
-    current = parent;
-  }
-}
-
-/**
- * Recursively collect the production dependency closure (dependencies + optionalDependencies) starting from entry packages.
- * Return package name → real directory. If the same name resolves to different real directories, throw an error: a flat release layout cannot contain two versions,
- * and silently choosing one would introduce version drift into the package. Skip missing optional dependencies.
- */
-export async function resolveProductionPackageClosure(
-  entryPackageNames: readonly string[],
-  nodeModulesDir: string,
-  workspacePackageDirs: ReadonlyMap<string, string> = new Map(),
-): Promise<Map<string, string>> {
-  const closure = new Map<string, string>();
-  const queue: Array<{ name: string; fromDir: string; optional: boolean }> = entryPackageNames.map(
-    (name) => ({ name, fromDir: dirname(resolve(nodeModulesDir)), optional: true }),
-  );
-
-  while (queue.length > 0) {
-    const item = queue.shift();
-    if (!item) break;
-    const packageDir =
-      (await findDependencyDir(item.fromDir, item.name)) ??
-      workspacePackageDirs.get(item.name) ??
-      null;
-    if (!packageDir) {
-      if (item.optional) continue;
-      throw new Error(
-        `Missing production dependency in workspace: ${item.name} (from ${item.fromDir})`,
-      );
-    }
-    const existing = closure.get(item.name);
-    if (existing) {
-      if (existing !== packageDir) {
-        // pnpm peer dependencies may legitimately include multiple versions (typically ajv6 + ajv8).
-        // Keep the first resolved version at the top level and preserve package-specific nested node_modules during copying,
-        // letting Node's local resolution select the correct peer; do not reject a valid Agent bundle during staging.
-        continue;
-      }
-      continue;
-    }
-    closure.set(item.name, packageDir);
-
-    const packageJson = await readPackageJson(packageDir);
-    const dependencies = (packageJson?.dependencies ?? {}) as Record<string, string>;
-    const optionalDependencies = (packageJson?.optionalDependencies ?? {}) as Record<
-      string,
-      string
-    >;
-    for (const dependencyName of Object.keys(dependencies)) {
-      queue.push({
-        name: dependencyName,
-        fromDir: packageDir,
-        optional: dependencyName in optionalDependencies,
-      });
-    }
-    for (const dependencyName of Object.keys(optionalDependencies)) {
-      queue.push({ name: dependencyName, fromDir: packageDir, optional: true });
-    }
-  }
-  return closure;
-}
-
-/**
- * Runtime allowlist for node-pty. Always exclude `build/`: it contains host-platform build artifacts, and node-pty's
- * loadNativeModule loads in the order build/Release → build/Debug → prebuilds/<platform>-<arch>.
- * Leaving build/ in a cross-platform package makes the target machine load the wrong pty.node architecture first and crash immediately.
- * Also exclude prebuilds for other platforms to keep the release package small.
- */
-export function isNodePtyRuntimePath(relativePath: string, target: ServerTarget): boolean {
-  const normalized = relativePath.split(sep).join("/");
-  if (normalized === "" || normalized === "package.json") return true;
-  // Fix: node-pty's runtime allowlist used to omit license files inside the package, leaving the release with code but no notices.
-  if (/^(?:LICENSE|NOTICE|COPYING)(?:[._-].*)?$/iu.test(normalized)) return true;
-  if (normalized === "lib" || normalized.startsWith("lib/")) return true;
-  if (normalized === "typings" || normalized.startsWith("typings/")) return true;
-  if (
-    normalized === "prebuilds" ||
-    normalized === `prebuilds/${target}` ||
-    normalized.startsWith(`prebuilds/${target}/`)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isTargetSpecificPackage(packageName: string, target: ServerTarget): boolean {
-  if (!packageName.startsWith("@mbears/opentui-core-")) return true;
-  return packageName === `@mbears/opentui-core-${target}`;
-}
+export { collectBareModuleSpecifiers, isNodePtyRuntimePath, resolveProductionPackageClosure };
 
 export interface StageOptions {
   target: ServerTarget;
   appVersion: string;
-  /** tsup output directory (server-cli.js / server-core.js). */
+  /** tsup 产物目录（server-cli.js / server-core.js） */
   distDir: string;
-  /** Existing CLI/Agent bundle (zcode.cjs, standalone CJS). */
+  /** 既有 CLI/Agent bundle（zcode.cjs，自包含 CJS） */
   agentBundlePath: string;
-  /** Prepared Node binary for the target platform. */
+  /** 已准备好的目标平台 Node 二进制 */
   nodeBinaryPath: string;
-  /** Read from the single compliance owner (scripts/third-party-notices.mjs) by the build entry point; component assembly must not construct its own license list. */
+  /** 构建入口从统一合规 owner（scripts/third-party-notices.mjs）读取后传入；组件组装不能自行拼凑许可。 */
   notices: { thirdParty: string; node: string; nodeSource: string };
-  /** Source node_modules used to resolve and copy the dependency closure. */
+  /** 依赖闭包解析与复制的来源 node_modules */
   workspaceNodeModulesDir: string;
-  /** Workspace packages not linked into node_modules by pnpm (for example, @zcode/tui). */
+  /** 未被 pnpm 链接到 node_modules 的 workspace 包（例如 @zcode/tui）。 */
   workspacePackageDirs?: ReadonlyMap<string, string>;
-  /** Parent directory for release output. */
+  /** 发行目录的输出父目录 */
   outputDir: string;
-  /** Root directory for prepared native search tools (tools/<id>/<binary>). */
+  /** 已准备好的 native search tools 根目录（tools/<id>/<binary>）。 */
   nativeToolsDir?: string;
-  /** Official plugin sources or a packages directory that has already been seeded. */
+  /** 官方插件源码或已 seed 的 packages 目录。 */
   officialPluginsDir?: string;
-  /** Whether to also produce tar.gz (defaults to true). */
+  /** 是否同时产出 tar.gz（默认 true） */
   archive?: boolean;
+  /** 是否生成独立组件归档（默认 true）；关闭时仍保留组件内容哈希和大小。 */
+  componentArchives?: boolean;
 }
 
 export interface StagedRelease {
@@ -181,7 +49,7 @@ export interface StagedRelease {
 }
 
 const POSIX_LAUNCHER = `#!/bin/sh
-# Generated by zcode-server staging: locate the distribution root and start Server CLI with the bundled Node.
+# 由 zcode-server staging 生成：定位发行根后用随包 Node 启动 Server CLI。
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 exec "$DIR/runtime/node" "$DIR/runtime/server-cli.js" "$@"
 `;
@@ -193,83 +61,6 @@ const WINDOWS_LAUNCHER = [
   "",
 ].join("\r\n");
 
-async function copyPackageDir(
-  sourceDir: string,
-  targetDir: string,
-  filter?: (relativePath: string) => boolean,
-  includeNestedNodeModules = false,
-): Promise<void> {
-  await cp(sourceDir, targetDir, {
-    recursive: true,
-    dereference: true,
-    filter: (source) => {
-      const relativePath = relative(sourceDir, source);
-      if (relativePath === "") return true;
-      // Do not copy nested node_modules from packages: closure resolution already flattened transitive dependencies into release node_modules.
-      if (
-        !includeNestedNodeModules &&
-        (relativePath === "node_modules" || relativePath.split(sep).includes("node_modules"))
-      )
-        return false;
-      return filter ? filter(relativePath) : true;
-    },
-  });
-}
-
-async function runCommand(command: string, args: readonly string[], cwd: string): Promise<void> {
-  await new Promise<void>((resolvePromise, rejectPromise) => {
-    // macOS's bundled tar writes Finder extended attributes as AppleDouble `._*` entries by default.
-    // When the release package is extracted on Linux/Windows, these host metadata entries become real files, polluting the file tree
-    // and causing component hashes to differ between download and target machine. Disable copyfile metadata before creating the archive.
-    // On Windows, the passed command is an absolute System32 tar.exe path, which also matches this check.
-    const env = isTarCommand(command) ? { ...process.env, COPYFILE_DISABLE: "1" } : process.env;
-    const child = spawn(command, [...args], { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
-    child.once("error", rejectPromise);
-    child.once("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else
-        rejectPromise(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "null"}`));
-    });
-  });
-}
-
-async function listFiles(root: string): Promise<string[]> {
-  const entries = await (await import("node:fs/promises")).readdir(root, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    const relativePath = entry.name;
-    const absolutePath = join(root, relativePath);
-    if (entry.isDirectory()) {
-      for (const nested of await listFiles(absolutePath)) files.push(join(relativePath, nested));
-    } else if (entry.isFile()) {
-      files.push(relativePath);
-    }
-  }
-  return files.sort();
-}
-
-async function hashPaths(
-  root: string,
-  paths: readonly string[],
-): Promise<{ sha256: string; sizeBytes: number }> {
-  const hash = createHash("sha256");
-  let sizeBytes = 0;
-  for (const relativePath of [...paths].sort()) {
-    const absolutePath = join(root, relativePath);
-    const stat = await (await import("node:fs/promises")).stat(absolutePath);
-    const files = stat.isDirectory()
-      ? (await listFiles(absolutePath)).map((file) => join(relativePath, file))
-      : [relativePath];
-    for (const file of files.sort()) {
-      const contents = await readFile(join(root, file));
-      hash.update(`${file}\0`);
-      hash.update(contents);
-      sizeBytes += contents.byteLength;
-    }
-  }
-  return { sha256: hash.digest("hex"), sizeBytes };
-}
-
 async function copyDirectoryIfPresent(
   sourceDir: string | undefined,
   targetDir: string,
@@ -280,17 +71,75 @@ async function copyDirectoryIfPresent(
   } catch {
     return [];
   }
-  const names = (
-    await (await import("node:fs/promises")).readdir(sourceDir, { withFileTypes: true })
-  )
+  const candidates = (await readdir(sourceDir, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && entry.name.endsWith("-plugin"))
     .map((entry) => entry.name)
     .filter((name) => name !== "superpowers-plugin")
     .sort();
+  // Bug 原因：只按 "-plugin" 后缀识别官方插件，会把 checkout 残留的僵尸目录也算进去。CI 用
+  // GIT_CLEAN_FLAGS "-e node_modules/" 跨 job 保留 node_modules，别的分支（例如把 zcode-cua-plugin
+  // 改名为 computer-use-plugin 的分支）install 过的插件目录切回来后只剩 node_modules；tracked 文件
+  // 全没了，但目录还在。官方插件的 package.json 都是 tracked 文件，以它是否存在判定"该目录属于
+  // 当前 checkout"；通过判定的插件仍走下方 fail-closed 校验，不放松对残缺插件的拒绝。
+  const names: string[] = [];
+  for (const name of candidates) {
+    try {
+      await access(join(sourceDir, name, "package.json"));
+      names.push(name);
+    } catch {
+      // 无 package.json ⇒ 不是当前 checkout 的 workspace 包，跳过。
+    }
+  }
   for (const name of names) {
-    await copyPackageDir(join(sourceDir, name), join(targetDir, name));
+    const stagedDir = join(targetDir, name);
+    await copyPackageDir(join(sourceDir, name), stagedDir);
+    await assertOfficialPluginRuntime(stagedDir, name);
   }
   return names.map((name) => name.replace(/-plugin$/u, ""));
+}
+
+const PLUGIN_ROOT_PLACEHOLDER_PREFIX = "${ZCODE_PLUGIN_ROOT}/";
+
+/**
+ * Bug 原因：legacy prepare-prebuilds.mjs 曾显式构建并断言 android-emulator / ios-simulator /
+ * browser-use 的 `dist/mcp/server.js`；切到 stageRelease 后只剩整目录复制，而插件 dist 被
+ * gitignore，干净 CI 工作区会把只有 plugin.json 与 skills、却没有 MCP 入口的插件静默打进
+ * archive，远端启用插件后 MCP server 启动时才报找不到文件。这里以 plugin.json 声明为事实源做
+ * fail-closed 校验：manifest 缺失，或 mcpServers 的 command/args 引用的 `${ZCODE_PLUGIN_ROOT}/...`
+ * 文件不在 staged 目录里，staging 直接失败，而不是产出残缺 archive。
+ */
+async function assertOfficialPluginRuntime(stagedDir: string, name: string): Promise<void> {
+  const manifestPath = join(stagedDir, ".zcode-plugin", "plugin.json");
+  let manifest: {
+    mcpServers?: Record<string, { command?: unknown; args?: unknown } | undefined>;
+  };
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, "utf8")) as typeof manifest;
+  } catch (error) {
+    throw new Error(`Official plugin ${name} has no readable manifest: ${manifestPath}`, {
+      cause: error,
+    });
+  }
+  const missing: string[] = [];
+  for (const server of Object.values(manifest.mcpServers ?? {})) {
+    if (!server) continue;
+    const references = [server.command, ...(Array.isArray(server.args) ? server.args : [])];
+    for (const reference of references) {
+      if (typeof reference !== "string" || !reference.startsWith(PLUGIN_ROOT_PLACEHOLDER_PREFIX))
+        continue;
+      const relativePath = reference.slice(PLUGIN_ROOT_PLACEHOLDER_PREFIX.length);
+      try {
+        await access(join(stagedDir, ...relativePath.split("/")));
+      } catch {
+        missing.push(relativePath);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Official plugin ${name} manifest references MCP runtime files missing from the staged package: ${missing.join(", ")} (build the plugin before staging)`,
+    );
+  }
 }
 
 async function copyNativeTools(
@@ -324,7 +173,7 @@ async function copyNativeTools(
     const targetPath = join(targetDir, id, source.split(sep).pop() ?? id);
     await mkdir(dirname(targetPath), { recursive: true });
     await cp(source, targetPath, { dereference: true });
-    // Fix: copying only executables would omit the prepared declarations from the standalone native-search-tools component.
+    // 修复：只复制可执行文件会让独立 native-search-tools 组件丢失已准备的声明。
     for (const notice of ["THIRD-PARTY-NOTICES.txt", "SOURCES.json"]) {
       const bytes = await readFile(join(dirname(source), notice));
       if (!bytes.length) throw new Error(`Empty native notice: ${notice}`);
@@ -336,47 +185,7 @@ async function copyNativeTools(
   return copied;
 }
 
-async function createComponentArchive(
-  releaseDir: string,
-  outputDir: string,
-  target: ServerTarget,
-  id: string,
-  paths: readonly string[],
-): Promise<{ archivePath: string; sha256: string; sizeBytes: number }> {
-  const info = await hashPaths(releaseDir, paths);
-  const componentRoot = join(outputDir, ".components", `${id}-${info.sha256.slice(0, 12)}`);
-  await rm(componentRoot, { force: true, recursive: true });
-  await mkdir(componentRoot, { recursive: true });
-  for (const relativePath of paths) {
-    const source = join(releaseDir, relativePath);
-    try {
-      await access(source);
-    } catch {
-      continue;
-    }
-    const targetPath = join(componentRoot, relativePath);
-    await mkdir(dirname(targetPath), { recursive: true });
-    await cp(source, targetPath, { recursive: true, dereference: true });
-  }
-  const extension = target.startsWith("win32-") ? "zip" : "tar.gz";
-  const archivePath = join(outputDir, "components", target, `${id}-${info.sha256}.${extension}`);
-  await mkdir(dirname(archivePath), { recursive: true });
-  await rm(archivePath, { force: true });
-  // Windows hosts lack zip and Git Bash's GNU tar is not usable (see tarCommand.ts); all tar calls explicitly use System32 bsdtar.
-  // POSIX hosts continue using the zip command to create zip archives.
-  const tarCommand = resolveHostTarCommand();
-  if (extension === "zip") {
-    if (process.platform === "win32")
-      await runCommand(tarCommand, ["-acf", archivePath, "."], componentRoot);
-    else await runCommand("zip", ["-qr", archivePath, "."], componentRoot);
-  } else if (process.platform === "win32") {
-    await runCommand(tarCommand, ["-czf", archivePath, "."], componentRoot);
-  } else await runCommand("tar", ["-czf", archivePath, "."], componentRoot);
-  await rm(componentRoot, { force: true, recursive: true });
-  return { archivePath, ...info };
-}
-
-/** Assemble the `zcode-server-<os>-<arch>/` release directory; local assembly only, with no upload or publishing. */
+/** 组装 `zcode-server-<os>-<arch>/` 发行目录（spec §7.1）；只做本地组装，不上传、不发布。 */
 export async function stageRelease(options: StageOptions): Promise<StagedRelease> {
   for (const [name, value] of Object.entries(options.notices)) {
     if (!value.trim()) throw new Error(`Missing distribution notice: ${name}`);
@@ -386,13 +195,16 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
   const releaseDir = join(outputRoot, releaseName);
   const runtimeDir = join(releaseDir, "runtime");
   await rm(releaseDir, { force: true, recursive: true });
-  // Staging rebuilds the release directory: delete old component archives for the same target so a previous build's
-  // hash is not accidentally uploaded to the CDN, exposing components in the catalog that do not match this manifest.
-  await rm(join(outputRoot, "components", options.target), { force: true, recursive: true });
+  // staging 是发布目录的重建操作：删除同 target 的旧组件归档，避免上一次构建的
+  // hash 仍被误上传到 CDN，导致 catalog 暴露无法与本次 manifest 对齐的组件。
+  await rm(join(outputRoot, "components", options.target), {
+    force: true,
+    recursive: true,
+  });
   await rm(join(outputRoot, ".components"), { force: true, recursive: true });
   await mkdir(join(releaseDir, "bin"), { recursive: true });
   await mkdir(runtimeDir, { recursive: true });
-  // Every independently downloadable component must carry the applicable notices, written before component hashes are computed.
+  // 每个可独立下载的组件都要带适用声明，并在计算组件哈希前写入。
   await writeFile(join(runtimeDir, "THIRD-PARTY-NOTICES.md"), options.notices.thirdParty);
   await writeFile(join(runtimeDir, "LICENSE.node.txt"), options.notices.node);
   await writeFile(join(runtimeDir, "NODE-SOURCES.json"), options.notices.nodeSource);
@@ -404,7 +216,7 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     );
   }
 
-  // Copy the entry bundle and sourcemap with matching names; filenames must align with the relative-path resolution in cli.ts.
+  // 入口 bundle 与 sourcemap 同名复制，文件名必须与 cli.ts 的相对路径解析保持一致。
   const bundleSources: string[] = [];
   for (const entryName of ["server-cli.js", "server-core.js"]) {
     const sourcePath = join(options.distDir, entryName);
@@ -417,8 +229,10 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     `${JSON.stringify({ name: releaseName, private: true, type: "module" }, null, 2)}\n`,
     "utf8",
   );
-  await cp(options.agentBundlePath, join(runtimeDir, "zcode.cjs"), { dereference: true });
-  // The Agent bundle is the third runtime entry point; scanning only the Server bundle would miss external TUI/Playwright dependencies.
+  await cp(options.agentBundlePath, join(runtimeDir, "zcode.cjs"), {
+    dereference: true,
+  });
+  // Agent bundle 是第三个实际运行入口；只扫描 Server bundle 会漏掉外置的 TUI/Playwright。
   bundleSources.push(await readFile(options.agentBundlePath, "utf8"));
 
   const nodeTargetPath = join(
@@ -428,8 +242,8 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
   await cp(options.nodeBinaryPath, nodeTargetPath, { dereference: true });
   if (!options.target.startsWith("win32-")) await chmod(nodeTargetPath, 0o755);
 
-  // Use artifact scanning as the source of truth for runtime/node_modules: install everything the bundles reference, including transitive dependencies.
-  // Do not use the tsup external declaration list, which can drift from actual references.
+  // runtime/node_modules 以产物扫描为事实源：bundle 引用什么就装什么（含传递依赖），
+  // 不使用 tsup external 声明列表，避免声明与实际引用漂移。
   const referencedPackages = new Set<string>();
   for (const source of bundleSources) {
     for (const name of collectBareModuleSpecifiers(source)) referencedPackages.add(name);
@@ -451,8 +265,8 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
         isNodePtyRuntimePath(relativePath, options.target),
       );
     } else {
-      // External Agent dependencies can contain multiple peer versions (for example, ajv6 + ajv8). Preserve nested node_modules only for known peer
-      // conflicts to avoid copying pnpm's entire development dependency tree into the release package.
+      // Agent 的外置依赖存在 peer 版本并存（例如 ajv6 + ajv8）。只为已知 peer
+      // 冲突包保留 nested node_modules，避免把 pnpm 的整棵开发依赖树复制进发行包。
       await copyPackageDir(
         packageDir,
         targetDir,
@@ -536,22 +350,20 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     plugins,
     components: componentMeta,
   });
-  await writeFile(
-    join(releaseDir, "manifest.json"),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
-  );
-
-  for (const component of componentMeta) {
-    const archive = await createComponentArchive(
-      releaseDir,
-      outputRoot,
-      options.target,
-      component.id,
-      component.paths,
-    );
-    component.archivePath = relative(outputRoot, archive.archivePath).split(sep).join("/");
-    componentArchivePaths.push(archive.archivePath);
+  // SSH 开发验证只安装整包；独立组件归档会重复哈希、复制和压缩同一批内容。
+  // 仅跳过归档生成，保留上方组件身份计算和完整资源校验；默认发布链仍生成组件包。
+  if (options.componentArchives !== false) {
+    for (const component of componentMeta) {
+      const archive = await createComponentArchive(
+        releaseDir,
+        outputRoot,
+        options.target,
+        component.id,
+        component.paths,
+      );
+      component.archivePath = relative(outputRoot, archive.archivePath).split(sep).join("/");
+      componentArchivePaths.push(archive.archivePath);
+    }
   }
   await writeFile(
     join(releaseDir, "manifest.json"),
@@ -564,15 +376,9 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     const extension = options.target.startsWith("win32-") ? "zip" : "tar.gz";
     archivePath = join(outputRoot, `${releaseName}.${extension}`);
     await rm(archivePath, { force: true });
-    // On Windows hosts, explicitly use System32 bsdtar instead of relying on the caller's PATH (see tarCommand.ts for the reason).
-    const tarCommand = resolveHostTarCommand();
-    if (extension === "zip") {
-      if (process.platform === "win32")
-        await runCommand(tarCommand, ["-acf", archivePath, releaseName], outputRoot);
-      else await runCommand("zip", ["-qr", archivePath, releaseName], outputRoot);
-    } else if (process.platform === "win32") {
-      await runCommand(tarCommand, ["-czf", archivePath, releaseName], outputRoot);
-    } else await runCommand("tar", ["-czf", archivePath, releaseName], outputRoot);
+    if (extension === "zip")
+      await runPackagingCommand("zip", ["-qr", archivePath, releaseName], outputRoot);
+    else await runPackagingCommand("tar", ["-czf", archivePath, releaseName], outputRoot);
   }
 
   return {
@@ -581,74 +387,4 @@ export async function stageRelease(options: StageOptions): Promise<StagedRelease
     componentArchivePaths,
     packagedDependencies: [...closure.keys()].sort(),
   };
-}
-
-async function pruneKoffiRuntime(
-  sourceDir: string,
-  targetDir: string,
-  target: ServerTarget,
-): Promise<void> {
-  const [platform, architecture] = target.split("-");
-  const targetKeys =
-    platform === "linux"
-      ? [`linux_${architecture}`, `musl_${architecture}`]
-      : [`${platform}_${architecture}`];
-  const sourceBuild = join(sourceDir, "build", "koffi");
-  const targetBuild = join(targetDir, "build", "koffi");
-  await rm(targetBuild, { recursive: true, force: true });
-  await mkdir(targetBuild, { recursive: true });
-  for (const targetKey of targetKeys) {
-    const sourcePath = join(sourceBuild, targetKey);
-    try {
-      await access(sourcePath);
-    } catch {
-      continue;
-    }
-    await cp(sourcePath, join(targetBuild, targetKey), { recursive: true, dereference: true });
-  }
-}
-
-/**
- * Ensure node-pty in the release package has a pty.node for the target platform. The official node-pty npm package includes only
- * darwin/win32 prebuilds; for Linux, add the binary from the workspace's `@lydell/node-pty-<target>`
- * (the same source as the legacy remote-asset pipeline). Fail directly if it is missing to avoid shipping a package with broken terminal support.
- */
-async function ensureNodePtyPrebuild(
-  options: StageOptions,
-  nodeModulesTargetDir: string,
-): Promise<void> {
-  const prebuildDir = join(nodeModulesTargetDir, "node-pty", "prebuilds", options.target);
-  const ptyNodePath = join(prebuildDir, "pty.node");
-  let hasPtyNode = true;
-  try {
-    await access(ptyNodePath);
-  } catch {
-    hasPtyNode = false;
-  }
-  if (!hasPtyNode) {
-    // The official package has no prebuild for this platform (Linux); add it from the @lydell platform package.
-    const lydellDir = await findDependencyDir(
-      dirname(resolve(options.workspaceNodeModulesDir)),
-      `@lydell/node-pty-${options.target}`,
-    );
-    const lydellPtyNode = lydellDir
-      ? join(lydellDir, "prebuilds", options.target, "pty.node")
-      : null;
-    if (!lydellPtyNode) {
-      throw new Error(
-        `Missing node-pty prebuild for ${options.target}: install @lydell/node-pty-${options.target}`,
-      );
-    }
-    await mkdir(prebuildDir, { recursive: true });
-    await cp(lydellPtyNode, ptyNodePath, { dereference: true });
-  }
-  // On Darwin, spawn-helper must be executable; npm publishing/extraction does not guarantee permission bits, and node-pty
-  // fails during posix_spawn if they are missing (the legacy remote-asset pipeline hit the same issue; see prepare-prebuilds.mjs).
-  const spawnHelperPath = join(prebuildDir, "spawn-helper");
-  try {
-    await access(spawnHelperPath);
-    await chmod(spawnHelperPath, 0o755);
-  } catch {
-    // Non-Darwin platforms do not have spawn-helper; ignore it.
-  }
 }
