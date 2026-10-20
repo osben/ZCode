@@ -49,6 +49,9 @@ describe("release installer", () => {
       }),
       "utf8",
     );
+    await mkdir(layout.serverRoot, { recursive: true });
+    await writeFile(layout.uninstalledFile, JSON.stringify({ uninstalled: true }), "utf8");
+    await writeFile(join(layout.serverRoot, "KEEP_UNKNOWN.txt"), "preserve", "utf8");
     const archivePath = join(root, "release.tar.gz");
     const { execFile } = await import("node:child_process");
     await new Promise<void>((resolve, reject) =>
@@ -68,6 +71,12 @@ describe("release installer", () => {
     const launcher = await readFile(join(layout.stableBinDir, "zcode"), "utf8");
     expect(launcher).toContain("current.json");
     expect(launcher).toContain('"$ROOT/releases"/*)');
+    await expect(readFile(layout.uninstalledFile, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(join(layout.serverRoot, "KEEP_UNKNOWN.txt"), "utf8")).resolves.toBe(
+      "preserve",
+    );
   });
 
   it("installs a Windows zip and writes a launcher that is safe for quoted paths", async () => {
@@ -119,15 +128,18 @@ describe("release installer", () => {
     expect(launcher).toContain("Invalid current ZCode Server release");
   });
 
-  // Bugfix: this case verifies the POSIX shell stable launcher's fail-closed output by executing
-  // the shell script directly via its shebang. Windows cannot spawn an extensionless script
-  // (ENOENT), so run on POSIX hosts only.
+  // Bugfix: 该用例验证 POSIX shell 版 stable launcher 的 fail-closed 输出；Windows 没有 /bin/sh，只在 POSIX 宿主运行。
+  // Bugfix: 原来靠 shebang 直接执行新写入的脚本。macOS XProtect 在新可执行文件首次 exec 时扫描，且全系统排队：
+  // 单次约 0.4 秒，并行跑 1391 个测试文件时超过 30 秒超时。改由系统 /bin/sh 读取脚本，exec 目标是系统二进制，
+  // 不再触发扫描；shebang 与可执行位改为直接断言。
   it.skipIf(process.platform === "win32")(
     "fails closed when the POSIX stable launcher reads an external current release",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "zcode-release-launcher-boundary-"));
       const layout = resolveServerLayout(join(root, "server"));
-      await writeStableLauncher(layout, "linux");
+      const launcherPath = await writeStableLauncher(layout, "linux");
+      expect((await readFile(launcherPath, "utf8")).startsWith("#!/bin/sh\n")).toBe(true);
+      expect((await stat(launcherPath)).mode & 0o111).not.toBe(0);
       await writeFile(
         layout.currentFile,
         JSON.stringify({ version: "1.0.0", releaseDir: join(root, "outside") }),
@@ -136,7 +148,7 @@ describe("release installer", () => {
       const { execFile } = await import("node:child_process");
       await expect(
         new Promise<void>((resolve, reject) => {
-          execFile(join(layout.stableBinDir, "zcode"), [], (error, _stdout, stderr) => {
+          execFile("/bin/sh", [launcherPath], (error, _stdout, stderr) => {
             if (error) reject(new Error(`${error.message}: ${stderr}`));
             else resolve();
           });

@@ -56,6 +56,8 @@ Deferred in 8c (kept at fork HEAD):
 
 ### Coordinator decisions applied after 8c (recorded for the next PR)
 
+Part 4 (`specs/services-upstream-sync-part4.md`) closes the 8c deferrals below. Its decisions supersede the "next PR" wording in this list.
+
 - Task-state single writer: the fork `zcodeTask*` path stays the only writer. Upstream `task-facts` (`createTaskFacts`, `mutateSessionFacts`) stays unwired until the UI sidebar PR. `zcodeTaskServiceAdapter.ts` and `zcodeTaskIndexSyncer.ts` remain at fork HEAD in 8c, because the three-way merge is not a clean non-ownership subset.
 - `packages/server/src/http.ts`: `/api/connect-remote` and `/ws/remote/:id` are kept (fork remote features and bots `/remote` depend on them; `specs/bot-remote-command.md`). Remaining upstream hunks are not in 8c: one wires `workspaceIdentityMapper` from the standalone host, one takes `serverId` from options. Both need the server-cli wiring, so the hand merge and the fork-route test are the next PR's work.
 - `session/taskIndexRepo.ts` non-group hunks: deferred to the UI sidebar PR, together with the grouped view they depend on.
@@ -90,4 +92,4 @@ Each file below keeps its fork HEAD version. A fork-wins three-way merge was tri
 
 ## API export ledger (3.16.1, PR api-exports)
 
-The export ledger (name, upstream definition, fork location, status) lives in `specs/services-upstream-sync-api-exports.md` to keep this file under the staged-size limit.
+# The export ledger (name, upstream definition, fork location, status) lives in `specs/services-upstream-sync-api-exports.md` to keep this file under the staged-size limit.

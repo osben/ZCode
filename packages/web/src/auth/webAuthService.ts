@@ -6,6 +6,7 @@ import {
 import {
   buildOAuthState,
   buildReturnToCallbackUrl,
+  buildWebRemoteOAuthRedirectUri,
   isTrustedDevReturnTo,
   parseOAuthState,
   parseOptionalUrl,
@@ -86,20 +87,36 @@ export class WebAuthService {
   startLogin(options: WebAuthLoginOptions = {}): void {
     const nonce = this.runtime.createNonce();
     const provider = options.provider ?? ZAI_PROVIDER_ID;
+    const appReturnTo = options.appReturnTo ?? this.runtime.getCurrentHref();
+    const returnToOptions = { currentOrigin: this.runtime.getCurrentOrigin() };
+    const redirectUri = buildWebRemoteOAuthRedirectUri(
+      options.redirectUri ?? this.config.redirectUri,
+      appReturnTo,
+      returnToOptions,
+    );
     this.repo.savePendingNonce(nonce);
     this.repo.savePendingProvider(provider);
+    this.repo.savePendingRedirectUri(nonce, redirectUri);
 
     const state = buildOAuthState({
       nonce,
-      app_return_to: options.appReturnTo ?? this.runtime.getCurrentHref(),
-      ...(options.devReturnTo ? { return_to: options.devReturnTo } : {}),
+      app_return_to: appReturnTo,
+      ...(options.devReturnTo
+        ? {
+            return_to: buildWebRemoteOAuthRedirectUri(
+              options.devReturnTo,
+              appReturnTo,
+              returnToOptions,
+            ),
+          }
+        : {}),
     });
 
     this.runtime.assign(
       this.provider.buildAuthorizeUrl({
         state,
         provider,
-        redirectUri: options.redirectUri ?? this.config.redirectUri,
+        redirectUri,
       }),
     );
   }
@@ -141,14 +158,18 @@ export class WebAuthService {
     // Use the provider recorded before redirect: authorize parameter names and the location of access_token
     // in the token response are provider-specific. If absent, fall back to zai to keep legacy callback links working.
     const provider = this.repo.loadPendingProvider() ?? ZAI_PROVIDER_ID;
+    const pendingRedirectUri = this.repo.loadPendingRedirectUri(statePayload.nonce);
     this.repo.clearPendingNonce();
     this.repo.clearPendingProvider();
+    this.repo.clearPendingRedirectUri();
 
-    const callbackRedirectUri = ["/cn/share/callback", "/share/callback"].includes(
-      new URL(url).pathname,
-    )
-      ? this.config.shareRedirectUri
-      : this.config.redirectUri;
+    // Logins started by older pages have no pending redirect URI and keep the configured value.
+    // Never use the current callback's code/state as redirect_uri.
+    const callbackRedirectUri =
+      pendingRedirectUri ??
+      (["/cn/share/callback", "/share/callback"].includes(new URL(url).pathname)
+        ? this.config.shareRedirectUri
+        : this.config.redirectUri);
     const exchange = await this.provider.exchangeToken({
       code: callback.code,
       state: callback.state,
@@ -178,6 +199,22 @@ export class WebAuthService {
 
   getZCodeJwtToken(): string | null {
     return this.repo.loadZCodeJwtToken();
+  }
+
+  /** Display data for the account row on the device page. Read-only; it does not participate in the login decision. */
+  getActiveAccount(): {
+    displayName: string;
+    avatarUrl?: string;
+    provider: WebOAuthProviderId;
+  } | null {
+    const account = this.repo.loadActiveAccount();
+    if (!account) return null;
+    const { userInfo, provider } = account;
+    return {
+      displayName: userInfo.displayName.trim() || userInfo.username,
+      ...(userInfo.avatarUrl ? { avatarUrl: userInfo.avatarUrl } : {}),
+      provider,
+    };
   }
 
   async logout(): Promise<void> {

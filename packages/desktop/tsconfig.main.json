@@ -1,11 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "noEmit": true,
+    "paths": { "@desktop/*": ["./src/*"] },
     "outDir": "out/main",
-    "rootDir": "src/main",
-    "lib": ["es2025"]
+    "rootDir": "src",
+    "lib": ["es2025", "dom"],
+    "types": ["node", "electron"]
   },
-  "include": ["src/main"],
+  "include": ["src/main", "src/shared", "src/scheduler"],
   // Main depends directly on shared and services; these references let the Desktop subproject consistently reuse their generated declarations.
   "references": [{ "path": "../shared" }, { "path": "../services" }]
 }

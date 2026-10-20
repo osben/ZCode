@@ -1,12 +1,13 @@
 import {
   conversationShareErrorEnvelopeSchema,
-  conversationShareKnownErrorCodeSchema,
+  classifyConversationShareError,
+  conversationShareRequestIdSchema,
   conversationSharePreviewDataSchema,
   createConversationShareSuccessEnvelopeSchema,
   decodeConversationShareRows,
   isConversationShareSchemaVersionSupported,
   parseConversationSharePathname,
-  type ConversationShareApiErrorCode,
+  type ConversationShareErrorKind,
   type ConversationSharePreview,
   type ServiceLocale,
   toServiceLocale,
@@ -14,26 +15,20 @@ import {
 
 const SHARE_CODE_PATTERN = /^[A-Za-z0-9._~-]{1,512}$/u;
 
-export type ConversationSharePreviewErrorKind =
-  | "authentication_required"
-  | "not_found"
-  | "expired"
-  | "rate_limited"
-  | "network"
-  | "invalid_contract"
-  | "unsupported_schema_version"
-  | "unknown";
+export type ConversationSharePreviewErrorKind = ConversationShareErrorKind;
 
 export class ConversationSharePreviewClientError extends Error {
   readonly kind: ConversationSharePreviewErrorKind;
   readonly status?: number;
-  readonly code?: ConversationShareApiErrorCode;
+  readonly code?: number;
+  readonly requestId?: string;
 
   constructor(options: {
     kind: ConversationSharePreviewErrorKind;
     message: string;
     status?: number;
-    code?: ConversationShareApiErrorCode;
+    code?: number;
+    requestId?: string;
     cause?: unknown;
   }) {
     super(options.message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -41,6 +36,8 @@ export class ConversationSharePreviewClientError extends Error {
     this.kind = options.kind;
     this.status = options.status;
     this.code = options.code;
+    const requestId = conversationShareRequestIdSchema.safeParse(options.requestId);
+    if (requestId.success) this.requestId = requestId.data;
   }
 }
 
@@ -72,28 +69,6 @@ export function buildShareImportDeepLink(shareCode: string): string {
     throw new TypeError("Invalid conversation share code");
   }
   return `zcode://share/import?code=${encodeURIComponent(shareCode)}`;
-}
-
-function mapErrorKind(code: ConversationShareApiErrorCode): ConversationSharePreviewErrorKind {
-  switch (code) {
-    case 3213:
-      return "authentication_required";
-    case 3211:
-      return "not_found";
-    case 3212:
-      return "expired";
-    case 3002:
-      return "rate_limited";
-    default:
-      return "unknown";
-  }
-}
-
-function mapHttpStatus(status: number): ConversationSharePreviewErrorKind {
-  if (status === 401) return "authentication_required";
-  if (status === 404 || status === 403) return "not_found";
-  if (status === 429) return "rate_limited";
-  return "unknown";
 }
 
 export interface ConversationSharePreviewClientOptions {
@@ -187,12 +162,28 @@ export class ConversationSharePreviewClient {
       contentType: response.headers.get("content-type"),
     });
 
-    const body = await response.text();
+    const headerId = conversationShareRequestIdSchema.safeParse(
+      response.headers.get("x-request-id"),
+    );
+    const requestId = headerId.success ? headerId.data : undefined;
+    let body: string;
+    try {
+      body = await response.text();
+    } catch (cause) {
+      throw new ConversationSharePreviewClientError({
+        kind: "network",
+        message: "Share response interrupted",
+        status: response.status,
+        requestId,
+        cause,
+      });
+    }
     if (!response.ok && !body.trim()) {
       throw new ConversationSharePreviewClientError({
-        kind: mapHttpStatus(response.status),
+        kind: classifyConversationShareError(response.status),
         message: "Conversation share API failed",
         status: response.status,
+        requestId,
       });
     }
     let payload: unknown;
@@ -200,9 +191,10 @@ export class ConversationSharePreviewClient {
       payload = JSON.parse(body) as unknown;
     } catch (error) {
       throw new ConversationSharePreviewClientError({
-        kind: "invalid_contract",
+        kind: response.ok ? "invalid_contract" : classifyConversationShareError(response.status),
         message: "Conversation share API returned invalid JSON",
         status: response.status,
+        requestId,
         cause: error,
       });
     }
@@ -210,19 +202,20 @@ export class ConversationSharePreviewClient {
     if (!response.ok) {
       const parsedError = conversationShareErrorEnvelopeSchema.safeParse(payload);
       if (parsedError.success) {
-        // Preserve the server's msg for unknown business codes instead of letting envelope parsing fail and degrade into a context-free HTTP error.
-        const knownCode = conversationShareKnownErrorCodeSchema.safeParse(parsedError.data.code);
+        // Unknown business codes keep the code and request ID so server logs can be correlated.
         throw new ConversationSharePreviewClientError({
-          kind: knownCode.success ? mapErrorKind(knownCode.data) : mapHttpStatus(response.status),
+          kind: classifyConversationShareError(response.status, parsedError.data.code),
           message: parsedError.data.msg,
           status: response.status,
-          ...(knownCode.success ? { code: knownCode.data } : {}),
+          requestId: requestId ?? parsedError.data.logid,
+          code: parsedError.data.code,
         });
       }
       throw new ConversationSharePreviewClientError({
-        kind: mapHttpStatus(response.status),
+        kind: classifyConversationShareError(response.status),
         message: "Conversation share API failed",
         status: response.status,
+        requestId,
       });
     }
 
@@ -232,6 +225,7 @@ export class ConversationSharePreviewClient {
         kind: "invalid_contract",
         message: "Conversation share preview does not match the public contract",
         status: response.status,
+        requestId,
         cause: parsed.error,
       });
     }
@@ -247,6 +241,7 @@ export class ConversationSharePreviewClient {
         kind: "unsupported_schema_version",
         message: "Conversation share requires a newer ZCode version",
         status: response.status,
+        requestId,
       });
     }
     // Degrade row by row: skip and count unrecognized rows so the entire page remains available.

@@ -9,6 +9,7 @@ import {
   type HostAgentProcessSpawnedResponse,
   type HostCuaOperationStateResponse,
   type HostMcpTelemetryResponse,
+  type HostPluginTelemetryResponse,
   type HostSessionCreateTelemetryResponse,
   type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
@@ -44,6 +45,7 @@ import { ingestHostNetworkObservations } from "./desktopNetworkTelemetry.js";
 import {
   buildHostProcessEnv,
   hostModulePath,
+  type RemoteAssetDirs,
   resolveBundledGlmBinaryPath,
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
@@ -85,6 +87,7 @@ export interface HostInitMessage {
     workspaceIdentity?: string;
   }>;
   agentSpawnFallbackCwd?: string;
+  remoteAssets?: RemoteAssetDirs;
   /** Path to the ZCode Built-in Provider Config resolved by Main; Host/Services do not know Electron's installation layout. */
   zcodeBuiltinProviderConfigFilePath: string;
   /** Local runtime environment collected/filtered asynchronously by Main; passed only to InitLocal. */
@@ -185,6 +188,7 @@ export function spawnHostProcess(
     onAgentProcessReady?: (event: HostAgentProcessReadyResponse) => void;
     onAgentProcessSpawned?: (event: HostAgentProcessSpawnedResponse) => void;
     onMcpTelemetry?: (event: HostMcpTelemetryResponse) => void;
+    onPluginTelemetry?: (event: HostPluginTelemetryResponse) => void;
     onSessionCreateTelemetry?: (event: HostSessionCreateTelemetryResponse) => void;
     onCuaOperationStateChanged?: (
       source: ElectronUtilityProcess,
@@ -238,6 +242,7 @@ export function spawnHostProcess(
     onOffPeakRunResult?: (result: {
       offPeakTaskId: string;
       ok: boolean;
+      lifecycleManaged?: true;
       conversationId?: string;
       sessionId?: string;
       error?: string;
@@ -387,6 +392,11 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.McpTelemetry) {
       dependencies.onMcpTelemetry?.(result.data);
+      return;
+    }
+
+    if (result.data.type === HostResponseTypes.PluginTelemetry) {
+      dependencies.onPluginTelemetry?.(result.data);
       return;
     }
 
@@ -595,6 +605,7 @@ export function spawnHostProcess(
       dependencies.onOffPeakRunResult?.({
         offPeakTaskId: result.data.offPeakTaskId,
         ok: result.data.ok,
+        lifecycleManaged: result.data.lifecycleManaged,
         conversationId: result.data.conversationId,
         sessionId: result.data.sessionId,
         error: result.data.error,

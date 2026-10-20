@@ -3,7 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelSelectionView } from "@zcode/services";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
+import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
 import {
+  INCOGNITO_LOCKDOWN_PROFILE,
   type ModelSelection,
   ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
   type ZCodeWorkspaceStateSnapshot,
@@ -3630,6 +3632,200 @@ describe("副屏首条推荐的桌面与手机提交边界", () => {
       },
     );
   }
+});
+
+// specs/ui-draft-send-path.md: first sends that need a session created on the send path.
+describe("SessionPane draft send route (create route)", () => {
+  it("activates the prepared worktree with attachments and context in the same submission", async () => {
+    const snapshot = makeSnapshot();
+    projectionState.current = {
+      status: "live",
+      snapshot,
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const attachments = [
+      {
+        ref: "zcode-artifact://pasted",
+        fileName: "pasted-text.txt",
+        mime: "text/plain",
+        bytes: 20000,
+      },
+    ];
+    const contextRefs = [{ kind: "shared_context_import" as const, context_id: "plan-context" }];
+    const conversationQuotes = [{ text: "Planning requirements", messageId: "quoted-message" }];
+    const executionWorktree = { path: "/workspace-worktrees/plan", branchName: "zcode/plan" };
+    const reuploadAttachmentsForSession = vi.fn(async () => attachments);
+    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+      ackFor(envelope, {
+        status: "accepted",
+        ...(envelope.type === "createSession"
+          ? { result: { type: "createSession" as const, sessionId: snapshot.sessionId } }
+          : {}),
+      }),
+    );
+    const root = await renderPane();
+    try {
+      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
+      await act(async () => {
+        await captured.composerProps?.onSendText("inspect the context", {
+          attachments,
+          sharedContextRefs: contextRefs,
+          conversationQuotes,
+          contextAttachmentCount: 2,
+          executionWorktree,
+          preparedSessionId: snapshot.sessionId,
+          preparedAttemptId: "plan-attempt",
+          reuploadAttachmentsForSession,
+        });
+        await flushMicrotasks();
+      });
+      const submitted = mocks.sendCommand.mock.calls
+        .slice(callsBeforeSubmit)
+        .map(([command]) => command);
+      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
+      expect(submitted[0]).toMatchObject({
+        payload: {
+          preparedSessionId: snapshot.sessionId,
+          expectedAttemptId: "plan-attempt",
+          executionWorktree,
+        },
+      });
+      expect(submitted[1]).toMatchObject({
+        sessionId: snapshot.sessionId,
+        payload: {
+          text: "inspect the context",
+          attachments,
+          context_refs: contextRefs,
+          conversationQuotes,
+        },
+      });
+      expect(reuploadAttachmentsForSession).toHaveBeenCalledExactlyOnceWith(snapshot.sessionId);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("creates the execution-worktree session on the send path and never promotes the warm draft", async () => {
+    const warmSessionId = "warm-draft-not-promoted";
+    const createdSessionId = "worktree-created-session";
+    const warmSnapshot = makeSnapshot();
+    warmSnapshot.sessionId = warmSessionId;
+    projectionState.current = {
+      status: "live",
+      snapshot: null,
+      subscriptionId: "worktree-draft-subscription",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const beginPromotion = vi.fn(() => true);
+    const promote = vi.fn();
+    // A warm draft exists, but a worktree send must not read or promote it (the warm cwd is the parent workspace).
+    prewarmHookMock.binding = {
+      workspaceKey: "/workspace",
+      sessionId: warmSessionId,
+      promote,
+      discard: vi.fn(),
+      beginPromotion,
+    } as typeof prewarmHookMock.binding;
+    const reuploadAttachmentsForSession = vi.fn(async () => [
+      { ref: "zcode-artifact://worktree-copy", fileName: "a.txt", mime: "text/plain", bytes: 4 },
+    ]);
+    const attachments = [
+      { ref: "zcode-artifact://parent-copy", fileName: "a.txt", mime: "text/plain", bytes: 4 },
+    ];
+    const executionWorktree = { path: "/workspace-worktrees/draft", branchName: "zcode/draft" };
+    const onSessionCreated = vi.fn();
+    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+      ackFor(envelope, {
+        status: "accepted",
+        ...(envelope.type === "createSession"
+          ? { result: { type: "createSession" as const, sessionId: createdSessionId } }
+          : {}),
+      }),
+    );
+    const root = await renderPane({ sessionId: null, onSessionCreated });
+    try {
+      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
+      await act(async () => {
+        await captured.composerProps?.onSendText("edit in the worktree", {
+          attachments,
+          executionWorktree,
+          reuploadAttachmentsForSession,
+        });
+        await flushMicrotasks();
+      });
+      // Config CAS commands from the draft barrier are not part of the create route.
+      const submitted = mocks.sendCommand.mock.calls
+        .slice(callsBeforeSubmit)
+        .map(([command]) => command)
+        .filter((command) => command.type === "createSession" || command.type === "sendText");
+      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
+      expect(submitted[0]).toMatchObject({ payload: { executionWorktree } });
+      expect(submitted[1]).toMatchObject({
+        sessionId: createdSessionId,
+        payload: {
+          text: "edit in the worktree",
+          attachments: [{ ref: "zcode-artifact://worktree-copy", fileName: "a.txt" }],
+        },
+      });
+      expect(reuploadAttachmentsForSession).toHaveBeenCalledExactlyOnceWith(createdSessionId);
+      expect(beginPromotion).not.toHaveBeenCalled();
+      expect(promote).not.toHaveBeenCalled();
+      expect(onSessionCreated).toHaveBeenCalledWith(createdSessionId);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("disables the warm draft for an incognito first send and creates the frozen profile on the send path", async () => {
+    const createdSessionId = "incognito-created-session";
+    prewarmHookMock.binding = null;
+    useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
+    projectionState.current = {
+      status: "live",
+      snapshot: null,
+      subscriptionId: "incognito-draft-subscription",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const onSessionCreated = vi.fn();
+    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+      ackFor(envelope, {
+        status: "accepted",
+        ...(envelope.type === "createSession"
+          ? { result: { type: "createSession" as const, sessionId: createdSessionId } }
+          : {}),
+      }),
+    );
+    const root = await renderPane({ sessionId: null, onSessionCreated });
+    try {
+      expect(prewarmHookMock.lastEnabled).toBe(false);
+      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
+      await act(async () => {
+        await captured.composerProps?.onSendText("clean start", {
+          incognito: INCOGNITO_LOCKDOWN_PROFILE,
+        });
+        await flushMicrotasks();
+      });
+      const submitted = mocks.sendCommand.mock.calls
+        .slice(callsBeforeSubmit)
+        .map(([command]) => command);
+      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
+      expect(submitted[0]).toMatchObject({
+        payload: { incognito: INCOGNITO_LOCKDOWN_PROFILE },
+      });
+      expect(submitted[1]).toMatchObject({ sessionId: createdSessionId });
+      expect(onSessionCreated).toHaveBeenCalledWith(createdSessionId);
+    } finally {
+      useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+      await act(async () => root.unmount());
+    }
+  });
 });
 
 describe("SessionPane lease ownership", () => {

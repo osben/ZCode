@@ -139,11 +139,13 @@ async function ensureNodeBinary(repoRoot: string, target: ServerTarget): Promise
 
 async function ensureAgentBundle(repoRoot: string, skipBuild: boolean): Promise<string> {
   const bundlePath = join(repoRoot, "apps/zcode-cli/packages/cli/dist/zcode.cjs");
-  if (await pathExists(bundlePath)) return bundlePath;
   if (skipBuild) {
+    if (await pathExists(bundlePath)) return bundlePath;
     throw new Error(`Agent bundle missing: ${bundlePath} (remove --skip-agent-build to build it)`);
   }
-  log("agent bundle missing, building via scripts/build-desktop-agent-cli.mjs");
+  // Bug cause: the first target only rebuilt when the bundle was missing, so bootstrap copied the previous dist into
+  // every platform archive. Later targets may reuse the bundle only after this run's first target has really built it.
+  log("building current agent bundle via scripts/build-desktop-agent-cli.mjs");
   await runCommand(
     process.execPath,
     [join(repoRoot, "scripts/build-desktop-agent-cli.mjs")],
@@ -269,6 +271,7 @@ async function main(): Promise<void> {
     officialPluginsDir,
     outputDir: join(packageRoot, "dist-release"),
     archive: !argv.includes("--no-archive"),
+    componentArchives: !argv.includes("--skip-component-archives"),
   });
 
   log(`release dir: ${staged.releaseDir}`);
