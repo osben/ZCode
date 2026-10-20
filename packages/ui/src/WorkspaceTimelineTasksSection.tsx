@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- The timeline handles local scoped queries, active remote caching, and task-action dispatch; keep the flow together for clarity. */
+import { useTaskDeleteDialog } from "@/hooks/useTaskDeleteDialog.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -48,6 +49,7 @@ export function WorkspaceTimelineTasksSection({
   taskRowVariant = "timeline",
   emptyMessage,
   mobileActiveTaskKey,
+  isWebRemoteControl = false,
   onSelectTask,
 }: {
   workspaceTabs: WorkspaceTabState[];
@@ -59,6 +61,7 @@ export function WorkspaceTimelineTasksSection({
   taskRowVariant?: "default" | "timeline";
   emptyMessage?: string;
   mobileActiveTaskKey?: string | null;
+  isWebRemoteControl?: boolean;
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -67,6 +70,7 @@ export function WorkspaceTimelineTasksSection({
   ) => void;
 }) {
   const { intl, locale } = useZCodeIntl();
+  const taskDeletion = useTaskDeleteDialog();
   const baseServices = useBaseWorkspaceServices();
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
@@ -605,6 +609,7 @@ export function WorkspaceTimelineTasksSection({
 
   return (
     <div className="flex min-h-0 flex-col">
+      {taskDeletion.dialog}
       {renamingItemKey !== null ? (
         <TaskRenameDialog
           open
@@ -732,6 +737,9 @@ export function WorkspaceTimelineTasksSection({
         </ContextMenuTrigger>
         {contextMenuItem && contextMenuWorkspaceServices && contextMenuItemKey ? (
           <TaskListItemContextMenuContent
+            onDeleteTask={
+              isWebRemoteControl ? undefined : () => taskDeletion.open(contextMenuItem, false)
+            }
             workspacePath={contextMenuItem.workspacePath}
             remoteSessionId={contextMenuWorkspaceServices.remoteSessionId}
             task={contextMenuItem}

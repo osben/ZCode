@@ -1,160 +1,151 @@
-# Session deletion: honest copy, child counts, permanent erase
+# Permanent session deletion
 
-Status: implemented (2026-10-18), except the E2E scenarios, which are not written or run (desktop E2E cannot run in this environment).
+Status: implemented locally (2026-10-19), with the multi-window worktree retention restriction below. Manual-review E2E cases remain unpromoted pending user review.
 
-## Problem
+## Product contract
 
-"Delete" in this app never removes data. Facts verified in the current source:
+Two ordinary actions remain:
 
-- Non-archived row: `deleteTask` writes a tombstone (`tasks.deleted = 1`) in `tasks-index.sqlite`. Archived row: `deleteArchivedTask` writes the same tombstone (`taskIndexRepo.ts:1893`; `specs/manage-sessions-table.md` §7 wrongly calls it "permanent index removal").
-- The CLI session store (`~/.zcode/cli/db/db.sqlite`) keeps every row, message and file. The only `delete from session` in the CLI is `deleteEmptySession` (empty drafts). The `deleteSession` command only closes the runtime.
-- The tombstone is intentional and must stay: it is what prevents deleted chats from reappearing after a restart (`docs/task-list-membership-cache-sync.md`).
-- Children (`selection_side_chat`, `subagent_child`, workflow children) are attached by `session.parent_id` (plain column, no foreign key) and have no task-index row. They disappear from the UI with their parent, but stay in the database. No purge, retention job or Storage-manager category (`sessionStore` is `cleanability: none`) can remove them.
-- Archive writes only `tasks.archived` in the task index. A search of `zcode-cli` (`bootstrap`, `core`, `adapters`), `services` and `desktop` finds no writer of the CLI `time_archived`; it is only read (`session-mapper.ts`, `server-operations.ts`, `resume.ts`). Archived parents therefore keep "active" children.
-- The only in-process `eventStore.deleteSession` calls (`server-operations.ts`, `session-residency.ts`) release the in-memory `InMemorySessionEventStore`, the only `EventStore` implementation exported by `adapters/src/storage/index.ts`. They are not a persistent delete; message content lives in the SQLite `message` / `part` / `session_entry` tables.
-- Dropping a `session` row is not enough to clear a tree. Foreign keys on `session(id)` differ per table (`migrations.ts`):
-  - `message`, `part`, `session_entry`, `session_input`, `session_task_link.child_session_id` and similar: `on delete cascade`.
-  - `workflow_run.parent_session_id` and `session_task_link.parent_session_id`: `on delete set null`, so the rows survive as orphans. (`workflow_activity.child_session_id` is also set null, but activities are deleted with their run.)
-  - `dwf_run.parent_session_id`, the other `dwf_*` columns and `input_history.session_id` (the typed prompts of a session): plain text, no foreign key (by design for `dwf_*`, `migrations.ts:814`), so they are never touched by a `session` delete.
-  - `session.parent_id`: plain text, no foreign key.
-- Foreign keys are enforced at runtime: `pragma foreign_keys = on` is set on the same `DatabaseSync` handle (`SqliteSessionStore.db`) that all repositories use, inside the migration runner (`migration-runner.ts:137`). This is a precondition of §4, so a test asserts it on the store handle.
-- The only delete dialog that explains anything is Session Manager ("Session files stay on disk"). The sidebar archived section, web-remote index and "Delete all archived" say nothing about children or retained data.
-- Child counts on rows are not reliable enough for copy. `sideChatCount` / `subagentCount` ride the live sessions-index overlay, are not persisted in the task index, and `mapSessionSummaryToTaskMeta.ts` omits a zero count, so "absent" cannot be told from "zero". The archived section, web-remote index and `archivedTaskDeletion.ts` (the "Delete all archived" batch, ids only) do not read them at all. Rows also exclude archived and nested descendants.
+- **Archive** is reversible, index-only, unchanged, and requires no confirmation.
+- **Delete** requires confirmation, tombstones the task through the existing mutation lane, permanently deletes its session tree, then removes eligible execution worktree folders. Git branches remain. Aggregate App Usage remains, including exact distinct-session counts and longest-session duration through anonymous accounting. Deleted sessions disappear from Top Sessions.
 
-Net effect: users believe a chat was erased, its content (including side chats and subagent transcripts) stays on disk, and there is no way to get rid of it.
+The `deleted` tombstone remains an internal anti-resurrection mechanism; Hide is not an ordinary action. Delete has no undo and no optional erase checkbox. Preserve Session Manager pinned-row opt-in. Historical hidden-session maintenance stays in Settings → Sessions, uses Delete terminology, and shares the executor.
 
-## Terms
+Descendants are the existing recursive `parent_id` children of types `selection_side_chat`, `subagent_child`, `workflow_child`, and `nested_workflow_child`, archived included. Independent forks and interactive primary sessions are not traversed. Surviving forks retain their content and source-session files they still reference.
 
-- **Hide** — today's "Delete": tombstone in the task index, content retained. Reversible only by developers; not offered as undo in UI.
-- **Erase** — new: permanent removal of the session, its descendant children and their files, then removal of the index row. Irreversible.
-- **Descendants** — sessions reachable from a root through `parent_id` where the child `task_type` is one of `selection_side_chat`, `subagent_child`, `workflow_child`, `nested_workflow_child`. **Forks (`fork`) and other primary sessions are never descendants**, even though they also carry `parent_id`.
+## Reviewed baseline
 
-## Contract
+Review at `a28996988bdd048480e814e6657c4c1b5f42320c` established:
 
-### 1. Archive stays index-only (decision, no behavior change)
+- `deleteTask` and `deleteArchivedTasks` only tombstone. Archived batch deletion needs an explicit erase step.
+- The existing CLI erase chain guards running trees in the answering process, closes idle runtimes, removes known session directories with fork retention, and deletes rows transactionally.
+- Services-owned worktree outcomes belong to the task-service result, not a CLI response issued before Git cleanup.
+- `executionWorktree` is durable task-index metadata; `worktreePreparation` is a live Host fact, so an index query alone cannot protect preparation.
+- Git removal already rejects main and unregistered worktrees. Public service callers use the Git service contract, not repository `getStatus`.
+- Usage rollups retain older/pruned raw contributions. A simple detached raw fold plus a union can double-count. Top Sessions uses a left join, so missing content alone does not remove its statistical row.
 
-Archive is reversible and children render on the parent row, so they are archived implicitly. Archive does not cascade, does not write CLI `time_archived`, and has no dialog. Hide and Erase of a parent whose `runningSubagentCount > 0` warn that running children will be stopped (Hide) or block the Erase until they stop (§4).
+## Owners and event order
 
-### 2. Hide: honest copy with child counts (part A)
-
-Every confirm surface for deleting a session — Session Manager dialog, sidebar archived section, web-remote task index, "Delete all archived" — states what happens:
-
-- Body: sessions are hidden from the list and their files stay on disk until erased.
-- When the selected sessions have children, a second line adds the counts: "Includes {sideChats} side chats and {subagents} subagents." The numbers come from the read-only `countSessionTree` query (§5), not from row meta, because row counts cannot distinguish "unknown" from "zero" and exclude archived and nested descendants (see Problem). The dialog shows the line only after the query resolves; nothing is shown while it loads (no flicker for plain sessions), and when it fails, is unsupported or the workspace is remote it shows the generic sentence "May also include side chats and subagents attached to these sessions." A zero count is omitted; a resolved all-zero result shows no line.
-- "Delete all archived" resolves the archived ids first, then runs the same query once for the batch.
-- Bulk dialogs query only the rows that will actually be deleted (pinned rows excluded unless opted in, as today).
-
-New i18n keys under `sessionManager.delete.*` / `confirmDialog.archivedTaskDelete*` in `en-US`, `zh-CN`, `uk-UA` (uk-UA three-form plurals). The stale text in `specs/manage-sessions-table.md` §7 is corrected in the same change.
-
-### 3. Erase: opt-in permanent removal (part B)
-
-Erase only ever acts on sessions that are already hidden. It is a second step after Hide, never a separate delete path:
-
-1. **Session Manager delete dialog** — a checkbox below the pinned checkbox: "Erase files permanently. This can't be undone." Unchecked by default, never remembered. When checked, the dialog shows the exact tree numbers from `countSessionTree`: "Erases {total} sessions: {sideChats} side chats, {subagents} subagents, {workflowSessions} workflow sessions." The checkbox is disabled while a session in the tree is running (the dialog says how many to stop). The confirm button becomes "Erase {count}" and keeps destructive styling. Confirm runs the existing Hide path first (`deleteTask` / `deleteArchivedTasks`, through the window controller, so projections and caches update through the existing `task_deleted` flow), then erases the same ids. If the erase step fails, the sessions are still hidden and the result toast names the failed count.
-2. **Hidden-sessions maintenance row (Settings → Sessions)** — a footer row under the Session Manager table showing how many hidden sessions still have content in the CLI store ("{count} hidden sessions are still stored on disk") with an "Erase hidden sessions" action behind a confirm dialog. It renders nothing while the count is unknown, zero, or unsupported. This is the only way to erase sessions that were hidden before this feature (they have no UI row). Count only, no byte size. It lives in Settings → Sessions, not in the Resource Manager Storage tab: Storage is served by the main process, which holds no task state and has no relay to the Host, so a Storage-tab action would need a new IPC channel, a preload bridge and a main→Host relay. The count and the action cover local workspaces only and use the same Hide-first, tombstone-kept erase path.
-
-Hide remains the default everywhere. The sidebar, archived section and web remote only get §2 copy; the irreversible action lives in one place per concern so it cannot be hit from a hover button.
-
-### 4. Erase semantics
-
-Owner split: the CLI session store owns content; `tasks-index.sqlite` owns list visibility. The tombstone is never removed by Erase: `saveSession` in the CLI (`sessions.ts`, `insert into session … on conflict(id) do update`) is an upsert, so any resident runtime that writes after the erase can recreate the `session` row. Keeping the tombstone is what keeps such a row hidden. The cost is one small index row per erased session, which holds no conversation text (see the scrub rule below).
-
-```
-Session Manager (confirm, Erase checked)
-   │ 1. Hide: deleteTask / deleteArchivedTasks  ──▶ tombstone + task_deleted   (existing path)
-   ▼
-zcodeTaskService.eraseTasks(rows)
-   │ 2. resolve tree: countSessionTree; refuse if any session in tree is running (this process)
-   ▼
-Host: close resident runtimes in the tree (closeSession), then request
-   ▼
-CLI protocol method session/eraseTree({ sessionIds })
-   │ 3. recursive walk by parent_id over child task types (root always included)
-   │ 4. remove session-scoped directories (§6) for tree sessions that no surviving fork points at
-   │      any failure ──▶ stop: rows stay, result reports fileFailureCount, retry finds the same tree
-   │ 5. one transaction, in this order:
-   │      a. delete workflow_run rows whose parent_session_id is in the tree
-   │      b. delete dwf_run rows whose parent_session_id is in the tree (dwf_* children cascade)
-   │      c. delete input_history rows of the tree's sessions (typed prompts, no foreign key)
-   │      d. delete the tree's session rows (FK cascade removes message/part/entry/input/task links/usage)
-   ▼
-result ──▶ Services: scrub title and body text from the tombstoned index rows of the erased tasks
-       ──▶ UI toast (erased / kept counts, plus a file-failure warning). The tombstone stays.
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as Shared confirmation / UI hook
+    participant Controller as Existing mutation lane
+    participant Index as Task index
+    participant Service as Task erase service
+    participant CLI as Session executor / SQLite
+    participant Host as Host preparation / Main inventory
+    participant Git as Git service
+    User->>UI: Delete
+    UI->>Service: Explicit capability and tree counts
+    UI->>Git: Worktree changes through service hook
+    UI-->>User: Scope, dirty files, branches and usage retained
+    User->>UI: Confirm Delete / Delete anyway
+    UI->>Service: Recheck known running trees
+    UI->>Controller: Existing deleteTask / deleteArchivedTasks
+    Controller->>Index: Tombstone and task_deleted
+    UI->>UI: Remove tombstoned rows from caches
+    UI->>Service: Erase successfully tombstoned IDs
+    Service->>CLI: session/eraseTree
+    CLI->>CLI: Running guard, close idle runtimes, session directories
+    CLI->>CLI: BEGIN IMMEDIATE: preserve usage, delete rows, COMMIT
+    CLI-->>Service: Content and directory outcomes
+    Service->>Index: Scrub title and searchable text
+    Service->>Host: Authoritative live preparation and all-window paths
+    Service->>Index: Surviving task ownership
+    Service->>Git: Force-remove eligible linked folder only
+    Service-->>UI: Categorized content / worktree results
 ```
 
-Rules:
+The task index owns membership and durable execution facts. CLI SQLite owns conversation content and usage. Host owns live preparation. Main owns window inventory, not task state. Services coordinates through injected boundaries; UI keeps presentation and pending confirmation only.
 
-- **Files before rows.** Directories are removed first and the rows only after every removal succeeded, so a failed or interrupted cleanup leaves the tree discoverable (the maintenance count still includes it) and a retry finishes it. A file failure erases nothing for that request; Services marks those tasks as failed and retries root by root so clean roots are still erased.
-- **Surviving forks keep their files.** A fork copies message parts but keeps attachment and artifact URLs, which resolve to the source session's directory. Directories of tree sessions that still have a child outside the tree (`listSessionTreeIdsWithSurvivingChildren`) are kept and counted in `filesRetainedCount`; ids that cannot be mapped to a plain directory name are kept the same way.
-- **Scrub the index copy.** The task index keeps up to 200 000 characters of chat text per task (`tasks.searchable_text`) plus the title. After a successful erase Services calls `scrubDeletedTaskContent` for the erased tasks, which blanks both in the tombstoned rows (identity columns and `deleted` stay). `writeRecord` also never stores text or a title for a tombstoned row, so a late syncer write cannot bring them back. This also applies to a plain Hide.
-- **Hide first, erase second.** If any step after Hide fails, the session is still hidden and nothing resurrects. A retry is safe because every step is idempotent.
-- **Workflow tables are deleted explicitly, before the sessions.** `workflow_run` references sessions with `on delete set null` and `dwf_run` has no foreign key at all, so a plain `session` delete would leave both behind with their journals.
-- **In-memory state.** The Host closes resident runtimes through `closeSession`, which also releases their `InMemorySessionEventStore` entries (the existing `eventStore.deleteSession` calls). Erase adds no second in-memory cleanup path.
-- **Idempotent.** A session id that no longer exists counts as erased. Erasing an id twice is a no-op.
-- **Running guard is process-local.** Erase refuses while a session in the tree has a live turn in the CLI process that serves the request. The session database has no lease or owner table, so another window's CLI process is not checked: if it is running a turn in an erased tree, its later writes fail on the foreign key. v1 accepts this limit and does not add a cross-window lease.
-- **Hide warns, it does not stop.** Hide of a parent with running children only warns in the dialog; it never stops them.
-- **Forks survive.** A fork of an erased session keeps its own content; its `parent_id` becomes a dangling reference (no foreign key exists), same as after a hide. The fork-boundary row must not crash on a missing parent (verify in implementation, add a test).
-- **No second state.** No `erasing` flag is persisted. The tree is recomputed at confirm time; the dialog numbers are not trusted by the executor.
-- **Remote workspaces** (`workspaceIdentity` set) are not erasable in v1: the action is hidden with a reason. Mobile web remote never offers Erase: `SettingsPage` passes `allowErase={!isWebRemoteControl}` to the Sessions section, which hides both the checkbox and the maintenance row (method presence cannot be used, because RPC proxies answer any property).
-- **No process per workspace.** Session ids are global, so counting hidden content goes through one client: an already-running runtime if any exists (`runtimePolicy: "existing-only"`), otherwise a single started one in the first workspace that can host it. Erasing hidden content uses each workspace's own live runtime first (its running guard sees its own sessions) and sends the remaining ids through one shared started client.
-- **Unsupported peers.** An older CLI without the methods answers method-not-found; Services maps that to "unsupported", the dialog falls back to the generic §2 sentence, and Erase is hidden.
+Remote workspaces, Web remote control and read-only states cannot execute permanent Delete. The Web remote-control archived bulk action stays disabled even if its base Host advertises local deletion support. Provide a reason. RPC proxy method presence is not support: use explicit capability. Unsupported peers must not silently degrade Delete into tombstone-only success. Archive follows existing availability.
 
-### 5. Interfaces
+Known running trees block before tombstoning. CLI rechecks at execution; a later race can leave a tombstone with retained content and must be reported. Preserve the accepted process-local running guard; do not add a cross-window session lease.
 
-CLI session store port (`session-store.port.ts`), optional like `deleteEmptySession`:
+## Confirmation and UI
 
-```ts
-/** Descendants of the roots through child task types only; includes archived children; excludes forks. Unknown ids count 0. */
-countSessionTree?(input: { rootIds: readonly SessionId[] }): Promise<SessionTreeCounts>;
-deleteSessionTree?(input: { rootIds: readonly SessionId[] }): Promise<{ erasedIds: SessionId[] }>;
-interface SessionTreeCounts { total: number; sideChats: number; subagents: number; workflowSessions: number; workflowRuns: number; running: number }
-```
+All ordinary Delete surfaces share semantics: sidebar menu, Session Manager, archived single and batch deletion.
 
-`countSessionTree` is read-only and used by the Hide copy (§2), the Erase preview (§3) and the maintenance count. `running` is filled by the protocol handler from the live registry, not by the store.
+- Pinned rows are excluded from batch deletion until opted in; previews/counts reflect actual candidates.
+- Load exact tree counts asynchronously. Show no additional count line while loading, omit zero categories, and show a generic descendant warning on failure/unsupported counts. Row overlays are not exact counts.
+- Read worktree paths from execution facts and deduplicate. Query staged, unstaged and untracked files through a public Git-service hook. Show roughly five paths/statuses (`M`, `??`, etc.) plus a localized remainder. Loading adds no Git line; failure is unknown, not clean.
+- Dirty folders warn about permanent loss of uncommitted changes if removed. Dirtiness alone does not block: use **Delete anyway**. State that branches and aggregate usage remain.
+- Protected folders can remain, so do not promise every folder will disappear.
+- Cancel mutates nothing. Use destructive confirmation, keyboard-accessible controls and DESIGN.md responsive/theme primitives.
+- Localize in en-US, zh-CN and uk-UA; use `formatPlural` with appropriate Ukrainian one/few/many/other forms. Shared test IDs cover Delete, dialog and confirmation.
 
-Protocol (`packages/shared/src/zcode-protocol/index.ts`, strict schemas, runtime validation): `session/treeCounts` and `session/eraseTree`, dispatched in `server.ts`, handled in `server-operations.ts`, listed in `shared/test/zcodeProtocol.test.ts`.
+## Content, results and recovery
 
-Services (`IZCodeTaskService`), all optional so existing implementers (bots fixtures, remote collections, e2e harness) keep compiling: `countTaskTrees(params)`, `eraseTasks(params)`, `countDeletedTaskContent(params)`. Remote collections do not implement them; the UI shows Erase only when the method exists and the workspace is local. UI reaches them through `packages/ui/src/hooks/`, never through `window.zcode`.
+Preserve controller tombstoning and projection events. Erase only successfully tombstoned IDs; remove them from UI query caches after tombstoning. Failure never restores membership.
 
-No schema change, no migration, no new `setting.json` key. Erase is a data operation on the shared databases; the upstream build treats a tombstoned id without a session row as already hidden.
+Keep files-before-rows: failed known session-directory removal retains rows for retry. Delete workflow runs, nested runs and input history before sessions; FK cascades remove messages, parts and raw usage. Resolve the tree and preserve usage inside the same write transaction. Keep fork-file retention and existing late-child handling.
 
-### 6. Session-scoped files
+Scrub tombstoned titles/searchable text, retaining identity and execution facts. Late writes cannot restore content or visible membership. Absent session rows can still have pending worktree cleanup.
 
-Only directories whose name is exactly an erased session id, under known roots, are removed, never by glob. Any category whose per-session path cannot be confirmed in the code is left in place, reported in the result as "files kept", and recorded below.
+Separate outcomes for task content (erased/skipped/running/unsupported/failed), retained/failed session directories, and removed/retained/failed worktree targets with reasons. Extend `ZCodeTaskEraseResult` with `worktreeCleanup`: removed paths, retained/failed target-and-reason entries and counts. Update actual transport validation where the result crosses a boundary; do not report future worktree cleanup in the CLI result.
 
-Removed before the database rows (a failure keeps the rows so the erase can be retried), each as `<storageRoot>/cli/<dir>/<sessionId>` where the id must match `[A-Za-z0-9._-]{1,120}` (the artifact store's own sanitizer leaves such ids unchanged) and the resolved path must be a direct child of the root:
+Pending cleanup must be discoverable and retryable after content deletion, including historical maintenance. Durable execution facts are the recovery source; content counts alone are insufficient. Avoid a second accepted queue or global erasing state.
 
-- `artifacts` — tool result artifacts (`NodeToolArtifactStore`)
-- `image-cache`, `pdf-cache`, `video-cache` — derived media attachments
-- `sessions` — script-workflow files (`script-workflow-tool-port.ts`)
+## Authoritative worktree cleanup
 
-Not removed in v1, because the protocol server does not know their roots: `bash-startup/<sessionId>` (shell startup scripts) and persisted exec output `<execRoot>/<sessionId>/*-stdout.log`. The dialog copy therefore says the conversation data is erased and some cache files may remain. The protocol server receives the raw `storage.dir` as the `storageRoot` dependency from the entrypoint and joins `cli/<dir>/<sessionId>` exactly like the writers do (`create-app.ts`, `script-workflow-tool-port.ts`); it deliberately does not use `getCliStorageRoot()`, which differs when `storage.dir` itself ends in `cli`. When the dependency is absent every session counts as a file failure.
+Both erase entry points share one implementation:
 
-Side effect to know: usage tables (`model_usage`, `turn_usage`, `tool_usage`) cascade from `session`, so erased sessions also leave the app usage statistics.
+1. Capture persisted execution facts and repository scope before erasure. Never reconstruct paths from branch names or location preferences.
+2. Deduplicate canonical paths across chunks. Branch protection is repository-scoped; use established cross-platform/symlink identity helpers.
+3. After successful content erasure, recheck surviving task facts, including archived/pinned tasks, live non-cancelled preparation, and open workspace paths in every window.
+4. Retain shared targets needed by failed/blocked tasks or other hidden sessions whose content survives. A non-deleted-only query cannot establish exclusive ownership.
+5. Remote targets and unavailable authoritative guards are retained with explicit reasons. Failed inventory reads are not empty inventory. The current preparation inventory is window-Host-scoped; with multiple main application windows, cleanup conservatively retains worktrees because other Hosts cannot yet supply an authoritative preparation snapshot. Content deletion still proceeds and reports retained folders.
+6. Recheck immediately before mutation; use `gitService.removeWorktree` with force and preserve linked/non-main validation. Never delete the branch.
+7. Positively confirmed missing folders count as removed. Permission errors, invalid targets and unknown registration do not prove absence. Never recursively delete arbitrary paths as fallback.
 
-## Acceptance scenarios
+Retry must work when content is gone. If the original workspace is missing, resolve a valid repository boundary or report retained/failed without claiming removal.
 
-1. Session with 2 side chats and 3 subagents, Hide → dialog line "Includes 2 side chats and 3 subagents" once the query resolves (generic sentence before that); after confirm the row is gone and rows in `db.sqlite` are unchanged.
-2. Same session, Erase checked → dialog shows exact tree numbers including archived and nested descendants; after confirm `session`, `message`, `part`, `workflow_run` and `dwf_run` rows for the whole tree are gone; the tombstone stays; a restart does not resurrect it.
-3. A fork of an erased session still opens and renders its history.
-4. Erase while a subagent is running → blocked with the running count; nothing deleted.
-5. Erase fails or is interrupted midway → the session stays hidden (Hide ran first); retrying succeeds and is a no-op for ids already erased.
-6. Archived row Hide through the archived section → dialog states files stay on disk.
-7. The maintenance entry shows "Deleted sessions with content: N"; "Erase deleted sessions" erases all tombstoned trees of the local workspaces, reports partial failures by count, and the count drops to 0.
-8. Remote workspace row: Erase checkbox disabled with a reason.
-9. Archive a parent with children → no dialog, no CLI change, children reappear with the parent on restore.
+## Anonymous usage preservation
 
-## Tests
+The user approved extra anonymous accounting on 2026-10-19 to preserve exact distinct-session counts and longest duration as well as additive metrics. A fresh opaque random identity may group a deleted session's time buckets; keep no mapping to its original ID. Detached records contain no original session IDs, titles, prompts or messages and never appear in Top Sessions.
 
-- CLI: tree walk includes `selection_side_chat`/`subagent_child`/`workflow_child`/`nested_workflow_child`, includes archived, excludes `fork` and `interactive` rows that share `parent_id`; `pragma foreign_keys` reads `1` on the store handle; after an erase no row remains in `message`, `part`, `session_entry`, `session_input`, `session_task_link`, `workflow_run` or `dwf_run` (and their cascaded children) that references a tree id; idempotent second call.
-- Services: Hide runs before erase, tombstone is never removed, erase failure keeps the session hidden, running guard, method-not-found maps to unsupported.
-- UI: dialog child line (zero, one, plural), checkbox swaps to exact numbers, confirm label, disabled states; maintenance entry.
-- E2E: Session Manager Hide with children and Erase with children.
+Use additive fork-owned schema with `fork_usage_detached*` names and a separate noncolliding ledger ID (`9002_fork_usage_detached` if unused). Never change upstream migrations or existing `9001_fork_usage_rollup` schema/checksum inputs.
 
-## Decisions taken
+Preservation and deletion share `BEGIN IMMEDIATE`; rollback restores accounting and content. Do not nest transactions or await asynchronous work inside the SQLite transaction.
 
-- Archive stays index-only: no dialog, no cascade (confirmed by the user, 2026-10-18).
-- Hide only warns about running children; it never stops them.
-- The maintenance entry lives in Settings → Sessions (chosen by the user over the Storage tab, 2026-10-18).
-- No byte size for hidden sessions; a count is enough.
-- v1 removes only the session directories listed in §6; `bash-startup` and persisted exec output stay on disk and the dialog copy says some cache files may remain.
+Single-count invariant: each retained contribution appears exactly once whether raw-backed, rolled up, detached or surviving raw pruning. Simple existing-rollup-plus-doomed-raw is forbidden. Account for stale/debounced rollups, complete/partially pruned buckets, old buckets outside the seven-day replacement window, empty raw tables, and surviving sessions sharing buckets. Never silently clip negative reconciliation residuals or discard uncertain history.
+
+A supported design may protect deletion-affected aggregate buckets from destructive rebuild and apply exact before/after deltas for later usage writes through the existing usage repository. It must synchronize pending usage before protection, retain prior pruned contributions, preserve transaction rollback, and define how existing shared-database writers are observed. Normal recomputation must never overwrite protected/detached contributions or count them twice. Further usage in an affected bucket must remain visible.
+
+Update all applicable queries: additive totals, error counts, weighted average numerators/denominators, model/tool breakdowns, daily/hourly series, workspace/model/provider/query-source facets and filters, exact distinct counts and longest duration. Preserve current filter/date semantics. Raw fallback cannot silently omit anonymous history. Keep the existing two-year retention boundary; all-time means retained history, not indefinite retention.
+
+Immediate reads, recomputation, reopened connections and retries preserve the same historical contribution. Lost attribution in already-pruned model/tool aggregates is not reconstructed as per-session history.
+
+## Acceptance and E2E scenarios
+
+1. Archive/restore changes index membership only; content survives with no new confirmation.
+2. Sidebar Delete opens confirmation; cancel changes nothing; confirm erases stopped roots and defined descendants while independent forks and tombstones survive restart.
+3. Count loading has no extra line, zeros are omitted, errors show generic warning; pinned inclusion refreshes candidates without stale results.
+4. Known running root/child blocks before tombstone; late CLI rejection retains content, reports partial outcome and never cleans that task's worktree.
+5. Clean worktree is removed; dirty staged/unstaged/untracked paths show bounded statuses and **Delete anyway** removes an eligible folder. Branch remains.
+6. Shared targets, archived/pinned surviving owners, preparation, open windows and failed/blocked batch owners retain folders. Main/remote targets are never removed.
+7. Canonical aliases deduplicate targets; unrelated repositories with equal branch names do not interfere; unavailable guards retain.
+8. Git failure after content deletion reports partial outcome and remains retryable through maintenance; absent folders and repeated deletion are idempotent.
+9. Session Manager has no erase checkbox, retains pinned opt-in, and local archived single/batch actions run full deletion. Restored-elsewhere archived IDs are skipped.
+10. Remote/read-only/unsupported peers cannot silently perform hide-only Delete. Mobile reuses its existing Host and Agent attachment.
+11. Tokens, requests, errors, cache/reasoning totals, turns/tools and duration sums/counts remain stable. Supported time/workspace ranges preserve exact session count and longest duration. Deleted sessions leave Top Sessions; anonymous storage has no original IDs/titles.
+12. Repeat with stale/no rollup, partial pruning, old/shared buckets, debounce, subsequent same-bucket usage, recompute, reopen and retention expiry.
+13. Force a deletion-transaction failure: content/accounting roll back atomically; retry does not duplicate usage.
+14. E2E: isolated fixtures exercise sidebar cancel/confirm, dirty Delete anyway, running block, pinned batch, archived deletion and partial-result maintenance. Cover desktop/narrow Web, themes and locale lengths where runnable; record environment blockers honestly.
+
+Run root typecheck/lint, CLI typecheck/lint, targeted store/bootstrap/services/shared/UI tests, architecture changed check and fork-scoped format check. Inspect final diff and report real results. Git publication requires explicit user authorization.
+
+## Decisions and non-goals
+
+- 2026-10-19: permanent Delete supersedes conflicting 2026-10-18 Hide/Erase decisions. Archive remains unchanged.
+- Remove worktree folders only; branches remain.
+- Preserve exact aggregate session metrics through approved anonymous accounting.
+- Historical maintenance remains in Sessions settings and covers content or pending cleanup.
+- Non-goals: undo, remote permanent deletion, branch deletion, tombstone removal, a new Hide action, retained per-session conversation details or cross-window running-session leases.
+
+## Local verification evidence
+
+Desktop manual-review runs exercised sidebar cancel/confirm/reload (DEL01) and all-archived cancel/confirm. Both passed locally on macOS. Store tests cover anonymous counts/duration, old/shared/partially-pruned buckets, external updates, rollback, retry, privacy and retention. Service tests use controlled Git/inventory ports for guard and partial-result behavior. Dirty-worktree, cross-platform and mobile visual E2E scenarios remain pending; passing unit tests do not imply those E2E cases were run.
+
+The all-CLI typecheck/lint commands also inspect untouched packages. Their existing protocol-lifecycle type errors and widespread max-lines failures must be reported separately from targeted deletion checks. PR publication was subsequently authorized by the user on 2026-10-19.

@@ -105,6 +105,16 @@ import {
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { toast } from "@/components/ui/toast.js";
+import { TaskDeleteConfirmationDialog } from "@/task-deletion/TaskDeleteConfirmationDialog.js";
+import {
+  countTaskDeletionTrees,
+  formatTaskDeletionResult,
+  loadTaskDeletionWorktreePreview,
+  permanentlyDeleteTasks,
+  taskDeletionSupported,
+  type TaskDeleteTarget,
+} from "@/task-deletion/taskDeletion.js";
+import type { TaskDeleteDialogRow } from "@/task-deletion/taskDeletionTypes.js";
 
 export type SortableBindings = Pick<ReturnType<typeof useSortable>, "attributes" | "listeners">;
 
@@ -267,6 +277,12 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     selectWorkspaceDisplayEntry(state, tab.workspacePath, tab.workspaceIdentity),
   );
   const [customizeDialogOpen, setCustomizeDialogOpen] = useState(false);
+  const [taskDeleteDialog, setTaskDeleteDialog] = useState<{
+    target: TaskDeleteTarget;
+    supported: boolean;
+  } | null>(null);
+  const [taskDeleteBusy, setTaskDeleteBusy] = useState(false);
+  const [taskDeleteNotice, setTaskDeleteNotice] = useState<string | null>(null);
   const workspaceDisplayLabel = workspaceDisplayEntry?.displayName?.trim() || workspaceSidebarLabel;
   const workspaceIconColorClass = workspaceDisplayEntry?.color
     ? WORKSPACE_ICON_COLOR_CLASS[workspaceDisplayEntry.color]
@@ -743,6 +759,89 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
       findCurrentTaskItem,
       zcodeTaskService,
     ],
+  );
+
+  const resolveTaskDeleteServices = useCallback(
+    (_target: TaskDeleteTarget) => ({
+      taskService: zcodeTaskService,
+      gitService: services.gitService,
+    }),
+    [services.gitService, zcodeTaskService],
+  );
+  const loadDeleteTreeCounts = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) =>
+      countTaskDeletionTrees(rows as readonly TaskDeleteTarget[], resolveTaskDeleteServices),
+    [resolveTaskDeleteServices],
+  );
+  const loadDeleteWorktreePreview = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) =>
+      loadTaskDeletionWorktreePreview(
+        rows as readonly TaskDeleteTarget[],
+        resolveTaskDeleteServices,
+      ),
+    [resolveTaskDeleteServices],
+  );
+  const handleStartTaskDelete = useCallback(
+    async (taskId: string) => {
+      if (readOnlyReason) return;
+      const task = findCurrentTaskItem(taskId);
+      if (!task) return;
+      const target: TaskDeleteTarget = {
+        id: task.taskId,
+        taskId: task.taskId,
+        title: task.title,
+        archived: false,
+        pinned: false,
+        workspacePath: tab.workspacePath,
+        ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+        ...(task.executionWorktree ? { executionWorktree: task.executionWorktree } : {}),
+      };
+      setTaskDeleteNotice(null);
+      setTaskDeleteDialog({
+        target,
+        supported: await taskDeletionSupported([target], resolveTaskDeleteServices),
+      });
+    },
+    [
+      findCurrentTaskItem,
+      readOnlyReason,
+      resolveTaskDeleteServices,
+      tab.workspaceIdentity,
+      tab.workspacePath,
+    ],
+  );
+  const handleConfirmTaskDelete = useCallback(
+    async (rows: readonly TaskDeleteDialogRow[]) => {
+      if (taskDeleteBusy) return;
+      setTaskDeleteBusy(true);
+      setTaskDeleteDialog(null);
+      try {
+        const result = await permanentlyDeleteTasks(
+          rows as readonly TaskDeleteTarget[],
+          resolveTaskDeleteServices,
+          (target) => {
+            removeTaskState(target.workspacePath, target.taskId, target.workspaceIdentity);
+            if (target.workspaceIdentity) {
+              useRemoteTimelineTaskStore
+                .getState()
+                .removeTask(target.workspacePath, target.taskId, target.workspaceIdentity);
+              useRemotePinnedTaskStore
+                .getState()
+                .removeTask(target.workspacePath, target.taskId, target.workspaceIdentity);
+            }
+          },
+        );
+        setTaskDeleteNotice(
+          formatTaskDeletionResult(result, (id, values) => intl.formatMessage({ id }, values)),
+        );
+      } catch (error) {
+        logger.error("[WorkspaceSidebarItem] permanent task deletion failed", { error });
+        setTaskDeleteNotice(intl.formatMessage({ id: "taskDelete.error" }));
+      } finally {
+        setTaskDeleteBusy(false);
+      }
+    },
+    [intl, removeTaskState, resolveTaskDeleteServices, taskDeleteBusy],
   );
 
   const handleSetTaskUnread = useCallback(
@@ -1277,9 +1376,30 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
             onRenameTask={handleRenameTask}
             onSetTaskPinned={handleSetTaskPinned}
             onArchiveTask={handleArchiveTask}
+            onDeleteTask={isWebRemoteControl ? undefined : handleStartTaskDelete}
             onSetTaskUnread={handleSetTaskUnread}
             readOnlyReason={readOnlyReason}
           />
+          {taskDeleteNotice ? (
+            <p
+              role="status"
+              className="whitespace-pre-line break-words px-3 py-2 text-ui-sm text-foreground-subtle"
+            >
+              {taskDeleteNotice}
+            </p>
+          ) : null}
+          {taskDeleteDialog ? (
+            <TaskDeleteConfirmationDialog
+              rows={[taskDeleteDialog.target]}
+              supported={taskDeleteDialog.supported}
+              loadTreeCounts={loadDeleteTreeCounts}
+              loadWorktreePreview={loadDeleteWorktreePreview}
+              onCancel={() => setTaskDeleteDialog(null)}
+              onConfirm={(rows) =>
+                void handleConfirmTaskDelete(rows as readonly TaskDeleteTarget[])
+              }
+            />
+          ) : null}
         </CollapsibleContent>
       </Collapsible>
       <RemoteSyncDialogs

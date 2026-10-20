@@ -87,4 +87,32 @@ describe("tombstoned task rows", () => {
     await repo.scrubDeletedTaskContent({ ...target, taskIds: ["t1"] });
     expect(rowText()).toEqual({ title: "visible", searchable_text: "visible body", deleted: 0 });
   });
+
+  it("clears completed cleanup facts so historical maintenance no longer counts that worktree", async () => {
+    await repo.syncTaskMeta({
+      meta: { ...meta("deleted"), executionWorktree: { path: "/worktrees/t1", branchName: "t1" } },
+      searchableText: "body",
+      deleted: true,
+    });
+    expect(
+      (await repo.listTaskMetas({ workspacePath: target.workspacePath, includeDeleted: true }))[0]
+        ?.executionWorktree,
+    ).toEqual({
+      path: "/worktrees/t1",
+      branchName: "t1",
+    });
+
+    await repo.scrubDeletedTaskContent({
+      ...target,
+      taskIds: ["t1"],
+      clearExecutionWorktree: true,
+    });
+    const [remaining] = await repo.listTaskMetas({
+      workspacePath: target.workspacePath,
+      includeDeleted: true,
+    });
+    expect(remaining?.taskId).toBe("t1");
+    expect(remaining?.executionWorktree).toBeUndefined();
+    await expect(repo.listDeletedTaskIds(target)).resolves.toEqual(["t1"]);
+  });
 });

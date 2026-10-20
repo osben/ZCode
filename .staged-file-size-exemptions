@@ -18,6 +18,12 @@ packages/ui/src/v4/SessionPane.tsx
 packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
 # Temporary (integration-owned, split later): oversize files brought in by the integration merge.
 # Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration; split each later and remove its line.
+DESIGN.md
+packages/ui/src/WorkspaceHeaderSections.tsx
+packages/ui/src/styles.css
+packages/ui/src/v4/ConversationStatusPanel.tsx
+packages/ui/src/workspace-grouped-tasks/task-row.tsx
+packages/web/src/main.tsx
 docs/conversation-session-ui-testid-contract.md
 packages/desktop/test/e2e/automations-workflows-hub.test.ts
 packages/desktop/test/e2e/coding-plan-team-usage.test.ts
@@ -185,6 +191,30 @@ packages/ui/src/WorkspaceSidebar.tsx
 specs/nested-agents-md.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
+
 # TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
 packages/provider-node/test/provider-node-runtime.test.ts
 packages/provider/test/config-service.test.ts
+
+
+# Existing oversized files touched by permanent session deletion; new modules stay below the limit.
+packages/desktop/src/host/index.ts
+packages/desktop/src/main/desktopHostProcess.ts
+packages/desktop/src/main/index.ts
+packages/desktop/wdio.conf.ts
+packages/services/src/node.ts
+packages/services/src/session/taskIndexRepo.ts
+packages/services/src/session/zcodeTaskService.ts
+packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts
+packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts
+packages/shared/src/channels.ts
+packages/shared/src/test-ids.ts
+packages/shared/src/validation.ts
+packages/shared/src/zcode-protocol/index.ts
+packages/ui/src/TaskListItem.tsx
+packages/ui/src/WebRemoteControlTaskIndex.tsx
+packages/ui/src/WorkspacePinnedTasksSection.tsx
+packages/ui/src/WorkspaceSidebarItem.tsx
+packages/ui/src/WorkspaceTimelineTasksSection.tsx
+specs/manage-sessions-table.md
+

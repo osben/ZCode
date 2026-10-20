@@ -1,5 +1,70 @@
 /** Український переклад */
 const ukUA: Record<string, string> = {
+  "taskDelete.reasonUnavailable": "Немає даних для безпечного вилучення",
+  "taskDelete.reasonContent": "Вміст сеансу ще збережено",
+  "taskDelete.reasonInUse": "Ще використовується",
+  "taskDelete.reasonFailed": "Помилка очищення",
+
+  "taskDelete.body":
+    "Назавжди видалити ці розмови та пов'язані сеанси. Відповідні папки робочих дерев також буде вилучено. Цю дію неможливо скасувати.",
+  "taskDelete.includes": "Містить {items}.",
+  "taskDelete.includesGeneric":
+    "Може також містити пов'язані бічні розмови, субагентів і сеанси робочих процесів.",
+  "taskDelete.worktreeUnknown":
+    "Не вдалося перевірити зміни в робочих деревах. Вилучення дерева назавжди знищить незакомічені файли.",
+  "taskDelete.retainedNotice":
+    "Гілки Git і зведена статистика використання збережуться. Робочі дерева, що використовуються, залишаться.",
+  "taskDelete.unsupported": "Остаточне видалення недоступне для вибраних сеансів.",
+  "taskDelete.remoteUnavailable": "Видалення доступне лише в локальній настільній програмі.",
+  "taskDelete.tagActive": "Активний",
+  "taskDelete.tagArchived": "Архівний",
+  "taskDelete.error":
+    "Не вдалося видалити. Перевірте результат і повторіть у налаштуваннях сеансів.",
+  "taskDelete.result":
+    "Видалено сеансів: {erased}; пропущено: {skipped}; працюють: {running}; не підтримується: {unsupported}; помилки: {failed}.",
+  "taskDelete.sessionFileFailures": "Помилки очищення папок сеансів: {count}.",
+  "taskDelete.filesRetained": "Збережені папки сеансів: {count}.",
+  "taskDelete.worktreeRemoved": "Вилучені робочі дерева: {paths}",
+  "taskDelete.worktreeRetained": "Збережені робочі дерева: {paths}",
+  "taskDelete.worktreeFailed": "Не вдалося очистити робочі дерева: {paths}",
+  "taskDelete.title.one": "Видалити {count} сеанс?",
+  "taskDelete.title.few": "Видалити {count} сеанси?",
+  "taskDelete.title.many": "Видалити {count} сеансів?",
+  "taskDelete.title.other": "Видалити {count} сеансу?",
+  "taskDelete.confirm.one": "Видалити {count}",
+  "taskDelete.confirm.few": "Видалити {count}",
+  "taskDelete.confirm.many": "Видалити {count}",
+  "taskDelete.confirm.other": "Видалити {count}",
+  "taskDelete.deleteAnyway.one": "Усе одно видалити",
+  "taskDelete.deleteAnyway.few": "Усе одно видалити",
+  "taskDelete.deleteAnyway.many": "Усе одно видалити",
+  "taskDelete.deleteAnyway.other": "Усе одно видалити",
+  "taskDelete.more.one": "Ще {count}",
+  "taskDelete.more.few": "Ще {count}",
+  "taskDelete.more.many": "Ще {count}",
+  "taskDelete.more.other": "Ще {count}",
+  "taskDelete.includePinned.one": "Включити {count} закріплений сеанс",
+  "taskDelete.includePinned.few": "Включити {count} закріплені сеанси",
+  "taskDelete.includePinned.many": "Включити {count} закріплених сеансів",
+  "taskDelete.includePinned.other": "Включити {count} закріпленого сеансу",
+  "taskDelete.running.one": "Спочатку зупиніть {count} активний сеанс.",
+  "taskDelete.running.few": "Спочатку зупиніть {count} активні сеанси.",
+  "taskDelete.running.many": "Спочатку зупиніть {count} активних сеансів.",
+  "taskDelete.running.other": "Спочатку зупиніть {count} активного сеансу.",
+  "taskDelete.dirtyWarning.one":
+    "Незакомічені зміни в {count} робочому дереві буде назавжди втрачено, якщо вилучити його папку.",
+  "taskDelete.dirtyWarning.few":
+    "Незакомічені зміни в {count} робочих деревах буде назавжди втрачено, якщо вилучити їхні папки.",
+  "taskDelete.dirtyWarning.many":
+    "Незакомічені зміни в {count} робочих деревах буде назавжди втрачено, якщо вилучити їхні папки.",
+  "taskDelete.dirtyWarning.other":
+    "Незакомічені зміни в {count} робочого дерева буде назавжди втрачено, якщо вилучити його папку.",
+  "taskDelete.worktreeMore.one": "Ще {count} файл",
+  "taskDelete.worktreeMore.few": "Ще {count} файли",
+  "taskDelete.worktreeMore.many": "Ще {count} файлів",
+  "taskDelete.worktreeMore.other": "Ще {count} файлу",
+  "sessionManager.hidden.worktrees": "Робочі дерева, що очікують очищення: {count}",
+
   "sessionManager.openUnavailable":
     "Робочий простір сесії недоступний. Відновіть з'єднання або відкрийте проєкт і повторіть спробу.",
   "sessionManager.pinnedArchived": "Закріплення не фільтрує архівні сесії.",
@@ -8514,13 +8579,13 @@ const ukUA: Record<string, string> = {
     "Також можуть бути включені побічні розмови та субагенти цих сесій.",
   "sessionManager.erase.checkbox": "Також остаточно стерти збережені розмови",
   "sessionManager.erase.confirm": "Стерти {count}",
-  "sessionManager.erase.result": "Стерто: {erased}. Залишаються прихованими: {kept}.",
-  "sessionManager.erase.unsupported": "Остаточне стирання тут недоступне.",
+  "sessionManager.erase.result": "Видалено: {erased}. Залишено для повторної спроби: {kept}.",
+  "sessionManager.erase.unsupported": "Остаточне видалення тут недоступне.",
   "sessionManager.erase.filesFailed":
-    "Деякі теки сесій не вдалося видалити. Ці сесії залишаються прихованими; повторіть стирання.",
-  "sessionManager.hidden.erase": "Стерти приховані сесії",
-  "sessionManager.hidden.confirmTitle": "Стерти всі приховані сесії?",
-  "sessionManager.hidden.confirm": "Стерти",
+    "Не вдалося видалити деякі папки сеансів. Повторіть у налаштуваннях сеансів.",
+  "sessionManager.hidden.erase": "Видалити раніше приховані сеанси",
+  "sessionManager.hidden.confirmTitle": "Видалити раніше приховані сеанси?",
+  "sessionManager.hidden.confirm": "Видалити назавжди",
   "sessionManager.delete.workflowSessions.one": "{count} сесія робочого процесу",
   "sessionManager.delete.workflowSessions.few": "{count} сесії робочого процесу",
   "sessionManager.delete.workflowSessions.many": "{count} сесій робочого процесу",
@@ -8550,13 +8615,13 @@ const ukUA: Record<string, string> = {
   "sessionManager.hidden.count.many": "{count} прихованих сесій досі зберігаються на диску.",
   "sessionManager.hidden.count.other": "{count} прихованої сесії досі зберігаються на диску.",
   "sessionManager.hidden.confirmBody.one":
-    "Буде остаточно стерто {count} збережену сесію, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+    "Назавжди видалити {count} збережений сеанс і відповідні папки робочих дерев. Незакомічені зміни буде втрачено. Гілки Git і зведена статистика залишаться.",
   "sessionManager.hidden.confirmBody.few":
-    "Буде остаточно стерто {count} збережені сесії, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+    "Назавжди видалити збережені сеанси ({count}) і відповідні папки робочих дерев. Незакомічені зміни буде втрачено. Гілки Git і зведена статистика залишаться.",
   "sessionManager.hidden.confirmBody.many":
-    "Буде остаточно стерто {count} збережених сесій, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+    "Назавжди видалити збережені сеанси ({count}) і відповідні папки робочих дерев. Незакомічені зміни буде втрачено. Гілки Git і зведена статистика залишаться.",
   "sessionManager.hidden.confirmBody.other":
-    "Буде остаточно стерто {count} збереженої сесії, зокрема побічні розмови та субагентів. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+    "Назавжди видалити збережені сеанси ({count}) і відповідні папки робочих дерев. Незакомічені зміни буде втрачено. Гілки Git і зведена статистика залишаться.",
   "sessionManager.delete.partialFailure": "Видалено {succeeded}, помилок: {failed}",
   "sessionManager.mutationFailed": "Не вдалося виконати дію. Спробуйте ще раз.",
   "sessionManager.bulk.ariaLabel": "Масові дії",

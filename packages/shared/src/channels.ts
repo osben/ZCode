@@ -641,6 +641,8 @@ export const HostMessageTypes = {
   SessionMessageDeliveryResult: "session-message-delivery-result",
   /** main → host: result of creating a feedback log archive */
   FeedbackLogArchiveResult: "feedback-log-archive-result",
+  /** Main → Host: authoritative open workspace-path snapshot across every desktop window. */
+  OpenWorkspaceInventoryResult: "open-workspace-inventory-result",
   /** main → host: dispatch a scheduled task when due; session cron reuses targetTaskId, while only historical unbound tasks create a session */
   CronRun: "cron-run",
   /** main → host: dispatch an off-peak task; the first createTask run starts a session, later runs resume with conversationId/sessionId */
@@ -738,6 +740,8 @@ export const HostResponseTypes = {
   SessionMessageDeliverResult: "session-message-deliver-result",
   /** host → main: ask main to reuse its log-export logic to create a feedback log archive */
   FeedbackLogArchiveRequest: "feedback-log-archive-request",
+  /** Host → Main: request the authoritative open workspace paths across every desktop window. */
+  OpenWorkspaceInventoryRequest: "open-workspace-inventory-request",
   /** host → main: scheduled-task dispatch result (success returns taskId/sessionId; failure includes transient/permanent status) */
   CronRunResult: "cron-run-result",
   /** host → main: off-peak-task dispatch result (success returns conversationId/sessionId; failure includes transient/permanent status) */

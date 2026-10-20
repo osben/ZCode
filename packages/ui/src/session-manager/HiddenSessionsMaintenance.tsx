@@ -9,16 +9,18 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
  */
 export function HiddenSessionsMaintenance({
   sessions,
+  worktrees = 0,
   busy,
   onErase,
 }: {
   sessions: number | null;
+  worktrees?: number;
   busy: boolean;
   onErase: () => Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
-  if (sessions === null || sessions <= 0) {
+  if (sessions === null || (sessions <= 0 && worktrees <= 0)) {
     return null;
   }
 
@@ -40,7 +42,12 @@ export function HiddenSessionsMaintenance({
       data-testid="session-manager-hidden-sessions"
     >
       <span className="min-w-0">
-        {intl.formatPlural({ id: "sessionManager.hidden.count" }, sessions)}
+        {sessions > 0 ? intl.formatPlural({ id: "sessionManager.hidden.count" }, sessions) : null}
+        {worktrees > 0 ? (
+          <span className="block">
+            {intl.formatMessage({ id: "sessionManager.hidden.worktrees" }, { count: worktrees })}
+          </span>
+        ) : null}
       </span>
       <Button
         type="button"

@@ -167,6 +167,13 @@ export interface ZCodeTaskIndexSyncer {
    * The mobile host command queue may use only this event as the boundary for sending the next input.
    */
   onSessionReadyEvent: Event<ZCodeTaskIndexReadyEvent>;
+  /** Current non-cancelled worktree preparations from the Host's live sessions-index projections. */
+  listWorktreePreparations(): Array<{
+    targetPath: string;
+    branchName: string;
+    workspacePath: string;
+    status: "preparing" | "failed";
+  }>;
   /** Release all V4 subscriptions and the workspace emitter; do not close the injected taskIndexRepo. */
   disposeAll(): void;
 }
@@ -1783,6 +1790,29 @@ export function createZCodeTaskIndexSyncer(
     syncSnapshotAndBroadcast,
 
     syncTaskModel,
+
+    listWorktreePreparations() {
+      const preparations: Array<{
+        targetPath: string;
+        branchName: string;
+        workspacePath: string;
+        status: "preparing" | "failed";
+      }> = [];
+      for (const state of workspaceIngests.values()) {
+        for (const summary of state.summaries.values()) {
+          const preparation = summary.worktreePreparation;
+          if (preparation && preparation.status !== "cancelled") {
+            preparations.push({
+              targetPath: preparation.targetPath,
+              branchName: preparation.branchName,
+              workspacePath: state.target.workspacePath,
+              status: preparation.status,
+            });
+          }
+        }
+      }
+      return preparations;
+    },
 
     emitWorkspaceTaskListChanged,
 

@@ -101,6 +101,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # scripts/*.test.mjs (pre-commit fixtures) read the real fork-upstream-base.json and fail
+      # loudly when pendingUpstreamCommit is set but absent from the clone.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
+
       - name: Restore V8 compile cache
         uses: actions/cache@v4
         with:
@@ -136,6 +141,11 @@ jobs:
         # 其类型链依赖 contracts 与 dynamic-workflow，需按拓扑顺序先构建。
         run: >
           pnpm --filter @zcode/contracts --filter @zcode/dynamic-workflow --filter @zcode/adapters --filter @zcode/e2e-report build
+
+      # The pre-commit regression tests run the wrapper against this checkout,
+      # so make the pending upstream blob available just as in the checks job.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
 
       - name: Tests
         run: pnpm test

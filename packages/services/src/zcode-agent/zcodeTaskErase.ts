@@ -1,13 +1,19 @@
+import { zcodeTaskEraseResultSchema } from "@zcode/shared";
 // Permanent erase of hidden tasks (specs/session-deletion-cascade.md §3-§4).
-// Owners: the CLI session store owns session content; tasks-index.sqlite owns list visibility. Erase never
-// writes the task index: the tombstone stays, because any resident runtime can still upsert the session row
-// and the tombstone is what keeps such a row hidden. Erase only acts on ids that already carry a tombstone,
-// so the executor and the list-visibility path stay a single Hide path followed by an optional erase.
+// The task index owns tombstones and durable worktree facts; the CLI owns conversation content.
+// Permanent Delete preserves the existing tombstone lane, then erases content and eligible worktrees.
 import type { ZCodeProvider } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
-import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
-import type { ZCodeTaskEraseResult, ZCodeTaskTreeCounts } from "#src/session/zcodeTaskService.js";
+import type { TaskIndexRepo, TaskIndexWorktreeOwnerFact } from "#src/session/taskIndexRepo.js";
+import type {
+  ZCodeTaskEraseResult,
+  ZCodeTaskTreeCounts,
+  ZCodeTaskWorktreeCleanupResult,
+} from "#src/session/zcodeTaskService.js";
 import type { IZCodeAgentService, ZCodeAgentRuntimePolicy } from "./zcodeAgent.js";
+import type { ZCodeTaskIndexSyncer } from "./zcodeTaskIndexSyncer.js";
+import { createTaskWorktreeCleanup } from "./zcodeTaskWorktreeCleanup.js";
+import type { IGitService } from "#src/git/git.js";
 
 const logger = createServiceLogger("zcode-task-erase");
 
@@ -26,7 +32,8 @@ export interface TaskEraseOperations {
     params: WorkspaceScope & { taskIds: string[] },
   ): Promise<ZCodeTaskTreeCounts | null>;
   eraseTasks(params: WorkspaceScope & { taskIds: string[] }): Promise<ZCodeTaskEraseResult | null>;
-  countHiddenTaskContent(): Promise<{ sessions: number } | null>;
+  getDeletionCapability(params: WorkspaceScope): Promise<{ supported: boolean }>;
+  countHiddenTaskContent(): Promise<{ sessions: number; worktrees: number } | null>;
   eraseHiddenTaskContent(): Promise<ZCodeTaskEraseResult | null>;
 }
 
@@ -50,6 +57,18 @@ function emptyResult(): ZCodeTaskEraseResult {
     failedTaskIds: [],
     fileFailureCount: 0,
     filesRetainedCount: 0,
+    worktreeCleanup: emptyWorktreeCleanup(),
+  };
+}
+
+function emptyWorktreeCleanup(): ZCodeTaskWorktreeCleanupResult {
+  return {
+    removed: [],
+    retained: [],
+    failed: [],
+    removedCount: 0,
+    retainedCount: 0,
+    failedCount: 0,
   };
 }
 
@@ -61,8 +80,38 @@ export function createTaskEraseOperations(options: {
   agent: IZCodeAgentService;
   taskIndexRepo: TaskIndexRepo;
   provider: ZCodeProvider;
+  gitService?: Pick<
+    IGitService,
+    "getRepositorySummary" | "resolveWorktreePathIdentities" | "removeWorktree"
+  >;
+  taskIndexSyncer?: Pick<ZCodeTaskIndexSyncer, "listWorktreePreparations">;
+  getOpenWorkspacePaths?: () => Promise<string[]>;
 }): TaskEraseOperations {
   const { agent, taskIndexRepo, provider } = options;
+
+  async function listLocalTaskMetas(): Promise<TaskIndexWorktreeOwnerFact[]> {
+    return await taskIndexRepo.listLocalWorktreeOwnerFacts({ provider });
+  }
+
+  async function getDeletionCapability(params: WorkspaceScope) {
+    if (isRemote(params) || !agent.eraseSessionTrees || !agent.countSessionTrees) {
+      return { supported: false };
+    }
+    // Prefer a live runtime so opening a dialog does not spawn one CLI process per workspace.
+    for (const runtimePolicy of ["existing-only", "start-if-needed"] as const) {
+      try {
+        const probe = await agent.countSessionTrees({
+          workspacePath: params.workspacePath,
+          sessionIds: ["__zcode_deletion_capability_probe__"],
+          runtimePolicy,
+        });
+        return { supported: probe !== null };
+      } catch {
+        // existing-only rejects when no runtime exists; fall through once.
+      }
+    }
+    return { supported: false };
+  }
 
   /** Chunked count; null when the CLI does not support it. Throws when the agent cannot be reached. */
   async function countIds(
@@ -96,6 +145,16 @@ export function createTaskEraseOperations(options: {
     if (isRemote(params) || !agent.countSessionTrees || params.taskIds.length === 0) return null;
     return countIds(params, params.taskIds, "start-if-needed");
   }
+
+  const worktreeCleanup = createTaskWorktreeCleanup({
+    agent,
+    taskIndexRepo,
+    gitService: options.gitService,
+    taskIndexSyncer: options.taskIndexSyncer,
+    getOpenWorkspacePaths: options.getOpenWorkspacePaths,
+    listLocalTaskMetas,
+    countTaskTrees: (scope, taskIds, runtimePolicy) => countIds(scope, taskIds, runtimePolicy),
+  });
 
   /**
    * Erase one chunk of roots for a workspace; falls back to root-by-root when a running session blocks it.
@@ -184,7 +243,7 @@ export function createTaskEraseOperations(options: {
     if (isRemote(params) || !agent.eraseSessionTrees) return null;
     const requested = [...new Set(params.taskIds)];
     const result = emptyResult();
-    if (requested.length === 0) return result;
+    if (requested.length === 0) return zcodeTaskEraseResultSchema.parse(result);
     const hidden = new Set(
       await taskIndexRepo.listDeletedTaskIds({
         workspacePath: params.workspacePath,
@@ -194,10 +253,12 @@ export function createTaskEraseOperations(options: {
     );
     const eligible = requested.filter((taskId) => hidden.has(taskId));
     result.skippedTaskIds = requested.filter((taskId) => !hidden.has(taskId));
+    const taskMetas = await listLocalTaskMetas();
     for (const taskIds of chunk(eligible, ERASE_CHUNK_SIZE)) {
       const outcome = await eraseChunk(params, params, taskIds, result, "start-if-needed");
       if (outcome === "unsupported") return null;
     }
+    await worktreeCleanup.cleanupWorktrees(taskMetas, new Set(eligible), result);
     logger.info(undefined, "[TaskErase] batch completed", {
       requested: requested.length,
       erased: result.erasedTaskIds.length,
@@ -206,8 +267,11 @@ export function createTaskEraseOperations(options: {
       failed: result.failedTaskIds.length,
       fileFailures: result.fileFailureCount,
       filesRetained: result.filesRetainedCount,
+      worktreesRemoved: result.worktreeCleanup.removedCount,
+      worktreesRetained: result.worktreeCleanup.retainedCount,
+      worktreesFailed: result.worktreeCleanup.failedCount,
     });
-    return result;
+    return zcodeTaskEraseResultSchema.parse(result);
   }
 
   async function listHiddenByWorkspace(): Promise<Map<string, string[]>> {
@@ -227,16 +291,32 @@ export function createTaskEraseOperations(options: {
    * that can host it. A workspace whose folder is gone must not stop its tombstones from being counted.
    */
   async function countHiddenTaskContent() {
-    if (!agent.countSessionTrees) return null;
+    let worktreeCount = 0;
+    try {
+      const metas = await listLocalTaskMetas();
+      const paths = metas.flatMap((task) =>
+        task.deleted && task.executionWorktree?.path ? [task.executionWorktree.path] : [],
+      );
+      if (paths.length > 0 && options.gitService) {
+        const identities = await options.gitService.resolveWorktreePathIdentities({ paths });
+        worktreeCount = new Set(identities).size;
+      } else {
+        worktreeCount = new Set(paths).size;
+      }
+    } catch (error) {
+      logger.warn(undefined, "[TaskErase] hidden worktree count failed", { error });
+      return null;
+    }
+    if (!agent.countSessionTrees) return { sessions: 0, worktrees: worktreeCount };
     const byWorkspace = await listHiddenByWorkspace();
     const workspaces = [...byWorkspace.keys()];
-    if (workspaces.length === 0) return { sessions: 0 };
+    if (workspaces.length === 0) return { sessions: 0, worktrees: worktreeCount };
     const allIds = [...byWorkspace.values()].flat();
     for (const runtimePolicy of ["existing-only", "start-if-needed"] as const) {
       for (const workspacePath of workspaces) {
         try {
           const counts = await countIds({ workspacePath }, allIds, runtimePolicy);
-          return counts ? { sessions: counts.total } : null;
+          return counts ? { sessions: counts.total, worktrees: worktreeCount } : null;
         } catch (error) {
           if (runtimePolicy === "start-if-needed") {
             logger.warn(undefined, "[TaskErase] hidden content count failed", { error });
@@ -253,6 +333,7 @@ export function createTaskEraseOperations(options: {
    */
   async function eraseHiddenTaskContent() {
     if (!agent.eraseSessionTrees) return null;
+    const taskMetas = await listLocalTaskMetas();
     const byWorkspace = await listHiddenByWorkspace();
     const result = emptyResult();
     const withoutRuntime: Array<{ workspacePath: string; taskIds: string[] }> = [];
@@ -305,8 +386,23 @@ export function createTaskEraseOperations(options: {
       }
       if (!handled) result.failedTaskIds.push(...entry.taskIds);
     }
-    return result;
+    await worktreeCleanup.cleanupWorktrees(
+      taskMetas,
+      new Set(
+        taskMetas
+          .filter((task) => task.deleted && task.executionWorktree?.path)
+          .map((task) => task.taskId),
+      ),
+      result,
+    );
+    return zcodeTaskEraseResultSchema.parse(result);
   }
 
-  return { countTaskTrees, eraseTasks, countHiddenTaskContent, eraseHiddenTaskContent };
+  return {
+    countTaskTrees,
+    getDeletionCapability,
+    eraseTasks,
+    countHiddenTaskContent,
+    eraseHiddenTaskContent,
+  };
 }

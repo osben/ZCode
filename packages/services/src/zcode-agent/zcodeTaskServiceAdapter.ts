@@ -138,6 +138,7 @@ import {
   OFF_PEAK_MUTATION_TOOL_NAMES,
 } from "#src/zcode-agent/automationToolPolicy.js";
 import type { ISettingService } from "#src/setting/setting.js";
+import type { IGitService } from "#src/git/git.js";
 import type {
   SessionMessageDeliveryResult,
   SessionMessageSendRequested,
@@ -200,6 +201,8 @@ interface CreateZCodeTaskServiceAdapterOptions {
   // same instance or subscriptions split between the desktop-continuous and task-adapter paths, leaving
   // the UI without all events.
   taskIndexSyncer: ZCodeTaskIndexSyncer;
+  gitService?: IGitService;
+  getOpenWorkspacePaths?: () => Promise<string[]>;
   settingService?: Pick<ISettingService, "get">;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
 }
@@ -313,6 +316,9 @@ export function createZCodeTaskServiceAdapter(
     agent: options.zcodeAgentService,
     taskIndexRepo,
     provider: GLM_PROVIDER,
+    gitService: options.gitService,
+    getOpenWorkspacePaths: options.getOpenWorkspacePaths,
+    taskIndexSyncer: options.taskIndexSyncer,
   });
   const ownsForkWorkspacePinRepo = !options.forkWorkspacePinRepo;
   const forkWorkspacePinRepo = options.forkWorkspacePinRepo ?? new ForkWorkspacePinRepo();
