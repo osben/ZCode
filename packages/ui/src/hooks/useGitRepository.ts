@@ -39,11 +39,11 @@ interface GitLiveDataRefreshInput {
   includeExtendedData: boolean;
   refreshToken: string | number | boolean | null;
   workspaceRpcEnabled: boolean;
-  // Self-healing inputs (BUG-GWT-013), optional so pure-diff callers keep the legacy contract:
-  // summaryResolved is true once a refresh settled for this exact target; refreshPending is
-  // true while the version-current request has not settled yet (its settle handler owns recovery).
+  // BUG-GWT-013: resolved snapshot and current pending request for this exact target.
+  // Optional for legacy refresh-decision callers.
   summaryResolved?: boolean;
   refreshPending?: boolean;
+  retryTick?: number;
 }
 
 export interface GitPaneFileChange extends GitFileChange {
@@ -376,21 +376,21 @@ export function shouldRefreshLiveGitData(
     return true;
   }
 
+  if (previous.retryTick !== next.retryTick) {
+    return true;
+  }
+
   if (previous.refreshToken !== next.refreshToken) {
     return true;
   }
 
-  // Key behavior (BUG-GWT-013): re-issue the initial refresh when the active target has no
-  // settled summary and no request is pending — a dropped (services identity swap) or rejected
-  // first refresh must not hide the destination chip until a renderer reload. While a request
-  // is pending, its settle handler owns recovery instead. Strict checks keep the rule inert for
-  // callers that do not provide the self-healing inputs.
+  // BUG-GWT-013: recover an unresolved target only after its current request settles.
+  // Strict checks preserve callers that omit these optional recovery inputs.
   if (next.summaryResolved === false && next.refreshPending === false) {
     return true;
   }
 
-  // Key behavior: closing the Git pane must not trigger real Git work just because branch/identity data is missing.
-  // Fetch extra data only on the closed → open transition; task/last-turn switches only reorganize local data.
+  // Only opening the pane requests extras; closing it and last-turn switches need no Git IO.
   return !previous.includeExtendedData && next.includeExtendedData;
 }
 
@@ -436,24 +436,19 @@ export function useGitRepository(options: {
   );
   const requestVersionRef = useRef(0);
   const pendingRequestVersionRef = useRef<number | null>(null);
-  // Bounded recovery for a rejected initial refresh: the failure leaves summaryResolved false without
-  // changing any effect dependency, so the re-issue rule would never be re-evaluated. A tick bump re-runs
-  // the effect; the counter (per target) caps it so a persistent failure settles on the error state.
+  // A retry tick admits bounded recovery even when a confirmed snapshot remains resolved.
+  // The counter is scoped to both identity and path so another target gets its own budget.
   const [retryTick, setRetryTick] = useState(0);
-  const consecutiveFailuresRef = useRef<{ key: string; count: number }>({
-    key: "",
-    count: 0,
-  });
+  const consecutiveFailuresRef = useRef({ workspaceKey: "", workspacePath: "", count: 0 });
   const lastLiveRefreshInputRef = useRef<GitLiveDataRefreshInput | null>(null);
   const lastFileChangeEntry = null;
   const lastSummaryEntry = null;
-  // True once a refresh settled (loaded, not loading, not errored) for the exact current target.
-  // A settle flips this flag, which re-evaluates the effect below, and the flag feeds the
-  // self-healing re-issue rule in shouldRefreshLiveGitData (BUG-GWT-013).
+  // A successful snapshot resolves the target even while refreshing or when comparison fails.
+  // Loading must not flip this flag: that would clean up an in-flight same-target refresh
+  // and misidentify its completion as a service-instance swap needing another request.
   const summaryResolved =
     matchesGitRepositoryTarget(repositoryState, { workspacePath, workspaceKey }) &&
-    !repositoryState.loading &&
-    repositoryState.error === null;
+    repositoryState.revision > 0;
 
   useEffect(() => {
     const nextRefreshInput: GitLiveDataRefreshInput = {
@@ -463,6 +458,7 @@ export function useGitRepository(options: {
       refreshToken,
       workspaceRpcEnabled,
       summaryResolved,
+      retryTick,
       refreshPending:
         pendingRequestVersionRef.current !== null &&
         pendingRequestVersionRef.current === requestVersionRef.current,
@@ -485,8 +481,7 @@ export function useGitRepository(options: {
     if (!workspaceRpcEnabled) {
       requestVersionRef.current += 1;
       lastLiveRefreshInputRef.current = nextRefreshInput;
-      // A disconnected remote workspace may show an empty Git-pane shell, but do not
-      // query remote Git before session recovery; that would amplify a disconnected proxy error into log noise on every first mount.
+      // Wait for remote session recovery before querying Git.
       setRepositoryState((current) =>
         createInitialState(workspacePath, {
           workspaceKey,
@@ -522,38 +517,38 @@ export function useGitRepository(options: {
         : createInitialState(workspacePath, { workspaceKey }),
     );
 
-    // Agent file writes trigger automatic Git refresh. Do not split this into summary/unstaged/staged
-    // RPCs because each server call reruns git status, creating a three-call burst for every update in the logs.
-    // Use refresh once so a single status snapshot provides the header and the Git pane’s base data.
+    // One refresh derives summary and changes from the same status snapshot.
     const refreshPromise = gitService.refresh({
       workspacePath,
       includeIdentity: includeExtendedData,
       includeBranchComparison: includeExtendedData,
     });
 
-    // Key behavior: while the header is always visible, it needs only summary and staged/unstaged counts;
-    // fetch branch comparison and identity only after the Git pane is expanded, avoiding full Git-pane prefetch on the first frame.
+    // Identity and comparison are requested only for an open Git pane.
     void refreshPromise
-      .then(({ summary, identity, unstagedChanges, stagedChanges, branchComparison }) => {
+      .then((result) => {
+        const {
+          summary,
+          identity,
+          unstagedChanges,
+          stagedChanges,
+          branchComparison,
+          branchComparisonError,
+        } = result;
         if (pendingRequestVersionRef.current === requestVersion) {
           pendingRequestVersionRef.current = null;
         }
 
-        // Key behavior (BUG-GWT-013): a result for the still version-current request must be
-        // applied even when the issuing effect run was cleaned up by a services identity swap
-        // with unchanged logical inputs — dropping it left the workspace summary-less (no
-        // destination chip) until a renderer reload. Version currency is the target check: any
-        // logical input change bumps the version or re-issues, so an equal version means the
-        // same workspacePath/workspaceKey still owns this result.
+        // BUG-GWT-013: service replacement must not drop a current result. Logical target
+        // changes advance the version, so only the current identity/path can apply it.
         if (requestVersionRef.current !== requestVersion) {
           return;
         }
-        // Only a current request's success resets the cap; a stale result must not clear another target's count.
-        consecutiveFailuresRef.current = { key: workspaceKey, count: 0 };
+        // Stale results cannot reset another target's retry budget.
+        consecutiveFailuresRef.current = { workspaceKey, workspacePath, count: 0 };
 
         if (disposed) {
-          // The result came from a superseded service instance; drop the stored baseline so
-          // the next effect evaluation re-establishes the fetch through the current instance.
+          // Re-establish the baseline through the replacement service instance.
           lastLiveRefreshInputRef.current = null;
         }
 
@@ -576,7 +571,7 @@ export function useGitRepository(options: {
             enabled: false,
           },
           loading: false,
-          error: null,
+          error: branchComparisonError ?? null,
           revision: requestVersion,
           sourceOptions: buildSourceOptions(datasets),
           datasets,
@@ -587,10 +582,8 @@ export function useGitRepository(options: {
           pendingRequestVersionRef.current = null;
         }
 
-        // Key behavior (BUG-GWT-013): same version-currency rule as the success path — an
-        // identity swap must not silence the failure. The applied error state keeps
-        // summaryResolved false, so shouldRefreshLiveGitData re-issues on the next effect
-        // evaluation instead of pinning the workspace without its destination chip.
+        // Apply the same stale-result guard on failure. The retry tick also handles
+        // targets whose confirmed snapshot remains visible after a failed refresh.
         if (requestVersionRef.current !== requestVersion) {
           return;
         }
@@ -600,23 +593,28 @@ export function useGitRepository(options: {
           workspacePath,
           error: message,
         });
-        setRepositoryState((current) => ({
-          ...createInitialState(workspacePath, {
-            workspaceKey,
-            loading: false,
-            error: message,
-            revision: current.revision,
-          }),
-        }));
-        // Bounded: after MAX_INITIAL_REFRESH_RETRIES consecutive rejections the error state stands until the
-        // next file-change trigger or a dependency change.
-        const failures =
-          consecutiveFailuresRef.current.key === workspaceKey
-            ? consecutiveFailuresRef.current.count
-            : 0;
+        setRepositoryState((current) =>
+          matchesGitRepositoryTarget(current, nextRefreshInput) &&
+          current.summary.isGitAvailable &&
+          current.summary.isRepository
+            ? { ...current, loading: false, error: message }
+            : createInitialState(workspacePath, {
+                workspaceKey,
+                loading: false,
+                error: message,
+              }),
+        );
+        // Exhausted retries leave the error visible until an external refresh trigger.
+        const failures = matchesGitRepositoryTarget(
+          consecutiveFailuresRef.current,
+          nextRefreshInput,
+        )
+          ? consecutiveFailuresRef.current.count
+          : 0;
         if (failures < MAX_INITIAL_REFRESH_RETRIES) {
           consecutiveFailuresRef.current = {
-            key: workspaceKey,
+            workspaceKey,
+            workspacePath,
             count: failures + 1,
           };
           setRetryTick((tick) => tick + 1);
@@ -640,8 +638,7 @@ export function useGitRepository(options: {
   ]);
 
   return useMemo(() => {
-    // useEffect clears old state only after the workspace-switch commit. During render, project an empty state by
-    // identity and path so Git data from a previous execution directory is never exposed for the new target.
+    // Hide another identity/path's snapshot during render, before effect cleanup.
     const currentRepositoryState = matchesGitRepositoryTarget(repositoryState, {
       workspaceKey,
       workspacePath,

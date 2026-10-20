@@ -13,6 +13,7 @@ import {
   LSP_DEFAULT_IDLE_SHUTDOWN_MS,
   LSP_DEFAULT_MAX_RUNNING_SERVERS,
   LSP_DEFAULT_NOT_INSTALLED_RETRY_MS,
+  LSP_DEFAULT_UNAVAILABLE_RETRY_MS,
   LSP_LOGGER_MODULE,
 } from "./constants.js";
 import {
@@ -42,6 +43,8 @@ export interface LanguageServerPoolOptions {
   spawnImpl?: LspSpawnFn;
   /** After `not_installed`, acquire retries the spawn only once this much time has passed. */
   notInstalledRetryMs?: number;
+  /** After the restart budget runs out, acquire makes one more start only once this much time has passed. */
+  unavailableRetryMs?: number;
 }
 
 const NOOP_LOGGER: Logger = {
@@ -63,6 +66,7 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
   const idleShutdownMs = options.idleShutdownMs ?? LSP_DEFAULT_IDLE_SHUTDOWN_MS;
   const maxRunningServers = options.maxRunningServers ?? LSP_DEFAULT_MAX_RUNNING_SERVERS;
   const notInstalledRetryMs = options.notInstalledRetryMs ?? LSP_DEFAULT_NOT_INSTALLED_RETRY_MS;
+  const unavailableRetryMs = options.unavailableRetryMs ?? LSP_DEFAULT_UNAVAILABLE_RETRY_MS;
   const now = options.now ?? Date.now;
   const listeners = new Set<(event: LanguageServerEvent) => void>();
   const entries = new Map<string, LspServerEntry>();
@@ -121,11 +125,35 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
           });
           return startFresh(entry, options?.trace);
         }
-        entry.state = "unavailable";
+        markUnavailable(entry);
         return failedResult(entry);
       case "unavailable":
-        return failedResult(entry);
+        // A failed start is often fixed outside ZCode (dependencies installed in a fresh worktree),
+        // so the budget is not final: one attempt per window, still triggered only by an acquire.
+        if (entry.unavailableAt === undefined || now() < entry.unavailableAt + unavailableRetryMs) {
+          return failedResult(entry);
+        }
+        entry.unavailableAt = undefined;
+        logger.info("LSP server retrying after unavailable window", {
+          event: "adapters.lsp.retry",
+          serverId: server.id,
+          restarts: entry.restarts,
+        });
+        return startFresh(entry, options?.trace);
     }
+  }
+
+  function markUnavailable(entry: LspServerEntry): void {
+    entry.state = "unavailable";
+    // restartOnCrash: false is the user's choice of no restarts, so that unavailable stays final.
+    entry.unavailableAt = entry.server.restartOnCrash ? now() : undefined;
+    logger.warn("LSP server unavailable after failed starts", {
+      event: "adapters.lsp.unavailable",
+      serverId: entry.server.id,
+      restarts: entry.restarts,
+      lastErrorCode: entry.lastErrorCode,
+      ...(entry.unavailableAt === undefined ? {} : { retryAfterMs: unavailableRetryMs }),
+    });
   }
 
   function startFresh(
@@ -139,6 +167,8 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
 
   function failedResult(entry: LspServerEntry): LanguageServerAcquireResult {
     if (entry.state === "unavailable") {
+      // Only the code: tool failures are logged with their message (`tool.call.failed`), and the
+      // server's text and stderr tail must not reach the production log through this path.
       const last = entry.lastErrorCode ? ` (last error: ${entry.lastErrorCode})` : "";
       return {
         state: "failed",
