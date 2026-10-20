@@ -101,6 +101,11 @@ jobs:
           node-version-file: .nvmrc
           cache: pnpm
 
+      # scripts/*.test.mjs (pre-commit fixtures) read the real fork-upstream-base.json and fail
+      # loudly when pendingUpstreamCommit is set but absent from the clone.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
+
       - name: Restore V8 compile cache
         uses: actions/cache@v4
         with:
