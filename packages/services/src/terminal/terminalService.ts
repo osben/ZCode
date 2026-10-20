@@ -321,6 +321,53 @@ export function resolveTerminalCwd(cwd?: string): string {
   throw new Error("No usable working directory found for terminal startup");
 }
 
+/** Upper bound on PTY output characters kept while no listener is attached; the oldest chunks are dropped first so the visible tail survives. */
+export const TERMINAL_UNSUBSCRIBED_OUTPUT_MAX_CHARS = 1_048_576;
+
+// Cause: the first prompt is written by the PTY about 10ms after spawn, before the renderer has the
+// terminal id and subscribes to onDynamicData. A plain Emitter drops events that have no listener,
+// so remote terminals (40-200ms SSH round trips) lost the first prompt and showed an empty screen.
+// Prevention: buffer output while no listener is attached and replay it in order on the first
+// subscription. Buffering also covers a detached period (for example a reconnect), with no timers.
+export function createBufferedTerminalOutputEmitter(): {
+  emitter: Emitter<string>;
+  push: (data: string) => void;
+} {
+  const pending: string[] = [];
+  let pendingChars = 0;
+  let hasListener = false;
+
+  const emitter: Emitter<string> = new Emitter<string>({
+    // Emitter registers the listener before invoking this hook, so fire() here reaches the new subscriber.
+    onWillAddFirstListener: () => {
+      hasListener = true;
+      const buffered = pending.splice(0);
+      pendingChars = 0;
+      for (const chunk of buffered) {
+        emitter.fire(chunk);
+      }
+    },
+    onDidRemoveLastListener: () => {
+      hasListener = false;
+    },
+  });
+
+  return {
+    emitter,
+    push: (data) => {
+      if (hasListener) {
+        emitter.fire(data);
+        return;
+      }
+      pending.push(data);
+      pendingChars += data.length;
+      while (pendingChars > TERMINAL_UNSUBSCRIBED_OUTPUT_MAX_CHARS && pending.length > 1) {
+        pendingChars -= pending.shift()?.length ?? 0;
+      }
+    },
+  };
+}
+
 export function createTerminalService(dependencies: {
   settingService: ISettingService;
 }): ITerminalService {
@@ -374,7 +421,8 @@ export function createTerminalService(dependencies: {
       });
       const nodePty = await loadNodePtyModule();
       ensureNodePtySpawnHelperExecutable();
-      const dataEmitter = new Emitter<string>();
+      const terminalOutput = createBufferedTerminalOutputEmitter();
+      const dataEmitter = terminalOutput.emitter;
       const exitEmitter = new Emitter<number>();
 
       let p: IPty;
@@ -393,7 +441,7 @@ export function createTerminalService(dependencies: {
         );
       }
 
-      p.onData((data) => dataEmitter.fire(data));
+      p.onData((data) => terminalOutput.push(data));
       p.onExit(({ exitCode }) => {
         exitEmitter.fire(exitCode);
         dataEmitter.dispose();

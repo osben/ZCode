@@ -1,7 +1,8 @@
 /* eslint-disable max-lines -- HTTP, WebSocket, and static-asset routes are registered together to preserve one authorization order. */
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
+import * as nodePath from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { hostname } from "node:os";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
@@ -352,9 +353,25 @@ function requiresToken(c: Context): boolean {
   return (c.req.method !== "GET" && c.req.method !== "HEAD") || targetsApiOrWs(c);
 }
 
-function isInsideDirectory(root: string, candidate: string): boolean {
-  const diff = relative(root, candidate);
-  return diff === "" || (!diff.startsWith("..") && !diff.includes(`..${sep}`));
+// Drive-qualified paths ("Z:/x", "Z:\x", "Z:x") are resolved by win32 path.resolve onto another
+// drive (including subst and mapped network drives), so they are rejected before any resolution.
+const DRIVE_QUALIFIED_PATH_PATTERN = /^[a-zA-Z]:/;
+
+export function isPathDriveQualified(pathname: string): boolean {
+  return DRIVE_QUALIFIED_PATH_PATTERN.test(pathname);
+}
+
+// pathApi is injectable for cross-platform tests. On Windows, path.relative across drives returns
+// an absolute path (e.g. "Z:\marker.txt") that does not start with "..", so it was wrongly treated
+// as inside the static root. Absolute relative results are therefore always treated as outside.
+export function isInsideDirectory(
+  root: string,
+  candidate: string,
+  pathApi: Pick<typeof nodePath, "relative" | "isAbsolute" | "sep"> = nodePath,
+): boolean {
+  const diff = pathApi.relative(root, candidate);
+  if (pathApi.isAbsolute(diff)) return false;
+  return diff === "" || (!diff.startsWith("..") && !diff.includes(`..${pathApi.sep}`));
 }
 
 async function resolveStaticFile(
@@ -365,6 +382,11 @@ async function resolveStaticFile(
   const root = resolve(staticRoot);
   const normalizedPathname = pathname === "/" ? "/index.html" : pathname;
   const relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
+  // Reject drive-qualified paths before resolve(), including the %3A-decoded form. Respond 404 and
+  // skip the SPA fallback so the request never reaches a file outside the static root.
+  if (isPathDriveQualified(relativePath)) {
+    return null;
+  }
   let candidate = resolve(root, relativePath);
   if (!isInsideDirectory(root, candidate)) {
     return null;

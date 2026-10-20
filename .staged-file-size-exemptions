@@ -229,3 +229,4 @@ packages/services/src/bots/botsService.ts
 
 packages/zcode-server-cli/src/cli.ts
 
+packages/server/src/http.ts
