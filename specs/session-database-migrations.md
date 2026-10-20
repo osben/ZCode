@@ -20,7 +20,9 @@ services-side task index and project storage are specified elsewhere.
   production entry point. The constructor is private.
 - Compatibility sync path (TEMPORARY, remove in the final PR together with the callers): `runSqliteSessionMigrationsSync`,
   `SqliteSessionStore.openSyncCompat`, `createSqliteSessionStore` and `openStartupSqliteSessionStore`. The sync
-  path applies the same ledger rules but takes no table backup.
+  path applies the same ledger rules but takes no table backup. Its `migrationResult` has the shared
+  `MigrationResult` shape: `applied` lists only the ids whose SQL ran in this open (empty on a reopen), and
+  `backupSkipped` is always `true`. `storage-migrate` relies on that shape to build its report.
 
 ## Ledger rules
 
