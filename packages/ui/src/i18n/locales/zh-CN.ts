@@ -6620,6 +6620,14 @@ const zhCN: Record<string, string> = {
   "chat.error.remoteNoAvailableModel":
     "此远程设备尚无可用模型，请先在本机配置模型，保存后会自动同步到远程设备",
   "chat.error.sendFailed": "发送失败，请稍后重试。",
+  "chat.error.resumeBlocked": "暂时无法继续，请检查会话后重试。",
+  "chat.history.workingThroughputTitle": "最近一次已完成模型请求的输出吞吐",
+  "chat.history.workingThroughputEstimateTitle": "流式输出吞吐（按字符估算；请求完成后显示精确值）",
+  "chat.history.outputTokens": "{count} tokens",
+  "chat.history.outputTokensTitle": "本轮主 Agent 输出的 token 数",
+  "chat.incognito.unsupported": "当前 Agent 版本无法启动无痕会话。请更新应用或远程 Agent 后重试。",
+  "chat.incognito.agentOutdated":
+    "Agent 版本过旧。请重启应用或更新远程 Agent（开发环境：重新运行 dev:desktop 以重建 Agent）后重试。",
   "chat.error.modelSettings": "模型设置",
   "chat.error.setModels": "配置",
 

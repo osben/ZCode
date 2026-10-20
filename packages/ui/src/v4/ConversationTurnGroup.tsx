@@ -95,6 +95,7 @@ import { readAssistantFeedback } from "@/v4/ConversationRowView.js";
 import type {
   AssistantFeedbackHandler,
   EditWorkspaceRewindAvailability,
+  RowPinChangeHandler,
 } from "@/v4/ConversationRowView.js";
 import {
   isConversationReasoningRowVisible,
@@ -107,6 +108,12 @@ import type {
   ConversationTurnWorkSegment,
 } from "@/v4/conversationTurnRenderUnits.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
+import {
+  resolveSegmentStreamingContent,
+  useStreamingThroughput,
+} from "@/v4/conversationStreamingThroughput.js";
+import { formatTokensPerSecond, useSessionThroughput } from "@/hooks/useSessionThroughput.js";
+import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 import { ConversationTurnRow, resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
 import { ConversationHookDetailsAction } from "@/v4/ConversationHookDetailsAction.js";
 import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
@@ -121,6 +128,7 @@ interface ConversationTurnGroupProps {
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onFeedbackChange?: AssistantFeedbackHandler;
+  onPinChange?: RowPinChangeHandler;
   onEdit?: (
     target: ConversationRowTarget,
     newText: string,
@@ -173,7 +181,7 @@ function HighspeedOutputFooter({
             type="button"
             variant="ghost"
             size="default"
-            className="h-7 gap-1 rounded-[8px] bg-black/5 px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10"
+            className="h-7 gap-1 rounded-[8px] bg-surface px-2 py-1 text-ui-base font-medium leading-5 text-foreground hover:bg-surface-hover"
             data-highspeed-output-share="true"
             disabled={sharePending}
             aria-label={shareAriaLabel}
@@ -634,12 +642,14 @@ function OffPeakTurnCards({
 function AssistantHistoryStatus({
   segment,
   open,
+  context,
   highspeed,
   highspeedMeta,
   sourceCommandIds,
 }: {
   segment: ConversationTurnWorkSegment;
   open: boolean;
+  context: ConversationRowRenderContext;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
   sourceCommandIds: readonly string[];
@@ -651,6 +661,21 @@ function AssistantHistoryStatus({
     intl,
     locale,
   );
+  const isRunning = segment.workStatus?.state === "running";
+  const { tokensPerSecond } = useSessionThroughput({
+    enabled: isRunning,
+    sessionId: context.sessionId,
+    workspaceIdentity: context.workspaceIdentity,
+    workspacePath: context.workspacePath,
+  });
+  const segmentStreamingContent = resolveSegmentStreamingContent(segment.assistantWorkRows);
+  const streamingTokensPerSecond = useStreamingThroughput({
+    enabled: isRunning,
+    contentKey: segmentStreamingContent.key,
+    text: segmentStreamingContent.text,
+  });
+  const isEstimate = streamingTokensPerSecond !== null;
+  const throughputTokensPerSecond = isEstimate ? streamingTokensPerSecond : tokensPerSecond;
   const savedDurationLabel =
     segment.workStatus?.state === "completed" &&
     highspeedMeta?.savedDurationMs !== undefined &&
@@ -716,6 +741,31 @@ function AssistantHistoryStatus({
             {intl.formatMessage({ id: "chat.highspeed.statusTag" })}
           </span>
         </div>
+      ) : isRunning && throughputTokensPerSecond !== null ? (
+        <span
+          data-testid="chat-working-throughput"
+          data-throughput-estimated={isEstimate ? "true" : undefined}
+          title={intl.formatMessage({
+            id: isEstimate
+              ? "chat.history.workingThroughputEstimateTitle"
+              : "chat.history.workingThroughputTitle",
+          })}
+          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+        >
+          {isEstimate ? "~" : ""}
+          {formatTokensPerSecond(locale, throughputTokensPerSecond)} tok/s
+        </span>
+      ) : !isRunning && segment.workStatus?.outputTokens !== undefined ? (
+        <span
+          data-testid="chat-worked-output-tokens"
+          title={intl.formatMessage({ id: "chat.history.outputTokensTitle" })}
+          className="ml-auto shrink-0 pl-2 text-ui-base tabular-nums text-foreground-subtle"
+        >
+          {intl.formatMessage(
+            { id: "chat.history.outputTokens" },
+            { count: formatCompactTokenNumber(locale, segment.workStatus.outputTokens) },
+          )}
+        </span>
       ) : null}
     </div>
   );
@@ -728,6 +778,7 @@ function ConversationWorkSegmentFlow({
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantPreviewCards,
@@ -745,6 +796,7 @@ function ConversationWorkSegmentFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantPreviewCards: AssistantPreviewCard[];
@@ -795,6 +847,7 @@ function ConversationWorkSegmentFlow({
               row={item.row}
               context={context}
               onEdit={item.row.actions?.canEdit === true ? onEdit : undefined}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
             />
           );
@@ -864,6 +917,7 @@ function ConversationWorkSegmentFlow({
               <AssistantHistoryStatus
                 segment={segment}
                 open={open}
+                context={context}
                 highspeed={highspeed}
                 highspeedMeta={highspeedMeta}
                 sourceCommandIds={sourceCommandIds}
@@ -878,6 +932,7 @@ function ConversationWorkSegmentFlow({
           segment={segment}
           sourceCommandIds={sourceCommandIds}
           open={open}
+          context={context}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
         />
@@ -893,6 +948,7 @@ function ConversationTurnFlow({
   onFork,
   onRetry,
   onEdit,
+  onPinChange,
   editWorkspaceRewindAvailability,
   assistantCopyText,
   assistantCodeCommentCards,
@@ -907,6 +963,7 @@ function ConversationTurnFlow({
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
   onEdit?: ConversationTurnGroupProps["onEdit"];
+  onPinChange?: RowPinChangeHandler;
   editWorkspaceRewindAvailability: EditWorkspaceRewindAvailability;
   assistantCopyText?: string;
   assistantCodeCommentCards: AssistantCodeCommentCard[];
@@ -1010,6 +1067,7 @@ function ConversationTurnFlow({
           onFork={onFork}
           onRetry={onRetry}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantPreviewCards={assistantPreviewCards}
@@ -1044,6 +1102,7 @@ const BACKGROUND_RESULT_TITLE_SOURCES: ReadonlySet<string> = new Set([
   "bash",
   "subagent",
   "workflow",
+  "dream",
 ]);
 
 function resolveBackgroundResultTitle(unit: ConversationTurnRenderUnit): string | undefined {
@@ -1243,6 +1302,7 @@ function ConversationTurnGroupImpl({
   onRetry,
   onFeedbackChange,
   onEdit,
+  onPinChange,
 }: ConversationTurnGroupProps) {
   const isOfficeMode = useIsOfficeMode();
   const { intl } = useZCodeIntl();
@@ -1493,6 +1553,7 @@ function ConversationTurnGroupImpl({
                   row={row}
                   context={context}
                   onEdit={row.actions?.canEdit === true ? onEdit : undefined}
+                  onPinChange={onPinChange}
                   editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
                 />
               ))}
@@ -1521,6 +1582,7 @@ function ConversationTurnGroupImpl({
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={onRetry}
               onEdit={onEdit}
+              onPinChange={onPinChange}
               editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
               assistantCopyText={assistantCopyText}
               assistantCodeCommentCards={assistantCodeCommentCards}
@@ -1578,16 +1640,18 @@ function ConversationTurnGroupImpl({
               createdAt={latestAssistantTextRow.createdAt}
               compactForRemoteControl={context.compactForRemoteControl}
               feedback={readAssistantFeedback(latestAssistantTextRow)}
+              pinnedAt={latestAssistantTextRow.pinnedAt}
               sessionId={context.sessionId}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={canRetryLatestAssistant ? onRetry : undefined}
               onFeedbackChange={onFeedbackChange}
+              onPinChange={onPinChange}
               hookInvocations={unit.hookInvocations}
               turnId={unit.turnId}
               sourceCommandIds={deliverySourceCommandIds}
               className={cn(
                 "flex items-center gap-1",
-                context.compactForRemoteControl
+                context.compactForRemoteControl || latestAssistantTextRow.pinnedAt !== undefined
                   ? "opacity-100"
                   : "opacity-0 transition-opacity group-hover/assistant-turn:opacity-100 focus-within:opacity-100 has-[[data-bot-group-delivery]]:opacity-100",
               )}
@@ -1645,6 +1709,7 @@ function ConversationTurnGroupImpl({
           apiRetry={apiRetry}
           context={assistantRowContext}
           onEdit={onEdit}
+          onPinChange={onPinChange}
           editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
           assistantCopyText={assistantCopyText}
           assistantCodeCommentCards={assistantCodeCommentCards}

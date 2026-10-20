@@ -293,3 +293,6 @@ packages/ui/test/workspaceSidePane.test.ts
 packages/ui/test/v4PaneLayoutStore.test.ts
 packages/ui/test/savedWorkflowPermissionBlocks.test.ts
 packages/ui/test/settingsPageIntegratedTerminalShell.test.ts
+# TEMPORARY upstream 3.16.1 sync (ui bucket 7): oversize UI files re-applied with fork changes; split or reconcile in the UI-2 PR and remove these lines.
+packages/ui/src/ModelConfigSelect.tsx
+packages/ui/src/v4/ConversationTurnGroup.tsx
