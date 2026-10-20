@@ -52,7 +52,7 @@ describe("remote asset staging CLI", () => {
       await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
     );
     expect(rootPackage.scripts["prepare:remote-assets:linux"]).toBe(
-      "pnpm --filter @zcode/server-cli stage:remote-assets --linux",
+      "node scripts/prepare-prebuilds.mjs --linux",
     );
   });
 
