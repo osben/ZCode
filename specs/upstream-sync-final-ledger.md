@@ -416,3 +416,28 @@ Not done and blocked:
 - Formatting: `pnpm fmt:check` fails on other slices' files (packages/web/src/webRemoteControlDeviceInfo.ts, packages/web/test/webRemoteControlWorkspaceBridgeSession.test.ts, and more). None of the files changed here is listed.
 - Test copy: `node scripts/check-test-copy.mjs` reports 7 locale violations, all in packages/desktop/test/e2e manual-review pending files outside this scope. In the touched test files, the comments the fork had already translated are English again, and every comment or title this slice added is English. About 40 Chinese `it` titles and assertion messages from upstream remain in `zcode-builtin-integrity.test.ts`; the check does not flag them. Translating them is open follow-up work.
 - Staged size: packages/web/src/main.tsx (about 103 KB) is already listed as TEMPORARY in `.staged-file-size-exemptions`; no new entry needed.
+
+## controller
+
+Scope: `packages/services/src/window-controller/windowHostControllerService.ts` (the fork's home for the window host controller) against upstream `0a1fc56d` `packages/desktop/src/host/windowHostControllerService.ts`, the upstream desktop tests, and the fork's own spec in `packages/desktop/test/windowHostControllerService.test.ts`. Base: `aac47556`.
+
+Before: the four desktop files failed 28 of 41 tests (`windowHostControllerUnreadSignal` 14, `windowHostControllerTaskMeta` 10, `windowHostControllerAttachmentIdentity` 2, `windowHostControllerService` 2). After: 41 of 41 pass. `packages/services/test` failures are unchanged: 52 failed, the same list as before, none in the window controller.
+
+Ported from upstream, and kept fork guards (`assertOpen`, `maxSources`, bounded reads, convergence and incognito writes, the single runtime unread producer):
+
+- Source identity: `sourceKey` uses `sourceServerId ?? remoteSessionId`, the same key the projection already uses. A remote scope that carries only `sourceServerId` no longer collapses to `undefined`. Rows and scopes carry `sourceServerId` and `serverDisplayName` end to end.
+- Live events: an `isCurrentSource()` guard runs before the unread signal fires and before the follow-up refresh. Replaced, offline and disposed sources emit nothing. A failed follow-up refresh goes to `onSourceError` and never swallows a signal that already fired.
+- `getTaskMeta`: the address is parsed with `windowHostTaskAddressSchema`. Owner and source are re-checked before and after the IO, including the attachment's remote session ID and the address identity. A changed owner, a disposed attachment or an address mismatch rejects with `任务读取期间 source 已失效` or `任务地址与 source 不匹配`.
+- `mutateTask`: the source must be online, or the call throws. Mark-read and mark-unread wait for an in-flight read, then re-read only when the row is missing. Both return the committed reply, normalized to the source scope. The unread compare-and-swap uses that reply, not a later projection. Errors: `未读写入期间 source 已失效`.
+- `resolveTaskAddress`: the attachment is re-checked after the first snapshot load. A row is matched by `sourceServerId` when the source has one, so a Source-only sidebar query can be followed by an attachment. The `allowMissingTask` fallback keeps `sourceServerId`.
+- `replaceDisconnectedSource`: upstream's commit guard and rollback are ported earlier in the fork (see the `compile bridges` section). This pass did not change them.
+
+Decisions that differ from upstream:
+
+- `createAttachmentService(ownsUnreadSignals = true)`. Default `true` keeps the fork's always-on unread stream for every attachment, because the fork's sidebar unread writer (`useProjectUnreadSignals`) runs on every attachment. A passive attachment (`false`) gets `Event.None`, which the upstream test requires. Each attachment forwards from the runtime emitter and disposes its own subscription, so a disposed attachment gets no signals.
+- `getTaskMeta` throws when the owner is unavailable. The fork returned `null`. Upstream throws, and the test expects the rejection. The UI caller (`readProjectTaskMeta` in `useProjectUnreadSignals`) is inside a `.catch`, so a throw is treated as no compare-and-swap basis. Checked: `taskListMetaSync`, `taskUnreadSourceOfTruth`, `projectSidebarForegroundUnread`, `projectTreeBackgroundUnread`, `projectTreeWindowDirectory`, `useWorkspaceActiveTaskState` and `hostRemoteWorkspaceProxyState` all pass (63 tests).
+- Post-write refresh: a forced refresh that joins an older in-flight read reports that read's failure a second time. The post-write refresh now waits for the in-flight read to settle, then reads again. Test: `delivers the explicit completion of a known task even when its projection refresh fails` (expects exactly one `onSourceError`).
+
+Size guard: `.staged-file-size-exemptions` already lists `packages/services/src/window-controller/windowHostControllerService.ts` as TEMPORARY, from the earlier merge. No new entry.
+
+Not changed: `ZCodeTaskListWorkspaceScope` (services) still has no `kind` or `sourceServerId`. The controller reads `sourceServerId` from its own `WindowHostControllerSourceScope`, so the shared protocol needed no change.
