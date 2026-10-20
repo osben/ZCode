@@ -49,3 +49,7 @@ specs/system-prompt-settings.md
 specs/voice-dictation.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
+
+# Temporary: upstream 3.16.1 sync (PR 3): data files consumed whole by the architecture governance gate; split later.
+architecture-policy.yaml
+.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
