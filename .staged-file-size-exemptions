@@ -334,3 +334,9 @@ apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts
 apps/zcode-cli/packages/cli/src/prompt-command.ts
 apps/zcode-cli/packages/cli/tests/cli.unit.test.ts
 apps/zcode-cli/packages/i18n/src/locales/uk-UA.ts
+
+# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
+packages/services/src/session/automationRepo.ts
+packages/services/src/session/offPeakTaskRepo.ts

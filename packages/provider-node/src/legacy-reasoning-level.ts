@@ -37,12 +37,17 @@ export function resolveLegacyReasoningLevel(
         // Must be the resolved original rule with no site/API restrictions; a newly added site rule with the same name must not inherit the legacy alias accidentally.
         const rename =
           rule.type === "model"
-            ? renames.find((entry) => entry.modelMatch === rule.modelMatch)
+            ? renames.find(
+                (entry) =>
+                  entry.modelMatch === rule.modelMatch ||
+                  entry.simplifiedModelMatch === rule.modelMatch,
+              )
             : undefined;
         const values = rule.config.optionSpecs?.reasoningLevel?.values;
         return rename && values?.includes("disabled")
           ? {
               ...rule,
+              modelMatch: rename.modelMatch,
               config: rule.config.overlay(
                 new ModelConfig({
                   optionSpecs: new ModelOptionSpecsConfig({
