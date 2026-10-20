@@ -1,12 +1,15 @@
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu.js";
 import { TaskActionMenuContent } from "@/TaskActionMenuContent.js";
+import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 
 export function TaskListItemContextMenu({
   intl,
+  task,
   isPinned,
   fileManagerLabel,
   taskSessionFile,
@@ -25,6 +28,7 @@ export function TaskListItemContextMenu({
   onCopyTaskPath,
   onCopyTaskLogPath,
   onCopySessionId,
+  onCopyText,
   onViewModelTrajectory,
   onOpenProviderConfig,
   disableTaskActions = false,
@@ -33,6 +37,7 @@ export function TaskListItemContextMenu({
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
   };
+  task: ZCodeTaskMeta;
   isPinned: boolean;
   fileManagerLabel: string;
   taskSessionFile: { loading: boolean; path: string | null; exists: boolean };
@@ -57,6 +62,7 @@ export function TaskListItemContextMenu({
   onCopyTaskPath: () => void;
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
+  onCopyText: (label: string, value: string | null) => void;
   onViewModelTrajectory?: () => void;
   onOpenProviderConfig: () => void;
   disableTaskActions?: boolean;
@@ -90,6 +96,13 @@ export function TaskListItemContextMenu({
         onOpenProviderConfig={onOpenProviderConfig}
         disableTaskActions={disableTaskActions}
         disabledReason={disabledReason}
+      />
+      <TaskPullRequestMenuItems
+        task={task}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        onCopyText={onCopyText}
       />
     </ContextMenuContent>
   );

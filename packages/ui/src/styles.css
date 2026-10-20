@@ -321,6 +321,12 @@ html[data-document-hidden] *::after {
   --color-idle-task-surface: var(--color-violet-50);
   /* Worktree-session GitBranch marker; same hue family as idle-task by approved v1 decision (specs/worktree-icon-visibility.md). */
   --color-worktree-task: var(--color-violet-600);
+  /* Pull request lifecycle stages (specs/sidebar-pr-status.md): GitHub colors as
+     aliases of existing semantic tokens, theme-aware through var() indirection. */
+  --color-pr-open: var(--color-success);
+  --color-pr-draft: var(--color-foreground-subtle);
+  --color-pr-merged: var(--color-icon-purple);
+  --color-pr-closed: var(--color-destructive);
   /* Incognito composer tint and toggle (specs/incognito-session.md); sidebar marker stays uncolored. */
   --color-incognito: var(--color-cyan-600);
   /* Pinned-entry bars in the conversation turn navigator (specs/turn-navigator-pin-highlight.md). */

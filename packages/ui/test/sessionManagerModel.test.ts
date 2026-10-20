@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSessionManagerVisibleRowSignature,
   computeSessionManagerDeleteCandidates,
   applySessionManagerClientFilters,
   buildSessionManagerRows,
@@ -228,3 +229,42 @@ describe("computeSessionManagerDeleteCandidates", () => {
     expect(candidates.archived.map((row) => row.task.taskId)).toEqual(["archived"]);
   });
 });
+
+describe("buildSessionManagerVisibleRowSignature", () => {
+  it("changes when the same task id is visible in another workspace", () => {
+    // Regression: the signature used bare task ids, so scrolling from workspace-a::t1 to
+    // workspace-b::t1 kept the memoized visible rows and the new row was never probed.
+    const inA = buildRowsForWorkspace("/dev/workspace-a");
+    const inB = buildRowsForWorkspace("/dev/workspace-b");
+    const flatA = inA.map((row) => ({ kind: "row" as const, row }));
+    const flatB = inB.map((row) => ({ kind: "row" as const, row }));
+
+    expect(buildSessionManagerVisibleRowSignature(flatA, [0])).not.toBe(
+      buildSessionManagerVisibleRowSignature(flatB, [0]),
+    );
+  });
+
+  it("is stable for the same visible rows and skips group rows", () => {
+    const rows = buildRowsForWorkspace("/dev/workspace-a");
+    const flat = rows.map((row) => ({ kind: "row" as const, row }));
+
+    expect(buildSessionManagerVisibleRowSignature(flat, [0])).toBe(
+      buildSessionManagerVisibleRowSignature(flat, [0]),
+    );
+    const withGroup = [
+      { kind: "group" as const, group: { workspaceKey: "/dev/workspace-a", rows } as never },
+      ...flat,
+    ];
+    expect(buildSessionManagerVisibleRowSignature(withGroup, [0, 1])).toBe(
+      buildSessionManagerVisibleRowSignature(flat, [0]),
+    );
+  });
+});
+
+function buildRowsForWorkspace(workspacePath: string) {
+  return buildSessionManagerRows({
+    activeItems: [fixtureTask({ taskId: "t1", workspacePath })],
+    archivedItems: [],
+    pinnedKeys: new Set(),
+  });
+}

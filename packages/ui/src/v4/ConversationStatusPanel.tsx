@@ -107,6 +107,10 @@ import {
   buildConversationGoalIterationSummaries,
   getConversationGoalElapsedSeconds,
 } from "@/v4/conversationGoalSummaryModel.js";
+import {
+  ConversationStatusPanelPullRequests,
+  PrimaryPullRequestTrailingIcon,
+} from "@/v4/ConversationStatusPanelPullRequests.js";
 
 export interface ConversationStatusPanelProps {
   workspacePath: string;
@@ -117,6 +121,8 @@ export interface ConversationStatusPanelProps {
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
   executionWorktree?: ZCodeTaskMeta["executionWorktree"];
+  /** Task owning the executionWorktree; keys the pull request status store entry. */
+  activeTaskId?: string | null;
   gitWorkspacePath?: string;
   goal?: GoalState | null;
   sessionPlans?: readonly ToolCallRow[];
@@ -373,6 +379,7 @@ function StatusSection({
 
 function GitStatusSection({
   activeTaskChangeSummary,
+  activeTaskId,
   executionWorktree,
   gitWorkspacePath,
   gitSummary,
@@ -386,6 +393,7 @@ function GitStatusSection({
   useVerticalFloatingPanels,
 }: {
   activeTaskChangeSummary?: ZCodeTaskChangeSummary | null;
+  activeTaskId?: string | null;
   executionWorktree?: ZCodeTaskMeta["executionWorktree"];
   gitSummary: GitRepositorySummary | null | undefined;
   gitWorktreeReviewSourceId?: GitChangeSourceId | null;
@@ -424,12 +432,21 @@ function GitStatusSection({
       title={intl.formatMessage({ id: "chat.statusPanel.environment" })}
       trailing={(isOpen) =>
         isOpen ? null : (
-          <span className="shrink-0 font-mono text-ui-sm tabular-nums">
-            <span className={cn("text-[var(--color-diff-added)]", !hasChanges && "opacity-50")}>
-              +{git.added}
-            </span>{" "}
-            <span className={cn("text-[var(--color-diff-removed)]", !hasChanges && "opacity-50")}>
-              -{git.removed}
+          <span className="flex shrink-0 items-center gap-1.5">
+            {executionWorktree ? (
+              <PrimaryPullRequestTrailingIcon
+                activeTaskId={activeTaskId}
+                workspacePath={workspacePath}
+                workspaceIdentity={workspaceIdentity}
+              />
+            ) : null}
+            <span className="font-mono text-ui-sm tabular-nums">
+              <span className={cn("text-[var(--color-diff-added)]", !hasChanges && "opacity-50")}>
+                +{git.added}
+              </span>{" "}
+              <span className={cn("text-[var(--color-diff-removed)]", !hasChanges && "opacity-50")}>
+                -{git.removed}
+              </span>
             </span>
           </span>
         )
@@ -455,6 +472,12 @@ function GitStatusSection({
             </span>
           </div>
         ) : null}
+        <ConversationStatusPanelPullRequests
+          activeTaskId={activeTaskId}
+          hasWorktree={Boolean(executionWorktree)}
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+        />
         {/* Bug cause: the V4 status-panel migration kept only the static Changes display and
             stopped forwarding the old Git review callback, leaving the review entry in the spec unclickable. */}
         <button
@@ -2041,6 +2064,7 @@ function ConversationStatusPanelImpl({
   gitWorktreeChangeSummary,
   activeTaskChangeSummary,
   executionWorktree,
+  activeTaskId,
   gitWorkspacePath,
   goal,
   sessionPlans,
@@ -2290,6 +2314,7 @@ function ConversationStatusPanelImpl({
                 workspaceIdentity={workspaceIdentity}
                 activeTaskChangeSummary={activeTaskChangeSummary}
                 executionWorktree={executionWorktree}
+                activeTaskId={activeTaskId}
                 onRefreshGit={onRefreshGit}
                 onOpenGitReview={onOpenGitReview}
                 separated={false}

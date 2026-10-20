@@ -18,6 +18,13 @@ import {
   readComposerDestinationControlEnabled,
 } from "@/v4/composer/ComposerDestinationControl.js";
 import { shouldRenderComposerDestinationControl } from "@/v4/composer/destinationControlVisibility.js";
+import type { ComposerDraftWorktreeIntent } from "@/v4/composer/composerDraftWorktreeIntent.js";
+
+const pipelineCreation = vi.hoisted(() => ({ begin: vi.fn() }));
+vi.mock("@/v4/composer/composerWorktreePipeline.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/composerWorktreePipeline.js")>()),
+  beginWorktreePipelineCreation: pipelineCreation.begin,
+}));
 
 const WORKSPACE_KEY = "/dev/alpha";
 
@@ -215,10 +222,11 @@ function gitSummaryOn(branchName: string): GitRepositorySummary {
 }
 
 function renderDestination(branchName: string) {
+  const slot: { current: ComposerDraftWorktreeIntent | null } = { current: null };
   const element = (name: string) =>
     createElement(
       ComposerDraftWorktreeIntentContext.Provider,
-      { value: undefined },
+      { value: slot },
       createElement(ComposerDestinationControl, {
         workspacePath: "/repo",
         gitSummary: gitSummaryOn(name),
@@ -229,6 +237,7 @@ function renderDestination(branchName: string) {
   const view = render(element(branchName));
   return {
     rerenderOn: (name: string) => view.rerender(element(name)),
+    slot,
   };
 }
 
@@ -343,6 +352,8 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     branchFetch.getLocalBranches.mockReset();
     branchFetch.getBranchMergeStatus.mockReset();
     branchFetch.getBranchMergeStatus.mockResolvedValue(mergeStatus(null));
+    pipelineCreation.begin.mockReset();
+    pipelineCreation.begin.mockResolvedValue({ ok: false });
     switcherStub.createBranchAndSwitch.mockClear();
     settingsBox.value = {};
   });
@@ -352,6 +363,7 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     settingsBox.value = {};
     useDraftBranchIntentStore.getState().setWorktreeIntentActive("/repo", false);
     useDraftBranchIntentStore.getState().clearDraftBranchIntent("/repo");
+    useDraftBranchIntentStore.getState().clearFrozenWorktreeIntent("/repo");
   });
 
   it("(a) ON derives the Base from origin/HEAD and issues no branch switch", async () => {
@@ -410,17 +422,54 @@ describe("worktree mode ON selects the repository main branch as the Base (rende
     expect(branchRowValue("destination.baseBranch")).toContain("main");
 
     // Manual base pick from the inline list overrides the default while the mode stays on.
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
+      branchName: "frozen-branch",
+    });
     fireEvent.click(screen.getByText("destination.baseBranch").closest("button")!);
     fireEvent.click(await screen.findByRole("option", { name: "dev" }));
     await screen.findByText("destination.baseBranch");
     expect(branchRowValue("destination.baseBranch")).toContain("dev");
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
 
-    // Toggling OFF keeps the picked value (re-labeled Task ↔ Base); ON re-defaults to main.
+    // Toggling OFF clears the frozen destination and ON re-defaults to main.
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
+      branchName: "frozen-branch",
+    });
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.taskBranch");
     expect(branchRowValue("destination.taskBranch")).toContain("dev");
+    expect(useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent("/repo")).toBeUndefined();
     fireEvent.click(worktreeSwitch());
     await screen.findByText("destination.baseBranch");
     expect(branchRowValue("destination.baseBranch")).toContain("main");
+  });
+
+  it("(e) restores a frozen destination when worktree admission fails", async () => {
+    useDraftBranchIntentStore.getState().setWorktreeIntentActive("/repo", true);
+    useDraftBranchIntentStore.getState().setFrozenWorktreeIntent("/repo", {
+      branchName: "feature-frozen",
+      customLocationPath: "/custom/frozen",
+    });
+    const { slot } = renderDestination("main");
+
+    await waitFor(() => expect(slot.current).not.toBeNull());
+    const outcome = await slot.current!.beginCreation("frozen prompt", async () => "session");
+
+    expect(outcome).toEqual({ ok: false });
+    expect(pipelineCreation.begin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branchName: "feature-frozen",
+        effectiveLocation: expect.objectContaining({
+          mode: "custom",
+          customPath: "/custom/frozen",
+        }),
+      }),
+    );
+    expect(
+      useDraftBranchIntentStore.getState().frozenWorktreeIntentByWorkspaceKey["/repo"],
+    ).toEqual({
+      branchName: "feature-frozen",
+      customLocationPath: "/custom/frozen",
+    });
   });
 });

@@ -21,11 +21,55 @@ interface DraftBranchIntentState {
   setDraftBranchIntent: (workspaceKey: string, branchName: string) => void;
   clearDraftBranchIntent: (workspaceKey: string) => void;
   setWorktreeIntentActive: (workspaceKey: string, active: boolean) => void;
+  /**
+   * Frozen destination of a restored failed submission (branch name and custom location). The next
+   * worktree creation for the workspace uses it once, so Retry keeps the frozen destination.
+   */
+  frozenWorktreeIntentByWorkspaceKey: Record<string, FrozenWorktreeDestination>;
+  setFrozenWorktreeIntent: (workspaceKey: string, destination: FrozenWorktreeDestination) => void;
+  clearFrozenWorktreeIntent: (workspaceKey: string) => void;
+  /** Read the pending frozen destination without consuming it; undefined when none is pending. */
+  peekFrozenWorktreeIntent: (workspaceKey: string) => FrozenWorktreeDestination | undefined;
+  /**
+   * Clear the frozen destination only when it is still the given object. Called once admission has
+   * succeeded, so a failed admission keeps the frozen destination for the next Retry.
+   */
+  releaseFrozenWorktreeIntent: (
+    workspaceKey: string,
+    destination: FrozenWorktreeDestination,
+  ) => void;
 }
 
-export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set) => ({
+export interface FrozenWorktreeDestination {
+  branchName: string;
+  customLocationPath?: string;
+}
+
+export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set, get) => ({
   intentByWorkspaceKey: {},
   worktreeIntentActiveByWorkspaceKey: {},
+  frozenWorktreeIntentByWorkspaceKey: {},
+  setFrozenWorktreeIntent: (workspaceKey, destination) =>
+    set((state) => ({
+      frozenWorktreeIntentByWorkspaceKey: {
+        ...state.frozenWorktreeIntentByWorkspaceKey,
+        [workspaceKey]: destination,
+      },
+    })),
+  clearFrozenWorktreeIntent: (workspaceKey) =>
+    set((state) => {
+      if (!(workspaceKey in state.frozenWorktreeIntentByWorkspaceKey)) return state;
+      const { [workspaceKey]: _removed, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
+      return { frozenWorktreeIntentByWorkspaceKey: rest };
+    }),
+  peekFrozenWorktreeIntent: (workspaceKey) =>
+    get().frozenWorktreeIntentByWorkspaceKey[workspaceKey],
+  releaseFrozenWorktreeIntent: (workspaceKey, destination) =>
+    set((state) => {
+      if (state.frozenWorktreeIntentByWorkspaceKey[workspaceKey] !== destination) return state;
+      const { [workspaceKey]: _released, ...rest } = state.frozenWorktreeIntentByWorkspaceKey;
+      return { frozenWorktreeIntentByWorkspaceKey: rest };
+    }),
   setDraftBranchIntent: (workspaceKey, branchName) =>
     set((state) => ({
       intentByWorkspaceKey: { ...state.intentByWorkspaceKey, [workspaceKey]: branchName },

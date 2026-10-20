@@ -66,6 +66,13 @@ const forkIsolatedTests = [
 const forkNodeTestFiles = [
   "packages/services/test/botMessagesLocale.test.ts",
   "packages/services/test/branchMergeStatusService.test.ts",
+  // session PR status node:test cases (mapping + service); run via test:node.
+  "packages/services/test/sessionPullRequestMapping.test.ts",
+  "packages/services/test/sessionPullRequestsService.test.ts",
+  // Real-git + fake-gh integration over the host path; run via test:node.
+  "packages/services/test/sessionPullRequestsIntegration.test.ts",
+  // Missing comma here made the whole config fail to parse (TransformError at the next entry).
+  "packages/services/test/sessionPullRequestsServiceLogging.test.ts",
   // node:test cases run via test:node; excluded here so Vitest does not collect them.
   "packages/services/test/systemPromptService.test.ts",
   "packages/services/test/outputStyleService.test.ts",
@@ -80,6 +87,8 @@ const forkNodeTestFiles = [
   "packages/ui/test/voiceDictation.test.ts",
   "packages/ui/test/chatErrorResume.test.ts",
   "packages/ui/test/branchMergeStatusProbeRunner.test.ts",
+  // session PR status prober node:test cases; run via test:node.
+  "packages/ui/test/pullRequestStatusProbeRunner.test.ts",
   "packages/ui/test/i18nCatalogParity.test.ts",
   "packages/ui/test/intlPlural.test.ts",
   "packages/ui/test/localeContentCatalogs.test.ts",

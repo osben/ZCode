@@ -35,6 +35,7 @@ import {
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
 import { readV4WorktreeRecoveryDrafts } from "@/v4/composer/composerDraftStore.js";
+import enUSCatalog from "@/i18n/locales/en-US.js";
 
 // BUG-GWT-005 (docs/testing/git-worktree-qa/bugs/BUG-GWT-005.md) is a composer-level admission
 // bug, so its regression mounts ConversationComposer. The heavy editor/toolbar subtrees are
@@ -2568,6 +2569,122 @@ describe("BUG-GWT-005: frozen submission admission after failed creation → Ret
   });
 });
 
+describe("worktree failure classification and queue-time preflight", () => {
+  function formatWithEnUs(id: string, values?: Record<string, string>): string {
+    const template = enUSCatalog[id] ?? id;
+    return Object.entries(values ?? {}).reduce(
+      (text, [key, value]) => text.replaceAll(`{${key}}`, value),
+      template,
+    );
+  }
+
+  it("carries the primary issue code and raw detail into the failed pipeline entry", async () => {
+    seedCreating({ sessionId: "session-failure-detail" });
+    createWorktree.mockResolvedValueOnce({
+      ok: false,
+      worktreePath: null,
+      branchName: null,
+      issues: [
+        {
+          code: "target-branch-not-found",
+          message: "Base branch was not found.",
+          detail: "fatal: invalid reference: main",
+        },
+      ],
+    });
+    const outcome = await startComposerWorktreePipeline({
+      gitService,
+      workspaceKey: WORKSPACE_KEY,
+      sessionId: "session-failure-detail",
+      params: { ...PARAMS, attemptId: currentPipeline("session-failure-detail")!.attemptId },
+      formatMessage: formatWithEnUs,
+    });
+    expect(outcome).toBe("failed");
+    expect(currentPipeline("session-failure-detail")).toMatchObject({
+      status: "failed",
+      failureIssueCode: "target-branch-not-found",
+      failureDetail: "fatal: invalid reference: main",
+    });
+  });
+
+  it("blocks Send before any session exists for an unborn HEAD repository", async () => {
+    const getLocalBranches = vi.fn(async () => ({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [],
+    }));
+    const prepareSession = vi.fn(async () => "session-should-not-exist");
+    const result = await beginWorktreePipelineCreation({
+      gitService: { ...gitService, getLocalBranches },
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: { mode: "project" },
+      branchName: PARAMS.branchName,
+      baseFromHeadDefault: true,
+      queuedPromptPreview: "preview",
+      prepareSession,
+      formatMessage: formatWithEnUs,
+    });
+    expect(result).toEqual({ ok: false });
+    expect(prepareSession).not.toHaveBeenCalled();
+    expect(currentPipeline()?.failureMessage).toContain("“main” was not found");
+    expect(currentPipeline()?.failureMessage).toContain(
+      "A repository without commits has no branches yet",
+    );
+  });
+
+  it("blocks Send when an explicitly chosen base branch is missing from a loaded list", async () => {
+    const getLocalBranches = vi.fn(async () => ({
+      headRefType: "branch",
+      currentBranchName: "main",
+      branches: [{ name: "main" }, { name: "feature-x" }],
+    }));
+    const prepareSession = vi.fn(async () => "session-should-not-exist");
+    const result = await beginWorktreePipelineCreation({
+      gitService: { ...gitService, getLocalBranches },
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: { mode: "project" },
+      branchName: PARAMS.branchName,
+      baseBranch: "develop",
+      baseFromHeadDefault: false,
+      queuedPromptPreview: "preview",
+      prepareSession,
+      formatMessage: formatWithEnUs,
+    });
+    expect(result).toEqual({ ok: false });
+    expect(prepareSession).not.toHaveBeenCalled();
+    expect(currentPipeline()?.failureMessage).toContain("“develop” was not found");
+  });
+
+  it("never blocks Send when the branch probe fails (degrade to HEAD)", async () => {
+    const getLocalBranches = vi.fn(async () => {
+      throw new Error("branch rpc failed");
+    });
+    const prepareSession = vi.fn(async () => {
+      seedCreating({ sessionId: "session-preflight-degraded" });
+      return "session-preflight-degraded";
+    });
+    createWorktree.mockResolvedValueOnce({
+      ok: true,
+      worktreePath: PARAMS.targetPath,
+      branchName: PARAMS.branchName,
+      issues: [],
+    });
+    const result = await beginWorktreePipelineCreation({
+      gitService: { ...gitService, getLocalBranches },
+      workspaceKey: WORKSPACE_KEY,
+      workspacePath: WORKSPACE_KEY,
+      effectiveLocation: { mode: "project" },
+      branchName: PARAMS.branchName,
+      baseFromHeadDefault: true,
+      queuedPromptPreview: "preview",
+      prepareSession,
+      formatMessage: formatWithEnUs,
+    });
+    expect(result).toEqual({ ok: true, sessionId: "session-preflight-degraded" });
+  });
+});
 describe("shared-context-only worktree submission recovery", () => {
   const SHARED_CONTEXT_ID = "context-shared-recovery";
   // Minimal pending share import on the composer snapshot; the other fields are the ones the

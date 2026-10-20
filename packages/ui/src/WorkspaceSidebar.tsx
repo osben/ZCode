@@ -131,6 +131,7 @@ import { WorkspacePinnedTasksSection } from "@/WorkspacePinnedTasksSection.js";
 import { WorkspaceTimelineTasksSection } from "@/WorkspaceTimelineTasksSection.js";
 import { WorkspaceGroupedTasksSection } from "@/WorkspaceGroupedTasksSection.js";
 import { BranchMergeStatusProbes } from "@/BranchMergeStatusProbes.js";
+import { PullRequestStatusProbes } from "@/PullRequestStatusProbes.js";
 import { StickyGroupHeaderSlot } from "@/workspace-grouped-tasks/sticky-group-header-slot.js";
 import type { CreateTaskRequest } from "@/app-shell/types.js";
 import { useWebRemoteControlFeatureEnabled } from "@/WebRemoteControlFeatureProvider.js";
@@ -1725,6 +1726,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                   Панель прячется через CSS и не размонтируется, поэтому
                   видимость передаётся пропом: каждое открытие — новая проба. */}
               <BranchMergeStatusProbes workspaceTabs={workspaceTabs} active={isSidebarVisible} />
+              {/* Task-level PR status shares the sidebar mount so every surface
+                  reads one store entry per workspace task. Not gated on sidebar
+                  visibility: the header chip and Git tools read the same store
+                  while the sidebar is collapsed, so they need the probe too. */}
+              <PullRequestStatusProbes workspaceTabs={workspaceTabs} sortBy={taskSortBy} />
               {shouldShowPinnedTasks ? (
                 // Switching the main task area to archive must not hide pinned.
                 // Pinned is a global section and remains visible in archive mode.

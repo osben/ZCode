@@ -577,6 +577,11 @@ export function ChatEmptyWorktreeTaskToggle({
   const pipeline = useComposerWorktreePipelineStore((state) =>
     selectComposerWorktreePipeline(state, workspaceKey),
   );
+  // Frozen destination of a restored failed submission: Retry re-arms this checkbox and creates the
+  // frozen branch at the frozen location (the unified control does the same).
+  const frozenIntent = useDraftBranchIntentStore(
+    (state) => state.frozenWorktreeIntentByWorkspaceKey[workspaceKey],
+  );
   const currentTab =
     workspaceTabs.find((workspaceTab) =>
       isWorkspaceMenuTabSelected(workspaceTab, { workspacePath, workspaceIdentity }),
@@ -650,6 +655,14 @@ export function ChatEmptyWorktreeTaskToggle({
     setChecked(false);
     setBranchesResult(null);
   }, [workspacePath, repoEligible]);
+
+  // Re-arm from a restored frozen destination. Declared after the reset effect so a workspace
+  // reset in the same commit cannot clear it again.
+  useEffect(() => {
+    if (frozenIntent && repoEligible) {
+      setChecked(true);
+    }
+  }, [frozenIntent, repoEligible]);
 
   useEffect(() => {
     if (!checked || !repoEligible || branchesResult !== null) {
@@ -752,7 +765,7 @@ export function ChatEmptyWorktreeTaskToggle({
   }, [branchesResult, effectiveLocation, workspaceKey, workspacePath]);
 
   const beginCreation = useCallback(
-    (
+    async (
       queuedPromptPreview: string,
       prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>,
       syncPreparedWorktree?: ComposerWorktreePreparationSync,
@@ -761,12 +774,18 @@ export function ChatEmptyWorktreeTaskToggle({
       // Validation, target path, and the runner kickoff live in the shared begin helper; only the
       // name generation and base resolution are this entry's own.
       const hasBranchList = Boolean(branchesResult && branchesResult.branches.length > 0);
-      return beginWorktreePipelineCreation({
+      // The frozen destination is peeked here and released only after admission succeeds, so a
+      // preflight, reservation, or prepareSession failure keeps it for the next Retry.
+      const frozen = useDraftBranchIntentStore.getState().peekFrozenWorktreeIntent(workspaceKey);
+      const result = await beginWorktreePipelineCreation({
         gitService: baseServices.gitService,
         workspaceKey,
         workspacePath,
-        effectiveLocation,
-        branchName: generateComposedBranchName(),
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        effectiveLocation: frozen?.customLocationPath
+          ? { ...effectiveLocation, mode: "custom", customPath: frozen.customLocationPath }
+          : effectiveLocation,
+        branchName: frozen?.branchName ?? generateComposedBranchName(),
         ...(effectiveBaseBranch && hasBranchList ? { baseBranch: effectiveBaseBranch } : {}),
         baseFromHeadDefault: !hasBranchList,
         queuedPromptPreview,
@@ -775,6 +794,10 @@ export function ChatEmptyWorktreeTaskToggle({
         ...(syncPreparedWorktree ? { syncPreparedWorktree } : {}),
         formatMessage: (id, values) => intl.formatMessage({ id }, values),
       });
+      if (result.ok && frozen) {
+        useDraftBranchIntentStore.getState().releaseFrozenWorktreeIntent(workspaceKey, frozen);
+      }
+      return result;
     },
     [
       baseServices.gitService,
@@ -785,6 +808,7 @@ export function ChatEmptyWorktreeTaskToggle({
       intl,
       workspaceKey,
       workspacePath,
+      workspaceIdentity,
     ],
   );
 
@@ -828,6 +852,11 @@ export function ChatEmptyWorktreeTaskToggle({
         onCheckedChange={(value) => {
           const enabled = value === true;
           setChecked(enabled);
+          if (!enabled) {
+            // The user changed the destination: a frozen Retry destination from a restored failure
+            // must not survive into the next worktree creation (the flag-on control clears it too).
+            useDraftBranchIntentStore.getState().clearFrozenWorktreeIntent(workspaceKey);
+          }
           if (!enabled && (pipeline?.status === "creating" || pipeline?.status === "ready")) {
             // Withdraw: the git call is not cancellable; its result lands with an orphan note
             // and the queued send is dropped (spec: composer-worktree-setup-steps.md).

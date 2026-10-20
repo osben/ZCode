@@ -10,6 +10,7 @@ import { nanoid } from "nanoid";
  */
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { logger } from "@/logger.js";
+import type { GitLocalBranchListResult } from "@zcode/shared";
 import {
   ensureWorktreeExclusionSafely,
   executeWorktreeCreation,
@@ -31,11 +32,14 @@ import {
   selectComposerWorktreePipeline,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
+import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
 /** Sessions whose Retry is waiting on the Host acknowledgement (count per session key). */
 const pendingRetryBySessionKey = new Map<string, number>();
+/** Bound for the advisory queue-time branch probe; a slower RPC degrades to HEAD, never blocks Send. */
+const WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS = 1500;
 /**
  * Branch names and target paths claimed by an admission before its store entry exists. Admission
  * claims them synchronously in beginWorktreePipelineCreation (before its first await), so a name
@@ -235,21 +239,42 @@ export function startComposerWorktreePipeline({
           });
         } else {
           logger.warn("[WorktreePipeline] no marker sync; path differs");
-          useComposerWorktreePipelineStore
-            .getState()
-            .markFailed(
-              workspaceKey,
-              formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
-              sessionId,
-              attemptId,
-            );
-          return "failed";
+          return failPreparation({
+            message: formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
+          });
         }
       }
       useComposerWorktreePipelineStore
         .getState()
         .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
       return "ready";
+    };
+    // Every failed preparation outcome settles through one exit: mark the entry failed, then offer
+    // the return-to-draft hand-off. The hand-off is ownership-gated and returns false when it cannot
+    // take over, which leaves the failed-row path (the entry already marked failed) in place.
+    const failPreparation = (failure: {
+      message: string;
+      issueCode?: string | null;
+      rawDetail?: string | null;
+    }): "failed" => {
+      useComposerWorktreePipelineStore
+        .getState()
+        .markFailed(workspaceKey, failure.message, sessionId, attemptId, {
+          issueCode: failure.issueCode ?? null,
+          rawDetail: failure.rawDetail ?? null,
+        });
+      if (sessionId) {
+        initiateComposerWorktreeFailureReturn({
+          workspaceKey,
+          sessionId,
+          attemptId,
+          params,
+          failureMessage: failure.message,
+          issueCode: failure.issueCode ?? null,
+          rawDetail: failure.rawDetail ?? null,
+        });
+      }
+      return "failed";
     };
     try {
       const outcome = await executeWorktreeCreation({
@@ -284,15 +309,9 @@ export function startComposerWorktreePipeline({
             branchName: params.branchName,
             targetPath: outcome.worktreePath,
           });
-          useComposerWorktreePipelineStore
-            .getState()
-            .markFailed(
-              workspaceKey,
-              formatMessage("worktreeSetup.reservation.conflict"),
-              sessionId,
-              attemptId,
-            );
-          return "failed";
+          return failPreparation({
+            message: formatMessage("worktreeSetup.reservation.conflict"),
+          });
         }
         // WT-04 unified: consume the existing directory in place (no draft transfer, no second one).
         logger.info("[WorktreePipeline] reusing existing worktree", {
@@ -302,39 +321,121 @@ export function startComposerWorktreePipeline({
         });
         return await settleReady(outcome.worktreePath, true);
       }
-      if (outcome.errorDetail !== null) {
-        logger.warn("[WorktreePipeline] worktree create request failed", {
-          workspaceKey,
-          branchName: params.branchName,
-          error: outcome.errorDetail,
-        });
-      } else {
-        logger.warn("[WorktreePipeline] worktree creation rejected", {
-          workspaceKey,
-          branchName: params.branchName,
-          issues: outcome.issueCodes,
-        });
-      }
-      useComposerWorktreePipelineStore
-        .getState()
-        .markFailed(workspaceKey, outcome.message, sessionId, attemptId);
-      return "failed";
+      // Logs carry issue codes or a classification only. The raw Git/RPC text (rawDetail) lives in
+      // the failure modal's memory state and must not reach production logs.
+      logger.warn("[WorktreePipeline] worktree creation failed", {
+        workspaceKey,
+        branchName: params.branchName,
+        issues: outcome.issueCodes,
+      });
+      // Return-to-draft hand-off (live renderer only) runs inside failPreparation for every failure.
+      return failPreparation({
+        message: outcome.message,
+        issueCode: outcome.issueCode,
+        rawDetail: outcome.rawDetail,
+      });
     } catch (error) {
+      // Only the error class is logged: the message can carry filesystem or transport detail.
       logger.warn("[WorktreePipeline] creation orchestration threw", {
         workspaceKey,
         branchName: params.branchName,
-        error: getErrorMessage(error),
+        errorName: error instanceof Error ? error.name : typeof error,
       });
-      useComposerWorktreePipelineStore
-        .getState()
-        .markFailed(workspaceKey, getErrorMessage(error), sessionId, attemptId);
-      return "failed";
+      // The primary message is the generic worktree summary; the raw error text is kept only as
+      // memory-only detail for the failure modal (never logged, never shown inline).
+      return failPreparation({
+        message: formatMessage("commandCenter.worktree.error.unknown"),
+        rawDetail: getErrorMessage(error),
+      });
     } finally {
       inFlightByPipelineKey.delete(runKey);
     }
   })();
   inFlightByPipelineKey.set(runKey, attempt);
   return attempt;
+}
+
+/**
+ * Queue-time base-branch preflight with positive evidence only (spec §Preflight): a successfully
+ * loaded branch list proves an unborn HEAD or a missing explicit base. A failed, absent, or hung
+ * probe never blocks Send; the base degrades to HEAD (acceptance scenario 24). The probe is
+ * advisory and bounded, and its raw error is neither logged nor returned.
+ *
+ * Tri-state: `failed` blocks Send, `confirmed` keeps the explicit base, and `unconfirmed` (absent,
+ * rejected, or timed out) drops the explicit base so the creation falls back to HEAD.
+ */
+type PreflightFailure = { messageId: string; values: Record<string, string> };
+type PreflightOutcome =
+  | { kind: "failed"; failure: PreflightFailure }
+  | { kind: "confirmed" }
+  | { kind: "unconfirmed" };
+
+/**
+ * Returns null synchronously when the Git service has no branch probe, so the admission keeps its
+ * synchronous path to prepareSession; otherwise the bounded probe is awaited.
+ */
+function queueTimeBaseBranchPreflight({
+  gitService,
+  workspacePath,
+  baseBranch,
+}: {
+  gitService: WorktreeCreationGitService;
+  workspacePath: string;
+  baseBranch?: string;
+}): Promise<PreflightOutcome> | null {
+  if (!gitService.getLocalBranches) return null;
+  return probeBaseBranchPreflight(
+    gitService.getLocalBranches.bind(gitService),
+    workspacePath,
+    baseBranch,
+  );
+}
+
+async function probeBaseBranchPreflight(
+  getLocalBranches: NonNullable<WorktreeCreationGitService["getLocalBranches"]>,
+  workspacePath: string,
+  baseBranch: string | undefined,
+): Promise<PreflightOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let branches: GitLocalBranchListResult | null = null;
+  try {
+    branches = await Promise.race([
+      getLocalBranches({ workspacePath }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), WORKTREE_PREFLIGHT_PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    branches = null;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!branches) return { kind: "unconfirmed" };
+  if (branches.branches.length === 0 && branches.currentBranchName !== null) {
+    // Unborn HEAD: no base (explicit or defaulted) can be forked from. The message already carries
+    // the "repository without commits" hint.
+    return {
+      kind: "failed",
+      failure: {
+        messageId: "commandCenter.worktree.error.target-branch-not-found",
+        values: { branchName: baseBranch ?? branches.currentBranchName },
+      },
+    };
+  }
+  if (
+    baseBranch &&
+    branches.branches.length > 0 &&
+    !branches.branches.some((branch) => branch.name === baseBranch)
+  ) {
+    return {
+      kind: "failed",
+      failure: {
+        messageId: "commandCenter.worktree.error.target-branch-not-found",
+        values: { branchName: baseBranch },
+      },
+    };
+  }
+  return { kind: "confirmed" };
 }
 
 /**
@@ -347,6 +448,7 @@ export function beginWorktreePipelineCreation({
   gitService,
   workspaceKey,
   workspacePath,
+  workspaceIdentity,
   effectiveLocation,
   branchName,
   baseBranch,
@@ -360,6 +462,7 @@ export function beginWorktreePipelineCreation({
   gitService: WorktreeCreationGitService;
   workspaceKey: string;
   workspacePath: string;
+  workspaceIdentity?: string;
   effectiveLocation: EffectiveWorktreeLocation;
   branchName: string;
   baseBranch?: string;
@@ -389,10 +492,10 @@ export function beginWorktreePipelineCreation({
   }
 
   const attempt = (async (): Promise<ComposerWorktreeBeginResult> => {
-    const failWith = (id: string) => {
+    const failWith = (id: string, values?: Record<string, string>) => {
       useComposerWorktreePipelineStore
         .getState()
-        .markValidationFailed(workspaceKey, formatMessage(id));
+        .markValidationFailed(workspaceKey, formatMessage(id, values));
       return { ok: false } as const;
     };
     if (
@@ -409,21 +512,37 @@ export function beginWorktreePipelineCreation({
       return failWith("commandCenter.worktree.error.target-path-invalid");
     }
     // Claim the names before the first await: the generator for the next submission runs in a
-    // later task and must see them even while prepareSession is still pending.
+    // later task and must see them even while the preflight or prepareSession is still pending.
     const nameKeys = nameClaimKeys(workspaceKey, branchName, targetPath);
     if (nameKeys.some((key) => admissionClaimByNameKey.has(key))) {
       return failWith("worktreeSetup.reservation.conflict");
     }
     const attemptId = nanoid();
     const releaseNames = claimNameKeys(nameKeys, attemptId);
+    const preflightProbe = queueTimeBaseBranchPreflight({ gitService, workspacePath, baseBranch });
+    const preflight: PreflightOutcome | null = preflightProbe ? await preflightProbe : null;
+    if (preflight?.kind === "failed") {
+      releaseNames();
+      return failWith(preflight.failure.messageId, preflight.failure.values);
+    }
+    // Only a confirmed probe keeps the explicit base; an absent, rejected, or timed-out probe
+    // degrades to HEAD, so a stale or unverified base is never sent to the Host.
+    const keepExplicitBase = Boolean(baseBranch) && preflight?.kind === "confirmed";
+    const confirmedBaseBranch = keepExplicitBase ? baseBranch : undefined;
+    const effectiveBaseFromHeadDefault =
+      baseBranch && !keepExplicitBase ? true : baseFromHeadDefault;
     const params = {
       ...(submissionId ? { submissionId } : {}),
       attemptId,
       workspacePath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
       branchName,
       targetPath,
-      ...(baseBranch ? { baseBranch } : {}),
-      baseFromHeadDefault,
+      ...(effectiveLocation.mode === "custom" && effectiveLocation.customPath
+        ? { customLocationPath: effectiveLocation.customPath }
+        : {}),
+      ...(confirmedBaseBranch ? { baseBranch: confirmedBaseBranch } : {}),
+      baseFromHeadDefault: effectiveBaseFromHeadDefault,
     };
     let sessionId: string;
     try {
@@ -432,7 +551,7 @@ export function beginWorktreePipelineCreation({
         workspaceKey,
         branchName,
         targetPath,
-        ...(baseBranch ? { baseBranch } : {}),
+        ...(confirmedBaseBranch ? { baseBranch: confirmedBaseBranch } : {}),
       });
     } catch (error) {
       releaseNames();

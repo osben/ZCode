@@ -146,6 +146,10 @@ import {
   type V4ComposerDraft,
   type V4ComposerRecoveryContexts,
 } from "@/v4/composer/composerDraftStore.js";
+import {
+  buildV4RecoveryAttachmentsManifest,
+  buildV4WorktreeIntentFromParams,
+} from "@/v4/composer/composerRecoveryRecord.js";
 import { restoreComposerRecoveryContexts } from "@/v4/composer/composerRecoveryContexts.js";
 import {
   resolveOppositeFollowupDelivery,
@@ -170,7 +174,9 @@ import {
   useComposerWorktreePipelineStore,
   type ArmedWorktreeSendContinuation,
 } from "@/store/composerWorktreePipelineStore.js";
-import { isComposerWorktreePipelineInFlight } from "@/v4/composer/composerWorktreePipeline.js";
+import { rehydrateComposerRecoveryAttachments } from "@/v4/composer/composerRecoveryAttachments.js";
+import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+import { moveComposerAttachmentScopeItems } from "@/store/composerAttachmentUploadStore.js";
 import {
   applyDraftBranchIntentForSend,
   selectDraftBranchIntent,
@@ -1489,8 +1495,25 @@ function ConversationComposerImpl({
       return;
     }
     if (worktreePipeline?.status === "failed") {
+      if (worktreePipeline.returningToDraft) {
+        // The return-to-draft orchestrator owns this failure (specs/composer-worktree-setup-steps.md
+        // §Return to draft on failure): it reports to the Host, transfers the recovery record into
+        // the draft pending scope, and settles the session. Running the local failure handling here
+        // would re-create the session-scope recovery record the transfer just moved.
+        // Keep the armed continuation registered: a Host-rejected hand-off falls back to the failed
+        // row, where Retry must still admit the frozen submission. A successful hand-off releases it.
+        pendingWorktreeSendRef.current = null;
+        setWorktreeQueued(false);
+        return;
+      }
       const failureKey = `${queued.preparedSessionId}\0${worktreePipeline.params?.attemptId ?? ""}\0${worktreePipeline.failureMessage ?? ""}`;
-      if (onWorktreePreparationFailed && !reportedWorktreeFailuresRef.current.has(failureKey)) {
+      // After a failed tombstone the return-to-draft hand-off already reported the failure to the
+      // Host; this effect must not send a second failure report. Retry stays armed below.
+      if (
+        onWorktreePreparationFailed &&
+        !worktreePipeline.tombstoneFailed &&
+        !reportedWorktreeFailuresRef.current.has(failureKey)
+      ) {
         reportedWorktreeFailuresRef.current.add(failureKey);
         void onWorktreePreparationFailed(
           queued.preparedSessionId,
@@ -1729,13 +1752,27 @@ function ConversationComposerImpl({
       };
       const restoreSubmittedDraft = () => {
         if (!draftSubmissionClaimed) return;
+        // Clipboard-text path metadata persists only for local workspaces (remote targets keep
+        // the reattach requirement); the worktree intent snapshot prefills Retry/Change actions.
+        const persistPathMetadata = !workspaceIdentity?.trim();
+        const preparationParams = preparedSessionIdForSend
+          ? selectComposerWorktreePipeline(
+              useComposerWorktreePipelineStore.getState(),
+              workspaceKey,
+              preparedSessionIdForSend,
+            )?.params
+          : undefined;
         const restoredDraft: Omit<V4ComposerDraft, "updatedAt"> = {
           ...composerDraft,
           ...submittedDraft,
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
-          recoveryAttachments: attachmentsApi.attachments
-            .filter((item) => submittedAttachmentIds.includes(item.id))
-            .map(({ id, filename }) => ({ id, filename })),
+          ...(preparationParams
+            ? { worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams) }
+            : {}),
+          recoveryAttachments: buildV4RecoveryAttachmentsManifest(
+            attachmentsApi.attachments.filter((item) => submittedAttachmentIds.includes(item.id)),
+            { persistPathMetadata },
+          ),
         };
         // Recovery belongs to the frozen submission, even after this component displays another chat.
         if (preparedSessionIdForSend || queueWorktreeSend) {
@@ -1770,6 +1807,30 @@ function ConversationComposerImpl({
             getV4WorktreeRecoveryScope(submittedOwner.scopeId, submissionId),
             restoredDraft,
           );
+        }
+        if (draftPersistClaimRef.current === submissionId) {
+          suppressDraftPersistRef.current = false;
+          draftPersistClaimRef.current = null;
+        }
+        draftSubmissionClaimed = false;
+      };
+      // Begin failed before any Host session was reserved (validation or preflight, spec §Preflight).
+      // With an empty editor the frozen draft returns inline, and the queue-time recovery record for
+      // this submission is dropped so the message does not also come back as a card. Text typed while
+      // the reservation was pending is never overwritten (spec decision 2): the card keeps the message.
+      const restoreUnreservedSubmittedDraft = () => {
+        if (!draftSubmissionClaimed) return;
+        if (!isCurrentOwner() || textRef.current.trim().length > 0) {
+          restoreSubmittedDraft();
+          return;
+        }
+        clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+        updateComposerContentRef.current(submittedDraft);
+        if (editorClearedOptimistically) {
+          if (submittedDraft.editorStateJson)
+            inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
+          else inputApiRef.current?.setText(submittedDraft.text);
+          updateText(submittedDraft.text);
         }
         if (draftPersistClaimRef.current === submissionId) {
           suppressDraftPersistRef.current = false;
@@ -2208,10 +2269,9 @@ function ConversationComposerImpl({
           ...composerDraft,
           ...submittedDraft,
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
-          recoveryAttachments: attachmentsApi.attachments.map(({ id, filename }) => ({
-            id,
-            filename,
-          })),
+          recoveryAttachments: buildV4RecoveryAttachmentsManifest(attachmentsApi.attachments, {
+            persistPathMetadata: !workspaceIdentity?.trim(),
+          }),
         };
         const recoverySaved = persistV4ComposerDraft(
           workspacePath,
@@ -2225,7 +2285,8 @@ function ConversationComposerImpl({
         }
         claimSubmittedDraft();
         if (!onPrepareWorktreeSession || (!worktreeIntent && !preparedSessionIdForSend)) {
-          restoreSubmittedDraft();
+          if (preparedSessionIdForSend) restoreSubmittedDraft();
+          else restoreUnreservedSubmittedDraft();
           useComposerWorktreePipelineStore
             .getState()
             .markValidationFailed(workspaceKey, "Worktree session preparation is unavailable");
@@ -2266,11 +2327,13 @@ function ConversationComposerImpl({
                 ? await restartPreparedWorktreeCreation({
                     workspaceKey,
                     workspacePath,
+                    ...(workspaceIdentity ? { workspaceIdentity } : {}),
                     sessionId: preparedSessionIdForSend,
                     preparation,
                     gitService: baseWorkspaceServices.gitService,
                     prepareSession: prepareOwnedSession,
                     syncPreparedWorktree: onSyncWorktreePreparation,
+                    submissionId,
                     formatMessage: (id, values) => intl.formatMessage({ id }, values),
                   })
                 : await worktreeIntent!.beginCreation(
@@ -2289,7 +2352,7 @@ function ConversationComposerImpl({
           }
           if (!begin.ok) {
             setWorktreeQueued(false);
-            restoreSubmittedDraft();
+            restoreUnreservedSubmittedDraft();
             return;
           }
           preparedSessionIdForSend = begin.sessionId;
@@ -2417,6 +2480,162 @@ function ConversationComposerImpl({
       workspacePath,
     ],
   );
+
+  // One restore implementation shared by the recovery card's Restore and the return-to-draft
+  // auto-restore (spec §Return to draft on failure): composer content, editor state, frozen
+  // contexts (replaced, never merged), and the worktree intent that re-arms Retry/Change.
+  const applyWorktreeRecoveryDraft = useCallback(
+    (draft: V4ComposerDraft) => {
+      // The frozen plan state and mode are part of the submission (spec scenario 22), so they
+      // replace the live values; updateComposerContent would keep the current plan/mode.
+      replaceComposerDraft({
+        ...composerDraft,
+        text: draft.text,
+        editorStateJson: draft.editorStateJson,
+        mention: draft.mention,
+        mode: draft.mode ?? composerDraft.mode,
+        planEnabled: draft.planEnabled ?? composerDraft.planEnabled,
+      });
+      if (draft.editorStateJson) inputApiRef.current?.setEditorStateJson(draft.editorStateJson);
+      else inputApiRef.current?.setText(draft.text);
+      updateText(draft.text);
+      clearConversationSelectionReferences();
+      clearCodeCommentContexts();
+      clearWebElementContexts();
+      clearPptxElementReferences();
+      clearPluginUiContexts();
+      // Restore re-establishes exactly the frozen submission: the next draft's contexts are
+      // replaced, never merged, and the frozen contexts return through the normal add paths.
+      const restoredContextId = draft.recoveryContexts?.sharedContextRefs?.[0]?.context_id;
+      setRestoredShareContext(
+        restoredContextId ? { scopeId: draftScopeId, contextId: restoredContextId } : null,
+      );
+      restoreComposerRecoveryContexts(draft.recoveryContexts, {
+        sessionId,
+        workspaceKey,
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      });
+      const intent = draft.worktreeIntent;
+      if (intent) {
+        const destinationStore = useDraftBranchIntentStore.getState();
+        destinationStore.setWorktreeIntentActive(workspaceKey, true);
+        if (intent.baseBranch) {
+          destinationStore.setDraftBranchIntent(workspaceKey, intent.baseBranch);
+        } else if (intent.baseFromHeadDefault) {
+          // A HEAD-default base must not keep a live base choice made after the failure.
+          destinationStore.clearDraftBranchIntent(workspaceKey);
+        }
+        // Retry creates the frozen branch at the frozen location instead of generating a new name.
+        destinationStore.setFrozenWorktreeIntent(workspaceKey, {
+          branchName: intent.branchName,
+          ...(intent.customLocationPath ? { customLocationPath: intent.customLocationPath } : {}),
+        });
+      }
+    },
+    [
+      clearCodeCommentContexts,
+      clearConversationSelectionReferences,
+      clearPluginUiContexts,
+      clearPptxElementReferences,
+      clearWebElementContexts,
+      composerDraft,
+      draftScopeId,
+      replaceComposerDraft,
+      sessionId,
+      updateText,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+    ],
+  );
+
+  // ── Return-to-draft requests (workspace-scoped store; spec §Return to draft on failure) ──
+  // The failure hand-off moves the frozen submission into the draft pending recovery scope and
+  // bumps a restore request; the mounted draft composer consumes it by performing exactly the
+  // card's Restore. A non-empty draft is never overwritten — the card stays and the modal says
+  // the message is saved (spec decision 2).
+  const failureReturnRestoreRequest = useWorktreeFailureReturnStore(
+    (state) => state.restoreRequestByWorkspaceKey[workspaceKey],
+  );
+  const failureReturnRestoreScope = useWorktreeFailureReturnStore(
+    (state) => state.restoreScopeByWorkspaceKey[workspaceKey],
+  );
+  const failureReturnSubmitRequest = useWorktreeFailureReturnStore(
+    (state) => state.submitRequestByWorkspaceKey[workspaceKey],
+  );
+  const appliedFailureReturnRestoreRef = useRef(0);
+  const appliedFailureReturnSubmitRef = useRef(0);
+  const failureReturnDraftOccupiedRef = useRef<() => boolean>(() => false);
+  failureReturnDraftOccupiedRef.current = () =>
+    hasDraftToSubmit || pending || worktreeQueued || attachmentsApi.attachments.length > 0;
+
+  useEffect(() => {
+    if (sessionId !== null || !failureReturnRestoreRequest) return;
+    if (appliedFailureReturnRestoreRef.current >= failureReturnRestoreRequest) return;
+    appliedFailureReturnRestoreRef.current = failureReturnRestoreRequest;
+    // The scope-switch draft restore is queued on the next animation frame and would overwrite a
+    // restore applied now. Apply this restore in a later frame. It is not cancelled by effect
+    // cleanup: the applied ref is already set, so a cancelled frame would never be retried.
+    const restore = () => {
+      useWorktreeFailureReturnStore.getState().consumeDraftRestoreRequest(workspaceKey);
+      // The request names the failed submission's recovery scope. Never fall back to another pending
+      // record: the oldest one may belong to an earlier failure, and this failure would stay stranded.
+      if (!failureReturnRestoreScope) return;
+      const savedDraft = readV4ComposerDraft(
+        workspacePath,
+        workspaceIdentity,
+        failureReturnRestoreScope,
+      );
+      if (!savedDraft) return;
+      const saved = { scope: failureReturnRestoreScope, draft: savedDraft };
+      rehydrateComposerRecoveryAttachments({
+        workspaceKey,
+        recoveryScope: saved.scope,
+        manifest: saved.draft.recoveryAttachments ?? [],
+      });
+      if (failureReturnDraftOccupiedRef.current()) {
+        // The draft filled after the hand-off's draftEmpty check. The record stays on the recovery
+        // card, so the modal must not keep Retry (it would submit the newer draft).
+        useWorktreeFailureReturnStore.getState().markFailureSavedNotRestored(workspaceKey);
+        return;
+      }
+      moveComposerAttachmentScopeItems(
+        `${workspaceKey}\0${saved.scope}`,
+        `${workspaceKey}\0${V4_DRAFT_SCOPE_ROOT}`,
+        (saved.draft.recoveryAttachments ?? []).map((item) => item.id),
+      );
+      applyWorktreeRecoveryDraft(saved.draft);
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, saved.scope);
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      restore();
+      return;
+    }
+    requestAnimationFrame(restore);
+  }, [
+    applyWorktreeRecoveryDraft,
+    failureReturnRestoreRequest,
+    failureReturnRestoreScope,
+    sessionId,
+    workspaceIdentity,
+    workspaceKey,
+    workspacePath,
+  ]);
+
+  // "Retry" from the failure modal: run the ordinary submit over the restored submission — no
+  // second dispatch path. The submit waits for any pending restore request to land first, so the
+  // idempotency guard and the double-action protections of submit() apply unchanged.
+  useEffect(() => {
+    if (sessionId !== null || !failureReturnSubmitRequest) return;
+    if (appliedFailureReturnSubmitRef.current >= failureReturnSubmitRequest) return;
+    if (useWorktreeFailureReturnStore.getState().restoreRequestByWorkspaceKey[workspaceKey]) {
+      return;
+    }
+    appliedFailureReturnSubmitRef.current = failureReturnSubmitRequest;
+    useWorktreeFailureReturnStore.getState().consumeDraftSubmitRequest(workspaceKey);
+    void submit();
+  }, [failureReturnSubmitRequest, sessionId, submit, workspaceKey]);
 
   // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
   const handleEditorChange = useCallback(
@@ -3343,30 +3562,7 @@ function ConversationComposerImpl({
               .captureSubmission?.(ids, `${workspaceKey}\0${recoveryScope}`)
               .discardAttachments();
           }}
-          onRestore={(draft) => {
-            updateComposerContent(draft);
-            if (draft.editorStateJson)
-              inputApiRef.current?.setEditorStateJson(draft.editorStateJson);
-            else inputApiRef.current?.setText(draft.text);
-            updateText(draft.text);
-            // Restore re-establishes exactly the frozen submission: the next draft's contexts are
-            // replaced, never merged, and the frozen contexts return through the normal add paths.
-            clearConversationSelectionReferences();
-            clearCodeCommentContexts();
-            clearWebElementContexts();
-            clearPptxElementReferences();
-            clearPluginUiContexts();
-            const restoredContextId = draft.recoveryContexts?.sharedContextRefs?.[0]?.context_id;
-            setRestoredShareContext(
-              restoredContextId ? { scopeId: draftScopeId, contextId: restoredContextId } : null,
-            );
-            restoreComposerRecoveryContexts(draft.recoveryContexts, {
-              sessionId,
-              workspaceKey,
-              workspacePath,
-              ...(workspaceIdentity ? { workspaceIdentity } : {}),
-            });
-          }}
+          onRestore={applyWorktreeRecoveryDraft}
         />
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">
