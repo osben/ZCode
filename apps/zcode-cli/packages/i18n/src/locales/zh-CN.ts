@@ -5,7 +5,7 @@ export const zhCN: ZCodeCopy = {
   cli: {
     errors: {
       localeUnsupported: (value) =>
-        `不支持的 --locale 值：${value}。支持的语言：en-US、zh-CN、uk-UA、auto。`,
+        `不支持的 --locale 值：${value}。支持的语言：en-US、zh-CN、auto。`,
     },
     help: (version) => `zcode ${version}
 
@@ -18,7 +18,7 @@ export const zhCN: ZCodeCopy = {
   app-server 运行 ZCode Protocol stdio app server
   commands   列出自定义 slash commands（\`commands list\`）
   doctor     检查运行时和打包假设
-  login [zai|bigmodel|chatgpt]  通过浏览器授权登录
+  login [zai|bigmodel]  通过浏览器授权登录
   logout     删除共享的 Z.AI 登录凭据
   plugins    管理插件与市场（\`plugins list|install|uninstall|enable|disable|update|validate|marketplace ...\`；别名 plugin）
   skills     列出本地 skills（\`skills list\`）
@@ -39,8 +39,9 @@ export const zhCN: ZCodeCopy = {
     从本次 prompt/TUI 的可用工具集中移除整个工具，不修改持久化配置。
     工具名用逗号或空格分隔，例如 "Bash Edit"。
     "Bash(git *)" 也会移除整个 Bash，不支持按命令内容匹配。
+  --toolsearch-mode <auto|native|local|off> ToolSearch 模式（默认 off，仅本次启动）
   --force-mcs      对 Anthropic provider 强制启用 mid-conversation system 投影
-  --locale <locale>  UI 语言：en-US、zh-CN、uk-UA 或 auto
+  --locale <locale>  UI 语言：en-US、zh-CN 或 auto
   --mode <mode>    prompt 权限模式：build、edit、plan、yolo 或 guarded（--prompt 默认 yolo）
   --resume <sessionId>  按 sessionId 恢复持久化 session（sess_...）
   --target <text>  在 headless 模式运行或设置 session goal
@@ -119,9 +120,9 @@ Slash Commands:
         },
         chatgptOauth: {
           pendingPrimary: "等待 ChatGPT 授权",
-          pendingSecondary: "请在浏览器中使用 ChatGPT Plus/Pro 账号完成登录。",
+          pendingSecondary: "请在浏览器中使用你的 ChatGPT Plus/Pro 账号完成登录。",
           primary: "ChatGPT Plan",
-          secondary: "通过 ChatGPT 登录（OpenAI 官方令牌共享计划）。",
+          secondary: "使用 ChatGPT 继续（OpenAI 官方 token 共享）。",
         },
         zaiApiKey: {
           inputPrimary: "输入 Z.AI Coding Plan API Key",

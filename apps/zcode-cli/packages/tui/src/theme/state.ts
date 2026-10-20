@@ -38,3 +38,4 @@ export function resolveTuiThemeMode(
 export function isTuiThemeMode(value: unknown): value is UiThemeMode {
   return value === "dark" || value === "light";
 }
+

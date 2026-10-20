@@ -41,8 +41,8 @@ export function appendAgentResult(
   result: TuiSubmitPromptResult,
   options: { workspaceDirectory?: string } = {},
 ): Message[] {
-  // Resume replay previously kept only content/role, causing persisted reasoning/tool
-  // parts to disappear on initial render; restore TUI structured parts here and keep using the live streaming components.
+  // resume 回放以前只保留 content/role，导致已持久化的 reasoning/tool
+  // part 被初始渲染丢掉；这里恢复成 TUI 结构化 parts，继续复用实时流式组件。
   const restored = result.restoredMessages
     ? result.restoredMessages.map((message) =>
         restoreTranscriptMessage(message, options.workspaceDirectory),
@@ -173,8 +173,8 @@ export async function submitDuringActiveTurn(input: {
     if (result.kind !== "queued") {
       input.setDraftValue(input.text);
     } else {
-      // Queued input has not yet been added to the model context by the runtime. Appending it directly to the transcript
-      // would mix it with the response being streamed, so show it in the queue area above the input instead.
+      // 排队输入还没有被 runtime 注入模型上下文，直接追加到 transcript
+      // 会和正在流式输出的回复混在一起；先放到输入框上方的队列区。
       input.setQueuedInputs((current) =>
         upsertQueuedInput(current, {
           id: result.pendingInputId,
@@ -234,8 +234,8 @@ export async function submitIdleTurn(input: {
   if (!input.submitOptions?.preserveSelection) input.setSelection(undefined);
   input.setSlashSelection(undefined);
   if (compactCommand) {
-    // `/compact` is a control command. The TUI previously rendered it as a user row,
-    // while the app has a dedicated compaction banner, creating inconsistent semantics. Render the same kind of timeline row here.
+    // `/compact` 是控制命令，TUI 之前把它渲染成 user row；
+    // app 侧又有专门的 compaction 横条，导致两端语义不一致。这里直接渲染同一类 timeline row。
     input.setMessages((current) =>
       upsertCompactTimelineMessage(
         current,

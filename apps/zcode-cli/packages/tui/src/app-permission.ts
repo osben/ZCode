@@ -11,13 +11,14 @@ import { createQuestionPromptState } from "./app-question-state.js";
 import type { TuiRequestPermission } from "./types.js";
 
 /**
- * Automatically allow the CreateWorkflow confirmation gate on the CLI side.
+ * CreateWorkflow 的确认 gate 在 CLI 侧自动放行。
  *
- * This is a **documented CLI exception** (user decision: terminal users are already operating in a command-line context, where friction outweighs protection).
- * The bypass exists only in the client response layer; core `alwaysAsk` semantics, hook order, permission events, and the desktop confirmation window are unchanged.
+ * 这是**记录在案的 CLI 例外**（user 裁定：
+ * 终端用户已经在命令行语境里，摩擦大于保护）。旁路只在客户端应答层：core 的 `alwaysAsk` 语义、
+ * hook 次序、权限事件、桌面确认窗全部不动。
  *
- * **Never include permissionUpdates**: that would persist an allow rule and turn "skip one confirmation" into actual authorization.
- * Bypassing the gate is not bypassing permissions; actors in the run still inherit the session's permission profile.
+ * **绝不带 permissionUpdates**：那会持久化一条 allow 规则，把「跳过一次确认」变成真的授权。
+ * gate 旁路不等于权限旁路——run 里的 actor 仍继承会话的权限 profile。
  */
 function createWorkflowBypassResult(toolName: string): PermissionBrokerResult {
   return {
@@ -38,8 +39,8 @@ export function createTuiPermissionRequester(input: {
         return;
       }
 
-      // Approval bypass: short-circuit before creating approval, so the approval panel is never rendered (setApprovalQueue is untouched).
-      // AmendWorkflow uses the same gate and exception as CreateWorkflow.
+      // 审批旁路：在建 approval 之前短路，所以审批面板根本不会被渲染（setApprovalQueue 不被触碰）。
+      // AmendWorkflow 与 CreateWorkflow 同一道门、同一条例外。
       if (
         request.toolName === CREATE_WORKFLOW_TOOL_NAME ||
         request.toolName === AMEND_WORKFLOW_TOOL_NAME

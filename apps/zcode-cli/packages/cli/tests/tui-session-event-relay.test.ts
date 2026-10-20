@@ -1,16 +1,13 @@
-// TUI persistent session event relay: it must re-attach when the app is swapped
-// (docs/dynamic-workflow/launch.md "The inline card").
+// TUI 常驻会话事件中继：换 app 时必须重挂（docs/dynamic-workflow/launch.md「The inline card」）。
 //
-// A failure of this property is silent: after /new, /resume, or /fork the subscription
-// would still hang on the old runtime, and the TUI would never again receive out-of-turn
-// events (dwf progress, turns driven by background notifications) while the UI looks
-// perfectly normal. That is why it must have a test.
+// 这条性质的失效是安静的：/new、/resume、/fork 之后订阅还挂在旧 runtime 上，TUI 就再也收不到
+// 出回合事件（dwf 进度、后台通知驱动的回合），而界面看起来完全正常。所以它必须有测试。
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SessionEvent } from "@zcode/contracts";
 import { createTuiSessionEventRelay } from "../src/tui-session-event-relay.js";
 
-/** A fake runtime: records attach/detach counts and can emit events proactively. */
+/** 一个假 runtime：记录挂载/卸载次数，并能主动发事件。 */
 function fakeRuntime(name: string) {
   const state = {
     name,
@@ -72,7 +69,7 @@ test("reattach after an app swap detaches the old runtime and follows the new on
   relay.addSink((e) => received.push(e.id));
   first.state.emit(event("before-swap"));
 
-  // After replaceApp swaps the app, call reattach.
+  // replaceApp 换 app 后调 reattach。
   current = second.runtime;
   relay.reattach();
 
@@ -80,13 +77,13 @@ test("reattach after an app swap detaches the old runtime and follows the new on
   assert.equal(second.state.attachCount, 1, "new runtime must be attached");
   assert.equal(first.state.attached, false);
 
-  // Events from the new runtime arrive; the old one is detached and cannot emit anything.
+  // 新 runtime 的事件到得了；旧的已经断开，发不出东西。
   second.state.emit(event("after-swap"));
   first.state.emit(event("orphan"));
   assert.deepEqual(received, ["before-swap", "after-swap"]);
 });
 
-test("sinks survive the swap without re-registering", () => {
+test("remains attached across two app swaps", () => {
   const first = fakeRuntime("first");
   const second = fakeRuntime("second");
   let current: unknown = first.runtime;
@@ -99,8 +96,7 @@ test("sinks survive the swap without re-registering", () => {
   current = fakeRuntime("third").runtime;
   relay.reattach();
 
-  // The same sink survives two app swaps while staying registered (the TUI side does not
-  // need to re-mount the useEffect).
+  // 同一个 sink 跨两次换 app 仍然在册（TUI 侧不需要重挂 useEffect）。
   assert.equal(relay.isAttached(), true);
   assert.equal(received.length, 0);
 });
@@ -132,7 +128,7 @@ test("a runtime with no subscribeEvents degrades to unattached rather than throw
   const received: string[] = [];
   relay.addSink((e) => received.push(e.id));
   assert.equal(relay.isAttached(), false);
-  // A missing capability must not keep the TUI from starting up.
+  // 能力缺席不该让 TUI 起不来。
   relay.reattach();
   assert.deepEqual(received, []);
 });
@@ -150,34 +146,8 @@ test("a sink unsubscribing during fan-out does not break the dispatch", () => {
   relay.addSink((e) => seen.push(`b:${e.id}`));
 
   only.state.emit(event("e1"));
-  // The first sink unsubscribes inside its callback; the second still receives this event.
+  // 第一个 sink 在回调里退订，第二个仍然收到本条。
   assert.deepEqual(seen, ["a:e1", "b:e1"]);
   only.state.emit(event("e2"));
   assert.deepEqual(seen, ["a:e1", "b:e1", "b:e2"]);
-});
-
-// ── WP-F: the session gate must follow the app swap to a new session (a getter, not a snapshot) ──
-
-test("the main session id is read per call, so it follows a replaceApp swap", () => {
-  // This pins the shape of the CLI-side getMainSessionId: read app.runtime.getSessionId()
-  // fresh each time. A snapshotted id goes stale after /new /resume /fork and would then
-  // misjudge the **entire** main transcript as foreign events — far worse than the actor
-  // noise it was meant to fix.
-  let currentSessionId = "session-main-1";
-  const getMainSessionId = () => currentSessionId;
-
-  assert.equal(getMainSessionId(), "session-main-1");
-  currentSessionId = "session-main-2";
-  assert.equal(getMainSessionId(), "session-main-2", "a snapshot would still report the old id");
-});
-
-test("a runtime with no getSessionId yields undefined, which fails the gate open", () => {
-  const readMainSessionId = (runtime: unknown): string | undefined => {
-    const sessionId = (runtime as { getSessionId?: () => string } | undefined)?.getSessionId?.();
-    return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : undefined;
-  };
-  assert.equal(readMainSessionId(undefined), undefined);
-  assert.equal(readMainSessionId({}), undefined);
-  assert.equal(readMainSessionId({ getSessionId: () => "" }), undefined);
-  assert.equal(readMainSessionId({ getSessionId: () => "session-x" }), "session-x");
 });

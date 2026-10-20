@@ -58,7 +58,7 @@ interface CreateWorkflowFacadeDeps {
   pdfDocumentPort?: PdfDocumentPort;
   logger: Logger;
   mcpPort?: McpPort;
-/** Parent-session model factory (same convention as script-workflow-child-runtime.ts). */
+  /** 父会话的 model factory（与 script-workflow-child-runtime.ts 同一约定）。 */
   modelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]>;
   permissionService: PermissionService;
   prepareUserExecutionBoundary: PrepareUserExecutionBoundary;
@@ -285,9 +285,11 @@ function createWorkflowChildRuntime(
     {
       ...deps.runtimeConfig,
       agentName: options.workflowKind === "expert" ? "zcode-expert" : "zcode-workflow",
-      // The workflow child is not part of the Guarded contract; it only isolates the parent's task mode and does not inherit approvals.
+      // workflow child 不在 Guarded 合同内；只隔离父任务模式，不继承审批。
       mode: "yolo",
       modelSelection: deps.runtime.getSessionModelSelection(),
+      // 父 Shell 在首条输入才解析，不能继承 app 创建时尚未初始化的静态配置。
+      bashShellSelection: deps.runtime.getSessionShellSelection(),
       parentSessionId: deps.sessionId,
       taskType: "workflow_child",
       workingDirectory: deps.workingDirectory,
@@ -295,7 +297,7 @@ function createWorkflowChildRuntime(
     {
       agentTelemetry: deps.agentTelemetry,
       agentTelemetryCausation: deps.agentTelemetry.captureCausation(),
-      // The Workflow is scheduled independently after the parent tool returns; do not represent it as a synchronous child of the parent Span.
+      // Workflow 在父工具返回后独立调度，不能伪装成父 Span 的同步 Child。
       agentTelemetryCausationMode: "linked_root",
       eventStore: createInMemorySessionEventStore(),
       sessionStore: deps.sessionStore,
@@ -333,7 +335,7 @@ function createWorkflowChildRuntime(
           ? (deps.appOptions.skillPort ??
             createNodeSkillAdapter({
               extraRoots: deps.configResult.config.skills.roots,
-              // Workflow child agents reuse the same skill discovery logic and must inherit the disabled paths from the main configuration.
+              // workflow 子 agent 复用同一套 skill 发现逻辑，也必须继承主配置里的禁用路径。
               disabledPaths: collectDisabledPaths(deps.configResult.config.skillOverrides),
             }))
           : undefined,
@@ -341,10 +343,9 @@ function createWorkflowChildRuntime(
       eventSink: deps.eventSink,
       modelFactory: deps.modelFactory,
       resolveEffectiveModelSelection: deps.appOptions.resolveEffectiveModelSelection,
-      // Derive external interaction ports from the parent runtime (permissionBroker +
-      // providerRuntimeHeadersPort). The protocol client does not know the child session's identity;
-      // passing through the appOptions ports would send reverse requests to an unknown session and
-      // the response would never arrive.
+      // 对外交互端口由父 runtime 派生（permissionBroker + providerRuntimeHeadersPort）：
+      // 子会话不是协议客户端认识的身份，直接透传 appOptions 的端口会让反向请求发到一个
+      // 客户端找不到的 session 上、response 永不回来。
       ...deps.runtime.createChildClientPorts({
         agentId: options.childSessionId,
         agentType: options.workflowKind === "expert" ? "zcode-expert" : "zcode-workflow",

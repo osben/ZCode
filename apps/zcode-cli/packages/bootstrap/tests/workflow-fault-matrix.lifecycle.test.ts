@@ -1,12 +1,11 @@
 // ============================================================
-// Fault matrix · lifecycle rows (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md: B15–B19)
+// 故障矩阵 · 生命周期行（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md：B15–B19）
 // ============================================================
-// These rows exercise the run service's real paths: `service.resume` after a stop-set halt (B15),
-// the stall notification after 20 minutes without a single success (B16), `service.cancel` during
-// backoff (B17), host `service.close()` while in flight (B18), and another process writing a
-// terminal row while in flight (B19). The assembly is createFaultServiceHarness: real
-// createDynamicWorkflowRunService + real governor + a scaled clock, with assertCommonInvariants
-// asserted over the RunEvent view reconstructed from progress payloads.
+// 这些行要的是 run service 的真实路径：Stop 集停下之后 `service.resume`（B15）、20 分钟无一次
+// 成功的 stall 通知（B16）、退避中 `service.cancel`（B17）、在飞时宿主 `service.close()`（B18）、
+// 在飞时别的进程写下终态行（B19）。装配是 createFaultServiceHarness：真
+// createDynamicWorkflowRunService + 真 governor + 缩放时钟，assertCommonInvariants 从进度
+// 载荷还原的 RunEvent 视图上断。
 
 import { describe, expect, it } from "vitest";
 import type { RunEvent } from "@zcode/dynamic-workflow";
@@ -31,7 +30,7 @@ import {
 } from "./helpers/fault-matrix-cells.js";
 import { FAULT_MATRIX_SHAPES } from "./helpers/fault-matrix-scripts.js";
 
-/** Polls a condition until it holds or times out. */
+/** 轮询某个条件直到成立或超时。 */
 async function waitFor(predicate: () => boolean, timeoutMs: number, what: string): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
@@ -40,23 +39,29 @@ async function waitFor(predicate: () => boolean, timeoutMs: number, what: string
   }
 }
 
-function settledEvents(harness: FaultServiceHarness, runId: string): Extract<RunEvent, { type: "run-settled" }>[] {
+function settledEvents(
+  harness: FaultServiceHarness,
+  runId: string,
+): Extract<RunEvent, { type: "run-settled" }>[] {
   return harness
     .eventsOf(runId)
-    .filter((event): event is Extract<RunEvent, { type: "run-settled" }> => event.type === "run-settled");
+    .filter(
+      (event): event is Extract<RunEvent, { type: "run-settled" }> => event.type === "run-settled",
+    );
 }
 
 // ————————————————————————————————————————————————————————————————
-// B15: stop-set halts -> server flips healthy -> resume completes
+// B15：Stop 集停下 → 服务器翻转健康 → resume 完成
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B15 flip — provider 停下后 resume 从断点续跑", () => {
-  it.each(cells([{ shape: "W4" }], [{ shape: "S-phase" }]).map((cell) => [cellName(cell), cell] as const))(
+  it.each(
+    cells([{ shape: "W4" }], [{ shape: "S-phase" }]).map((cell) => [cellName(cell), cell] as const),
+  )(
     "%s：第一段 stopped(provider)；翻转后 resume 完成，已完结 ask 不再请求",
     async (_name, cell: CellCoordinate) => {
-      // Let K+1 requests through first (exactly enough for one subagent to fully finish), then 401
-      // everything: by the time the first segment halts, the journal holds both completed asks and
-      // aborted ones.
+      // 先放行 K+1 个请求（恰好让一个子代理完整走完），之后一律 401：第一段停下时
+      // journal 里既有已完结的 ask，也有被中止的。
       const turns = FAULT_CELL_TURNS;
       const firstSegment: FaultProgram = (request) =>
         request.ordinal <= turns + 1 ? SERVE : AUTH_401;
@@ -89,18 +94,19 @@ describe("fault matrix · B15 flip — provider 停下后 resume 从断点续跑
         ).length;
         const requestsBefore = server.requests.length;
         const asks = FAULT_MATRIX_SHAPES[cell.shape].asks;
-        expect(completedBefore).toBeGreaterThanOrEqual(0);
         expect(completedBefore).toBeLessThan(asks);
 
-        // Flip -> resume.
+        // 翻转 → resume。
         server.setProgram(healthy());
-        // resume is an optional capability on the port; this assembly's service always has it —
-        // absence would mean the assembly is wrong.
+        // resume 是端口上的可选能力；本装配的 service 恒有它，缺席即装配错了。
         const resume = harness.service.resume;
-        expect(resume).toBeDefined();
         const resumed = await resume!(runId);
         expect(resumed).toMatchObject({ ok: true, runId });
-        await waitFor(() => settledEvents(harness, runId).length >= 2, CELL_TIMEOUT_MS - 5_000, "second run-settled");
+        await waitFor(
+          () => settledEvents(harness, runId).length >= 2,
+          CELL_TIMEOUT_MS - 5_000,
+          "second run-settled",
+        );
         await pause(POST_SETTLE_GRACE_MS);
         const second = await harness.service.getTask(runId);
         expect(second?.runStatus).toBe("completed");
@@ -108,15 +114,13 @@ describe("fault matrix · B15 flip — provider 停下后 resume 从断点续跑
         expect(settled).toHaveLength(2);
         expect(settled[1]).toMatchObject({ status: "completed" });
 
-        // The second segment only re-asks unfinished asks: completed ones replay from the journal
-        // with zero requests (decision 13).
+        // 第二段只重问未完结的 ask：已完结的从 journal 回放，一次请求都没有（决策 13）。
         const secondSegment = server.requests.length - requestsBefore;
         expect(secondSegment).toBe((asks - completedBefore) * (turns + 1));
         for (const node of askNodes(harness.journal, runId)) {
           expect(node.status).toBe("completed");
         }
-        // Zero provider failures in the second segment (the cancelled entries around the first
-        // segment's settle are echoes of siblings being aborted; they do not count).
+        // 第二段零 provider 失败（第一段结算前后那几条 cancelled 是兄弟被 abort 的回声，不算）。
         const lateFailures = harness.statusEvents.filter(
           (event) =>
             event.type === "model_request_failed" &&
@@ -134,7 +138,7 @@ describe("fault matrix · B15 flip — provider 停下后 resume 从断点续跑
 });
 
 // ————————————————————————————————————————————————————————————————
-// B16: stall — persistent rate limiting, no success -> exactly one run-stalled; completes after the flip
+// B16：stall——持续限流、无一次成功 → 恰好一条 run-stalled；翻转后完成
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B16 stall — 无一次成功的重试段恰好通知一次", () => {
@@ -151,16 +155,15 @@ describe("fault matrix · B16 stall — 无一次成功的重试段恰好通知�
         const stalled = () =>
           harness.eventsOf(runId).filter((event) => event.type === "run-stalled");
         await waitFor(() => stalled().length >= 1, 10_000, "run-stalled");
-        // Wait one more window: there must be no second notification (one per stall segment).
+        // 再等一个窗：不能第二次通知（每个 stall 段一条）。
         await pause(FAULT_CELL_STALL_AFTER_MS + 100);
         expect(stalled()).toHaveLength(1);
         const info = stalled()[0] as Extract<RunEvent, { type: "run-stalled" }>;
         expect(info.reason).toBe("rate_limited");
         expect(info.cap).toBeDefined();
-        // sinceMs is measured on the driver's clock (virtual milliseconds), >= the virtual window;
-        // here we only pin "not smaller than the configured window".
+        // sinceMs 是 driver 时钟（虚拟毫秒）的量，≥ 虚拟窗；这里只钉「不小于配置的窗」。
         expect(info.sinceMs).toBeGreaterThan(0);
-        // Never succeeded.
+        // 从未成功过。
         expect(statusCount(harness.statusEvents, "model_request_completed")).toBe(0);
         expect(statusCount(harness.statusEvents, "model_retry_scheduled")).toBeGreaterThan(0);
 
@@ -190,7 +193,7 @@ describe("fault matrix · B16 stall — 无一次成功的重试段恰好通知�
 });
 
 // ————————————————————————————————————————————————————————————————
-// B17: user cancel during backoff -> stopped(user), settles immediately, zero requests afterwards
+// B17：退避中用户取消 → stopped(user)，立即结算，之后零请求
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B17 cancel — 退避中取消立即停下", () => {
@@ -230,7 +233,7 @@ describe("fault matrix · B17 cancel — 退避中取消立即停下", () => {
           { status: "stopped", stopReason: "user", server },
         );
         expect(statusCount(harness.statusEvents, "model_request_completed")).toBe(0);
-        // All backoff timers are withdrawn: wait a while after the settle and there are still zero requests.
+        // 退避定时器全部被撤：结算之后再等一段，仍然零请求。
         const after = server.requests.length;
         await pause(500);
         expect(server.requests.length).toBe(after);
@@ -244,15 +247,14 @@ describe("fault matrix · B17 cancel — 退避中取消立即停下", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// B18: host close while in flight -> stopped(interrupted); zero events after the close; a new service resumes on the same journal
+// B18：在飞时宿主 close → stopped(interrupted)；关闭后零事件；新服务在同一份 journal 上 resume
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，下一次激活可续跑", () => {
   it.each(cells([{ shape: "W4" }]).map((cell) => [cellName(cell), cell] as const))(
     "%s：stopped(interrupted) 在 close 解析前写完；之后零事件；同一份 journal 上 resume 完成",
     async (_name, cell: CellCoordinate) => {
-      // Persistent rate limiting keeps the run reliably in flight (as in B17), so the close is
-      // guaranteed to land on a genuinely live engine.
+      // 持续限流让 run 稳定地留在飞行中（同 B17），close 因此一定落在一个真活着的引擎上。
       const server = await startFakeProviderServer({ program: always(BUSY_3008) });
       const first = createFaultServiceHarness({
         server,
@@ -270,8 +272,7 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
 
         await first.service.close();
 
-        // 1) By the time close resolves, that entry has been written: the engine's own finishRun
-        // tail, not something the service patched in.
+        // 1) close 解析时那一笔已经写完：引擎自己的 finishRun 尾巴，不是 service 补的。
         const snapshot = await first.service.getTask(runId);
         expect(snapshot?.runStatus).toBe("stopped");
         expect(snapshot?.stopReason).toBe("interrupted");
@@ -282,6 +283,17 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
 
         const settledAt = first.settledAt(runId);
         expect(settledAt).toBeDefined();
+        // 2) close 之后零事件、零新请求。服务端可能在 close 返回后才收到此前已发出且
+        // 已取消的报文；到达计数不是启动计数，不能据此误判仍在重试。
+        const eventsAtClose = first.runEvents.length;
+        const requestsStartedAtClose = statusCount(first.statusEvents, "model_request_started");
+        expect(requestsStartedAtClose).toBeGreaterThan(0);
+        await pause(POST_SETTLE_GRACE_MS);
+        expect(first.runEvents.length).toBe(eventsAtClose);
+        expect(statusCount(first.statusEvents, "model_request_started")).toBe(
+          requestsStartedAtClose,
+        );
+        // 等观察窗口结束再核对迟到请求与取消回声，避免在报文到达前空验不变量。
         assertCommonInvariants(
           {
             runId,
@@ -294,20 +306,13 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
           { status: "stopped", stopReason: "interrupted", server },
         );
 
-        // 2) Zero events and zero requests after the close: backoff timers are all withdrawn and
-        // no progress events lag behind.
-        const eventsAtClose = first.runEvents.length;
-        const requestsAtClose = server.requests.length;
-        await pause(POST_SETTLE_GRACE_MS);
-        expect(first.runEvents.length).toBe(eventsAtClose);
-        expect(server.requests.length).toBe(requestsAtClose);
-        // A launch after the close is a wiring error, not a business rejection.
+        // 关闭之后的 launch 是接线错误，不是业务拒绝。
         await expect(first.service.resume!(runId)).rejects.toThrow(/service is closed/);
       } finally {
         await first.dispose();
       }
 
-      // 3) Next activation: a **new** service resumes on the same journal and finishes from where it stopped.
+      // 3) 下一次激活：一台**新** service 在同一份 journal 上 resume，从断点跑完。
       server.setProgram(healthy());
       const second = createFaultServiceHarness({
         server,
@@ -316,7 +321,6 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
       });
       try {
         const resume = second.service.resume;
-        expect(resume).toBeDefined();
         expect(await resume!(runId)).toMatchObject({ ok: true, runId });
         await waitFor(
           () => settledEvents(second, runId).length >= 1,
@@ -325,8 +329,7 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
         );
         await pause(POST_SETTLE_GRACE_MS);
         expect((await second.service.getTask(runId))?.runStatus).toBe("completed");
-        // The resume clears the Interrupted residue left by the close: the row cannot be both
-        // completed and carrying a failure.
+        // 续跑清掉了关闭留下的 Interrupted 残留：行不能既 completed 又带着失败。
         const record = journal.getRun(runId);
         expect(record?.status).toBe("completed");
         expect(record?.failure).toBeUndefined();
@@ -344,15 +347,14 @@ describe("fault matrix · B18 close — 宿主关闭停下自己拥有的 run，
 });
 
 // ————————————————————————————————————————————————————————————————
-// B19: a foreign terminal row under a live engine -> no terminal snapshot; only the real completion counts, and the row carries no stale failure
+// B19：活引擎下的外来终态行 → 不产生终态快照；真正的完成才算数，行不带陈旧失败
 // ————————————————————————————————————————————————————————————————
 
 describe("fault matrix · B19 foreign row — 别的进程写下的终态行压不过活着的引擎", () => {
   it.each(cells([{ shape: "W4" }]).map((cell) => [cellName(cell), cell] as const))(
     "%s：外来 stopped(interrupted) 不产生 run-settled；真正的 completed 才产生，且行不留失败",
     async (_name, cell: CellCoordinate) => {
-      // Persistent rate limiting keeps the run reliably in flight (as in B17 / B18), so the
-      // foreign write is guaranteed to land on the live engine.
+      // 持续限流让 run 稳定地留在飞行中（同 B17 / B18），外来写入因此一定落在活引擎上。
       const server = await startFakeProviderServer({ program: always(BUSY_3008) });
       const harness = createFaultServiceHarness({
         server,
@@ -366,24 +368,21 @@ describe("fault matrix · B19 foreign row — 别的进程写下的终态行压�
           "first retry_scheduled",
         );
 
-        // Orphan convergence from a second instance: write the journal directly, entirely unknown
-        // to this process's registry.
+        // 第二个实例的孤儿收敛：直接写 journal，本进程的注册表毫不知情。
         harness.journal.updateRunStatus(runId, "stopped", {
           stopReason: "interrupted",
           failure: { code: "Interrupted", message: "owning process exited" },
         });
         expect(harness.journal.getRun(runId)?.status).toBe("stopped");
 
-        // A foreign write is not a settlement: it bypasses the engine, so it produces no progress
-        // events at all.
+        // 外来写入不是一次结算：它不经引擎，所以一条进度事件都不产生。
         await pause(POST_SETTLE_GRACE_MS);
         expect(settledEvents(harness, runId)).toHaveLength(0);
         expect(harness.settledAt(runId)).toBeUndefined();
-        // The tracker still reads "running" — this is exactly what makes it keep polling instead
-        // of notifying the model that the run ended.
+        // 追踪器读到的仍然是「在跑」——正是这一点让它继续轮询而不是通知模型 run 已结束。
         expect((await harness.service.getTask(runId))?.status).toBe("running");
 
-        // The engine finishes as usual and its own settlement rewrites that row.
+        // 引擎照常跑完，它自己的结算改写那一行。
         server.setProgram(healthy());
         const snapshot = await harness.settle(runId);
         await pause(POST_SETTLE_GRACE_MS);
@@ -394,8 +393,7 @@ describe("fault matrix · B19 foreign row — 别的进程写下的终态行压�
 
         const record = harness.journal.getRun(runId);
         expect(record?.status).toBe("completed");
-        // A stale failure never coexists with the artifact (the "clears a stale failure…" half of
-        // the journal contract, on the real path).
+        // 陈旧失败不与产物并存（journal 契约的「clears a stale failure…」在真路径上的那一半）。
         expect(record?.failure).toBeUndefined();
         expect(record?.stopReason).toBeUndefined();
 

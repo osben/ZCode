@@ -32,7 +32,7 @@ This is a personal fork of [zai-org/ZCode](https://github.com/zai-org/ZCode). I 
 
 ## Setup
 
-Install Git, Node.js **26.11.1**, and pnpm **10.33.2**. [mise.toml](mise.toml) is the source of truth for tool versions. Run all development and packaging commands below from the repository root.
+Install Git, Node.js **26.11.1**, and pnpm **12.14.0**. [mise.toml](mise.toml) is the source of truth for tool versions. Run all development and packaging commands below from the repository root.
 
 ```bash
 pnpm bootstrap

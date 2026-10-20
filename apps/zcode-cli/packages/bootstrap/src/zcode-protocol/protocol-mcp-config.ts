@@ -16,9 +16,9 @@ export function protocolMcpServersToRuntimeMcpConfig(
         command: server.command,
         args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
-        // ZCode Protocol's mcpServers is the complete override configuration for session/runtime and
-        // status queries. If timeoutMs is not restored here, the timeout saved by the UI is lost
-        // before real tool initialization or mcp/list probing.
+        // ZCode Protocol 的 mcpServers 是 session/runtime 和状态查询的完整覆盖配置。
+        // 这里如果不还原 timeoutMs，UI 保存的超时会在真实工具初始化或 mcp/list 探测前丢失。
+        ...(server.alwaysLoad !== undefined ? { alwaysLoad: server.alwaysLoad } : {}),
         ...(server.timeoutMs !== undefined ? { timeoutMs: server.timeoutMs } : {}),
         ...(server.isolation !== undefined ? { isolation: server.isolation } : {}),
         ...(server.protocolVersion !== undefined
@@ -32,7 +32,8 @@ export function protocolMcpServersToRuntimeMcpConfig(
       url: server.url,
       headers: Object.fromEntries(server.headers.map(({ name, value }) => [name, value])),
       ...(server.oauth !== undefined ? { oauth: server.oauth } : {}),
-      // HTTP/SSE MCP uses the same protocol override path, so preserve its timeout just as for stdio.
+      ...(server.alwaysLoad !== undefined ? { alwaysLoad: server.alwaysLoad } : {}),
+      // HTTP/SSE MCP 也复用同一条 protocol 覆盖链路，需和 stdio 一样保留超时。
       ...(server.timeoutMs !== undefined ? { timeoutMs: server.timeoutMs } : {}),
       ...(server.isolation !== undefined ? { isolation: server.isolation } : {}),
       ...(server.protocolVersion !== undefined ? { protocolVersion: server.protocolVersion } : {}),

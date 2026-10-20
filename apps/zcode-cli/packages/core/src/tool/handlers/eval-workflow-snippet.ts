@@ -243,6 +243,7 @@ export const evalWorkflowSnippetToolEntry: ToolEntry = {
   capability:
     "Compile and synchronously run a small dynamic-workflow TypeScript snippet (world reads + pure logic) against the real workflow execution path, fully ephemerally",
   metadata: {
+    shouldDefer: true,
     name: EVAL_WORKFLOW_SNIPPET_TOOL_NAME,
     description: EVAL_WORKFLOW_SNIPPET_TOOL_DESCRIPTION,
     // Once world.run is included, the snippet can produce effects: readOnly flips, and prepareApproval applies the confirmation gate

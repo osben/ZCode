@@ -2,6 +2,8 @@
 // the embedded search branch delegates search to Bash find/grep. The allowlist deliberately excludes
 // file-writing tools (Write/Edit/ApplyPatch), so Bash is the only side-effect entry point and the Explore prompt enforces read-only behavior.
 export const EXPLORE_AGENT_ALLOWED_TOOLS = [
+  "ToolSearch",
+  "DeferredToolCall",
   "Bash",
   "Glob",
   "Grep",
@@ -15,6 +17,8 @@ export const EXPLORE_AGENT_ALLOWED_TOOLS = [
 export type ExploreAgentAllowedTool = (typeof EXPLORE_AGENT_ALLOWED_TOOLS)[number];
 
 export const EXPLORE_AGENT_EMBEDDED_SEARCH_ALLOWED_TOOLS = [
+  "ToolSearch",
+  "DeferredToolCall",
   "Bash",
   "LSP",
   "Read",
@@ -36,24 +40,31 @@ const EXPLORE_AGENT_DESCRIPTION_TOOL_PRIORITY_SET = new Set<ExploreAgentAllowedT
   EXPLORE_AGENT_DESCRIPTION_TOOL_PRIORITY,
 );
 
-export function buildExploreAllowedTools(options: {
-  embeddedSearchEnabled?: boolean;
-} = {}): readonly ExploreAgentAllowedTool[] {
+export function buildExploreAllowedTools(
+  options: {
+    embeddedSearchEnabled?: boolean;
+  } = {},
+): readonly ExploreAgentAllowedTool[] {
   return options.embeddedSearchEnabled
     ? EXPLORE_AGENT_EMBEDDED_SEARCH_ALLOWED_TOOLS
     : EXPLORE_AGENT_ALLOWED_TOOLS;
 }
 
-export function formatExploreAllowedToolsForAgentDescription(options: {
-  embeddedSearchEnabled?: boolean;
-} = {}): string {
+export function formatExploreAllowedToolsForAgentDescription(
+  options: {
+    embeddedSearchEnabled?: boolean;
+  } = {},
+): string {
   const allowedTools = buildExploreAllowedTools(options);
   const allowedToolSet = new Set(allowedTools);
   const prioritizedTools = EXPLORE_AGENT_DESCRIPTION_TOOL_PRIORITY.filter((tool) =>
     allowedToolSet.has(tool),
   );
   const unprioritizedTools = allowedTools.filter(
-    (tool) => !EXPLORE_AGENT_DESCRIPTION_TOOL_PRIORITY_SET.has(tool),
+    (tool) =>
+      tool !== "ToolSearch" &&
+      tool !== "DeferredToolCall" &&
+      !EXPLORE_AGENT_DESCRIPTION_TOOL_PRIORITY_SET.has(tool),
   );
   return [...prioritizedTools, ...unprioritizedTools].join(", ");
 }

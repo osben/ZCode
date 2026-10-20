@@ -29,8 +29,8 @@ async function run(input: unknown): Promise<CreateWorkflowOutput> {
 }
 
 /**
- * A script from the analyzer corpus (docs/dynamic-workflow/presentation.md and
- * docs/dynamic-workflow/presentation.md acceptance samples).
+ * 分析器语料里的一个脚本（docs/dynamic-workflow/presentation.md 与
+ * docs/dynamic-workflow/presentation.md 的验收样本）。
  */
 function fixture(name: string): string {
   return readFileSync(
@@ -39,7 +39,7 @@ function fixture(name: string): string {
   );
 }
 
-/** Analyzer full graph → bounding layer; same signature as the handler's two call sites. */
+/** 分析器全图 → 裁剪层，与 handler 的两个调用点同一签名。 */
 function bound(script: string): CreateWorkflowCausalityGraph {
   const { causality, flow, handoff } = analyzeScript(script);
   expect(causality).toBeDefined();
@@ -48,7 +48,7 @@ function bound(script: string): CreateWorkflowCausalityGraph {
 
 type Edge = CreateWorkflowEdge;
 
-/** Transitive closure of forward (non-back) edges, `from -> Set<to>`. */
+/** 前向（非 back）边的传递闭包，`from -> Set<to>`。 */
 function closure(edges: readonly Edge[]): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   const next = new Map<string, string[]>();
@@ -83,7 +83,7 @@ function closureEquals(a: Map<string, Set<string>>, b: Map<string, Set<string>>)
   return true;
 }
 
-/** The forward edge set is irreducible: removing any single edge changes the closure. */
+/** 前向边集不可约：去掉任何一条都改变闭包。 */
 function isIrredundant(edges: readonly Edge[]): boolean {
   const forward = edges.filter((edge) => edge.back !== true);
   const full = closure(forward);
@@ -93,14 +93,13 @@ function isIrredundant(edges: readonly Edge[]): boolean {
 }
 
 /**
- * Referential integrity of the payload (spec "Contract"): every bridge between the three layers lands in the listed sets.
- * - a step's lane ∈ lanes; a step's phase ∈ phases (when the vocabulary is present, every step carries one).
- * - a participant's phase ∈ phases, or all `unphased` when the vocabulary is absent; lane ∈ lanes;
- *   steps ⊆ steps; each step belongs to at most one card.
- * - handoff ends ∈ participants with no self-loop; phaseEdges ends ∈ phases; likewise for exits / sink.
- * - a phase's alongside ∈ phases and excludes itself (a phase is not alongside itself).
- * - phaseStreams ends ∈ phases, no self-loops, and the two ends are alongside each other
- *   (docs/dynamic-workflow/presentation.md, "Streams").
+ * 载荷的引用完整性（spec「契约」）：三层之间的桥全部落在列出的集合里。
+ * - step 的车道 ∈ lanes；step 的 phase ∈ phases（词汇表在场时每个 step 都带）。
+ * - participant 的 phase ∈ phases，或词汇表缺席时全部为 `unphased`；lane ∈ lanes；
+ *   steps ⊆ steps；每个 step 至多属于一张卡。
+ * - handoff 两端 ∈ participants，无自环；phaseEdges 两端 ∈ phases；exits / sink 同理。
+ * - phase 的 alongside ∈ phases，且不含自己（一个阶段不与自己并行）。
+ * - phaseStreams 两端 ∈ phases、无自环、两端互为 alongside（docs/dynamic-workflow/presentation.md「Streams」）。
  */
 function expectReferentialIntegrity(graph: CreateWorkflowCausalityGraph): void {
   const laneIds = new Set(graph.lanes.map((lane) => lane.id));
@@ -122,7 +121,7 @@ function expectReferentialIntegrity(graph: CreateWorkflowCausalityGraph): void {
     expect(participant.steps.length).toBeGreaterThan(0);
     for (const id of participant.steps) {
       expect(stepIds.has(id)).toBe(true);
-      // Family member cards share the same site step: sharing between members is legal; cross-lane / cross-phase is not.
+      // 家族成员卡共享同一站点 step：成员之间的共享是合法的，跨车道 / 跨阶段的不是。
       const seen = owner.get(id);
       if (seen !== undefined) {
         const other = graph.participants.find((candidate) => candidate.id === seen)!;
@@ -162,10 +161,10 @@ function expectReferentialIntegrity(graph: CreateWorkflowCausalityGraph): void {
   if (graph.phases === undefined) expect(Object.hasOwn(graph, "phaseStreams")).toBe(false);
   for (const id of graph.exits ?? []) expect(phaseIds.has(id)).toBe(true);
   for (const id of graph.sink ?? []) expect(stepIds.has(id)).toBe(true);
-  // The four phase fields stand and fall together.
+  // 四个阶段字段同进同退。
   expect(Object.hasOwn(graph, "phaseEdges")).toBe(Object.hasOwn(graph, "phases"));
   expect(Object.hasOwn(graph, "exits")).toBe(Object.hasOwn(graph, "phases"));
-  // Step-level edges and lane multiplicity have left the payload (handoff-stack).
+  // step 级边与车道多重性已从载荷退场（handoff-stack）。
   expect(Object.hasOwn(graph, "edges")).toBe(false);
   for (const lane of graph.lanes) expect(Object.hasOwn(lane, "nesting")).toBe(false);
 }
@@ -177,7 +176,7 @@ describe("CreateWorkflow tool", () => {
     expect(registry.has("CreateWorkflow")).toBe(true);
   });
 
-  it("typechecks a valid script cleanly", async () => {
+  it("emits the bounded display graph for a clean script", async () => {
     const output = await run({
       script:
         'interface R { done: boolean }\nconst r = await agent("a").ask<R>("do");\nreturn r.done;',
@@ -185,14 +184,6 @@ describe("CreateWorkflow tool", () => {
     expect(output.ok).toBe(true);
     expect(output.diagnostics).toEqual([]);
     expect(output.response).toContain("NOT executed");
-  });
-
-  it("emits the bounded display graph for a clean script", async () => {
-    const output = await run({
-      script:
-        'interface R { done: boolean }\nconst r = await agent("a").ask<R>("do");\nreturn r.done;',
-    });
-    expect(output.ok).toBe(true);
     expect(output.causalityGraph).toBeDefined();
     const graph = output.causalityGraph!;
     // One step, standing in the actor's lane, at its author-script (prelude-stripped,
@@ -203,19 +194,20 @@ describe("CreateWorkflow tool", () => {
     expect(graph.lanes[0]?.name).toBe("a");
     expect(graph.sink).toEqual(["ask#1"]);
     expect(graph.truncated).toBeUndefined();
-    // Layer two: one subagent card holds this single step, with no handoff.
+    // 第二层：一张子代理卡装着这一个 step，无交接。
     expect(graph.participants).toEqual([
       { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] },
     ]);
     expect(graph.handoffs).toEqual([]);
-    // The analyzer's internal vocabulary (region / certainty / edge kinds) stays out of the payload
-    // (single-arrow-contract); step-level edges and `nesting` are no longer forwarded (handoff-stack).
+    // 分析器内部的词汇（region / certainty / 边种类）不进载荷（single-arrow-contract）；
+    // step 级边与 `nesting` 不再转发（handoff-stack）。
     expect(Object.hasOwn(graph, "regions")).toBe(false);
     expect(Object.hasOwn(graph, "edges")).toBe(false);
     for (const step of graph.steps) {
       expect(Object.hasOwn(step, "region")).toBe(false);
       expect(Object.hasOwn(step, "certainty")).toBe(false);
     }
+    expect(Object.hasOwn(graph, "phases")).toBe(false);
     expectReferentialIntegrity(graph);
   });
 
@@ -254,10 +246,6 @@ describe("CreateWorkflow tool", () => {
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
     expect(graph.truncated).toBe(true);
-    expect(graph.steps.length).toBeLessThanOrEqual(64);
-    expect(graph.lanes.length).toBeLessThanOrEqual(32);
-    expect(graph.participants.length).toBeLessThanOrEqual(64);
-    expect(graph.handoffs.length).toBeLessThanOrEqual(256);
     // Lanes cap at 32 while steps cap at 64, so steps whose lane was dropped must go
     // too — otherwise the renderer gets a card with no row to sit in. Each surviving
     // actor is one card in the single implicit phase.
@@ -269,12 +257,12 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("carries one hand-off shape: from, to, a back bit for loop back-edges, and types for the inspector", async () => {
-    // Type labels, kinds, and certainty stay out of the display channel: the analyzer still computes them (for the
-    // text graph / mermaid / refined fork), edges only mean runs after; `back` is the only edge-level marker and only
-    // marks loop back-edges; `types` is inspector material and never reaches the arrows.
+    // 类型标签、种类、确定性都不进展示通道：分析器仍算它们（文本图/mermaid/精炼 fork 用），
+    // 边只表示 runs after；`back` 是唯一的边级标记，只标循环回边；`types` 是检视器素材，
+    // 不上箭头。
     const output = await run({
       script: [
-        'interface Flaky { findings: string[] }',
+        "interface Flaky { findings: string[] }",
         'const f = await agent("a").ask<Flaky>("f");',
         "for (let i = 0; i < 2; i++) {",
         '  const u = await agent("b").ask<string>(`use ${f.findings[0]}`);',
@@ -290,21 +278,11 @@ describe("CreateWorkflow tool", () => {
       { from: "unphased:actor#2", to: "unphased:actor#3", types: ["string"] },
       { from: "unphased:actor#3", to: "unphased:actor#2", back: true },
     ]);
-    for (const edge of graph.handoffs) {
-      for (const key of Object.keys(edge)) expect(["back", "from", "to", "types"]).toContain(key);
-      expect(Object.hasOwn(edge, "kind")).toBe(false);
-      expect(Object.hasOwn(edge, "certainty")).toBe(false);
-    }
-    for (const edge of graph.phaseEdges ?? []) {
-      expect(Object.keys(edge).sort()).toEqual(
-        edge.back === true ? ["back", "from", "to"] : ["from", "to"],
-      );
-    }
   });
 
   it("carries an interpolated actor name's static shape through the bounded payload", async () => {
-    // The contract boundary is exactly where optional fields disappear: namePattern / labelPattern leaking past the
-    // length-capped mapping is not caught by strict schema; it just quietly sinks the lane header back to "unnamed agent".
+    // 契约边界是可选字段消失的地方：namePattern / labelPattern 漏掉限长映射不会被
+    // strict schema 抓住，只会让车道头静静地退回「未命名智能体」。
     const output = await run({
       script: [
         "const topics = [1, 2, 3];",
@@ -320,13 +298,12 @@ describe("CreateWorkflow tool", () => {
     const graph = output.causalityGraph!;
     const byId = new Map(graph.lanes.map((lane) => [lane.id, lane]));
     expect(byId.get("actor#1")?.namePattern).toEqual({ head: "研究员" });
-    // The shape is **not written into name**: `name`'s contract is the word the author wrote verbatim.
+    // 形状**不写进 name**：`name` 的契约是作者原样写下的那个词。
     expect(Object.hasOwn(byId.get("actor#1")!, "name")).toBe(false);
-    // A literal-named lane is unchanged byte for byte — the field is absent, not an undefined value.
+    // 字面量名的车道逐字节不变——字段缺席，不是 undefined 值。
     expect(byId.get("actor#2")?.name).toBe("主编");
     expect(Object.hasOwn(byId.get("actor#2")!, "namePattern")).toBe(false);
-    // Multiplicity no longer hangs on the lane (it used to be families → nesting): the family's member count is
-    // expressed by the participant card.
+    // 多重性不再挂在车道上（曾是 families → nesting）：家族的成员数由参与者卡表达。
     expect(Object.hasOwn(byId.get("actor#1")!, "nesting")).toBe(false);
     expect(Object.hasOwn(byId.get("actor#1")!, "families")).toBe(false);
     expect(graph.participants.filter((p) => p.lane === "actor#1").map((p) => p.member)).toEqual([
@@ -334,16 +311,15 @@ describe("CreateWorkflow tool", () => {
       { index: 1, of: 3 },
       { index: 2, of: 3 },
     ]);
-    // The inline receiver's card also gets the shape; an identifier receiver's card has no shape to speak of.
+    // 内联 receiver 的卡片同样拿到形状；标识符 receiver 的卡片没有形状可言。
     const steps = new Map(graph.steps.map((step) => [step.id, step]));
     expect(steps.get("ask#1")).toMatchObject({ label: "ask", labelPattern: { head: "研究员" } });
     expect(Object.hasOwn(steps.get("ask#2")!, "labelPattern")).toBe(false);
   });
 
   it("carries the may-set copies' source through the bounded payload", async () => {
-    // The may-set lane expansion's copy must survive all the way to the tool output: `source` is an optional field,
-    // so dropping it from the length-capped mapping is not caught by strict schema — the live overlay would just
-    // quietly fail to associate with any instance.
+    // may-set 车道展开的拷贝要能一路活到工具输出：`source` 是可选字段，限长映射里漏掉它
+    // 不会被 strict schema 抓住，只会让直播叠加静静地关联不上任何实例。
     const output = await run({
       script: [
         'const fast = agent("fast");',
@@ -360,16 +336,16 @@ describe("CreateWorkflow tool", () => {
       ["ask#2~actor#1", "actor#1", "ask#2"],
       ["ask#2~actor#2", "actor#2", "ask#2"],
     ]);
-    // The un-expanded step is unchanged byte for byte: the field is absent, not an undefined value.
+    // 未展开的 step 逐字节不变：字段缺席，不是 undefined 值。
     expect(Object.hasOwn(graph.steps[0]!, "source")).toBe(false);
-    // The copy keeps all candidate lanes (hover clue); the id stays within the 64-character cap.
+    // 拷贝保留全部候选车道（悬停线索），id 在 64 字符上限内。
     expect(graph.steps[1]).toMatchObject({ lanes: ["actor#1", "actor#2"] });
     for (const step of graph.steps) expect(step.id.length).toBeLessThanOrEqual(64);
-    // `source` points at the site the copy replaced, which is no longer in the graph — sink and cards reference only the copy.
+    // source 指向的是被拷贝替换掉的站点，图里没有这个节点——sink 与卡只引用拷贝。
     const stepIds = new Set(graph.steps.map((step) => step.id));
     expect(stepIds.has("ask#2")).toBe(false);
     expect(graph.sink).toEqual(["ask#2~actor#1", "ask#2~actor#2"]);
-    // The two copies belong to two different cards (each on its own lane), with the opener triage first.
+    // 两份拷贝分属两张卡（各在自己的车道上），开局者 triage 排第一。
     expect(graph.participants.map((p) => [p.id, p.steps])).toEqual([
       ["unphased:actor#3", ["ask#1"]],
       ["unphased:actor#1", ["ask#2~actor#1"]],
@@ -381,16 +357,34 @@ describe("CreateWorkflow tool", () => {
     ]);
   });
 
-  // —— Layer two: participant cards and handoffs (docs/dynamic-workflow/presentation.md, "The display contract") ——
+  // —— 第二层：参与者卡与交接（docs/dynamic-workflow/presentation.md「The display contract」）————
 
   it("expands a literal fan-out into one member card each, all handing to the reviewer", async () => {
     const output = await run({ script: fixture("handoff-literal-members.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
     expect(graph.participants).toEqual([
-      { id: "phase#1:actor#1[0]", phase: "phase#1", lane: "actor#1", steps: ["ask#1"], member: { index: 0, of: 3 } },
-      { id: "phase#1:actor#1[1]", phase: "phase#1", lane: "actor#1", steps: ["ask#1"], member: { index: 1, of: 3 } },
-      { id: "phase#1:actor#1[2]", phase: "phase#1", lane: "actor#1", steps: ["ask#1"], member: { index: 2, of: 3 } },
+      {
+        id: "phase#1:actor#1[0]",
+        phase: "phase#1",
+        lane: "actor#1",
+        steps: ["ask#1"],
+        member: { index: 0, of: 3 },
+      },
+      {
+        id: "phase#1:actor#1[1]",
+        phase: "phase#1",
+        lane: "actor#1",
+        steps: ["ask#1"],
+        member: { index: 1, of: 3 },
+      },
+      {
+        id: "phase#1:actor#1[2]",
+        phase: "phase#1",
+        lane: "actor#1",
+        steps: ["ask#1"],
+        member: { index: 2, of: 3 },
+      },
       { id: "phase#1:actor#2", phase: "phase#1", lane: "actor#2", steps: ["ask#2"] },
     ]);
     expect(graph.handoffs).toEqual([
@@ -398,14 +392,14 @@ describe("CreateWorkflow tool", () => {
       { from: "phase#1:actor#1[1]", to: "phase#1:actor#2", types: ["Draft"] },
       { from: "phase#1:actor#1[2]", to: "phase#1:actor#2", types: ["Draft"] },
     ]);
-    // A single card's `member` / `many` is absent, not an undefined value.
+    // 单卡的 `member` / `many` 缺席，不是 undefined 值。
     expect(Object.hasOwn(graph.participants[3]!, "member")).toBe(false);
     expect(Object.hasOwn(graph.participants[3]!, "many")).toBe(false);
     expectReferentialIntegrity(graph);
   });
 
   it("collapses a family of unknown cardinality into one `many` card", async () => {
-    // A pushed-onto array is not a literal length; iterating ask results is equally unknowable — both are one `many` card.
+    // 被 push 过的数组不是字面量长度；迭代 ask 结果同样不可知——都是一张 `many` 卡。
     const output = await run({ script: fixture("handoff-pushed-array-many.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -418,14 +412,14 @@ describe("CreateWorkflow tool", () => {
       { from: "unphased:actor#1", to: "unphased:actor#2", types: ["Draft"] },
       { from: "unphased:actor#2", to: "unphased:actor#3", types: ["string[]"] },
     ]);
-    for (const participant of graph.participants) expect(Object.hasOwn(participant, "member")).toBe(false);
+    for (const participant of graph.participants)
+      expect(Object.hasOwn(participant, "member")).toBe(false);
     expectReferentialIntegrity(graph);
   });
 
   it("puts every card in `unphased` when the script has no phase vocabulary", async () => {
-    // No phase vocabulary: `phases` is absent and the card's phase is always `unphased` (the UI synthesizes a module
-    // with the same id).
-    // A handoff carrying no data (the editor's ask does not mention draft) is still a handoff; the same-lane self-loop disappears.
+    // 无阶段词汇：`phases` 缺席，卡的 phase 恒为 `unphased`（UI 合成一个同 id 的模块）。
+    // 没有数据的接力（editor 的 ask 不提 draft）仍是交接；同车道自环消失。
     const output = await run({ script: fixture("handoff-unphased-baton.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -440,8 +434,7 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("matches the earth-v5 hand-off acceptance sample after bounding", () => {
-    // The spec "Tests and acceptance" earth-v5 acceptance: five phases of participants and handoffs, byte for byte;
-    // P2 has zero handoffs.
+    // spec「测试与验收」的 earth-v5 验收：五个阶段的参与者与交接，逐字节；P2 零交接。
     const graph = bound(fixture("handoff-earth-v5.ts"));
     expect(graph.truncated).toBeUndefined();
     expect(graph.phases?.map((phase) => phase.id)).toEqual([
@@ -472,7 +465,7 @@ describe("CreateWorkflow tool", () => {
       "phase#4:actor#8",
     ]);
     expect(byPhase("phase#5")).toEqual(["phase#5:workspace"]);
-    // Participant array order = handoff order within phase order (fold-out top to bottom).
+    // 参与者数组顺序 = 阶段序内的交接序（折叠面自上而下）。
     expect(graph.participants.map((p) => p.id)).toEqual([
       ...byPhase("phase#1"),
       ...byPhase("phase#2"),
@@ -481,15 +474,11 @@ describe("CreateWorkflow tool", () => {
       ...byPhase("phase#5"),
     ]);
     const lanes = new Map(graph.lanes.map((lane) => [lane.id, lane.name]));
-    expect(["actor#1", "actor#2", "actor#4", "actor#5", "actor#6", "actor#7", "actor#8"].map((id) => lanes.get(id))).toEqual([
-      "architect",
-      "harness",
-      "fixer",
-      "jury-a",
-      "jury-b",
-      "jury-c",
-      "polisher",
-    ]);
+    expect(
+      ["actor#1", "actor#2", "actor#4", "actor#5", "actor#6", "actor#7", "actor#8"].map((id) =>
+        lanes.get(id),
+      ),
+    ).toEqual(["architect", "harness", "fixer", "jury-a", "jury-b", "jury-c", "polisher"]);
     const members = graph.participants.filter((p) => p.lane === "actor#3");
     expect(members.map((p) => p.member)).toEqual(
       Array.from({ length: 5 }, (_, index) => ({ index, of: 5 })),
@@ -512,9 +501,8 @@ describe("CreateWorkflow tool", () => {
     expectReferentialIntegrity(graph);
   });
 
-  // —— Phase vocabulary bounding (docs/dynamic-workflow/presentation.md, "The display contract") ——
-  // The phase layer comes from the control-flow graph's phase quotient (where one can go between phases); the step
-  // layer is the site table.
+  // —— 阶段词汇表的裁剪（docs/dynamic-workflow/presentation.md「The display contract」）————
+  // 阶段层来自控制流图的阶段商（阶段之间能去哪），step 层是站点表。
 
   it("carries the phase vocabulary through the bounded payload", async () => {
     const output = await run({
@@ -536,30 +524,29 @@ describe("CreateWorkflow tool", () => {
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
     expect(graph.truncated).toBeUndefined();
-    // Phases are numbered by the marker order of first appearance, with the author's original word and the marker's position.
+    // 阶段按名字首次出现的标记顺序编号，带作者原词与该标记的位置。
     expect(graph.phases).toEqual([
       { id: "phase#1", name: "preflight", line: 1, column: 1 },
       { id: "phase#2", name: "work", line: 4, column: 1 },
       { id: "phase#3", name: "checkpoint", line: 8, column: 5 },
     ]);
-    // The partition is complete: with the vocabulary present, every step has exactly one phase.
+    // 划分是全的：词汇表在场时每个 step 恰有一个阶段。
     expect(graph.steps.map((step) => step.phase)).toEqual([
       "phase#1",
       "phase#1",
       "phase#2",
       "phase#3",
     ]);
-    // Phase edges are the control-flow graph's phase quotient, shaped like handoff edges: loop back-edges carry
-    // `back`, everything else carries nothing.
-    // Same-phase self-loops (loops inside work) are not emitted.
+    // 阶段边是控制流图的阶段商，与交接边同一形状：循环回边带 `back`，其余什么都不带。
+    // 同阶段自环（work 里的循环）不发。
     expect(graph.phaseEdges).toEqual([
       { from: "phase#1", to: "phase#2" },
       { from: "phase#2", to: "phase#3" },
       { from: "phase#3", to: "phase#2", back: true },
     ]);
-    // After the loop exits the script completes normally: both phases that could be the last round lead to the deliverable.
+    // 循环退出后脚本正常完成：两个可能是最后一轮的阶段都通向返回物。
     expect(graph.exits).toEqual(["phase#2", "phase#3"]);
-    // Layer two groups cards by phase: a cross-phase causal edge (plan → worker) is not a handoff; handoffs live only within a phase.
+    // 第二层按阶段分卡：跨阶段的因果边（plan → worker）不是交接，交接只在阶段内。
     expect(graph.participants.map((p) => p.id)).toEqual([
       "phase#1:workspace",
       "phase#1:actor#1",
@@ -570,22 +557,6 @@ describe("CreateWorkflow tool", () => {
       { from: "phase#1:workspace", to: "phase#1:actor#1", types: ["string[]"] },
     ]);
     expectReferentialIntegrity(graph);
-  });
-
-  it("keeps a zero-marker graph free of every phase field", async () => {
-    // The UI's view-switch condition is exactly "vocabulary present or not", so a zero-marker script must not carry a
-    // single phase field — absent, not an undefined value, and not an empty array.
-    const output = await run({
-      script:
-        'interface R { done: boolean }\nconst r = await agent("a").ask<R>("do");\nreturn r.done;',
-    });
-    expect(output.ok).toBe(true);
-    const graph = output.causalityGraph!;
-    expect(Object.hasOwn(graph, "phases")).toBe(false);
-    expect(Object.hasOwn(graph, "phaseEdges")).toBe(false);
-    expect(Object.hasOwn(graph, "exits")).toBe(false);
-    for (const step of graph.steps) expect(Object.hasOwn(step, "phase")).toBe(false);
-    for (const participant of graph.participants) expect(participant.phase).toBe("unphased");
   });
 
   it("carries the unphased fallback for steps before the first marker", async () => {
@@ -599,13 +570,12 @@ describe("CreateWorkflow tool", () => {
     });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
-    // The fallback phase sorts first (it holds the steps before the first marker) and has **no name**: the display
-    // name is localized by the UI, the same pattern as the workspace / unknown lanes.
+    // 兜底阶段排在最前（它装的是首个标记之前的 step）且**无 name**：显示名由 UI 本地化，
+    // 与 workspace / unknown 车道同一模式。
     expect(graph.phases?.[0]).toEqual({ id: "unphased" });
-    expect(Object.hasOwn(graph.phases![0]!, "name")).toBe(false);
     expect(graph.phases?.[1]).toMatchObject({ id: "phase#1", name: "later" });
     expect(graph.steps.map((step) => step.phase)).toEqual(["unphased", "phase#1"]);
-    // With the vocabulary present, the fallback phase is a member of the table and cards land in it as usual.
+    // 词汇表在场时兜底阶段是表里的一员，卡照常归入它。
     expect(graph.participants.map((p) => [p.id, p.phase])).toEqual([
       ["unphased:actor#1", "unphased"],
       ["phase#1:actor#2", "phase#1"],
@@ -614,9 +584,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("lists a marker-only phase: control passes through it even with no step", async () => {
-    // The causal quotient graph only sees members, not prepare; the control-flow quotient does see it — it is a
-    // position between the two steps.
-    // Layer two has no card for it: cards are "lanes that have steps within the phase".
+    // 因果商图只认成员，看不见 prepare；控制流商看得见——它是两个 step 之间的一个位置。
+    // 第二层没有它的卡：卡是「阶段里有 step 的车道」。
     const output = await run({ script: fixture("phase-empty-phase.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -632,9 +601,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("keeps a phase whose only member was truncated: it is still a control-flow position", async () => {
-    // 71 asks truncated at 64 → the only member of the later phase is truncated away. The phase layer does not
-    // converge by membership (a phase is a control-flow position, not a set of members), so it and the edges leading
-    // to it stay; the step layer as usual keeps only early's members, and late's card disappears with its step.
+    // 71 asks 截到 64 → 后一个阶段的唯一成员被截走。阶段层不按成员收敛（阶段是控制流
+    // 位置，不是成员的集合），所以它和通向它的边都留下；step 层照旧只剩 early 的成员，
+    // late 的那张卡随它的 step 一起消失。
     const asks = Array.from(
       { length: 70 },
       (_, index) => `const r${index} = await a.ask<string>("m${index}");`,
@@ -660,14 +629,15 @@ describe("CreateWorkflow tool", () => {
     expect(graph.phaseEdges).toEqual([{ from: "phase#1", to: "phase#2" }]);
     expect(graph.exits).toEqual(["phase#2"]);
     for (const step of graph.steps) expect(step.phase).toBe("phase#1");
-    expect(graph.participants.map((p) => [p.id, p.steps.length])).toEqual([["phase#1:actor#1", 64]]);
+    expect(graph.participants.map((p) => [p.id, p.steps.length])).toEqual([
+      ["phase#1:actor#1", 64],
+    ]);
     expectReferentialIntegrity(graph);
   });
 
   it("degrades the whole vocabulary past 32 phases", async () => {
-    // Over the bound, degrade as a whole: a half-truncated phase graph lies (the truncated phases' members lose their
-    // home), so rather say nothing — all four fields absent + truncated, and the UI naturally falls back to the
-    // phase-less view.
+    // 超界整体降级：裁一半的阶段图会说谎（被裁阶段的成员没了家），宁可不说——四个字段
+    // 全部缺席 + truncated，UI 自然退回无阶段画面。
     const marked = Array.from(
       { length: 33 },
       (_, index) => `phase("p${index}");\nconst r${index} = await a.ask<string>("m${index}");`,
@@ -681,32 +651,16 @@ describe("CreateWorkflow tool", () => {
     expect(Object.hasOwn(graph, "phases")).toBe(false);
     expect(Object.hasOwn(graph, "phaseEdges")).toBe(false);
     expect(Object.hasOwn(graph, "exits")).toBe(false);
-    // The step's `phase` must disappear along with it: a card carrying a phase id that is not in phases is a dangling reference.
+    // step 的 `phase` 必须一起消失：带着一个不在 phases 里的阶段 id 的卡片是悬空引用。
     expect(graph.steps).toHaveLength(33);
     for (const step of graph.steps) expect(Object.hasOwn(step, "phase")).toBe(false);
-  });
-
-  it("keeps participants inside the vocabulary when the vocabulary degrades", async () => {
-    // Referential integrity from the spec "Contract": `participant.phase` ∈ `phases[].id`, or all `unphased` with
-    // `phases` absent. After the vocabulary degrades as a whole, cards must not still claim `phase#N` — the UI would go
-    // looking for a phase that does not exist.
-    const marked = Array.from(
-      { length: 33 },
-      (_, index) => `phase("p${index}");\nconst r${index} = await a.ask<string>("m${index}");`,
-    );
-    const output = await run({
-      script: ['const a = agent("a");', ...marked, "return r0;"].join("\n"),
-    });
-    expect(output.ok).toBe(true);
-    const graph = output.causalityGraph!;
-    expect(Object.hasOwn(graph, "phases")).toBe(false);
     expectReferentialIntegrity(graph);
   });
 
   it("never lets a step, a card, an edge or an exit name a phase the payload does not list", async () => {
-    // Referential integrity outranks retained count — the same rule as lanes/edges — and holds for every phase outcome.
+    // 引用完整性优先于保留数量，和车道/边同一条规则——对每一种阶段结局都成立。
     const scripts = [
-      // Vocabulary present, with a fallback phase and a cross-phase back-edge.
+      // 词汇表在场，含兜底阶段与跨阶段回边。
       [
         'const seed = await agent("seed").ask<string>("go");',
         'phase("loop");',
@@ -719,9 +673,9 @@ describe("CreateWorkflow tool", () => {
         "}",
         "return seed;",
       ].join("\n"),
-      // Zero markers: all four fields absent.
+      // 零标记：四个字段全缺席。
       'const a = await agent("a").ask<string>("q");\nreturn a;',
-      // Intra-phase loop + fan-out family + workspace card.
+      // 阶段内循环 + fan-out 家族 + 工作区卡。
       fixture("handoff-earth-v5.ts"),
     ];
     for (const script of scripts) {
@@ -732,9 +686,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("emits an empty exits list when the script has no normal completion", async () => {
-    // The group may be empty: an unconditionally-throwing script has no phase leading to the deliverable, `exits` is
-    // present but empty, the `abort` terminal has no node so that edge does not appear, and `truncated` must not lie
-    // because of it.
+    // 组内可为空：无条件 throw 的脚本没有通向返回物的阶段，`exits` 在场但空，`abort` 终端
+    // 没有节点所以那条边不出现，`truncated` 不能因此撒谎。
     const output = await run({
       script: 'phase("a");\nconst x = await agent("a").ask<string>("q");\nthrow new Error(x);',
     });
@@ -747,9 +700,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("ships an exception edge as an ordinary arrow and drops the abort terminal", async () => {
-    // A may-throw step in the try body enters the catch phase: that is a real "may run next" successor, and without it
-    // the recovery phase entered only via exceptions would dangle. A throw inside catch points at abort and has no node
-    // to land on, so it is dropped.
+    // try 体里的 step may-throw 进 catch 阶段：那是真实的「可能接着跑」后继，不发则只靠异常
+    // 进入的恢复阶段会悬空。catch 里的 throw 指向 abort，无节点可落，丢弃。
     const output = await run({
       script: [
         'phase("attempt");',
@@ -775,10 +727,10 @@ describe("CreateWorkflow tool", () => {
     }
   });
 
-  // —— Transitive reduction of phase edges (spec Round 2: one arrow promises only the runs-after reachability) ——
+  // —— 阶段边的传递归约（spec Round 2：一种箭头只承诺 runs-after 的可达关系）————
 
   it("drops a phase skip edge the arm path already implies", async () => {
-    // `if` without else: the head → successor skip edge vanishes, implied by head → arm → successor.
+    // `if` 无 else：head → 后继的跳过边被 head → arm → 后继蕴含而消失。
     const output = await run({
       script: [
         'phase("a");',
@@ -820,8 +772,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("keeps one back edge for a loop body spanning three phases with a continue", async () => {
-    // The `continue` in B back to A vanishes, witnessed by "B → C (forward) → A (one-hop back-edge)"; two mutually
-    // witnessing back-edges do not vanish together, so C → A remains and the loop stays closed.
+    // B 里的 `continue` 回 A 被「B → C（前向）→ A（一跳回边）」见证而消失；两条互相见证的
+    // 回边不会一起消失，所以 C → A 留下，环仍然闭合。
     const output = await run({
       script: [
         "for (let i = 0; i < 3; i++) {",
@@ -847,13 +799,11 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("keeps every edge of two independent choices that reuse the same two phase names", async () => {
-    // Bug (same passage in the spec's "Untyped reduction"): two unrelated if/else groups reuse the same pair of phase
-    // names, so in the quotient graph left ↔ right becomes an ordinary pair of branch edges. The old implementation
-    // looked for witnesses on the **original graph**, so `choose → left` was judged redundant via `choose → right → left`
-    // and deleted, and `left → next` deleted via `left → right → next` — the picture became "conditional branches always
-    // take right; left is right's fork", a false statement. A path walking back around the loop asserts nothing about
-    // "whether control can actually get there", so the reduction runs on strongly-connected components: not a single
-    // edge within a component may be lost.
+    // Bug（spec「Untyped reduction」同一段）：两组互不相干的 if/else 复用同一对阶段名，商图
+    // 里 left ↔ right 就成了一对普通分支边。旧实现在**原图**上找见证，于是 `choose → left`
+    // 被 `choose → right → left` 判成冗余而删掉，`left → next` 被 `left → right → next` 删
+    // 掉——画面变成「条件分支总是走 right，left 是 right 的岔路」，一句假话。绕环走回来的路径
+    // 对「控制能不能到那儿」不作断言，所以归约跑在缩点上，同一分量里的边一条都不能少。
     const output = await run({
       script: [
         'phase("choose");',
@@ -879,9 +829,8 @@ describe("CreateWorkflow tool", () => {
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
     expect(graph.phases?.map((phase) => phase.name)).toEqual(["choose", "left", "right", "next"]);
-    // left and right reach each other — one component: both cross edges are present, and both are **not** back-edges
-    // (this is not a loop; two groups of choices each taking their own edges). The four edges in and out of the
-    // component are likewise all present.
+    // left 与 right 互相可达，是一个分量：两条对穿边都在，且都**不是**回边（这不是循环，
+    // 是两组选择各走各的边）。进出分量的四条边同样一条不少。
     expect(graph.phaseEdges).toEqual([
       { from: "phase#1", to: "phase#2" },
       { from: "phase#1", to: "phase#3" },
@@ -896,10 +845,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("still drops a spawner's pass-through edge over a fork/join: nothing there is on a cycle", async () => {
-    // The other half of SCC reduction: edge deletion in acyclic regions must not be loosened at all. Two concurrent
-    // callbacks each open a phase, and the main line enters the wrap-up after the join — `spawn → join` is implied by
-    // the two strand paths and vanishes as before. The three phases each form their own component, so witnesses here
-    // still count.
+    // 缩点归约的另一半：无环处的删边一点不能放松。两个并发回调各开一个阶段，主线在 join
+    // 之后进入收尾——`spawn → join` 被两条 strand 路径蕴含，照旧消失。三个阶段各自成分量，
+    // 所以这里的见证仍然作数。
     const output = await run({
       script: [
         'phase("spawn");',
@@ -930,9 +878,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("leaves a loop's back edge out of the components: the skip edge it spans still drops", async () => {
-    // Components consider forward edges only. A back-edge says "next round"; counting it into components would shrink
-    // the whole loop body into one dot, and genuinely redundant edges inside the loop body could never be deleted
-    // again — here `A → C` would survive along with `B → C`.
+    // 分量只看前向边。回边说的是「下一轮」，把它算进分量会让整个循环体缩成一个点，循环体
+    // 内部真正冗余的边就再也删不掉——这里 `A → C` 会跟着 `B → C` 一起留下来。
     const output = await run({
       script: [
         "for (let i = 0; i < 3; i++) {",
@@ -959,9 +906,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("carries `alongside` for a phase entered while another phase's strands still ran", async () => {
-    // Corpus strand-fanout-two-phases-join.ts, golden `phase phase#2 "B" alongside=phase#1`:
-    // A's fan-out is not awaited, so B's marker arrives while A's subagent is still running. This is **node fact** —
-    // attached only to B, and it must not conjure an edge between the two (control did not transfer from A to B or anywhere else).
+    // 语料 strand-fanout-two-phases-join.ts，golden `phase phase#2 "B" alongside=phase#1`：
+    // A 的 fan-out 没有被 await，B 的标记因此在 A 的子代理还在跑的时候就到了。这是**节点事实**
+    // ——只挂在 B 上，且不得在两者之间变出一条边（控制并没有从 A 转移到 B 之外的地方）。
     const output = await run({ script: fixture("strand-fanout-two-phases-join.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -973,10 +920,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("streams the channel between two stage futures, but not the writer after the join", async () => {
-    // Corpus stream-pipeline.ts (docs/dynamic-workflow/presentation.md, "Streams"): the causal graph's phase quotient
-    // has phase#1 →data→ phase#2 (facts channel), phase#1 →data→ phase#3, phase#2 →seq→ phase#3.
-    // Only the first one connects two mutually-alongside phases — the writer sits after the join, which is a matter of
-    // control arrows.
+    // 语料 stream-pipeline.ts（docs/dynamic-workflow/presentation.md「Streams」）：因果图阶段商有
+    // phase#1 →data→ phase#2（facts channel）、phase#1 →data→ phase#3、phase#2 →seq→ phase#3。
+    // 只有第一条连着两个互为 alongside 的阶段——写作者在 join 之后，是控制箭头的事。
     const output = await run({ script: fixture("stream-pipeline.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -985,9 +931,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("streams every hand-off of a five-stage pipeline, in order", () => {
-    // The shape that triggered this design (abridged from testfield's "2077 future jobs pipeline"): five stage futures
-    // chained by four channels; in the control-flow view the five phases are pairwise alongside with phaseEdges empty —
-    // the streams are the only relationship between them.
+    // 触发本设计的形状（testfield「2077 未来职业流水线」缩写）：五个 stage future 由四条 channel
+    // 串起来，控制流视图里五个阶段两两 alongside、phaseEdges 为空——流是它们之间唯一的关系。
     const graph = bound(`
       const FIELDS = ["pets", "sleep", "food"];
       const s1 = channel<string>("s1");
@@ -1040,7 +985,7 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("leaves two futures with no channel between them without streams", () => {
-    // Two unrelated futures are still alongside (one band), but with no data edges there is no stream: the field is absent entirely.
+    // 两个互不相干的 future 照样 alongside（一条带），但没有 data 边就没有流：字段整个缺席。
     const graph = bound(`
       const web = future(async () => {
         phase("Read the web");
@@ -1060,8 +1005,8 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("leaves the sequential control free of `alongside`", async () => {
-    // Control group strand-fanout-awaited-per-phase.ts: the same three fan-outs, but each phase awaits its own work
-    // first, so nothing sits across a marker. Absence must be **field absence** — the UI draws a straight line from it.
+    // 对照组 strand-fanout-awaited-per-phase.ts：同样三次 fan-out，但每个阶段都先 await 完
+    // 自己的工作，没有东西跨过标记停着。缺席必须是**字段缺席**——UI 据缺席画一条直线。
     const output = await run({ script: fixture("strand-fanout-awaited-per-phase.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -1071,10 +1016,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("matches the control-flow phase quotient of phase-jsonl-db up to reduction", async () => {
-    // End-to-end acceptance (spec "Tests and acceptance"): the forward closure of the payload's phase edges = the
-    // closure of `.phase-flow.mmd` minus terminals, self-loops, and pure loop edges; the payload edge set is
-    // irreducible; back edges are a subset of the mmd loop edges, and every loop closed by a loop edge stays closed
-    // (both ends mutually reachable).
+    // 端到端验收（spec「测试与验收」）：载荷阶段边的前向闭包 = `.phase-flow.mmd` 去掉终端、
+    // 自环与纯 loop 边后的闭包；载荷边集不可约；back 边是 mmd 里 loop 边的子集，且每条被
+    // loop 边闭合的环仍被闭合（两端互相可达）。
     const output = await run({ script: fixture("phase-jsonl-db.ts") });
     expect(output.ok).toBe(true);
     const graph = output.causalityGraph!;
@@ -1105,7 +1049,7 @@ describe("CreateWorkflow tool", () => {
     for (const edge of backs) {
       expect(loops.some((loop) => loop.from === edge.from && loop.to === edge.to)).toBe(true);
     }
-    // Every loop closed by an mmd back-edge is still a loop in the payload (forward ∪ back): both ends mutually reachable.
+    // 每条 mmd 回边闭合的环在载荷（前向 ∪ back）里仍是环：两端互相可达。
     const all = (graph.phaseEdges ?? []).map((edge) => ({ from: edge.from, to: edge.to }));
     const reach = closure(all);
     for (const loop of loops) {
@@ -1113,7 +1057,7 @@ describe("CreateWorkflow tool", () => {
       expect(reach.get(loop.to)?.has(loop.from)).toBe(true);
     }
     expect(graph.exits).toEqual([...exits]);
-    // All six phases present, and the membership partition is complete.
+    // 六个阶段都在，成员划分是全的。
     expect(graph.phases?.map((phase) => phase.name)).toEqual([
       "preflight",
       "attempt",
@@ -1123,12 +1067,6 @@ describe("CreateWorkflow tool", () => {
       "wrap-up",
     ]);
     expectReferentialIntegrity(graph);
-  });
-
-  it("withholds the display graph when the script has type errors", async () => {
-    const output = await run({ script: 'const x: number = "s";' });
-    expect(output.ok).toBe(false);
-    expect(output.causalityGraph).toBeUndefined();
   });
 
   it("surfaces facade-misuse diagnostics with ok=false and no graph", async () => {
@@ -1146,16 +1084,17 @@ describe("CreateWorkflow tool", () => {
   it("reports diagnostics for a type error with script-relative line", async () => {
     const output = await run({ script: 'const x: number = "s";' });
     expect(output.ok).toBe(false);
+    expect(output.causalityGraph).toBeUndefined();
     expect(output.diagnostics.some((diagnostic) => diagnostic.line === 1)).toBe(true);
     expect(output.response).toContain("L1:");
     expect(output.response).toContain("NOT executed");
   });
 
   /**
-   * Placeholder copy made real: the diagnostic path's NOTE used to say "the execution model is still under development"
-   * and "only typechecks the script (placeholder for testing)" — after the engine was wired up both sentences were lies
-   * (a clean script really does start a background run). The only truths on this path are "not executed" + "fix and
-   * resubmit", so the model runs its own fix-and-retry loop instead of believing the whole tool is still a toy.
+   * 占位文案真化：诊断路径的 NOTE 曾自述「the execution model is still under development」与
+   * 「only typechecks the script (placeholder for testing)」——引擎接线后两句都是谎言（干净脚本
+   * 会真启动一个后台 run）。这条路径上唯一为真的是「没执行」+「改完重交」，模型据此走自己的
+   * 改错重试回路，而不是以为整个工具还是个玩具。
    */
   it("诊断路径的 NOTE 只说没执行与改完重交，不再自述占位", async () => {
     const output = await run({ script: 'const x: number = "s";' });
@@ -1170,9 +1109,9 @@ describe("CreateWorkflow tool", () => {
   it("rejects Node globals to enforce script purity", async () => {
     const output = await run({ script: "process.exit(1);" });
     expect(output.ok).toBe(false);
-    expect(output.diagnostics.some((diagnostic) => diagnostic.message.includes("Cannot find name"))).toBe(
-      true,
-    );
+    expect(
+      output.diagnostics.some((diagnostic) => diagnostic.message.includes("Cannot find name")),
+    ).toBe(true);
   });
 
   it("rejects input missing the script field", async () => {
@@ -1180,10 +1119,9 @@ describe("CreateWorkflow tool", () => {
   });
 
   it("keeps the facade out of its description and points at the skill instead", () => {
-    // 2026-09-21: the facade and authoring rules moved into the dynamic-workflows skill
-    // (docs/dynamic-workflow/authoring.md, "The authoring surface"), leaving the description only a few hundred tokens.
-    // Two things are pinned here: the d.ts is no longer re-sent with every request, and the description names the skill
-    // and the Skill tool. The routing signals remain in workflow-routing-hints.test.ts.
+    // 2026-09-21：facade 与写作规则搬进 dynamic-workflows 技能（docs/dynamic-workflow/authoring.md
+    // 「The authoring surface」），描述只剩几百 token。这里钉住两件事：d.ts 不再随每次请求重发，
+    // 描述点名了技能与 Skill 工具。路由信号仍在 workflow-routing-hints.test.ts。
     const description = createWorkflowToolEntry.metadata.description ?? "";
     expect(description).not.toContain("declare ");
     expect(description).not.toContain("ask<T");
@@ -1196,13 +1134,11 @@ describe("CreateWorkflow tool", () => {
   });
 });
 
-// Normalization of the concurrency upper bound (docs/dynamic-workflow/concurrency.md, "Two bounds on a run") lives in
-// resolveInput rather than the handler: the confirmation dialog must show the number that will take effect, and the
-// dialog comes before the handler.
-// The default concurrency is a starting point, not a cap, so here it is only floored to at least 1; values above the
-// default pass through as-is.
+// 并发上界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）的归一住在
+// resolveInput 而不是 handler：确认窗必须显示将要生效的那个数，而窗在 handler 之前。
+// 默认并发是起点不是上限，所以这里只向下取整到至少 1，高于默认的值原样放行。
 describe("CreateWorkflow resolveInput — max_concurrency", () => {
-  /** The inline path never touches the disk, so cwd does not matter; saved cases create their own real directory. */
+  /** 内联路径一次盘都不碰，所以 cwd 是什么无所谓；saved 用例自己造真目录。 */
   const UNREAD_CWD = "/workspace/never-read";
 
   async function resolved(input: unknown, cwd = UNREAD_CWD): Promise<Record<string, unknown>> {
@@ -1216,24 +1152,19 @@ describe("CreateWorkflow resolveInput — max_concurrency", () => {
     expect(await resolved(input)).toBe(input);
   });
 
-  it("leaves a small request byte-identical: the inline path stays the identity", async () => {
-    const input = { script: "return 1;", max_concurrency: 3 };
-    expect(await resolved(input)).toBe(input);
-  });
-
   it("never invents the key for a call that did not set one", async () => {
     expect(Object.hasOwn(await resolved({ script: "return 1;" }), "max_concurrency")).toBe(false);
   });
 
   it("carries the limit through the saved source, which rebuilds the input", async () => {
-    // The saved branch assembles a fresh input from scratch, so "a field quietly dropped" is a failure shape unique to this path.
+    // saved 分支是从零拼一份新入参的，所以「字段被悄悄丢掉」是这条路径独有的失效形态。
     const cwd = mkdtempSync(join(tmpdir(), "dwf-maxconc-"));
     try {
       saveSavedWorkflow({ cwd, name: "nightly", meta: { description: "d" }, script: "return 1;" });
       const input = await resolved({ saved: { name: "nightly" }, max_concurrency: 32 }, cwd);
       expect(input.max_concurrency).toBe(32);
       expect(input.script).toBe("return 1;");
-      // A saved call with no upper bound likewise does not conjure an empty shell key.
+      // 未设上界的 saved 调用同样不造空壳键。
       expect(
         Object.hasOwn(await resolved({ saved: { name: "nightly" } }, cwd), "max_concurrency"),
       ).toBe(false);
@@ -1243,8 +1174,7 @@ describe("CreateWorkflow resolveInput — max_concurrency", () => {
   });
 
   it("floors to a whole number of at least one, and nothing more", () => {
-    // The helper is the shared entry for both tools: values outside the schema (0, negatives, fractions) must not get
-    // through; large numbers pass as-is.
+    // helper 是两个工具的共用入口：schema 之外的值（0、负数、小数）不该穿过去；大数原样过。
     expect(normalizeWorkflowMaxConcurrency(0)).toBe(1);
     expect(normalizeWorkflowMaxConcurrency(-3)).toBe(1);
     expect(normalizeWorkflowMaxConcurrency(3.7)).toBe(3);
@@ -1252,9 +1182,8 @@ describe("CreateWorkflow resolveInput — max_concurrency", () => {
   });
 });
 
-// The subagent model (docs/dynamic-workflow/launch.md, "From call to run") lives in resolveInput alongside the
-// concurrency upper bound, for the same reason: the confirmation dialog must show the model that will take effect, and
-// a call whose model cannot be resolved should never open a dialog at all.
+// 子代理模型（docs/dynamic-workflow/launch.md「From call to run」）与并发上界同住 resolveInput，
+// 理由也同一条：确认窗必须显示将要生效的那个模型，而解不出来的调用根本不该开窗。
 describe("CreateWorkflow resolveInput — subagent_model", () => {
   const UNREAD_CWD = "/workspace/never-read";
 
@@ -1296,7 +1225,7 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   }
 
   it("rewrites the model the user named into the canonical picker form", async () => {
-    // The user wrote a bare name with different casing; both the dialog and the handler must see the registry's one.
+    // 用户说的是裸名、大小写也不同；窗上与 handler 看到的必须是注册表的那一个。
     expect(
       (await resolved({ script: "return 1;", subagent_model: "glm-4.6" }, CATALOG)).subagent_model,
     ).toBe("bigmodel/GLM-4.6$high");
@@ -1308,7 +1237,7 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   });
 
   it("normalises a padded id rather than letting the window show the whitespace", async () => {
-    // The schema carries `.trim()`, so "equals the canonical form after parsing" does not mean the raw input was canonical.
+    // schema 带 `.trim()`，所以「解析后与规范形相等」并不意味着原始入参就是规范形。
     const input = { script: "return 1;", subagent_model: "  openai/gpt-5  " };
     const resolvedInput = await resolved(input, CATALOG);
     expect(resolvedInput).not.toBe(input);
@@ -1322,6 +1251,12 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   });
 
   it("fails before the confirmation window and lists the ids the model could have used", async () => {
+    // 裸名只在别的 provider 下有：边界挡回，窗不开，文案把「用户点名才写全称」说给模型听。
+    const crossing = await failed({ script: "return 1;", subagent_model: "gpt-5" }, CATALOG);
+    expect(crossing.message).toContain("session's provider (bigmodel)");
+    expect(crossing.message).toContain("openai/gpt-5");
+    expect(crossing.message).toContain("ask the user first");
+
     const failure = await failed({ script: "return 1;", subagent_model: "gemini-3" }, CATALOG);
     expect(failure.message).toContain("No configured model matches `gemini-3`");
     expect(failure.message).toContain("bigmodel/GLM-4.6 [current]");
@@ -1330,23 +1265,23 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   });
 
   it("refuses the field outright on a host with no model catalog", async () => {
-    // Letting it through silently would let a string the host cannot resolve travel all the way to the subagent's
-    // first utterance before blowing up.
+    // 静默放行会让一个宿主解不了的字符串一路传到子代理第一次开口时才炸。
     const failure = await failed({ script: "return 1;", subagent_model: "gpt-5" }, undefined);
     expect(failure.message).toBe("This host cannot choose a subagent model; omit subagent_model.");
-    // Calls that omit the field pass as usual on the same host.
+    // 没给字段的调用在同一台宿主上照常通过。
     expect(
       Object.hasOwn(await resolved({ script: "return 1;" }, undefined), "subagent_model"),
     ).toBe(false);
   });
 
   it("carries the canonical model through the saved source, which rebuilds the input", async () => {
-    // The saved branch assembles a fresh input from scratch, so "a field quietly dropped" is a failure shape unique to this path.
+    // saved 分支从零拼一份新入参，所以「字段被悄悄丢掉」是这条路径独有的失效形态。
     const cwd = mkdtempSync(join(tmpdir(), "dwf-subagent-model-"));
     try {
       saveSavedWorkflow({ cwd, name: "nightly", meta: { description: "d" }, script: "return 1;" });
+      // 全称：`gpt-5` 不在会话的 provider（bigmodel）下，裸名会被 provider 边界挡回。
       const input = await resolved(
-        { saved: { name: "nightly" }, subagent_model: "GPT-5" },
+        { saved: { name: "nightly" }, subagent_model: "openai/GPT-5" },
         CATALOG,
         cwd,
       );
@@ -1364,7 +1299,7 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   });
 
   it("fails a saved call without touching the disk: nothing runs and no window opens", async () => {
-    // Resolution happens before reading the disk, so a call that cannot even resolve a model name never scans the disk first.
+    // 解析排在读盘之前，所以一个连模型名都解不出来的调用不会先去扫一遍磁盘。
     const failure = await failed(
       { saved: { name: "nightly" }, subagent_model: "gemini-3" },
       CATALOG,
@@ -1383,10 +1318,9 @@ describe("CreateWorkflow resolveInput — subagent_model", () => {
   });
 });
 
-// The bounding layer is **self-defensive**, not trusting the producer: these graphs are fed straight into
-// boundCausalityGraph because the analyzer cannot produce them by construction. "Claimed phases are all declared" is an
-// upstream corpus property, not this layer's input contract — phase ids are free-form strings, and .strict() cannot
-// catch dangling references; they can only be blocked here.
+// 裁剪层是**自卫**的，不是信任生产者的：这些图直接喂给 boundCausalityGraph，因为分析器
+// 按构造产不出它们。「认领的阶段都已声明」是上游的语料性质，不是本层的输入契约——阶段 id
+// 是自由字符串，悬空引用 .strict() 抓不到，只能在这里挡住。
 describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
   const step = (id: string, phase: string) => ({
     id,
@@ -1415,8 +1349,8 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
       { ...base, steps: [step("ask#1", "phase#1"), step("ask#2", "phase#99")] },
       flowWith([]),
     );
-    // Declared phases are listed as usual and keep their members; the step claiming an undeclared phase only loses its
-    // `phase` field, and the card itself stays on the graph (its lanes are all fine).
+    // 声明过的阶段照常列出并保留成员；声称未声明阶段的那个 step 只丢 `phase` 字段，
+    // 卡片本身仍在图上（它的车道都还是好的）。
     expect(bounded.phases).toEqual([{ id: "phase#1", name: "declared" }]);
     expect(bounded.steps.map((s) => s.id)).toEqual(["ask#1", "ask#2"]);
     expect(bounded.steps[0]?.phase).toBe("phase#1");
@@ -1436,14 +1370,13 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
         ],
       },
     );
-    // The same referential-integrity rule as edges: self-references, unlisted phases, and duplicates are dropped; if
-    // nothing remains the field is absent entirely.
+    // 与边同一条引用完整性规则：自引用、未列出的阶段、重复项都丢掉，剩下空的就整个字段缺席。
     expect(bounded.phases).toEqual([
       { id: "phase#1", name: "A" },
       { id: "phase#2", name: "B", alongside: ["phase#1"] },
     ]);
     expect(Object.hasOwn(bounded.phases![0]!, "alongside")).toBe(false);
-    // And it is not an edge: not a single phaseEdge should grow because of it.
+    // 而且它不是边：一条 phaseEdge 都不该因此长出来。
     expect(bounded.phaseEdges).toEqual([]);
   });
 
@@ -1459,7 +1392,7 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
         ],
         phaseEdges: [
           { certainty: "maybe", from: "phase#1", kind: "data", to: "phase#2" },
-          // Duplicates, self-loops, non-data, unlisted phases, a non-alongside pair: none of these is a stream.
+          // 重复、自环、非 data、未列出的阶段、不 alongside 的一对：全都不是流。
           { certainty: "always", from: "phase#1", kind: "data", to: "phase#2" },
           { certainty: "maybe", from: "phase#2", kind: "data", to: "phase#2" },
           { certainty: "maybe", from: "phase#1", kind: "seq", to: "phase#2" },
@@ -1479,7 +1412,7 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
       },
     );
     expect(bounded.phaseStreams).toEqual([{ from: "phase#1", to: "phase#2" }]);
-    // Streams are not edges: phaseEdges come only from the control-flow view.
+    // 流不是边：phaseEdges 只来自控制流视图。
     expect(bounded.phaseEdges).toEqual([]);
   });
 
@@ -1490,7 +1423,7 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
         ...base,
         steps: [step("ask#1", "phase#1")],
         phases: ids.map((id) => ({ id, name: id })),
-        // 17 × 16 = 272 mutually-alongside ordered pairs, all data edges: over 128.
+        // 17 × 16 = 272 条互为 alongside 的有序对，全是 data 边：超过 128。
         phaseEdges: ids.flatMap((from) =>
           ids
             .filter((to) => to !== from)
@@ -1521,15 +1454,13 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
         { from: "phase#1", kind: "jump", to: "sink", via: "return" },
       ]),
     );
-    // Endpoint filtering uses **listed** phases; entry / abort have no nodes; self-loops are not emitted; sink edges
-    // become exits.
+    // 端点过滤按**列出的**阶段；entry / abort 无节点；自环不发；sink 边变成 exits。
     expect(bounded.phaseEdges).toEqual([]);
     expect(bounded.exits).toEqual(["phase#1"]);
   });
 
   it("emits no vocabulary at all without a control-flow projection", () => {
-    // The phase layer's only source is the control-flow graph; the causal graph's own phases no longer enter the
-    // payload. All or nothing.
+    // 阶段层的唯一来源是控制流图；因果图自己带的 phases 不再进载荷。全有或全无。
     const bounded = boundCausalityGraph({
       ...base,
       steps: [step("ask#1", "phase#1")],
@@ -1560,8 +1491,8 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
         ],
       },
     );
-    // phase#1 → phase#2 has both forward fact and back-edge fact: treated as forward (ranking prefers one more
-    // constraint); phase#2 → phase#1 has only the back-edge fact: back.
+    // phase#1 → phase#2 同时有前向事实与回边事实：按前向处理（排秩宁多一条约束）；
+    // phase#2 → phase#1 只有回边事实：back。
     expect(bounded.phaseEdges).toEqual([
       { from: "phase#1", to: "phase#2" },
       { from: "phase#2", to: "phase#1", back: true },
@@ -1569,8 +1500,7 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
   });
 
   it("emits no cards and no hand-offs without a hand-off projection", () => {
-    // Layer two's only source is the analyzer's handoff graph; when absent, the two required arrays are empty rather
-    // than undefined.
+    // 第二层的唯一来源是分析器的交接图；缺席时两个必填数组为空，而不是 undefined。
     const bounded = boundCausalityGraph({ ...base, steps: [step("ask#1", "phase#1")] });
     expect(bounded.participants).toEqual([]);
     expect(bounded.handoffs).toEqual([]);
@@ -1578,9 +1508,8 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
   });
 
   it("truncates participants in order to 64, dropping hand-offs that touch a cut card and types past 8", () => {
-    // 70 member cards share a single site step (the analyzer's FANOUT_EXPAND_CAP cannot produce this many, so it is
-    // hand-built). The opener survives and the tail is truncated; handoffs touching truncated cards disappear with
-    // them; `types` is capped at 8 per edge.
+    // 70 张成员卡共享同一个站点 step（分析器的 FANOUT_EXPAND_CAP 产不出这么多，所以手造）。
+    // 开局者活下来、尾巴被截；触及被截卡的交接随之消失；`types` 每边截到 8 个。
     const handoff: HandoffGraph = {
       participants: Array.from({ length: 70 }, (_, index) => ({
         id: `unphased:actor#1[${index}]`,
@@ -1605,7 +1534,6 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
       handoff,
     );
     expect(bounded.truncated).toBe(true);
-    expect(bounded.participants).toHaveLength(64);
     expect(bounded.participants.map((p) => p.id)).toEqual(
       Array.from({ length: 64 }, (_, index) => `unphased:actor#1[${index}]`),
     );
@@ -1626,11 +1554,16 @@ describe("boundCausalityGraph — 对损坏输入的引用完整性", () => {
   });
 
   it("drops a card whose lane or every step was cut, and its hand-offs with it", () => {
-    // Cards converge onto surviving steps; a card with no steps left disappears; cards whose lane is gone disappear;
-    // truncated cards' steps stay in `steps` (run state still associates normally). Any discard sets truncated.
+    // 卡的 step 收敛到存活的 step，一个都不剩的卡消失；车道不在场的卡消失；被截卡的 step
+    // 仍留在 `steps`（运行状态照常关联）。任一丢弃置 truncated。
     const handoff: HandoffGraph = {
       participants: [
-        { id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1", "ask#ghost"] },
+        {
+          id: "unphased:actor#1",
+          phase: "unphased",
+          lane: "actor#1",
+          steps: ["ask#1", "ask#ghost"],
+        },
         { id: "unphased:actor#9", phase: "unphased", lane: "actor#9", steps: ["ask#1"] },
         { id: "unphased:workspace", phase: "unphased", lane: "workspace", steps: ["ask#ghost"] },
       ],

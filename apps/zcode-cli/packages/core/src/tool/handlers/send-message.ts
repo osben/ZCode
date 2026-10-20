@@ -10,17 +10,8 @@ import {
   type TraceContext,
 } from "@zcode/contracts";
 import type { ToolEntry, ToolHandler } from "../types.js";
-import { assertNotOffPeakTurn } from "./off-peak.js";
 
 const MAX_SEND_MESSAGE_MODEL_BYTES = 4096;
-/**
- * SendMessage resumes a completed subagent through
- * resumeTerminalAgentInBackground without the off-peak subagentModelOverride. The subagent rebuilds its model from the parent's
- * persistent selection, so all requests count against the user's Coding Plan. Subagents in off-peak turns always complete synchronously in the foreground,
- * making this the only meaningful SendMessage use case for that leakage path; reject it directly.
- */
-const OFF_PEAK_SEND_MESSAGE_HINT =
-  "Spawn a new foreground Agent with the full context instead of resuming a completed one.";
 
 const SEND_MESSAGE_PROVIDER_DESCRIPTION = [
   "# SendMessage",
@@ -47,10 +38,6 @@ const SEND_MESSAGE_TOOL_OUTPUT_SCHEMA = {
 
 const sendMessageHandler: ToolHandler = async (input, context) => {
   const parsed = SendMessageInputSchema.parse(input) as SendMessageInput;
-  assertNotOffPeakTurn(context, SEND_MESSAGE_TOOL_NAME, {
-    hint: OFF_PEAK_SEND_MESSAGE_HINT,
-    recoverable: true,
-  });
 
   if (!context.subagentPort?.sendMessage) {
     throw createCoreError(
@@ -78,14 +65,20 @@ const sendMessageHandler: ToolHandler = async (input, context) => {
       workspaceRoot: context.workspaceRoot,
       trace: resolveToolTraceContext(context),
     },
-    { signal: context.abortSignal },
+    {
+      signal: context.abortSignal,
+      model: context.model,
+      modelOverride: context.subagentModelOverride,
+    },
   ) satisfies Promise<SendMessageOutput>;
 };
 
 export const sendMessageToolEntry: ToolEntry = {
   capability: "Send a short message to a local agent",
   metadata: {
+    shouldDefer: true,
     name: SEND_MESSAGE_TOOL_NAME,
+    searchHint: "send messages to agent teammates",
     description: SEND_MESSAGE_PROVIDER_DESCRIPTION,
     readOnly: false,
     destructive: false,

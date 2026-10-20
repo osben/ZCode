@@ -60,6 +60,7 @@ export async function settleToolResults(
         result.toolName,
         modelContentForToolResult(result),
         isErrorForToolResult(result),
+        toolCallById.get(result.toolCallId)?.modelCallWrapper,
       ),
     ),
   );
@@ -130,7 +131,12 @@ export async function settleToolResults(
           callID: result.toolCallId,
           declarationIndex: persisted.declarationIndex,
           tool: projectedResultToolName.toolName,
-          metadata: projectedResultToolName.metadata,
+          metadata: {
+            ...projectedResultToolName.metadata,
+            ...(toolCallById.get(result.toolCallId)?.modelCallWrapper
+              ? { modelCallWrapper: toolCallById.get(result.toolCallId)?.modelCallWrapper }
+              : {}),
+          },
           state: result.success
             ? {
                 status: "completed",

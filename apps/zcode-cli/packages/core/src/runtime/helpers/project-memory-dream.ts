@@ -24,7 +24,7 @@ import { findLatestReadFileState } from "../../tool/read-file-state.js";
 import type { AgentRuntimeInternal } from "../internal.js";
 import { resolveMainAgentSystemPromptOverrides } from "../methods/context.js";
 import {
-  buildProjectMemoryAgentProviderMessages,
+  prepareProjectMemoryAgentRequest,
   captureProjectMemoryAgentContext,
   createProjectMemoryAgentToolExecutor,
   recordProjectMemoryAgentModelUsageFact,
@@ -436,7 +436,7 @@ async function runDreamConsolidation(
       sessionIds: input.transcriptSessionIds,
       transcriptRoot: runtime.modelIoDir!,
     });
-    const providerMessages = buildProjectMemoryAgentProviderMessages(runtime, context, prompt);
+    const request = prepareProjectMemoryAgentRequest(context, prompt);
     const executor = createProjectMemoryAgentToolExecutor(runtime, context);
     const touchedPaths = new Set<string>();
 
@@ -459,10 +459,9 @@ async function runDreamConsolidation(
       onRequestSettled: (request) =>
         recordProjectMemoryAgentModelUsageFact(runtime, context, request, "dream"),
       maxTurns: DREAM_MAX_TURNS,
-      messages: providerMessages,
+      request,
       model: context.model,
       rootDir: context.memoryRoot,
-      tools: context.tools,
       workingDirectory: context.workingDirectory,
       workspaceRoot: context.workspaceRoot,
     });

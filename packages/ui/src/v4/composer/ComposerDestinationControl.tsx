@@ -377,17 +377,28 @@ export function ComposerDestinationControl({
   const branchRowSub =
     worktreeMode && branchListFailed ? intl.formatMessage({ id: "destination.headFallback" }) : "";
 
+  // Per-mode effective selection (spec §4, 2026-10-19): project mode applies the draft intent over
+  // the live current branch at send; worktree mode forks from the explicit base override, falling
+  // back to the shared selection and the live current branch. The base override is worktree-mode
+  // state (hidden while the mode is off; re-defaulted on every ON), so it must never name the
+  // project-mode task branch — the row, the chip, and the list checkmark all render this one value
+  // or they desync from the actual send behavior.
+  const selectedValue = worktreeMode
+    ? (baseBranch ?? branchIntent ?? currentBranchName)
+    : (branchIntent ?? currentBranchName);
+
   function resolveTriggerLabel(): string {
     if (worktreeMode) return intl.formatMessage({ id: "destination.worktreeLabel" });
-    if (detached) return intl.formatMessage({ id: "git.head.detached" });
+    // An explicit intent stays actionable from a detached HEAD (the send switches off it), so it
+    // wins over the detached label; that label is only for when no branch can be named.
+    if (detached && !branchIntent) return intl.formatMessage({ id: "git.head.detached" });
     return selectedBranch ?? intl.formatMessage({ id: "git.branchSwitcher.label" });
   }
 
   const triggerLabel = resolveTriggerLabel();
   const branches = branchesResult?.branches ?? [];
-  const rowValue = detached
-    ? intl.formatMessage({ id: "git.head.detached" })
-    : (baseBranch ?? branchIntent ?? currentBranchName ?? "");
+  const rowValue =
+    selectedValue ?? (detached ? intl.formatMessage({ id: "git.head.detached" }) : "");
 
   return (
     <>
@@ -538,7 +549,7 @@ export function ComposerDestinationControl({
                 <CommandGroup className="p-1">
                   {branches.map((branch) => {
                     const isCurrent = branch.name === currentBranchName;
-                    const isSelected = branch.name === (baseBranch ?? branchIntent);
+                    const isSelected = branch.name === selectedValue;
                     // Checked out in another worktree: not switchable as a task branch (project
                     // mode); still valid as a worktree BASE — a base only needs to exist.
                     const occupiedDirectory = switcher.worktreeOccupancy.get(branch.name);
