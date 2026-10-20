@@ -1209,6 +1209,9 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
         comparisonLabel: null,
         changes: [],
       }),
+      // Home-only screens have no connected workspace, so no session pull
+      // requests exist yet; an explicit empty answer avoids `undefined`.
+      getSessionPullRequests: async () => ({}),
       getIdentity: async () => ({
         userName: null,
         userEmail: null,

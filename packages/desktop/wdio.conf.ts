@@ -160,6 +160,7 @@ import {
   CONTEXT_WINDOW_COLD_RESUME_PROVIDER_NAME,
   seedProviderReadinessHistoryFixture,
 } from "./test/e2e/helpers/provider-readiness-history-fixture.js";
+import { seedSessionPrStatusFixture } from "./test/e2e/helpers/session-pr-status-fixture.js";
 import {
   PASSIVE_AGENT_STARTUP_SCENARIO,
   SMALL_AGENT_WARMUP_SCENARIO,
@@ -328,6 +329,7 @@ const GROUPED_ARCHIVE_RESURRECTION_SPEC =
 const GROUPED_HEADER_PIN_VISIBILITY_SPEC =
   "conversation-session-grouped-header-pin-visibility.test.ts";
 const GIT_REVIEW_ENTRY_SPEC = "conversation-session-git-review-entry.test.ts";
+const SESSION_PR_STATUS_SPEC = "git/session-pr-status.test.ts";
 const WORKTREE_CHAT_FIRST_SPEC = "conversation-session-worktree-chat-first.test.ts";
 const WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC = "windows-agent-metric-probe-absence.test.ts";
 const HOOKS_LIFECYCLE_SPEC = "conversation-session-hooks-lifecycle.test.ts";
@@ -3115,6 +3117,15 @@ async function resetE2EHome(specs: string[] = []) {
       workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
     });
   }
+  if (workerSpecsContain(specs, SESSION_PR_STATUS_SPEC)) {
+    // PRS-01 needs a worktree task row, a github.com remote, and the fake gh
+    // (ZCODE_GH_BINARY seam) in place before the Host opens tasks-index.
+    await seedSessionPrStatusFixture({
+      cliEntryPoint: ZCODE_CLI_ENTRYPOINT,
+      e2eHomeDir: E2E_HOME_DIR,
+      workspacePath: resolve(E2E_HOME_DIR, "ZCodeProject"),
+    });
+  }
   if (usesTaskIndexRowAuthorityFixture(specs)) {
     // Bug root cause: TSL23 needs the cold-start state of "more persisted rows than session
     // summaries" to exist before the Host opens tasks-index; the spec's before hook is already too
@@ -4583,6 +4594,13 @@ export const config: WebdriverIO.Config = {
           // while not affecting the WDIO runner's own process cleanup commands.
           ZCODE_GIT_BINARY: resolve(E2E_HOME_DIR, "missing-bin", "git"),
         }
+      : {}),
+    // session-pr-status spec seam: POSIX-only fake gh at a fixed path. The spec writes the
+    // script itself before the first worktree task triggers gh resolution; other specs only see
+    // a candidate that fails the --version probe and fall through to a real gh lookup, and
+    // Windows keeps the seam unset (spawn of a shell script is not supported there).
+    ...(process.platform !== "win32"
+      ? { ZCODE_GH_BINARY: resolve(E2E_HOME_DIR, "fake-bin", "gh") }
       : {}),
     VITE_ZCODE_E2E_STORE_BRIDGE: "1",
     ZCODE_AGENT_SERVER_ARGS_JSON: "",

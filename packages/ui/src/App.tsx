@@ -16,6 +16,7 @@ import { useWorkspaceActiveTaskState } from "@/hooks/useWorkspaceActiveTaskState
 import { useEnsureWorkspaceMcpLoaded } from "@/hooks/useEnsureWorkspaceMcpLoaded.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { isWorkspaceReadOnly, isWorkspaceTab } from "@/store/tabStore.js";
 import type { TaskChatMessage as TestChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -479,6 +480,8 @@ export function App({
     // merge-статуса: сервисный кэш уже инвалидирован, пробе остаётся
     // переопросить. Untouched workspace'ы упрутся в сервисный TTL — дешёво.
     useBranchMergeStatusStore.getState().requestRefresh();
+    // PR-статус: push/commit мог открыть или обновить PR сессии.
+    usePullRequestStatusStore.getState().requestRefresh();
   }, []);
   const handleRefreshGitReview = useCallback(() => {
     if (gitRepositoryWorkspacePath === workspaceAbsPath) {
@@ -487,6 +490,7 @@ export function App({
     }
     setGitReviewRefreshVersion((value) => value + 1);
     useBranchMergeStatusStore.getState().requestRefresh();
+    usePullRequestStatusStore.getState().requestRefresh();
   }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({

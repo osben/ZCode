@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gitRemoteUrlToWebUrl } from "../src/gitRemoteWebUrl.js";
+import { gitRemoteUrlToRepository, gitRemoteUrlToWebUrl } from "../src/gitRemoteWebUrl.js";
 
 describe("gitRemoteUrlToWebUrl", () => {
   it("converts supported remote syntaxes and preserves nested repository paths", () => {
@@ -50,5 +50,44 @@ describe("gitRemoteUrlToWebUrl", () => {
     expect(gitRemoteUrlToWebUrl("ssh://git@ssh.github.com:443/osben/ZCode.git")).toBe(
       "https://github.com/osben/ZCode",
     );
+  });
+});
+
+describe("gitRemoteUrlToRepository", () => {
+  it("parses owner and name from supported remote syntaxes", () => {
+    expect(gitRemoteUrlToRepository("git@github.com:osben/ZCode.git")).toEqual({
+      host: "github.com",
+      owner: "osben",
+      name: "ZCode",
+    });
+    expect(gitRemoteUrlToRepository("https://github.com/zai-org/ZCode")).toEqual({
+      host: "github.com",
+      owner: "zai-org",
+      name: "ZCode",
+    });
+    expect(gitRemoteUrlToRepository("ssh://git@ssh.github.com:443/osben/ZCode.git")).toEqual({
+      host: "github.com",
+      owner: "osben",
+      name: "ZCode",
+    });
+    expect(gitRemoteUrlToRepository("ghe.example.com:org/repo.git")).toEqual({
+      host: "ghe.example.com",
+      owner: "org",
+      name: "repo",
+    });
+  });
+
+  it("keeps the last segment as the name for nested group paths", () => {
+    expect(gitRemoteUrlToRepository("git@gitlab.example.com:group/subgroup/repo.git")).toEqual({
+      host: "gitlab.example.com",
+      owner: "group",
+      name: "repo",
+    });
+  });
+
+  it("returns null for unparsable remotes", () => {
+    for (const value of ["", "not a url", "https://github.com", "C:\\Users\\osben\\ZCode"]) {
+      expect(gitRemoteUrlToRepository(value)).toBeNull();
+    }
   });
 });
