@@ -337,6 +337,8 @@ export interface WebRemoteControlStatus {
   expiresAt?: number;
   mobileConnected?: boolean;
   mobileViewState?: WebRemoteControlMobileViewState;
+  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional and unused by the fork v1 path.
+  mobileTaskView?: WebRemoteControlMobileTaskView;
   mobileDeviceInfo?: WebRemoteControlMobileDeviceInfo;
   qrUrl?: string;
   connectUrl?: string;
@@ -694,6 +696,15 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlAppErrorPayload
   | WebRemoteControlMobileDiagnosticPayload;
 
+/** Task the mobile client is viewing. Plain shape only; the relay payloads that carry it are not part of this module's transport. */
+export interface WebRemoteControlMobileTaskView {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+  // TEMPORARY relay-decision placeholder: the UI reads it on the view; the bridge injects it (never the Web client).
+  remoteSessionId?: string;
+}
+
 export interface WebRemoteControlWorkspaceTarget {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -731,6 +742,8 @@ export interface WebRemoteControlTaskTarget {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
+  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional; the fork v1 path never sets it.
+  hostId?: string;
   workspaceLabel: string;
   workspaceKind: "local" | "remote";
   createdAt: number;
@@ -825,7 +838,7 @@ export function resolveWebRemoteControlWorkspaceKey(
   return target.workspaceIdentity?.trim() || target.workspacePath;
 }
 
-function isWebRemoteControlBridgeableWorkspaceTarget(
+export function isWebRemoteControlBridgeableWorkspaceTarget(
   workspace: WebRemoteControlWorkspaceTarget,
 ): boolean {
   return (

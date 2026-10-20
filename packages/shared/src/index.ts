@@ -125,6 +125,8 @@ export * from "./conversation-preview-artifacts.js";
 export * from "./contextBudgetPolicy.js";
 export * from "./zcode-session-task-status.js";
 export * from "./zcode-session-content-profile.js";
+export type { ZCodeWorkspaceStateSnapshot } from "./zcode-workspace-state.js";
+export type { WorkspaceHookReviewTrustState } from "./zcode-protocol-v4/workspace-hook-review.js";
 export * from "./zcode-tool-projection-memory.js";
 export * from "./zcode-slash-command-help.js";
 export * from "./zcodeEndpoint.js";
@@ -274,6 +276,7 @@ export type {
   UpdateStatePayload,
   WSLDistro,
   WindowControlsOverlayReadyPayload,
+  WindowScreenshotResult,
   ZCodeStdioTapDevState,
 } from "./platform.js";
 export type {
