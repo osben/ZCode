@@ -44,3 +44,28 @@ Assertion-level failures (fork expectations vs upstream structure), grouped by f
 ## Not verified in this integration
 
 - `pnpm test:pre-push`, `pnpm test` (node), `scripts/check-test-copy.mjs`, desktop/web tests, and the push hook are not run to green; the UI vitest failures above block the affected-test hook.
+
+## Test triage (current state)
+
+Ledgered UI-2 rows (skip or removal is tagged `TEMPORARY(UI-2)` in the file):
+
+- UI2-MODULE-ABSENT: test files deleted because their feature modules are absent in the upstream-structured tree; restore from `9c2434f7` with the UI-2 port: `webRemoteControlTaskIndexLayout`, `workspaceSidebarItemRenderStability`, `workspaceSidebarRemoteNotice`, `workspaceSidebarTaskViewSwitcher`, `workspacePinnedTasksSection`, `webRemoteControlMobileTaskHome`, `useGroupedTaskView`, `taskTimelineGroups`, `composerPlanTransition`, `chatEmptyWorktreeTaskToggle`, `automationTypographyTokens`.
+- UI2-SIDEBAR-PINS: `workspaceSidebarProjectPins.test.ts` `describe.skip` (old sidebar project pins).
+- UI2-SIDEBAR-NEWTASK: `workspaceSidebarNewTaskEntryNames.test.ts` `describe.skip` (old sidebar entry names).
+- UI2-PLAN-SHORTCUT: two `/plan` shortcut cases in `v4SlashCommands.test.ts` `it.skip` (shortcut decision).
+
+Decision rows (not UI-2 work; need an owner decision):
+
+- DEC-DESTRUCTIVE-ENTER: upstream `ConfirmDialog` does not confirm destructive dialogs on Enter from non-interactive content; the fork test expects confirm. One case `it.skip` in `confirmDialogEnterRouting.test.ts`.
+
+Fork behaviour regressions accepted for now:
+
+- Draft right-sidebar scope (see decision 1 above): drafts have no sidebar owner (UI-2 row: restore draft-scoped owner).
+
+Fork test specs restored over upstream tests (the fork test passes against current source): `memorySettingsSection`, `taskListItemHoverActions` (oversize, exempted), `usePaneSessionPersistence`, `v4PendingCommandRegistry`, `v4ConversationComposerErrorBanner`.
+
+Theme: `App.tsx` ports the fork's `systemResolvedTheme` state (OS scheme tracked as state so changes re-render); `themeTarget` derives from `resolvedTheme`.
+
+Lockfile and manifest: `pnpm-lock.yaml` and `packages/ui/package.json` equal origin/integration (no upstream pin changes; fork pins kept).
+
+Remaining failing tests at this point (not yet triaged to a fix or ledger row): about 117 across 27 files; main groups are `subagentsSection`, `projectTreeBackgroundUnread`, `v4ConversationStatusPanel`, `workspaceHeaderTitleSection`, `useWorkspaceActiveTaskState`, `conversationShareConfirmationDock`, `settingsPageConfig`, `remoteConnectionFieldsDockerRefresh`, `commandCenterSelection`, `useDraftConfigControl`, and about 15 single-case files.
