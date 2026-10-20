@@ -1,7 +1,6 @@
 /**
- * The protocol process has one diagnostic output. Listen for asynchronous errors on the
- * actual stream, not only write failures; otherwise EPIPE -> uncaughtException -> another
- * stderr write can create a high-CPU feedback loop.
+ * 协议进程的诊断出口只有一个。必须监听真实流的异步 error，而不只是 catch write：
+ * 否则 EPIPE -> uncaughtException -> 再写 stderr 会形成高 CPU 自激循环。
  */
 export function installProtocolStderrBoundary(stderr: NodeJS.WritableStream): () => void {
   const originalWrite = stderr.write;
@@ -24,7 +23,7 @@ export function installProtocolStderrBoundary(stderr: NodeJS.WritableStream): ()
         unavailable = true;
       }
     }
-    // Diagnostics are best-effort; if the output is unavailable, still complete the caller's flush without writing to the broken stream or reporting that failure.
+    // 诊断是 best effort；出口失效后仍完成调用方的 flush，不再写坏流或报告自身失败。
     if (writeCallback) queueMicrotask(() => writeCallback());
     return true;
   }) as typeof stderr.write;

@@ -48,7 +48,7 @@ function formatUnifiedDiffLines(structuredPatch: ToolResultDisplayHunk[]): ToolR
     for (const rawLine of hunk.lines) {
       const marker = diffMarker(rawLine);
       const lineLabel = marker === "+" ? String(newLine) : String(oldLine);
-      // On narrow screens, keep one line-number column so old/new numbers do not squeeze the content out of readable width.
+      // 窄屏只保留一列行号，避免旧/新双行号把正文挤出可读区域。
       appendDiffLine(lines, `${lineLabel.padStart(4)} ${rawLine}`, toneForDiffMarker(marker));
       if (marker !== "+") oldLine += 1;
       if (marker !== "-") newLine += 1;

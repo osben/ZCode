@@ -58,7 +58,7 @@ export type CommandCenterPluginSetResult = {
 };
 
 export type CommandCenterPluginUninstallResult = {
-  // null means the plugin is not installed (idempotent no-op).
+  // null 表示该插件未安装（幂等 no-op）。
   removed: { id: string; name: string } | null;
 };
 
@@ -246,29 +246,25 @@ export type CommandCenterApp = {
     runId?: string;
   }): Promise<CommandCenterExpertWorkflowResult>;
   /**
-   * Workflow-run listing for `/dwf list`. Optional capability: if the dwf journal is
-   * unavailable, the run service is not constructed and this member is absent; the
-   * command can then report “unavailable” instead of an empty list. The server already
-   * filters by parent session (listRunsByParentSession), so every returned row belongs
-   * to this session.
+   * workflow run 的枚举面，服务 `/dwf list`。可选能力：dwf journal 不可用时整个 run service
+   * 不构造，此成员随之缺席——命令据此回「不可用」而不是空表。
+   * 服务端已按父会话过滤（listRunsByParentSession），返回的每一行都属于本会话。
    */
   listDynamicWorkflowRuns?(input: { limit?: number }): Promise<DynamicWorkflowRunSessionSummary[]>;
   /**
-   * Cold replay for workflow runs, used by the TUI mirror on startup:
-   * journal → same progress payload as live. Optional capability; absent under the same
-   * conditions as {@link listDynamicWorkflowRuns}.
+   * workflow run 的冷回放，服务 TUI 镜像的冷启动：
+   * journal → 与 live 同一种进度载荷。可选能力，缺席条件同 {@link listDynamicWorkflowRuns}。
    */
   replayDynamicWorkflowRuns?(input: {
     excludeRunIds: ReadonlySet<string>;
   }): Promise<DynamicWorkflowRunProgressPayload[]>;
   /**
-   * Workflow-run cancellation for `/dwf cancel`. runId ≡ taskId ≡ workId (one shared identifier).
+   * workflow run 的取消面，服务 `/dwf cancel`。runId ≡ taskId ≡ workId（同一把标识）。
    */
   cancelBackgroundTask?(taskId: string): Promise<BackgroundTaskCancelResult>;
   /**
-   * Workflow-run resumption for `/dwf resume`. Failures use a structured reason instead
-   * of throwing; the command presents the server's decision as-is and never derives
-   * `resumable` on the client.
+   * workflow run 的恢复面，服务 `/dwf resume`。失败走结构化 reason 而不是 throw，
+   * 命令原样呈现服务端裁定——`resumable` 绝不在客户端重新推导。
    */
   resumeWorkflowRun?(input: {
     workId: string;
@@ -347,15 +343,14 @@ export type CommandCenterDeps = {
     kind?: "slash_command",
   ) => Promise<unknown> | unknown;
   resumeApp(sessionId?: string): Promise<CommandCenterApp>;
-  /** Save the full default selection after a successful user-initiated switch; not called during session restore or automatic initialization. */
+  /** 用户主动切换成功后保存完整默认选择；恢复会话与自动初始化不调用。 */
   saveDefaultModelSelection?: (selection: ModelSelection) => Promise<void>;
   logout?: () => Promise<CommandCenterLogoutResult>;
   setLocale?: (locale: UiLocale) => Promise<CommandCenterLocaleResult> | CommandCenterLocaleResult;
   setMode?: (mode: SwitchableCommandCenterMode) => Promise<CommandCenterMode> | CommandCenterMode;
   /**
-   * This process's `--workflow-mode` (see launch.md "The standalone CLI: `--workflow-mode`"). When
-   * disabled, `/workflow` and `/dwf resume` show a local hint; absence does not gate commands (tests
-   * and embedders), and the CLI entry point always passes the mode.
+   * 本进程的 `--workflow-mode`（launch.md「The standalone CLI: `--workflow-mode`」）。`disabled` 时
+   * `/workflow` 与 `/dwf resume` 给本地提示；缺席不设门（单测、嵌入方），CLI 入口总会传入。
    */
   workflowMode?: DynamicWorkflowMode;
 };
