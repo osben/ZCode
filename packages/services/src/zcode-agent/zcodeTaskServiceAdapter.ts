@@ -145,7 +145,6 @@ import type {
 } from "#src/session/sessionMailbox.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { createTaskEraseOperations } from "./zcodeTaskErase.js";
-import { ForkWorkspacePinRepo } from "#src/session/forkWorkspacePinRepo.js";
 import type {
   IZCodeAgentService,
   ZCodeAgentServiceEvent,
@@ -196,7 +195,6 @@ interface TaskOverlay {
 interface CreateZCodeTaskServiceAdapterOptions {
   zcodeAgentService: IZCodeAgentService;
   taskIndexRepo?: TaskIndexRepo;
-  forkWorkspacePinRepo?: ForkWorkspacePinRepo;
   // The syncer now owns the workspace emitter and broadcast entry point; the adapter must share that
   // same instance or subscriptions split between the desktop-continuous and task-adapter paths, leaving
   // the UI without all events.
@@ -321,8 +319,6 @@ export function createZCodeTaskServiceAdapter(
     getOpenWorkspacePaths: options.getOpenWorkspacePaths,
     taskIndexSyncer: options.taskIndexSyncer,
   });
-  const ownsForkWorkspacePinRepo = !options.forkWorkspacePinRepo;
-  const forkWorkspacePinRepo = options.forkWorkspacePinRepo ?? new ForkWorkspacePinRepo();
   const taskIndexSyncer = options.taskIndexSyncer;
 
   // The adapter previously treated the syncer as optional when it owned notifySyncerSession. The
@@ -1910,7 +1906,6 @@ export function createZCodeTaskServiceAdapter(
     taskIndexTerminalDisposable.dispose();
     taskIndexReadyDisposable.dispose();
     taskIndexRepo.close();
-    if (ownsForkWorkspacePinRepo) forkWorkspacePinRepo.close();
     for (const emitter of taskEmitters.values()) emitter.dispose();
     for (const emitter of globalTaskEmitters.values()) emitter.dispose();
     errorEmitter.dispose();
@@ -3535,14 +3530,6 @@ export function createZCodeTaskServiceAdapter(
       });
       emitWorkspaceTaskListChanged(params, meta, params.pinned ? "task_pinned" : "task_unpinned");
       return meta;
-    },
-
-    async listPinnedWorkspaceKeys(): Promise<string[]> {
-      return forkWorkspacePinRepo.listPinnedWorkspaceKeys();
-    },
-
-    async setWorkspacePinned(params: { workspaceKey: string; pinned: boolean }): Promise<void> {
-      await forkWorkspacePinRepo.setWorkspacePinned(params);
     },
 
     async setTaskUnread(params): Promise<ZCodeTaskMeta> {
