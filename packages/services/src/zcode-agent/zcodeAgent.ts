@@ -1013,6 +1013,16 @@ export interface IZCodeAgentService {
   ): Event<ConversationTelemetryFact>;
   /** CUA permission observations for all local live tasks in the current window; history, remote tasks, and replayable events are excluded. */
   onDynamicCuaPermissionObservation(): Event<ZCodeAgentCuaPermissionObservation>;
+  // Optional until the desktop consumer is synced (upstream marks these required).
+  onDynamicOffPeakLifecycle?(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Event<import("@zcode/shared").OffPeakLifecycleNotification>;
+  controlOffPeakExecutionV4?(
+    params: ZCodeAgentWorkspaceTarget & { control: import("@zcode/shared").OffPeakControlParams },
+  ): Promise<import("@zcode/shared").OffPeakControlResult>;
+  onDynamicPluginUiToolResult?(): Event<
+    PluginUiToolResultNotification & { workspacePath: string; workspaceIdentity?: string }
+  >;
   /** Read-only CLI persistent facts; does not restore a running session. Older remotes may not provide it. */
   reconcileSessionsIndexV4?(
     params: ZCodeAgentWorkspaceTarget & { sessionIds: string[] },
