@@ -18,13 +18,13 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
 type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 
-const FORK_WORKSPACE_PINS_SCHEMA = `
+export const FORK_WORKSPACE_PINS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS fork_workspace_pins (
     workspace_key TEXT PRIMARY KEY,
     pinned_at INTEGER NOT NULL
   );
 `;
-const FORK_WORKSPACE_PINS_MIGRATION_ID = "9001_fork_workspace_pins";
+export const FORK_WORKSPACE_PINS_MIGRATION_ID = "9001_fork_workspace_pins";
 
 function rollbackQuietly(db: DatabaseSyncInstance): void {
   // Rollback can also fail due to I/O; do not replace the original migration/write failure.
@@ -157,7 +157,7 @@ export class ForkWorkspacePinRepo {
       this.db.exec("PRAGMA synchronous = NORMAL");
     }
     if (!isTasksStoragePrepared(path, this.db)) {
-      if (!isTasksStorageMigrated(path, this.db)) runTasksDatabaseMigrations(this.db);
+      if (!isTasksStorageMigrated(path, this.db)) await runTasksDatabaseMigrations(this.db);
     }
     // The fork migration is not part of upstream schema preparation; always run the idempotent check.
     this.runForkMigrations();

@@ -562,11 +562,7 @@ importers:
         specifier: ^4.1.5
         version: 4.1.7(patch_hash=11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0)(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(@vitest/coverage-v8@4.1.7)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.13.3(@types/node@26.6.5)(typescript@5.9.3))(vite@7.3.7(@types/node@26.6.5)(jiti@2.7.0)(lightningcss@1.33.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  apps/zcode-cli/packages/documents-plugin:
-    devDependencies:
-      '@zcode/office-runtime':
-        specifier: workspace:*
-        version: link:../office-runtime
+  apps/zcode-cli/packages/documents-plugin: {}
 
   apps/zcode-cli/packages/dynamic-workflow:
     dependencies:
@@ -731,19 +727,11 @@ importers:
         specifier: 4.6.5
         version: 4.6.5
 
-  apps/zcode-cli/packages/pdf-plugin:
-    devDependencies:
-      '@zcode/office-runtime':
-        specifier: workspace:*
-        version: link:../office-runtime
+  apps/zcode-cli/packages/pdf-plugin: {}
 
   apps/zcode-cli/packages/plugin-creator-plugin: {}
 
-  apps/zcode-cli/packages/presentations-plugin:
-    devDependencies:
-      '@zcode/office-runtime':
-        specifier: workspace:*
-        version: link:../office-runtime
+  apps/zcode-cli/packages/presentations-plugin: {}
 
   apps/zcode-cli/packages/restore-legacy-sessions-plugin: {}
 
@@ -755,11 +743,7 @@ importers:
 
   apps/zcode-cli/packages/skill-creator-plugin: {}
 
-  apps/zcode-cli/packages/spreadsheets-plugin:
-    devDependencies:
-      '@zcode/office-runtime':
-        specifier: workspace:*
-        version: link:../office-runtime
+  apps/zcode-cli/packages/spreadsheets-plugin: {}
 
   apps/zcode-cli/packages/superpowers-plugin: {}
 
@@ -17304,7 +17288,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.7(patch_hash=11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0)(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(@vitest/coverage-v8@4.1.7)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.13.3(@types/node@26.6.5)(typescript@6.0.2))(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      vitest: 4.1.7(patch_hash=11fdb66aa985e1d77e68752deeb7c1130ae33c9a4e2968f23aae8adaf8bc9ba0)(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(@vitest/coverage-v8@4.1.7)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.13.3(@types/node@26.6.5)(typescript@5.9.3))(vite@8.3.4(@types/node@26.6.5)(esbuild@0.25.12)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   '@vitest/expect@4.1.7':
     dependencies:

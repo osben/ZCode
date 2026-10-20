@@ -5,6 +5,7 @@ import type { GitChangeSourceId, GitDiffResult } from "@zcode/shared";
 import { TID_GIT_PANE } from "@zcode/shared";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
+import { Alert, AlertDescription } from "@/components/ui/alert.js";
 import { FileTextIcon, RefreshCw } from "lucide-react";
 import { GroupByDirectoryCheckbox } from "@/components/GroupByDirectoryCheckbox.js";
 import {
@@ -519,6 +520,16 @@ export function GitPane({
           </Button>
         </div>
       </div>
+
+      {gitState.error && currentChanges.length > 0 ? (
+        <div className="px-3 pb-3">
+          <Alert variant="warning">
+            <AlertDescription className="break-words">
+              {intl.formatMessage({ id: "git.error.description" }, { message: gitState.error })}
+            </AlertDescription>
+          </Alert>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1">
         {currentChanges.length > 0 ? (

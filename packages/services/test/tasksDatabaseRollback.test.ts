@@ -19,7 +19,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
   const offPeak = new OffPeakTaskRepo(path);
   const db = new DatabaseSync(path);
   try {
-    runTasksDatabaseMigrations(db);
+    await runTasksDatabaseMigrations(db, path);
     db.exec(`DELETE FROM tasks_schema_migration WHERE id='0002_provider_selection';
       INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,title,created_at,updated_at,meta_json)
       VALUES('ssh:a:/same','/same','ssh:a:/same','session','旧会话标题',1,2,'{"unknown":"附件引用"}');
@@ -42,7 +42,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
       "off_peak_tasks",
     ];
     const before = preservedTables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
-    runTasksDatabaseMigrations(db);
+    await runTasksDatabaseMigrations(db, path);
     expect(preservedTables.map((table) => db.prepare(`SELECT * FROM ${table}`).all())).toEqual(
       before,
     );
@@ -57,7 +57,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
     });
 
     const selection = { providerId: "proxy", modelId: "next", options: { reasoningLevel: "high" } };
-    // Two independent repos first-open the same database in reverse order; both must work behind the unified migration gate.
+    // 两个独立 Repo 逆序首次打开同一库，必须都在统一迁移门禁之后工作。
     const idle = await offPeak.create(
       {
         title: "新闲时",
@@ -89,7 +89,7 @@ it("DB109-01/09/10/13：八表内容保留，旧版读取新增/更新任务无�
     expect(oldAutomation(rawTask).prompt).toBe("新定时正文");
     expect(oldOffPeak(rawIdle).prompt).toBe("新闲时正文");
 
-    // Simulate a pre-rollback legacy Writer update that leaves one migration ledger entry; a re-upgrade must not restore the default selection from the old choice.
+    // 模拟回滚后的旧 Writer 更新，保留一次迁移账本；再升级不能拿旧选择恢复默认执行。
     automation.close();
     offPeak.close();
     const ledger = db.prepare("SELECT * FROM tasks_schema_migration").all();
