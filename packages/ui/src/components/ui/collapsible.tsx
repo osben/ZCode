@@ -1,5 +1,5 @@
 import { Collapsible as CollapsiblePrimitive } from "radix-ui";
-import { cn } from "../lib/utils.js";
+import { cn } from "@/components/lib/utils.js";
 
 function Collapsible({ ...props }: React.ComponentProps<typeof CollapsiblePrimitive.Root>) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
@@ -20,27 +20,20 @@ function CollapsibleContent({
     <CollapsiblePrimitive.CollapsibleContent
       data-slot="collapsible-content"
       className={cn(
-        "group/collapsible-content overflow-hidden",
+        "overflow-hidden",
         "data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up data-[state=closed]:[animation-fill-mode:forwards] transition-none duration-300 ease-in-out",
+        "data-[state=open]:[&>div]:animate-in data-[state=open]:[&>div]:fade-in-0",
+        "data-[state=closed]:[&>div]:animate-out data-[state=closed]:[&>div]:fade-out-0 data-[state=closed]:[&>div]:[animation-fill-mode:forwards]",
         className,
       )}
       {...props}
     >
-      <div
-        className={cn(
-          "transition-none duration-300 ease-in-out",
-          "group-data-[state=open]/collapsible-content:animate-in group-data-[state=open]/collapsible-content:fade-in-0",
-          "group-data-[state=closed]/collapsible-content:animate-out group-data-[state=closed]/collapsible-content:fade-out-0 group-data-[state=closed]/collapsible-content:[animation-fill-mode:forwards]",
-        )}
-      >
-        {/* Large-session resize traces show that when the collapsible animation layer sets only duration/ease,
-            the browser uses the default transition-property: all to animate scrollbar-color, causing non-composited animation while resizing the window.
-            Explicitly disable CSS transitions here and keep only the animate-in/out keyframe animations. */}
-        {/* tw-animate-css does not provide utilities such as animate-fade-in / animate-fade-out;
-            use animate-in/out with fade-in-0 / fade-out-0 instead.
-            The child div itself has no data-state, so continue reading the parent content state here
-            to keep opacity and height animations on separate layers.
-            Add a slight delay on open so the fade-in is not consumed while the content is still clipped to zero height. */}
+      <div className="transition-none duration-300 ease-in-out">
+        {/* Bugfix: 大会话 resize trace 显示 collapsible 动画层只设置 duration/ease 时，
+            浏览器会用默认 transition-property: all 动画 scrollbar-color，拖拽窗口时触发非合成动画。
+            这里显式禁用 CSS transition，只保留 animate-in/out 的关键帧动画。 */}
+        {/* 嵌套 content 的同名 group 会匹配祖先 open，覆盖当前 closed 的淡出。
+            动画只由当前 content 的 data-state 作用于直接子层，保持高度/透明度分层。 */}
         {children}
       </div>
     </CollapsiblePrimitive.CollapsibleContent>

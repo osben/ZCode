@@ -243,7 +243,9 @@ describe("RemoteConnectionFields Docker refresh", () => {
   });
 
   it("shows an empty Docker container hint in the chooser when no containers are available", () => {
+    // Upstream opens the chooser only in select mode; a selected name keeps select mode on.
     const html = renderDockerFields({
+      dockerContainer: "zcode-dev",
       dockerContainers: [],
       refreshDockerContainers: vi.fn(),
     });
@@ -251,31 +253,33 @@ describe("RemoteConnectionFields Docker refresh", () => {
     expect(html).toContain(expectedCopy("docker.noContainers"));
   });
 
-  it("shows the same short hint when Docker availability detection reports unavailable", () => {
+  it("shows the Docker unavailable hint when Docker availability detection reports unavailable", () => {
     const html = renderDockerFields({
+      dockerContainer: "zcode-dev",
       dockerAvailable: false,
       dockerContainers: [],
       refreshDockerContainers: vi.fn(),
     });
 
-    expect(html).toContain(expectedCopy("docker.noContainers"));
-    expect(html).not.toContain("当前环境未检测到可用的 Docker 运行环境");
+    expect(html).toContain(expectedCopy("docker.unavailable"));
+    expect(html).not.toContain(expectedCopy("docker.noContainers"));
   });
 
-  it("renders an independent manual container input without replacing the selected container label", () => {
+  it("renders only the manual container input in manual mode, with its value", () => {
     const html = renderDockerFields({
-      dockerContainer: "zcode-dev",
+      dockerContainer: "",
       manualDockerContainer: "manual-dev",
       refreshDockerContainers: vi.fn(),
     });
 
     expect(html).toContain('data-testid="docker-container-input"');
     expect(html).toContain('value="manual-dev"');
-    expect(html).toContain("zcode-dev");
+    expect(html).not.toContain('data-testid="docker-container-select"');
   });
 
   it("shows a helper hint when the manual Docker container input is empty", () => {
     const html = renderDockerFields({
+      dockerContainer: "",
       manualDockerContainer: "",
       refreshDockerContainers: vi.fn(),
     });

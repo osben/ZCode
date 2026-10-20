@@ -194,6 +194,7 @@ export function usePluginUiToolCallModel(
     displayMode,
     toolInput,
     toolResult,
+    toolCallId: toolCall.toolId,
     toolCancelled: isPluginUiToolCancelled(toolCall),
     hostVersion: "zcode",
     // Without a side pane entry (e.g. read-only / non-desktop shell) or when the page does not support fullscreen, declare inline only.

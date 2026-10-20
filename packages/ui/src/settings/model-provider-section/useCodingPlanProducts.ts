@@ -1,4 +1,4 @@
-/* eslint-disable max-lines -- Coding Plan products handle static plans, remote estimates, caching, and signed-in fallbacks together to avoid splitting shared state. */
+/* eslint-disable max-lines -- Coding Plan 套餐需要集中处理静态套餐、远端试算、缓存与登录态回退，避免把共享状态拆散。 */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
@@ -37,17 +37,28 @@ const ZAI_START_FREE_PRODUCT_IDS = {
 } as const;
 const CODING_PLAN_PRODUCTS_CACHE_TTL_MS = 30_000;
 const CODING_PLAN_STATIC_PRODUCTS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const productRequestCache = new Map<string, Promise<CodingPlanProductsSnapshot>>();
-const productSnapshotCache = new Map<
-  string,
-  { snapshot: CodingPlanProductsSnapshot; expiresAt: number }
+let productRequestCache = new WeakMap<object, Map<string, Promise<CodingPlanProductsSnapshot>>>();
+let productSnapshotCache = new WeakMap<
+  object,
+  Map<string, { snapshot: CodingPlanProductsSnapshot; expiresAt: number }>
 >();
-const productCacheGeneration = new Map<string, number>();
-let staticProductsConfigCache: {
-  config: CodingPlanStaticProductsConfig;
-  expiresAt: number;
-} | null = null;
-let staticProductsConfigRequest: Promise<CodingPlanStaticProductsConfig> | null = null;
+let productCacheGeneration = new WeakMap<object, Map<string, number>>();
+let staticProductsConfigCache = new WeakMap<
+  object,
+  { config: CodingPlanStaticProductsConfig; expiresAt: number }
+>();
+let staticProductsConfigRequest = new WeakMap<object, Promise<CodingPlanStaticProductsConfig>>();
+
+function getServiceCache<T>(
+  cache: WeakMap<object, Map<string, T>>,
+  service: object,
+): Map<string, T> {
+  const existing = cache.get(service);
+  if (existing) return existing;
+  const created = new Map<string, T>();
+  cache.set(service, created);
+  return created;
+}
 
 export function useCodingPlanProducts(
   providerId: CodingPlanProviderId,
@@ -81,8 +92,8 @@ export function useCodingPlanProducts(
           ? await loadCodingPlanStaticProductsSnapshotForTest(providerId, service)
           : staticSnapshot;
         setState({
-          // Do not call paid batch-preview when logged out/disconnected, but still show static plans.
-          // Previously this returned an empty snapshot plus loading, leaving the plan list stuck loading.
+          // 未登录/未连接时禁止打 paid batch-preview，但仍要展示静态套餐。
+          // 之前这里返回空 snapshot + loading，导致套餐列表一直卡在加载态。
           snapshot: loadedStaticSnapshot,
           loading: false,
           error: null,
@@ -99,8 +110,8 @@ export function useCodingPlanProducts(
       }
 
       setState((current) => ({
-        // After static plans moved to remote configuration, there is no local data fallback on the first list view.
-        // Keep an empty snapshot while fetching configuration and preview so the outer view shows a full loading state instead of flashing an empty list.
+        // 静态套餐改为远端配置后，首次查看套餐列表时没有本地数据可兜底；
+        // 请求配置和试算期间必须保持空 snapshot，让外层展示整块加载态，而不是先闪空列表。
         snapshot: options?.force === true ? current.snapshot : null,
         loading: true,
         error: null,
@@ -128,8 +139,8 @@ export function useCodingPlanProducts(
           error: message,
         });
         setState((current) => ({
-          // A failed manual refresh must not replace the last valid preview with static plans.
-          // soldOut/canPurchase/forbidden exist only in batch-preview; replacing them would make the period list treat sold-out plans as subscribable.
+          // 手动刷新失败不能用静态套餐覆盖上一轮有效 preview。
+          // soldOut/canPurchase/forbidden 只存在于 batch-preview，覆盖后周期列表会把“已售罄”误算成可订阅。
           snapshot: resolveCodingPlanProductsFailureSnapshot(
             current.snapshot,
             loadedStaticSnapshot,
@@ -159,38 +170,41 @@ export async function loadCodingPlanProductsForTest(
   staticProducts?: CodingPlanStaticProduct[],
 ): Promise<CodingPlanProductsSnapshot> {
   const now = Date.now();
+  const requestCache = getServiceCache(productRequestCache, service);
+  const snapshotCache = getServiceCache(productSnapshotCache, service);
+  const generationCache = getServiceCache(productCacheGeneration, service);
   const generation = force
-    ? invalidateCodingPlanProductsCache(providerId)
-    : (productCacheGeneration.get(providerId) ?? 0);
-  const cachedSnapshot = productSnapshotCache.get(providerId);
+    ? invalidateCodingPlanProductsCache(providerId, service)
+    : (generationCache.get(providerId) ?? 0);
+  const cachedSnapshot = snapshotCache.get(providerId);
   if (!force && cachedSnapshot && cachedSnapshot.expiresAt > now) {
     return cachedSnapshot.snapshot;
   }
 
-  const cachedPromise = productRequestCache.get(providerId);
+  const cachedPromise = requestCache.get(providerId);
   if (!force && cachedPromise) {
     return cachedPromise;
   }
 
-  // React Strict Mode and settings refreshes can briefly mount plan cards more than once.
-  // BigModel/Z.AI preview endpoints sometimes return “System busy” for bursts, so coalesce in-flight requests and briefly cache only successful results.
-  // Manual refresh, successful login/connection, and completed purchases use force to bypass the cache and avoid stale transaction state.
-  // Login/connection success must also revoke cache-write eligibility from older unauthenticated previews so late responses cannot overwrite the new authenticated result.
+  // React 严格模式和设置页状态刷新会短时间重复挂载套餐卡，
+  // BigModel/Z.AI 套餐预览接口对连发请求会偶发返回“系统繁忙”；这里合并进行中请求，并只短缓存成功结果，
+  // 手动刷新、登录/连接成功和购买完成都用 force 绕过缓存，避免交易状态长期陈旧。
+  // 登录/连接成功还必须让旧的未登录试算请求失去写缓存资格，避免它晚返回后覆盖新的登录态试算结果。
   const promise = loadBatchPreviewWithStaticProducts(providerId, service, staticProducts ?? []);
-  productRequestCache.set(providerId, promise);
+  requestCache.set(providerId, promise);
 
   try {
     const snapshot = await promise;
-    if ((productCacheGeneration.get(providerId) ?? 0) === generation) {
-      productSnapshotCache.set(providerId, {
+    if ((generationCache.get(providerId) ?? 0) === generation) {
+      snapshotCache.set(providerId, {
         snapshot,
         expiresAt: now + CODING_PLAN_PRODUCTS_CACHE_TTL_MS,
       });
     }
     return snapshot;
   } finally {
-    if (productRequestCache.get(providerId) === promise) {
-      productRequestCache.delete(providerId);
+    if (requestCache.get(providerId) === promise) {
+      requestCache.delete(providerId);
     }
   }
 }
@@ -213,18 +227,19 @@ export function resolveCodingPlanProductsFailureSnapshot(
 }
 
 export function clearCodingPlanProductsCacheForTest() {
-  productRequestCache.clear();
-  productSnapshotCache.clear();
-  productCacheGeneration.clear();
-  staticProductsConfigCache = null;
-  staticProductsConfigRequest = null;
+  productRequestCache = new WeakMap();
+  productSnapshotCache = new WeakMap();
+  productCacheGeneration = new WeakMap();
+  staticProductsConfigCache = new WeakMap();
+  staticProductsConfigRequest = new WeakMap();
 }
 
-function invalidateCodingPlanProductsCache(providerId: CodingPlanProviderId) {
-  const nextGeneration = (productCacheGeneration.get(providerId) ?? 0) + 1;
-  productCacheGeneration.set(providerId, nextGeneration);
-  productRequestCache.delete(providerId);
-  productSnapshotCache.delete(providerId);
+function invalidateCodingPlanProductsCache(providerId: CodingPlanProviderId, service: object) {
+  const generationCache = getServiceCache(productCacheGeneration, service);
+  const nextGeneration = (generationCache.get(providerId) ?? 0) + 1;
+  generationCache.set(providerId, nextGeneration);
+  getServiceCache(productRequestCache, service).delete(providerId);
+  getServiceCache(productSnapshotCache, service).delete(providerId);
   return nextGeneration;
 }
 
@@ -355,8 +370,8 @@ function buildStaticProductDisplayList(
     );
     return {
       ...product,
-      // The display model still needs a newline-delimited string for legacy card logic, while retaining structured entries;
-      // otherwise a single tooltip sent by client/configs would be lost during normalization.
+      // 展示模型仍需要换行字符串供旧卡片逻辑读取，同时保留结构化条目，
+      // 否则 client/configs 下发的单条 tooltip 会在归一化时丢失。
       productDescription:
         descriptionItems.length > 0
           ? descriptionItems.map((item) => item.text).join("\n")
@@ -376,8 +391,8 @@ export async function loadCodingPlanStaticProductListForTest(
 ): Promise<CodingPlanStaticProduct[]> {
   try {
     const config = await loadCodingPlanStaticProductsConfig(service);
-    // Plan descriptions are maintained centrally by remote client/configs; the frontend must not hard-code overrides for Lite/Pro/Max,
-    // or the settings page will keep showing old copy after remote updates.
+    // 套餐描述由远端 client/configs 统一维护，前端不能再按 Lite/Pro/Max 写死覆盖，
+    // 否则远端更新后设置页仍展示旧文案。
     const remoteProducts = config[providerId] ?? [];
     if (providerId === BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan) {
       return filterCodingPlanPurchaseProducts(providerId, remoteProducts);
@@ -391,13 +406,13 @@ export async function loadCodingPlanStaticProductListForTest(
         ? await service.getStartPlanPreview()
         : null;
     if (!startPlanPreview) {
-      // Whether the trial plan exists is determined by client/configs.startPlanPreview.
-      // Do not use a local hard-coded fallback when the backend omits the field, or a trial plan disabled by configuration will appear.
+      // 体验套餐是否存在由 client/configs.startPlanPreview 决定。
+      // 后端缺字段时不能再用本地硬编码兜底，否则会展示已经被配置关闭的体验套餐。
       return remoteProducts;
     }
 
-    // The free Start tier now belongs to the separate Start Plan entry and must be explicitly enabled by the remote preview flag.
-    // The Z.AI - Coding Plan purchase list shows paid upgrades only, avoiding duplicate display of Start as a purchasable plan.
+    // Start 免费档现在归属于独立的 Start Plan 入口，且必须由远端 preview 开关显式打开。
+    // Z.AI - Coding Plan 的购买列表只展示付费升级项，避免把 Start 当成可购买套餐重复显示。
     const seen = new Set<string>();
     return [...buildZaiStartStaticProducts(startPlanPreview), ...remoteProducts].filter(
       (product) => {
@@ -430,31 +445,33 @@ async function loadCodingPlanStaticProductsConfig(
   service: NonNullable<ReturnType<typeof useOptionalServices>>["codingPlanSubscriptionService"],
 ): Promise<CodingPlanStaticProductsConfig> {
   const now = Date.now();
-  if (staticProductsConfigCache && staticProductsConfigCache.expiresAt > now) {
-    return staticProductsConfigCache.config;
+  const cached = staticProductsConfigCache.get(service);
+  if (cached && cached.expiresAt > now) {
+    return cached.config;
   }
-  if (staticProductsConfigRequest) {
-    return staticProductsConfigRequest;
+  const cachedRequest = staticProductsConfigRequest.get(service);
+  if (cachedRequest) {
+    return cachedRequest;
   }
 
   if (typeof service.getStaticProducts !== "function") {
     return {};
   }
 
-  // Static plans come from remote client/configs, but should be fetched only when the user views the plan list.
-  // Cache in memory for one day and coalesce in-flight requests so settings rerenders or multiple provider cards do not fetch configuration repeatedly.
+  // 静态套餐来自远端 client/configs，但只有用户真正查看套餐列表时才需要请求；
+  // 这里做一天内存缓存和进行中请求合并，避免设置页重渲染或多个 provider 卡片重复拉配置。
   const request = service.getStaticProducts();
-  staticProductsConfigRequest = request;
+  staticProductsConfigRequest.set(service, request);
   try {
     const config = await request;
-    staticProductsConfigCache = {
+    staticProductsConfigCache.set(service, {
       config,
       expiresAt: now + CODING_PLAN_STATIC_PRODUCTS_CACHE_TTL_MS,
-    };
+    });
     return config;
   } finally {
-    if (staticProductsConfigRequest === request) {
-      staticProductsConfigRequest = null;
+    if (staticProductsConfigRequest.get(service) === request) {
+      staticProductsConfigRequest.delete(service);
     }
   }
 }
@@ -496,13 +513,13 @@ function mergeStaticProductWithPreview(
 export function normalizeErrorMessage(error: unknown): string {
   const message = readErrorMessage(error);
   if (isCodingPlanSystemBusyMessage(message)) {
-    // The payment endpoint may return WAF HTML or a JSON parsing error.
-    // Do not show this content directly to users; display a generic system-busy notice.
+    // 支付接口可能返回 WAF HTML 或 JSON 解析错误。
+    // 这类内容不能直接展示给用户，统一提示系统繁忙。
     return CODING_PLAN_SYSTEM_BUSY;
   }
   if (isCodingPlanOAuthRequiredMessage(message)) {
-    // Plan/payment endpoints still require an OAuth session.
-    // If the token is expired, corrupted, or missing, guide users to log in/connect again instead of showing the raw backend token error.
+    // 套餐/支付接口仍依赖 OAuth 登录态。
+    // token 过期、损坏或缺失时要引导用户重新登录/连接，不能直接展示后端原始 token 错误。
     return CODING_PLAN_OAUTH_REQUIRED_ERROR;
   }
   return message;

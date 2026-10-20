@@ -1,17 +1,17 @@
-/* oxlint-disable eslint(max-lines) -- Creation, reuse, cleanup, and first-frame ModelSelection for draft prewarming must share one owner state machine; splitting it across files would make StrictMode/transport-replacement cleanup timing harder to audit. */
-// Prewarm the v4 draft session.
+/* oxlint-disable eslint(max-lines) -- draft prewarm 的创建、复用、回收和首帧 ModelSelection 必须共享同一 owner 状态机；拆到多文件会让 StrictMode/transport 换代清理时序更难审计。 */
+// 草稿态 v4 draft session 预热。
 //
-// Background: with no registered session in draft state, configuration has to use the legacy workspace-default RPC,
-// whose buildWorkspaceState response constructs a full app each time (140–798 ms); the first send also has to
-// createSession on demand. The v4 protocol already keeps phase=draft session entities ("binding a pane to a draft
-// session means the server already has a session entity"). When the pane has no bound session, this module creates a
-// draft session in the background as the prewarm carrier: configuration writes go directly to the session using v4 CAS,
-// the first send reuses it, and an unused session is cleaned up. It stays in memory only and disappears when the CLI restarts;
-// the gateway isDraftSession filter ensures it never leaks into the sessions-index sidebar as a "new task".
+// 背景：草稿态没有任何 session 在册时，配置面被迫走 workspace-default 旧 RPC，
+// 其回包 buildWorkspaceState 每次临建完整 app（140-798ms/次）；首发也要现场
+// createSession。v4 协议本就保留 phase=draft 会话实体（「pane 绑 draft
+// session 则服务端已有会话实体」）——本模块在 pane 未绑定会话时后台建一个
+// draft session 作预热载体：配置写走 v4 CAS 命令直达会话、首发 sendText 复用、
+// 未使用则清理。纯内存不落盘，CLI 重启即消失；gateway isDraftSession 过滤保证
+// 它不会以「新任务」漏进 sessions-index 侧栏。
 //
-// Structure: lifecycle is owned by the pure controller startDraftSessionPrewarm (testable, with no React dependency);
-// useDraftSessionPrewarm only wires effects and exposes owner-scoped bindings.
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+// 结构：生命周期收敛在纯控制器 startDraftSessionPrewarm（可单测，无 React 依赖），
+// useDraftSessionPrewarm 只做 effect 接线与 owner-scoped binding 暴露。
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { CommandAck, CommandType, SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 
@@ -22,24 +22,27 @@ type DispatchCommand = (
 ) => Promise<CommandAck>;
 
 export interface DraftPrewarmController {
-  /** First admission command has been sent but its ACK is unresolved; dispose must not delete a session with an unknown result. */
+  /** 首条 admission 命令已发出、ACK 未收口；dispose 不得删除结果未知的会话。 */
   markPromotionPending(): void;
-  /** Set after the first send succeeds; dispose must not delete the promoted session. */
+  /** 首发成功后标记（dispose 不再删除已提升的会话）。 */
   markPromoted(): void;
-  /** Set after the session becomes invalid (subscription error/sendText rejected); dispose skips deleteSession because the session likely no longer exists. */
+  /** 会话失效（订阅错误/sendText 被拒）后标记（dispose 不发 deleteSession——会话多半已不存在）。 */
   markDiscarded(): void;
-  /** Lifecycle end (effect cleanup / workspace switch / binding to a real session): deleteSession cleans up a created, unpromoted, valid session; if creation is still in flight, delete it locally when the ACK arrives. */
+  /**
+   * 生命周期终点（effect cleanup / 切 workspace / 绑定真实会话）：
+   * 已建且未提升未失效 → deleteSession 清理；创建仍在飞 → ack 到达时就地删除。
+   */
   dispose(): void;
 }
 
-/** Pure controller for prewarm lifecycle: create → surface through onReady → choose cleanup action on dispose. */
+/** 预热生命周期纯控制器：创建 → onReady 上抛 → dispose 决策清理。 */
 export function startDraftSessionPrewarm(params: {
   workspaceKey: string;
   dispatchCommand: DispatchCommand;
   onReady: (sessionId: string) => void;
-  /** Single-flight owner for waiting until the non-cancelable createSession call settles; invoke exactly once whether it succeeds or fails. */
+  /** single-flight owner 用于等待不可取消的 createSession 收口；无论成功失败都只调用一次。 */
   onSettled?: () => void;
-  /** Initial config for the prewarmed session (synchronously resolved from the global "last selection"), so the first projected frame is global without a flash. */
+  /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
 }): DraftPrewarmController {
   const { workspaceKey, dispatchCommand, onReady, onSettled, resolveInitialConfig } = params;
@@ -59,7 +62,7 @@ export function startDraftSessionPrewarm(params: {
         }
       })
       .catch(() => {
-        // Cleanup failure is harmless: the in-memory session disappears when the CLI exits.
+        // 清理失败无碍：内存会话随 CLI 退出消失。
       });
   };
 
@@ -67,7 +70,7 @@ export function startDraftSessionPrewarm(params: {
     const createPayload: Record<string, unknown> = { workspaceId: workspaceKey };
     const initialConfig = resolveInitialConfig?.();
     if (initialConfig && Object.keys(initialConfig).length > 0) {
-      // The first frame of a prewarmed session already uses the global model (merged from createSession.config by the CLI), avoiding a flash of the workspace default.
+      // 预热会话首帧即用全局模型（CLI 归并 createSession.config），不闪 workspace 缺省。
       createPayload.config = initialConfig;
     }
     return createPayload;
@@ -86,7 +89,7 @@ export function startDraftSessionPrewarm(params: {
         return;
       }
       if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
-        logger.warn("[v4-draft-prewarm] createSession 被拒，回落无预热路径", {
+        logger.warn("[v4-draft-prewarm] createSession 被拒", {
           status: ack.status,
           reasonCode: ack.reasonCode ?? null,
           workspaceKey,
@@ -95,7 +98,7 @@ export function startDraftSessionPrewarm(params: {
       }
       createdSessionId = ack.result.sessionId;
       if (disposed) {
-        // Creation cannot be canceled when the user switches away quickly; delete it locally when the ACK arrives to avoid leaving an in-memory session behind.
+        // 极快切走时创建无法取消：ACK 到达后就地删除，避免遗留内存会话。
         deleteCreatedSession(createdSessionId);
         return;
       }
@@ -106,7 +109,7 @@ export function startDraftSessionPrewarm(params: {
       onReady(createdSessionId);
     })
     .catch((error) => {
-      logger.warn("[v4-draft-prewarm] createSession 失败，回落无预热路径", {
+      logger.warn("[v4-draft-prewarm] createSession 失败", {
         error: error instanceof Error ? error.message : String(error),
         workspaceKey,
       });
@@ -132,9 +135,9 @@ export function startDraftSessionPrewarm(params: {
     dispose() {
       if (disposed) return;
       disposed = true;
-      // During MCP initialization, the Agent may admit the first send before the renderer receives its ACK.
-      // If owner cleanup treats it as an ordinary draft, it will close the execution adapter that is already running.
-      // Only a draft that has never started promotion can be safely reclaimed automatically; pending must wait for the original command to settle.
+      // Agent 可在 MCP 初始化期间先 admission 首发，而 renderer 仍等待 ACK；
+      // 此时 owner cleanup 若按普通 draft 删除，会关闭已经运行的 execution adapter。
+      // 只有从未开始 promotion 的 draft 才能安全自动回收，pending 必须等待原命令收口。
       if (createdSessionId && promotionState === "draft") {
         deleteCreatedSession(createdSessionId);
       }
@@ -143,22 +146,25 @@ export function startDraftSessionPrewarm(params: {
 }
 
 export interface DraftSessionPrewarm {
-  /** Prewarm binding ready for the current workspace/transport generation. */
+  /** 当前 workspace/transport generation 已就绪的预热 binding。 */
   binding: DraftPrewarmBinding | null;
+  /** 首发等待本 owner 当前创建任务；失败或换代即拒绝，不在发送路径另建会话。 */
+  waitForSession(): Promise<DraftPrewarmBinding>;
 }
 
 export interface DraftPrewarmBinding {
   workspaceKey: string;
   sessionId: string;
-  /** Synchronously claim the lifecycle before sending the first admission command; false means this binding is no longer the current owner. */
+  /** 首条 admission 命令发出前同步占住生命周期；false 表示 binding 已不是当前 owner。 */
   beginPromotion(): boolean;
-  /** Set after first-send success (prevents the cleanup path from calling deleteSession on a promoted session). */
+  /** 首发成功后标记（阻止清理路径 deleteSession 已提升的会话）。 */
   promote(): void;
-  /** Discard after a subscription error/sendText rejection; affects only the controller that created this binding. */
+  /** 订阅错误 / sendText 被拒后丢弃；只影响创建本 binding 的 controller。 */
   discard(): void;
 }
 
 interface DraftPrewarmSubscriber {
+  generation: object;
   invalidationVersion: number;
   onBinding: (binding: DraftPrewarmBinding | null) => void;
 }
@@ -168,15 +174,29 @@ interface DraftPrewarmCurrent {
   controller: DraftPrewarmController;
   binding: DraftPrewarmBinding | null;
   settled: boolean;
+  completion: Promise<void>;
   retiring: boolean;
-  /** Retry attempt number for this generation; 0 means the initial attempt. */
+  /** 本代是第几次退避重试的产物；0 表示首发。 */
   retryAttempt: number;
 }
 
-/** Backoff schedule after createSession failure. When the CUA Helper becomes ready, workspace-dispose reclaims the client and interrupts an in-flight createSession with client disposed. Warning once would permanently fall back to no-prewarm behavior, leaving draft state without a sessionId and pasted images stuck at waitingSession (0% progress). Reclamation is transient and retrying after a short delay can succeed, so use bounded backoff instead of giving up. */
+/**
+ * createSession 失败后的退避重试节奏。
+ *
+ * CUA Helper ready 会触发 workspace-dispose 回收，正在飞的 createSession 被
+ * client disposed 打断；只 warn 一次会永久「回落无预热路径」，草稿态从此拿不到
+ * sessionId，粘贴的图片永远停在 waitingSession（进度 0%）。回收是瞬态的，隔一会儿重试即可
+ * 成功，所以这里做有界退避而不是放弃。
+ */
 const PREWARM_RETRY_DELAYS_MS = [500, 1000, 2000];
 
-/** Prewarm coordinator for the same logical draft pane. createSession must not be tied directly to a React effect instance: cleanup cannot cancel a protocol request already sent, while the next effect would immediately send another createSession. The Agent's global FIFO could then fill with multiple slow creations for the same draft. Keep the owner across synchronous remounts and block the next generation from enqueueing another create until the previous create ACK arrives. */
+/**
+ * 同一逻辑 draft pane 的预热协调器。
+ *
+ * createSession 不能直接绑在 React effect 实例上。effect cleanup 无法取消已经
+ * 发出的协议请求，新 effect 却会立刻再发一个 createSession；Agent 的全局 FIFO 因而被同一草稿
+ * 的多个慢创建占满。协调器跨同步重挂保留 owner，并在旧创建 ACK 前阻止下一代创建入队。
+ */
 class DraftSessionPrewarmCoordinator {
   private readonly subscribers = new Map<symbol, DraftPrewarmSubscriber>();
   private current: DraftPrewarmCurrent | null = null;
@@ -204,7 +224,53 @@ class DraftSessionPrewarmCoordinator {
     this.resolveInitialConfig = resolveInitialConfig;
   }
 
+  async waitForSession(
+    invalidationVersion: number,
+    generation: object,
+  ): Promise<DraftPrewarmBinding> {
+    const assertCurrentSubscriber = () => {
+      if (
+        this.requestedInvalidationVersion() !== invalidationVersion ||
+        !Array.from(this.subscribers.values()).some(
+          (subscriber) => subscriber.generation === generation,
+        )
+      )
+        throw new Error("草稿会话已切换，请重新发送");
+    };
+    assertCurrentSubscriber();
+    // 新草稿已接管时，旧创建仍可能在回收；这是等待窗口，不是用户再次切换。
+    // 资格绑定本次订阅，防止相同版本的离开/重进让旧提交借新草稿继续发送。
+    if (this.current?.retiring) {
+      await this.current.completion;
+      assertCurrentSubscriber();
+    }
+    // 已确定失败/失效后，用户再次点击可以重试；仍由 owner 创建并合并并发等待者，
+    // 不能因后台重试耗尽就让当前草稿永久无法发送。
+    if (this.current?.settled && !this.current.binding) {
+      this.clearRetryTimer();
+      this.blockedInvalidationVersion = null;
+      this.current = null;
+      this.startCurrent(invalidationVersion);
+    }
+    const current = this.current;
+    if (!current) throw new Error("草稿会话尚未开始创建");
+    // Bug 根因：binding=null 同时表示创建在途和失败，首发据此另建会话会与预热并发。
+    // 创建只归此 owner；等待捕获的一代，不能在 await 后悄悄换成另一个会话发送。
+    await current.completion;
+    assertCurrentSubscriber();
+    if (
+      this.current !== current ||
+      current.retiring ||
+      current.invalidationVersion !== invalidationVersion ||
+      this.requestedInvalidationVersion() !== invalidationVersion
+    )
+      throw new Error("草稿会话已切换，请重新发送");
+    if (!current.binding) throw new Error("草稿会话创建失败，请重试");
+    return current.binding;
+  }
+
   acquire(params: {
+    generation: object;
     invalidationVersion: number;
     onBinding: (binding: DraftPrewarmBinding | null) => void;
   }): () => void {
@@ -221,8 +287,8 @@ class DraftSessionPrewarmCoordinator {
       if (!this.subscribers.delete(token) || this.subscribers.size > 0) {
         return;
       }
-      // React StrictMode and synchronous remounts with the same key run cleanup before the effect again. Defer confirmation until
-      // the next task to avoid protocol churn from "create → cleanup delete → create" when the pane did not really leave.
+      // React StrictMode 和同 key 同步重挂会先 cleanup 再重新执行 effect。延迟到下一任务确认
+      // 是否真的离开，避免“create → cleanup delete → create”的协议 churn。
       this.cleanupTimer = setTimeout(() => {
         this.cleanupTimer = null;
         if (this.subscribers.size > 0) {
@@ -263,7 +329,7 @@ class DraftSessionPrewarmCoordinator {
         return;
       }
       this.retireCurrent();
-      // createSession cannot be canceled once sent; onSettled queues delete after its ACK, then starts only the newest generation.
+      // createSession 已经发出时不可取消；onSettled 会在 ACK 后先排 delete，再只启动最新代。
       if (this.current) {
         return;
       }
@@ -280,7 +346,10 @@ class DraftSessionPrewarmCoordinator {
     this.retryTimer = null;
   }
 
-  /** createSession settled without a binding = failure (rejected or threw). client disposed due to reclamation is transient, so schedule another create with backoff; when retries are exhausted, retain the existing fallback to no prewarm path. */
+  /**
+   * createSession 收口却没拿到 binding = 失败（被拒或异常）。回收导致的 client disposed 是
+   * 瞬态的，按退避重排一次创建；用尽后保留失败态，由下一次生命周期失效重新创建。
+   */
   private scheduleRetryAfterFailure(failed: DraftPrewarmCurrent): void {
     const delay = PREWARM_RETRY_DELAYS_MS[failed.retryAttempt];
     if (delay === undefined) return;
@@ -291,7 +360,7 @@ class DraftSessionPrewarmCoordinator {
       if (this.subscribers.size === 0) return;
       const requestedVersion = this.requestedInvalidationVersion();
       if (requestedVersion === null || this.blockedInvalidationVersion === requestedVersion) return;
-      // Release the failed generation so the next one can pass the reconcile single-flight gate.
+      // 释放失败的一代，让下一代能通过 reconcile 的单飞闸。
       this.current = null;
       this.startCurrent(requestedVersion, failed.retryAttempt + 1);
     }, delay);
@@ -299,6 +368,10 @@ class DraftSessionPrewarmCoordinator {
 
   private startCurrent(invalidationVersion: number, retryAttempt = 0): void {
     let current!: DraftPrewarmCurrent;
+    let complete!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
     const controller = startDraftSessionPrewarm({
       workspaceKey: this.workspaceKey,
       dispatchCommand: (type, payload, targetSessionId) =>
@@ -340,8 +413,9 @@ class DraftSessionPrewarmCoordinator {
       },
       onSettled: () => {
         current.settled = true;
+        complete();
         if (this.current !== current || !current.retiring) {
-          // Not retired but no binding received = createSession failed; transient reclamation can be retried with backoff.
+          // 未被 retire 却没拿到 binding = createSession 失败；瞬态回收可退避重试。
           if (this.current === current && !current.retiring && current.binding === null) {
             this.scheduleRetryAfterFailure(current);
           }
@@ -360,6 +434,7 @@ class DraftSessionPrewarmCoordinator {
       controller,
       binding: null,
       settled: false,
+      completion,
       retiring: false,
       retryAttempt,
     };
@@ -441,17 +516,17 @@ function getDraftSessionPrewarmCoordinator(params: {
 }
 
 export function useDraftSessionPrewarm(params: {
-  /** Enabled only while the pane has no bound session (sessionId===null). */
+  /** pane 未绑定会话（sessionId===null）时启用。 */
   enabled: boolean;
   workspaceKey: string;
-  /** Logical pane identity within the same workspace; must remain stable across synchronous remounts. */
+  /** 同一 workspace 内的逻辑 pane 身份；同步重挂必须保持稳定。 */
   paneId: string;
-  /** Increment when external capabilities change; used only to reclaim and rebuild an unpromoted draft prewarm session. */
+  /** 外部能力变化时递增；仅用于回收并重建尚未提升的草稿预热会话。 */
   invalidationVersion?: number;
-  /** Transport identity for the conversation provider; remains stable while the workspace lease is unchanged. */
+  /** conversation provider 的 transport identity；同 workspace lease 变化时保持不变。 */
   transportIdentity: unknown;
   dispatchCommand: DispatchCommand;
-  /** Initial config for the prewarmed session (synchronously resolved from the global "last selection"), so the first projected frame is global without a flash. */
+  /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
 }): DraftSessionPrewarm {
   const {
@@ -463,8 +538,8 @@ export function useDraftSessionPrewarm(params: {
     dispatchCommand,
     resolveInitialConfig,
   } = params;
-  // Workspace/pane/transport together define the logical owner: remounts with the same owner reuse single-flight; a transport
-  // replacement still creates a new coordinator so cleanup of the old session cannot accidentally use the new transport.
+  // workspace/pane/transport 共同定义逻辑 owner：同 owner 重挂复用 single-flight，transport
+  // 换代仍生成新 coordinator，确保旧 session 的清理不会误走新 transport。
   const owner = useMemo(
     () => ({ workspaceKey, paneId, transportIdentity }),
     [paneId, transportIdentity, workspaceKey],
@@ -492,6 +567,7 @@ export function useDraftSessionPrewarm(params: {
   useEffect(() => {
     if (!enabled) return;
     return coordinator.acquire({
+      generation,
       invalidationVersion,
       onBinding: (binding) => {
         setReady((current) => {
@@ -504,5 +580,10 @@ export function useDraftSessionPrewarm(params: {
     });
   }, [coordinator, enabled, generation, invalidationVersion]);
 
-  return { binding: ready?.generation === generation ? ready.binding : null };
+  const waitForSession = useCallback(async () => {
+    if (!enabled) throw new Error("草稿会话尚未启用");
+    return coordinator.waitForSession(invalidationVersion, generation);
+  }, [coordinator, enabled, generation, invalidationVersion]);
+
+  return { binding: ready?.generation === generation ? ready.binding : null, waitForSession };
 }

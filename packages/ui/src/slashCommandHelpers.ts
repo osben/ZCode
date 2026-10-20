@@ -1,5 +1,5 @@
 /**
- * slashCommandHelpers — pure helper functions used by SlashCommandPlugin.tsx
+ * slashCommandHelpers — 纯函数辅助工具，供 SlashCommandPlugin.tsx 使用
  */
 import { $getRoot, $getSelection, $isRangeSelection, $isTextNode } from "lexical";
 import type { AgentSummary, Locale, SkillSummary, ZCodeSlashCommand } from "@zcode/shared";
@@ -16,26 +16,28 @@ export interface SlashCommandPluginProps {
   container?: HTMLElement | null;
   workspacePath: string;
   workspaceIdentity?: string;
-  /** ID of an existing Session; null/undefined means a new draft and determines Skill catalog authority. */
+  /** 已有 Session 的 id；null/undefined 表示新建草稿，决定 Skill catalog authority。 */
   sessionId?: string | null;
   disabled?: boolean;
   excludedCommandNames?: readonly string[];
   /**
-   * App-level local commands (such as `/side`). The CLI catalog remains authoritative; only rendering-layer commands are allowed here
-   * that “run a UI action on selection”; they are not sent and are not written back to the CLI command list.
+   * App 层本地命令（如 `/side`）。命令目录仍以 CLI catalog 为权威；这里只允许渲染层
+   * 追加"选中即执行 UI 行为"的命令，不参与发送，也不写回 CLI 命令列表。
    */
   appCommands?: readonly AppSlashCommand[];
 }
 
-/** App-level slash command: selecting it runs a UI action (no mention insertion or message send). */
+/** App 层斜杠命令：选中即执行 UI 行为（不插入 mention、不发送）。 */
 export interface AppSlashCommand {
-  /** Command value (without `/`), such as "side". */
+  /** 命令值（不含 `/`），如 "side"。 */
   value: string;
-  /** Localized description displayed directly in the `/` panel. */
+  /** 本地化操作名称；省略时保留斜杠命令形式。 */
+  label?: string;
+  /** 本地化描述，直接展示在 `/` 面板。 */
   description: string;
-  /** Extra search keywords; include both Chinese and English aliases so either input convention can find the command. */
+  /** 额外搜索关键词；应同时包含中英文别名，保证两种输入习惯都能搜到。 */
   keywords?: readonly string[];
-  /** UI action to run immediately after the command is selected. */
+  /** 选中命令后立即执行的 UI 行为。 */
   run: () => void;
 }
 
@@ -54,7 +56,7 @@ export function buildAppSlashCommandSuggestions(
         id: `${APP_SLASH_SUGGESTION_ID_PREFIX}${value}`,
         trigger: "/",
         value,
-        label: `/${value}`,
+        label: command.label ?? `/${value}`,
         description: command.description,
         keywords: [...new Set([value, command.description, ...(command.keywords ?? [])])],
       },
@@ -67,8 +69,8 @@ export function isAppSlashCommandSuggestion(suggestion: PromptInputSuggestionIte
 }
 
 /**
- * `/side` gate: drafts have no parent session to attach a child to, and auxiliary conversations cannot open another auxiliary conversation.
- * Hide the command consistently for read-only contexts, mobile viewports, and fixed entry points.
+ * `/side` 门禁：草稿态没有父 session 可挂 child，辅助对话自身不允许再开辅助对话，
+ * 只读与手机 viewport 与固定入口保持一致地隐藏。
  */
 export function shouldOfferSideSlashCommand(options: {
   isDraft: boolean;
@@ -82,18 +84,17 @@ export function shouldOfferSideSlashCommand(options: {
 }
 
 export function normalizeSlashCommandValue(name: string): string {
-  // A remote ZCode Agent may return "/init" directly as the command name.
-  // Strip the leading slash from the UI value; otherwise Markdown insertion produces "//init" and interferes with slash-panel matching.
+  // ZCode Agent 在远端可能直接返回 "/init" 作为命令名。
+  // UI 的 value 需要去掉前导斜杠，否则插入 markdown 时会变成 "//init"，并影响 / 面板匹配。
   return name.trim().replace(/^\/+/, "");
 }
 
 export function buildSlashSuggestions(commands: ZCodeSlashCommand[]): PromptInputSuggestionItem[] {
   return commands.flatMap((command) => {
     const value = normalizeSlashCommandValue(command.name);
-    // The UI used to maintain a built-in allowlist, a GLM `/goal` fallback, and a v4 appended catalog.
-    // If the CLI catalog was missing, some commands still appeared, hiding missing `/init` and custom commands. Command discovery
-    // now treats the CLI protocol catalog as authoritative; the UI no longer appends commands or maintains a built-in allowlist.
-    if (!value) {
+    // Plan 是 Composer 本地操作。旧 Agent 仍可能广播同名命令，不能让它重新
+    // 变成插入文本、等到发送时才切模式的旧入口；其余命令仍以 CLI catalog 为准。
+    if (!value || value.toLowerCase() === "plan") {
       return [];
     }
     return [

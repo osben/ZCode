@@ -1,7 +1,6 @@
-// m3-ui-core: unit tests for SessionDataLayer + ConversationProjectionStore.
-// Covers the three client rules of 04-sync-and-recovery, R-01 generation protection, refcount + keep-warm
-// lifecycle, and the convergence of the optimistic overlay with the authoritative projection
-// (R-07 sourceCommandId / pendingCommands anchors).
+// m3-ui-core：SessionDataLayer + ConversationProjectionStore 单测。
+// 覆盖 04-sync-and-recovery 三条客户端规则、R-01 代际防护、引用计数 + keep-warm 生命周期、
+// optimistic overlay 与权威投影的收口（R-07 sourceCommandId / pendingCommands 锚点）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   CommandAck,
@@ -43,7 +42,7 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 
-// ── Test fixtures ──
+// ── 测试装置 ──
 
 function makeSnapshot(overrides: Partial<ConversationSnapshot> = {}): ConversationSnapshot {
   return {
@@ -158,7 +157,7 @@ function makeFrame(
   return { topic, subscriptionId, fromSeq, toSeq, sentAt: 1, payload };
 }
 
-/** A minimal run: `nodes` keyed by (siteId, ordinal), ordinals 1..n. */
+/** 一条最小 run：`nodes` 按 (siteId, ordinal) 键控，序号 1..n。 */
 function workflowRun(runId: string, nodes: number): WorkflowRunState {
   return {
     runId,
@@ -192,7 +191,7 @@ class FakeTransport implements ConversationTransport {
   private restartListeners = new Set<Parameters<ConversationTransport["onRuntimeRestart"]>[0]>();
   private initialFrames = new Map<string, ConversationTopicFrame>();
   private subCounter = 0;
-  /** The response strategy for each subscribe; tests override it as needed. */
+  /** 每次 subscribe 的应答策略，测试按需覆盖。 */
   subscribeImpl: (
     params: SubscribeParams,
     subscriptionId: string,
@@ -272,7 +271,7 @@ class FakeTransport implements ConversationTransport {
   }
 
   rowsRangeCalls: V4ConversationRowsRangeParams[] = [];
-  /** The rows/range response strategy; loadOlder tests override it as needed. */
+  /** rows/range 应答策略，loadOlder 测试按需覆盖。 */
   rowsRangeImpl: (
     params: V4ConversationRowsRangeParams,
   ) => V4ConversationRowsRangeResult | Promise<V4ConversationRowsRangeResult> = () => ({
@@ -370,7 +369,7 @@ describe("ConversationProjectionStore", () => {
   beforeEach(() => {
     transport = new FakeTransport();
     store = new ConversationProjectionStore("conversation/s1", transport);
-    // Frame routing lives in SessionDataLayer; wire it manually when testing the store alone.
+    // 帧路由在 SessionDataLayer；store 独测时手工接线。
     transport.onFrame((frame, context) => store.handleFrame(frame, context));
   });
 
@@ -667,11 +666,10 @@ describe("ConversationProjectionStore", () => {
     expect(snapshot.rows.window[0]).toMatchObject({ rowId: 1, text: "hello" });
   });
 
-  // `workflowRun.updated` is a new key-level delta op (shared delta.ts). The store has **no** branch for it,
-  // nor should it: the semantics live entirely in applyConversationDeltas, and the store only forwards. This
-  // case pins three things — the frame survives the assembler's strict zod; the container and the modified run
-  // get fresh objects (memo must recompute); untouched runs and rows keep their object identity (memo must
-  // not recompute).
+  // `workflowRun.updated` 是新的键级增量 op（shared delta.ts）。store 里**没有**、也不该有
+  // 它的分支：语义整个住在 applyConversationDeltas 里，store 只转发。这条用例钉三件事——
+  // 帧过得了 assembler 那道严格 zod；容器与被改的 run 换新对象（memo 要重算）；没被碰的 run
+  // 与 rows 保持对象同一性（memo 不该重算）。
   it("workflowRun.updated 帧经严格 zod 与 apply 落库，只让被改的 run 换身份", async () => {
     await store.connect();
     transport.emit(
@@ -718,7 +716,7 @@ describe("ConversationProjectionStore", () => {
       status: "completed",
       lastEventSequence: 9,
     });
-    // The upsert is keyed by (siteId, ordinal): the existing entry is replaced in place, no second entry appended.
+    // upsert 按 (siteId, ordinal)：既有条目原地替换，不追加第二条。
     expect(next.workflowRuns!.runs[0]!.nodes).toHaveLength(3);
     expect(next.workflowRuns!.runs[0]!.nodes[2]).toMatchObject({ ordinal: 3, phase: "settled" });
     expect(next.workflowRuns!.runs[1]).toBe(untouched);
@@ -843,7 +841,7 @@ describe("ConversationProjectionStore", () => {
   it("aligned recovery frame 早于 resync Promise continuation 仍与 ACK 共同收口 flight", async () => {
     await store.connect();
     transport.resyncImpl = (params) => {
-      // Simulates the same read: the response has resolved, but the notification fires before the Promise continuation runs.
+      // 模拟同一 read：response 已解析，但 Promise continuation 尚未运行时 notification 先 fire。
       transport.emitRecovery(
         makeFrame(params.subscriptionId, 5, 5, { kind: "deltas", deltas: [] }),
       );
@@ -935,9 +933,8 @@ describe("ConversationProjectionStore", () => {
     await flushMicrotasks();
     expect(store.getState().snapshot?.logEpoch).toBe("epoch-2");
     expect(store.getState().snapshot?.rows.window).toEqual([]);
-    // Bug regression: after the initial is lost, a complete online snapshot is only the first applied base;
-    // the persisted old fallback inside it can only seed the observation baseline, not masquerade as a new
-    // post-subscription event.
+    // Bug 回归：initial 丢失后的完整 online snapshot 只是首个 applied base，
+    // 其中持久化的旧 fallback 只能播种观察基线，不能冒充订阅后的新事件。
     expect(listener).not.toHaveBeenCalled();
 
     transport.emit(
@@ -1032,12 +1029,10 @@ describe("ConversationProjectionStore", () => {
     expect(store.getState().snapshot?.seq).toBe(5);
   });
 
-  // ── Deterministic content faults (04-sync closed rule 11) ──────────────────────────────────────────
-  // The ladder above assumes faults are transient. Schema rejection is not: the bytes already passed
-  // checksum/JSON, so being rejected means this side cannot read the peer's **content**, and a resume tier
-  // would only redeliver the same batch of deltas. Observed cost on 2026-09-21 (sess_4142de31) was a session
-  // that would not open — three frames per round, the user manually reconnected twice and burned three frames
-  // each time.
+  // ── 确定性内容 fault（04-sync 封闭规则 11）──────────────────────────────────────────
+  // 上面那条阶梯默认 fault 是瞬态的。schema 拒收不是：字节已过 checksum/JSON，被拒说明本端读不
+  // 懂对端的**内容**，resume 档只会把同一批 delta 再投一遍。2026-09-21（sess_4142de31）实测代价
+  // 是一条打不开的会话——三帧一轮，用户手动重连两次又各烧三帧。
 
   it("内容 fault 直接强制 snapshot，跳过必然失败的 resume 档", async () => {
     await store.connect();
@@ -1045,7 +1040,7 @@ describe("ConversationProjectionStore", () => {
     await flushMicrotasks();
     expect(transport.resyncCalls).toHaveLength(1);
     expect(transport.resyncCalls[0]?.forceSnapshot).toBe(true);
-    // The projection stays put: the bad frame was never applied, and the user still sees the last complete projection.
+    // 投影不动：坏帧从未被 apply，用户看到的仍是最后一份完整投影。
     expect(store.getState().snapshot?.seq).toBe(5);
   });
 
@@ -1058,18 +1053,18 @@ describe("ConversationProjectionStore", () => {
     await flushMicrotasks();
 
     expect(store.getState().status).toBe("error");
-    // Distinguished from transport failure: reconnecting will not change the outcome, and telemetry must not aggregate it as one link flap.
+    // 与传输失败区分开：重连不会改变结果，遥测也不该把它聚合成一次链路抖动。
     expect(store.getState().lastError).toBe(SUBSCRIPTION_CONTENT_REJECTED);
-    // Before the fix this was two resyncs (resume + snapshot) with a terminal state of recoveryFailed.
+    // 修复前这里是 resume + snapshot 两次 resync 且终态写成 recoveryFailed。
     expect(transport.resyncCalls).toHaveLength(1);
-    // The last good projection remains visible (session content stays behind the error banner).
+    // 最后一份好投影仍然可见（会话内容留在错误横幅后面）。
     expect(store.getState().snapshot).toBe(before);
   });
 
   it("内容 fault 的强制 snapshot 若读得懂，照常收口，不落 error", async () => {
     await store.connect();
     transport.resyncImpl = (params) => {
-      // The new snapshot is regenerated and may no longer contain the unreadable content — this self-healing path must stay.
+      // 新快照是重新生成的，可能已经不含那份读不懂的内容——这条自愈路径必须留着。
       transport.emitRecovery(
         makeFrame(params.subscriptionId, 0, 9, {
           kind: "snapshot",
@@ -1092,7 +1087,7 @@ describe("ConversationProjectionStore", () => {
     vi.useFakeTimers();
     try {
       await store.connect();
-      // The forced snapshot went out but no recovery frame ever came back — this is a transport symptom, not unreadable content.
+      // 强制 snapshot 发出去了，但一个 recovery 帧都没回来——这是传输症状，不是读不懂内容。
       transport.emitFault("conversation/s1", "sub-1", "online", WIRE_FAULT_INVALID_PAYLOAD);
       await flushMicrotasks();
       expect(transport.resyncCalls).toHaveLength(1);
@@ -1137,7 +1132,7 @@ describe("ConversationProjectionStore", () => {
         ack: { subscriptionId: params.subscriptionId, mode: "resume", logEpoch: "epoch-1" },
       };
     };
-    // fromSeq=7 ≠ local 5 → a gap.
+    // fromSeq=7 ≠ 本地 5 → 断档。
     transport.emit(
       makeFrame("sub-1", 7, 8, {
         kind: "deltas",
@@ -1145,7 +1140,7 @@ describe("ConversationProjectionStore", () => {
       }),
     );
     await flushMicrotasks();
-    // The gap frame is dropped, and the same-sub resync carries a base (state unpolluted, the watermark still valid).
+    // 断档帧被丢弃，same-sub resync 带 base（状态未污染，水位仍合法）。
     expect(transport.subscribeCalls).toHaveLength(1);
     expect(transport.resyncCalls).toEqual([
       { subscriptionId: "sub-1", base: { logEpoch: "epoch-1", seq: 5 } },
@@ -1208,7 +1203,7 @@ describe("ConversationProjectionStore", () => {
       }),
     );
     expect(store.getState().snapshot?.rows.window).toHaveLength(0);
-    // Dropped ≠ gap: no re-subscribe is triggered.
+    // 丢弃 ≠ 断档：不触发重订阅。
     expect(transport.subscribeCalls).toHaveLength(1);
   });
 
@@ -1274,7 +1269,7 @@ describe("ConversationProjectionStore", () => {
     store.markCommandPending({ commandId: "c1", type: "sendText", issuedAt: 1 });
     store.markCommandPending({ commandId: "c2", type: "stop", issuedAt: 2 });
     expect(store.getState().optimisticCommands).toHaveLength(2);
-    // c1 converges via the userInput.sourceCommandId anchor (R-07).
+    // c1 经 userInput.sourceCommandId 锚点收口（R-07）。
     transport.emit(
       makeFrame("sub-1", 5, 6, {
         kind: "deltas",
@@ -1296,7 +1291,7 @@ describe("ConversationProjectionStore", () => {
       }),
     );
     expect(store.getState().optimisticCommands.map((c) => c.commandId)).toEqual(["c2"]);
-    // c2 converges via pendingCommands.
+    // c2 经 pendingCommands 收口。
     transport.emit(
       makeFrame("sub-1", 6, 7, {
         kind: "deltas",
@@ -1321,41 +1316,44 @@ describe("ConversationProjectionStore", () => {
     expect(store.getState().optimisticCommands).toHaveLength(0);
   });
 
-  it("A12：accepted 输入投影完全静默时只触发一次 same-sub recovery", async () => {
-    vi.useFakeTimers();
-    try {
-      await store.connect();
-      store.markCommandPending({ commandId: "silent-input", type: "sendText", issuedAt: 1 });
+  it.each(["sendText", "editUserQuery"] as const)(
+    "A12：%s accepted 输入投影完全静默时只触发一次 same-sub recovery",
+    async (type) => {
+      vi.useFakeTimers();
+      try {
+        await store.connect();
+        store.markCommandPending({ commandId: "silent-input", type, issuedAt: 1 });
 
-      store.expectAcceptedInputProjection("silent-input");
-      store.expectAcceptedInputProjection("silent-input");
-      await vi.advanceTimersByTimeAsync(ACCEPTED_INPUT_PROJECTION_GRACE_MS - 1);
-      expect(transport.resyncCalls).toEqual([]);
+        store.expectAcceptedInputProjection("silent-input");
+        store.expectAcceptedInputProjection("silent-input");
+        await vi.advanceTimersByTimeAsync(ACCEPTED_INPUT_PROJECTION_GRACE_MS - 1);
+        expect(transport.resyncCalls).toEqual([]);
 
-      await vi.advanceTimersByTimeAsync(1);
-      expect(transport.resyncCalls).toEqual([
-        {
-          subscriptionId: "sub-1",
-          base: { logEpoch: "epoch-1", seq: 5 },
-        },
-      ]);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(transport.resyncCalls).toEqual([
+          {
+            subscriptionId: "sub-1",
+            base: { logEpoch: "epoch-1", seq: 5 },
+          },
+        ]);
 
-      // The recovery only acts on the subscription; the store has no write path that replays the command, and the same expectation does not restart the timer.
-      await vi.advanceTimersByTimeAsync(ACCEPTED_INPUT_PROJECTION_GRACE_MS);
-      expect(transport.resyncCalls).toHaveLength(1);
-    } finally {
-      await store.close();
-      vi.useRealTimers();
-    }
-  });
+        // 恢复只作用于订阅；store 没有重放 command 的写路径，同一 expectation 也不重启 timer。
+        await vi.advanceTimersByTimeAsync(ACCEPTED_INPUT_PROJECTION_GRACE_MS);
+        expect(transport.resyncCalls).toHaveLength(1);
+      } finally {
+        await store.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("A12：及时 user row 或 queue authority 会取消 accepted-input recovery", async () => {
     vi.useFakeTimers();
     try {
       await store.connect();
-      store.markCommandPending({ commandId: "row-input", type: "sendText", issuedAt: 1 });
+      store.markCommandPending({ commandId: "row-input", type: "editUserQuery", issuedAt: 1 });
 
-      // Covers the normal race where the frame precedes the ACK Promise continuation: the fact is already visible when the expectation is registered.
+      // 覆盖 frame 先于 ACK Promise continuation 的正常竞态：登记 expectation 时事实已可见。
       transport.emit(
         makeFrame("sub-1", 5, 6, {
           kind: "deltas",
@@ -1476,7 +1474,7 @@ describe("ConversationProjectionStore", () => {
       });
     const first = store.connect();
     const second = store.connect();
-    // Both responses resolve (order irrelevant; the older generation's result must be unsubscribed).
+    // 两次应答都返回（顺序无关紧要，旧代际结果必须被退订）。
     gate[0]();
     gate[1]();
     await Promise.all([first, second]);
@@ -1525,7 +1523,7 @@ describe("SessionDataLayer", () => {
 
   describe("行结构共享（docs/performance/conversation-row-structural-sharing.md）", () => {
     function rowsSnapshot(rows: ConversationRow[], seq = 5): ConversationSnapshot {
-      // A JSON round-trip simulates wire deserialization: identical content, brand-new references.
+      // JSON 往返模拟 wire 反序列化：内容相同、引用全新。
       return makeSnapshot({
         seq,
         rows: {
@@ -1600,7 +1598,7 @@ describe("SessionDataLayer", () => {
       subscribeWithRows(rows);
       const first = layer.acquire("s1");
       await flushMicrotasks();
-      // Simulates a historical snapshot retained by a closure chain.
+      // 模拟被闭包链留住的历史 snapshot。
       const retained = first.store.getState().snapshot!.rows.window;
       first.release();
       vi.advanceTimersByTime(30_000);
@@ -1674,19 +1672,19 @@ describe("SessionDataLayer", () => {
     await flushMicrotasks();
     const storeA = a.store;
     a.release();
-    // Re-acquired within keep-warm: reuse, no unsubscribe.
+    // keep-warm 内重新引用：复用，不退订。
     vi.advanceTimersByTime(10_000);
     const b = layer.acquire("s1");
     expect(b.store).toBe(storeA);
     expect(b.openKind).toBe("keep_warm");
     expect(transport.unsubscribeCalls).toHaveLength(0);
     b.release();
-    // Timed out: unsubscribe + removal from the registry.
+    // 超时：退订 + 移出注册表。
     vi.advanceTimersByTime(30_000);
     await flushMicrotasks();
     expect(transport.unsubscribeCalls).toEqual(["sub-1"]);
     expect(layer.size).toBe(0);
-    // Acquiring again is a brand-new subscribe (the same path as a refresh).
+    // 再 acquire 是全新 subscribe（与刷新同一路径）。
     layer.acquire("s1");
     await flushMicrotasks();
     expect(transport.subscribeCalls).toHaveLength(2);
@@ -1700,59 +1698,9 @@ describe("SessionDataLayer", () => {
     a.release();
     vi.advanceTimersByTime(60_000);
     await flushMicrotasks();
-    // b still holds a reference and must not be unsubscribed.
+    // b 仍持有引用，不得退订。
     expect(transport.unsubscribeCalls).toHaveLength(0);
     expect(b.store.getState().status).toBe("live");
-  });
-
-  it("session-gone subscribe is terminal: runtime restart cannot re-subscribe and keep-warm drops the entry", async () => {
-    // Worktree first-send sequence: the draft pane holds a prewarm session, the send switches to a
-    // new session, the CLI deletes the unpromoted prewarm, and the new session's runtime start then
-    // broadcasts a restart while the prewarm store is in keep-warm.
-    const lease = layer.acquire("s1");
-    await flushMicrotasks();
-    expect(lease.store.getState().status).toBe("live");
-    lease.release();
-
-    transport.subscribeImpl = () => {
-      throw new Error(
-        "Session is not active and not persisted: s1 (fault.subscribe.sessionNotFound)",
-      );
-    };
-    // The runtime-restart broadcast arrives while the deleted session's store is in keep-warm.
-    transport.restart();
-    await flushMicrotasks();
-    // Terminal: the entry is dropped and the store closed immediately instead of staying in keep-warm.
-    expect(layer.size).toBe(0);
-    expect(lease.store.getState().status).toBe("closed");
-
-    // The failing restart itself attempted one subscribe (subscribeCalls = initial + terminal attempt);
-    // further restart broadcasts (the new session's runtime, later turns) stay silent.
-    expect(transport.subscribeCalls).toHaveLength(2);
-    transport.restart();
-    await flushMicrotasks();
-    expect(transport.subscribeCalls).toHaveLength(2);
-  });
-
-  it("session-gone with a live pane reference keeps the store but stops reconnects", async () => {
-    const lease = layer.acquire("s1");
-    await flushMicrotasks();
-    transport.subscribeImpl = () => {
-      throw new Error(
-        "Session is not active and not persisted: s1 (fault.subscribe.sessionNotFound)",
-      );
-    };
-    lease.store.retry();
-    await flushMicrotasks();
-    expect(lease.store.getState().status).toBe("error");
-    transport.restart();
-    await flushMicrotasks();
-    // The pane still holds the store, so the entry stays; but no further subscribe is attempted.
-    expect(layer.size).toBe(1);
-    expect(transport.subscribeCalls).toHaveLength(2);
-    transport.restart();
-    await flushMicrotasks();
-    expect(transport.subscribeCalls).toHaveLength(2);
   });
 
   it("dispose 清场：取消 keep-warm、关闭全部 store", async () => {
@@ -1780,13 +1728,13 @@ describe("SessionDataLayer", () => {
   });
 });
 
-// ── M5④ R-06: loadOlder cursor pagination (store-side merge rules) ──
+// ── M5④ R-06：loadOlder 游标分页（store 侧合并规范） ──
 
 describe("ConversationProjectionStore.loadOlder", () => {
   let transport: FakeTransport;
   let store: ConversationProjectionStore;
 
-  /** A truncated snapshot with window 41..100 (60 rows) and global first row 1. */
+  /** 窗口 41..100（60 行）、全序首行 1 的截断快照。 */
   function truncatedSnapshot(): ConversationSnapshot {
     const window: ConversationRow[] = [];
     for (let rowId = 41; rowId <= 100; rowId++) {
@@ -1889,7 +1837,7 @@ describe("ConversationProjectionStore.loadOlder", () => {
     expect(state.loadingOlder).toBe(false);
     expect(state.snapshot!.rows.window).toHaveLength(100);
     expect(state.snapshot!.rows.window[0]!.rowId).toBe(1);
-    // rowIds ascending in global order (still ordered after the prepend).
+    // 全序 rowId 升序（前插后仍有序）。
     const ids = state.snapshot!.rows.window.map((row) => row.rowId);
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
     expect(hasOlderRows(state.snapshot)).toBe(false);
@@ -2066,8 +2014,8 @@ describe("ConversationProjectionStore.loadOlder", () => {
   });
 
   it("TN09：not-enough-queries 后追加第二条 realUser query → revision 递增 → 重新探测得 hydrated", async () => {
-    // The same single-query scenario as TN01, but the first round is already complete; this case only verifies
-    // the directory revision and does not overlap HLP01's first-round truncation backfill semantics.
+    // 与 TN01 相同的单-query 场景，但首轮已完整；本 case 只验证目录 revision，
+    // 不与 HLP01 的首轮截断补齐语义重叠。
     const tail = store.getState().snapshot!;
     store.handleFrame(
       makeFrame("sub-1", 5, 6, {
@@ -2089,13 +2037,13 @@ describe("ConversationProjectionStore.loadOlder", () => {
       hasMore: false,
     });
 
-    // First probe: the complete branch has fewer than 2 queries; the terminal state is cached.
+    // 首次探测：完整分支不足 2 条 query，终态缓存。
     const firstResult = await store.loadAllOlder();
     expect(firstResult.status).toBe("not-enough-queries");
     expect(transport.rowsRangeCalls).toHaveLength(1);
     const revisionAfterProbe = store.getState().turnNavigatorDirectoryRevision;
 
-    // The user submits a second realUser query within the same logEpoch (a row.appended delta).
+    // 用户在同一 logEpoch 内提交第二条 realUser query（row.appended delta）。
     transport.emit(
       makeFrame("sub-1", 6, 7, {
         kind: "deltas",
@@ -2103,11 +2051,11 @@ describe("ConversationProjectionStore.loadOlder", () => {
       }),
     );
 
-    // Bug root cause (CR-01): the logEpoch is unchanged, but the set of realUser queries has changed.
-    // turnNavigatorDirectoryRevision must increment so the cached terminal state is invalidated.
+    // Bug 根因（CR-01）：logEpoch 未变，但 realUser query 集合已变化。
+    // turnNavigatorDirectoryRevision 必须递增，使终态缓存失效。
     expect(store.getState().turnNavigatorDirectoryRevision).toBe(revisionAfterProbe + 1);
 
-    // Second probe: tail now has 2 queries and can be judged without any backfill fetch.
+    // 第二次探测：现在 tail 有 2 条 query，无需补拉即可判定。
     const secondResult = await store.loadAllOlder();
     expect(secondResult.status).toBe("hydrated");
     expect(transport.rowsRangeCalls).toHaveLength(2);
@@ -2176,7 +2124,7 @@ describe("ConversationProjectionStore.loadOlder", () => {
         resolveFetch = resolve;
       });
     const inflight = store.loadOlder();
-    // Authoritative resync: the window is wholesale replaced with another segment (the first row changes → the cursor is invalidated).
+    // 权威侧 resync：窗口整体替换为另一段（首行改变 → 游标失效）。
     store.handleFrame(
       makeFrame(store.getState().subscriptionId!, 0, 9, {
         kind: "snapshot",
@@ -2202,7 +2150,7 @@ describe("ConversationProjectionStore.loadOlder", () => {
   });
 
   it("到顶/无快照时 no-op（不发请求）", async () => {
-    // Pull to the top first.
+    // 先拉到顶。
     transport.rowsRangeImpl = () => ({
       rows: olderRows(1, 40),
       atSeq: 5,
@@ -2218,10 +2166,10 @@ describe("ConversationProjectionStore.loadOlder", () => {
 
   it("mergeOlderRows：按 rowId 键控，只收窗口首行之前的行", () => {
     const window = olderRows(41, 45);
-    // Rows overlapping or out of range of the window are dropped; purely older rows are prepended.
+    // 与窗口重叠/越界的行被丢弃；纯旧行前插。
     const merged = mergeOlderRows(window, [...olderRows(39, 42), assistantRow(50, "越界")]);
     expect(merged!.map((row) => row.rowId)).toEqual([39, 40, 41, 42, 43, 44, 45]);
-    // No mergeable rows → null (the reference is not replaced).
+    // 无可并入行 → null（引用不换）。
     expect(mergeOlderRows(window, olderRows(41, 45))).toBeNull();
     expect(mergeOlderRows(window, [])).toBeNull();
   });

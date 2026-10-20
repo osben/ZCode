@@ -6,7 +6,8 @@
 // enumerated item by item, while on the real DOM this pins the two sentences, the changed row, the option descriptions,
 // the content the Allow reply carries out, the "unavailable" gate, and Shift+Tab.
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER, type ZCodePermissionRequest } from "@zcode/shared";
+import { type ZCodePermissionRequest } from "@zcode/shared";
+import { TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER } from "@zcode/shared/test-ids";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

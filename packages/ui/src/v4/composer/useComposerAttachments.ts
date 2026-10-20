@@ -106,6 +106,8 @@ export interface ComposerAttachmentsApi {
   retryAttachment: (id: string) => void;
   /** After a successful send, clear only the frozen attachment IDs; omit to explicitly clear the whole attachment area. */
   clearAttachments: (attachmentIds?: readonly string[]) => void;
+  /** Re-prepare draft attachments when the draft moves to another workspace; never inherit upload refs from the old session. */
+  restoreDraftAttachments: (attachments: readonly ChatComposerAttachment[]) => void;
   /** Restore queue refs already owned by the session as ready chips without triggering upload/adopt. */
   restoreSessionOwnedAttachments: (attachments: readonly AttachmentRef[]) => boolean;
   /** Return only ready refs; return null as a second submit gate if any attachment is not ready. */
@@ -1017,6 +1019,24 @@ export function useComposerAttachments(
     [commitScope, scopeKey],
   );
 
+  const restoreDraftAttachments = useCallback(
+    (source: readonly ChatComposerAttachment[]) => {
+      // 新项目可能使用另一 Host/session；保留原始 File/路径，重新生成预览和上传归属。
+      const restored = source.map((item) => ({
+        sourceKind: item.sourceKind,
+        messageCount: item.messageCount,
+        lineCount: item.lineCount,
+        charCount: item.charCount,
+        ...(item.file
+          ? createChatComposerAttachment(item.file, item.localPath)
+          : createChatComposerPathAttachment(item.localPath!)),
+      }));
+      clearAttachments();
+      addPreparedAttachments(restored);
+    },
+    [addPreparedAttachments, clearAttachments],
+  );
+
   const restoreSessionOwnedAttachments = useCallback(
     (attachmentRefs: readonly AttachmentRef[]): boolean => {
       if (attachmentRefs.length === 0) return true;
@@ -1139,6 +1159,7 @@ export function useComposerAttachments(
       removeAttachment,
       retryAttachment,
       clearAttachments,
+      restoreDraftAttachments,
       restoreSessionOwnedAttachments,
       prepareForSend,
       reuploadForSession,
@@ -1153,6 +1174,7 @@ export function useComposerAttachments(
       attachments,
       composerDragKind,
       clearAttachments,
+      restoreDraftAttachments,
       restoreSessionOwnedAttachments,
       handleAttachmentInputChange,
       handleDragLeaveComposer,

@@ -92,7 +92,10 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
       description: "手机端连接没有及时恢复，当前页面暂时无法继续同步远程控制。",
       detailLabel: "恢复详情",
       nextStepsTitle: "下一步",
-      nextSteps: ["保持手机网络可用后重试。", "如果仍无法恢复，再回到桌面端重新开启 Web 远程控制。"],
+      nextSteps: [
+        "保持手机网络可用后重试。",
+        "如果仍无法恢复，再回到桌面端重新开启 Web 远程控制。",
+      ],
       action: "重试",
     },
     "relay-unavailable": {
@@ -114,6 +117,27 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
       nextStepsTitle: "下一步",
       nextSteps: ["先在桌面端打开目标工作区。", "再从手机端选择这个工作区。"],
       action: "重新加载",
+    },
+    // TEMPORARY relay-decision entries: the shared reason union carries these placeholders until the relay decision.
+    "device-not-owned": {
+      tone: "danger",
+      badge: "设备未授权",
+      title: "设备未授权",
+      description: "此手机未获得该桌面端的授权。",
+      detailLabel: "错误详情",
+      nextStepsTitle: "下一步",
+      nextSteps: ["请在桌面端重新配对此手机。"],
+      action: "重试",
+    },
+    "auth-required": {
+      tone: "warning",
+      badge: "需要登录",
+      title: "需要登录",
+      description: "请重新登录后继续使用 Web 远程控制。",
+      detailLabel: "错误详情",
+      nextStepsTitle: "下一步",
+      nextSteps: ["请在桌面端登录后重新生成二维码。"],
+      action: "重试",
     },
     "unexpected-error": {
       tone: "danger",
@@ -145,7 +169,10 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
       description: "This remote control session expired or was closed from desktop.",
       detailLabel: "Close reason",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Start Web remote control again on desktop.", "Open the workspace from a new link."],
+      nextSteps: [
+        "Start Web remote control again on desktop.",
+        "Open the workspace from a new link.",
+      ],
       action: "Reload",
     },
     "session-conflict": {
@@ -156,14 +183,18 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
         "Another remote control device connected and replaced this phone. Only one mobile controller can stay active at a time.",
       detailLabel: "Relay detail",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Continue on the newer device.", "Scan the desktop QR code again to use this phone."],
+      nextSteps: [
+        "Continue on the newer device.",
+        "Scan the desktop QR code again to use this phone.",
+      ],
       action: "Try Again",
     },
     "workspace-closed": {
       tone: "neutral",
       badge: "Workspace closed",
       title: "Workspace Closed",
-      description: "The shared workspace was closed on desktop, so this phone can no longer access it.",
+      description:
+        "The shared workspace was closed on desktop, so this phone can no longer access it.",
       detailLabel: "Desktop detail",
       nextStepsTitle: "Next steps",
       nextSteps: ["Reopen the target workspace on desktop.", "Start Web remote control again."],
@@ -177,18 +208,23 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
         "The desktop side disconnected. This phone can no longer control the desktop workspace.",
       detailLabel: "Relay detail",
       nextStepsTitle: "What happened",
-      nextSteps: ["Make sure ZCode is still running and online on desktop.", "Start Web remote control again from desktop."],
+      nextSteps: [
+        "Make sure ZCode is still running and online on desktop.",
+        "Start Web remote control again from desktop.",
+      ],
       action: "Try Again",
     },
     "invalid-mobile-connection": {
       tone: "warning",
       badge: "Invalid connection",
       title: "Mobile Connection Invalid",
-      description:
-        "The QR parameters or authentication proof for this page are no longer valid.",
+      description: "The QR parameters or authentication proof for this page are no longer valid.",
       detailLabel: "Failure detail",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Do not reuse an old screenshot or copied link.", "Scan the latest desktop QR code."],
+      nextSteps: [
+        "Do not reuse an old screenshot or copied link.",
+        "Scan the latest desktop QR code.",
+      ],
       action: "Try Again",
     },
     "desktop-bootstrap-timeout": {
@@ -199,7 +235,10 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
         "This phone reached the relay, but desktop did not return workspace data in time.",
       detailLabel: "Timeout detail",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Check that desktop is not asleep or waiting for confirmation.", "Keep both devices online and retry."],
+      nextSteps: [
+        "Check that desktop is not asleep or waiting for confirmation.",
+        "Keep both devices online and retry.",
+      ],
       action: "Retry",
     },
     "connection-recovery-timeout": {
@@ -210,7 +249,10 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
         "This phone did not recover its remote control connection in time, so the current page cannot keep syncing yet.",
       detailLabel: "Recovery detail",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Keep the phone network available and retry.", "If it still cannot recover, start Web remote control again from desktop."],
+      nextSteps: [
+        "Keep the phone network available and retry.",
+        "If it still cannot recover, start Web remote control again from desktop.",
+      ],
       action: "Retry",
     },
     "relay-unavailable": {
@@ -230,8 +272,32 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
       description: "Web remote control can only access workspaces already open on desktop.",
       detailLabel: "Limitation",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Open the target workspace on desktop first.", "Select it from this phone afterward."],
+      nextSteps: [
+        "Open the target workspace on desktop first.",
+        "Select it from this phone afterward.",
+      ],
       action: "Reload",
+    },
+    // TEMPORARY relay-decision entries: the shared reason union carries these placeholders until the relay decision.
+    "device-not-owned": {
+      tone: "danger",
+      badge: "Device not owned",
+      title: "Device Not Authorized",
+      description: "This phone is not authorized for this desktop.",
+      detailLabel: "Error detail",
+      nextStepsTitle: "Next steps",
+      nextSteps: ["Pair this phone again from the desktop."],
+      action: "Retry",
+    },
+    "auth-required": {
+      tone: "warning",
+      badge: "Sign-in required",
+      title: "Sign-in Required",
+      description: "Sign in again to continue with Web remote control.",
+      detailLabel: "Error detail",
+      nextStepsTitle: "Next steps",
+      nextSteps: ["Sign in on the desktop, then generate a new QR code."],
+      action: "Retry",
     },
     "unexpected-error": {
       tone: "danger",
@@ -240,7 +306,10 @@ const WEB_REMOTE_CONTROL_SCREEN_COPY = {
       description: "An unexpected error occurred while opening Web remote control.",
       detailLabel: "Error detail",
       nextStepsTitle: "Next steps",
-      nextSteps: ["Refresh this page once.", "If it still fails, generate a new QR code on desktop."],
+      nextSteps: [
+        "Refresh this page once.",
+        "If it still fails, generate a new QR code on desktop.",
+      ],
       action: "Retry",
     },
   },
@@ -319,9 +388,7 @@ export function WebRemoteControlFailureScreen({
               <span className="min-w-0 truncate">{copy.badge}</span>
             </div>
             <h1 className="text-ui-lg font-medium text-foreground">{copy.title}</h1>
-            <p className="mt-2 text-ui-xs leading-6 text-foreground-subtle">
-              {copy.description}
-            </p>
+            <p className="mt-2 text-ui-xs leading-6 text-foreground-subtle">{copy.description}</p>
           </div>
         </div>
 

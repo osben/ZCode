@@ -3,6 +3,8 @@
 
 /** Coordinates of the project owning the workflow; use for conversations (run / revise / create) and opening an instance, never the active project. */
 export type SavedWorkflowProjectTarget = {
+  projectId?: string | null;
+  hostId?: string;
   workspacePath: string;
   workspaceIdentity?: string;
 };

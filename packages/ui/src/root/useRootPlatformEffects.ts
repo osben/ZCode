@@ -1,18 +1,22 @@
-/* oxlint-disable eslint(max-lines) -- Platform events and share imports share one lifecycle. */
+/* oxlint-disable eslint(max-lines) -- 平台事件和分享导入共用同一生命周期。 */
+import { getConversationShareErrorDetails } from "@/lib/conversationShareError.js";
 import { useEffect, useRef, useState } from "react";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import type { IPlatformService } from "@zcode/shared";
+import type { CreateTaskOptions } from "@/app-shell/types.js";
+import type { IPlatformService, ZCodeTaskClientMode } from "@zcode/shared";
+import { readV4ComposerDraft, V4_DRAFT_SCOPE_ROOT } from "@/v4/composer/composerDraftStore.js";
+import { readComposerWorkspaceScope } from "@/v4/composer/composerDraftStore.js";
+import { useComposerClientNamespace } from "@/hooks/useServices.js";
 import { isWorkspaceTab, type TabStoreState, type WindowTabState } from "@/store/tabStore.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { logger } from "@/logger.js";
-import { seedImportedSessionDraft } from "@/v4/composer/newTaskDraft.js";
+import { resolveImportedComposerConfig } from "@/v4/composer/newTaskDraft.js";
 import { dismissToast, toast, updateToast } from "@/components/ui/toast.js";
 import { matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
 import { isShortcutRecordingActive } from "@/shortcuts/bindings.js";
 import { isRendererReloadNavigation } from "@/lib/rendererNavigation.js";
 import {
-  buildConnectedRemoteWorkspaceSessionTargets,
-  buildWebRemoteControlWorkspaceTargets,
+  useWebRemoteControlWorkspaceSync,
   shouldPublishCompleteWorkspaceSnapshot,
 } from "@/root/rootPlatformWorkspaceSync.js";
 import { useOptionalBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
@@ -29,6 +33,8 @@ export function useRootPlatformEffects({
   initialWorkspaceIdentity,
   initialWorkspacePurpose,
   initialTaskId,
+  initialTaskDraft,
+  clientMode = "desktop-continuous",
   canBootstrapInitialWorkspace = true,
   addTab,
   setIsBootstrappingInitialWorkspace,
@@ -47,9 +53,7 @@ export function useRootPlatformEffects({
   activeWorkspaceIdentity,
   reconnectingRemoteWorkspaceKeys = [],
   remoteWorkspaceErrorByWorkspaceKey = {},
-  totalUnreadTaskCount,
   webRemoteControlFeatureEnabled = false,
-  webRemoteControlSessionActive = false,
   hasCompletedFullTabRestore = true,
   intl,
   isRestoringOAuthSession,
@@ -58,6 +62,8 @@ export function useRootPlatformEffects({
   initialWorkspaceIdentity?: string;
   initialWorkspacePurpose?: import("@zcode/shared").WorkspacePurpose;
   initialTaskId?: string;
+  initialTaskDraft?: CreateTaskOptions;
+  clientMode?: ZCodeTaskClientMode;
   canBootstrapInitialWorkspace?: boolean;
   addTab: (
     workspacePath: string,
@@ -69,7 +75,11 @@ export function useRootPlatformEffects({
   setIsBootstrappingInitialWorkspace: (value: boolean) => void;
   platform: IPlatformService;
   activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
-  startDraftInWorkspace: (workspacePath: string, workspaceIdentity?: string) => void;
+  startDraftInWorkspace: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+    options?: CreateTaskOptions,
+  ) => void;
   startNewTaskFromActiveWorkspace: (source: string) => void;
   openWorkspace: () => void;
   openWorkspacePath: (workspacePath: string) => void | Promise<void>;
@@ -82,9 +92,7 @@ export function useRootPlatformEffects({
   activeWorkspaceIdentity?: string | null;
   reconnectingRemoteWorkspaceKeys?: string[];
   remoteWorkspaceErrorByWorkspaceKey?: Record<string, string>;
-  totalUnreadTaskCount: number;
   webRemoteControlFeatureEnabled?: boolean;
-  webRemoteControlSessionActive?: boolean;
   hasCompletedFullTabRestore?: boolean;
   intl: ReturnType<typeof import("@/i18n/IntlProvider.js").useZCodeIntl>["intl"];
   isRestoringOAuthSession: boolean;
@@ -93,20 +101,44 @@ export function useRootPlatformEffects({
   const baseServices = useOptionalBaseWorkspaceServices();
   const pendingShareImportRef = useRef<ShareImportIntent | null>(null);
   const [shareImportRevision, setShareImportRevision] = useState(0);
+  const composerClientNamespace = useComposerClientNamespace();
   const activeShareImportRef = useRef<ShareImportIntent | null>(null);
   const importOperationRef = useRef<string | null>(null);
   const lastImportProgressToastRef = useRef<{ phase: string; at: number } | null>(null);
   const importToastIdRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // At startup, check the local OAuth session before restoring history/the initial workspace.
-    // If addTab runs first here, signed-out users briefly see the main UI before the login page covers it.
+    // 启动时必须先判断 OAuth 本地会话，再恢复历史/初始 workspace。
+    // 如果这里抢先 addTab，未登录用户会先看到主界面，之后才被登录页覆盖。
     if (!canBootstrapInitialWorkspace || didBootstrapInitialWorkspaceRef.current) {
       return;
     }
 
     didBootstrapInitialWorkspaceRef.current = true;
     if (initialWorkspaceAbsPath) {
+      const savedScope = readComposerWorkspaceScope(
+        initialWorkspaceAbsPath,
+        initialWorkspaceIdentity,
+        composerClientNamespace,
+      );
+      // 手机重建 Root 时 bridge 只有地址；项目意图随已有浏览器草稿恢复，先于 prewarm。
+      const savedDraft =
+        clientMode === "web-remote-replayable" && !initialTaskId && !initialTaskDraft
+          ? readV4ComposerDraft(
+              initialWorkspaceAbsPath,
+              initialWorkspaceIdentity,
+              V4_DRAFT_SCOPE_ROOT,
+              savedScope,
+            )
+          : null;
+      const draftIntent =
+        initialTaskDraft ??
+        (savedScope
+          ? { projectId: savedScope.projectId, taskGroupId: savedDraft?.taskGroupId }
+          : undefined) ??
+        (savedDraft?.projectId !== undefined
+          ? { projectId: savedDraft.projectId, taskGroupId: savedDraft.taskGroupId }
+          : undefined);
       addTab(
         initialWorkspaceAbsPath,
         initialWorkspaceIdentity || initialWorkspacePurpose
@@ -120,22 +152,25 @@ export function useRootPlatformEffects({
         useZCodeSessionStore
           .getState()
           .setActiveTaskId(initialWorkspaceAbsPath, initialTaskId, initialWorkspaceIdentity);
-      } else if (!isRendererReloadNavigation()) {
-        // The initial workspace injected by main only identifies the workspace entry point; without an explicit taskId,
-        // a cold app launch must open a draft and must not let renderer-local last-session/group/pane
-        // restore a historical session. A reload of the same renderer retains eligibility to resume the current session.
-        startDraftInWorkspace(initialWorkspaceAbsPath, initialWorkspaceIdentity);
+      } else if (draftIntent || !isRendererReloadNavigation()) {
+        // 修复原因：main 注入 initial workspace 只表达工作区入口；没有显式 taskId
+        // 的 app 冷启动必须进入草稿，不能让 renderer-local last-session/group/pane
+        // 抢回历史会话；同一 renderer reload 则保留当前 session 续流资格。
+        startDraftInWorkspace(initialWorkspaceAbsPath, initialWorkspaceIdentity, draftIntent);
       }
     }
-    // Recent projects from the Dock navigate directly to a workspace through initialWorkspaceAbsPath.
-    // If the first screen still renders a default empty tab once, the window briefly shows the workspace loading page,
-    // then adds the target workspace asynchronously, looking like it opened the wrong page before redirecting.
-    // Include initial workspace injection in the startup guard and render the full content only after the first tab is ready.
+    // Dock 最近项目会通过 initialWorkspaceAbsPath 直达工作区。
+    // 如果这里仍然等首屏先按默认空 tab 渲染一次，窗口会先闪出打开工作区中间页，
+    // 再异步补上目标 workspace，视觉上像是“打开错页再跳转”。
+    // 这里把初始工作区注入也纳入启动保护期，等首个 tab 准备好后再渲染正式内容。
     setIsBootstrappingInitialWorkspace(false);
   }, [
     addTab,
     canBootstrapInitialWorkspace,
     initialTaskId,
+    initialTaskDraft,
+    composerClientNamespace,
+    clientMode,
     initialWorkspaceAbsPath,
     initialWorkspaceIdentity,
     initialWorkspacePurpose,
@@ -147,16 +182,16 @@ export function useRootPlatformEffects({
     const disposeFocusTab = platform.onFocusTab((path: string) => {
       logger.info("[Root] onFocusTab:", path);
       if (activateTabByPath(path)) {
-        // System workspace focus is workspace-only navigation; task notifications have a separate
-        // explicit taskId path, so do not implicitly restore the last selected session for this workspace here.
+        // 系统 workspace focus 是 workspace-only 导航；任务通知另有
+        // 显式 taskId 路径，不能在这里隐式恢复这个 workspace 上次选中的 session。
         startDraftInWorkspace(path);
       }
     });
     const disposeNewTab = platform.onNewTab(() => {
       logger.info("[Root] onNewTab");
       setWorkspaceActionError(null);
-      // New tabs used to open the workspace loading page, so startup and shortcuts could both land there.
-      // New-tab behavior is now consistently “open workspace”; Root chooses the directory picker or falls back to the default workspace.
+      // 新标签过去会打开工作区中间页，导致启动/快捷键都可能进入中间页。
+      // 现在新标签语义收敛为“打开工作区”动作，由 Root 决定目录选择或默认 workspace 兜底。
       openWorkspace();
     });
     const disposeNewTask = platform.onNewTask(() => {
@@ -174,9 +209,9 @@ export function useRootPlatformEffects({
           }
 
           logger.info("[Root] onOpenWorkspacePath:", path);
-          // The system-service deep link matches the Open folder action above the input.
-          // Reuse handleSelectProject here instead of adding the path as a chat attachment, preserving tab deduplication,
-          // cross-window activation, recentProjects updates, and other existing behavior for manually opened folders.
+          // 系统服务 deep link 对应输入框上方 Open folder 语义。
+          // 这里复用 handleSelectProject，而不是把路径作为聊天附件，才能保留 tab 去重、
+          // 跨窗口激活和 recentProjects 更新这些手动打开文件夹的既有行为。
           openWorkspacePath(path);
         })
       : () => {};
@@ -230,7 +265,7 @@ export function useRootPlatformEffects({
       : () => {};
     const disposeNotificationClick = platform.onTaskNotificationClick((taskId: string) => {
       logger.info("[Root] onTaskNotificationClick:", taskId);
-      // Search all workspaces for the one containing taskId, then activate its tab and switch to the task.
+      // 遍历所有 workspace 找到 taskId 所属的 workspace，然后激活对应 tab 并切换任务
       const workspaces = useZCodeSessionStore.getState().workspaces;
       for (const [workspacePath, workspaceState] of Object.entries(workspaces)) {
         const taskMeta = workspaceState.taskListCache?.find((task) => task.taskId === taskId);
@@ -238,8 +273,8 @@ export function useRootPlatformEffects({
         if (hasTask) {
           const targetWorkspacePath = taskMeta?.workspacePath ?? workspacePath;
           const targetWorkspaceIdentity = taskMeta?.workspaceIdentity;
-          // A notification click looks up the task through the global workspace store.
-          // Activate and select remote tasks using workspaceIdentity from task metadata; otherwise they fall into a path-only bucket.
+          // 通知点击会从全局 workspace store 反查 task。
+          // 远端任务必须用 task meta 自带的 workspaceIdentity 激活和选中，否则会落到 path-only 桶。
           activateTabByPath(
             targetWorkspacePath,
             targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : undefined,
@@ -319,8 +354,8 @@ export function useRootPlatformEffects({
       return;
     }
 
-    // The share-page deep link must not branch on login state in Root; both signed-out and signed-in users
-    // use the same continuation/import flow. The API itself determines whether a public share can be imported.
+    // 分享页 Deep Link 不应在 Root 层按登录态分叉；未登录与已登录都
+    // 走同一份 continuation/import 流程。公开可导入分享由接口自身决定是否可用。
     pending.status = "importing";
     pendingShareImportRef.current = null;
     activeShareImportRef.current = pending;
@@ -344,8 +379,8 @@ export function useRootPlatformEffects({
       ) {
         return;
       }
-      // complete means only that the import transaction has settled; the success result replaces the progress notice below,
-      // avoiding two consecutive success toasts: “Import complete” followed by “Imported from share.”
+      // complete 只表示导入事务已经收口；成功结果会在下方统一替换进度提示，避免短暂闪过
+      // “导入完成”后又紧接着出现“已从分享导入”的两条成功 Toast。
       if (progress.phase === "complete") {
         return;
       }
@@ -393,8 +428,8 @@ export function useRootPlatformEffects({
       )
       .then((result) => {
         pending.status = "complete";
-        // Prepare a separate draft in the workspace where the import will land before activating it; importing into an existing session does not override its selection.
-        seedImportedSessionDraft(result);
+        // 先准备实际落地工作区的独立草稿，再激活；复用导入不覆盖会话选择。
+        const composerConfig = resolveImportedComposerConfig(result, composerClientNamespace);
         const activated = activateTabByPath(
           result.workspacePath,
           result.workspaceIdentity ? { workspaceIdentity: result.workspaceIdentity } : undefined,
@@ -410,16 +445,17 @@ export function useRootPlatformEffects({
           result.workspacePath,
           result.sessionId,
           result.workspaceIdentity,
+          composerConfig,
         );
-        // Import may reuse the currently open session; setActiveTaskId alone does not produce an observable switch.
-        // Explicitly send a navigation request on every success; the target pane consumes it after the share content is ready.
+        // 导入可能复用当前已打开的 session；仅 setActiveTaskId 不会产生可观察的切换。
+        // 每次成功都显式发出一次定位请求，目标 pane 准备好分享内容后再消费。
         sessionStore.requestTimelineBottom(
           result.workspacePath,
           result.sessionId,
           result.workspaceIdentity,
         );
-        // A fallback import lands in a different workspace than the one the user is viewing. Explain where it landed and why it fell back,
-        // or the user will only see that the conversation “moved somewhere else.”
+        // 回退过的导入会落在与用户当前所看不同的 workspace，必须讲清落在哪、为何回退，
+        // 否则用户只会看到会话“跑到别处去了”。
         const resultMessage = result.fallbackReason
           ? intl.formatMessage(
               {
@@ -458,7 +494,11 @@ export function useRootPlatformEffects({
           typeof firstIssueRecord?.artifactDisplayName === "string"
             ? firstIssueRecord.artifactDisplayName
             : undefined;
+        const diagnostics = getConversationShareErrorDetails(error);
         logger.warn("[Root] share import failed", {
+          status: diagnostics.status,
+          code: diagnostics.code,
+          requestId: diagnostics.requestId,
           operationId,
           clientRequestId: pending.clientRequestId,
           kind,
@@ -515,6 +555,7 @@ export function useRootPlatformEffects({
     isRestoringOAuthSession,
     locale,
     shareImportRevision,
+    composerClientNamespace,
   ]);
 
   useEffect(() => {
@@ -524,51 +565,23 @@ export function useRootPlatformEffects({
 
     const paths = tabs
       .filter(isWorkspaceTab)
-      // Remote workspaces now restore at startup as “disconnected placeholder tabs.”
-      // These tabs have no remoteSessionId but are still remote sessions; do not sync them as local paths to the main-process window list.
-      // Filter using the full remote identity fields to avoid syncing remote paths as local window tabs.
+      // 启动期远程 workspace 现在会先以“断开占位 tab”恢复，
+      // 这些 tab 没有 remoteSessionId，但本质仍是远程会话，不能当成本地路径同步给主进程窗口列表。
+      // 这里改成按完整远程身份字段过滤，避免把远程路径误同步到本地窗口标签。
       .filter((tab) => !tab.remoteSessionId && !tab.workspaceIdentity && !tab.remoteTarget)
       .map((tab) => tab.workspacePath);
     platform.syncWindowTabs(paths);
   }, [hasCompletedFullTabRestore, isDesktop, platform, tabs]);
 
-  useEffect(() => {
-    if (
-      !isDesktop ||
-      !shouldPublishCompleteWorkspaceSnapshot(hasCompletedFullTabRestore) ||
-      !platform.syncWebRemoteControlWorkspaces
-    ) {
-      return;
-    }
-
-    const connectedRemoteWorkspaces = buildConnectedRemoteWorkspaceSessionTargets({ tabs });
-    if (connectedRemoteWorkspaces.length > 0) {
-      // Bugfix: Bot remote-connection status checks depend on the remoteSessionId -> workspaceIdentity binding in the main process.
-      // This binding previously reused Web remote-control workspace sync, which does not run when Web remote control is off. The UI then showed connected while Bot incorrectly reported disconnected.
-      platform.syncWebRemoteControlWorkspaces(connectedRemoteWorkspaces);
-    }
-
-    if (!webRemoteControlFeatureEnabled || !webRemoteControlSessionActive) {
-      return;
-    }
-
-    const workspaces = buildWebRemoteControlWorkspaceTargets({
-      tabs,
-      reconnectingRemoteWorkspaceKeys,
-      remoteWorkspaceErrorByWorkspaceKey,
-    });
-
-    platform.syncWebRemoteControlWorkspaces(workspaces);
-  }, [
-    hasCompletedFullTabRestore,
-    isDesktop,
+  useWebRemoteControlWorkspaceSync({
     platform,
+    tabs,
+    isDesktop: Boolean(isDesktop),
+    featureEnabled: webRemoteControlFeatureEnabled,
+    hasCompletedFullTabRestore,
     reconnectingRemoteWorkspaceKeys,
     remoteWorkspaceErrorByWorkspaceKey,
-    tabs,
-    webRemoteControlFeatureEnabled,
-    webRemoteControlSessionActive,
-  ]);
+  });
 
   useEffect(() => {
     if (isDesktop) {
@@ -576,8 +589,8 @@ export function useRootPlatformEffects({
     }
 
     function handleWindowKeydown(event: KeyboardEvent) {
-      // The recorder exclusively owns the keyboard while recording. This listener registers before the recorder listener (same capture phase),
-      // so without short-circuiting it, pressing Cmd/Ctrl+N or O during recording would actually create a task/open a workspace.
+      // 录制态键盘归录制器独占。本监听先于录制监听注册（同 capture 阶段），
+      // 不短路的话录制期按 Cmd/Ctrl+N、O 预览会真实触发新建任务/打开工作区。
       if (isShortcutRecordingActive()) {
         return;
       }
@@ -588,10 +601,10 @@ export function useRootPlatformEffects({
         return;
       }
 
-      // Web has no host menu, so add a best-effort keyboard listener that uses the platform's primary modifier and the same root actions.
-      // Coupling detail: use the default keys (Ctrl/Cmd+N, +O) because menu-channel commands are not configurable on Web
-      // (disabled in settings). If Web menu-channel rebinding is enabled later,
-      // this must read the effective shortcut map or customized keys will behave differently on Web.
+      // Web 端没有宿主菜单，补一层 best-effort 键盘监听，按平台主修饰键落到同一套根级动作。
+      // 耦合说明：这里固定使用默认键位（Ctrl/Cmd+N、+O），与「menu 通道命令在 Web 端不可配置」
+      // （设置页置灰）配套——若未来放开 Web 端 menu 通道改键，
+      // 此处必须改为读快捷键生效表，否则用户改键后 Web 行为会分裂。
       event.preventDefault();
       if (isOpenWorkspaceShortcut) {
         openWorkspace();
@@ -614,9 +627,9 @@ export function useRootPlatformEffects({
 
     let disposed = false;
 
-    // Native menu copy was previously hard-coded in the main process, so changing locale in the renderer updated only the React title-bar menu.
-    // The desktop then showed two languages at once, and Help feedback/log export could not follow the current locale.
-    // Explicitly sync the current locale to main so native and title-bar menus are rebuilt from the same language state.
+    // 原生菜单文案之前在 main 进程里写死，renderer 切换 locale 只会更新 React 标题栏菜单。
+    // 结果就是桌面端会同时出现两套语言，Help 里的反馈/导出日志也无法跟随当前语言切换。
+    // 这里把当前 locale 主动同步给 main，让原生菜单和标题栏菜单都从同一份语言状态重建。
     platform.setApplicationLocale(locale).catch((error) => {
       if (disposed) {
         return;
@@ -628,12 +641,6 @@ export function useRootPlatformEffects({
       disposed = true;
     };
   }, [isDesktop, locale, platform]);
-
-  useEffect(() => {
-    // The first Dock badge version counts only tasks completed in the background that have not been opened.
-    // Failure dots and permission tags retain their own UI semantics instead of mixing into a generic platform alert count.
-    platform.syncWindowUnreadCount(totalUnreadTaskCount);
-  }, [platform, totalUnreadTaskCount]);
 
   const activeTabId = useTabStore((state: TabStoreState) => state.activeTabId);
   const activeTabCandidate = useTabStore((state: TabStoreState) =>

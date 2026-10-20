@@ -1,7 +1,7 @@
 import { createElement } from "react";
-
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Button } from "@/components/ui/button.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";

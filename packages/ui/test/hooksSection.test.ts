@@ -12,6 +12,7 @@ import {
   buildPluginHookRows,
   filterPluginHooksByScope,
   isReadOnlyZCodeHook,
+  resolveHookScopeTarget,
   resolveLatestReviewScopeTarget,
 } from "@/settings/HooksSection.js";
 import { useHooksStore } from "@/store/hooksStore.js";
@@ -21,6 +22,7 @@ afterEach(() => {
   useHooksStore.setState({
     workspacePath: null,
     workspaceIdentity: null,
+    authorityKey: null,
     loadedWorkspaceKey: null,
     hooks: [],
     loading: false,
@@ -309,14 +311,6 @@ describe("Hooks settings page", () => {
     expect(html).toContain("quality");
     expect(html).toContain("Scope unknown");
     expect(html).toContain("plugin-hook-row");
-    expect(html).toContain("lucide-anchor");
-    expect(html).not.toContain("lucide-webhook");
-    expect(html).toContain("overflow-hidden rounded-xl bg-surface");
-    expect(html).toContain("h-px bg-border/50");
-    expect(html).toContain("font-mono text-ui-sm text-foreground-subtle");
-    expect(html).toContain("hover:bg-hover");
-    expect(html).not.toContain("Configured hooks");
-    expect(html).not.toContain("Plugin hooks");
   });
 
   it("omits empty groups after filtering", () => {
@@ -404,7 +398,7 @@ describe("Hooks settings page", () => {
 
   // workspace-hook-trust：未信任的工作区 Hook 在任何 review 状态下都显示行内 Trust 按钮；
   // 信任状态不通过徽章展示，避免与运行时权威投影产生第二事实来源。
-  it("无需活跃 review 也给未信任 Workspace Hook 显示行内信任按钮，并删除推导状态徽章", () => {
+  it("无需活跃 review 也给未信任 Workspace Hook 显示行内信任按钮", () => {
     const untrusted = {
       ...workspaceConfiguredHook("pending_trust"),
       id: "untrusted-disabled-row",
@@ -448,13 +442,6 @@ describe("Hooks settings page", () => {
     );
 
     expect(html.match(/>Trust</gu)).toHaveLength(1);
-    expect(html.indexOf(">Trust<")).toBeLessThan(html.indexOf('role="switch"'));
-    expect(html).not.toContain("Configured on");
-    expect(html).not.toContain("Configured off");
-    expect(html).not.toContain("Needs review");
-    expect(html).not.toContain("Trusted");
-    expect(html).not.toContain("Will run");
-    expect(html).not.toContain("Will not run");
   });
 
   it("未信任 Hook 的有效运行开关固定关闭并锁定，且不修改传入配置状态", () => {

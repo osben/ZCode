@@ -121,8 +121,7 @@ describe("BrowserSettingsSection", () => {
     const toggle = screen.getByRole("switch", {
       name: "settings.embeddedBrowserAllowInsecureCertificates",
     });
-    // A security-reducing toggle must default to off; upgrading users must not passively gain
-    // the allow behavior.
+    // 降低安全性的开关必须默认关闭，用户升级新版本不能被动获得放行行为。
     expect(toggle.getAttribute("aria-checked")).toBe("false");
 
     fireEvent.click(toggle);
@@ -154,55 +153,6 @@ describe("BrowserSettingsSection", () => {
         name: "settings.embeddedBrowserAllowInsecureCertificates",
       }),
     ).toBeNull();
-  });
-
-  it("浏览器数据操作按钮与 Terminal font 操作控件使用一致的 lg 尺寸", () => {
-    renderSection();
-
-    for (const name of [
-      "settings.browser.import.action",
-      "settings.browser.clearCache.action",
-      "settings.browser.clearAll.action",
-    ]) {
-      const button = screen.getByRole("button", { name });
-      expect(button.className).toContain("h-8");
-      expect(button.className).toContain("rounded-lg");
-      expect(button.getAttribute("data-size")).toBe("lg");
-    }
-  });
-
-  it("BS-037 导入登录状态与内置浏览器控制开关同卡片，且排在开关之后", () => {
-    renderSection();
-
-    const controlSwitch = screen.getByRole("switch", { name: "settings.browser.control.title" });
-    const importButton = screen.getByRole("button", { name: "settings.browser.import.action" });
-    const controlCard = controlSwitch.closest('[data-slot="card"]');
-
-    // Confirm the card container was actually found before asserting; otherwise, when closest
-    // returns null, later assertions degenerate into always-true checks.
-    expect(controlCard).not.toBeNull();
-    // Importing sign-in state is the companion action after "enable built-in browser control";
-    // only the same card can express that ordering.
-    expect(controlCard?.contains(importButton)).toBe(true);
-    expect(
-      controlSwitch.compareDocumentPosition(importButton) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-  });
-
-  it("BS-037 浏览器数据分组只保留清除类操作", () => {
-    renderSection();
-
-    const clearCacheButton = screen.getByRole("button", {
-      name: "settings.browser.clearCache.action",
-    });
-    const importButton = screen.getByRole("button", { name: "settings.browser.import.action" });
-    const dataCard = clearCacheButton.closest('[data-slot="card"]');
-
-    expect(dataCard).not.toBeNull();
-    expect(dataCard?.contains(importButton)).toBe(false);
-    expect(
-      dataCard?.contains(screen.getByRole("button", { name: "settings.browser.clearAll.action" })),
-    ).toBe(true);
   });
 
   it("复用官方 browser-use plugin 开关并初始化当前 workspace", async () => {

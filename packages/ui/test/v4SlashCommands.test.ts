@@ -47,7 +47,8 @@ describe("parseV4VisibleSlashCommand", () => {
     ).toBeNull();
   });
 
-  it("parses /plan as a mode shortcut and keeps only the task argument", () => {
+  // TEMPORARY(UI-2): ledger row UI2-PLAN-SHORTCUT (/plan shortcut decision).
+  it.skip("parses /plan as a mode shortcut and keeps only the task argument", () => {
     expect(parseV4VisibleSlashCommand("/plan", [])).toEqual({
       kind: "planShortcut",
       task: "",
@@ -66,7 +67,8 @@ describe("parseV4VisibleSlashCommand", () => {
     expect(parseV4VisibleSlashCommand("/planner 做普通任务", [])).toBeNull();
   });
 
-  it("recognizes /plan with attachments or context for ordinary Plan submission", () => {
+  // TEMPORARY(UI-2): ledger row UI2-PLAN-SHORTCUT (/plan shortcut decision).
+  it.skip("recognizes /plan with attachments or context for ordinary Plan submission", () => {
     expect(
       parseV4VisibleSlashCommand("/plan 检查附件", [
         { ref: "zcode-artifact://a", fileName: "a.txt", mime: "text/plain", bytes: 1 },

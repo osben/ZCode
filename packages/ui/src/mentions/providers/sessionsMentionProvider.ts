@@ -1,35 +1,15 @@
-// Composer parity: `#` the session candidate data source moved from the old zcodeSessionStore/taskQueryCache/remote*
-// store to the v4 sessions index (useWorkspaceSessionsIndexItems, shared with the sidebar).
-// The old store is no longer populated by the session list under the v4 shell, so reading it would show an empty panel; serialization and sorting semantics are unchanged
-// (collectSessionMentionItems remains for unit tests and aggregation reuse).
-import { useMemo } from "react";
-import type { IServiceAccessor } from "@zcode/services";
+import { useEffect, useMemo, useState } from "react";
+import type { ProjectTree } from "@zcode/services";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
 import { buildSessionMentionMarkdown } from "@/mentions/mentionMarkdown.js";
 import { filterMentionItemsWithOptions } from "@/mentions/mentionSearch.js";
 import type { MentionCategoryResult, MentionItem } from "@/mentions/mentionTypes.js";
 import type { SessionMentionWorkspaceScope } from "@/mentions/mentionPanelRouting.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import {
-  useBaseWorkspaceServices,
-  useWorkspaceServicesResolution,
-} from "@/hooks/useWorkspaceServices.js";
-import {
-  resolveWorkspaceServices,
-  type WorkspaceServiceResolverState,
-} from "@/lib/workspaceServiceResolver.js";
-import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
-import { useTabStore } from "@/store/TabStoreProvider.js";
-import { isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
-import {
-  useWorkspaceSessionsIndexItems,
-  type WorkspaceSessionsIndexScope,
-} from "@/v4/useWorkspaceSessionsIndexItems.js";
-
-const HASH_SESSION_MENTION_LIMIT_PER_WORKSPACE = 20;
+import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 
 interface SessionMentionItem extends MentionItem {
-  /** Bucket only during candidate aggregation; do not write this to a Lexical node or canonical mention. */
+  /** 只在候选聚合阶段分桶，不写入 Lexical node 或 canonical mention。 */
   workspaceKey: string;
 }
 
@@ -110,82 +90,6 @@ export function collectSessionMentionItems(
     .map((task) => mapTaskToMentionItem(task, provider));
 }
 
-function limitSessionMentionItemsPerWorkspace(items: SessionMentionItem[]): SessionMentionItem[] {
-  const itemCountByWorkspaceKey = new Map<string, number>();
-  return items.filter((item) => {
-    const itemCount = itemCountByWorkspaceKey.get(item.workspaceKey) ?? 0;
-    if (itemCount >= HASH_SESSION_MENTION_LIMIT_PER_WORKSPACE) return false;
-    itemCountByWorkspaceKey.set(item.workspaceKey, itemCount + 1);
-    return true;
-  });
-}
-
-function buildSessionMentionScopes(params: {
-  baseServices: IServiceAccessor;
-  currentRemoteSessionId: string | null;
-  currentServices: IServiceAccessor;
-  currentWorkspaceIdentity?: string;
-  currentWorkspacePath: string;
-  enabled: boolean;
-  serviceResolverState: WorkspaceServiceResolverState;
-  workspaceTabs: WorkspaceTabState[];
-}): WorkspaceSessionsIndexScope[] {
-  if (!params.enabled) {
-    return [];
-  }
-
-  const currentAgentService = params.currentServices.zcodeAgentService;
-  const scopes: WorkspaceSessionsIndexScope[] = [];
-  const seenWorkspaceKeys = new Set<string>();
-  const candidates: Array<
-    Pick<
-      WorkspaceTabState,
-      "remoteSessionId" | "remoteTarget" | "workspaceIdentity" | "workspacePath"
-    >
-  > = [
-    {
-      workspacePath: params.currentWorkspacePath,
-      ...(params.currentWorkspaceIdentity
-        ? { workspaceIdentity: params.currentWorkspaceIdentity }
-        : {}),
-      ...(params.currentRemoteSessionId ? { remoteSessionId: params.currentRemoteSessionId } : {}),
-    },
-    ...params.workspaceTabs,
-  ];
-
-  for (const candidate of candidates) {
-    const workspaceKey = buildTaskWorkspaceKey(
-      candidate.workspacePath,
-      candidate.workspaceIdentity,
-    );
-    if (seenWorkspaceKeys.has(workspaceKey)) {
-      continue;
-    }
-
-    const resolved = resolveWorkspaceServices(
-      candidate,
-      params.baseServices,
-      params.serviceResolverState,
-    );
-    // Boundary: # references are ultimately read by the current Agent Host's SQLite session store by session ID.
-    // Aggregate only the same agent service authority so sessions from another remote Host are not exposed as selectable but unreadable references;
-    // when remote is disconnected, the resolver returns null and must not fall back to the local base service.
-    if (!resolved || resolved.services.zcodeAgentService !== currentAgentService) {
-      continue;
-    }
-
-    seenWorkspaceKeys.add(workspaceKey);
-    scopes.push({
-      workspacePath: candidate.workspacePath,
-      ...(candidate.workspaceIdentity ? { workspaceIdentity: candidate.workspaceIdentity } : {}),
-      ...(resolved.remoteSessionId ? { endpointKey: resolved.remoteSessionId } : {}),
-      agentService: resolved.services.zcodeAgentService,
-    });
-  }
-
-  return scopes;
-}
-
 export function useSessionsMentionProvider(
   provider: ZCodeProvider,
   workspacePath: string,
@@ -195,97 +99,104 @@ export function useSessionsMentionProvider(
   workspaceScope: SessionMentionWorkspaceScope,
   emptyText: string,
   title: string,
+  unclassifiedTitle = title,
 ): MentionCategoryResult {
-  const baseServices = useBaseWorkspaceServices();
-  const tabs = useTabStore((state) => state.tabs);
-  const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
-  const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
-  const sessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
-    (state) => state.sessionIdByWorkspaceIdentity,
-  );
-  const sessionIdByWorkspacePath = useRemoteWorkspaceSessionStore(
-    (state) => state.sessionIdByWorkspacePath,
-  );
-  const serviceResolverState = useMemo(
-    () => ({
-      sessionsById,
-      sessionIdByWorkspaceIdentity,
-      sessionIdByWorkspacePath,
-    }),
-    [sessionIdByWorkspaceIdentity, sessionIdByWorkspacePath, sessionsById],
-  );
-  const {
-    services: workspaceServices,
-    remoteSessionId,
-    isRemoteTarget,
-  } = useWorkspaceServicesResolution(workspacePath, undefined, workspaceIdentity);
-  // `@` and `#` share the provider, but only `#` can expand to workspaces under the same authority.
-  // Reuse the sessions-index registry by endpoint+workspaceKey reference count; do not create another connection.
-  const scopes = useMemo<WorkspaceSessionsIndexScope[]>(() => {
-    if (!enabled || (isRemoteTarget && !remoteSessionId)) {
-      return [];
+  const { services } = useWorkspaceServicesResolution(workspacePath, undefined, workspaceIdentity);
+  const [snapshot, setSnapshot] = useState<{
+    services: typeof services;
+    tree: ProjectTree;
+    error: Error | null;
+    loading: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setSnapshot(null);
+      return;
     }
-    if (workspaceScope === "current-workspace") {
-      return [
-        {
-          workspacePath,
-          ...(workspaceIdentity ? { workspaceIdentity } : {}),
-          ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
-          // Remote requests must explicitly carry the service for the resolved endpoint; do not let the local Host query remote paths.
-          agentService: workspaceServices.zcodeAgentService,
-        },
-      ];
-    }
-    return buildSessionMentionScopes({
-      baseServices,
-      currentRemoteSessionId: remoteSessionId,
-      currentServices: workspaceServices,
-      currentWorkspaceIdentity: workspaceIdentity,
-      currentWorkspacePath: workspacePath,
-      enabled,
-      serviceResolverState,
-      workspaceTabs,
+    let current = true;
+    let generation = 0;
+    const refresh = async () => {
+      const request = ++generation;
+      setSnapshot({ services, tree: { projects: [], tasks: [] }, error: null, loading: true });
+      try {
+        if (!services.projectService) throw new Error("project.service-unavailable");
+        // 候选行由 Host 组织态与 CLI 镜像决定；不能让缺席的 sessions-index 或 tab 隐藏历史任务。
+        const tree = await services.projectService.readTree({ includeDeleted: true });
+        if (current && request === generation)
+          setSnapshot({ services, tree, error: null, loading: false });
+      } catch (error) {
+        if (current && request === generation)
+          setSnapshot({
+            services,
+            tree: { projects: [], tasks: [] },
+            error: error instanceof Error ? error : new Error(String(error)),
+            loading: false,
+          });
+      }
+    };
+    const listener = services.broadcastService.onMessage((event) => {
+      if (event.channel === "state:projects") void refresh();
     });
+    void refresh();
+    return () => {
+      current = false;
+      listener.dispose();
+    };
+  }, [enabled, services]);
+  const tree = snapshot?.services === services ? snapshot.tree : null;
+  const groups = useMemo(() => {
+    if (!tree) return [];
+    const currentKey = buildTaskWorkspaceKey(workspacePath, workspaceIdentity);
+    const visibleTasks = tree.tasks.filter(
+      (task) =>
+        workspaceScope !== "current-workspace" ||
+        buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity) === currentKey,
+    );
+    const buckets = new Map<string, { id: string; title: string; tasks: ZCodeTaskMeta[] }>();
+    for (const task of visibleTasks) {
+      const id =
+        workspaceScope === "current-workspace"
+          ? "sessions"
+          : JSON.stringify([task.hostId, task.projectId]);
+      const project = tree.projects.find(
+        (project) => project.id === task.projectId && project.hostId === task.hostId,
+      );
+      const bucket = buckets.get(id) ?? {
+        id,
+        title:
+          workspaceScope === "current-workspace" ? title : (project?.name ?? unclassifiedTitle),
+        tasks: [],
+      };
+      bucket.tasks.push(task);
+      buckets.set(id, bucket);
+    }
+    return [...buckets.values()].map((bucket) => ({
+      id: bucket.id,
+      title: bucket.title,
+      items: filterMentionItemsWithOptions(
+        collectSessionMentionItems(bucket.tasks, provider),
+        query,
+        {
+          limit: workspaceScope === "current-workspace" ? Number.POSITIVE_INFINITY : 20,
+          requireQuery: false,
+        },
+      ),
+    }));
   }, [
-    baseServices,
-    enabled,
-    isRemoteTarget,
-    remoteSessionId,
-    serviceResolverState,
-    workspaceIdentity,
+    tree,
     workspacePath,
+    workspaceIdentity,
     workspaceScope,
-    workspaceServices,
-    workspaceTabs,
+    title,
+    unclassifiedTitle,
+    provider,
+    query,
   ]);
-  const { items: indexMetas, hydratingEndpointKeys } = useWorkspaceSessionsIndexItems(scopes);
-
-  const allItems = useMemo(
-    () =>
-      collectSessionMentionItems(indexMetas, provider, {
-        workspacePath,
-        workspaceIdentity,
-      }),
-    [indexMetas, provider, workspaceIdentity, workspacePath],
-  );
-
-  const items = useMemo(() => {
-    // The mention filter only sorts/truncates original objects; preserve SessionMentionItem.workspaceKey.
-    const matchedItems = filterMentionItemsWithOptions(allItems, query, {
-      limit: Number.POSITIVE_INFINITY,
-      requireQuery: false,
-    }) as SessionMentionItem[];
-    // `#` searches all sessions first, then limits results separately by workspaceKey; do not truncate globally,
-    // or priority sorting for the current workspace would crowd out every other workspace.
-    return workspaceScope === "same-authority-workspaces"
-      ? limitSessionMentionItemsPerWorkspace(matchedItems)
-      : matchedItems;
-  }, [allItems, query, workspaceScope]);
-
   return {
-    items: enabled ? items : [],
-    loading: enabled && hydratingEndpointKeys.length > 0,
-    error: null,
+    items: enabled ? groups.flatMap((group) => group.items) : [],
+    groups: enabled && workspaceScope !== "current-workspace" ? groups : undefined,
+    loading: enabled && (!snapshot || snapshot.services !== services || snapshot.loading),
+    error: snapshot?.services === services ? snapshot.error : null,
     emptyText,
     title,
   };

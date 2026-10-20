@@ -145,4 +145,113 @@ describe("botsService Telegram polling", () => {
       serviceA.disposeAll();
     },
   );
+
+  it("retries bot storage initialization while the shared state lock is contended at startup", async () => {
+    useTempDataDir();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubHangingTelegramFetch();
+    const baseRepo = f.createMemoryRepo(f.telegramConfig);
+    let readStateCalls = 0;
+    const repo = {
+      ...baseRepo,
+      readState: vi.fn(async () => {
+        readStateCalls += 1;
+        if (readStateCalls <= 2) {
+          throw new Error(
+            "Timed out after 8000ms waiting for the ZCode file lock: bot-state.v3.json.lock",
+          );
+        }
+        return baseRepo.readState();
+      }),
+    };
+
+    const service = f.createBotsService({
+      credentialService: f.createCredentialService({ "telegram-token": "token" }),
+      legacyTaskService: f.createLegacyTaskService(),
+      repo: repo as never,
+    });
+
+    // Init attempts: fail, retry after 1s and fail, retry after 5s and succeed, then the
+    // post-migration restore loop reads the state once more.
+    await vi.advanceTimersByTimeAsync(7_000);
+
+    expect(readStateCalls).toBeGreaterThanOrEqual(4);
+    expect(
+      warnSpy.mock.calls.some(([, message]) =>
+        String(message).includes("Bot storage initialization failed, retrying"),
+      ),
+    ).toBe(true);
+    expect(
+      errorSpy.mock.calls.some(([, message]) =>
+        String(message).includes("Bot storage initialization failed"),
+      ),
+    ).toBe(false);
+
+    service.disposeAll();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("logs the terminal bot storage initialization error once after bounded retries", async () => {
+    useTempDataDir();
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubHangingTelegramFetch();
+    const baseRepo = f.createMemoryRepo(f.telegramConfig);
+    const repo = {
+      ...baseRepo,
+      readState: vi.fn(async () => {
+        throw new Error(
+          "Timed out after 8000ms waiting for the ZCode file lock: bot-state.v3.json.lock",
+        );
+      }),
+    };
+
+    const service = f.createBotsService({
+      credentialService: f.createCredentialService({ "telegram-token": "token" }),
+      legacyTaskService: f.createLegacyTaskService(),
+      repo: repo as never,
+    });
+
+    await vi.advanceTimersByTimeAsync(7_500);
+
+    expect(
+      warnSpy.mock.calls.filter(([, message]) =>
+        String(message).includes("Bot storage initialization failed, retrying"),
+      ),
+    ).toHaveLength(2);
+    expect(
+      errorSpy.mock.calls.filter(([, message]) =>
+        String(message).includes("Bot storage initialization failed"),
+      ),
+    ).toHaveLength(1);
+
+    service.disposeAll();
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });
+
+function stubHangingTelegramFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string | URL, init?: RequestInit) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/getUpdates")) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+    }),
+  );
+}

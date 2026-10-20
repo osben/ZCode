@@ -45,12 +45,27 @@ export interface ZCodeAgentUpdatePluginMarketplaceParams extends ZCodeAgentWorks
   operationId?: string;
 }
 
+/** Host-only observation context for plugin mutations; pluginManagementService strips it before the agent call. */
+export interface ZCodePluginMutationTelemetry {
+  entry?:
+    | "store_list"
+    | "store_detail"
+    | "side_pane_market"
+    | "recommended_prompt"
+    | "recommended_ui"
+    | "component_settings";
+  client_kind?: "desktop" | "mobile";
+  trigger?: "user" | "automatic" | "dependency" | "restore" | "sync";
+}
+
 export interface ZCodeAgentInstallPluginParams extends ZCodeAgentWorkspaceTarget {
   dryRun?: boolean;
   marketplace: string;
   operationId?: string;
   pluginName: string;
   scope?: "user" | "workspace";
+  /** Host-only observation context (see withPluginTelemetry). Never sent to the CLI. */
+  telemetry?: ZCodePluginMutationTelemetry;
 }
 
 export interface ZCodeAgentCancelPluginOperationParams {
@@ -102,6 +117,8 @@ export interface ZCodeAgentSetPluginEnabledParams extends ZCodeAgentWorkspaceTar
   operationId?: string;
   pluginId: string;
   scope?: "user" | "workspace";
+  /** Host-only observation context (see withPluginTelemetry). Never sent to the CLI. */
+  telemetry?: ZCodePluginMutationTelemetry;
 }
 
 // Plugin conversation reference catalog:

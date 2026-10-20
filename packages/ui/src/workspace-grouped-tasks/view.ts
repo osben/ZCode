@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Pure view helpers for grouped tasks currently centralize task/group reordering, menu movement, and optimistic merging; split further by drag area later. */
 import type { ZCodeGroupedTaskView, ZCodeGroupedTaskViewNode } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
-import type { GroupedDraftTaskPlacement } from "@/store/zcodeSessionStoreTypes.js";
+import type { GroupedDraftTaskPlacement } from "@/project-sidebar/grouped/types.js";
 import { taskKey } from "@/workspace-grouped-tasks/ids.js";
 
 function cloneView(view: ZCodeGroupedTaskView): ZCodeGroupedTaskView {

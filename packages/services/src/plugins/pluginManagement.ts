@@ -45,6 +45,7 @@ import type {
   ZCodeAgentUpdatePluginMarketplaceParams,
   ZCodeAgentUpdatePluginParams,
   ZCodeAgentValidatePluginParams,
+  ZCodePluginMutationTelemetry,
 } from "../zcode-agent/zcodeAgentPluginParams.js";
 
 export interface IPluginManagementService {
@@ -98,3 +99,35 @@ export interface IPluginManagementService {
 export const IPluginManagementService = createServiceDescriptor<IPluginManagementService>(
   ServiceChannels.PluginManagement,
 );
+
+/**
+ * Attaches observation-only context to plugin mutations. The telemetry object is Host-only:
+ * pluginManagementService removes it before calling the agent, so it never reaches the CLI.
+ * RPC methods are provided by a Proxy; do not copy them with object spread.
+ */
+export function withPluginTelemetry(
+  service: IPluginManagementService,
+  telemetry: ZCodePluginMutationTelemetry,
+): IPluginManagementService {
+  const mutations = new Set<PropertyKey>([
+    "addPluginMarketplace",
+    "removePluginMarketplace",
+    "updatePluginMarketplace",
+    "installPlugin",
+    "uninstallPlugin",
+    "updatePlugin",
+    "restoreBuiltinPlugin",
+    "configurePlugin",
+    "resetPluginConfig",
+    "setPluginEnabled",
+  ]);
+  return new Proxy(service, {
+    get(target, property) {
+      const method = Reflect.get(target, property, target);
+      if (typeof method !== "function") return method;
+      if (!mutations.has(property)) return method.bind(target);
+      return (params: ZCodeAgentInstallPluginParams) =>
+        method.call(target, { ...params, telemetry });
+    },
+  });
+}

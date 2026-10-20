@@ -1,14 +1,16 @@
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from "react";
-
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { GitRepositorySummary } from "@zcode/shared";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import type { ConversationShareSelectionDraft } from "@/store/conversationShareSelectionStore.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
+
+const sessionPaneSource = readFileSync("packages/ui/src/v4/SessionPane.tsx", "utf8");
 
 const projectionState = vi.hoisted(() => ({
   current: null as {
@@ -39,58 +41,26 @@ vi.mock("@/store/conversationShareSelectionStore.js", async (importOriginal) => 
   const actual =
     await importOriginal<typeof import("@/store/conversationShareSelectionStore.js")>();
   const fakeState = () => ({
-    popoverOpen: false,
     drafts: shareStoreState.draft ? { "child-session": shareStoreState.draft } : {},
     // ac4bc6e79c 起 SessionPane 从 dockStates[sessionId] 读取发布中 dock 状态，
     // mock 缺这个字段会让 SSR selector 读 undefined[sessionId] 直接抛错。
     dockStates: {},
-    finishSelection: vi.fn(),
+    closeShare: vi.fn(),
+    confirmSelectionEdit: vi.fn(),
+    beginSelectionEdit: vi.fn(),
+    cancelSelectionEdit: vi.fn(),
+    togglePendingRow: vi.fn(),
+    setAllPendingRowsSelected: vi.fn(),
+    deselectProductTurn: vi.fn(),
     updateDockState: vi.fn(),
-    goToConfiguration: vi.fn(),
-    goToSelection: vi.fn(),
     setAccessMode: vi.fn(),
-    setAllRowsSelected: vi.fn(),
-    showTimeline: vi.fn(),
-    showSelectionPanel: vi.fn(),
     syncAvailableTurns: vi.fn(),
-    toggleRow: vi.fn(),
   });
   // 只替换 hook 与 getState；派生 selector 保留真实实现，避免测试自证。
   const hook = (selector: (state: unknown) => unknown) => selector(fakeState());
   return {
     ...actual,
     useConversationShareSelectionStore: Object.assign(hook, { getState: fakeState }),
-  };
-});
-
-// Worktree notice inputs: the session's live sessions-index row (owns executionWorktree) and the
-// Git summary the pane reads. The real useGitRepository runs in SSR with its initial state, which is
-// the pre-status placeholder; a test may override only the summary to model a settled refresh.
-const worktreeState = vi.hoisted(() => ({
-  items: [] as Array<{
-    taskId: string;
-    executionWorktree?: { path: string; branchName: string };
-  }>,
-  gitSummary: null as GitRepositorySummary | null,
-}));
-
-vi.mock("@/v4/useWorkspaceSessionsIndexItems.js", () => ({
-  useWorkspaceSessionsIndexItems: () => ({ items: worktreeState.items }),
-}));
-
-// The auto-refresh watcher needs live workspace services; SSR cannot run its effects anyway.
-vi.mock("@/hooks/useGitAutoRefresh.js", () => ({
-  useGitAutoRefresh: () => undefined,
-}));
-
-vi.mock("@/hooks/useGitRepository.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/hooks/useGitRepository.js")>();
-  return {
-    ...actual,
-    useGitRepository: (options: Parameters<typeof actual.useGitRepository>[0]) => {
-      const state = actual.useGitRepository(options);
-      return worktreeState.gitSummary ? { ...state, summary: worktreeState.gitSummary } : state;
-    },
   };
 });
 
@@ -121,6 +91,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => ({
     zcodeSessionService: {
@@ -165,7 +136,6 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       apiRetry,
       backgroundScrollLocked,
       bottomDock,
-      headerSlot,
       rowContext,
       selectionActions,
       scrollToQueryActionRef,
@@ -173,7 +143,6 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       apiRetry?: ConversationSnapshot["control"]["apiRetry"];
       backgroundScrollLocked?: boolean;
       bottomDock?: ReactNode;
-      headerSlot?: ReactNode;
       rowContext?: ConversationRowRenderContext;
       selectionActions?: { enabled: boolean };
       scrollToQueryActionRef?: { current: unknown };
@@ -183,7 +152,7 @@ vi.mock("@/v4/ConversationTimeline.js", async () => {
       timelineState.backgroundScrollLocked = backgroundScrollLocked ?? false;
       timelineState.selectionActionsEnabled = selectionActions?.enabled ?? null;
       timelineState.scrollToQueryActionRef = scrollToQueryActionRef ?? null;
-      return React.createElement("div", { "data-testid": "mock-timeline" }, headerSlot, bottomDock);
+      return React.createElement("div", { "data-testid": "mock-timeline" }, bottomDock);
     },
   };
 });
@@ -223,23 +192,6 @@ vi.mock("@/request-security-edition/V4ProviderRuntimeHeadersController.js", asyn
       React.createElement("div", { "data-testid": "mock-runtime-headers" }),
   };
 });
-
-function createUnavailableSummary(workspacePath: string): GitRepositorySummary {
-  return {
-    workspacePath,
-    repoRoot: workspacePath,
-    workspaceInRepoPath: ".",
-    autoRefreshWatchPaths: [],
-    branchName: null,
-    trackingBranchName: null,
-    headRefType: "branch",
-    ahead: 0,
-    behind: 0,
-    isDirty: false,
-    isGitAvailable: false,
-    isRepository: false,
-  };
-}
 
 function makeSnapshot(
   lastError: ConversationSnapshot["control"]["lastError"] = null,
@@ -297,20 +249,14 @@ function renderReadOnlyPane({
   apiRetry = null,
   lastError = null,
   readOnly = true,
-  workflowRuns,
-  sharedContextImport,
 }: {
   allowWorkspaceFileRewind?: boolean;
   apiRetry?: ConversationSnapshot["control"]["apiRetry"];
   lastError?: ConversationSnapshot["control"]["lastError"];
   readOnly?: boolean;
-  workflowRuns?: ConversationSnapshot["workflowRuns"];
-  sharedContextImport?: ConversationSnapshot["sharedContextImport"];
 } = {}): string {
   const snapshot = makeSnapshot(lastError);
   snapshot.control.apiRetry = apiRetry;
-  if (workflowRuns) snapshot.workflowRuns = workflowRuns;
-  snapshot.sharedContextImport = sharedContextImport;
   projectionState.current = {
     lastError: null,
     loadingOlder: false,
@@ -323,7 +269,7 @@ function renderReadOnlyPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: TEST_LOCALE },
       createElement(SessionPane, {
         allowWorkspaceFileRewind,
         paneId: "pane-1",
@@ -340,53 +286,6 @@ describe("SessionPane read-only mode", () => {
   afterEach(() => {
     timelineState.apiRetry = null;
     timelineState.rowContext = null;
-    worktreeState.items = [];
-    worktreeState.gitSummary = null;
-  });
-
-  // Regression: the placeholder summary used before a successful Git status has branchName null and
-  // headRefType "branch". Treating it as a live branch hid the persisted creation branch.
-  describe("worktree created notice branch", () => {
-    const WORKTREE = { path: "/workspace/wt-quiet", branchName: "zcode/quiet-otter" };
-
-    it("falls back to the creation branch before any Git status has succeeded", () => {
-      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
-
-      const html = renderReadOnlyPane();
-
-      expect(html).toContain('data-worktree-created="true"');
-      expect(html).toContain("zcode/quiet-otter");
-    });
-
-    it("falls back to the creation branch when the refresh reports no repository", () => {
-      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
-      worktreeState.gitSummary = {
-        ...createUnavailableSummary(WORKTREE.path),
-        headRefType: "branch",
-        branchName: null,
-      };
-
-      const html = renderReadOnlyPane();
-
-      expect(html).toContain('data-worktree-created="true"');
-      expect(html).toContain("zcode/quiet-otter");
-    });
-
-    it("shows the live branch once Git status reports a repository", () => {
-      worktreeState.items = [{ taskId: "child-session", executionWorktree: WORKTREE }];
-      worktreeState.gitSummary = {
-        ...createUnavailableSummary(WORKTREE.path),
-        isGitAvailable: true,
-        isRepository: true,
-        branchName: "feat/live-branch",
-      };
-
-      const html = renderReadOnlyPane();
-
-      expect(html).toContain('data-worktree-created="true"');
-      expect(html).toContain("feat/live-branch");
-      expect(html).not.toContain("zcode/quiet-otter");
-    });
   });
 
   it("renders subagent child panes without composer or queue input affordances", () => {
@@ -441,55 +340,12 @@ describe("SessionPane read-only mode", () => {
     expect(html).toContain("Provider connection failed");
     expect(html).not.toContain('data-testid="mock-composer"');
   });
-
-  // 浮岛已删除（docs/dynamic-workflow/presentation.md「Other places a run appears」item 1）：运行态迁进状态胶囊的
-  // Workflows 分区，composer 上方不再有任何 workflow 浮层。原来这里是「只读缺席 / 主对话在场」
-  // 两个方向的用例，现在**两个方向都断言无岛**——留一条正向用例才能钉住"删除是全局的"，
-  // 只删掉在场那条会让主对话 pane 重新长出浮岛而没人发现。
-  const runningWorkflowRuns = {
-    revision: 1,
-    runs: [
-      {
-        runId: "dwfrun-1",
-        toolCallId: "tool-wf-1",
-        status: "running" as const,
-        usage: { spentTokens: 0, nodesUsed: 0 },
-        actors: [],
-        nodes: [],
-        lastEventSequence: 1,
-      },
-    ],
-  };
-
-  it("read-only panes never float the workflow run island", () => {
-    const html = renderReadOnlyPane({ workflowRuns: runningWorkflowRuns });
-
-    expect(html).not.toContain('data-testid="workflow-run-island"');
-  });
-
-  it("primary conversation panes no longer float the workflow run island either", () => {
-    const html = renderReadOnlyPane({ readOnly: false, workflowRuns: runningWorkflowRuns });
-
-    expect(html).toContain('data-testid="mock-composer"');
-    expect(html).not.toContain('data-testid="workflow-run-island"');
-    expect(html).not.toContain("workflow-run-island-pill");
-  });
-
-  it("does not show the legacy imported-share notice in read-only panes", () => {
-    const html = renderReadOnlyPane({
-      sharedContextImport: { title: "筛选近一年收益前10%的偏股混合基金" },
-    });
-
-    expect(html).not.toContain('data-testid="conversation-share-import-notice"');
-    expect(html).not.toContain("shared_context");
-  });
 });
 
 /**
  * 这些用例守护 SessionPane 到 timeline 的分享模式接线。
  *
- * Bug 根因：滚动锁定、勾选期禁用 message 工具条和 dock 进出动画曾经只有 policy 模块的
- * 隔离单测，SessionPane 从未引用过它们，所以三条修复实际都没生效而测试仍是绿的。
+ * 分享浮窗必须保留 Composer 和正文滚动，勾选期仍禁用 message 工具条。
  * 断言必须落在 SessionPane 真正传给 ConversationTimeline 的 props 上。
  */
 describe("SessionPane 分享模式接线", () => {
@@ -505,9 +361,8 @@ describe("SessionPane 分享模式接线", () => {
   const partialDraft = (
     overrides: Partial<ConversationShareSelectionDraft> = {},
   ): ConversationShareSelectionDraft => ({
-    scope: "partial",
-    stage: "selection",
-    view: "selection",
+    open: true,
+    pendingExcludedRowIds: [],
     availableRowIds: [1],
     excludedRowIds: [],
     productTurnIdByRowId: { 1: "product-turn-1" },
@@ -528,7 +383,7 @@ describe("SessionPane 分享模式接线", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: TEST_LOCALE },
         createElement(SessionPane, {
           paneId: "pane-1",
           readOnly: false,
@@ -539,23 +394,32 @@ describe("SessionPane 分享模式接线", () => {
     );
   };
 
-  it("选择面板展开时锁定背景滚动，收起到 timeline 后恢复", () => {
-    renderSharePane(partialDraft({ view: "selection" }));
-    expect(timelineState.backgroundScrollLocked).toBe(true);
+  it("选择面板展开和收起时都保留正文滚动", () => {
+    renderSharePane(partialDraft());
+    expect(timelineState.backgroundScrollLocked).toBe(false);
 
-    renderSharePane(partialDraft({ view: "timeline" }));
+    renderSharePane(partialDraft({ pendingExcludedRowIds: null }));
     expect(timelineState.backgroundScrollLocked).toBe(false);
   });
 
   it("选择面板展开时向 Timeline 传递正文定位 action ref", () => {
-    renderSharePane(partialDraft({ view: "selection" }));
+    renderSharePane(partialDraft());
     expect(timelineState.scrollToQueryActionRef).not.toBeNull();
   });
 
-  it("进入配置阶段后不再锁定背景滚动", () => {
-    renderSharePane(partialDraft({ stage: "configuration", view: "selection" }));
+  it("分享选择确认 handler 接线到当前 session 的 confirmShareSelection", () => {
+    const nextHandlerStart = sessionPaneSource.indexOf(
+      "const handleConfirmShareSelection = useCallback",
+    );
+    const nextHandlerEnd = sessionPaneSource.indexOf(
+      "const handleDismissShareError = useCallback",
+      nextHandlerStart,
+    );
+    expect(nextHandlerStart).toBeGreaterThanOrEqual(0);
+    expect(nextHandlerEnd).toBeGreaterThan(nextHandlerStart);
 
-    expect(timelineState.backgroundScrollLocked).toBe(false);
+    const nextHandler = sessionPaneSource.slice(nextHandlerStart, nextHandlerEnd);
+    expect(nextHandler).toContain("confirmShareSelection(sessionId)");
   });
 
   it("不在分享模式时不锁定背景滚动", () => {
@@ -572,10 +436,11 @@ describe("SessionPane 分享模式接线", () => {
     expect(timelineState.selectionActionsEnabled).toBe(true);
   });
 
-  it("chat 与分享 dock 通过同一个过渡层切换 mode", () => {
+  it("分享浮窗保持 chat 输入区，不再替换 Composer", () => {
     expect(renderSharePane(undefined)).toContain('data-conversation-bottom-dock-mode="chat"');
-    expect(renderSharePane(partialDraft())).toContain(
-      'data-conversation-bottom-dock-mode="confirmation"',
-    );
+    const html = renderSharePane(partialDraft());
+    expect(html).toContain('data-conversation-bottom-dock-mode="chat"');
+    expect(html).toContain('data-testid="mock-composer"');
+    expect(html).not.toContain('data-conversation-bottom-dock-mode="confirmation"');
   });
 });

@@ -5,6 +5,7 @@ import { logger } from "@/logger.js";
 import type { WorkspaceSettingsLayerProps } from "@/root/types.js";
 
 export function WorkspaceSettingsLayer({
+  onOpenSession,
   workspaceScopedServices,
   isDesktop,
   isMacDesktop,
@@ -15,7 +16,7 @@ export function WorkspaceSettingsLayer({
   onBack,
   onCreateTask,
   onOpenWorkspace,
-  onOpenSession,
+  onOpenRemoteWorkspace,
   allowOpenWorkspace,
   onLogin,
   onLogout,
@@ -40,9 +41,10 @@ export function WorkspaceSettingsLayer({
             windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
             captionWorkspacePath={captionWorkspacePath}
             onBack={onBack}
+            onOpenSession={onOpenSession}
             onCreateTask={onCreateTask}
             onOpenWorkspace={onOpenWorkspace}
-            onOpenSession={onOpenSession}
+            onOpenRemoteWorkspace={onOpenRemoteWorkspace}
             allowOpenWorkspace={allowOpenWorkspace}
             onLogin={onLogin}
             onLogout={onLogout}
@@ -58,9 +60,10 @@ export function WorkspaceSettingsLayer({
           windowsWindowControlsRightPaddingPx={windowsWindowControlsRightPaddingPx}
           captionWorkspacePath={captionWorkspacePath}
           onBack={onBack}
+          onOpenSession={onOpenSession}
           onCreateTask={onCreateTask}
           onOpenWorkspace={onOpenWorkspace}
-          onOpenSession={onOpenSession}
+          onOpenRemoteWorkspace={onOpenRemoteWorkspace}
           allowOpenWorkspace={allowOpenWorkspace}
           onLogin={onLogin}
           onLogout={onLogout}

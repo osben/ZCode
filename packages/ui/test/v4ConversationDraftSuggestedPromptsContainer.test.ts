@@ -315,7 +315,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     cleanup();
   });
 
-  it("reserves an in-flow slot for the async list below the composer", async () => {
+  it("keeps the recommendation slot after the async list arrives", async () => {
     const view = render(
       createElement(ConversationDraftSuggestedPromptsContainer, {
         className: "mt-3",
@@ -327,13 +327,9 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     const slot = view.container.firstElementChild;
 
     expect(slot?.getAttribute("data-v4-draft-suggested-prompts-slot")).toBe("true");
-    expect(slot?.classList.contains("h-8")).toBe(true);
-    expect(slot?.classList.contains("mt-3")).toBe(true);
-    expect(slot?.classList.contains("absolute")).toBe(false);
-    expect(slot?.classList.contains("top-full")).toBe(false);
   });
 
-  it("keeps the in-flow slot mounted while the async list is empty", () => {
+  it("keeps the slot mounted while the async list is pending", () => {
     listClientScenes.mockImplementation(() => new Promise(() => {}));
 
     const view = render(
@@ -344,7 +340,6 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     const slot = view.container.firstElementChild;
     expect(slot?.getAttribute("data-v4-draft-suggested-prompts-slot")).toBe("true");
-    expect(slot?.classList.contains("h-8")).toBe(true);
     expect(slot?.childElementCount).toBe(0);
   });
 
@@ -734,6 +729,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     await waitFor(() =>
       expect(installPlugin).toHaveBeenCalledWith({
+        telemetry: { entry: "recommended_prompt", client_kind: "desktop" },
         workspacePath,
         workspaceIdentity,
         remoteSessionId: "remote-runtime",
@@ -938,6 +934,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
 
     await waitFor(() =>
       expect(setPluginEnabled).toHaveBeenCalledWith({
+        telemetry: { entry: "recommended_prompt", client_kind: "desktop" },
         workspacePath,
         pluginId: "document-skills@zcode-plugins-official",
         enabled: true,

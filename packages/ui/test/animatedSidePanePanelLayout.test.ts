@@ -1,33 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   MIN_PREVIEW_PANE_HEAVY_CONTENT_VISIBLE_INLINE_SIZE_PX,
-  resolveAnimatedSidePanePanelLayout,
   resolveOpenTabLauncherItemIds,
   shouldOfferSelectionSideConversation,
   shouldRenderPreviewPaneHeavyContent,
 } from "@/app-shell/animatedSidePanePanelModel.js";
 
 describe("AnimatedSidePanePanel layout", () => {
-  it("uses full panel size for mobile overlay instead of the collapsed desktop default", () => {
-    expect(resolveAnimatedSidePanePanelLayout({ mobileOverlay: true })).toMatchObject({
-      collapsedSize: "0px",
-      defaultSize: "100%",
-      maxSize: "100%",
-      minSize: "0px",
-      useResizablePanel: false,
-    });
-  });
-
-  it("keeps the desktop side pane collapsed by default", () => {
-    expect(resolveAnimatedSidePanePanelLayout({ mobileOverlay: false })).toMatchObject({
-      collapsedSize: "0px",
-      defaultSize: "0px",
-      maxSize: "65%",
-      minSize: "240px",
-      useResizablePanel: true,
-    });
-  });
-
   it("defers heavy PreviewPane content while the active code tab is only a narrow viewport sliver", () => {
     expect(
       shouldRenderPreviewPaneHeavyContent({
@@ -58,18 +37,6 @@ describe("AnimatedSidePanePanel layout", () => {
   });
 
   it("keeps active media mounted while the side pane is settling after resize", () => {
-    expect(
-      shouldRenderPreviewPaneHeavyContent({
-        isActiveTab: true,
-        isMediaPreview: true,
-        isResizeSettling: true,
-        isSidePaneVisible: true,
-        visibleInlineSizePx: 480,
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps audio media mounted while the side pane is settling after resize", () => {
     expect(
       shouldRenderPreviewPaneHeavyContent({
         isActiveTab: true,
@@ -153,7 +120,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasReviewTab: false,
         supportsEmbeddedBrowser: false,
       }),
-    ).toEqual(["review", "terminal"]);
+    ).toEqual(["files", "terminal", "review"]);
 
     expect(
       resolveOpenTabLauncherItemIds({
@@ -162,7 +129,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasReviewTab: false,
         supportsEmbeddedBrowser: true,
       }),
-    ).toEqual(["review", "terminal", "browser"]);
+    ).toEqual(["files", "browser", "terminal", "review"]);
   });
 
   it("adds the side conversation launcher only when a desktop parent task is available", () => {
@@ -173,7 +140,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasActiveTask: false,
         hasReviewTab: false,
       }),
-    ).toEqual(["selection-side-conversation", "review", "terminal", "browser"]);
+    ).toEqual(["files", "browser", "terminal", "review", "selection-side-conversation"]);
     expect(
       resolveOpenTabLauncherItemIds({
         canOpenSelectionSideConversation: false,
@@ -181,7 +148,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasActiveTask: false,
         hasReviewTab: false,
       }),
-    ).toEqual(["review", "terminal", "browser"]);
+    ).toEqual(["files", "browser", "terminal", "review"]);
   });
 
   it("offers the model trajectory launcher only with an active task", () => {
@@ -191,14 +158,14 @@ describe("AnimatedSidePanePanel layout", () => {
         hasActiveTask: true,
         hasReviewTab: false,
       }),
-    ).toEqual(["review", "terminal", "browser", "model-trajectory"]);
+    ).toEqual(["files", "browser", "terminal", "review", "model-trajectory"]);
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
         hasActiveTask: false,
         hasReviewTab: false,
       }),
-    ).toEqual(["review", "terminal", "browser"]);
+    ).toEqual(["files", "browser", "terminal", "review"]);
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: true,
@@ -206,7 +173,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasReviewTab: true,
         supportsEmbeddedBrowser: false,
       }),
-    ).toEqual(["terminal", "model-trajectory", "developer-tools"]);
+    ).toEqual(["files", "terminal", "model-trajectory", "developer-tools"]);
   });
 
   it("hides the side conversation entry without an active task and on mobile", () => {

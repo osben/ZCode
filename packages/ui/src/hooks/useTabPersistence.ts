@@ -1,4 +1,9 @@
-/** useTabPersistence — tab persistence. On mount, restore the last opened tabs from settingService; subscribe to tab-store changes and debounce writes back to settingService. */
+/**
+ * useTabPersistence —— 标签页持久化
+ *
+ * - mount 时从 settingService 恢复上次打开的标签页
+ * - 订阅 tab store 变化，debounce 写回 settingService
+ */
 import { useEffect, useRef } from "react";
 import { useState } from "react";
 import type { AppSettings } from "@zcode/shared";
@@ -17,10 +22,33 @@ export interface TabPersistenceRestoreLifecycle {
   fullyCompleted: boolean;
 }
 
+/**
+ * 活动目录选择的写回门禁。
+ *
+ * 这个对象由 Root 在本地窗口内共享给远程 session 流程：恢复未完成或失败时，
+ * 远程连接状态变化只能更新内存，不能把半份 tab 快照写回全局 settings。
+ */
+export interface WorkspacePersistenceGate {
+  canPersist: boolean;
+  restoreFailed: boolean;
+  onCanPersist?: () => void | Promise<void>;
+}
+
+function openWorkspacePersistenceGate(
+  persistenceGate: WorkspacePersistenceGate | undefined,
+  persistSession: boolean,
+): void {
+  if (!persistenceGate) return;
+  persistenceGate.canPersist = Boolean(persistSession);
+  if (persistenceGate.canPersist) {
+    void persistenceGate.onCanPersist?.();
+  }
+}
+
 export interface TabPersistenceRestoreResult {
-  /** Path recognized during restore as app-owned; do not use it to update recent projects. */
+  /** 恢复期间识别出的 app-owned 路径，不得回填为最近项目。 */
   excludedRecentProjectPaths?: readonly string[];
-  /** After restoring the active workspace, fill in inactive workspaces during the idle period after the first frame. */
+  /** active workspace 已恢复后，在首帧后的 idle period 补齐 inactive workspace。 */
   deferredRestore?: () => void;
 }
 
@@ -54,47 +82,23 @@ export function hasCompletedTabPersistenceInitialRestore({
   );
 }
 
-export function getRecentProjectPathsFromSettings(
-  settings: Pick<AppSettings, "lastWorkspaceSession">,
-  excludedPaths: readonly string[] = [],
-): string[] {
-  const excludedPathSet = new Set(excludedPaths);
-  return readPersistedWorkspaceSessionEntries(settings)
-    .flatMap((entry) =>
-      entry.kind === "local" &&
-      entry.workspacePurpose !== "conversation" &&
-      !excludedPathSet.has(entry.workspacePath)
-        ? [entry.workspacePath]
-        : [],
-    )
-    .slice(0, 10);
-}
-
-export function buildRestoredRecentProjectPaths(
-  settings: Pick<AppSettings, "lastWorkspaceSession" | "recentProjects">,
-  excludedPaths: readonly string[] = [],
-): string[] {
-  const excludedPathSet = new Set(excludedPaths);
-  const existingRecent = (settings.recentProjects ?? []).filter(
-    (path) => !excludedPathSet.has(path),
-  );
-  const restoredProjects = getRecentProjectPathsFromSettings(settings, excludedPaths);
-  return [...new Set([...existingRecent, ...restoredProjects])].slice(0, 10);
-}
-
 function buildDefaultPersistPatch(state: TabStoreState): Partial<AppSettings> {
-  const workspaceTabs = state.tabs.filter(isWorkspaceTab).filter((tab) => !tab.remoteSessionId);
-  const activeIndex = state.activeWorkspacePath
-    ? workspaceTabs.findIndex((tab) => tab.workspacePath === state.activeWorkspacePath)
-    : 0;
-
+  const tab = state.tabs
+    .filter(isWorkspaceTab)
+    .find(
+      (candidate) =>
+        (candidate.workspaceIdentity?.trim() || candidate.workspacePath) ===
+        (state.activeWorkspaceIdentity?.trim() || state.activeWorkspacePath),
+    );
+  if (tab?.workspaceIdentity || tab?.remoteSessionId) return {};
   return {
-    lastWorkspaceSession: workspaceTabs.map((tab) => ({
-      kind: "local" as const,
-      workspacePath: tab.workspacePath,
-      ...(tab.workspacePurpose ? { workspacePurpose: tab.workspacePurpose } : {}),
-    })),
-    lastActiveTabIndex: Math.max(activeIndex, 0),
+    lastActiveWorkspace: tab
+      ? {
+          kind: "local",
+          workspacePath: tab.workspacePath,
+          ...(tab.workspacePurpose ? { workspacePurpose: tab.workspacePurpose } : {}),
+        }
+      : null,
   };
 }
 
@@ -102,20 +106,23 @@ export function useTabPersistence({
   settingService,
   restoreSession = true,
   persistSession = restoreSession,
+  persistenceGate,
   restorePersistedSession,
   buildPersistPatch,
 }: {
   settingService?: ISettingService;
-  /** Whether to restore the previous session: true for the first window, false for additional windows. */
+  /** 是否恢复上次会话，首个窗口 true，新窗口 false */
   restoreSession?: boolean;
-  /** Whether to write this window’s session to global settings: true for the first window, false for additional windows. */
+  /** 是否把当前窗口会话写回全局设置，首个窗口 true，新窗口 false */
   persistSession?: boolean;
-  /** Custom restore flow; when absent, fall back to the default local-tab restore logic. */
+  /** 与远程 session 流程共享的活动目录写回门禁。 */
+  persistenceGate?: WorkspacePersistenceGate;
+  /** 自定义恢复流程；不传则回退到原来的本地 tab 恢复逻辑 */
   restorePersistedSession?: (
     settings: AppSettings,
   ) => Promise<TabPersistenceRestoreResult | void> | TabPersistenceRestoreResult | void;
-  /** Custom persistence patch; when absent, write back only the local workspace session. */
-  buildPersistPatch?: (state: TabStoreState) => Partial<AppSettings>;
+  /** 自定义持久化补丁；不传则只写回本地 workspace 会话 */
+  buildPersistPatch?: (state: TabStoreState, settings: AppSettings) => Partial<AppSettings>;
 }) {
   const store = useTabStoreApi();
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -127,9 +134,9 @@ export function useTabPersistence({
     completed: !shouldRestoreSession,
     fullyCompleted: !shouldRestoreSession,
   }));
-  // In the same render where the provider/OAuth gate changes from false to true,
-  // the session-restore effect has not yet set isRestoring=true. Bind completion to the current settingService + restoreSession here,
-  // so initialWorkspacePath does not call addTab before restoreTabs.
+  // provider/OAuth gate 从 false 切到 true 的同一轮 render 里，
+  // 恢复会话 effect 还没来得及把 isRestoring 设为 true。这里把完成态绑定到
+  // 当前 settingService + restoreSession，避免 initialWorkspacePath 抢在 restoreTabs 前 addTab。
   const hasCompletedInitialRestore = hasCompletedTabPersistenceInitialRestore({
     settingService,
     restoreSession,
@@ -142,10 +149,11 @@ export function useTabPersistence({
       restoreLifecycle.fullyCompleted);
   const isRestoring = shouldRestoreSession && !hasCompletedInitialRestore;
 
-  // Restore session
+  // 恢复会话
   useEffect(() => {
     if (!settingService || !restoreSession) {
       initialRestoreFullyCompletedRef.current = true;
+      openWorkspacePersistenceGate(persistenceGate, persistSession);
       setRestoreLifecycle({
         settingService,
         restoreSession,
@@ -158,10 +166,14 @@ export function useTabPersistence({
     let cancelled = false;
     let cancelDeferredRestore: (() => void) | null = null;
     initialRestoreFullyCompletedRef.current = false;
-    // On the Root’s first frame, the empty default tab store renders the “Open workspace” center page,
-    // then this hook asynchronously restores lastWorkspaceSession, briefly flashing “Open project” during startup.
-    // Expose the restoring state so the outer layer keeps showing loading until the session check completes,
-    // instead of showing the default empty state prematurely.
+    if (persistenceGate) {
+      persistenceGate.canPersist = false;
+      persistenceGate.restoreFailed = false;
+    }
+    // Bugfix: Root 首屏会先按 tab store 的默认空状态渲染打开工作区中间页，
+    // 随后这里再异步恢复 lastWorkspaceSession，导致主界面启动时闪一下“打开项目”。
+    // 这里显式暴露恢复中的状态，让外层在会话检查完成前持续显示 loading，
+    // 避免把“默认空态”误展示给用户。
     setRestoreLifecycle({
       settingService,
       restoreSession,
@@ -195,25 +207,6 @@ export function useTabPersistence({
           }
         }
 
-        const excludedRecentProjectPaths = restoreResult?.excludedRecentProjectPaths ?? [];
-        // recentProjects updates only when the user selects a project through the open-workspace action,
-        // but most users open workspaces by restoring sessions, leaving recentProjects empty.
-        // Session restore now includes both local and remote workspaces, and they share lastActiveTabIndex;
-        // extract local workspaces from the full session snapshot and update recentProjects here,
-        // so adding remote restore does not return history to showing only manually opened local projects.
-        // Older versions lost workspacePurpose and could add the app-owned default cwd
-        // to recentProjects as a regular project. Filtering only this restore is not enough;
-        // also remove old entries so the project picker does not continue rendering it as a workspace.
-        const merged = buildRestoredRecentProjectPaths(settings, excludedRecentProjectPaths);
-        const persistedRecent = settings.recentProjects ?? [];
-        if (
-          merged.length !== persistedRecent.length ||
-          merged.some((p, i) => p !== persistedRecent[i])
-        ) {
-          settingService.update({ recentProjects: merged }).catch((err) => {
-            logger.error("[useTabPersistence] 同步 recentProjects 失败:", err);
-          });
-        }
         if (!cancelled) {
           const deferredRestore = restoreResult?.deferredRestore;
           setRestoreLifecycle({
@@ -227,9 +220,10 @@ export function useTabPersistence({
               if (cancelled) {
                 return;
               }
-              // active-only is a startup transient and must not be persisted early; the store event from the completed merge
-              // is the first event that contains a full session snapshot and can be written back.
+              // active-only 是启动瞬态，不能提前持久化；补齐合并产生的 store event
+              // 才是首个允许写回的完整 session snapshot。
               initialRestoreFullyCompletedRef.current = true;
+              openWorkspacePersistenceGate(persistenceGate, persistSession);
               try {
                 deferredRestore();
               } catch (error) {
@@ -247,13 +241,20 @@ export function useTabPersistence({
             });
           } else {
             initialRestoreFullyCompletedRef.current = true;
+            openWorkspacePersistenceGate(persistenceGate, persistSession);
           }
         }
       })
       .catch((err) => {
         logger.error("[useTabPersistence] 恢复标签页失败:", err);
         if (!cancelled) {
-          initialRestoreFullyCompletedRef.current = true;
+          // 恢复失败时必须 fail-closed；当前 renderer 的 tabs 不是磁盘快照的完整替代品。
+          // 只停止 loading，不允许后续远程断连/关闭事件覆盖 setting.json。
+          initialRestoreFullyCompletedRef.current = false;
+          if (persistenceGate) {
+            persistenceGate.canPersist = false;
+            persistenceGate.restoreFailed = true;
+          }
           setRestoreLifecycle({
             settingService,
             restoreSession,
@@ -267,9 +268,16 @@ export function useTabPersistence({
       cancelled = true;
       cancelDeferredRestore?.();
     };
-  }, [restorePersistedSession, settingService, restoreSession, store]);
+  }, [
+    persistSession,
+    persistenceGate,
+    restorePersistedSession,
+    settingService,
+    restoreSession,
+    store,
+  ]);
 
-  // Persist: subscribe to store changes and debounce writes.
+  // 持久化：订阅 store 变化，debounce 写入
   useEffect(() => {
     if (!settingService || !persistSession) return;
 
@@ -277,14 +285,26 @@ export function useTabPersistence({
       if (!initialRestoreFullyCompletedRef.current) {
         return;
       }
+      if (persistenceGate && !persistenceGate.canPersist) {
+        return;
+      }
       if (timerRef.current) clearTimeout(timerRef.current);
 
       timerRef.current = setTimeout(() => {
-        // If a new secondary window also writes its tabs to global settings,
-        // it can overwrite the session the main window intends to restore, so next startup would open the wrong window.
-        // Make session persistence an independent switch and let only the first local window write back.
+        // 新开的次级窗口如果也把自己的标签页写回全局设置，
+        // 会把主窗口真正想恢复的会话覆盖掉，导致下次启动恢复到错误窗口。
+        // 这里把“是否持久化会话”独立成开关，只让首个本地窗口负责写回。
+        // Bug 原因：remote legacy identity 的单一来源在最新 AppSettings；旧写入者只拿 tab
+        // state，默认空 history 会把冻结 identity 改写成当前线路。写前读取同一 settings 快照。
         settingService
-          .update((buildPersistPatch ?? buildDefaultPersistPatch)(state))
+          .get()
+          .then((settings) =>
+            settingService.update(
+              buildPersistPatch
+                ? buildPersistPatch(state, settings)
+                : buildDefaultPersistPatch(state),
+            ),
+          )
           .catch((err) => {
             logger.error("[useTabPersistence] 持久化失败:", err);
           });
@@ -295,7 +315,7 @@ export function useTabPersistence({
       unsubscribe();
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [buildPersistPatch, persistSession, store, settingService]);
+  }, [buildPersistPatch, persistSession, persistenceGate, store, settingService]);
 
   return { isRestoring, hasCompletedInitialRestore, hasCompletedFullRestore };
 }

@@ -1,3 +1,5 @@
+import { toServiceLocale } from "../../i18n/serviceLocale.js";
+import type { Locale } from "@zcode/shared";
 import { additionalRequestModalSelectors } from "@/request-security-edition/errors.js";
 import { isStartPlanModelProviderId, type MarketingPopup } from "@zcode/shared";
 import type {
@@ -31,7 +33,7 @@ export function marketingLabel(text: MarketingPopup["title"]): string {
 
 export function adaptMarketingPopup(
   id: string,
-  locale: "zh-CN" | "en-US",
+  locale: Locale,
   popup: MarketingPopup,
   hero: CloudDialogHero | null,
   viewPlanLabel?: string,
@@ -82,7 +84,7 @@ export function adaptMarketingPopup(
     id,
     revision: 1,
     kind: "campaign",
-    locale,
+    locale: toServiceLocale(locale),
     dialog: {
       title: marketingLabel(popup.title),
       formattedTitle: {

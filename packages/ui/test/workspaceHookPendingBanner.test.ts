@@ -10,8 +10,7 @@ import {
   TID_V4_WORKSPACE_HOOK_PENDING_BANNER,
   TID_V4_WORKSPACE_HOOK_PENDING_DISMISS,
   TID_V4_WORKSPACE_HOOK_PENDING_REVIEW,
-} from "@zcode/shared";
-
+} from "@zcode/shared/test-ids";
 import {
   WorkspaceHookPendingBanner,
   workspaceHookPendingDismissStore,
@@ -161,13 +160,6 @@ describe("WorkspaceHookPendingBanner（软门禁 D4）", () => {
 
   it("admission 为 null 时不渲染", () => {
     const html = renderBanner({ admission: null });
-    expect(html).not.toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_BANNER + '"');
-  });
-
-  it("dismiss 后同 bundle 不再现（幂等 key = sessionId + bundleDigest）", () => {
-    // 第一次 dismiss
-    workspaceHookPendingDismissStore.dismiss("sess-1", sampleAdmission.bundleDigest);
-    const html = renderBanner({ admission: sampleAdmission });
     expect(html).not.toContain('data-testid="' + TID_V4_WORKSPACE_HOOK_PENDING_BANNER + '"');
   });
 

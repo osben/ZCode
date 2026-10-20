@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 // 动态工作流灰度关掉之后的自动化页（docs/dynamic-workflow/launch.md「Gray release」DWG-07）：
-// 只剩一个平铺的「自动化」标题，没有「工作流」标签，也不挂中枢。
+// 灰度关闭时标题不提供工作流标签。
 //
-// AutomationsSection 本体在本仓从不整棵渲染（依赖面太大），沿用 automationsSectionOffPeakTelemetry
-// 与 automationsPageTabs 的做法：接线用源码契约钉，标题本身真渲染。
 import { createElement, useState } from "react";
-
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TID_AUTOMATIONS_PAGE_TAB, testId } from "@zcode/shared";
+import { TID_AUTOMATIONS_PAGE_TAB } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   AutomationsPageTitle,
@@ -46,8 +44,6 @@ describe("AutomationsPageTitle 灰度门", () => {
     expect(screen.queryByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"))).toBeNull();
     const heading = screen.getByRole("heading", { level: 1 });
     expect(heading.textContent).toBe(expectedCopy("settings.automations.title"));
-    // 沿用 text-ui-xl 页面标题层级——切换存在与否不该改变标题本身的视觉层级。
-    expect(heading.className).toContain("text-ui-xl");
   });
 
   it("灰度关 + en-US → 标题走同一个 i18n key，不是硬编码中文", () => {

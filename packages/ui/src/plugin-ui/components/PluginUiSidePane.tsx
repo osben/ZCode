@@ -3,6 +3,7 @@ import type { PluginUiSidePaneViewProps } from "@/plugin-ui/contract.js";
 
 /** Pure side pane view: reads no session, lease, projection, or workspace store. */
 export function PluginUiSidePaneView({
+  visible,
   scopeRef,
   host,
   loadingLabel,
@@ -18,6 +19,7 @@ export function PluginUiSidePaneView({
       className="h-full min-h-0 overflow-hidden bg-background"
     >
       <PluginUiCard
+        visible={visible}
         pageKey={host.pageKey}
         fill
         handle={host.handle}

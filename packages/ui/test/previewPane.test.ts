@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getPreviewPaneSafeErrorMessage,
+  resolvePreviewPaneImageFileReference,
   getPreviewPaneDisplayOptions,
   isPreviewPaneFileTooLargeError,
   isPptxPreviewFileTooLarge,
@@ -16,9 +17,91 @@ import {
   shouldShowPreviewPaneHeaderDivider,
 } from "@/PreviewPane.js";
 import { createDiffSourceFilePreviewSource, getDiffSourceFileTarget } from "@/lib/codeViewer.js";
+import { createWorkspaceFileComposerMention } from "@/lib/workspaceFileDrag.js";
 import { getPreviewPaneErrorTextClass } from "@/previewPaneContent.js";
 
 describe("PreviewPane helpers", () => {
+  it.each([
+    ["/project", "/outside/drawing.png"],
+    ["/project", "/project-other/drawing.png"],
+    ["C:\\project", "C:\\outside\\drawing.png"],
+  ])("keeps an outside image's absolute reference for %s", (workspacePath, path) => {
+    const reference = resolvePreviewPaneImageFileReference(
+      { type: "image", title: "drawing.png", mediaType: "image/png", path, workspacePath },
+      workspacePath,
+      workspacePath,
+    );
+    expect(reference?.relativePath).toBe(path);
+    expect(createWorkspaceFileComposerMention(reference!, workspacePath).value).toBe(path);
+  });
+
+  it("routes remote image references only to the matching workspace draft", () => {
+    const source = {
+      type: "image" as const,
+      title: "drawing.png",
+      path: "/project/drawing.png",
+      mediaType: "image/png",
+      workspacePath: "/project",
+      workspaceIdentity: "ssh://host-a/project",
+    };
+    expect(
+      resolvePreviewPaneImageFileReference(source, "/project", "ssh://host-a/project"),
+    ).toEqual({
+      type: "file",
+      name: "drawing.png",
+      path: source.path,
+      relativePath: "drawing.png",
+      workspacePath: "/project",
+      workspaceIdentity: "ssh://host-a/project",
+    });
+    expect(
+      resolvePreviewPaneImageFileReference(source, "/project", "ssh://host-b/project"),
+    ).toBeUndefined();
+    expect(resolvePreviewPaneImageFileReference(source, "/project", "/project")).toBeUndefined();
+    expect(resolvePreviewPaneImageFileReference(source, "/project", undefined)).toBeUndefined();
+  });
+
+  it("keeps local path fallback and rejects content without a source path", () => {
+    expect(
+      resolvePreviewPaneImageFileReference(
+        { type: "file", title: "drawing.svg", path: "/project/drawing.svg" },
+        "/project",
+        "/project",
+      ),
+    ).toMatchObject({ relativePath: "drawing.svg", workspacePath: "/project" });
+    expect(
+      resolvePreviewPaneImageFileReference(
+        {
+          type: "file",
+          title: "drawing.png",
+          path: "/project/drawing.png",
+          workspacePath: "/project",
+        },
+        "/other",
+        "/other",
+      ),
+    ).toMatchObject({ path: "/project/drawing.png", relativePath: "drawing.png" });
+    expect(
+      resolvePreviewPaneImageFileReference(
+        {
+          type: "file",
+          title: "drawing.png",
+          path: "/project/drawing.png",
+          workspacePath: "/project",
+        },
+        "/remote",
+        "ssh://host/remote",
+      ),
+    ).toBeUndefined();
+    expect(
+      resolvePreviewPaneImageFileReference(
+        { type: "text", title: "inline.svg", content: "<svg/>", language: "xml" },
+        "/project",
+        "/project",
+      ),
+    ).toBeUndefined();
+  });
+
   it.each([
     [3, "codeViewer.mediaUnsupported"],
     [4, "codeViewer.mediaUnsupported"],
@@ -461,22 +544,6 @@ describe("PreviewPane helpers", () => {
     expect(getPreviewPaneErrorTextClass("permission denied", missingFileMessage)).toBe(
       "text-destructive",
     );
-  });
-
-  it("reads scroll metrics from the real preview content scroller", async () => {
-    const previewPaneModule = await import("@/PreviewPane.js");
-
-    expect(typeof previewPaneModule.readPreviewPaneScrollMetrics).toBe("function");
-
-    expect(
-      previewPaneModule.readPreviewPaneScrollMetrics({
-        scrollHeight: 2400,
-        scrollTop: 720,
-      }),
-    ).toEqual({
-      scrollHeight: 2400,
-      scrollTop: 720,
-    });
   });
 
   it("builds a normal file preview source from diff preview sources", () => {

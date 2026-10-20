@@ -574,7 +574,7 @@ describe("WorkflowArtifactSidePane 头部动作", () => {
   it("没有「下载」按钮——renderer 没有任何把字节存成用户文件的宿主能力", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
-    expect(view.queryByText(expectedCopy("voiceDictation.models.download"))).toBeNull();
+    expect(view.queryByRole("button", { name: /download/i })).toBeNull();
   });
 });
 

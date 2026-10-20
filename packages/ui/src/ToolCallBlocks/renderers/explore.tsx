@@ -1,12 +1,12 @@
 /* eslint-disable max-lines -- Explore's aggregate renderer maintains categories, parent summaries, and reusable child-tool summaries; splitting it would make parent/child display rules harder to keep aligned. */
 import { SearchIcon } from "lucide-react";
 import { extractPlanStepsFromToolInput, extractPlanStepsFromToolOutput } from "@zcode/shared";
-import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { ToolSnapshotFieldNotice } from "@/ToolCallBlocks/ToolSnapshotFieldNotice.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 import { getExecuteSecondaryText } from "@/ToolCallBlocks/renderers/execute.js";
 import { buildReadSummary, ReadFileChip } from "@/ToolCallBlocks/renderers/read.js";
+import { getWebFetchPrimaryText } from "@/ToolCallBlocks/renderers/web-fetch.js";
 import { getSearchPrimaryText } from "@/ToolCallBlocks/renderers/search.js";
 import { renderFilePath } from "@/ToolCallBlocks/shared.js";
 import { resolveToolCallIdentity } from "@/lib/toolIdentity.js";
@@ -121,10 +121,17 @@ function collectCommandStrings(input: unknown): string[] {
     .filter(Boolean);
 }
 
-type ExploreBucket = "search" | "list" | "file";
+type ExploreBucket = "search" | "fetch" | "list" | "file";
 
 function getBucketLabel(intl: IntlLike, bucket: ExploreBucket, count: number) {
   switch (bucket) {
+    case "fetch":
+      return intl.formatMessage({
+        id:
+          count === 1
+            ? "chat.toolCall.explore.bucket.fetch.one"
+            : "chat.toolCall.explore.bucket.fetch.other",
+      });
     case "search":
       return intl.formatPlural({ id: "chat.toolCall.explore.bucket.search" }, count);
     case "list":
@@ -145,6 +152,7 @@ function classifyExploreToolCall({
   title?: string;
   input: unknown;
 }): ExploreBucket {
+  if (resolveToolCallIdentity({ kind, title, input }).family === "web-fetch") return "fetch";
   const fingerprint = `${kind} ${title ?? ""}`.toLowerCase();
   const command = collectCommandStrings(input).join(" ; ").toLowerCase();
 
@@ -168,6 +176,8 @@ function classifyExploreToolCall({
 function formatExploreSummary(intl: IntlLike, counts: Record<ExploreBucket, number>) {
   const summaryParts: string[] = [];
 
+  if (counts.fetch > 0)
+    summaryParts.push(`${counts.fetch} ${getBucketLabel(intl, "fetch", counts.fetch)}`);
   if (counts.search > 0) {
     summaryParts.push(`${counts.search} ${getBucketLabel(intl, "search", counts.search)}`);
   }
@@ -190,6 +200,8 @@ function getChildActionKindLabel(
   switch (family) {
     case "file-read":
       return intl.formatMessage({ id: "chat.toolCall.read.reading" });
+    case "web-fetch":
+      return intl.formatMessage({ id: "chat.toolCall.webFetch.fetching" });
     case "search":
       return intl.formatMessage({ id: "chat.toolCall.search.searching" });
     case "shell":
@@ -315,6 +327,17 @@ function getLatestExploreChildSummary(
     };
   }
 
+  if (childIdentity.family === "web-fetch") {
+    const primaryText = getWebFetchPrimaryText(childToolCall.input);
+    return {
+      animationKey: `fetch:${childToolCall.toolId}:${primaryText}`,
+      primaryText: renderChildActionKindPrefix(
+        actionKindLabel,
+        <span className="min-w-0 truncate">{primaryText}</span>,
+      ),
+      title: primaryText,
+    };
+  }
   if (childIdentity.family === "search") {
     const primaryText = getSearchPrimaryText(intl, childToolCall.input);
 
@@ -379,6 +402,7 @@ export function getLatestExploreChildSummaryFromChildren(
 }
 
 export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
+  const ToolCallBlock = context.nestedToolRenderer;
   const { intl } = useZCodeIntl();
   const { toolCallNode, isRunning, statusLabel, errorText } = context;
   const { toolCall, childToolCalls } = toolCallNode;
@@ -392,7 +416,7 @@ export function ExploreToolCallBlock(context: ToolCallBlockRenderContext) {
       acc[bucket] += 1;
       return acc;
     },
-    { search: 0, list: 0, file: 0 },
+    { search: 0, fetch: 0, list: 0, file: 0 },
   );
   const summary = formatExploreSummary(intl, counts);
   const kindLabel = intl.formatMessage({

@@ -5,6 +5,7 @@ import {
   resolveOffPeakCreateBlockReason,
   resolveLocalizedOffPeakCreateTitle,
   resolveOffPeakStatusFooter,
+  shouldShowOffPeakModelSelectionIssue,
 } from "@/settings/offPeakUiPresentation.js";
 
 const remainingWaitMessages: Record<string, string> = {
@@ -102,6 +103,19 @@ describe("resolveOffPeakCreateBlockReason", () => {
   });
 });
 
+describe("shouldShowOffPeakModelSelectionIssue", () => {
+  it.each([
+    ["queued", true],
+    ["paused", true],
+    ["running", true],
+    ["completed", false],
+    ["failed", false],
+    ["cancelled", false],
+  ] as const)("只对仍可能执行的 %s 任务显示修复提示", (status, expected) => {
+    expect(shouldShowOffPeakModelSelectionIssue(status)).toBe(expected);
+  });
+});
+
 describe("formatOffPeakRemainingWait", () => {
   const now = 1_000_000;
 
@@ -113,11 +127,10 @@ describe("formatOffPeakRemainingWait", () => {
     expect(formatOffPeakRemainingWait(now + waitMs, now, remainingWaitIntl)).toBe(expected);
   });
 
-  it("rounds a positive partial minute up and avoids calendar dates", () => {
+  it("rounds a positive partial minute up", () => {
     const label = formatOffPeakRemainingWait(now + 60_001, now, remainingWaitIntl);
 
     expect(label).toBe("2 分钟");
-    expect(label).not.toMatch(/[年月日]/);
   });
 
   it("uses a sub-minute label once the recovery point is reached", () => {
@@ -159,7 +172,7 @@ describe("resolveFailedOffPeakQueueFooter", () => {
 });
 
 describe("off-peak terminal status presentation", () => {
-  it("dims completed cards while preserving hover and more-actions feedback", () => {
+  it("completed tasks resolve to the terminal status footer", () => {
     expect(resolveOffPeakStatusFooter({ status: "completed" })).toMatchObject({
       icon: "success",
       className: "text-foreground-subtle",

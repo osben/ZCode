@@ -229,7 +229,7 @@ describe("FeedbackBackgroundUploadIndicator", () => {
     }
   });
 
-  it("renders a folded status capsule by default to avoid covering the workspace", () => {
+  it("hides progress details while folded", () => {
     const html = renderIndicator();
 
     expect(html).toContain(expectedCopy("feedback.background.title"));

@@ -1,11 +1,12 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useEffectEvent } from "react";
 import type { IServiceAccessor } from "@zcode/services";
 import type { FileEntry } from "@zcode/shared";
-import { FolderIcon, FolderSymlinkIcon } from "lucide-react";
-import { Button } from "./components/ui/button.js";
-import { Input } from "./components/ui/input.js";
-import { useZCodeIntl } from "./i18n/IntlProvider.js";
-import { logger } from "./logger.js";
+import { FolderIcon, FolderSymlinkIcon, LoaderIcon } from "lucide-react";
+import { Button } from "@/components/ui/button.js";
+import { Input } from "@/components/ui/input.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { logger } from "@/logger.js";
+import { cn } from "@/components/lib/utils.js";
 
 export function createDirectoryBrowserReadParams(
   path: string,
@@ -18,7 +19,7 @@ export function filterDirectoryBrowserEntries(entries: FileEntry[]): FileEntry[]
   return entries.filter((e) => e.type === "directory");
 }
 
-// Reason for the fix: Remote directory entries already include isSymbolicLink. Only the displayed icon changes here; navigation and selection semantics stay the same.
+// 修复原因：远程目录条目已经携带 isSymbolicLink，这里只替换展示图标，不改变进入和选择目录的路径语义。
 export function getDirectoryBrowserEntryIconKind(
   entry: Pick<FileEntry, "isSymbolicLink" | "type">,
 ): "folder" | "folder-symlink" {
@@ -41,22 +42,39 @@ export function createDirectoryBrowserRequestGuard(): {
 }
 
 /**
- * Server-side directory browser dialog.
- * Browse remote or local server directory structures through fileService.readdir,
- * for cases where the Web app cannot call the native system file picker.
+ * 服务端目录浏览对话框。
+ * 通过 fileService.readdir 浏览远程/本地服务器的目录结构，
+ * 适用于 web 端无法调用系统原生文件选择器的场景。
  */
 export function DirectoryBrowser({
   services,
   onSelect,
   onCancel,
   onPathChange,
+  initialPath,
+  onNavigationStateChange,
+  navigationRevision = 0,
   embedded = false,
+  showSelectionActions = false,
+  selectLabel,
+  selecting,
+  formatError,
 }: {
-  services: IServiceAccessor;
+  services: {
+    fileService: Pick<IServiceAccessor["fileService"], "readdir">;
+    systemService: { info(): Promise<{ homedir: string }> };
+  };
   onSelect: (path: string) => void;
   onCancel: () => void;
   onPathChange?: (path: string) => void;
+  initialPath?: string;
+  onNavigationStateChange?: (ready: boolean) => void;
+  navigationRevision?: number;
   embedded?: boolean;
+  showSelectionActions?: boolean;
+  selectLabel?: string;
+  selecting?: boolean;
+  formatError?: (error: unknown) => string;
 }) {
   const [currentPath, setCurrentPath] = useState("");
   const [inputPath, setInputPath] = useState("");
@@ -64,23 +82,39 @@ export function DirectoryBrowser({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showHiddenDirectories, setShowHiddenDirectories] = useState(false);
+  const requestedPathRef = useRef("");
+  const appliedNavigationRevisionRef = useRef(navigationRevision);
   const listRef = useRef<HTMLDivElement>(null);
   const showHiddenDirectoriesRef = useRef(false);
   const requestGuardRef = useRef(createDirectoryBrowserRequestGuard());
   const { intl } = useZCodeIntl();
 
-  // Initialize: use homedir as the starting path
+  // 同一向导收起后会重建浏览器实例；卸载必须撤销旧请求，不能让迟到结果改写恢复后的目录。
   useEffect(() => {
-    services.systemService
-      .info()
-      .then((info) => {
-        navigateTo(info.homedir);
-      })
-      .catch((err) => {
-        logger.error("[DirectoryBrowser] 获取系统信息失败:", err);
-        setError(intl.formatMessage({ id: "directoryBrowser.errorSystem" }));
-        setLoading(false);
-      });
+    let disposed = false;
+    const homeRequestId = requestGuardRef.current.begin();
+    if (initialPath) {
+      void navigateTo(initialPath);
+    } else {
+      void services.systemService
+        .info()
+        .then((info) => {
+          if (!disposed && requestGuardRef.current.isCurrent(homeRequestId))
+            void navigateTo(info.homedir);
+        })
+        .catch((err) => {
+          if (disposed || !requestGuardRef.current.isCurrent(homeRequestId)) return;
+          logger.error("[DirectoryBrowser] 获取系统信息失败:", err);
+          setError(
+            formatError?.(err) ?? intl.formatMessage({ id: "directoryBrowser.errorSystem" }),
+          );
+          setLoading(false);
+        });
+    }
+    return () => {
+      disposed = true;
+      requestGuardRef.current.begin();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -88,7 +122,9 @@ export function DirectoryBrowser({
     path: string,
     nextShowHiddenDirectories = showHiddenDirectoriesRef.current,
   ) => {
+    requestedPathRef.current = path;
     const requestId = requestGuardRef.current.begin();
+    onNavigationStateChange?.(false);
     setLoading(true);
     setError("");
     try {
@@ -103,16 +139,19 @@ export function DirectoryBrowser({
       setCurrentPath(path);
       setInputPath(path);
       onPathChange?.(path);
-      // Scroll to the top
+      onNavigationStateChange?.(true);
+      // 滚动到顶部
       listRef.current?.scrollTo(0, 0);
     } catch (err) {
       if (!requestGuardRef.current.isCurrent(requestId)) {
         return;
       }
-      // When users quickly switch directories or toggle hidden directories, an earlier readdir call may return later;
-      // a stale error must not overwrite the latest navigation state, or the UI could show a directory/error that does not match the current button state.
+      // 用户快速切换目录或隐藏目录时，较早 readdir 可能后返回；
+      // 过期错误不能覆盖最新导航状态，否则 UI 会展示和当前按钮状态不一致的目录/错误。
       logger.error("[DirectoryBrowser] readdir 失败:", err);
-      setError(intl.formatMessage({ id: "directoryBrowser.errorReadDir" }, { error: String(err) }));
+      setError(
+        formatError?.(err) ?? intl.formatMessage({ id: "directoryBrowser.errorUnavailable" }),
+      );
     } finally {
       if (requestGuardRef.current.isCurrent(requestId)) {
         setLoading(false);
@@ -120,8 +159,23 @@ export function DirectoryBrowser({
     }
   };
 
+  const navigateFromParent = useEffectEvent((path: string) => {
+    void navigateTo(path);
+  });
+  useEffect(() => {
+    // chip 是导航请求；成功回传同一路径不能再次触发读取，旧请求仍由 guard 淘汰。
+    if (
+      initialPath &&
+      (initialPath !== requestedPathRef.current ||
+        navigationRevision !== appliedNavigationRevisionRef.current)
+    ) {
+      appliedNavigationRevisionRef.current = navigationRevision;
+      navigateFromParent(initialPath);
+    }
+  }, [initialPath, navigationRevision]);
+
   const handleGoUp = () => {
-    // Get the parent directory path
+    // 提取父目录路径
     const parent = currentPath.replace(/\/[^/]+\/?$/, "") || "/";
     navigateTo(parent);
   };
@@ -144,7 +198,7 @@ export function DirectoryBrowser({
 
   const handleSelectCurrentPath = () => {
     const selectedPath = currentPath.trim();
-    if (!selectedPath || loading) {
+    if (!selectedPath || loading || selecting) {
       return;
     }
 
@@ -156,28 +210,39 @@ export function DirectoryBrowser({
   };
 
   const browserContent = (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
+    <div
+      className={cn(
+        "flex min-h-0 flex-1 flex-col gap-3",
+        embedded && "rounded-md border border-border bg-surface p-3",
+      )}
+    >
       <div>
-        <div className="mb-1 block text-ui-base text-foreground-subtle">
-          {intl.formatMessage({ id: "directoryBrowser.title" })}
-        </div>
+        {!embedded ? (
+          <div className="mb-1 block text-ui-base text-foreground-subtle">
+            {intl.formatMessage({ id: "directoryBrowser.title" })}
+          </div>
+        ) : null}
 
-        {/* Path input */}
+        {/* 路径输入 */}
         <form onSubmit={handleInputSubmit} className="flex flex-col gap-2 sm:flex-row">
           <Input
             type="text"
+            aria-label={intl.formatMessage({
+              id: "directoryBrowser.pathPlaceholder",
+            })}
             size="lg"
             value={inputPath}
             onChange={(e) => setInputPath(e.target.value)}
             placeholder={intl.formatMessage({
               id: "directoryBrowser.pathPlaceholder",
             })}
-            className="h-9 min-w-0 flex-1 text-ui-base"
+            className="h-9 min-w-0 flex-1 font-mono placeholder:font-sans text-ui-base max-md:text-mobile-input-safe"
             autoFocus
           />
           <div className="flex gap-2 sm:shrink-0">
             <Button
               type="submit"
+              variant="secondary"
               size="lg"
               className="h-9 min-w-0 flex-1 px-4 text-ui-base sm:flex-none"
             >
@@ -185,7 +250,7 @@ export function DirectoryBrowser({
             </Button>
             <Button
               type="button"
-              variant={showHiddenDirectories ? "secondary" : "outline"}
+              variant={showHiddenDirectories ? "secondary" : "ghost"}
               size="lg"
               aria-pressed={showHiddenDirectories}
               className="h-9 min-w-0 flex-1 px-3 text-ui-base sm:flex-none"
@@ -201,21 +266,26 @@ export function DirectoryBrowser({
         </form>
       </div>
 
-      {/* Error message */}
+      {/* 错误提示 */}
       {error ? <div className="text-ui-base text-destructive">{error}</div> : null}
 
-      {/* Directory list */}
+      {/* 目录列表；embedded 时外层 dir-shell 已带边框，列表不再叠加内层边框（原型单层框内分区）。 */}
       <div
         ref={listRef}
-        className="flex-1 flex flex-col overflow-y-auto rounded-lg border border-border bg-background"
+        className={cn(
+          "flex-1 flex flex-col overflow-y-auto",
+          embedded
+            ? "min-h-24 max-h-64 rounded-md bg-background"
+            : "rounded-lg border border-border bg-background",
+        )}
       >
-        {/* Parent directory */}
+        {/* 上级目录 */}
         {currentPath && currentPath !== "/" ? (
           <button
             onClick={handleGoUp}
-            // The scroll container uses a vertical flex layout, where children may shrink by default;
-            // when many directories cause scrolling, the first “Go to parent” row would shrink and change height.
-            className="flex h-10 w-full shrink-0 cursor-pointer items-center gap-2 border-b border-border px-3 text-left text-ui-base transition hover:bg-hover/50"
+            // 滚动容器是纵向 flex 布局，子项默认允许 shrink；
+            // 当目录很多触发滚动时，首行“返回上级”会被压缩导致高度变化。
+            className="flex h-10 w-full shrink-0 cursor-pointer items-center gap-2 px-3 text-left text-ui-base transition hover:bg-hover/50"
           >
             <FolderIcon className="size-4 shrink-0 text-foreground-subtle" />
             <span className="text-foreground">..</span>
@@ -253,9 +323,71 @@ export function DirectoryBrowser({
     </div>
   );
 
-  if (embedded) {
-    return browserContent;
-  }
+  const selectionActions = (
+    <>
+      {" "}
+      {/* Bugfix: 非嵌入模式之前只能继续进入子目录，没有确认当前目录的路径。
+            Web 目录浏览器作为独立选择器使用时因此永远拿不到 onSelect 结果。
+            这里把确认动作收口到弹窗 footer，选择当前浏览路径并交回上层。 */}
+      <div className="mt-3 flex shrink-0 justify-end gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="lg"
+          className="h-10 min-w-0 px-5 text-ui-base"
+          onClick={onCancel}
+        >
+          {intl.formatMessage({ id: "common.cancel" })}
+        </Button>
+        <Button
+          type="button"
+          size="lg"
+          className={cn(
+            "h-10 min-w-0 px-5 text-ui-base",
+            selecting !== undefined && "grid",
+            selecting && "disabled:opacity-100",
+          )}
+          disabled={!currentPath.trim() || loading || Boolean(error) || selecting}
+          aria-busy={selecting}
+          data-testid="directory-browser-confirm"
+          onClick={handleSelectCurrentPath}
+        >
+          {/* 原因：父层追加加载行会撑高弹窗且脱离点击位置；复用父层状态，在按钮内反馈。
+              两种文案共用网格占位，避免加载时按钮变宽；不新增异步状态或计时器。 */}
+          <span
+            className={cn("col-start-1 row-start-1", selecting && "invisible")}
+            aria-hidden={selecting || undefined}
+          >
+            {selectLabel ?? intl.formatMessage({ id: "directoryBrowser.selectDir" })}
+          </span>
+          {selecting !== undefined ? (
+            <span
+              className={cn(
+                "col-start-1 row-start-1 inline-flex items-center justify-center gap-2",
+                !selecting && "invisible",
+              )}
+              role={selecting ? "status" : undefined}
+              aria-hidden={!selecting}
+            >
+              <LoaderIcon
+                aria-hidden="true"
+                className="size-4 animate-spin motion-reduce:animate-none"
+              />
+              {intl.formatMessage({ id: "directoryBrowser.opening" })}
+            </span>
+          ) : null}
+        </Button>
+      </div>
+    </>
+  );
+  // 原因：项目编辑器已有 Dialog；嵌入选择复用相同 footer，避免叠加全屏遮罩。
+  if (embedded)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {browserContent}
+        {showSelectionActions ? selectionActions : null}
+      </div>
+    );
 
   return (
     <div
@@ -265,29 +397,7 @@ export function DirectoryBrowser({
     >
       <div className="flex h-[min(36rem,calc(100vh-4rem))] w-[min(44rem,calc(100vw-2rem))] flex-col rounded-xl border border-border bg-popover p-4 shadow-xl">
         {browserContent}
-        {/* Bugfix: In non-embedded mode, users could only enter a subdirectory and could not confirm the current directory path.
-            As a result, the Web directory browser never returned an onSelect result when used as a standalone picker.
-            Move the confirmation action to the dialog footer, where it selects the currently browsed path and returns it to the caller. */}
-        <div className="mt-3 flex shrink-0 justify-end gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="lg"
-            className="h-10 min-w-0 px-5 text-ui-base"
-            onClick={onCancel}
-          >
-            {intl.formatMessage({ id: "common.cancel" })}
-          </Button>
-          <Button
-            type="button"
-            size="lg"
-            className="h-10 min-w-0 px-5 text-ui-base"
-            disabled={!currentPath.trim() || loading}
-            onClick={handleSelectCurrentPath}
-          >
-            {intl.formatMessage({ id: "directoryBrowser.selectDir" })}
-          </Button>
-        </div>
+        {selectionActions}
       </div>
     </div>
   );

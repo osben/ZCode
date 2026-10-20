@@ -3,7 +3,7 @@ export { AppErrorBoundary, ScopedErrorBoundary } from "./ErrorBoundary.js";
 export type { ScopedErrorBoundaryVariant } from "./ErrorBoundary.js";
 export { Button, buttonVariants } from "./components/ui/button.js";
 export { DesktopWindowFrame } from "./DesktopWindowFrame.js";
-export { WebRemoteControlDialog } from "./WebRemoteControlDialog.js";
+export { WebRemoteControlDialog } from "@/web-remote-control/index.js";
 export {
   WebRemoteControlFeatureProvider,
   useWebRemoteControlFeatureEnabled,
@@ -48,6 +48,11 @@ export {
   REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE,
   createRemoteWorkspaceDisconnectedError,
 } from "./lib/remoteWorkspaceServiceError.js";
+export {
+  getSourceSettingsServices,
+  registerSourceSettingsServices,
+  useSourceSettingsServices,
+} from "./store/sourceSettingsServiceStore.js";
 
 // Hooks — shared access layer for services and platform operations
 export {
@@ -120,3 +125,4 @@ export { generateMobileDeviceFingerprint, setStreamClientId } from "./lib/stream
 export { GlobalDatabaseStartupLoading } from "./root/GlobalDatabaseStartupLoading.js";
 
 export { LocalTtftObserver, setLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+export { ensurePendingTaskDraft } from "@/v4/composer/composerDraftStore.js";

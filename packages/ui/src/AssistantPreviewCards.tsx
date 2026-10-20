@@ -60,7 +60,8 @@ export function buildAssistantPreviewPptxAutoOpenRequest(
   if (pptxCards.length === 0) return null;
 
   return {
-    // Include the final card signature for stat results in the one-shot key; late candidates in the same turn must not make an old validation projection look like a newly consumed result.
+    // stat 结果对应的最终卡片签名必须进入一次性 key；同一 turn 的候选若晚到，
+    // 不会把旧的校验投影误当成已经消费的新结果。
     key: JSON.stringify([baseKey, getAssistantPreviewCardsValidationSignature(pptxCards)]),
     sources: pptxCards.map((card) => buildAssistantPreviewCardFileSource(card, scope)),
   };
@@ -74,7 +75,7 @@ interface AssistantPreviewCardsProps {
   onOpenBrowserUrl?: (url: string) => void;
   onOpenFileLink?: (target: MessageFileLinkTarget) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
-  /** Generated artifacts in the Desktop completion state: open the PPTX files validated for this turn in one batch. */
+  /** Desktop 完成态生成产物：批量打开本轮已通过校验的 PPTX。 */
   autoOpenPptxKey?: string;
   onAutoOpenPptx?: (request: AssistantPreviewCardsAutoOpenRequest) => void;
   compactForRemoteControl?: boolean;
@@ -112,8 +113,8 @@ export function useAssistantPreviewCardValidation(
   );
   const cardsSignature = useMemo(() => getAssistantPreviewCardsValidationSignature(cards), [cards]);
   const validationCardsRef = useRef({ cards, signature: cardsSignature });
-  // Timeline reconstruction may pass a cards array with identical contents but a different reference; an effect depending on the array reference would issue duplicate RPCs.
-  // Replace the validation snapshot only when its semantic signature changes; a change to workspace fileService still revalidates the same snapshot.
+  // timeline 重建时会传入内容相同但引用不同的 cards 数组，effect 若依赖数组引用会重复发起 RPC。
+  // 只在语义签名变化时替换校验快照；workspace fileService 变化仍会使用同一快照重新校验。
   if (validationCardsRef.current.signature !== cardsSignature) {
     validationCardsRef.current = { cards, signature: cardsSignature };
   }
@@ -139,8 +140,8 @@ export function useAssistantPreviewCardValidation(
 
     let disposed = false;
 
-    // When switching historical messages, stat results validated for the previous message may be reused briefly before the effect cleanup runs.
-    // Revalidate all candidates in a batch using the current signature, then publish once to avoid file cards flashing before being replaced.
+    // 历史消息切换时，上一条消息的已通过 stat 结果会在 effect 清理前短暂复用。
+    // 这里按当前候选签名批量二次校验，全部算完后一次发布，避免文件卡先闪一批再被替换。
     void resolveValidatedAssistantPreviewCards(validationCards, fileService).then(
       (visibleCards) => {
         if (disposed) return;
@@ -210,8 +211,8 @@ export function AssistantPreviewCards({
     });
     if (!request) return;
 
-    // Auto-open may consume only the final visible cards; this keeps it aligned with the 15-candidate limit, 10-card cap, and Host stat results,
-    // so it cannot open a file that is absent from the cards.
+    // 自动打开只能消费最终可见卡片；这样与 15 个候选、10 张上限和 Host stat
+    // 完全同源，不会打开卡片中并不存在的文件。
     onAutoOpenPptx(request);
   }, [
     autoOpenPptxKey,
@@ -290,60 +291,67 @@ function AssistantPreviewCardRow({
         }
       : null;
   return (
-    <div
-      className="flex w-full items-center gap-3 rounded-xl border border-card-border bg-card p-3 pr-4 text-foreground"
-      data-zcode-stream-animate="true"
-      style={
-        {
-          "--zcode-stream-animation-delay": `${animationDelayMs}ms`,
-        } as CSSProperties
+    <OpenSplitButton
+      renderCard={(button) => (
+        <div
+          className="flex w-full items-center gap-3 rounded-xl border border-card-border bg-card p-3 pr-4 text-foreground"
+          data-preview-card-title={card.title}
+          data-zcode-stream-animate="true"
+          style={
+            {
+              "--zcode-stream-animation-delay": `${animationDelayMs}ms`,
+            } as CSSProperties
+          }
+        >
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-background text-foreground-subtle">
+            {!renderAsFile && card.type === "website" ? (
+              <GlobeIcon className="size-6" />
+            ) : descriptor ? (
+              <FileDisplayIcon src={descriptor.fileIconSrc} size={24} />
+            ) : (
+              <FileTextIcon className="size-6" />
+            )}
+          </div>
+          <div className="min-w-0 flex flex-1 flex-col gap-1">
+            <div className="truncate text-ui-base font-medium leading-5">{card.title}</div>
+            <div className="truncate text-ui-base leading-5 text-foreground-subtlest">
+              {subtitle}
+            </div>
+          </div>
+          {button}
+        </div>
+      )}
+      target={
+        !renderAsFile && card.type === "website"
+          ? {
+              type: "website",
+              url: card.url,
+              // website 卡有两个来源——html 引用卡（file://）与 localhost
+              // 预览卡（http(s) 活服务）。localPath 直开只对前者生效；localhost 卡
+              // 必须继续把 URL 交给浏览器，否则丢路由/动态内容。
+              workspacePath,
+              localPath: card.url.startsWith("file:") ? card.filePath : undefined,
+            }
+          : {
+              type: "file",
+              path: filePath!,
+              title: card.title,
+              label: card.title,
+              // Preview Card 以前没有 CodeViewer scope，远程 Linux path
+              // 会被 OpenSplitButton 当成本地路径交给宿主编辑器。
+              previewSource:
+                card.type === "website"
+                  ? fileSource!
+                  : buildAssistantPreviewCardFileSource(card, {
+                      workspacePath,
+                      workspaceIdentity,
+                      workspaceRemoteSessionId,
+                    }),
+            }
       }
-    >
-      <div className="flex size-11 shrink-0 items-center justify-center rounded-md bg-background text-foreground-subtle">
-        {!renderAsFile && card.type === "website" ? (
-          <GlobeIcon className="size-6" />
-        ) : descriptor ? (
-          <FileDisplayIcon src={descriptor.fileIconSrc} size={24} />
-        ) : (
-          <FileTextIcon className="size-6" />
-        )}
-      </div>
-      <div className="min-w-0 flex flex-1 flex-col gap-1">
-        <div className="truncate text-ui-base font-medium leading-5">{card.title}</div>
-        <div className="truncate text-ui-base leading-5 text-foreground-subtlest">{subtitle}</div>
-      </div>
-      <OpenSplitButton
-        target={
-          !renderAsFile && card.type === "website"
-            ? {
-                type: "website",
-                url: card.url,
-                // Website cards have two sources: HTML reference cards (file://) and localhost
-                // preview cards (live http(s) services). Opening localPath directly works only for the former;
-                // localhost cards must keep passing the URL to the browser to preserve routing and dynamic content.
-                localPath: card.url.startsWith("file:") ? card.filePath : undefined,
-              }
-            : {
-                type: "file",
-                path: filePath!,
-                title: card.title,
-                label: card.title,
-                // Preview Cards previously had no CodeViewer scope, so a remote Linux path
-                // was passed to the host editor as if it were a local path by OpenSplitButton.
-                previewSource:
-                  card.type === "website"
-                    ? fileSource!
-                    : buildAssistantPreviewCardFileSource(card, {
-                        workspacePath,
-                        workspaceIdentity,
-                        workspaceRemoteSessionId,
-                      }),
-              }
-        }
-        onOpenBrowserUrl={onOpenBrowserUrl}
-        onOpenFileLink={onOpenFileLink}
-        onOpenCodeViewer={onOpenCodeViewer}
-      />
-    </div>
+      onOpenBrowserUrl={onOpenBrowserUrl}
+      onOpenFileLink={onOpenFileLink}
+      onOpenCodeViewer={onOpenCodeViewer}
+    />
   );
 }

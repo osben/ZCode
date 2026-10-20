@@ -19,6 +19,8 @@ import { logger } from "@/logger.js";
 
 /** Target project coordinates (the workflow's project; never use the active project; invariant 7); remoteSessionId determines the connection endpoint. */
 export interface SavedWorkflowLaunchTarget {
+  projectId?: string | null;
+  hostId?: string;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
@@ -154,6 +156,7 @@ export function useSavedWorkflowLauncher(params: {
             payload: { workspaceId },
             sessionId: null,
           }),
+          { projectId: target.projectId },
         );
         if (createAck.status !== "accepted" || createAck.result?.type !== "createSession") {
           // Session was not created: do not send start or keep a session; return a generic error.

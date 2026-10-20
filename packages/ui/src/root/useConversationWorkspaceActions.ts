@@ -2,23 +2,22 @@ import { useCallback } from "react";
 import type { IServiceAccessor } from "@zcode/services";
 import { logger } from "@/logger.js";
 import type { TabStoreState } from "@/store/tabStore.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { usePaneLayoutStore } from "@/v4/paneLayoutStore.js";
-import { useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 
 export function useConversationWorkspaceActions({
   services,
   addTab,
+  createTask,
   setWorkspaceActionError,
 }: {
   services: IServiceAccessor;
   addTab: TabStoreState["addTab"];
+  createTask: (source: string) => Promise<void>;
   setWorkspaceActionError: (error: string | null) => void;
 }) {
   const handleSelectConversationWorkspace = useCallback(
     (path: string) => {
-      // The conversation workspace is an app-managed shared cwd, not a user project: do not activate it across windows
-      // or write it to recentProjects; use purpose only so the display layer classifies it as “Conversation.”
+      // 对话工作区是 app 管理的独立 cwd，不属于用户项目：不走跨窗口项目激活，
+      // 也不写 recentProjects，只用 purpose 让展示层把它归到“对话”。
       logger.info("[Root] select conversation workspace", { path });
       addTab(path, { workspacePurpose: "conversation" });
       setWorkspaceActionError(null);
@@ -28,16 +27,17 @@ export function useConversationWorkspaceActions({
 
   const handleResolveConversationWorkspace = useCallback(async () => {
     try {
-      const result = await services.fileService.ensureConversationWorkspace();
+      if (!services.projectService) throw new Error("project.service-unavailable");
+      const result = await services.projectService.prepareSession();
       setWorkspaceActionError(null);
-      return result.path;
+      return result.workspacePath;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error("[Root] ensure conversation workspace failed", { error });
       setWorkspaceActionError(message);
       throw error;
     }
-  }, [services.fileService, setWorkspaceActionError]);
+  }, [services.projectService, setWorkspaceActionError]);
 
   const handleEnsureConversationWorkspace = useCallback(async () => {
     const path = await handleResolveConversationWorkspace();
@@ -45,18 +45,10 @@ export function useConversationWorkspaceActions({
     return path;
   }, [handleResolveConversationWorkspace, handleSelectConversationWorkspace]);
 
-  const handleCreateConversationTask = useCallback(async () => {
-    try {
-      const path = await handleResolveConversationWorkspace();
-      handleSelectConversationWorkspace(path);
-      // “Conversation +” is an explicit target and must not be overridden by the project binding of the current split pane/workbench group.
-      useWorkbenchGroupStore.getState().deactivateActiveGroup();
-      usePaneLayoutStore.getState().resetToPrimaryPane();
-      useZCodeSessionStore.getState().startDraft(path);
-    } catch {
-      // handleResolveConversationWorkspace already logs the error and preserves the current workspace.
-    }
-  }, [handleResolveConversationWorkspace, handleSelectConversationWorkspace]);
+  const handleCreateConversationTask = useCallback(
+    () => createTask("task section new task"),
+    [createTask],
+  );
 
   return {
     handleSelectConversationWorkspace,

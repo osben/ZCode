@@ -880,10 +880,7 @@ export function createTaskSlice(set: SetFn) {
               current.taskUnreadByTaskId;
             const { [taskId]: _removedTaskMeta, ...restOptimisticTaskListByTaskId } =
               current.optimisticTaskListByTaskId;
-            const {
-              [taskId]: _removedPromotedGroupedDraftTask,
-              ...restPromotedGroupedDraftTaskByTaskId
-            } = current.promotedGroupedDraftTaskByTaskId;
+
             const shouldCloseDeletedTask = current.activeTaskId === taskId;
 
             // When deleting the task currently viewed in the sidebar, the task list data used to be updated alone,
@@ -901,7 +898,6 @@ export function createTaskSlice(set: SetFn) {
               taskConfigOptionsStatusByTaskId: restTaskConfigOptionsStatusByTaskId,
               taskUnreadByTaskId: restTaskUnreadByTaskId,
               optimisticTaskListByTaskId: restOptimisticTaskListByTaskId,
-              promotedGroupedDraftTaskByTaskId: restPromotedGroupedDraftTaskByTaskId,
             };
           },
           workspaceIdentity,

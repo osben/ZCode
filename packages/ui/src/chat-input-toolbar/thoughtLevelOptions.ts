@@ -1,3 +1,5 @@
+import { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelLabels.js";
+export { thoughtLevelLabelId } from "@/chat-input-toolbar/thoughtLevelLabels.js";
 import type { ZCodeConfigOption, ZCodeProvider } from "@zcode/shared";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getConfigOptionEntryLabel } from "@/chat-input-toolbar/display.js";
@@ -15,43 +17,11 @@ const NO_THOUGHT_LEVEL_VALUES = new Set([
   "off",
 ]);
 
-const THOUGHT_LEVEL_LABEL_IDS: Record<string, string> = {
-  disabled: "chat.toolbar.thoughtLevel.value.off",
-  false: "chat.toolbar.thoughtLevel.value.off",
-  no: "chat.toolbar.thoughtLevel.value.off",
-  none: "chat.toolbar.thoughtLevel.value.off",
-  nothink: "chat.toolbar.thoughtLevel.value.off",
-  "no-think": "chat.toolbar.thoughtLevel.value.off",
-  no_think: "chat.toolbar.thoughtLevel.value.off",
-  off: "chat.toolbar.thoughtLevel.value.off",
-  enable: "chat.toolbar.thoughtLevel.value.on",
-  enabled: "chat.toolbar.thoughtLevel.value.on",
-  on: "chat.toolbar.thoughtLevel.value.on",
-  true: "chat.toolbar.thoughtLevel.value.on",
-  low: "chat.toolbar.thoughtLevel.value.low",
-  minimal: "chat.toolbar.thoughtLevel.value.minimal",
-  medium: "chat.toolbar.thoughtLevel.value.medium",
-  high: "chat.toolbar.thoughtLevel.value.high",
-  "extra-high": "chat.toolbar.thoughtLevel.value.xhigh",
-  extra_high: "chat.toolbar.thoughtLevel.value.xhigh",
-  xhigh: "chat.toolbar.thoughtLevel.value.xhigh",
-  max: "chat.toolbar.thoughtLevel.value.max",
-  ultra: "chat.toolbar.thoughtLevel.value.ultra",
-};
-
 function normalizeThoughtLevelText(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/**
- * Level value → message key; return undefined when absent from the map (the caller displays the provider’s level name as-is).
- * This label is also used outside the toolbar (for workflow subagent models), so both places must use the same map.
- */
-export function thoughtLevelLabelId(value: string): string | undefined {
-  return THOUGHT_LEVEL_LABEL_IDS[normalizeThoughtLevelText(value)];
-}
-
-export function isNoThoughtLevel(entry: ThoughtLevelEntry): boolean {
+export function isNoThoughtLevel(entry: Pick<ThoughtLevelEntry, "value">): boolean {
   return NO_THOUGHT_LEVEL_VALUES.has(normalizeThoughtLevelText(entry.value));
 }
 
@@ -62,7 +32,7 @@ export function getNextThoughtLevelValue(
     return null;
   }
 
-  // Configuration defines level order; name aliases are for display only and must not change menu or shortcut order.
+  // 配置已声明档位顺序；名称别名只用于展示，不能改变菜单或快捷键顺序。
   const entries = option.options;
   const currentValue = String(option.currentValue);
   const currentIndex = entries.findIndex((candidate) => candidate.value === currentValue);
@@ -77,10 +47,7 @@ export function getThoughtLevelLabel(
   option: ZCodeConfigOption,
   entry: ThoughtLevelEntry,
 ): string {
-  const value = normalizeThoughtLevelText(entry.value);
-  const labelId = Object.hasOwn(THOUGHT_LEVEL_LABEL_IDS, value)
-    ? THOUGHT_LEVEL_LABEL_IDS[value]
-    : undefined;
+  const labelId = thoughtLevelLabelId(entry.value);
   if (labelId) {
     return intl.formatMessage({ id: labelId });
   }

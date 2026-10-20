@@ -17,7 +17,7 @@ import {
   WorkflowRunSaveSlotsBoundary,
   type WorkflowRunSaveSlots,
   type WorkflowRunSaveSlotsHost,
-} from "@/components/workflow-timeline/WorkflowRunSaveControls.js";
+} from "@/project-workflow/WorkflowRunSaveControls.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { WorkflowArtifactTilePreview } from "@/app-shell/workflow-artifacts/WorkflowArtifactTilePreview.js";
 import { useHasV4Conversation } from "@/v4/V4ConversationContext.js";
@@ -96,6 +96,7 @@ export function ConversationWorkflowCompletion({
   // Resume, `onSendWorkflowSaveRequest`. The chip is not gated; it reports whether the file exists
   // on disk, not whether this card can act on it.
   const saveHost: WorkflowRunSaveSlotsHost = {
+    sessionId: sessionId ?? undefined,
     workspacePath: context.workspacePath,
     ...(context.workspaceIdentity === undefined
       ? {}

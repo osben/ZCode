@@ -84,10 +84,6 @@ describe("PermissionDialog", () => {
     expect(withFeedback).toContain(expectedCopy("chat.permission.feedback.placeholder"));
     expect(withFeedback).toContain("<textarea");
     expect(withFeedback).toContain('wrap="soft"');
-    expect(withFeedback).toContain("field-sizing-content");
-    expect(withFeedback).toContain("max-h-[5lh]");
-    expect(withFeedback).toContain("overflow-y-auto");
-    expect(withFeedback).toContain("focus-visible:ring-0");
     expect(withFeedback).toContain('maxLength="4096"');
   });
 
@@ -223,7 +219,7 @@ describe("PermissionDialog", () => {
     expect(html).toContain(expectedCopy("chat.permission.allowCommand.description"));
   });
 
-  it("wraps a long prefix in the allow-always description position", () => {
+  it("truncates long permission prefixes without showing exact command grants", () => {
     const html = renderPermissionDialog({
       type: "permission_request",
       taskId: "task-1",
@@ -259,9 +255,6 @@ describe("PermissionDialog", () => {
 
     expect(html).toContain('data-permission-rule-prefixes="true"');
     expect(html).toContain('data-permission-rule-scopes="true"');
-    expect(html).toContain("basis-48");
-    expect(html).toContain("whitespace-pre-wrap");
-    expect(html).toContain("break-all");
     expect(html).toContain('data-permission-rule-scope-truncated="true"');
     expect(html).not.toContain(expectedCopy("chat.permission.allowAlways.description.command"));
   });
@@ -627,7 +620,7 @@ describe("PermissionDialog", () => {
     expect(html).not.toContain("/Users/dev/ZCodeProject/demo/");
   });
 
-  it("不再承载聊天底部主列宽度和 summary 偏移", () => {
+  it("permission preview displays pending approval instead of execution state", () => {
     const html = renderPermissionDialog({
       type: "permission_request",
       taskId: "task-1",

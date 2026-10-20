@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button.js";
 import { PluginUiCard } from "@/plugin-ui/components/PluginUiCard.js";
 import type { PluginUiToolCallViewProps } from "@/plugin-ui/contract.js";
-import { TID_PLUGIN_UI_OPEN_SIDE_PANE } from "@zcode/shared";
+import { TID_PLUGIN_UI_OPEN_SIDE_PANE } from "@zcode/shared/test-ids";
 import { PanelRightOpenIcon, PinIcon, PinOffIcon } from "lucide-react";
 
 /** Pure tool card view: platform capabilities, result, and side pane ownership are all supplied by the adapter. */
