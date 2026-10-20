@@ -342,9 +342,17 @@ export function startComposerWorktreePipeline({
         branchName: params.branchName,
         errorName: error instanceof Error ? error.name : typeof error,
       });
+      // The primary message is the generic worktree summary; the raw error text is kept only as
+      // memory-only detail for the failure modal (never logged, never shown inline).
       useComposerWorktreePipelineStore
         .getState()
-        .markFailed(workspaceKey, getErrorMessage(error), sessionId, attemptId);
+        .markFailed(
+          workspaceKey,
+          formatMessage("commandCenter.worktree.error.unknown"),
+          sessionId,
+          attemptId,
+          { rawDetail: getErrorMessage(error) },
+        );
       return "failed";
     } finally {
       inFlightByPipelineKey.delete(runKey);
@@ -359,8 +367,15 @@ export function startComposerWorktreePipeline({
  * loaded branch list proves an unborn HEAD or a missing explicit base. A failed, absent, or hung
  * probe never blocks Send; the base degrades to HEAD (acceptance scenario 24). The probe is
  * advisory and bounded, and its raw error is neither logged nor returned.
+ *
+ * Tri-state: `failed` blocks Send, `confirmed` keeps the explicit base, and `unconfirmed` (absent,
+ * rejected, or timed out) drops the explicit base so the creation falls back to HEAD.
  */
 type PreflightFailure = { messageId: string; values: Record<string, string> };
+type PreflightOutcome =
+  | { kind: "failed"; failure: PreflightFailure }
+  | { kind: "confirmed" }
+  | { kind: "unconfirmed" };
 
 /**
  * Returns null synchronously when the Git service has no branch probe, so the admission keeps its
@@ -374,7 +389,7 @@ function queueTimeBaseBranchPreflight({
   gitService: WorktreeCreationGitService;
   workspacePath: string;
   baseBranch?: string;
-}): Promise<PreflightFailure | null> | null {
+}): Promise<PreflightOutcome> | null {
   if (!gitService.getLocalBranches) return null;
   return probeBaseBranchPreflight(
     gitService.getLocalBranches.bind(gitService),
@@ -387,7 +402,7 @@ async function probeBaseBranchPreflight(
   getLocalBranches: NonNullable<WorktreeCreationGitService["getLocalBranches"]>,
   workspacePath: string,
   baseBranch: string | undefined,
-): Promise<PreflightFailure | null> {
+): Promise<PreflightOutcome> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let branches: GitLocalBranchListResult | null = null;
   try {
@@ -402,13 +417,16 @@ async function probeBaseBranchPreflight(
   } finally {
     clearTimeout(timer);
   }
-  if (!branches) return null;
+  if (!branches) return { kind: "unconfirmed" };
   if (branches.branches.length === 0 && branches.currentBranchName !== null) {
     // Unborn HEAD: no base (explicit or defaulted) can be forked from. The message already carries
     // the "repository without commits" hint.
     return {
-      messageId: "commandCenter.worktree.error.target-branch-not-found",
-      values: { branchName: baseBranch ?? branches.currentBranchName },
+      kind: "failed",
+      failure: {
+        messageId: "commandCenter.worktree.error.target-branch-not-found",
+        values: { branchName: baseBranch ?? branches.currentBranchName },
+      },
     };
   }
   if (
@@ -417,11 +435,14 @@ async function probeBaseBranchPreflight(
     !branches.branches.some((branch) => branch.name === baseBranch)
   ) {
     return {
-      messageId: "commandCenter.worktree.error.target-branch-not-found",
-      values: { branchName: baseBranch },
+      kind: "failed",
+      failure: {
+        messageId: "commandCenter.worktree.error.target-branch-not-found",
+        values: { branchName: baseBranch },
+      },
     };
   }
-  return null;
+  return { kind: "confirmed" };
 }
 
 /**
@@ -506,11 +527,17 @@ export function beginWorktreePipelineCreation({
     const attemptId = nanoid();
     const releaseNames = claimNameKeys(nameKeys, attemptId);
     const preflightProbe = queueTimeBaseBranchPreflight({ gitService, workspacePath, baseBranch });
-    const preflightFailure = preflightProbe ? await preflightProbe : null;
-    if (preflightFailure) {
+    const preflight: PreflightOutcome | null = preflightProbe ? await preflightProbe : null;
+    if (preflight?.kind === "failed") {
       releaseNames();
-      return failWith(preflightFailure.messageId, preflightFailure.values);
+      return failWith(preflight.failure.messageId, preflight.failure.values);
     }
+    // Only a confirmed probe keeps the explicit base; an absent, rejected, or timed-out probe
+    // degrades to HEAD, so a stale or unverified base is never sent to the Host.
+    const keepExplicitBase = Boolean(baseBranch) && preflight?.kind === "confirmed";
+    const confirmedBaseBranch = keepExplicitBase ? baseBranch : undefined;
+    const effectiveBaseFromHeadDefault =
+      baseBranch && !keepExplicitBase ? true : baseFromHeadDefault;
     const params = {
       ...(submissionId ? { submissionId } : {}),
       attemptId,
@@ -521,8 +548,8 @@ export function beginWorktreePipelineCreation({
       ...(effectiveLocation.mode === "custom" && effectiveLocation.customPath
         ? { customLocationPath: effectiveLocation.customPath }
         : {}),
-      ...(baseBranch ? { baseBranch } : {}),
-      baseFromHeadDefault,
+      ...(confirmedBaseBranch ? { baseBranch: confirmedBaseBranch } : {}),
+      baseFromHeadDefault: effectiveBaseFromHeadDefault,
     };
     let sessionId: string;
     try {
@@ -531,7 +558,7 @@ export function beginWorktreePipelineCreation({
         workspaceKey,
         branchName,
         targetPath,
-        ...(baseBranch ? { baseBranch } : {}),
+        ...(confirmedBaseBranch ? { baseBranch: confirmedBaseBranch } : {}),
       });
     } catch (error) {
       releaseNames();

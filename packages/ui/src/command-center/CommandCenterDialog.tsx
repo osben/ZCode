@@ -1402,7 +1402,16 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         branchName,
         issues: outcome.issueCodes,
       });
-      setWorktreeIssueMessage(outcome.message);
+      // A thrown request has no issue code: show the request failure with its raw text here (the
+      // Command Center has no details block), so the cause is not lost behind the generic summary.
+      setWorktreeIssueMessage(
+        outcome.issueCode === null && outcome.rawDetail
+          ? intl.formatMessage(
+              { id: "commandCenter.worktree.error.requestFailed" },
+              { error: outcome.rawDetail },
+            )
+          : outcome.message,
+      );
     } finally {
       // A stale request's finally must not unlock a newer Start; busy is cleared exclusively by the current attempt.
       if (worktreeStartAttemptRef.current === attempt) {

@@ -29,6 +29,7 @@ import {
   isWorktreeConfigurationFailure,
   useWorktreeFailureReturnStore,
 } from "@/store/worktreeFailureReturnStore.js";
+import { readComposerDestinationControlEnabled } from "@/v4/composer/ComposerDestinationControl.js";
 
 function buildFailureDetailLines(params: {
   rawDetail: string | null;
@@ -69,6 +70,9 @@ export function WorktreeCreationFailureModalDialog({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const hasTechnicalDetails = Boolean(rawDetail || worktreePath || branchName || issueCode);
   const configurationFailure = isWorktreeConfigurationFailure(issueCode);
+  // The destination request is consumed only by the unified control; the legacy layout (flag off)
+  // mounts the checkbox, so the action is hidden there and Retry remains the recovery path.
+  const [destinationControlEnabled] = useState(readComposerDestinationControlEnabled);
 
   const handleCopyDetails = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -147,7 +151,7 @@ export function WorktreeCreationFailureModalDialog({
         <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
           {intl.formatMessage({ id: "worktreeFailure.dismiss" })}
         </Button>
-        {configurationFailure ? (
+        {configurationFailure && destinationControlEnabled ? (
           <Button
             type="button"
             variant="default"
@@ -232,7 +236,7 @@ export function WorktreeFailureModalHost() {
       const { workspacePath, workspaceIdentity } = pending;
       toast(intl.formatMessage({ id: "worktreeFailure.toastTitle" }), {
         variant: "warning",
-        dedupeKey: `worktree-failure:${pending.sessionId}`,
+        dedupeKey: `worktree-failure:${pending.sessionId}:${pending.attemptId ?? ""}`,
         actionLabel: intl.formatMessage({ id: "worktreeFailure.toastOpen" }),
         onAction: () => {
           tabStoreApi

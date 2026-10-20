@@ -1507,7 +1507,13 @@ function ConversationComposerImpl({
         return;
       }
       const failureKey = `${queued.preparedSessionId}\0${worktreePipeline.params?.attemptId ?? ""}\0${worktreePipeline.failureMessage ?? ""}`;
-      if (onWorktreePreparationFailed && !reportedWorktreeFailuresRef.current.has(failureKey)) {
+      // After a failed tombstone the return-to-draft hand-off already reported the failure to the
+      // Host; this effect must not send a second failure report. Retry stays armed below.
+      if (
+        onWorktreePreparationFailed &&
+        !worktreePipeline.tombstoneFailed &&
+        !reportedWorktreeFailuresRef.current.has(failureKey)
+      ) {
         reportedWorktreeFailuresRef.current.add(failureKey);
         void onWorktreePreparationFailed(
           queued.preparedSessionId,

@@ -306,8 +306,18 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
         resolveCreate = resolve;
       }),
     );
+    // Only a confirmed branch probe keeps the explicit base; the list proves "main" exists.
+    const confirmedGitService = {
+      ...gitService,
+      getLocalBranches: vi.fn(async () => ({
+        headRefType: "branch",
+        currentBranchName: "main",
+        branches: [{ name: "main" }],
+      })),
+    };
     const outcome = await beginWorktreePipelineCreation({
       ...baseInput,
+      gitService: confirmedGitService,
       effectiveLocation: projectLocation,
       baseBranch: "main",
       baseFromHeadDefault: false,
@@ -329,5 +339,36 @@ describe("beginWorktreePipelineCreation validation (no silent worktree misfires)
     expect(
       selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY)?.status,
     ).toBe("ready");
+  });
+
+  it("an absent branch probe drops the explicit base and degrades to HEAD", async () => {
+    // No getLocalBranches on the Git service: the base is unverified, so it must not be sent.
+    createWorktree.mockResolvedValue({
+      ok: true,
+      worktreePath: "/dev/alpha-worktrees/zcode-sleepy-capybara",
+      branchName: "zcode/sleepy-capybara",
+      issues: [],
+    });
+    const seenParams: unknown[] = [];
+    const outcome = await beginWorktreePipelineCreation({
+      ...baseInput,
+      effectiveLocation: projectLocation,
+      baseBranch: "main",
+      baseFromHeadDefault: false,
+      prepareSession: async (params) => {
+        seenParams.push(params);
+        return "session-1";
+      },
+    });
+    expect(outcome).toEqual({ ok: true, sessionId: "session-1" });
+    expect(seenParams[0]).not.toHaveProperty("baseBranch");
+    expect(
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY),
+    ).toMatchObject({
+      params: { baseFromHeadDefault: true },
+    });
+    expect(
+      selectComposerWorktreePipeline(useComposerWorktreePipelineStore.getState(), KEY).params,
+    ).not.toHaveProperty("baseBranch");
   });
 });
