@@ -198,7 +198,7 @@ import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissi
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { toast } from "@/components/ui/toast.js";
-import { useOptionalBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useOptionalWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import {
   resolveOppositeFollowupDelivery,
   resolveFollowupModifierTooltip,
@@ -784,8 +784,12 @@ function ConversationComposerImpl({
   // Draft branch intent (specs/composer-branch-switcher-semantics.md): the guard and git access
   // needed to apply the intent at send time. Null services/guard = harness or compact shell
   // without providers; the branch resolution then never runs.
-  // Upstream port: resolves the base host services; remote-target routing is not re-ported (see ledger).
-  const baseWorkspaceServices = useOptionalBaseWorkspaceServices();
+  const workspaceServiceResolution = useOptionalWorkspaceServicesResolution(
+    workspacePath,
+    remoteSessionId,
+    workspaceIdentity,
+  );
+  const baseWorkspaceServices = workspaceServiceResolution?.services ?? null;
   const branchSwitchGuard = useBranchSwitchGuard();
   const [presentedHighspeedCardId, setPresentedHighspeedCardId] = useState<string | null>(null);
   const [highspeedSweepActive, setHighspeedSweepActive] = useState(false);

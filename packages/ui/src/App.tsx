@@ -380,6 +380,8 @@ export function App({
     workspaceIdentity,
   });
   const theme = useZCodeStore((s) => s.theme);
+  const palette = useZCodeStore((s) => s.palette);
+  const resolvedTheme = resolveTheme(theme);
   const setTheme = useZCodeStore((s) => s.setTheme);
   const setPalette = useZCodeStore((s) => s.setPalette);
   const {
@@ -1106,6 +1108,9 @@ export function App({
         // 如果依赖完整 user 对象，auth store 返回等价新引用时会重建整组 command/run 闭包。
         isLoggedIn,
         themeTarget,
+        themeMode: theme,
+        themePalette: palette,
+        resolvedTheme,
         shortcuts: {
           newTask: newTaskShortcutLabel,
           openWorkspace: openWorkspaceShortcutLabel,
@@ -1176,6 +1181,9 @@ export function App({
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
+      theme,
+      palette,
+      resolvedTheme,
     ],
   );
   const taskFindDialogProps = useMemo<TaskFindDialogProps>(

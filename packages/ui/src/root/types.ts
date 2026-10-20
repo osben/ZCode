@@ -7,6 +7,7 @@ import type {
   WebRemoteControlWorkspaceListResult,
   WebRemoteControlWorkspaceSwitchOptions,
 } from "@zcode/shared";
+import type { OpenExistingSessionTarget } from "@/hooks/useOpenExistingSession.js";
 import type { IServiceAccessor } from "@zcode/services";
 import type { ReactNode } from "react";
 import type { CreateTaskOptions, CreateTaskRequest } from "@/app-shell/types.js";
@@ -92,6 +93,8 @@ export interface RootProps {
   /** Web 远控跨 workspace 点击任务后的单次移动端落点 */
   initialSidebarFileTreeOpen?: boolean;
   initialWebRemoteControlMobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
+  /** Workspace/task list preloaded by mobile home when Web remote control has no workspace to bridge. */
+  initialWebRemoteControlWorkspaceList?: WebRemoteControlWorkspaceListResult;
   /** Web 远控手机端 relay terminal transport 状态，用于已进入页面后的轻量恢复提示 */
   webRemoteControlTerminalTransportState?: WebRemoteControlTerminalTransportState;
   /** 手机 Web 远控初始 workspace 注入前继续展示的入口 loading，桌面端不使用 */
