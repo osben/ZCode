@@ -91,8 +91,13 @@ visible there until the new build erases them. Accepted: fork erase removes rows
   `includeArchived` is set, and `updateSession` still writes `timeArchived`.
 - `updateSession` writes only the columns the input owns (upstream partial update), which fixes the stale full-row
   overwrite of concurrent title and permission changes.
-- Deferred: upstream writes `last_outcome` through `UpdateSessionInput.lastOutcome`. The fork contracts do not carry
-  that field yet, so the column is never written by this build (it is read as NULL). Add it with the contracts sync.
+- `UpdateSessionInput.lastOutcome` is written to `last_outcome` by the same partial update as the other owned columns
+  (`set("last_outcome", ...)`). An omitted field leaves the column unchanged, so a title or permission update never
+  clears the outcome. The column is the terminal-state fact only; it is not derived from live phase.
+- Erase interaction: a tombstoned (`time_deleted`) row still accepts `lastOutcome`, because a run that finishes after
+  the soft delete must still record its terminal state until the tree is erased. An erased row no longer exists: the
+  update matches no row and `mustGetSession` throws `Session not found after write`, the same as for every other field.
+  The update never recreates an erased row.
 
 ## Backup and admission
 
