@@ -4,6 +4,23 @@ import {
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
 import { incognitoUnsupportedMessageId } from "@/lib/incognitoUnsupportedMessage.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
+import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
+import { useGitRepository } from "@/hooks/useGitRepository.js";
+import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import type {
+  ComposerWorktreePreparationParams,
+  ComposerWorktreePreparationSyncParams,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
+import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
 import {
   createRemoteWorkspaceDisconnectedError,
@@ -14,7 +31,6 @@ import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInherited
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
 import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
-import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
 import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane 是单 pane 竖切的命令编排收口（订阅/发送/停止/fork/edit/retry/queue/slash 全集），与旧 ChatView 同粒度；HEAD 已超限（693 行计数），拆散命令组会打散 dispatchCommand/snapshotRef 的闭包纪律。 */
@@ -77,13 +93,8 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
-import {
-  selectDraftIncognito,
-  useDraftIncognitoIntentStore,
-} from "@/v4/composer/draftIncognitoIntent.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
@@ -179,11 +190,8 @@ import { projectSessionConfigToTaskConfigOptions } from "@/v4/composer/sessionCo
 import { useDraftRuntimeRebuildGate } from "@/v4/composer/useDraftRuntimeRebuildGate.js";
 import { useDraftModelReadinessGate } from "@/v4/composer/useDraftModelReadinessGate.js";
 import { useSettings } from "@/hooks/useSettingService.js";
-import { useGitRepository } from "@/hooks/useGitRepository.js";
-import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import {
   DEFAULT_CONVERSATION_SHARE_ACCESS_MODE,
   DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
@@ -201,12 +209,6 @@ import {
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
-import type {
-  ComposerWorktreePreparationParams,
-  ComposerWorktreePreparationSyncParams,
-} from "@/v4/composer/composerDraftWorktreeIntent.js";
-import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
-import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
@@ -217,8 +219,6 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
-import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
-import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -263,7 +263,6 @@ import {
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
-import { useStructurallySharedMemo } from "@/v4/useStructurallySharedMemo.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -2421,6 +2420,7 @@ export function SessionPane({
         undefined,
         undefined,
         undefined,
+        undefined,
         createSource,
       );
       if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
@@ -2771,27 +2771,27 @@ export function SessionPane({
   );
   // 发起 toolCallId → 静态图：图是 run 的属性，
   // 三种来源的轮尾 run 卡都到这一张表取图。行窗口一遍建成，随窗口重建。
-  const workflowGraphByToolCallId = useStructurallySharedMemo(
-    buildWorkflowGraphByToolCallId,
-    snapshot?.rows.window,
+  const workflowGraphByToolCallId = useMemo(
+    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
+    [snapshot?.rows.window],
   );
   // runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：补全之后
   // run 卡与侧板取它。行窗口一遍建成，随窗口重建。
-  const workflowFillGraphByRunId = useStructurallySharedMemo(
-    buildWorkflowFillGraphByRunId,
-    snapshot?.rows.window,
+  const workflowFillGraphByRunId = useMemo(
+    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
+    [snapshot?.rows.window],
   );
   // 工作流工具行 → 草稿位置：稿号与
   // 「后面还有更新的一稿」都只能从行序读出，行窗口一遍建成，随窗口重建。
-  const workflowDraftByToolCallId = useStructurallySharedMemo(
-    buildWorkflowDraftByToolCallId,
-    snapshot?.rows.window,
+  const workflowDraftByToolCallId = useMemo(
+    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
+    [snapshot?.rows.window],
   );
   // runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
   // 「Which workflow a run is saved as」规则 1）。行窗口一遍建成，随窗口重建。
-  const workflowSaveCandidatesByRunId = useStructurallySharedMemo(
-    buildWorkflowSaveCandidatesByRunId,
-    snapshot?.rows.window,
+  const workflowSaveCandidatesByRunId = useMemo(
+    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
+    [snapshot?.rows.window],
   );
   // Workflow 通知 manifest 的升级条目 Waiting→Answered 联查表（runId → 停驻 qid 集合）。
   const workflowRunPendingQuestionsByRunId = useMemo(
@@ -4448,6 +4448,7 @@ export function SessionPane({
     },
     [handleRowPin, platform, sessionId],
   );
+
   const handleDeleteQueueItem = useCallback(
     (queueItemId: string) => {
       const current = snapshotRef.current;
@@ -5276,8 +5277,7 @@ export function SessionPane({
   const runningBackgroundWorkCount =
     statusPanelModel.runningBashWorks.length +
     statusPanelModel.runningSubagentWorks.length +
-    statusPanelModel.runningWorkflowRuns.length +
-    (statusPanelModel.latestDreamWork?.status === "running" ? 1 : 0);
+    statusPanelModel.runningWorkflowRuns.length;
   const runningTerminalCount = statusPanelModel.runningBashWorks.length;
   const runningAgentCount = statusPanelModel.runningSubagentWorks.length;
   const runningWorkflowCount = statusPanelModel.runningWorkflowRuns.length;
@@ -5311,10 +5311,8 @@ export function SessionPane({
     () => (onOpenWorkflowRun ? resolveSoleRunningWorkflowRunTarget(statusPanelModel) : null),
     [onOpenWorkflowRun, statusPanelModel],
   );
-  const canOpenBackgroundWorks =
-    runningBackgroundWorkCount > 0 || Boolean(statusPanelModel.latestDreamWork);
   const handleOpenRunningBackgroundWorks = useCallback(() => {
-    if (!canOpenBackgroundWorks) return;
+    if (runningBackgroundWorkCount === 0) return;
     if (soleRunningWorkflowRunTarget) {
       // 与面板行同一个 handler：不存在第二条打开路径。
       handleOpenWorkflowRunFromPanel(soleRunningWorkflowRunTarget);
@@ -5330,7 +5328,7 @@ export function SessionPane({
     handleOpenWorkflowRunFromPanel,
     handleSummaryPanelVariantChange,
     runningAgentCount,
-    canOpenBackgroundWorks,
+    runningBackgroundWorkCount,
     runningTerminalCount,
     runningWorkflowCount,
     soleRunningWorkflowRunTarget,
@@ -5894,7 +5892,7 @@ export function SessionPane({
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
-        sessionId && canOpenBackgroundWorks ? handleOpenRunningBackgroundWorks : undefined
+        sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
       }
       backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
       // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
@@ -5992,7 +5990,6 @@ export function SessionPane({
       !quotaBanner.dismissed &&
       (!projectedComposerError || quotaBanner.takesOverError || quotaBanner.state.blocksSubmit) ? (
         <ConversationQuotaBanner
-          key={`${snapshot?.sessionId ?? "session"}:${controlLastErrorKey ?? "quota-banner"}`}
           state={quotaBanner.state}
           onShown={quotaBanner.markShown}
           billingDiscountActive={billingDiscount.active}
@@ -6004,11 +6001,6 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
-          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
-          autoContinueReady={sharedSettings !== null}
-          onAutoContinue={
-            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
-          }
         />
       ) : null}
       {recoverableCommand ? (
@@ -6475,6 +6467,7 @@ export function SessionPane({
     </PluginUiSessionProvider>
   );
 }
+
 function ExecutionWorktreeGitAutoRefresh({
   workspacePath,
   workspaceIdentity,

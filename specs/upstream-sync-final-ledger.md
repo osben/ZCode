@@ -564,3 +564,39 @@ Status: PARTIAL. Only the `/plan` slice was done in this pass; the file hand-mer
 - Verified: `node scripts/check-test-copy.mjs` exit 0; `v4SlashCommands`, `promptInputTriggers`, `v4SessionPaneModelSwitchRecovery` tests 123/123 pass.
 - Not yet run: `pnpm typecheck`, `pnpm lint`, full `packages/ui/test` run.
 - Not done: task B (19-file hand-merge, `parts/uisrc3.txt`); task C (`workspace-grouped-tasks/` retirement).
+
+## ui parity sessionpane
+
+Scope: `packages/ui/src/v4/SessionPane.tsx` (pass 3a). `V4ChatPane.tsx` and `V4WorkspaceChatArea.tsx` were compared with upstream and kept as the fork version (see below).
+
+Method: start from upstream 3.16.1 `SessionPane.tsx`, then re-apply only the fork hunks that a spec documents. Non-spec fork hunks were dropped.
+
+Kept (fork, spec-documented):
+
+- Draft create route in `dispatchSendTextAfterConfig` (`executionWorktree`, `incognito`, `preparedSessionId`, `reuploadAttachmentsForSession`), prewarm disabled for incognito drafts, incognito toast. Specs: `ui-draft-send-path.md`, `incognito-session.md`.
+- `tracksOnPaneStore` in `dispatchCommand` (commands aimed at a worktree-prepared session are not tracked in this pane). Spec: `ui-draft-send-path.md`.
+- Worktree preparation pipeline (`prepareWorktreeSession`, `syncWorktreePreparation`, retry/cancel/failed handlers) and the header `ConversationWorktreeSetupSteps` / `ConversationWorktreeCreatedNotice`. Spec: `composer-worktree-setup-steps.md`.
+- Execution worktree git state in the status panel (`sessionIndexScopes`, `useGitRepository`, `ExecutionWorktreeGitAutoRefresh`, `onOpenGitReview` with execution path). Spec: `execution-worktree-*.md`.
+- Resume after error (`resumableComposerError`, `handleResumeError`, `onResumeError`). Spec: `chat-error-resume.md`.
+- Voice dictation prop `voiceDictationEnabled`. Spec: `voice-dictation.md`.
+- Message pins (`ConversationPinnedBar`, `handleRowPin`, `onPinChange`, `scrollToRowActionRef`). Spec: `turn-navigator-pin-highlight.md`.
+- `onCreateTaskInWorkspace` prop. Spec: `ui-upstream-sync-integration.md`.
+- `zcodeAgentService` in `useServices` (used by the execution worktree session index lookup).
+
+Dropped (upstream behavior taken, no spec):
+
+- `useStructurallySharedMemo` for workflow graph memos. Upstream `useMemo` is used.
+- Dream work count in the background-works indicator (`latestDreamWork`, `canOpenBackgroundWorks`). Upstream count is used.
+- Quota banner auto-continue props (`autoContinueDefault`, `autoContinueReady`, `onAutoContinue`) and the banner `key`. No spec documents them.
+
+Not changed: `V4ChatPane.tsx` and `V4WorkspaceChatArea.tsx` keep the fork version. Their remaining differences from upstream are the selection side chat wiring (`selectionSideChat`, `readOnlySessionId`, `selectionSideChatSessionId`, `remoteSessionId`), which the side chat specs document.
+
+Verification (this branch):
+
+- `pnpm typecheck`: exit 0, 0 errors (run after the filter packages were built).
+- `pnpm lint`: 0 errors, 94 warnings, none in the owned files.
+- `node scripts/architecture/architecture-check.mjs check --full`: 0 violations.
+- `node scripts/check-test-copy.mjs`: passed.
+- `pnpm fmt:check`: passed.
+- `v4SessionPaneModelSwitchRecovery.test.ts` and `v4ConversationStatusPanel.test.ts`: 157/157 pass.
+- `node scripts/run-vitest.mjs run packages/ui/test`: see the PR report.
