@@ -15,18 +15,57 @@ function storageKey(workspaceKey: string): string {
   return `${STORAGE_PREFIX}${workspaceKey}`;
 }
 
-export function readPersistedPaneSession(workspaceKey: string): string | null {
+export interface PersistedPaneSession {
+  sessionId: string;
+  readOnly?: boolean;
+  selectionSideChat?: boolean;
+}
+
+export function readPersistedPaneSession(workspaceKey: string): PersistedPaneSession | null {
   try {
-    return localStorage.getItem(storageKey(workspaceKey));
+    const value = localStorage.getItem(storageKey(workspaceKey));
+    if (!value) return null;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "sessionId" in parsed &&
+        typeof parsed.sessionId === "string" &&
+        parsed.sessionId.length > 0
+      ) {
+        return {
+          sessionId: parsed.sessionId,
+          ...("readOnly" in parsed && parsed.readOnly === true ? { readOnly: true } : {}),
+          ...("selectionSideChat" in parsed && parsed.selectionSideChat === true
+            ? { selectionSideChat: true }
+            : {}),
+        };
+      }
+    } catch {
+      // Previous versions stored the session ID as a plain string.
+    }
+    return { sessionId: value };
   } catch {
     return null;
   }
 }
 
-export function persistPaneSession(workspaceKey: string, sessionId: string | null): void {
+export function persistPaneSession(
+  workspaceKey: string,
+  sessionId: string | null,
+  capabilities: { readOnly?: boolean; selectionSideChat?: boolean } = {},
+): void {
   try {
     if (sessionId) {
-      localStorage.setItem(storageKey(workspaceKey), sessionId);
+      localStorage.setItem(
+        storageKey(workspaceKey),
+        JSON.stringify({
+          sessionId,
+          ...(capabilities.readOnly ? { readOnly: true } : {}),
+          ...(capabilities.selectionSideChat ? { selectionSideChat: true } : {}),
+        }),
+      );
     } else {
       localStorage.removeItem(storageKey(workspaceKey));
     }
@@ -70,7 +109,12 @@ export interface UsePaneSessionPersistenceParams {
   /** TabStore 恢复的启动激活页签；不用于显式打开项目或手机入口。 */
   restoreOnStartup?: boolean;
   /** 恢复入口：与用户点击任务列表同一条选择路径，保证副作用（已读清理等）一致。 */
-  selectSession: (sessionId: string) => void;
+  selectSession: (
+    sessionId: string,
+    capabilities?: Pick<PersistedPaneSession, "readOnly" | "selectionSideChat">,
+  ) => void;
+  activeReadOnly?: boolean;
+  activeSelectionSideChat?: boolean;
   /** 仅已挂回的远端提供权威查询；未就绪时不传，禁止本地 fallback。 */
   lookupSession?: (sessionId: string) => Promise<boolean>;
   onSessionMissing?: () => void;
@@ -103,6 +147,8 @@ export function usePaneSessionPersistence({
   enabled = true,
   restoreOnStartup = false,
   selectSession,
+  activeReadOnly = false,
+  activeSelectionSideChat = false,
   lookupSession,
   onSessionMissing,
 }: UsePaneSessionPersistenceParams): void {
@@ -111,7 +157,7 @@ export function usePaneSessionPersistence({
   const startupRestoreAvailableRef = useRef(true);
   const pendingRestoreRef = useRef<{
     workspaceKey: string;
-    sessionId: string;
+    binding: PersistedPaneSession;
   } | null>(null);
   const selectSessionRef = useRef(selectSession);
   selectSessionRef.current = selectSession;
@@ -134,7 +180,7 @@ export function usePaneSessionPersistence({
     // 稳定 attachment 内的正常选择/新建不能因暂时查空而退回草稿。
     const restoringSelection =
       restoringSession?.workspaceKey === workspaceKey &&
-      restoringSession.sessionId === activeSessionId;
+      restoringSession.binding.sessionId === activeSessionId;
     if (!lookupSession || !activeSessionId || (!attachmentChanged && !restoringSelection)) return;
     let cancelled = false;
     void lookupSession(activeSessionId)
@@ -178,8 +224,8 @@ export function usePaneSessionPersistence({
     }
     const stored = readPersistedPaneSession(workspaceKey);
     if (stored) {
-      pendingRestoreRef.current = { workspaceKey, sessionId: stored };
-      selectSessionRef.current(stored);
+      pendingRestoreRef.current = { workspaceKey, binding: stored };
+      selectSessionRef.current(stored.sessionId, stored);
     }
     // activeSessionId/draftFocusVersion 故意不进依赖：恢复只看 workspace 首次挂载瞬间，
     // 之后的显式新建与选择变化走下面的持久化 effect。
@@ -199,6 +245,9 @@ export function usePaneSessionPersistence({
       // 读到恢复前的 null。等选择态真正回填后再允许写，避免先删掉 reload 恢复键。
       pendingRestoreRef.current = null;
     }
-    persistPaneSession(workspaceKey, activeSessionId);
-  }, [activeSessionId, enabled, workspaceKey]);
+    persistPaneSession(workspaceKey, activeSessionId, {
+      readOnly: activeReadOnly,
+      selectionSideChat: activeSelectionSideChat,
+    });
+  }, [activeReadOnly, activeSelectionSideChat, activeSessionId, enabled, workspaceKey]);
 }
