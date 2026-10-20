@@ -17,6 +17,7 @@
     "src/host/sourceServerDirectory.ts",
     "src/host/windowRemoteConnectionRegistry.ts"
   ],
+  // TEMPORARY(relay-decision): these four e2e files target upstream relay v2, which is not adopted until the user decides. Remove this exclude when the relay decision lands.
   "exclude": [
     "test/e2e/helpers/web-remote-unread.ts",
     "test/e2e/conversation-session/manual-review/pending/conversation-session-web-remote-unread.test.ts",
