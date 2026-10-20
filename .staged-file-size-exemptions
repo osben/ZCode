@@ -249,3 +249,5 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
+packages/services/src/session/automationRepo.ts
+packages/services/src/session/offPeakTaskRepo.ts

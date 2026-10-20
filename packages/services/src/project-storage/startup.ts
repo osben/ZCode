@@ -1,4 +1,4 @@
-import type { AppSettings, DatabaseMigrationFacts } from "@zcode/shared";
+import type { DatabaseMigrationFacts } from "@zcode/shared";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createRequire } from "node:module";
@@ -31,10 +31,6 @@ const LOCK_WAIT_MS = 60 * 60_000;
 export async function prepareTasksIndexStorage(
   path: string,
   onProgress: (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) => void,
-  settings?: Pick<
-    AppSettings,
-    "lastWorkspaceSession" | "recentProjects" | "sourceServers" | "connectionProfiles"
-  >,
 ): Promise<void> {
   // 回调拿到的是当时事实，不共享后续执行会继续递增的内部对象。
   const report = (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) =>
@@ -101,7 +97,8 @@ export async function prepareTasksIndexStorage(
   }
   markTasksStorageMigrated(path);
   const repos = [
-    new TaskIndexRepo(settings, undefined, path, LOCK_WAIT_MS),
+    // Fork TaskIndexRepo takes (path, busyTimeout); upstream's settings-based project import is deferred.
+    new TaskIndexRepo(path, LOCK_WAIT_MS),
     new AutomationRepo(path, LOCK_WAIT_MS),
     new OffPeakTaskRepo(path, LOCK_WAIT_MS),
   ];
