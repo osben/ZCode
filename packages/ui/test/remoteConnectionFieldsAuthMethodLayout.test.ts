@@ -7,7 +7,7 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -49,6 +49,7 @@ beforeEach(() => {
 });
 
 function renderRemoteConnectionFields(
+  locale: "en-US" | "zh-CN" = "en-US",
   overrides: Partial<ComponentProps<typeof RemoteConnectionFields>> = {},
 ) {
   return render(
@@ -57,7 +58,7 @@ function renderRemoteConnectionFields(
       { platform },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: TEST_LOCALE },
+        { initialLocale: locale },
         createElement(RemoteConnectionFields, {
           kind: "ssh",
           host: "",
@@ -107,9 +108,11 @@ function renderRemoteConnectionFields(
   );
 }
 
-it("auth and download method groups expose names and selected state; password can be shown and hidden", () => {
+it("auth and download methods have group names and pressed state, and the password can be shown then hidden", () => {
   renderRemoteConnectionFields();
-  const auth = screen.getByRole("group", { name: expectedCopy("ssh.authMethod") });
+  const auth = screen.getByRole("group", {
+    name: expectedCopy("ssh.authMethod"),
+  });
   expect(within(auth).getByRole("button", { pressed: true }).textContent).toBe(
     expectedCopy("ssh.auth.password"),
   );
@@ -119,20 +122,34 @@ it("auth and download method groups expose names and selected state; password ca
   expect(password.getAttribute("type")).toBe("text");
   fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
   expect(password.getAttribute("type")).toBe("password");
-  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.advancedOptions") }));
-  const download = screen.getByRole("group", { name: expectedCopy("ssh.assetInstallMode") });
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: new RegExp(expectedCopy("ssh.advancedOptions"), "i"),
+    }),
+  );
+  const download = screen.getByRole("group", {
+    name: expectedCopy("ssh.assetInstallMode"),
+  });
   expect(within(download).getByRole("button", { pressed: true })).toBeTruthy();
   expect(within(download).getByRole("button", { pressed: false })).toBeTruthy();
 });
 
 it.each([
-  { kind: "ssh", sshAuthMethod: "privateKey", labelKey: "ssh.privateKeyPassphrase" },
-  { kind: "server", sshAuthMethod: "password", labelKey: "server.token" },
+  {
+    kind: "ssh",
+    sshAuthMethod: "privateKey",
+    label: expectedCopy("ssh.privateKeyPassphrase"),
+  },
+  {
+    kind: "server",
+    sshAuthMethod: "password",
+    label: expectedCopy("server.token"),
+  },
 ] as const)(
   "$kind passphrase field can be shown and hidden and is label-associated",
-  ({ kind, sshAuthMethod, labelKey }) => {
-    renderRemoteConnectionFields({ kind, sshAuthMethod });
-    const input = screen.getByLabelText(expectedCopy(labelKey));
+  ({ kind, sshAuthMethod, label }) => {
+    renderRemoteConnectionFields("en-US", { kind, sshAuthMethod });
+    const input = screen.getByLabelText(label);
     expect(input.getAttribute("type")).toBe("password");
     fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
     expect(input.getAttribute("type")).toBe("text");
@@ -141,9 +158,9 @@ it.each([
   },
 );
 
-it("Docker container list can be selected from the search box with arrow keys and Enter", async () => {
+it("the Docker container list can be picked from the search box with arrow keys and Enter", async () => {
   const setDockerContainer = vi.fn();
-  renderRemoteConnectionFields({
+  renderRemoteConnectionFields("en-US", {
     kind: "docker",
     dockerContainer: "alpha",
     dockerAvailable: true,

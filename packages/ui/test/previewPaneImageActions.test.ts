@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImagePreviewContent, SvgPreviewContent } from "@/previewPaneImageContent.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { WORKSPACE_FILE_ADD_TO_CHAT_EVENT } from "@/lib/workspaceFileDrag.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { downloadImagePreview } from "@/components/ai-elements/image-preview-dialog.js";
 import { toast } from "@/components/ui/toast.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 vi.mock("@/components/ai-elements/image-preview-dialog.js", () => ({
   downloadImagePreview: vi.fn(),
@@ -30,7 +30,7 @@ function setup(fileReference: typeof reference | null = reference) {
   const result = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: TEST_LOCALE },
+      { initialLocale: "en-US" },
       createElement(ImagePreviewContent, {
         title: "image.png",
         imageSource: "data:image/png,test",
@@ -84,7 +84,7 @@ describe("image preview actions", () => {
   it("disables add-to-chat when there is no matching source reference", () => {
     const view = setup(null);
     view.open();
-    // 显式无引用时，不允许把图片 URL 或远端路径当作本地文件写入草稿。
+    // With an explicit null reference, the image URL or remote path must not be written into the draft as a local file.
     expect(
       view
         .getByRole("menuitem", { name: expectedCopy("workspaceFileTree.addToChat") })
@@ -124,7 +124,7 @@ describe("image preview actions", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: TEST_LOCALE },
+        { initialLocale: "en-US" },
         createElement(SvgPreviewContent, {
           title: "latin1.svg",
           svgContent: "<svg>replacement text</svg>",

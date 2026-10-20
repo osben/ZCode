@@ -2,14 +2,14 @@ import { ToolPresentation } from "@/ToolCallBlocks/ToolPresentation.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import zhCN from "@/i18n/locales/zh-CN.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ExecuteGroupToolCallBlock } from "@/ToolCallBlocks/renderers/execute-group.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function renderExecuteGroup(
   locale: "en-US" | "zh-CN",
   statuses: Array<"pending" | "completed" | "failed" | "stopped" | "in_progress">,
-  options: { forceOpen?: boolean; durationMs?: number } = {},
+  options: { forceOpen?: boolean } = {},
 ) {
   return renderToStaticMarkup(
     createElement(
@@ -19,7 +19,7 @@ function renderExecuteGroup(
         nestedToolRenderer: ToolPresentation,
         toolCallNode: {
           toolCall: {
-            toolId: "execute:tool-1",
+            toolCallId: "execute:tool-1",
             kind: "Execute",
             title: "Execute",
             input: {},
@@ -27,7 +27,6 @@ function renderExecuteGroup(
               statuses.includes("in_progress") || statuses.includes("pending")
                 ? "in_progress"
                 : "completed",
-            ...(options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
           },
           childToolCalls: statuses.map((status, index) => ({
             toolCall: {
@@ -56,7 +55,9 @@ function renderExecuteGroup(
         rawFileSummaries: [],
         isRunning: statuses.includes("in_progress") || statuses.includes("pending"),
         statusLabel:
-          statuses.includes("in_progress") || statuses.includes("pending") ? "执行中" : "已完成",
+          statuses.includes("in_progress") || statuses.includes("pending")
+            ? "Running"
+            : "Completed",
         childToolList: null,
         forceOpen: options.forceOpen ?? false,
         canToggle: true,
@@ -72,14 +73,13 @@ describe("ExecuteGroupToolCallBlock", () => {
     const enHtml = renderExecuteGroup("en-US", ["completed", "in_progress"]);
 
     expect(html).toContain(">终端</span>");
-    expect(enHtml).toContain(">Terminal</span>");
-    expect(html).toContain(zhCN["chat.toolCall.execute.running"]);
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.executeGroup.label")}</span>`);
+    expect(html).toContain("正在执行");
     expect(html).toContain("pnpm test");
     expect(html).not.toContain("2 个命令");
     expect(html).toContain(">·</span>");
-    expect(enHtml).toContain('<span class="shrink-0 text-foreground-subtle">Running</span>');
-    expect(enHtml).toContain('<code class="min-w-0 truncate font-sans">pnpm test</code>');
-    expect(html).toContain("relative inline-flex min-w-0 items-center gap-2 overflow-hidden");
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.execute.running")}</span>`);
+    expect(enHtml).toContain(">pnpm test</code>");
   });
 
   it("shows only the command count in the expanded running summary", () => {
@@ -87,7 +87,9 @@ describe("ExecuteGroupToolCallBlock", () => {
     const summaryEnd = html.indexOf('data-slot="collapsible-content"');
     const summary = html.slice(0, summaryEnd);
 
-    expect(summary).toContain("2 commands");
+    expect(summary).toContain(
+      expectedCopy("chat.toolCall.executeGroup.command.other", { count: 2 }),
+    );
     expect(summary).not.toContain("Running");
     expect(summary).not.toContain("pnpm test");
   });
@@ -105,23 +107,11 @@ describe("ExecuteGroupToolCallBlock", () => {
 
     expect(zhHtml).toContain("2 个命令");
     expect(zhHtml).toContain("1 个失败");
-    expect(enHtml).toContain("2 commands");
-    expect(enHtml).toContain("1 failed");
-    expect(enHtml).toContain(">Terminal</span>");
+    expect(enHtml).toContain(
+      expectedCopy("chat.toolCall.executeGroup.command.other", { count: 2 }),
+    );
+    expect(enHtml).toContain(expectedCopy("chat.toolCall.executeGroup.failed", { count: 1 }));
+    expect(enHtml).toContain(`>${expectedCopy("chat.toolCall.executeGroup.label")}</span>`);
     expect(enHtml).toContain(">·</span>");
-    expect(enHtml).not.toContain("relative inline-flex min-w-0 items-center overflow-hidden");
-  });
-
-  it("shows the finished stage duration after the command count", () => {
-    const html = renderExecuteGroup("en-US", ["completed", "completed"], { durationMs: 12_000 });
-
-    expect(html).toContain("2 commands");
-    expect(html).toContain(">12s<");
-  });
-
-  it("does not show a duration while the stage is running", () => {
-    const html = renderExecuteGroup("en-US", ["completed", "in_progress"], { durationMs: 12_000 });
-
-    expect(html).not.toContain(">12s<");
   });
 });

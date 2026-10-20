@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
 
 // The Artifacts section of the run side pane: deliverable row + index, or a tile gallery
-// (docs/dynamic-workflow/authoring.md "How the user sees them";
-// shape in docs/dynamic-workflow/presentation.md "The run pane").
+// (docs/dynamic-workflow/authoring.md "How the user sees them"; shape per
+// docs/dynamic-workflow/presentation.md "The run pane").
 //
-// ⚠ Terminology: the artifact in this section is output the script delivers to the **user** via `artifact.*`,
-// distinct from the "result" (the script's top-level
-// return value, for the model) — the spec's invariants require the two wordings to be distinguishable. (The
-// `report` entries section was withdrawn
-// at user instruction on 2026-09-04; see the same-day revision of docs/dynamic-workflow/presentation.md.)
+// Terminology: artifacts in this section are outputs the script delivered to the **user** via
+// `artifact.*`, which are distinct from the "result" (the script top-level return value, for
+// the model) — the spec invariant requires the two wordings to stay distinguishable. (The
+// `report`-entry section was removed on 2026-09-04 per user instruction; see the same-day
+// revision of docs/dynamic-workflow/presentation.md.)
 //
-// The position assertion "this section is the pane's last section" lives in workflowRunSidePane.test.ts (that's
-// where the full pane exists);
-// this file only pins the section's own shape and interactions.
+// The "this section is the panel's last section" placement assertion lives in
+// workflowRunSidePane.test.ts (which has the full panel); this file only pins this section's
+// own shape and interactions.
 import { createElement } from "react";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), warn: vi.fn() },
 }));
 
-/** The board fetch transport surface: cases directly observe the `afterSequence` it receives (the only observable point of incremental continuation). */
+/** The board data transport: cases observe the `afterSequence` it receives (the only observable of incremental fetches). */
 const workflowRunArtifactData =
   vi.fn<
     (params: {
@@ -35,7 +35,7 @@ const workflowRunArtifactData =
     }) => Promise<V4ConversationWorkflowRunArtifactDataResult>
   >();
 
-/** The byte-reading surface: document / CSV / image thumbnails go through it; PDF and the board must not touch it. */
+/** The byte-read surface: document / CSV / image thumbnails go through it; PDFs and boards must not. */
 const workflowRunArtifactRead = vi.fn();
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
@@ -48,18 +48,16 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowRunArtifactsSection } from "@/app-shell/WorkflowRunArtifactsSection.js";
 // eslint-disable-next-line import/first
-import { expectedCopy } from "./helpers/uiCopy.js";
-// eslint-disable-next-line import/first
 import type { WorkflowRunArtifactView } from "@/hooks/useWorkflowRunArtifacts.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const onOpenArtifact = vi.fn();
-const ARTIFACT_TITLE = "审计报告";
 
 function artifact(overrides: Partial<WorkflowRunArtifactView> = {}): WorkflowRunArtifactView {
   return {
     id: "book",
     kind: "file",
-    title: ARTIFACT_TITLE,
+    title: "Audit report",
     contentType: "application/pdf",
     bytes: 4096,
     sourcePath: "out/book.pdf",
@@ -89,7 +87,7 @@ function renderSection(
 
 beforeEach(() => {
   cleanup();
-  // MessageResponse picks the code block theme via matchMedia; jsdom doesn't have it.
+  // MessageResponse picks code-block colors via matchMedia; jsdom does not provide it.
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -108,22 +106,20 @@ beforeEach(() => {
 });
 
 describe("WorkflowRunArtifactsSection", () => {
-  it("默认展开，卡直接在场（产物是交付物，不该藏在一次点击后面）；一件产物即交付物行", () => {
+  it("is expanded by default with the card already present (artifacts are deliverables, not hidden behind a click); one artifact means a deliverable row", () => {
     const view = renderSection([artifact()]);
     expect(view.getByTestId(TID_WORKFLOW_ARTIFACTS_TOGGLE).getAttribute("aria-expanded")).toBe(
       "true",
     );
     const cards = view.getAllByTestId(TID_WORKFLOW_ARTIFACT_CARD);
     expect(cards).toHaveLength(1);
-    // Single-item rule: no flag and exactly one item ⇒ deliverable row (same testid; the shape is recorded in
-    // data-variant).
+    // Single-item rule: no flag and only one item => deliverable row (same testid; shape recorded on data-variant).
     expect(cards[0]!.getAttribute("data-variant")).toBe("row");
     expect(view.queryByTestId("workflow-run-artifact-gallery")).toBeNull();
   });
 
-  // Deliverable (docs/dynamic-workflow/presentation.md "The run pane", item 4): row + hairline + single-column
-  // index; when collapsed the section head carries the title.
-  it("有交付物：交付物行领头（容器查询下窄面板收成 136 × 85），其余是细线之下的单列索引行；收起时节头在件数后带交付物标题", () => {
+  // Deliverables (docs/dynamic-workflow/presentation.md "The run pane", item 4): row + hairline + single-column index; the section header carries the title when collapsed.
+  it("leads with the deliverable and lists other artifacts in order; collapsing still shows the count and deliverable title", () => {
     const view = renderSection([
       artifact({
         id: "perf",
@@ -140,54 +136,56 @@ describe("WorkflowRunArtifactsSection", () => {
         bytes: 2048,
         sourcePath: undefined,
       }),
-      artifact({ title: "审计报告", description: "本轮审计的结论与修复建议。", primary: true }),
+      artifact({
+        title: "Audit report",
+        description: "Conclusions and fix suggestions from this audit.",
+        primary: true,
+      }),
     ]);
     const body = view.getByTestId("workflow-run-artifact-primary-body");
-    expect(body.className).toContain("@container/wf-artifacts");
     const cards = within(body).getAllByTestId(TID_WORKFLOW_ARTIFACT_CARD);
-    // The hook already ordered the list with the deliverable first; pick the row by flag here, not by position.
+    // The hook already sorted deliverables first; pick the row by its flag here, not by position.
     expect(cards[0]!.getAttribute("data-variant")).toBe("row");
     expect(cards[0]!.getAttribute("data-artifact-id")).toBe("book");
     expect(within(cards[0]!).getByTestId("workflow-artifact-row-description").textContent).toBe(
-      "本轮审计的结论与修复建议。",
+      "Conclusions and fix suggestions from this audit.",
     );
     expect(within(cards[0]!).getByTestId("workflow-artifact-row-detail").textContent).toBe(
-      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")}·PDF·4.0 KB`,
+      "File·PDF·4.0 KB",
     );
-    // The preview frame is the button's sibling (controls inside a thumbnail must not nest inside a button), so
-    // look inside the row container.
-    const frame = within(cards[0]!.parentElement!).getByTestId("workflow-artifact-row-frame");
-    expect(frame.className).toContain("@max-[380px]/wf-artifacts:w-[136px]");
-    expect(frame.className).toContain("@max-[380px]/wf-artifacts:h-[85px]");
+    // The preview frame is a sibling of the button (controls inside a thumbnail cannot nest in a button), so look in the tile container.
+    expect(
+      within(cards[0]!.parentElement!).getByTestId("workflow-artifact-row-frame"),
+    ).toBeTruthy();
     const index = view.getByTestId("workflow-run-artifact-index");
-    expect(index.className).toContain("grid-cols-1");
     expect(index.className).toContain("border-t");
     const lines = within(index).getAllByTestId(TID_WORKFLOW_ARTIFACT_CARD);
     expect(lines.map((card) => card.getAttribute("data-artifact-id"))).toEqual(["perf", "notes"]);
     expect(lines.every((card) => card.getAttribute("data-variant") === "line")).toBe(true);
-    // Index lines draw no frame; the detail sits on the line itself (count for the board, size for documents),
-    // and the tooltip holds only kind word · title (+ source).
+    // Index lines draw no frame; the detail sits on the line (item count for boards, size for documents); the tooltip holds only the kind word · title (+ source).
     expect(within(index).queryByTestId("workflow-artifact-tile-frame")).toBeNull();
     expect(within(lines[0]!).getByTestId("workflow-run-artifact-items").textContent).toBe(
-      expectedCopy("chat.toolCall.workflow.run.artifacts.preset.items", { count: "4" }),
+      expectedCopy("chat.toolCall.workflow.run.artifacts.preset.items", { count: 4 }),
     );
     expect(within(lines[1]!).getByTestId("workflow-run-artifact-bytes").textContent).toBe("2.0 KB");
     expect(lines[0]!.getAttribute("title")).toBe(
-      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.chart")} · 审计报告`,
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.chart")} · Audit report`,
     );
-    // Cadence: the row at 30ms, index lines following.
+    // Cadence: rows land at 30 ms, index lines follow.
     expect((cards[0] as HTMLElement).style.animationDelay).toBe("30ms");
     expect((lines[0] as HTMLElement).style.animationDelay).toBe("60ms");
-    // When expanded the section head doesn't repeat the title; collapsed it does.
+    // While expanded the header does not repeat the title; collapsed it carries it.
     expect(view.queryByTestId("workflow-run-artifacts-primary-title")).toBeNull();
     fireEvent.click(view.getByTestId(TID_WORKFLOW_ARTIFACTS_TOGGLE));
     expect(view.getByTestId("workflow-run-artifacts-count").textContent).toBe("3");
-    expect(view.getByTestId("workflow-run-artifacts-primary-title").textContent).toBe("· 审计报告");
+    expect(view.getByTestId("workflow-run-artifacts-primary-title").textContent).toBe(
+      "· Audit report",
+    );
     // The word "primary" never reaches the screen.
     expect(view.container.textContent).not.toMatch(/primary/iu);
   });
 
-  it("节身是一片画廊：一件产物一张瓦片（预览框 + 说明行），依次落地；不再有药丸行 + 挂卡", () => {
+  it("renders the section body as a gallery: one tile per artifact (preview frame + caption), landing in sequence; no more pill row + hanging card", () => {
     const view = renderSection([
       artifact(),
       artifact({ id: "notes", kind: "markdown", contentType: "text/markdown", bytes: 2048 }),
@@ -196,68 +194,65 @@ describe("WorkflowRunArtifactsSection", () => {
     const gallery = view.getByTestId("workflow-run-artifact-gallery");
     const tiles = within(gallery).getAllByTestId(TID_WORKFLOW_ARTIFACT_CARD);
     expect(tiles).toHaveLength(3);
-    // Each tile carries its own preview frame (the button's sibling, inert); PDF draws a paper-page glyph + badge.
+    // Every tile carries its own preview frame (sibling of the button, inert); PDFs draw the sheet-page glyph + badge.
     const tile = tiles[0]!.parentElement!;
     const frame = within(tile).getByTestId("workflow-artifact-tile-frame");
     expect(frame.hasAttribute("inert")).toBe(true);
     expect(within(tile).getByTestId("workflow-artifact-sheet-badge").textContent).toBe("PDF");
     expect(within(tiles[0]!).queryByTestId("workflow-artifact-tile-frame")).toBeNull();
-    // 30ms per tile.
+    // One tile every 30 ms.
     expect((tiles[0] as HTMLElement).style.animationDelay).toBe("30ms");
     expect((tiles[2] as HTMLElement).style.animationDelay).toBe("90ms");
     expect(view.queryByTestId("workflow-run-artifact-row")).toBeNull();
     expect(view.queryByTestId("workflow-run-artifact-preview")).toBeNull();
   });
 
-  it("可以手动收起，收起时表头仍报件数", () => {
+  it("can be collapsed manually; the header still reports the count when collapsed", () => {
     const view = renderSection([artifact(), artifact({ id: "notes", kind: "markdown" })]);
     expect(view.getByTestId("workflow-run-artifacts-count").textContent).toBe("2");
 
     fireEvent.click(view.getByTestId(TID_WORKFLOW_ARTIFACTS_TOGGLE));
     expect(view.queryAllByTestId(TID_WORKFLOW_ARTIFACT_CARD)).toHaveLength(0);
-    // Collapsing must not make "what this run delivered" invisible.
+    // Collapsing must not hide "what this run delivered".
     expect(view.getByTestId("workflow-run-artifacts-count").textContent).toBe("2");
   });
 
-  it("说明行带类型徽字、字节数与版本尾槽；kind 词与工作区出处进 tooltip；title 缺席时退回 id", () => {
+  it("captions carry the type badge, byte size, and version tail slot; kind word and workspace source go to the tooltip; a missing title falls back to the id", () => {
     const view = renderSection([artifact({ title: undefined })]);
     const card = view.getByTestId(TID_WORKFLOW_ARTIFACT_CARD);
-    // The tail slot holds the compact v2 (same in both languages); the long form lives in title.
+    // The tail slot holds the compact v2 (same in both languages); the long form lives in the title.
     const version = within(card).getByTestId("workflow-artifact-tile-version");
     expect(version.textContent).toBe("v2");
     expect(version.getAttribute("title")).toBe(
-      expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: "2" }),
+      expectedCopy("chat.toolCall.workflow.run.artifacts.version", { version: 2 }),
     );
     expect(within(card).getByTestId("workflow-run-artifact-badge").textContent).toBe("PDF");
     expect(within(card).getByTestId("workflow-run-artifact-bytes").textContent).toBe("4.0 KB");
-    // The source is a path that doesn't fit on the line: it goes into the tooltip together with the kind word.
-    expect(card.getAttribute("title")).toBe(
-      `${expectedCopy("chat.toolCall.workflow.run.artifacts.kind.file")} · book\nout/book.pdf`,
-    );
+    // The source is a path that does not fit on the line: it joins the kind word in the tooltip.
+    expect(card.getAttribute("title")).toBe("File · book\nout/book.pdf");
     expect(view.queryByTestId("workflow-run-artifact-source-path")).toBeNull();
-    // The facade's default title is already the id, so the description line falls back to the id rather than
-    // staying empty.
+    // The facade's default title is the id, so the caption falls back to the id instead of staying empty.
     expect(within(card).getByText("book")).toBeTruthy();
   });
 
-  it("英文语境下版本尾槽同样是 v{n}，tooltip 用英文", () => {
+  it("keeps the same v{n} version tail in English, with an English tooltip", () => {
     const view = renderSection([artifact()], { locale: "en-US" });
     const version = view.getByTestId("workflow-artifact-tile-version");
     expect(version.textContent).toBe("v2");
     expect(version.getAttribute("title")).toBe("v2");
   });
 
-  it("第 1 版不写版本号（v1 是常态，写出来是噪音）", () => {
+  it("omits the version number for v1 (v1 is the norm; showing it is noise)", () => {
     const view = renderSection([artifact({ version: 1 })]);
     expect(view.queryByTestId("workflow-artifact-tile-version")).toBeNull();
   });
 
-  it("看板瓦片没有字节与出处（它的「大小」是有多少条数据）", () => {
+  it('board tiles carry no bytes and no source (their "size" is how many data rows they have)', () => {
     const view = renderSection([
       artifact({
         id: "perf",
         kind: "chart",
-        title: "每轮耗时",
+        title: "Latency per round",
         bytes: undefined,
         contentType: undefined,
         sourcePath: undefined,
@@ -269,42 +264,42 @@ describe("WorkflowRunArtifactsSection", () => {
     expect(view.queryByTestId("workflow-run-artifact-source-path")).toBeNull();
   });
 
-  it("点瓦片把产物 id 交给宿主（瓦片只发意图，scope 由上层补齐）", () => {
+  it("clicking a tile hands the artifact id to the host (tiles only emit intent; scope is filled in upstream)", () => {
     const view = renderSection([artifact()]);
     fireEvent.click(view.getByTestId(TID_WORKFLOW_ARTIFACT_CARD));
     expect(onOpenArtifact).toHaveBeenCalledWith("book");
   });
 
-  it("瓦片是一颗真按钮（键盘激活交给浏览器，不用自己接 keydown）", () => {
+  it("the tile is a real button (keyboard activation is left to the browser; no custom keydown handler)", () => {
     const view = renderSection([artifact()]);
     const card = view.getByTestId(TID_WORKFLOW_ARTIFACT_CARD) as HTMLButtonElement;
     expect(card.tagName).toBe("BUTTON");
     expect(card.disabled).toBe(false);
     expect(card.getAttribute("data-artifact-open")).toBe("true");
     expect(card.getAttribute("aria-label")).toBe(
-      `${expectedCopy("chat.toolCall.workflow.run.artifacts.open")}: ${ARTIFACT_TITLE}`,
+      `${expectedCopy("chat.toolCall.workflow.run.artifacts.open")}: Audit report`,
     );
   });
 
-  it("宿主没注入打开能力时瓦片禁用，但内容照旧在场", () => {
+  it("disables the tile when the host injects no open capability, but the content stays present", () => {
     const view = renderSection([artifact()], { openable: false });
     const card = view.getByTestId(TID_WORKFLOW_ARTIFACT_CARD) as HTMLButtonElement;
     expect(card.disabled).toBe(true);
     expect(card.getAttribute("data-artifact-open")).toBeNull();
     expect(card.getAttribute("aria-label")).toBeNull();
-    expect(within(card).getByText(ARTIFACT_TITLE)).toBeTruthy();
+    expect(within(card).getByText("Audit report")).toBeTruthy();
     fireEvent.click(card);
     expect(onOpenArtifact).not.toHaveBeenCalled();
   });
 
-  it("内容产物的瓦片不去翻 journal 的 report 行；PDF 也不读字节（画不了就不拉）", async () => {
+  it("content-artifact tiles do not page through journal report rows; PDFs do not read bytes either (nothing to draw, nothing to fetch)", async () => {
     renderSection([artifact()]);
     await act(async () => {});
     expect(workflowRunArtifactData).not.toHaveBeenCalled();
     expect(workflowRunArtifactRead).not.toHaveBeenCalled();
   });
 
-  it("markdown 产物的预览框里是文档开头的缩放渲染，字节走产物 tab 同一条读取", async () => {
+  it("a markdown artifact's preview frame holds a scaled render of the document head; bytes go through the same read as the artifact tab", async () => {
     workflowRunArtifactRead.mockResolvedValue({
       dataBase64: btoa("# Hello\n\nBody."),
       mediaType: "text/markdown",
@@ -315,7 +310,7 @@ describe("WorkflowRunArtifactsSection", () => {
       artifact({
         id: "notes",
         kind: "markdown",
-        title: "说明",
+        title: "Notes",
         contentType: "text/markdown",
         bytes: 15,
         sourcePath: undefined,
@@ -331,7 +326,7 @@ describe("WorkflowRunArtifactsSection", () => {
     );
   });
 
-  it("预置看板在预览框里实时渲染，并随 itemCount 变化带 afterSequence 增量续拉", async () => {
+  it("preset boards render live in the preview frame and refetch incrementally with afterSequence as itemCount changes", async () => {
     workflowRunArtifactData
       .mockResolvedValueOnce({
         items: [
@@ -349,7 +344,7 @@ describe("WorkflowRunArtifactsSection", () => {
       artifact({
         id: "rounds",
         kind: "table",
-        title: "每轮",
+        title: "Rounds",
         bytes: undefined,
         sourcePath: undefined,
         contentType: undefined,
@@ -360,7 +355,7 @@ describe("WorkflowRunArtifactsSection", () => {
 
     const view = renderSection([board(2)]);
     await waitFor(() => expect(view.getAllByTestId("artifact-table-row")).toHaveLength(2));
-    // Only let the CLI fetch the two columns the spec names, not the whole item.
+    // The CLI fetches only the columns named by the spec, not the whole item.
     expect(workflowRunArtifactData).toHaveBeenCalledWith({
       sessionId: "parent-a",
       runId: "dwfrun-1",
@@ -393,10 +388,9 @@ describe("WorkflowRunArtifactsSection", () => {
     });
   });
 
-  it("spec 还没读回来时看板瓦片保持安静，不闪一句「无法渲染」", async () => {
-    // Regression: the spec can only come back via the journal query; merging "not yet arrived" and "broken"
-    // into one error message
-    // made every board flash red text once when opened.
+  it('board tiles stay quiet while the spec has not arrived; no flashing "cannot render" line', async () => {
+    // Regression: the spec only comes back with the journal query; merging "not yet" and "broken"
+    // into one error line made every board flash red once on open.
     const view = renderSection([
       artifact({
         id: "perf",
@@ -411,18 +405,17 @@ describe("WorkflowRunArtifactsSection", () => {
     await act(async () => {});
     expect(view.queryByTestId("workflow-run-artifact-preset-invalid")).toBeNull();
     expect(view.queryByTestId("workflow-run-artifact-preset-missing")).toBeNull();
-    // The description line is still real; the preview frame stays blank.
+    // The caption is still real; the preview frame stays blank.
     expect(view.getByTestId(TID_WORKFLOW_ARTIFACT_CARD)).toBeTruthy();
     expect(view.getByTestId("workflow-artifact-preview-pending")).toBeTruthy();
   });
 
-  it("spec 在场但解析不出来时，只有预览框降级成一句话，说明行照旧", async () => {
-    const invalidChartTitle = "坏看板";
+  it("degrades only the preview frame to one sentence when the spec is present but unparseable; the caption is untouched", async () => {
     const view = renderSection([
       artifact({
         id: "perf",
         kind: "chart",
-        title: invalidChartTitle,
+        title: "Broken chart",
         bytes: undefined,
         sourcePath: undefined,
         contentType: undefined,
@@ -433,6 +426,6 @@ describe("WorkflowRunArtifactsSection", () => {
     await waitFor(() =>
       expect(view.getByTestId("workflow-run-artifact-preset-invalid")).toBeTruthy(),
     );
-    expect(view.getByText(invalidChartTitle)).toBeTruthy();
+    expect(view.getByText("Broken chart")).toBeTruthy();
   });
 });

@@ -9,10 +9,10 @@ import {
   TID_MODEL_PROVIDER_TEMPLATE_PICKER,
   testId,
 } from "@zcode/shared/test-ids";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { ProviderTemplatePicker } from "@/settings/model-provider-section/ProviderTemplatePicker.js";
 import { ProviderDetailFeedbackBoundary } from "@/settings/model-provider-section/ProviderDetailFeedback.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const loggerMock = vi.hoisted(() => ({ error: vi.fn() }));
 
@@ -24,14 +24,33 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     locale: "en-US",
     intl: {
-      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
-        expectedCopy(id, values),
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string>) => {
+        const message =
+          {
+            "settings.modelProvider.templatePickerTitle": expectedCopy(
+              "settings.modelProvider.templatePickerTitle",
+            ),
+            "settings.modelProvider.templatePickerBack": expectedCopy(
+              "settings.modelProvider.templatePickerBack",
+            ),
+            "settings.modelProvider.createCustomProvider": expectedCopy(
+              "settings.modelProvider.createCustomProvider",
+            ),
+            "settings.modelProvider.templateCreateFailed": expectedCopy(
+              "settings.modelProvider.templateCreateFailed",
+            ),
+            "settings.modelProvider.templateCreateRetry": expectedCopy(
+              "settings.modelProvider.templateCreateRetry",
+            ),
+          }[id] ?? id;
+        return message.replace("{reason}", values?.reason ?? "");
+      },
     },
   }),
 }));
 
 describe("ProviderTemplatePicker", () => {
-  it("按 Settings View 顺序展示本地化 Template，并提供同页自定义入口", () => {
+  it("shows localized templates in Settings View order with a same-page custom entry", () => {
     const html = renderToStaticMarkup(
       createElement(
         TooltipProvider,
@@ -69,10 +88,10 @@ describe("ProviderTemplatePicker", () => {
     );
   });
 
-  it("Template 创建失败时在详情底部显示错误并允许重试", async () => {
+  it("shows an error at the bottom of the details and allows retry when template creation fails", async () => {
     const onCreateFromTemplate = vi
       .fn<(templateId: string) => Promise<void>>()
-      .mockRejectedValueOnce(new Error("写入失败"))
+      .mockRejectedValueOnce(new Error("Write failed"))
       .mockResolvedValueOnce();
 
     render(
@@ -99,7 +118,7 @@ describe("ProviderTemplatePicker", () => {
       ),
     );
 
-    fireEvent.click(screen.getByTestId(testId(TID_MODEL_PROVIDER_TEMPLATE_ITEM, "deepseek")));
+    fireEvent.click(screen.getByRole("button", { name: "DeepSeek" }));
     expect((await screen.findByRole("alert")).textContent).toContain(
       expectedCopy("settings.modelProvider.templateCreateFailed"),
     );

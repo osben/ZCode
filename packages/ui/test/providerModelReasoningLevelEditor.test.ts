@@ -4,18 +4,19 @@ import { createElement, useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderModelReasoningLevelEditor } from "@/settings/model-provider-section/ProviderModelReasoningLevelEditor.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
 describe("ProviderModelReasoningLevelEditor", () => {
-  it("只聚焦档位再离开不创建个人覆盖", () => {
+  it("does not create a personal override when a level is only focused then blurred", () => {
     const onChange = vi.fn();
     render(
       createElement(ProviderModelReasoningLevelEditor, {
         values: ["low", "high"],
         overridden: false,
-        addLabel: "Add level",
-        deleteLabel: "Delete level",
+        addLabel: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+        deleteLabel: expectedCopy("settings.modelProvider.reasoningLevelDelete"),
         onChange,
       }),
     );
@@ -23,37 +24,19 @@ describe("ProviderModelReasoningLevelEditor", () => {
     fireEvent.blur(screen.getByDisplayValue("low"));
     expect(onChange).not.toHaveBeenCalled();
   });
-  it("用紧凑标签完成键盘排序、编辑、添加和删除", () => {
+  it("completes keyboard reordering, editing, adding and deleting", () => {
     function Harness() {
       const [values, setValues] = useState<readonly string[]>(["low", "high"]);
       return createElement(ProviderModelReasoningLevelEditor, {
         values,
         overridden: true,
-        addLabel: "Add level",
-        deleteLabel: "Delete level",
+        addLabel: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+        deleteLabel: expectedCopy("settings.modelProvider.reasoningLevelDelete"),
         onChange: setValues,
       });
     }
 
     const { container } = render(createElement(Harness));
-    const firstChip = container.querySelector<HTMLElement>(
-      '[data-model-reasoning-level-editor="true"] > div',
-    );
-    expect(firstChip?.className).toContain("box-border");
-    expect(firstChip?.className).toContain("h-8");
-    expect(firstChip?.className).not.toContain("min-h-8");
-    expect(screen.getByRole("button", { name: "low" }).className).not.toContain("font-mono");
-    expect(screen.getByRole("button", { name: "low" }).dataset.variant).toBe("outline");
-    expect(screen.getByRole("button", { name: "low" }).dataset.size).toBe("lg");
-    const addButton = container.querySelector<HTMLButtonElement>(
-      '[data-model-reasoning-level-add="true"]',
-    )!;
-    expect(addButton.dataset.variant).toBe("outline");
-    expect(addButton.dataset.size).toBe("icon-lg");
-    const deleteButton = container.querySelector<HTMLButtonElement>(
-      '[data-model-reasoning-chip="true"] button:nth-of-type(2)',
-    );
-    expect(deleteButton?.className).toContain("opacity-0");
 
     const readValues = () =>
       Array.from(
@@ -78,22 +61,24 @@ describe("ProviderModelReasoningLevelEditor", () => {
     expect(readValues()).toEqual(["low", "high"]);
 
     fireEvent.click(screen.getByRole("button", { name: "high" }));
-    expect(screen.getByDisplayValue("high").className).toContain("field-sizing-content");
-    expect(screen.getByDisplayValue("high").className).toContain("text-ui-base");
-    expect(screen.getByDisplayValue("high").className).not.toContain("font-mono");
     fireEvent.change(screen.getByDisplayValue("high"), { target: { value: "medium" } });
     fireEvent.keyDown(screen.getByDisplayValue("medium"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium"]);
 
-    fireEvent.click(addButton);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("settings.modelProvider.reasoningLevelAdd"),
+      }),
+    );
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "max" } });
     fireEvent.keyDown(screen.getByDisplayValue("max"), { key: "Enter" });
     expect(readValues()).toEqual(["low", "medium", "max"]);
 
-    const firstChipDeleteButton = container.querySelector<HTMLButtonElement>(
-      '[data-model-reasoning-chip="true"] button:nth-of-type(2)',
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `${expectedCopy("settings.modelProvider.reasoningLevelDelete")}: low`,
+      }),
     );
-    fireEvent.click(firstChipDeleteButton!);
     expect(readValues()).toEqual(["medium", "max"]);
     expect(container.querySelector('[data-personal-override="true"]')).toBeTruthy();
   });

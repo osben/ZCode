@@ -31,7 +31,9 @@ vi.mock("@/v4/PendingCommandRecoveryBanner.js", () => ({
   },
 }));
 
-const sessionCreateCapture = vi.hoisted(() => ({ report: vi.fn(async () => {}) }));
+const sessionCreateCapture = vi.hoisted(() => ({
+  report: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/sessionCreateTelemetry.js", () => ({
   reportSessionCreate: sessionCreateCapture.report,
 }));
@@ -57,7 +59,10 @@ const scrollFocus = vi.hoisted(() => ({
         heldQueueDisposition?: "clearQueueAndSend" | "keepQueueAndSend";
         expectedHeldQueueItemIds?: readonly string[];
         requestedDelivery?: "startNow" | "queue" | "guide";
-        sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
+        sharedContextRefs?: Array<{
+          kind: "shared_context_import";
+          context_id: string;
+        }>;
         submission?: {
           mode: "build";
           modelSelection: {
@@ -83,7 +88,8 @@ const scrollFocus = vi.hoisted(() => ({
   scrollToBottom: vi.fn(),
 }));
 
-// Never resolves: these tests do not exercise discovery queries; resolving would trigger setState after teardown (unhandled exception).
+// Never resolves: these files do not test discovery queries; resolving would
+// trigger setState after environment teardown (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -118,7 +124,11 @@ const conversationMock = vi.hoisted(() => {
 });
 
 const prewarmHookInputs = vi.hoisted(() => ({
-  binding: null as null | { sessionId: string; beginPromotion: () => boolean; promote: () => void },
+  binding: null as null | {
+    sessionId: string;
+    beginPromotion: () => boolean;
+    promote: () => void;
+  },
   current: [] as Array<{
     workspaceKey: string;
     transportIdentity: unknown;
@@ -139,8 +149,9 @@ const servicesMock = vi.hoisted(() => ({
     })),
   },
   highspeedCardService: {
-    // This file uses a minimal DOM that is destroyed after the test case; keep unrelated Highspeed
-    // queries pending so their Promise callbacks do not wake the React scheduler after window cleanup.
+    // This file uses a minimal DOM that is destroyed when the case ends; keep
+    // unrelated Highspeed queries pending so their Promise callbacks cannot wake
+    // the React scheduler again after window cleanup.
     getSnapshot: vi.fn(() => new Promise(() => {})),
     prepareTurn: vi.fn(async () => ({
       kind: "fallback" as const,
@@ -150,7 +161,8 @@ const servicesMock = vi.hoisted(() => ({
     healthy: vi.fn(),
     share: vi.fn(),
   },
-  // Fix rationale: the readiness hook uses the service as an effect dependency; rebuilding it on every render causes infinite re-renders until OOM.
+  // Fix rationale: the readiness hook depends on the service as an effect
+  // dependency; rebuilding it every render caused infinite re-renders until OOM.
   modelSelectionService: {
     getView: vi.fn(async () => ({
       revision: 1,
@@ -175,19 +187,22 @@ const servicesMock = vi.hoisted(() => ({
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
-// This group only verifies composer continuity; group delivery services are covered by dedicated component tests and real Host/CLI E2E.
+// This group only verifies composer continuity; group-sync services are covered
+// by dedicated component tests and real Host/CLI E2E.
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
 }));
 
-// Bugfix: this file only verifies SessionPane composer continuity; isolate the off-peak entry's dependency on the real TabStore.
+// Bugfix: this file only verifies SessionPane composer continuity, so isolate the
+// off-peak entry from the real TabStore dependency.
 vi.mock("@/v4/OffPeakNewTaskEntry.js", () => ({
   OffPeakNewTaskEntry: () => null,
 }));
 
-// Isolate the suggested-prompts placeholder for the same reason: this file uses a minimal DOM that
-// only implements createElement; rendering lucide icons would hit createElementNS and crash outright, unrelated to composer continuity.
+// Likewise isolate the suggested-prompts placeholder: this file uses a minimal
+// DOM that only implements createElement; rendering lucide icons would go through
+// createElementNS and crash, which is unrelated to composer continuity.
 vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
   ConversationDraftSuggestedPromptsContainer: () => null,
 }));
@@ -201,8 +216,10 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: conversationMock.currentLayer ?? conversationMock.layer,
     sendCommand: conversationMock.currentSendCommand ?? conversationMock.sendCommand,
     attachmentPut: vi.fn(),
-    // The run discovery query SessionPane pulls from the journal as a fallback on mount: without a stub the effect throws a TypeError;
-    // the stub must be a stable reference — the effect depends on workflowRuns, and a new function per render causes an infinite loop.
+    // SessionPane pulls the journal-fallback run discovery query on mount: a
+    // missing stub throws TypeError in an effect; the stub must be a stable
+    // reference — the effect depends on workflowRuns, and a fresh function per
+    // render would loop forever.
     workflowRuns: workflowRunsQueryMock,
     fileChanges: vi.fn(),
     fileRewindPreview: vi.fn(),
@@ -229,8 +246,9 @@ vi.mock("@/hooks/useServices.js", () => ({
   useServices: () => servicesMock,
 }));
 
-// This file only verifies the composer lifecycle; the target Host View's async subscription already has dedicated hook tests.
-// If the real hook runs against the minimal DOM, Promise resolution would leave React scheduling pending past window cleanup.
+// This file only verifies the composer lifecycle; the target Host View async
+// subscription has its own hook tests. Running the real hook in the minimal DOM
+// would leave React scheduling behind window cleanup via Promise callbacks.
 vi.mock("@/hooks/useModelSelectionView.js", () => ({
   useModelSelectionServiceView: () => ({
     state: {
@@ -249,7 +267,9 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
               {
                 modelId: "deepseek-v4-flash",
                 config: {
-                  optionSpecs: { reasoningLevel: { values: ["low", "high"], map: "{}" } },
+                  optionSpecs: {
+                    reasoningLevel: { values: ["low", "high"], map: "{}" },
+                  },
                 },
               },
             ],
@@ -298,7 +318,11 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
         const ack = (await params.dispatchCommand("createSession", {}, null)) as {
           result: { sessionId: string };
         };
-        return { sessionId: ack.result.sessionId, beginPromotion: () => true, promote: vi.fn() };
+        return {
+          sessionId: ack.result.sessionId,
+          beginPromotion: () => true,
+          promote: vi.fn(),
+        };
       },
     };
   },
@@ -314,7 +338,10 @@ vi.mock("@/v4/ConversationComposer.js", () => ({
         heldQueueDisposition?: "clearQueueAndSend" | "keepQueueAndSend";
         expectedHeldQueueItemIds?: readonly string[];
         requestedDelivery?: "startNow" | "queue" | "guide";
-        sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
+        sharedContextRefs?: Array<{
+          kind: "shared_context_import";
+          context_id: string;
+        }>;
       },
     ) => Promise<"sent" | "blocked" | "confirmationRequired">;
   }) => {
@@ -588,10 +615,12 @@ afterEach(() => {
 
 describe("SessionPane composer continuity", () => {
   it.each(["group", "project", "session"] as const)(
-    "%s 首发只在 accepted 后报告，打开和后续发送不报告",
+    "%s first send reports only after accepted; opening and follow-up sends do not report",
     async (source) => {
       const store = useZCodeSessionStore.getState();
-      store.startDraft("/workspace", undefined, undefined, { createSource: source });
+      store.startDraft("/workspace", undefined, undefined, {
+        createSource: source,
+      });
       const root = createRoot(installMinimalDom());
       mountedRoots.push(root);
       renderPane(root, null);
@@ -605,9 +634,10 @@ describe("SessionPane composer continuity", () => {
       await act(async () => {
         await scrollFocus.composerProps?.onSendText("create session");
       });
-      // Highspeed unified the first-send path: first sends without attachments also go through the two-phase
-      // "empty createSession + sendText" flow so the gacha admission gets a real sessionId; therefore the first
-      // send's message_id is the sendText commandId (calls[1]), not the empty-create commandId (calls[0]).
+      // Highspeed unified the first-send chain: an attachment-free first send also
+      // takes the two-phase "empty createSession + sendText" path so the draw
+      // admission gets a real sessionId; the first-send message_id is therefore the
+      // sendText commandId (calls[1]), not the empty-create commandId (calls[0]).
       // The telemetry invariant still holds: report exactly once after accepted.
       const firstSendCalls = conversationMock.sendCommand.mock.calls;
       expect(firstSendCalls).toHaveLength(2);
@@ -627,52 +657,61 @@ describe("SessionPane composer continuity", () => {
     },
   );
 
-  it.each(["accepted", "rejected"] as const)("Goal 首发 %s 时只按 ACK 统计", async (status) => {
-    const root = createRoot(installMinimalDom());
-    mountedRoots.push(root);
-    renderPane(root, null);
-    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
-      commandId: envelope.commandId,
-      revisionAtDecision: 1,
-      status: "accepted" as const,
-      result: { type: "createSession", sessionId: "goal-created" },
-    }));
-    conversationMock.sendCommand.mockResolvedValueOnce({
-      commandId: "goal-command",
-      revisionAtDecision: 1,
-      status,
-    } as never);
-    await act(async () => {
-      await scrollFocus.composerProps?.onSendText("/goal explain the test");
-    });
-    expect(sessionCreateCapture.report).toHaveBeenCalledTimes(status === "accepted" ? 1 : 0);
-    if (status === "accepted")
-      expect(sessionCreateCapture.report).toHaveBeenCalledWith(
+  it.each(["accepted", "rejected"] as const)(
+    "a Goal first send with %s counts by ACK only",
+    async (status) => {
+      const root = createRoot(installMinimalDom());
+      mountedRoots.push(root);
+      renderPane(root, null);
+      conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+        commandId: envelope.commandId,
+        revisionAtDecision: 1,
+        status: "accepted" as const,
+        result: { type: "createSession", sessionId: "goal-created" },
+      }));
+      conversationMock.sendCommand.mockResolvedValueOnce({
+        commandId: "goal-command",
+        revisionAtDecision: 1,
+        status,
+      } as never);
+      await act(async () => {
+        await scrollFocus.composerProps?.onSendText("/goal explain the test");
+      });
+      expect(sessionCreateCapture.report).toHaveBeenCalledTimes(status === "accepted" ? 1 : 0);
+      if (status === "accepted")
+        expect(sessionCreateCapture.report).toHaveBeenCalledWith(
+          null,
+          expect.objectContaining({ messageId: "goal-command" }),
+        );
+    },
+  );
+
+  it.each(["hello", "/goal explain"])(
+    "a prewarmed first send of %s carries the actual input commandId",
+    async (text) => {
+      prewarmHookInputs.binding = {
+        sessionId: "prewarmed",
+        beginPromotion: () => true,
+        promote: vi.fn(),
+      };
+      const root = createRoot(installMinimalDom());
+      mountedRoots.push(root);
+      renderPane(root, null);
+      await act(async () => {
+        await scrollFocus.composerProps?.onSendText(text);
+      });
+      const commandId = conversationMock.sendCommand.mock.calls[0]![0].commandId;
+      expect(sessionCreateCapture.report).toHaveBeenCalledExactlyOnceWith(
         null,
-        expect.objectContaining({ messageId: "goal-command" }),
+        expect.objectContaining({
+          sessionId: "prewarmed",
+          messageId: commandId,
+        }),
       );
-  });
+    },
+  );
 
-  it.each(["hello", "/goal explain"])("预热首发 %s 携带实际输入 commandId", async (text) => {
-    prewarmHookInputs.binding = {
-      sessionId: "prewarmed",
-      beginPromotion: () => true,
-      promote: vi.fn(),
-    };
-    const root = createRoot(installMinimalDom());
-    mountedRoots.push(root);
-    renderPane(root, null);
-    await act(async () => {
-      await scrollFocus.composerProps?.onSendText(text);
-    });
-    const commandId = conversationMock.sendCommand.mock.calls[0]![0].commandId;
-    expect(sessionCreateCapture.report).toHaveBeenCalledExactlyOnceWith(
-      null,
-      expect.objectContaining({ sessionId: "prewarmed", messageId: commandId }),
-    );
-  });
-
-  it("先空创建再首发使用 sendText ID，不用空创建 ID", async () => {
+  it("empty-create-then-first-send uses the sendText ID, not the empty-create ID", async () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
     renderPane(root, null);
@@ -696,7 +735,7 @@ describe("SessionPane composer continuity", () => {
     );
   });
 
-  it("用户确认恢复重发使用新 accepted ID，不用旧命令 ID", async () => {
+  it("a user-confirmed recovery resend uses the new accepted ID, not the old command ID", async () => {
     recoveryCapture.entries = [
       {
         commandId: "old-command",
@@ -708,7 +747,10 @@ describe("SessionPane composer continuity", () => {
       type: "createSession",
       sessionId: null,
       payload: { workspaceId: "/workspace", firstInput: { text: "retry" } },
-      clientContext: { workspace: { workspacePath: "/workspace" }, sessionCreateSource: "project" },
+      clientContext: {
+        workspace: { workspacePath: "/workspace" },
+        sessionCreateSource: "project",
+      },
     });
     try {
       const root = createRoot(installMinimalDom());
@@ -734,7 +776,7 @@ describe("SessionPane composer continuity", () => {
     }
   });
 
-  it("首发传输失败不产生 session_create", async () => {
+  it("a first-send transport failure produces no session_create", async () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
     renderPane(root, null);
@@ -747,7 +789,7 @@ describe("SessionPane composer continuity", () => {
     expect(sessionCreateCapture.report).not.toHaveBeenCalled();
   });
 
-  it("/goal 沿用点击发送时冻结的 Submission，不在异步准备后回读草稿", async () => {
+  it("/goal reuses the Submission frozen at click time and does not re-read the draft after async preparation", async () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
     renderPane(root, "session-1");
@@ -760,7 +802,7 @@ describe("SessionPane composer continuity", () => {
       },
     };
     await act(async () => {
-      await scrollFocus.composerProps?.onSendText("/goal 固定此次选择", { submission });
+      await scrollFocus.composerProps?.onSendText("/goal freeze this selection", { submission });
     });
     expect(conversationMock.sendCommand).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -770,7 +812,7 @@ describe("SessionPane composer continuity", () => {
     );
   });
 
-  it("workspace 切换后旧预热 dispatcher 仍发送到原本地 transport", async () => {
+  it("after a workspace switch, the old prewarm dispatcher still sends to the original local transport", async () => {
     const sendCommandA = vi.fn(async (envelope: { commandId: string }) => ({
       commandId: envelope.commandId,
       revisionAtDecision: 1,
@@ -804,8 +846,9 @@ describe("SessionPane composer continuity", () => {
     const bindingA = prewarmHookInputs.current.findLast(
       (input) => input.workspaceKey === "/local/a",
     );
-    // Root cause: the single-flight coordinator now uses the stable SessionDataLayer to identify the transport,
-    // while the old assertion still treated the provider's re-creatable sendCommand wrapper as the identity.
+    // Bug root cause: the single-flight coordinator now identifies the transport
+    // by the stable SessionDataLayer; the old assertion still treated the
+    // provider-rebuilt sendCommand wrapper as the identity.
     expect(bindingA?.transportIdentity).toBe(layerA);
 
     conversationMock.currentLayer = layerB;
@@ -923,7 +966,7 @@ describe("SessionPane composer continuity", () => {
     }));
 
     await act(async () => {
-      await scrollFocus.composerProps?.onSendText("立即执行", {
+      await scrollFocus.composerProps?.onSendText("Run now", {
         requestedDelivery: "startNow",
       });
     });
@@ -933,7 +976,7 @@ describe("SessionPane composer continuity", () => {
       expect.objectContaining({
         type: "sendText",
         payload: expect.objectContaining({
-          text: "立即执行",
+          text: "Run now",
           requestedDelivery: "startNow",
         }),
       }),
@@ -949,7 +992,7 @@ describe("SessionPane composer continuity", () => {
     const queuedItem = {
       queueItemId: "q-1",
       kind: "sendText" as const,
-      text: "旧消息",
+      text: "old message",
       sourceCommandId: "old-command",
       clientId: "desktop",
       attachments: [],
@@ -966,7 +1009,11 @@ describe("SessionPane composer continuity", () => {
         sessionId: "session-1",
         revision: 7,
         inputRouting: { mode: "choice" },
-        queue: { autoDrain: false, pauseReason: "stopped", items: [queuedItem] },
+        queue: {
+          autoDrain: false,
+          pauseReason: "stopped",
+          items: [queuedItem],
+        },
       },
       subscriptionId: "sub-session",
       lastError: null,
@@ -976,10 +1023,10 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-1");
 
     await act(async () => {
-      await expect(scrollFocus.composerProps?.onSendText("新消息")).resolves.toBe(
+      await expect(scrollFocus.composerProps?.onSendText("new message")).resolves.toBe(
         "confirmationRequired",
       );
-      await expect(scrollFocus.composerProps?.onSendText("/goal 新目标")).resolves.toBe(
+      await expect(scrollFocus.composerProps?.onSendText("/goal new goal")).resolves.toBe(
         "confirmationRequired",
       );
     });
@@ -999,7 +1046,7 @@ describe("SessionPane composer continuity", () => {
       status: "accepted" as const,
     }));
     await act(async () => {
-      await scrollFocus.composerProps?.onSendText("新消息", {
+      await scrollFocus.composerProps?.onSendText("new message", {
         heldQueueDisposition: "clearQueueAndSend",
         expectedHeldQueueItemIds: ["q-1"],
       });
@@ -1031,7 +1078,7 @@ describe("SessionPane composer continuity", () => {
             {
               queueItemId: "q-1",
               kind: "sendText",
-              text: "旧消息",
+              text: "old message",
               sourceCommandId: "old-command",
               clientId: "desktop",
               attachments: [],
@@ -1062,10 +1109,11 @@ describe("SessionPane composer continuity", () => {
     );
   });
 
-  // What is revealed when expanded must not be less than the pill (docs/dynamic-workflow/presentation.md "Other places a run appears"):
-  // when a live run appears (running count goes from 0 to >=1, including entering a session that already has live
-  // runs) the "Workflows" section opens; it folds when the last one ends. A manual fold stays folded until all
-  // runs end or the session changes.
+  // The expanded view must show no less than the capsule (docs/dynamic-workflow/
+  // presentation.md "Other places a run appears"): when a live run appears (count
+  // going 0 to >=1, including entering a session that already has live runs) the
+  // Workflows section opens; it folds when the last one ends. A manual fold stays
+  // folded until all runs end or the session changes.
   it("opens the Workflows section while a run is live and respects a manual fold", () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
@@ -1095,18 +1143,18 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
 
-    // 0 → 1: open.
+    // 0 -> 1: open.
     projectionState.current = withRuns("session-1", [liveRun]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(true);
 
-    // After a manual fold, stay folded while runs are still live (another run arriving changes nothing).
+    // After a manual fold, runs still going (another one arriving included) keep it folded.
     act(() => scrollFocus.statusPanelProps?.onWorkflowSectionOpenChange?.(false));
     projectionState.current = withRuns("session-1", [liveRun, { ...liveRun, runId: "dwfrun-2" }]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
 
-    // All ended: fold; next run appearing: reopen.
+    // All ended: fold; the next run appearing: reopen.
     projectionState.current = withRuns("session-1", [{ ...liveRun, status: "completed" as never }]);
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(false);
@@ -1114,7 +1162,8 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-1");
     expect(scrollFocus.statusPanelProps?.workflowSectionOpen).toBe(true);
 
-    // Fold in a session with a live run, then enter another session that also has live runs: open in the new session.
+    // Fold inside a session with live runs, then enter another session with live
+    // runs: the new session shows it open.
     act(() => scrollFocus.statusPanelProps?.onWorkflowSectionOpenChange?.(false));
     projectionState.current = withRuns("session-2", [liveRun]);
     renderPane(root, "session-2");

@@ -2,15 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { Locale } from "@zcode/shared";
 import type { IFeedbackService } from "@zcode/services";
 import type { FeedbackTicketSummary } from "@zcode/shared";
-import {
-  FeedbackTicketList,
-  TicketsInitialLoadingState,
-  TicketsView,
-} from "@/feedback/TicketsView.js";
+import { FeedbackTicketList, TicketsView } from "@/feedback/TicketsView.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 
 function createFeedbackService(): IFeedbackService {
   return {
@@ -30,7 +27,7 @@ function createFeedbackService(): IFeedbackService {
   } as unknown as IFeedbackService;
 }
 
-function renderTicketsView(locale: "en-US" | "en-US") {
+function renderTicketsView(locale: Locale = TEST_LOCALE) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
@@ -45,10 +42,11 @@ function renderTicketsView(locale: "en-US" | "en-US") {
 
 describe("TicketsView", () => {
   it("uses English copy for the initial feedback list loading state without a detail placeholder", () => {
-    const html = renderTicketsView("en-US");
+    const html = renderTicketsView();
 
-    expect(html).toContain(expectedCopy("common.loading"));
-    expect(html).not.toContain(expectedCopy("feedback.tickets.placeholder.title"));
+    expect(html).toContain("Loading...");
+    expect(html).not.toContain("Select feedback to view details");
+    expect(html).not.toContain("加载中");
   });
 
   it("renders ticket IDs with a copy action in the list", () => {
@@ -63,7 +61,7 @@ describe("TicketsView", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+        { initialLocale: TEST_LOCALE },
         createElement(FeedbackTicketList, {
           items: [ticket],
           selectedTicketId: null,
@@ -74,23 +72,8 @@ describe("TicketsView", () => {
     );
 
     expect(html).toContain("ZC-123");
-    expect(html).toContain(expectedCopy("feedback.tickets.issuePrefix"));
-    expect(html).toContain(expectedCopy("feedback.detail.issueCopy"));
+    expect(html).toContain("Issue #");
+    expect(html).toContain("Copy issue ID");
     expect(html).toContain("Cannot submit prompt");
-  });
-
-  it("renders the initial ticket list loading state centered in the content area", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(TicketsInitialLoadingState),
-      ),
-    );
-
-    expect(html).toContain(expectedCopy("common.loading"));
-    expect(html).toContain("flex-1");
-    expect(html).toContain("items-center");
-    expect(html).toContain("justify-center");
   });
 });

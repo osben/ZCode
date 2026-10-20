@@ -5,11 +5,9 @@ import type { SourceServerMigrationReport } from "@zcode/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SourceServerMigrationReportPanel } from "../src/settings/SourceServerMigrationReportPanel.js";
 
-import { TEST_LOCALE } from "./helpers/uiCopy.js";
-
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: TEST_LOCALE,
+    locale: "en-US",
     intl: {
       formatMessage: ({ id }: { id: string }) => id,
     },
@@ -56,7 +54,7 @@ describe("SourceServerMigrationReportPanel", () => {
 
     expect(screen.getByText("/workspace/conflicted")).toBeTruthy();
     expect(screen.getByText(/remote\.error\.workspaceTaskIdentityConflict/u)).toBeTruthy();
-    // 失败行说明带「N 处冲突」段（settings.source.migrationConflictCount）。
+    // The failed-row caption carries an "N conflicts" segment (settings.source.migrationConflictCount).
     expect(screen.getByText(/settings\.source\.migrationConflictCount/u)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /abandonMigration/u }));
@@ -184,7 +182,7 @@ describe("SourceServerMigrationReportPanel", () => {
         onRetry: vi.fn(),
       }),
     );
-    // 完成行说明使用「已合并 N 条线路的历史」（N=variantKeys 数），完成行不提供操作按钮。
+    // The completed-row caption reads "merged history of N routes" (N = variantKeys count); completed rows offer no action buttons.
     expect(screen.getByText(/settings\.source\.migrationMergedHistory/u)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /retryMigration/u })).toBeNull();
   });
