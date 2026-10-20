@@ -45,6 +45,7 @@ import type {
   ZCodeAgentUpdatePluginMarketplaceParams,
   ZCodeAgentUpdatePluginParams,
   ZCodeAgentValidatePluginParams,
+  ZCodePluginMutationTelemetry,
 } from "../zcode-agent/zcodeAgentPluginParams.js";
 
 export interface IPluginManagementService {
@@ -106,7 +107,7 @@ export const IPluginManagementService = createServiceDescriptor<IPluginManagemen
  */
 export function withPluginTelemetry(
   service: IPluginManagementService,
-  telemetry: NonNullable<ZCodeAgentInstallPluginParams["telemetry"]>,
+  telemetry: ZCodePluginMutationTelemetry,
 ): IPluginManagementService {
   const mutations = new Set<PropertyKey>([
     "addPluginMarketplace",

@@ -3,6 +3,7 @@ import type {
   OAuthCallbackResult,
   OAuthProviderId,
   OAuthProviderMeta,
+  OAuthSessionState,
   OAuthStartResponse,
   SiwcLoginCompletionResult,
   SiwcLoginStart,
@@ -10,6 +11,7 @@ import type {
   UserInfo,
 } from "@zcode/shared";
 import { ServiceChannels } from "@zcode/shared";
+import type { Event } from "@zcode/rpc";
 import { createServiceDescriptor } from "../descriptors.js";
 
 /**
@@ -19,6 +21,9 @@ import { createServiceDescriptor } from "../descriptors.js";
  * provider management, state lifecycle, token exchange, and credential storage.
  */
 export interface IOAuthService {
+  /** Published after a credential change completes, before provider cleanup and caller UI/settings follow-up. */
+  readonly onDidChangeSession: Event<OAuthSessionState>;
+
   /** Get the available providers (only those with enabled=true). */
   getProviders(): Promise<OAuthProviderMeta[]>;
 

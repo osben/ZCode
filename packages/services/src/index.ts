@@ -364,6 +364,19 @@ export type {
   VirtualProject,
 } from "#src/project/contract.js";
 
+export { ITaskGroupService } from "#src/task-groups/contract.js";
+export type {
+  TaskGroup,
+  TaskGroupColor,
+  TaskGroupStructure,
+  GroupTaskRef,
+  GroupNode,
+  MoveGroupNode,
+} from "#src/task-groups/contract.js";
+
+export { readProjectCatalog, projectSelectionId } from "#src/project-catalog/index.js";
+export type { ProjectCatalogPort, ProjectCatalogSnapshot } from "#src/project-catalog/contract.js";
+
 export { IRemoteProjectService } from "#src/remote-projects/contract.js";
 export type {
   RemoteProjectCache,
