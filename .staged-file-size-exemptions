@@ -193,9 +193,40 @@ specs/nested-agents-md.md
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
 
+
 # TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
 packages/provider-node/test/provider-node-runtime.test.ts
 packages/provider/test/config-service.test.ts
+
+
+# TEMPORARY upstream 3.16.1 sync - revert/split in final PR
+packages/shared/src/bots.ts
+packages/shared/src/channels.ts
+packages/shared/src/conversation-share.ts
+packages/shared/src/platform.ts
+packages/shared/src/protocol.ts
+packages/shared/src/test-ids.ts
+packages/shared/src/validationAppSettings.ts
+packages/shared/src/web-remote-control.ts
+packages/shared/src/zcode-protocol-v4/command.ts
+packages/shared/src/zcode-protocol-v4/rows.ts
+packages/shared/src/zcode-protocol-v4/snapshot.ts
+packages/shared/src/zcode-protocol-v4/transport.ts
+packages/shared/src/zcode-protocol/index.ts
+packages/shared/src/zcode-task-types-core.ts
+packages/shared/test/appSettings.test.ts
+packages/shared/test/conversationShareContract.test.ts
+packages/shared/test/validation.test.ts
+packages/shared/test/zcodeProtocol.test.ts
+packages/shared/test/zcodeProtocolV4Command.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRuns.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRunsCaps.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRunsDelta.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRunsEviction.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRunsHoles.test.ts
+packages/shared/test/zcodeProtocolV4WorkflowRunsReducer.test.ts
+packages/services/test/zcodeAgentService.test.ts
+
 
 
 # Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.

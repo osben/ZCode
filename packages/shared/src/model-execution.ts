@@ -9,6 +9,7 @@ import { modelSelectionSchema } from "./model-selection.js";
 export const modelExecutionSelectionFallbackReasonSchema = z.enum([
   "highspeed_card_expired",
   "highspeed_request_failed",
+  "highspeed_selection_unavailable",
 ]);
 
 /** Text and attachment sends share execution constraints; credentials belong to a single execution and are not part of Session configuration. */
@@ -16,6 +17,14 @@ export const modelExecutionSchema = z
   .object({
     memoryExtraction: z.literal("skip").optional(),
     selectionScope: z.literal("execution"),
+    offPeak: z
+      .object({
+        executionId: z.string().min(1),
+        ticketId: z.string().min(1),
+        providerErrorCode: z.string().min(1),
+      })
+      .strict()
+      .optional(),
     requestAuth: z
       .object({
         apiKey: z.string().min(1).optional(),
@@ -31,23 +40,18 @@ export const modelExecutionSchema = z
     subagents: z
       .object({
         foregroundModel: z.literal("submission"),
-        background: z.literal("deny"),
+        background: z.enum(["deny", "allow"]),
       })
       .strict()
       .optional(),
     /**
-     * When this execution's Selection fails, fall back to the original model within the same Turn
-     * and finish the turn, instead of failing the whole turn.
-     * Trigger conditions are declared by the initiator: `providerId` restricts matching to the
-     * provider this turn's execution Selection points at; `rules` match in declared order and the
-     * first hit decides the fallback reason; an omitted `providerErrorCode` means any failure of
-     * that provider (except user cancellation and context-window overflow). The CLI does not
-     * hard-code provider id prefixes, model names, or error text.
-     * The fallback target is `target` first (the submission selection at card-draw time, i.e. the
-     * session's original model), then the runtime's resident session Selection: the execution
-     * scope never rewrites the session selection, but the resident selection lives only in runtime
-     * memory and may be unbound under cold-restore races, so the initiator must declare `target`
-     * (docs/highspeed/highspeed-card-spec.md §2.2).
+     * 本次执行的 Selection 失败时，同一 Turn 内退回原模型继续跑完，而不是让整轮失败。
+     * 触发条件由发起方声明：`providerId` 限定只匹配本轮 execution Selection 指向的 provider；
+     * `rules` 按声明顺序匹配，首个命中的规则决定退回原因，`providerErrorCode` 缺省表示该 provider
+     * 的任何失败（用户取消与上下文超窗除外）。CLI 不按 provider id 前缀、模型名或错误文案硬编码。
+     * 退回目标先取 `target`（发起方抽卡时的提交选择，即会话原模型），再取本轮接纳前复制的 runtime 会话常驻 Selection：
+     * 接纳用户消息时绑定普通提交选择，但常驻选择只在 runtime 内存里，冷恢复竞态下可能未绑定，
+     * 所以发起方必须声明 `target`（docs/highspeed/highspeed-card-spec.md §2.2）。
      */
     selectionFallback: z
       .object({

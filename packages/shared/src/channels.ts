@@ -1,4 +1,5 @@
-/* eslint-disable max-lines -- Keep communication channels and request/response mappings defined together so channel strings do not spread across processes. */
+import type { WebRemoteControlAuthStateChange } from "./web-remote-control.js";
+/* eslint-disable max-lines -- 通信频道和请求响应映射必须集中定义，避免跨进程 channel 字符串散落。 */
 import type {
   ResourceUsageSnapshot,
   LoadCliMcpFromUserDirectoryRequest,
@@ -15,7 +16,6 @@ import type {
   WebRemoteControlReconnectWorkspaceResult,
   WebRemoteControlStartOperationResult,
   WebRemoteControlStatus,
-  WebRemoteControlTaskTarget,
   WebRemoteControlWorkspaceTarget,
 } from "./web-remote-control.js";
 import type { AppSettings, Locale } from "./protocol.js";
@@ -35,7 +35,6 @@ import type { RendererHeapSample } from "./validation.js";
 import type {
   CancelPendingRemoteConnectionRequest,
   BindRemoteWorkspaceSessionContextRequest,
-  BotRemoteWorkspaceReconnectedEvent,
   BrowserViewScreenshotSurfacePreparePayload,
   BrowserViewScreenshotSurfaceReadyPayload,
   BrowserViewScreenshotSurfaceReleasePayload,
@@ -67,6 +66,7 @@ import type {
   OpenInEditorOptions,
   PostUpdateReleaseNotesPayload,
   RemoteSessionClosedEvent,
+  RemoteSessionReconnectedEvent,
   SSHConfigAliasOption,
   TaskNotificationPayload,
   WSLDistro,
@@ -117,7 +117,14 @@ export const ServiceChannels = {
   ZCodeAgent: "zcode-agent",
   /** ZCode session application service */
   ZCodeSession: "zcode-session",
-  /** Orchestration for conversation-share publishing, previews, and continuation APIs */
+  Project: "project",
+  TaskGroups: "task-groups",
+  RemoteProjects: "remote-projects",
+  /** 手机远端 attachment 的窗口目录；原 project 继续属于工作区。 */
+  WindowProject: "window-project",
+  WindowRemoteProjects: "window-remote-projects",
+  WindowProjectChanges: "window-project-changes",
+  /** 会话分享发布、预览与 continuation API 编排 */
   ConversationShare: "conversation-share",
   /** File-system watcher service */
   FileWatcher: "file-watcher",
@@ -129,7 +136,11 @@ export const ServiceChannels = {
   ModelSelection: "model-selection",
   /** Internal Provider Provisioning target for remote Environments */
   ProviderProvisioningTarget: "provider-provisioning-target",
-  /** Local usage statistics service */
+  /** Source Server 端 workspace 身份解析服务 */
+  SourceServerWorkspace: "source-server-workspace",
+  /** 桌面 Host 的 Source Server 目录与连接管理服务 */
+  SourceServerManagement: "source-server-management",
+  /** 本地 usage 统计服务 */
   UsageStats: "usage-stats",
   /** Coding Plan subscription purchase service */
   CodingPlanSubscription: "coding-plan-subscription",
@@ -195,7 +206,8 @@ export const PlatformChannels = {
   /** renderer → main: release the plugin UI sandbox (close ports, remove the protocol handler, clear the partition) */
   PluginSandboxDispose: "zcode:plugin-sandbox-dispose",
   PluginSandboxCopyImage: "zcode:plugin-sandbox-copy-image",
-  /** renderer → main: consume a one-time user-gesture token from the plugin UI sandbox guest */
+  PluginSandboxExecutionActive: "zcode:plugin-sandbox-execution-active",
+  /** renderer → main：一次性消费插件 UI 沙箱 guest 的用户手势 token */
   PluginSandboxConsumeUserGesture: "zcode:plugin-sandbox-consume-user-gesture",
   /** renderer → main: query its own webContents id to use as the sandbox registration owner */
   PluginSandboxOwnerWebContentsId: "zcode:plugin-sandbox-owner-web-contents-id",
@@ -205,6 +217,8 @@ export const PlatformChannels = {
   GetAppWorktreesDir: "zcode:get-app-worktrees-dir",
   /** Renderer → Main: apply/release the system-wide output mute used while voice dictation records */
   SetDictationSystemMute: "zcode:set-dictation-system-mute",
+  /** Open the system multi-directory picker */
+  SelectDirectories: "zcode:select-directories",
   /** Open the system file picker */
   SelectFile: "zcode:select-file",
   /** Open the system multi-file picker */
@@ -221,24 +235,27 @@ export const PlatformChannels = {
   RemoteConnectionLog: "zcode:remote-connection-log",
   /** Main → Renderer: the remote workspace session has closed */
   RemoteSessionClosed: "zcode:remote-session-closed",
-  /** Main → Renderer: the Bot successfully reconnected the remote workspace */
-  BotRemoteWorkspaceReconnected: "zcode:bot-remote-workspace-reconnected",
-  /** Check whether the directory is open in another window and activate that window if so */
+  /** Main → Renderer：Source 自动重连后的 logical session 已换代并完成 port ready */
+  RemoteSessionReconnected: "zcode:remote-session-reconnected",
+  /** 检查目录是否已在其他窗口打开，如果是则激活该窗口 */
   ActivateOrSetWorkspace: "zcode:activate-or-set-workspace",
   /** Establish an SSH remote connection */
   ConnectRemote: "zcode:connect-remote",
-  /** Cancel the remote connection in progress for this window */
+  /** Desktop Renderer → Main：为在线 Source 创建配置专用 attachment */
+  RequestSourceSettingsAttachment: "zcode:request-source-settings-attachment",
+  /** 取消当前窗口正在进行中的远程连接 */
   CancelPendingRemoteConnection: "zcode:cancel-pending-remote-connection",
   /** Renderer → Main: bind the canonical workspace context to a remote logical session */
   BindRemoteWorkspaceSessionContext: "zcode:bind-remote-workspace-session-context",
   /** Enable Web remote control for the current workspace */
   StartWebRemoteControl: "zcode:start-web-remote-control",
-  ResetWebRemoteControlPairing: "zcode:reset-web-remote-control-pairing",
-  /** Disable Web remote control for the current window */
+  /** 关闭当前窗口的 Web 远程控制 */
   StopWebRemoteControl: "zcode:stop-web-remote-control",
   /** Query the current window’s Web remote-control status */
   GetWebRemoteControlStatus: "zcode:get-web-remote-control-status",
-  /** Main → Renderer: Web remote-control status changed for the current window */
+  /** Renderer → Main：OAuth 会话变化通知，不携带凭据 */
+  WebRemoteControlAuthStateChanged: "zcode:web-remote-control-auth-state-changed",
+  /** Main → Renderer：当前窗口 Web 远程控制状态变化 */
   WebRemoteControlStatusChanged: "zcode:web-remote-control-status-changed",
   /** Release the remote session in the current window */
   DisposeRemoteSession: "zcode:dispose-remote-session",
@@ -262,9 +279,7 @@ export const PlatformChannels = {
   SyncWindowTabs: "zcode:sync-window-tabs",
   /** Renderer → Main: sync the workspaces available for Web remote-control switching in the current window */
   SyncWebRemoteControlWorkspaces: "zcode:sync-web-remote-control-workspaces",
-  /** Renderer → Main: sync the task snapshots available for Web remote-control display in the current window */
-  SyncWebRemoteControlTasks: "zcode:sync-web-remote-control-tasks",
-  /** Main → Renderer: mobile client requests reconnecting the remote workspace in the current window */
+  /** Main → Renderer：手机端请求重连当前窗口里的远程 workspace */
   WebRemoteControlReconnectWorkspace: "zcode:web-remote-control-reconnect-workspace",
   /** Renderer → Main: sync the unread task count for the current window */
   SyncWindowUnreadCount: "zcode:sync-window-unread-count",
@@ -581,7 +596,9 @@ export const InternalChannels = {
   ScopedServicePort: "zcode:scoped-service-port",
   /** renderer → main: the scoped MessagePort is registered and its attachment can be switched safely */
   ScopedServicePortReady: "zcode:scoped-service-port-ready",
-  /** preload → renderer: the main process confirmed the system notification was shown; the renderer can play its sound */
+  /** main → renderer：在线 Source 的配置专用 MessagePort */
+  SourceSettingsServicePort: "zcode:source-settings-service-port",
+  /** preload → renderer：主进程已确认系统通知展示，renderer 可播放提示音 */
   TaskNotificationSound: "zcode:task-notification-sound",
   /** main → host renderer: the plugin UI sandbox MessagePort group (port2[]), payload { sandboxId, initId, names } */
   PluginSandboxPorts: "zcode:plugin-sandbox-ports",
@@ -598,6 +615,8 @@ export const ZCODE_RPC_HOST_CAPABILITY_HEADER = "x-zcode-rpc-host-capability";
 
 /** Initialization message types from main to the host process */
 export const HostMessageTypes = {
+  /** main → Host：准备手机项目目录，只复用已在线物理 Source。 */
+  PrepareProjectWorkspace: "prepare-project-workspace",
   DatabaseStartupControl: "database-startup-control",
   /** Initialize local services */
   InitLocal: "init-local",
@@ -607,7 +626,9 @@ export const HostMessageTypes = {
   CancelRemoteWorkspaceConnect: "cancel-remote-workspace-connect",
   /** main → window Host: bind the canonical workspace identity to a logical session */
   BindRemoteWorkspaceContext: "bind-remote-workspace-context",
-  /** main → window Host: release a remote logical session */
+  /** main → window Host：取消已超时的 workspace bind */
+  CancelRemoteWorkspaceBind: "cancel-remote-workspace-bind",
+  /** main → window Host：释放一个远程 logical session */
   DisposeRemoteWorkspaceSession: "dispose-remote-workspace-session",
   /** main → host: expose an existing service through a new RPC MessagePort */
   AttachServicePort: "attach-service-port",
@@ -661,16 +682,26 @@ export const HostMessageTypes = {
   ResourceUsageSnapshotRequest: "resource-usage-snapshot-request",
   ResourceUsageSnapshotCancel: "resource-usage-snapshot-cancel",
   NetworkCapture: "network-capture",
+  /** main → host：Main 的实时界面语言变化（Host 用于 ZCode endpoint 的 X-Client-Language） */
+  ApplicationLocaleChanged: "application-locale-changed",
 } as const;
 
 /** Response message types from the host process to the main process */
 export const HostResponseTypes = {
+  /** Host → main：已准入的目录与 scope，main 不解释项目业务。 */
+  ProjectWorkspacePrepared: "project-workspace-prepared",
   DatabaseStartupState: "database-startup-state",
   /** window Host → main: report remote connection progress logs by requestId */
   RemoteWorkspaceConnectionLog: "remote-workspace-connection-log",
   /** window Host → main: remote logical session established */
   RemoteWorkspaceConnected: "remote-workspace-connected",
-  /** window Host → main: remote logical session setup failed */
+  /** window Host → main：workspace canonical 准备完成，可安全建立新 attachment */
+  RemoteWorkspaceContextBound: "remote-workspace-context-bound",
+  /** window Host → main：workspace canonical 准备失败 */
+  RemoteWorkspaceContextBindFailed: "remote-workspace-context-bind-failed",
+  /** window Host → main：Source transport 重连后 logical session 已换代 */
+  RemoteWorkspaceReconnected: "remote-workspace-reconnected",
+  /** window Host → main：远程 logical session 建立失败 */
   RemoteWorkspaceConnectFailed: "remote-workspace-connect-failed",
   /** window Host → main: connected remote logical session closed */
   RemoteWorkspaceClosed: "remote-workspace-closed",
@@ -695,7 +726,8 @@ export const HostResponseTypes = {
   ToolExecResource: "tool-exec-resource",
   /** The automation Host reports a newly created Session after its first input is accepted. */
   SessionCreateTelemetry: "session-create-telemetry",
-  /** host → main: Resource Manager sampling result, correlated by requestId */
+  PluginTelemetry: "plugin-telemetry",
+  /** host → main：资源管理器采样结果（按 requestId 关联） */
   ResourceUsageSnapshotResult: "resource-usage-snapshot-result",
   NetworkCaptureBatch: "network-capture-batch",
   /** Number of Agent sessions currently executing prompts inside the host changed */
@@ -782,6 +814,10 @@ export interface PlatformChannelMap {
     request: { active: boolean };
     response: void;
   };
+  [PlatformChannels.SelectDirectories]: {
+    request: void;
+    response: string[];
+  };
   [PlatformChannels.SelectFile]: {
     request: void;
     response: string | null;
@@ -822,8 +858,8 @@ export interface PlatformChannelMap {
     request: RemoteSessionClosedEvent;
     response: void;
   };
-  [PlatformChannels.BotRemoteWorkspaceReconnected]: {
-    request: BotRemoteWorkspaceReconnectedEvent;
+  [PlatformChannels.RemoteSessionReconnected]: {
+    request: RemoteSessionReconnectedEvent;
     response: void;
   };
   [PlatformChannels.ActivateOrSetWorkspace]: {
@@ -840,7 +876,17 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.ConnectRemote]: {
     request: ConnectRemoteRequest;
-    response: { success: boolean; error?: string; sessionId?: string };
+    response: {
+      success: boolean;
+      error?: string;
+      reasonCode?: string;
+      retryable?: boolean;
+      sessionId?: string;
+    };
+  };
+  [PlatformChannels.RequestSourceSettingsAttachment]: {
+    request: { sourceServerId: string };
+    response: { attachmentId: string };
   };
   [PlatformChannels.CancelPendingRemoteConnection]: {
     request: CancelPendingRemoteConnectionRequest;
@@ -848,18 +894,18 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.BindRemoteWorkspaceSessionContext]: {
     request: BindRemoteWorkspaceSessionContextRequest;
-    response: void;
+    response: import("./platform.js").BindRemoteWorkspaceSessionContextIpcResult;
   };
   [PlatformChannels.StartWebRemoteControl]: {
     request: WebRemoteControlContext;
     response: WebRemoteControlStartOperationResult;
   };
-  [PlatformChannels.ResetWebRemoteControlPairing]: {
-    request: WebRemoteControlContext;
-    response: WebRemoteControlStartOperationResult;
-  };
   [PlatformChannels.StopWebRemoteControl]: {
     request: void;
+    response: void;
+  };
+  [PlatformChannels.WebRemoteControlAuthStateChanged]: {
+    request: WebRemoteControlAuthStateChange;
     response: void;
   };
   [PlatformChannels.GetWebRemoteControlStatus]: {
@@ -908,10 +954,6 @@ export interface PlatformChannelMap {
   };
   [PlatformChannels.SyncWebRemoteControlWorkspaces]: {
     request: WebRemoteControlWorkspaceTarget[];
-    response: void;
-  };
-  [PlatformChannels.SyncWebRemoteControlTasks]: {
-    request: WebRemoteControlTaskTarget[];
     response: void;
   };
   [PlatformChannels.WebRemoteControlReconnectWorkspace]: {
@@ -1312,7 +1354,7 @@ export interface PlatformChannelMap {
     response: void;
   };
   [PlatformChannels.GetInstalledEditors]: {
-    request: void;
+    request: string | undefined;
     response: EditorInfo[];
   };
   [PlatformChannels.GetApplicationIcon]: {

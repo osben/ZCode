@@ -306,7 +306,11 @@ export interface ZCodeTaskMeta {
    * causing task lists, snapshots, and logs to cross-contaminate. workspaceIdentity is added here for isolation.
    */
   workspaceIdentity?: string;
-  /** App-owned workspace category; defaults to project and does not participate in workspaceKey. */
+  /** Controller/renderer 任务列表投影使用；不参与 workspace identity 或持久化 key。 */
+  sourceServerId?: string;
+  /** Source directory 的用户可读名称；缺失时 UI 回退 sourceServerId。 */
+  serverDisplayName?: string;
+  /** app-owned workspace 分类；缺省为 project，不参与 workspaceKey。 */
   workspacePurpose?: import("./workspacePurpose.js").WorkspacePurpose;
   createdAt: number;
   updatedAt: number;
@@ -612,8 +616,10 @@ export interface ZCodeToolCall {
   title: string;
   /** Raw agent ToolCall payload; use this when debugging protocol fields. */
   raw: unknown;
-  /** Resolved Skill metadata; used only for telemetry attribution. */
+  pluginMetadata?: { pluginId: string; component: "mcp" };
+  /** Skill resolved metadata；只用于 telemetry attribution。 */
   skillMetadata?: {
+    name?: string;
     qualifiedName?: string;
     pluginId?: string;
     source?: "agents" | "zcode" | "bundled" | "plugin" | "remote";
@@ -641,8 +647,10 @@ export interface ZCodeToolCallUpdate {
   error?: string;
   /** Raw agent ToolCallUpdate payload; use this when debugging protocol fields. */
   raw: unknown;
-  /** Resolved Skill metadata; used only for telemetry attribution. */
+  pluginMetadata?: { pluginId: string; component: "mcp" };
+  /** Skill resolved metadata；只用于 telemetry attribution。 */
   skillMetadata?: {
+    name?: string;
     qualifiedName?: string;
     pluginId?: string;
     source?: "agents" | "zcode" | "bundled" | "plugin" | "remote";

@@ -17,7 +17,9 @@ export type RemoteWorkspaceIdentityKind = "ssh" | "wsl" | "docker" | "server";
 
 export interface ParsedRemoteWorkspaceIdentity {
   kind: RemoteWorkspaceIdentityKind;
-  /** Actual remote path in normalized POSIX form. */
+  /** kind=server 时的稳定 Source Server id。 */
+  sourceServerId?: string;
+  /** 远端真实路径（posix 归一形态）。 */
   workspacePath: string;
 }
 
@@ -127,11 +129,13 @@ export function parseRemoteWorkspaceIdentity(
   // Consume authority one segment at a time; the path can contain ":" (POSIX paths allow it in theory),
   // so do not split the whole identity. Advance by segment, then take the remainder as the path.
   let cursor = kindEnd + 1;
+  let sourceServerId: string | undefined;
   for (let i = 0; i < AUTHORITY_SEGMENTS[kind]; i++) {
     const next = rest.indexOf(":", cursor);
     if (next <= cursor) {
       return null;
     }
+    if (kind === "server" && i === 0) sourceServerId = rest.slice(cursor, next);
     cursor = next + 1;
   }
   // WSL identities added an optional user segment to distinguish the default user from an explicit user.
@@ -148,7 +152,7 @@ export function parseRemoteWorkspaceIdentity(
   if (!workspacePath.startsWith("/")) {
     return null;
   }
-  return { kind, workspacePath };
+  return { kind, workspacePath, ...(sourceServerId ? { sourceServerId } : {}) };
 }
 
 /** Whether the identity is remote and can be parsed by parseRemoteWorkspaceIdentity. */
@@ -181,4 +185,18 @@ export function rebaseRemoteWorkspaceIdentity(
   }
   const authorityPrefix = trimmed.slice(0, trimmed.length - parsed.workspacePath.length);
   return `${authorityPrefix}${normalizeWorkspacePathForIdentity(workspacePath)}`;
+}
+
+/** 虚拟项目的 host 身份；只在统一 identity 模块裁剪路径，业务层不得自行拆 authority。 */
+export function remoteHostIdFromWorkspaceIdentity(identity: string): string | null {
+  const parsed = parseRemoteWorkspaceIdentity(identity);
+  return parsed ? identity.slice(0, -(parsed.workspacePath.length + 1)) : null;
+}
+
+/** 从已登记的 Host 身份构造目录身份；不让业务模块拼接或解析 authority。 */
+export function buildRemoteHostWorkspaceIdentity(hostId: string, workspacePath: string): string {
+  const identity = `${hostId}:${normalizeWorkspacePathForIdentity(workspacePath)}`;
+  if (remoteHostIdFromWorkspaceIdentity(identity) !== hostId)
+    throw new Error("Invalid remote host identity");
+  return identity;
 }

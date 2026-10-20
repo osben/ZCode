@@ -120,6 +120,7 @@ export * from "./official-mcp-auth.js";
 export * from "./official-mcp-tool-error.js";
 export * from "./conversation-message-projection-policy.js";
 export * from "./conversation-share.js";
+export * from "./conversation-share-content.js";
 export * from "./conversation-preview-artifacts.js";
 export * from "./contextBudgetPolicy.js";
 export * from "./zcode-session-task-status.js";
@@ -138,6 +139,7 @@ export * from "./dynamic-workflow-feature.js";
 export * from "./markdown-artifact-images.js";
 export * from "./serviceAuthority.js";
 export * from "./server-remote.js";
+export * from "./source-server/index.js";
 
 export interface ICredentialStore {
   get(key: string): Promise<string | null>;
@@ -145,6 +147,7 @@ export interface ICredentialStore {
   delete(key: string): Promise<void>;
 }
 
+// Compat: upstream moved test ids to the "@zcode/shared/test-ids" subpath; unsynced packages still import them from the root.
 export * from "./test-ids.js";
 export * from "./test-ids-workflow.js";
 export * from "./channels.js";
@@ -172,14 +175,19 @@ export type {
   ConfigureFinalArmsCustomEventE2ERequest,
   FinalArmsCustomEventE2EEntry,
   FinalArmsCustomEventPayload,
+  MobilePluginDiscoveryTelemetry,
   RendererTelemetryEventPayload,
   TelemetryEventPayload,
   TelemetryRendererContext,
 } from "./telemetry.js";
 export {
+  PLUGIN_TELEMETRY_EVENTS,
+  mobilePluginDiscoveryTelemetrySchema,
+  sanitizePluginTelemetryDetail,
   collectTelemetryRendererContext,
   resolveSafeTelemetryHostname,
   sanitizeTelemetryErrorMessage,
+  sanitizeTelemetrySkillName,
   sanitizeTelemetryEventDetail,
 } from "./telemetry.js";
 export type {
@@ -201,8 +209,11 @@ export * from "./sessionCreateTelemetry.js";
 export type { LaunchMarks } from "./launchMarks.js";
 export { LAUNCH_MARKS_QUERY_KEY, parseLaunchMarks, serializeLaunchMarks } from "./launchMarks.js";
 export type {
+  BrowserViewSurfaceScaleMode,
   CancelPendingRemoteConnectionRequest,
   BindRemoteWorkspaceSessionContextRequest,
+  BindRemoteWorkspaceSessionContextIpcResult,
+  BindRemoteWorkspaceSessionContextResult,
   BotRemoteWorkspaceReconnectedEvent,
   BrowserTabResidencyState,
   BrowserViewCloseTabNotification,
@@ -255,12 +266,14 @@ export type {
   PostUpdateReleaseNotesPayload,
   RemoteConnectionRuntimeLog,
   RemoteSessionClosedEvent,
+  RemoteSessionReconnectedEvent,
   RemoteServiceSession,
   SSHConfigAliasOption,
   TaskNotificationPayload,
   UpdateCheckResultPayload,
   UpdateStatePayload,
   WSLDistro,
+  WindowControlsOverlayReadyPayload,
   ZCodeStdioTapDevState,
 } from "./platform.js";
 export type {
@@ -320,6 +333,7 @@ export * from "./tool-plan-adapter.js";
 export * from "./permission-request-preview.js";
 export * from "./web-remote-control.js";
 export * from "./web-remote-control-heartbeat.js";
+
 export * from "./web-remote-control-rpc-transport.js";
 export * from "./settings-sync.js";
 export * from "./uuid.js";
@@ -386,3 +400,5 @@ export {
   isRequestSecurityFailure,
 } from "./request-security-edition/policy.js";
 export * from "./request-security-edition/verification-policy.js";
+
+export * from "./conversation-share-tool-presentation.js";

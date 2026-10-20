@@ -29,11 +29,11 @@ export function isOffPeakTerminalStatus(
 }
 
 /**
- * Stable error marker for an unavailable ticket (server 400/3102: active expired after 3h / ready ticket expired after 5min / settled / wrong owner).
- * The zcode-cli adapter classifies this business code as a non-retryable failure and embeds this marker in the error message.
- * Host terminal writeback uses it to request a new ticket for the same task_id and resume, instead of marking the task failed.
- * The marker crosses processes only in error text, so it must remain unique and stable end to end; do not change it. It must match
- * the same-named constant in apps/zcode-cli/packages/adapters/src/model/offpeak-retry.ts.
+ * 票据不可用（服务端 400/3102：active 3h 到期 / ready 5min 废票 / settled / 非本人）的
+ * 稳定错误标记。zcode-cli 适配层把该业务码分类为不可重试失败并在错误消息里嵌入本标记；
+ * 旧 Host 终态兼容分支据此重新取号；驻留执行通过严格生命周期通知申请新票，
+ * 不依赖错误文本控制续跑。兼容标记保持稳定；与
+ * apps/zcode-cli/packages/adapters/src/model/offpeak-retry.ts 的同名常量跨包同值。
  */
 export const OFF_PEAK_TICKET_EXPIRED_MARKER = "off-peak-ticket-expired";
 
@@ -100,7 +100,11 @@ export function isOffPeakTicketExpiredError(message: string | undefined): boolea
 
 /** One off-peak task: form creation requests a ticket and queues it; dispatch creates a new session through createTask. */
 export interface ZCodeOffPeakTask {
-  /** Local primary key, also used as the server task_id (stable across multiple tickets). */
+  projectId?: string | null;
+  hostId?: string;
+  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  additionalDirectories?: string[];
+  /** 本地主键，同时用作服务端 task_id（稳定，跨多个 ticket，D26）。 */
   offPeakTaskId: string;
   /** Snowflake ticket_id returned by the server; updated whenever a new ticket is requested (resume after 3h expiry / Continue retry). */
   serverTicketId?: string;
@@ -166,6 +170,10 @@ export interface ZCodeOffPeakTask {
 
 /** Input for creating an off-peak task (workspace is injected by the caller from context; the service requests a ticket first and persists only on success). */
 export interface ZCodeOffPeakTaskCreateParams {
+  projectId?: string | null;
+  hostId?: string;
+  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  additionalDirectories?: string[];
   title: string;
   prompt: string;
   permissionMode: ZCodeTaskMode;

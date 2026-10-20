@@ -7,6 +7,7 @@ import type { WorkspacePurpose } from "./workspacePurpose.js";
 import type { DynamicWorkflowMode } from "./dynamic-workflow-feature.js";
 import type { EmbeddedBrowserViewportPreference } from "./browser-use/command-metadata.js";
 import type { IncognitoDefaults } from "./incognito-profile.js";
+import type { AppToolSearchMode } from "./app-runtime-preferences.js";
 
 // ── Domain types ──
 
@@ -180,7 +181,9 @@ export type RemoteTargetSnapshot =
 export interface RemoteWorkspaceSessionSnapshot {
   /** Actual absolute path of the remote workspace. */
   workspacePath: string;
-  /** Local workspace path at the time of remote connection; used only to rewrite MCP filesystem paths. */
+  /** 用户可见的 workspace 分类；旧远端快照缺失时按 project 兼容读取。 */
+  workspacePurpose?: WorkspacePurpose;
+  /** 发起远程连接时的本机 workspace 路径，仅用于 MCP filesystem 路径改写。 */
   localWorkspacePath?: string;
   /** Stable identity key for the remote workspace (authority + canonicalPath). */
   workspaceIdentity?: string;
@@ -326,9 +329,11 @@ export interface AppSettings {
    * Once hidden, the button is not rendered and is not restored by restart or upgrade; it can only be re-enabled in Settings.
    */
   computerUseComposerEntryHidden?: boolean;
-  /** Master switch for automatically archiving old completed tasks. */
+  /** 自动归档旧会话的总开关 */
   taskAutoArchiveEnabled?: boolean;
-  /** Auto-archive threshold; a task may be archived when its last update is older than this many days. */
+  /** 自动归档修复后的一次性关闭标记；只用于设置迁移，不参与归档判断。 */
+  taskAutoArchiveResetVersion?: 1;
+  /** 自动归档阈值；当任务最后更新时间早于该天数时允许被归档 */
   taskAutoArchiveOlderThanDays?: number;
   /** Hide the window to the tray on close on desktop (Windows/Linux; spec: docs/desktop/linux-close-to-tray.md). */
   closeToTrayOnWindows?: boolean;
@@ -393,7 +398,9 @@ export interface AppSettings {
   providerFamilyDomainMigrated?: boolean;
   /** Whether to inject bfs/ugrep enhancements for Bash in newly created or cold-restored Sessions; enabled by default. */
   nativeSearchEnhancementsEnabled?: boolean;
-  /** Whether Memory is enabled in newly created or cold-restored Sessions; disabled by default. */
+  /** 新建或冷恢复时读取；已有 Runtime 保持原策略。 */
+  toolSearchMode?: AppToolSearchMode;
+  /** 新建或冷恢复 Session 是否启用 Memory；默认关闭。 */
   memoryEnabled?: boolean;
   /** Inject the project memory index as a standalone background-context block instead of inside
    *  the "# agentsMd" instruction banner. Fork-only: stored in fork-settings.json. Default false. */
@@ -421,9 +428,32 @@ export interface AppSettings {
     | "other"
     | null;
   proactiveSuggestionsEnabled?: boolean;
-  /** Full workspace session at the last shutdown (including local and remote workspaces). */
+  /** 新版只保存活动执行目录；不表达项目/连接成员，null 表示明确清空。 */
+  lastActiveWorkspace?: PersistedWorkspaceSessionEntry | null;
+  /** Host 从项目/本机入口派生，供旧版降级读取；新版不作为入口真相。 */
   lastWorkspaceSession?: PersistedWorkspaceSessionEntry[];
-  /** Tab index that was active at the last shutdown. */
+  /** 每个 Source Server 已解析的 canonical conversation backing workspace。 */
+  remoteConversationWorkspaceBySourceServerId?: Record<
+    string,
+    {
+      workspacePath: string;
+      lastResolvedAt: number;
+    }
+  >;
+  /** R3 控制端已识别的 Source Server；运行态仍由远端 Server 权威提供。 */
+  sourceServers?: import("./source-server/contracts.js").SourceServerRecord[];
+  /** R3 到达 Source Server 的线路；只保存 credential key，不保存 secret。 */
+  connectionProfiles?: import("./source-server/contracts.js").ConnectionProfile[];
+  /** R3 workspace 打开历史；连接线路与 workspace 实体分离。 */
+  sourceServerWorkspaceHistory?: import("./source-server/contracts.js").SourceServerWorkspaceHistoryEntry[];
+  /** 桌面端启动时是否执行 Source Server 静默重连；缺失按 true 兼容旧设置。 */
+  remoteStartupAutoReconnectEnabled?: boolean;
+  sourceServerDirectoryMigrationVersion?: 1;
+  /** 旧客户端只接受 2；保留回滚兼容，新介绍不使用该字段判断已读。 */
+  remoteBoundaryOnboardingVersion?: 2;
+  /** 仅表示用户明确确认持续运行介绍。 */
+  remoteBoundaryIntroAcknowledgedVersion?: 1;
+  /** 上次关闭时激活的 tab 索引 */
   lastActiveTabIndex?: number;
   /** Last active taskId for each workspace; restored automatically on next open. */
   lastActiveTaskByWorkspace?: Record<string, string>;
@@ -445,7 +475,13 @@ export interface AppSettings {
   skippedElectronUpdateVersions?: Partial<Record<ElectronReleaseChannel, string>>;
   /** Whether the first-launch settings-sync prompt has been dismissed; means only that the prompt will not reappear, not that import succeeded. */
   settingsSyncFirstRunPromptHandled?: boolean;
-  /** Non-sensitive device identity for the external Web remote-control relay; passHash must be stored in credentialService. */
+  /** 外部 Web 远控 relay 的非敏感设备身份；passHash 必须存 credentialService。 */
+  /** V2 非敏感注册身份；JWT 和一次性 token 不持久化于 AppSettings。 */
+  webRemoteControlRelayV2Device?: {
+    deviceSid: string;
+    userId: string;
+    endpointOrigin: string;
+  };
   webRemoteControlExternalRelayDevice?: {
     deviceSid: string;
   };

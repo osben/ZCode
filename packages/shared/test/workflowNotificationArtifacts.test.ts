@@ -137,15 +137,6 @@ describe("workflowNotificationMeta.terminal.artifacts", () => {
 
   // The escalation branch is separate: it announces an unmet obligation, unrelated to deliverables.
   it("escalation 分支不长出 artifacts", () => {
-    expect(() =>
-      workflowNotificationMetaSchema.parse({
-        kind: "escalation",
-        qid: "dwfq-1",
-        actor: "actor#1@1",
-        question: "which branch?",
-        artifacts: [{ id: "a", kind: "file", version: 1 }],
-      }),
-    ).not.toThrow();
     const parsed = workflowNotificationMetaSchema.parse({
       kind: "escalation",
       qid: "dwfq-1",

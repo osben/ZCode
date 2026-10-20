@@ -2039,6 +2039,8 @@ describe("createZCodeAgentService", () => {
           memoryEnabled: false,
           memoryIndexAsContext: false,
           modelContextBudgetStrategy: "preflight-v1" as const,
+          // Upstream 3.16.1: the shared runtime-preference schema defaults toolSearchMode to "off".
+          toolSearchMode: "off" as const,
         },
         expectedResolverCalls: 1,
       },
@@ -2051,6 +2053,7 @@ describe("createZCodeAgentService", () => {
           memoryEnabled: false,
           memoryIndexAsContext: false,
           modelContextBudgetStrategy: "preflight-v1" as const,
+          toolSearchMode: "off" as const,
         },
         expectedResolverCalls: 0,
       },
