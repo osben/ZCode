@@ -31,7 +31,9 @@ const broadcastService = {
     return { dispose: () => fixture.broadcasts.delete(listener) };
   },
 };
-vi.mock("@/logger.js", () => ({ logger: { warn: fixture.warning } }));
+vi.mock("@/logger.js", () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: fixture.warning, error: vi.fn() },
+}));
 vi.mock("@/store/zcodeSessionStore.js", () => ({
   getTaskMeta: () => null,
   selectWorkspaceZCodeState: () => fixture.workspace,
