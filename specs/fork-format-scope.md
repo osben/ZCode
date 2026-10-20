@@ -70,7 +70,7 @@ Part of every upstream sync PR, in the same PR as the merge:
 
 Every gate that runs on a commit, push or PR, and whether an upstream-identical file trips it:
 
-- Pre-commit `staged-size-before` / `staged-size-after`: trips on files over 20000 bytes. Exempt when identical to the pending blob (above).
+- Pre-commit `staged-size-before` / `staged-size-after`: trips on files over 20000 bytes. Exempt when identical to the pending blob (above). Temporary sync measure: Markdown under a `docs/` directory (`(^|/)docs/.+\.md`) is not size-limited at all, because documentation copied from upstream cannot be split; remove this relaxation once the 3.16.1 sync series has landed.
 - Pre-commit `format-and-lint`: formats via the exemption above; oxlint ignores Markdown.
 - Pre-push `verify` (`scripts/run-pre-push.mjs`): `lint` and `architecture:check --changed` scan code only; `test-copy:check` scans `packages/ui/test`, `packages/web/test` and `packages/desktop/test/e2e` only. A docs-only push skips the tests. No gate reads document content, so byte-copied Chinese documents are not checked by CJK or English-only rules.
 - PR CI `pr-checks.yml`: typecheck, lint, architecture, pre-push runner tests and unit tests do not read `docs/`; `pnpm fmt:check` is covered above.
