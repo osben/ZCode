@@ -8,7 +8,8 @@ import {
  * (specs/composer-worktree-setup-steps.md, "Host preparation updates are authoritative even when
  * a renderer pipeline entry already exists"):
  * - Host `cancelled` stops local delivery: the entry is discarded (consumed/discarded stay put)
- *   so the queued send is restored rather than dispatched.
+ *   so the queued send is restored rather than dispatched, unless its live failure hand-off is
+ *   still awaiting the Hide tombstone or that tombstone failed.
  * - A newer Host attempt replaces the renderer's stale attempt for this session only, keeping the
  *   queued prompt preview; a late Git result for the replaced attempt cannot restore `ready`
  *   (the runner's attempt drift check drops it).
@@ -39,6 +40,7 @@ export function restoreComposerWorktreePipelineFromPreparation({
   const current = selectComposerWorktreePipeline(store, workspaceKey, sessionId);
 
   if (preparation.status === "cancelled") {
+    if (current?.returningToDraft || current?.tombstoneFailed) return;
     if (current && current.status !== "consumed" && current.status !== "discarded") {
       store.discard(workspaceKey, sessionId);
     }

@@ -459,6 +459,166 @@ Six decisions closed by the worktree lifecycle review:
    after the real directory and its Git binding are verified on the target Host; stale
    registrations fail recoverably without pruning.
 
+## Return to draft on failure (2026-10-19)
+
+Closed decisions (confirmed by the product owner):
+
+1. A failed preparation owned by the live renderer is removed by the existing Hide path — the
+   `deleteTask` tombstone (`session-deletion-cascade.md`) — not by a new hard-delete Host command.
+   The Host marker is settled through the existing `updateWorktreePreparation` command; no protocol
+   surface is added.
+2. The frozen submission is restored automatically only into an empty main draft. A non-empty draft
+   is never overwritten: the recovery card stays, and the modal states that the message is saved;
+   replacing the current draft then requires the card's explicit restore/replace action.
+3. The worktree directory Git may have created is never deleted automatically. Its path is shown in
+   the modal details; later attempts reuse it through the existing `target-path-exists` /
+   `branch-in-other-worktree` adoption logic.
+4. When the failure arrives while the user is in another workspace — or in another view of the same
+   workspace — no modal interrupts them: an action toast ("Could not create the worktree — Open")
+   is shown, and the modal opens when they return to that workspace's draft screen.
+5. Modal actions follow the error class: configuration errors (`target-branch-not-found`,
+   repository without commits, `target-path-invalid`, `branch-already-exists`,
+   `invalid-branch-name`) offer "Change branch/folder" as the primary action and hide "Retry",
+   because a retry would deterministically fail again; transient and unknown errors
+   (`unknown`, `git-unavailable`, `worktree-locked`, permission failures) offer "Retry" as the
+   primary action. "Copy details" is always available inside the expandable technical block.
+6. The in-session failed row (Retry/Discard), the supersession rules, `restoreForRetry`, and the
+   BUG-GWT-005 protections remain the fallback path unchanged; removing them is out of scope.
+
+### Owners and event order
+
+The renderer that issued the send and still owns the armed submission is the single owner of the
+automatic return. Ownership is decided in this renderer process: the module-scoped armed-send
+registry holds a live continuation for the prepared session, and the pipeline entry's attempt is
+current (not superseded, not replaced by a newer Host attempt). Every other case — reload, another
+window, reconcile after Host restart, a user opening an already-failed prepared session from the
+sidebar — keeps the existing failed row with Retry/Discard and the recovery card unchanged, and
+never triggers removal.
+
+```text
+Live renderer (Git runner settles failed)   Draft store (localStorage)      Host marker / task index
+   |                                              |                                |
+   | 1. verify ownership: armed submission for    |                                |
+   |    this session in this process; attempt     |                                |
+   |    current and not superseded                |                                |
+   | 2. transfer recovery record + staged  ------> | ONE write: restored fields     |
+   |    attachments into the __draft__ scope       | under __draft__, or the record |
+   |    (empty draft ⇄ non-empty draft branch)     | under the draft recovery scope |
+   | 3. report failure (existing effect) -------------------------------------> | status=failed, attempt CAS
+   | 4. settle hidden: updateWorktreePreparation  -----------------------------> | status=cancelled, attempt CAS
+   | 5. tombstone: deleteTask (existing Hide path) --------------------------->  | tasks.deleted=1
+   | 6. discard() local pipeline entry             |                                |
+   | 7. navigate startDraft when the active view is the failed session;        |
+   |    otherwise an action toast (the modal defers until the user returns)   |
+   | 8. open the failure modal from the workspace-scoped modal store (memory) |
+```
+
+Ordering constraints:
+
+- The preparing session is never removed before the Git attempt is settled and not in flight; a
+  late success must never leave a created worktree without its session.
+- The session is never removed before the recovery record and its staged attachments are safely
+  written under the draft scope (step 2 precedes steps 4-6). If the transfer write fails, the flow
+  stops before any removal and falls back to the existing failed-row path.
+- Host writes are sequenced failed → cancelled by the same owner so the preparation guard never
+  observes a `failed` mutation after `cancelled`; the existing failure-report effect and the
+  hand-off coexist without unhandled rejections (same-attempt rewrites are benign).
+- The tombstone reuses the `deleteTask` Hide path exactly; it does not touch the CLI session row,
+  the Host session store, or the worktree directory.
+- If the tombstone fails, the hand-off attempts to return the recovery record to the failed session
+  scope and keeps the failed-row pipeline and continuation; it does not open the return modal.
+
+### Failure modal
+
+The modal state lives in a workspace-scoped renderer store (keyed by the uniform workspace
+identity key), never in a composer instance and never persisted. It carries the issue code, the
+summarized message, the raw Git detail, and the worktree path when one is known. Raw Git output
+lives only in this memory state: it is not persisted and not logged; after a reload only the
+summary message remains. The modal reuses the shared dialog primitives and the existing
+`commandCenter.worktree.error.*` message ids; new strings are added once to en-US, zh-CN, and
+uk-UA. When the Git request throws instead of returning an issue, its raw error text is used only
+for the expandable detail; the primary message is the generic localized worktree-failure summary.
+
+"Retry" closes the modal and runs the ordinary `submit()` over the restored submission — the
+worktree intent and its parameters are part of the restored draft — through the mounted draft
+composer. There is no second dispatch path: the per-workspace idempotency guard still applies and
+a double activation must not double-submit. "Change branch/folder" closes the modal, keeps the
+restored draft, and opens the destination control for the user to pick different parameters. An
+explicit branch/base selection or turning worktree mode off clears the frozen destination so it
+cannot override the user's new choice; failed admissions and ordinary Retry retain it.
+
+If the preparing-session tombstone fails, the hand-off must not discard its pipeline entry or open
+the return modal. It restores the recovery record to the failed session's scope and leaves the
+failed-row Retry/Discard path available until the tombstone succeeds.
+
+### Recovery record extensions (additive)
+
+The recovery record additionally carries the worktree intent parameters (branch name, base branch,
+base-from-HEAD-default flag, and the effective location when custom) so a restored draft can
+prefill "Retry" and "Change branch/folder". For clipboard-text attachments of local workspaces the
+manifest additionally persists `localPath`, `mime`, and `size`, and restore re-hydrates them from
+the temporary file through the existing path-reference attachment form; remote workspaces keep the
+reattach requirement. The plan state (`mode`, `planEnabled`) is part of the record and survives
+restore into the `__draft__` scope (regression-tested). Records written before these fields
+existed remain readable; missing optional fields degrade exactly like today.
+
+### Preflight
+
+Predictable configuration failures are blocked at queue time — before any session is reserved —
+through the existing validation-failure surface (failed destination row, draft restored inline,
+no Retry):
+
+- An explicitly chosen base branch that is absent from a successfully loaded branch list blocks
+  Send with the `target-branch-not-found` message (which already carries the "repository without
+  commits" hint).
+- A successfully loaded but empty branch list (unborn HEAD) blocks Send with the same message.
+- A missing or failed branch list never blocks Send: the base degrades to HEAD with the visible
+  note (acceptance scenario 9).
+
+Branch evidence comes from the Git service of the target Host, addressed by `workspaceIdentity`
+with the local path fallback — never by path alone — and reuses the existing issue codes and
+message ids; no duplicate strings are introduced.
+
+Begin results: a not-ok begin reserved no Host session. The composer returns the frozen draft inline
+when its editor is still empty, drops the queue-time recovery record for that submission, and clears
+the admission name claim. If text was typed while the reservation was pending, the submission stays
+on the recovery card and the typed text is not overwritten (decision 2). Preflight and the reservation
+conflict both use this path.
+
+Automatic restore: the failure hand-off names the recovery record it moved (the modal store carries
+the pending scope). The composer restores exactly that record and never the oldest pending one. The
+worktree intent is written into the source record before the transfer; a rejected write moves nothing
+and removes nothing, so the failed-row path stays (scenario 19). The restored mode and plan state
+replace the live values (scenario 22).
+
+### Additional acceptance scenarios
+
+19. Live-renderer failure return: with the armed submission owned by this renderer, a failed Git
+    creation transfers the frozen submission (text, editor state, plan state, contexts,
+    attachments, worktree intent) into the `__draft__` scope in one write, settles the Host marker
+    cancelled, tombstones the preparing session out of every sidebar list, discards the pipeline
+    entry, navigates back to the draft screen, restores the submission into the composer, and
+    opens the failure modal — leaving no empty preparing session behind.
+20. Non-empty draft: when the main draft has content, nothing is overwritten; the recovery card
+    remains under the draft scope, the modal states the message is saved, and replacing the
+    current draft requires the explicit restore action.
+21. Away user: the failure arrives while another workspace or another view is active — no modal
+    interrupts; an action toast offers "Open", and the modal opens when the user returns to the
+    draft screen of that workspace.
+22. Plan mode and long-paste attachment survive: after the return (including a reload before
+    restore), the composer is in Plan mode again, and a clipboard-text temp-file attachment is
+    re-hydrated from its `localPath` for local workspaces without a reattach requirement.
+23. Retry dispatches exactly once: "Retry" runs the ordinary submit over the restored submission;
+    the idempotency guard admits it once and a double action does not create a second session.
+24. Preflight blocking: an unborn-HEAD repository or an explicitly missing base branch blocks Send
+    before any session exists, with the specific message and the draft intact; a failed branch
+    list still degrades to HEAD and does not block.
+25. Fallback unchanged: reload, another window, Host-restart reconcile, and re-opened failed
+    prepared sessions keep the in-session failed row with Retry/Discard, the recovery card, and
+    the BUG-GWT-005 protections; none of them triggers removal or the modal flow.
+26. Stale attempts never remove: a hand-off whose attempt is superseded or replaced by a newer
+    Host attempt performs no transfer, no Host mutation, and no tombstone.
+
 ## Concurrent submission reservation revision (2026-10-19)
 
 - Destination names are reserved per workspace. An admission claims its generated branch name and

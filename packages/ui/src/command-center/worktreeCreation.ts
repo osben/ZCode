@@ -8,6 +8,7 @@
  * gitService and message formatting are injected so the two entry points (palette, empty-state) share one semantics.
  */
 import type {
+  GitLocalBranchListResult,
   GitWorktreeCreateResult,
   GitWorktreeExcludeResult,
   GitWorktreeListResult,
@@ -20,6 +21,11 @@ import {
   resolveWorktreeIssueMessageId,
 } from "@/command-center/worktreeTaskFlow.js";
 
+/** Error class only for logs: raw messages can carry Git/RPC or transport detail. */
+function errorClassName(error: unknown): string {
+  return error instanceof Error ? error.name : typeof error;
+}
+
 /** Git service surface consumed by the shared creation orchestration (injected for tests). */
 export interface WorktreeCreationGitService {
   createWorktree(params: {
@@ -29,6 +35,11 @@ export interface WorktreeCreationGitService {
     targetPath: string;
   }): Promise<GitWorktreeCreateResult>;
   listWorktrees(params: { workspacePath: string }): Promise<GitWorktreeListResult>;
+  /**
+   * Optional local-branch probe used by the queue-time preflight (unborn HEAD / missing base
+   * branch). Absent or failing probes never block Send — the base degrades to HEAD instead.
+   */
+  getLocalBranches?(params: { workspacePath: string }): Promise<GitLocalBranchListResult>;
   /** Verify the registered worktree's real directory on the target Host before reuse. */
   verifyWorktreeUsable(params: {
     workspacePath: string;
@@ -51,8 +62,13 @@ export type WorktreeCreationOutcome =
       message: string;
       /** Issue codes the server rejected with (logging only); empty when the request threw. */
       issueCodes: readonly string[];
-      /** Error text from a thrown request (logging only); null when the server rejected. */
-      errorDetail: string | null;
+      /** Primary issue code of the rejection; null when the request threw or Git classified nothing. */
+      issueCode: string | null;
+      /**
+       * Raw technical detail (Git stderr, or the thrown request's error text) for the failure
+       * modal's expandable block. Memory-only: callers must not persist or log it.
+       */
+      rawDetail: string | null;
     };
 
 /**
@@ -77,7 +93,7 @@ export async function ensureWorktreeExclusionSafely(
     logger.warn("[WorktreeTask] worktree exclusion request failed", {
       workspacePath,
       targetPath,
-      error: getErrorMessage(error),
+      errorName: errorClassName(error),
     });
   }
 }
@@ -133,14 +149,14 @@ export async function executeWorktreeCreation({
       targetPath,
     });
   } catch (error) {
+    // The raw text stays memory-only in rawDetail (modal details); it is never surfaced in the summary.
     const errorDetail = getErrorMessage(error);
     return {
       kind: "failed",
-      message: formatMessage("commandCenter.worktree.error.requestFailed", {
-        error: errorDetail,
-      }),
+      message: formatMessage("commandCenter.worktree.error.unknown"),
       issueCodes: [],
-      errorDetail,
+      issueCode: null,
+      rawDetail: errorDetail,
     };
   }
 
@@ -180,7 +196,8 @@ export async function executeWorktreeCreation({
               path: existing.path,
             }),
             issueCodes: [issue.code],
-            errorDetail: null,
+            issueCode: issue.code,
+            rawDetail: issue.detail ?? null,
           };
         }
         await ensureWorktreeExclusionSafely(gitService, workspacePath, existing.path);
@@ -198,7 +215,7 @@ export async function executeWorktreeCreation({
         workspacePath,
         branchName,
         issueCode: issue.code,
-        error: getErrorMessage(error),
+        errorName: errorClassName(error),
       });
     }
   }
@@ -218,6 +235,7 @@ export async function executeWorktreeCreation({
           })
         : formatMessage("commandCenter.worktree.error.unknown"),
     issueCodes: result.issues.map((entry) => entry.code),
-    errorDetail: null,
+    issueCode: issue?.code ?? null,
+    rawDetail: issue?.detail ?? null,
   };
 }

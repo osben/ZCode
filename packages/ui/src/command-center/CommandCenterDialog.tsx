@@ -1396,20 +1396,22 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         setWorktreeRecoveryPath(outcome.worktreePath);
         return;
       }
-      if (outcome.errorDetail !== null) {
-        logger.warn("[CommandCenter] worktree create request failed", {
-          workspacePath: project.workspacePath,
-          branchName,
-          error: outcome.errorDetail,
-        });
-      } else {
-        logger.warn("[CommandCenter] worktree creation rejected", {
-          workspacePath: project.workspacePath,
-          branchName,
-          issues: outcome.issueCodes,
-        });
-      }
-      setWorktreeIssueMessage(outcome.message);
+      // Issue codes only: the raw Git/RPC text (rawDetail) is never logged.
+      logger.warn("[CommandCenter] worktree creation failed", {
+        workspacePath: project.workspacePath,
+        branchName,
+        issues: outcome.issueCodes,
+      });
+      // A thrown request has no issue code: show the request failure with its raw text here (the
+      // Command Center has no details block), so the cause is not lost behind the generic summary.
+      setWorktreeIssueMessage(
+        outcome.issueCode === null && outcome.rawDetail
+          ? intl.formatMessage(
+              { id: "commandCenter.worktree.error.requestFailed" },
+              { error: outcome.rawDetail },
+            )
+          : outcome.message,
+      );
     } finally {
       // A stale request's finally must not unlock a newer Start; busy is cleared exclusively by the current attempt.
       if (worktreeStartAttemptRef.current === attempt) {
