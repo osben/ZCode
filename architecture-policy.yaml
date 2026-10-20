@@ -691,7 +691,8 @@ modules:
         packages/shared/src/web-remote-relay/index.ts,
         packages/shared/src/web-remote-relay/contract.ts,
       ]
-    layers: { domain: "." }
+    layers: { domain: domain, adapters: adapters }
+    layerOrder: [domain, adapters]
     owner: remote-control
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
