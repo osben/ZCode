@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isFormattable, listForkChangedFiles, resolveUpstreamBase } from "./fork-format.mjs";
-import { UPSTREAM_BASE_FILE, chunkPaths } from "./fork-format-pending.mjs";
+import { UPSTREAM_BASE_FILE, chunkPaths, fetchPendingUpstream } from "./fork-format-pending.mjs";
 
 const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "fork-format.mjs");
 
@@ -217,6 +217,7 @@ function addPendingUpstream(repo, base) {
   git(repo, "checkout", "-q", "-b", "pending-upstream", base);
   write(repo, "pending-same.ts", UNFORMATTED_TS);
   write(repo, "pending-diff.ts", UNFORMATTED_TS);
+  write(repo, "pending-crlf.ts", UNFORMATTED_TS);
   write(repo, "pending-link-target.ts", UNFORMATTED_TS);
   symlinkSync("pending-link-target.ts", join(repo, "pending-link.ts"));
   const sha = commitAll(repo, "pending upstream");
@@ -225,15 +226,38 @@ function addPendingUpstream(repo, base) {
 }
 
 // Fork copies: one identical to the pending blob, one differing by a single
-// trailing newline, and one regular file where the pending commit has a symlink.
+// trailing newline, one regular file where the pending commit has a symlink,
+// and one CRLF copy that `text` normalizes to the pending LF blob.
 function makePendingFixture(t) {
   const { repo, base } = makeFixtureRepo(t);
   const pending = addPendingUpstream(repo, base);
   write(repo, "pending-same.ts", UNFORMATTED_TS);
   write(repo, "pending-diff.ts", `${UNFORMATTED_TS}\n`);
   write(repo, "pending-link.ts", UNFORMATTED_TS);
+  write(repo, ".gitattributes", "*.ts text=auto\n");
+  write(repo, "pending-crlf.ts", UNFORMATTED_TS.replace("\n", "\r\n"));
   commitAll(repo, "fork: copy pending files");
   return { repo, base, pending };
+}
+
+function hasCommit(repo, sha) {
+  return (
+    spawnSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: repo, env: gitEnv }).status === 0
+  );
+}
+
+// A clone without the pending commit, like a fresh CI checkout. The source
+// repository allows fetching by SHA (GitHub does too); the pending commit is
+// deliberately unreachable from any branch in the source.
+function makeCiClone(t, repo) {
+  git(repo, "config", "uploadpack.allowAnySHA1InWant", "true");
+  const clone = realpathSync(mkdtempSync(join(tmpdir(), "fork-format-ci-")));
+  t.after(() => rmSync(clone, { force: true, recursive: true }));
+  rmSync(clone, { force: true, recursive: true });
+  execFileSync("git", ["clone", "--no-local", "--quiet", repo, clone], { env: gitEnv });
+  git(clone, "config", "user.email", "test@example.com");
+  git(clone, "config", "user.name", "Test");
+  return clone;
 }
 
 test("pending-identical files leave the selection; one-byte edits, absent and symlink paths stay", (t) => {
@@ -245,6 +269,7 @@ test("pending-identical files leave the selection; one-byte edits, absent and sy
   assert.ok(listed.includes("pending-diff.ts"), listed.join("\n"));
   assert.ok(listed.includes("pending-link.ts"), listed.join("\n"));
   assert.ok(!listed.includes("pending-same.ts"), listed.join("\n"));
+  assert.ok(!listed.includes("pending-crlf.ts"), listed.join("\n"));
 
   const failing = runScript(repo, "--check");
   assert.notEqual(failing.status, 0, failing.stdout + failing.stderr);
@@ -303,4 +328,40 @@ test("a malformed pendingUpstreamCommit, including null, fails loudly", (t) => {
     assert.notEqual(result.status, 0, String(value));
     assert.match(result.stderr, /pendingUpstreamCommit must be a full 40-character/);
   }
+});
+
+test("a CI clone without the pending commit fetches it by URL and fmt:check then passes", async (t) => {
+  const { repo, base, pending } = makePendingFixture(t);
+  pinWithPending(repo, base, pending);
+  commitAll(repo, "fork: pin pending upstream");
+  // Make the pending commit unreachable from any branch, as upstream is in CI.
+  git(repo, "checkout", "-q", "--detach", "main");
+  git(repo, "branch", "-q", "-D", "pending-upstream");
+  const ci = makeCiClone(t, repo);
+
+  assert.equal(hasCommit(ci, pending), false);
+  const check = runScript(ci, "--check");
+  assert.notEqual(check.status, 0);
+  assert.match(check.stderr, /git fetch upstream/);
+
+  await fetchPendingUpstream(ci, repo);
+  assert.equal(hasCommit(ci, pending), true);
+  assert.equal(git(ci, "for-each-ref", "refs/remotes/upstream").trim(), "");
+
+  // The identical file is skipped; the in-scope one-byte copies are formatted, then the check passes.
+  const fixing = runScript(ci);
+  assert.equal(fixing.status, 0, fixing.stdout + fixing.stderr);
+  const passing = runScript(ci, "--check");
+  assert.equal(passing.status, 0, passing.stdout + passing.stderr);
+  assert.equal(readFileSync(join(ci, "pending-same.ts"), "utf8"), UNFORMATTED_TS);
+});
+
+test("fetchPendingUpstream does nothing without the field and fails loudly when the fetch fails", async (t) => {
+  // makePendingFixture pins the base only, so the field is absent.
+  const { repo, base } = makePendingFixture(t);
+  await fetchPendingUpstream(repo, "/nonexistent/upstream/path");
+
+  pinWithPending(repo, base, "2".repeat(40));
+  commitAll(repo, "fork: pin unreachable commit");
+  await assert.rejects(fetchPendingUpstream(repo, "/nonexistent/upstream/path"), /fetch/);
 });

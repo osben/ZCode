@@ -74,7 +74,7 @@ async function main() {
   // A staged file byte-identical to the pendingUpstreamCommit blob is left
   // unformatted by oxfmt; oxlint still checks it. Spec: specs/fork-format-scope.md.
   const repoRoot = (await git(process.cwd(), ["rev-parse", "--show-toplevel"])).trim();
-  const pending = await loadPendingUpstream(repoRoot);
+  const pending = await loadPendingUpstream(repoRoot, "index");
   const repoPaths = files.map((file) => relative(repoRoot, resolve(file)).replaceAll("\\", "/"));
   const identical = await pendingIdenticalPaths(repoRoot, repoPaths, pending, "index");
   const formatTargets = files.filter((_, index) => !identical.has(repoPaths[index]));

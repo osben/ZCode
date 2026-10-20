@@ -129,7 +129,8 @@ function git(cwd, ...args) {
 // Fixture repository whose pendingUpstreamCommit is its first commit, which
 // holds pending-same.json. The fixture lives under scripts/ like the other
 // fixtures, so oxlint sees paths inside its own root.
-function makePendingHookFixture(pendingUpstreamCommit) {
+// The pin is staged by default: the hook reads pendingUpstreamCommit from the index.
+function makePendingHookFixture(pendingUpstreamCommit, { stagePin = true } = {}) {
   const dir = makeFixtureDir();
   git(dir, "init", "-q", "-b", "main");
   git(dir, "config", "user.email", "test@example.com");
@@ -141,6 +142,9 @@ function makePendingHookFixture(pendingUpstreamCommit) {
   const pending = git(dir, "rev-parse", "HEAD");
   const pin = { upstreamCommit: pending, pendingUpstreamCommit: pendingUpstreamCommit ?? pending };
   writeFileSync(join(dir, "fork-upstream-base.json"), `${JSON.stringify(pin, null, 2)}\n`);
+  if (stagePin) {
+    git(dir, "add", "fork-upstream-base.json");
+  }
   return dir;
 }
 
@@ -166,6 +170,22 @@ test("pre-commit does not reformat a staged file byte-identical to the pending b
     assert.equal(readFileSync(join(dir, "pending-same.json"), "utf8"), '{"b":2,"a":1}');
     assert.equal(
       readFileSync(join(dir, "other-fork.json"), "utf8").includes('{ "b": 2, "a": 1 }'),
+      true,
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("pre-commit reads the pin from the index: an unstaged pin does not exempt a staged file", () => {
+  const dir = makePendingHookFixture(undefined, { stagePin: false });
+  try {
+    git(dir, "add", "pending-same.json");
+
+    const result = runWrapperIn(dir, [join(dir, "pending-same.json")]);
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.equal(
+      readFileSync(join(dir, "pending-same.json"), "utf8").includes('{ "b": 2, "a": 1 }'),
       true,
     );
   } finally {

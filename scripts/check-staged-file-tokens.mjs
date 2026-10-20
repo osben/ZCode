@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { loadPendingUpstream, pendingIdenticalPaths } from "./fork-format-pending.mjs";
 
 const MAX_BYTES = 5_000 * 4;
 // Repo-relative paths that may exceed the limit. One path per line, `#` starts a comment.
@@ -90,9 +90,20 @@ async function main() {
     sizes.set(oid, Number(bytes));
   }
   const exemptions = await readExemptions(cwd);
-  const candidates = files.filter(
+  const oversizedFiles = files.filter(
     (file) => sizes.get(file.oid) > MAX_BYTES && !exemptions.has(file.name),
   );
+  if (!oversizedFiles.length) return;
+  // Staged blobs identical to the pending upstream commit are not the fork's
+  // to split (specs/fork-format-scope.md). The pin is read from the index.
+  const pending = await loadPendingUpstream(cwd, "index");
+  const identical = await pendingIdenticalPaths(
+    cwd,
+    oversizedFiles.map((file) => file.name),
+    pending,
+    "index",
+  );
+  const candidates = oversizedFiles.filter((file) => !identical.has(file.name));
   if (!candidates.length) return;
 
   const attributes = await git(
