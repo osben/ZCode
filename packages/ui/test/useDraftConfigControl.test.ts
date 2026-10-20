@@ -1769,4 +1769,65 @@ describe("useDraftConfigControl slash command hydration", () => {
     expect(control!.composerDraft).toMatchObject({ text: "typed after acceptance", mode: "build" });
     act(() => root.unmount());
   });
+
+  it("switching the model while typing keeps the typed input", async () => {
+    const workspacePath = "/switch-model-keeps-input";
+    const view = modelSelectionView(1, ["model-a", "model-b"], "model-a");
+    const root = createRoot(installMinimalDom());
+    let control: ReturnType<typeof useDraftConfigControl>;
+    function Probe({
+      sessionId,
+      config,
+    }: {
+      sessionId: string | null;
+      config: Partial<SessionConfigState>;
+    }) {
+      control = useDraftConfigControl({
+        workspacePath,
+        sessionId,
+        sessionConfig: sessionId === null ? null : config,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+    const sessionConfig = {
+      mode: "build",
+      modelSelection: { providerId: "provider", modelId: "model-a" },
+    } as Partial<SessionConfigState>;
+
+    await act(async () =>
+      root.render(createElement(Probe, { sessionId: "switch-session", config: sessionConfig })),
+    );
+    act(() => control!.updateComposerContent({ text: "half typed sentence" }));
+    act(() => control!.handleDraftSelectModel("provider", "model-b"));
+    expect(control!.composerDraft).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+    // A late snapshot that still reports the previous model must not replace the user's switch or text.
+    await act(async () =>
+      root.render(
+        createElement(Probe, { sessionId: "switch-session", config: { ...sessionConfig } }),
+      ),
+    );
+    expect(control!.composerDraft).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+    expect(readV4ComposerDraft(workspacePath, undefined, "switch-session")).toMatchObject({
+      text: "half typed sentence",
+      modelSelection: { providerId: "provider", modelId: "model-b" },
+    });
+
+    await act(async () => root.render(createElement(Probe, { sessionId: null, config: {} })));
+    act(() => control!.updateComposerContent({ text: "root typed" }));
+    act(() => control!.handleDraftSelectModel("provider", "model-b"));
+    act(() => control!.handleDraftSelectModel("provider", "model-a"));
+    expect(control!.composerDraft).toMatchObject({
+      text: "root typed",
+      modelSelection: { providerId: "provider", modelId: "model-a" },
+    });
+    act(() => root.unmount());
+  });
 });
