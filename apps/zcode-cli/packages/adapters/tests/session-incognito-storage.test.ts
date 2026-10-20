@@ -7,7 +7,7 @@ import {
   type SessionId,
 } from "@zcode/contracts";
 import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
-import { runSqliteSessionMigrations } from "../src/storage/session-store/migration-runner.js";
+import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
 import { createSession, getSession } from "../src/storage/session-store/repositories/sessions.js";
 
 // specs/incognito-session.md "Session storage": fork migration 9001_fork_session_incognito adds
@@ -24,7 +24,7 @@ describe("session incognito storage", () => {
   function openDb(): DatabaseSync {
     const db = new DatabaseSync(":memory:");
     databases.push(db);
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
     return db;
   }
 
@@ -116,7 +116,7 @@ describe("session incognito storage", () => {
       "INSERT INTO schema_migration (id, checksum, app_version, time_applied) VALUES (?, ?, ?, ?)",
     ).run("9002_fork_future_feature", "unknown-checksum", "9.9.9", 1);
 
-    expect(() => runSqliteSessionMigrations(db, ":memory:")).not.toThrow();
+    expect(() => runSqliteSessionMigrationsSync(db, ":memory:")).not.toThrow();
     expect(
       db.prepare("SELECT count(*) AS n FROM schema_migration WHERE id = ?").get(MIGRATION_ID),
     ).toEqual({ n: 1 });

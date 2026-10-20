@@ -432,7 +432,7 @@ describe("SQLite session store", () => {
   it("keeps the existing in-memory session store path working", () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     try {
-      expect(store.debugMigrationIds()).toHaveLength(24);
+      expect(store.debugMigrationIds()).toHaveLength(26);
     } finally {
       store.close();
     }
@@ -558,8 +558,10 @@ describe("SQLite session store", () => {
       "0020_provider_model_selection",
       "0021_official_glm_selection",
       "0022_backfilled_session_reasoning",
-      "0023_session_execution_worktree",
+      "0023_session_soft_delete_outcome",
+      "0024_session_database_identity",
       "9001_fork_session_incognito",
+      "9002_fork_session_execution_worktree",
     ];
 
     try {
@@ -596,6 +598,8 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.5",
         "0.16.5",
+        "0.16.9",
+        "0.16.9",
         "0.16.9",
         "0.16.9",
       ]);
@@ -645,7 +649,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 24)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 26)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -868,8 +872,10 @@ describe("SQLite session store", () => {
         "0020_provider_model_selection",
         "0021_official_glm_selection",
         "0022_backfilled_session_reasoning",
-        "0023_session_execution_worktree",
+        "0023_session_soft_delete_outcome",
+        "0024_session_database_identity",
         "9001_fork_session_incognito",
+        "9002_fork_session_execution_worktree",
       ]);
       store.close();
     } finally {

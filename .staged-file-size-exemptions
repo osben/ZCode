@@ -252,3 +252,9 @@ specs/manage-sessions-table.md
 
 # TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
 apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
+apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
+apps/zcode-cli/packages/adapters/tests/session-store.test.ts
+# Real sqlite histories used by session-migration-history.test.ts (binary fixtures, not editable source).
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
