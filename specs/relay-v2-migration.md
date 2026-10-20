@@ -197,3 +197,45 @@ editing `scripts/check-test-copy.mjs`.
 
 Compatibility: the desktop and web clients must remain compatible with upstream's V2 client contract
 (`packages/shared/src/web-remote-relay/**`) so they can talk to either server.
+
+## 11. Refinements (supersede 10.1 and 10.2 where they differ)
+
+### 11.1 Relay host config (existing variable, no new name)
+
+- The variable is the existing `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL`, set in
+  `.github/workflows/fork-release.yml` (`vars.*`, build time), read at runtime by
+  `packages/shared/src/env.ts` (`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT`) and
+  `packages/desktop/src/main/index.ts`, and for web as `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL`.
+- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`; a path is stripped).
+  A legacy `wss://host/ws` value is normalized to its origin with a logged warning. Release notes must say so.
+- Derived from the origin, never separately configured:
+  HTTP `${origin}/api/v1/remote/{device,device/delete,token}`,
+  WS `${wsOrigin}/api/v1/remote/ws2?token=…`,
+  OAuth callback `${endpointOrigin}/remote/v4`.
+- Fallback when unset: the zcode endpoint origin (upstream behavior). No hardcoded production relay host.
+
+### 11.2 Bearer for relay HTTP (the JWT seam)
+
+- Upstream's client already takes the bearer as a parameter (`register(deviceMid, jwt, signal)`).
+  That signature is kept byte-identical, so the wire matches upstream.
+- The caller supplies a relay JWT from a `RelayBearerProvider` (desktop Main and web), which is the only
+  new seam. The provider obtains the JWT by exchanging the account identity.
+- Exchange endpoint (self-hosted relay): `POST ${origin}/api/v1/remote/session`, body
+  `{identity_token: string}`, response `{code: 0, msg, data: {jwt, expires_in}}`. The relay verifies the
+  identity token once against the configured identity provider (issuer and JWKS from env, fork-owned
+  config), then signs its own JWT with a fork-owned key (`kid`, rotation per 8.1).
+- Trust boundary: the identity provider is trusted only at the exchange. Relay JWTs are the only
+  credential for `/api/v1/remote/*` and `ws2`. Relay JWTs never go into QR codes or business messages.
+- OPEN (owner to confirm): which identity provider is "the fork's existing identity" for mobile login
+  (the desktop login session, or the OAuth provider used by `/remote/v4`). Until confirmed, the exchange
+  accepts an identity token from the configured issuer only.
+
+### 11.3 Staging (advisor review)
+
+- PR1 (shared): add V2 exports next to V1 (`WebRemoteControlRelayV2*` names do not collide). Add
+  `adapters/` and `domain/`, fill `./testing/fake-relay-v2`, add V2 tests. V1 kept. Architecture policy entries for the new subdirectories.
+- PR2 (desktop + web + endpoint builders): switch to V2, remove V1 transport and auth providers,
+  add the re-pair state. `zcodeEndpoint.test.ts` change is ledgered as an intentional behavior change.
+- PR3 (server + e2e): `packages/remote-relay` V2, remove the `tsconfig.e2e.json` exclusion, re-enable
+  the 12 `webAuthService` skips if they depend on the server (check first), delete remaining V1.
+- Every upstream comment and test copy is translated to English on import. `check-test-copy.mjs` must pass.
