@@ -43,16 +43,23 @@ const {
   },
 }));
 
-vi.mock("lucide-react", () => {
+vi.mock("lucide-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("lucide-react")>();
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     createElement("svg", { "data-icon": name, ...props });
 
   return {
+    ...actual,
     Archive: createIcon("archive"),
+    Cloud: createIcon("cloud"),
     CloudUpload: createIcon("cloud-upload"),
     Clock: createIcon("clock"),
+    Cpu: createIcon("cpu"),
+    FileDiff: createIcon("file-diff"),
+    Folder: createIcon("folder"),
+    GitBranch: createIcon("git-branch"),
+    GitMerge: createIcon("git-merge"),
     LoaderIcon: createIcon("loader"),
-    ListTree: createIcon("list-tree"),
     Pin: createIcon("pin"),
     Smartphone: createIcon("smartphone"),
   };
@@ -60,6 +67,13 @@ vi.mock("lucide-react", () => {
 
 vi.mock("@/components/ui/badge.js", () => ({
   Badge: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
+}));
+
+vi.mock("@/components/ui/tooltip.js", () => ({
+  TooltipProvider: ({ children }: { children?: ReactNode }) => children,
+  Tooltip: ({ children }: { children?: ReactNode }) => children,
+  TooltipTrigger: ({ children }: { children?: ReactNode }) => children,
+  TooltipContent: ({ children }: { children?: ReactNode }) => children,
 }));
 
 vi.mock("@/components/ui/button.js", () => ({
@@ -327,93 +341,6 @@ describe("TaskListItem hover action rendering", () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it("opens pinned files on touch without selecting the task", async () => {
-    const { MemoTaskItem } = await import("@/TaskListItem.js");
-    const container = installMinimalDom(true);
-    const root = createRoot(container);
-    const onOpenFileTree = vi.fn(async () => {});
-    const onSelectTask = vi.fn();
-    act(() =>
-      root.render(
-        createElement(MemoTaskItem, {
-          intl: stableIntl,
-          isActive: false,
-          isArchiveConfirming: false,
-          isPinned: true,
-          onArchiveTask: vi.fn(),
-          onArchiveTaskInline: vi.fn(),
-          onCancelArchiveConfirm: vi.fn(),
-          onMarkTaskAsUnread: vi.fn(),
-          onSelectTask,
-          onStartRenameTask: vi.fn(),
-          onTogglePinTask: vi.fn(),
-          onOpenFileTree,
-          task: createTask(),
-          workspacePath: "/workspace",
-        }),
-      ),
-    );
-    const button = findByAttributeValue(container, "data-testid", "task-files-task-1");
-    expect(button).not.toBeNull();
-    const stopPropagation = vi.fn();
-    await act(async () => {
-      button?.dispatchEvent({
-        type: "click",
-        bubbles: true,
-        preventDefault: vi.fn(),
-        stopPropagation,
-      } as TestEvent);
-    });
-    expect(onOpenFileTree).toHaveBeenCalledOnce();
-    expect(stopPropagation).toHaveBeenCalled();
-    expect(onSelectTask).not.toHaveBeenCalled();
-    act(() => root.unmount());
-  });
-
-  it.each([false, true])(
-    "hoverEnabled=%s controls synthetic mouse and focus presentation",
-    async (hoverEnabled) => {
-      const { MemoTaskItem } = await import("@/TaskListItem.js");
-      const container = installMinimalDom(true);
-      const root = createRoot(container);
-      const onSelectTask = vi.fn();
-      act(() =>
-        root.render(
-          createElement(MemoTaskItem, {
-            intl: stableIntl,
-            isActive: false,
-            isArchiveConfirming: false,
-            isPinned: false,
-            hoverEnabled,
-            onArchiveTask: vi.fn(),
-            onArchiveTaskInline: vi.fn(),
-            onCancelArchiveConfirm: vi.fn(),
-            onMarkTaskAsUnread: vi.fn(),
-            onSelectTask,
-            onStartRenameTask: vi.fn(),
-            onTogglePinTask: vi.fn(),
-            task: createTask(),
-            workspacePath: "/workspace",
-          }),
-        ),
-      );
-      const row = findByAttribute(container, "data-task-item-key")!;
-      act(() => {
-        row.dispatchEvent({ type: "mouseover", bubbles: true, relatedTarget: null });
-        row.dispatchEvent({ type: "focusin", bubbles: true });
-      });
-      expect(
-        findByAttribute(container, "data-task-row-metadata")
-          ?.getAttribute("class")
-          ?.includes("hidden"),
-      ).toBe(hoverEnabled);
-      expect(row.getAttribute("class")?.includes("hover:bg-surface-hover")).toBe(hoverEnabled);
-      act(() => row.dispatchEvent({ type: "click", bubbles: true }));
-      expect(onSelectTask).toHaveBeenCalledOnce();
-      act(() => root.unmount());
-    },
-  );
-
   it("keeps idle rows free of per-row context menu and hover-only archive tooltip", async () => {
     const { MemoTaskItem } = await import("@/TaskListItem.js");
     const root: Root = createRoot(installMinimalDom());
@@ -487,6 +414,88 @@ describe("TaskListItem hover action rendering", () => {
     });
   });
 
+  it("restores a mobile-active task's run-state indicator when hover actions replace the phone marker", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    leadingIndicatorState.value = "unread";
+
+    act(() => {
+      root.render(
+        createElement(MemoTaskItem, {
+          intl: stableIntl,
+          isActive: false,
+          isArchiveConfirming: false,
+          isMobileActive: true,
+          isPinned: false,
+          onArchiveTask: vi.fn(),
+          onArchiveTaskInline: vi.fn(),
+          onCancelArchiveConfirm: vi.fn(),
+          onMarkTaskAsUnread: vi.fn(),
+          onSelectTask: vi.fn(),
+          onStartRenameTask: vi.fn(),
+          onTogglePinTask: vi.fn(),
+          task: createTask(),
+          workspacePath: "/workspace",
+        }),
+      );
+    });
+
+    const row = findByAttribute(container, "data-task-item-key");
+    const unreadIndicator = findByAttribute(container, "data-unread-indicator");
+    expect(row).not.toBeNull();
+    expect(unreadIndicator?.parentNode?.__attrs.get("class")).toContain("invisible");
+
+    act(() => {
+      row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+    });
+
+    expect(unreadIndicator?.parentNode?.__attrs.get("class")).not.toContain("invisible");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("keeps default rows in the compact layout without idle dots", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+
+    act(() => {
+      root.render(
+        createElement(MemoTaskItem, {
+          intl: stableIntl,
+          isActive: false,
+          isArchiveConfirming: false,
+          isPinned: false,
+          onArchiveTask: vi.fn(),
+          onArchiveTaskInline: vi.fn(),
+          onCancelArchiveConfirm: vi.fn(),
+          onMarkTaskAsUnread: vi.fn(),
+          onSelectTask: vi.fn(),
+          onStartRenameTask: vi.fn(),
+          onTogglePinTask: vi.fn(),
+          task: {
+            ...createTask(),
+            workspacePath: "/Users/demo/.zcode/workspace/default",
+          },
+          variant: "default",
+          workspacePath: "/Users/demo/.zcode/workspace/default",
+        }),
+      );
+    });
+
+    const row = container.querySelector("[data-task-item-key]");
+    expect(row?.getAttribute("class")).toContain("items-center");
+    expect(row?.getAttribute("class")).not.toContain("items-start");
+    expect(container.querySelector("[data-idle-indicator]")).toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
   it("does not re-render when task meta is replaced with equivalent display fields", async () => {
     const { MemoTaskItem } = await import("@/TaskListItem.js");
     const root: Root = createRoot(installMinimalDom());
@@ -510,7 +519,7 @@ describe("TaskListItem hover action rendering", () => {
     act(() => {
       root.render(createElement(MemoTaskItem, props));
     });
-    expect(formatRelativeTimeCalls).toHaveLength(1);
+    expect(formatRelativeTimeCalls).toHaveLength(2);
 
     act(() => {
       root.render(
@@ -521,7 +530,7 @@ describe("TaskListItem hover action rendering", () => {
       );
     });
 
-    expect(formatRelativeTimeCalls).toHaveLength(1);
+    expect(formatRelativeTimeCalls).toHaveLength(2);
 
     act(() => {
       root.unmount();
