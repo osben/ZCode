@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta } from "@zcode/shared";
-import { createWindowHostControllerRuntime } from "../src/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 const workspacePath = "/repo";
 const workspaceIdentity = "remote:server:source:/repo";

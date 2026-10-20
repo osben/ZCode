@@ -25,6 +25,13 @@ const ACCOUNTLESS_FORK_SPEC_NAMES = new Set([
   "conversation-session-running-guide-steer.test.ts",
   "conversation-session-tool-cross-product.test.ts",
   "conversation-session-v4-fork-edit-branch.test.ts",
+  // Bug cause: the fake OAuth/legacy token makes the plugin market hit the real account control
+  // plane (401 login-expired dialog) before the plugin replay starts, so these start accountless.
+  "plugin-management-discovery-presentation.test.ts",
+  "plugin-management-ui-market.test.ts",
+  "conversation-session-plugin-marketplace-installed-roundtrip.test.ts",
+  "plugin-store-auto-refresh-throttled.test.ts",
+  "plugin-store-auto-refresh-on-enter.test.ts",
 ]);
 
 export function createE2EStartupCredentialSeed(

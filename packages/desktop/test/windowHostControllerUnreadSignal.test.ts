@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import type { ZCodeTaskMeta, ZCodeWorkspaceEvent } from "@zcode/shared";
 import type { IZCodeTaskService, WindowHostTaskUnreadSignal } from "@zcode/services";
-import { createWindowHostControllerRuntime } from "../src/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 async function fixture() {
   const events = new Emitter<ZCodeWorkspaceEvent>();

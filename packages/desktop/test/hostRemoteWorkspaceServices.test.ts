@@ -44,10 +44,7 @@ import { createRemoteConnectionServiceCollection } from "../src/host/remoteConne
 import { createRemotePromptAttachmentTaskService } from "../src/host/remotePromptAttachments.js";
 import { setDataBaseDir } from "@zcode/services/node";
 import * as nodeServices from "@zcode/services/node";
-import {
-  createRemoteWorkspaceServiceCollection,
-  createServerRemoteWorkspaceServiceCollection,
-} from "../src/host/remoteWorkspaceServiceCollection.js";
+import { createServerRemoteWorkspaceServiceCollection } from "../src/host/remoteWorkspaceServiceCollection.js";
 
 const originalHome = process.env.HOME;
 const clientConfigService = {
@@ -133,6 +130,25 @@ function makeRemoteServices() {
       getView: vi.fn(async () => ({ revision: 0, providers: [] })),
     },
     providerSettingsService: { remote: "provider-settings" },
+    // RPC v1 contract channels (upstream 3.16.x): the remote must provide every one of them.
+    genUiService: { remote: "gen-ui" },
+    settingService: { remote: "setting" },
+    onboardingRecordService: { remote: "onboarding-record" },
+    credentialService: { remote: "credential" },
+    broadcastService: { remote: "broadcast" },
+    conversationShareService: { remote: "conversation-share" },
+    botsService: { remote: "bots" },
+    oauthService: { remote: "oauth" },
+    mediaPreviewService: { remote: "media-preview" },
+    sourceServerWorkspaceService: { remote: "source-server-workspace" },
+    usageStatsService: { remote: "usage-stats" },
+    codingPlanSubscriptionService: { remote: "coding-plan-subscription" },
+    clientScenesService: { remote: "client-scenes" },
+    subagentsService: { remote: "subagents" },
+    memoryService: { remote: "memory" },
+    outputStyleService: { remote: "output-style" },
+    settingsSyncService: { remote: "settings-sync" },
+    promptAttachmentTransferService: { remote: "prompt-attachment-transfer" },
   } as never;
 }
 
@@ -173,7 +189,7 @@ describe("remote workspace host service wiring", () => {
 
   it("keeps workspace services remote and exposes local global services for Web remote control", () => {
     const remoteServices = makeRemoteServices();
-    const services = createRemoteWorkspaceServiceCollection({
+    const services = createServerRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -237,7 +253,7 @@ describe("remote workspace host service wiring", () => {
               connectionServices,
               sourceServices,
             })
-          : createRemoteWorkspaceServiceCollection({
+          : createServerRemoteWorkspaceServiceCollection({
               clientConfigService,
               connectionServices,
               sourceServices,
@@ -333,7 +349,7 @@ describe("remote workspace host service wiring", () => {
           headers: { "content-type": "application/json" },
         });
       });
-      const services = createRemoteWorkspaceServiceCollection({
+      const services = createServerRemoteWorkspaceServiceCollection({
         clientConfigService,
         connectionServices: makeRemoteServices(),
         ...(sharedOwner ? { sourceServices: new ServiceCollection() } : {}),
@@ -432,7 +448,7 @@ describe("remote workspace host service wiring", () => {
           headers: { "content-type": "application/json" },
         });
       });
-      const services = createRemoteWorkspaceServiceCollection({
+      const services = createServerRemoteWorkspaceServiceCollection({
         clientConfigService,
         connectionServices: makeRemoteServices(),
         ...remoteWorkspaceHostOptions(),
@@ -493,7 +509,7 @@ describe("remote workspace host service wiring", () => {
     const home = createTempHome();
     vi.spyOn(globalThis, "fetch").mockImplementation(createPresetFetchMock("preflight-v1"));
     const remoteServices = makeRemoteServices();
-    const services = createRemoteWorkspaceServiceCollection({
+    const services = createServerRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -594,7 +610,7 @@ describe("remote workspace host service wiring", () => {
     remoteServices.zcodeAgentService.respondSessionRuntimePreferences.mockRejectedValueOnce(
       transportError,
     );
-    const services = createRemoteWorkspaceServiceCollection({
+    const services = createServerRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(onError),
@@ -649,7 +665,7 @@ describe("remote workspace host service wiring", () => {
     const fetchImpl = createPresetFetchMock();
     vi.spyOn(globalThis, "fetch").mockImplementation(fetchImpl);
     const remoteServices = makeRemoteServices();
-    createRemoteWorkspaceServiceCollection({
+    createServerRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),
@@ -751,7 +767,7 @@ describe("remote workspace host service wiring", () => {
       ...makeRemoteServices(),
       zcodeTaskService: { sendPrompt: rawSendPrompt },
     } as never;
-    const services = createRemoteWorkspaceServiceCollection({
+    const services = createServerRemoteWorkspaceServiceCollection({
       clientConfigService,
       connectionServices: remoteServices,
       ...remoteWorkspaceHostOptions(),

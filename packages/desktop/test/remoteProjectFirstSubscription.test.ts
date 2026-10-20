@@ -17,7 +17,7 @@ import {
   SourceServerWorkspaceIdentityMapper,
   SourceServerWorkspaceIdentityChannelServer,
 } from "../../services/src/source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
-import { createWindowHostSessionsIndexObserver } from "../src/host/windowHostSessionsIndexObserver.js";
+import { createWindowHostSessionsIndexObserver } from "@zcode/services/window-controller";
 
 it.each([false, true])(
   "empty remote project receives first permission without restart (runtime already running=%s)",

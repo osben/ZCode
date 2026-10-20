@@ -270,3 +270,43 @@ Desktop typecheck drive (branch `claude/final-desktop-compile`). Each bullet nam
 
 - TEMPORARY(relay-decision): packages/desktop/tsconfig.e2e.json excludes four upstream relay-v2 e2e files (web-remote-unread helper and three conversation-session tests). Remove when the user decides on relay v2.
 - Note: windowHostController\*.test.ts in desktop imports desktop/src/host/windowHostControllerService.js, which moved to services in the fork. Left for the test-fix wave.
+
+## tests desktop
+
+Scope: `node scripts/run-vitest.mjs run packages/desktop/test` (unit tests only, not wdio e2e).
+Before: 16 failed files / 40 failed tests. After: 7 failed files / 42 failed tests. The count rose because three window-host controller test files previously failed at import (0 tests ran). They now load, and 28 of their behavior tests fail (see the last group below). The remaining 42 failures are all listed here with a reason.
+
+### Fixed in this pass
+
+- `desktopProductIdentity`: root `package-lock.json` version fields synced to `3.16.1-fork.1` (package.json is the fork version).
+- `e2eRuntimePaths`: `bot-r3-workspace-identity.test.ts` mock `ensureDefaultProject` no longer returns a `/tmp` path (mock value only, no allowlist change).
+- `remoteProjectFirstSubscription`, `windowHostControllerAttachmentIdentity`, `windowHostControllerTaskMeta`, `windowHostControllerUnreadSignal`: imports repointed from `desktop/src/host/windowHostControllerService.js` / `windowHostSessionsIndexObserver.js` to `@zcode/services/window-controller` (the fork moved both modules there). No re-export shim was added: the architecture check reports new desktop files as unmanaged.
+- `hostRemoteWorkspaceServices`: factory name aligned with the source (`createServerRemoteWorkspaceServiceCollection`, upstream name, replaces the base name `createRemoteWorkspaceServiceCollection`). The `makeRemoteServices` fixture gains stubs for the 18 RPC v1 channels that `assertRemoteWorkspaceRpcContract` requires. 4 tests of this file now pass.
+- `e2eConversationPreparation` (7 tests): `e2e/helpers/v4-conversation.ts` `prepareV4ConversationE2E` and `ensureV4ShellReady` ported from upstream (`waitForProjectRow`, `ensureV4PreparationDraft`, `startDraftFromProject`). Imports from `./project-sidebar.js` and `DEFAULT_WORKSPACE` added.
+- `e2eToolFullAccess` (3): `ensureToolCrossProductFullAccessMode` uses `getV4ConfigProjection` (upstream). The DOM-based `isFullAccessModeSelected` helper is removed (it was only used there).
+- `e2eV4WindowSize` (2): `setV4ElectronWindowSize` delegates to `setCurrentElectronRendererContentSize` (upstream). The old `browser.electron.execute` path is removed.
+- `e2eSshRemoteReleaseAssets` (1): test file restored to upstream `0a1fc56d`. The branch version still asserted the removed `manifest-<platform>.json` sentinel; the helper uses the descriptor + four archive layout that upstream tests.
+- `pluginMarketStartupCredentials` (5): the five plugin-market specs added to `ACCOUNTLESS_FORK_SPEC_NAMES` in `e2e/helpers/e2e-startup-credentials.ts`, so they start without the fake account identity, as the test names require.
+- `desktopMainIpcPlatform` (1): the stale test "offers restored local workspace contexts to Web remote control startup recovery" is replaced by upstream's successor "keeps local window tabs separate from the complete remote control workspace snapshot". Upstream removed the restore call from `SyncWindowTabs`: recovery is now driven by the full `SyncWebRemoteControlWorkspaces` snapshot. The dead `restorePreviouslyEnabledWebRemoteControl` wiring in `packages/desktop/src/main/index.ts` is removed (upstream has none).
+
+Unchanged and passing (checked, not in the failing list): `connectDesktopSourceServer`, `desktopCronScheduler`, `desktopMainIpcRemoteTelemetry`, `desktopNetworkTelemetry`, `desktopRemoteSessions`, `hostRemoteStartupIntegration`, `offPeakHostDispatch`, `preloadDisposer`, `remoteConnectionFailureContract`, `remoteWorkspaceServicePortBridge`, `sourceServerHostReleaseWiring`, `windowProjectDirectoryAttachment`.
+
+### Still failing (42 tests)
+
+1. `buildPipelineEntrypoints.test.ts` (1): "prepares the manifest format consumed by the existing Desktop remote runtime". The fork-created test asserts that `packages/zcode-server-cli` has no `stage:remote-assets` script. The script still exists upstream and is still called by `scripts/bootstrap.mjs:252` (`--filter @zcode/server-cli stage:remote-assets`). Removing it needs a decision on the remote-asset pipeline (migrate bootstrap to root `prepare:remote-assets`, then delete the stage script). Not done.
+
+2. `webRemoteControlManagerExternalRelay.test.ts` (1): "uses the current endpoint resolver for relay and QR URL on each start". The fork test is the spec: relay v1 `ws://localhost:3030/ws`. The relay URL comes from `packages/shared` `buildZCodeEndpointUrls`, which upstream changed to `/api/v1/remote/ws2`. The shared test `packages/shared/test/zcodeEndpoint.test.ts` also asserts ws2. Making this pass requires editing `packages/shared` (off-limits) or a desktop-side override that contradicts shared. Needs a decision on which relay the fork ships.
+
+3. `hostRemoteWorkspaceServices.test.ts` (12): these fork tests drive the base-era `createRemoteWorkspaceServiceCollection` options API: `localOnboardingRecordService`, `runtimePreferencesBridge`, `parentPort`, `createRemotePromptAttachmentTaskService` / `...SessionService`, `createReportingRemoteZCodeTaskService`. The upstream hand-merge kept `createServerRemoteWorkspaceServiceCollection`, which takes none of those options. The behavior is therefore missing from the current source:
+   - "keeps workspace services remote and exposes local global services for Web remote control" and "desktop-attached ... 同源引导记录" (onboarding record must resolve to the local fallback for desktop-attached attachments; the server variant passes).
+   - "远程用量使用 Token ..." x3 and "fallback 'bigmodel' / 'zai' team=... 的 401 指纹到达 PAT owner" x4 (remote usage token and 401 fingerprint routing to the PAT owner).
+   - "bridges app-global runtime preferences without a workspace-scoped subscription", "reports a runtime preference response transport failure without retrying".
+   - "materializes web remote task prompts before the reporting wrapper observes them".
+     Porting this is a feature port of roughly 580 lines of base code, not a small hunk, so it needs a decision. This may be a real Web remote control regression; verify in the app before merging.
+
+4. `windowHostControllerUnreadSignal.test.ts` (14), `windowHostControllerTaskMeta.test.ts` (10), `windowHostControllerAttachmentIdentity.test.ts` (2), `windowHostControllerService.test.ts` (2): these test the upstream desktop controller. The fork moved and reworked it into `packages/services/src/window-controller` (source registration keyed by sourceServerId, address validation before source IO, owner/session re-checks after reads, admission and unread-marker race guards). The remote scope built by the services controller (`windowHostControllerService.ts` near line 833) no longer carries `sourceServerId`, and the services runtime does not check the owner before source IO. The fixes belong in `packages/services` (off-limits in this pass). The two `windowHostControllerService.test.ts` failures are the fork's own spec: "routes unopened remote task commands by Source identity without requiring a logical attachment or earlier list query" and "在 Host 内聚合 local 与 remote task rows，并为结果附加 source 地址". The services controller currently throws `列表 mutation 无法解析唯一 source`. Services fix needed.
+
+### Test-only notes
+
+- No test was skipped, deleted or weakened. The two replaced tests (desktopMainIpcPlatform restore case, e2eSshRemoteReleaseAssets file) encode behavior upstream removed; their upstream successors are used.
+- `scripts/check-test-copy.mjs` not edited. Test copy stays English where new.
