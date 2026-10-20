@@ -1,9 +1,11 @@
+import { OFF_PEAK_EXECUTION_TOOL_DENYLIST } from "@zcode/shared";
 import type {
   CompactPhase,
   CompactReason,
   MessageId,
   ModelStreamRecoveryStatus,
   Model,
+  ModelSelection,
   OutputStylePromptConfig,
   SessionEvent,
   TraceContext,
@@ -11,7 +13,7 @@ import type {
   TurnId,
 } from "../deps.js";
 import type { ActiveTurnSteeringState } from "../types.js";
-import type { SubagentRunOptions } from "@zcode/contracts";
+import type { ModelToolContract, SubagentRunOptions } from "@zcode/contracts";
 import type { DrainedPendingInputDiagnostics, ModelExecutionContext } from "../types.js";
 import type { TurnMachineImpl } from "../deps.js";
 import type { RuntimeMessageEntry } from "../../agent/message-history.js";
@@ -23,17 +25,16 @@ export const MAX_CONSECUTIVE_RAPID_REFILLS = 3;
 export const AUTOMATION_MUTATION_TOOL_NAMES = ["CronCreate", "CronUpdate", "CronDelete"] as const;
 const AUTOMATION_QUERY_ID_PREFIX = "automation-";
 /**
- * Tools hidden during an off-peak dispatch turn; OffPeakList remains available as read-only.
- * - OffPeakCreate: prevents off-peak tasks from recursively spawning themselves and scheduling without limit.
- * - SendMessage / Workflow: these can start child Agents outside the off-peak turn's modelExecution (SendMessage resumes
- *   a completed subagent; Workflow creates a script sub-session), using the model selected persistently by the parent session.
+ * 闲时派发轮隐藏的工具；OffPeakList 只读保留。
+ * - OffPeakCreate：防止闲时任务递归自我派生、无限调度。
+ * - Workflow 与动态执行入口：独立工作流运行器尚未加入闲时票据生命周期。
  *
- * Keep this as a separate constant; never add it to AUTOMATION_MUTATION_TOOL_NAMES. Cron automation turns explicitly allow
- * OffPeakCreate to schedule off-peak tasks, and merging the constants would incorrectly deny it.
+ * 独立常量，绝不并入 AUTOMATION_MUTATION_TOOL_NAMES——cron automation turn 明确放行
+ * OffPeakCreate（定时派生闲时任务），混入会让 automation turn 误 deny。
  */
-export const OFF_PEAK_MUTATION_TOOL_NAMES = ["OffPeakCreate", "SendMessage", "Workflow"] as const;
-// The init phase of an off-peak dispatch has no fixed traceId prefix; only the resume phase uses `${offPeakTaskId}:resume:*`
-// (starting with offpeak-). The prefix is only a fallback signal for resume; the primary signal must be explicit offPeakTaskId.
+export const OFF_PEAK_MUTATION_TOOL_NAMES = OFF_PEAK_EXECUTION_TOOL_DENYLIST;
+// 闲时派发 init 段 traceId 无固定前缀，只有 resume 段是 `${offPeakTaskId}:resume:*`
+// （offpeak- 开头）；前缀只是 resume 兜底信号，主信号必须是显式 offPeakTaskId。
 const OFF_PEAK_QUERY_ID_PREFIX = "offpeak-";
 
 export interface CompactLoopTracking {
@@ -59,6 +60,7 @@ export interface AutoCompactLoopContext {
   rapidRefill: RapidRefillDecision;
   model: Model;
   turnRequestState: TurnRequestState;
+  getContinuationTools?: () => readonly ModelToolContract[];
 }
 
 export interface ReactiveCompactLoopContext {
@@ -68,6 +70,7 @@ export interface ReactiveCompactLoopContext {
   model: Model;
   rapidRefillCount: number;
   turnRequestState: TurnRequestState;
+  getContinuationTools?: () => readonly ModelToolContract[];
 }
 
 export interface TurnRequestState {
@@ -76,17 +79,18 @@ export interface TurnRequestState {
 }
 
 export interface RegularTurnLoopState {
+  offPeakExecutionId?: string;
   activeTurn?: ActiveTurnSteeringState;
-  /** Identity of this automation turn, explicitly passed by Host admission; do not infer it from persisted task metadata. */
+  /** Host admission 显式传入的本轮 automation 身份；不能从持久 task metadata 推断。 */
   automationId?: string;
-  /** Identity of this off-peak task turn, explicitly passed by Host admission; mutually exclusive with automationId and not inferred from persisted metadata. */
+  /** Host admission 显式传入的本轮闲时任务身份；与 automationId 互斥，不从持久 meta 推断。 */
   offPeakTaskId?: string;
-  /** After CronCreate reaches the global limit, this user turn is permanently text-only; the model cannot resume tool use. */
+  /** CronCreate 命中全局上限后，本用户 turn 永久切为纯文本回复，禁止模型自行恢复。 */
   automationCreateLimitReached?: boolean;
   anomalyWarningsInjected: number;
-  /** Whether this turn has consumed a background result notification from a subagent. */
+  /** 本轮是否已消费来源为 subagent 的后台结果通知。 */
   backgroundSubagentResultConsumed: boolean;
-  /** Whether this turn has consumed a background notification from a workflow (dynamic-workflow run). */
+  /** 本轮是否已消费来源为 workflow（dynamic-workflow run）的后台通知。 */
   workflowResultConsumed: boolean;
   compactTracking?: CompactLoopTracking;
   currentUserMessageId: MessageId;
@@ -95,16 +99,20 @@ export interface RegularTurnLoopState {
   input: string;
   inputId?: string;
   modelResponse: string;
-  /** The callable model fixed for this turn; configuration changes affect only Loops created later. */
+  /** 本轮固定使用的可调用模型；配置变化只影响以后创建的 Loop。 */
   model: Model;
-  /** execution means the current Active Model cannot be changed by a guide in the same loop. */
+  /** execution 表示当前 Active Model 不能被同 loop 的 guide 改写。 */
   modelSelectionScope?: "execution";
-  /** Fallback declaration for this turn's execution Selection; clear after one match so the fallback model cannot trigger another fallback. */
+  /** 本轮执行 Selection 的降级声明；命中一次后清空，退回后的模型不再二次降级。 */
   selectionFallback?: ModelExecutionContext["selectionFallback"];
-  /** Foreground child Selection override from Core Server; takes precedence over profile and parent-model inheritance. */
+  /** 请求期失败已命中退回声明但无可用退回目标；TurnError 归因据此发布，Renderer 作废匹配卡。 */
+  highspeedFallbackUnavailable?: boolean;
+  /** 仅加速卡过期回退使用的启动快照；不用于闲时换票。 */
+  highspeedFallbackSelection?: ModelSelection;
+  /** Core Server 的前台 child Selection override；优先于 profile 与父模型继承。 */
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   modelStepCount: number;
-  /** Number of assistant/compact outputs for the current query successfully written to provider-visible persistent history. */
+  /** 当前 query 已成功写入 provider 可见持久历史的 assistant/compact 产物数量。 */
   historyRoundCount: number;
   completedRealToolResultBatch: boolean;
   reactiveCompactAttemptedInCurrentModelStep: boolean;
@@ -112,22 +120,22 @@ export interface RegularTurnLoopState {
   repeatedToolCallStreakCount: number;
   pendingStreamRecoveryRequest?: PendingStreamRecoveryRequest;
   stopHookContinuationCount: number;
-  /** Raw transcript start for the final successful product turn; assigned only after confirming there will be no continuation. */
+  /** 最终成功 product turn 的 raw transcript 起点；只有确认不再 continue 时才赋值。 */
   stableProductStartMessageId?: MessageId;
-  /** Final successful assistant boundary; paired with stableProductStartMessageId. */
+  /** 最终成功 assistant boundary；与 stableProductStartMessageId 成对出现。 */
   stableBoundaryAssistantMessageId?: MessageId;
   streamRecoveryRetryCount: number;
   tokenCount: number;
   toolCallCount: number;
-  /** Provider-local history for the current Turn; released when the Turn ends. */
+  /** 当前 Turn 的 provider-local history；Turn 结束后直接释放。 */
   turnRequestState: TurnRequestState;
-  /** Tool names hidden from the provider for the current turn; the registry retains them for defense-in-depth checks at execution boundaries. */
+  /** 当前 turn 不向 provider 暴露的工具名；registry 仍保留，供执行边界做纵深校验。 */
   toolDisallowlist?: readonly string[];
   traceId: TraceId;
   turnAbortSignal: AbortSignal;
   turnId: TurnId;
   turnMachine: TurnMachineImpl;
-  /** Provider-visible output style captured for the current Turn; this does not indicate an explicit subagent model override. */
+  /** 当前 Turn 捕获的 provider-visible output style；不表示显式 subagent model override。 */
   turnOutputStyle?: OutputStylePromptConfig;
   turnTraceContext: TraceContext;
   userMessageId: MessageId;
@@ -138,20 +146,21 @@ export function isAutomationMutationRestrictedTurn(state: RegularTurnLoopState):
   if (state.turnTraceContext.queryId?.trim().startsWith(AUTOMATION_QUERY_ID_PREFIX)) return true;
 
   const disallowedTools = new Set(state.toolDisallowlist ?? []);
-  // Active/busy automation input merges the turn-scoped denylist into the current loop. Even if the original
-  // automationId is no longer the loop's first input, propagate the same fact to handler execution boundaries.
+  // active/busy automation 输入会把 turn-scoped denylist 合并进当前 loop；即使原始
+  // automationId 不再是 loop 首输入，也必须把同一事实继续传到 handler 执行边界。
   return AUTOMATION_MUTATION_TOOL_NAMES.every((toolName) => disallowedTools.has(toolName));
 }
 
 /**
- * Whether this is an automatically dispatched off-peak turn (OffPeakCreate must be denied). The three signals mirror
- * isAutomationMutationRestrictedTurn: explicit offPeakTaskId is primary; the resume-phase traceId prefix and turn denylist are defense-in-depth fallbacks.
+ * 本轮是否为闲时自动派发 turn（需 deny OffPeakCreate）。三重信号与
+ * isAutomationMutationRestrictedTurn 同构：显式 offPeakTaskId 为主信号；
+ * resume 段 traceId 前缀与 turn denylist 是纵深兜底。
  */
 export function isOffPeakCreateRestrictedTurn(state: RegularTurnLoopState): boolean {
   if (state.offPeakTaskId?.trim()) return true;
   if (state.turnTraceContext.queryId?.trim().startsWith(OFF_PEAK_QUERY_ID_PREFIX)) return true;
 
-  // The fallback checks only the OffPeakCreate sentinel; older Host dispatches may not yet include the newly added tool in the denylist.
+  // 兜底只认 OffPeakCreate 这一哨兵：旧 host 派发的 denylist 可能尚未带上 新增的工具。
   const disallowedTools = new Set(state.toolDisallowlist ?? []);
   return disallowedTools.has(OFF_PEAK_MUTATION_TOOL_NAMES[0]);
 }
@@ -183,7 +192,7 @@ export function recordCompactSuccess(
 }
 
 export function recordCompletedToolBatch(state: RegularTurnLoopState): void {
-  // The old guard remained used for the entire user turn after a complete tool batch, preventing a later real overflow from triggering reactive compaction again.
+  // 旧 guard 活在整个用户 turn，完整工具批次结束后仍保持 used，导致后续真实 overflow 无法再次 reactive compact。
   state.reactiveCompactAttemptedInCurrentModelStep = false;
   if (state.compactTracking) {
     state.compactTracking.toolTurnsSinceCompact += 1;
@@ -191,12 +200,12 @@ export function recordCompletedToolBatch(state: RegularTurnLoopState): void {
 }
 
 export function recordModelHistoryRound(state: RegularTurnLoopState): void {
-  // toolCallCount expands parallel tools by count and cannot represent the turns the model actually wrote to history.
-  // Reuse the existing modelStepCount commit boundary and additionally count history turns without changing loop-control semantics.
+  // toolCallCount 会把并行工具按数量展开，无法表达模型真正写入历史的轮次。
+  // 调用点沿用既有 modelStepCount 的提交边界，额外累计历史轮次而不改变 loop 控制语义。
   state.historyRoundCount += 1;
 }
 
 export function recordCompactHistoryRound(state: RegularTurnLoopState): void {
-  // A compact summary is a separate provider-visible persistent history entry, not an ordinary model step, so count it separately.
+  // compact summary 是独立的 provider 可见持久历史，但不是普通模型步骤，单独累计一次。
   state.historyRoundCount += 1;
 }

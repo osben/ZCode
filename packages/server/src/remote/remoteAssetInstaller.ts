@@ -102,6 +102,7 @@ export function buildRemoteArtifactDownloadCommand(params: {
   totalBytes?: number | null;
   expectedSha256?: string;
   sha256Tool?: RemoteSha256Tool;
+  supportsProgress?: boolean;
 }): string {
   const shouldVerifyChecksum =
     typeof params.expectedSha256 === "string" &&
@@ -131,6 +132,7 @@ export function buildRemoteArtifactDownloadCommand(params: {
     outputPath: params.outputPath,
     progressLabel: params.progressLabel,
     totalBytes: params.totalBytes,
+    supportsProgress: params.supportsProgress !== false,
   });
 }
 
@@ -171,7 +173,9 @@ function buildRemoteDownloadWithProgressCommand(params: {
   outputPath: string;
   progressLabel: string;
   totalBytes?: number | null;
+  supportsProgress: boolean;
 }): string {
+  if (!params.supportsProgress) return params.attemptCommand;
   const quotedOutputPath = quotePosixPathArg(params.outputPath);
   const quotedProgressLabel = quotePosixShellArg(params.progressLabel);
   const totalBytes = normalizeTotalBytes(params.totalBytes);
@@ -204,12 +208,12 @@ export function buildRemoteChecksumCommand(params: {
 }): string {
   const file = quotePosixPathArg(params.filePath);
   if (params.tool === "sha256sum") {
-    return `sha256sum ${file} | awk '{print $1}'`;
+    return `checksum_output=$(sha256sum ${file}) && printf '%s' "\${checksum_output%% *}"`;
   }
   if (params.tool === "shasum") {
-    return `shasum -a 256 ${file} | awk '{print $1}'`;
+    return `checksum_output=$(shasum -a 256 ${file}) && printf '%s' "\${checksum_output%% *}"`;
   }
-  return `openssl dgst -sha256 ${file} | awk '{print $NF}'`;
+  return `checksum_output=$(openssl dgst -sha256 ${file}) && printf '%s' "\${checksum_output##* }"`;
 }
 
 export class LocalUploadAssetInstaller implements RemoteAssetInstaller {
@@ -286,7 +290,7 @@ export class LocalUploadAssetInstaller implements RemoteAssetInstaller {
       // deployment. Do not check only for the parent directory, or an incomplete official plugin asset
       // will be uploaded again.
       this.loggers.logWarn(
-        `[remote-assets] local release asset incomplete: source=${localPath} missing=${missingRequiredPaths.join(",")}; trying CDN cache fallback`,
+        `[remote-assets] local release asset incomplete: source=${JSON.stringify(localPath)} missing=${missingRequiredPaths.join(",")}; trying CDN cache fallback`,
       );
     }
 
@@ -370,7 +374,7 @@ export class LocalUploadAssetInstaller implements RemoteAssetInstaller {
     // final rename isolated.
     const tempRemotePath = `${params.remotePath}.new-${Date.now()}-${randomUUID()}`;
     this.loggers.log(
-      `[remote-assets] uploading ${params.sourceRelativePath} to ${params.remotePath}`,
+      `[remote-assets] uploading ${params.sourceRelativePath} to ${JSON.stringify(params.remotePath)}`,
     );
     const remoteParentDir = posix.dirname(params.remotePath);
     const cleanupRemoteStaging = async (): Promise<void> => {
@@ -466,7 +470,7 @@ export class LocalUploadAssetInstaller implements RemoteAssetInstaller {
       // creating remote staging after cancellation.
       throwIfRemoteAssetInstallAborted(this.options.signal);
       this.loggers.log(
-        `[remote-assets] uploading ${params.sourceRelativePath} to ${params.remoteDir}`,
+        `[remote-assets] uploading ${params.sourceRelativePath} to ${JSON.stringify(params.remoteDir)}`,
       );
       const remoteParentDir = posix.dirname(params.remoteDir);
       const remoteDirName = posix.basename(params.remoteDir);
@@ -831,7 +835,7 @@ export class RemoteDownloadAssetInstaller implements RemoteAssetInstaller {
         // isolated by manifest SHA, clear it on a ready hit or this call will return early and treat the
         // existing cache as the result of this deployment.
         this.loggers.logWarn(
-          `[remote-assets] download required: component=${component.id} reason=force refresh path=${readyPath}`,
+          `[remote-assets] download required: component=${component.id} reason=force refresh path=${JSON.stringify(readyPath)}`,
         );
         await this.removeRemoteComponentCache(componentDir);
       } else {
@@ -875,6 +879,7 @@ export class RemoteDownloadAssetInstaller implements RemoteAssetInstaller {
       totalBytes,
       expectedSha256: component.sha256,
       sha256Tool: this.tools.sha256,
+      supportsProgress: this.tools.supportsProgress,
     });
     const checksumCommand = buildRemoteChecksumCommand({
       tool: this.tools.sha256,
@@ -906,7 +911,9 @@ export class RemoteDownloadAssetInstaller implements RemoteAssetInstaller {
       buildRemoteMoveCommand(componentNewDir, componentDir),
       cleanupCommand,
       "trap - EXIT",
-    ].join(" && ");
+      // 下载进度和清理语句含分号，拼进 && 链会让失败被后续清理的成功退出码覆盖，
+      // 继而复制不存在的组件。逐行执行让 set -e 在失败处退出，EXIT trap 只负责清理。
+    ].join("\n");
 
     this.loggers.log(`[remote-assets] remote downloading ${component.id}@${component.version}`);
     const stream = await this.backend.exec(command);

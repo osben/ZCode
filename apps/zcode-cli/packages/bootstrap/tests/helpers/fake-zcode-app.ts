@@ -124,6 +124,8 @@ export function createFakeApp(
       hasActiveOrQueuedTurnWork: () => false,
       hasResidencyBlockingWork: () => false,
       hasRunningBackgroundTasks: () => false,
+      getExecutionWorktree: () => options?.runtimeConfig?.executionWorktree ?? null,
+      isIncognito: () => Boolean(options?.runtimeConfig?.incognito),
       isSessionPersisted: () => false,
       getActiveForegroundExecutionId: () => undefined,
       getSessionModelSelection: () => {

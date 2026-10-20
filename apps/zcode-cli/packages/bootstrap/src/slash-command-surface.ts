@@ -1,10 +1,9 @@
-import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES, type ZCodeSlashCommand } from "@zcode/shared";
+import { BUILTIN_ZCODE_SLASH_COMMAND_HELP_ENTRIES } from "@zcode/shared";
 
 /**
- * The App `/` panel and plus menu display entries in this order (the UI does not maintain a separate
- * ordering allowlist). `workflow` follows `goal`; both start a unit of work (see "Workflow entry" in
- * docs/ui/chat-composer-action-menu.md). It is gated by the gradual-rollout flag and filtered during
- * assembly by zcode-protocol/slash-commands.ts.
+ * App `/` 面板与加号菜单按本顺序展示（UI 不维护排序白名单）。`workflow` 紧随 `goal`：两者都是
+ * 「开启一段工作」的入口（docs/ui/chat-composer-action-menu.md「工作流入口」）；它受灰度门约束，
+ * 由 zcode-protocol/slash-commands.ts 在装配时剔除。
  */
 export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "goal",
@@ -14,16 +13,7 @@ export const APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES = [
   "dream",
 ] as const;
 
-/** Commands used only by the App Composer; do not add them to the CLI TUI/help surface. */
-export const APP_PROTOCOL_APP_ONLY_BUILTIN_SLASH_COMMANDS = [
-  {
-    description: "Switch to Plan mode and optionally send a task.",
-    inputHint: "/plan [task]",
-    name: "plan",
-    source: "builtin",
-  },
-] as const satisfies readonly ZCodeSlashCommand[];
-
+// Plan 由 Composer 本地操作提供，保留名称以防自定义命令接管该入口。
 const EXTRA_RESERVED_SLASH_COMMAND_NAMES = ["compress", "plan"] as const;
 
 const RESERVED_SLASH_COMMAND_NAMES = new Set(

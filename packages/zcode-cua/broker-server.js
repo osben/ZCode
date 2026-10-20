@@ -178,8 +178,7 @@ export async function requestHelperScreenRecordingPermissionViaLaunchServices(_o
   return { ok: false, reason: UNAVAILABLE };
 }
 
-// Open-source builds do not ship the Computer Use Helper: there is no install
-// root and no standalone Helper candidate paths.
+// 开源构建不携带 Computer Use Helper：没有安装根目录，也没有独立 Helper 候选路径。
 export function resolveHelperAppName(_env) {
   return HELPER_APP_NAME;
 }
@@ -192,8 +191,7 @@ export function standaloneHelperCandidatePaths(_env) {
   return [];
 }
 
-// Open-source builds do not inject the Computer Use broker MCP service; return
-// the servers unchanged.
+// 开源构建不注入 Computer Use broker MCP 服务，原样返回。
 export function injectPermissionBrokerAgentMcpServers(servers, _options) {
   return servers;
 }

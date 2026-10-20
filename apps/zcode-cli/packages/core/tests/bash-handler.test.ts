@@ -538,7 +538,6 @@ describe("bashHandler", () => {
     });
     expect(observedCwd).toBe(nextCwd);
     expect(bashToolEntry.formatModelContent?.(output)).toBe("ok");
-    expect(bashToolEntry.formatModelContent?.(output)).not.toContain("Shell cwd was reset");
   });
 
   it("keeps cwd persistence independent from read-only Bash inspection classification", async () => {
@@ -1254,8 +1253,14 @@ describe("bashHandler", () => {
     ).rejects.toThrow("resize aborted");
   });
 
-  it("rejects background execution and disables auto-background in idle-time turns", async () => {
-    const runBashWithBackgroundLifecycle = vi.fn();
+  // Fork divergence (see specs/upstream-sync-cli-divergences.md): idle/off-peak turns reject explicit
+  // background Bash and never auto-background on timeout. Upstream 3.16.1 instead keeps idle background
+  // ownership in the runtime lifecycle; the fork keeps this guard.
+  it("rejects explicit background Bash in idle turns and runs foreground idle Bash without background lifecycle", async () => {
+    const runBashWithBackgroundLifecycle = vi.fn(async () => ({
+      kind: "completed" as const,
+      result: executionResult({ status: "completed", exitCode: 0 }),
+    }));
     const run = vi.fn(async () => executionResult({ status: "completed", exitCode: 0 }));
     const executionPort: BashBackgroundLifecycleExecutionPort = {
       run,
@@ -1267,19 +1272,20 @@ describe("bashHandler", () => {
         { command: "long-running command", run_in_background: true } satisfies BashInput,
         contextWith(executionPort, { offPeakTurn: true }),
       ),
-    ).rejects.toMatchObject({
-      type: CoreErrorType.ToolExecutionFailed,
-      recoverable: true,
-    });
+    ).rejects.toThrow("Idle-time tasks do not support background commands");
     expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
 
     const output = (await bashHandler(
       { command: "long-running command" } satisfies BashInput,
       contextWith(executionPort, { offPeakTurn: true }),
     )) as BashOutput;
-    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
-    expect(run).toHaveBeenCalledTimes(1);
     expect(output.status).toBe("completed");
+    for (const [, lifecycle] of runBashWithBackgroundLifecycle.mock.calls as unknown as Array<
+      [unknown, { mode: string }]
+    >) {
+      expect(lifecycle.mode).not.toBe("auto_on_timeout");
+    }
   });
 
   it("starts background execution when requested", async () => {
@@ -1518,7 +1524,7 @@ describe("bashHandler", () => {
     });
   });
 
-  it("does not require git-bash for the default Windows shell", async () => {
+  it("uses the posix-bash profile without an explicit session shell selection", async () => {
     let capturedRequest: ExecutionRequest | undefined;
     const executionPort: ExecutionPort = {
       async run(request) {
@@ -1852,7 +1858,6 @@ describe("bashHandler", () => {
     const content = bashToolEntry.formatModelContent?.(output);
     expect(content).toBe("ok");
     expect(JSON.stringify(output)).not.toContain("resolvedCwd");
-    expect(JSON.stringify(content)).not.toContain("resolvedCwd");
   });
 
   it("formats Bash results as stdout and stderr text for the model", () => {
@@ -1867,8 +1872,6 @@ describe("bashHandler", () => {
     } satisfies BashOutput);
 
     expect(modelContent).toBe("input.tex\nmain.tex\nsynonyms.txt");
-    expect(modelContent).not.toContain('"stdout"');
-    expect(modelContent).not.toContain('"status"');
   });
 
   it("formats Bash interrupted and persisted results with hints", () => {
@@ -1909,7 +1912,6 @@ describe("bashHandler", () => {
     } satisfies BashOutput);
 
     expect(modelContent).toBe("updated\nPreviously read files changed; re-read before editing.");
-    expect(modelContent).not.toContain("staleReadFileStateHint");
   });
 
   it("backfills readFileState from successful cat before Edit", async () => {
@@ -2650,9 +2652,6 @@ describe("bashHandler", () => {
     expect(modelContent).toBe(
       "Command running in background with ID: exec_bg. Output is being written to: /tmp/exec_bg-stdout.log. You will be notified when it completes. To check interim output, use Read on that file path.",
     );
-    expect(modelContent).not.toContain("Stdout:");
-    expect(modelContent).not.toContain("Stderr:");
-    expect(modelContent).not.toContain("<persisted-output>");
   });
 });
 

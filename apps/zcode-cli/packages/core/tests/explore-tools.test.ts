@@ -7,6 +7,8 @@ import {
 describe("Explore tool policy", () => {
   it("keeps direct and embedded-search Explore tool lists in sync with provider-visible text", () => {
     expect(buildExploreAllowedTools()).toEqual([
+      "ToolSearch",
+      "DeferredToolCall",
       "Bash",
       "Glob",
       "Grep",
@@ -21,6 +23,8 @@ describe("Explore tool policy", () => {
     );
 
     expect(buildExploreAllowedTools({ embeddedSearchEnabled: true })).toEqual([
+      "ToolSearch",
+      "DeferredToolCall",
       "Bash",
       "LSP",
       "Read",

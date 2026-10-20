@@ -9,6 +9,7 @@ import { estimateTokens } from "../utils.js";
 const ENVIRONMENT_HEADING = "# Environment";
 const WORKING_DIRECTORY_LABEL = "Primary working directory";
 const EXECUTION_WORKTREE_LABEL = "Execution worktree";
+const ADDITIONAL_DIRECTORIES_LABEL = "Additional directories";
 const IS_GIT_REPOSITORY_LABEL = "Is a git repository";
 const PLATFORM_LABEL = "Platform";
 const SHELL_LABEL = "Shell";
@@ -54,13 +55,14 @@ export function formatExecutionWorktreeSentence(worktree: ExecutionWorktreeEnvFa
   const branchClause = worktree.branchName ? ` (branch ${worktree.branchName})` : "";
   return `${EXECUTION_WORKTREE_LABEL}: this session runs in a linked git worktree of ${worktree.workspacePath}${branchClause}; file changes stay in the worktree until they are merged.`;
 }
-
 export function buildEnvInfoSection(
   envInfo: EnvInfo,
   model?: Model,
   executionWorktree?: ExecutionWorktreeEnvFact,
+  additionalDirectories: readonly string[] = [],
 ): ContextSection {
-  return buildEnvironmentInfoContextSection(buildEnvInfoContent(envInfo, model, executionWorktree));
+  const content = buildEnvInfoContent(envInfo, model, additionalDirectories, executionWorktree);
+  return buildEnvironmentInfoContextSection(content);
 }
 
 function buildEnvironmentInfoContextSection(content: string): ContextSection {
@@ -109,7 +111,8 @@ export function buildGitSystemContextSection(envInfo: EnvInfo): ContextSection |
 
 function buildEnvInfoContent(
   info: EnvInfo,
-  model?: Model,
+  model: Model | undefined,
+  additionalDirectories: readonly string[],
   executionWorktree?: ExecutionWorktreeEnvFact,
 ): string {
   const hasGitRepository = isEnvInfoGitRepository(info);
@@ -122,6 +125,13 @@ function buildEnvInfoContent(
     `- ${WORKING_DIRECTORY_LABEL}: ${info.cwd}`,
     // Plain sessions pass no worktree fact and keep a byte-identical section (pinned by tests).
     ...(executionWorktreeLine ? [`- ${executionWorktreeLine}`] : []),
+    // 附加目录此前只进入能力发现，模型看不到目录范围；这里只投影本次运行已解析的路径。
+    ...(additionalDirectories.length
+      ? [
+          `- ${ADDITIONAL_DIRECTORIES_LABEL}:`,
+          ...additionalDirectories.map((path) => `  - ${path}`),
+        ]
+      : []),
     `- ${IS_GIT_REPOSITORY_LABEL}: ${hasGitRepository ? YES_LABEL : NO_LABEL}`,
     `- ${PLATFORM_LABEL}: ${info.platform}`,
     `- ${SHELL_LABEL}: ${info.shell}`,

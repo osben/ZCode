@@ -1,3 +1,4 @@
+import type { PluginUiToolResultNotification } from "@zcode/shared/mcp-apps";
 import type {
   BackgroundBashOutputResult,
   SessionDebugSnapshot,
@@ -107,6 +108,7 @@ import type {
   ConversationRowTarget,
   HelloMessage,
   SessionsIndexTopicWireCandidate,
+  SessionsIndexReconcileResult,
   V4AttachmentBeginResult,
   V4AttachmentChunkResult,
   V4AttachmentCommitResult,
@@ -196,6 +198,7 @@ export interface ZCodeAgentSessionTreeParams extends ZCodeAgentWorkspaceTarget {
 }
 
 export interface ZCodeAgentResumeSessionParams extends ZCodeAgentSessionTarget {
+  additionalDirectories?: string[];
   model?: ModelSelection;
   thoughtLevel?: string;
   mcpServers?: ZCodeAgentMcpServer[];
@@ -240,6 +243,8 @@ export type ZCodeAgentCuaPermissionObservation = CuaPermissionObservation &
   ZCodeAgentWorkspaceTarget;
 
 export interface ZCodeAgentCreateSessionParams extends ZCodeAgentWorkspaceTarget {
+  projectId?: string | null;
+  additionalDirectories?: string[];
   sessionId?: string;
   sessionTraceId?: TraceId;
   parentSessionId?: string;
@@ -258,8 +263,9 @@ export interface ZCodeAgentCreateSessionParams extends ZCodeAgentWorkspaceTarget
 export interface ZCodeAgentListSessionsParams extends ZCodeAgentWorkspaceTarget {
   sessionIds?: string[];
   runtimePolicy?: ZCodeAgentRuntimePolicy;
-  includeArchived?: boolean;
   limit?: number;
+  // Fork: archived-session repair and deletion query archived rows. Upstream dropped this field; kept until those callers move.
+  includeArchived?: boolean;
 }
 
 export interface ZCodeAgentListSessionSubagentsParams extends ZCodeAgentSessionTarget {
@@ -417,6 +423,7 @@ export interface ZCodeAgentSessionSubscribeParams extends ZCodeAgentSessionTarge
 // and fan out v4/conversation/frame notifications by workspace to the renderer.
 
 export interface ZCodeAgentConversationSubscribeParams extends ZCodeAgentSessionTarget {
+  retryInitialization?: string;
   /** Watermark invariant: include it only when the client actually holds a consistent state at that point in time. */
   base?: { logEpoch: string; seq: number };
   visibility?: "foreground" | "background";
@@ -514,6 +521,8 @@ export interface ZCodeAgentConversationFileRewindPreviewParams extends ZCodeAgen
 }
 
 export interface ZCodeAgentConversationCommandParams extends ZCodeAgentWorkspaceTarget {
+  /** 仅 Host 消费；显式 NULL 表示全局任务，不向 CLI 发送项目概念。 */
+  projectId?: string | null;
   envelope: CommandEnvelope;
   /** Host-internal only, for the Browser Use runtime boundary; not included in the V4 wire envelope. */
   clientMode?: ZCodeTaskClientMode;
@@ -1004,7 +1013,23 @@ export interface IZCodeAgentService {
   ): Event<ConversationTelemetryFact>;
   /** CUA permission observations for all local live tasks in the current window; history, remote tasks, and replayable events are excluded. */
   onDynamicCuaPermissionObservation(): Event<ZCodeAgentCuaPermissionObservation>;
+  // Optional until the desktop consumer is synced (upstream marks these required).
+  onDynamicOffPeakLifecycle?(
+    params: ZCodeAgentWorkspaceTarget,
+  ): Event<import("@zcode/shared").OffPeakLifecycleNotification>;
+  controlOffPeakExecutionV4?(
+    params: ZCodeAgentWorkspaceTarget & { control: import("@zcode/shared").OffPeakControlParams },
+  ): Promise<import("@zcode/shared").OffPeakControlResult>;
+  onDynamicPluginUiToolResult?(): Event<
+    PluginUiToolResultNotification & { workspacePath: string; workspaceIdentity?: string }
+  >;
+  /** Read-only CLI persistent facts; does not restore a running session. Older remotes may not provide it. */
+  reconcileSessionsIndexV4?(
+    params: ZCodeAgentWorkspaceTarget & { sessionIds: string[] },
+  ): Promise<SessionsIndexReconcileResult>;
   // ── sessions-index channel (list activity) ──
+  // Deferred to the zcodeAgentService unit: onDynamicOffPeakLifecycle, controlOffPeakExecutionV4,
+  // onDynamicPluginUiToolResult (required members; implementers must provide them first).
   subscribeSessionsIndexV4(
     params: ZCodeAgentSessionsIndexSubscribeParams,
   ): Promise<V4SessionsIndexSubscribeResult>;

@@ -1,118 +1,100 @@
 /**
- * Sandboxed child-process logic. **One implementation, one entry file, two launch methods**:
- *   - {@link renderChildEntry} renders {@link childMain} via `toString()` together with payload
- *     as a self-contained ESM file; the harness writes it to
- *     `<cwd>/.zcode/workflow-runs/<runId>.mjs` (child-entry-file.ts).
- *   - Regular Node: `node --max-old-space-size=N <entry>`; the entry file self-starts when it
- *     detects that it is the process entry point.
- *   - SEA single-file binary: the CLI's hidden subcommand `__zcode-dwf-child <entry>` imports
- *     this file and calls its exported `start(deps)`, injecting vm/readline/stdio from the CLI
- *     process (the SEA main program does not interpret Node CLI flags, so `--eval` cannot work).
+ * 沙箱子进程逻辑。**一份实现，一份入口文件，两种启动方式**：
+ *   - {@link renderChildEntry} 把 {@link childMain} 经 `toString()` 与 payload 一起渲染成一份
+ *     自包含 ESM，harness 写到 `<cwd>/.zcode/workflow-runs/<runId>.mjs`（child-entry-file.ts）；
+ *   - 普通 Node：`node --max-old-space-size=N <entry>`，入口文件发现自己就是进程入口时自启；
+ *   - SEA 单文件二进制：CLI 的隐藏子命令 `__zcode-dwf-child <entry>` `import()` 这份文件并调
+ *     它导出的 `start(deps)`，注入 CLI 进程的 vm/readline/stdio（SEA 主程序不解释 Node CLI
+ *     旗标，`--eval` 路不通）。
  *
- * Windows command lines are limited to 32,767 characters. `--eval CHILD_SOURCE -- <base64url
- * payload>` puts the full lowered script on the command line; once the script exceeds roughly
- * 18 KB, `spawn ENAMETOOLONG` prevents any longer run from starting on Windows.
+ * Windows 的命令行上限是 32,767 字符，
+ * `--eval CHILD_SOURCE -- <base64url payload>` 会把整份 lowered 脚本放在命令行上，脚本
+ * 一过约 18 KB 就 `spawn ENAMETOOLONG`，Windows 上每个稍长的 run 都起不来。
  *
- * Structure:
- *   - The outer realm ({@link childMain} itself) is ordinary Node code holding stdio, readline,
- *     and vm for transport.
- *   - Evaluation happens in a **separate realm** created by `vm.createContext(...)`, containing
- *     only ES intrinsics and injected `__host`. A bare vm context has no
- *     `process`/`require`/`Buffer`/`fetch` and no timers; we add only `__host` and runtime
- *     restrictions. channel / future and stall detection (docs/dynamic-workflow/authoring.md
- *     "Streams") are both implemented inside the cell: the former is a pure promise mechanism,
- *     and the latter holds precisely because "the cell has no other wake-up source".
+ * 结构：
+ *   - 外层 realm（{@link childMain} 自身）是普通 Node 代码：持有 stdio、readline、vm，负责传输。
+ *   - 求值单元是 `vm.createContext(...)` 建的**独立 realm**：只含 ES intrinsics + 注入的 `__host`。
+ *     裸 vm context 天然没有 `process`/`require`/`Buffer`/`fetch`，也没有定时器；我们只补 `__host`
+ *     与运行期禁令。channel / future 与停滞检测（docs/dynamic-workflow/authoring.md「Streams」）
+ *     都在 cell 内实现：前者是纯 promise 机制，后者正是靠「cell 内没有别的唤醒源」成立。
  *
- * Cross-realm containment (prevent prototype leakage / prototype pollution): everything the
- * script touches (Promise, JSON-parsed host results, Error) is constructed **inside the
- * context**. Only two values cross between the outer realm and the context: the outer
- * `__send(string)` function and inbound line strings (strings are primitives with no realm
- * ownership). Thus `Array.isArray`/`instanceof`/prototype chains are all context-native from the
- * script's perspective and never mix in outer-realm intrinsics.
+ * 跨 realm 收敛（防原型泄漏 / prototype pollution）：脚本触及的一切（Promise、JSON 解析出的
+ * host 结果、Error）都在 **context 内**构造；外层与 context 间仅有两种跨界值——一个 `__send(string)`
+ * 外层函数，以及入站的行字符串（字符串是原始值，无 realm 归属）。故 `Array.isArray`/`instanceof`/
+ * 原型链在脚本视角下全是 context-native，绝不掺入外层 realm 的 intrinsics。
  *
- * Dynamic imports: runFn is compiled by `vm.runInContext` (Script, without an
- * importModuleDynamically callback), so runtime `import()` throws
- * `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`. `eval`/`Function` use the same context global.
+ * 动态 import：runFn 经 `vm.runInContext`（Script，未提供 importModuleDynamically 回调）编译，
+ * 运行期 `import()` 抛 `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`。`eval`/`Function` 绑定同一套
+ * context 全局。
  *
- * This file is a **hand-maintained mirror** of protocol.ts wire protocol: childMain runs as an
- * embedded string in the entry file and cannot import protocol.ts. Changes to either must be
- * mirrored in the other. Therefore {@link childMain} may import **types** only (erased at
- * compile time) and must never add runtime package dependencies; the module's sole value import
- * (the bootstrap string from child-cell-streams.ts) is read and embedded into the entry file by
- * {@link renderChildEntry} only, and childMain itself receives it through deps.
+ * ⚠ 本文件是 protocol.ts 线协议的**手写镜像**：入口文件里的 childMain 以内嵌字符串运行，无法 import
+ * protocol.ts。改任一处必须同步另一处。故 {@link childMain} 只允许 import **类型**（编译期擦除），
+ * 绝不引入运行期 package 依赖；本模块唯一的值 import（child-cell-streams.ts 的引导字符串）只被
+ * {@link renderChildEntry} 读取并内嵌进入口文件，childMain 自身通过 deps 拿到它。
  */
 
 import { CELL_STREAMS_BOOTSTRAP } from "./child-cell-streams.js";
 import type { ChildPayload } from "./protocol.js";
 
-/** Entire `node:vm` surface used by {@link childMain} (narrowed to two functions; this is the child-process VM contract). */
+/** {@link childMain} 用到的 `node:vm` 全部表面（窄到只有两个函数——这就是子进程的 vm 契约）。 */
 export interface ChildVmModule {
   createContext(sandbox: object, options?: { name?: string }): object;
   runInContext(code: string, sandbox: object, options?: { filename?: string }): unknown;
 }
 
-/** `readline.Interface` surface used by {@link childMain}. */
+/** {@link childMain} 用到的 `readline.Interface` 表面。 */
 export interface ChildReadlineInterface {
   on(event: "line", listener: (line: string) => void): unknown;
   close(): void;
 }
 
 /**
- * Host capabilities injected into {@link childMain}. **Each launch method provides real
- * implementations**: when the entry file self-starts, it obtains them from `node:vm` /
- * `node:readline` / `process`; the SEA subcommand obtains them from the CLI process.
+ * 注入给 {@link childMain} 的宿主能力。**两种启动方式各自提供真实实现**：入口文件自启时从
+ * `node:vm` / `node:readline` / `process` 现取，SEA 子命令从 CLI 进程现取。
  */
 export interface ChildMainDeps {
   vm: ChildVmModule;
   createInterface(options: { input: NodeJS.ReadableStream }): ChildReadlineInterface;
-  /** Source of inbound responses (parent-process stdin pipe). Holding it also keeps the event loop alive. */
+  /** 入站 response 的来源（父进程 stdin 管道）。持有它也让事件循环保持存活。 */
   stdin: NodeJS.ReadableStream;
-  /** Destination for outbound NDJSON; {@link childMain} adds the newline. */
+  /** 出站 NDJSON 的去处；{@link childMain} 自己补换行。 */
   stdout: { write(chunk: string): unknown };
   /**
-   * Payload for this run ({@link import("./protocol.js").ChildPayload}). The entry file embeds it
-   * as a JSON literal and passes it through unchanged; it no longer travels through argv or base64.
+   * 本次 run 的 payload（{@link import("./protocol.js").ChildPayload}）。入口文件把它当 JSON
+   * 字面量内嵌并原样递进来——不再经 argv、不再 base64。
    */
   payload: ChildPayload;
   /**
-   * The cell's second bootstrap script: channel / future and stall detection
-   * ({@link import("./child-cell-streams.js").CELL_STREAMS_BOOTSTRAP} in child-cell-streams.ts).
-   * It travels the same path as payload—the entry file embeds it as a string literal and `start`
-   * passes it through—because childMain's self-containment constraint forbids referencing
-   * module-scope bindings, and keeping it in this file would burst the single-file line limit.
-   * It runs in the same context after BOOTSTRAP and before the lowered body, reading and writing
-   * the context globals that BOOTSTRAP created with `var`.
+   * cell 的第二段引导脚本：channel / future 与停滞检测（child-cell-streams.ts 的
+   * {@link import("./child-cell-streams.js").CELL_STREAMS_BOOTSTRAP}）。与 payload 同路——
+   * 入口文件把它当字符串字面量内嵌、`start` 原样递进来——因为 childMain 的自包含约束不许它
+   * 引用模块作用域的绑定，而把它留在本文件里会顶穿单文件行数上限。它在 BOOTSTRAP 之后、
+   * lowered 体之前于同一 context 内运行，读写 BOOTSTRAP 用 `var` 建下的 context 全局。
    */
   streamsBootstrap: string;
 }
 
 /**
- * **Only** entry point for the sandbox child process. The returned promise resolves after script
- * execution ends (complete has been sent and stdin closed).
+ * 沙箱子进程的**唯一**出口。返回的 promise 在脚本执行终结（complete 已发出、stdin 已关）后兑现。
  *
- * Why it must be awaitable: the SEA subcommand runs in the CLI process, whose entry point starts
- * a 1s exit watchdog after `run()` returns (`scheduleCliExitWatchdog` in shutdown.ts). If the
- * child logic simply "sets up readline and returns synchronously," the watchdog would kill the
- * entire child just as the run starts. The self-starting entry file does not need this promise
- * (the process exits naturally when the event loop is idle), but both launch methods share one
- * implementation, so childMain provides the completion signal for both.
+ * 为什么必须可 await：SEA 子命令跑在 CLI 进程里，而 CLI 入口在 `run()` 返回后会挂一个 1s
+ * 退出 watchdog（shutdown.ts 的 `scheduleCliExitWatchdog`）。若子进程逻辑只是"装好 readline
+ * 就同步返回"，watchdog 会在 run 刚起步时把整个子进程强退。入口文件自启时不需要这个 promise
+ * （事件循环空了自然退出），但两条入口共用一个实现，所以由 childMain 统一给出终结信号。
  *
- * Self-containment constraints (functional, not stylistic). {@link renderChildEntry} embeds this
- * function as **source** using `childMain.toString()`, so its body must stand alone:
- *   1. Reference only parameters, language intrinsics, and Node globals such as `Buffer`;
- *      **never reference module-scope bindings** (constants, helper functions, imports). This is
- *      why the sandbox bootstrap is inline in the function body, not a module-level constant.
- *   2. **Never name inner functions**; see the comment in the function body for the rationale and
- *      previous failure (esbuild `minify + keepNames` wraps them in the module-scope `__name` helper).
- * Verify both constraints against real bundled/minified output; source tests alone cannot catch
- * regressions of this kind.
+ * ⚠ 自包含约束（载荷性，不是风格）。{@link renderChildEntry} 靠 `childMain.toString()` 把本函数
+ * 当**源码**内嵌，所以函数体必须是一段能独立成立的程序，两条规矩：
+ *   1. 只引用参数、语言 intrinsics 与 `Buffer` 这类 Node 全局，**绝不引用模块作用域的任何绑定**
+ *      （常量、辅助函数、import）。沙箱 bootstrap 也因此内联在函数体里，而不是模块级常量。
+ *   2. **内层函数一律不许有名字**——理由和踩过的坑见函数体里那段注释（esbuild 的
+ *      `minify + keepNames` 会给它们套上模块作用域的 `__name` helper）。
+ * 两条约束都需要在真实打包/压缩形态下验证，光靠源码测试抓不到这类回归。
  */
 export function childMain(deps: ChildMainDeps): Promise<void> {
   /**
-   * Bootstrap script run inside the vm context (plain JS with no backticks / ${}, so it can be
-   * embedded safely). Defines `__host` (Boundary A shims), `__deliver` (consume inbound
-   * responses), and `__execute` (run lowered fn), and applies runtime restrictions (Date.now /
-   * argless new Date() / Math.random)—the belt; compile-time diagnostics are the suspenders.
+   * 在 vm context 内运行的引导脚本（纯 JS，无 backtick / ${}，以便安全内嵌）。
+   * 定义 `__host`（Boundary A shims）、`__deliver`（消费入站 response）、`__execute`（跑 lowered fn），
+   * 并施加运行期禁令（Date.now / argless new Date() / Math.random）——belt；编译期诊断是 suspenders。
    */
   const BOOTSTRAP = String.raw`
 "use strict";
@@ -120,8 +102,7 @@ export function childMain(deps: ChildMainDeps): Promise<void> {
 var __nextLocal = 0;
 var __nextReq = 0;
 var __pending = new Map();
-// Holes already filled this run: site id → body text. When the same site is reached again (in a
-// loop), evaluate directly without crossing the wire.
+// 本世已补全的留白：站点 id → 体的文本。同一站点再次到达（循环）时直接求值，不再过线。
 var __fills = new Map();
 
 function __emit(obj) {
@@ -129,8 +110,7 @@ function __emit(obj) {
 }
 
 function __createActor(siteId, name, persona) {
-  // Create the child-local handle synchronously and send create-actor fire-and-forget; stdio
-  // FIFO lets the parent establish the mapping before any later ask.
+  // 同步造 child-local 句柄并即发即忘 create-actor；父进程据 stdio FIFO 在后续 ask 前完成映射。
   var localId = "local#" + (++__nextLocal);
   __emit({ kind: "create-actor", localId: localId, siteId: siteId, name: name, persona: persona });
   return localId;
@@ -145,8 +125,7 @@ function __ask(siteId, actor, instructions) {
 }
 
 function __worldRead(siteId, op, args) {
-  // args is the positional argument array packed by lowering; this shim passes it through
-  // unchanged and does not inspect op or validate arity (the driver owns that).
+  // args 是 lowering 打包好的位置实参数组；本 shim 原样透传，不看 op、不校验元数（归 driver）。
   var id = "r" + (++__nextReq);
   return new Promise(function (resolve, reject) {
     __pending.set(id, { resolve: resolve, reject: reject });
@@ -155,20 +134,17 @@ function __worldRead(siteId, op, args) {
 }
 
 function __evaluateFill(evaluate, code) {
-  // evaluate is the (__src) => eval(__src) that lowering emits at the site: a direct eval closing
-  // over every binding of the author's code at that point (__host included), which yields the
-  // (async () => { … }) function; calling it produces the hole's value. Each arrival creates a
-  // fresh evaluate, so a hole inside a loop sees that iteration's own bindings. Evaluation
-  // failures (syntax errors) and body rejections surface on this promise at the site, where the
-  // script can catch them.
+  // evaluate 是 lowering 在站点处发出的 (__src) => eval(__src)：直接 eval，闭包住作者代码在
+  // 那一点的全部绑定（__host 在内），求出 (async () => { … }) 这个函数；调它，结果即留白的值。
+  // 每次到达都新造一个 evaluate，循环里的留白因此看见各轮自己的绑定。求值失败（语法错）与体的
+  // 拒绝都在这条 promise 上冒出，落在站点处，脚本可以 catch。
   return Promise.resolve().then(function () {
     return evaluate(code)();
   });
 }
 
 function __hole(siteId, name, prompt, evaluate, body) {
-  // Already filled (the body lives in the script): call the body directly without crossing the
-  // wire. Synchronous throws become rejections, same rule as future.
+  // 已补全（体就在脚本里）：直接调体，不过线。同步抛出转成拒绝，与 future 同规。
   if (body !== undefined) {
     try {
       return Promise.resolve(body());
@@ -193,15 +169,13 @@ function __log(message) {
 }
 
 function __enterPhase(name) {
-  // Phase marker: no site and no journal entry; it only asks the engine to emit an event, so it
-  // uses the same event channel as log.
+  // 阶段标记：无站点、不落 journal，只让引擎发一条事件——所以与 log 同走事件通道。
   __emit({ kind: "event", type: "phase-entered", name: String(name) });
 }
 
 function __publishArtifact(siteId, op, args) {
-  // Content artifacts are effects: scripts await them and must be able to catch their
-  // rejections, so they use request/response like ask / world-read. args is the positional array
-  // packed by lowering ([id, path|content, opts]), passed through unchanged.
+  // 内容产物是效应：脚本 await 它、要能 catch 它的拒绝，所以与 ask / world-read 同走
+  // request/response。args 是 lowering 打包的位置实参（[id, path|content, opts]），原样透传。
   var id = "r" + (++__nextReq);
   return new Promise(function (resolve, reject) {
     __pending.set(id, { resolve: resolve, reject: reject });
@@ -210,30 +184,25 @@ function __publishArtifact(siteId, op, args) {
 }
 
 function __declareArtifact(siteId, op, args) {
-  // Predeclared artifacts are declarations: they synchronously return void, so there is nothing
-  // to await and they use the event channel. They share a FIFO with report; a tagged report must
-  // reach the parent after its declaration, and this ordering guarantees that.
+  // 预置产物是声明：同步返回 void，没有可等的东西，所以走事件通道。它与 report 共用同一条
+  // FIFO——一条打了标签的 report 必须晚于它的声明到达父进程，而顺序正是由这一点保证的。
   __emit({ kind: "event", type: "declare-artifact", siteId: siteId, op: op, args: args });
 }
 
 function __report(siteId, item, artifactId) {
-  // Fire and forget: scripts never await it, so use the event channel instead of
-  // request/response. The parent journals one row per siteId × ordinal, so **arrival order** is
-  // essential (stdio FIFO guarantees it).
-  // If item contains a cycle, JSON.stringify throws here at the report() call site; the script
-  // can catch it or let the run fail. Both are better than silently sending a partial item; the
-  // parent has the same guard.
-  // If artifactId is absent, JSON.stringify omits the key, so the wire value is untagged.
+  // 即发即忘：脚本从不 await 它，所以走 event 通道而不是 request/response。父进程按 siteId ×
+  // ordinal 落一行 journal，故本条消息的**到达顺序**是承重的（stdio FIFO 保证它）。
+  // item 里若有环，这里的 JSON.stringify 会抛错——就在 report() 的调用点上，脚本要么 catch
+  // 要么让 run 失败。两者都比静默发出一条残缺的 item 好；父进程另有同样的护栏。
+  // artifactId 缺席时 JSON.stringify 直接把这个键丢掉，线上因此就是"没有标签"。
   __emit({ kind: "event", type: "report", siteId: siteId, item: item, artifactId: artifactId });
 }
 
-// ── Runtime arguments (Boundary A args) ──
-// Like the budget, construct them inside the context with JSON.parse, so scripts receive
-// context-native objects without any outer-realm intrinsics (see the cross-realm containment
-// constraint at the top of this file).
-// Object.freeze is **shallow**: nested objects remain mutable, so the script can still change
-// args.foo.bar. v1 accepts this limitation; it prevents accidental reassignment of args, not a
-// security boundary (the caller supplied the arguments in the first place).
+// —— 运行实参（Boundary A 的 args）——
+// 与预算一样在 context **内**用 JSON.parse 构造，所以脚本拿到的是 context-native 对象，
+// 外层 realm 的 intrinsics 一点都不掺进来（本文件顶部的跨 realm 收敛约束）。
+// ⚠ Object.freeze 是**浅**冻结：嵌套对象未冻结，脚本仍能改动 args.foo.bar。v1 接受这个
+// 界限——它挡的是"手滑重新赋值 args"，不是一个安全边界（实参本来就是调用方给的）。
 var __args = Object.freeze(JSON.parse(__argsJson));
 
 globalThis.__host = {
@@ -249,7 +218,7 @@ globalThis.__host = {
   hole: __hole,
 };
 
-// ── Consume inbound responses (called by the outer realm with a line string) ──
+// —— 入站 response 消费（由外层 realm 以行字符串调用）——
 globalThis.__deliver = function (line) {
   var msg = JSON.parse(line);
   if (msg.kind !== "response") return;
@@ -260,8 +229,7 @@ globalThis.__deliver = function (line) {
     waiter.resolve(msg.value);
     return;
   }
-  // Reject with a context-native Error so code/violations/finalText cross over for structured
-  // try/catch handling in the script.
+  // 拒绝以 context-native Error 过界，带上 code/violations/finalText 供脚本 try/catch 结构化处理。
   var e = msg.error || {};
   var err = new Error(e.message || "workflow host error");
   if (e.name) err.name = e.name;
@@ -271,13 +239,11 @@ globalThis.__deliver = function (line) {
   waiter.reject(err);
 };
 
-// Whether the run has already sent complete. Stall detection (__checkStalled in
-// deps.streamsBootstrap) also reads and writes it.
+// run 是否已发出 complete。停滞检测（deps.streamsBootstrap 里的 __checkStalled）也读写它。
 var __settled = false;
 
 function __complete(ok, payload) {
-  // Idempotent: once stall detection has ended the run with error-complete, a (theoretical) later
-  // script completion must not send a second one.
+  // 幂等：停滞检测已经以 error-complete 结束 run 之后，脚本（理论上）再完成也不再发第二条。
   if (__settled) return;
   __settled = true;
   if (ok) {
@@ -300,8 +266,7 @@ function __complete(ok, payload) {
   __emit({ kind: "complete", ok: false, error: wire });
 }
 
-// The outer realm calls this to run the script. Always resolve (errors have been converted to
-// complete messages) so the outer realm can clean up by closing stdin.
+// 外层 realm 调用它跑脚本；始终 resolve（错误已转成 complete 消息），便于外层收尾（关 stdin）。
 globalThis.__execute = async function (runFn) {
   try {
     var value = await runFn(globalThis.__host);
@@ -311,7 +276,7 @@ globalThis.__execute = async function (runFn) {
   }
 };
 
-// ── Runtime restrictions (the belt; compile-time diagnostics are the suspenders): Date.now / argless new Date() / Math.random ──
+// —— 运行期禁令（belt；编译诊断是 suspenders）：Date.now / argless new Date() / Math.random ——
 var __NativeDate = Date;
 class __WorkflowDate extends __NativeDate {
   constructor() {
@@ -334,22 +299,19 @@ Math.random = function () {
 };
 `;
 
-  // The second self-containment constraint above is easier to violate than "do not import":
-  // **never name inner functions**. Root cause (we hit this before adding this test): the CLI
-  // desktop-agent build uses `minify + keepNames`, and esbuild rewrites inner functions whose
-  // names it can infer (variable declarations such as `const send = …`, function declarations,
-  // and object-literal properties) as `__name(fn, "send")`. `__name` is injected at module
-  // scope. If it appears in the `toString()` source, the embedded child process throws
-  // ReferenceError—**only the minified release artifact breaks**, while source tests pass.
-  // Member assignment (`sandbox.__send = …`) and anonymous functions in argument positions are
-  // not rewritten, so use only those forms below. Verify against real bundled/minified output.
+  // ⚠ 自包含约束的第二条（见函数上方注释），比"别 import"更容易踩：**内层函数一律不许有名字**。
+  // 根因（本条测试写出来之前真踩到过）：CLI 的 desktop-agent 构建用 `minify + keepNames`，
+  // 那个组合下 esbuild 会把**能推导出名字**的内层函数（变量声明 `const send = …`、函数声明、
+  // 对象字面量属性）改写成 `__name(fn, "send")`，而 `__name` 是注入在模块作用域的 helper。
+  // 它一旦出现在 `toString()` 的文本里，内嵌出的子进程程序就会 ReferenceError——**只在压缩过的
+  // 发布产物里坏**，源码测试全绿。成员赋值（`sandbox.__send = …`）与实参位置的匿名函数不被改写，
+  // 所以下面一律用这两种形态。验证时需要运行真实打包、压缩后的产物。
 
   const payload = deps.payload;
 
-  // Separate realm: the bare context has only ES intrinsics; inject __send for transport and
-  // JSON for arguments.
-  // Missing arguments (inline run, legacy journal row) are encoded as "{}": `args` is always
-  // defined on the script side, and this sandbox is where that invariant is established.
+  // 独立 realm：裸 context 只有 ES intrinsics，注入 __send 传输 + 实参 JSON。
+  // 实参缺席（内联 run、老 journal 行）编码成 "{}"：`args` 恒有定义是脚本侧的不变式，
+  // 沙箱这一侧就是它成立的地方。
   const sandbox = {
     __argsJson: JSON.stringify(payload.args ?? {}),
   } as {
@@ -366,19 +328,16 @@ Math.random = function () {
   deps.vm.runInContext(BOOTSTRAP, sandbox, { filename: "workflow-bootstrap.js" });
   deps.vm.runInContext(deps.streamsBootstrap, sandbox, { filename: "workflow-streams.js" });
 
-  // Compile the lowered function body (a context-native async fn; its await creates a context
-  // Promise, and import() throws because no callback is supplied).
+  // 编译 lowered 函数体（context-native async fn；其 await 产生 context Promise，import() 无回调将抛错）。
   let runFn: unknown;
   try {
     runFn = deps.vm.runInContext(`(async (__host) => {\n${payload.lowered}\n})`, sandbox, {
       filename: "workflow-script.js",
     });
   } catch (error) {
-    // Lowered-body compilation failed: send error-complete and terminate. Deliberately do
-    // **not** call process.exit; stdout writes to the pipe asynchronously, and immediate exit
-    // would truncate the complete message just sent (the parent would see only "exited without
-    // completing" and lose SyntaxError details). There is no reader in the event loop now, so
-    // the child exits naturally after flushing.
+    // lowered 体编译失败：发 error-complete 后直接终结。刻意**不**调 process.exit——写往管道的
+    // stdout 是异步的，立即 exit 会截断刚发出的那条 complete（父进程转而只看到"退出而未完成"，
+    // 丢掉 SyntaxError 明细）。此时事件循环里没有 reader，子进程冲刷完就自然退出。
     const err = error as { name?: string; message?: string; stack?: string } | undefined;
     deps.stdout.write(
       `${JSON.stringify({
@@ -394,21 +353,17 @@ Math.random = function () {
     return Promise.resolve();
   }
 
-  // stdin keeps the event loop alive; pass each line to the context's __deliver.
+  // stdin 持有事件循环存活；每行喂给 context 的 __deliver。
   const reader = deps.createInterface({ input: deps.stdin });
-  // Stall detection (execution-engine.md "The vm cell"): after each response is delivered, and
-  // once after the script starts, ask the cell on **setImmediate** "is there anything left to
-  // do". setImmediate runs after all of this turn's microtasks—every continuation the response
-  // could trigger has finished—and the cell has no timers or I/O, so "no in-flight requests and
-  // not complete" holds forever once it holds at that moment. On a hit the cell has already sent
-  // error-complete; here we only close the reader (__execute will never resolve, so cleanup must
-  // happen on this path). setImmediate is a Node global, and both launch paths (self-starting
-  // entry file / SEA subcommand) run inside Node, satisfying this function's self-containment
-  // constraint.
-  // ⚠ Both call sites inline setImmediate instead of extracting `const scheduleStallCheck = …`:
-  // an inner function whose name can be inferred gets wrapped in the module-scope `__name` helper
-  // by minify + keepNames (see the comment above this function);
-  // tests/child-source-bundled.test.ts has caught exactly this.
+  // 停滞检测（execution-engine.md「The vm cell」）：每条 response 投递后、以及脚本起步后，
+  // 各在 **setImmediate** 上问一次 cell「还有事可做吗」。setImmediate 排在本轮全部微任务
+  // 之后——response 能触发的每个 continuation 都已跑完——而 cell 内没有定时器与 I/O，所以
+  // 「无在飞请求且未完成」在这一刻成立就永远成立。命中时 cell 已发 error-complete；这里只
+  // 收 reader（__execute 永远不会兑现，收尾得由这条路来做）。setImmediate 是 Node 全局，
+  // 两条启动路（入口文件自启 / SEA 子命令）都在 Node 里，符合本函数的自包含约束。
+  // ⚠ 两处直接内联 setImmediate 而不是抽成 `const scheduleStallCheck = …`：一个能推导出名字的
+  // 内层函数会被 minify + keepNames 套上模块作用域的 `__name` helper（见函数上方那条注释），
+  // tests/child-source-bundled.test.ts 抓过这一条。
   reader.on("line", (line: string) => {
     if (!line.trim()) return;
     sandbox.__deliver(line);
@@ -417,8 +372,7 @@ Math.random = function () {
     });
   });
 
-  // Run the script; close stdin during cleanup and let the process exit when the event loop is
-  // idle (the parent also kills it after receiving complete).
+  // 跑脚本；收尾时关 stdin，进程随空闲事件循环自然退出（父进程亦会在收到 complete 后 kill）。
   const execution = sandbox.__execute(runFn).then(
     () => reader.close(),
     () => reader.close(),
@@ -429,31 +383,26 @@ Math.random = function () {
   return execution;
 }
 
-/** Replace characters outside the safe runId set with `_` in entry filenames (filename and header comment use the same sanitization). */
+/** 入口文件名里 runId 的安全字符集之外一律换成 `_`（文件名与头注释共用同一份净化）。 */
 function safeRunId(runId: string): string {
   return runId.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 /**
- * Render the sandbox entry file: a self-contained ESM that the harness writes to disk and starts
- * with `node <entry>`.
+ * 渲染沙箱入口文件：一份自包含 ESM，harness 把它写到磁盘后以 `node <entry>` 启动。
  *
- * Contents: payload as a JSON literal (`JSON.stringify` output is a valid JS expression),
- * {@link childMain} embedded via `toString()`, exported `start(deps)`, and two top-level actions:
- *   - Best-effort heap limit: the default path uses the real `--max-old-space-size` flag; SEA
- *     re-exec cannot pass flags, so call `v8.setFlagsFromString` only when it is absent from
- *     `execArgv` (effect is not guaranteed, same as the atomic-command path).
- *   - Self-start check: when `realpath(argv[1])` matches this file (the `node <entry>` case),
- *     self-start using process vm/readline/stdio. When imported by the SEA subcommand, the check
- *     is false and the subcommand calls `start`. Compare realpaths, not raw paths: on macOS,
- *     tmpdir may be a `/var → /private/var` symlink, and `import.meta.url` uses the resolved real
- *     path; a raw comparison would leave the child silently unstarted.
+ * 内容：payload 作为 JSON 字面量（`JSON.stringify` 的输出就是合法的 JS 表达式）、经 `toString()`
+ * 内嵌的 {@link childMain}、导出的 `start(deps)`，以及两段顶层逻辑：
+ *   - 堆上限 best-effort：缺省路径由真旗标 `--max-old-space-size` 生效；SEA 自 re-exec 传不了
+ *     旗标，`execArgv` 里没有它时才 `v8.setFlagsFromString`（效果不保证，与原子命令侧同款）；
+ *   - 自启判定：`realpath(argv[1])` 与本文件同一路径时（`node <entry>`）以 process 的
+ *     vm/readline/stdio 自启；被 SEA 子命令 `import()` 时判定为假，由子命令调 `start`。
+ *     比较 realpath 而不是裸路径：macOS 的 tmpdir 经 `/var → /private/var` 符号链接，
+ *     `import.meta.url` 是解析后的真实路径，裸比较会让子进程静默不启动。
  *
- * The only interpolations are childMain's source and payload JSON. Template literals inside
- * childMain are safe because interpolation is **runtime string concatenation**; embedded text
- * is not parsed again. The real risk is the self-containment constraint in childMain (see its
- * comment). The generated top-level code deliberately avoids template literals to avoid
- * conflicts with the outer `${}`.
+ * 唯一的插值是 childMain 的源文本与 payload JSON。childMain 自己带着模板字面量不成问题——插值是
+ * **运行期的字符串拼接**，嵌进来的文本不会被再解析一次；真正的风险在 childMain 的自包含约束
+ * 那一侧（见其注释）。生成的顶层代码刻意不用模板字面量，免得与外层的 `${}` 打架。
  */
 export function renderChildEntry(payload: ChildPayload, meta: { runId: string }): string {
   const runId = safeRunId(meta.runId);
@@ -467,8 +416,7 @@ import vm from "node:vm";
 
 export const payload = ${JSON.stringify(payload)};
 
-// The cell's second bootstrap script (channel / future / stall detection), embedded as a literal
-// like payload.
+// cell 的第二段引导脚本（channel / future / 停滞检测），与 payload 同样以字面量内嵌。
 export const streamsBootstrap = ${JSON.stringify(CELL_STREAMS_BOOTSTRAP)};
 
 const main = ${childMain.toString()};
@@ -484,7 +432,7 @@ if (
   try {
     setFlagsFromString("--max-old-space-size=" + Math.trunc(payload.maxOldSpaceSizeMb));
   } catch {
-    // Best effort: V8 may ignore flags already consumed at startup; failure must not affect the run.
+    // best-effort：V8 对启动期已消费的旗标可能不再理会，失败不得影响 run。
   }
 }
 

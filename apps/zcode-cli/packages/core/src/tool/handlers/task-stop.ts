@@ -12,6 +12,8 @@ import {
 import type { ToolEntry, ToolHandler } from "../types.js";
 
 const MAX_TASK_STOP_MODEL_BYTES = 100_000;
+const TASK_STOP_LOOKUP_FAILURE_GUIDANCE =
+  "This lookup failure does not mean the task has completed or stopped; use the full task_id returned when the task started to stop it.";
 
 // Provider requests use metadata.description directly; a short internal summary would hide parameters, return values, and usage
 // context from the model. Keep the short summary for the capability.
@@ -75,7 +77,8 @@ const taskStopHandler: ToolHandler = async (input, context) => {
         toolCallId: context.toolCallId,
       });
     }
-    throw taskStopError(`No task found with ID: ${taskId}`, 1, {
+    // 单纯提示未找到任务容易被模型误读为已停止；明确查找失败不代表终态，并要求使用完整 ID。
+    throw taskStopError(`Invalid task ID "${taskId}". ${TASK_STOP_LOOKUP_FAILURE_GUIDANCE}`, 1, {
       reason: result.reason,
       taskId,
       taskType: result.type,
@@ -97,7 +100,9 @@ export const taskStopToolEntry: ToolEntry = {
   aliases: ["KillShell", "KillBash"],
   capability: "Stop a running background task by ID",
   metadata: {
+    shouldDefer: true,
     name: TASK_STOP_TOOL_NAME,
+    searchHint: "kill a running background task",
     description: TASK_STOP_PROVIDER_DESCRIPTION,
     readOnly: false,
     destructive: false,
@@ -155,11 +160,7 @@ function formatTaskStopModelContent(output: unknown): string {
   return JSON.stringify(TaskStopOutputSchema.parse(output));
 }
 
-function taskStopError(
-  message: string,
-  code: 1 | 3,
-  context: Record<string, unknown>,
-): Error {
+function taskStopError(message: string, code: 1 | 3, context: Record<string, unknown>): Error {
   return createCoreError(CoreErrorType.ToolExecutionFailed, message, {
     context: {
       ...context,

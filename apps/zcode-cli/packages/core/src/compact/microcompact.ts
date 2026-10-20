@@ -14,10 +14,8 @@ import {
 import type { CompactModelMessage } from "./manual.js";
 import { estimateMessageTokens } from "./manual.js";
 
-export const MICROCOMPACT_CLEARED_TOOL_RESULT_PREFIX =
-  "[Old tool result content cleared]";
-export const MICROCOMPACT_CLEARED_TOOL_RESULT_MESSAGE =
-  "[Old tool result content cleared]";
+export const MICROCOMPACT_CLEARED_TOOL_RESULT_PREFIX = "[Old tool result content cleared]";
+export const MICROCOMPACT_CLEARED_TOOL_RESULT_MESSAGE = "[Old tool result content cleared]";
 export const DEFAULT_MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS = 5;
 export const DEFAULT_MICROCOMPACT_IDLE_THRESHOLD_MINUTES = 60;
 export const DEFAULT_MICROCOMPACT_MIN_TOKEN_SAVINGS = 256;
@@ -93,6 +91,7 @@ export function maybeLocalMicrocompactMessages<T extends LocalMicrocompactMessag
   config?: LocalMicrocompactPolicyConfig;
   lastAssistantCompletedAtMs?: number;
   messages: readonly T[];
+  resolveToolResultName?: (message: T, index: number) => string | undefined;
   nowMs?: number;
 }): LocalMicrocompactResult<T> {
   const config = input.config ?? {};
@@ -121,7 +120,11 @@ export function maybeLocalMicrocompactMessages<T extends LocalMicrocompactMessag
     };
   }
 
-  const candidateGroups = collectCompactableToolResultGroups(messages, config);
+  const candidateGroups = collectCompactableToolResultGroups(
+    messages,
+    config,
+    input.resolveToolResultName,
+  );
   if (candidateGroups.length === 0) {
     return {
       decision: { estimatedTokenCount, reason: "no_candidates", thresholdTokens, trigger },
@@ -153,8 +156,7 @@ export function maybeLocalMicrocompactMessages<T extends LocalMicrocompactMessag
 
   const postTokenCount = estimateMessageTokens(messages);
   const tokensSaved = Math.max(0, estimatedTokenCount - postTokenCount);
-  const minSavings =
-    positiveInt(config.minTokenSavings) ?? DEFAULT_MICROCOMPACT_MIN_TOKEN_SAVINGS;
+  const minSavings = positiveInt(config.minTokenSavings) ?? DEFAULT_MICROCOMPACT_MIN_TOKEN_SAVINGS;
   if (tokensSaved < minSavings) {
     return {
       decision: { estimatedTokenCount, reason: "below_min_savings", thresholdTokens, trigger },
@@ -186,8 +188,7 @@ function resolveMicrocompactTrigger(input: {
   thresholdTokens?: number;
 }): MicrocompactTrigger | undefined {
   const idleThresholdMinutes =
-    positiveInt(input.config.idleThresholdMinutes) ??
-    DEFAULT_MICROCOMPACT_IDLE_THRESHOLD_MINUTES;
+    positiveInt(input.config.idleThresholdMinutes) ?? DEFAULT_MICROCOMPACT_IDLE_THRESHOLD_MINUTES;
   if (
     input.lastAssistantCompletedAtMs !== undefined &&
     Number.isFinite(input.lastAssistantCompletedAtMs)
@@ -208,6 +209,7 @@ function resolveMicrocompactTrigger(input: {
 function collectCompactableToolResultGroups<T extends LocalMicrocompactMessage>(
   messages: readonly T[],
   config: LocalMicrocompactPolicyConfig,
+  resolveToolResultName?: (message: T, index: number) => string | undefined,
 ): ToolResultCandidate[][] {
   const compactableTools = new Set(
     config.compactableToolNames ?? DEFAULT_MICROCOMPACT_COMPACTABLE_TOOLS,
@@ -231,8 +233,11 @@ function collectCompactableToolResultGroups<T extends LocalMicrocompactMessage>(
     }
 
     if (message.role !== "tool") return;
-    if (!message.toolCallId || !message.toolName) return;
-    if (!compactableTools.has(message.toolName)) return;
+    const toolName = resolveToolResultName
+      ? resolveToolResultName(message, index)
+      : message.toolName;
+    if (!message.toolCallId || !toolName) return;
+    if (!compactableTools.has(toolName)) return;
     if (message.isError && !clearErrorResults) return;
     if (isMicrocompactClearedToolResultContent(message.content)) return;
     if (hasMediaToolResultContent(message.content)) return;

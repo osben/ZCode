@@ -17,6 +17,8 @@ import {
   SESSION_TITLE_QUERY_SOURCE,
   generateTitleCandidate,
   normalizeTitleInput,
+  retainTitleModelContext,
+  type TitleModelContext,
 } from "./title-generation-sidecar.js";
 
 const GENERATED_TITLE_EXPECTED_SOURCES: readonly SessionTitleSource[] = [
@@ -34,11 +36,13 @@ export function maybeStartSessionTitleGeneration(
   options?: {
     deferIfProviderRuntimeHeadersRefresh?: boolean;
     goalSummaryTargetID?: string;
+    offPeakExecutionId?: string;
   },
 ): boolean {
   return maybeStartSessionTitleGenerationFromSeed.call(this, input, {
     deferIfProviderRuntimeHeadersRefresh: options?.deferIfProviderRuntimeHeadersRefresh,
     goalSummaryTargetID: options?.goalSummaryTargetID,
+    offPeakExecutionId: options?.offPeakExecutionId,
     messageID,
     traceContext,
   });
@@ -49,10 +53,12 @@ export function maybeStartDeferredSessionTitleGeneration(
   input: string,
   messageID: MessageId,
   traceContext: TraceContext,
+  offPeakExecutionId?: string,
 ): boolean {
   return maybeStartSessionTitleGenerationFromSeed.call(this, input, {
     messageID,
     traceContext,
+    offPeakExecutionId,
   });
 }
 
@@ -79,6 +85,7 @@ function maybeStartSessionTitleGenerationFromSeed(
     messageID?: MessageId;
     traceContext: TraceContext;
     bypassShortInputGuard?: boolean;
+    offPeakExecutionId?: string;
   },
 ): boolean {
   if (
@@ -100,10 +107,12 @@ function maybeStartSessionTitleGenerationFromSeed(
   // The title task outlives the current Turn. Freeze causation when enqueuing it so later awaits,
   // scheduler behavior, or implementation refactoring cannot silently drop the background Trace's Link to the triggering Span.
   const causation = this.agentTelemetry.captureCausation();
+  const modelContext = retainTitleModelContext(this, options.offPeakExecutionId);
 
   const generation = generateAndPersistSessionTitle
     .call(this, input, options.messageID, options.traceContext, {
       causation,
+      modelContext,
       goalSummaryTargetID: options.goalSummaryTargetID,
     })
     .catch(async (error) => {
@@ -122,7 +131,8 @@ function maybeStartSessionTitleGenerationFromSeed(
           traceContext: options.traceContext,
         });
       }
-    });
+    })
+    .finally(() => modelContext.release());
   void this.trackResidencyBlockingWork(generation).catch((error) => {
     this.logger?.warn("Session title fallback persistence failed", {
       ...traceContextToLogContext(options.traceContext),
@@ -179,6 +189,7 @@ async function generateAndPersistSessionTitle(
   options: {
     causation?: AgentTelemetryCausation;
     goalSummaryTargetID?: string;
+    modelContext?: TitleModelContext;
   } = {},
 ): Promise<void> {
   const initialSession = await this.sessionStore?.getSession(this.sessionId);
@@ -220,6 +231,7 @@ async function generateAndPersistSessionTitle(
 
   const generated = await generateTitleCandidate.call(this, input, {
     causation: options.causation,
+    modelContext: options.modelContext,
     messageID,
     querySource: SESSION_TITLE_QUERY_SOURCE,
     traceContext,

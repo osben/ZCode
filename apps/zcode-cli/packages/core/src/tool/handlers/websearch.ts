@@ -91,8 +91,8 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
       },
     ],
     tools: [createProviderNativeWebSearchContract(input)],
-    // BigModel's Anthropic-compatible endpoint rejects a named forced web_search tool_choice (1210).
-    // Keep automatic selection here and rely on a single-tool request and prompt to trigger provider-native search.
+    // BigModel 的 Anthropic 兼容端点会拒绝 named forced web_search tool_choice（1210）。
+    // 这里保持自动选择，依靠单工具请求和 prompt 触发 provider-native 搜索。
     options: {
       ...auxiliaryModelOptions(model),
       maxOutputTokens: Math.min(4096, model.optionSpecs.maxOutputTokens.max),
@@ -100,8 +100,9 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
     abortSignal: context.abortSignal,
   };
 
-  // Non-streaming JSON from BigModel's Anthropic-compatible endpoint returns provider-internal web_search results as a bare
-  // assistant-side tool_result, which makes the AI SDK throw Invalid JSON response during schema validation. Streaming reuses existing SSE compatibility.
+  // BigModel Anthropic 兼容端点的非流式 JSON 会把 provider 内部
+  // web_search 结果返回为 assistant-side 裸 tool_result，AI SDK 会在 schema
+  // 校验阶段抛 Invalid JSON response。走流式可复用现有 SSE compat。
   const result = await collectWebSearchStreamResult({
     events: runWithModelInvocationContext(
       {
@@ -114,7 +115,7 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
           querySource: "web_search_tool",
         },
         modelCall: { operation: "web_search" },
-        // Do not set statusSink here: the executor-provided context.model already has the default session event sink.
+        // statusSink 不在这里设：执行器交出的 context.model 已带默认会话事件出口。
         traceContext: webSearchTraceFromContext(context),
       },
       () => model.streamText(request),
@@ -128,9 +129,11 @@ export const webSearchToolEntry: ToolEntry = {
   ...WEBSEARCH_TOOL_CONTRACT,
   providerNative: undefined,
   metadata: {
+    shouldDefer: true,
     name: WEBSEARCH_TOOL_NAME,
-    // A hard-coded month would make the model-visible WebSearch description stale.
-    // Regenerate it on each read so a long-running process does not keep sending last month's value.
+    searchHint: "search the web for current information",
+    // 写死月份会导致模型可见的 WebSearch 描述过期。
+    // 每次读取时重新生成，避免长驻进程跨月后继续投递旧月份。
     get description() {
       return buildWebSearchProviderDescription();
     },

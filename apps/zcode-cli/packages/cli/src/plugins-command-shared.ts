@@ -11,8 +11,8 @@ export type PluginDiagnostic = PluginListOutcome["diagnostics"][number];
 export type PluginScope = "user" | "workspace";
 
 /**
- * CLI dependency name → bootstrap export name. Tests inject fakes by dependency name; production lazily loads bootstrap by export name,
- * so lightweight commands such as `zcode plugins list` do not load the entire bootstrap graph up front.
+ * CLI 依赖名 → bootstrap 导出名。测试按依赖名注入假实现；生产路径按导出名懒加载 bootstrap，
+ * 避免 `zcode plugins list` 这类轻命令把整个 bootstrap 图提前拉起来。
  */
 export const BOOTSTRAP_EXPORTS = {
   addMarketplace: "addZCodePluginMarketplace",
@@ -43,7 +43,7 @@ export interface PluginsCommandDependencies extends PluginsCommandOverrides {
   userConfigPath?: string;
 }
 
-/** Flags specific to `zcode plugins` subcommands; collected by run.ts's global parser and forwarded unchanged. */
+/** `zcode plugins` 子命令专属旗标；由 run.ts 的全局解析器收集后原样透传。 */
 export interface PluginsCommandFlags {
   all?: boolean;
   available?: boolean;
@@ -52,7 +52,7 @@ export interface PluginsCommandFlags {
   sparse?: readonly string[];
 }
 
-/** Argument usage error: the caller prints the message and usage, then exits with code 1. */
+/** 参数用法错误：调用方打印 message + usage 并以 1 退出。 */
 export class PluginsUsageError extends Error {}
 
 export function requireOne(rest: string[]): string {
@@ -102,7 +102,7 @@ export function hasErrors(diagnostics: readonly PluginDiagnostic[]): boolean {
   return diagnostics.some((diagnostic) => diagnostic.severity === "error");
 }
 
-/** Allow a bare name only when it uniquely matches a loaded plugin (built-in or installed); duplicate names require @marketplace. */
+/** 裸 name 在已加载插件（内置 + 已安装）里唯一匹配才放行；多个同名必须带 @marketplace。 */
 export async function resolveLoadedPluginId(
   deps: PluginsCommandDependencies,
   identifier: string,

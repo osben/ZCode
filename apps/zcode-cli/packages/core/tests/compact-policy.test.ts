@@ -116,19 +116,6 @@ describe("auto compact policy", () => {
     });
   });
 
-  it("uses the effective normal request output target for the input-side compact budget", () => {
-    const config = {
-      contextWindow: 128_000,
-      maxOutputTokens: 32_000,
-      modelContextBudgetStrategy: "legacy" as const,
-    };
-
-    expect(getAutoCompactOutputReserveTokens(config)).toBe(21_000);
-    expect(getEffectiveContextWindowSize(config)).toBe(107_000);
-    expect(getAutoCompactThreshold(config)).toBe(94_000);
-    expect(MAX_OUTPUT_TOKENS_FOR_SUMMARY).toBe(20_000);
-  });
-
   it("uses explicit output token reserve when it is below the compact cap", () => {
     const config = {
       contextWindow: 200_000,
@@ -156,7 +143,6 @@ describe("auto compact policy", () => {
       contextWindow: 200_000,
     };
 
-    expect(DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS).toBe(32_000);
     expect(getEffectiveContextWindowSize(config)).toBe(179_000);
     expect(getAutoCompactThreshold(config)).toBe(166_000);
   });

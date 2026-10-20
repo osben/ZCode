@@ -16,7 +16,7 @@ import {
   splitForkSettingsPatch,
 } from "@zcode/shared";
 import type { ForkAppSettings } from "@zcode/shared";
-import type { ISettingService } from "./setting.js";
+import type { ISettingService, WorkspaceSettingsProjection } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
@@ -233,12 +233,24 @@ export function createSettingService(): ISettingService {
 /** Host-private migration entry point, not part of Setting RPC; ordinary get/update never wait for OAuth queries. */
 export function createSettingServiceWithMigrations(): {
   service: ISettingService;
+  setWorkspaceProjection: (
+    reader: (settings: AppSettings) => Promise<WorkspaceSettingsProjection>,
+  ) => void;
   prepareLegacyAccountConnections: (
     resolveOrganization: (connection: LegacyTeamConnection) => Promise<string | null>,
   ) => Promise<readonly ProviderFamilyDomain[]>;
 } {
   const { enqueueSettingsWrite, runSettingsCommit, waitForQueuedWrites } =
     createSettingsWriteQueue();
+  // Upstream host assembly binds the workspace projection once. Fork keys are merged after projection,
+  // so projection parsing (which strips unknown keys) never sees the sidecar values.
+  let workspaceProjection:
+    | ((settings: AppSettings) => Promise<WorkspaceSettingsProjection>)
+    | undefined;
+  const projectSettings = async (settings: AppSettings): Promise<AppSettings> =>
+    workspaceProjection
+      ? appSettingsSchema.parse({ ...settings, ...(await workspaceProjection(settings)) })
+      : settings;
 
   const service: ISettingService = {
     async get(): Promise<AppSettings> {
@@ -248,7 +260,7 @@ export function createSettingServiceWithMigrations(): {
       const result = await readSettingsWithMeta();
       const forkSettings = await readForkSettings();
       if (!result.needsMigrationPersist && !result.legacyForkSettings) {
-        return { ...result.settings, ...forkSettings };
+        return { ...(await projectSettings(result.settings)), ...forkSettings };
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
@@ -280,7 +292,7 @@ export function createSettingServiceWithMigrations(): {
         readSettings(),
         readForkSettings(),
       ]);
-      return { ...settings, ...migratedForkSettings };
+      return { ...(await projectSettings(settings)), ...migratedForkSettings };
     },
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
@@ -306,6 +318,10 @@ export function createSettingServiceWithMigrations(): {
             const expected = appSettingsPatchSchema.parse(expectedAccountSettings);
             if (
               read.settings.providerFamilyDomain !== expected.providerFamilyDomain ||
+              // Same identity re-selected with an identical mapping still counts as a new operation when a version is supplied.
+              (expected.providerFamilyDomainUpdatedAt !== undefined &&
+                (read.settings.providerFamilyDomainUpdatedAt ?? 0) !==
+                  expected.providerFamilyDomainUpdatedAt) ||
               JSON.stringify(read.settings.providerFamilyConnectionSelections ?? {}) !==
                 JSON.stringify(expected.providerFamilyConnectionSelections ?? {})
             ) {
@@ -331,9 +347,17 @@ export function createSettingServiceWithMigrations(): {
               MAX_RECENT_PROJECTS,
             );
           }
+          // Each connection-mapping write is a new operation even when the selection is unchanged; the version
+          // is monotonic because it is computed under the same main-file lock.
+          if (Object.hasOwn(patch, "providerFamilyConnectionSelections")) {
+            merged.providerFamilyDomainUpdatedAt = Math.max(
+              validatedPatch.providerFamilyDomainUpdatedAt ?? Date.now(),
+              (read.settings.providerFamilyDomainUpdatedAt ?? 0) + 1,
+            );
+          }
 
           await writeSettings(
-            merged,
+            await projectSettings(merged),
             shouldCommit,
             runSettingsCommit,
             enterCommitPhase,
@@ -393,6 +417,10 @@ export function createSettingServiceWithMigrations(): {
   let migrationComplete = false;
   return {
     service,
+    setWorkspaceProjection(reader) {
+      if (workspaceProjection) throw new Error("settings.workspace-projection-already-bound");
+      workspaceProjection = reader;
+    },
     prepareLegacyAccountConnections(resolveOrganization) {
       // After import completes, do not reread the migration file on every auth request. Restart Host to restore an older backup.
       if (migrationComplete) return Promise.resolve([]);

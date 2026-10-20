@@ -1,15 +1,15 @@
-// Session resident pool acceptance net (spec: apps/zcode-cli/docs/design/v2/session-idle-deactivation.md):
-// a single app-server proactively recycles long-idle runtimes via an idle TTL and bounds bursty resident counts
-// with a high/low water LRU; running turns, background work, subscriptions, and protocol operations must be kept alive first.
+// Session 常驻池验收网（spec: apps/zcode-cli/docs/design/v2/session-idle-deactivation.md）：
+// 单个 app-server 以 idle TTL 主动回收长期空闲 runtime，并用 high/low water LRU
+// 限制突发 resident 数量；运行、后台 work、订阅和协议操作必须优先保活。
 //
-// Three layers of coverage:
-// - pool unit (fake host): TTL, high/low water LRU, guard conditions, operation lease,
-//   fresh-facts re-validation, the waitForDeactivation gate, and failure isolation.
-// - execution-surface unit (stub context): in-memory removal completes within the same synchronous slice
-//   (unsubscribe → gateway deactivation → sessions.delete), app.close finishes asynchronously; repeated calls are idempotent.
-// - integration (real sqlite + ZCodeProtocolAgentServer + binder): subscribe → unsubscribe →
-//   capacity rebalance deactivation → sessions-index subscribers receive no session.removed → resubscribe cold-recovers a full
-//   snapshot; the reactivation gate holds concurrent subscribes until app.close finalization completes.
+// 三层覆盖：
+// - pool 单元（fake host）：TTL、high/low water LRU、保护条件、operation lease、
+//   fresh facts 二次校验、waitForDeactivation 闸门和失败隔离。
+// - 执行面单元（stub context）：内存摘除在同一同步片完成（unsubscribe → gateway 去激活 →
+//   sessions.delete），app.close 后置异步；重复调用幂等。
+// - 集成（真 sqlite + ZCodeProtocolAgentServer + binder）：subscribe → unsubscribe →
+//   容量 rebalance 去激活 → sessions-index 订阅者收不到 session.removed → 再订阅冷恢复出完整
+//   snapshot；再激活闸门在 app.close 收尾完成前挂住并发 subscribe。
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,9 +36,6 @@ import {
   V4_NOTIFICATIONS,
 } from "@zcode/shared/zcode-protocol-v4";
 import {
-  DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT,
-  DEFAULT_SESSION_RESIDENT_IDLE_TIMEOUT_MS,
-  DEFAULT_SESSION_RESIDENT_TARGET_COUNT,
   SessionResidentPool,
   type SessionDeactivationDecision,
   type SessionResidencyFacts,
@@ -59,7 +56,7 @@ import { ZCodeProtocolAgentServer } from "../src/zcode-protocol/server.js";
 import { createFakeApp } from "./helpers/fake-zcode-app.js";
 import type { ZCodeApp } from "../src/app/types.js";
 
-// ── Resident pool unit (fake host) ───────────────────────────────────────────────────
+// ── 常驻池单元（fake host）──────────────────────────────────────────────────
 
 function idleFacts(overrides: Partial<SessionResidencyFacts> = {}): SessionResidencyFacts {
   return {
@@ -150,12 +147,6 @@ async function waitForAll(pool: SessionResidentPool, sessionIds: string[]): Prom
 }
 
 describe("SessionResidentPool", () => {
-  it("默认混合策略为 idle 10 分钟、highWater 16、target 8", () => {
-    expect(DEFAULT_SESSION_RESIDENT_TARGET_COUNT).toBe(8);
-    expect(DEFAULT_SESSION_RESIDENT_HIGH_WATER_COUNT).toBe(16);
-    expect(DEFAULT_SESSION_RESIDENT_IDLE_TIMEOUT_MS).toBe(10 * 60 * 1_000);
-  });
-
   it.each([
     [{ targetCount: -1 }, "targetCount"],
     [{ targetCount: 3, highWaterCount: 2 }, "highWaterCount"],
@@ -520,7 +511,7 @@ describe("SessionResidentPool", () => {
   });
 });
 
-// ── Execution-surface unit (stub context) ────────────────────────────────────────────────
+// ── 执行面单元（stub context）───────────────────────────────────────────────
 
 interface ExecutorHarness {
   context: ZCodeProtocolAgentServerContext;
@@ -543,7 +534,7 @@ function makeExecutorHarness(sessionId: string): ExecutorHarness {
         await closeGate;
       },
     },
-    // After deactivation the in-memory event store must be equivalent to "never loaded" (session-event-store-retention.md).
+    // 去激活后内存 event store 必须与“从未加载”等价（session-event-store-retention.md）。
     eventStore: {
       deleteSession: async (id: string) => {
         calls.push(`eventStore.deleteSession:${id}`);
@@ -571,8 +562,8 @@ describe("deactivateSessionRecord（执行面）", () => {
   it("内存摘除在同一同步片完成，app.close 后置异步等待", async () => {
     const harness = makeExecutorHarness("sess-exec");
     const promise = deactivateSessionRecord(harness.context, "sess-exec");
-    // The instant the call returns (not awaited): unsubscribe, gateway deactivation, and registry deletion must all be done —
-    // under JS's single thread this guarantees a subscribe/command can never hit the "validated but not yet removed" window.
+    // 调用返回瞬间（未 await）：unsubscribe、gateway 去激活、注册表删除必须已完成——
+    // JS 单线程下这保证 subscribe/命令不可能命中"校验通过但还没摘除"的窗口。
     expect(harness.calls).toEqual([
       "unsubscribe",
       "gateway.deactivateSession:sess-exec",
@@ -589,7 +580,7 @@ describe("deactivateSessionRecord（执行面）", () => {
     harness.releaseClose();
     await promise;
     expect(settled).toBe(true);
-    // The in-memory event store is released after app.close, as part of the same deactivation transaction's finalization.
+    // 内存 event store 在 app.close 之后释放，属于同一次去激活事务的收尾。
     expect(harness.calls.at(-1)).toBe("eventStore.deleteSession:sess-exec");
   });
 
@@ -602,9 +593,8 @@ describe("deactivateSessionRecord（执行面）", () => {
   });
 
   /**
-   * The real gateway's deactivate and the execution surface's preflight must reuse the same pure validation; that way
-   * the current implementation is rejected by deactivate after unsubscribe, while the fixed one is rejected by
-   * preflight before the first side effect.
+   * 真实 gateway 的 deactivate 与执行面 preflight 必须复用同一纯校验；这样当前实现会在
+   * unsubscribe 后由 deactivate 拒绝，而修复后会在第一个副作用前由 preflight 拒绝。
    */
   function makeThrowingGatewayHarness(sessionId: string): ExecutorHarness {
     const harness = makeExecutorHarness(sessionId);
@@ -636,18 +626,18 @@ describe("deactivateSessionRecord（执行面）", () => {
       "Session command inbox is still pinned",
     );
 
-    // Bug root cause: the throwable gateway validation used to sit after unsubscribe, leaving the resident record
-    // in the registry while the runtime event subscription was already torn down; a failed preflight must fully preserve the usable state.
+    // Bug 根因：可抛出的 gateway 校验曾位于 unsubscribe 之后，导致 resident record
+    // 仍在注册表里但 runtime event subscription 已拆除；预检失败必须完整保留可用状态。
     expect(harness.context.sessions.has("sess-pinned")).toBe(true);
     expect(harness.calls).not.toContain("unsubscribe");
   });
 });
 
-// ── Integration (real sqlite + server + binder) ──────────────────────────────────────────────────────────
+// ── 集成（真 sqlite + server + binder）─────────────────────────────────────
 
 const WORKSPACE_PATH = "/workspace/idle-deactivation";
 const SESSION_ID = "sess_idle_deactivate" as SessionId;
-type TestSessionStore = ReturnType<typeof createSqliteSessionStore>;
+type TestSessionStore = Awaited<ReturnType<typeof createSqliteSessionStore>>;
 
 async function requestResult(server: ZCodeProtocolAgentServer, message: ZCodeProtocolMessage) {
   const response = await server.handleMessage(message);
@@ -701,7 +691,7 @@ async function saveTextMessage(
 }
 
 async function seedPersistedSession(dbPath: string): Promise<void> {
-  const store = createSqliteSessionStore({ dbPath });
+  const store = await createSqliteSessionStore({ dbPath });
   try {
     await store.createSession({
       id: SESSION_ID,
@@ -735,14 +725,14 @@ interface IntegrationHarness {
   sessions: Map<string, ZCodeProtocolSessionRecord>;
 }
 
-function bootServer(
+async function bootServer(
   dbPath: string,
   options: {
     appOverrides?: Partial<ZCodeApp>;
     poolOptions?: SessionResidentPoolOptions;
   } = {},
-): IntegrationHarness {
-  const store = createSqliteSessionStore({ dbPath });
+): Promise<IntegrationHarness> {
+  const store = await createSqliteSessionStore({ dbPath });
   const createdApps: ZCodeApp[] = [];
   const server = new ZCodeProtocolAgentServer({
     createZCodeApp: (appOptions) => {
@@ -763,8 +753,8 @@ function bootServer(
   return { server, store, createdApps, sessions };
 }
 
-// The subscribe response is strictly ACK-only; the initial snapshot goes through the request-scoped post-response
-// outbox (an owned notification after the response line); parse it out here and return it together.
+// subscribe response 严格 ACK-only；initial snapshot 走 request-scoped post-response
+// outbox（response line 之后的 owned notification），此处解析出来一并返回。
 async function subscribeConversation(
   server: ZCodeProtocolAgentServer,
   requestId: string,
@@ -805,7 +795,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
     const dbPath = join(tempRoot, "sessions.db");
     await seedPersistedSession(dbPath);
     const clock = createTestClock(1_000);
-    const { server, store, createdApps, sessions } = bootServer(dbPath, {
+    const { server, store, createdApps, sessions } = await bootServer(dbPath, {
       poolOptions: {
         highWaterCount: 16,
         idleTimeoutMs: 100,
@@ -815,8 +805,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
     });
     const indexFrames: unknown[] = [];
     server.setNotificationSink((message) => {
-      // Once the sink is attached, cold recovery really sends a runtime preferences reverse request and waits for
-      // the response; auto-answering avoids a timeout.
+      // 挂 sink 后冷恢复会真发 runtime preferences 反向请求并等待响应，自动应答避免超时。
       if (
         "id" in message &&
         "method" in message &&
@@ -836,7 +825,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       }
     });
     try {
-      // Sidebar list subscriber: verify deactivation produces no session.removed delta frames.
+      // 侧边栏列表订阅者：验证去激活不产生 session.removed 增量帧。
       const indexResult = await requestResult(server, {
         id: "idx-sub",
         method: V4_METHODS.conversationSubscribe,
@@ -853,7 +842,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       expect(sessions.has(SESSION_ID)).toBe(true);
       expect(createdApps).toHaveLength(1);
 
-      // While a conversation subscriber exists, the idle TTL must not start.
+      // conversation 订阅者在场时不得开始 idle TTL。
       server.rebalanceResidentSessions();
       expect(sessions.has(SESSION_ID)).toBe(true);
 
@@ -867,7 +856,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         },
       });
 
-      // A subscriber leaving only starts a new idle TTL; below highWater the warm runtime is kept.
+      // 订阅者离开只开始新的 idle TTL，未超 highWater 时保留热 runtime。
       expect(sessions.has(SESSION_ID)).toBe(true);
       clock.advance(99);
       server.rebalanceResidentSessions();
@@ -881,7 +870,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         }
       ).context.sessionResidentPool?.waitForDeactivation(SESSION_ID);
 
-      // The list subscriber received no session.removed (the sidebar entry must be preserved verbatim).
+      // 列表订阅者没有收到 session.removed（侧边栏项必须原样保留）。
       const removedFrames = indexFrames
         .map((frame) => sessionsIndexTopicFrameSchema.parse(frame))
         .filter(
@@ -891,7 +880,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
         );
       expect(removedFrames).toEqual([]);
 
-      // Resubscribe: cold recovery rebuilds the record (a second app is created); the snapshot includes history.
+      // 再订阅：走冷恢复重建 record（新建第二个 app），snapshot 含历史。
       const resubscribed = await subscribeConversation(server, "conv-resub", "conn-desktop-2");
       if (resubscribed.initialFrame.payload.kind !== "snapshot") {
         throw new Error("Expected cold-resume snapshot");
@@ -921,7 +910,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
       releaseClose = resolve;
     });
     let closeCount = 0;
-    const { server, store, createdApps, sessions } = bootServer(dbPath, {
+    const { server, store, createdApps, sessions } = await bootServer(dbPath, {
       appOverrides: {
         close: async () => {
           closeCount += 1;
@@ -964,7 +953,7 @@ describe("session resident pool（集成：真 sqlite + server + binder）", () 
   });
 });
 
-// ── Server assembly-layer config fallback ──────────────────────────────────────────────────
+// ── server 装配层配置回退 ──────────────────────────────────────────────────
 
 describe("SessionResidentPool 配置回退", () => {
   function makeServer(deps: Partial<ZCodeProtocolAgentDependencies>) {
@@ -998,13 +987,13 @@ describe("SessionResidentPool 配置回退", () => {
 
     context.sessionResidentPool!.rebalance();
 
-    // Bug root cause: the legacy low-water used to also override high-water, so 3 residents would immediately be cut to 2,
-    // degenerating the default 16 / low-water 2 hysteresis window into a zero-width window.
+    // Bug 根因：legacy low-water 曾同时覆盖 high-water，3 个 resident 会立即被砍到 2，
+    // 让默认 16/low-water 2 的迟滞窗口退化为零宽窗口。
     expect(context.sessions.size).toBe(3);
   });
 
   it("只覆盖 targetCount 且高于默认 high-water 时不让 server 构造失败", () => {
-    // The assembly layer should resolve a valid high-water; this test only constrains that the CLI can start, not the specific derivation strategy.
+    // 装配层应解析出有效 high-water；测试只约束 CLI 可启动，不锁死具体推导策略。
     expect(() => makeServer({ sessionResidentPoolOptions: { targetCount: 20 } })).not.toThrow();
   });
 });

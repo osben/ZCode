@@ -62,6 +62,13 @@ export interface HighspeedCardServiceOptions {
 }
 
 const DEFAULT_WAIT_BUDGET_MS = 1000;
+/**
+ * Cooldown entered after a draw rejection that a send actually observed within its budget (spec §3 rule 16).
+ * Without it, a persistently rejected draw (2026-10-19 production: HTTP 400 code=3001 on every draw) was
+ * re-issued by every following send, each paying the failing request's full latency before falling back.
+ * A late background rejection no turn observes must NOT set this — the next send still redraws (CR-01).
+ */
+const DRAW_FAILURE_RETRY_BACKOFF_MS = 60_000;
 
 type SendBudgetOutcome<T> = { kind: "settled"; value: T } | { kind: "timeout" };
 /** Races an await against the current prepareTurn's send budget; exhausting the budget only ends the wait and never cancels the request. */
@@ -257,7 +264,16 @@ export class HighspeedCardService implements IHighspeedCardService {
     }
 
     const draw = this.inFlightDraw ?? this.startDraw(params, drawProviderId);
-    const outcome = await withinBudget(draw);
+    let outcome;
+    try {
+      outcome = await withinBudget(draw);
+    } catch {
+      // Spec §3 rule 16: the draw rejection won this send's race, so this send falls back immediately and the
+      // service enters the failure cooldown instead of letting every following send re-issue the same doomed
+      // request. Only the max wins: a successful draw's next_draw_at (or an earlier cooldown) must not shorten.
+      this.nextDrawAt = Math.max(this.nextDrawAt ?? 0, this.now() + DRAW_FAILURE_RETRY_BACKOFF_MS);
+      return { kind: "fallback", reason: "draw-failed", nextDrawAt: this.nextDrawAt };
+    }
     if (outcome.kind === "timeout") {
       return { kind: "fallback", reason: "draw-timeout", nextDrawAt: this.nextDrawAt };
     }
@@ -276,6 +292,15 @@ export class HighspeedCardService implements IHighspeedCardService {
       nextDrawAt: this.nextDrawAt,
       drawing: this.inFlightDraw !== null,
     };
+  }
+
+  async invalidateCard(cardId: string): Promise<boolean> {
+    this.expireCard(this.now());
+    if (this.card?.cardId !== cardId) return false;
+    // Bug 根因：创建期发现加速 Provider 已从 Registry 下架时，卡仍留在服务里，Renderer 会继续
+    // 锁定模型选择器。按事件携带的 cardId 作废当前卡，旧事件不能误删随后抽到的新卡；冷却时间不变。
+    this.card = null;
+    return true;
   }
 
   healthy(cardId: string): Promise<HighspeedCardUsage> {

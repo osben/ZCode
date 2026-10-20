@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SQLITE_MIGRATIONS } from "../src/storage/session-store/migrations.js";
+import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
 import {
-  runSqliteSessionMigrations,
+  runSqliteSessionMigrationsSync,
   runSqliteSessionMigrationsAsync,
 } from "../src/storage/session-store/migration-runner.js";
 
@@ -27,7 +28,7 @@ function createFixture() {
   return db;
 }
 function applyFrozen(db: DatabaseSync, before = "9999") {
-  for (const migration of SQLITE_MIGRATIONS.filter((m) => m.id < before)) {
+  for (const migration of SESSION_DATABASE_MIGRATIONS.filter((m) => m.id < before)) {
     if (db.prepare("SELECT 1 FROM schema_migration WHERE id=?").get(migration.id)) continue;
     db.exec(migration.sql);
     db.prepare("INSERT INTO schema_migration VALUES(?,?,?,?)").run(
@@ -146,7 +147,7 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
       for (const db of [oldDb, nextDb]) seedSelections(db);
       applyFrozen(oldDb);
       if (mode === "async") await runSqliteSessionMigrationsAsync(nextDb, ":memory:");
-      else runSqliteSessionMigrations(nextDb, ":memory:");
+      else runSqliteSessionMigrationsSync(nextDb, ":memory:");
       expect(snapshot(nextDb)).toEqual(snapshot(oldDb));
       expect(nextDb.prepare("SELECT count(*) AS n FROM part").get()?.n).toBe(109);
     },
@@ -158,7 +159,7 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     applyFrozen(db);
     db.exec("UPDATE session_entry SET data=json_set(data,'$.modelSelection',NULL)");
     const before = snapshot(db);
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
     applyFrozen(db);
     expect(snapshot(db)).toEqual(before);
   });
@@ -177,7 +178,7 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     );
     const partsBefore = db.prepare("SELECT * FROM part ORDER BY id").all();
 
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
 
     expect(db.prepare("SELECT checksum FROM schema_migration WHERE id=?").get(SELECTION)).toEqual({
       checksum: TRANSLATED_SELECTION_CHECKSUM,
@@ -190,7 +191,7 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
     applyFrozen(db);
     db.prepare("UPDATE schema_migration SET checksum='changed' WHERE id=?").run(SELECTION);
     const before = snapshot(db);
-    expect(() => runSqliteSessionMigrations(db, ":memory:")).toThrow(/checksum mismatch/);
+    expect(() => runSqliteSessionMigrationsSync(db, ":memory:")).toThrow(/checksum mismatch/);
     expect(snapshot(db)).toEqual(before);
   });
 
@@ -201,11 +202,11 @@ describe("Todo144：启动 runner 保持冻结迁移合同", () => {
       "CREATE TRIGGER reject_part BEFORE UPDATE ON part BEGIN SELECT RAISE(ABORT,'fixture failure'); END",
     );
     const before = snapshot(db);
-    expect(() => runSqliteSessionMigrations(db, ":memory:")).toThrow(/migration/);
+    expect(() => runSqliteSessionMigrationsSync(db, ":memory:")).toThrow(/migration/);
     expect(snapshot(db)).toEqual(before);
     expect(db.isTransaction).toBe(false);
     db.exec("DROP TRIGGER reject_part");
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
     expect(db.prepare("SELECT 1 FROM schema_migration WHERE id=?").get(REASONING)).toBeDefined();
   });
 });
