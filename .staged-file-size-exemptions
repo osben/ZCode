@@ -270,6 +270,7 @@ packages/ui/test/zcodeSessionStore.test.ts
 
 # TEMPORARY upstream 3.16.1 sync (ui bucket 3)
 packages/ui/test/subagentsSection.test.ts
+packages/ui/test/projectTreeBackgroundUnread.test.ts
 packages/ui/src/settings/AutomationEditView.tsx
 packages/ui/src/settings/McpSettingsSection.tsx
 packages/ui/src/settings/OffPeakEditView.tsx

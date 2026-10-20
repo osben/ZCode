@@ -15,7 +15,7 @@ import { useWorkspaceTaskNavigation } from "@/app-shell/useWorkspaceTaskNavigati
 import { ensureTaskNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
 import { createTabStore, type TabStore } from "@/store/tabStore.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { createWindowHostControllerRuntime } from "@desktop/host/windowHostControllerService.js";
+import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 
 const mocks = vi.hoisted(() => ({
   services: {} as IServiceAccessor,
