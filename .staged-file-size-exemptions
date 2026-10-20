@@ -260,3 +260,6 @@ architecture-policy.yaml
 
 # TEMPORARY (final fork restore desktop): restored fork createRemoteWorkspaceServiceCollection (~33 KB). Remove after the desktop host split.
 packages/desktop/src/host/remoteWorkspaceServiceCollection.ts
+
+# TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
+third-party/npm-overrides.json
