@@ -42,7 +42,7 @@ describe("build pipeline entrypoints", () => {
       }
     }
     expect(configs.find((config) => config.name === "host")?.entry).toMatchObject({
-      "host/tasksStorageWorker": "src/host/tasksStorageWorker.ts",
+      "host/tasksStorageWorker": "src/host/database-startup/tasksStorageWorker.ts",
     });
   });
 });
