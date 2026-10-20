@@ -1,5 +1,6 @@
 import { readRelayConfig } from "./config.js";
 import { createRelayDeviceStore } from "./deviceStore.js";
+import { createRelaySessionService } from "./session.js";
 import { createRelayServer } from "./nodeServer.js";
 import type { RelayLogger } from "../contract.js";
 
@@ -16,8 +17,15 @@ const logger: RelayLogger = {
 
 async function main() {
   const config = readRelayConfig(process.env);
+  // Key material is validated before the database opens, so a bad key set never starts a half-up relay.
+  const session = createRelaySessionService({
+    signingKeys: config.session.signingKeys,
+    ttlSeconds: config.session.ttlSeconds,
+    identity: config.session.identity,
+    now: Date.now,
+  });
   const store = await createRelayDeviceStore(config.store);
-  const server = await createRelayServer({ ...config.server, store, logger });
+  const server = await createRelayServer({ ...config.server, store, session, logger });
   logger.info("started");
   let shutdown: Promise<void> | undefined;
   const stop = () => {
@@ -34,7 +42,7 @@ async function main() {
 }
 
 main().catch((error: unknown) => {
-  // не глотаем причину: без сообщения диагностика startup-failed невозможна
-  logger.error(`startup-failed: ${error instanceof Error ? error.stack : String(error)}`);
+  // Startup errors carry names of configuration variables, never their values.
+  logger.error(`startup-failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
