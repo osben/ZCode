@@ -15,7 +15,7 @@ type ThemeWindow = typeof window & {
     getTheme(): string;
     setTheme(theme: string): void;
     getLocale(): "zh-CN" | "en-US";
-    setLocale(locale: "en-US"): void;
+    setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void;
   };
 };
 

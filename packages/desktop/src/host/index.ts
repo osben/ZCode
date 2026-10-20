@@ -614,17 +614,28 @@ function trackOffPeakRunOutcome(params: {
     workspacePath: params.workspacePath,
     workspaceIdentity: params.workspaceIdentity,
   };
+  // Check before registering so an unsupported Source does not leave a resident execution behind.
+  const onLifecycle = params.zcodeAgentService.onDynamicOffPeakLifecycle;
+  if (!onLifecycle) throw new Error("Off-peak lifecycle events unsupported by this Source");
   const registration = params.service.residentExecutions.register({
     offPeakTaskId: params.offPeakTaskId,
     executionId: params.traceId,
     sessionId: params.taskId,
     ticketId: params.ticketId,
-    control: (control) =>
-      params.zcodeAgentService.controlOffPeakExecutionV4({ ...target, control }),
+    control: (control) => {
+      // The agent service marks these optional for older Sources; a missing method is an explicit failure.
+      const controlExecution = params.zcodeAgentService.controlOffPeakExecutionV4;
+      if (!controlExecution)
+        throw new Error("Off-peak execution control unsupported by this Source");
+      return controlExecution.call(params.zcodeAgentService, { ...target, control });
+    },
     complete: (outcome) => finalizeOffPeakRun({ ...params, outcome }),
     disposed: () => disposeOffPeakRunSubscription(key),
   });
-  const disposable = params.zcodeAgentService.onDynamicOffPeakLifecycle(target)((event) => {
+  const disposable = onLifecycle.call(
+    params.zcodeAgentService,
+    target,
+  )((event) => {
     if (event.executionId !== params.traceId || event.sessionId !== params.taskId) return;
     void params.service.residentExecutions
       .handle(event)
@@ -1796,6 +1807,15 @@ function notifyProjectChange(): void {
 }
 
 /** Bot 只取得当前 Source 代际，不拥有连接，也不创建 logical tab。 */
+/** The fork's service accessor types the Source workspace service as optional; a missing one is an explicit failure, not a crash. */
+function requireSourceServerWorkspaceService<
+  T extends { readonly sourceServerWorkspaceService?: unknown },
+>(services: T): NonNullable<T["sourceServerWorkspaceService"]> {
+  const service = services.sourceServerWorkspaceService;
+  if (!service) throw new Error("Source Server workspace service unavailable");
+  return service as NonNullable<T["sourceServerWorkspaceService"]>;
+}
+
 function resolveBotProjectConnection(hostId: string): BotProjectConnection | undefined {
   const serverId = parseRemoteWorkspaceIdentity(
     buildRemoteHostWorkspaceIdentity(hostId, "/"),
@@ -1830,7 +1850,7 @@ function resolveBotProjectConnection(hostId: string): BotProjectConnection | und
     modelSelectionService: connection.services.modelSelectionService,
     agentService: connection.services.zcodeAgentService,
     bindWorkspace: async (target) => {
-      await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+      await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
         workspacePath: target.workspacePath,
         legacyRouteHint: target.workspaceIdentity,
       });
@@ -1963,6 +1983,7 @@ async function createWindowRemoteConnectionHandle(params: {
     });
     params.signal.throwIfAborted();
     topicResourceRelay = createWindowTopicResourceRelay({
+      // Pin to the physical Source connection's agent service: `services` is reassigned on each reconnect generation.
       getPeerAgentService: () => connection?.services.zcodeAgentService,
       resolveServices: (scope) => windowRemoteConnectionRegistry.resolveScopedServices(scope),
       getBots: () => activeServices?.getOptional(IBotsService),
@@ -2174,7 +2195,7 @@ async function createWindowRemoteConnectionHandle(params: {
                 fallback: input.legacyRouteHint ?? currentRouteHint,
               });
               input.signal?.throwIfAborted();
-              await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+              await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
                 workspacePath: input.workspacePath,
                 legacyRouteHint,
               });
@@ -2182,7 +2203,7 @@ async function createWindowRemoteConnectionHandle(params: {
           }
         : {
             bindWorkspaceIdentity: async (input) => {
-              await connection.services.sourceServerWorkspaceService.resolveWorkspace({
+              await requireSourceServerWorkspaceService(connection.services).resolveWorkspace({
                 workspacePath: input.workspacePath,
               });
             },
@@ -2621,10 +2642,9 @@ function exposeServicesOnMessagePort(
     ? createZCodeAgentConnectionScope(agentService, connectionContext)
     : undefined;
   services.register(IWindowControllerService, windowHostControllerRuntime.service);
-  // 未读自动写入只归窗口 base renderer；手机和 remote facade 不能重复消费同一完成信号。
-  const controllerAttachment = windowHostControllerRuntime.createAttachmentService(
-    clientMode === "desktop-continuous" && attachmentScope.kind === "local",
-  );
+  // Fork keeps unread signals on for every attachment: web-remote-replayable has no separate mobile-task-view
+  // channel (relay v1), so the mobile sidebar still depends on this stream. Upstream's base-renderer-only gate is not ported.
+  const controllerAttachment = windowHostControllerRuntime.createAttachmentService();
   const overrides = new Map<string, unknown>([
     [IWindowControllerService.channelName, controllerAttachment],
   ]);
@@ -3948,9 +3968,11 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                     sourceServices: activeServices ?? undefined,
                   }),
                   async (workspacePath) => {
-                    await connection.services.sourceServerWorkspaceService.resolveWorkspace({
-                      workspacePath,
-                    });
+                    await requireSourceServerWorkspaceService(connection.services).resolveWorkspace(
+                      {
+                        workspacePath,
+                      },
+                    );
                     return buildServerRemoteWorkspaceIdentity({
                       serverId: sourceServerId,
                       workspacePath,

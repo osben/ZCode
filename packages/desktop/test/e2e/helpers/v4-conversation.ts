@@ -87,6 +87,8 @@ export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
 interface PrepareV4ConversationE2EOptions {
   resetDraftBeforeProvider?: boolean;
   skipProvider?: boolean;
+  /** Skip the ZCodeProject wait in ensureV4ShellReady; a logged-in cold start lands on the conversation backing workspace and the caller waits for the shell itself. */
+  skipShellReady?: boolean;
 }
 
 /** Fixed paneId for the single-pane vertical slice (V4ChatPane hardcodes workspace-main). */
@@ -132,7 +134,9 @@ export interface V4MessageSnapshot {
 }
 
 export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2EOptions = {}) {
-  await ensureV4ShellReady();
+  if (!options.skipShellReady) {
+    await ensureV4ShellReady();
+  }
   if (options.resetDraftBeforeProvider) {
     // Reason for the fix: if a formal case stays on the old active session, provider
     // initialization may write the default model back to the old session; switch to a v4 empty
@@ -2857,7 +2861,10 @@ export function pasteV4ComposerImageAttachment(
 }
 
 /** Waits for a user row to render its attachment cluster, returning the file pill text and the media thumbnails' accessible filenames. */
-export async function waitForV4RowAttachments(timeout = 60000): Promise<string> {
+export async function waitForV4RowAttachments(
+  timeout = 60000,
+  expectedNames: readonly string[] = [],
+): Promise<string> {
   let text = "";
   await browser.waitUntil(
     async () => {
@@ -2872,7 +2879,8 @@ export async function waitForV4RowAttachments(timeout = 60000): Promise<string> 
           .filter(Boolean);
         return [visibleText, ...mediaFilenames].filter(Boolean).join("\n");
       }, TID_V4_ROW_ATTACHMENTS);
-      return text.trim().length > 0;
+      // Text cards and media thumbnails mount asynchronously; a multi-file case must wait for the whole group.
+      return text.trim().length > 0 && expectedNames.every((name) => text.includes(name));
     },
     { timeout, timeoutMsg: "user 行没有渲染出附件簇（TID_V4_ROW_ATTACHMENTS）" },
   );

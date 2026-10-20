@@ -43,6 +43,10 @@ export interface BotsServiceHarnessOptions {
   projectWorkspaces?: Array<
     Record<string, unknown> & { kind: "local" | "remote"; workspacePath: string }
   >;
+  /** Fork fixtures seed bot workspace candidates here; project-based fixtures use projectWorkspaces instead. */
+  lastWorkspaceSession?: Array<
+    Record<string, unknown> & { kind: "local" | "remote"; workspacePath: string }
+  >;
 }
 
 export interface BotsServiceHarness {
@@ -195,11 +199,14 @@ export function createBotsServiceHarness(options: BotsServiceHarnessOptions): Bo
       get: async () => ({
         locale: "en-US",
         recentProjects: [E2E_BOT_WORKSPACE],
-        lastWorkspaceSession: [],
+        lastWorkspaceSession:
+          options.lastWorkspaceSession ??
+          (options.projectWorkspaces ? [] : [{ kind: "local", workspacePath: E2E_BOT_WORKSPACE }]),
         enabledBuiltinAgentCliProviders: ["glm"],
       }),
       update: async () => undefined,
       updateDataBaseDir: async () => undefined,
+      ensureDefaultProject: async (path: string) => ({ path, created: false }),
     },
     repo: {
       readConfig: async () => config,

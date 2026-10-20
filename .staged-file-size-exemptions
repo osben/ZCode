@@ -234,6 +234,12 @@ packages/server/src/http.ts
 packages/ui/src/project-sidebar/grouped/task-row.tsx
 
 # TEMPORARY (upstream 3.16.1 final sync WIP): split these files below 20000 bytes, then remove this block.
+packages/desktop/src/host/index.ts
+packages/services/src/node.ts
+packages/services/src/session/zcodeTaskService.ts
+packages/services/src/window-controller/windowHostControllerService.ts
+packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts
+packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts
 packages/desktop/src/host/sourceServerConnectionManager.ts
 packages/desktop/src/host/sourceServerDirectory.ts
 packages/desktop/src/host/windowRemoteConnectionRegistry.ts

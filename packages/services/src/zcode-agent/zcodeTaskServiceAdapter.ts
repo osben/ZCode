@@ -216,6 +216,7 @@ interface TaskTarget {
 }
 
 interface TaskTargetWithMcpServers extends TaskTarget {
+  additionalDirectories?: string[];
   model?: string;
   thoughtLevel?: string;
   mcpServers?: ZCodeAgentMcpServer[];
@@ -1213,6 +1214,9 @@ export function createZCodeTaskServiceAdapter(
       workspacePath: params.workspacePath,
       workspaceIdentity: params.workspaceIdentity,
       sessionId: params.taskId,
+      ...(params.additionalDirectories !== undefined
+        ? { additionalDirectories: params.additionalDirectories }
+        : {}),
       // Mobile replayable recovery still goes through the task adapter, but the stale-model guard runs
       // during session resume. Pass the current UI model here so the guard also protects this path, not
       // only the desktop-continuous primary path.
@@ -2744,6 +2748,7 @@ export function createZCodeTaskServiceAdapter(
         taskId: params.taskId,
         workspacePath: params.workspacePath,
         workspaceIdentity: params.workspaceIdentity,
+        additionalDirectories: params.additionalDirectories,
         model,
         thoughtLevel,
         mcpServers: params.mcpServers,
@@ -2831,6 +2836,16 @@ export function createZCodeTaskServiceAdapter(
         workspaceIdentity: params.workspaceIdentity,
         provider: GLM_PROVIDER,
       });
+    },
+
+    // Live sessions-index activity set (non-terminal phase), not the task-index status: tasks-index status
+    // only mirrors the CLI last_outcome and never reads as running.
+    async listActiveTaskIds(params): Promise<string[]> {
+      const key = workspaceKey(params);
+      return taskIndexSyncer
+        .activeTaskRefs()
+        .filter((ref) => workspaceKey(ref) === key)
+        .map((ref) => ref.taskId);
     },
 
     // listTaskList serves full-text search (searchable_text/snippets) and supplements

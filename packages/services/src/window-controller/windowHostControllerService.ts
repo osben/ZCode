@@ -581,6 +581,7 @@ export function createWindowHostControllerRuntime(options: {
   async function refreshSource(
     resolved: ResolvedWindowHostControllerSource,
     force = false,
+    beforeCommit?: () => void,
   ): Promise<void> {
     registerResolvedSource(resolved);
     if (!resolved.taskService || resolved.sourceAvailability !== "online") {
@@ -605,6 +606,7 @@ export function createWindowHostControllerRuntime(options: {
       if (sourceRefreshGenerations.get(key) !== generation) {
         throw new Error("Controller source refresh generation 已失效");
       }
+      beforeCommit?.();
       const previousScope = pendingReplacementByNextSourceKey.get(key);
       projection.replaceSourceSnapshot({
         scope: resolved.scope,
@@ -651,6 +653,12 @@ export function createWindowHostControllerRuntime(options: {
   async function replaceDisconnectedSource(
     previousScope: WindowHostControllerSourceScope,
     resolved: ResolvedWindowHostControllerSource,
+    transaction?: {
+      /** Re-checked right before the snapshot commits; false means a newer reconnect generation owns the source. */
+      canCommit?: () => boolean;
+      /** Drop the provisional replacement generation when the refresh fails. */
+      rollbackOnFailure?: boolean;
+    },
   ): Promise<void> {
     if (!resolved.taskService || resolved.sourceAvailability !== "online") {
       throw new Error("重连 source 尚未 online，不能替换离线投影");
@@ -667,7 +675,25 @@ export function createWindowHostControllerRuntime(options: {
       projection.removeSource(previousScope);
     }
     pendingReplacementByNextSourceKey.set(sourceKey(resolved.scope), retainedPreviousScope);
-    await refreshSource(resolved, true);
+    try {
+      await refreshSource(resolved, true, () => {
+        if (transaction?.canCommit?.() === false) {
+          throw new Error("Controller source replacement generation 已失效");
+        }
+      });
+    } catch (error) {
+      if (transaction?.rollbackOnFailure) {
+        // The Registry rolled back its provisional logical session; keeping the pending source would leak an orphan owner
+        // and retry from the stale session on the next reconnect.
+        const key = sourceKey(resolved.scope);
+        if (pendingReplacementByNextSourceKey.has(key)) {
+          pendingReplacementByNextSourceKey.delete(key);
+          forgetRegisteredSource(resolved.scope);
+          projection.discardSource(resolved.scope);
+        }
+      }
+      throw error;
+    }
   }
 
   function resolveQuerySources(

@@ -7,7 +7,9 @@ describe("输入框项目选择器", () => {
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
     await browser.execute(() => {
       (
-        window as Window & { __testActions?: { setLocale(locale: "en-US"): void } }
+        window as Window & {
+          __testActions?: { setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void };
+        }
       ).__testActions!.setLocale("zh-CN");
     });
     const names = Array.from({ length: 7 }, (_, i) => `E2E_PROJECT_PICKER_${i}`);
