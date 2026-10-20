@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runServerCli } from "./cli.js";
 import { resolveBundledAgentWiring } from "./runtime/agentWiring.js";
+import { createUpdateDaemonHandoff } from "./runtime/updateHandoff.js";
 
 // Pass automatic wiring only as an explicit dependency for this CLI invocation; do not pollute the global environment.
 // When starting a candidate release, Supervisor recalculates against the candidate runtime to avoid inheriting zcode.cjs from the old release.
@@ -22,7 +23,10 @@ void runServerCli(
       });
     },
   },
-  { bundledAgentWiring },
+  {
+    bundledAgentWiring,
+    updateDaemonHandoff: createUpdateDaemonHandoff(),
+  },
 ).then((exitCode) => {
   process.exitCode = exitCode;
 });

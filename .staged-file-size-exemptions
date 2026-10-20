@@ -255,3 +255,7 @@ specs/manage-sessions-table.md
 
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+
+# TEMPORARY upstream 3.16.1 sync (zcode-server-cli): oversized files that differ from the pending upstream blob; split each later and remove its line.
+packages/zcode-server-cli/src/cli.ts
+packages/zcode-server-cli/test/coreHttp.test.ts

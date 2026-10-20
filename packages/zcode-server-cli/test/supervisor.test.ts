@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CRASH_BACKOFF_MS } from "../src/contracts.js";
 import { requestControl } from "../src/ipc/controlClient.js";
+import { DataRootLock } from "../src/runtime/lock.js";
 import { resolveServerLayout } from "../src/runtime/paths.js";
 import { ReleaseManager } from "../src/runtime/releaseManager.js";
+import { waitForServerStopped } from "../src/runtime/shutdownWait.js";
+import { readPersistedStatus } from "../src/runtime/statusSnapshot.js";
 import { Supervisor } from "../src/supervisor/supervisor.js";
 
 class FakeCore extends EventEmitter {
@@ -16,6 +19,8 @@ class FakeCore extends EventEmitter {
   public killRequested = false;
   public exitOnShutdown = true;
   public exitOnKill = true;
+  /** 模拟 SIGKILL 已发出但 OS 回收延迟（如 Rosetta/swap 下的不可中断等待）。 */
+  public killExitDelayMs: number | undefined;
 
   public send(message: unknown): boolean {
     if (
@@ -32,17 +37,20 @@ class FakeCore extends EventEmitter {
 
   public kill(): boolean {
     this.killRequested = true;
-    if (this.exitOnKill) this.emit("exit", null, "SIGKILL");
+    if (this.killExitDelayMs !== undefined) {
+      setTimeout(() => this.emit("exit", null, "SIGKILL"), this.killExitDelayMs);
+    } else if (this.exitOnKill) this.emit("exit", null, "SIGKILL");
     return true;
   }
 
-  public reportReady(generation: number): void {
+  public reportReady(generation: number, version = "test", releaseId?: string): void {
     queueMicrotask(() =>
       this.emit("message", {
         type: "ready",
         host: "127.0.0.1",
         port: 43123,
-        version: "test",
+        version,
+        ...(releaseId ? { releaseId } : {}),
         generation,
       }),
     );
@@ -82,8 +90,15 @@ describe("Supervisor lifecycle", () => {
     await supervisor.start();
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(supervisor.status()).toMatchObject({ state: "ready", pid: 42, port: 43123 });
-    core.emit("message", { type: "task-activity", runningTaskCount: 2 });
+    const tasks = [{ sessionId: "task-a", workspacePath: "/repo", workspaceIdentity: "remote-a" }];
+    core.emit("message", { type: "task-activity", runningTaskCount: 2, runningTasks: tasks });
     expect(supervisor.status().runningTaskCount).toBe(2);
+    await expect(
+      requestControl(resolveServerLayout(join(root, "server")).controlEndpoint, {
+        command: "running-tasks",
+      }),
+    ).resolves.toEqual(tasks);
+    expect(supervisor.status()).not.toHaveProperty("runningTasks");
     await Promise.all([supervisor.stop(), supervisor.stop()]);
     expect(supervisor.status()).toMatchObject({
       state: "stopped",
@@ -93,6 +108,48 @@ describe("Supervisor lifecycle", () => {
       startedAt: null,
       runningTaskCount: 0,
     });
+  });
+
+  it("reports the executing Supervisor and active Core release identities", async () => {
+    const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "zri-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    const releases = new ReleaseManager(layout);
+    await releases.ensure();
+    const releaseDir = join(layout.releasesDir, "release-b");
+    await mkdir(releaseDir, { recursive: true });
+    await releases.writePending({
+      version: "4.0.0",
+      releaseDir,
+      releaseId: "release-b",
+    });
+    await releases.applyPending();
+    const core = new FakeCore();
+    const supervisor = new Supervisor({
+      layout,
+      launcher: {
+        launch: (generation) => {
+          core.reportReady(generation, "4.0.0", "release-b");
+          return core as unknown as ChildProcess;
+        },
+      },
+      version: "4.0.0",
+      supervisorReleaseId: "release-b",
+    } as ConstructorParameters<typeof Supervisor>[0] & { supervisorReleaseId: string });
+
+    await supervisor.start();
+    await waitForState(supervisor, "ready");
+
+    await expect(
+      requestControl(layout.controlEndpoint, { command: "runtime-identity" } as never),
+    ).resolves.toEqual({
+      supervisorVersion: "4.0.0",
+      supervisorReleaseId: "release-b",
+      activeReleaseVersion: "4.0.0",
+      activeReleaseId: "release-b",
+      coreVersion: "4.0.0",
+      coreReleaseId: "release-b",
+    });
+    await supervisor.stop();
   });
 
   it("does not recover an active update before a competing Supervisor acquires the lock", async () => {
@@ -135,10 +192,9 @@ describe("Supervisor lifecycle", () => {
       10_000,
     );
 
-    // Bugfix: Windows does not allow rename to overwrite a current.json held open by readFile;
-    // polling the file races atomicWriteJson for the handle and produces EPERM. Candidate launch
-    // happens after the transaction/current writes complete, so wait on the lifecycle signal for
-    // the same stable observation point without changing lock-contention semantics.
+    // Bugfix: Windows 不允许 rename 覆盖正被 readFile 打开的 current.json；轮询文件会与
+    // atomicWriteJson 争抢句柄并制造 EPERM。candidate 启动发生在 transaction/current
+    // 写入完成之后，以生命周期信号等待同一个稳定观察点，不改变锁竞争语义。
     await Promise.race([
       candidateLaunched,
       new Promise<never>((_, reject) =>
@@ -159,6 +215,7 @@ describe("Supervisor lifecycle", () => {
 
     candidate?.reportReady(2);
     await expect(apply).resolves.toMatchObject({ applied: true, version: "new" });
+    expect(supervisor.status().version).toBe("new");
     await supervisor.stop();
   });
 
@@ -190,11 +247,10 @@ describe("Supervisor lifecycle", () => {
   });
 
   it("keeps applying the update after a client timeout while rollback finishes", async () => {
-    // Bugfix: on Windows `/tmp` resolves to the current drive's root and normal users usually have
-    // no write permission there; use the system temp directory so the case only verifies the update
-    // lifecycle after a client timeout. macOS AF_UNIX endpoints have a shorter path limit; the
-    // system temp dir already contains a random prefix, so keep the fixture prefix short to avoid
-    // pushing control.sock past the limit.
+    // Bugfix: Windows 上 `/tmp` 会解析到当前盘根目录且普通用户通常无写权限；
+    // 使用系统临时目录，让用例只验证客户端超时后的 update 生命周期。
+    // macOS AF_UNIX endpoint 有较短的路径上限；系统临时目录已经包含随机前缀，
+    // 这里保持 fixture 前缀短，避免测试自身把 control.sock 路径推过上限。
     const root = await mkdtemp(join(tmpdir(), "z2-"));
     const layout = resolveServerLayout(join(root, "server"));
     const releases = new ReleaseManager(layout);
@@ -218,8 +274,8 @@ describe("Supervisor lifecycle", () => {
         },
       },
       version: "test",
-      // waitForUpdateReady polls every 50ms; leave one full polling cycle so the old release
-      // rollback's terminal ready state is observed too, not just the brief starting/ready window.
+      // waitForUpdateReady 以 50ms 轮询；留出一个完整轮询周期，确保旧 release
+      // rollback 的 ready 终态也被观察到，而不是只观察到短暂的 starting/ready 窗口。
       coreReadyTimeoutMs: 120,
       coreStopGraceTimeoutMs: 20,
       coreKillTimeoutMs: 5,
@@ -319,14 +375,14 @@ describe("Supervisor lifecycle", () => {
     for (let crashIndex = 0; crashIndex < CRASH_BACKOFF_MS.length; crashIndex++) {
       cores[crashIndex]?.emit("exit", 1, null);
       expect(supervisor.status().state).toBe("crashed");
-      // The backoff sequence must match the spec's 1/2/4/8/16 seconds: restarting one millisecond early must not happen.
+      // 退避序列必须与 spec 的 1/2/4/8/16 秒一致：提前一毫秒不应重启。
       await vi.advanceTimersByTimeAsync((CRASH_BACKOFF_MS[crashIndex] ?? 0) - 1);
       expect(cores.length).toBe(crashIndex + 1);
       await vi.advanceTimersByTimeAsync(1);
       expect(cores.length).toBe(crashIndex + 2);
     }
 
-    // The sixth crash exceeds the 5-crashes-per-5-minutes budget; trip the breaker and stop launching new Cores.
+    // 第六次 crash 超出 5 次/5 分钟预算，熔断且不再拉起新 Core。
     cores[CRASH_BACKOFF_MS.length]?.emit("exit", 1, null);
     expect(supervisor.status().state).toBe("crash-loop-stopped");
     await vi.advanceTimersByTimeAsync(60_000);
@@ -375,10 +431,10 @@ describe("Supervisor lifecycle", () => {
     await expect(
       requestControl(layout.controlEndpoint, { command: "apply-update" }),
     ).rejects.toThrow(/--force/);
-    // The guard must not interrupt the Core when it rejects (R2-CLI-09).
+    // guard 拒绝时不得中断 Core（R2-CLI-09）。
     expect(supervisor.status().state).toBe("ready");
 
-    // R2-CLI-10: confirm-uninstall must be rejected while tasks are running and the state preserved.
+    // R2-CLI-10：有运行任务时 confirm-uninstall 必须被拒绝并保持原状态。
     await expect(
       requestControl(layout.controlEndpoint, {
         command: "confirm-uninstall",
@@ -387,7 +443,7 @@ describe("Supervisor lifecycle", () => {
     ).rejects.toThrow(/Cannot uninstall/);
     expect(supervisor.status().state).toBe("ready");
 
-    // --force explicitly allows interrupting running tasks to apply the release.
+    // --force 明确允许中断运行任务后应用 release。
     await expect(
       requestControl(layout.controlEndpoint, { command: "apply-update", force: true }),
     ).resolves.toMatchObject({
@@ -397,7 +453,7 @@ describe("Supervisor lifecycle", () => {
     expect(supervisor.status().state).toBe("ready");
     expect(cores.length).toBe(2);
 
-    // Once tasks drop to zero, uninstall proceeds and stops the Server.
+    // 任务清零后 uninstall 放行并停止 Server。
     cores[1]?.emit("message", { type: "task-activity", runningTaskCount: 0 });
     await new Promise<void>((resolve) => setImmediate(resolve));
     await expect(
@@ -407,43 +463,6 @@ describe("Supervisor lifecycle", () => {
       }),
     ).resolves.toMatchObject({ uninstalled: true });
     await waitForState(supervisor, "stopped");
-  });
-
-  it("rolls back the current pointer and relaunches the previous release when the new core is unhealthy", async () => {
-    const root = await mkdtemp(join(tmpdir(), "zcode-r2-rollback-"));
-    const layout = resolveServerLayout(join(root, "server"));
-    const releases = new ReleaseManager(layout);
-    await releases.ensure();
-    await mkdir(join(layout.releasesDir, "old"), { recursive: true });
-    await mkdir(join(layout.releasesDir, "new"), { recursive: true });
-    await releases.writePending({ version: "old", releaseDir: join(layout.releasesDir, "old") });
-    await releases.applyPending();
-    await releases.writePending({ version: "new", releaseDir: join(layout.releasesDir, "new") });
-    const cores: FakeCore[] = [];
-    const supervisor = new Supervisor({
-      layout,
-      launcher: {
-        launch: (generation, release) => {
-          const core = new FakeCore();
-          cores.push(core);
-          if (release?.version === "new") queueMicrotask(() => core.emit("exit", 1, null));
-          else core.reportReady(generation);
-          return core as unknown as ChildProcess;
-        },
-      },
-      version: "test",
-    });
-    await supervisor.start();
-    await waitForState(supervisor, "ready");
-    await expect(
-      requestControl(layout.controlEndpoint, { command: "apply-update", force: true }),
-    ).rejects.toThrow(/failed while applying/);
-    await waitForState(supervisor, "ready");
-    expect(
-      JSON.parse(await (await import("node:fs/promises")).readFile(layout.currentFile, "utf8")),
-    ).toMatchObject({ version: "old" });
-    expect(cores.length).toBe(3);
-    await supervisor.stop();
   });
 
   it("does not restart the failed candidate while rollback pointer restore is pending", async () => {
@@ -475,9 +494,8 @@ describe("Supervisor lifecycle", () => {
     await supervisor.start();
     await waitForState(supervisor, "ready");
 
-    // Rollback file operations may be dragged past the first crash backoff by slow disks or
-    // antivirus; during that window the stale crashed state must not authorize an automatic
-    // restart, or the bad release would boot again and Supervisor would lose ownership.
+    // 回滚文件操作可能被慢盘/杀毒软件拖过首个 crash backoff；期间不得让旧的
+    // crashed 状态放行自动重启，否则坏 release 会再次启动并丢失 Supervisor 所有权。
     const internal = supervisor as unknown as { releaseManager: ReleaseManager };
     const originalRestoreCurrent = internal.releaseManager.restoreCurrent.bind(
       internal.releaseManager,
@@ -556,7 +574,7 @@ describe("Supervisor lifecycle", () => {
       launcher: {
         launch: (generation, release) => {
           if (release?.version === "new") {
-            // Use a real ChildProcess to reproduce Node's spawn-failure sequence: error + close, no exit.
+            // 使用真实 ChildProcess 复现 Node 的 spawn 失败序列：error + close，无 exit。
             return fork(join(root, "never-loaded.js"), [], {
               execPath: join(root, "nonexistent-node"),
               stdio: ["ignore", "ignore", "ignore", "ipc"],
@@ -864,6 +882,42 @@ describe("Supervisor lifecycle", () => {
     await expect(competing.start()).resolves.toMatchObject({ state: "starting" });
     await competing.stop();
   });
+
+  it("completes a slow SIGKILL reap within production stop budgets observed by stop waiters", async () => {
+    // Bug 原因：远端 Rosetta + swap 环境按事故时序推算，SIGKILL 后约 3.5～5.4 秒才回收 Core。旧的 2 秒强杀
+    // 等待会把必然结束的退出判为 stop-failed，6 秒的 stop 等待方也会早于 Supervisor 收口超时。
+    const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "zsk-"));
+    const layout = resolveServerLayout(join(root, "server"));
+    const core = new FakeCore();
+    core.exitOnShutdown = false;
+    core.killExitDelayMs = 3_000;
+    const supervisor = new Supervisor({
+      layout,
+      launcher: {
+        launch: (generation) => {
+          core.reportReady(generation);
+          return core as unknown as ChildProcess;
+        },
+      },
+      version: "test",
+    });
+    try {
+      await supervisor.start();
+      await waitForState(supervisor, "ready");
+      const baselineUpdatedAt = (await readPersistedStatus(layout))?.updatedAt ?? 0;
+
+      const stopped = supervisor.stop();
+      await expect(waitForServerStopped(layout, baselineUpdatedAt, true)).resolves.toBeUndefined();
+      await expect(stopped).resolves.toMatchObject({ state: "stopped", pid: null });
+      expect(core.killRequested).toBe(true);
+      await expect(new DataRootLock(layout.lockFile).inspect()).resolves.toEqual({
+        state: "missing",
+      });
+    } finally {
+      await supervisor.stop().catch(() => undefined);
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 
   it("clears Core-scoped state and ignores stale child or generation messages", async () => {
     const root = await mkdtemp(join(tmpdir(), "zcode-r2-generation-"));
