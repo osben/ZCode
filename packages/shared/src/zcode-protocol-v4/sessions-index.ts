@@ -1,6 +1,6 @@
 // sessions-index topic: live data source for the list; conflated latest state that never overflows.
 import { z } from "zod";
-import { zcodeExecutionWorktreeSchema } from "../zcode-protocol/index.js";
+import { zcodeExecutionWorktreeSchema } from "./execution-worktree.js";
 import { timestampSchema } from "./core.js";
 import { sessionWorkflowActivitySchema } from "./sessions-index-workflow-activity.js";
 import {

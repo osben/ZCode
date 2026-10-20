@@ -902,7 +902,8 @@ export function createZCodeAgentConnectionScope(
       // 页面创建只属于本地桌面；手机回放和 relay 不拥有原生 guest。
       if (role !== "terminal-client" || context.clientMode !== "desktop-continuous")
         return RpcEvent.None;
-      return base.onDynamicPluginUiToolResult();
+      // The member is optional on the agent contract until the desktop consumer is synced (services part 4).
+      return base.onDynamicPluginUiToolResult?.() ?? RpcEvent.None;
     },
     onDynamicCuaPermissionObservation() {
       assertOpen();

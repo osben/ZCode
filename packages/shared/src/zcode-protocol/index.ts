@@ -36,6 +36,7 @@ export { conversationQuoteSchema, conversationQuotesSchema } from "../conversati
 // Delete this whole file when the legacy protocol client/server groups above are removed.
 // Note: schemas with no external consumers are often internal dependencies of live schema unions; handle them with their host file, not individually.
 import { z } from "zod";
+import { zcodeExecutionWorktreeSchema } from "../zcode-protocol-v4/execution-worktree.js";
 import { accountProviderUnavailableReasonSchema } from "../account-provider-state.js";
 import { incognitoProfileSchema } from "../incognito-profile.js";
 import { bashOutputDisplaySchema } from "../bash-output-display.js";
@@ -126,6 +127,13 @@ export {
   type HookExecutionProjection,
   type HookInvocationRow,
 } from "../zcode-protocol-v4/rows.js";
+
+export {
+  sessionsIndexReconcileParamsSchema,
+  sessionsIndexReconcileResultSchema,
+  type SessionsIndexReconcileParams,
+  type SessionsIndexReconcileResult,
+} from "../zcode-protocol-v4/sessions-index.js";
 
 export const ZCODE_PROTOCOL_NAME = "ZCode Protocol" as const;
 export const ZCODE_PROTOCOL_VERSION = 1 as const;
@@ -1930,19 +1938,10 @@ export type ZCodeSessionSubagentsResult = z.infer<typeof zcodeSessionSubagentsRe
 /** Zod representation in the protocol of the server feature-key domain (packages/shared/src/dynamic-workflow-feature.ts). */
 export const zcodeDynamicWorkflowModeSchema = z.enum(DYNAMIC_WORKFLOW_MODES);
 
-/**
- * Execution worktree for sessions whose agent runs in a linked git worktree while the session
- * stays listed under the parent workspace. `path` is the absolute worktree directory used as the
- * session execution cwd; `branchName` is the checked-out branch, persisted for display only.
- */
-export const zcodeExecutionWorktreeSchema = z
-  .object({
-    path: nonEmptyString,
-    // Optional: cold sessions-index seeds read the persisted row where the branch may be absent.
-    branchName: nonEmptyString.optional(),
-  })
-  .strict();
-export type ZCodeExecutionWorktree = z.infer<typeof zcodeExecutionWorktreeSchema>;
+export {
+  zcodeExecutionWorktreeSchema,
+  type ZCodeExecutionWorktree,
+} from "../zcode-protocol-v4/execution-worktree.js";
 
 export const zcodeSessionCreateParamsSchema = z
   .object({

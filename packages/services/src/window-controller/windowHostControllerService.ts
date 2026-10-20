@@ -416,6 +416,9 @@ export function createWindowHostControllerRuntime(options: {
     const service = current.taskService;
     const base = mutationParams(address);
     switch (mutation.kind) {
+      case "rename":
+        await service.renameTask({ ...base, title: mutation.title });
+        break;
       case "pin":
         await service.setTaskPinned({ ...base, pinned: mutation.pinned });
         break;

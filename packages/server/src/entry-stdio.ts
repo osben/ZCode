@@ -1,4 +1,4 @@
-import { migrateApplicationStorage, createSettingService } from "@zcode/services/node";
+import { migrateApplicationStorage } from "@zcode/services/node";
 import { disposeServiceResourcesAndWait, getAppConfigDir } from "@zcode/services/node";
 import type { IChannel } from "@zcode/rpc";
 import {
@@ -65,7 +65,8 @@ async function main() {
     environmentConfigRoot: getAppConfigDir(),
     content: readBundledZCodeBuiltinProviderConfig(),
   });
-  await migrateApplicationStorage(await createSettingService().get());
+  // Fork form: no settings argument. The projected settings seed has no live consumer (services part 4, section 7).
+  await migrateApplicationStorage();
   const { authorityModeParseResult, services } = createStdioServices({
     env: process.env,
     zcodeBuiltinProviderConfigFilePath,
