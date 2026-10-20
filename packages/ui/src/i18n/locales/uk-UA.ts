@@ -7939,6 +7939,8 @@ const ukUA: Record<string, string> = {
   "bots.boundGroups.title": "Прив'язані групи",
   "bots.boundGroups.count": "{count} тем",
   "bots.boundGroups.countOne": "{count} тема",
+  "bots.boundGroups.count.one": "{count} тема",
+  "bots.boundGroups.count.other": "{count} тем",
   "bots.boundGroups.toggle": "Увімкнути групу: {name}",
   "bots.boundGroups.loading": "Завантаження груп…",
   "bots.boundGroups.empty":

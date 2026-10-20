@@ -46,6 +46,14 @@ vi.mock("@/hooks/useServices.js", () => ({
   useOptionalServices: () => ({
     highspeedCardService: { share: vi.fn() },
   }),
+  // The live throughput pipeline (useSessionThroughput → useSessionDebug) reads the session debug snapshot;
+  // returning null in tests is enough and does not affect assertions (the throughput label renders only when
+  // data exists).
+  useServices: () => ({
+    zcodeAgentService: {
+      readSessionDebug: async () => null,
+    },
+  }),
 }));
 const topicInterrupted = vi.hoisted(() => vi.fn(() => false));
 vi.mock("@/v4/botGroupDeliveryContext.js", async (importOriginal) => ({
