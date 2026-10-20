@@ -58,7 +58,14 @@ const ZCODE_AGENT_RUNTIME = {
 const releaseDir = join(mockCdnDir, "releases", version);
 const nodeVersion = "v22.16.0";
 const componentSchemaVersion = 1;
-const remotePlatforms = ["linux-arm64", "linux-x64", "darwin-arm64", "darwin-x64"];
+export function resolveRemotePlatforms(argv) {
+  const platforms = ["linux-arm64", "linux-x64", "darwin-arm64", "darwin-x64"];
+  return argv.includes("--linux")
+    ? platforms.filter((target) => target.startsWith("linux-"))
+    : platforms;
+}
+
+const remotePlatforms = resolveRemotePlatforms(process.argv.slice(2));
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const isBootstrapWithRemote = process.env.ZCODE_BOOTSTRAP_WITH_REMOTE === "1";
 

@@ -352,7 +352,7 @@ export default defineConfig([
     name: "host",
     entry: {
       "host/index": "src/host/index.ts",
-      "host/tasksStorageWorker": "src/host/database-startup/tasksStorageWorker.ts",
+      "host/tasksStorageWorker": "src/host/tasksStorageWorker.ts",
     },
     outDir: "out",
     format: "esm",

@@ -124,7 +124,7 @@ describe("highspeed metrics persistence", () => {
     expect(events[0]?.type).toBe("highspeed_metrics_updated");
   });
 
-  it("终态耗时持久化把 live 投影的 fallbackAt 写入 metadata 与事件，已持久化的值优先", async () => {
+  it.each(["highspeed_request_failed", "highspeed_selection_unavailable"] as const)("persists fallback reason %s without overwriting the first persisted value", async (initialReason) => {
     // CR-02 回归：fallbackAt 只存在于 live 投影；不随终态写入 transcript 时，
     // HighspeedMetricsUpdated 的 payload 与 cold hydration 都拿不到它。
     let current = userInfo();
@@ -144,7 +144,7 @@ describe("highspeed metrics persistence", () => {
     } as unknown as SessionEventStorePort;
     const persist = (
       fallbackAt: number,
-      fallbackReason: "highspeed_card_expired" | "highspeed_request_failed",
+      fallbackReason: NonNullable<Parameters<typeof persistHighspeedTiming>[0]["fallbackReason"]>,
     ) =>
       persistHighspeedTiming({
         sessionStore,
@@ -160,22 +160,22 @@ describe("highspeed metrics persistence", () => {
         onPersistedEvent: () => undefined,
       });
 
-    await persist(5_000, "highspeed_request_failed");
+    await persist(5_000, initialReason);
     const persisted = current.metadata?.highspeed as Record<string, unknown>;
     expect(persisted?.fallbackAt).toBe(5_000);
     // fallbackReason 与 fallbackAt 同源同规则持久化，冷恢复后 Toast 文案才不会退回“卡已到期”。
-    expect(persisted?.fallbackReason).toBe("highspeed_request_failed");
+    expect(persisted?.fallbackReason).toBe(initialReason);
     expect(current.metadata?.conversationInputIntent).toMatchObject({
-      highspeed: { fallbackAt: 5_000, fallbackReason: "highspeed_request_failed" },
+      highspeed: { fallbackAt: 5_000, fallbackReason: initialReason },
     });
     expect(events[0]?.payload).toMatchObject({
-      highspeed: { fallbackAt: 5_000, fallbackReason: "highspeed_request_failed" },
+      highspeed: { fallbackAt: 5_000, fallbackReason: initialReason },
     });
 
     // 只增不删：transcript 已有 fallbackAt/fallbackReason 时不被后到的 live 值改写。
     await persist(9_000, "highspeed_card_expired");
     const after = current.metadata?.highspeed as Record<string, unknown>;
     expect(after?.fallbackAt).toBe(5_000);
-    expect(after?.fallbackReason).toBe("highspeed_request_failed");
+    expect(after?.fallbackReason).toBe(initialReason);
   });
 });

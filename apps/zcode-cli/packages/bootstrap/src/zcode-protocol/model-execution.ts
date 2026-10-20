@@ -6,6 +6,11 @@ import type { SendInputOptions } from "../app/types.js";
 export function createModelExecutionContext(
   input: NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>,
 ): NonNullable<SendInputOptions["modelExecution"]> {
+  const subagents = input.subagents;
+  // The shared wire schema can describe newer runtimes; this Core still requires execution-scoped children to stay foreground.
+  if (subagents && subagents.background !== "deny") {
+    throw new Error("This runtime does not support background agents with execution-scoped models");
+  }
   const requestAuth = input.requestAuth ? freezeRequestAuth(input.requestAuth) : undefined;
   return {
     ...(input.memoryExtraction ? { memoryExtraction: input.memoryExtraction } : {}),
@@ -15,7 +20,9 @@ export function createModelExecutionContext(
           requestDependencies: { requestAuth: { source: { resolve: async () => requestAuth } } },
         }
       : {}),
-    ...(input.subagents ? { subagents: input.subagents } : {}),
+    ...(subagents
+      ? { subagents: { foregroundModel: subagents.foregroundModel, background: "deny" as const } }
+      : {}),
     ...(input.selectionFallback ? { selectionFallback: input.selectionFallback } : {}),
   };
 }

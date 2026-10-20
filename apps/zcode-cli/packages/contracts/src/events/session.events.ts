@@ -751,10 +751,9 @@ export interface ModelSelectedPayload {
 
 /**
  * Reason that the execution Selection fell back to the session Selection. Uses the same value set as
- * @zcode/shared's selectionFallback rule: an expired card is identified by a declared provider error
- * code; every other accelerated-request failure is classified as request_failed.
+ * @zcode/shared's selectionFallback rule and persisted highspeed metadata share this reason set.
  */
-export type TurnExecutionModelFallbackReason = "highspeed_card_expired" | "highspeed_request_failed";
+export type TurnExecutionModelFallbackReason = NonNullable<HighspeedMessageMetadata["fallbackReason"]>;
 
 export interface TurnExecutionModelFallbackPayload {
   inputId?: string;

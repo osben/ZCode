@@ -249,3 +249,7 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
+
+# Bounded repairs to existing centralized build and event-contract files.
+scripts/prepare-prebuilds.mjs
+apps/zcode-cli/packages/contracts/src/events/session.events.ts
