@@ -67,6 +67,31 @@ PR 1 keeps the fork's version of every file whose upstream version would not com
 - Locale-switch e2e cases that fail the English e2e copy rule (`scripts/check-test-copy.mjs`): `settings/settings-client-language-header`, `manual-review/pending/web-remote-control-auth-gate`, `conversation-session-archive-management`, `conversation-session-project-composer`, `conversation-session-project-missing-primary-root`, `conversation-session-r3-ui-pairwise`. Re-add with the translation follow-up PR or with a fork English variant.
 - Upstream `package.json` changes (`imports` map for `#src/*` and `#e2e/*`, `test:auto-update-install-reentry-smoke`, and the removed `prepare:remote-assets`): PR 3.
 
+## PR 3 slice (branch `claude/upstream-sync-desktop-3`)
+
+Stacked on `claude/upstream-sync-desktop-1` (#210) with `origin/integration` merged in. The `.staged-file-size-exemptions` and e2e import conflicts were resolved as the union (see the merge commit).
+
+Decisions in this slice:
+
+- `package.json`: integration already carries the upstream dependency bumps (`@larksuiteoapi/node-sdk` 1.75.0, `ws` 8.22, `transcribe-cpp`) through the services sync. They are kept, not reverted to the 0a1fc56d pins, to keep the lockfile consistent with services. `prepare:remote-assets` is restored as a fork divergence: `prepare-runtime-assets.mjs` (fork), `docs/bootstrap.md`, `wdio.conf.ts` and `fork-release.yml` (`ZCODE_SKIP_REMOTE_ASSETS`) still use it, and `scripts/prepare-prebuilds.mjs` exists in the repo. Upstream removed it. Remove this divergence only when the fork release path stops using it.
+- `tsconfig.main.json`: taken from upstream (`noEmit`, `rootDir: src`, `src/shared` and `src/scheduler` included), English reference comment kept. `tsconfig.main` is not a root `pnpm typecheck` gate. Its error count fell from about 477 to about 421 lines (mostly unbuilt project references). `tsconfig.remote-main.json` is identical on both sides and includes relay files, so it is untouched.
+- `src/main/index.ts`: three-way merge; the relay-coupled hunks are kept verbatim from the fork (see below). Upstream hunks applied: `appSettingsPatchSchema` typing for `syncImmediateAppSettings`, Electron `net.fetch` URL normalization for telemetry, `getClientLanguage` for help config and client-config fetcher, the context-prompt prewarm moved after the persisted locale is read, linux tray late-creation unread replay, and the `protocolUrl &&` guard for startup deep links.
+- `src/main/desktopContextPromptRollout.ts`: upstream (fork changed only one comment, which is kept in English).
+- `src/main/autoUpdater.ts`: NOT merged in this slice (design decision needed, see below).
+
+Deferred in this slice, with reasons:
+
+- `src/main/index.ts` relay-coupled hunks (kept as fork, untouched): `createNodeWebRemoteControlRelayAuthProvider` and `createWebRemoteControlRelayAuthStorageProvider` replaced by the relay v2 `createWebRemoteControlDeviceStorage`; `prepareProjectWorkspace` / `cancelProjectPreparation` manager options; removal of `restorePreviouslyEnabledWebRemoteControl` and `syncWebRemoteControlTasks`.
+- `src/main/index.ts` source-server and bot wiring: upstream moved `handleBotRemoteWorkspace*Request` handlers out of the window-host bridge (into the source-server resolver group). The fork keeps them, including the fork `/remote` link handler. `attachSourceSettings` (needs `InternalChannels.SourceSettingsServicePort`, which the shared slice does not yet provide) is deferred.
+- `src/main/index.ts` hunks that depend on fork-diverged files: `browserGuestManager.updateViewportFromRenderer` (fork kept its `desktopZoomFactor` argument) and `desktopHostProcess` `onPluginTelemetry` and `remoteAssets` host options (the fork `desktopHostProcess.ts` lacks them, and it was changed on both sides).
+- `applyApplicationLocale` posting `HostMessageTypes.ApplicationLocaleChanged` to Hosts: the constant does not exist in `packages/shared` on this branch. Needs the shared slice.
+- `src/main/autoUpdater.ts`: both sides rewrote the quit-and-install state machine. The fork has a "3.15.3 parity" implementation (`quitAndInstallPhase`, `settlingCheckForUpdates`, dictation mute before install, English comments). Upstream 3.16.1 uses `quitAndInstallState` with `isUpdateTargetLocked()` and defers the downloaded publish until the download promise settles (`pendingDownloadedUpdate`). Both are the same concept with different designs. A three-way merge gives 13 conflicts. Decision needed: adopt the upstream state machine and re-apply the fork dictation mute calls (`restoreDictationSystemMuteForShutdown`), or keep the fork machine and document the divergence. Not merged until decided.
+- `wdio.conf.ts`: full three-way merge has 18 conflicts across fork e2e fixtures (seed helpers, mock servers, timeouts, `ZCODE_E2E_MOCHA_GREP`, `configureZCodeAgentServerEnv`, `withE2EDesktopBuildLock`). Not merged: the e2e behavior cannot be validated in this environment. The `TEMPORARY (PR 1)` option is still present and must be resolved in the next PR.
+- `src/main/pluginSandbox/*`, `src/preload/pluginSandbox/hostBridge.ts`, `src/renderer/src/plugin-sandbox/*`, and `src/main/embedded-browser-permission-contract/*`: not started. They depend on `browserScreenshotActivityController.ts` and `embeddedBrowserPermissionPolicy.ts`, which are fork-changed.
+- Source-server wiring (`connectDesktopSourceServer`, `sourceServer*`, `botRemoteWorkspaceResolver`, `remoteWorkspacePreparation`, `serverRemoteDuplexTransport`, `sourceServerOperationLogs`, `sourceServerStartupReconnect`, preload `remoteWorkspaceBindBridge`): not started. `@zcode/services/node` exports `createServerHostServices` (`packages/services/src/node.ts`) on this branch, so the services side exists. The host wiring is the next step.
+- Database startup 2-argument ordering gap: `prepareTasksIndexStorage(path, onProgress)` in `packages/services/src/project-storage/startup.ts` still has no third (legacy settings) argument, so `src/host/database-startup/tasksStorageWorker.ts` keeps the 2-argument `DEFERRED` call. Services-owned: fix in the services startup sync, not here.
+- Reverted desktop tests (about 63) whose subject files are not yet synced: not re-synced in this slice.
+
 ## Compatibility members (remove in the final desktop PR)
 
 - None in PR 1.
