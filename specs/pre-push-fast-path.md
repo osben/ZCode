@@ -2,16 +2,21 @@
 
 ## Rules and ownership
 
-`pnpm verify:pre-push` owns the sequential local gate: lint, architecture,
-affected Vitest, then the complete `test:node` suite. A failed stage stops the
-gate and preserves its nonzero exit status. Every executed stage reports its
-start, result and elapsed time; the gate also reports total elapsed time.
+`pnpm verify:pre-push` (`scripts/run-pre-push.mjs`) owns the sequential local
+gate: lint, the architecture governance tests (`test:architecture`),
+`architecture:check --changed`, `test-copy:check`, affected Vitest
+(`test:unit:affected -- --scope push`), then the complete `test:node` suite. A
+failed stage stops the gate and preserves its nonzero exit status. Every executed
+stage reports its start, result and elapsed time; the gate also reports total
+elapsed time. The SQLite schema contract check is not part of the gate yet; it
+returns with the product sync that provides its shared migration module.
 
-The existing affected-test resolver remains the single owner of the comparison
-target: explicit base, Git pre-push input, upstream, then default branch. The
-default-branch fallback prefers `origin/HEAD`, then `origin/integration`, before
-the legacy `origin/staging` fallback. An existing remote branch still uses the
-remote SHA supplied by Git.
+`scripts/pre-push-diff-target.mjs` owns the documentation-only comparison target:
+explicit base, Git pre-push input, upstream, then default branch. The
+default-branch fallback prefers `origin/HEAD`, then `origin/integration`, then
+`origin/staging`, `origin/main`, `origin/master`, `main` and `master`. An existing
+remote branch still uses the remote SHA supplied by Git. Affected Vitest scope
+selection is owned by upstream `scripts/run-affected-unit-tests.mjs`.
 
 Only a nonempty, known diff consisting entirely of root-level `.md` files or
 `.md` files inside `docs/` and `specs/` may skip both test stages. Lint and
@@ -29,11 +34,12 @@ This cache only accelerates compilation; it never caches a test result or skips
 an executed check.
 
 ```text
-Git refs -> affected-test target resolver -> documentation classification
-                                         -> lint -> architecture
+Git refs -> pre-push diff target resolver -> documentation classification
+                                          -> lint -> test:architecture -> architecture:check
+                                              -> test-copy:check
                                               -> documentation only: skip tests
-                                              -> otherwise: affected -> node tests
-                                         -> result + elapsed time
+                                              -> otherwise: affected (--scope push) -> node tests
+                                          -> result + elapsed time
 ```
 
 ## Acceptance scenarios

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 
-import { resolveDiffTarget } from "./run-affected-unit-tests.mjs";
+import { resolveDiffTarget } from "./pre-push-diff-target.mjs";
 
 const exec = promisify(execFile);
 const root = process.cwd();
@@ -62,8 +62,14 @@ async function main() {
     throw new Error("Run this gate with pnpm run verify:pre-push.");
   }
   const docsOnly = await isDocumentationOnly();
-  const stages = [["lint"], ["architecture:check", ["--", "--changed"]], ["test-copy:check"]];
-  if (!docsOnly) stages.push(["test:unit:affected"], ["test:node"]);
+  // Order follows upstream verify:pre-push: architecture contracts run before the affected tests.
+  const stages = [
+    ["lint"],
+    ["test:architecture"],
+    ["architecture:check", ["--", "--changed"]],
+    ["test-copy:check"],
+  ];
+  if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {
     const status = await runStage(task, args);
     if (status !== 0) return status;
