@@ -3,8 +3,7 @@
 ## Rules and ownership
 
 `pnpm verify:pre-push` (`scripts/run-pre-push.mjs`) owns the sequential local
-gate: lint, the architecture governance tests (`test:architecture`),
-`architecture:check --changed`, `test-copy:check`, affected Vitest
+gate: lint, `architecture:check --changed`, `test-copy:check`, affected Vitest
 (`test:unit:affected -- --scope push`), then the complete `test:node` suite. A
 failed stage stops the gate and preserves its nonzero exit status. Every executed
 stage reports its start, result and elapsed time; the gate also reports total
@@ -42,7 +41,7 @@ an executed check.
 
 ```text
 Git refs -> pre-push diff target resolver -> documentation classification
-                                          -> lint -> test:architecture -> architecture:check
+                                          -> lint -> architecture:check --changed
                                               -> test-copy:check
                                               -> documentation only: skip tests
                                               -> otherwise: affected (--scope push) -> node tests

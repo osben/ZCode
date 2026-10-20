@@ -86,14 +86,13 @@ if (process.env.FAIL_STAGE && process.argv[3] === process.env.FAIL_STAGE) proces
 
 const allStages = [
   "lint",
-  "test:architecture",
   "architecture:check",
   "test-copy:check",
   "test:unit:affected",
   "test:node",
 ];
 // Documentation-only pushes run the static stages and skip both test stages.
-const staticStages = allStages.slice(0, 4);
+const staticStages = allStages.slice(0, 3);
 
 test("supports executable package managers as well as JS entry points", async (t) => {
   const f = await fixture(t);
@@ -122,7 +121,7 @@ test("documentation-only commits run static checks and skip both test stages", a
   assert.match(result.stdout, /documentation-only.*skip/iu);
   assert.match(result.stdout, /lint.*passed.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
-  assert.deepEqual(result.calls[2].args, ["run", "architecture:check", "--", "--changed"]);
+  assert.deepEqual(result.calls[1].args, ["run", "architecture:check", "--", "--changed"]);
 });
 
 test("deleted documentation is safe to skip", async (t) => {
@@ -201,7 +200,7 @@ test("a failing stage preserves its status, reports timing and stops subsequent 
   await f.commit();
   const result = await f.run({ FAIL_STAGE: "architecture:check" });
   assert.equal(result.code, 7);
-  assert.deepEqual(result.stages, allStages.slice(0, 3));
+  assert.deepEqual(result.stages, allStages.slice(0, 2));
   assert.match(result.stdout, /architecture:check.*failed.*7.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
 });

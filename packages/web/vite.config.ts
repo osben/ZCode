@@ -17,10 +17,7 @@ import {
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
-const { version, zcodeCompatibility } = JSON.parse(
-  readFileSync(resolve(REPO_ROOT, "package.json"), "utf-8"),
-) as { version: string; zcodeCompatibility?: { minCompatibleVersion?: string } };
-const minCompatibleVersion = zcodeCompatibility?.minCompatibleVersion ?? version;
+const { version } = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf-8"));
 
 function resolveZCodeEnv(value: string | undefined): "test" | "production" {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -88,7 +85,6 @@ export default defineConfig(({ mode }) => {
       __ZCODE_VERSION__: JSON.stringify(
         resolveRemoteFrontendVersion(version, process.env.WEB_REMOTE_FRONTEND_VERSION),
       ),
-      __ZCODE_MIN_COMPATIBLE_VERSION__: JSON.stringify(minCompatibleVersion),
       __ZCODE_COMMIT__: JSON.stringify(env.ZCODE_COMMIT || "unknown"),
       __ZCODE_ENV__: JSON.stringify(zcodeEnv),
       "import.meta.env.VITE_ZCODE_BASE_URL": JSON.stringify(zcodeEndpointOrigin),
@@ -97,7 +93,6 @@ export default defineConfig(({ mode }) => {
       // Inject public OAuth configuration explicitly so Web does not implicitly depend on source fallbacks in different modes.
       "import.meta.env.VITE_ZAI_OAUTH_CLIENT_ID": JSON.stringify(zaiOAuthClientId),
       "import.meta.env.VITE_ZAI_OAUTH_ORIGIN": JSON.stringify(zaiOAuthOrigin),
-      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN": JSON.stringify(bigmodelOAuthOrigin),
     },
     build: {
       // Do not expose sourceMappingURL in production browser assets, to prevent reconstructing application source on the client.
