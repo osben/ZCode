@@ -1376,7 +1376,7 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
             onRenameTask={handleRenameTask}
             onSetTaskPinned={handleSetTaskPinned}
             onArchiveTask={handleArchiveTask}
-            onDeleteTask={(taskId) => void handleStartTaskDelete(taskId)}
+            onDeleteTask={handleStartTaskDelete}
             onSetTaskUnread={handleSetTaskUnread}
             readOnlyReason={readOnlyReason}
           />
