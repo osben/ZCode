@@ -2642,6 +2642,9 @@ export function createLocalServices(options: {
       createBotsService({
         credentialService,
         zcodeTaskService,
+        projectService,
+        remoteProjectService,
+        ownerHostId: options?.projectStorageHostId,
         broadcastService,
         settingService,
         modelSelectionService: providerRuntime.modelSelection,

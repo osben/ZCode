@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 import {
@@ -11,8 +12,10 @@ import {
 import { getAppConfigDir } from "../paths.js";
 import {
   BOTS_CONFIG_FILE,
+  BOTS_CONFIG_PRE_PROJECT_IDENTITY_FILE,
   BOTS_LEGACY_CONFIG_FILE,
   BOTS_LEGACY_STATE_FILE,
+  BOTS_STATE_PRE_PROJECT_IDENTITY_FILE,
   BOTS_V2_STATE_FILE,
   BOTS_STATE_FILE,
   createDefaultBotsConfig,
@@ -53,6 +56,27 @@ export class BotsRepo {
     const path = join(getAppConfigDir(), BOTS_CONFIG_FILE);
     await withFileLock(path, () => writeJson(path, parsed));
     return parsed;
+  }
+
+  /**
+   * Copies the current v3 config and state once, before the first project-identity rewrite.
+   * An existing backup is never overwritten, so a later run cannot replace the true pre-migration copy.
+   */
+  async backupBeforeProjectIdentityMigration(): Promise<void> {
+    const dir = getAppConfigDir();
+    const pairs = [
+      [BOTS_CONFIG_FILE, BOTS_CONFIG_PRE_PROJECT_IDENTITY_FILE],
+      [BOTS_STATE_FILE, BOTS_STATE_PRE_PROJECT_IDENTITY_FILE],
+    ] as const;
+    for (const [source, backup] of pairs) {
+      await withFileLock(join(dir, source), () =>
+        copyFile(join(dir, source), join(dir, backup), constants.COPYFILE_EXCL).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code !== "EEXIST") throw error;
+          },
+        ),
+      );
+    }
   }
 
   async readState(): Promise<BotsStateFile> {
