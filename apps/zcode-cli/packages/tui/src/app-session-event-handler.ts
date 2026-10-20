@@ -8,28 +8,28 @@ import { isSubagentToolMirror } from "./app-subagent-events.js";
 type SessionEventHandlers = Parameters<typeof applySessionEventToState>[1];
 
 /**
- * Bounded memory window for IDs of applied events.
+ * 已应用事件 id 的记忆窗。
  *
- * Why this is needed: the cross-turn persistent subscription and per-turn `onEvent` can both deliver the same event.
- * The mirror is immune to duplicate delivery (the shared reducer returns null for an event it just reduced), but the transcript is not:
- * events such as `assistant_message` are appended unconditionally, so duplicate delivery shows the reply twice.
+ * 为什么需要：跨回合常驻订阅与 per-turn `onEvent` 会**同时**投同一条事件。镜像本身对
+ * 重复投递免疫（共享 reducer 对刚归约完的同一条事件返回 null），但转写不是——
+ * `assistant_message` 之类是无条件 append，双投会让回复在屏幕上出现两次。
  *
- * A bounded window is enough: the two sinks fire sequentially on the same emit, so duplicates are always adjacent and there is no need to remember the entire session.
+ * 有界即够：两个 sink 是在同一次 emit 上先后触发的，重复永远紧邻，不需要记住整场会话。
  */
 const MAX_REMEMBERED_EVENT_IDS = 2_048;
 
 /**
- * Allow only **main-session** events into the transcript.
+ * 只让**主会话**的事件进转写。
  *
- * Why filtering is required: raw actor/subsession events are delivered through `notifyExternalChildSessionEvent` into
- * **the same external sink set as the parent runtime**, while **retaining the child's sessionId** (the protocol uses it to route the event
- * to the desktop as a detached live session). The TUI sink is attached to that set, as is per-turn onEvent,
- * so without filtering, actor streaming deltas, tool calls, submit_result, and turn_complete would all appear in the main transcript.
+ * 为什么必须过滤：actor / 子会话的原始事件会经 `notifyExternalChildSessionEvent` 投进
+ * **父 runtime 的同一个外部 sink 集**，并且**保留子自己的 sessionId**（协议层据此按
+ * detached live session 路由给桌面）。TUI 的 sink 就挂在那个集合上，per-turn onEvent 也一样，
+ * 所以不过滤的话 actor 的流式增量、工具调用、submit_result、turn_complete 会全部画进主转写。
  *
- * DWF progress events are **parent-session** events (`session.events.ts:134`, "append to parent session"), so tool cards
- * and settled completion turns are unaffected; they remain the only two workflow surfaces in the TUI.
+ * dwf 进度事件本身是**父会话**事件（`session.events.ts:134`「追加到父会话」），所以工具卡
+ * 与结算后的完成回合不受影响——它们仍是工作流在 TUI 上的唯一两个表面。
  *
- * Allow events when the main sessionId is unavailable: rendering a little extra is preferable to blanking the entire transcript because an ID is missing.
+ * 拿不到主 sessionId 时放行：宁可多渲染一点，也不要因为缺一个 id 就让转写整片空白。
  */
 export function isMainSessionEvent(
   event: SessionEvent,
@@ -53,14 +53,14 @@ type SessionEventApplierInput = SessionEventHandlers & {
 };
 
 /**
- * Complete entry pipeline: session gate → deduplication → apply to state.
+ * 完整的入口流水线：会话闸门 → 去重 → 应用到状态。
  *
- * Export this as a pure function (the caller owns the seen set) instead of keeping it in the hook so the **effect** can be tested:
- * a regression such as "an actor's turn_complete is not appended to the main transcript by the fallback" can only be proven at the pipeline level,
- * not by testing the predicate alone. Return whether the event was actually applied.
+ * 导出成纯函数（seen-set 由调用方持有）而不是只留在 hook 里，是为了让**效果**可测：
+ * 「actor 的 turn_complete 不会经兜底追加进主转写」这种回归只能在流水线层面证明，
+ * 在谓词层面证明不了。返回是否真的应用了。
  *
- * Run the gate before deduplication: foreign events must not consume slots in the bounded deduplication window
- * (actor events could otherwise evict a main-session duplicate and let it through).
+ * 闸门排在去重之前：外来事件不该占用去重窗口的名额（窗口有界，被 actor 事件挤掉
+ * 会让主会话的重复投递漏过去）。
  */
 export function applyMainSessionEvent(
   event: SessionEvent,
@@ -100,9 +100,9 @@ export function useSessionEventSubscription(
 }
 
 /**
- * Record this event; return false if it has already been applied (the caller should skip it entirely).
+ * 记下这条事件；返回 false 表示它已经被应用过（调用方应整条跳过）。
  *
- * Always allow events without IDs: an occasional duplicate render is preferable to dropping an event because a key is missing.
+ * 没有 id 的事件一律放行：宁可重复渲染一次，也不要因为缺一个 key 就把事件整条吞掉。
  */
 export function rememberSessionEvent(applied: Set<string>, event: SessionEvent): boolean {
   const eventId = typeof event.id === "string" && event.id.length > 0 ? event.id : undefined;
@@ -110,7 +110,7 @@ export function rememberSessionEvent(applied: Set<string>, event: SessionEvent):
   if (applied.has(eventId)) return false;
   applied.add(eventId);
   if (applied.size > MAX_REMEMBERED_EVENT_IDS) {
-    // Set preserves insertion order, so the oldest entries are removed first.
+    // Set 保持插入序，最旧的一批先出。
     const excess = applied.size - MAX_REMEMBERED_EVENT_IDS;
     let removed = 0;
     for (const id of applied) {

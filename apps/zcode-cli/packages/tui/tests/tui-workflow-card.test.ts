@@ -57,7 +57,7 @@ function startedMirror(): TuiWorkflowMirror {
   return mirrorAfter([progress("run-started", { runId: RUN_ID, caps: { maxConcurrency: 4 } })]);
 }
 
-// ── Mirror: shared reducer drives it + React gets the reference back ──
+// ── 镜像：共享 reducer 驱动 + React 引用回传 ──
 
 test("progress events drive the mirror through the shared reducer", () => {
   const dispatched = mirrorAfter(
@@ -76,10 +76,9 @@ test("progress events drive the mirror through the shared reducer", () => {
   const run = dispatched.state.runs[0];
   assert.equal(run?.runId, RUN_ID);
   assert.equal(run?.status, "running");
-  // Actor status is derived, computed by the shared reducer per decision 39; the TUI does not
-  // re-derive it (docs/dynamic-workflow/concurrency.md): dispatched only means "session ready, first
-  // request not yet admitted" and counts as waiting; only node-executing (the model request has
-  // been sent) counts as running.
+  // actor 状态是派生的，由共享 reducer 按决策 39 算出，TUI 不重推导
+  // （docs/dynamic-workflow/concurrency.md）：dispatched 只是「会话就绪、首个请求尚未
+  // 准入」，算 waiting；要到 node-executing（模型请求已发出）才是 running。
   assert.equal(run?.actors[0]?.status, "waiting");
   assert.deepEqual(workflowRunStepCounts(run!), { nodesSettled: 0, nodesTotal: 1 });
 
@@ -90,9 +89,8 @@ test("progress events drive the mirror through the shared reducer", () => {
   assert.equal(executing.state.runs[0]?.actors[0]?.status, "running");
 });
 
-// There is exactly one reader for step counts (@zcode/shared's workflowRunStepCounts). The mirror
-// used to count nodes itself, so a run that hit the node cap showed three numbers — on the TUI card,
-// the run card, and the timeline summary — all smaller than the real step count.
+// 步数读法只有一处（@zcode/shared 的 workflowRunStepCounts）。镜像此前自己数 nodes，于是一条
+// 撞过节点界的 run 在 TUI 卡、run 卡与时间线摘要上显示三个数字，而且三个都比真实步数小。
 test("step counts include the instances the node cap kept out of the list", () => {
   const rejected = 3;
   const events = [progress("run-started", { runId: RUN_ID, caps: { maxConcurrency: 4 } })];
@@ -114,10 +112,11 @@ test("step counts include the instances the node cap kept out of the list", () =
     nodesSettled: 1,
     nodesTotal: WORKFLOW_RUNS_LIMITS.maxNodes + rejected,
   });
-  // The card reads the same function, so the two places can no longer disagree.
-  const card = buildTuiWorkflowCardIndex({ ...EMPTY_TUI_WORKFLOW_MIRROR, state: { revision: 1, runs: [run] } }).get(
-    TOOL_CALL_ID,
-  );
+  // 卡片读的是同一个函数，所以两处不可能再各说各话。
+  const card = buildTuiWorkflowCardIndex({
+    ...EMPTY_TUI_WORKFLOW_MIRROR,
+    state: { revision: 1, runs: [run] },
+  }).get(TOOL_CALL_ID);
   assert.equal(card?.nodesTotal, WORKFLOW_RUNS_LIMITS.maxNodes + rejected);
   assert.equal(card?.nodesSettled, 1);
 });
@@ -130,7 +129,7 @@ test("an unchanged event returns the identical mirror reference so React skips t
   });
   const advanced = applyWorkflowProgressToMirror(mirror, settle);
   assert.notEqual(advanced, mirror);
-  // Replaying the same event immediately: the shared reducer returns null and the mirror hands back the identical reference.
+  // 同一条事件立刻重放：共享 reducer 回 null，镜像回传同一个引用。
   assert.equal(applyWorkflowProgressToMirror(advanced, settle), advanced);
 });
 
@@ -145,7 +144,7 @@ test("log events stay out of the protocol state but land in the bounded TUI log 
     [progress("log", { message: "  step   one\n" }), progress("log", { message: "step two" })],
     startedMirror(),
   );
-  // Logs stay out of the graph: no site id, so the node/actor tables are untouched.
+  // log 不进图：没有 site id，节点/actor 表不动。
   assert.deepEqual(mirror.state.runs[0]?.nodes, []);
   assert.deepEqual(mirror.logTailByRunId[RUN_ID], ["step one", "step two"]);
 });
@@ -162,9 +161,8 @@ test("the log tail is bounded and keeps the newest entries", () => {
 });
 
 test("a log event with no usable message stays out of the tail but still raises the水位", () => {
-  // A valid event raises lastEventSequence even when its content is unusable (the shared reducer's
-  // existing ruling: the event log needs to know there is new content to fetch). So what can be
-  // asserted here is that **the log tail does not move**, not that the whole mirror does not move.
+  // 一条有效事件哪怕内容不可用也会抬 lastEventSequence（共享 reducer 的既有裁定：
+  // 事件日志需要知道有新内容可取）。所以这里能断言的是**日志尾不动**，不是整个镜像不动。
   const mirror = startedMirror();
   const before = mirror.state.runs[0]?.lastEventSequence ?? 0;
   for (const payload of [{ message: "   " }, {}]) {
@@ -177,7 +175,7 @@ test("a log event with no usable message stays out of the tail but still raises 
   }
 });
 
-// ── Join: by toolCallId (runtime state comes only from the mirror; seeding only supplies display names) ──
+// ── join：按 toolCallId（运行态只来自镜像状态；补种只给展示名）──
 
 test("the card index joins by toolCallId and carries settled/observed step counts", () => {
   const mirror = mirrorAfter(
@@ -191,7 +189,7 @@ test("the card index joins by toolCallId and carries settled/observed step count
   const card = buildTuiWorkflowCardIndex(mirror).get(TOOL_CALL_ID);
   assert.equal(card?.runId, RUN_ID);
   assert.equal(card?.nodesSettled, 1);
-  // The denominator is the number of **scheduled** nodes, not a fake grand total.
+  // 分母是**已排程**节点数，不是冒充的全程总数。
   assert.equal(card?.nodesTotal, 2);
 });
 
@@ -206,9 +204,8 @@ test("a run with no toolCallId has no card to join", () => {
 });
 
 test("cold replay drives the mirror through the shared reducer; seeding only adds the label", () => {
-  // docs/dynamic-workflow/presentation.md: runtime state comes only from replay (the journal's real
-  // ordered events); summaries only add display names. A replayed run has the same shape as a live
-  // reduction: step counts, usage, actors, resumable — nothing missing.
+  // docs/dynamic-workflow/presentation.md：运行态只从回放来（journal 的真实有序事件），
+  // 摘要只补展示名。回放出的 run 与 live 归约同形：步数、用量、actor、resumable 一个不少。
   sequence = -1;
   const replayed = mirrorAfter(
     [
@@ -223,7 +220,7 @@ test("cold replay drives the mirror through the shared reducer; seeding only add
   );
   const seeded = seedWorkflowMirror(replayed, [
     { runId: RUN_ID, label: "cold run" },
-    // A run not in the mirror: the summary does not conjure a card for it.
+    // 镜像里没有的 run：摘要不会为它造一张卡。
     { runId: "dwfrun-unknown", label: "ghost" },
   ]);
   const index = buildTuiWorkflowCardIndex(seeded);
@@ -256,15 +253,13 @@ test("resumable is rendered from the state bit and never re-derived from status"
     progress("run-started", { runId: RUN_ID, caps: { maxConcurrency: 4 } }),
     progress("run-settled", { status: "stopped" }),
   ]);
-  // stopped without the state bit (old CLI): not treated as resumable.
+  // stopped 却没带状态位（旧 CLI）：不当成可恢复。
   assert.equal(buildTuiWorkflowCardIndex(withoutBit).get(TOOL_CALL_ID)?.resumable, undefined);
 });
 
 test("interrupted notices come from the server boolean and preserve the server's order", () => {
-  // The port's comment is explicit: updatedAt is display-only; re-sorting by it on the read side
-  // would drift from the server's tie-break. The server orders "most recently updated first", and
-  // that order must be preserved verbatim here — a newer entry that arrived first belongs above an
-  // older one.
+  // 端口注释明确：updatedAt 只供展示，读侧拿它重排会与服务端的 tie-break 漂移。服务端按
+  // 「最近更新在前」给序，这里必须原样保留——先来的 newer 就该排在 older 之前。
   const notices = interruptedWorkflowNotices([
     { runId: "newer", status: "stopped", resumable: true, updatedAt: 900, label: "N" },
     { runId: "older", status: "stopped", resumable: true, updatedAt: 100 },
@@ -278,7 +273,7 @@ test("interrupted notices come from the server boolean and preserve the server's
   assert.equal(notices[0]?.label, "N");
 });
 
-// ── Event switch: progress events no longer fall into default ──
+// ── 事件开关：progress 事件不再落进 default ──
 
 function sessionEvent(payload: unknown): SessionEvent {
   return {
@@ -332,22 +327,13 @@ test("applySessionEventToState routes dwf progress into the mirror", () => {
   assert.equal(mirror.state.runs[0]?.status, "running");
 });
 
-// ── Dedup: the resident subscription and the per-turn sink never double-deliver ──
-
-test("an event id is applied once no matter how many sinks deliver it", () => {
-  const applied = new Set<string>();
-  const event = sessionEvent({ runId: RUN_ID, sequence: 0, eventType: "log", payload: {} });
-  assert.equal(rememberSessionEvent(applied, event), true);
-  assert.equal(rememberSessionEvent(applied, event), false);
-});
+// ── 去重：常驻订阅与 per-turn sink 绝不双投 ──
 
 test("events built by the real contracts factory always carry a dedup key", () => {
-  // Dedup relies entirely on SessionEvent.id. This test deliberately goes through the **real**
-  // createSessionEvent instead of this file's hand-written fixtures: if someone someday adds an
-  // event construction path that does not mint an id, "missing id means pass through" would
-  // silently degrade into "rendered twice" (a double-delivered streaming delta corrupts the visible
-  // text on the spot). There are two structural guarantees: createSessionEvent unconditionally mints
-  // an id, and SessionEvent.id is a required field.
+  // 去重的全部依据是 SessionEvent.id。这条用例故意走**真实**的 createSessionEvent，
+  // 而不是本文件的手写 fixture：如果哪天有人加了一条不铸 id 的事件构造路径，
+  // 「缺 id 就放行」会静默退化成「双份渲染」（流式增量双投会当场把可见文本写坏）。
+  // 结构性保证有两层：createSessionEvent 无条件铸 id，且 SessionEvent.id 是必填字段。
   const applied = new Set<string>();
   for (const type of [
     SessionEventType.ModelStreaming,
@@ -359,7 +345,7 @@ test("events built by the real contracts factory always carry a dedup key", () =
   ]) {
     const event = createSessionEvent(type, "session-1" as never, {});
     assert.ok(event.id, `${type} must carry an id`);
-    // First delivery applies; the second sink's copy of the same event is dropped.
+    // 第一次投递应用，第二个 sink 的同一条被丢弃。
     assert.equal(rememberSessionEvent(applied, event), true);
     assert.equal(rememberSessionEvent(applied, event), false);
   }
@@ -380,7 +366,7 @@ test("the dedup window is bounded", () => {
   assert.ok(applied.size <= 2_048, `window grew to ${applied.size}`);
 });
 
-// ── Card rendering ──
+// ── 卡片渲染 ──
 
 function renderCardText(element: React.ReactElement): string[] {
   const lines: string[] = [];
@@ -418,7 +404,7 @@ test("the collapsed card line shows label, run status and settled/observed steps
   assert.match(collapsed, /running/u);
   assert.match(collapsed, /1\/1 steps/u);
   assert.match(collapsed, /\+ to expand/u);
-  // The collapsed state must not leak expanded details.
+  // 折叠态不泄漏展开详情。
   assert.doesNotMatch(collapsed, /budget/u);
 });
 
@@ -432,7 +418,7 @@ test("the expanded card shows usage, actors, log tail and result", () => {
   const mirror = mirrorAfter(
     [
       progress("actor-created", { actor: { siteId: "actor#1", ordinal: 1 }, name: "planner" }),
-      // usage-updated carries the spent total directly (docs/dynamic-workflow/authoring.md); there is no derived field.
+      // usage-updated 直接携带已花总量（docs/dynamic-workflow/authoring.md），没有派生字段。
       progress("usage-updated", { spentTokens: 1_234 }),
       progress("log", { message: "compiling proof" }),
     ],
@@ -450,7 +436,7 @@ test("the expanded card shows usage, actors, log tail and result", () => {
   assert.match(expanded, /- to collapse/u);
 });
 
-// ── Picking the six rows: running first (docs/dynamic-workflow/launch.md "The inline card") ──
+// ── 六行位置的挑选：跑着的优先（docs/dynamic-workflow/launch.md「The inline card」）──
 
 function actorFixture(
   name: string,
@@ -472,7 +458,7 @@ test("the six actor rows go running, then waiting, then completed, stable within
   ]);
 
   assert.equal(rows.length, MAX_ACTOR_ROWS);
-  // Within a bucket, protocol order is preserved: run-1 before run-2, wait-1..3 in original order.
+  // 桶内保持协议顺序：run-1 在 run-2 之前，wait-1..3 原序。
   assert.deepEqual(
     rows.map((actor) => actor.name),
     ["run-1", "run-2", "wait-1", "wait-2", "wait-3", "done-1"],
@@ -505,7 +491,7 @@ test("a wide run's expanded card shows the agent that is running, not the six th
     const instance = { siteId: `ask#${index}`, ordinal: 1 };
     events.push(progress("actor-created", { actor, name: `planner-${index}` }));
     events.push(progress("node-queued", { instance, kind: "ask", actor }));
-    // The last one is still running and the first six have all settled — under protocol order it is exactly the one pushed out of the six rows.
+    // 最后一个还在跑，前六个都已结算——协议顺序下它恰好被挤出六行之外。
     events.push(
       index === total
         ? progress("node-executing", { instance })
@@ -521,7 +507,7 @@ test("a wide run's expanded card shows the agent that is running, not the six th
   assert.equal(rows.length, MAX_ACTOR_ROWS);
   assert.match(rows[0]!, /planner-7/u);
   assert.match(rows[0]!, /running/u);
-  // What gets pushed out is the last completed one, not the one still running.
+  // 被挤出去的是最后一个已完成的，不是那个还在跑的。
   assert.ok(
     rows.every((line) => !/planner-6/u.test(line)),
     "a completed agent should be the one dropped",
@@ -570,7 +556,7 @@ test("a replayed stopped run renders its real facts after a cold start", () => {
   );
   assert.match(expanded, /cold/u);
   assert.match(expanded, /stopped/u);
-  // Replay brings back the real actor, no longer an empty shell.
+  // 回放带回了真实的 actor，不再是空壳。
   assert.match(expanded, /planner/u);
 });
 
@@ -585,14 +571,12 @@ test("both locales render the card without leaking raw copy keys", () => {
   }
 });
 
-// ── Cold seeding → notice lines (after startup / /resume) ──
+// ── 冷补种 → notice 行（启动 / /resume 后）──
 
 test("summaries map to seeds carrying only display facts, never runtime state", () => {
   const seed = workflowRunSeedFromSummary({ runId: "dwfrun-1", status: "running" });
   assert.deepEqual(seed, { runId: "dwfrun-1" });
-  // Absent label / updatedAt should stay absent, with no defaults invented; status / resumable are
-  // runtime state and go through replay, not seeding.
-  assert.equal("label" in seed, false);
+  // label / updatedAt 缺席就该缺席，不造默认值；status / resumable 是运行态，走回放，不进补种。
 
   const full = workflowRunSeedFromSummary({
     runId: "dwfrun-2",
@@ -620,7 +604,7 @@ test("a notice falls back to the runId when the server sent no label", () => {
 test("notices append as system rows, never as fabricated user rows", () => {
   const messages = appendWorkflowInterruptedNotices([], [{ runId: "dwfrun-1", label: "A" }], COPY);
   assert.equal(messages.length, 1);
-  // This is not something the user said: a system row, never a fabricated user row (same ruling as not rendering the model-only synthetic user row).
+  // 这不是用户说的话：system 行，不伪造 user 行（与不渲染 model-only 合成 user 行同一裁定）。
   assert.equal(messages[0]?.role, "system");
 });
 
