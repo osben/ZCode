@@ -56,8 +56,6 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
       "在任何创造性工作前使用：创建功能、构建组件、增加能力或修改行为；先探索用户意图、需求和设计。",
     "en-US":
       "Use before any creative work, including creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements, and design before implementation.",
-    "uk-UA":
-      "Використовуйте перед будь-якою творчою роботою: створенням функцій, компонентів, додаванням можливостей або зміною поведінки. Спершу з'ясовує наміри користувача, вимоги та дизайн.",
   },
   "control-browser": {
     "zh-CN": "控制 ZCode 内置浏览器，用于打开、检查、点击、输入、截图或验证网页和本地开发页面。",
@@ -78,8 +76,6 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
       "完整的 DOCX 文档创建、编辑与分析能力，支持修订、批注、格式保持和文本提取。适用于创建新文档、修改内容、处理修订、添加批注或其它专业 Word 文档任务。",
     "en-US":
       "Create, edit, and analyze DOCX documents with revisions, comments, formatting preservation, and text extraction. Use for new documents, edits, revision handling, comments, and professional Word document work.",
-    "uk-UA":
-      "Створюйте, редагуйте й аналізуйте документи DOCX із виправленнями, коментарями, збереженням форматування та видобуванням тексту. Для нових документів, правок, роботи з виправленнями, коментарями й професійних документів Word.",
   },
   "docx-viewer": {
     "zh-CN":
@@ -115,8 +111,6 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
       "专业 PDF 工具集，覆盖报告、创意视觉、学术 LaTeX 和现有 PDF 处理四条生产线。可按文档类型自动路由，支持报告、海报、论文、简历、提取、合并、拆分、表单填写和格式转换等任务。",
     "en-US":
       "Professional PDF toolkit for reports, creative visuals, academic LaTeX, and existing-PDF workflows. Supports reports, posters, papers, resumes, extraction, merge, split, forms, and conversion.",
-    "uk-UA":
-      "Професійний набір інструментів PDF для звітів, творчих макетів, академічного LaTeX і роботи з наявними PDF. Звіти, постери, статті, резюме, видобування, об'єднання, розділення, форми та конвертація.",
   },
   "pdf-viewer": {
     "zh-CN":
@@ -131,8 +125,6 @@ const BUILTIN_SKILL_DESCRIPTIONS: Record<string, Partial<Record<Locale, string>>
       "检查并窄范围更新从 PPTX 预览区选择的元素。通过完整文件指纹和 OOXML 定位校验 shape 文本或表格单元格，冲突时停止而不猜测。",
     "en-US":
       "Inspect and narrowly update elements selected in PPTX Preview Pane. Verifies the whole-file fingerprint and OOXML locator for shape or table-cell text, and stops on conflicts instead of guessing.",
-    "uk-UA":
-      "Перевіряйте й точково оновлюйте елементи, вибрані в панелі попереднього перегляду PPTX. Звіряє відбиток усього файлу та OOXML-локатор тексту фігури чи клітинки таблиці й зупиняється за конфлікту, а не вгадує.",
   },
   "pptx-viewer": {
     "zh-CN":
@@ -274,11 +266,9 @@ export function resolveSkillDisplayDescription(
   skill: SkillDisplayCandidate,
   locale?: Locale,
 ): string {
-  const descriptions = isOfficialBuiltinSkill(skill)
-    ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]
+  const localized = isOfficialBuiltinSkill(skill)
+    ? BUILTIN_SKILL_DESCRIPTIONS[skill.name]?.[locale ?? "en-US"]
     : undefined;
-  // Fall back to English when a locale has no translation yet (e.g. a newly added upstream skill).
-  const localized = descriptions?.[locale ?? "en-US"] ?? descriptions?.["en-US"];
   return localized ?? skill.description;
 }
 
