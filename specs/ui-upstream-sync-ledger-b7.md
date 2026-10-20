@@ -44,3 +44,10 @@ Test files with fork code churn only and no fork-added case: automationsPageTabs
 ## Files with no code-level fork change (kept as upstream, nothing to re-apply)
 
 AssistantPreviewCards.tsx, ConversationShareMenu.tsx, SaveWorkflowPermissionBlock.tsx, WindowsTopLeftLogo.tsx, app-shell/SidePaneTabTrigger.tsx, app-shell/workspaceShellWindowChrome.ts, chat-input-toolbar/thoughtLevelOptions.ts, gen-ui/adapters/theme.ts, onboarding/useOnboardingTrigger.ts, remote-connection/RemoteConnectionHistoryInput.tsx, slashCommandHelpers.ts, v4/conversationShareModePolicy.ts, v4/transport.ts, v4/windowControllerTaskListRegistry.ts, test/providerFamilyConnectionVisibility.test.ts, test/remoteConnectionFieldsAuthMethodLayout.test.ts (copy churn only), test/savedWorkflowDispatchPrecedence.test.ts, test/useRemoteWorkspaceHistory.test.ts (fork test count equals base; upstream rewrote the suite), test/workflowWorkspaceSidePane.test.ts.
+
+## Fork i18n keys added by bucket 7 (values copied from the fork catalogs)
+
+- `chat.error.resumeBlocked` (en-US, zh-CN, uk-UA): used by SessionPane resume-after-error.
+- `chat.history.workingThroughputTitle`, `chat.history.workingThroughputEstimateTitle`, `chat.history.outputTokens`, `chat.history.outputTokensTitle` (en-US, zh-CN; uk-UA already had them): used by ConversationTurnGroup.
+- `chat.incognito.unsupported`, `chat.incognito.agentOutdated` (en-US, zh-CN; uk-UA already had them): toast ids from `lib/incognitoUnsupportedMessage.ts`, used by SessionPane.
+- Not added (feature not ported): `workspaceSidebar.pinFailed`, `git.head.detached` is present upstream.
