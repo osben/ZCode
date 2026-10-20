@@ -165,8 +165,15 @@ describe("createTaskEraseOperations", () => {
     expect(agent.countSessionTrees).toHaveBeenCalledWith({
       workspacePath: workspace.workspacePath,
       sessionIds: ["__zcode_deletion_capability_probe__"],
-      runtimePolicy: "start-if-needed",
+      runtimePolicy: "existing-only",
     });
+
+    // No live runtime: existing-only rejects, so the probe retries once with start-if-needed.
+    vi.mocked(agent.countSessionTrees!).mockRejectedValueOnce(new Error("no runtime"));
+    await expect(operations.getDeletionCapability(workspace)).resolves.toEqual({ supported: true });
+    expect(agent.countSessionTrees).toHaveBeenLastCalledWith(
+      expect.objectContaining({ runtimePolicy: "start-if-needed" }),
+    );
 
     vi.mocked(agent.countSessionTrees!).mockResolvedValueOnce(null);
     await expect(operations.getDeletionCapability(workspace)).resolves.toEqual({
