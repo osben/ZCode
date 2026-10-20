@@ -2,11 +2,16 @@
 *.mjs text eol=lf
 *.sh  text eol=lf
 
-# Gen UI vendor-файлы проверяются по SHA-256 manifest; checkout сохраняет исходные байты.
+# Gen UI vendor files are verified by SHA-256 manifest; checkout keeps the original bytes.
 apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/vendor/** -text linguist-vendored=true
+# Schema baseline is compared byte-for-byte with the runtime dump; Windows autocrlf checkout to CRLF would be
+# reported as a schema diff by db:schema:check and block pre-push, so force LF.
+*.baseline.sql text eol=lf
 
 # E2E PDF fixture 含规范 xref 尾空格，必须按二进制处理，避免 diff --check 误报。
 packages/desktop/test/e2e/fixtures/fs/**/*.pdf binary
+# 文档查看器测试 PDF 同理：按字节解析 xref，换行转换会破坏偏移。
+apps/zcode-cli/packages/office-runtime/fixtures/*.pdf binary
 
 # 上游许可原文与生成的声明按字节保存，不能自动转换换行或裁剪空白。
 # 原文中的 License / ======= 是 Markdown 标题，不是合并冲突。
@@ -17,3 +22,6 @@ third-party/runtime/*.txt -text -whitespace linguist-vendored=true
 docs/knip/docs/LICENSE -text -whitespace linguist-vendored=true
 docs/knip/docs/licenses/** -text -whitespace linguist-vendored=true
 third-party/inventory.json linguist-generated=true
+
+# Gen UI vendor 快照带 sha256 清单，构建时逐字节校验；autocrlf 改写换行会误报漂移，按字节保真。
+apps/zcode-cli/packages/visualize-plugin/skills/visualize/assets/vendor/** -text
