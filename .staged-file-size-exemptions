@@ -223,6 +223,8 @@ packages/shared/test/zcodeProtocolV4WorkflowRunsReducer.test.ts
 packages/services/test/zcodeAgentService.test.ts
 packages/server/src/remote/remoteAssetInstaller.ts
 packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts
+packages/services/src/node.ts
+packages/services/src/setting/settingService.ts
 
 
 # Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.

@@ -6,5 +6,5 @@ export const taskFactsModule = {
   id: "task-facts",
   requires: ["shared"],
   provides: ["task-facts"],
-  publicEntrypoints: ["index.ts", "contract.ts", "repairSubagentTaskIndex.ts"],
+  publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

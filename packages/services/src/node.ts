@@ -380,6 +380,14 @@ import { createGitCheckpointService } from "./git/gitCheckpointService.js";
 import { createSystemService } from "./system/systemService.js";
 import { createTerminalService } from "./terminal/terminalService.js";
 import { createSettingServiceWithMigrations } from "./setting/settingService.js";
+import { createSourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspaceService.js";
+import { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
+import { SourceServerWorkspaceAliasRepo } from "./session/sourceServerWorkspaceAliasRepo.js";
+import { SourceServerWorkspaceIdentityMapper } from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
+import {
+  buildServerRemoteWorkspaceIdentity,
+  remoteHostIdFromWorkspaceIdentity,
+} from "@zcode/shared";
 import { createOnboardingRecordService } from "./onboarding/onboardingRecordService.js";
 import { createLegacyTeamOrganizationResolver } from "./model-provider/legacyTeamOrganizationResolver.js";
 import { createObservableSettingService } from "./setting/observableSettingService.js";
@@ -1220,6 +1228,13 @@ export function createLocalServices(options: {
     trigger: Exclude<ProviderProvisioningTrigger, "environment-online">,
   ) => void;
   serviceAuthorityMode?: ServiceAuthorityMode;
+  /**
+   * Standalone Source Server storage identity. Accepted for the host assembly contract only: the fork
+   * TaskIndexRepo still uses the single local tasks-index path; per-host storage ownership is deferred.
+   */
+  projectStorageHostId?: string;
+  /** Standalone Source Server workspace service; when omitted no Source Server workspace service is registered. */
+  sourceServerWorkspaceService?: ISourceServerWorkspaceService;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
   agentTelemetry?: {
     getDeviceMid?: () => string | undefined;
@@ -2892,6 +2907,9 @@ export function createLocalServices(options: {
   sqliteReposToClose.push(taskIndexRepo);
   sqliteReposToClose.push(forkWorkspacePinRepo);
   sharedSqliteRepos.set(services, sqliteReposToClose);
+  if (options?.sourceServerWorkspaceService) {
+    services.register(ISourceServerWorkspaceService, options.sourceServerWorkspaceService);
+  }
   return services;
 }
 
@@ -3074,3 +3092,60 @@ export {
   SourceServerWorkspaceIdentityMapper,
 } from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
 export { scopeConversationShareServiceForAttachment } from "./conversation-share/conversationShareConnectionScope.js";
+
+/**
+ * Tasks-index startup for the Source Server host. Desktop keeps its own barrier
+ * (project-storage/startup.ts, run by the tasks storage worker); this entry is used only by the
+ * standalone host and must finish before it opens RPC or schedulers.
+ * Automations and off-peak still self-initialize on first use until their DB layer lands.
+ */
+export async function migrateApplicationStorage(): Promise<{ backupSkipped: boolean }> {
+  const tasks = new TaskIndexRepo();
+  try {
+    await tasks.ensureReady();
+    return { backupSkipped: false };
+  } finally {
+    tasks.close();
+  }
+}
+
+/** Standalone Source Server assembly: one storage identity, one workspace alias owner, one identity mapper. */
+export async function createServerHostServices(options: {
+  topicResourceRelayChannel?: NonNullable<
+    Parameters<typeof createLocalServices>[0]
+  >["topicResourceRelayChannel"];
+  sourceServerId: string;
+  zcodeBuiltinProviderConfigFilePath: string;
+  providerProvisioningTargetEnabled?: boolean;
+}) {
+  const projectStorageHostId = remoteHostIdFromWorkspaceIdentity(
+    buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath: "/" }),
+  );
+  if (!projectStorageHostId) throw new Error("Invalid Source Server storage identity");
+  await migrateApplicationStorage();
+  const workspaceAliasRepo = new SourceServerWorkspaceAliasRepo();
+  const workspaceIdentityMapper = new SourceServerWorkspaceIdentityMapper();
+  const sourceServerWorkspaceService = createSourceServerWorkspaceService(workspaceAliasRepo, {
+    defaultWorkspaceIdentity: (workspacePath) =>
+      buildServerRemoteWorkspaceIdentity({ serverId: options.sourceServerId, workspacePath }),
+    onResolved: ({ workspacePath, canonicalWorkspaceKey }) => {
+      workspaceIdentityMapper.register({
+        stableIdentity: buildServerRemoteWorkspaceIdentity({
+          serverId: options.sourceServerId,
+          workspacePath,
+        }),
+        canonicalIdentity: canonicalWorkspaceKey,
+      });
+    },
+  });
+  const migrationFailedPathCount = await workspaceAliasRepo.getFailedPathCount();
+  const services = createLocalServices({
+    zcodeBuiltinProviderConfigFilePath: options.zcodeBuiltinProviderConfigFilePath,
+    providerProvisioningTargetEnabled: options.providerProvisioningTargetEnabled,
+    serviceAuthorityMode: "standalone-server",
+    topicResourceRelayChannel: options.topicResourceRelayChannel,
+    projectStorageHostId,
+    sourceServerWorkspaceService,
+  });
+  return { services, workspaceIdentityMapper, migrationFailedPathCount };
+}
