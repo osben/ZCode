@@ -1,6 +1,32 @@
 import { requestSecurityMessagesZhCN } from "@/request-security-edition/messages.js";
 /** 中文翻译 */
 const zhCN: Record<string, string> = {
+  "worktreeFailure.title": "无法创建 worktree",
+  "worktreeFailure.savedNotRestored":
+    "当前草稿不为空，你的消息已保存在下方的“未发送的消息已保存”卡片中。",
+  "worktreeFailure.showDetails": "显示详情",
+  "worktreeFailure.hideDetails": "隐藏详情",
+  "worktreeFailure.copyDetails": "复制详情",
+  "worktreeFailure.dismiss": "关闭",
+  "worktreeFailure.retry": "重试",
+  "worktreeFailure.changeDestination": "更改分支/文件夹",
+  "worktreeFailure.toastTitle": "无法创建 worktree",
+  "worktreeFailure.toastOpen": "打开",
+  "composerRecovery.title": "未发送的消息已保存",
+  "composerRecovery.storageUnavailable":
+    "无法保存恢复状态。消息尚未发送；请释放浏览器存储空间后重试。",
+  "composerRecovery.editorOccupied": "请先发送或清空当前草稿再恢复。",
+  "composerRecovery.reattach": "请重新附加缺失文件，或明确移除它们。",
+  "composerRecovery.restore": "恢复",
+  "composerRecovery.removeMissing": "移除缺失文件",
+  "composerRecovery.dismiss": "丢弃已保存的消息",
+  "chat.incognito.toggle": "无痕会话",
+  "chat.incognito.marker": "无痕",
+  "chat.incognito.turnOff": "关闭无痕模式",
+  "chat.incognito.includeHeading": "本次会话包含",
+  "chat.incognito.unsupported": "当前 Agent 版本无法启动无痕会话。请更新应用或远程 Agent 后重试。",
+  "chat.incognito.agentOutdated":
+    "Agent 版本过旧。请重启应用或更新远程 Agent（开发环境：重新运行 dev:desktop 以重建 Agent）后重试。",
   "preview.image.copy": "复制图片",
   "preview.image.actions": "图片操作",
   "preview.image.added": "已添加到聊天",

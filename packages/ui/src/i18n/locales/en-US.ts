@@ -1,6 +1,33 @@
 import { requestSecurityMessagesEnUS } from "@/request-security-edition/messages.js";
 /** English translations */
 const enUS: Record<string, string> = {
+  "worktreeFailure.title": "Could not create the worktree",
+  "worktreeFailure.savedNotRestored":
+    'Your message was saved below in the "Unsent message saved" card because the current draft is not empty.',
+  "worktreeFailure.showDetails": "Show details",
+  "worktreeFailure.hideDetails": "Hide details",
+  "worktreeFailure.copyDetails": "Copy details",
+  "worktreeFailure.dismiss": "Close",
+  "worktreeFailure.retry": "Retry",
+  "worktreeFailure.changeDestination": "Change branch/folder",
+  "worktreeFailure.toastTitle": "Could not create the worktree",
+  "worktreeFailure.toastOpen": "Open",
+  "composerRecovery.title": "Unsent message saved",
+  "composerRecovery.storageUnavailable":
+    "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",
+  "composerRecovery.editorOccupied": "Send or clear the current draft before restoring.",
+  "composerRecovery.reattach": "Reattach the listed missing files, or explicitly remove them.",
+  "composerRecovery.restore": "Restore",
+  "composerRecovery.removeMissing": "Remove missing files",
+  "composerRecovery.dismiss": "Dismiss saved message",
+  "chat.incognito.toggle": "Incognito session",
+  "chat.incognito.marker": "Incognito",
+  "chat.incognito.turnOff": "Turn off incognito",
+  "chat.incognito.includeHeading": "Include in this session",
+  "chat.incognito.unsupported":
+    "This agent version can't start incognito sessions. Update the app or the remote agent and try again.",
+  "chat.incognito.agentOutdated":
+    "The agent is out of date. Restart the app or update the remote agent (dev: restart dev:desktop to rebuild the agent) and try again.",
   "preview.image.copy": "Copy image",
   "preview.image.actions": "Image actions",
   "preview.image.added": "Added to chat",
