@@ -73,6 +73,11 @@ jobs:
       - name: Pre-push runner regression tests
         run: pnpm test:pre-push
 
+      # Pending upstream exemption (specs/fork-format-scope.md): when fork-upstream-base.json names
+      # a pendingUpstreamCommit the checkout lacks, fetch it by URL. No-op when the field is absent.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
+
       # Same command as local: only files the fork changed since the upstream sync base pinned in
       # fork-upstream-base.json (specs/fork-format-scope.md). Upstream-identical files stay
       # untouched so upstream syncs do not conflict; a sync PR bumps the pin in the same PR.
