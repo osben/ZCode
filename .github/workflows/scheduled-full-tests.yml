@@ -16,6 +16,11 @@ concurrency:
   group: scheduled-full-tests
   cancel-in-progress: false
 
+env:
+  # Persistent V8 compile cache (Node >= 22.1), same contract as pr-checks.yml: the unit suite is
+  # import-bound, and the cache step below persists this directory between runs.
+  NODE_COMPILE_CACHE: .v8-cache
+
 jobs:
   unit-tests:
     name: Unit tests (full)

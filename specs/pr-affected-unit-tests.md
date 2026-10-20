@@ -15,7 +15,7 @@
 
 - **Ownership of test execution**: PR CI owns affected execution; the scheduled workflow owns full execution. PR CI never executes fewer tests than the official Vitest selection for the PR's own diff, and the scheduled workflow never skips tests.
 - **PR base**: full clone (`fetch-depth: 0`) in the `Unit tests` job; base is `git merge-base origin/<base_ref> HEAD` where `<base_ref>` is `github.base_ref` (the checkout on `pull_request` is the merge ref, so the merge-base is the exact fork point and the diff is the PR's changes only).
-- **Affected execution**: `pnpm test:unit:affected -- --base <merge-base> --on-full=run` with `NODE_OPTIONS=--no-experimental-webstorage` on the step. Job name stays `Unit tests` so any future branch-protection required checks keep matching.
+- **Affected execution**: `pnpm test:unit:affected -- --base <merge-base> --on-full run` with `NODE_OPTIONS=--no-experimental-webstorage` on the step. Job name stays `Unit tests` so any future branch-protection required checks keep matching.
 - **`--on-full` interface** (`scripts/run-affected-unit-tests.mjs`): `run` executes the whole suite when the official selection covers it; `skip` (default, unchanged pre-push behavior) skips and exits 0. Invalid or missing values fail argument parsing.
 - **Dependency manifest guard**: if the diff `<base>..HEAD` touches `pnpm-lock.yaml` or any `package.json`, the workflow runs the full `pnpm test:unit` instead of affected selection (dependency changes are invisible to the import graph).
 - **`test:node`**: always runs in full on PRs; it is small, fixed-list, and carries the convention-coupled coverage.
@@ -26,7 +26,7 @@
 
 - Small code PR touching one source file: selection maps it through the import graph; only related specs run; unrelated failures elsewhere cannot fail this PR's gate.
 - PR adding only test files: the new tests are themselves selected and run.
-- PR touching `vitest.setup.ts` or any `vitest/vite.config.*`: `forceRerunTriggers` yields full selection; `--on-full=run` executes the entire suite (the step log states the full run).
+- PR touching `vitest.setup.ts` or any `vitest/vite.config.*`: `forceRerunTriggers` yields full selection; `--on-full run` executes the entire suite (the step log states the full run).
 - Large sync/refactor PR: official selection covers the suite; the full suite runs exactly as before this change.
 - PR bumping `pnpm-lock.yaml` (or any `package.json`): the manifest guard forces the full `pnpm test:unit`.
 - Nightly/manual run: full `pnpm test` executes regardless of any selection logic.
