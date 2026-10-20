@@ -5285,6 +5285,17 @@ const enUS: Record<string, string> = {
     "The registered worktree for {branchName} at {path} is missing or not usable.",
   "worktreeSetup.reconcile.markerSyncUnavailable":
     "Setup finished at a different worktree path and the session record could not be updated",
+  "worktreeFailure.title": "Could not create the worktree",
+  "worktreeFailure.savedNotRestored":
+    'Your message was saved below in the "Unsent message saved" card because the current draft is not empty.',
+  "worktreeFailure.showDetails": "Show details",
+  "worktreeFailure.hideDetails": "Hide details",
+  "worktreeFailure.copyDetails": "Copy details",
+  "worktreeFailure.dismiss": "Close",
+  "worktreeFailure.retry": "Retry",
+  "worktreeFailure.changeDestination": "Change branch/folder",
+  "worktreeFailure.toastTitle": "Could not create the worktree",
+  "worktreeFailure.toastOpen": "Open",
   "worktreeSetup.reservation.conflict":
     "Another chat is already preparing a worktree with this name. Send again to use a new name.",
   "git.branchSwitcher.appliesOnSend": "Applies when you send the first message",

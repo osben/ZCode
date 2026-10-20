@@ -17,7 +17,11 @@ export interface ComposerExecutionWorktree {
   branchName: string;
 }
 
-/** Queue-time begin result: ok means the pipeline entry exists (creating); not-ok means it failed validation (reason in the store). */
+/**
+ * Queue-time begin result: ok means the pipeline entry exists (creating). not-ok means no Host session
+ * was reserved (validation or preflight failed; the reason is in the store), so the caller restores the
+ * frozen draft inline instead of writing a recovery record.
+ */
 export type ComposerWorktreeBeginResult = { ok: true; sessionId: string } | { ok: false };
 
 export interface ComposerWorktreePreparationParams {
