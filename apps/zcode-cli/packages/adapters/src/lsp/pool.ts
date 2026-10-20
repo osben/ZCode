@@ -167,8 +167,9 @@ export function createLanguageServerPool(options: LanguageServerPoolOptions): La
 
   function failedResult(entry: LspServerEntry): LanguageServerAcquireResult {
     if (entry.state === "unavailable") {
-      const detail = entry.lastErrorMessage ? `: ${entry.lastErrorMessage}` : "";
-      const last = entry.lastErrorCode ? ` (last error: ${entry.lastErrorCode}${detail})` : "";
+      // Only the code: tool failures are logged with their message (`tool.call.failed`), and the
+      // server's text and stderr tail must not reach the production log through this path.
+      const last = entry.lastErrorCode ? ` (last error: ${entry.lastErrorCode})` : "";
       return {
         state: "failed",
         code: "lsp_server_unavailable",

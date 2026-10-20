@@ -86,7 +86,10 @@ describe("LSP pool: unavailable after failed starts", () => {
       const unavailable = pool.acquire(server, TEST_KEY);
       expect(unavailable).toMatchObject({ state: "failed", code: "lsp_server_unavailable" });
       expect(unavailable.state === "failed" && unavailable.message).toContain(
-        "required workspace dependency is missing",
+        "last error: lsp_request_failed",
+      );
+      expect(unavailable.state === "failed" && unavailable.message).not.toContain(
+        "dependency is missing",
       );
       expect(pool.acquire(server, TEST_KEY)).toMatchObject({ state: "failed" });
       expect(harness.spawns()).toBe(2);

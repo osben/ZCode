@@ -152,9 +152,9 @@ sequenceDiagram
   refused the workspace. This is a failed start with code `lsp_request_failed`.
   - The `adapters.lsp.start_failed` log adds `rpcCode` (for example `-32603`). It never adds
     the server's message text, which can contain paths.
-  - The message text (plus the stderr tail) reaches the model only in the tool result. The
-    `lsp_server_unavailable` result also carries the last error message, so the model sees why
-    the server is unavailable.
+  - The `lsp_server_unavailable` result names only the last error code. Tool failures are
+    logged with their message (`tool.call.failed`), so the server's text and stderr tail stay out
+    of that result.
 - **Freshness.** A diagnostics result counts for the document's current version `v`
   only when one of these holds:
   1. it is a pull `textDocument/diagnostic` response for `v`;
