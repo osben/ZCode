@@ -249,10 +249,10 @@ function renderWebRemoteControlFailure(failure: WebRemoteControlFailure): void {
 }
 
 function isWebOAuthCallback(params: URLSearchParams): boolean {
+  // Tolerate a trailing slash: the fork redirect URI is /web-remote/callback and hosts may append "/".
+  const pathname = window.location.pathname.replace(/\/+$/, "");
   return (
-    ["/web-remote/callback", "/cn/share/callback", "/share/callback"].includes(
-      window.location.pathname,
-    ) &&
+    ["/web-remote/callback", "/cn/share/callback", "/share/callback"].includes(pathname) &&
     params.has("state") &&
     // BigModel authCode must reach the callback page first, where the provider normalizes it to a code.
     (params.has("code") || params.has("authCode") || params.has("error"))

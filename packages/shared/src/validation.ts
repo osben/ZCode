@@ -125,6 +125,27 @@ export const webRemoteControlReconnectWorkspaceResultSchema = z.union([
   }),
 ]);
 
+export const webRemoteControlTaskTargetSchema = z.object({
+  taskId: nonEmptyStringSchema,
+  title: z.string(),
+  workspacePath: nonEmptyStringSchema,
+  workspaceIdentity: nonEmptyStringSchema.optional(),
+  remoteSessionId: nonEmptyStringSchema.optional(),
+  workspaceLabel: nonEmptyStringSchema,
+  workspaceKind: z.enum(["local", "remote"]),
+  createdAt: z.number().finite(),
+  updatedAt: z.number().finite(),
+  provider: zcodeProviderSchema.optional(),
+  unreadAt: z.number().finite().optional(),
+  displayStatus: z.enum(["idle", "running", "completed", "error"]).optional(),
+  hasBackgroundWork: z.boolean().optional(),
+  workflowActivity: sessionWorkflowActivitySchema.optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
+});
+
+export const webRemoteControlTaskTargetsSchema = z.array(webRemoteControlTaskTargetSchema);
+
 export const webRemoteControlFailureReasonSchema = z.enum([
   "session-not-found",
   "session-expired",
@@ -210,11 +231,13 @@ export const webRemoteControlWindowBootstrapResultSchema = z.object({
   workspaces: webRemoteControlWorkspaceTargetsSchema,
   initialViewState: webRemoteControlMobileViewStateSchema.optional(),
   mobileViewState: webRemoteControlMobileViewStateSchema.optional(),
+  tasks: webRemoteControlTaskTargetsSchema,
   mobileTaskViewEpoch: webRemoteControlTransportIdSchema.optional(),
 });
 
 export const webRemoteControlWorkspaceListResultSchema = z.object({
   workspaces: webRemoteControlWorkspaceTargetsSchema,
+  tasks: webRemoteControlTaskTargetsSchema.optional(),
   activeWorkspaceKey: nonEmptyStringSchema.optional(),
   activeTaskId: nonEmptyStringSchema.optional(),
 });

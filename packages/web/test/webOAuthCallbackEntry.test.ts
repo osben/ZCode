@@ -55,7 +55,7 @@ afterEach(async () => {
 async function bootstrap(path: string, query: string) {
   window.history.replaceState(null, "", `${path}?${query}`);
   const { WebAuthService } = await import("@web/auth/webAuthService.js");
-  // 保留真实入口和回调组件 effect；服务内部的 nonce/token 契约由 webAuthService.test 覆盖。
+  // Keep the real entry and callback component effects; the nonce/token contract inside the service is covered by webAuthService.test.
   const handleCallback = vi
     .spyOn(WebAuthService.prototype, "handleCallback")
     .mockResolvedValue(null);
@@ -66,9 +66,14 @@ async function bootstrap(path: string, query: string) {
 }
 
 describe("Web OAuth callback entry", () => {
-  for (const path of ["/share/callback", "/cn/share/callback", "/remote/v4", "/remote/v4/"]) {
+  for (const path of [
+    "/share/callback",
+    "/cn/share/callback",
+    "/web-remote/callback",
+    "/web-remote/callback/",
+  ]) {
     it.each(["authCode=bigmodel-code", "code=zai-code", "error=access_denied"])(
-      `${path} 的 %s 渲染回调页并交给认证服务`,
+      `${path} with %s renders the callback page and hands off to the auth service`,
       async (result) => {
         const handleCallback = await bootstrap(path, `state=entry-state&${result}`);
         expect(document.body.textContent).toContain("Finishing Sign-In");
@@ -79,7 +84,7 @@ describe("Web OAuth callback entry", () => {
 
   for (const path of ["/share/callback", "/cn/share/callback"]) {
     it.each(["authCode=code", "code=code", "error=access_denied", "state=entry-state"])(
-      `${path} 缺少 state 或结果参数时不进入回调页：%s`,
+      `${path} without state or a result parameter does not enter the callback page: %s`,
       async (query) => {
         const handleCallback = await bootstrap(path, query);
         expect(handleCallback).not.toHaveBeenCalled();
@@ -88,7 +93,7 @@ describe("Web OAuth callback entry", () => {
     );
   }
 
-  it("普通分享路径即使携带 OAuth 参数也保持预览路由", async () => {
+  it("keeps a regular share path on the preview route even with OAuth parameters", async () => {
     const handleCallback = await bootstrap("/share/example", "state=entry-state&authCode=code");
     expect(handleCallback).not.toHaveBeenCalled();
     expect(document.body.textContent).toBe("share-preview");

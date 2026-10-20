@@ -307,7 +307,9 @@ describe("NodePluginAdapter", () => {
         await write();
       });
 
-      await Promise.resolve();
+      // The HTTP adapter loads TLS CA material asynchronously before it calls fetch, so wait for
+      // the request to be issued instead of assuming a fixed number of microtask ticks.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       expect(writeLockCalls).toBe(0);
       resolveFetch(
         new Response(

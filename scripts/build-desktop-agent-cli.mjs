@@ -7,7 +7,10 @@ import { runCommand } from "./spawn-command.mjs";
 // adapters tsc 在内存受限机器上会 OOM（exit 134），给整条构建链路提高堆上限。
 process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + " " : ""}--max-old-space-size=8192`;
 import { stageDevCuaPluginRuntime } from "./stage-dev-cua-plugin-runtime.mjs";
-import { resolveBuiltinProviderBuildEnvironment } from "./builtin-provider-config.mjs";
+import {
+  resolveBuiltinProviderBuildEnvironment,
+  stageBuiltinProviderConfig,
+} from "./builtin-provider-config.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const useTurboBuild = process.env.ZCODE_DESKTOP_AGENT_BUILD_MODE === "turbo";
@@ -120,6 +123,22 @@ function stageDevAgentBundle() {
   });
 }
 
+/**
+ * Re-stage the built-in provider config next to the agent bundle after every build path.
+ *
+ * scripts/builtin-provider-config.mjs resolves the file from this run's ZCODE_ENV (pnpmRunEnv).
+ * The CLI build (apps/zcode-cli/packages/cli/scripts/build.mjs) also stages it, but this explicit
+ * call keeps dist/provider on the same environment as the run, so the bootstrap path does not
+ * depend on the nested build having staged it. The fork test in scripts/test pins this call.
+ */
+async function stageProviderConfigForAgentBundle() {
+  await stageBuiltinProviderConfig({
+    root: repoRoot,
+    env: pnpmRunEnv,
+    directory: resolve(repoRoot, "apps/zcode-cli/packages/cli/dist/provider"),
+  });
+}
+
 function runBootstrapWithRemoteBuild() {
   // Bug 原因：bootstrap 过去把 dist/zcode.cjs 存在当作本轮已构建，源码变化后仍会
   // 把上一代 Agent 放进 Source Server archive。bootstrap 成功必须代表本轮真实重建。
@@ -152,6 +171,7 @@ function runBootstrapWithRemoteBuild() {
 
 if (useBootstrapWithRemoteBuild) {
   runBootstrapWithRemoteBuild();
+  await stageProviderConfigForAgentBundle();
   stageDevAgentBundle();
   stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
@@ -174,6 +194,7 @@ if (!useTurboBuild) {
     env: pnpmRunEnv,
     stdio: "inherit",
   });
+  await stageProviderConfigForAgentBundle();
   stageDevAgentBundle();
   stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
   process.exit(0);
@@ -196,5 +217,6 @@ runCommand(
     stdio: "inherit",
   },
 );
+await stageProviderConfigForAgentBundle();
 stageDevAgentBundle();
 stageDevCuaPluginRuntime({ env: cuaPluginRuntimeStagingEnv });
