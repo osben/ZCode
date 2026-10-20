@@ -493,3 +493,23 @@ Full `node scripts/run-vitest.mjs run packages/services/test packages/server/tes
 - Bots project binding and host/project addressing: `botsProjectBinding` (7), `botsService.permissionsWorkspace` (5), `botsService.messageFlow` (5), `botsService.groups` (1). These need `hostId` in `ensureConnected`, `workspaceId` as `[hostId, projectId]`, project-binding state, and project execution scope in `botsService.ts` (10k lines). Ledger services part 4 section 2 keeps this deferred. The fork `/remote` addressing (`remote:server:...`) is unchanged and `botsService.remoteLink` still passes.
 - `automation` and `offPeak` project freeze are now green; `AutomationService`/`OffPeakTaskService` `prepareProjectExecution` wiring in production is not changed by this slice.
 - Architecture check (`pnpm architecture:check --changed`) reports 4 unmanaged new files that are not in this diff (desktop host files, `packages/shared/src/zcode-protocol-v4/execution-worktree.ts`), as in the sync branch base. Not 0.
+
+## lastmile desktop
+
+Scope: the 10 desktop test files that failed in the full unit run: `webRemoteControlTransport` (fork-isolated), `desktopAgentBytecode`, `desktopCrashCapture`, `desktopNetworkPolicy`, `desktopNetworkTelemetry`, `desktopProviderConfig`, `processResourceCliSource`, `processResourceSampleSources`, `processResourceSelfHeapSource`, `webRemoteControlManagerExternalRelay`.
+
+### Root cause (environment, not source)
+
+- All 10 files failed to load with `Electron failed to install correctly, please delete node_modules/electron`. `pnpm install --ignore-scripts` skips electron's postinstall, so `node_modules/electron` had no binary. Running `node node_modules/electron/install.js` fixes it. No fork source, import, export, or merge-dropped file was involved.
+- The `fork-isolated` project in `vitest.config.ts` is intact. Every `packages/...` entry in the fork `origin/integration` config is still present.
+
+### Verification
+
+- The 10 files, run alone: 4 files 34/34 tests pass, 6 files 120/120 tests pass.
+- `node scripts/run-vitest.mjs run packages/desktop/test --exclude "packages/desktop/test/e2e/**/*.test.ts"`: 366 files passed, 2 skipped; 2941 tests passed, 7 skipped; exit 0.
+- `pnpm typecheck` 0. `pnpm lint` 0 errors (94 warnings, pre-existing).
+- `pnpm architecture:check --changed`: NOT 0. It reports 4 `unmanaged-new-file` violations, none in the desktop tests: `packages/desktop/src/host/sourceServerManagementService.ts`, `packages/desktop/src/host/sourceServerMigrationCounts.ts`, `packages/desktop/src/host/windowTopicResourceRelay.ts`, `packages/shared/src/zcode-protocol-v4/execution-worktree.ts`. These came from the upstream merge and are not registered as managed modules. Fixing them means registering or moving modules (`pnpm architecture:adopt` or relocation), a governance decision left for the owner. Already recorded in the architecture bullet above.
+
+### Source changes
+
+- None. The fork desktop behavior was already intact; no code was ported.
