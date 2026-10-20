@@ -1,3 +1,8 @@
+import { ToolSearchModeSchema } from "@zcode/contracts";
+import {
+  STORAGE_MIGRATION_COMMAND,
+  storageMigrationReportSchema,
+} from "@zcode/shared/sqlite-migrations";
 import { extractDisallowedToolsArgs, parseGlobalArgs } from "./arguments.js";
 import { createNodeLoggerFactory } from "@zcode/adapters";
 import { getRuntimeInfo, type PresentationSurface } from "@zcode/core";
@@ -254,10 +259,9 @@ const runZCodeProtocolCommand = async (
   try {
     const env = prepareCliRuntimeEnv(deps.env ?? process.env);
     const workingDirectory = (deps.cwd ?? process.cwd)();
-    // The packaged app-server is an internal protocol subprocess of the desktop host.
-    // If it continues searching upward from the workspace for a user .env file, a read failure or
-    // environment contamination can terminate it before protocol setup; the outer process then sees
-    // only "ZCode agent transport closed."
+    // 打包态 app-server 是 desktop host 的内部协议子进程。
+    // 如果这里继续从 workspace 向上读取用户 .env，读文件失败或环境污染会在协议建立前
+    // 直接退出，外层只能看到 ZCode agent transport closed。
     const dotenvResult = shouldLoadCliDotenvForProtocolServer(env)
       ? (deps.loadDotenv ?? loadCliDotenv)({
           cwd: workingDirectory,
@@ -299,6 +303,37 @@ const runZCodeProtocolCommand = async (
 };
 
 export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<number> => {
+  if (ctx.argv[0] === STORAGE_MIGRATION_COMMAND) {
+    try {
+      if (ctx.argv.length !== 1) throw new Error("storage-migrate accepts no arguments");
+      const migrateStorage =
+        deps.migrateStorage ??
+        (async () => {
+          // 复用正常启动的配置解析与存储入口，不初始化 Provider/MCP/Agent 运行态。
+          const { createConfig, resolvePath } = await import("@zcode/adapters/config");
+          const { openStartupSqliteSessionStore } = await import("@zcode/adapters/storage");
+          const config = createConfig({ env: deps.env ?? process.env });
+          const store = await openStartupSqliteSessionStore({
+            dbPath: resolvePath(config.config.storage.sessionDbPath),
+          });
+          try {
+            return store.migrationResult;
+          } finally {
+            store.close();
+          }
+        });
+      const report = storageMigrationReportSchema.parse({
+        version: 1,
+        kind: "storage-migrated",
+        ...(await migrateStorage()),
+      });
+      ctx.stdout.write(`${JSON.stringify(report)}\n`);
+      return 0;
+    } catch (error) {
+      ctx.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      return 1;
+    }
+  }
   if (ctx.argv[0] === "__internal-search") {
     return runEmbeddedSearchCli(ctx.argv.slice(1), {
       cwd: (deps.cwd ?? process.cwd)(),
@@ -312,9 +347,8 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     return await runPluginHostCommand(ctx, ctx.argv.slice(1));
   }
 
-  // As with the plugin host, this must happen before parseArgs: under SEA, a DWF sandbox subprocess
-  // is a self-reexec of this binary, and its final argv entry is the entry-file path. Strict
-  // parseArgs would reject it as an unknown argument.
+  // 与 plugin host 同理，且必须同样在 parseArgs 之前：SEA 下 dwf 的沙箱子进程是本二进制的
+  // 自 re-exec，argv 末位是入口文件路径——交给严格 parseArgs 只会报未知参数。
   if (isDwfChildInvocation(ctx.argv)) {
     return await runDwfChildCommand(ctx, ctx.argv.slice(1));
   }
@@ -408,6 +442,14 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     browserExecutable,
     outputFormat,
   );
+  const parsedToolsearchMode = ToolSearchModeSchema.safeParse(
+    parsed.values["toolsearch-mode"] ?? "off",
+  );
+  if (!parsedToolsearchMode.success) {
+    ctx.stderr.write("--toolsearch-mode must be one of auto, native, local, off.\n");
+    return 1;
+  }
+  const toolsearchMode = parsedToolsearchMode.data;
   const forceMcs = parsed.values["force-mcs"] === true;
   let targetRequest: CliTargetRequest | undefined;
   try {
@@ -465,9 +507,8 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
     return 1;
   }
 
-  // The Host determines app-server mode (see launch.md "The standalone CLI: `--workflow-mode`").
-  // Other subcommands do not create sessions; like --force-mcs, this applies only to --prompt,
-  // --target, and the TUI.
+  // app-server 的 mode 归 Host 决定（launch.md「The standalone CLI: `--workflow-mode`」），
+  // 其余子命令不建会话；作用域与 --force-mcs 相同：只有 --prompt、--target 与 TUI。
   if (
     workflowModeOption !== undefined &&
     !isForceMcsSupportedInvocation({
@@ -482,14 +523,16 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
   const workflowMode = workflowModeOption ?? DEFAULT_CLI_WORKFLOW_MODE;
 
   if (
-    forceMcs &&
+    (forceMcs || parsed.values["toolsearch-mode"] !== undefined) &&
     !isForceMcsSupportedInvocation({
       positionals: parsed.positionals,
       prompt: parsed.values.prompt as string | undefined,
       targetRequest,
     })
   ) {
-    ctx.stderr.write(`${FORCE_MCS_SCOPE_ERROR}\n`);
+    ctx.stderr.write(
+      `${parsed.values["toolsearch-mode"] !== undefined ? "--toolsearch-mode can only be used with --prompt, --target, or tui." : FORCE_MCS_SCOPE_ERROR}\n`,
+    );
     return 1;
   }
 
@@ -531,6 +574,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       resumeRequest,
       toolDisallowlist,
       forceMcs,
+      toolsearchMode,
       presentationSurface,
       workflowMode,
     );
@@ -548,6 +592,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
       resumeRequest,
       toolDisallowlist,
       forceMcs,
+      toolsearchMode,
       presentationSurface,
       workflowMode,
     );
@@ -604,6 +649,7 @@ export const run = async (ctx: RunContext, deps: RunDependencies = {}): Promise<
         resumeRequest,
         toolDisallowlist,
         forceMcs,
+        toolsearchMode,
         workflowMode,
       );
     default:

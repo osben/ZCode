@@ -1,11 +1,11 @@
-// The shape of the host side reading the journal (docs/execution-engine.md "Reading the journal"): report items
-// leave the storage layer only when they are about to be shown, and only as many as can be displayed.
+// 宿主侧读 journal 的形状（docs/execution-engine.md「Reading the journal」）：report item 只在
+// 要显示时才离开存储层，而且只取显示得下的那么多。
 //
-// - Cold replay: report events after this run's 64th are read back without items, and the reduced state is
-//   byte-identical to reading the full log (docs/dynamic-workflow/presentation.md "Cold replay");
-// - Amend import: not a single report row is read; whether the predecessor reported or how much, the import tables are the same;
-// - Scale: a run that reported all 65,536 items, across terminal snapshot / artifact list / cold replay /
-//   GetWorkflowRun / amend import combined, hands exactly 256 + 64 + 64 report items to JavaScript.
+// - 冷回放：本 run 第 64 条之后的 report 事件不带 item 读回，归约结果与读全量逐字节相同
+//   （docs/dynamic-workflow/presentation.md「Cold replay」）；
+// - 修订导入：一条 report 行都不读，前驱报没报过、报了多少，导入表都一样；
+// - 规模：一个报满 65,536 条的 run，终态快照 / 产物清单 / 冷回放 / GetWorkflowRun / 修订导入
+//   加起来，交到 JS 手里的 report item 恰好是 256 + 64 + 64 条。
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,12 +46,12 @@ type SqliteJournal = JournalStorePort & {
 };
 
 let tempRoot: string;
-let store: ReturnType<typeof createSqliteSessionStore>;
+let store: Awaited<ReturnType<typeof createSqliteSessionStore>>;
 let journal: SqliteJournal;
 
 beforeEach(async () => {
   tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-report-reads-"));
-  store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+  store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
   const resolved = resolveDynamicWorkflowJournalStore(store as never);
   if (resolved === undefined) throw new Error("sqlite store must expose the dwf journal");
   journal = resolved as SqliteJournal;
@@ -84,7 +84,7 @@ function started(runId: string): void {
   } as RunEvent);
 }
 
-/** One report: node row + event, matching the engine's "one write + one event" shape. */
+/** 一条 report：节点行 + 事件，与引擎的「一次写 + 一个事件」同形。 */
 function report(runId: string, ordinal: number, item: unknown, artifactId?: string): void {
   journal.putNode({
     runId,
@@ -149,7 +149,7 @@ describe("cold replay reads report items only up to the projection's bound", () 
     createRun(runId);
     started(runId);
     declareChart(runId);
-    // First life 90 reports (one labeled every three), then stop; second life adds 60 more and settles.
+    // 第一世 90 条（每三条一条打标签），停下；第二世再 60 条，结算。
     for (let ordinal = 1; ordinal <= 90; ordinal += 1) {
       report(
         runId,
@@ -171,7 +171,7 @@ describe("cold replay reads report items only up to the projection's bound", () 
 
     const full = journal.listEvents(runId, ALL_EVENTS);
     const stripped = journal.listEvents(runId, COLD_REPLAY_EVENT_READ);
-    // This case really did reach the stripping: the first 64 reports carry items, the other 86 do not; the event count is unchanged.
+    // 这条用例确实走到了剥离：前 64 条 report 带 item，其余 86 条不带；事件条数不变。
     expect(stripped).toHaveLength(full.length);
     expect(stripped.filter(hasItem)).toHaveLength(64);
     expect(stripped.filter((stored) => stored.event.type === "report")).toHaveLength(150);
@@ -179,11 +179,11 @@ describe("cold replay reads report items only up to the projection's bound", () 
     const fromFull = reduce(runId, full);
     const fromStripped = reduce(runId, stripped);
     expect(fromStripped).toEqual(fromFull);
-    // The reduced state itself makes sense: 64 previews, truncated, and the dashboard counted all 50 labels.
+    // 归约结果本身说得通：64 条预览、被截断、看板数到了全部 50 条标签。
     expect(fromStripped.reports).toHaveLength(64);
     expect(fromStripped.truncated).toBe(true);
     expect(fromStripped.artifacts?.find((artifact) => artifact.id === "perf")?.itemCount).toBe(50);
-    // This read is the production entry point.
+    // 生产入口就是这条读。
     let viaEntry: WorkflowRunsState | undefined;
     for (const payload of replayRunProgress(rowOf(runId), journal, CEILING)) {
       viaEntry = reduceWorkflowRunsState(viaEntry, payload) ?? viaEntry;
@@ -272,7 +272,7 @@ describe("amend import never reads report rows", () => {
 });
 
 describe("a run that reported 65,536 items", () => {
-  /** Wrap it: count the report items these reads hand to JavaScript (node rows' result, events' item). */
+  /** 包一层：数一数经这些读交到 JS 手里的 report item（节点行的 result、事件的 item）。 */
   function countingJournal(target: SqliteJournal): { journal: SqliteJournal; items: () => number } {
     let items = 0;
     const proxy = new Proxy(target, {
@@ -308,7 +308,7 @@ describe("a run that reported 65,536 items", () => {
     journal.updateRunStatus(runId, "completed");
 
     const counted = countingJournal(journal);
-    // Cold row (no entry in this process's registry): the terminal snapshot reads everything from the journal.
+    // 冷行（本进程注册表里没有条目）：终态快照全部从 journal 读。
     const snapshot = snapshotOf(runId, new Map(), counted.journal);
     expect(snapshot?.reportCount).toBe(total);
     expect(snapshot?.reports).toHaveLength(256);
@@ -323,7 +323,7 @@ describe("a run that reported 65,536 items", () => {
     expect(run?.reports).toHaveLength(64);
     expect(run?.artifacts?.find((artifact) => artifact.id === "perf")?.itemCount).toBe(total / 2);
 
-    // GetWorkflowRun: the same event read as cold replay (64 items); node rows carry no results and no report is read.
+    // GetWorkflowRun：与冷回放同一条事件读（64 条 item），节点行不带结果、不读 report。
     const { getRunDetail } = createRunIntrospectionMethods({
       introspection: counted.journal as unknown as DynamicWorkflowIntrospectableJournal,
       journal: counted.journal,
@@ -339,15 +339,15 @@ describe("a run that reported 65,536 items", () => {
     expect(preflightAmendImport(counted.journal, runId)).toMatchObject({ ok: true });
     await buildImportedCache({ journal: counted.journal }, runId);
 
-    // Snapshot 256 + cold replay 64 + GetWorkflowRun 64; the artifact list and amend import read none.
+    // 快照 256 + 冷回放 64 + GetWorkflowRun 64；产物清单与修订导入一条不读。
     expect(counted.items()).toBe(256 + 64 + 64);
   }, 120_000);
 });
 
 describe("report item size: 1 MiB items stay out of JavaScript except where they are shown", () => {
-  // docs/execution-engine.md "Progressive results: `report`" and "Reading the journal": after the 1 MiB per-item
-  // cap, "read only the first N items" cannot control bytes — every reader also needs a byte bound. What is counted
-  // here is the report payload bytes genuinely handed to JavaScript (node rows' result, events' item, dashboard entries' item / fields).
+  // docs/execution-engine.md「Progressive results: `report`」与「Reading the journal」：单条上限
+  // 1 MiB 之后，「只读前 N 条」管不住字节——每个读者还得有字节界。这里数的是真正交到 JS 手里
+  // 的 report 载荷字节（节点行的 result、事件的 item、看板条目的 item / fields）。
   const ITEM_PAD = 1_000_000;
   const TOTAL = 40;
 
@@ -412,13 +412,13 @@ describe("report item size: 1 MiB items stay out of JavaScript except where they
     const counted = byteCountingJournal(journal);
     const MiB = 1024 * 1024;
 
-    // Terminal snapshot: the first few items, at most 8 MiB (about 1 MB each, hence 8), with the true total.
+    // 终态快照：前若干条、至多 8 MiB（每条约 1 MB，所以 8 条），总数照实。
     const snapshot = snapshotOf(runId, new Map(), counted.journal);
     expect(snapshot?.reportCount).toBe(TOTAL);
     expect(snapshot?.reports).toHaveLength(8);
     expect(counted.bytes()).toBeLessThanOrEqual(8 * MiB);
 
-    // The dashboard takes fields only: 20 label reports fit on one page, and only 20 small numbers reach JS.
+    // 看板只取字段：20 条标签 report 一页装下，交到 JS 的只有 20 个小数字。
     counted.reset();
     const fieldPage = listArtifactItemsFrom(counted.journal, runId, "perf", {
       limit: 200,
@@ -431,7 +431,7 @@ describe("report item size: 1 MiB items stay out of JavaScript except where they
     expect(fieldPage.hasMore).toBe(false);
     expect(counted.bytes()).toBeLessThan(1024);
 
-    // The dashboard takes whole items (old renderer): at most 4 MiB per page, hence 4 items, with hasMore reported.
+    // 看板取整条（老渲染器）：一页至多 4 MiB，于是 4 条、并报 hasMore。
     counted.reset();
     const wholePage = listArtifactItemsFrom(counted.journal, runId, "perf", {
       limit: 200,
@@ -441,7 +441,7 @@ describe("report item size: 1 MiB items stay out of JavaScript except where they
     expect(wholePage.hasMore).toBe(true);
     expect(counted.bytes()).toBeLessThanOrEqual(4 * MiB);
 
-    // One event-log page: likewise at most 4 MiB.
+    // 事件日志一页：同样至多 4 MiB。
     counted.reset();
     const eventPage = (
       counted.journal as unknown as DynamicWorkflowIntrospectableJournal
@@ -452,7 +452,7 @@ describe("report item size: 1 MiB items stay out of JavaScript except where they
     expect(eventPage.hasMore).toBe(true);
     expect(counted.bytes()).toBeLessThanOrEqual(4 * MiB);
 
-    // The byte count resume restores: sum(octet_length(result_json)), the same bytes as JSON.stringify at write time.
+    // resume 恢复的字节计数：sum(octet_length(result_json))，与写入时 JSON.stringify 的字节相同。
     const expected = Array.from({ length: TOTAL }, (_v, index) =>
       payloadBytes({ n: index + 1, pad: "x".repeat(ITEM_PAD) }),
     ).reduce((sum, value) => sum + value, 0);
@@ -460,8 +460,8 @@ describe("report item size: 1 MiB items stay out of JavaScript except where they
   }, 120_000);
 
   it("extracts fields in SQLite exactly as the renderer reads them from the whole item", () => {
-    // The path rules are a protocol-level contract (readWorkflowArtifactField): the CLI extracts in SQLite and the
-    // renderer extracts in JS; the same item and the same path must yield the same value (failure = the key is not in the table).
+    // 路径规则是协议上的契约（readWorkflowArtifactField）：CLI 在 SQLite 里取、渲染器在 JS 里
+    // 取，同一条 item、同一条路径必须得到同一个值（走不通 = 表里没有这个键）。
     const runId = "dwfrun-field-parity";
     createRun(runId);
     started(runId);

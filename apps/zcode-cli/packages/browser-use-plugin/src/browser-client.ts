@@ -1,5 +1,5 @@
-// Importing from the @zcode/core root barrel makes esbuild trace Agent/tool modules with top-level side effects,
-// bundling the Bash registry, subagents, and runtime into the official plugin. Browser artifacts must depend only on narrow subpaths.
+// 从 @zcode/core 根 barrel 导入会让 esbuild 追踪具有顶层副作用的 Agent/tool 模块，
+// 把 Bash registry、subagent 和 runtime 一起打进官方插件。Browser 发布物只能依赖窄 subpath。
 import { setupBrowserRuntime as setupCoreBrowserRuntime } from "@zcode/core/browser-client";
 import { readNodeReplBrowserRuntimeBridge } from "@zcode/node-repl-host/runtime-bridge";
 

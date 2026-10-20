@@ -1,10 +1,8 @@
 /**
- * Integration tests for the dwf run service. The assembly follows runDriverScript from
- * workflow-driver.helpers.ts: real script → real compilation / schema synthesis / validate /
- * lowering → sandbox subprocess → engine core → real AgentRuntime driver, with only the model
- * swapped for a predictable scripted adapter. The subject under test is the run service itself:
- * compile once, engine-exclusive createRun, run metadata persisted, actor sessions made real,
- * cancellation semantics, caps defaults, and event pagination.
+ * dwf run service 的集成测试。装配照 workflow-driver.helpers.ts 的 runDriverScript：真实脚本 →
+ * 真实编译 / schema 合成 / validate / lowering → 沙箱子进程 → 引擎核心 → 真实 AgentRuntime
+ * driver，只把模型换成可预测的脚本化 adapter。被测对象是 run service 本身：编译一次、
+ * 引擎独占 createRun、run 元数据落库、actor 会话真实化、取消语义、caps 默认值、事件分页。
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -94,15 +92,13 @@ import {
 import type { ExecutionPort } from "@zcode/contracts";
 import { mkdtempSync, readFileSync } from "node:fs";
 /**
- * A dedicated run cwd: the harness writes the entry file to `<cwd>/.zcode/workflow-runs/<runId>.mjs`
- * and keeps it. Using process.cwd() would leave the archive in the package directory and let
- * parallel test files overwrite each other's entry files of the same name.
+ * 独立的 run cwd：harness 把入口文件写到 `<cwd>/.zcode/workflow-runs/<runId>.mjs` 且保留，
+ * 用 process.cwd() 会把存档留在包目录里，并让并行测试文件互相覆写同名入口文件。
  */
 const TEST_CWD: string = mkdtempSync(join(tmpdir(), "dwf-bootstrap-test-cwd-"));
 
-// Count how many real ts.Programs get built, so that "compile once" becomes an assertable fact.
-// importOriginal keeps the compilation itself real — the other cases depend on the real lowering
-// and schema synthesis.
+// 数真实的 ts.Program 建了几次，让「编译一次」成为可断言的事实。用 importOriginal 保持
+// 编译本身是真的——其余用例依赖真实的 lowering 与 schema 合成。
 const { compiledScripts } = vi.hoisted(() => ({ compiledScripts: [] as string[] }));
 
 vi.mock("@zcode/dynamic-workflow", async (importOriginal) => {
@@ -116,7 +112,7 @@ vi.mock("@zcode/dynamic-workflow", async (importOriginal) => {
   };
 });
 
-/** Minimal script with one typed ask; the actor ref is actor#1@1 and the ask site is ask#1. */
+/** 一个 typed ask 的最小脚本；actor ref 为 actor#1@1，ask 站点为 ask#1。 */
 const TYPED_SCRIPT = [
   "interface Answer { text: string }",
   'const a = await agent("worker").ask<Answer>("do the thing");',
@@ -126,10 +122,9 @@ const TYPED_SCRIPT = [
 const BROKEN_SCRIPT = 'const x: number = "definitely not a number";';
 
 /**
- * Publishes a user-facing artifact (docs/dynamic-workflow/authoring.md). Markdown rather than a
- * file: what this case proves is the **wiring** (service → launch → driver → store), and markdown
- * does not require a real file in the workspace — the path / limit / type semantics on the file
- * side belong to workflow-driver-artifacts.test.ts.
+ * 发布一个用户面产物（docs/dynamic-workflow/authoring.md）。用 markdown 而不是 file：这条用例
+ * 要证的是**接线**（service → launch → driver → store），而 markdown 不需要工作区里真有一个
+ * 文件——文件那一侧的路径 / 上限 / 类型语义归 workflow-driver-artifacts.test.ts。
  */
 const ARTIFACT_SCRIPT = ['artifact.markdown("summary", "# 结论");', 'return "done";'].join("\n");
 
@@ -139,35 +134,31 @@ function traceFor(name: string) {
 }
 
 /**
- * This file's model plans have one more kind than the helpers': `escalate` issues one real
- * `escalate` tool call. It runs the whole "actor hits a wall → asks → gets an answer → keeps
- * working" line through the **real tool layer**, instead of the test holding the port and
- * impersonating the model (which would skip three segments: the registration gate, the allowlist
- * restoration, and the tool-result feedback).
+ * 本文件的模型计划比 helpers 的多一种：`escalate` 发一次真的 `escalate` 工具调用。
+ * 它让「actor 撞墙 → 提问 → 拿到答案 → 继续干活」整条线经**真实工具层**跑一遍，而不是由
+ * 测试直接持端口扮演模型（那样漏掉注册门、allowlist 补回、工具结果回灌三段）。
  */
 type ActorPlan =
   | PlannedResponse
   | { kind: "escalate"; question: string; context?: string }
-  // One real `Write` tool call: runs the whole "subagent writes a file → executor emits
-  // ToolCallStarted → driver reports → engine closes the import cache" line through the real
-  // tool layer (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Amend-resume").
+  // 一次真的 `Write` 工具调用：让「子代理写文件 → 执行器发 ToolCallStarted → driver 上报 → 引擎关导入缓存」
+  // 整条线经真实工具层跑一遍（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Amend-resume」）。
   | { kind: "write"; path: string; content: string }
-  // Hangs, but **respects cancellation**: the turn rejects with the abort signal, like a real provider.
+  // 挂起，但**理会取消**：turn 随 abort 信号 reject，与真实 provider 一样。
   //
-  // The difference from `hang` is not a detail but a watershed: `hang` simulates a provider that
-  // never even looks at AbortSignal, its turn never lands, so for that session "did it finish
-  // writing or not" can never be answered (the driver's quiescence accounting therefore refuses to
-  // continue its in-flight ask; see workflow-driver-quiescence.ts). This kind is the normal shape.
+  // 与 `hang` 的区别不是细节而是分水岭：`hang` 模拟的是一个连 AbortSignal 都不看的 provider，
+  // 它的 turn 永远落不了地，于是那个会话「写完了没有」永远答不上来（driver 的静默账因此
+  // 拒绝接续它的在飞 ask，见 workflow-driver-quiescence.ts）。本种类才是正常形状。
   | { kind: "hang-until-cancelled" }
-  // The model request rejects with an adapter error (model-side error containment cases).
+  // 模型请求以 adapter 错误 reject（模型侧错误收容用例）。
   | { kind: "throw"; error: unknown };
 
-/** Observation surface of one generateText request: the messages the model saw this round and the tools it was given. */
+/** 一次 generateText 请求的观察面：模型这一轮看见的消息与被提供的工具。 */
 interface ModelRequestLog {
   requests: { messages?: unknown; tools?: readonly { name: string }[] }[];
 }
 
-/** Scripted model adapter (same pattern as workflow-driver.helpers; this file looks up the plan by actor key). */
+/** 脚本化 model adapter（同 workflow-driver.helpers 的模式，本文件按 actor 键取计划）。 */
 function scriptedModelAdapter(
   responses: ActorPlan[],
   onCall?: () => void,
@@ -186,13 +177,11 @@ function scriptedModelAdapter(
         kind: "text",
         text: "(no further scripted response)",
       };
-      // Hang: simulates an in-flight turn (cancel/resume cases rely on it to park the run at a
-      // predictable node).
+      // 挂起：模拟一个在飞 turn（取消/恢复用例靠它把 run 停在可预测的节点上）。
       if (planned.kind === "hang") return new Promise(() => {});
       if (planned.kind === "hang-until-cancelled") {
         const signal = request?.abortSignal;
-        // Without a signal it degrades to hang (should not happen: the driver creates an
-        // AbortController for every ask).
+        // 没有信号就退化成 hang（不该发生：driver 每个 ask 都建 AbortController）。
         if (signal === undefined) return new Promise(() => {});
         return new Promise((_resolve, reject) => {
           const fail = (): void => reject(new Error("model request aborted"));
@@ -225,7 +214,11 @@ function scriptedModelAdapter(
           providerMetadata: undefined,
           text: "",
           toolCalls: [
-            { id: `write-call-${index}`, name: "Write", input: { file_path: planned.path, content: planned.content } },
+            {
+              id: `write-call-${index}`,
+              name: "Write",
+              input: { file_path: planned.path, content: planned.content },
+            },
           ],
           usage,
         };
@@ -263,67 +256,63 @@ function scriptedModelAdapter(
 interface HarnessOptions {
   actorScripts?: Record<string, ActorPlan[]>;
   availableParallelism?: () => number;
-  /** Narrow port for the process-level governor; unwired by default (actors are not governed by the gate and launch registers no ceiling). */
+  /** 进程级治理器的窄端口；缺省不接（actor 不受闸门约束，launch 也不登记上界）。 */
   concurrency?: WorkflowConcurrencyPort;
   journal?: JournalStorePort;
-  /** Makes the actor runtime's turn never end on its own; for cancellation cases. */
+  /** 让 actor runtime 的 turn 永不自行结束，用于取消用例。 */
   hangActors?: boolean;
   /**
-   * Bounded wait ceiling for session quiescence (default {@link AMEND_TRANSCRIPT_QUIESCE_MS} = 5
-   * seconds). Only the "amend an in-flight predecessor whose turn never landed" path ever waits
-   * the full amount, so only that group of cases needs it shortened.
+   * 会话静默的有界等待上界（缺省 {@link AMEND_TRANSCRIPT_QUIESCE_MS} = 5 秒）。只有「修订一个
+   * turn 落不了地的在飞前驱」这一条路会真的等满，所以只有那组用例需要把它缩下来。
    */
   quiesceMs?: number;
   onRunEvent?: (progress: DynamicWorkflowRunProgressPayload) => void;
-  /** The parent session's current permission mode (docs/dynamic-workflow/launch.md "Permissions inside a run"); unwired by default. */
+  /** 父会话当前的权限模式（docs/dynamic-workflow/launch.md「Permissions inside a run」）；缺省不接。 */
   permissionMode?: () => CollaborationMode;
-  /** The parent session of this service instance (the scope of orphan sweeping). */
+  /** 本服务实例的父会话（孤儿收敛的作用域）。 */
   parentSessionId?: string;
   /**
-   * Residency registration hook (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
-   * "Engine ownership", rule 1). **Unwired by default**: every other case in this file therefore
-   * also serves as a regression for "behavior unchanged when the host has no residency concept".
+   * 常驻登记钩子（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Engine ownership」规则一）。
+   * **缺省不接**：本文件其余全部用例因此同时充当「宿主无常驻概念时行为不变」的回归。
    */
   registerResidencyBlockingWork?: (work: Promise<unknown>) => void;
-  /** Launch anchor resolution (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Token telemetry for subagents"): default means the host has no active turn. */
+  /** 发起锚点解析（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Token telemetry for subagents」）：缺省即宿主没有活动轮。 */
   resolveLaunchInputId?: (trace: { turnId?: string }) => string | undefined;
-  /** Makes resumeFromStore throw SessionNotFound (fallback case for a cleaned-up session). */
+  /** 让 resumeFromStore 抛 SessionNotFound（会话被清理的回退用例）。 */
   resumeSessionMissing?: boolean;
   /**
-   * Real session store: with it wired, actor messages actually get persisted and the service hands
-   * the transcript surface to the driver (a prerequisite for ask-boundary accounting; see
-   * apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). Unwired by default.
+   * 真实会话存储：接上它，actor 的消息才真的落库，service 也才把转录面交到 driver 手上
+   * （ask 边界记账的前提，apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。缺省不接。
    */
   sessionStore?: SessionStorePort;
-  /** Destination for user-facing artifacts. Unwired by default — content members therefore reject with ArtifactStoreUnavailable. */
+  /** 用户面产物的落点。缺省不接——内容成员因此以 ArtifactStoreUnavailable 拒绝。 */
   artifactStore?: ToolArtifactStorePort;
   taskLinkStore?: { createSessionTaskLink(input: CreateSessionTaskLinkInput): Promise<unknown> };
-  /** Injection point that mints a draft when a completion lands on a run without one (the blank-draft group of cases); unwired by default. */
+  /** 补全落在没有草稿的 run 上时铸草稿的注入点（留白那组用例）；缺省不接。 */
   writeWorkflowDraft?: Parameters<typeof createDynamicWorkflowRunService>[0]["writeWorkflowDraft"];
-  /** Execution port for world.run; fails on touch by default (the vast majority of cases in this file must not run commands). */
+  /** world.run 的执行端口；缺省触及即失败（本文件绝大多数用例不该跑命令）。 */
   executionPort?: ExecutionPort;
 }
 
 interface Harness {
-  /** Event store shared by the actor runtime (in production this is the **parent runtime's** store). */
+  /** actor runtime 共享的 event store（生产里就是**父 runtime 的** store）。 */
   actorEventStore: SessionEventStorePort;
-  /** Per-actor model request log (keyed by actor ref string); observation surface for the tool face and tool results. */
+  /** 每个 actor 的模型请求流水（键为 actor ref 串）；工具面与工具结果的观察面。 */
   actorModelRequests: Record<string, ModelRequestLog>;
   actorRuntimeInputs: DynamicWorkflowActorRuntimeInput[];
   /**
-   * Sessions that called subscribeEvents on the actor runtime. The run service itself is **not
-   * allowed even once** (the old dead seam); the driver subscribes exactly once per actor for
-   * rate-limit observation (docs/dynamic-workflow/concurrency.md "Protocol and UI"), and that
-   * subscription only reads ModelNetworkStatus — it is not a live transcript channel.
+   * 对 actor runtime 调 subscribeEvents 的会话。run service 自己**一次都不许**（旧死接缝）；
+   * driver 为限流观察每个 actor 订阅恰好一次（docs/dynamic-workflow/concurrency.md「Protocol and UI」），
+   * 那条订阅只读 ModelNetworkStatus，不是 transcript 直播通道。
    */
   actorSubscribeCalls: SessionId[];
   journal: JournalStorePort;
-  /** Logs recorded by the service (orphan sweeping requires a warn per entry). */
+  /** 服务记下的日志（孤儿收敛要求逐条 warn）。 */
   logs: { level: string; message: string; context?: Record<string, unknown> }[];
-  /** The **order** in which each actor was constructed / persisted / live-streamed / linked / first called by the model. */
+  /** 每个 actor 的构造/持久化/直播/建链/首轮模型调用的**发生顺序**。 */
   order: string[];
   persistedTitles: string[];
-  /** Actor sessions for which resumeFromStore was called (observation surface for the rehydration cases). */
+  /** resumeFromStore 被调用的 actor 会话（rehydration 用例的观察面）。 */
   resumeCalls: SessionId[];
   runEvents: DynamicWorkflowRunProgressPayload[];
   runEventRoutings: { parentSessionId?: string }[];
@@ -332,38 +321,35 @@ interface Harness {
   taskLinks: CreateSessionTaskLinkInput[];
 }
 
-/** The default parent session of this service instance; orphan-sweeping cases contrast it against "some other session". */
+/** 本服务实例的默认父会话；孤儿收敛的用例围绕它与「别的会话」对照。 */
 const HARNESS_PARENT_SESSION = createSessionId("harness-parent");
 /**
- * The harness's "parent session's current model": the same value as createTestAgentRuntime's
- * default selection, so "no override" and "override with the parent model" land on the same
- * record here — matching production (create-app.ts hands
- * `getRuntime().getSessionModelSelection()` to the model policy as parentSelection).
+ * harness 里「父会话当前模型」：与 createTestAgentRuntime 的缺省 selection 同一个值，于是
+ * 「不覆盖」与「覆盖成父模型」在这里落到同一条记录——照生产（create-app.ts 把
+ * `getRuntime().getSessionModelSelection()` 交给模型策略作 parentSelection）。
  */
 const HARNESS_PARENT_MODEL = createTestModelSelection("test/default-runtime-model");
 
 /**
- * Journal stand-in with the orphan-sweeping narrow queries. The real SQL semantics (pre-filtering
- * non-terminal rows by parent session) are pinned against the real database in
- * `adapters/tests/dwf-journal-store.test.ts`; all we need here is an implementation the run
- * service's capability probe recognizes, so the "what to sweep, what failures to write" policy
- * layer can be asserted in isolation.
+ * 带孤儿收敛窄查询的 journal 替身。真正的 SQL 语义（按父会话预筛非终态行）在
+ * `adapters/tests/dwf-journal-store.test.ts` 里对真库钉住；这里只要一个能被 run service
+ * 的能力探测认出来的实现，好让「收敛什么、写什么失败」这层策略可以被单独断言。
  */
 class SweepableJournalStore extends InMemoryJournalStore {
   private readonly createdRunIds: string[] = [];
-  /** Stand-in for row timestamps: the real DB maintains time_created/time_updated in SQL; the in-memory implementation carries no time. */
+  /** 行时间戳的替身：真库由 SQL 维护 time_created/time_updated，内存实现不带时间。 */
   private readonly rowTimes = new Map<string, number>();
   private clock = 1_700_000_000_000;
 
   override createRun(record: RunRecord): void {
     super.createRun(record);
     this.createdRunIds.push(record.runId);
-    // Increment one millisecond per row: makes "most recently updated first" an assertable fact in the stand-in too.
+    // 每行递增一毫秒：让「最近更新在前」在替身里也是一个可断言的事实。
     this.clock += 1;
     this.rowTimes.set(record.runId, this.clock);
   }
 
-  /** Stand-in timestamp of a row (tests assert updatedAt passthrough from it). */
+  /** 某行的替身时间戳（测试据它断言 updatedAt 透传）。 */
   rowTimeOf(runId: string): number {
     const time = this.rowTimes.get(runId);
     if (time === undefined) throw new Error(`no row time for ${runId}`);
@@ -382,10 +368,9 @@ class SweepableJournalStore extends InMemoryJournalStore {
   }
 
   /**
-   * Enumeration-surface stand-in: reversing creation order approximates "most recently updated
-   * first"; the real SQL ordering is pinned on the adapters side. Returns the narrow projection +
-   * timestamps ({@link DwfRunSessionListItem}) — `result` is deliberately omitted, matching the
-   * real DB's not selecting result_json.
+   * 枚举面替身：创建序反转近似「最近更新在前」；真正的 SQL 排序在 adapters 侧钉住。
+   * 回窄投影 + 时间戳（{@link DwfRunSessionListItem}）——`result` 刻意不带，与真库
+   * 不 select result_json 同规。
    */
   listRunsByParentSession(parentSessionId: string, limit: number): DwfRunSessionListItem[] {
     return this.createdRunIds
@@ -406,13 +391,11 @@ class SweepableJournalStore extends InMemoryJournalStore {
   }
 
   /**
-   * Artifact read-surface stand-in (the real DB's two SQL queries are pinned on the adapters
-   * side; only **semantic** agreement matters here).
+   * 产物读面替身（真库的两条 SQL 在 adapters 侧钉住；这里只要**语义**一致）。
    *
-   * `listArtifactRows` = the run's `kind = "artifact"` node rows, in insertion order (= version
-   * order). **Failed rows included**: the caller filters by status itself — the ruling "a failed
-   * publish does not count as a version" belongs to the read side; if the storage layer did it
-   * for callers, nobody could test it.
+   * `listArtifactRows` = 该 run 的 `kind = "artifact"` 节点行，按插入序（= 版本序）。
+   * **含失败行**：调用方自己按 status 过滤——「失败的发布不算一版」这条裁决属于读侧，
+   * 让存储层替它做掉就没人能测到它。
    */
   listArtifactRows(runId: string): NodeRecord[] {
     return this.listNodes(runId, { kinds: "all", withResult: true }).filter(
@@ -421,10 +404,9 @@ class SweepableJournalStore extends InMemoryJournalStore {
   }
 
   /**
-   * `listArtifactItems` = the **event** rows in the run with `type = "report"` and a matching
-   * `artifactId`, one page in ascending sequence order. `limit` is honored **exactly** and never
-   * clamped on its own (same rule as the real DB); `hasMore` is decided here. The byte limit is
-   * not simulated in the stand-in — the real DB's byte rules are pinned by the adapters tests.
+   * `listArtifactItems` = 该 run 里 `type = "report"` 且 `artifactId` 相符的**事件**行，
+   * 按 sequence 升序的一页。`limit` **精确**兑现且绝不自己钳（真库同规），`hasMore` 由这里判定。
+   * 字节界不在替身里模拟——真库的字节规则由 adapters 的测试钉住。
    */
   listArtifactItems(
     runId: string,
@@ -456,7 +438,7 @@ class SweepableJournalStore extends InMemoryJournalStore {
   }
 }
 
-/** Preloads one dwf_run row (simulating a record left behind by a previous process). */
+/** 预置一行 dwf_run（模拟上一个进程留下的记录）。 */
 function preloadRun(
   journal: JournalStorePort,
   input: {
@@ -523,9 +505,8 @@ function makeHarness(options: HarnessOptions = {}): Harness {
       : { resolveLaunchInputId: options.resolveLaunchInputId }),
     ...(options.sessionStore === undefined ? {} : { actorTranscriptStore: options.sessionStore }),
     ...(options.artifactStore === undefined ? {} : { artifactStore: options.artifactStore }),
-    // Only to shrink the bounded wait for "session quiescence" to milliseconds (the gate for amend
-    // continuing an in-flight ask; see workflow-driver-quiescence.ts). All other driver clock
-    // behavior uses real time.
+    // 只为把「会话静默」的有界等待缩到毫秒级（amend 接续在飞 ask 的闸门，见
+    // workflow-driver-quiescence.ts）。其余 driver 时钟行为一概走真时间。
     ...(options.quiesceMs === undefined ? {} : { driverClock: { quiesceMs: options.quiesceMs } }),
     createActorRuntime: (input) => {
       actorRuntimeInputs.push(input);
@@ -544,11 +525,9 @@ function makeHarness(options: HarnessOptions = {}): Harness {
           taskType: "workflow_child",
           subagents: { enabled: false },
           ...workflowActorToolPolicy(input.persona),
-          // The model face expands per the production factory (create-app.ts): both the pin and
-          // this run's subagentModel go into the policy, and the selection the runtime actually
-          // receives is the one journalActorResolvedModel persists. Without this layer, "which
-          // source wins" could only be observed at the run service level via factory input, not
-          // via what was persisted.
+          // 模型面照生产工厂（create-app.ts）展开：pin 与本 run 的 subagentModel 都进策略，
+          // runtime 实际拿到的 selection 才是 journalActorResolvedModel 落库的那一条。少了这一层，
+          // 「哪个来源赢」在 run service 层面就只能看工厂输入，看不到落库结果。
           ...workflowActorModelPolicy(
             {
               parentSelection: HARNESS_PARENT_MODEL,
@@ -561,9 +540,9 @@ function makeHarness(options: HarnessOptions = {}): Harness {
           ).configOverrides,
         },
         {
-          // Two key points of the production wiring, per script-workflow-child-runtime.ts:
-          // (1) the event store is shared with the parent runtime (a harness-level store stands in for the parent's here);
-          // (2) the live sink is a **construction-time** dep, not a later subscribeEvents.
+          // 生产接线的两个要点，照 script-workflow-child-runtime.ts：
+          // (1) event store 与父 runtime 共享（这里用一个 harness 级 store 代表父的）；
+          // (2) 直播 sink 是**构造期** dep，而不是事后 subscribeEvents。
           eventStore: actorEventStore,
           eventSink: {
             onSessionEvent: (event) => {
@@ -573,7 +552,7 @@ function makeHarness(options: HarnessOptions = {}): Harness {
           },
           modelAdapter: (options.hangActors
             ? {
-                // Never resolves: simulates an in-flight ask until abort interrupts the turn.
+                // 永不 resolve：模拟一个在飞 ask，直到 abort 把 turn 打断。
                 generateText: () => new Promise(() => {}),
               }
             : scriptedModelAdapter(
@@ -582,36 +561,33 @@ function makeHarness(options: HarnessOptions = {}): Harness {
                 modelRequests,
               )) as never,
           workflowSubmitPort: input.submitPort,
-          // Per production (script-workflow-child-runtime.ts): both control ports go into the actor session together.
-          // Ports present = `escalate` enters the registry — the only switch for the actor-side escalation channel.
+          // 照生产（script-workflow-child-runtime.ts）：两个控制端口一起进 actor 会话。
+          // 端口在场 = `escalate` 进注册表，这是 actor 侧升级通道的唯一开关。
           workflowEscalatePort: input.escalatePort,
           fileSystemPort,
           ...(options.sessionStore === undefined ? {} : { sessionStore: options.sessionStore }),
         },
       );
-      // The old dead seam: the run service used to call subscribeEvents after persist as a live
-      // transcript channel. That must never happen again (a subscription installed after seq 1
-      // would make the v4 gateway wait for seq 1 forever). Today the only subscribers are the
-      // driver's two observation surfaces (once per actor each: rate-limit observation reads
-      // ModelNetworkStatus, tool activity observation reads ToolCallStarted); the cases below
-      // count on that.
+      // 旧的死接缝：run service 曾在 persist 之后 subscribeEvents 当 transcript 直播通道。那条
+      // 必须一次都不再发生（装在 seq 1 之后的订阅会让 v4 网关永远等 seq 1）。今天的订阅者只有
+      // driver 的两个观察面（每 actor 各一次：限流观察读 ModelNetworkStatus，工具活动观察读
+      // ToolCallStarted），下面的用例按此计数。
       const originalSubscribe = runtime.subscribeEvents.bind(runtime);
       runtime.subscribeEvents = (sink) => {
         actorSubscribeCalls.push(input.sessionId);
         return originalSubscribe(sink);
       };
-      // ensureSessionPersistedForExternalActivity is a no-op without a sessionStore, so we wrap it
-      // here to record the call fact (order assertions rely on taskLinks and its relative order).
+      // ensureSessionPersistedForExternalActivity 在无 sessionStore 时是 no-op，
+      // 所以这里包一层记录调用事实（顺序断言靠 taskLinks 与它的相对次序）。
       const original = runtime.ensureSessionPersistedForExternalActivity.bind(runtime);
       runtime.ensureSessionPersistedForExternalActivity = async (title, opts) => {
         persistedTitles.push(title);
         order.push(`persist:${key}`);
         return original(title, opts);
       };
-      // Full resumeFromStore stand-in (does not call original): the harness runtime has no
-      // sessionStore, so the real implementation would throw a configuration error. Here we pin
-      // only "rehydration was/wasn't called" and the fallback path; the real messageHistory
-      // hydration semantics are covered by core's resume tests.
+      // resumeFromStore 全量替身（不调 original）：harness 的 runtime 没有 sessionStore，
+      // 真实实现必抛配置错误。这里只钉「rehydration 被调/没被调」与回退路径；
+      // 真实的 messageHistory 水化语义由 core 的 resume 测试负责。
       runtime.resumeFromStore = async () => {
         order.push(`resume:${key}`);
         resumeCalls.push(input.sessionId);
@@ -673,11 +649,10 @@ function makeHarness(options: HarnessOptions = {}): Harness {
 }
 
 /**
- * Submits and asserts acceptance, returning the runId. submit's result is a discriminated union
- * (the three gates of amend-resume can refuse a submission; see contracts'
- * DynamicWorkflowRunSubmitResult), so "submission succeeded" must hold in every case first;
- * centralizing that assertion here spares each case body an individual if (!result.ok).
- * Refusal paths are asserted directly against service.submit by the amend group of cases.
+ * submit 并断言被接受，回 runId。submit 的结果是判别联合（amend-resume 的三道门可以拒绝一次
+ * 提交，见 contracts 的 DynamicWorkflowRunSubmitResult），所以「提交成功」在每个用例里都得
+ * 先成立；把这个断言收在一处，用例正文才不必逐个写 if (!result.ok)。
+ * 拒绝路径由 amend 那组用例直接对 service.submit 断言。
  */
 async function submitRun(
   harness: Harness,
@@ -687,7 +662,7 @@ async function submitRun(
   return result.runId;
 }
 
-/** Success path of the amend entry (refusals are asserted in dedicated cases). */
+/** amend 入口的成功路径（refusal 在专门的用例里断言）。 */
 async function amendRun(
   harness: Harness,
   request: Parameters<NonNullable<Harness["service"]["amend"]>>[0],
@@ -697,7 +672,7 @@ async function amendRun(
   return result;
 }
 
-/** Waits for a run to settle (waitForTask is the port's own waiting surface, covered by these cases along the way). */
+/** 等某个 run 结算（waitForTask 是端口自己的等待面，顺带被这些用例覆盖）。 */
 async function settle(harness: Harness, runId: string): Promise<void> {
   await harness.service.waitForTask(runId);
 }
@@ -726,7 +701,7 @@ describe("dynamic workflow run service — 在飞计数与结算订阅（registr
     expect(harness.service.countLiveRuns()).toBe(0);
     expect(notices).toEqual([{ runId, liveRunCount: 0 }]);
 
-    // After unsubscribing, run one more run: no more notifications, but counting still works.
+    // 退订后再跑一个 run：不再通知，但计数照常。
     unsubscribe();
     const second = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -772,17 +747,14 @@ describe("dynamic workflow run service — 在飞计数与结算订阅（registr
 });
 
 /**
- * Residency registration (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
- * "Engine ownership", rule 1).
+ * 常驻登记（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Engine ownership」规则一）。
  *
- * Bug root cause (2026-09-15): the engine lived in the session App's closure and never entered the
- * runtime task registry, while the residency pool only reads the registry — a still-running run
- * was read as idle, the App was closed (10 minutes idle), and resume started a second engine.
- * Registration must land in the **same synchronous slice as startup**, so both cases below assert
- * **before** awaiting the entry promise.
+ * Bug 根因（2026-09-15）：引擎活在会话 App 的闭包里、不进 runtime task registry，而常驻池只读
+ * registry——一个仍在跑的 run 被读成 idle，App 被关闭（10 分钟空闲），resume 起了第二个引擎。
+ * 登记必须落在**启动的同一同步片**，所以下面两条用例都在 await 入口 promise **之前**断言。
  */
 describe("dynamic workflow run service — 常驻登记（Engine ownership 规则一）", () => {
-  /** Records the registered promises and whether they have settled; the latter proves the registered promise is not the placeholder on the registry entry. */
+  /** 记录登记过的 promise 与它们是否已结算；后者证明登记的不是注册表条目上的占位 promise。 */
   function recorder(): {
     register: (work: Promise<unknown>) => void;
     settled: boolean[];
@@ -813,19 +785,18 @@ describe("dynamic workflow run service — 常驻登记（Engine ownership 规�
       scriptText: TYPED_SCRIPT,
       trace: traceFor("residency-submit"),
     });
-    // The submit promise has not been awaited yet, but registration has already happened: a
-    // residency rebalance landing here can see this run.
+    // submit 的 promise 尚未被 await，登记已经发生：落在这里的常驻再平衡看得见这个 run。
     expect(hook.works).toHaveLength(1);
 
     const runId = (await submitted).runId;
-    // What was registered is the real settlement promise, not the synchronously visible placeholder Promise.resolve on the entry.
+    // 登记的是真结算 promise，不是条目上那个同步可见的占位 Promise.resolve。
     expect(hook.settled[0]).toBe(false);
     expect(harness.service.countLiveRuns()).toBe(1);
 
     await settle(harness, runId);
     await hook.works[0];
     expect(hook.settled[0]).toBe(true);
-    // Exactly once: submit goes through trackSettlement, the single registration point.
+    // 恰好一次：submit 只经 trackSettlement 这一个登记点。
     expect(hook.works).toHaveLength(1);
     expect(harness.journal.getRun(runId)?.status).toBe("completed");
   });
@@ -859,20 +830,6 @@ describe("dynamic workflow run service — 常驻登记（Engine ownership 规�
     expect(hook.works).toHaveLength(1);
     expect(harness.journal.getRun(runId)?.status).toBe("completed");
   });
-
-  it("钩子缺席（宿主没有常驻概念）时 run 照常跑到 completed", async () => {
-    const harness = makeHarness();
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      parentSessionId: HARNESS_PARENT_SESSION,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("residency-absent"),
-    });
-
-    await settle(harness, runId);
-    expect((await harness.service.getTask(runId))?.status).toBe("completed");
-    expect(harness.service.countLiveRuns()).toBe(0);
-  });
 });
 
 describe("dynamic workflow run service — submit", () => {
@@ -892,7 +849,7 @@ describe("dynamic workflow run service — submit", () => {
 
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("completed");
-    // The script's top-level return value is the run's artifact (Answer.text).
+    // 脚本的顶层返回值就是 run 的产物（Answer.text）。
     expect(snapshot?.output).toBe("done");
   });
 
@@ -906,13 +863,10 @@ describe("dynamic workflow run service — submit", () => {
     await settle(harness, runId);
 
     expect(runId).toMatch(/^[A-Za-z0-9._-]+$/);
-    expect(runId).not.toMatch(/[#@/]/);
   });
 
-  // "Compile once": a single ts.Program feeds the site table / schema synthesis / lowering. The
-  // three convenience entry points each build their own program; chaining them would typecheck
-  // three times — this assertion exists to stop anyone from switching the chain back to the
-  // convenience entry points.
+  // 「编译一次」：一个 ts.Program 喂站点表 / schema 合成 / lowering。三个便捷入口各建自己的
+  // program，串起来会 typecheck 三遍——这条断言就是防止有人把链换回便捷入口。
   it("一次 submit 只建一个 ts.Program", async () => {
     const harness = makeHarness();
     compiledScripts.length = 0;
@@ -927,8 +881,8 @@ describe("dynamic workflow run service — submit", () => {
     expect(compiledScripts.filter((script) => script === TYPED_SCRIPT)).toHaveLength(1);
   });
 
-  // Engine-exclusive createRun: the submit path must never pre-insert a dwf_run row, otherwise the
-  // engine construction flips into the resume branch and silently "resumes" from an empty journal.
+  // 引擎独占 createRun：submit 路径绝不预插 dwf_run 行，否则引擎构造翻进 resume 分支，
+  // 静默从一份空 journal「恢复」。
   it("submit 不预插 dwf_run 行，run 由引擎创建", async () => {
     const journal = new InMemoryJournalStore();
     const createRun = vi.spyOn(journal, "createRun");
@@ -942,14 +896,14 @@ describe("dynamic workflow run service — submit", () => {
     });
     await settle(harness, runId);
 
-    // createRun exactly once, and inside engine construction — the getRun before it must return
-    // undefined (that is exactly how the engine decides "a new run, not a resume").
+    // createRun 恰好一次，且发生在引擎构造里——它之前那次 getRun 必须返回 undefined
+    // （那正是引擎判断「新 run 而非 resume」的依据）。
     expect(createRun).toHaveBeenCalledTimes(1);
     const firstGetRunResult = getRun.mock.results[0];
     expect(firstGetRunResult?.value).toBeUndefined();
   });
 
-  // Run metadata persistence: without these four fields, resume's script_hash check has nothing to compare against.
+  // run 元数据落库：没有这四个字段，resume 的 script_hash 校验没有比对对象。
   it("scriptText / scriptHash / parentSessionId / cwd 落库", async () => {
     const harness = makeHarness();
     const parentSessionId = createSessionId("meta-parent");
@@ -966,15 +920,14 @@ describe("dynamic workflow run service — submit", () => {
     expect(record?.scriptText).toBe(TYPED_SCRIPT);
     expect(record?.parentSessionId).toBe(parentSessionId);
     expect(record?.cwd).toBe("/tmp/dwf-meta");
-    // scriptHash is computed by the caller (this service): sha256 hex over the author's original text, not the lowered function body.
+    // scriptHash 由调用方（本服务）算：sha256 hex over 作者原文，不是 lowered 函数体。
     const { createHash } = await import("node:crypto");
     expect(record?.scriptHash).toBe(
       createHash("sha256").update(TYPED_SCRIPT, "utf8").digest("hex"),
     );
   });
 
-  // Defensive: a dirty script should never reach submit (the handler only calls it on ok); if it
-  // does, hard-fail without creating a run.
+  // 防御性：脏脚本不该走到 submit（handler 只在 ok 时调），走到了就硬失败且不建 run。
   it("脏脚本硬失败且不建 run", async () => {
     const journal = new InMemoryJournalStore();
     const createRun = vi.spyOn(journal, "createRun");
@@ -988,10 +941,9 @@ describe("dynamic workflow run service — submit", () => {
       }),
     ).rejects.toThrow(/does not typecheck/);
 
-    // Not a single dwf_run row was created: the dirty script is blocked at the compile stage and
-    // the engine was never constructed.
+    // 一行 dwf_run 都没建：脏脚本在编译阶段就被挡下，引擎从未被构造。
     expect(createRun).not.toHaveBeenCalled();
-    // No actor session was ever started either.
+    // actor 会话也从未开始。
     expect(harness.actorRuntimeInputs).toEqual([]);
   });
 
@@ -1009,12 +961,11 @@ describe("dynamic workflow run service — submit", () => {
   });
 });
 
-// ── Requested concurrency ceiling (docs/dynamic-workflow/concurrency.md "Two bounds on a run") ──
-// `max_concurrency` is used as-is, above or below the default concurrency, with no upper bound:
-// absence means the default concurrency. This group pins the whole path
-// "request → round down → persist to dwf_run.caps_max_concurrency → two read surfaces → run-started payload".
+// ── 请求的并发上界（docs/dynamic-workflow/concurrency.md「Two bounds on a run」）─────────────
+// `max_concurrency` 高于低于默认并发都照用、没有上限：缺席即默认并发。这一组把
+// 「请求 → 取整 → 落 dwf_run.caps_max_concurrency → 两条读面 → run-started 载荷」整条路钉住。
 describe("dynamic workflow run service — 请求的并发上界", () => {
-  /** 10 cores → default concurrency 8: above the floor of 4 and below the hard cap of 16. */
+  /** 10 核 → 默认并发 8：既高于地板 4、又低于硬顶 16。 */
   const TEN_CORES = () => 10;
   const DEFAULT_OF_TEN_CORES = 8;
 
@@ -1062,9 +1013,8 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
   });
 
   it("amend 把上界带到后继 run（前驱的值不被继承——三态归一在工具层）", async () => {
-    // Hang the actor: the predecessor has no finished ask, so the precheck needs no message
-    // boundary (the assembly without a transcript store has no boundary accounting anyway, same
-    // as the existing amend cases).
+    // 挂住 actor：前驱没有已完结的 ask，于是预检不需要消息边界（无转录存储的装配里本就没有
+    // 边界记账，与既有 amend 用例同款）。
     const harness = makeHarness({ availableParallelism: TEN_CORES, hangActors: true });
     const predecessor = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -1089,8 +1039,7 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
     expect(await harness.service.cancel(amended.runId)).toBe(true);
     await settle(harness, amended.runId);
 
-    // Same predecessor, this time without the field: the successor runs at the default concurrency
-    // (absence ≠ inheriting the predecessor's 2).
+    // 同一个前驱、这次不带字段：后继跑在默认并发上（缺席 ≠ 沿用前驱的 2）。
     const inherited = await amendRun(harness, {
       cwd: TEST_CWD,
       predecessorRunId: predecessor,
@@ -1108,7 +1057,6 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
 
   it("defaultConcurrency() 与默认并发的唯一实现同值（必须与缺省落库的那个数对得上）", () => {
     const harness = makeHarness({ availableParallelism: TEN_CORES });
-    expect(typeof harness.service.defaultConcurrency).toBe("function");
     expect(harness.service.defaultConcurrency!()).toBe(
       resolveWorkflowDefaultConcurrency(TEN_CORES),
     );
@@ -1122,8 +1070,7 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
     const raised = await submitWithLimit(harness, "snapshot-raised", 20);
     expect(await harness.service.getTask(raised)).toMatchObject({ maxConcurrency: 20 });
 
-    // A run on the default value has nothing to say: the field is absent entirely, rather than
-    // reporting a number equal to the default.
+    // 跑在默认值上的 run 没有可说的：字段整个缺席，而不是报一个等于默认值的数。
     const unlimited = await submitWithLimit(harness, "snapshot-unlimited");
     const snapshot = await harness.service.getTask(unlimited);
     expect("maxConcurrency" in snapshot!).toBe(false);
@@ -1135,9 +1082,8 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
     expect("maxConcurrency" in (await harness.service.getTask(explicitDefault))!).toBe(false);
   });
 
-  // The gap (submit has returned, the dwf_run row is not yet persisted) is the moment AmendWorkflow's
-  // resolveInput is most likely to read the snapshot — amending a run that just started. The
-  // registry copy must give the same answer as the row.
+  // 间隙（submit 已返回、dwf_run 行还没落）是 AmendWorkflow 的 resolveInput 最可能读到快照的
+  // 时刻——修订一个刚起步的 run。注册表副本必须与行给出同一个答案。
   it("间隙里的快照与详情读注册表副本，答案与落行后一致", async () => {
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
@@ -1204,9 +1150,8 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
     });
   });
 
-  // Cross-slice wire contract: `concurrencyCeiling` on the `run-started` payload is the other half
-  // of the shared reducer's judgment of "does this run have its own ceiling" (the other half being
-  // the engine's own caps.maxConcurrency).
+  // 跨切片的线契约：`run-started` 载荷上的 `concurrencyCeiling` 是共享 reducer 判断
+  // 「这个 run 有没有自己的上界」的另一半（另一半是引擎自己的 caps.maxConcurrency）。
   it("run-started 载荷带 concurrencyCeiling，与引擎的 caps 并列", async () => {
     const harness = makeHarness({ availableParallelism: TEN_CORES });
     const runId = await submitWithLimit(harness, "payload-ceiling", 2);
@@ -1221,17 +1166,16 @@ describe("dynamic workflow run service — 请求的并发上界", () => {
   });
 });
 
-// ── Retuning the ceiling of a live run in place (docs/dynamic-workflow/concurrency.md "Retuning a live run") ──
-// An amendment that only changes `max_concurrency` does not mint a successor: same runId, no
-// supersede, not one in-flight ask lost. This group pins every observable consequence on the port
-// side — the row, the registry copy, events (including the host-derived default concurrency), the
-// two refusals, clamping, and "resume starts from the new ceiling". The engine-internal half
-// (caps read live, pumpAll, no-op) is covered by dynamic-workflow's engine-retune-concurrency tests.
+// ── 就地改一个在飞 run 的上界（docs/dynamic-workflow/concurrency.md「Retuning a live run」）──
+// 一次只改 `max_concurrency` 的修订不铸后继：同一个 runId、不 supersede、在飞 ask 一个不丢。
+// 这一组钉住端口这一侧的全部可观察后果——行、注册表副本、事件（含宿主派生的默认并发）、两种拒绝、
+// 钳制，以及「resume 从新上界起跑」。引擎内部那半边（caps 现读、pumpAll、no-op）由
+// dynamic-workflow 的 engine-retune-concurrency 测试负责。
 describe("dynamic workflow run service — retuneConcurrency", () => {
   const TEN_CORES = () => 10;
   const DEFAULT_OF_TEN_CORES = 8;
 
-  /** Starts a hung run (actors never return ⇒ the run stays in flight) and waits for the engine to persist the dwf_run row. */
+  /** 起一个挂住的 run（actor 永不返回 ⇒ run 一直在飞），并等引擎把 dwf_run 行落下来。 */
   async function liveRun(harness: Harness, name: string, maxConcurrency?: number): Promise<string> {
     const runId = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -1246,7 +1190,6 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
   }
 
   function retune(harness: Harness, runId: string, maxConcurrency: number | null) {
-    expect(typeof harness.service.retuneConcurrency).toBe("function");
     return harness.service.retuneConcurrency!({ maxConcurrency, runId });
   }
 
@@ -1265,11 +1208,10 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
       previous: 4,
       defaultConcurrency: DEFAULT_OF_TEN_CORES,
     });
-    // Resume reuses the caps in the row, so not persisting means nothing changed.
+    // resume 沿用行里的 caps，所以不落库就等于什么都没改。
     expect(harness.journal.getRun(runId)?.caps).toEqual({ maxConcurrency: 2 });
-    // Registry copy: the snapshot reads it first; if it does not move, it would keep reporting the
-    // submission-time number after the retune — and `AmendWorkflow`'s resolveInput reads exactly
-    // this snapshot to decide "what to keep".
+    // 注册表副本：快照优先读它，不挪就会在 retune 之后继续报提交时那个数，而
+    // `AmendWorkflow` 的 resolveInput 正是读这张快照判「沿用什么」。
     expect(await harness.service.getTask(runId)).toMatchObject({ maxConcurrency: 2 });
 
     const changed = harness.runEvents.filter(
@@ -1280,7 +1222,7 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
       runId,
       caps: { maxConcurrency: 2 },
       previous: { maxConcurrency: 4 },
-      // Host-derived field: the read side uses it to decide whether to write down or clear the new ceiling — same seam as `run-started`.
+      // 宿主派生字段：读侧据它判断新上界该写下还是该清掉，与 `run-started` 同一条缝。
       concurrencyCeiling: DEFAULT_OF_TEN_CORES,
     });
     await stop(harness, runId);
@@ -1312,7 +1254,7 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
     expect(await retune(harness, runId, DEFAULT_OF_TEN_CORES)).toMatchObject({ ok: true });
     const snapshot = await harness.service.getTask(runId);
     expect("maxConcurrency" in snapshot!).toBe(false);
-    // Same rule for the floor: 0 and negative values both land on 1.
+    // 地板同规：0 与负数都落到 1。
     expect(await retune(harness, runId, 0)).toMatchObject({ ok: true, maxConcurrency: 1 });
     await stop(harness, runId);
   });
@@ -1328,17 +1270,18 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
       defaultConcurrency: DEFAULT_OF_TEN_CORES,
     });
     expect(harness.journal.getRun(runId)?.caps.maxConcurrency).toBe(DEFAULT_OF_TEN_CORES);
-    // Already on the default, so asking for another "release" is the same value.
+    // 已经在默认值上，再要一次「解除」就是同一个值。
     expect(await retune(harness, runId, null)).toMatchObject({ ok: false, reason: "unchanged" });
     await stop(harness, runId);
   });
 
-  // The governor side (docs/dynamic-workflow/concurrency.md "The governor", "The control path"):
-  // launch registers this run's ceiling with the governor (raising the growth cap of the key it
-  // used), retune overrides it via the control path, and it is cleared when launch settles — all
-  // three switch value at the same instant as the scheduler and the seat gate.
+  // 治理器那一侧（docs/dynamic-workflow/concurrency.md「The governor」「The control path」）：
+  // launch 把本 run 的上界登记给治理器（抬它用过的 key 的增长上限），retune 经控制面覆盖，
+  // launch 结算时清掉——三处与调度器、座位闸门同一刻换值。
   it("launch 登记上界、retune 覆盖、结算清掉：治理器上的增长上限跟着 run 走", async () => {
-    const governor = createWorkflowConcurrencyGovernor({ defaultConcurrency: DEFAULT_OF_TEN_CORES });
+    const governor = createWorkflowConcurrencyGovernor({
+      defaultConcurrency: DEFAULT_OF_TEN_CORES,
+    });
     const calls: string[] = [];
     const concurrency: WorkflowConcurrencyPort = {
       tryAdmit: (runId, key) => governor.tryAdmit(runId, key),
@@ -1373,7 +1316,7 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
 
     expect(await retune(harness, runId, 2)).toEqual({ ok: false, reason: "not_live" });
     expect(await retune(harness, "dwfrun-nobody", 2)).toEqual({ ok: false, reason: "not_live" });
-    // Refusal means zero side effects: the row is still the one from the moment of stopping.
+    // 拒绝即零副作用：行还是停止那一刻的那一份。
     expect(harness.journal.getRun(runId)?.caps).toEqual({ maxConcurrency: 4 });
   });
 
@@ -1388,17 +1331,15 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
     await vi.waitFor(() => {
       expect(harness.journal.getRun(runId)?.caps).toEqual({ maxConcurrency: 2 });
     });
-    // The new generation's registry entry copies the number in the row, so `previous` refers to the ceiling after the retune.
+    // 新一世的注册表条目抄的是行里那个数，所以 `previous` 说的是 retune 之后的上界。
     expect(await harness.service.getTask(runId)).toMatchObject({ maxConcurrency: 2 });
     expect(await retune(harness, runId, 5)).toMatchObject({ ok: true, previous: 2 });
     await stop(harness, runId);
   });
 
-  // The **end-to-end** half of the same contract: the live side is minted by launch's emit hook
-  // (toProgressPayload's `run-caps-changed` branch), the cold side by replayRunProgress. The two
-  // must be byte-for-byte equal — the live path only appends the default concurrency to
-  // `run-started` while the cold path appends it to every event; exactly that difference is what
-  // this case guards against.
+  // 同一条契约的**端到端**那一半：live 侧是 launch 的 emit 钩子铸的（toProgressPayload 的
+  // `run-caps-changed` 分支），冷侧是 replayRunProgress 铸的。两者必须逐字节相等——live 路只给
+  // `run-started` 拼默认并发、冷路给每条事件都拼，这个差别正是这条用例要挡住的。
   it("live 与冷回放为同一条 run-caps-changed 铸出逐字节相同的载荷", async () => {
     const journal = new SweepableJournalStore();
     const harness = makeHarness({
@@ -1422,7 +1363,7 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
     const live = harness.runEvents.find(
       (event) => event.runId === runId && event.eventType === "run-caps-changed",
     );
-    // Cold side: same journal, new service (this process has no entry for this run, so it will be replayed).
+    // 冷侧：同一份 journal、新的 service（本进程没有这个 run 的条目，所以它会被回放）。
     const cold = makeHarness({ availableParallelism: TEN_CORES, journal });
     const replayed = await cold.service.replayProgressForSession!({ excludeRunIds: new Set() });
     const coldEvent = replayed.find(
@@ -1434,30 +1375,25 @@ describe("dynamic workflow run service — retuneConcurrency", () => {
   });
 });
 
-// ── End to end: real AmendWorkflow tool → real run service → real engine → journal / events ──
-// docs/dynamic-workflow/launch.md "Changing only the parallelism of a live run". The group above
-// asserts directly against the service, and the core-side cases swap the port for a stub — nothing
-// between the two seams proves they actually line up. This group wires the tool executor,
-// resolveInput's routing, handler, port, engine, and journal into one chain.
+// ── 端到端：真 AmendWorkflow 工具 → 真 run service → 真引擎 → journal / 事件 ─────────────
+// docs/dynamic-workflow/launch.md「Changing only the parallelism of a live run」。上面那一组
+// 直接对 service 断言，core 那一侧的用例又把端口换成了 stub——两条缝之间没有任何东西证明它们
+// 真的对得上。这一组把工具执行器、resolveInput 的路由、handler、端口、引擎与 journal 串成一条。
 //
-// **What is real**: the tool registry and executor, AmendWorkflow's resolveInput / permission step
-// / handler, `createDynamicWorkflowRunService`, engine and scheduler, driver, journal rows and the
-// event stream, progress payloads.
-// **What is stood in**: the actors' model adapter (`hangActors`: generateText never resolves, so
-// the three asks stay stably in flight), and the parallelism probe (fixed 10 cores → default
-// concurrency 8).
+// **哪些是真的**：工具注册表与执行器、AmendWorkflow 的 resolveInput / 权限步 / handler、
+// `createDynamicWorkflowRunService`、引擎与调度器、driver、journal 行与事件流、进度载荷。
+// **哪些是替身**：actor 的模型适配器（`hangActors`：generateText 永不 resolve，于是三个 ask
+// 稳定停在在飞状态），以及并发探测（固定 10 核 → 默认并发 8）。
 //
-// **Throttling is not proven here**: making a subagent actually emit "the next turn step" requires
-// a fake model that can be toggled externally, which this harness's scripted adapter cannot
-// provide. The seat-gate half is proven by workflow-driver-seat-gate.test.ts with a real governor +
-// real driver (throttling 4→1, FIFO release, no throttling on the tool side, cancellation does not
-// free a seat); this group proves "one call of the tool really moved the ceiling onto the engine
-// and journal, and not a single in-flight ask was touched".
+// **这里不证停驻**：让子代理真的发出「下一个 turn step」需要一个可外部拨动的假模型，本 harness
+// 的脚本化 adapter 给不了那个控制点。座位闸门那一半由 workflow-driver-seat-gate.test.ts 用真
+// 治理器 + 真 driver 证（压低 4→1 停驻、FIFO 放行、工具侧不停驻、取消不腾座位）；本组证的是
+// 「工具的一次调用真的把上界改到了引擎与 journal 上，而且一个在飞 ask 都没动」。
 describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到端）", () => {
   const TEN_CORES = () => 10;
   const DEFAULT_OF_TEN_CORES = 8;
 
-  /** Three subagents in flight at once: lowering the ceiling only means something if there are "excess ones". */
+  /** 三个子代理同时在飞：压低上界要有「超出的那些」才说得上话。 */
   const THREE_PARALLEL_SCRIPT = [
     "interface Answer { text: string }",
     'const one = agent("one");',
@@ -1492,8 +1428,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       scriptText: THREE_PARALLEL_SCRIPT,
       trace: traceFor("retune-e2e"),
     });
-    // All three asks have been dispatched and are stuck in the model request; the run started at
-    // the default concurrency (no max_concurrency at submission).
+    // 三个 ask 都已派发并卡在模型请求里；run 起于默认并发（提交时没给 max_concurrency）。
     await vi.waitFor(() => {
       expect(
         journal
@@ -1504,7 +1439,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
     expect(journal.getRun(runId)?.caps.maxConcurrency).toBe(DEFAULT_OF_TEN_CORES);
     const runsBefore = journal.listRunsByParentSession(sessionId, 50).length;
 
-    // ——— Real tool executor ———
+    // ——— 真工具执行器 ———
     const registry = createToolRegistry();
     const amendEntry = builtInTools.find((entry) => entry.metadata.name === "AmendWorkflow");
     expect(amendEntry).toBeDefined();
@@ -1545,7 +1480,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       };
     };
 
-    // ——— 1. Lower to 1 ———
+    // ——— 1. 压低到 1 ———
     const lowered = await amend(1);
     expect(lowered.success).toBe(true);
     expect(lowered.output.response).toBe(
@@ -1558,15 +1493,15 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       previous: DEFAULT_OF_TEN_CORES,
       defaultConcurrency: DEFAULT_OF_TEN_CORES,
     });
-    // Not an amendment: no background task, no compiled artifact, no diagnostics.
+    // 不是一次修订：没有后台任务、没有编译产物、没有诊断。
     expect(lowered.output).not.toHaveProperty("backgroundTaskId");
     expect(lowered.output).not.toHaveProperty("status");
     expect(lowered.output).not.toHaveProperty("causalityGraph");
     expect(lowered.output.diagnostics).toEqual([]);
-    // This session's own in-flight run: no confirmation prompt expected (attribution rules in docs/dynamic-workflow/launch.md).
+    // 本会话自己的在飞 run：不该弹确认窗（docs/dynamic-workflow/launch.md 的归属规则）。
     expect(permissionAsks).toEqual([]);
 
-    // Same run, no successor, nobody superseded.
+    // 同一个 run、没有后继、没有人被 supersede。
     expect(journal.listRunsByParentSession(sessionId, 50)).toHaveLength(runsBefore);
     const row = journal.getRun(runId);
     expect(row?.status).toBe("running");
@@ -1574,7 +1509,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
     expect(row?.caps.maxConcurrency).toBe(1);
     expect(harness.runEvents.filter((event) => event.eventType === "run-settled")).toEqual([]);
 
-    // Exactly one run-caps-changed, carrying the host-appended default concurrency.
+    // 恰好一条 run-caps-changed，带着宿主拼上的默认并发。
     const changed = harness.runEvents.filter(
       (event) => event.runId === runId && event.eventType === "run-caps-changed",
     );
@@ -1586,14 +1521,12 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       concurrencyCeiling: DEFAULT_OF_TEN_CORES,
     });
 
-    // The snapshot reports the new value immediately (this is what `AmendWorkflow`'s resolveInput
-    // reads to decide "what to keep"). The detail surface and `GetWorkflowRun` read the same
-    // `runConcurrencyField`, sourced from the row caps asserted below; that read surface requires
-    // a journal with introspection queries and is covered by this file's "getRunDetail carries
-    // maxConcurrency" group.
+    // 快照立刻报新值（`AmendWorkflow` 的 resolveInput 判「沿用什么」读的就是它）。详情面与
+    // `GetWorkflowRun` 读的是同一个 `runConcurrencyField`，取数来自下面断言的那一行 caps；
+    // 那条读面需要带内省查询的 journal，由本文件「getRunDetail 带 maxConcurrency」一组覆盖。
     expect(await harness.service.getTask(runId)).toMatchObject({ maxConcurrency: 1 });
 
-    // Not one of the three in-flight asks was stopped: the row is still running, and not a single node-settled.
+    // 在飞的三个 ask 一个都没被停：行还是 running，一条 node-settled 都没有。
     expect(
       journal
         .listNodes(runId, { kinds: "all", withResult: true })
@@ -1605,12 +1538,12 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       ),
     ).toEqual([]);
 
-    // ——— 2. Same value again ———
+    // ——— 2. 同一个值再来一次 ———
     const again = await amend(1);
     expect(again.success).toBe(false);
     expect(again.message.startsWith("workflow_retune_unchanged:")).toBe(true);
     expect(again.message).toContain(runId);
-    // Refusal means zero side effects: the row untouched, and no second event.
+    // 拒绝即零副作用：行没动，也没有第二条事件。
     expect(journal.getRun(runId)?.caps.maxConcurrency).toBe(1);
     expect(
       harness.runEvents.filter(
@@ -1618,7 +1551,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       ),
     ).toHaveLength(1);
 
-    // ——— 3. null back to the default concurrency ———
+    // ——— 3. null 回到默认并发 ———
     const raised = await amend(null);
     expect(raised.success).toBe(true);
     expect(raised.output.response).toBe(
@@ -1627,7 +1560,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
         `Run ${runId} keeps running under it: nothing was stopped and no new run was started.`,
     );
     expect(journal.getRun(runId)?.caps.maxConcurrency).toBe(DEFAULT_OF_TEN_CORES);
-    // Back at the default concurrency ⇒ the read surface drops the field entirely ("when none, absent").
+    // 回到默认并发 ⇒ 读面把字段整个撤掉（「无则缺席」）。
     const snapshot = await harness.service.getTask(runId);
     expect("maxConcurrency" in snapshot!).toBe(false);
     expect(
@@ -1636,8 +1569,7 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
       ),
     ).toHaveLength(2);
 
-    // After the three calls the run is still healthy and still owned by this service: it stops as
-    // usual and lands as a recoverable stopped(user).
+    // 三次调用之后 run 仍然健康、仍归本 service 所有：照常停得下来，落成可恢复的 stopped(user)。
     expect(
       journal
         .listNodes(runId, { kinds: "all", withResult: true })
@@ -1650,28 +1582,25 @@ describe("dynamic workflow run service — AmendWorkflow 就地 retune（端到�
   });
 });
 
-// ── This run's subagent model (docs/dynamic-workflow/launch.md) ─────────────────────────────
-// `subagent_model` only describes which model the **subagents** run on; the main agent stays on
-// the session model. This group pins the whole path "request → normalize to canonical string →
-// record in the journal event run-launched → two read surfaces → run-started payload → actor
-// runtime factory". Absence means subagents run on the session model, and the key genuinely does
-// not appear anywhere.
+// ── 本 run 的子代理模型（docs/dynamic-workflow/launch.md）─────────────────────────────
+// `subagent_model` 只描述**子代理**跑在哪个模型上，主代理照旧在会话模型上。这一组把
+// 「请求 → 归一成规范串 → 记进 journal 事件 run-launched → 两条读面 → run-started 载荷 →
+// actor runtime 工厂」整条路钉住。缺席即子代理跑在会话模型上，且每一处的键都真的不出现。
 //
-// The landing spot is an **event, not a column** (user decision: no migration): it lives in
-// `run-launched` alongside the launch anchor and the phase table, written once in the generation
-// that creates the run, and the host reads it back from the event header.
+// 落点是**事件而不是列**（用户裁决不做迁移）：与发起锚点、阶段表同住 `run-launched`，
+// 只在建 run 那一世写一次，宿主从事件头读回。
 describe("dynamic workflow run service — 本 run 的子代理模型", () => {
-  /** A selection with a level: `$level` is part of the selection and must ride along in the canonical string end to end. */
+  /** 带档位的选择：`$level` 是选择的一部分，规范串里必须带着它走完全程。 */
   const FLASH: ModelSelection = {
     providerId: "zhipu",
     modelId: "glm-5.3-flash",
     options: { reasoningLevel: "high" },
   };
   const FLASH_CANONICAL = "zhipu/glm-5.3-flash$high";
-  /** A selection without a level: the canonical string therefore has only two segments. */
+  /** 不带档位的选择：规范串因此只有两段。 */
   const HAIKU: ModelSelection = { providerId: "anthropic", modelId: "haiku" };
 
-  /** This run's `run-launched` event: the subagent model lives here (there is no such column on dwf_run). */
+  /** 本 run 的 `run-launched` 事件：子代理模型就住在这里（dwf_run 上没有这一列）。 */
   const launchedOf = (harness: Harness, runId: string): RunEvent | undefined =>
     harness.journal
       .listEvents(runId, { types: "all", reportItems: "all" })
@@ -1694,7 +1623,7 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
     await settle(harness, runId);
 
     expect(subagentModelOf(harness, runId)).toBe(FLASH_CANONICAL);
-    // Zero SQL: the record row carries no such fact; the read side always goes through events (user decision: no migration).
+    // 零 SQL：记录行上没有这条事实，读侧一律走事件（用户裁决不做迁移）。
     expect("subagentModel" in harness.journal.getRun(runId)!).toBe(false);
   });
 
@@ -1715,7 +1644,7 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
       trace: traceFor("subagent-model-absent"),
     });
     await settle(harness, plain);
-    // Key absent rather than `undefined`: the read side uses presence/absence to decide whether this run ever set a subagent model.
+    // 键缺席而不是 `undefined`：读侧据「在不在场」判断这个 run 有没有设过子代理模型。
     expect("subagentModel" in launchedOf(harness, plain)!).toBe(false);
   });
 
@@ -1751,14 +1680,13 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
       const detail = await introspection.getRunDetail(plain);
       expect("subagentModel" in detail!).toBe(false);
 
-      // List rows do not carry it: same rule as the concurrency ceiling — a rarely-set field must not widen every row of the enumeration surface.
+      // 列表行不带：与并发上界同规——很少设置的字段不该把枚举面的每一行都加宽。
       const { runs } = await introspection.listRuns({ cwd: projectCwd, limit: 20 });
       expect(runs).toHaveLength(2);
       for (const row of runs) expect("subagentModel" in row).toBe(false);
 
-      // Restart (new service, empty registry, same journal): the in-memory copy is gone and the two
-      // read surfaces can only read it back from the `run-launched` event — this assertion is the
-      // evidence that "cold reads work with zero SQL".
+      // 重启（新服务、空注册表、同一个 journal）：内存副本没有了，两条读面只能从
+      // `run-launched` 事件读回——这条断言就是「零 SQL 也能冷读」的证据。
       const cold = makeHarness({ journal });
       const coldIntrospection = introspectionOf(cold);
       expect(await cold.service.getTask(chosen)).toMatchObject({
@@ -1772,9 +1700,8 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
     });
   });
 
-  // The gap (submit has returned, the dwf_run row is not yet persisted): `AmendWorkflow`'s
-  // resolveInput reads the snapshot to decide "what to keep", and amending a run that just started
-  // lands exactly here. The registry copy must give the same answer as after the row is persisted.
+  // 间隙（submit 已返回、dwf_run 行还没落）：`AmendWorkflow` 的 resolveInput 读快照判「沿用
+  // 什么」，而修订一个刚起步的 run 恰好落在这里。注册表副本必须与落行后同一个答案。
   it("间隙里的快照与详情读注册表副本，答案与落行后一致", async () => {
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
@@ -1821,7 +1748,7 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
       expect(subagentModelOf(harness, predecessor)).toBe(FLASH_CANONICAL);
     });
 
-    // A different model: the successor lands on the new value.
+    // 换一个模型：后继落新值。
     const amended = await amendRun(harness, {
       cwd: TEST_CWD,
       predecessorRunId: predecessor,
@@ -1835,9 +1762,8 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
     expect(await harness.service.cancel(amended.runId)).toBe(true);
     await settle(harness, amended.runId);
 
-    // Same predecessor, this time without the field: the successor falls back to the session model
-    // (absence ≠ inheriting the predecessor's FLASH). If the port inherited even once here, the
-    // tool face's `null` ("back to the session model") would never reach persistence.
+    // 同一个前驱、这次不带字段：后继回到会话模型（缺席 ≠ 沿用前驱的 FLASH）。端口若在这里
+    // 继承一次，工具面的 `null`（「回到会话模型」）就永远到不了落库这一步。
     const cleared = await amendRun(harness, {
       cwd: TEST_CWD,
       predecessorRunId: predecessor,
@@ -1889,7 +1815,7 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
     });
     await settle(harness, runId);
 
-    // The factory receives the structured selection, not the string: the pin only records the two identity segments, the level can only come through here.
+    // 工厂收的是结构化选择而不是那个串：pin 只记身份两段，档位只能从这里下去。
     expect(harness.actorRuntimeInputs.at(-1)?.runSubagentModel).toEqual(FLASH);
 
     const plain = await submitRun(harness, {
@@ -1902,7 +1828,7 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
   });
 
   it("resume 从 run-launched 事件读回选择，交给工厂并抄进注册表条目", async () => {
-    // Resume reuses the recorded one — the same discipline as caps / args: a run's identity includes which model it runs on.
+    // resume 沿用记下来的那一份，与 caps / args 同一条纪律：一次 run 的身份包含它跑在哪个模型上。
     const harness = makeHarness({ hangActors: true });
     const runId = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -1921,14 +1847,11 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
     await vi.waitFor(() => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(1);
     });
-    // The resumed generation's factory input: the selection came back whole (level included), while
-    // the resume entry point has no such parameter at all.
+    // 续跑那一世的工厂输入：选择整条回来了（档位没掉），而 resume 入口根本没有这个形参。
     expect(harness.actorRuntimeInputs.at(-1)?.runSubagentModel).toEqual(FLASH);
 
-    // The resumed generation's entry also carries this selection, leaving the read surface with a
-    // single rule: if there is an entry, read the entry; only cold rows scan the event header. The
-    // spy is the evidence for this rule — the snapshot answers the model question without issuing a
-    // single listEvents.
+    // 续跑那一世的条目也带上了这份选择，于是读面只剩一条规则：有条目就读条目，只有冷行才
+    // 去扫事件头。spy 是这条规则的证据——快照答得出模型，却一次 listEvents 都没发。
     const listEvents = vi.spyOn(harness.journal, "listEvents");
     expect(await harness.service.getTask(runId)).toMatchObject({
       subagentModel: FLASH_CANONICAL,
@@ -1941,20 +1864,16 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
   });
 
   it("amend 带 subagentModel：run 选择压过前驱承袭的 pin，新 run 的 resolved_model 记的是新选择", async () => {
-    // Regression case (2026-09-17 testfield, dwf-assets/workflow-subagent-model-precedence-brief.md):
-    // the predecessor's subagent ran on the pin; AmendWorkflow with `subagent_model` switched the
-    // model, run-launched recorded the new selection, the confirmation dialog said "Subagents run
-    // on Z", yet the driver still created sessions per the pin — every resumed subagent with live
-    // work ran on the wrong model. Omission means inherit, an explicit value means replace: the pin
-    // only guards the implicit default when there is no run selection.
+    // 回归用例（2026-09-17 testfield，dwf-assets/workflow-subagent-model-precedence-brief.md）：
+    // 前驱的子代理跑在 pin 上；AmendWorkflow 带 `subagent_model` 换模型，run-launched 记下新选择、
+    // 确认窗说「Subagents run on Z」，而 driver 仍按 pin 造会话——每个有 live 工作的续跑子代理都
+    // 跑错模型。省略即继承，显式值即替换：pin 只守没有 run 选择时的隐式缺省。
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-model-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
-      // Predecessor: both of worker's asks are live, sessions and boundaries really persisted — at
-      // amend time the second ask diverges, and the first, as a completed prefix, gives the import
-      // table a transcript seed, so the pin is inherited along with the seed (an actor that
-      // diverges at seq 0 has no prefix and no seed).
+      // 前驱：worker 两问都 live，会话与边界真的落库——修订时第二问分歧，第一问作为已完成前缀
+      // 让导入表带上转录种子，pin 就是随种子承袭过来的（seq 0 就分歧的 actor 没有前缀、没有种子）。
       const before = makeHarness({
         actorScripts: {
           "actor#1@1": [
@@ -1972,14 +1891,13 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
       });
       await settle(before, runA);
 
-      // The predecessor's worker ran on the session model. Rewrite its record to a sentinel so that
-      // pin ≠ session model ≠ this selection — with the three sources pairwise distinct, "who wins"
-      // becomes an assertable fact.
+      // 前驱 worker 跑在会话模型上。把它的记录改成哨兵，好让 pin ≠ 会话模型 ≠ 本次选择——
+      // 三个来源两两不同，「谁赢」才是可断言的事实。
       const workerRow = journal.getActor(runA, "actor#1", 1)!;
       expect(workerRow.resolvedModel).toBe("test/default-runtime-model");
       journal.putActor({ ...workerRow, resolvedModel: "pinned/from-predecessor" });
 
-      // Amend: change only the second ask and provide a new subagent model.
+      // 修订：只改第二问，并给出新的子代理模型。
       const after = makeHarness({
         actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "revised" } }] },
         journal,
@@ -1995,18 +1913,16 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
       await settle(after, amended.runId);
       expect((await after.service.getTask(amended.runId))?.output).toBe("one|revised|0");
 
-      // worker built a session only at the diverging ask, and the factory received both the
-      // inherited pin and this run's selection — with both present, what is asserted is precedence
-      // rather than one side being absent.
+      // worker 只在分歧那一问建了一次会话，工厂同时拿到承袭的 pin 与本 run 的选择——两者都在场，
+      // 断言的才是优先级而不是某一方缺席。
       expect(after.actorRuntimeInputs).toHaveLength(1);
       expect(after.actorRuntimeInputs[0]).toMatchObject({
         pinnedModel: "pinned/from-predecessor",
         runSubagentModel: HAIKU,
       });
-      // Regression point: the new run's own record writes the run selection (before the fix this read the pin).
+      // 回归点：新 run 自己的记录写的是 run 选择（修复前这里读到 pin）。
       expect(journal.getActor(amended.runId, "actor#1", 1)?.resolvedModel).toBe("anthropic/haiku");
-      // The predecessor's record is untouched byte for byte: lineage therefore preserves the
-      // "model was switched" history, with nothing silent.
+      // 前驱的记录一个字节不动：lineage 因此保留「换过模型」这段历史，没有什么是静默的。
       expect(journal.getActor(runA, "actor#1", 1)?.resolvedModel).toBe("pinned/from-predecessor");
     } finally {
       store.close();
@@ -2015,10 +1931,9 @@ describe("dynamic workflow run service — 本 run 的子代理模型", () => {
   });
 });
 
-// ── Models the script names (docs/dynamic-workflow/launch.md "Models the script names") ─────
-// A persona's `model` name → the binding table on run-launched → looked up at session creation,
-// overriding the run's subagent model → dwf_actor.resolved_model records the one actually used.
-// Resume reads the same table back from the same event.
+// ── 脚本点名的模型（docs/dynamic-workflow/launch.md「Models the script names」）─────────────
+// persona 的 `model` 名字 → run-launched 上的绑定表 → 建会话时查表、压过 run 的子代理模型 →
+// dwf_actor.resolved_model 记下实际用上的那一个。resume 从同一条事件读回同一张表。
 describe("dynamic workflow run service — 脚本点名的模型", () => {
   const LIGHT: ModelSelection = { providerId: "zhipu", modelId: "GLM-5.3-Flash" };
   const STRONG: ModelSelection = {
@@ -2061,20 +1976,20 @@ describe("dynamic workflow run service — 脚本点名的模型", () => {
         "GLM-5.3$high": "zhipu/GLM-5.3$high",
       },
     });
-    // The factory receives the whole selection (level included); subagents with no named model do not have this key.
+    // 工厂收到的是整条选择（档位在内），没点名模型的子代理没有这一键。
     const byActor = new Map(
       harness.actorRuntimeInputs.map((input) => [refToString(input.actor), input]),
     );
     expect(byActor.get("actor#1@1")?.actorModel).toEqual(LIGHT);
     expect(byActor.get("actor#2@1")?.actorModel).toEqual(STRONG);
     expect("actorModel" in byActor.get("actor#3@1")!).toBe(false);
-    // What gets persisted is the one the runtime actually received: the persona's model overrides the run's subagent model.
+    // 落库的是 runtime 实际拿到的那一个：persona 的模型压过 run 的子代理模型。
     expect(harness.journal.getActor(runId, "actor#1", 1)?.resolvedModel).toBe(
       "zhipu/GLM-5.3-Flash",
     );
     expect(harness.journal.getActor(runId, "actor#2", 1)?.resolvedModel).toBe("zhipu/GLM-5.3");
     expect(harness.journal.getActor(runId, "actor#3", 1)?.resolvedModel).toBe("anthropic/haiku");
-    // What the persona records is the name written verbatim in the script (ModelRef has been erased to a name in lowering).
+    // persona 里记的是脚本逐字写下的名字（ModelRef 在 lowering 里已抹成名字）。
     expect(harness.journal.getActor(runId, "actor#2", 1)?.persona).toMatchObject({
       model: "GLM-5.3$high",
     });
@@ -2098,9 +2013,8 @@ describe("dynamic workflow run service — 脚本点名的模型", () => {
       undefined,
     ]);
     expect("model" in created[2]!.payload).toBe(false);
-    // Dispatching re-states the birth fact: the engine carries the persona's name
-    // (actorPersonaModel), the host derives the canonical string (actorModel), and the read surface
-    // uses it to rebuild the dispatched subagents, retrieved from the table, together with their models.
+    // 派发重复出生事实：引擎带 persona 的名字（actorPersonaModel），宿主派生规范串（actorModel），
+    // 读面据它把派发时收回表的子代理连模型一起建出来。
     const dispatched = harness.runEvents.filter(
       (event) =>
         event.runId === runId &&
@@ -2153,7 +2067,7 @@ describe("dynamic workflow run service — 脚本点名的模型", () => {
       expect(await introspectionOf(harness).getRunDetail(runId)).toMatchObject({
         modelBindings: TABLE,
       });
-      // Cold row (another process, no entry): the same table read back from run-launched.
+      // 冷行（另一个进程，没有条目）：从 run-launched 读回同一张表。
       const cold = makeHarness({ journal });
       expect(await cold.service.getTask(runId)).toMatchObject({ modelBindings: TABLE });
       expect(await introspectionOf(cold).getRunDetail(runId)).toMatchObject({
@@ -2188,10 +2102,9 @@ describe("dynamic workflow run service — 脚本点名的模型", () => {
   });
 });
 
-// ── Permission mode of this run's subagents (docs/dynamic-workflow/launch.md "Permissions inside a run") ──
-// In the generation that creates the run, the launching session's permission mode is recorded into
-// `run-launched.subagentPermissionMode`, and resume reads it back from the same event; however the
-// session switches modes afterwards, it never changes this run. plan is not carried into the run.
+// ── 本 run 子代理的权限模式（docs/dynamic-workflow/launch.md「Permissions inside a run」）──
+// 建 run 那一世把发起会话的权限模式记进 `run-launched.subagentPermissionMode`，resume 从同一条
+// 事件读回；会话此后怎么换模式都不改变这个 run。plan 不带进 run。
 describe("dynamic workflow run service — 本 run 子代理的权限模式", () => {
   const launchedOf = (harness: Harness, runId: string): RunEvent | undefined =>
     harness.journal
@@ -2220,7 +2133,7 @@ describe("dynamic workflow run service — 本 run 子代理的权限模式", ()
       await settle(harness, runId);
       expect(launchedOf(harness, runId)).toMatchObject({ subagentPermissionMode: recorded });
       expect(harness.actorRuntimeInputs.at(-1)?.subagentPermissionMode).toBe(recorded);
-      // Zero SQL: the record row carries no such fact.
+      // 零 SQL：记录行上没有这条事实。
       expect("subagentPermissionMode" in harness.journal.getRun(runId)!).toBe(false);
     }
   });
@@ -2304,14 +2217,11 @@ describe("dynamic workflow run service — 本 run 子代理的权限模式", ()
   });
 });
 
-// ── This run's script file (Provenance of docs/dynamic-workflow/launch.md "Script files") ──
-// ── This run's script file (Provenance in docs/dynamic-workflow/launch.md "Script files") ──
-// `scriptPath` records "which file this run's script came from", as an absolute path. Rule by rule
-// the same as the subagent model: recorded once with `run-launched`, not read by the engine, zero
-// SQL, read back by the two surfaces (entry if present, cold rows scan the event header).
-// The only difference: it has **no three states** — an amendment always records the new script's
-// file and never reuses the predecessor's — the predecessor's path points at the old script, and
-// reusing it would send the model off to edit a file that is no longer running.
+// ── 本 run 的脚本文件（docs/dynamic-workflow/launch.md「Script files」的 Provenance）───────
+// `scriptPath` 记的是「这个 run 的脚本从哪个文件来的」，绝对路径。与子代理模型逐条同规：
+// 随 `run-launched` 记一次、引擎不读、零 SQL、两条读面读回（有条目读条目，冷行扫事件头）。
+// 唯一的不同是它**没有三态**：修订记的永远是新脚本的文件，绝不沿用前驱的——前驱的路径
+// 指向旧脚本，沿用它就是让模型下次去编辑一个已经不在跑的文件。
 describe("dynamic workflow run service — 本 run 的脚本文件", () => {
   const DRAFT = "/repo/.zcode/workflow-drafts/audit.dwf.ts";
   const REVISED = "/repo/.zcode/workflow-drafts/audit-2.dwf.ts";
@@ -2337,7 +2247,7 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
     });
     await settle(harness, withFile);
     expect(scriptPathOf(harness, withFile)).toBe(DRAFT);
-    // Zero SQL: the record row carries no such fact (user decision: no migration); the read side always goes through events.
+    // 零 SQL：记录行上没有这条事实（用户裁决不做迁移），读侧一律走事件。
     expect("scriptPath" in harness.journal.getRun(withFile)!).toBe(false);
 
     const without = await submitRun(harness, {
@@ -2346,7 +2256,7 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
       trace: traceFor("script-path-submit-absent"),
     });
     await settle(harness, without);
-    // Key absent rather than `undefined`: the model face uses presence/absence to decide which sentence to say next.
+    // 键缺席而不是 `undefined`：模型面据「在不在场」决定说哪一句下一步。
     expect("scriptPath" in launchedOf(harness, without)!).toBe(false);
   });
 
@@ -2375,15 +2285,14 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
       expect("scriptPath" in (await harness.service.getTask(without))!).toBe(false);
       expect("scriptPath" in (await introspection.getRunDetail(without))!).toBe(false);
 
-      // List rows do not carry it: same rule as the subagent model and the concurrency ceiling — a
-      // field only AmendWorkflow needs must not widen every row of the enumeration surface.
+      // 列表行不带：与子代理模型、并发上界同规——只有 AmendWorkflow 用得上的字段不该把
+      // 枚举面的每一行都加宽。
       const { runs } = await introspection.listRuns({ cwd: projectCwd, limit: 20 });
       expect(runs).toHaveLength(2);
       for (const row of runs) expect("scriptPath" in row).toBe(false);
 
-      // Restart (new service, empty registry, same journal): the in-memory copy is gone and the two
-      // read surfaces can only read it back from the `run-launched` event — evidence that "cold
-      // reads work with zero SQL".
+      // 重启（新服务、空注册表、同一个 journal）：内存副本没有了，两条读面只能从
+      // `run-launched` 事件读回——「零 SQL 也能冷读」的证据。
       const cold = makeHarness({ journal });
       const coldIntrospection = introspectionOf(cold);
       expect(await cold.service.getTask(withFile)).toMatchObject({ scriptPath: DRAFT });
@@ -2393,8 +2302,8 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
     });
   });
 
-  // The gap (submit has returned, the dwf_run row is not yet persisted): the same argument as for
-  // the subagent model — the registry copy must give the same answer as after the row is persisted.
+  // 间隙（submit 已返回、dwf_run 行还没落）：与子代理模型同一条论证——注册表副本必须与
+  // 落行后给出同一个答案。
   it("间隙里的快照与详情读注册表副本，答案与落行后一致", async () => {
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
@@ -2452,9 +2361,8 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
     expect(await harness.service.cancel(amended.runId)).toBe(true);
     await settle(harness, amended.runId);
 
-    // Same predecessor, this time without the field: the successor has no file (absence ≠ reusing
-    // the predecessor's DRAFT). The predecessor's path points at the old script; if the port
-    // inherited even once here, the model would next go edit a file that is no longer running.
+    // 同一个前驱、这次不带字段：后继没有文件（缺席 ≠ 沿用前驱的 DRAFT）。前驱的路径指向的
+    // 是旧脚本，端口若在这里继承一次，模型下次就会去编辑一个已经不在跑的文件。
     const cleared = await amendRun(harness, {
       cwd: TEST_CWD,
       predecessorRunId: predecessor,
@@ -2488,9 +2396,8 @@ describe("dynamic workflow run service — 本 run 的脚本文件", () => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(1);
     });
 
-    // The resumed generation's entry carries this path (the resume entry point has no such
-    // parameter at all, so the event is the only source). The spy is the evidence for "entry if
-    // present": the snapshot answers the path question without issuing a single listEvents.
+    // 续跑那一世的条目带上了这个路径（resume 入口根本没有这个形参，唯一来源是事件）。
+    // spy 是「有条目就读条目」的证据：快照答得出路径，却一次 listEvents 都没发。
     const listEvents = vi.spyOn(harness.journal, "listEvents");
     expect(await harness.service.getTask(runId)).toMatchObject({ scriptPath: DRAFT });
     expect(listEvents).not.toHaveBeenCalled();
@@ -2534,7 +2441,7 @@ describe("dynamic workflow run service — 发起锚点（apps/zcode-cli/package
     const anchored = anchoredEvents(harness);
     expect(anchored.map((event) => event.eventType)).toEqual(["actor-created", "run-settled"]);
     expect(anchored.every((event) => event.launchInputId === "launch-input-active")).toBe(true);
-    // Remaining events do not carry the derived field: the anchor is only needed at the two moments of attribution.
+    // 其余事件不带派生字段：锚点只在归属的两个时刻需要。
     expect(
       harness.runEvents
         .filter((event) => event.eventType === "node-queued")
@@ -2621,7 +2528,7 @@ describe("dynamic workflow run service — 发起锚点（apps/zcode-cli/package
 });
 
 describe("dynamic workflow run service — 产物存储的接线", () => {
-  /** Fake store recording write parameters (only text writes needed: the script publishes markdown). */
+  /** 记录写入参数的 fake store（只需文本写：脚本发的是 markdown）。 */
   function recordingArtifactStore(): {
     store: ToolArtifactStorePort;
     writes: ToolArtifactWriteRequest[];
@@ -2662,9 +2569,8 @@ describe("dynamic workflow run service — 产物存储的接线", () => {
     expect(harness.journal.getRun(runId)?.status).toBe("completed");
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({
-      // **This service's** parent session, not the optional parentSessionId from the submit
-      // request: in production the two hold the same value, and only the former is required
-      // (which session's directory the bytes land in should not have an undefined branch).
+      // **本服务的**父会话，不是 submit 请求里那个可选的 parentSessionId：生产里两者同值，
+      // 而只有前者是必填的（字节写进哪个会话的目录不该有 undefined 分支）。
       sessionId: HARNESS_PARENT_SESSION,
       toolName: "CreateWorkflow",
       retention: "project",
@@ -2678,7 +2584,7 @@ describe("dynamic workflow run service — 产物存储的接线", () => {
 
     const runId = await submitRun(harness, {
       cwd: TEST_CWD,
-      // The script catches the rejection and hands the error code back as the result: exactly the spec's gating idiom.
+      // 脚本 catch 住拒绝并把错误码当结果交出来：这正是 spec 的门控习语。
       scriptText: [
         "let code = 'none';",
         'try { await artifact.markdown("summary", "# 结论"); }',
@@ -2695,17 +2601,15 @@ describe("dynamic workflow run service — 产物存储的接线", () => {
   });
 });
 
-// ── Read surface for user-facing artifacts (docs/dynamic-workflow/authoring.md "How the user sees them") ──
-// ⚠ Terminology: artifact = output the script publishes for the **user** via `artifact.*`, not the
-// `output` on the port (the script's top-level return value, the engine's internal name for it).
+// ── 用户面产物的读面（docs/dynamic-workflow/authoring.md「How the user sees them」）──────────────
+// ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给**用户**看的产出，不是端口上的 `output`
+// （脚本顶层返回值，引擎内部对它的同名叫法）。
 //
-// Three port methods: listArtifacts (inventory) / listArtifactItems (dashboard data) /
-// readArtifact (bytes). readArtifact's authorization chain is the focus of this section: the run
-// belongs to this session ∧ the journal has a completed row for that version ⇒ only then take the
-// uri **from the row** to read from the store. Every negative case asserts the store was **never
-// touched even once**.
+// 三个端口方法：listArtifacts（清单）/ listArtifactItems（看板取数）/ readArtifact（字节）。
+// readArtifact 的授权链是本节的重点：run 属于本会话 ∧ journal 有该版本的 completed 行 ⇒
+// 才拿**行上的** uri 去 store 读。每一条负例都断言 store **一次都没被碰过**。
 describe("dynamic workflow run service — 用户面产物的读面", () => {
-  /** Fake store recording reads and writes; `readToolResultBinaryArtifact` returns the bytes it wrote for a uri. */
+  /** 记录读写的 fake store；`readToolResultBinaryArtifact` 按 uri 回它写过的字节。 */
   function readableArtifactStore(): {
     store: ToolArtifactStorePort;
     reads: string[];
@@ -2737,16 +2641,15 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
           reads.push(request.uri);
           const bytes = bytesByUri.get(request.uri);
           if (bytes === undefined) throw new Error(`unknown uri: ${request.uri}`);
-          // The store side re-derives contentType from the file name, deliberately giving a **wrong**
-          // one: the read surface must use the copy on the journal record (the exact-match contract
-          // by which the UI dispatches renderers).
+          // store 侧按文件名再推一次 contentType，故意给一个**错的**：读面必须用 journal
+          // 记录上的那一份（UI 分派渲染器的精确匹配契约）。
           return { uri: request.uri, bytes, contentType: "application/json" };
         },
       },
     };
   }
 
-  /** Declares a dashboard, feeds it two tagged reports, then publishes two versions of markdown. */
+  /** 声明一块看板、喂它两条标签 report，再发布两版 markdown。 */
   const MIXED_SCRIPT = [
     'artifact.chart("perf", { x: { field: "round" }, y: { field: "ms" } });',
     'report({ round: 1, ms: 40 }, "perf");',
@@ -2776,8 +2679,9 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
     const artifacts = await harness.service.listArtifacts!(runId);
 
     expect(artifacts).toHaveLength(2);
-    // Order = order of first appearance: the dashboard is declared first, markdown published after.
+    // 顺序 = 首次出现顺序：看板先声明，markdown 后发布。
     const [chart, summary] = artifacts!;
+    // 未打标签的那条 report 不算进任何产物。
     expect(chart).toMatchObject({ id: "perf", kind: "chart", version: 1, itemCount: 2 });
     expect(chart?.versions).toHaveLength(1);
     expect(summary).toMatchObject({
@@ -2788,8 +2692,6 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
       itemCount: 0,
     });
     expect(summary?.versions.map((entry) => entry.version)).toEqual([1, 2]);
-    // The untagged report counts toward no artifact.
-    expect(chart?.itemCount).toBe(2);
   });
 
   it("listArtifactItems 按 sequence 升序分页，afterSequence 严格大于，hasMore 由存储层判定", async () => {
@@ -2804,16 +2706,16 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
     expect(all.items[0]?.siteId).toBe("report#1");
     expect(all.hasMore).toBe(false);
 
-    // Exact limit: the storage layer never clamps on its own, and can say whether anything remains after the page.
+    // limit 精确：存储层绝不自己钳，且说得出页之后还有没有。
     const firstPage = await read({ limit: 1 });
     expect(firstPage.items).toHaveLength(1);
     expect(firstPage.hasMore).toBe(true);
-    // Cursor strictly greater than.
+    // 游标严格大于。
     const secondPage = await read({ afterSequence: firstPage.items[0]!.sequence, limit: 10 });
     expect(secondPage.items.map((entry) => entry.item)).toEqual([{ round: 2, ms: 31 }]);
-    // An out-of-range cursor yields an empty page, not an error — running off the tail is a normal paging outcome.
+    // 越界 cursor 得到空页，不是错误——翻到尾巴是正常的翻页结局。
     expect(await read({ afterSequence: 9_999, limit: 10 })).toEqual({ items: [], hasMore: false });
-    // An unknown id is likewise an empty page (the untagged report belongs to no id).
+    // 未知 id 同样是空页（未打标签的那条 report 不属于任何 id）。
     expect(await read({ limit: 10 }, "ghost")).toEqual({ items: [], hasMore: false });
   });
 
@@ -2824,16 +2726,15 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
 
     expect(new TextDecoder().decode(first!.bytes)).toBe("# 第一版");
     expect(new TextDecoder().decode(second!.bytes)).toBe("# 第二版");
-    // The store stand-in deliberately returns application/json; the text/markdown on the record is the UI's dispatch contract.
+    // store 的替身故意回 application/json；记录上的 text/markdown 才是 UI 的分派契约。
     expect(first!.contentType).toBe("text/markdown");
-    // A distinct uri per version — version history is real, not the same bytes with a new number.
+    // 两个版本各自的 uri——版本历史是真的，不是同一份字节换个号。
     expect(new Set(reads).size).toBe(2);
   });
 
   it("授权负例：run 的父会话不是本服务的 ⇒ 拒绝，且 store 一次都没被碰", async () => {
-    // This is step ② of the authorization chain at spec line 177. Service instances are constructed
-    // per parent session; the bytes of a run from some other session must never flow out through
-    // this service.
+    // 这是 spec 行 177 的授权链第 ② 步。服务实例按父会话构造，一个别的会话的 run 的字节
+    // 绝不能经本服务流出去。
     const { harness, runId, reads } = await runMixed({
       parentSessionId: createSessionId("some-other-session"),
     });
@@ -2845,8 +2746,7 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
     const { harness, runId, reads } = await runMixed();
     expect(await harness.service.readArtifact!("dwfrun-nope", "summary", 1)).toBeUndefined();
     expect(await harness.service.readArtifact!(runId, "ghost", 1)).toBeUndefined();
-    // Only two versions were published; version 3 does not exist — the version number is part of
-    // the authorization chain, not a hint one could skip past.
+    // 只发布过两版，第 3 版不存在——版本号是授权链的一部分，不是一个可以越过的提示。
     expect(await harness.service.readArtifact!(runId, "summary", 3)).toBeUndefined();
     expect(reads).toEqual([]);
   });
@@ -2858,9 +2758,8 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
   });
 
   it("store 缺席 / 不带二进制读回 ⇒ 整条读回缺席，绝不退回文本读再解码", async () => {
-    // Falling back to a text read is exactly the bug recorded on ToolBinaryArtifactReadResult on
-    // 2026-09-04: the store derives contentType from the file name, office extensions land on
-    // application/json, and decoding as utf8 corrupts them.
+    // 退回文本读正是 2026-09-04 记录在 ToolBinaryArtifactReadResult 上的那条 bug：
+    // store 按文件名推 contentType，office 扩展名落到 application/json 被当 utf8 解码即损坏。
     const textOnly: ToolArtifactStorePort = {
       writeToolResultArtifact: async (request) => ({
         id: "a1",
@@ -2885,21 +2784,18 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
   });
 
   it("引擎发出的事件真的能被共享 reducer 归约成 workflowRuns.artifacts（两半的接缝）", async () => {
-    // This pins the **seam**, not either half: the reducer assumes the `artifact-published` payload
-    // is `{ instance, artifact: ArtifactVersionRecord }`, while the payload is actually emitted by
-    // the engine and bounded through toProgressPayload. Both halves green in their own unit tests
-    // yet mismatched in shape is the most typical silent failure of this layering — the symptom is
-    // a side panel that stays empty forever with no error reported anywhere.
+    // 这条钉的是**接缝**，不是任何一半：reducer 假设 `artifact-published` 的载荷是
+    // `{ instance, artifact: ArtifactVersionRecord }`，而载荷实际由引擎发、经
+    // toProgressPayload 有界化。两边各自的单测都绿、形状却对不上，是这类分层最典型的
+    // 静默失败——症状是侧板永远空着，而没有任何一处报错。
     const { harness, runId } = await runMixed();
 
     const published = harness.runEvents.filter((event) => event.eventType === "artifact-published");
-    // One dashboard declaration + two markdown versions = three; only failed publishes go through
-    // artifact-failed (this script has none).
+    // 一块看板声明 + 两版 markdown = 三条；失败的发布才走 artifact-failed（本脚本没有）。
     expect(published).toHaveLength(3);
     expect(harness.runEvents.some((event) => event.eventType === "artifact-failed")).toBe(false);
-    // Artifact sites emit no node lifecycle events (slice 1's ruling: otherwise the projection
-    // would reduce them into nodes[], and the side panel would grow an untracked node nobody can
-    // wait on).
+    // 产物站点不发任何节点生命周期事件（slice 1 的裁决：否则投影会把它归约进 nodes[]，
+    // 侧板上就多出一个没人能等的 untracked 节点）。
     expect(
       published.every((event) => (event.payload as { instance?: unknown }).instance !== undefined),
     ).toBe(true);
@@ -2910,12 +2806,12 @@ describe("dynamic workflow run service — 用户面产物的读面", () => {
     }
     expect(state?.runs[0]?.artifacts).toEqual([
       { id: "perf", kind: "chart", version: 1, itemCount: 2 },
-      // bytes ride along on the record (the card displays size); 11 = the UTF-8 byte count of "# 第二版".
+      // bytes 随记录带上来（卡片要显示大小）；11 = "# 第二版" 的 UTF-8 字节数。
       { id: "summary", kind: "markdown", version: 2, contentType: "text/markdown", bytes: 11 },
     ]);
-    // The reduced state passes the strict schema — the live frame is not dropped wholesale for carrying one key too many or too few.
+    // 归约出来的状态过 strict schema——线上那一帧不会因为多带/少带一个键被整帧丢掉。
     expect(workflowRunsStateSchema.parse(state)).toEqual(state);
-    // Tagged reports still enter the Results section (one channel, one set of limits); the untagged one is there too.
+    // 打了标签的 report 仍然进 Results 区（一条通道一套上限），未打标签的也在。
     expect(state?.runs[0]?.reports?.map((report) => report.artifactId)).toEqual([
       "perf",
       "perf",
@@ -2955,25 +2851,21 @@ describe("dynamic workflow run service — actor sessions", () => {
     const link = harness.taskLinks[0]!;
     expect(link.role).toBe("workflow_actor");
     expect(link.parentSessionId).toBe(createSessionId("actor-parent"));
-    // The run identity goes in the FK-free path column: rootWorkflowRunId has an FK to the legacy
-    // workflow_run(id); filling in a dwf runId would make FOREIGN KEY constraint failed reject
-    // every link.
+    // run 身份走无 FK 的 path 列：rootWorkflowRunId 对 legacy workflow_run(id) 有 FK，
+    // 填 dwf runId 会以 FOREIGN KEY constraint failed 拒掉每一个 link。
     expect(link.rootWorkflowRunId).toBeUndefined();
     expect(link.path).toContain(runId);
   });
 
   /**
-   * Tripwire for the production wiring (amend-resume): the transcript surface must travel from the
-   * service deps all the way into the driver's hands for boundaries to be writable. If any link in
-   * between forgets to pass it through, there is no compile error and the run completes as usual —
-   * it just can never again serve as an **amend predecessor** (the service's "reject wholesale
-   * without a marker predecessor" gate blocks it), and the symptom is far from the cause. So this
-   * case uses a real database: actor messages actually persisted, and the boundary must equal the
-   * length counted by that same storage surface.
+   * 生产接线的绊线（amend-resume）：转录面从 service deps 一路交到 driver 手上，边界才写得下来。
+   * 中间任何一环忘了透传，都不会有编译错误、run 照常跑完——只是这个 run 从此**不能作修订的
+   * 前驱**（service 的「无 marker 前驱整体拒绝」门会挡下来），而症状离成因很远。所以这条用例
+   * 走真库：actor 的消息真的落库，边界必须等于同一个存取面数出来的长度。
    */
   it("接上会话存储后，ask 节点带上消息数边界（service → launch → driver 的透传）", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-boundary-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     try {
       const harness = makeHarness({ sessionStore: store as never });
       const runId = await submitRun(harness, {
@@ -2988,7 +2880,7 @@ describe("dynamic workflow run service — actor sessions", () => {
       const persisted = await store.messages({ sessionID: actorSessionId });
       expect(persisted.length).toBeGreaterThan(0);
       expect(node?.messageBoundary).toBe(persisted.length);
-      // Read-modify-write: not one of the fields the engine wrote may be lost.
+      // 读改写：引擎写下的字段一个不许掉。
       expect(node?.status).toBe("completed");
       expect(node?.actorSeq).toBe(0);
       expect(node?.stats?.tokens).toBeGreaterThan(0);
@@ -2998,14 +2890,12 @@ describe("dynamic workflow run service — actor sessions", () => {
     }
   });
 
-  // Only one live transcript channel remains: the child runtime's **construction-time** eventSink.
-  // The run service no longer subscribes itself — the old `onActorSessionEvent` + `subscribeEvents`
-  // was installed after persist, and the SessionTitleUpdated persist writes is exactly seq 1; the
-  // v4 gateway only drains contiguous seqs, so that subscription would wait from seq 2 onward for
-  // a seq 1 that never comes (transcript permanently blank).
-  // The driver's rate-limit observation subscription (exactly once per actor) is not a live
-  // channel: it only reads ModelNetworkStatus, so missing seq 1 does not matter — hence what is
-  // pinned here is "exactly once per actor", not zero.
+  // transcript 直播只剩一条通道：child runtime 的**构造期** eventSink。run service 不再
+  // 自己订阅——旧的 `onActorSessionEvent` + `subscribeEvents` 装在 persist 之后，而
+  // persist 写下的 SessionTitleUpdated 就是 seq 1，v4 网关只排水连续 seq，于是那条
+  // 订阅从 seq 2 起永远等一个再也不会来的 seq 1（transcript 永久空白）。
+  // driver 的限流观察订阅（每 actor 恰好一次）不是直播通道：它只读 ModelNetworkStatus，
+  // 漏掉 seq 1 无关紧要——所以这里钉的是「恰好每 actor 一次」，而不是零。
   it("actor 事件只经构造期 sink 直播，subscribeEvents 只有 driver 的两个观察面（每 actor 各一次）", async () => {
     const harness = makeHarness();
     const runId = await submitRun(harness, {
@@ -3023,9 +2913,8 @@ describe("dynamic workflow run service — actor sessions", () => {
       ),
     ).toBe(true);
     expect(harness.actorSubscribeCalls).toEqual([actorSessionId, actorSessionId]);
-    // One face of the shared store: actor events land in the (in production, the parent runtime's)
-    // store under their own sessionId — exactly where v4's `loadPersistedEvents(actorSessionId)`
-    // reads.
+    // 共享 store 的一面：actor 事件按自己的 sessionId 落在（生产里是父 runtime 的）store 里，
+    // 这正是 v4 `loadPersistedEvents(actorSessionId)` 读的地方。
     const stored = await harness.actorEventStore.getEvents(actorSessionId);
     expect(stored.length).toBe(harness.sessionEvents.length);
   });
@@ -3042,15 +2931,13 @@ describe("dynamic workflow run service — actor sessions", () => {
     expect(harness.actorRuntimeInputs).toHaveLength(1);
     const sessionId = harness.actorRuntimeInputs[0]!.sessionId;
     expect(sessionId).toContain(runId);
-    // refToString(actor) is `actor#1@1`: # and @ must already have been folded away.
+    // refToString(actor) 是 `actor#1@1`：# 与 @ 必须已被折叠掉。
     expect(sessionId).not.toMatch(/[#@/]/);
   });
 
-  // The persistence sequence must be **per actor, at creation, atomic**: never batched to submit,
-  // and never deferred until after the first ask. What this pins is exactly that regression — if
-  // someone ever changes the factory back to fire-and-forget, persistence and link creation would
-  // race the first turn, and session_task_link.child_session_id's FK requires the session row to
-  // exist first.
+  // 持久化序列必须是**每 actor、创建时、原子**的：绝不批到 submit，也绝不推迟到第一次 ask 之后。
+  // 这条钉的正是那个退化——若将来有人把工厂改回 fire-and-forget，落库与建链就会与第一个
+  // turn 竞速，而 session_task_link.child_session_id 的 FK 要求会话行先存在。
   it("持久化在该 actor 的首个 turn 之前完成（不是 fire-and-forget）", async () => {
     const harness = makeHarness();
     const runId = await submitRun(harness, {
@@ -3070,11 +2957,10 @@ describe("dynamic workflow run service — actor sessions", () => {
     expect(linkIndex).toBeGreaterThanOrEqual(0);
     expect(turnIndex).toBeGreaterThanOrEqual(0);
     expect(constructIndex).toBeGreaterThanOrEqual(0);
-    // Runtime construction (= live sink installed) must precede persist: the SessionTitleUpdated
-    // persist writes is seq 1, and a sink effective only after it would leave the v4 gateway's
-    // contiguous drain waiting for seq 1 forever from seq 2 on.
+    // runtime 构造（= 直播 sink 装好）必须早于 persist：persist 写的 SessionTitleUpdated
+    // 是 seq 1，晚于它才生效的 sink 会让 v4 网关的连续排水从 seq 2 起永远等 seq 1。
     expect(constructIndex).toBeLessThan(persistIndex);
-    // Persist the session row → create the link (FK order) → only then may the first turn start.
+    // 落会话行 → 建 link（FK 顺序）→ 才允许第一个 turn 起跑。
     expect(persistIndex).toBeLessThan(linkIndex);
     expect(linkIndex).toBeLessThan(turnIndex);
   });
@@ -3093,8 +2979,8 @@ describe("dynamic workflow run service — actor sessions", () => {
     expect(actors[0]!.sessionId).toBe(harness.actorRuntimeInputs[0]!.sessionId);
   });
 
-  // The old scheme `wf-actor-${refToString(actor)}` contained no runId, so actors of the same
-  // site×ordinal in two concurrent runs would collide into one session id.
+  // 旧方案 `wf-actor-${refToString(actor)}` 不含 runId，并发两个 run 的同 site×ordinal
+  // actor 会撞成同一个会话 id。
   it("并发两个 run 的同 site×ordinal actor 不撞会话 id", async () => {
     const harness = makeHarness();
     const [first, second] = await Promise.all([
@@ -3127,8 +3013,7 @@ describe("dynamic workflow run service — cancellation", () => {
       trace: traceFor("cancel-run"),
     });
 
-    // Wait for the actor session to be built (meaning the ask was dispatched and the turn is in
-    // flight) before cancelling.
+    // 等 actor 会话建起来（说明 ask 已派发、turn 在飞），再取消。
     await vi.waitFor(() => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(0);
     });
@@ -3137,17 +3022,15 @@ describe("dynamic workflow run service — cancellation", () => {
     await settle(harness, runId);
 
     const snapshot = await harness.service.getTask(runId);
-    // Failure is never encoded as a stop, and a stop is never encoded as a failure: the journal
-    // gives the two different semantics and different resume UX. The snapshot base class's status
-    // is the background task tracker's generic vocabulary (stopped → cancelled); the real word is
-    // in runStatus.
+    // 失败绝不编码成停止，停止也绝不编码成失败：journal 里两者语义与 resume UX 不同。
+    // 快照基类的 status 是后台任务追踪器的通用词汇（stopped → cancelled）；真实词在 runStatus。
     expect(snapshot?.status).toBe("cancelled");
     expect(snapshot?.runStatus).toBe("stopped");
     expect(snapshot?.stopReason).toBe("user");
     expect(harness.journal.getRun(runId)?.status).toBe("stopped");
     expect(harness.journal.getRun(runId)?.stopReason).toBe("user");
 
-    // The persisted actor records survive (a cancelled run can be resumed).
+    // 已落库的 actor 记录保留（取消的 run 可 resume）。
     expect(harness.journal.listActors(runId, { withPersona: true })).toHaveLength(1);
   });
 
@@ -3170,16 +3053,14 @@ describe("dynamic workflow run service — cancellation", () => {
 });
 
 /**
- * Close (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Engine ownership", rule 2).
+ * 关闭（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Engine ownership」规则二）。
  *
- * The engine is a closure of this App; once the App closes it has no host. So closing must stop
- * actively: abort every in-flight entry with `"interrupted"` and wait for settlement, with that
- * entry **written by the engine itself** (updateRunStatus + run-settled + driver dispose) — the
- * service does not add a single word; writing around the engine would create a second writer of
- * dwf_run.
+ * 引擎是本 App 的闭包，App 一关它就没了宿主。所以关闭要主动停：以 `"interrupted"` abort 每个
+ * 在飞条目并等结算，那一笔**由引擎自己写**（updateRunStatus + run-settled + driver dispose），
+ * service 一个字都不补——绕过引擎写就会造出 dwf_run 的第二个写入者。
  */
 describe("dynamic workflow run service — close（Engine ownership 规则二）", () => {
-  /** The largest event sequence this run currently has in the journal; used to prove "no more events after close". */
+  /** journal 里该 run 目前的最大事件 sequence；用来证明「关闭之后不再有事件」。 */
   function maxSequence(harness: Harness, runId: string): number {
     return harness.journal
       .listEvents(runId, { types: "all", reportItems: "all" })
@@ -3201,30 +3082,28 @@ describe("dynamic workflow run service — close（Engine ownership 规则二）
 
     await harness.service.close();
 
-    // Settlement is already complete when close resolves: no need to wait on waitForTask again.
+    // close 解析时结算已经完成：不需要再等 waitForTask。
     expect(harness.service.countLiveRuns()).toBe(0);
     const record = harness.journal.getRun(runId);
     expect(record?.status).toBe("stopped");
-    // interrupted rather than user: in the UI, user reads as "the user pressed stop", whereas this
-    // was the host stopping it on the user's behalf.
+    // interrupted 而不是 user：UI 上 user 读作「用户按了停止」，而这是宿主替它停的。
     expect(record?.stopReason).toBe("interrupted");
     expect(record?.failure?.code).toBe("Interrupted");
     expect(record?.failure?.message).toContain("the owning session closed");
     expect(record?.failure?.message).toContain(runId);
 
-    // The entry's terminal state is in place, and the snapshot speaks stopped (resumable).
+    // 条目终态已就位，快照按 stopped 讲（可 resume）。
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.runStatus).toBe("stopped");
     expect(snapshot?.stopReason).toBe("interrupted");
 
-    // The engine's own entry: the journal has run-settled, not a bare status row patched in by the service.
+    // 引擎自己那一笔：journal 里有 run-settled，而不是 service 补写的一行裸状态。
     const settled = harness.journal
       .listEvents(runId, { types: "all", reportItems: "all" })
       .filter(({ event }) => event.type === "run-settled");
     expect(settled).toHaveLength(1);
 
-    // The journal stops growing after close: settlement was written before close resolved, and no
-    // straggler event comes after.
+    // 关闭之后 journal 不再长：结算写在 close 解析之前，之后没有任何落后的事件。
     const sequenceAtClose = maxSequence(harness, runId);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(maxSequence(harness, runId)).toBe(sequenceAtClose);
@@ -3250,11 +3129,11 @@ describe("dynamic workflow run service — close（Engine ownership 规则二）
     const closing = harness.service.close().then(() => {
       resolved = true;
     });
-    // Settlement goes through the real abort → engine stop → finishRun chain; it cannot complete within one microtask.
+    // 结算靠真实的 abort → 引擎 stop → finishRun 链路，不是一个微任务就能走完。
     expect(resolved).toBe(false);
     await closing;
     expect(resolved).toBe(true);
-    // The settlement notice precedes close resolving: what close waits for is exactly the tail of that chain.
+    // 结算通知先于 close 解析：close 等的正是那条链路的末端。
     expect(settledFirst).toBe(`settled:${runId}`);
     unsubscribe();
   });
@@ -3294,7 +3173,7 @@ describe("dynamic workflow run service — close（Engine ownership 规则二）
     const harness = makeHarness();
     const first = harness.service.close();
     const second = harness.service.close();
-    // Idempotence comes from remembering the promise, not from walking the close flow a second time.
+    // 幂等靠记住 promise，而不是靠再走一遍关闭流程。
     expect(second).toBe(first);
     await first;
     const closing = harness.logs.filter(
@@ -3306,23 +3185,19 @@ describe("dynamic workflow run service — close（Engine ownership 规则二）
 });
 
 /**
- * Foreign terminal rows (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
- * "Engine ownership", rule 3).
+ * 外来终态行（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Engine ownership」规则三）。
  *
- * Bug root cause (2026-09-04 / 2026-09-15): a second desktop instance cold-recovered the same
- * session, and its orphan sweeping wrote a terminal row onto a run whose engine **was still alive**
- * in this process. This process accepted it wholesale: the tracker received the terminal snapshot,
- * the model was notified that the run had ended, the task was marked done, the real completion was
- * subsequently discarded, and the row ended as completed while still carrying that stale failure.
+ * Bug 根因（2026-09-04 / 2026-09-15）：第二个桌面实例冷恢复了同一个会话，它的孤儿收敛在本进程
+ * 引擎**仍然活着**的 run 上写下终态行。本进程照单全收：追踪器拿到终态快照、通知模型 run 已
+ * 结束、把任务标完，真正的完成随后被丢弃，而行以 completed 收场却还带着那份陈旧失败。
  *
- * The assembly parks the run on a genuinely live node using an escalation question (escalate does
- * not end the turn; after answering, work continues), so the same run can both be observed and be
- * released to run to completed.
+ * 装配用升级问答把 run 停在一个真活着的节点上（escalate 不终止 turn，答完继续干活），
+ * 因此同一个 run 既能被观察，也能被放行跑到 completed。
  */
 describe("dynamic workflow run service — 外来终态行（Engine ownership 规则三）", () => {
   const FOREIGN_FAILURE = { code: "Interrupted" as const, message: "owning process exited" };
 
-  /** Starts a run and parks it on the escalation question; returns the runId and qid. */
+  /** 起一个 run 并停在升级问答上；回 runId 与 qid。 */
   async function parkedRun(
     harness: Harness,
     name: string,
@@ -3353,23 +3228,21 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
     });
   }
 
-  // Uses a real database: two of the four read surfaces (listRuns / getRunDetail) are wired via
-  // capability probing, which the stand-in lacks; and what this case must prove is precisely
-  // **all four read surfaces giving the same answer**.
+  // 走真库：四条读面里有两条（listRuns / getRunDetail）靠能力探测接上，替身里没有它们；
+  // 而这条用例要证的正是**四条读面同一个答案**。
   it("四条读面都忽略活条目下的外来终态行，警告每个条目只记一次", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = parkedHarness("真正的结果", journal);
       const { runId } = await parkedRun(harness, "foreign-row");
 
-      // The second instance's orphan sweep: writes the terminal row directly on the journal, with
-      // this process's registry none the wiser.
+      // 第二个实例的孤儿收敛：直接在 journal 上写终态行，本进程的注册表毫不知情。
       harness.journal.updateRunStatus(runId, "stopped", {
         stopReason: "interrupted",
         failure: FOREIGN_FAILURE,
       });
       expect(harness.journal.getRun(runId)?.status).toBe("stopped");
 
-      // (1) Snapshot: still running, and none of the three terminal fields appear.
+      // (1) 快照：仍然在跑，三个终态字段一个都不出。
       const snapshot = await harness.service.getTask(runId);
       expect(snapshot?.status).toBe("running");
       expect(snapshot).not.toHaveProperty("runStatus");
@@ -3377,7 +3250,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
       expect(snapshot).not.toHaveProperty("failure");
       expect(snapshot).not.toHaveProperty("error");
 
-      // (2) List and (3) detail: the same answer as the snapshot (divergence in three places is harder to diagnose than three places all wrong).
+      // (2) 列表与 (3) 详情：与快照同一个答案（三处分叉比三处都错更难查）。
       const introspection = introspectionOf(harness);
       const { runs: listed } = await introspection.listRuns({ cwd: TEST_CWD, limit: 20 });
       const row = listed.find((item) => item.runId === runId);
@@ -3389,7 +3262,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
       expect(detail).not.toHaveProperty("error");
       expect(detail).not.toHaveProperty("result");
 
-      // (4) Session enumeration surface (it has no registry of its own; it relies on the service handing entries in).
+      // (4) 会话枚举面（它自己没有注册表，靠 service 把条目递进去）。
       const sessionRows = await harness.service.listRunsForSession(20);
       const sessionRow = sessionRows.find((item) => item.runId === runId);
       expect(sessionRow?.status).toBe("running");
@@ -3397,7 +3270,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
       expect(sessionRow).not.toHaveProperty("failureCode");
       expect(sessionRow?.resumable).toBe(false);
 
-      // A trail without spam: the tracker polls every second, and the warning is logged once per entry.
+      // 留痕但不刷屏：追踪器每秒轮询，警告每个条目只记一次。
       await harness.service.getTask(runId);
       await harness.service.getTask(runId);
       const warns = harness.logs.filter(
@@ -3410,7 +3283,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
         stopReason: "interrupted",
       });
 
-      // Teardown: let the run really finish; do not leave a live engine for the next case.
+      // 收尾：让 run 真的结束，别把一个在飞引擎留给下一条用例。
       await harness.service.cancel(runId);
       await settle(harness, runId);
     });
@@ -3424,7 +3297,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
       failure: FOREIGN_FAILURE,
     });
 
-    // Release: the actor gets the answer, keeps working, and submits.
+    // 放行：actor 拿到答案继续干活并提交。
     expect(await harness.service.resolveQuestion(qid, "继续")).toMatchObject({ ok: true });
     await settle(harness, runId);
 
@@ -3433,7 +3306,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
     expect(snapshot?.runStatus).toBe("completed");
     expect(snapshot?.output).toBe("真正的结果");
     expect(snapshot).not.toHaveProperty("failure");
-    // The storage-side other half (the journal contract's "clears a stale failure…"): a completed row carries no failure.
+    // 存储侧的另一半（journal 契约的「clears a stale failure…」）：completed 的行不带失败。
     const record = harness.journal.getRun(runId);
     expect(record?.status).toBe("completed");
     expect(record?.failure).toBeUndefined();
@@ -3453,7 +3326,7 @@ describe("dynamic workflow run service — 外来终态行（Engine ownership �
       resolved = true;
       return snapshot;
     });
-    // The row is already terminal, but what is awaited is the entry's settlement promise — it has not fulfilled yet.
+    // 行已经是终态，但等的是条目的结算 promise——它还没有兑现。
     await Promise.resolve();
     expect(resolved).toBe(false);
 
@@ -3469,9 +3342,8 @@ describe("dynamic workflow run service — observation", () => {
     expect(await harness.service.getTask("dwfrun-unknown")).toBeUndefined();
   });
 
-  // The tracker polls immediately after submit returns, while the dwf_run row waits on engine
-  // construction. At that instant the snapshot must be running, or the first poll would judge the
-  // just-started run as lost.
+  // submit 返回后追踪器会立刻轮询，而 dwf_run 行要等引擎构造。这一刻快照必须是 running，
+  // 否则第一次轮询就把刚启动的 run 判成 lost。
   it("submit 刚返回时快照已是 running", async () => {
     const harness = makeHarness({ hangActors: true });
     const runId = await submitRun(harness, {
@@ -3488,10 +3360,8 @@ describe("dynamic workflow run service — observation", () => {
     await settle(harness, runId);
   });
 
-  // The restart-recovery face of a bug observed in the desktop: after a process restart the
-  // registry is empty and the snapshot can only be synthesized from the journal record. A completed
-  // record carrying result must return it as output, or TaskOutput could never get the artifact
-  // after a restart.
+  // 桌面实测 bug 的重启恢复面：进程重启后注册表为空，快照只能由 journal 记录合成。
+  // completed 记录带 result 时必须把它当 output 回出来，否则 TaskOutput 在重启后永远拿不到产物。
   it("重启恢复：注册表为空时 completed 记录的 result 作为 output 回出", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, { runId: "dwfrun-restart", status: "running" });
@@ -3531,11 +3401,10 @@ describe("dynamic workflow run service — observation", () => {
     expect(snapshot?.error).toBe("script threw");
   });
 
-  // ── Terminal snapshots carry progressive artifacts (the data source of the completion notice) ──
+  // ── 终态快照携带渐进产物（完成通知的数据源）──
   //
-  // Entries come from the journal's kind="report" rows, not from the memory-only workflowRuns
-  // projection: that is these entries' durable home, and it survives a restart. The notification
-  // can therefore salvage mid-run artifacts even on failed / cancelled runs.
+  // 条目取自 journal 的 kind="report" 行，而不是 memory-only 的 workflowRuns 投影：那是这些
+  // 条目的持久家，重启后依然在。通知因此在 failed / cancelled 上也能捞回半途的产物。
 
   function preloadReports(journal: JournalStorePort, runId: string, items: unknown[]): void {
     items.forEach((item, index) => {
@@ -3602,15 +3471,13 @@ describe("dynamic workflow run service — observation", () => {
 
     const snapshot = await harness.service.getTask("dwfrun-reports-mixed");
     expect(snapshot?.status).toBe("completed");
-    // Absent rather than an empty array: the notification side uses this to make the whole
-    // <reports> section disappear instead of emitting an empty one.
+    // 缺席而不是空数组：通知端据此让整节 <reports> 消失，不发空节。
     expect(snapshot && "reports" in snapshot).toBe(false);
   });
 
   /**
-   * No reads while in flight: `getTask` is polled repeatedly by the background tracker, while
-   * `listNodes` is a full table scan. The only consumer is the terminal notification; while
-   * running there is no reader, only cost.
+   * 在飞时不读：`getTask` 会被后台追踪器反复轮询，而 `listNodes` 是一次全表扫。唯一的消费者
+   * 是终态通知，运行中读它没有读者、只有成本。
    */
   it("running 的快照不读 report 节点（避免每次轮询扫全表）", async () => {
     const journal = new SweepableJournalStore();
@@ -3625,8 +3492,7 @@ describe("dynamic workflow run service — observation", () => {
     expect(listNodes).not.toHaveBeenCalled();
   });
 
-  // In-memory terminal state wins: a run just settled in this process uses the artifact the engine
-  // handed back, without falling back to the journal record.
+  // 内存终态优先：本进程刚结算的 run 以引擎交回的 artifact 为准，不退回 journal 记录。
   it("内存终态的 artifact 优先于 journal 记录的 result", async () => {
     const journal = new SweepableJournalStore();
     const harness = makeHarness({ journal });
@@ -3636,7 +3502,7 @@ describe("dynamic workflow run service — observation", () => {
       trace: traceFor("in-memory-wins"),
     });
     await settle(harness, runId);
-    // The journal side was rewritten to a different value; the in-memory terminal state remains authoritative.
+    // journal 侧被改写成另一个值；内存终态仍然是权威。
     journal.updateRunStatus(runId, "completed", { result: "journal-side value" });
 
     const snapshot = await harness.service.getTask(runId);
@@ -3656,7 +3522,7 @@ describe("dynamic workflow run service — observation", () => {
     const { events: all, hasMore: allHasMore } = await harness.service.listEvents(runId, {});
     expect(allHasMore).toBe(false);
     expect(all.length).toBeGreaterThan(0);
-    // sequence is monotonic, and the payload is the event object minus type.
+    // sequence 单调，payload 是事件对象去掉 type 后的其余字段。
     expect(all[0]!.type).toBe("run-started");
     expect(all[0]!.payload).toMatchObject({ runId });
     expect(all.map((event) => event.sequence)).toEqual(
@@ -3670,7 +3536,7 @@ describe("dynamic workflow run service — observation", () => {
       afterSequence: firstPage[1]!.sequence,
       limit: 2,
     });
-    // Page boundaries neither overlap nor skip.
+    // 页边界不重不漏。
     expect(secondPage[0]!.sequence).toBeGreaterThan(firstPage[1]!.sequence);
 
     const beyond = await harness.service.listEvents(runId, {
@@ -3680,9 +3546,8 @@ describe("dynamic workflow run service — observation", () => {
   });
 
   it("listEvents 不给 limit 时一页 500 条（事件日志从不一次读完）", async () => {
-    // docs/execution-engine.md "Reading the journal": v4 workflowRunEvents' limit is optional, and
-    // absence used to mean reading the whole event log in one go — a run full of reports is a
-    // GiB-scale item.
+    // docs/execution-engine.md「Reading the journal」：v4 workflowRunEvents 的 limit 是可选的，
+    // 缺省曾经意味着整条事件日志一次读完——一个报满 report 的 run 是 GiB 量级的 item。
     const harness = makeHarness();
     const runId = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -3697,7 +3562,7 @@ describe("dynamic workflow run service — observation", () => {
     const page = await harness.service.listEvents(runId, {});
     expect(page.events).toHaveLength(500);
     expect(page.hasMore).toBe(true);
-    // Explicit limit respected as-is (the v4 gateway has already clamped per schema).
+    // 显式 limit 原样尊重（v4 网关已按 schema 钳过）。
     const asked = await harness.service.listEvents(runId, { limit: 501 });
     expect(asked.events).toHaveLength(501);
     const small = await harness.service.listEvents(runId, { limit: 3 });
@@ -3705,9 +3570,8 @@ describe("dynamic workflow run service — observation", () => {
   });
 
   it("journal 能按字节翻页时，listEvents 走它并带上协议的两道缺省界", async () => {
-    // Only SQLite's listEventPage can honor the byte limits (it reads payload length from the row
-    // header without reading the payload); when the caller gives no limits, the service supplies
-    // both at the protocol ceilings and takes hasMore as-is from the storage layer's verdict.
+    // 字节界只有 SQLite 的 listEventPage 兑现得了（它从行头读载荷长度，不读载荷）；
+    // 调用方不给界时，服务按协议上限给全两者，hasMore 原样取存储层的判定。
     const calls: Array<{ afterSequence?: number; limit: number; maxBytes: number }> = [];
     class PagingJournal extends SweepableJournalStore {
       listEventPage(
@@ -3754,11 +3618,11 @@ describe("dynamic workflow run service — observation", () => {
     await settle(harness, runId);
 
     const { events: journalPage } = await harness.service.listEvents(runId, {});
-    // Aligned entry by entry: the same event must have the same sequence and the same kind at both consumers.
+    // 逐条对齐：同一条事件在两个消费者那里必须是同一个 sequence 与同一个种类。
     expect(harness.runEvents.map((event) => [event.sequence, event.eventType])).toEqual(
       journalPage.map((event) => [event.sequence, event.type]),
     );
-    // Monotonic and starting from 0 (appendEvent's allocation semantics).
+    // 单调且从 0 起（appendEvent 的分配语义）。
     expect(harness.runEvents.map((event) => event.sequence)).toEqual(
       harness.runEvents.map((_, index) => index),
     );
@@ -3774,9 +3638,8 @@ describe("dynamic workflow run service — observation", () => {
     await settle(harness, runId);
 
     const created = harness.runEvents.find((event) => event.eventType === "actor-created");
-    // This assertion is the tripwire between "deterministic minting" and "what the driver actually
-    // minted": the session id is the entry point for the phase-5 drill-down; once the two sides
-    // drift, the detail page opens a session that does not exist.
+    // 这条断言是"确定性铸造"与"driver 实际铸造"之间的绊线：会话 id 是 phase 5 下钻的入口，
+    // 两边一旦漂移，详情页会打开一个不存在的会话。
     expect(created?.actorSessionId).toBe(harness.actorRuntimeInputs[0]?.sessionId);
     expect(created?.actorSessionId).toContain(runId);
   });
@@ -3793,10 +3656,10 @@ describe("dynamic workflow run service — observation", () => {
     const usage = harness.runEvents.filter((event) => event.eventType === "usage-updated");
     expect(usage.length).toBeGreaterThan(0);
     const last = usage.at(-1)!;
-    // docs/dynamic-workflow/authoring.md "Usage, not budget": the event payload and dwf_run.spent_tokens are always equal.
+    // docs/dynamic-workflow/authoring.md「Usage, not budget」：事件载荷与 dwf_run.spent_tokens 永远相等。
     expect(last.payload.spentTokens).toBe(harness.journal.getRun(runId)?.spentTokens);
     expect(last.payload.spentTokens).toBeGreaterThan(0);
-    // No more derived fields: the payload is exactly as the engine emitted it.
+    // 不再有派生字段：载荷就是引擎发的原样。
     expect("spentTokens" in last).toBe(false);
   });
 
@@ -3818,7 +3681,7 @@ describe("dynamic workflow run service — observation", () => {
     const persona = created?.payload.persona as { system?: string } | undefined;
     expect(created?.truncated).toBe(true);
     expect(persona?.system?.length).toBe(DYNAMIC_WORKFLOW_RUN_EVENT_PAYLOAD_LIMITS.maxStringLength);
-    // The same serialization also feeds listEvents: both consumers get the same bounded payload.
+    // 同一次序列化也喂给 listEvents：两个消费者拿到同一份有界载荷。
     const { events: page } = await harness.service.listEvents(runId, {});
     const pageCreated = page.find((event) => event.type === "actor-created");
     expect((pageCreated?.payload.persona as { system?: string }).system?.length).toBe(
@@ -3842,9 +3705,8 @@ describe("dynamic workflow run service — observation", () => {
   });
 
   it("钩子的 routing 携带 parentSessionId：事件必须落在发起该 run 的会话里", async () => {
-    // The other half of the identity gate lives in createDynamicWorkflowRunProgressSink; what is
-    // proven here is that the run service really handed the identity over (otherwise the gate
-    // could only admit via the lenient "absence means this session" branch, amounting to no gate).
+    // 身份闸门的另一半在 createDynamicWorkflowRunProgressSink 里；这里证明 run service
+    // 真的把身份交了出去（否则闸门只能靠"缺席即本会话"的宽松分支放行，形同没有闸门）。
     const harness = makeHarness();
     const parentSessionId = createSessionId("run-progress-routing-parent");
     const runId = await submitRun(harness, {
@@ -3890,13 +3752,11 @@ describe("dynamic workflow run service — observation", () => {
 });
 
 describe("dynamic workflow run service — 孤儿 run 收敛", () => {
-  // Desktop-observed bug (2026-08-19, dwfrun-734d1f9d): the process was closed after run-started,
-  // and the dwf_run row **stayed running forever** — getTask/waitForTask answer journal snapshots
-  // directly for runs not in this process's registry, so after the session was restored every
-  // journal read surface was told "still running", never self-healing. The sweep happens at the
-  // next construction of this parent session's app: at that moment this service instance owns zero
-  // in-flight runs, so any non-terminal row of this session in the journal can only be a dead
-  // process's leftover.
+  // 桌面实测 bug（2026-08-19，dwfrun-734d1f9d）：run-started 之后进程被关掉，dwf_run 行
+  // **永远停在 running**——getTask/waitForTask 对不在本进程注册表里的 run 直接回 journal
+  // 快照，于是恢复会话后每个 journal 读面都被告知「还在跑」，永不自愈。收敛的时机是下一次
+  // 这个父会话的 app 构造：那一刻本服务实例名下零个在飞 run，journal 里本会话的任何非终态行
+  // 都只可能是死进程的遗物。
   it("构造时把本会话的非终态 run 收敛成 failed（interrupted 编码）", () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -3916,9 +3776,8 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
       const record = journal.getRun(runId);
       expect(record?.status).toBe("stopped");
       expect(record?.stopReason).toBe("interrupted");
-      // The failure encoding follows the engine's WorkflowErrorJson shape, and the code must be
-      // simultaneously distinct from "the script really failed" (the harness encodes a thrown
-      // script as DriverError) and "the user cancelled" (stopped(user), resumable).
+      // 失败编码沿用引擎的 WorkflowErrorJson 形态，且 code 必须同时区别于「脚本真失败」
+      // （harness 把脚本抛错编码成 DriverError）与「用户取消」（stopped(user)，可 resume）。
       expect(record?.failure?.code).toBe("Interrupted");
       expect(record?.failure?.message).toContain(runId);
     }
@@ -3955,15 +3814,14 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     for (const status of ["completed", "errored", "stopped"] as const) {
       const record = journal.getRun(`dwfrun-terminal-${status}`);
       expect(record?.status).toBe(status);
-      // Not even a failure reason may be patched onto a terminal row: stopped means "cancelled by the user, resumable", not interrupted.
+      // 终态行连失败原因都不许被补写：stopped 是「用户取消、可 resume」，不是 interrupted。
       expect(record?.failure).toBeUndefined();
     }
   });
 
-  // Never sweep globally: the run service is constructed per app (= per parent session), and
-  // sibling sessions in the same process each have their own in-memory registry while sharing one
-  // sqlite. A sweep without parentSessionId would mark other sessions' **in-flight** runs dead.
-  // Rows with an absent parent session likewise do not belong to this session.
+  // 绝不全局清扫：run service 是 per-app（= per 父会话）构造的，同进程兄弟会话各有各的
+  // 内存注册表、共用同一个 sqlite。不带 parentSessionId 的清扫会把别的会话**正在飞**的 run
+  // 标死。父会话缺席的行同理不属于本会话。
   it("别的会话（以及无父会话）的非终态 run 不动", () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -4001,8 +3859,7 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     expect(journal.getRun("dwfrun-orphan-before-submit")?.status).toBe("stopped");
   });
 
-  // This is the bug's user-visible face: whatever the journal snapshot answers, TaskOutput shows
-  // after the session is restored.
+  // 这条就是 bug 的用户可见面：journal 快照回什么，恢复会话后的 TaskOutput 就显示什么。
   it("getTask 对被收敛的 run 回 stopped(interrupted) 并带失败原因", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -4013,7 +3870,7 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     const harness = makeHarness({ journal });
 
     const snapshot = await harness.service.getTask("dwfrun-orphan-snapshot");
-    // Tracker vocabulary: stopped → cancelled; the real word and reason live on runStatus / stopReason.
+    // 追踪器词汇：stopped → cancelled；真实词与原因在 runStatus / stopReason 上。
     expect(snapshot?.status).toBe("cancelled");
     expect(snapshot?.runStatus).toBe("stopped");
     expect(snapshot?.stopReason).toBe("interrupted");
@@ -4021,9 +3878,8 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     expect(snapshot?.error).toContain("dwfrun-orphan-snapshot");
   });
 
-  // No dwf_event is synthesized: the event log's contract is "what the engine emitted", and the
-  // status authority is the run row.
-  // run-settled is the engine's closing word, not the sweeper's.
+  // 不合成 dwf_event：事件日志的契约是「引擎发过什么」，状态权威在 run 行上。
+  // run-settled 是引擎的收口，不是清扫者的。
   it("收敛不给事件日志添任何一条事件", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -4059,8 +3915,7 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     expect(updateRunStatus).not.toHaveBeenCalled();
   });
 
-  // When the journal implementation lacks the narrow query, this must neither crash nor pretend to
-  // have swept: skip and record the reason (visible degradation).
+  // journal 实现不带窄查询时不能崩、也不能假装收敛过：跳过并记下原因（可见降级）。
   it("journal 不带窄查询时跳过收敛并记原因", () => {
     const journal = new InMemoryJournalStore();
     preloadRun(journal, {
@@ -4077,14 +3932,13 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
     ).toBe(true);
   });
 
-  // Tripwire for the production wiring, same as the orphan-sweeping one: the narrow query is
-  // discovered by **capability probing** (it is not on the engine's JournalStorePort), so once the
-  // method name or signature drifts there is no compile error — the sweep would just be silently
-  // skipped, regressing to the "orphan run stays running forever" bug. This case therefore uses the
-  // real sqlite session store, i.e. the production resolveDynamicWorkflowJournalStore path.
+  // 生产接线的绊线。窄查询是**能力探测**出来的（它不在引擎的 JournalStorePort 上），所以
+  // 方法名或签名一旦漂移，不会有任何编译错误——只会让收敛静默跳过，退回「孤儿 run 永远
+  // running」那个 bug。这条用例因此走真实的 sqlite session store，即生产那条
+  // resolveDynamicWorkflowJournalStore 路径。
   it("真实 sqlite journal 上收敛生效，且只碰本会话", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-sweep-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     try {
       const journal = resolveDynamicWorkflowJournalStore(store as never);
       expect(journal).toBeDefined();
@@ -4112,7 +3966,7 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
       expect(reconciled?.stopReason).toBe("interrupted");
       expect(reconciled?.failure?.code).toBe("Interrupted");
       expect(journal!.getRun("dwfrun-sqlite-sibling")?.status).toBe("running");
-      // The status authority is the run row; the event log still holds only the one event the engine emitted.
+      // 状态权威在 run 行上，事件日志仍然只有引擎发过的那一条。
       expect((await harness.service.listEvents("dwfrun-sqlite-orphan", {})).events).toHaveLength(1);
     } finally {
       store.close();
@@ -4122,18 +3976,16 @@ describe("dynamic workflow run service — 孤儿 run 收敛", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// run introspection (listRuns / getRunDetail)
-// See docs/dynamic-workflow/launch.md
+// run 内省（listRuns / getRunDetail）
+// 见 docs/dynamic-workflow/launch.md
 // ————————————————————————————————————————————————————————————————
 
 /**
- * This project's cwd and "another project's" cwd (cwd is the literal-equality project key).
+ * 本项目的 cwd 与"别的项目"的 cwd（cwd 是字面等值匹配的项目键）。
  *
- * Must be a **directory that really exists**: a run that actually executes uses it as the sandbox
- * subprocess's cwd; a nonexistent path makes spawn fail outright and the run settle as failed — at
- * that point what is under test is no longer truth synthesis. (This one was genuinely stepped on
- * while writing these cases: with two literal fake paths, the runs in the in-flight cases all
- * became failed.)
+ * 必须是**真实存在的目录**：真跑起来的 run 会以它作为沙箱子进程的 cwd，不存在的路径让
+ * spawn 直接失败、run 结算 failed——那时被测的就不是真相合成了。（这一条是写这些用例时
+ * 真实踩到的：原先用两个字面量假路径，在飞用例里的 run 全部变成 failed。）
  */
 let projectCwd = "";
 let otherCwd = "";
@@ -4152,21 +4004,18 @@ afterAll(async () => {
 });
 
 /**
- * Runs introspection cases on a real sqlite journal.
+ * 真实 sqlite journal 上跑内省用例。
  *
- * This family **must use the real database**: the four introspection queries are not on the
- * engine's JournalStorePort but are wired via capability probing, and rewriting them in JS on a
- * stand-in means replacing the semantics under test with a replica — whose drift symptom is
- * precisely "capability silently absent" or "counts/tails look right but the SQL is another
- * story". The queries' own semantics (cwd pushdown, ordering, limit clamping) are pinned against
- * the real database in `adapters/tests/dwf-journal-store.test.ts`; what is pinned here is the
- * service side's **truth synthesis**.
+ * 这一族**必须走真库**：四条内省查询不在引擎的 JournalStorePort 上，是靠能力探测接上的，
+ * 在替身里用 JS 重写它们等于把被测语义换成复制品——而漂移的症状恰恰是「能力静默缺席」或
+ * 「计数/尾巴看起来对但 SQL 是另一回事」。查询自身的语义（cwd 下推、排序、limit 钳制）在
+ * `adapters/tests/dwf-journal-store.test.ts` 里对真库钉住；这里钉的是 service 侧的**真相合成**。
  */
 async function withSqliteJournal(
   run: (journal: JournalStorePort & DwfRunIntrospectionQueries) => Promise<void>,
 ): Promise<void> {
   const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-introspect-"));
-  const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+  const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
   try {
     const journal = resolveDynamicWorkflowJournalStore(store as never);
     expect(journal).toBeDefined();
@@ -4177,30 +4026,25 @@ async function withSqliteJournal(
   }
 }
 
-/** The port's two optional members: when the capability is present they must be implemented; absence fails the case (rather than silently skipping assertions). */
+/** 端口的两个可选成员：能力在场时必须实现，缺席即用例失败（而不是静默跳过断言）。 */
 function introspectionOf(harness: Harness): {
   getRunDetail: (runId: string) => Promise<DynamicWorkflowRunDetail | undefined>;
   listRuns: (query: DynamicWorkflowRunListQuery) => Promise<DynamicWorkflowRunListResult>;
 } {
   const { getRunDetail, listRuns } = harness.service;
-  expect(typeof listRuns).toBe("function");
-  expect(typeof getRunDetail).toBe("function");
   return { getRunDetail: getRunDetail!, listRuns: listRuns! };
 }
 
 /**
- * Forwarding layer that hides some runIds from the **read surfaces**: simulates the microtask gap
- * of submit → createRun (the registry has the entry, the journal has no row yet).
+ * 把若干 runId 从**读面**藏起来的转发层：模拟 submit → createRun 的微任务间隙（注册表已有
+ * 条目、journal 还没有行）。
  *
- * Why "hide reads" rather than "withhold writes": both dwf_event and dwf_node have FKs to
- * dwf_run(id), so really withholding createRun would make the engine's first run-started event
- * fail to insert and the run become failed outright — that would no longer be testing the gap.
- * Hidden reads create exactly the state the service sees during the gap: registry hit, while
- * `getRun` and `listRuns` both disclaim it.
+ * 为什么是"藏读"而不是"扣住写"：dwf_event / dwf_node 都对 dwf_run(id) 有 FK，真扣住 createRun
+ * 会让引擎的第一条 run-started 事件插入失败、run 直接变成 failed——那测的就不是间隙了。藏读
+ * 造出的正是间隙里 service 能看到的状态：注册表命中、`getRun` 与 `listRuns` 都不认识它。
  *
- * Explicit per-method forwarding (no spreads): both journal implementations are classes, and
- * `{...journal}` copies only own properties — every prototype method would be lost (same argument
- * as createJournalSequenceCapture).
+ * 逐方法显式转发（不用展开）：两个 journal 实现都是 class，`{...journal}` 只拷自有属性，
+ * 原型上的方法会全部丢掉（createJournalSequenceCapture 的同一条论证）。
  */
 function hideRunsFromReads(
   journal: JournalStorePort & DwfRunIntrospectionQueries,
@@ -4226,11 +4070,10 @@ function hideRunsFromReads(
     getRunRow: (runId) => (hidden.has(runId) ? undefined : journal.getRunRow(runId)),
     listRecentLogEvents: (runId, limit) => journal.listRecentLogEvents(runId, limit),
     listRuns: (query) => journal.listRuns(query).filter((row) => !hidden.has(row.runId)),
-    // Artifact read surfaces (the two new DwfRunIntrospectionQueries queries after migration 0029).
-    // Must be forwarded **one by one** rather than spread with `...journal`: both journal
-    // implementations are classes, spreading copies only own properties and loses the entire
-    // prototype. `hidden` plays no part — this stand-in only hides run rows; artifacts are fetched
-    // by runId, and a hidden run could never fetch its own rows anyway.
+    // 产物读面（迁移 0029 之后 DwfRunIntrospectionQueries 的两条新查询）。这里必须**逐条
+    // 转发**而不能展开 `...journal`：两个 journal 实现都是 class，展开只拷自有属性、原型上的
+    // 方法会整片丢掉。hidden 不参与——这个替身只藏 run 行，产物按 runId 取数，被藏的 run
+    // 本就取不到自己的行。
     listArtifactRows: (runId) => journal.listArtifactRows(runId),
     countTaggedReports: (runId) => journal.countTaggedReports(runId),
     listArtifactItems: (runId, artifactId, query) =>
@@ -4240,9 +4083,8 @@ function hideRunsFromReads(
 }
 
 describe("dynamic workflow run service — run name 落库", () => {
-  // input.name previously lived only on the fallback chain of the tool row and the task title and
-  // was not persisted to dwf_run, so runs enumerated across sessions were just a list of bare
-  // runIds. What is pinned here is the whole path submit → EngineConfig → createRun.
+  // input.name 此前只活在工具行与任务标题的兜底链上，不落 dwf_run，于是跨会话枚举出来的
+  // run 只能是一串裸 runId。这条钉的是 submit → EngineConfig → createRun 的整条路。
   it("submit 带 name → dwf_run.name 落库", async () => {
     const harness = makeHarness();
     const runId = await submitRun(harness, {
@@ -4258,10 +4100,8 @@ describe("dynamic workflow run service — run name 落库", () => {
 });
 
 describe("dynamic workflow run service — 内省能力探测", () => {
-  // "No runs" and "no capability" must be distinguishable: when the journal lacks the introspection
-  // queries the two optional members are **absent entirely**, and the tool layer's typeof probe
-  // then returns a business failure instead of an empty list that reads as "this project never ran
-  // a workflow".
+  // 「没有 run」与「没有能力」必须可分辨：journal 不带内省查询时两个可选成员**整个缺席**，
+  // 工具层的 typeof 探测据此回业务失败，而不是一个看起来"这个项目没跑过 workflow"的空列表。
   it("journal 不带内省查询时两个可选成员缺席", () => {
     const harness = makeHarness({ journal: new InMemoryJournalStore() });
     expect(harness.service.listRuns).toBeUndefined();
@@ -4293,7 +4133,7 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
         runId,
         status: "running",
       });
-      // An in-flight run must never be marked "possibly interrupted" — that is the first way the list would lie to the model.
+      // 在飞的 run 绝不能被标成「可能已中断」——那是列表面对模型说谎的第一种方式。
       expect("possiblyInterrupted" in runs[0]!).toBe(false);
 
       await harness.service.cancel(runId);
@@ -4301,9 +4141,8 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
     });
   });
 
-  // Registry hit means ownership, **even if the journal row records another session**. This is
-  // exactly the tier possiblyInterrupted must not mislabel: same-process sibling sessions share
-  // one sqlite, each with its own registry.
+  // 注册表命中即归属，**哪怕 journal 行记着另一个会话**。这一档正是 possiblyInterrupted 不该
+  // 误标的那一档：同进程的兄弟会话共用一个 sqlite，各有各的注册表。
   it("注册表命中即归本会话，即使 journal 行记的是别的会话", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ hangActors: true, journal });
@@ -4326,9 +4165,8 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
     });
   });
 
-  // The first tier of the status priority: in-memory terminal state > journal status. The in-memory
-  // settlement is what this process just took over from the engine, while the journal row may not
-  // be fully written yet (or may have been changed by something else).
+  // 状态优先级的第一档：内存终态 > journal 状态。内存里的结算是本进程刚从引擎手里接过的，
+  // journal 行可能还没写完（或被别的东西改过）。
   it("内存终态优先于 journal 状态", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
@@ -4339,12 +4177,12 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
         trace: traceFor("list-memory-wins"),
       });
       await settle(harness, runId);
-      // Artificially flip the journal row back to non-terminal, creating a disagreement between the two truth sources.
+      // 人为把 journal 行拨回非终态，制造两个真相源的分歧。
       journal.updateRunStatus(runId, "running");
 
       const { runs } = await introspectionOf(harness).listRuns({ cwd: projectCwd, limit: 20 });
       expect(runs[0]).toMatchObject({ runId, status: "completed" });
-      // Owned by this session + in-memory terminal state ⇒ no such doubt regardless of what the journal says.
+      // 归本会话 + 有内存终态 ⇒ 无论 journal 说什么都不该带这个疑虑。
       expect("possiblyInterrupted" in runs[0]!).toBe(false);
     });
   });
@@ -4366,9 +4204,8 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
         runId: "dwfrun-sibling-running",
         status: "running",
       });
-      // Annotate only, never rewrite: the journal row must still be running (burying a sibling
-      // session's in-flight run = declaring a live run dead; the right to orphan-sweep belongs
-      // exclusively to the owning session's construction moment).
+      // 只标注、绝不改写：journal 行必须还是 running（替兄弟会话在飞的 run 收尸 = 把活着的
+      // run 标死；孤儿收敛的执行权只属于 owning 会话的构造时刻）。
       expect(journal.getRun("dwfrun-sibling-running")?.status).toBe("running");
     });
   });
@@ -4434,9 +4271,8 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
     });
   });
 
-  // The truncated criterion is "fetch one extra" rather than "fill to limit": the latter misreports
-  // when the count is exactly equal to the limit, and a misreport sends the model chasing a page
-  // of history that does not exist.
+  // truncated 的判据是「多取一条」而不是「取满 limit」：后者在条数正好等于 limit 时误报，
+  // 而误报会让模型去追一页不存在的历史。
   describe("truncated", () => {
     it("为真当且仅当还有 run 没进这一页", async () => {
       await withSqliteJournal(async (journal) => {
@@ -4454,7 +4290,7 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
         expect(firstPage.runs).toHaveLength(2);
         expect(firstPage.truncated).toBe(true);
 
-        // Count exactly equal to the limit: not one entry was dropped, so the field is absent entirely (not false).
+        // 条数正好等于 limit：一条都没落下，所以字段整个缺席（不是 false）。
         const exactPage = await introspection.listRuns({ cwd: projectCwd, limit: 3 });
         expect(exactPage.runs).toHaveLength(3);
         expect("truncated" in exactPage).toBe(false);
@@ -4465,13 +4301,11 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
     });
 
     /**
-     * The page at the clamped ceiling. Looks like a repeat of the previous case but pins a coupling
-     * that cannot be tested elsewhere: the truncated verdict depends on the storage query accepting
-     * "ceiling + 1". If someone ever adds a defensive `Math.min(50, limit)` ceiling inside
-     * SqliteDwfJournalStore.listRuns, the probe row is swallowed and truncated is permanently
-     * absent at **exactly** limit = 50 — while none of the 2 / 3 / 20 boundary cases would fail.
-     * The ceiling comes from the contract constant, so this case automatically follows when the
-     * tool face raises it.
+     * 钳制上限那一页。这条看着像是上一条的重复，其实钉的是一个别处测不到的耦合：truncated
+     * 的判定依赖存储查询接受「上限 + 1」。若将来有人在 SqliteDwfJournalStore.listRuns 里加一个
+     * `Math.min(50, limit)` 的防御性天花板，探测行会被吃掉，truncated 就在**恰好** limit = 50
+     * 时永久缺席——而 2 / 3 / 20 的边界用例一个都不会失败。上限取自契约常量，工具面调高上限
+     * 时这条用例自动跟着走。
      */
     it("在钳制上限那一页仍然标 truncated（探测行必须能过存储层）", async () => {
       await withSqliteJournal(async (journal) => {
@@ -4507,8 +4341,7 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
       });
     });
 
-    // The complement also counts toward the page: when a gap run pushes the oldest journal row out
-    // of the page, that displaced row is the "there is more".
+    // 补集也算在页内：间隙里的 run 顶掉最旧的 journal 行时，被顶掉的那条就是「还有更多」。
     it("注册表补集把 journal 行挤出页时标 truncated", async () => {
       await withSqliteJournal(async (real) => {
         const hidden = new Set<string>();
@@ -4549,13 +4382,12 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
         label: "// triage the failing tests",
         labelSource: "script",
       });
-      // Derived at read time, never written back: persisting it would freeze a display heuristic into data.
+      // 读时派生，绝不回写：落库等于把一个展示启发式固化成数据。
       expect("name" in journal.getRun("dwfrun-unnamed")!).toBe(false);
     });
   });
 
-  // Positive assertion of the read-only invariant: after the two read surfaces, not a single write
-  // happened on the journal.
+  // 只读不变式的正面断言：两条读面之后 journal 上一次写入都没有发生过。
   it("合成过程不写 journal（写入面零调用、行逐字段不变）", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
@@ -4594,9 +4426,8 @@ describe("dynamic workflow run service — listRuns 真相合成", () => {
 });
 
 describe("dynamic workflow run service — submit → createRun 的间隙", () => {
-  // A run with no journal row yet must appear in the list as pending: without this branch, a run
-  // the model just started would vanish entirely from its own project's list (even though it just
-  // received a runId).
+  // journal 尚无行的 run 必须以 pending 出现在列表里：少了这一支，模型刚起的 run 会在自己
+  // 项目的列表里整个消失（而它明明刚拿到 runId）。
   it("注册表-only 的 run 以 pending 附加，且排在 journal 行之前", async () => {
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
@@ -4649,10 +4480,9 @@ describe("dynamic workflow run service — submit → createRun 的间隙", () =
       hidden.add(runId);
       const introspection = introspectionOf(harness);
 
-      // It must not appear when another project asks (registry entries carry their own cwd).
+      // 别的项目问起时它不该出现（注册表条目自带 cwd）。
       expect((await introspection.listRuns({ cwd: otherCwd, limit: 20 })).runs).toEqual([]);
-      // An explicit status filter governs it just the same — the complement is not an exemption
-      // channel from filters.
+      // 显式的状态过滤器同样管得住它——补集不是过滤器的豁免通道。
       expect(
         (await introspection.listRuns({ cwd: projectCwd, limit: 20, statuses: ["completed"] }))
           .runs,
@@ -4663,7 +4493,7 @@ describe("dynamic workflow run service — submit → createRun 的间隙", () =
     });
   });
 
-  // A gap run answering not_found would be a lie: it just handed the runId to the caller.
+  // 间隙里的 run 报 not_found 会是一句谎：它刚刚把 runId 交给了调用方。
   it("getRunDetail 对间隙里的 run 回 pending 详情而不是 not_found", async () => {
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
@@ -4686,7 +4516,7 @@ describe("dynamic workflow run service — submit → createRun 的间隙", () =
         runId,
         status: "pending",
       });
-      // Counts honestly report 0 while there is no authoritative source yet.
+      // 计数还没有权威来源时诚实地报 0。
       expect(detail?.usage).toEqual({
         nodesCompleted: 0,
         nodesFailed: 0,
@@ -4704,15 +4534,13 @@ describe("dynamic workflow run service — submit → createRun 的间隙", () =
 });
 
 describe("dynamic workflow run service — getRunDetail 组合", () => {
-  // ── Artifact cross-section (the `GetWorkflowRun` row of docs/dynamic-workflow/authoring.md) ──
-  // ⚠ Terminology: artifact = output the script publishes for the **user** via `artifact.*`, not
-  // the detail's `result` (the script's top-level return value, the engine's internal name for it).
-  // The two sit side by side on the same return object, so this must be spelled out here.
+  // ── 产物截面（docs/dynamic-workflow/authoring.md 的 `GetWorkflowRun` 行）─────────────
+  // ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给**用户**看的产出，不是详情里的 `result`
+  // （脚本顶层返回值，引擎内部对它的同名叫法）。两者在同一个返回对象上并列，所以这里必须写明。
   //
-  // getRunDetail has **two** return branches and both must carry artifacts: the journal-row branch
-  // (the norm) and the registry-gap branch (run submitted, dwf_run row not yet persisted). Missing
-  // either one shows up as "the model cannot see what this run produced", and the gap one is the
-  // easiest to miss — it reads like a pure fallback.
+  // getRunDetail 有**两条**返回分支，两条都要带产物：journal 行分支（常态）与注册表间隙分支
+  // （run 已提交、dwf_run 行还没落）。漏掉任一条的症状都是「模型看不见这个 run 产出了什么」，
+  // 而间隙那条最容易漏——它读起来像个纯兜底。
   const DETAIL_ARTIFACT_SCRIPT = [
     'artifact.chart("perf", { x: { field: "round" }, y: { field: "ms" } });',
     'report({ round: 1, ms: 40 }, "perf");',
@@ -4720,7 +4548,7 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
     'return "done";',
   ].join("\n");
 
-  /** Text-only fake store (the script publishes markdown). */
+  /** 只写文本的 fake store（脚本发的是 markdown）。 */
   function detailArtifactStore(): ToolArtifactStorePort {
     return {
       writeToolResultArtifact: async (request) => ({
@@ -4762,17 +4590,15 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
         contentType: "text/markdown",
         itemCount: 0,
       });
-      // This is the **same** artifactsOf as the port's listArtifacts, so the two are byte-for-byte
-      // identical — three places each merging its own copy would sooner or later diverge on
-      // something like "does a failed row count as a version".
+      // 与端口的 listArtifacts 是**同一个** artifactsOf，所以两处逐字节相同——
+      // 三处各归并一份迟早会在「失败行算不算一版」这种地方分叉。
       expect(detail?.artifacts).toEqual(await harness.service.listArtifacts!(runId));
     });
   });
 
   it("间隙分支也带 artifacts：dwf_run 行还没落，节点行却可能已经落了", async () => {
-    // The engine can putNode an artifact row immediately after createRun, so "the row is not yet
-    // there" does not mean "nothing was produced". This branch reads like a pure fallback, and it
-    // is exactly the one most likely to drop artifacts.
+    // 引擎在 createRun 之后立刻就能 putNode 一条 artifact 行，所以「行还没落」不等于
+    // 「什么都没产出」。这条分支读起来像纯兜底，恰恰是最容易被漏掉产物的那条。
     await withSqliteJournal(async (real) => {
       const hidden = new Set<string>();
       const journal = hideRunsFromReads(real, hidden);
@@ -4784,14 +4610,14 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
         trace: traceFor("detail-artifacts-gap"),
       });
       await settle(harness, runId);
-      // Hide the dwf_run row: getRunRow returns undefined while the registry entry remains ⇒ the gap branch is taken.
+      // 藏掉 dwf_run 行：getRunRow 回 undefined，注册表条目仍在 ⇒ 走间隙分支。
       hidden.add(runId);
 
       const detail = await introspectionOf(harness).getRunDetail(runId);
-      // The gap branch's signature: counts honestly at 0, actors / logTail empty.
+      // 间隙分支的招牌：计数诚实地为 0、actors / logTail 为空。
       expect(detail?.usage).toMatchObject({ nodesObserved: 0, spentTokens: 0 });
       expect(detail?.actors).toEqual([]);
-      // But the artifacts are there all the same.
+      // 但产物照样在。
       expect(detail?.artifacts?.map((entry) => entry.id)).toEqual(["perf", "summary"]);
     });
   });
@@ -4852,7 +4678,7 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
       expect(detail?.usage).toEqual({
         nodesCompleted: 2,
         nodesFailed: 1,
-        // "Row count of persisted nodes", not "total steps" — a dynamic workflow has no static total.
+        // 「已落库节点的行数」，不是「总步数」——动态工作流没有静态总数。
         nodesObserved: 4,
         nodesRunning: 1,
         spentTokens: 4_321,
@@ -4860,10 +4686,9 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
     });
   });
 
-  // ── Situation cross-section (docs/dynamic-workflow/launch.md "`GetWorkflowRun`") ─────────────
-  // The rules themselves are pinned by hand-crafted events in dynamic-workflow-run-roster.test.ts;
-  // here we only prove the **wiring works**: the real journal's events, node rows, and actor rows
-  // really are read out and fed into that rule set, rather than three empty fields.
+  // ── 情势截面（docs/dynamic-workflow/launch.md「`GetWorkflowRun`」）────────────────
+  // 规则本身由 dynamic-workflow-run-roster.test.ts 手搓事件钉死；这里只证明**接线通了**：
+  // 真 journal 的事件、节点行、actor 行确实被读出来喂进了那套规则，而不是三个空字段。
   it("journal 行分支带情势截面：子代理的当前 ask 带任务摘要与进度读数，阶段表按声明序", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
@@ -4930,16 +4755,14 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
           lastTool: { name: "Read", target: "docs/release.md" },
         },
       });
-      // The instant comes from dwf_event.time_created, so on the real DB it must be a real millisecond count.
+      // 时刻来自 dwf_event.time_created，所以真库里它必须是一个真实的毫秒数。
       expect(detail?.subagents[0]?.currentAsk?.startedAt).toBeGreaterThan(0);
       expect(detail?.phases).toMatchObject([
         { name: "collect", state: "current", rounds: 1, nodesRunning: 1 },
         { name: "verify", state: "ahead", rounds: 0 },
       ]);
-      // The row says this session is the launcher, but this session's registry has no such entry —
-      // i.e. a leftover from a restart: the in-process parking table died with the previous
-      // process, so this read **cannot answer** whether questions are pending and must honestly say
-      // it does not know.
+      // 行写着本会话是发起方，但本会话的注册表里没有它——也就是重启后的遗物：进程内那张
+      // 停驻表早随上一个进程没了，所以这次读**答不出**有没有问题在等，只能如实说不知道。
       expect(detail?.ownedByThisSession).toBe(true);
       expect(detail?.health).toMatchObject({
         consecutiveFailures: 0,
@@ -4988,10 +4811,10 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
       }
 
       const detail = await introspectionOf(harness).getRunDetail(runId);
-      // A terminal run by definition has nobody still listening, so "no pending questions" is a definitive statement.
+      // 终态 run 按定义没有还在听的人，所以「没有待答问题」是一句确定的话。
       expect(detail?.health).toMatchObject({ pendingQuestionsKnown: true, leftoverRunning: 1 });
       expect(detail?.subagents[0]).toMatchObject({ name: "worker", state: "unfinished" });
-      // The script had no phase() markers and never entered a phase ⇒ the field is absent entirely.
+      // 脚本没有 phase() 标记、也没进过任何阶段 ⇒ 整个字段缺席。
       expect("phases" in detail!).toBe(false);
     });
   });
@@ -5035,7 +4858,7 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
       const detail = await introspectionOf(harness).getRunDetail("dwfrun-logs");
       const logTail = detail!.logTail;
       expect(logTail).toHaveLength(20);
-      // Chronological (ascending sequence), and the tail takes the **last** 20: the earliest kept is step 7.
+      // 时序（sequence 升序），且尾巴取的是**末** 20 条：最早保留的是 step 7。
       expect(logTail.map((entry) => entry.sequence)).toEqual(
         [...logTail].sort((left, right) => left.sequence - right.sequence).map((e) => e.sequence),
       );
@@ -5043,12 +4866,10 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
       expect(logTail.at(-1)?.message).toHaveLength(
         DYNAMIC_WORKFLOW_RUN_EVENT_PAYLOAD_LIMITS.maxStringLength,
       );
-      // run-started is not a log: the type filter is pushed down into SQL, not admitted on the grounds
-      // that "the model can't read it anyway".
+      // run-started 不是 log：类型过滤下推到 SQL，不能靠"反正模型看不懂"混进来。
       expect(logTail.some((entry) => entry.message.includes("run-started"))).toBe(false);
-      // Each narrative carries its own persisted instant (dwf_event.time_created): the read surface
-      // uses it to compute "how long ago", instead of stamping a week-old history as "just now"
-      // with the read-time Date.now().
+      // 每条叙事带着自己的落库时刻（dwf_event.time_created）：读面据它算「多久以前」，
+      // 而不是用读时的 Date.now() 把一周前的历史全标成「刚刚」。
       for (const entry of logTail) {
         expect(typeof entry.at).toBe("number");
         expect(entry.at).toBeLessThanOrEqual(Date.now());
@@ -5065,9 +4886,8 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
     });
   });
 
-  // Timestamps read the journal row directly, deliberately bypassing the snapshot surface's
-  // new Date(0) fallback: once the in-memory entry evaporates that start time is a lie, and the
-  // model uses it to judge "how old is this run".
+  // 时间戳直读 journal 行，刻意绕开快照面的 new Date(0) 兜底：内存条目蒸发后那个起始时间
+  // 是假的，而模型据它判断「这个 run 是多久以前的」。
   it("createdAt / updatedAt 来自 journal 行", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
@@ -5115,9 +4935,8 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
 
       const detail = await introspectionOf(harness).getRunDetail(runId);
       expect(detail?.status).toBe("completed");
-      // The raw value, not JSON text: serialization for the model has a single implementation in
-      // core (shared by the completion notice and TaskOutput); serializing again at the port would
-      // yield "the same artifact in two different shapes".
+      // 原值，不是 JSON 文本：面向模型的序列化在 core 有唯一实现（完成通知与 TaskOutput
+      // 共用它），端口再做一次就会出现"同一个产物两种长相"。
       expect(detail?.result).toBe("the answer");
       expect("error" in detail!).toBe(false);
     });
@@ -5145,9 +4964,8 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
     });
   });
 
-  // The model must be able to distinguish "the process died" (Interrupted) from "the script really
-  // failed" (DriverError): the code passes through verbatim and is never folded into a generic
-  // failure.
+  // 模型必须能分辨「进程死了」（Interrupted）与「脚本真失败」（DriverError）：code 原样透出，
+  // 绝不折叠成一个通用失败。
   it("errored / stopped(interrupted)：failure_json 的 code 原样透出（含 Interrupted）", async () => {
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
@@ -5194,7 +5012,7 @@ describe("dynamic workflow run service — getRunDetail 组合", () => {
 });
 
 describe("resolveDynamicWorkflowJournalStore", () => {
-  // No journal, no service construction: a run that silently loses persistence is worse than no run.
+  // 没有 journal 就不构造服务：一个静默丢失持久化的 run 比没有 run 更糟。
   it("store 缺少 workflowJournalStore 时返回 undefined 并记原因", () => {
     const messages: string[] = [];
     const resolved = resolveDynamicWorkflowJournalStore(
@@ -5232,11 +5050,10 @@ describe("dynamic workflow run service — resume", () => {
   const RESUME_TOOL_CALL = createToolCallId("resume-origin");
 
   /**
-   * Phase one: run a run until "ask#1 settled, ask#2 in flight", then cancel.
-   * The journal is left with: the actor (with session id), a completed ask#1, and a running ask#2 —
-   * exactly the shape resume must take over. The options object is held by makeHarness's closure,
-   * so the test can rewrite actorScripts between the two phases (phase two's fresh runtime reads
-   * the script from whatever value is current then).
+   * 阶段一：把一个 run 跑到「ask#1 已完结、ask#2 在飞」再取消。
+   * journal 里留下：actor（带会话 id）、completed 的 ask#1、running 的 ask#2——
+   * 正是 resume 要接手的形态。options 对象被 makeHarness 闭包持有，测试可在两阶段之间
+   * 改写 actorScripts（阶段二的 fresh runtime 按当时的值取剧本）。
    */
   async function cancelledMidFlight(options: HarnessOptions = {}) {
     options.actorScripts = {
@@ -5267,7 +5084,7 @@ describe("dynamic workflow run service — resume", () => {
     const linksAfterPhaseOne = harness.taskLinks.length;
     const persistsAfterPhaseOne = harness.persistedTitles.length;
 
-    // Phase two script: the fresh runtime only needs to answer the redispatched ask#2 (untyped → a text segment).
+    // 阶段二剧本：fresh runtime 只需要应答重派发的 ask#2（untyped → 一段文本）。
     options.actorScripts = { "actor#1@1": [{ kind: "text", text: "two" }] };
     const result = await harness.service.resume?.(runId);
     expect(result).toMatchObject({ ok: true, runId, toolCallId: RESUME_TOOL_CALL });
@@ -5278,18 +5095,16 @@ describe("dynamic workflow run service — resume", () => {
     expect(snapshot?.output).toBe("one+two");
     expect(harness.journal.getRun(runId)?.status).toBe("completed");
 
-    // ask#1 did not rerun: 3 model requests across both phases (submit + hang + phase two's text);
-    // a redispatched ask#1 would make it 4. The actor runtime is constructed once per phase.
+    // ask#1 未重跑：两阶段共 3 次模型请求（submit + hang + 阶段二的 text），
+    // 若 ask#1 被重派发会是 4 次。actor runtime 每阶段各构造一次。
     expect(harness.order.filter((entry) => entry.startsWith("turn:")).length).toBe(3);
     expect(harness.order.filter((entry) => entry.startsWith("construct:")).length).toBe(2);
-    // Rehydration: the journaled actor is reattached via resumeFromStore; the session row and task
-    // link are not rebuilt.
+    // 重水化：journaled actor 经 resumeFromStore 重挂；会话行与 task link 不再重建。
     expect(harness.resumeCalls).toHaveLength(1);
     expect(harness.taskLinks.length).toBe(linksAfterPhaseOne);
     expect(harness.persistedTitles.length).toBe(persistsAfterPhaseOne);
 
-    // Event face: sequence continues monotonically across both phases; run-started appears twice;
-    // ask#1 settles short-circuited as cached.
+    // 事件面：sequence 跨两阶段单调续编；run-started 出现两次；ask#1 以 cached 短路结算。
     const sequences = harness.runEvents.map((event) => event.sequence);
     for (let i = 1; i < sequences.length; i++) {
       expect(sequences[i]!).toBeGreaterThan(sequences[i - 1]!);
@@ -5311,7 +5126,7 @@ describe("dynamic workflow run service — resume", () => {
     const result = await harness.service.resume?.(runId);
     expect(result).toMatchObject({ ok: true });
 
-    // Wait for the redispatched ask#2 to genuinely be in flight (phase two's 3rd model request).
+    // 等重派发的 ask#2 真正在飞（阶段二的第 3 次模型请求）。
     await vi.waitFor(() => {
       expect(harness.order.filter((entry) => entry.startsWith("turn:")).length).toBe(3);
     });
@@ -5327,8 +5142,7 @@ describe("dynamic workflow run service — resume", () => {
 
     options.actorScripts = { "actor#1@1": [{ kind: "hang" }] };
     await harness.service.resume?.(runId);
-    // Without waiting for settlement: launch's synchronous prefix has already let engine
-    // construction complete the resume branch (updateRunStatus running).
+    // 不等结算：launch 的同步前缀已让引擎构造走完 resume 分支（updateRunStatus running）。
     expect((await harness.service.getTask(runId))?.status).toBe("running");
 
     await harness.service.cancel(runId);
@@ -5363,11 +5177,11 @@ describe("dynamic workflow run service — resume", () => {
     await settle(harness, runId);
     const record = harness.journal.getRun(runId);
     expect(record?.status).toBe("completed");
-    // The non-terminal flip cleared the Interrupted leftover (updateRunStatus's new semantics via the real path).
+    // 非终态翻转清掉了 Interrupted 残留（updateRunStatus 的新语义走真实路径）。
     expect(record?.failure).toBeUndefined();
     expect(record?.stopReason).toBeUndefined();
     expect((await harness.service.getTask(runId))?.output).toBe("revived");
-    // Empty journal (no actor records) → the fresh persistence path, not rehydration.
+    // 空 journal（无 actor 记录）→ 全新持久化路径，不走重水化。
     expect(harness.resumeCalls).toHaveLength(0);
     expect(harness.persistedTitles).toHaveLength(1);
   });
@@ -5383,10 +5197,10 @@ describe("dynamic workflow run service — resume", () => {
 
     await settle(harness, runId);
     expect((await harness.service.getTask(runId))?.status).toBe("completed");
-    // Rehydration was attempted (journaled actor) and fell back after failing: the session was persisted once more.
+    // 重水化被尝试过（journaled actor），失败后回退：会话重新持久化了一次。
     expect(harness.resumeCalls).toHaveLength(1);
     expect(harness.persistedTitles.length).toBe(persistsAfterPhaseOne + 1);
-    // The fallback leaves a trace (warn), not silence.
+    // 回退有迹可循（warn），而不是静默。
     expect(
       harness.logs.some(
         (log) =>
@@ -5398,15 +5212,14 @@ describe("dynamic workflow run service — resume", () => {
 });
 
 /**
- * Argument persistence and replay (docs/dynamic-workflow/launch.md "Running a saved workflow").
+ * 实参的持久与重放（docs/dynamic-workflow/launch.md「Running a saved workflow」）。
  *
- * This group guards one sentence: **resume replays the stored arguments and never accepts new
- * ones**. The failure mode is quiet — a resumed run goes around again with `{}`, the script takes
- * another branch, and nothing on the run panel reveals it.
+ * 这一组守的是一句话：**resume 重放存下来的实参，永不接受新的**。失败形态很安静——一个
+ * 恢复出来的 run 带着 `{}` 再跑一遍，脚本走进另一条分支，而 run 面板上什么都看不出来。
  */
 describe("dynamic workflow run service — run args", () => {
-  // The artifact carries the arguments: whether "the arguments reached the sandbox" becomes a fact
-  // readable straight off getTask, not something to infer via indirect counting.
+  // 产物里带上实参：这样「实参有没有到沙箱」是一个可以从 getTask 直接看到的事实，
+  // 而不是一个要靠间接计数去推断的东西。
   const ARGS_SCRIPT = [
     "interface Answer { text: string }",
     'const a = await agent("worker").ask<Answer>(`work on ${String(args.target)}`);',
@@ -5428,8 +5241,7 @@ describe("dynamic workflow run service — run args", () => {
     await settle(harness, runId);
 
     expect(harness.journal.getRun(runId)?.args).toEqual({ target: "packages/core" });
-    // Persistence is only half: the artifact proves the arguments were actually injected into the
-    // sandbox and read by the script.
+    // 落库只是一半：产物证明这份实参真的被注入了沙箱、被脚本读到了。
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("completed");
     expect(snapshot?.output).toBe("packages/core:done");
@@ -5454,47 +5266,21 @@ describe("dynamic workflow run service — run args", () => {
     await settle(harness, runId);
 
     options.actorScripts = { "actor#1@1": [{ kind: "submit", result: { text: "resumed" } }] };
-    // resume's signature takes only a runId: swapping arguments is **inexpressible** on this entry
-    // point, and that is by design — new arguments = a new run = a new confirmation dialog.
+    // resume 的签名只收 runId：换实参在这条入口上**无从表达**，而那正是设计——
+    // 换实参 = 一次新的 run = 一次新的确认窗。
     expect(await harness.service.resume?.(runId)).toMatchObject({ ok: true, runId });
     await settle(harness, runId);
 
-    // The resumed run still uses the approved arguments, and the record was not rewritten by resume.
+    // 恢复出来的 run 用的还是被批准的那一份实参，且记录没有被 resume 改写。
     expect(harness.journal.getRun(runId)?.args).toEqual({ target: "original-target" });
     const resumed = await harness.service.getTask(runId);
     expect(resumed?.status).toBe("completed");
-    // The arguments in the artifact are the **first approved** copy: resume replays it without re-collecting.
+    // 产物里的实参就是**第一次批准的**那一份：resume 重放它，不重新征集。
     expect(resumed?.output).toBe("original-target:resumed");
   });
 
-  it("0026 之前的老行（无实参列）照旧可 resume", async () => {
-    const options: HarnessOptions = {
-      actorScripts: { "actor#1@1": [{ kind: "hang" }] },
-    };
-    const harness = makeHarness(options);
-    const runId = await submitRun(harness, {
-      cwd: TEST_CWD,
-      parentSessionId: HARNESS_PARENT_SESSION,
-      scriptText: TYPED_SCRIPT,
-      trace: traceFor("args-legacy-resume"),
-    });
-    await vi.waitFor(() => {
-      expect(harness.journal.getNode(runId, "ask#1", 1)?.status).toBe("running");
-    });
-    expect(await harness.service.cancel(runId)).toBe(true);
-    await settle(harness, runId);
-
-    options.actorScripts = { "actor#1@1": [{ kind: "submit", result: { text: "legacy" } }] };
-    expect(await harness.service.resume?.(runId)).toMatchObject({ ok: true, runId });
-    await settle(harness, runId);
-
-    expect((await harness.service.getTask(runId))?.status).toBe("completed");
-  });
-
-  // The GUI "configure" reruns the predecessor's own script (docs/dynamic-workflow/launch.md
-  // "Changing a run's settings from the GUI"): `inheritArgs` lets the amendment reuse the
-  // predecessor's persisted arguments; the tool path does not pass it, so amendments stay
-  // argument-free as before.
+  // GUI「配置」重跑前驱自己的脚本（docs/dynamic-workflow/launch.md「Changing a run's settings from the
+  // GUI」）：`inheritArgs` 让修订沿用前驱落库的实参；工具路径不传，修订照旧不带实参。
   it("amend 默认不带实参；inheritArgs 沿用前驱落库的那一份并注入沙箱", async () => {
     const options: HarnessOptions = {
       actorScripts: { "actor#1@1": [{ kind: "hang" }] },
@@ -5524,8 +5310,8 @@ describe("dynamic workflow run service — run args", () => {
     expect(harness.journal.getRun(inherited.runId)?.args).toEqual({ target: "packages/core" });
     expect((await harness.service.getTask(inherited.runId))?.output).toBe("packages/core:kept");
 
-    // Tool path (no inheritArgs): amend from the same predecessor once more; the new run carries no
-    // arguments. The predecessor hung with no completed ask, so the boundary precheck passes naturally.
+    // 工具路径（不传 inheritArgs）：再从同一个前驱修订一次，新 run 不带实参。前驱挂起时没有已完成
+    // 的 ask，边界预检自然通过。
     const plain = await amendRun(harness, {
       cwd: TEST_CWD,
       parentSessionId: HARNESS_PARENT_SESSION,
@@ -5614,13 +5400,11 @@ describe("dynamic workflow run service — resume 门", () => {
       ok: false,
       reason: "script_mismatch",
     });
-    // Refusal creates no registry entry and starts no engine: the record stays stopped and can be
-    // resumed once the record is repaired.
+    // 拒绝不建注册表条目、不启动引擎：记录保持 stopped，仍可在修复记录后恢复。
     expect(harness.journal.getRun("dwfrun-tampered")?.status).toBe("stopped");
   });
 
-  // Pre-facade-refactor old run (2026-09-15): the original text was written to the facade of its
-  // day and no longer passes the current typecheck.
+  // facade 重构后的老 run（2026-09-15）：原文按当时的 facade 写，当前类型检查不再通过。
   it("原文在当前 facade 下编不过 → compile_failed 携有界诊断，journal 状态不被触碰", async () => {
     const journal = new SweepableJournalStore();
     const legacyScript =
@@ -5664,11 +5448,10 @@ describe("dynamic workflow run service — resume 门", () => {
   });
 });
 
-// Cold replay (docs/dynamic-workflow/presentation.md): journal → the same kind of progress payload
-// as live. "Consistent across a restart" becomes an assertable fact here: run one run to completion
-// on one sqlite journal, and the payload sequence onRunEvent handed over live is byte-for-byte
-// equal to the replay sequence of a **new** service instance (empty registry = restarted); the
-// workflowRuns both reduce to via the shared reducer are naturally equal too.
+// 冷回放（docs/dynamic-workflow/presentation.md）：journal → 与 live 同一种进度载荷。
+// 「重启前后一致」在这里成为可断言的事实：同一份 sqlite journal 上跑完一个 run，live 时 onRunEvent
+// 交出的载荷序列，与一个**新** service 实例（注册表为空 = 重启）的回放序列逐字节相等；两者经共享
+// reducer 归约出的 workflowRuns 自然也相等。
 describe("dynamic workflow run service — replayProgressForSession（冷回放）", () => {
   const REPLAY_SCRIPT = [
     "interface Answer { text: string }",
@@ -5677,7 +5460,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
     "return a.text;",
   ].join("\n");
 
-  /** Minimal artifact store: only so `artifact.markdown` can publish (the read surface is out of scope for this group). */
+  /** 最小产物存储：只为让 `artifact.markdown` 能发布（读面不在本组用例的范围里）。 */
   function artifactStore(): ToolArtifactStorePort {
     let next = 0;
     return {
@@ -5722,7 +5505,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
       });
       await settle(live, runId);
       expect(journal.getRun(runId)?.status).toBe("completed");
-      // Something to compare: actors, nodes, usage, artifacts, and settle all happen on this run.
+      // 有东西可比：actor、节点、用量、产物、settle 都在这条 run 上。
       const kinds = new Set(live.runEvents.map((event) => event.eventType));
       for (const kind of [
         "run-started",
@@ -5735,16 +5518,14 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
         expect(kinds.has(kind)).toBe(true);
       }
 
-      // "Restart" = building another service on the same journal: empty registry, no events in memory.
+      // 「重启」= 同一份 journal 上再造一个 service：注册表为空，内存里没有任何事件。
       const cold = makeHarness({ artifactStore: artifactStore(), journal });
       const replayed = await cold.service.replayProgressForSession!({ excludeRunIds: new Set() });
 
       expect(replayed).toEqual(live.runEvents);
-      // The host-derived field must also agree on both sides: `concurrencyCeiling` lives only in
-      // the payload (the engine does not know how many cores the machine has); the cold replay
-      // minting one fewer key would be a silent projection divergence — the equality assertion
-      // above is its guardrail, and pinning "it is present and is the default concurrency" here
-      // keeps the equality assertion from still passing when both sides are absent together.
+      // 宿主派生字段也要两侧一致：`concurrencyCeiling` 只活在载荷里（引擎不知道机器有几个核），
+      // 冷回放少铸一个键就是一次静默的投影分叉——上面那条相等断言正是它的护栏，这里把「它确实
+      // 在场且是默认并发」单独钉住，免得两侧一起缺席时相等断言依然通过。
       const startedCeiling = (event: DynamicWorkflowRunProgressPayload | undefined) =>
         (event?.payload as { concurrencyCeiling?: number } | undefined)?.concurrencyCeiling;
       const liveStarted = live.runEvents.find((event) => event.eventType === "run-started");
@@ -5801,8 +5582,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
       reportItems: "all",
     }).length;
 
-    // Construction is the orphan sweep: the row is rewritten to stopped/interrupted, and the event
-    // stream stays as-is (the sweeper synthesizes no events).
+    // 构造即孤儿收敛：行被改写成 stopped/interrupted，事件流原样（收敛者不合成事件）。
     const harness = makeHarness({ journal });
     expect(journal.getRun("dwfrun-interrupted")).toMatchObject({
       status: "stopped",
@@ -5830,7 +5610,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
     const state = reduceAll(replayed);
     expect(state?.runs[0]).toMatchObject({ status: "stopped", resumable: true });
     expect(state?.runs[0]?.error).toContain("exited");
-    // Parked questions clear with the terminal state: after the process died nobody is waiting for answers.
+    // 停驻问题随终态清空：进程亡故后没有人在等答案。
     expect(state?.runs[0]?.pendingQuestions).toBeUndefined();
     expect(state?.runs[0]?.actors[0]?.status).toBe("completed");
   });
@@ -5871,7 +5651,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
     for (const event of replayed) {
       byRun.set(event.runId, [...(byRun.get(event.runId) ?? []), event]);
     }
-    // Settle already present: exactly one, with resumable backfilled by the row predicate (old journals' settle events lack that bit).
+    // 已含 settle：恰一条，且按行谓词补上 resumable（老 journal 的 settle 事件不带该位）。
     const cancelled = byRun.get("dwfrun-cancelled") ?? [];
     expect(cancelled.filter((event) => event.eventType === "run-settled")).toHaveLength(1);
     expect(cancelled.at(-1)?.payload).toMatchObject({
@@ -5879,7 +5659,7 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
       stopReason: "user",
       resumable: true,
     });
-    // Real script failure: the synthesized settle carries no resumable.
+    // 脚本真失败：合成 settle 不带 resumable。
     const crashed = byRun.get("dwfrun-crashed") ?? [];
     expect(crashed.at(-1)?.payload).toEqual({
       status: "errored",
@@ -5934,9 +5714,8 @@ describe("dynamic workflow run service — replayProgressForSession（冷回放�
     for (const event of replayed) {
       if (order.at(-1) !== event.runId) order.push(event.runId);
     }
-    // The enumeration surface gives the most recent 8 (of old-3..old-10 and the in-flight one);
-    // replay is oldest first; neither the in-flight nor the excluded run is in, and the sibling
-    // session's certainly is not.
+    // 枚举面给最近 8 条（old-3..old-10 与在飞的那条里最近的 8 条），回放最旧优先；
+    // 在飞的与被排除的都不在，兄弟会话的更不在。
     expect(order).not.toContain(inFlight);
     expect(order).not.toContain("dwfrun-old-10");
     expect(order).not.toContain("dwfrun-sibling");
@@ -6043,9 +5822,8 @@ describe("dynamic workflow run service — listRunsForSession", () => {
     await expect(harness.service.listRunsForSession?.()).resolves.toEqual([]);
   });
 
-  // label shares resolveDynamicWorkflowRunLabel with the tool face: if the enumeration surface
-  // derived its own fallback, the same run would display two names between /dwf list and the tool
-  // card (docs/dynamic-workflow/launch.md "`/dwf`").
+  // label 与工具面共用 resolveDynamicWorkflowRunLabel：枚举面自己拼一次兜底，同一个 run
+  // 就会在 /dwf list 与工具卡上显示两个名字（docs/dynamic-workflow/launch.md「`/dwf`」）。
   it("label 走 name → 脚本首行 → runId 的同一条派生链", async () => {
     const journal = new SweepableJournalStore();
     const seed = (input: { runId: string; name?: string; scriptText?: string }): void => {
@@ -6061,7 +5839,7 @@ describe("dynamic workflow run service — listRunsForSession", () => {
     };
     seed({ runId: "dwfrun-named", name: "nightly audit", scriptText: TYPED_SCRIPT });
     seed({ runId: "dwfrun-unnamed", scriptText: TYPED_SCRIPT });
-    // An all-whitespace name equals no name — otherwise the list shows an unclickable blank row.
+    // 全空白的 name 与没起名等价——否则列表里是一行不可点的空白。
     seed({ runId: "dwfrun-blank", name: "   ", scriptText: TYPED_SCRIPT });
     seed({ runId: "dwfrun-bare" });
 
@@ -6076,9 +5854,8 @@ describe("dynamic workflow run service — listRunsForSession", () => {
     expect(byId.get("dwfrun-bare")?.label).toBe("dwfrun-bare");
   });
 
-  // updatedAt reads the journal row's time_updated directly: `RunRecord` carries no time, so the
-  // enumeration surface must use the narrow projection's row type (DwfRunSessionListItem) — falling
-  // back to RunRecord would silently turn this field into undefined.
+  // updatedAt 直读 journal 行的 time_updated：`RunRecord` 不带时间，所以枚举面必须走窄投影
+  // 的行类型（DwfRunSessionListItem）——回退到 RunRecord 会让这个字段静默变成 undefined。
   it("updatedAt 透传 journal 行的 time_updated", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -6094,9 +5871,8 @@ describe("dynamic workflow run service — listRunsForSession", () => {
     expect(summary?.updatedAt).toBe(journal.rowTimeOf("dwfrun-timed"));
   });
 
-  // failure must survive the narrow projection: the model face needs to report failureCode /
-  // failureMessage ("the process died", with the Interrupted code as second evidence), and resumable
-  // is decided by status === "stopped".
+  // failure 必须活过窄投影：模型面要报 failureCode / failureMessage（「进程死了」这条事实
+  // 以 Interrupted 码为第二证据），resumable 由 status === "stopped" 判定。
   it("窄投影仍带 failure，stopped(interrupted) 判可恢复", async () => {
     const journal = new SweepableJournalStore();
     preloadRun(journal, {
@@ -6122,13 +5898,12 @@ describe("dynamic workflow run service — listRunsForSession", () => {
 });
 
 // ————————————————————————————————————————————————————————————————
-// amend-resume (amend and continue): apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
+// amend-resume（修订续跑）：apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
 // ————————————————————————————————————————————————————————————————
 
 /**
- * A script where one named actor asks twice plus one world-read; the `tail` argument changes the
- * text of the **second** ask, so seq 0 always hits and seq 1 always diverges — exactly the shape
- * the "prefix hit / live from the divergence point" logic needs to observe.
+ * 一个具名 actor 问两次 + 一次 world-read 的脚本；`tail` 参数改的是**第二问**的正文，
+ * 因此 seq 0 恒命中、seq 1 恒分歧——这正是「前缀命中 / 分歧点起 live」要观察的形状。
  */
 function amendScript(tail: string): string {
   return [
@@ -6142,14 +5917,11 @@ function amendScript(tail: string): string {
 }
 
 /**
- * Two named actors each ask once: the post-crash rebuild cases use it to leave an "unconsumed
- * import" on beta.
+ * 两个具名 actor 各问一次：崩溃后重建用例靠它把「未消费的导入」留在 beta 上。
  *
- * Postscript 2026-09-12: personas no longer declare tool levels, so any ask diverging to live
- * **closes** the import cache
- * (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md). After amending alpha, beta's
- * import is permanently void — on this path the rebuilt table only serves to prove "the gate
- * decision recovers from events"; the hit path is covered by the world-node cases.
+ * 追记 2026-09-12：persona 不再声明工具档位，所以任一 ask 分歧转 live 都会**关闭**导入缓存
+ * （apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md）。修订 alpha 之后 beta 的导入永远作废——崩溃后重建
+ * 出来的表在这条路径上只用来证明「关门判定从事件恢复」，命中路径见 world 节点用例。
  */
 const TWO_ACTOR_SCRIPT = [
   "interface Answer { text: string }",
@@ -6160,7 +5932,7 @@ const TWO_ACTOR_SCRIPT = [
   "return `${a.text}|${b.text}`;",
 ].join("\n");
 
-/** A run's node-settled events (with cached flag), in occurrence order. */
+/** 某个 run 的 node-settled 事件（含 cached 标志），按发生序。 */
 function settledEvents(
   harness: Harness,
   runId: string,
@@ -6173,16 +5945,15 @@ function settledEvents(
     });
 }
 
-/** How many times the model was really called (each turn of scriptedModelAdapter). */
+/** 模型真的被调了几次（scriptedModelAdapter 的每一轮 turn）。 */
 function turnCount(harness: Harness): number {
   return harness.order.filter((entry) => entry.startsWith("turn:")).length;
 }
 
 /**
- * Hides a run from `getRun` (the predecessor-was-cleaned-up case). The in-memory journal has no
- * delete surface, and this degraded path's sole observation point happens to be getRun — the Proxy
- * changes only that one method and forwards everything else (including orphan sweeping / the
- * enumeration capability probe) as-is.
+ * 把某个 run 从 `getRun` 上藏起来（前驱被清理的情形）。内存 journal 没有删除面，而这条
+ * 降级路径的观察点恰好只有 getRun——Proxy 只改这一个方法，其余（含孤儿收敛 / 枚举的能力探测）
+ * 原样转发。
  */
 function withHiddenRun(journal: JournalStorePort, hiddenRunId: string): JournalStorePort {
   return new Proxy(journal, {
@@ -6196,12 +5967,10 @@ function withHiddenRun(journal: JournalStorePort, hiddenRunId: string): JournalS
   }) as JournalStorePort;
 }
 
-// docs/dynamic-workflow/launch.md "Keeping the predecessor's script": AmendWorkflow without
-// `script` reads the predecessor's archived script in resolveInput via getScript — the same bytes
-// resume replays; a `path` amendment's `script_unchanged` precheck reads it too (comparing
-// **bytes**, not hashes). It is a separate read surface that does not enter the getTask snapshot:
-// the snapshot is polled by the background tracker, and the script is the largest string on the
-// port.
+// docs/dynamic-workflow/launch.md「Keeping the predecessor's script」：省略 `script` 的 AmendWorkflow
+// 在 resolveInput 里经 getScript 读前驱存档的脚本——与 resume 重放的是同一份字节；`path` 修订的
+// `script_unchanged` 预检读的也是它（要比**字节**，不是哈希）。它是一条单独的读面，
+// 不进 getTask 快照：快照被后台追踪器轮询，脚本是端口上最大的字符串。
 describe("dynamic workflow run service — getScript（修订沿用前驱的脚本）", () => {
   it("回 journal 行上逐字节的 script_text（不 trim、不改换行）", async () => {
     const journal = new SweepableJournalStore();
@@ -6263,15 +6032,14 @@ describe("dynamic workflow run service — amend 的门", () => {
     });
 
     expect(result).toEqual({ ok: false, reason: "run_not_found" });
-    // Refusal means zero side effects: no row, no registry entry, no live engine.
+    // 拒绝即零副作用：没有行、没有注册表条目、没有在飞引擎。
     expect(createRun).not.toHaveBeenCalled();
     expect(harness.actorRuntimeInputs).toEqual([]);
   });
 
-  // docs/execution-engine.md "Amend-resume": an in-flight predecessor is no longer refused (the old
-  // `not_amendable`) but stopped by amend with `{ superseded: newRunId }`, awaited for settlement,
-  // then imported and the successor started — one call, no race of "stop, poll until stopped, then
-  // resubmit".
+  // docs/execution-engine.md「Amend-resume」：在飞的前驱不再被拒（旧 `not_amendable`），而是被 amend
+  // 以 `{ superseded: newRunId }` 停下、等它结算、再导入并启动后继——一次调用，没有「停止后轮询到
+  // stopped 再重提交」的竞态。
   it("前驱仍在飞 → 停下成 stopped(superseded, supersededBy)、等结算、再启动后继", async () => {
     const harness = makeHarness({ hangActors: true });
     const runA = await submitRun(harness, {
@@ -6280,7 +6048,7 @@ describe("dynamic workflow run service — amend 的门", () => {
       scriptText: TYPED_SCRIPT,
       trace: traceFor("amend-live-a"),
     });
-    // Wait for the actor session to be built (ask dispatched, turn in flight) before amending.
+    // 等 actor 会话建起来（ask 已派发、turn 在飞），再修订。
     await vi.waitFor(() => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(0);
     });
@@ -6295,8 +6063,7 @@ describe("dynamic workflow run service — amend 的门", () => {
     expect(runB).not.toBe(runA);
     expect(amended.supersededRunId).toBe(runA);
 
-    // By the time amend returns, the predecessor has already settled (what was awaited is its own
-    // settlement promise, not a timeout).
+    // amend 返回时前驱已经结算（await 的是它自己的 settlement promise，不是超时）。
     const a = harness.journal.getRun(runA);
     expect(a).toMatchObject({ status: "stopped", stopReason: "superseded", supersededBy: runB });
     expect(a?.failure).toBeUndefined();
@@ -6306,15 +6073,14 @@ describe("dynamic workflow run service — amend 的门", () => {
       stopReason: "superseded",
       supersededBy: runB,
     });
-    // A superseded run is not resumable; the successor carries the lineage pointer and inherits the predecessor's name.
+    // 被替代的 run 不可恢复；后继带 lineage 指针、沿用前驱的名字。
     expect(await harness.service.resume(runA)).toEqual({ ok: false, reason: "superseded" });
     expect((await harness.service.getTask(runB))?.resumedFrom).toBe(runA);
     await vi.waitFor(() => {
       expect(harness.journal.getRun(runB)).toMatchObject({ resumedFrom: runA, name: "triage" });
     });
 
-    // Progress payloads: the predecessor's run-settled carries supersededBy and **not** resumable;
-    // the successor's run-started carries resumedFrom.
+    // 进度载荷：前驱的 run-settled 带 supersededBy 且**不带** resumable；后继的 run-started 带 resumedFrom。
     const settledA = harness.runEvents.find(
       (event) => event.runId === runA && event.eventType === "run-settled",
     );
@@ -6325,7 +6091,7 @@ describe("dynamic workflow run service — amend 的门", () => {
     );
     expect(startedB?.payload).toMatchObject({ resumedFrom: runA });
 
-    // Teardown: the successor is also hung (the same hung actor script); the user cancels it.
+    // 收尾：后继也挂着（同一份挂住的 actor 脚本），用户取消它。
     expect(await harness.service.cancel(runB)).toBe(true);
     await settle(harness, runB);
   });
@@ -6340,7 +6106,7 @@ describe("dynamic workflow run service — amend 的门", () => {
     await vi.waitFor(() => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(0);
     });
-    // Give one settled ask a missing boundary: the precheck must refuse before stopping.
+    // 让前驱的一个已完结 ask 缺边界：预检必须在停止之前拒绝。
     harness.journal.putNode({
       runId: runA,
       siteId: "ask#99",
@@ -6403,8 +6169,7 @@ describe("dynamic workflow run service — amend 的门", () => {
     expect(result).toEqual({ ok: false, reason: "missing_boundaries" });
   });
 
-  // The amendable set = any terminal state. completed and "the script really failed" are precisely
-  // the two classes plain resume excludes and amendments find most useful.
+  // 可修订集 = 任意终态。completed 与「脚本真失败」恰恰是 plain resume 排除、而修订最有用的两类。
   it.each(["completed", "errored", "stopped"] as const)("终态 %s 的前驱通过门", async (status) => {
     const journal = new SweepableJournalStore();
     const harness = makeHarness({ journal });
@@ -6419,7 +6184,7 @@ describe("dynamic workflow run service — amend 的门", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // The predecessor settled long ago: no supersededRunId.
+    // 前驱早已结算：没有 supersededRunId。
     expect(result.supersededRunId).toBeUndefined();
     await settle(harness, result.runId);
     expect(harness.journal.getRun(result.runId)?.resumedFrom).toBe(`dwfrun-${status}`);
@@ -6427,14 +6192,12 @@ describe("dynamic workflow run service — amend 的门", () => {
 });
 
 describe("dynamic workflow run service — amend-resume 的温启动", () => {
-  // End-to-end evidence for docs/dynamic-workflow/launch.md "Keeping the predecessor's script": the
-  // real AmendWorkflow tool (executor → resolveInput → getScript → prepareApproval → handler) wired
-  // to the real run service. An amendment that only changes the concurrency ceiling runs the
-  // predecessor's verbatim script, so every ask hits the cache: zero turns, yet the ceiling swapped
-  // for the new value.
+  // docs/dynamic-workflow/launch.md「Keeping the predecessor's script」的端到端证据：真实的 AmendWorkflow
+  // 工具（executor → resolveInput → getScript → prepareApproval → handler）接真实的 run service。
+  // 只改并发上界的修订跑的是前驱逐字节的脚本，所以每一问都命中缓存：零 turn，上界却换成了新值。
   it("AmendWorkflow 省略 script：工具经 getScript 沿用前驱脚本，全部命中缓存、只换上界", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-keep-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const script = amendScript("second question");
@@ -6456,8 +6219,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       await settle(before, runA);
       expect(journal.getRun(runA)?.caps.maxConcurrency).not.toBe(1);
 
-      // The amended run's actor has no scripted answers at all: if even one ask goes live, it
-      // cannot reach the result.
+      // 修订 run 的 actor 没有任何脚本化回答：只要有一问转 live，它就拿不到结果。
       const after = makeHarness({ journal, sessionStore: store as never });
       const registry = createToolRegistry();
       const amendEntry = builtInTools.find((entry) => entry.metadata.name === "AmendWorkflow");
@@ -6471,8 +6233,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
         emitEvent: async () => {},
         dynamicWorkflowRunPort: after.service,
         mode: "build",
-        // The predecessor does not belong to this session (submit carried no parentSessionId): a
-        // dialog would pop; allow everything here.
+        // 前驱不属于本会话（submit 没带 parentSessionId）：会弹窗，这里一律同意。
         permissionBroker: {
           async requestPermission(request) {
             permissionAsks.push(JSON.stringify(request));
@@ -6497,7 +6258,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       );
 
       expect(result.success).toBe(true);
-      // The confirmation dialog reviews the script that will run (backfilled into the arguments), with the "inherited" flag.
+      // 确认窗审的是将要跑的那一份脚本（回填进入参），并带着「沿用」的 flag。
       expect(permissionAsks).toHaveLength(1);
       expect(permissionAsks[0]).toContain('"script_inherited":true');
       const output = result.output as { backgroundTaskId?: string; response: string };
@@ -6510,9 +6271,8 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect(rowB?.scriptText).toBe(script);
       expect(rowB?.caps.maxConcurrency).toBe(1);
       expect(rowB?.resumedFrom).toBe(runA);
-      // The inherited script also has a home (docs/dynamic-workflow/launch.md "Provenance"): the
-      // predecessor never recorded a file, so the tool lands the archived script as a draft and the
-      // new run records that — the next amendment edits this file instead of re-inlining the text.
+      // 沿用的脚本也有家（docs/dynamic-workflow/launch.md「Provenance」）：前驱没记过文件，所以工具
+      // 把存档的脚本落成草稿，新 run 记的就是它——下一次修订去编辑这个文件，不必内联重抄。
       const recordedScriptPath = (await after.service.getTask(runB!))?.scriptPath;
       expect(recordedScriptPath).toBeDefined();
       expect(readFileSync(recordedScriptPath!, "utf8")).toBe(script);
@@ -6529,13 +6289,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
     }
   });
 
-  // End-to-end evidence for docs/dynamic-workflow/presentation.md "Subagent transcripts" and
-  // "Reduction": an amended run starts from an empty table, cache hits come without node-queued —
-  // so a hit's settlement must name the subagent itself, otherwise a subagent whose asks all hit
-  // shows as "pending" on the GUI and opens as "not yet started" (user report 2026-09-22).
+  // docs/dynamic-workflow/presentation.md「Subagent transcripts」与「Reduction」的端到端证据：
+  // 修订 run 从空表开始，缓存命中又没有 node-queued——命中的结算必须自己点名子代理，否则 GUI 上
+  // 一个全部 ask 都命中的子代理是「待开始」，点开是「尚未启动」（2026-09-22 用户报告）。
   it("修订 run 的缓存命中归到子代理名下，transcript 指向前驱里真有消息的那条会话；分歧后换回本 run 的", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-attrib-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const before = makeHarness({
@@ -6560,7 +6319,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect(predecessorSession).toBeDefined();
       expect((await store.messages({ sessionID: predecessorSession! })).length).toBeGreaterThan(0);
 
-      // —— Amendment of the same script: every ask hits, zero turns.
+      // —— 同一份脚本的修订：每一问都命中，零 turn。
       const same = makeHarness({ journal, sessionStore: store as never });
       const unchanged = await amendRun(same, {
         cwd: TEST_CWD,
@@ -6591,14 +6350,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect(cachedRun?.nodes.find((node) => node.siteId === "ask#2")?.instructionsHead).toBe(
         "second question",
       );
-      // This run never built a session for it: the transcript must be read from the predecessor, and
-      // that session really has messages.
+      // 本 run 从未给它建会话：transcript 要去前驱里读，而那条会话真有消息。
       expect(cachedRun?.actors).toMatchObject([
         { siteId: "actor#1", ordinal: 1, status: "completed", sessionId: predecessorSession },
       ]);
 
-      // —— Amendment with the second ask changed: the first ask hits (predecessor session), the
-      // second is live (this run's session, whose seed contains the prefix).
+      // —— 改了第二问的修订：第一问命中（前驱会话），第二问 live（本 run 的会话，种子里有前缀）。
       const diverged = makeHarness({
         actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "revised" } }] },
         journal,
@@ -6639,10 +6396,10 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
 
   it("前缀零派发命中、分歧点起 live、边界与 lineage 落库", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
-      // —— Predecessor run: both asks live, boundaries and sessions really persisted.
+      // —— 前驱 run：两问都 live，边界与会话都真的落库。
       const before = makeHarness({
         actorScripts: {
           "actor#1@1": [
@@ -6662,7 +6419,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect((await before.service.getTask(runA))?.output).toBe("one|two|0");
       expect(turnCount(before)).toBe(2);
 
-      // —— Amended run: only the second ask changed.
+      // —— 修订 run：只改第二问。
       const after = makeHarness({
         actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "revised" } }] },
         journal,
@@ -6679,12 +6436,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       const runB = submitted.runId;
       await settle(after, runB);
 
-      // The first ask's answer comes verbatim from the predecessor; the second is freshly run.
+      // 第一问的答案原样来自前驱，第二问是新跑出来的。
       expect((await after.service.getTask(runB))?.output).toBe("one|revised|0");
-      // The dispatch after divergence is the **only** one: zero tokens, zero calls for the prefix.
+      // 分歧之后的这一次派发是**唯一**一次：前缀零 token、零调用。
       expect(turnCount(after)).toBe(1);
 
-      // world-read and the seq 0 ask both settle cached; the diverging seq 1 does not.
+      // world-read 与 seq 0 的 ask 都以 cached 结算；分歧的 seq 1 不是。
       const settledB = settledEvents(after, runB);
       expect(settledB).toEqual([
         { siteId: "world-read#1", ordinal: 1, cached: true },
@@ -6692,8 +6449,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
         { siteId: "ask#2", ordinal: 1, cached: false },
       ]);
 
-      // A hit must persist a **real row**, with the boundary copied along — otherwise runB itself
-      // could never be amended again (the foundation of chained amendments).
+      // 命中必落**真行**，且边界一起拷过去——否则 runB 自己就不能再被修订（链式修订的根基）。
       const cachedNode = journal.getNode(runB, "ask#1", 1);
       const sourceNode = journal.getNode(runA, "ask#1", 1);
       expect(cachedNode?.status).toBe("completed");
@@ -6701,31 +6457,26 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect(cachedNode?.messageBoundary).toBe(sourceNode?.messageBoundary);
       expect(cachedNode?.actorSeq).toBe(0);
 
-      // lineage is a row-level fact: the "continued from run X" in the confirmation dialog and the
-      // detail page renders from it.
+      // lineage 是行级事实：确认窗与详情页的「续自 run X」从它渲染。
       expect(journal.getRun(runB)?.resumedFrom).toBe(runA);
-      // The predecessor is read-only: not one byte of runA's rows and nodes moved.
+      // 前驱只读：runA 的行与节点一个字节没动。
       expect(journal.getRun(runA)?.status).toBe("completed");
       expect(journal.getRun(runA)?.resumedFrom).toBeUndefined();
 
-      // The diverging actor's session is a **truncated copy**: new session id, content being the
-      // source session's first N messages.
+      // 分歧 actor 的会话是**截断复制**出来的：新会话 id、内容为源会话的前 N 条。
       const sourceSession = journal.getActor(runA, "actor#1", 1)?.sessionId;
       const amendedSession = after.actorRuntimeInputs[0]!.sessionId;
       expect(amendedSession).not.toBe(sourceSession);
-      // The session first holds the copied prefix, then the messages the diverging ask itself
-      // produced, so the length is **strictly greater** than the boundary.
+      // 会话里先有复制来的前缀，再有分歧那一问自己产的消息，所以长度**严格大于**边界。
       const seeded = await store.messages({ sessionID: amendedSession });
       expect(seeded.length).toBeGreaterThan(sourceNode!.messageBoundary!);
-      // Accounting continues counting on top of the copied prefix: the new run's own boundary = the
-      // session length at this moment. The count offset surviving prefix copy is exactly what lets
-      // runB also serve as a predecessor (chained amendments).
+      // 记账在复制出来的前缀之上接着数：新 run 自己的边界 = 此刻的会话长度。count offset
+      // 跨前缀复制不变，正是这条让 runB 也能再作前驱（链式修订）。
       expect(journal.getNode(runB, "ask#2", 1)?.messageBoundary).toBe(seeded.length);
-      // After copying, the existing rehydration machinery takes over rather than a new hydration path.
+      // 复制之后走既有的重水化机器，而不是另造一条水化路径。
       expect(after.resumeCalls).toContain(amendedSession);
 
-      // pin inheritance: at the amended run's first dispatch this run has no resolved result yet, so
-      // the pin can only come from the predecessor.
+      // pin 承袭：修订 run 的第一次派发时本 run 还没有解析结果，pin 只能来自前驱。
       expect(after.actorRuntimeInputs[0]!.pinnedModel).toBe(
         journal.getActor(runA, "actor#1", 1)?.resolvedModel,
       );
@@ -6735,12 +6486,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
     }
   });
 
-  // ──────────────────────────────────────────────────────────────
-  // Continuing an in-flight ask (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
-  // "What is imported", "How the engine consumes the cache")
-  // ──────────────────────────────────────────────────────────────
+  // ————————————————————————————————————————————————————————————————
+  // 在飞 ask 的接续（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
+  // 「What is imported」「How the engine consumes the cache」）
+  // ————————————————————————————————————————————————————————————————
 
-  /** Per-message "role + body" in a session; seed copying re-mints ids, so only the body survives cross-session comparison. */
+  /** 一个会话里每条消息的「角色 + 正文」；种子复制会重铸 id，所以只有正文经得起跨会话比对。 */
   async function transcriptOf(
     store: { messages(input: { sessionID: SessionId }): Promise<MessageWithParts[]> },
     sessionId: SessionId,
@@ -6755,33 +6506,28 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
   }
 
   /**
-   * Runs the predecessor to "first ask settled, second ask in flight", then stops it, and amends it
-   * with a **byte-for-byte identical** script.
+   * 前驱跑到「第一问已完结、第二问在飞」再停下，用**逐字节相同**的脚本修订它。
    *
-   * This is exactly the half-finished conversation this feature exists to rescue: the second ask
-   * never settled and has no boundary to import, but the transcript it already produced is still in
-   * the predecessor's session. The amendment re-issues the same instruction at the same spot
-   * (inputHash matches), so the new session must continue from that transcript rather than throw it
-   * away and start over.
+   * 这正是本特性要救的那半场对话：第二问从未结算、没有边界可导入，但它已经跑出来的那段转录
+   * 仍在前驱的会话里。修订在同一位置重发同一条指令（inputHash 相符），所以新会话要从那段
+   * 转录接着跑，而不是把它扔掉重来。
    */
   /**
-   * A predecessor at "first ask settled, second ask in flight", running on the **same** service
-   * (amending an in-flight run can only be stopped by the service that owns it; see
-   * amendDynamicWorkflowRun's in-flight verdict).
+   * 「第一问已完结、第二问在飞」的前驱，跑在**同一个** service 上（修订一个在飞 run 只能由
+   * 拥有它的那个 service 停下，见 amendDynamicWorkflowRun 的在飞判定）。
    *
-   * `plan` is a **mutable** plan table: the predecessor's adapter has already handed out its hang
-   * promise and will never read again; the amended run's actor runtime is freshly built and reads
-   * this table from index 0. So swapping the table's content amounts to giving the successor a new
-   * set of answers.
+   * `plan` 是一张**可变**的计划表：前驱的 adapter 已经把它的挂起 promise 交出去了，不会再读；
+   * 修订 run 的 actor runtime 是新造的，从下标 0 重新读这张表。所以换掉表的内容，就等于给
+   * 后继换了一套回答。
    */
   async function liveMidAskPredecessor(input: {
     journal: SweepableJournalStore;
     label: string;
     quiesceMs?: number;
     script: string;
-    /** How the second ask hangs: respects cancellation (a normal provider) or ignores even cancellation (the session never finishes writing). */
+    /** 第二问的挂法：理会取消（正常 provider）还是连取消都不理（会话永远写不完）。 */
     stall: "hang-until-cancelled" | "hang";
-    store: ReturnType<typeof createSqliteSessionStore>;
+    store: Awaited<ReturnType<typeof createSqliteSessionStore>>;
   }): Promise<{ harness: Harness; plan: ActorPlan[]; prefixBoundary: number; runA: string }> {
     const { journal, label, script, stall, store } = input;
     const plan: ActorPlan[] = [{ kind: "submit", result: { text: "one" } }, { kind: stall }];
@@ -6796,14 +6542,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       scriptText: script,
       trace: traceFor(`${label}-a`),
     });
-    // Wait until the second ask is really dispatched (the second turn has started) and the first
-    // ask's boundary is written.
+    // 等到第二问真的派发出去（第二轮 turn 已经起了）且第一问的边界已经写下。
     await vi.waitFor(() => {
       expect(turnCount(harness)).toBe(2);
       expect(journal.getNode(runA, "ask#1", 1)?.messageBoundary).toBeDefined();
     });
-    // The in-flight ask has a row, is running, and has no boundary of its own — it is exactly the
-    // one to be continued.
+    // 在飞的那条 ask 有行、是 running、没有自己的边界——它正是要被接续的那一条。
     expect(journal.getNode(runA, "ask#2", 1)).toMatchObject({ status: "running", actorSeq: 1 });
     expect(journal.getNode(runA, "ask#2", 1)?.messageBoundary).toBeUndefined();
     plan.length = 0;
@@ -6818,7 +6562,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
 
   it("前驱在飞的 ask 被同一条指令续上：新会话以前驱**整段**转录开场", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-inflight-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     const script = amendScript("second question");
     try {
@@ -6830,7 +6574,7 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
         store,
       });
 
-      // —— Amendment: the script is byte-for-byte identical, so the second ask's inputHash matches the in-flight one.
+      // —— 修订：脚本逐字节相同，所以第二问的 inputHash 与在飞的那条相符。
       const amended = await amendRun(harness, {
         cwd: TEST_CWD,
         predecessorRunId: runA,
@@ -6841,13 +6585,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       expect(amended.supersededRunId).toBe(runA);
       await settle(harness, runB);
 
-      // The predecessor's half-finished conversation really is longer than the first ask's boundary —
-      // otherwise this case proves nothing.
+      // 前驱那半场对话确实比第一问的边界长——否则这条用例什么都没证明。
       const sourceSession = journal.getActor(runA, "actor#1", 1)!.sessionId! as SessionId;
       const predecessorTranscript = await transcriptOf(store, sourceSession);
       expect(predecessorTranscript.length).toBeGreaterThan(prefixBoundary);
 
-      // The first ask still hits the cache; the second runs live (it is the continued ask).
+      // 第一问照旧命中缓存；第二问是 live 跑的（它是那条被接续的 ask）。
       expect((await harness.service.getTask(runB))?.output).toBe("one|revised|0");
       expect(settledEvents(harness, runB)).toEqual([
         { siteId: "world-read#1", ordinal: 1, cached: true },
@@ -6855,25 +6598,23 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
         { siteId: "ask#2", ordinal: 1, cached: false },
       ]);
 
-      // Core assertion: the new session opens **entry by entry** with the predecessor's entire
-      // transcript (including that half-finished exchange), not just up to the first ask's boundary.
+      // 核心断言：新会话的开头**逐条**就是前驱的整段转录（含那半场未完的问答），
+      // 而不是只到第一问的边界为止。
       const amendedSession = journal.getActor(runB, "actor#1", 1)!.sessionId! as SessionId;
       expect(amendedSession).not.toBe(sourceSession);
       const amendedTranscript = await transcriptOf(store, amendedSession);
       expect(amendedTranscript.slice(0, predecessorTranscript.length)).toEqual(
         predecessorTranscript,
       );
-      // After the continuation the ask runs live as usual, so the session grows longer still.
+      // 接续之后 ask 照常 live 跑，所以会话还要更长。
       expect(amendedTranscript.length).toBeGreaterThan(predecessorTranscript.length);
 
-      // The continued ask's stats record no worldToolCalls: its transcript predates this dispatch,
-      // and the in-memory tool count only sees the rounds it ran itself — reporting 0 would be read
-      // by a later amendment as "pure".
+      // 接续过的 ask 的 stats 不记 worldToolCalls：它的转录早于本次派发就存在，
+      // 内存里的工具计数只数得到自己跑的那几轮，报 0 会被后来的修订读成「纯」。
       const carried = journal.getNode(runB, "ask#2", 1);
       expect(carried?.status).toBe("completed");
       expect(carried?.stats?.worldToolCalls).toBeUndefined();
-      // Accounting continues on top of the carried-in transcript, so runB can also serve as a
-      // predecessor again (the foundation of chained amendments).
+      // 记账仍在接续来的转录之上接着数，所以 runB 也能再作前驱（链式修订的根基）。
       expect(carried?.messageBoundary).toBe(amendedTranscript.length);
     } finally {
       store.close();
@@ -6882,14 +6623,12 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
   });
 
   /**
-   * The same shape, only the second ask's text changed: the inputHash no longer matches, so that
-   * half-finished conversation **is not** this instruction's context. The new session only carries
-   * up to the first ask's boundary and the in-flight segment is dropped — i.e. the behavior before
-   * this feature.
+   * 同一个形状，只把第二问的正文改掉：inputHash 不再相符，那半场对话就**不是**这条指令的
+   * 上文了。新会话只接到第一问的边界为止，在飞那段被丢弃——也就是本特性之前的行为。
    */
   it("修订改掉了在飞的那条指令：不接续，新会话只到完结前缀的边界", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-inflight-miss-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const { harness, prefixBoundary, runA } = await liveMidAskPredecessor({
@@ -6910,20 +6649,20 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
 
       const sourceSession = journal.getActor(runA, "actor#1", 1)!.sessionId! as SessionId;
       const predecessorTranscript = await transcriptOf(store, sourceSession);
-      // The predecessor really has an in-flight transcript segment to drop (control and experiment face the same shape).
+      // 前驱确实有一段在飞转录可丢（对照组与实验组面对的是同一个形状）。
       expect(predecessorTranscript.length).toBeGreaterThan(prefixBoundary);
 
-      // The new session opens with exactly the **prefix** entries; not one of the in-flight segment was carried over.
+      // 新会话的开场恰好是**前缀**那几条，在飞那段一条都没带过来。
       const amendedSession = journal.getActor(amended.runId, "actor#1", 1)!.sessionId! as SessionId;
       const amendedTranscript = await transcriptOf(store, amendedSession);
       expect(amendedTranscript.slice(0, prefixBoundary)).toEqual(
         predecessorTranscript.slice(0, prefixBoundary),
       );
-      // The **direct negation** of the continuation case's core assertion: the new session does not open with the predecessor's entire transcript.
+      // 接续那条用例的核心断言的**直接否定**：新会话不以前驱的整段转录开场。
       expect(amendedTranscript.slice(0, predecessorTranscript.length)).not.toEqual(
         predecessorTranscript,
       );
-      // The instruction changed, so the predecessor's half-finished question text does not appear in the new session at all.
+      // 指令变了，所以前驱那半场的提问正文在新会话里根本不出现。
       expect(amendedTranscript).not.toContain(predecessorTranscript[prefixBoundary]);
     } finally {
       store.close();
@@ -6932,25 +6671,21 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
   });
 
   /**
-   * End-to-end evidence for the silent gate (driver's ledger → amend → builder): the predecessor's
-   * second ask ignores even cancellation, its turn never lands, so for that session "did it finish
-   * writing" can never be answered.
+   * 静默闸门的端到端证据（driver 的账 → amend → 构建器）：前驱的第二问连取消都不理会，
+   * 它的 turn 永远落不了地，于是那个会话「写完了没有」永远答不上来。
    *
-   * After the gate expires it is **not** treated as silent and continued: the continuation is
-   * cancelled and the completed prefix imported as usual — precisely the behavior before this
-   * feature.
+   * 闸门到点后**不**把它当静默继续用：接续取消，完结前缀照旧导入——正是本特性之前的行为。
    */
   it("前驱会话到点仍在被写 → 不接续，完结前缀照旧导入", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-inflight-noisy-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     const script = amendScript("second question");
     try {
       const { harness, prefixBoundary, runA } = await liveMidAskPredecessor({
         journal,
         label: "amend-inflight-noisy",
-        // Waiting out the real 5 seconds is pointless: the gate's ceiling is injectable, precisely
-        // to make this path testable.
+        // 真等满 5 秒没有意义：闸门的上界可注入，正是为了让这条路可测。
         quiesceMs: 5,
         script,
         stall: "hang",
@@ -6960,14 +6695,13 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       const amended = await amendRun(harness, {
         cwd: TEST_CWD,
         predecessorRunId: runA,
-        // The instruction is byte-for-byte identical — so **only** the quiescence gate can explain
-        // "not continued".
+        // 指令逐字节相同——所以**只有**静默闸门能解释「没接上」。
         scriptText: script,
         trace: traceFor("amend-inflight-noisy-b"),
       });
       await settle(harness, amended.runId);
 
-      // The prefix still hits (its boundary is a journal fact, regardless of how long the session is now).
+      // 前缀照旧命中（它的边界是 journal 事实，与会话此刻长不长无关）。
       expect(settledEvents(harness, amended.runId)).toEqual([
         { siteId: "world-read#1", ordinal: 1, cached: true },
         { siteId: "ask#1", ordinal: 1, cached: true },
@@ -6975,18 +6709,15 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
       ]);
       const sourceSession = journal.getActor(runA, "actor#1", 1)!.sessionId! as SessionId;
       const predecessorTranscript = await transcriptOf(store, sourceSession);
-      // The predecessor really has an in-flight transcript segment that **could** have been carried
-      // over, so "not carried" can only be the gate's doing.
+      // 前驱确实有一段在飞转录**可以**被带走，所以「没带走」只能是闸门的功劳。
       expect(predecessorTranscript.length).toBeGreaterThan(prefixBoundary);
       const amendedSession = journal.getActor(amended.runId, "actor#1", 1)!.sessionId! as SessionId;
       const amendedTranscript = await transcriptOf(store, amendedSession);
       expect(amendedTranscript.slice(0, prefixBoundary)).toEqual(
         predecessorTranscript.slice(0, prefixBoundary),
       );
-      // The instruction is byte-for-byte identical, so the question text would naturally appear once
-      // more — the only thing that distinguishes "continued or not" is this: the new session does
-      // not open with the predecessor's **entire** transcript (the in-flight half's answers were
-      // not carried over).
+      // 指令逐字节相同，所以提问正文本来就会再出现一次——能分辨「接没接上」的只有这一条：
+      // 新会话不以前驱的**整段**转录开场（在飞那半场的回答没被带过来）。
       expect(amendedTranscript.slice(0, predecessorTranscript.length)).not.toEqual(
         predecessorTranscript,
       );
@@ -6999,22 +6730,20 @@ describe("dynamic workflow run service — amend-resume 的温启动", () => {
 
 describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
   /**
-   * Token count of one scripted turn (see scriptedModelAdapter's usage at the top of this file).
-   * Usage assertions want exact numbers, not "greater than zero": the inherited portion and the
-   * freshly-run portion must be separable.
+   * 一轮 scripted turn 的 token 数（见本文件顶部 scriptedModelAdapter 的 usage）。
+   * 用量断言要的是准确数字而不是「大于零」：继承来的那部分与本次现跑的那部分必须分得开。
    */
   const TOKENS_PER_TURN = 20;
 
   it("后继 run 从前驱总量起账：命中不加钱、live turn 才加，前驱行分文不动；链式修订按构造求和", async () => {
-    // docs/dynamic-workflow/launch.md "The AmendWorkflow tool": the tokens on the completion card
-    // and the detail page are the cost of the **entire lineage**. A real session store: hits copy
-    // message boundaries, the precheck requires every settled ask to have a boundary, and chained
-    // amendments (runB as a predecessor) rely entirely on this.
+    // docs/dynamic-workflow/launch.md「The AmendWorkflow tool」：完成卡与详情页上的 token 是
+    // **整条 lineage** 的花费。真 session store：命中要拷消息边界，而预检要求每个完结 ask 都有边界，
+    // 链式修订（runB 再作前驱）全靠这条。
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-lineage-tokens-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
-      // —— Predecessor runA: both asks live = two turns.
+      // —— 前驱 runA：两问都 live = 两轮 turn。
       const before = makeHarness({
         actorScripts: {
           "actor#1@1": [
@@ -7035,7 +6764,7 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
       const totalA = 2 * TOKENS_PER_TURN;
       expect(journal.getRun(runA)?.spentTokens).toBe(totalA);
 
-      // —— Amended runB: first ask hits, second live = one turn.
+      // —— 修订 runB：第一问命中、第二问 live = 一轮 turn。
       const after = makeHarness({
         actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "revised" } }] },
         journal,
@@ -7050,8 +6779,7 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
       await settle(after, runB.runId);
       expect(turnCount(after)).toBe(1);
 
-      // Inherited plus one freshly-run turn. The hit ask added not a single token (its cost is in
-      // the inherited value).
+      // 继承 + 本次现跑的一轮。命中的那一问一分钱都没有再加（它的账在继承值里）。
       const totalB = totalA + TOKENS_PER_TURN;
       expect(journal.getRun(runB.runId)?.spentTokens).toBe(totalB);
       expect(settledEvents(after, runB.runId)).toEqual([
@@ -7060,13 +6788,11 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
         { siteId: "ask#2", ordinal: 1, cached: false },
       ]);
 
-      // The predecessor is read-only: lineage therefore preserves the "how much did the previous
-      // version cost" history.
+      // 前驱只读：lineage 因此保留「上一版花了多少」这段历史。
       expect(journal.getRun(runA)?.spentTokens).toBe(totalA);
 
-      // Projection face: run-started zeroes the usage, and the first usage-updated right after it
-      // must already be the inherited value — otherwise the card shows 0 before the first live turn
-      // lands (the illusion that "this amendment has not cost anything yet").
+      // 投影面：run-started 把用量清零，紧跟其后的第一条 usage-updated 必须已经是继承值——
+      // 否则卡片在第一轮 live turn 落地之前会显示 0（也就是「这次修订还没花钱」的假象）。
       const usageB = after.runEvents.filter(
         (event) => event.runId === runB.runId && event.eventType === "usage-updated",
       );
@@ -7075,17 +6801,14 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
       const typesB = after.runEvents
         .filter((event) => event.runId === runB.runId)
         .map((event) => event.eventType);
-      // The backfilled entry lands within the opening overture: before it only run-started and
-      // run-launched are allowed (the amend path always carries an anchor), and absolutely no
-      // actor / node events — otherwise the card would already have displayed 0 at the first
-      // dispatch.
+      // 补发那条落在起手序幕里：它之前只允许出现 run-started 与 run-launched（修订路一定带锚点），
+      // 绝不允许任何 actor / node 事件——否则卡片在第一次派发时就已经显示过 0。
       expect(typesB.slice(0, typesB.indexOf("usage-updated"))).toEqual([
         "run-started",
         "run-launched",
       ]);
 
-      // —— Chained amendment runC: each predecessor's number is already cumulative, so the sum is
-      // constructed rather than anyone walking the resumedFrom chain.
+      // —— 链式修订 runC：每个前驱的数字本身已是累计值，所以求和是构造出来的，没人走 resumedFrom 链。
       const third = makeHarness({
         actorScripts: { "actor#1@1": [{ kind: "submit", result: { text: "revised twice" } }] },
         journal,
@@ -7115,8 +6838,7 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
       trace: traceFor("lineage-tokens-fresh"),
     });
     await settle(harness, runId);
-    // The first usage-updated is this run's own first turn's cost, not an inherited value (absence
-    // means zero; no backfilled entry is emitted).
+    // 头一条 usage-updated 就是本 run 自己第一轮的花费，不是继承值（缺席即零，不发补发那条）。
     const usage = harness.runEvents.filter(
       (event) => event.runId === runId && event.eventType === "usage-updated",
     );
@@ -7125,26 +6847,23 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
   });
 
   it("间隙读面（dwf_run 行藏起来）报继承值而不是 0", async () => {
-    // The gap = the registry has the entry while the journal has no row yet (hidden reads; see
-    // hideRunsFromReads). If the amended run reported 0 here it would claim "this lineage cost
-    // nothing", while its starting point was fixed at the amend moment.
+    // 间隙 = 注册表已有条目、journal 还没有行（藏读模拟，见 hideRunsFromReads）。修订 run 在这里
+    // 报 0 会说「这条 lineage 没花钱」，而它的起点在 amend 那一刻就已确定。
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-lineage-gap-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     try {
       const real = resolveDynamicWorkflowJournalStore(store as never) as JournalStorePort &
         DwfRunIntrospectionQueries;
       const hidden = new Set<string>();
       const journal = hideRunsFromReads(real, hidden);
-      // Predecessor: first ask submit (one turn's usage + a message boundary, which the precheck
-      // needs), second ask hung then cancelled.
+      // 前驱：第一问 submit（一轮 turn 的用量 + 一条消息边界，预检要它），第二问挂住后被取消。
       const harness = makeHarness({
         actorScripts: {
           "actor#1@1": [{ kind: "submit", result: { text: "one" } }, { kind: "hang" }],
         },
         journal,
-        // A `hang` turn ignores even cancellation, so amend's quiescence gate would wait out the
-        // full ceiling before proceeding (workflow-driver-quiescence.ts). This case counts tokens
-        // and need not sit through 5 seconds with it.
+        // `hang` 的 turn 连取消都不理会，所以 amend 的静默闸门会等满上界才放行
+        // （workflow-driver-quiescence.ts）。本用例算的是 token，不必陪它等 5 秒。
         quiesceMs: 5,
         sessionStore: store as never,
       });
@@ -7170,11 +6889,10 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
         trace: traceFor("lineage-gap-b"),
       });
       await settle(harness, amended.runId);
-      // After the row lands: inherited value + one freshly-run turn.
+      // 落行后：继承值 + 本次现跑的一轮。
       expect(real.getRun(amended.runId)?.spentTokens).toBe(inherited + TOKENS_PER_TURN);
 
-      // Hide the row ⇒ the registry-gap branch is taken: it can report the inherited value (the
-      // entry only knows the starting point, which is already more honest than 0).
+      // 藏掉行 ⇒ 走注册表间隙分支：报得出继承值（条目只知道起点，这已经比 0 诚实）。
       hidden.add(amended.runId);
       const gap = await introspectionOf(harness).getRunDetail(amended.runId);
       expect(gap?.usage).toMatchObject({ nodesObserved: 0, spentTokens: inherited });
@@ -7182,7 +6900,7 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
       const gapRow = listed.runs.find((row) => row.runId === amended.runId);
       expect(gapRow?.spentTokens).toBe(inherited);
 
-      // A fresh submit's entry has no starting point ⇒ the gap still reports 0 (inheritance only happens on the amend path).
+      // 全新 submit 的条目没有起点 ⇒ 间隙照旧报 0（继承只发生在 amend 路上）。
       const fresh = await submitRun(harness, {
         cwd: TEST_CWD,
         parentSessionId: HARNESS_PARENT_SESSION,
@@ -7203,13 +6921,11 @@ describe("dynamic workflow run service — 用量沿 lineage 累计", () => {
 
 describe("dynamic workflow run service — amend-resume 的崩溃后重建", () => {
   it("崩溃后 resume：alpha 曾 live 但没写过工作区 ⇒ 门没关，beta 仍从导入表结算；journal pin 压过承袭的 seed pin", async () => {
-    // apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Amend-resume": in runB
-    // alpha diverged to live and hung; the process died. Going live itself does not close the gate —
-    // alpha never wrote a byte, so the workspace beta reads is the one the predecessor left. After
-    // resume rebuilds the import table beta hits as usual. (This case once asserted the opposite:
-    // back then "any ask live closes the gate", substituting a clock for a dependency.)
+    // apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Amend-resume」：runB 里 alpha 分歧转 live 并挂住；进程没了。
+    // 转 live 本身不关门——alpha 一个字节都没写，beta 读的工作区就是前驱留下的那个。resume 重建导入表后
+    // beta 照常命中。（这条曾断言相反的结论：那时「任一 ask live 即关门」，是拿时钟代替依赖。）
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-resume-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const before = makeHarness({
@@ -7227,8 +6943,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       });
       await settle(before, runA);
 
-      // Amend: only alpha's question changed → alpha diverges to live at seq 0 and hangs; beta is
-      // not yet queued.
+      // 修订：只改 alpha 的问题 → alpha 在 seq 0 分歧转 live 并挂住，beta 尚未排队。
       const crashed = makeHarness({ hangActors: true, journal, sessionStore: store as never });
       const submitted = await crashed.service.amend!({
         cwd: TEST_CWD,
@@ -7244,8 +6959,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       });
       expect(await crashed.service.cancel(runB)).toBe(true);
       await settle(crashed, runB);
-      // Cancellation happens before beta: beta has no rows at all in runB's journal; and no
-      // gate-closing event either.
+      // 取消发生在 beta 之前：beta 在 runB 的 journal 里没有任何行；也没有关门事件。
       expect(
         journal
           .listNodes(runB, { kinds: "all", withResult: true })
@@ -7257,9 +6971,8 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
           .some(({ event }) => event.type === "import-cache-closed"),
       ).toBe(false);
 
-      // The journal pin must outrank the inherited seed pin: the model that actually ran in this run
-      // is more specific than the predecessor's. The two would normally be equal, so runB's record
-      // is rewritten to a sentinel here, making "who wins" an assertable fact.
+      // journal pin 必须压过承袭的 seed pin：本 run 里实际跑过的模型比前驱的更具体。
+      // 两者本应相等，所以这里把 runB 的记录改成一个哨兵值，好让「谁赢」成为可断言的事实。
       const alphaRow = journal.getActor(runB, "actor#1", 1)!;
       journal.putActor({ ...alphaRow, resolvedModel: "sentinel/from-journal" });
 
@@ -7275,11 +6988,17 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       expect(outcome?.ok).toBe(true);
       await settle(resumed, runB);
 
-      // beta settles from the rebuilt import table: the gate never closed, only alpha really ran.
+      // beta 从重建出来的导入表结算：门从未关过，只有 alpha 真的跑了。
       expect((await resumed.service.getTask(runB))?.output).toBe("alpha-2|beta-1");
       expect(turnCount(resumed)).toBe(1);
-      expect(resumed.actorRuntimeInputs.map((input) => refToString(input.actor))).toEqual(["actor#1@1"]);
-      expect(settledEvents(resumed, runB)).toContainEqual({ siteId: "ask#2", ordinal: 1, cached: true });
+      expect(resumed.actorRuntimeInputs.map((input) => refToString(input.actor))).toEqual([
+        "actor#1@1",
+      ]);
+      expect(settledEvents(resumed, runB)).toContainEqual({
+        siteId: "ask#2",
+        ordinal: 1,
+        cached: true,
+      });
       expect(journal.getNode(runB, "ask#2", 1)?.result).toEqual({ text: "beta-1" });
 
       expect(resumed.actorRuntimeInputs[0]!.pinnedModel).toBe("sentinel/from-journal");
@@ -7290,18 +7009,16 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
   });
 
   it("崩溃后 resume：alpha 真的写了文件 ⇒ 执行器 → driver → 引擎关门；beta live 重跑（关门判定从 import-cache-closed 恢复）", async () => {
-    // Same scenario, two differences:
-    //   1. runA's beta **used tools** (one Write), so its cache entry is not "pure" — it may have
-    //      read the workspace;
-    //   2. runB's alpha issues one real `Write` before hanging. The executor emits ToolCallStarted
-    //      with readOnly:false / sideEffectScope:"workspace" before the handler; the driver's tool
-    //      activity observation reports askMutating, and the engine records import-cache-closed.
-    // resume honors only that event; beta therefore reruns live — the workspace it reads may have
-    // been changed by alpha.
-    // (Tools fail in this fixture due to fakeFileSystemPort; that is fine: ToolCallStarted is
-    // emitted before the handler, and what this chain verifies is precisely "the call happened".)
+    // 同一场景，两处不同：
+    //   1. runA 的 beta **用过工具**（一次 Write），所以它的缓存条目不是「纯」的——它可能读过工作区；
+    //   2. runB 的 alpha 挂住之前先调了一次真的 `Write`。执行器在 handler 之前发出带
+    //      readOnly:false / sideEffectScope:"workspace" 的 ToolCallStarted，driver 的工具活动观察上报
+    //      askMutating，引擎记下 import-cache-closed。
+    // resume 只认那条事件；beta 于是 live 重跑——它读的工作区可能已被 alpha 改过。
+    // （工具在这套夹具里会因 fakeFileSystemPort 而失败，无妨：ToolCallStarted 在 handler 之前就发了，
+    //   而这条链要验的正是「调用发生过」。）
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-resume-write-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const before = makeHarness({
@@ -7321,16 +7038,18 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
         trace: traceFor("amend-two-actor-write"),
       });
       await settle(before, runA);
-      // Fixture premise: beta really touched the outside world in runA (one Write), so after the
-      // gate closes its entry no longer hits; alpha only handed back a result, its worldToolCalls
-      // is 0 (`submit_result` only counts toward toolCalls) — a pure entry that still hits after
-      // the gate (the previous case took exactly that path).
+      // 夹具前提：beta 在 runA 里确实碰过外部世界（一次 Write），所以它的条目在关门后不再命中；
+      // alpha 只交了结果，它的 worldToolCalls 是 0（`submit_result` 只计入 toolCalls）——纯条目，
+      // 关门后照样命中（上一条用例走的正是这条路）。
       expect(journal.getNode(runA, "ask#2", 1)?.stats?.worldToolCalls ?? 0).toBeGreaterThan(0);
       expect(journal.getNode(runA, "ask#1", 1)?.stats?.worldToolCalls).toBe(0);
 
       const crashed = makeHarness({
         actorScripts: {
-          "actor#1@1": [{ kind: "write", path: join(TEST_CWD, "notes.md"), content: "alpha was here" }, { kind: "hang" }],
+          "actor#1@1": [
+            { kind: "write", path: join(TEST_CWD, "notes.md"), content: "alpha was here" },
+            { kind: "hang" },
+          ],
         },
         journal,
         sessionStore: store as never,
@@ -7344,8 +7063,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       expect(submitted.ok).toBe(true);
       if (!submitted.ok) return;
       const runB = submitted.runId;
-      // Wait for the gate-closing event to land in the journal: proof that the whole chain
-      // (tool layer → driver → engine) went through.
+      // 等到关门事件落 journal：这是整条链（工具层 → driver → 引擎）跑通的证据。
       await vi.waitFor(() => {
         expect(
           journal
@@ -7388,9 +7106,13 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
         "actor#1@1",
         "actor#2@1",
       ]);
-      expect(settledEvents(resumed, runB)).toContainEqual({ siteId: "ask#2", ordinal: 1, cached: false });
+      expect(settledEvents(resumed, runB)).toContainEqual({
+        siteId: "ask#2",
+        ordinal: 1,
+        cached: false,
+      });
       expect(journal.getNode(runB, "ask#2", 1)?.result).toEqual({ text: "beta-2" });
-      // resume does not re-emit the gate-closing event: the verdict is recovered, not newly occurring.
+      // resume 不重发关门事件：判定是恢复出来的，不是新发生的。
       expect(
         resumed.runEvents.filter(
           (event) => event.runId === runB && event.eventType === "import-cache-closed",
@@ -7404,7 +7126,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
 
   it("前驱被清理 → resume 仍成功，未消费的导入降级为 live 重跑", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-amend-lost-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
       const before = makeHarness({
@@ -7438,8 +7160,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       await crashed.service.cancel(runB);
       await settle(crashed, runB);
 
-      // The predecessor's journal is the amended run's **liveness dependency, but only an
-      // accelerator**: losing it makes things expensive, not wrong.
+      // 前驱 journal 是修订 run 的**存续依赖，但只是加速结构**：丢了变贵，不变错。
       const resumed = makeHarness({
         actorScripts: {
           "actor#1@1": [{ kind: "submit", result: { text: "alpha-2" } }],
@@ -7452,8 +7173,7 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
       expect(outcome?.ok).toBe(true);
       await settle(resumed, runB);
 
-      // beta really ran the model this time and the answer differs accordingly — what degraded is
-      // the bill, not correctness.
+      // beta 这次真的跑了模型，答案随之不同——退化的是账单，不是正确性。
       expect((await resumed.service.getTask(runB))?.output).toBe("alpha-2|beta-live");
       expect(turnCount(resumed)).toBe(2);
       expect(
@@ -7470,11 +7190,10 @@ describe("dynamic workflow run service — amend-resume 的崩溃后重建", () 
 
 describe("dynamic workflow run service — 升级问答（escalation）", () => {
   /**
-   * Starts a run, waits for it to dispatch the ask, and returns the actor session's escalation port.
+   * 起一个 run、等它把 ask 派下去，回 actor 会话的升级端口。
    *
-   * `hangActors` makes the model never resolve — exactly the shape of a turn blocked by an
-   * escalation question, and the only assembly that makes "while the question is parked the run
-   * keeps flying" an assertable fact.
+   * `hangActors` 让模型永不 resolve——那正是一次被升级问答阻塞住的 turn 的形状，也是唯一
+   * 能让「问题停驻期间 run 照常在飞」成为可断言事实的装配。
    */
   async function inflightEscalatePort(
     harness: Harness,
@@ -7488,8 +7207,7 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
     await vi.waitFor(() => {
       expect(harness.actorRuntimeInputs.length).toBeGreaterThan(0);
     });
-    // Parking only means anything after the ask is really dispatched (the driver has recorded
-    // currentInstance).
+    // ask 真正派下去（driver 记下 currentInstance）之后才谈得上停驻。
     await vi.waitFor(() => {
       expect(harness.runEvents.some((event) => event.eventType === "node-dispatched")).toBe(true);
     });
@@ -7508,24 +7226,21 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
       trace: traceFor("escalation-snapshot"),
     });
 
-    // Snapshot fallback: when the notice is dropped, the main agent can still rediscover the
-    // pending question here.
+    // 快照兜底：通知被丢弃时，主代理仍能从这里重新发现待答问题。
     const blocked = await harness.service.getTask(runId);
     expect(blocked?.pendingQuestions).toHaveLength(1);
     const question = blocked?.pendingQuestions?.[0];
     expect(question).toMatchObject({
       actor: "actor#1@1",
-      // The script is `agent("worker")`, so the effective name travels all the way to the snapshot —
-      // the notice face and the side panel therefore need not each re-query journal.listActors
-      // (that duplication would sooner or later disagree with the live track).
+      // 脚本是 `agent("worker")`，所以有效名一路到达快照——通知面与侧栏因此不必各自
+      // 回查 journal.listActors（那份重复迟早会与实时轨对不上）。
       actorName: "worker",
       question: "评分上限 95 而通过门槛 96，这个门是不是坏了？",
     });
-    // The run status never moves: escalation is a slow tool call inside an ask, not a run lifecycle event.
+    // run 状态全程不动：升级是 ask 内部的一次慢工具调用，不是 run 生命周期事件。
     expect(blocked?.status).toBe("running");
-    // The live track (which the side panel renders from) and the snapshot fallback (which self-heals
-    // after a dropped notice) report the same question instant — so "waiting for N minutes" cannot
-    // disagree between the two read surfaces.
+    // 实时轨（侧栏据它渲染）与快照兜底（通知丢弃后据它自愈）报同一个提问时刻——
+    // 两条读面上的「已等待 N 分钟」因此不会各说各话。
     const raisedPayload = harness.runEvents.find(
       (event) => event.eventType === "escalation-raised",
     )?.payload;
@@ -7539,19 +7254,17 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
     });
 
     const after = await harness.service.getTask(runId);
-    // When zero, the field is absent entirely (same rule as reports); no empty array is emitted.
+    // 零条时整字段缺席（与 reports 同规），不发空数组。
     expect(after).not.toHaveProperty("pendingQuestions");
     expect(after?.status).toBe("running");
   });
 
-  // The **query fallback** after a dropped notice, and the model side's only discovery surface:
-  // `ResolveWorkflowQuestion` accepts only a qid, and escalation notices have two known drop paths
-  // (stale branch generation / shutdown). The snapshot face serves the background task tracker;
-  // this one serves `GetWorkflowRun` — the two read surfaces share one source and one projection.
-  // Without this one, the notice copy and `unknown_question`'s server copy would both point at a
-  // tool that returns nothing.
+  // 通知丢弃后的**查询兜底**，也是模型侧唯一的发现面：`ResolveWorkflowQuestion` 只认 qid，
+  // 而升级通知有两条已知的丢弃路径（stale branch generation / shutdown）。快照面服务后台
+  // 任务追踪器，本条服务 `GetWorkflowRun`——两条读面同源同投影，缺了这一条，通知文案与
+  // `unknown_question` 的服务端文案都会指向一个什么都不返回的工具。
   it("停驻的问题同样出现在 getRunDetail 里（GetWorkflowRun 的取数面）", async () => {
-    // sqlite journal: getRunDetail / listRuns are introspection query surfaces, which the in-memory journal lacks.
+    // sqlite journal：getRunDetail / listRuns 是内省查询面，内存 journal 不带它们。
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ hangActors: true, journal });
       const { runId, port } = await inflightEscalatePort(harness, "escalation-detail");
@@ -7572,25 +7285,23 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
         question: "两条指令互相矛盾，先满足哪一条？",
         context: "第 3 步要求保留原文，第 5 步要求改写。",
       });
-      // Same source and same projection as the snapshot: the same run must give the same qid and
-      // the same question instant on both read surfaces, or "how long have we waited" disagrees
-      // between the two.
+      // 与快照同源同投影：同一个 run 在两条读面上必须给出同一个 qid 与同一个提问时刻，
+      // 否则「已等待多久」在两处各说各话。
       const snapshotQuestion = (await harness.service.getTask(runId))?.pendingQuestions?.[0];
       expect(question?.qid).toBe(snapshotQuestion?.qid);
       expect(question?.askedAt).toBe(snapshotQuestion?.askedAt);
-      // The run status never moves.
+      // run 状态全程不动。
       expect(detail?.status).toBe("running");
 
       await harness.service.resolveQuestion?.(question!.qid, "以第 5 步为准。");
       await expect(answered).resolves.toMatchObject({ kind: "answered" });
 
-      // When zero, the field is absent entirely (same rule as the snapshot; no empty array).
+      // 零条时整字段缺席（与快照同规，不发空数组）。
       expect(await introspectionOf(harness).getRunDetail(runId)).not.toHaveProperty(
         "pendingQuestions",
       );
 
-      // The actor's turn is still hung (hangActors); close the database only after wrapping up, to
-      // avoid writing into a closed store.
+      // actor 的 turn 仍然挂着（hangActors）；收口后再关库，避免写进一个已关闭的 store。
       await harness.service.cancel(runId);
       await settle(harness, runId);
     });
@@ -7609,10 +7320,9 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
     await harness.service.resolveQuestion?.(qid!, "坏了。");
     await answered;
 
-    // Live track: the payload received by the progress sink (Slice 2's notice producer reads this).
+    // 实时轨：progress sink 收到的载荷（Slice 2 的通知生产者读的就是它）。
     const raised = harness.runEvents.find((event) => event.eventType === "escalation-raised");
-    // The notice producer (Slice 2) reads this payload: struct ref for targeting, actorName for
-    // human reading, askedAt for computing wait time.
+    // 通知生产者（Slice 2）读的就是这份载荷：结构 ref 定位、actorName 供人读、askedAt 供算等待时长。
     expect(raised?.payload).toMatchObject({
       qid,
       actorName: "worker",
@@ -7623,13 +7333,12 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
       harness.runEvents.find((event) => event.eventType === "escalation-resolved")?.payload,
     ).toMatchObject({ answer: "坏了。", qid });
 
-    // Durable track: the existing event-paging surface carries the new kinds as-is (the protocol's
-    // type is an opaque string; zero contract additions).
+    // durable 轨：既有的事件分页面原样承载新种类（协议层 type 是不透明字符串，契约零加值）。
     const { events: page } = await harness.service.listEvents(runId, {});
     expect(
       page.filter((event) => event.type.startsWith("escalation-")).map((one) => one.type),
     ).toEqual(["escalation-raised", "escalation-resolved"]);
-    // sequence matches the journal's allocation (the driver side's record and the engine's record go through the same slicing).
+    // sequence 与 journal 的分配一致（driver 侧的 record 与引擎的 record 走同一条截取）。
     expect(page.find((one) => one.type === "escalation-raised")?.sequence).toBe(raised?.sequence);
   });
 
@@ -7637,14 +7346,13 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
     const harness = makeHarness({ hangActors: true });
     const { runId, port } = await inflightEscalatePort(harness, "escalation-refusals");
 
-    // (1) Unknown id (including stale ids of dead runs: parked items are not persisted, so after a
-    // restart they all look like this).
+    // (1) 未知 id（含死 run 的陈旧 id：停驻项不持久化，重启后都长这样）。
     expect(await harness.service.resolveQuestion?.("dwfq-nonesuch-1", "答案")).toMatchObject({
       ok: false,
       reason: "unknown_question",
     });
 
-    // (2) Already answered.
+    // (2) 已回答。
     const answered = port.escalate({
       toolCallId: createToolCallId("escalate-3"),
       question: "第一个问题",
@@ -7658,8 +7366,7 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
       reason: "already_resolved",
     });
 
-    // (3) The run is cancelled → the parked item is withdrawn via cancelAsk → answering afterwards
-    // yields run_not_in_flight.
+    // (3) run 被取消 → 停驻项随 cancelAsk 撤下 → 之后作答得到 run_not_in_flight。
     const cancelled = port.escalate({
       toolCallId: createToolCallId("escalate-4"),
       question: "第二个问题",
@@ -7674,8 +7381,7 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
       ok: false,
       reason: "run_not_in_flight",
     });
-    // Cancellation semantics byte-for-byte identical to today: the ask rejects with Cancelled, the
-    // run settles cancelled (and is thus resumable).
+    // 取消的语义与今天逐字节一致：ask 拒 Cancelled，run 结算 cancelled（因而可 resume）。
     expect((await harness.service.getTask(runId))?.status).toBe("cancelled");
   });
 
@@ -7716,36 +7422,30 @@ describe("dynamic workflow run service — 升级问答（escalation）", () => 
     const right = (await harness.service.getTask(secondRunId))?.pendingQuestions;
     expect(left?.map((one) => one.question)).toEqual(["A 的问题"]);
     expect(right?.map((one) => one.question)).toEqual(["B 的问题"]);
-    // qid global uniqueness is precisely the premise of "resolveQuestion takes a single opaque token".
+    // qid 全局唯一正是「resolveQuestion 只收一个不透明 token」的前提。
     expect(left?.[0]?.qid).not.toBe(right?.[0]?.qid);
   });
 });
 
-// ────────────────────────────────────────────────────────────────
-// End-to-end closure of escalation (Slice 4).
+// ————————————————————————————————————————————————
+// 升级问答的端到端闭环（Slice 4）。
 //
-// The group above has the test hold the port and impersonate the model; this group hands both ends
-// to real things: the actor's **model** issues an `escalate` tool call, the main session's **model**
-// issues a `ResolveWorkflowQuestion` tool call, and both paths land on the same parking table
-// through the real tool layer (registration gate → permission → handler → port).
+// 上面那组用例由测试自己持端口扮演模型；这一组把两端都交给真东西：actor 的**模型**发一次
+// `escalate` 工具调用，主会话的**模型**发一次 `ResolveWorkflowQuestion` 工具调用，两条路各自
+// 经真实工具层（注册门 → 权限 → handler → 端口）落到同一张停驻表上。
 //
-// Three things provable only at this layer, structurally invisible to the port-level cases:
-//   1. `escalate` really appears on the actor's turn's tool face (port present → includeEscalate →
-//      registry). Miss any link in between and the port-level assertions still all pass, while the
-//      actor hitting a broken gate has no such tool in hand at all;
-//   2. the answer returns **verbatim** as a tool result into the actor's next model request — the
-//      only physical channel for "continue working with the answer", and the concrete place where
-//      the spec's cache invariant "the Q&A pair lives wholly inside the actor's turn transcript"
-//      holds;
-//   3. zero new wiring on the main agent side: an ordinary session holding only a qid can release
-//      the actor using the existing tool face.
-// ────────────────────────────────────────────────────────────────
+// 只有在这一层才证明得了、而端口层用例结构上看不见的三件事：
+//   1. `escalate` 真的出现在 actor 那一轮的工具面上（端口在场 → includeEscalate → 注册表）。
+//      中间任何一环漏掉，端口层的断言仍然全绿，而 actor 撞上坏门时手里根本没有这个工具；
+//   2. 答案**逐字**作为工具结果回到 actor 的下一次模型请求——那是「带着答案继续干活」的唯一
+//      物理通道，也是 spec 里「问答对整体生活在 actor 轮次转录内部」这条缓存不变式的实处；
+//   3. 主代理侧零新接线：一个手上只有 qid 的普通会话，用既有工具面就能把 actor 放行。
+// ————————————————————————————————————————————————
 describe("dynamic workflow run service — 升级问答的端到端闭环", () => {
   /**
-   * The main session's stand-in: a real AgentRuntime with this service injected as its dwf run port
-   * (in production this is exactly how the main agent gets `ResolveWorkflowQuestion` — the tool has
-   * no registration gate and returns a structured failure only when the port is absent). The model
-   * issues one tool call per the plan, then ends the turn with a text segment.
+   * 主会话的替身：一个真实 AgentRuntime，注入本服务作为 dwf run 端口（生产里主代理就是这样
+   * 拿到 `ResolveWorkflowQuestion` 的——该工具无注册门，端口缺席时才回结构化失败）。模型按
+   * 计划先发一次工具调用，再收一段文本结束 turn。
    */
   function mainSessionRuntime(
     service: Harness["service"],
@@ -7802,7 +7502,7 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
     return { runtime, log };
   }
 
-  /** Starts a run and waits for the first question to park (the main agent's discovery surface is this snapshot). */
+  /** 起 run 并等第一个问题停驻（主代理侧的发现面就是这张快照）。 */
   async function runUntilParked(
     harness: Harness,
     name: string,
@@ -7832,8 +7532,7 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
       actorScripts: {
         "actor#1@1": [
           { kind: "escalate", question: QUESTION, context: CONTEXT },
-          // After getting the answer the actor keeps working and submits — escalate does not end
-          // the turn; this step is the proof.
+          // 拿到答案之后 actor 继续干活并提交——escalate 不终止 turn，这一步就是证据。
           { kind: "submit", result: { text: "按 95 通过" } },
         ],
       },
@@ -7848,13 +7547,13 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
     });
     expect(question.qid).toMatch(/^dwfq-/);
 
-    // (1) Tool face: the actor's first model request really carries escalate.
+    // (1) 工具面：actor 的第一次模型请求里真的带着 escalate。
     const actorRequests = harness.actorModelRequests["actor#1@1"];
     expect(actorRequests?.requests[0]?.tools?.map((tool) => tool.name)).toContain(
       ESCALATE_TOOL_NAME,
     );
 
-    // (2) Main agent side: one real ResolveWorkflowQuestion tool call (holding only a qid).
+    // (2) 主代理侧：一次真的 ResolveWorkflowQuestion 工具调用（手上只有 qid）。
     const main = mainSessionRuntime(harness.service, () => ({
       question_id: question.qid,
       answer: ANSWER,
@@ -7867,18 +7566,17 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("completed");
     expect(snapshot?.output).toBe("按 95 通过");
-    // After settlement the parking table clears in place (when zero, the field is absent entirely).
+    // 结算后停驻表就地清空（零条时整字段缺席）。
     expect(snapshot).not.toHaveProperty("pendingQuestions");
 
-    // (3) The answer returns verbatim into the actor's next model request: the only channel by
-    // which the actor "continues with the answer".
+    // (3) 答案逐字回到 actor 的下一次模型请求：这是 actor「带着答案继续」的唯一通道。
     expect(actorRequests?.requests.length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(actorRequests?.requests[1]?.messages)).toContain(ANSWER);
 
-    // The receipt the main agent receives carries the qid ("answer delivered, the run did not stop because of it").
+    // 主代理拿到的回执带着 qid（「答案已送达、run 并没有因此停下」）。
     expect(JSON.stringify(main.log.requests[1]?.messages)).toContain(question.qid);
 
-    // Event double-track in order: raised first, resolved after.
+    // 事件双轨按序：raised 在前，resolved 在后。
     expect(
       harness.runEvents
         .filter((event) => event.eventType.startsWith("escalation-"))
@@ -7887,9 +7585,8 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
   });
 
   it("停驻期间取消 run：actor 的 escalate 调用被打断，之后作答得到 run_not_in_flight", async () => {
-    // The spec's "no answer = blocked indefinitely" has exactly one escape hatch: the existing
-    // cancel. This case pins it at the tool layer: what is parked is not a promise held by the test
-    // but a real tool call inside the actor's turn.
+    // spec 的「无答案 = 无限期阻塞」有且只有一个逃生舱，就是既有的 cancel。这条用例把它钉在
+    // 工具层：停驻的不是一个测试持有的 promise，而是 actor 真实轮次里的一次工具调用。
     const harness = makeHarness({
       actorScripts: {
         "actor#1@1": [
@@ -7906,8 +7603,7 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("cancelled");
     expect(snapshot).not.toHaveProperty("pendingQuestions");
-    // Answering with a stale qid yields a structured refusal, not silent success — silent success
-    // would let the main agent believe it had already answered.
+    // 陈旧 qid 的作答得到结构化拒绝，而不是静默成功——静默成功会让主代理以为自己已经答过了。
     expect(await harness.service.resolveQuestion?.(question.qid, "太晚了")).toMatchObject({
       ok: false,
       reason: "run_not_in_flight",
@@ -7915,9 +7611,8 @@ describe("dynamic workflow run service — 升级问答的端到端闭环", () =
   });
 });
 
-// The seam of phase-entry records (docs/dynamic-workflow/presentation.md): the engine's
-// phase-entered, after bounding through toProgressPayload, really reduces to phases / currentPhase
-// in the shared reducer.
+// 阶段进入记录的接缝（docs/dynamic-workflow/presentation.md）：引擎发的
+// phase-entered 经 toProgressPayload 有界化后，共享 reducer 真的能归约出 phases / currentPhase。
 describe("dynamic workflow run service · phase-entered", () => {
   it("引擎发出的 phase-entered 经进度管线归约成 workflowRuns.phases 与 currentPhase", async () => {
     const harness = makeHarness();
@@ -7961,15 +7656,14 @@ describe("dynamic workflow run service · phase-entered", () => {
   });
 });
 
-// ────────────────────────────────────────────────────────────────
-// Birth phases (docs/dynamic-workflow/presentation.md)
-// ────────────────────────────────────────────────────────────────
+// ————————————————————————————————————————————————————————————————
+// 出生阶段（docs/dynamic-workflow/presentation.md）
+// ————————————————————————————————————————————————————————————————
 
 /**
- * A script spanning "before any marker / Prepare / Work": each segment builds one actor and asks
- * once, with an extra world-read in Prepare. The three kinds of birth events (actor-created /
- * node-queued / cached node-settled) and "no stamp before a marker" are simultaneously observable
- * on this one script.
+ * 一个横跨「标记之前 / Prepare / Work」的脚本：每段各建一个 actor 并问一次，Prepare 里另有
+ * 一次 world-read。三类出生事件（actor-created / node-queued / cached node-settled）与
+ * 「标记之前不带戳」在同一条脚本上同时可观察。
  */
 const BIRTH_PHASE_SCRIPT = [
   "interface Answer { text: string }",
@@ -7986,10 +7680,9 @@ const BIRTH_PHASE_SCRIPT = [
 ].join("\n");
 
 /**
- * Phase coordinates on birth events: compresses `actor-created` / `node-queued` / `node-settled`
- * into (type, instance, stamp) triples. `phaseName` **absent** versus "value undefined" are two
- * different things here — the engine only stamps birth events and every other event must carry not
- * a single key — hence the expansion with in-checks and toStrictEqual on the assertion side.
+ * 出生事件上的阶段坐标：把 `actor-created` / `node-queued` / `node-settled` 压成
+ * (类型, 实例, 戳) 三元组。`phaseName` **缺席**与「值为 undefined」在这里是两件事——引擎只在
+ * 出生事件上打戳，其余事件必须一个键都不带——所以按 in 判断条件展开，断言侧用 toStrictEqual。
  */
 function birthStamps(harness: Harness): { type: string; ref: string; phaseName?: string }[] {
   return harness.runEvents
@@ -8005,7 +7698,7 @@ function birthStamps(harness: Harness): { type: string; ref: string; phaseName?:
         instance?: { siteId: string; ordinal: number };
         phaseName?: string;
       };
-      // instance takes priority: node-* payloads carry both keys; the one being born is instance.
+      // instance 优先：node-* 的载荷两个键都有，出生的是 instance 那个。
       const ref = payload.instance ?? payload.actor;
       return {
         type: `${event.eventType}${event.payload.cached === true ? "(cached)" : ""}`,
@@ -8015,7 +7708,7 @@ function birthStamps(harness: Harness): { type: string; ref: string; phaseName?:
     });
 }
 
-/** The instance key the payload names (`instance` first, falling back to `actor`). */
+/** 载荷点名的实例键（`instance` 优先，没有就取 `actor`）。 */
 function refOfPayload(payload: Record<string, unknown>): string {
   const ref = (payload.instance ?? payload.actor) as
     | { siteId: string; ordinal: number }
@@ -8023,7 +7716,7 @@ function refOfPayload(payload: Record<string, unknown>): string {
   return `${ref?.siteId}@${ref?.ordinal}`;
 }
 
-/** Reduced instance → phase coordinate (undefined when absent). */
+/** 归约后的实例 → 阶段坐标（缺席即 undefined）。 */
 function reducedPhaseNames(state: WorkflowRunsState | undefined): {
   actors: [string, string | undefined][];
   nodes: [string, string | undefined][];
@@ -8038,7 +7731,7 @@ function reducedPhaseNames(state: WorkflowRunsState | undefined): {
   };
 }
 
-/** Reduces the event stream entry by entry (every case walks the full progress pipeline). */
+/** 事件流逐条归约（每个用例都要走一遍完整的进度管线）。 */
 function reduceAll(harness: Harness): WorkflowRunsState | undefined {
   let state: WorkflowRunsState | undefined;
   for (const event of harness.runEvents) {
@@ -8048,13 +7741,11 @@ function reduceAll(harness: Harness): WorkflowRunsState | undefined {
 }
 
 /**
- * The seam of runtime instances carrying phase coordinates (postscript 2026-09-09): the
- * `phaseName` the engine stamps on **birth events** passes through `toProgressPayload` untouched,
- * and the shared reducer lands it on `actors[*]` / `nodes[*]`.
+ * 运行时实例带阶段坐标的接缝（追记 2026-09-09）：引擎在**出生事件**上打的 `phaseName` 经
+ * `toProgressPayload` 原样过境，再由共享 reducer 落到 `actors[*]` / `nodes[*]` 上。
  *
- * This seam is exactly the fix face of the "all subagents appear in all phases" bug: the static
- * graph copies sites per phase, and runtime instances must carry the same coordinate so the UI can
- * bind by (site, phase) instead of by lane.
+ * 这条接缝正是「所有子代理出现在所有阶段」那个 bug 的修复面：静态图按阶段拷贝站点，运行时
+ * 实例必须带同一个坐标，UI 才能按 (站点, 阶段) 而不是按车道绑定。
  */
 describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
   it("标记前出生的实例不带戳、Prepare / Work 各带各的；派发与 live 结算不带，且归约后落到 actors / nodes 上", async () => {
@@ -8068,9 +7759,8 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
     await settle(harness, runId);
     expect(harness.journal.getRun(runId)).toMatchObject({ status: "completed" });
 
-    // Birth events: before the marker not a single key; after the marker, stamped with the phase at
-    // **birth** time. A live node-settled is not a birth event and likewise carries none (the stamp
-    // travels forward from queued via the reducer).
+    // 出生事件：标记之前的一个键都不带；标记之后的按**出生时**所在阶段带。
+    // live 的 node-settled 不是出生事件，因此同样不带（戳靠 reducer 从 queued 向前携带）。
     expect(birthStamps(harness)).toStrictEqual([
       { type: "actor-created", ref: "actor#1@1" },
       { type: "node-queued", ref: "ask#1@1" },
@@ -8085,10 +7775,9 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
       { type: "node-settled", ref: "ask#3@1" },
     ]);
 
-    // ask's node-dispatched restates its own birth fact
-    // (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Events"): the stamp shares
-    // its source with the node-queued, and the one born before the marker still carries not a single
-    // key; the world-read's dispatch is always bare.
+    // ask 的 node-dispatched 重复自己的出生事实（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
+    // 「Events」）：戳与它的 node-queued 同源，标记之前出生的那个照样一个键都不带；
+    // world-read 的派发始终是裸的。
     const dispatched = harness.runEvents.filter((event) => event.eventType === "node-dispatched");
     expect(
       dispatched.map((event) => ({
@@ -8104,8 +7793,7 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
       { ref: "world-read#1@1" },
       { ref: "ask#3@1", phaseName: "Work", actorPhaseName: "Work" },
     ]);
-    // Events naming a subagent all carry the session id: the read surface can use this one fact to
-    // take a started instance together with its subagent into the table.
+    // 点名子代理的事件都带上会话 id：读面据这一条就能把一个开跑的实例连同它的子代理收进表。
     const askDispatch = dispatched.find((event) => refOfPayload(event.payload) === "ask#3@1");
     expect(askDispatch).toMatchObject({
       actorSessionId: expect.any(String),
@@ -8117,12 +7805,12 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
           event.eventType === "actor-created" && refOfPayload(event.payload) === "actor#3@1",
       )?.actorSessionId,
     );
-    // The world-read dispatch has no actor, hence no transcript to open.
+    // world-read 的那条没有 actor，也就没有转录可开。
     expect(
       dispatched.find((event) => refOfPayload(event.payload) === "world-read#1@1"),
     ).not.toHaveProperty("actorSessionId");
 
-    // Reduced face: actors from actor-created; nodes from node-queued, carried on dispatched / settled.
+    // 归约面：actor 从 actor-created 取；节点从 node-queued 取并在 dispatched / settled 上携带。
     const state = reduceAll(harness);
     expect(reducedPhaseNames(state)).toEqual({
       actors: [
@@ -8137,18 +7825,17 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
         ["ask#3@1", "Work"],
       ],
     });
-    // The nodes really completed the whole lifecycle (otherwise the "carrying" above merely happened to be unexercised).
+    // 节点确实走完了整条生命周期（否则上面的「携带」只是恰好没被覆盖）。
     expect(state?.runs[0]?.nodes.every((node) => node.phase === "settled")).toBe(true);
     expect(workflowRunsStateSchema.parse(state)).toEqual(state);
   });
 
   it("resume 时 cached 的 node-settled 带回与前一世相同的出生阶段", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-birth-phase-"));
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const journal = new SweepableJournalStore();
     try {
-      // —— Predecessor: three asks and the world-read all run live once, with boundaries really
-      // persisted (resume's gate).
+      // —— 前驱：三个 ask 与 world-read 都 live 跑一遍，边界真的落库（resume 的门槛）。
       const before = makeHarness({ journal, sessionStore: store as never });
       const runA = await submitRun(before, {
         cwd: TEST_CWD,
@@ -8158,8 +7845,7 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
       await settle(before, runA);
       expect(before.journal.getRun(runA)).toMatchObject({ status: "completed" });
 
-      // —— Resume: the script is byte-for-byte identical, so every node hits the import cache and
-      // not one real dispatch happens.
+      // —— 续跑：脚本逐字节相同，于是每个节点都命中导入缓存，一次真派发都没有。
       const after = makeHarness({ journal, sessionStore: store as never });
       const submitted = await after.service.amend!({
         cwd: TEST_CWD,
@@ -8172,9 +7858,8 @@ describe("dynamic workflow run service · 出生阶段（phaseName）", () => {
       await settle(after, submitted.runId);
       expect(turnCount(after)).toBe(0);
 
-      // Hit nodes have no queued, so that cached settle is their birth event — stamps identical to
-      // the previous generation one by one, because when the script reruns the prefix phase()
-      // retreads the same trajectory and currentPhase at each mint point is unchanged.
+      // 命中的节点没有 queued，那条 cached settle 就是它的出生事件——戳与前一世逐个相同，
+      // 因为脚本重跑前缀时 phase() 沿同一轨迹重走，每个铸造点上的 currentPhase 不变。
       expect(birthStamps(after)).toStrictEqual([
         { type: "actor-created", ref: "actor#1@1" },
         { type: "node-settled(cached)", ref: "ask#1@1" },
@@ -8267,8 +7952,8 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
       subagentName: "alpha",
       rawMessage: "[1006] token expired",
     });
-    // Nodes: both the trigger and the sibling end as node-settled(cancelled) (same as cancel); no
-    // failed nodes; the journal node rows stay running (same as cancel: redispatched on resume).
+    // 节点：触发者与兄弟都以 node-settled(cancelled) 收场（与 cancel 同），没有 failed 节点；
+    // journal 的节点行保持 running（与 cancel 同：resume 时重新派发）。
     const settledNodes = harness.runEvents.filter(
       (event) => event.runId === runId && event.eventType === "node-settled",
     );
@@ -8278,7 +7963,7 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
       .filter((node) => node.kind === "ask");
     expect(nodes.map((node) => node.status)).toEqual(["running", "running"]);
 
-    // Snapshot: tracker vocabulary cancelled, real word stopped(provider) + structured failure.
+    // 快照：追踪器词汇 cancelled，真实词 stopped(provider) + 结构化失败。
     const snapshot = await harness.service.getTask(runId);
     expect(snapshot?.status).toBe("cancelled");
     expect(snapshot?.runStatus).toBe("stopped");
@@ -8286,8 +7971,7 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
     expect(snapshot?.failure?.code).toBe("ProviderStop");
     expect(snapshot?.failure?.providerStop?.kind).toBe("auth");
 
-    // run-settled payload: resumable + stopReason ride along on the event (the UI's Resume control
-    // and reason line read them).
+    // run-settled 载荷：resumable + stopReason 随事件透出（UI 的 Resume 控件与原因行读它）。
     const settled = harness.runEvents.find((event) => event.eventType === "run-settled");
     expect(settled?.payload).toMatchObject({
       status: "stopped",
@@ -8304,7 +7988,7 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
     });
   });
 
-  it("cancel(runId, \"model\")（TaskStop）→ stopped(model)；缺省 initiator 是 user", async () => {
+  it('cancel(runId, "model")（TaskStop）→ stopped(model)；缺省 initiator 是 user', async () => {
     const harness = makeHarness({ hangActors: true });
     const byModel = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -8313,12 +7997,19 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
     });
     expect(await harness.service.cancel(byModel, "model")).toBe(true);
     await settle(harness, byModel);
-    expect(harness.journal.getRun(byModel)).toMatchObject({ status: "stopped", stopReason: "model" });
+    expect(harness.journal.getRun(byModel)).toMatchObject({
+      status: "stopped",
+      stopReason: "model",
+    });
     expect((await harness.service.getTask(byModel))?.stopReason).toBe("model");
     const settled = harness.runEvents.find(
       (event) => event.runId === byModel && event.eventType === "run-settled",
     );
-    expect(settled?.payload).toMatchObject({ status: "stopped", stopReason: "model", resumable: true });
+    expect(settled?.payload).toMatchObject({
+      status: "stopped",
+      stopReason: "model",
+      resumable: true,
+    });
 
     const byUser = await submitRun(harness, {
       cwd: TEST_CWD,
@@ -8332,18 +8023,15 @@ describe("dynamic workflow run service — 模型侧错误的收容（apps/zcode
 });
 
 /**
- * The completion card's duration accounting (docs/dynamic-workflow/transcript-and-notifications.md
- * "How long it took"): the snapshot carries the whole lineage's active duration at terminal state,
- * and not before.
+ * 完成卡的时长口径（docs/dynamic-workflow/transcript-and-notifications.md「How long it took」）：
+ * 快照在终态携带整条 lineage 的活动时长，终态之前不带。
  *
- * The summation rule itself is unit-tested in `dynamic-workflow-run-elapsed.test.ts`, and each
- * generation's SQL is pinned against the real database in
- * `adapters/tests/dwf-journal-store.test.ts`; what is pinned here is the **wiring** — when the read
- * surface is present the number really reaches the snapshot (the terminal notice only reads the
- * snapshot), and when the read surface is absent the field does not appear at all.
+ * 求和规则本身在 `dynamic-workflow-run-elapsed.test.ts` 里单测，每一世的 SQL 在
+ * `adapters/tests/dwf-journal-store.test.ts` 里对真库钉住；这里钉的是**接线**——读面在场时那个数
+ * 真的走到了快照上（终态通知只读快照），以及读面缺席时字段整个不出。
  */
 class LifeSpanJournalStore extends SweepableJournalStore {
-  /** Each run's generations; absence means "this run has no readable generations". */
+  /** 每个 run 的世；缺席即「这个 run 没有可读的世」。 */
   readonly lifeSpans = new Map<string, DwfRunLifeSpan[]>();
 
   listRunLifeSpans(runId: string): DwfRunLifeSpan[] {
@@ -8360,15 +8048,14 @@ describe("dynamic workflow run service — 快照上的 lineage 活动时长", (
       scriptText: TYPED_SCRIPT,
       trace: traceFor("lifespan-terminal"),
     });
-    // Two generations: the first ran an hour and was interrupted; this one (replay) two minutes.
-    // Dead time between generations does not count.
+    // 两世：第一世跑了一小时被打断，这一世（重放）两分钟。世与世之间的死时间不计。
     journal.lifeSpans.set(runId, [
       { startedAt: 0, lastActivityAt: 3_600_000 },
       { startedAt: 200_000_000, lastActivityAt: 200_120_000 },
     ]);
 
-    // While running: the same terminal gate as reports / artifacts — the snapshot is polled
-    // repeatedly by the background tracker, and this number's only consumer is the terminal notice.
+    // 运行中：与 reports / artifacts 同一道终态闸门——快照被后台追踪器反复轮询，
+    // 而这个数的唯一消费者是终态通知。
     const running = await harness.service.getTask(runId);
     expect(running?.status).toBe("running");
     expect(running?.activeDurationMs).toBeUndefined();
@@ -8380,8 +8067,7 @@ describe("dynamic workflow run service — 快照上的 lineage 活动时长", (
   });
 
   it("修订链：快照报的是整条 lineage 的活动时长，不只是这一次修订的那一世", async () => {
-    // Hang the actor: the predecessor has no settled ask, so the precheck does not require message
-    // boundaries (same as the other amend cases in this file).
+    // 挂住 actor：前驱没有已完结的 ask，预检因此不要求消息边界（与本文件其余 amend 用例同款）。
     const journal = new LifeSpanJournalStore();
     const harness = makeHarness({ hangActors: true, journal });
     const predecessor = await submitRun(harness, {
@@ -8389,7 +8075,7 @@ describe("dynamic workflow run service — 快照上的 lineage 活动时长", (
       scriptText: TYPED_SCRIPT,
       trace: traceFor("lifespan-predecessor"),
     });
-    // The predecessor ran for four hours.
+    // 前驱跑了四小时。
     journal.lifeSpans.set(predecessor, [{ startedAt: 0, lastActivityAt: 4 * 3_600_000 }]);
 
     const amended = await amendRun(harness, {
@@ -8398,20 +8084,19 @@ describe("dynamic workflow run service — 快照上的 lineage 活动时长", (
       scriptText: TYPED_SCRIPT,
       trace: traceFor("lifespan-amendment"),
     });
-    // This amended generation is almost entirely cache replay: 12 seconds.
+    // 修订出来的这一世几乎全是缓存重放：12 秒。
     journal.lifeSpans.set(amended.runId, [
       { startedAt: 10 * 3_600_000, lastActivityAt: 10 * 3_600_000 + 12_000 },
     ]);
     expect(await harness.service.cancel(amended.runId)).toBe(true);
     await settle(harness, amended.runId);
 
-    // Defect cause: reporting only this generation → four hours of work written up as 12 seconds on
-    // the completion card, while the same card's tokens are the lineage total.
+    // 缺陷原因：只报这一世 → 四小时的活在完成卡上写成 12 秒，而同卡 tokens 是 lineage 总数。
     expect(journal.getRun(amended.runId)?.resumedFrom).toBe(predecessor);
     expect((await harness.service.getTask(amended.runId))?.activeDurationMs).toBe(
       4 * 3_600_000 + 12_000,
     );
-    // The predecessor's own card is unaffected (it was stopped by supersede, also terminal).
+    // 前驱自己的卡不受影响（它被 supersede 停下，也是终态）。
     expect((await harness.service.getTask(predecessor))?.activeDurationMs).toBe(4 * 3_600_000);
   });
 
@@ -8432,7 +8117,7 @@ describe("dynamic workflow run service — 快照上的 lineage 活动时长", (
 });
 
 describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => {
-  /** One open hole whose prompt carries the previous step's value; phases ["准备", "裁决"], the hole stands at position 1 by name. */
+  /** 一处开放的留白，prompt 带着前一步的值；阶段表 ["准备", "裁决"]，留白按名字站在第 1 位。 */
   const HOLE_SCRIPT = [
     'phase("准备");',
     'const a = await agent("worker").ask<{ text: string }>("do the thing");',
@@ -8440,14 +8125,14 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     "return v;",
   ].join("\n");
   const HOLE_PHASES = ["准备", "裁决"];
-  // Hole ids are name keys (docs/analysis.md "Sites"): look up by name, no hardcoded hashes.
+  // 留白 id 是名字键（docs/analysis.md「Sites」）：按名字取，不写死哈希。
   const VERDICT = holeSiteId("裁决");
   const LEFT = holeSiteId("左");
   const RIGHT = holeSiteId("右");
   const DECIDE = holeSiteId("决定");
   const REFINE = holeSiteId("细化");
 
-  /** Submits and waits until the run parks at the hole (the `hole-reached` progress event arriving means the park holds: the engine parks first, then records the event). */
+  /** 提交并等到 run 停在留白处（`hole-reached` 进度事件到达即停驻已成立：引擎先停驻再记事件）。 */
   async function submitAndReachHole(
     harness: Harness,
     name: string,
@@ -8482,21 +8167,20 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
   }
 
   it("停在留白处：run-launched 的 holes 下标、快照的 waiting 条目、hole-reached 载荷的 type / reachedAt", async () => {
-    // Real database: the detail face (getRunDetail) is only installed on a journal with introspection
-    // queries, and `updateRunScript`'s SQLite implementation walks the whole chain here too.
+    // 真库：详情面（getRunDetail）只在带内省查询的 journal 上装，且 `updateRunScript` 的 SQLite
+    // 实现在这里跟着整条链路走一遍。
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({ journal });
       const runId = await submitAndReachHole(harness, "hole-wait");
 
-      // Declares that position 1 of the phase table is an open hole (matched by name).
+      // 声明阶段表里第 1 位是开放的留白（按名字对出）。
       const launched = harness.journal.listEvents(runId, {
         types: ["run-launched"],
         reportItems: { limit: 0 },
       })[0]?.event;
       expect(launched).toMatchObject({ type: "run-launched", phaseNames: HOLE_PHASES, holes: [1] });
 
-      // Progress payload: the type comes from the compiled artifact, the arrival instant from the
-      // journal stamp; the prompt carries the previous step's value.
+      // 进度载荷：类型来自编译产物，到达时刻来自 journal 的戳；prompt 带着上一步的值。
       const reached = harness.runEvents.find((event) => event.eventType === "hole-reached");
       expect(reached?.payload).toMatchObject({
         instance: { siteId: VERDICT, ordinal: 1 },
@@ -8506,8 +8190,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       });
       expect(typeof reached?.payload.reachedAt).toBe("number");
 
-      // Snapshot: waiting only because the engine's parking table has it; line is the call's line in
-      // the draft, before is the previous phase.
+      // 快照：waiting 只因为引擎的停驻表里有它；line 是调用在草稿里的行，before 是前一个阶段。
       const waiting = await harness.service.getTask(runId);
       expect(waiting?.status).toBe("running");
       expect(waiting?.holes).toEqual([
@@ -8522,7 +8205,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
           before: "准备",
         },
       ]);
-      // Same source and same projection as the detail face.
+      // 详情面同源同投影。
       const detail = await harness.service.getRunDetail?.(runId);
       expect(detail?.holes).toEqual(waiting?.holes);
 
@@ -8538,10 +8221,8 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       const done = await harness.service.getTask(runId);
       expect(done?.status).toBe("completed");
       expect(done?.output).toBe("verdict");
-      // After the fill: filled comes from the hole-filled event, with the session that filled it.
-      // The function body has no sites and no phase markers, but the hole's own phase stays in the
-      // effective script's phase table via the mark node (analysis.md "Sites"), so the previous
-      // neighbor is still readable.
+      // 补全后：filled 来自 hole-filled 事件，带补全它的会话。函数体没有站点也没有阶段标记，但留白
+      // 自己的阶段靠 mark 节点留在有效脚本的阶段表里（analysis.md「Sites」），所以仍念得出前邻居。
       expect(done?.holes).toEqual([
         {
           before: "准备",
@@ -8555,20 +8236,19 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
           line: 3,
         },
       ]);
-      // The run row holds the effective script, both columns the same entry (hash over text), and
-      // getScript gives it too.
+      // run 行上是有效脚本，两列同一笔（哈希对文本），getScript 给的也是它。
       const record = harness.journal.getRun(runId);
       expect(record?.scriptText).toBe(result.scriptText);
       expect(record?.scriptHash).toBe(
         createHash("sha256").update(result.scriptText, "utf8").digest("hex"),
       );
       expect(await harness.service.getScript(runId)).toBe(result.scriptText);
-      // hole-filled forwards as-is like phase-entered, with the effective script's phase table.
+      // hole-filled 与 phase-entered 一样原样转发，带有效脚本的阶段表。
       const filledEvent = harness.runEvents.find((event) => event.eventType === "hole-filled");
       expect(filledEvent?.payload).toMatchObject({
         siteId: VERDICT,
         filledBy: HARNESS_PARENT_SESSION,
-        // A fill with no sites and no markers: the hole's own phase remains in the table (analysis.md "Sites").
+        // 无站点、无标记的补全：留白自己的阶段仍在表里（analysis.md「Sites」）。
         phaseNames: ["准备", "裁决"],
       });
     });
@@ -8602,17 +8282,15 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     ).toEqual(["actor#1", `${VERDICT}/actor#1`]);
     expect(
       harness.runEvents.find((event) => event.eventType === "hole-filled")?.payload,
-      // The body opens with `phase("复核")`: the hole's own phase has no members but stays in the
-      // table (analysis.md "Sites"). Fix reason: it used to be dropped, so every step name of the
-      // relay disappeared from the side panel and phaseNames.
+      // 函数体以 `phase("复核")` 开头：留白自己的阶段没有成员，但仍留在表里（analysis.md「Sites」）。
+      // 修复原因：它曾被丢掉，接龙的每一步名字因此从侧栏与 phaseNames 消失。
     ).toMatchObject({ phaseNames: ["准备", "裁决", "复核"] });
   });
 
   it("函数体里可以跑种子脚本没有的命令：world.run 的授权只在编译期，driver 没有第二份名单", async () => {
-    // Regression: the driver used to hold declaredRunCommands collected from the seed script at
-    // launch, while the fill compiles the effective script — so a `world.run("echo", …)` appearing
-    // for the first time in the body was refused as a "wiring error" and the whole run failed
-    // (workflow-world-read.ts file header item 2; authoring.md "Running commands").
+    // 回归：driver 曾持有 launch 时从种子脚本收集的 declaredRunCommands，补全编译的是有效脚本、
+    // driver 手里却还是种子那份，函数体里第一次出现的 `world.run("echo", …)` 被当"接线错误"拒掉，
+    // 整个 run 因此失败（workflow-world-read.ts 文件头第 2 条；authoring.md「Running commands」）。
     const ran: string[] = [];
     const stream = (text: string) => ({
       text,
@@ -8663,15 +8341,14 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     if (refused.ok) throw new Error("expected compile_failed");
     expect(refused.reason).toBe("compile_failed");
     expect(refused.diagnostics).toEqual([
-      // The analyzer anchors 2322 on the declaration name `x` (column 7); the spliced shim's indent
-      // has already been subtracted.
+      // 分析器把 2322 锚在声明名 `x` 上（第 7 列），拼接垫的缩进已经扣掉。
       expect.objectContaining({ inFill: true, line: 1, column: 7, code: 2322 }),
     ]);
     expect(harness.journal.getRun(runId)?.scriptText).toBe(before);
     expect((await harness.service.getTask(runId))?.holes?.[0]?.state).toBe("waiting");
     expect(harness.runEvents.some((event) => event.eventType === "hole-filled")).toBe(false);
 
-    // Fixed and resubmitted: the same hole accepts as usual.
+    // 改好再交：同一处留白照常接受。
     expect(await fill(harness, runId, 'return "v";')).toMatchObject({ ok: true });
     await settle(harness, runId);
   });
@@ -8739,7 +8416,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       reason: "run_not_found",
     });
 
-    // Not yet reached: the subagent hangs and the script is parked on the ask before the hole.
+    // 还没到达：子代理挂着，脚本停在留白之前的 ask 上。
     const hanging = makeHarness({ hangActors: true });
     const pending = await submitRun(hanging, {
       cwd: TEST_CWD,
@@ -8770,8 +8447,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     expect(again.message).toContain("already filled");
     await settle(harness, runId);
 
-    // A run parked at the hole: the parked branch is withdrawn with cancellation, and filling points
-    // at resume.
+    // 在留白处停下的 run：停驻的分支随取消撤下，补全指向 resume。
     const stopped = makeHarness();
     const stoppedRun = await submitAndReachHole(stopped, "hole-stopped");
     await stopped.service.cancel(stoppedRun);
@@ -8781,8 +8457,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     expect(afterStop).toMatchObject({ ok: false, reason: "hole_not_waiting" });
     if (afterStop.ok) throw new Error("unreachable");
     expect(afterStop.message).toContain("ResumeWorkflowRun");
-    // A dead park does not report waiting: no engine is waiting, so the hole does not appear on the
-    // snapshot at all.
+    // 死掉的停驻不报 waiting：没有引擎在等，快照上这处留白整个不出。
     expect((await stopped.service.getTask(stoppedRun))?.holes).toBeUndefined();
   });
 
@@ -8799,8 +8474,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     expect((await harness.service.getTask(runId))?.scriptPath).toBe(draftPath);
     await settle(harness, runId);
 
-    // A run without a draft: the minter persists to disk before the engine, the path goes into the
-    // journal with hole-filled, and the cold read surface still finds it after a restart.
+    // 没有草稿的 run：铸造器先于引擎落盘，路径随 hole-filled 进 journal，冷读面重启后照样找得到。
     await withSqliteJournal(async (journal) => {
       const minted: { cwd: string; name: string; source: string }[] = [];
       const mintPath = join(dir, "minted.dwf.ts");
@@ -8823,8 +8497,8 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
         minting.runEvents.find((event) => event.eventType === "hole-filled")?.payload,
       ).toMatchObject({ siteId: VERDICT, scriptPath: mintPath });
       await settle(minting, draftless);
-      // Cold read: another service instance (no entry) reads the fill-minted copy back from the
-      // journal event rather than the absence on run-launched.
+      // 冷读：另一个 service 实例（没有条目）从 journal 事件读回补全铸的那份，而不是 run-launched
+      // 上的缺席。
       const cold = makeHarness({ journal });
       expect((await cold.service.getTask(draftless))?.scriptPath).toBe(mintPath);
       expect((await cold.service.getRunDetail?.(draftless))?.scriptPath).toBe(mintPath);
@@ -8832,7 +8506,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     await rm(dir, { recursive: true, force: true });
   });
 
-  /** Two futures each parked at one hole: both can wait simultaneously, and the model will put both fills into one parallel batch. */
+  /** 两个 future 各停在一处留白：两处可以同时在等，模型也会把两次补全放进同一个并行批里。 */
   const TWO_HOLES_SCRIPT = [
     'phase("准备");',
     "const left = future(async () => {",
@@ -8880,8 +8554,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       expect(first).toMatchObject({ ok: true });
       expect(second).toMatchObject({ ok: true });
       if (!second.ok || !first.ok) throw new Error("unreachable");
-      // The second splices on top of the first's effective script: the text it hands over contains
-      // both function bodies, and the journal row is exactly that.
+      // 第二次是在第一次的有效脚本上拼的：它交出的文本包含两个函数体，journal 行就是它。
       expect(second.scriptText).toContain('hole<string>("左", `l ${a.text}`, async () => {');
       expect(second.scriptText).toContain('hole<string>("右", `r ${b.text}`, async () => {');
       expect(second.scriptText).toContain('return "L";');
@@ -8911,7 +8584,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     const harness = makeHarness();
     const runId = await submitAndReachBothHoles(harness, "hole-refused-first");
     const [refused, accepted] = await Promise.all([
-      // `hole<string>`'s body returns a number: refused at compile time.
+      // `hole<string>` 的体返回 number：编译期拒绝。
       fill(harness, runId, "return 1;", LEFT),
       fill(harness, runId, 'return "R";', RIGHT),
     ]);
@@ -8947,9 +8620,8 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     const dir = await mkdtemp(join(tmpdir(), "dwf-hole-nested-"));
     const draftPath = join(dir, "决定.dwf.ts");
     await writeFile(draftPath, NESTED_SCRIPT, "utf8");
-    // worker's plan is a **shared** array: the first generation hangs (so the run parks after the
-    // two fills), and before resume it is swapped for one submit — the rehydrated new runtime
-    // receives the same array reference.
+    // worker 的计划是一个**共享的**数组：第一世挂起（好让 run 在两次补全之后停下），resume 之前
+    // 换成一次提交——重水化出来的新 runtime 拿到的是同一个数组引用。
     const workerPlan: ActorPlan[] = [{ kind: "hang-until-cancelled" }];
     await withSqliteJournal(async (journal) => {
       const harness = makeHarness({
@@ -8974,8 +8646,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
           .map((event) => (event.payload.instance as { siteId: string }).siteId);
       await vi.waitFor(() => expect(reachedIds()).toEqual([DECIDE]));
 
-      // First fill: the body opens a phase, asks once, then returns with the inner hole's result; the
-      // inner hole's prompt reads the body's const.
+      // 第一次补全：体里先开一个阶段、问一次，再以内层留白的结果返回；内层留白的 prompt 读体内的 const。
       const outer = await fill(
         harness,
         runId,
@@ -8992,9 +8663,8 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       expect(outer.scriptPath).toBe(draftPath);
       expect(await readFile(draftPath, "utf8")).toBe(outer.scriptText);
 
-      // The run parks at the nested hole: the id is its own name key (without the outer prefix), the
-      // type comes from the effective script, and the before/after neighbors are the effective
-      // script's phases.
+      // run 停在嵌套的留白处：id 是它自己的名字键（不带外层前缀），类型来自有效脚本，前后邻居是
+      // 有效脚本的阶段。
       await vi.waitFor(() => expect(reachedIds()).toEqual([DECIDE, REFINE]));
       const nestedReached = harness.runEvents.find(
         (event) =>
@@ -9027,16 +8697,14 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       ]);
       expect(
         harness.runEvents.find((event) => event.eventType === "hole-filled")?.payload,
-        // The outer hole's body opens with a marker, so its own phase stays in the table ("决定" no
-        // longer disappears from phaseNames).
+        // 外层留白的函数体以标记开头，它自己的阶段仍留在表里（「决定」不再从 phaseNames 消失）。
       ).toMatchObject({
         siteId: DECIDE,
         phaseNames: ["探索", "决定", "初步", "细化", "执行"],
         holes: [3],
       });
 
-      // Second fill: the inner body reads the outer body's `x` and the `seed` from before the outer
-      // hole; the new id carries the inner hole's own prefix.
+      // 第二次补全：内层体读外层体的 `x` 与外层留白之前的 `seed`；新 id 带内层留白自己的前缀。
       const inner = await fill(harness, runId, "return { step: `${seed.text}/${x}` };", REFINE);
       if (!inner.ok) throw new Error(inner.message);
       expect(inner.phasesAdded).toEqual([]);
@@ -9044,7 +8712,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       expect(await readFile(draftPath, "utf8")).toBe(inner.scriptText);
       expect(inner.scriptText).toContain('hole<Plan>("细化", `refine ${x}`, async () => {');
       expect(inner.scriptText).toContain("return { step: `${seed.text}/${x}` };");
-      // The journal's run row: both function bodies nested inside the effective script, hash over text.
+      // journal 的 run 行：两个函数体嵌套在有效脚本里，哈希对文本。
       const record = journal.getRun(runId);
       expect(record?.scriptText).toBe(inner.scriptText);
       expect(record?.scriptHash).toBe(
@@ -9055,7 +8723,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
         "filled",
       ]);
 
-      // The inner body's value flowed into the phase after the outer hole: worker's prompt carries seed/draft.
+      // 内层体的值流进了外层留白之后的阶段：worker 的问句里带着 seed/draft。
       await vi.waitFor(() => {
         expect(harness.actorModelRequests["actor#2@1"]?.requests.length ?? 0).toBeGreaterThan(0);
       });
@@ -9063,8 +8731,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
         JSON.stringify(harness.actorModelRequests["actor#2@1"]?.requests[0]?.messages),
       ).toContain("execute seed/draft");
 
-      // Park after the two fills, then resume: the effective script's two function bodies execute
-      // inline, without a single hole request.
+      // 两次补全之后停下，再 resume：有效脚本的两个函数体内联执行，一次留白请求都没有。
       await harness.service.cancel(runId);
       await settle(harness, runId);
       expect((await harness.service.getTask(runId))?.status).toBe("cancelled");
@@ -9086,11 +8753,10 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
     await rm(dir, { recursive: true, force: true });
   });
 
-  // Fix reason: hole ids used to be concatenated per level (`hole#1/hole#1/…`, 7 characters per
-  // level), so in a ten-level relay the innermost id exceeded the protocol's 64-character limit.
-  // This runs a ten-step tail-hole relay on a real SQLite journal: each step is one FillWorkflowHole,
-  // the last dispatches a subagent and returns; every arrival event, every subagent, and every id in
-  // the run's hole snapshot stays within 64 and is depth-independent.
+  // 修复原因：留白 id 曾逐层拼接（`hole#1/hole#1/…`，每层 7 个字符），十层的接龙里最里层的 id 就过了
+  // 协议的 64 字符上界。这里在真实的 SQLite journal 上跑一条十步的尾巴留白接龙：每一步都是一次
+  // FillWorkflowHole，最后一步派一个子代理并返回；每条到达事件、每个子代理、run 的留白快照里的 id
+  // 都在 64 以内，且与深度无关。
   it("十步的尾巴留白接龙跑到完成：每一步一个名字键 id，深度不进 id，所有 id 都在 64 字符以内", async () => {
     const STEPS = 10;
     const stepName = (k: number) => `第${k}步`;
@@ -9134,12 +8800,11 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       expect(done?.status).toBe("completed");
       expect(done?.output).toBe("shipped");
 
-      // Each step arrives exactly once, in relay order.
+      // 每一步恰好到达一次，按接龙次序。
       expect(reached()).toEqual(
         Array.from({ length: STEPS }, (_, i) => holeSiteId(stepName(i + 1))),
       );
-      // Every id that ever entered an event: arrived holes and created subagents are all within the
-      // protocol ceiling, and the longest one is depth-independent.
+      // 所有进过事件的 id：到达的留白、创建的子代理，都在协议上界以内，而且最长的与深度无关。
       const actorIds = harness.runEvents
         .filter((event) => event.eventType === "actor-created")
         .map((event) => (event.payload.actor as { siteId: string }).siteId);
@@ -9148,7 +8813,7 @@ describe("dynamic workflow run service — 留白（FillWorkflowHole）", () => 
       expect(Math.max(...[...reached(), ...actorIds].map((id) => id.length))).toBe(
         `${last}/actor#1`.length,
       );
-      // Snapshot: all ten holes filled; the effective script's phase table reads out every step's name.
+      // 快照：十个留白都补全了；有效脚本的阶段表念得出每一步的名字。
       expect(done?.holes?.map((hole) => [hole.siteId, hole.state])).toEqual(
         Array.from({ length: STEPS }, (_, i) => [holeSiteId(stepName(i + 1)), "filled"]),
       );

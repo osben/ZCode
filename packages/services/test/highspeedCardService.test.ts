@@ -652,6 +652,48 @@ describe("HighspeedCardService", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("enters the draw cooldown when a draw rejection is observed within the send budget", async () => {
+    // Bug fix (spec §3 rule 16): a draw rejection that won the 1s race used to leave nextDrawAt
+    // untouched, so every following send re-issued the same doomed draw and paid its latency again
+    // (2026-10-19 production: repeated HTTP 400 code=3001 draws, each send delayed 0.5-3.3s).
+    let now = 50_000;
+    let drawCalls = 0;
+    const { calls, transport } = createTransport(async () => {
+      drawCalls += 1;
+      if (drawCalls === 1) {
+        throw new Error("highspeed draw failed: 400");
+      }
+      return cardResponse("task-1", now);
+    });
+    const service = new HighspeedCardService({ transport, now: () => now });
+    const params = {
+      taskId: "task-1",
+      providerId: "account:zai-team-coding-plan",
+      model: "glm-5",
+    };
+
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "draw-failed",
+    });
+
+    // Sends inside the failure cooldown fall back instantly without re-issuing the draw.
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "cooldown",
+    });
+    expect(await service.prepareTurn(params)).toMatchObject({
+      kind: "fallback",
+      reason: "cooldown",
+    });
+    expect(calls).toHaveLength(1);
+
+    // After the backoff expires the next send draws again and can succeed.
+    now += 61_000;
+    expect((await service.prepareTurn(params)).kind).toBe("accelerated");
+    expect(calls).toHaveLength(2);
+  });
+
   it("honors next_draw_at and silently falls back for a foreign task card", async () => {
     let now = 30_000;
     const { calls, transport } = createTransport(async () => cardResponse("task-a", now));

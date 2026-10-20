@@ -1,18 +1,15 @@
-// Conversation topic publisher (transport shell).
-// Authoritative CLI runtime: bounded in-memory delta log (logEpoch + retention window) +
-// subscribe(base) decision (resume/snapshot) + per-subscriber flush pipeline
-// (filter → coalesce → frame).
+// Conversation topic 发布器（传输外壳）。
+// CLI 侧权威运行时：内存有界 delta 日志（logEpoch + 保留窗）+ subscribe(base)
+// 裁决（resume/snapshot）+ 每订阅者 flush 管线（filter → coalesce → 打帧）。
 //
-// Responsibilities:
-// - This class owns authoritative accounting from events to frames, but performs no network I/O
-//   or timer work. The host drives flush timing (the host channel schedules by
-//   profile.flushWindowMs; tests call it manually), keeping advancement deterministic and testable.
-// - Resume and streaming share one pipeline: the initial resume frame is the retained-window
-//   delta in (base.seq, current], filtered by the subscriber profile and then coalesced. The
-//   golden test "snapshot(W)+stream ≡ full replay" therefore directly covers recovery.
-// - Resubscription replaces: subscribing again with the same connectionId invalidates the old
-//   subscription and clears its flush buffer. The old subscriptionId emits no more frames, and
-//   the client drops frames from older generations by subId.
+// 职责边界：
+// - 本类只做「事件 → 帧」的权威记账，不做网络 IO / 定时器——flush 时机由宿主驱动
+//   （host 通道层按 profile.flushWindowMs 调度；测试里手动调用），保持可测的纯推进。
+// - 恢复与续流共用一条管线：resume 的初始帧 = 保留窗内 (base.seq, current] 的 delta
+//   过该订阅者 profile 过滤再 coalesce，
+//   因此「snapshot(W)+续流 ≡ 全量重放」黄金测试可直接覆盖恢复路径。
+// - 重订阅 = 替换：同 connectionId 重复 subscribe 即作废旧订阅并清其
+//   flush buffer，旧 subscriptionId 不再产帧，客户端按 subId 丢弃旧代际帧。
 import { SessionEventType, type SessionEvent } from "@zcode/contracts";
 import type {
   CommandEnvelope,
@@ -31,6 +28,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import {
   DELIVERY_PROFILES,
+  statePatchSchema,
   PROTOCOL_V4_LIMITS,
   clampWorkflowRunsForLegacy,
   coalesceConversationDeltas,
@@ -66,9 +64,8 @@ const TERMINAL_PLAN_STATUSES: ReadonlySet<ToolCallRow["status"]> = new Set([
 ]);
 
 /**
- * Cold replay measures temporary deltas frequently; TextEncoder would allocate a full Uint8Array
- * for every measurement. The CLI is guaranteed to run in Node, so calculate the exact UTF-8 byte
- * count directly from the same JSON text instead of estimating.
+ * cold replay 会高频测量临时 delta；TextEncoder 会为每次测量再分配完整 Uint8Array。
+ * CLI 已固定运行在 Node，这里对同一 JSON 文本直接计算精确 UTF-8 字节数，不做近似估算。
  */
 export function coldHydrationJsonByteLength(value: unknown): number {
   const json = JSON.stringify(value);
@@ -121,12 +118,11 @@ interface Subscription {
 export interface ConversationSubscribeParams {
   connectionId: string;
   base?: { logEpoch: string; seq: number };
-  /** Defaults to replayable (the WebSocket default; MessagePort hosts explicitly pass continuous). */
+  /** 缺省 replayable（ws 默认；MessagePort 宿主显式传 continuous）。 */
   deliveryProfile?: DeliveryProfileName;
   /**
-   * Whether this connection's clientHello declared support for `workflowRun.*` deltas. Like
-   * deliveryProfile, this is injected by the trusted host and cannot be selected by UI subscribe.
-   * Defaults to false; absent capability means legacy consumer.
+   * 该连接的 clientHello 声明过认得 `workflowRun.*` 增量。与 deliveryProfile 同族：可信 host
+   * 注入，面向 UI 的 subscribe 选不了。缺省 false——能力位缺席一律按旧消费者办。
    */
   workflowRunDeltas?: boolean;
 }
@@ -134,9 +130,9 @@ export interface ConversationSubscribeParams {
 export interface ConversationSubscribeResult {
   ack: SubscribeAck;
   reservation: TopicFrameReservation<ConversationTopicFrame> | null;
-  /** Atomically restore the replaced subscription if initial encoding fails before ACK admission. */
+  /** initial encode 失败且 ACK 未 admission 时，原子恢复被替换的旧 subscription。 */
   rollback(): boolean;
-  /** Snapshot frame or resume continuation frame; null for resume with no new data (client watermark is aligned). */
+  /** snapshot 帧或 resume 的续传帧；resume 且无新增时为 null（客户端水位已对齐）。 */
   readonly frame: ConversationTopicFrame | null;
 }
 
@@ -146,21 +142,21 @@ export interface ConversationResyncRequest {
 }
 
 export interface ConversationTopicPublisherOptions {
-  /** CLI clock (source for frame.sentAt / clockOffset estimation). */
+  /** CLI 时钟（frame.sentAt / clockOffset 估计源）。 */
   now?: () => number;
-  /** Event retention window (entry count), defaults to PROTOCOL_V4_LIMITS.eventRetentionPerSession. */
+  /** 事件保留窗（条），默认 PROTOCOL_V4_LIMITS.eventRetentionPerSession。 */
   retention?: number;
-  /** Per-subscriber op limit after coalescing; mainly for protocol configuration and boundary tests. */
+  /** 每订阅者 coalesce 后 op 上限；主要用于协议配置与边界测试。 */
   subscriberBufferMaxOps?: number;
-  /** Per-subscriber UTF-8 byte limit for the logical deltas payload. */
+  /** 每订阅者 logical deltas payload 的 UTF-8 byte 上限。 */
   subscriberBufferMaxBytes?: number;
 }
 
 export interface ConversationSubscriberBufferLimits {
   maxOps?: number;
-  /** Byte floor (default 1MiB); for the effective limit see conversationSubscriberBufferByteLimit. */
+  /** 字节下限（默认 1MiB）；实际上限见 conversationSubscriberBufferByteLimit。 */
   maxBytes?: number;
-  /** Conservative upper bound of the current wire snapshot logical frame; default 0 means the floor alone decides. */
+  /** 当前 wire snapshot logical frame 的保守上界；缺省 0 = 只按下限裁决。 */
   snapshotBytesUpperBound?: number;
 }
 
@@ -175,17 +171,16 @@ export class ProjectionPayloadTooLargeError extends Error {
   }
 }
 
-// While running, leave room for the bounded terminal patch from TurnError/TurnComplete; otherwise,
-// if the body reaches 16 MiB exactly, the terminal state that stops the turn cannot fit in a
-// transportable snapshot either.
+// 运行中正文必须给 TurnError/TurnComplete 的 bounded terminal patch 留出空间；否则正文
+// 恰好占满 16MiB 后，停止 turn 的终态本身也无法进入可传输 snapshot。
 export const PROJECTION_TERMINAL_RESERVE_BYTES = 64 * 1024;
 
-// The row.actions schema has only four true booleans and one short enum; including JSON keys and
-// parent wrappers it is under 128 bytes. Reserve the full amount for each wire-tail row between
-// batch checkpoints so deferred materialization cannot underestimate the payload upper bound.
+// row.actions 的 schema 只有 4 个 true 布尔值和一个短枚举；含 JSON key/父级包装不足
+// 128 bytes。批量 checkpoint 之间按 wire tail 的每行完整预留，保证延迟 materialize
+// 不会让 payload 上界低估。
 const HYDRATION_ACTION_BYTES_PER_WIRE_ROW = 128;
 const HYDRATION_EVENT_WIRE_OVERHEAD_BYTES = 64;
-// In a logical snapshot frame, the sequence number appears in both frame.toSeq and snapshot.seq.
+// logical snapshot frame 中 sequence number 同时出现在 frame.toSeq 与 snapshot.seq。
 const HYDRATION_SEQUENCE_NUMBER_OCCURRENCES = 2;
 
 function hydrationSequenceNumberBytes(sequenceNumber: number): number {
@@ -209,11 +204,11 @@ function nonNegativeHardBound(value: number | undefined, maximum: number, name: 
 }
 
 /**
- * The subscriber buffer's effective byte limit = min(max(floor, snapshot upper bound), 16MiB - 64KiB) (05 §3).
- * Fix rationale: overflow exists to trade a backlog of deltas for a smaller snapshot; the old implementation fixed it at 1MiB, so a single large
- * delta (for example a tool row upsert carrying 3MiB of bash output) would degrade to a snapshot, yet the snapshot is larger still because the
- * same row remains in the tail window. It also made the client replace the whole state and drop already-paginated history rows, so the turn
- * navigator re-paginated in full—once per turn in long sessions. The outer clamp leaves assembly headroom for the frame shell; deltas frames stay <=16MiB.
+ * subscriber buffer 的实际字节上限 = min(max(下限, snapshot 上界), 16MiB - 64KiB)（05 §3）。
+ * 修复原因：overflow 的意义是用更小的 snapshot 换掉积压 delta；旧实现固定 1MiB，单条大
+ * delta（如 3MiB bash 输出的 tool row upsert）就会降级为 snapshot，而 snapshot 因同一行仍在
+ * 尾部窗口只会更大，还让客户端整份替换、丢掉已分页的历史行，turn navigator 随即全量重新
+ * 分页——长 session 中每轮循环一次。外层钳位给帧外壳留出 assembly 余量，deltas 帧仍 <=16MiB。
  */
 export function conversationSubscriberBufferByteLimit(
   floorBytes: number,
@@ -226,10 +221,9 @@ export function conversationSubscriberBufferByteLimit(
 }
 
 /**
- * Deltas after profile filtering enter this pure function; merge them with the existing buffer
- * and coalesce first, then enforce both op and UTF-8 byte limits. Limits must actually be
- * enforced: storing raw delta[] without checking them would keep accumulating data for slow
- * subscribers and eventually produce an unbounded frame.
+ * profile filter 后的 delta 进入此纯函数；先与现有 buffer 合并并 coalesce，
+ * 再按 op/UTF-8 bytes 双限额裁决——限额必须真正执行，只存裸 delta[] 不裁决的话，
+ * 慢订阅者会持续堆积并最终生成不可控的大帧。
  */
 export function appendConversationSubscriberBuffer(
   current: readonly ConversationDelta[],
@@ -264,9 +258,9 @@ export class ConversationTopicPublisher {
   private readonly retention: number;
   private readonly subscriberBufferMaxOps: number;
   private readonly subscriberBufferMaxBytes: number;
-  /** Bounded log in ascending seq order; resume is valid only within (floorSeq, currentSeq]. */
+  /** 有界日志：seq 升序；resume 只在 (floorSeq, currentSeq] 内合法。 */
   private readonly log: LogEntry[] = [];
-  /** Retention floor: a resume request with base.seq < floorSeq cannot continue losslessly, so it must use a snapshot. */
+  /** 保留窗下界：base.seq < floorSeq 的恢复请求已无法无损续传 → 只能 snapshot。 */
   private floorSeq = 0;
   private readonly subscriptions = new Map<string, Subscription>();
   private readonly subscriptionIdByConnection = new Map<string, string>();
@@ -303,7 +297,18 @@ export class ConversationTopicPublisher {
     return this.projection.getSnapshot();
   }
 
-  /** Logical TopicFrame byte measure shared by tests/gates (not the bare snapshot size). */
+  /** 初始化只变化几次，沿既有 snapshot 恢复边界发布，不引入第二份事件流。 */
+  setRuntimeInitialization(
+    state: NonNullable<ConversationSnapshot["runtimeInitialization"]>,
+  ): void {
+    this.projection.setRuntimeInitialization(state);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+    this.appendDeltas(this.currentSeq, [
+      { op: "state.updated", patch: statePatchSchema.parse(this.getSnapshot()) },
+    ]);
+  }
+
+  /** 测试/闸门共用的 logical TopicFrame 字节口径（不是裸 snapshot 大小）。 */
   getWireSnapshotLogicalBytes(): number {
     return this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
@@ -312,13 +317,13 @@ export class ConversationTopicPublisher {
     return this.projection.resolveStableForkCandidate(rowId);
   }
 
-  /** Inject a config seed: update the projection's initial value directly without producing a delta or entering the event log. See ProductProjection.seedConfig. */
+  /** config 种子注入：直改投影初值，不产 delta / 不进事件日志。语义见 ProductProjection.seedConfig。 */
   seedConfig(seed: SessionConfigSeed): void {
     this.projection.seedConfig(seed);
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
-  /** Share-import hints are static read-only metadata; they do not enter delta/revision and can be seeded idempotently after hydration. */
+  /** 分享导入提示是静态只读元数据，不进入 delta/revision；可在 hydration 后幂等补种。 */
   seedSharedContextImport(
     source: ConversationSnapshot["sharedContextImport"] | null | undefined,
   ): void {
@@ -351,18 +356,17 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
-  /** Store-verified subagent manifest for cold hydration; does not produce a delta. */
+  /** cold hydration 的 store-verified subagent manifest，不产 delta。 */
   seedSubagents(seed: SessionSubagentsSeed): void {
     this.projection.seedSubagents(seed);
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
   /**
-   * Snapshot sent over the wire: rows contain only the tail window (snapshotTailWindowRows),
-   * while totalCount/firstRowId preserve full-order semantics. The client uses
-   * `window[0].rowId === firstRowId` to detect reaching the top; older history is fetched through
-   * rows/range cursors. The projection's internal snapshot remains full because rows/range data
-   * sources and findRow/messageId anchors depend on it; truncate only at the frame boundary.
+   * 下发用快照：rows 只带尾部窗口（snapshotTailWindowRows），
+   * totalCount/firstRowId 保留全序口径——客户端以 `window[0].rowId === firstRowId`
+   * 判定已到顶，更早历史经 rows/range 游标拉取。投影内部快照保持全量
+   * （rows/range 数据源 + findRow/messageId 锚点都依赖它），只在打帧边界截断。
    */
   private getWireSnapshot(snapshot = this.projection.getSnapshot()): ConversationSnapshot {
     return this.getWireSnapshotForProfile(DELIVERY_PROFILES.continuous, snapshot);
@@ -391,12 +395,10 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Snapshot frame for one subscriber: profile determines row visibility, and the capability
-   * bit determines whether `workflowRuns` is sent in full or at the legacy boundary.
+   * 一个订阅者的快照帧：profile 决定行可见性，能力位决定 `workflowRuns` 发全量还是旧界。
    *
-   * Snapshot and deltas must use the same capability level: if a client receiving legacy
-   * whole-key patches suddenly gets 512 nodes in a snapshot, its `.max(256)` rejects the
-   * **entire frame** (a parse error on a known key does not merely strip that key).
+   * 快照与增量必须同一档：一个收着旧界整键 patch 的客户端，如果快照里突然来了 512 个节点，
+   * 它的 `.max(256)` 会让**整帧**解析失败（已知键上的解析错误不会只剥掉一个键）。
    */
   private getWireSnapshotForSubscription(subscription: Subscription): ConversationSnapshot {
     const snapshot = this.getWireSnapshotForProfile(subscription.profile);
@@ -406,12 +408,10 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * **Per-subscriber** encoding for a delta batch: profile filtering + whole-key folding for legacy consumers.
+   * 一批 delta 的**每订阅者**编码：profile 过滤 + 旧消费者的整键折叠。
    *
-   * Folding reads the **current** projection state, so replaying historical deltas during resume
-   * folds them into the terminal state: intermediate states are skipped, and the final state
-   * matches. This follows the existing coalesce behavior (see the header of
-   * conversation-workflow-run-deltas.ts).
+   * 折叠取的是**当前**投影状态，所以恢复回放上历史增量会折成终态——中间态被跳过，终态一致，
+   * 与 coalesce 的既有行为同规（conversation-workflow-run-deltas.ts 的文件头）。
    */
   private encodeDeltasForSubscription(
     deltas: readonly ConversationDelta[],
@@ -423,11 +423,9 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Candidate projection for input admission: represent the same intent as a complete QueueItem,
-   * including text and attachment references. QueueItem metadata is at least as large as the
-   * eventual user row after immediate startup, so an input accepted here will not become
-   * untransportable only when the first snapshot is sent. This method is read-only and does not
-   * write admission or the event log.
+   * 输入 admission 的候选 projection：用完整 QueueItem 表达同一份 intent，覆盖文本与附件引用。
+   * QueueItem 元数据不小于立即启动后的 user row，因此通过此闸门的输入不会在后续首次
+   * snapshot 才变成不可传输。此方法只读，不写 admission / event log。
    */
   measureInputAdmissionProjectionBytes(
     envelope: CommandEnvelope,
@@ -484,8 +482,7 @@ export class ConversationTopicPublisher {
   }
 
   private measureWireSnapshotBytes(snapshot: ConversationSnapshot): number {
-    // Use the longest normal subscriptionId/time/seq representations this publisher can emit so
-    // the measurement accounts for more than just the payload.
+    // subscriptionId/时间/seq 使用本 publisher 可产生的最长常规表示，确保测量不是只算 payload。
     const frame: ConversationTopicFrame = {
       topic: this.topic,
       subscriptionId: `sub-${this.logEpoch}-${Number.MAX_SAFE_INTEGER}`,
@@ -498,12 +495,10 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * rows/range (cursor-based): return the last `limit` rows whose rowId is less than beforeRowId
-   * (in ascending rowId order). The source is all projection rows (populated by event replay or
-   * transcript hydration), using the same reduction as the subscription stream and naturally
-   * matching the full-replay prefix byte for byte.
-   * Read-only, stateless, and safe to retry after timeout; the client uses atLogEpoch to discard
-   * stale reads as a whole.
+   * rows/range（游标制）：取 rowId < beforeRowId 的最后 limit 行
+   * （rowId 升序返回）。数据源 = 投影全量行（事件重放/transcript hydration 已灌入），
+   * 与订阅流出自同一归约，天然满足「与全量重放前缀逐字节一致」。
+   * 只读、无状态、超时重发安全；atLogEpoch 供客户端陈旧读整体丢弃。
    */
   getRowsRange(
     params: { beforeRowId?: number; limit: number },
@@ -530,10 +525,9 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Return the complete terminal plan directory from the current valid branch.
-   * The wire snapshot keeps only the tail window, so scanning visible rows in the renderer would
-   * miss earlier plans. After edit/retry, it could also retain stale directory entries already
-   * removed by the authoritative projection.
+   * 返回当前有效分支里的完整终态计划目录。
+   * wire snapshot 只保留 tail window；renderer 扫描可见 rows 会漏掉早期计划，
+   * edit/retry 后还可能保留已经被权威 projection 裁掉的旧目录项。
    */
   getPlans(): V4ConversationPlansResult {
     const snapshot = this.projection.getSnapshot();
@@ -553,7 +547,7 @@ export class ConversationTopicPublisher {
     };
   }
 
-  /** rowId → authoritative messageId (translation for forkAssistant/editUserQuery bridging). */
+  /** rowId → 权威 messageId（forkAssistant/editUserQuery 桥接翻译）。 */
   getMessageIdForRow(rowId: number): string | null {
     return this.projection.getMessageIdForRow(rowId);
   }
@@ -565,37 +559,37 @@ export class ConversationTopicPublisher {
     return this.projection.resolveRowActionTarget(target, action);
   }
 
-  /** rowId → all transcript messageIds within the same product turn. */
+  /** rowId → 同一 product turn 内所有 transcript messageId。 */
   getMessageIdsForTurnRow(rowId: number): string[] {
     return this.projection.getMessageIdsForTurnRow(rowId);
   }
 
-  /** A fork target must be the final assistantText segment in its turn. */
+  /** fork 目标必须是所属轮最后一段 assistantText。 */
   isLatestAssistantSegmentRow(rowId: number): boolean {
     return this.projection.isLatestAssistantSegmentRow(rowId);
   }
 
-  /** latestAssistantRetryOnly: retry target must be the newest assistantText in the full timeline with a realUser cause. */
+  /** latestAssistantRetryOnly：retry 目标必须是全时间线最新且有 realUser cause 的 assistantText。 */
   isLatestRetryAssistantRow(rowId: number): boolean {
     return this.projection.isLatestRetryAssistantRow(rowId);
   }
 
-  /** latestQueryEditOnly: only the realUser userInput row in the final turn can be edited. */
+  /** latestQueryEditOnly：只有最后一轮 realUser userInput row 可 edit。 */
   isLatestEditableUserRow(rowId: number): boolean {
     return this.projection.isLatestEditableUserRow(rowId);
   }
 
-  /** rowId → product turnId (look up user messageId for editUserQuery when no assistant anchor exists). */
+  /** rowId → product turnId（editUserQuery 无 assistant anchor 时回查 user messageId）。 */
   getTurnIdForRow(rowId: number): string | null {
     return this.projection.getTurnIdForRow(rowId);
   }
 
-  /** Assistant conservation: count of rejected body-stream events (>0 means the projection may be incomplete). */
+  /** assistant 守恒：被拒收的正文流事件数（>0 = 投影可能缺段）。 */
   getDroppedContentStreamEventCount(): number {
     return this.projection.getDroppedContentStreamEventCount();
   }
 
-  /** rowId → rewind anchor messageId for its turn (locates the editUserQuery user row). */
+  /** rowId → 其 turn 的 rewind 锚点 messageId（editUserQuery user 行定位）。 */
   getTurnRewindAnchor(rowId: number): string | null {
     return this.projection.getTurnRewindAnchor(rowId);
   }
@@ -604,7 +598,7 @@ export class ConversationTopicPublisher {
     return this.projection.getSnapshot().seq;
   }
 
-  /** Apply an authoritative event: advance the projection, account for it in the log, and fan it out to each subscriber's flush buffer. */
+  /** 应用权威事件：投影推进 + 日志记账 + 扇出到各订阅者 flush buffer。 */
   ingest(event: SessionEvent): void {
     const projectionLimit =
       event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError
@@ -624,12 +618,10 @@ export class ConversationTopicPublisher {
       let candidateBytes = 0;
       let nextUpperBound = 0;
       deltas = this.projection.applyEventAtomically(event, (snapshot, produced) => {
-        // dwf fast path: when this event produces only key-level deltas, their byte count is an
-        // upper bound on snapshot growth (an upsert adds at most its own content; removed only
-        // shrinks the snapshot). Avoid serializing the entire snapshot again; that JSON.stringify
-        // costs megabytes per engine event and was the other half of this optimization.
-        // The condition uses **actual output**, not a preview, so a diff that falls back to a
-        // whole-key patch naturally uses the exact path.
+        // dwf 快路径：这条事件只产键级增量时，它们的字节数就是快照增长的上界（一条 upsert
+        // 最多把自己那点内容加进去，removed 只会让快照变小），不必把整份快照再序列化一遍
+        // ——那一次 JSON.stringify 是每条引擎事件都要付的 MB 级开销，也是这次改造的另一半。
+        // 判据用的是**实际产出**而不是预演，所以 diff 退化出的整键 patch 自然落回精确路径。
         const growth = workflowRunDeltaGrowthUpperBound(produced);
         if (growth !== null && this.wireSnapshotBytesUpperBound + growth <= projectionLimit) {
           nextUpperBound = this.wireSnapshotBytesUpperBound + growth;
@@ -642,7 +634,11 @@ export class ConversationTopicPublisher {
       if (deltas === null) throw new ProjectionPayloadTooLargeError(candidateBytes);
       this.wireSnapshotBytesUpperBound = nextUpperBound;
     }
-    this.log.push({ seq: event.sequenceNumber, deltas });
+    this.appendDeltas(event.sequenceNumber, deltas);
+  }
+
+  private appendDeltas(seq: number, deltas: ConversationDelta[]): void {
+    this.log.push({ seq, deltas });
     while (this.log.length > this.retention) {
       const evicted = this.log.shift();
       if (evicted) this.floorSeq = evicted.seq;
@@ -668,21 +664,19 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Rematerialize the projection within the existing publisher while preserving connection-owned subscriptions.
+   * 在现有 publisher 内重物化 projection，保留 connection-owned subscriptions。
    *
-   * The gateway previously deleted the publisher and created a new instance. Although the
-   * projection was restored, the old instance's subscription registry, ownership, and in-flight
-   * reservations were lost. Rematerialization replaces state within the same topic authority;
-   * existing subscriptions should resync, but the publisher identity should not change.
+   * gateway 过去 delete publisher 后新建实例，projection 虽恢复了，旧实例
+   * 的 subscription registry / ownership / in-flight reservation 却一起丢失。重物化属于
+   * 同一 topic authority 的状态替换，只应让既有订阅 resync，不应换 publisher 身份。
    */
   rehydrate(
     events: readonly SessionEvent[],
     options: { onPayloadTooLarge?: (error: ProjectionPayloadTooLargeError) => void } = {},
   ): void {
-    // Do not clear the current projection/log/subscription delivery and replay in place:
-    // any reducer exception would leave the topic half-replayed. A candidate publisher owns no
-    // subscriptions; adopt its authoritative data surface only after full replay (including
-    // logical-size validation) succeeds.
+    // 重放不能先清空当前 projection/log/subscription delivery，再逐条 replay：
+    // 任一普通 reducer 异常都会把 topic 留在半重放状态。候选 publisher 不承接订阅，
+    // 完整 replay（含 logical size 校验）成功后才一次 adopt 权威数据面。
     let candidate = new ConversationTopicPublisher(this.sessionId, this.logEpoch, {
       now: this.now,
       retention: this.retention,
@@ -691,10 +685,8 @@ export class ConversationTopicPublisher {
     });
     const usedBatchHydration = candidate.tryBatchHydration(events);
     if (!usedBatchHydration) {
-      // Exceeding the conservative upper bound does not prove the authoritative projection is
-      // over limit. Retry from an empty candidate using the original per-event atomic admission,
-      // preserving the 16 MiB fail-closed limit and the old behavior of rejecting one oversized
-      // event while continuing to terminal state.
+      // 保守上界超限不代表权威 projection 一定超限；重新从空候选走原逐事件原子
+      // admission，保留 16MiB fail-closed 与“拒绝单个 oversize 后继续终态”的旧语义。
       candidate = new ConversationTopicPublisher(this.sessionId, this.logEpoch, {
         now: this.now,
         retention: this.retention,
@@ -712,18 +704,49 @@ export class ConversationTopicPublisher {
       }
     }
 
+    const previous = this.projection.getSnapshot();
+    if (previous.runtimeInitialization) {
+      // 首帧已对外发布，最终恢复不得让同一 epoch 的 seq/revision 倒退。
+      candidate.projection.setRuntimeInitialization(
+        previous.runtimeInitialization,
+        previous.seq + 1,
+        previous.revision + 1,
+      );
+    }
     this.projection = candidate.projection;
-    if (usedBatchHydration) {
-      // Batch replay defers derived actions until final materialization. If clients could resume
-      // this log from intermediate bases in old per-event snapshots, stale canEdit/canRetry
-      // values never held by the batch could not be revoked precisely. Rehydrate already
-      // requires all existing subscriptions to resync, so establish a snapshot recovery boundary
-      // at the current seq. New events can resume normally from that watermark, preserving
-      // replayable recovery semantics.
+    const current = this.getSnapshot();
+    if (
+      previous.runtimeInitialization &&
+      previous.rows.window.length === current.rows.window.length &&
+      previous.rows.window.every(
+        (row, index) =>
+          row.rowId === current.rows.window[index]?.rowId &&
+          row.kind === current.rows.window[index]?.kind,
+      )
+    ) {
+      // 正常初始化只补控制/摘要，不能用尾窗 snapshot 丢掉用户已分页读出的历史与滚动锚点。
+      // 真正改变历史结构（如 compact 修复）仍走既有完整 snapshot 边界。
+      const deltas: ConversationDelta[] = [
+        { op: "state.updated", patch: statePatchSchema.parse(current) },
+      ];
+      current.rows.window.forEach((row, index) => {
+        if (JSON.stringify(row) !== JSON.stringify(previous.rows.window[index]))
+          deltas.push({ op: "row.upserted", row });
+      });
+      this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+      this.appendDeltas(current.seq, deltas);
+      return;
+    }
+
+    if (usedBatchHydration || previous.runtimeInitialization) {
+      // 批量重放会把派生 actions 延迟到最终 materialization；若允许客户端
+      // 用逐事件旧快照的中间 base 续这份日志，batch 从未持有的旧 canEdit/canRetry 无法被
+      // 定点撤销。rehydrate 本来就要求所有现有订阅 resync，因此在当前 seq 建立 snapshot
+      // recovery boundary；此后新事件仍从该水位正常 resume，不改变 replayable 恢复语义。
       this.log.splice(0, this.log.length);
       this.floorSeq = candidate.currentSeq;
     } else {
-      // Strict fallback has no deferred materialization and preserves the original retained-log recovery semantics.
+      // strict fallback 没有延迟 materialization，完整保留原有 retained-log 恢复语义。
       this.log.splice(0, this.log.length, ...candidate.log);
       this.floorSeq = candidate.floorSeq;
     }
@@ -733,18 +756,16 @@ export class ConversationTopicPublisher {
       subscription.bufferBytes = 0;
       subscription.resyncRequired = true;
       subscription.sentSeq = 0;
-      // After adoption, frames reserved on the old projection can no longer commit; failed replay never touched those reservations.
+      // adopt 后旧 projection 上预留的帧不可再 commit；失败 replay 从未触碰该 reservation。
       subscription.inFlight = null;
     }
   }
 
   /**
-   * Cold-restore fast path: update only an unpublished candidate. The protocol wire snapshot
-   * always contains only the last 60 rows, so row updates accumulate deltas only for rows still
-   * in the tail, then reserve the full per-row schema upper bound for actions not yet
-   * materialized. When the payload limit is approached, exact measurement removes conservative
-   * growth from rows that have already left the tail. Finally converge actions across all rows
-   * once; total cost grows linearly with event/row count.
+   * 冷恢复快路径：只修改尚未发布的 candidate。协议 wire snapshot 固定只含末尾 60 行，
+   * 因此 row 更新只累计仍在 tail 的 delta，再给尚未 materialize 的 actions 按行预留
+   * 完整 schema 上界；已滑出 tail 的保守增长在触及 payload limit 时通过精确测量消除。
+   * 最终只做一次全行 actions 收敛，整体成本随事件/行数线性增长。
    */
   private tryBatchHydration(events: readonly SessionEvent[]): boolean {
     this.projection.beginHydrationReplay();
@@ -768,7 +789,7 @@ export class ConversationTopicPublisher {
         const wireDeltas = deltas.filter((delta) => {
           if (delta.op === "state.updated" || delta.op === "row.appended") return true;
           if (delta.op === "row.removed") return false;
-          // 4b-2: plugin resource notifications go through live deltas only and are excluded from cold-start measurement.
+          // 4b-2：插件资源通知只走实时增量，不进冷启动测量。
           if (
             delta.op === "pluginUi.resourceUpdated" ||
             delta.op === "pluginUi.resourceListChanged" ||
@@ -776,8 +797,8 @@ export class ConversationTopicPublisher {
             delta.op === "pluginUi.instanceClosed"
           )
             return false;
-          // Key-level deltas apply to state keys, not the 60-row wire tail, so they are always
-          // counted even if they are no longer in the window, matching state.updated.
+          // 键级增量作用在状态键上，不在 60 行 wire tail 里——没有「已滑出窗口所以不计」这一说，
+          // 与 state.updated 同规一律计入。
           if (delta.op === "workflowRun.updated" || delta.op === "workflowRun.removed") return true;
           wireRowIds ??= new Set(
             snapshot.rows.window
@@ -809,9 +830,8 @@ export class ConversationTopicPublisher {
         sequenceNumberGrowth +
         actionBytesUpperBound;
       if (mustMeasureSnapshot || upperBound > projectionLimit) {
-        // Falling back to strict as soon as the conservative delta total exceeds the limit would
-        // cause false fallbacks for repeated upserts that do not enlarge the snapshot. Retesting
-        // every 32 events would also repeatedly serialize the checkpoint.
+        // 保守 delta 累计值一旦超限就直接回退 strict 的话，重复 upsert
+        // 即使未增大 snapshot 也会误回退；固定 32-event 重测还会反复序列化 checkpoint。
         measuredBytes = this.measureWireSnapshotBytes(this.getWireSnapshot());
         measuredSequenceNumberBytes = currentSequenceNumberBytes;
         encodedGrowthSinceMeasurement = 0;
@@ -835,9 +855,8 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Subscription decision: resume if base.logEpoch matches and base.seq is within the retention
-   * window; otherwise send a snapshot. Resubscribe with the same connectionId to replace the old
-   * subscription and clear its flush buffer.
+   * 订阅裁决：base.logEpoch 匹配且 base.seq 在保留窗内 → resume，
+   * 否则 snapshot。同 connectionId 重订阅 = 替换旧订阅并清其 flush buffer。
    */
   subscribe(params: ConversationSubscribeParams): ConversationSubscribeResult {
     const result = this.subscribeReserved(params);
@@ -845,7 +864,7 @@ export class ConversationTopicPublisher {
     return result;
   }
 
-  /** Production gateway entry point: wait until the entire physical batch is accepted before committing the initial frame too. */
+  /** 生产 gateway 入口：初始帧也必须等 physical batch 全接受才 commit。 */
   subscribeReserved(params: ConversationSubscribeParams): ConversationSubscribeResult {
     const previousId = this.subscriptionIdByConnection.get(params.connectionId);
     const previousSubscription =
@@ -869,7 +888,7 @@ export class ConversationTopicPublisher {
     this.subscriptions.set(subscription.subscriptionId, subscription);
     this.subscriptionIdByConnection.set(params.connectionId, subscription.subscriptionId);
     const rollback = (): boolean => {
-      // After the initial reservation is committed, the replacement is admitted; reject any late rollback.
+      // initial reservation commit 后 replacement 已 admission，禁止迟到 rollback。
       if (
         subscription.inFlight === null ||
         this.subscriptions.get(subscription.subscriptionId) !== subscription ||
@@ -916,8 +935,7 @@ export class ConversationTopicPublisher {
       return this.subscribeResult(this.ackFor(subscription, "snapshot"), reservation, rollback);
     }
 
-    // Resume: replay (base.seq, current] within the retention window through the same
-    // filter→encode→coalesce pipeline as live streaming.
+    // resume：保留窗内 (base.seq, current] 重放，与在线续流同一条 filter→编码→coalesce 管线。
     const replay = coalesceConversationDeltas(
       this.encodeDeltasForSubscription(
         this.log.flatMap((entry) => (entry.seq > base.seq ? entry.deltas : [])),
@@ -962,7 +980,7 @@ export class ConversationTopicPublisher {
     );
   }
 
-  /** Resident reclamation check: do not deactivate the session while any subscriber remains. */
+  /** Resident 回收判定：仍有任一订阅者时该会话不可被去激活。 */
   hasSubscribers(): boolean {
     return this.subscriptions.size > 0;
   }
@@ -972,10 +990,9 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Drain one subscriber's flush buffer into a frame (the host drives this by flushWindowMs).
-   * Return null if there is no new content. The frame interval (sentSeq, currentSeq] includes
-   * seq values filtered out along the way, keeping the client's `frame.fromSeq === store.seq`
-   * continuity check independent of profile filtering.
+   * 排空一个订阅者的 flush buffer 打成一帧（宿主按 flushWindowMs 驱动）。
+   * 无新内容返回 null；帧区间 (sentSeq, currentSeq] 覆盖中途被过滤掉的 seq，
+   * 保证客户端 `frame.fromSeq === store.seq` 的连续性判定不受 profile 过滤影响。
    */
   reserveFlush(subscriptionId: string): TopicFrameReservation<ConversationTopicFrame> | null {
     const subscription = this.subscriptions.get(subscriptionId);
@@ -1014,7 +1031,7 @@ export class ConversationTopicPublisher {
     return this.reserveFrame(subscription, frame, false, "online");
   }
 
-  /** Convenience surface for legacy unit tests; production gateways must reserve, then commit only after emit-all succeeds. */
+  /** 旧单测便利面；生产 gateway 必须 reserve 后在 emit-all 成功才 commit。 */
   flush(subscriptionId: string): ConversationTopicFrame | null {
     const reservation = this.reserveFlush(subscriptionId);
     if (!reservation || !reservation.commit()) return null;
@@ -1022,9 +1039,9 @@ export class ConversationTopicPublisher {
   }
 
   /**
-   * Recover an active subscription with the same sub: the client's base is the only valid
-   * recovery point; do not guess client progress from sentSeq. New recovery admission invalidates
-   * the old reservation, so a late commit returns false because its inFlight identity no longer matches.
+   * 活跃订阅 same-sub 恢复：客户端 base 是唯一恢复起点，不能拿 sentSeq
+   * 猜客户端已应用到哪里。新 recovery admission 会作废旧 reservation；迟到 commit
+   * 因 inFlight 身份不再匹配而返回 false。
    */
   resyncReserved(
     subscriptionId: string,
@@ -1041,9 +1058,8 @@ export class ConversationTopicPublisher {
       inFlight: subscription.inFlight,
     };
 
-    // Old resync first committed the current reservation, then sent a snapshot based on the
-    // server's sentSeq, incorrectly recording a frame the client never received as delivered.
-    // Same-sub recovery must supersede the reservation directly.
+    // 旧 resync 会先 commit 当前 reservation，再基于服务端 sentSeq 发 snapshot，
+    // 这会把客户端未收到的帧误记为已送达。same-sub recovery 必须直接 supersede。
     subscription.inFlight = null;
     subscription.buffer = [];
     subscription.bufferBytes = 0;
@@ -1154,7 +1170,7 @@ export class ConversationTopicPublisher {
     };
   }
 
-  /** Overflow fallback (05 § two-tier backpressure): clear the buffer and send a snapshot frame to realign. */
+  /** 溢出降级（05 §两级背压）：清缓冲、回发 snapshot 帧重对齐。 */
   resync(subscriptionId: string): ConversationTopicFrame | null {
     const reservation = this.resyncReserved(subscriptionId, {
       base: null,
@@ -1213,8 +1229,8 @@ export class ConversationTopicPublisher {
       ack,
       reservation,
       rollback,
-      // Compatibility for older publisher unit tests: reading frame means the local transport accepted it.
-      // Production gateways read only the reservation and do not trigger this getter.
+      // 兼容旧 publisher 单测：读 frame 即表示本地 transport 已接受。
+      // 生产 gateway 只读 reservation，不会触发该 getter。
       get frame() {
         reservation?.commit();
         return reservation?.frame ?? null;

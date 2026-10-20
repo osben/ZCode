@@ -133,6 +133,7 @@ function formatResolveWorkflowQuestionModelContent(output: unknown): ModelMessag
 export const resolveWorkflowQuestionToolEntry: ToolEntry = {
   capability: "Answer a blocking question escalated by a subagent inside a running workflow run",
   metadata: {
+    shouldDefer: true,
     name: RESOLVE_WORKFLOW_QUESTION_TOOL_NAME,
     description: RESOLVE_WORKFLOW_QUESTION_DESCRIPTION,
     // Answering lets a parked actor continue work with this text; this is not a read-only operation.

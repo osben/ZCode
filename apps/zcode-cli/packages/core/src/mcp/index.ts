@@ -191,6 +191,9 @@ export function createMcpToolEntry(
     inputSchema: createModelFacingMcpInputSchema(descriptor, isCuaAppObservation),
     outputSchema: McpToolOutputJsonSchema,
     metadata: {
+      shouldDefer: true,
+      alwaysLoad: descriptor.alwaysLoad,
+      searchHint: descriptor.searchHint,
       concurrentSafe: readOnly || descriptor.annotations?.idempotentHint === true,
       destructive,
       // Pass the MCP tool description through to metadata so the registry includes it in model input;
