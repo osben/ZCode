@@ -16,13 +16,13 @@ import type {
   DockerContainerInfo,
   WSLDistro,
 } from "@zcode/shared";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { createCanonicalWslTargetResolver } from "@desktop/main/desktopWslTargetResolver.js";
 
 const ports = vi.hoisted(() => ({
   trace: { complete: vi.fn(), fail: vi.fn(), cancel: vi.fn() },
-  locale: "zh-CN",
+  locale: "en-US",
   snapshot: {} as SourceServerManagementSnapshot,
   credentialService: { load: vi.fn(async (): Promise<string | null> => null), save: vi.fn() },
   settingService: {
@@ -57,7 +57,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     locale: ports.locale,
     intl: {
       formatMessage: ({ id }: { id: string }, values: Record<string, string> = {}) => {
-        const messages: Record<string, string> = ports.locale === "zh-CN" ? zhCN : enUS;
+        const messages: Record<string, string> = enUS;
         return (messages[id] ?? id).replace(/\{(\w+)\}/gu, (_, key) => values[key] ?? `{${key}}`);
       },
     },
@@ -99,7 +99,7 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   ports.platform.isLocalDevelopmentRuntime = true;
   ports.platform.isDockerAvailable.mockResolvedValue(true);
-  ports.locale = "zh-CN";
+  ports.locale = TEST_LOCALE;
   ports.platform.listSSHConfigAliases.mockResolvedValue([]);
   ports.platform.listWSLDistros.mockResolvedValue([]);
   ports.platform.listDockerContainers.mockResolvedValue([]);
@@ -365,7 +365,11 @@ it.each([undefined, "Ubuntu"])(
     ]);
     expect(onConnect.mock.calls[1]?.[0]).toEqual(actual);
     render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-    await act(async () => fireEvent.click(screen.getByRole("button", { name: "更新远端" })));
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: expectedCopy("remote.action.update-server") }),
+      ),
+    );
     await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(3));
     expect(ports.management.updateSource.mock.calls).toEqual([
       [{ profileId, expectedTarget: actual, force: false }],
@@ -416,10 +420,15 @@ it.each(["removed", "controller", "canceled"])(
     } else {
       await waitFor(() => expect(result.current.connectingStep.loading).toBe(false));
       render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-      expect(screen.queryByRole("button", { name: "更新远端" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: expectedCopy("remote.action.update-server") }),
+      ).toBeNull();
       if (scenario === "controller")
         expect(result.current.connectingStep.upgradeTarget).toBe("controller");
-      else expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+      else
+        expect(
+          screen.getByRole("button", { name: expectedCopy("remote.action.retry") }),
+        ).toBeTruthy();
     }
     expect(ports.management.updateSource).not.toHaveBeenCalled();
   },
@@ -511,8 +520,10 @@ it.each(["handoff", "connection"])("%s 升级快照失败后可显式重试并�
   expect(ports.management.updateSource).not.toHaveBeenCalled();
   expect(props.onSelectProject).not.toHaveBeenCalled();
   render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-  expect(screen.queryByRole("button", { name: "更新远端" })).toBeNull();
-  const retry = screen.getByRole("button", { name: "重试" });
+  expect(
+    screen.queryByRole("button", { name: expectedCopy("remote.action.update-server") }),
+  ).toBeNull();
+  const retry = screen.getByRole("button", { name: expectedCopy("remote.action.retry") });
   expect(retry.hasAttribute("disabled")).toBe(false);
   fireEvent.click(retry);
   await waitFor(() =>
@@ -780,9 +791,11 @@ it("失败页脚提供关闭与返回列表，不改写失败为取消", async (
   act(() => result.current.selectionStep.onSelectTarget(targetA));
   await drain();
   render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-  expect(screen.queryByRole("button", { name: "取消连接" })).toBeNull();
-  expect(screen.getByRole("button", { name: "返回列表" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+  expect(
+    screen.queryByRole("button", { name: expectedCopy("remote.cancelConnection") }),
+  ).toBeNull();
+  expect(screen.getByRole("button", { name: expectedCopy("remote.selection.back") })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("common.close") }));
   await drain();
   expect(onOpenChange).toHaveBeenLastCalledWith(false);
   expect(result.current.connectingStep.cancelled).toBe(false);
@@ -1132,7 +1145,9 @@ it("设置新建直接进入 SSH 分类表单，切换和候选只准备配置�
   await drain();
   expect(result.current.currentStep).toBe("settings");
   expect(result.current.settingsStep.kind).toBe("ssh");
-  expect(result.current.connectingStep.backToDevicesLabel).toBe("新建连接");
+  expect(result.current.connectingStep.backToDevicesLabel).toBe(
+    expectedCopy("remote.settingsStepTitle"),
+  );
   expect(result.current.settingsStep.availableKinds).not.toContain("wsl");
   act(() => {
     result.current.settingsStep.onHostChange("first.example.com");
@@ -1187,12 +1202,12 @@ it("分类表单允许发现失败时手动添加，失败与没有运行容器�
   }
   render(createElement(Settings));
   fireEvent.click(screen.getByRole("button", { name: "Docker", exact: true }));
-  await screen.findAllByText(zhCN["remote.optionsLoadFailed"]);
-  expect(screen.queryByText(zhCN["docker.noContainers"])).toBeNull();
+  await screen.findAllByText(expectedCopy("remote.optionsLoadFailed"));
+  expect(screen.queryByText(expectedCopy("docker.noContainers"))).toBeNull();
   const input = screen.getByTestId("docker-container-input");
   fireEvent.change(input, { target: { value: "manual-container" } });
   expect(props.onConnect).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "添加并连接" }));
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.addAndConnect") }));
   await waitFor(() => expect(props.onConnect).toHaveBeenCalled());
 });
 
@@ -1467,7 +1482,9 @@ it("后台完成后设备已断开，旧继续不交付成功且保留可处理�
   };
   await act(async () => result.current.minimizedProgress!.onResume());
   expect(connected).not.toHaveBeenCalled();
-  expect(result.current.minimizedProgress?.error).toContain("设备");
+  expect(result.current.minimizedProgress?.error).toContain(
+    expectedCopy("project.connectionUnavailable"),
+  );
   expect(props.onConnect).toHaveBeenCalledTimes(1);
 });
 
@@ -1843,8 +1860,10 @@ it.each(editedUpgradeTargets)(
     expect(onConnect).toHaveBeenCalledOnce();
     expect(result.current.connectingStep.target).toMatchObject(target);
     render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "更新远端" })).toBeNull();
+    expect(screen.getByRole("button", { name: expectedCopy("remote.action.retry") })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("remote.action.update-server") }),
+    ).toBeNull();
   },
 );
 
@@ -1859,8 +1878,12 @@ it("快照校验后 Host 拒绝改址，旧升级退出且显式重试保留原�
   expect(props.onConnect).not.toHaveBeenCalled();
   expect(props.onSelectProject).not.toHaveBeenCalled();
   render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-  expect(screen.queryByRole("button", { name: "更新远端" })).toBeNull();
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "重试" })));
+  expect(
+    screen.queryByRole("button", { name: expectedCopy("remote.action.update-server") }),
+  ).toBeNull();
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("remote.action.retry") })),
+  );
   await waitFor(() =>
     expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/repo-b", undefined),
   );
@@ -1933,7 +1956,7 @@ it("WSL 升级缺少已解析身份时只提供重试", async () => {
   await waitFor(() => expect(result.current.connectingStep.loading).toBe(false));
   expect(ports.management.updateSource).not.toHaveBeenCalled();
   render(createElement(RemoteConnectionConnectingStep, result.current.connectingStep));
-  expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: expectedCopy("remote.action.retry") })).toBeTruthy();
 });
 
 it.each(editedUpgradeTargets)(

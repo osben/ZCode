@@ -7,6 +7,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { WORKSPACE_FILE_ADD_TO_CHAT_EVENT } from "@/lib/workspaceFileDrag.js";
 import { downloadImagePreview } from "@/components/ai-elements/image-preview-dialog.js";
 import { toast } from "@/components/ui/toast.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 vi.mock("@/components/ai-elements/image-preview-dialog.js", () => ({
   downloadImagePreview: vi.fn(),
@@ -29,7 +30,7 @@ function setup(fileReference: typeof reference | null = reference) {
   const result = render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(ImagePreviewContent, {
         title: "image.png",
         imageSource: "data:image/png,test",
@@ -64,11 +65,17 @@ describe("image preview actions", () => {
     try {
       const view = setup();
       view.open();
-      expect(view.getByRole("menuitem", { name: "复制图片" })).toBeDefined();
-      expect(view.getByRole("menuitem", { name: "下载图片" })).toBeDefined();
-      fireEvent.click(view.getByRole("menuitem", { name: "添加到聊天" }));
+      expect(
+        view.getByRole("menuitem", { name: expectedCopy("preview.image.copy") }),
+      ).toBeDefined();
+      expect(
+        view.getByRole("menuitem", { name: expectedCopy("markdownImage.download") }),
+      ).toBeDefined();
+      fireEvent.click(
+        view.getByRole("menuitem", { name: expectedCopy("workspaceFileTree.addToChat") }),
+      );
       await waitFor(() => expect(received).toEqual([reference]));
-      expect(toast).toHaveBeenCalledWith("已添加到聊天");
+      expect(toast).toHaveBeenCalledWith(expectedCopy("preview.image.added"));
     } finally {
       window.removeEventListener(WORKSPACE_FILE_ADD_TO_CHAT_EVENT, handler);
     }
@@ -79,7 +86,9 @@ describe("image preview actions", () => {
     view.open();
     // 显式无引用时，不允许把图片 URL 或远端路径当作本地文件写入草稿。
     expect(
-      view.getByRole("menuitem", { name: "添加到聊天" }).getAttribute("data-disabled"),
+      view
+        .getByRole("menuitem", { name: expectedCopy("workspaceFileTree.addToChat") })
+        .getAttribute("data-disabled"),
     ).not.toBeNull();
   });
 
@@ -87,22 +96,24 @@ describe("image preview actions", () => {
     vi.mocked(downloadImagePreview).mockResolvedValue({ kind: "started" });
     const view = setup();
     view.open();
-    fireEvent.click(view.getByRole("menuitem", { name: "下载图片" }));
+    fireEvent.click(view.getByRole("menuitem", { name: expectedCopy("markdownImage.download") }));
     await waitFor(() =>
       expect(downloadImagePreview).toHaveBeenCalledWith(
         { alt: "image.png", filename: "image.png", src: "data:image/png,test" },
         undefined,
       ),
     );
-    expect(toast).toHaveBeenCalledWith("图片下载已开始");
+    expect(toast).toHaveBeenCalledWith(expectedCopy("markdownImage.downloadStarted"));
   });
 
   it("reports an unhandled composer reference instead of claiming it was added", async () => {
     const view = setup();
     view.open();
-    fireEvent.click(view.getByRole("menuitem", { name: "添加到聊天" }));
+    fireEvent.click(
+      view.getByRole("menuitem", { name: expectedCopy("workspaceFileTree.addToChat") }),
+    );
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith("添加失败，请先打开此工作区的可编辑聊天。"),
+      expect(toast).toHaveBeenCalledWith(expectedCopy("preview.image.addFailed")),
     );
   });
 
@@ -113,7 +124,7 @@ describe("image preview actions", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(SvgPreviewContent, {
           title: "latin1.svg",
           svgContent: "<svg>replacement text</svg>",
@@ -127,7 +138,7 @@ describe("image preview actions", () => {
     fireEvent.load(image);
     expect(loadDownloadSource).not.toHaveBeenCalled();
     fireEvent.contextMenu(view.container.querySelector("[data-image-preview]")!);
-    fireEvent.click(view.getByRole("menuitem", { name: "下载图片" }));
+    fireEvent.click(view.getByRole("menuitem", { name: expectedCopy("markdownImage.download") }));
     await waitFor(() =>
       expect(downloadImagePreview).toHaveBeenCalledWith(
         { alt: "latin1.svg", filename: "latin1.svg", src: source },

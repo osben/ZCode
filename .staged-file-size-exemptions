@@ -308,3 +308,6 @@ packages/ui/src/settingsPageHelpers.tsx
 packages/ui/test/taskListItemHoverActions.test.ts
 # TEMPORARY upstream 3.16.1 sync (ui fix G5)
 packages/services/src/window-controller/windowHostControllerProjection.ts
+# TEMPORARY upstream 3.16.1 sync (ui): oversize test files converted to English copy locators; split into sibling modules in UI-2.
+packages/ui/test/sshDialogFlow.test.ts
+packages/ui/test/remoteConnectionFlowRecovery.test.ts
