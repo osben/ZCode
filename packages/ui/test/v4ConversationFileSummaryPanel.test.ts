@@ -9,6 +9,7 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const { collapsibleOpenChanges, openSplitButtonProps } = vi.hoisted(() => ({
   collapsibleOpenChanges: [] as Array<(open: boolean) => void>,
@@ -37,12 +38,22 @@ vi.mock("@/components/ui/collapsible.js", async () => {
   };
 });
 
+// Radix Checkbox needs a real DOM (Element.closest); the minimal test DOM does not provide it.
+vi.mock("@/components/ui/checkbox.js", async () => {
+  const React = await import("react");
+  return { Checkbox: () => React.createElement("span", { "data-slot": "checkbox" }) };
+});
+
 vi.mock("@/OpenSplitButton.js", async () => {
   const React = await import("react");
   return {
     OpenSplitButton: (props: Record<string, unknown>) => {
       openSplitButtonProps.push(props);
-      return React.createElement("button", { type: "button" }, "打开");
+      return React.createElement(
+        "button",
+        { type: "button" },
+        expectedCopy("chat.changeSummary.openInEditor"),
+      );
     },
   };
 });
@@ -67,6 +78,48 @@ function header(overrides: Partial<TurnHeaderRow> = {}): TurnHeaderRow {
     },
     ...overrides,
   };
+}
+
+function renderPanel(contextOverrides: Partial<ConversationRowRenderContext> = {}) {
+  const context: ConversationRowRenderContext = {
+    workspacePath: "/workspace",
+    theme: "system",
+    codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+    fetchFileChanges: async () => ({
+      files: 1,
+      additions: 11,
+      deletions: 0,
+      items: [
+        {
+          path: "/workspace/input.html",
+          additions: 11,
+          deletions: 0,
+          writeCount: 1,
+          toolNames: ["Write"],
+          patches: [
+            {
+              oldStart: 1,
+              oldLines: 0,
+              newStart: 1,
+              newLines: 11,
+              lines: ["+<html>"],
+            },
+          ],
+        },
+      ],
+    }),
+    ...contextOverrides,
+  };
+  return renderToStaticMarkup(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(ConversationFileSummaryPanel, {
+        header: header(),
+        context,
+      }),
+    ),
+  );
 }
 
 function createMinimalElement(ownerDocument: Document, tagName = "div") {
@@ -174,6 +227,19 @@ function collectText(node: unknown): string {
   return typeof candidate.textContent === "string" ? candidate.textContent : "";
 }
 
+function collectClassNames(node: unknown): string[] {
+  if (!node || typeof node !== "object") return [];
+  const candidate = node as {
+    attributes?: Map<string, string>;
+    childNodes?: unknown[];
+  };
+  const ownClassName = candidate.attributes?.get("class");
+  return [
+    ...(ownClassName ? [ownClassName] : []),
+    ...(candidate.childNodes?.flatMap((child) => collectClassNames(child)) ?? []),
+  ];
+}
+
 afterEach(() => {
   collapsibleOpenChanges.length = 0;
   openSplitButtonProps.length = 0;
@@ -202,7 +268,7 @@ describe("ConversationFileSummaryPanel", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(ConversationFileSummaryPanel, {
               header: header({
                 fileChanges: { files: 2, additions: 77, deletions: 3, state: "active" },
@@ -220,7 +286,9 @@ describe("ConversationFileSummaryPanel", () => {
         );
       });
       expect(fetchFileChanges).toHaveBeenCalledTimes(1);
-      expect(collectText(container)).toContain("1 个文件已更改");
+      expect(collectText(container)).toContain(
+        expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+      );
       expect(collectText(container)).toContain("+7");
       expect(collectText(container)).toContain("-2");
       expect(collectText(container)).not.toContain("+77");
@@ -240,7 +308,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -283,7 +351,7 @@ describe("ConversationFileSummaryPanel", () => {
     const render = (rowId: number) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({ rowId, entityId: `header-${rowId}` }),
           context,
@@ -321,7 +389,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -335,7 +403,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       ),
     );
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     await act(async () => collapsibleOpenChanges.at(-1)?.(true));
     expect(fetchFileChanges).toHaveBeenCalledTimes(2);
     expect(collectText(container)).toBe("");
@@ -380,7 +450,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             context,
@@ -388,7 +458,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       );
     });
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
 
     await act(async () => {
       collapsibleOpenChanges.at(-1)?.(true);
@@ -399,9 +471,10 @@ describe("ConversationFileSummaryPanel", () => {
     expect(text).toContain("input.html");
     expect(text).toContain("+11");
     expect(text).not.toContain("2 次修改");
-    expect(text).toContain("审查");
-    expect(text).toContain("打开");
-    expect(text).not.toContain("暂时无法预览这份 Diff。");
+    expect(text).toContain(expectedCopy("chat.changeSummary.review"));
+    expect(text).toContain(expectedCopy("chat.changeSummary.openInEditor"));
+    expect(collectClassNames(container)).toContain("w-full bg-background/50 overflow-hidden");
+    expect(text).not.toContain(expectedCopy("chat.changeSummary.diffUnavailable"));
     expect(openSplitButtonProps.at(-1)).toMatchObject({
       hideOpenWithMenu: false,
       target: {
@@ -416,6 +489,116 @@ describe("ConversationFileSummaryPanel", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+
+  it("flat row keeps the basename visible and collapses the directory with a leading ellipsis", async () => {
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    const context: ConversationRowRenderContext = {
+      workspacePath: "/workspace",
+      theme: "system",
+      codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+      fetchFileChanges: async () => ({
+        files: 1,
+        additions: 11,
+        deletions: 0,
+        items: [
+          {
+            path: "/workspace/src/v4/input.html",
+            additions: 11,
+            deletions: 0,
+            writeCount: 1,
+            toolNames: ["Write"],
+            patches: [],
+          },
+        ],
+      }),
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(ConversationFileSummaryPanel, {
+            header: header(),
+            context,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      collapsibleOpenChanges.at(-1)?.(true);
+      await Promise.resolve();
+    });
+
+    // The label reads as one path: the directory goes before the basename.
+    const text = collectText(container);
+    expect(text).toContain("input.html");
+    expect(text).toContain("src/v4/");
+    expect(text.indexOf("src/v4/")).toBeLessThan(text.indexOf("input.html"));
+    // The directory span carries the leading-ellipsis (rtl) truncation and absorbs the width
+    // deficit before the basename; ml-1.5 keeps the icon spacing while the label has no flex
+    // gap between directory and basename; the basename keeps truncate only as degradation.
+    const classNames = collectClassNames(container);
+    expect(classNames).toContain(
+      "ml-1.5 min-w-[2ch] shrink-[10000] truncate text-ui-base text-foreground-subtlest [direction:rtl] [text-align:left]",
+    );
+    expect(classNames).toContain("truncate text-ui-base font-medium text-foreground");
+
+    await act(async () => root.unmount());
+  });
+
+  it("flat row spaces a workspace-root file from its icon when there is no directory span", async () => {
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    const context: ConversationRowRenderContext = {
+      workspacePath: "/workspace",
+      theme: "system",
+      codePreviewSettings: DEFAULT_CODE_PREVIEW_SETTINGS,
+      fetchFileChanges: async () => ({
+        files: 1,
+        additions: 1,
+        deletions: 0,
+        items: [
+          {
+            path: "/workspace/README.md",
+            additions: 1,
+            deletions: 0,
+            writeCount: 1,
+            toolNames: ["Write"],
+            patches: [],
+          },
+        ],
+      }),
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(ConversationFileSummaryPanel, {
+            header: header(),
+            context,
+          }),
+        ),
+      );
+    });
+    await act(async () => {
+      collapsibleOpenChanges.at(-1)?.(true);
+      await Promise.resolve();
+    });
+
+    const text = collectText(container);
+    expect(text).toContain("README.md");
+    // No directory span exists for a root-level file, so the spacing class sits on the label
+    // wrapper and applies to the first text span after the icon.
+    const classNames = collectClassNames(container);
+    expect(classNames).toContain("inline-flex min-w-0 max-w-full items-center [&>img+*]:ml-1.5");
+    expect(classNames.some((name) => name.includes("min-w-[2ch]"))).toBe(false);
+
+    await act(async () => root.unmount());
   });
 
   it("运行中详情进入终态后丢弃旧 revision 结果并重新读取", async () => {
@@ -465,7 +648,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForState = (state: TurnHeaderRow["state"]) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({ state }),
           context,
@@ -528,7 +711,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForFileState = (state: "active" | "reverted") =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({
             fileChanges: {

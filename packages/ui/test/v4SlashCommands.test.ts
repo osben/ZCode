@@ -47,14 +47,45 @@ describe("parseV4VisibleSlashCommand", () => {
     ).toBeNull();
   });
 
-  it.each(["/plan", "  /PLAN  帮我做 X  ", "/planner 做普通任务"])(
-    "does not interpret %s as a send-time command",
-    (text) => {
-      expect(parseV4VisibleSlashCommand(text)).toBeNull();
-      expect(parseV4VisibleSlashCommand(text, [{ ref: "zcode-artifact://a" }])).toBeNull();
-      expect(parseV4VisibleSlashCommand(text, [], { contextAttachmentCount: 1 })).toBeNull();
-    },
-  );
+  it("parses /plan as a mode shortcut and keeps only the task argument", () => {
+    expect(parseV4VisibleSlashCommand("/plan", [])).toEqual({
+      kind: "planShortcut",
+      task: "",
+      displayText: "/plan",
+    });
+    expect(parseV4VisibleSlashCommand("  /plan    ", [])).toEqual({
+      kind: "planShortcut",
+      task: "",
+      displayText: "/plan",
+    });
+    expect(parseV4VisibleSlashCommand("  /PLAN  帮我做 X  ", [])).toEqual({
+      kind: "planShortcut",
+      task: "帮我做 X",
+      displayText: "/PLAN  帮我做 X",
+    });
+    expect(parseV4VisibleSlashCommand("/planner 做普通任务", [])).toBeNull();
+  });
+
+  it("recognizes /plan with attachments or context for ordinary Plan submission", () => {
+    expect(
+      parseV4VisibleSlashCommand("/plan 检查附件", [
+        { ref: "zcode-artifact://a", fileName: "a.txt", mime: "text/plain", bytes: 1 },
+      ]),
+    ).toMatchObject({
+      kind: "planShortcut",
+      task: "检查附件",
+    });
+    expect(
+      parseV4VisibleSlashCommand("/plan 检查网页", [], { contextAttachmentCount: 1 }),
+    ).toMatchObject({
+      kind: "planShortcut",
+      task: "检查网页",
+    });
+    expect(parseV4VisibleSlashCommand("/plan", [{}])).toMatchObject({
+      kind: "planShortcut",
+      task: "",
+    });
+  });
 
   it("does not consume commands with web element contexts", () => {
     expect(
