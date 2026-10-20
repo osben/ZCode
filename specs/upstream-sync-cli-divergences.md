@@ -25,7 +25,8 @@ is adopted or the final sync PR retires the compatibility member.
 
 ## Upstream requirements that depend on other packages (slice 3, bootstrap)
 
-- Bundled official plugins declare built runtime artifacts (`dist/server.mjs`, `dist/ui/*` for the document plugins) in `official-plugin-definitions.ts`. Those artifacts and the plugin manifests (`office` field, build scripts) come from the plugin-package sync, which is not part of the bootstrap slice. Until that sync lands, a checkout without built plugin runtimes fails the tests listed in the PR body (visualize skill gate, bundled plugin resilience, plugin discovery, skill discovery). This is an environment gap, not a bootstrap behavior change.
+- Bundled official plugins declare built runtime artifacts (`dist/server.mjs`, `dist/ui/*` for the document plugins; `dist/mcp/server.js` for node-repl-host) in `official-plugin-definitions.ts`. Slice 4a (plugin packages and build wiring) builds them: `documents`, `pdf`, `presentations`, `spreadsheets` run `packages/office-runtime/scripts/build.mjs`; `node-repl-host` and `browser-use` run their `tsc && scripts/build.mjs`. CI builds the same set in the unit job (`.github/workflows/pr-checks.yml`, "Build workspace packages needed by unit tests"). Without those artifacts the bootstrap tests fail (visualize skill gate, bundled plugin resilience, plugin discovery, skill discovery).
+- The icon-migration test (`bootstrap/tests/plugins.test.ts`) waits for the mocked `fetch` to start before resolving it. The fork loads TLS CA certificates asynchronously (`adapters/src/http`), so `fetch` starts after a tick, and the test keeps its synchronous "does not block overview callers" assertion.
 
 ## Review
 
