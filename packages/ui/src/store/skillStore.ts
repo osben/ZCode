@@ -9,6 +9,7 @@ import {
 import type { ISkillsService } from "@zcode/services";
 import { shouldExposeE2EStoreBridge } from "@/lib/e2eStoreBridge.js";
 import { logger } from "@/logger.js";
+import { getServiceAuthorityId } from "@/store/serviceAuthorityKey.js";
 
 interface SkillStoreState {
   workspacePath: string | null;
@@ -39,13 +40,15 @@ interface SkillStoreState {
 }
 
 const inFlightSkillLoads = new Map<string, ReturnType<ISkillsService["list"]>>();
-
+let activeSkillProjectionKey: string | null = null;
+let loadedSkillServiceAuthorityId: number | null = null;
 function getSkillLoadKey(
   workspacePath: string,
   provider: ZCodeProvider,
+  skillsService: ISkillsService,
   workspaceIdentity?: string,
 ): string {
-  return `${workspaceIdentity?.trim() || workspacePath}::${provider}`;
+  return `${getServiceAuthorityId(skillsService)}::${workspaceIdentity?.trim() || workspacePath}::${provider}`;
 }
 
 function loadSkillsOnce(
@@ -55,17 +58,17 @@ function loadSkillsOnce(
   workspaceIdentity?: string,
   options: { bypassCache?: boolean } = {},
 ): ReturnType<ISkillsService["list"]> {
-  const key = getSkillLoadKey(workspacePath, provider, workspaceIdentity);
+  const key = getSkillLoadKey(workspacePath, provider, skillsService, workspaceIdentity);
   if (!options.bypassCache) {
     const current = inFlightSkillLoads.get(key);
     if (current) {
       return current;
     }
   }
-  // After copying or removing a skill in the shared directory, refresh must return the latest result.
-  // Reusing an in-flight Promise would return an old scan and keep newly added skills out of chat mentions.
+  // 复制/移除技能到通用目录后 refresh 必须拿到最新结果。
+  // 若复用 in-flight Promise 会返回旧扫描结果，导致 chat mention 看不到新加的技能。
   const request = skillsService.list({ workspacePath, workspaceIdentity, provider }).finally(() => {
-    // Clear only if this is still the active in-flight request, so concurrent requests are not overwritten.
+    // 仅在自己是当前活跃 in-flight 时清理，避免覆盖其他并发请求。
     if (inFlightSkillLoads.get(key) === request) {
       inFlightSkillLoads.delete(key);
     }
@@ -111,14 +114,18 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
       });
       return;
     }
+    const serviceAuthorityId = getServiceAuthorityId(skillsService);
+    const projectionKey = `${serviceAuthorityId}::${normalizedWorkspaceIdentity || workspacePath}::${provider}`;
+    activeSkillProjectionKey = projectionKey;
     const hasCachedSkills =
       currentState.skills.length > 0 &&
+      loadedSkillServiceAuthorityId === serviceAuthorityId &&
       currentState.loadedWorkspacePath === workspacePath &&
       currentState.loadedWorkspaceIdentity === normalizedWorkspaceIdentity &&
       currentState.loadedProvider === provider;
-    // Changing the agent filter triggers initialize.
-    // Always setting loading=true previously replaced the list with a loading state before rendering results, causing flicker.
-    // Reuse only a cache for the same workspace+provider so another skill set is not briefly shown in the current session.
+    // 切换 agent 筛选时会触发 initialize。
+    // 之前总是 loading=true，会先清空成“加载中”再渲染结果，导致列表闪烁。
+    // 这里改成“只有同一 workspace+provider 的缓存才允许复用”，避免上一套技能误显示到当前会话里。
     set({
       workspacePath,
       workspaceIdentity: normalizedWorkspaceIdentity,
@@ -129,15 +136,17 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
       error: null,
     });
     try {
-      // The chat input can mount multiple skill consumers at once (for example, $ mentions and the / panel).
-      // They previously issued identical list requests concurrently on first render, turning service-layer mirror-sync contention into visible errors.
-      // Deduplicate by workspace+provider so consumers in the same round share one request result.
+      // 聊天输入区会同时挂载多个技能消费者（例如 $ mention 与 / 面板）。
+      // 之前它们首屏会并发触发相同的 list 请求，进而把服务层镜像同步竞争放大成用户可见报错。
+      // 这里先按 workspace+provider 去重，同一轮只复用一个请求结果。
       const result = await loadSkillsOnce(
         workspacePath,
         provider,
         skillsService,
         normalizedWorkspaceIdentity ?? undefined,
       );
+      if (activeSkillProjectionKey !== projectionKey) return;
+      loadedSkillServiceAuthorityId = serviceAuthorityId;
       set({
         skills: result.skills,
         capability: result.capability,
@@ -147,6 +156,7 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
         loadedProvider: provider,
       });
     } catch (error) {
+      if (activeSkillProjectionKey !== projectionKey) return;
       logger.error("[skills] initialize failed", {
         workspacePath,
         provider,
@@ -169,16 +179,27 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
     const workspaceIdentityFromState =
       workspaceIdentity?.trim() || get().workspaceIdentity || undefined;
     const provider = normalizeAgentProviderToZCodeAgent(get().provider);
-    const hasCachedSkills = get().skills.length > 0;
-    // Toggling a skill triggers refresh. Previously, loading was set to true every time,
-    // making the Settings list switch to a loading state and back, which caused the whole list to flicker.
-    // Show blocking loading only on the first load without a cache; refresh in the background and retain the current list when cached.
-    set({ loading: !hasCachedSkills, error: null });
-    // refresh must return the latest server result.
-    // Calling loadSkillsOnce directly would reuse an old in-flight request,
-    // leaving chat mentions with a stale list after a skill is copied to the shared directory.
-    // Explicitly bypass the in-flight cache during refresh to force a new request.
-    inFlightSkillLoads.delete(getSkillLoadKey(workspacePath, provider, workspaceIdentityFromState));
+    const serviceAuthorityId = getServiceAuthorityId(skillsService);
+    const projectionKey = `${serviceAuthorityId}::${workspaceIdentityFromState || workspacePath}::${provider}`;
+    activeSkillProjectionKey = projectionKey;
+    const hasCachedSkills =
+      get().skills.length > 0 && loadedSkillServiceAuthorityId === serviceAuthorityId;
+    // Bugfix: 开关技能后会触发 refresh，之前每次都把 loading 置 true，
+    // Settings 列表会先切到“加载中”再切回数据，用户看到整列表闪烁。
+    // 这里改成“仅首次无缓存时显示阻塞 loading”，有缓存时后台刷新并保留当前列表。
+    set({
+      skills: hasCachedSkills ? get().skills : [],
+      capability: hasCachedSkills ? get().capability : null,
+      loading: !hasCachedSkills,
+      error: null,
+    });
+    // Bugfix: refresh 必须保证拿到「最新一次」的服务端结果。
+    // 此前直接调 loadSkillsOnce 会复用 in-flight 的旧请求，
+    // 导致复制 skill 到通用目录后 chat mention 仍看到旧列表。
+    // 这里在 refresh 时显式跳过 in-flight 缓存，强制发起一次新请求。
+    inFlightSkillLoads.delete(
+      getSkillLoadKey(workspacePath, provider, skillsService, workspaceIdentityFromState),
+    );
     try {
       const result = await loadSkillsOnce(
         workspacePath,
@@ -186,6 +207,8 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
         skillsService,
         workspaceIdentityFromState,
       );
+      if (activeSkillProjectionKey !== projectionKey) return;
+      loadedSkillServiceAuthorityId = serviceAuthorityId;
       set({
         skills: result.skills,
         capability: result.capability,
@@ -195,6 +218,7 @@ export const useSkillStore = create<SkillStoreState>((set, get) => ({
         loadedProvider: provider,
       });
     } catch (error) {
+      if (activeSkillProjectionKey !== projectionKey) return;
       logger.error("[skills] refresh failed", {
         workspacePath,
         provider,
@@ -263,6 +287,6 @@ declare global {
 }
 
 if (shouldExposeE2EStoreBridge()) {
-  // WDIO must explicitly enable this E2E diagnostic entry point. Do not reuse ZCODE_ENV=test, which could expose the mutable global store in product test environments.
+  // E2E 诊断入口必须由 WDIO 显式打开，不能复用 ZCODE_ENV=test，避免产品测试环境暴露可变全局 store。
   window.__skillStoreE2E = useSkillStore;
 }

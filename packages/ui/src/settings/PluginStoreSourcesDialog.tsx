@@ -11,7 +11,7 @@ import {
 } from "@/settings/pluginStoreListing.js";
 import { DEFAULT_MARKETPLACE_ID } from "@/settings/recommendedPlugins.js";
 
-// The official marketplace cannot be removed; it would be reseeded at startup, confusing users when it came back after deletion.
+// 官方市场不可移除：移除后启动时会被重新补种，只会造成「删了又回来」的困惑。
 function isRemovableMarketplace(marketplace: ZCodePluginMarketplaceSummary): boolean {
   if (isPublicStoreMarketplaceId(marketplace.id)) return false;
   if (marketplace.id === DEFAULT_MARKETPLACE_ID) return false;
@@ -41,21 +41,21 @@ export function PluginStoreSourceRefreshFailure({
   );
 }
 
-/** Header gear → marketplace source management: list registered marketplaces and allow refresh/removal (use the New button to add one). */
+/** 顶栏店铺图标 → 市场源管理：列出已登记市场，支持刷新与移除（新增走 New 按钮）。 */
 export function PluginStoreSourcesDialog({
   open,
   onOpenChange,
   marketplaces,
   onUpdateMarketplace,
   onRemoveMarketplace,
-  operationId,
+  activeOperations,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   marketplaces: ZCodePluginMarketplaceSummary[];
   onUpdateMarketplace: (marketplace: string) => void;
   onRemoveMarketplace: (marketplace: string) => void;
-  operationId: string | null;
+  activeOperations: ReadonlyArray<{ id: string }>;
 }) {
   const { intl, locale } = useZCodeIntl();
   const claudeCodePlugins = intl.formatMessage({
@@ -78,8 +78,12 @@ export function PluginStoreSourcesDialog({
             </p>
           ) : (
             sortedMarketplaces.map((marketplace) => {
-              const updating = operationId === `marketplace:update:${marketplace.id}`;
-              const removing = operationId === `marketplace:remove:${marketplace.id}`;
+              const updating = activeOperations.some(
+                (operation) => operation.id === `marketplace:update:${marketplace.id}`,
+              );
+              const removing = activeOperations.some(
+                (operation) => operation.id === `marketplace:remove:${marketplace.id}`,
+              );
               return (
                 <div
                   key={marketplace.id}
@@ -110,7 +114,7 @@ export function PluginStoreSourcesDialog({
                         : ""}
                     </div>
                     {marketplace.refreshFailure &&
-                    // Do not show a notification when refreshing claude-plugins-official fails (same as pluginManagementStore.updateMarketplace).
+                    // claude-plugins-official 的刷新失败不提示（同 pluginManagementStore.updateMarketplace）。
                     marketplace.id !== CLAUDE_OFFICIAL_PLUGIN_MARKETPLACE_ID ? (
                       <PluginStoreSourceRefreshFailure failure={marketplace.refreshFailure} />
                     ) : null}

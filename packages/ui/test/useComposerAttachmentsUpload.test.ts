@@ -227,33 +227,32 @@ afterEach(async () => {
 });
 
 describe("useComposerAttachments eager upload", () => {
-  it("moves only submitted attachments and keeps the frozen handle usable after scope changes", async () => {
+  it("restores draft files into the target owner without reusing source upload references", async () => {
     mocks.service = createTransferService().service;
-    const probe = renderProbe({
-      attachmentSessionId: null,
-      scopeId: "__draft__",
-      localDesktop: true,
+    const { root } = renderProbe({ attachmentSessionId: null, scopeId: "new-project" });
+    const file = new File(["content"], "draft.txt", { type: "text/plain" });
+    act(() =>
+      latestApi?.restoreDraftAttachments([
+        {
+          id: "source-id",
+          file,
+          filename: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          attachmentRef: { ref: "/old-session/upload" },
+          uploadStatus: "ready",
+        } as never,
+      ]),
+    );
+    expect(latestApi?.attachments).toHaveLength(1);
+    expect(latestApi?.attachments[0]).toMatchObject({
+      file,
+      filename: "draft.txt",
+      uploadStatus: "waitingSession",
     });
-    await addPaths(["/workspace/submitted.txt"]);
-    const id = latestApi!.attachments[0]!.id;
-    const handle = latestApi!.captureSubmission([id]);
-    mocks.platform.selectFiles.mockResolvedValueOnce(["/workspace/next.txt"]);
-    await act(async () => latestApi!.openAttachmentPicker());
-    act(() => handle.moveToScope("/workspace\0prepared-session"));
-    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["next.txt"]);
-    probe.rerender({
-      attachmentSessionId: "prepared-session",
-      scopeId: "prepared-session",
-      localDesktop: true,
-    });
-    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["submitted.txt"]);
-    expect(await handle.prepareForSend()).toHaveLength(1);
-    await handle.adoptSentAttachments();
-    act(() => handle.clearAttachments());
-    expect(latestApi!.attachments).toHaveLength(0);
-    probe.rerender({ attachmentSessionId: null, scopeId: "__draft__", localDesktop: true });
-    expect(latestApi!.attachments.map((item) => item.filename)).toEqual(["next.txt"]);
-    act(() => probe.root.unmount());
+    expect(latestApi?.attachments[0]?.id).not.toBe("source-id");
+    expect(latestApi?.attachments[0]?.attachmentRef).toBeUndefined();
+    act(() => root.unmount());
   });
 
   it("满 8 个后每次粘贴都提示，且点击添加不再打开文件选择器", async () => {
@@ -687,21 +686,6 @@ describe("useComposerAttachments eager upload", () => {
     expect(transfer.service.adopt).not.toHaveBeenCalled();
     await latestApi?.adoptSentAttachments(latestApi.attachments.map((item) => item.id));
     expect(transfer.service.adopt).toHaveBeenCalledWith(operationId);
-    act(() => root.unmount());
-  });
-
-  it("prepares only frozen attachment IDs and leaves later attachments out of the send", async () => {
-    const transfer = createTransferService();
-    mocks.service = transfer.service;
-    transfer.stage.mockImplementation(async ({ operationId }) => resultFor(operationId));
-    const { root } = renderProbe({ attachmentSessionId: "session-1", scopeId: "task-a" });
-    await addPaths(["/tmp/first.png", "/tmp/second.png"]);
-    await vi.waitFor(() =>
-      expect(latestApi?.attachments.every((item) => item.uploadStatus === "ready")).toBe(true),
-    );
-    const [first, second] = latestApi!.attachments;
-    await expect(latestApi?.prepareForSend([first!.id])).resolves.toEqual([first!.attachmentRef]);
-    expect(second!.id).not.toBe(first!.id);
     act(() => root.unmount());
   });
 

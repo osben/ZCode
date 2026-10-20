@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- Controller source aggregation, routing, subscriptions, and lifecycle form one Host boundary. */
 import { Emitter } from "@zcode/rpc";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import type { ZCodeTaskMeta, ZCodeWorkspaceEvent } from "@zcode/shared";
 import type {
   ControllerSubscribeParams,
   WindowHostControllerTaskRow,
@@ -171,6 +171,9 @@ export function createWindowHostControllerRuntime(options: {
     { taskService: IZCodeTaskService; promise: Promise<void> }
   >();
   const sourceRefreshGenerations = new Map<string, number>();
+  // Single producer of live-only unread signals (fired from the owning source's workspace event, never replayed).
+  // Owner: this runtime; attachment services only forward its event. Attachments must not own or dispose it.
+  const unreadSignalEmitter = new Emitter<WindowHostTaskUnreadSignal>();
   const sourceLiveOverlays = new Map<string, WindowHostControllerSessionOverlay[]>();
   const sourceSessionObservers = new Map<
     string,
@@ -448,8 +451,9 @@ export function createWindowHostControllerRuntime(options: {
         });
         break;
       case "mark-unread":
-        await service.setTaskUnread({ ...base, unread: true });
-        break;
+        // The write reply carries the marker this command created. A list refresh after the write may already show a
+        // newer marker, so the caller's compare-and-clear must use this reply, not the projection.
+        return service.setTaskUnread({ ...base, unread: true });
       case "open":
       case "resume":
         // The Controller validates the unique source for open/resume; conversation operations still use the scoped facade.
@@ -498,7 +502,11 @@ export function createWindowHostControllerRuntime(options: {
           ...(resolved.scope.workspaceIdentity
             ? { workspaceIdentity: resolved.scope.workspaceIdentity }
             : {}),
-        })(() => {
+        })((event) => {
+          // Host-confirmed background terminal states are live-only unread signals; they are emitted before the refresh so the
+          // UI can persist the marker by identity, and are never derived from list snapshots or reconciliation refreshes.
+          const unreadSignal = toBackgroundCompletionSignal(resolved.scope, event);
+          if (unreadSignal) unreadSignalEmitter.fire(unreadSignal);
           // A workspace event may arrive while the first list refresh is reading; directly reusing
           // the single-flight would swallow the event. Wait for the in-flight read to finish, then merge events into the next refresh.
           const inFlight = sourceRefreshFlights.get(key)?.promise;
@@ -835,25 +843,32 @@ export function createWindowHostControllerRuntime(options: {
 
   function createAttachmentService(): IWindowControllerService & { dispose(): void } {
     const frameEmitter = new Emitter<WindowHostControllerFrame>();
-    // Live-only unread signal (never replayed by snapshots). No producer is wired in the fork yet; the
-    // unread mutation path still goes through setTaskUnread. Wiring it is part of the UI sidebar PR.
-    const unreadSignalEmitter = new Emitter<WindowHostTaskUnreadSignal>();
     const subscriptions = new Map<string, { dispose(): void }>();
     return {
       listTaskList,
       async getTaskMeta({ address }) {
-        // Projection-backed read; the owner-direct lookup needed for unread compare-and-swap is deferred.
-        return (
-          projection
-            .getTasks()
-            .find(
-              (row) =>
-                row.address.taskId === address.taskId &&
-                row.address.workspacePath === address.workspacePath &&
-                row.address.workspaceIdentity === address.workspaceIdentity &&
-                row.address.remoteSessionId === address.remoteSessionId,
-            )?.meta ?? null
-        );
+        // Owner-direct read: unread compare-and-swap must see the owning tasks index, not a list projection that may be
+        // a stale snapshot. An unavailable owner yields null (no CAS basis) rather than a projection fallback.
+        const workspaceIdentity = address.workspaceIdentity
+          ? { workspaceIdentity: address.workspaceIdentity }
+          : {};
+        const current = options.resolveSource({
+          workspacePath: address.workspacePath,
+          ...workspaceIdentity,
+        });
+        if (!current?.taskService || current.sourceAvailability !== "online") return null;
+        if (
+          address.remoteSessionId &&
+          current.scope.kind === "remote" &&
+          current.scope.remoteSessionId !== address.remoteSessionId
+        ) {
+          return null;
+        }
+        return current.taskService.getTaskMeta({
+          taskId: address.taskId,
+          workspacePath: address.workspacePath,
+          ...workspaceIdentity,
+        });
       },
       onDynamicTaskUnreadSignal() {
         return unreadSignalEmitter.event;
@@ -863,7 +878,7 @@ export function createWindowHostControllerRuntime(options: {
           return { deletedTaskIds: [], skippedTaskIds: [], failedTaskIds: [] };
         }
         const result = await projection.mutate(address, { kind: "delete-archived-batch", taskIds });
-        if (!result || typeof result === "boolean") {
+        if (!result || typeof result === "boolean" || !("deletedTaskIds" in result)) {
           throw new Error("归档删除批次未返回逐项目标结果");
         }
         const resolved = options.resolveSource({
@@ -893,13 +908,21 @@ export function createWindowHostControllerRuntime(options: {
         return deleted === true;
       },
       async mutateTask({ address, mutation }) {
-        await projection.mutate(address, mutation as WindowHostControllerMutation);
+        const reply = await projection.mutate(address, mutation as WindowHostControllerMutation);
         const resolved = options.resolveSource({
           workspacePath: address.workspacePath,
           ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
         });
         if (resolved) {
           await refreshSource(resolved, true);
+        }
+        if (
+          mutation.kind === "mark-unread" &&
+          reply &&
+          typeof reply === "object" &&
+          "taskId" in reply
+        ) {
+          return reply;
         }
         return (
           projection
@@ -939,7 +962,6 @@ export function createWindowHostControllerRuntime(options: {
         }
         subscriptions.clear();
         frameEmitter.dispose();
-        unreadSignalEmitter.dispose();
       },
     };
   }
@@ -1060,6 +1082,7 @@ export function createWindowHostControllerRuntime(options: {
       for (const subscription of sourceEventSubscriptions.values()) {
         subscription.dispose();
       }
+      unreadSignalEmitter.dispose();
       registeredScopes.clear();
       sourceAvailability.clear();
       sourceTaskServices.clear();
@@ -1072,5 +1095,36 @@ export function createWindowHostControllerRuntime(options: {
       sourceLiveOverlays.clear();
       pendingReplacementByNextSourceKey.clear();
     },
+  };
+}
+
+/**
+ * Only the Host-confirmed `background_terminal` event with a terminal status creates an unread signal. The address uses
+ * the source scope's identity (remoteSessionId + workspace identity), never the event's path alone, so identical task
+ * IDs on another remote identity cannot be confused with this source.
+ */
+function toBackgroundCompletionSignal(
+  scope: WindowHostControllerSourceScope,
+  event: ZCodeWorkspaceEvent,
+): WindowHostTaskUnreadSignal | null {
+  if (
+    event.type !== "workspace_task_list_changed" ||
+    event.reason !== "task_status_changed" ||
+    event.unreadSignal !== "background_terminal" ||
+    !event.taskMeta ||
+    (event.taskMeta.status !== "completed" && event.taskMeta.status !== "error")
+  ) {
+    return null;
+  }
+  const workspaceIdentity = scope.workspaceIdentity ?? event.workspaceIdentity;
+  return {
+    address: {
+      ...(scope.kind === "remote" ? { remoteSessionId: scope.remoteSessionId } : {}),
+      workspacePath: scope.workspacePath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      taskId: event.taskId ?? event.taskMeta.taskId,
+    },
+    updatedAt: event.taskMeta.updatedAt,
+    status: event.taskMeta.status,
   };
 }

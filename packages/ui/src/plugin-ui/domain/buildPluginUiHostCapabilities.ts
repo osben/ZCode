@@ -18,6 +18,8 @@ export interface PluginUiHostCapabilityInput {
   canDownloadFile: boolean;
   /** Persistent surface instance: declares `experimental["zcode/surface"]: { id }` so the page can tell it is running in a pane. */
   surfaceId?: string;
+  /** 窗口恢复键，仅接受宿主派生的不透明摘要。 */
+  surfaceStateKey?: string;
 }
 
 /**
@@ -47,7 +49,14 @@ export function buildPluginUiHostCapabilities(
       ...(input.canSubscribeResources
         ? { [MCP_APPS_RESOURCE_SUBSCRIBE_EXPERIMENTAL_KEY]: {} }
         : {}),
-      ...(input.surfaceId ? { [MCP_APPS_SURFACE_EXPERIMENTAL_KEY]: { id: input.surfaceId } } : {}),
+      ...(input.surfaceId
+        ? {
+            [MCP_APPS_SURFACE_EXPERIMENTAL_KEY]: {
+              id: input.surfaceId,
+              stateKey: input.surfaceStateKey,
+            },
+          }
+        : {}),
     },
   };
 }

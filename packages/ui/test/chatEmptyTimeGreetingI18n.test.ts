@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { resolveGreetingFontSizePx } from "@/v4/ConversationDraftEmptyState.js";
 
 describe("chat empty time greeting i18n", () => {

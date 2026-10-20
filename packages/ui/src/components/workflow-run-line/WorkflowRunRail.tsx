@@ -1,8 +1,7 @@
-// Miniature rail for a workflow run (docs/dynamic-workflow/presentation.md "The sidebar run line"):
-// 6px lamps laid out in declaration order, separated by 6×1px track segments — segments the control
-// flow traversed use the strong color, and parallel stations are joined by a double-line segment;
-// beyond six stations it folds to the running station ±2 with a "+n" tail. The sidebar run line and
-// the task island's run row share this one component: a run looks the same in both places.
+import { SidebarNativeTooltip } from "@/ControlHintTooltip.js";
+// 工作流运行的迷你轨道（docs/dynamic-workflow/presentation.md「The sidebar run line」）：6px 灯按
+// 声明序排开，之间是 6×1px 的轨段——控制流走过的段用强色，并行的两站之间画双线段；超过六站时折到
+// 运行站 ±2 并带「+n」尾。侧栏运行行与任务岛的 run 行共用这一个组件：一条 run 在两处长得一样。
 import { cn } from "@/components/lib/utils.js";
 import { STATUS_DOT } from "@/components/workflow-graph/run-status-presentation.js";
 import type { WorkflowRunRail as WorkflowRunRailModel } from "@/lib/workflowRunLine.js";
@@ -38,9 +37,8 @@ export function WorkflowRunRail({
         <span key={`${station.name}:${index}`} className="flex items-center">
           {index > 0 ? (
             station.twin === true ? (
-              // Double-line segment: this station runs parallel to the previous one; control flow did
-              // not walk from that station into this one. The two 1px lines sit 2px apart (a 4px
-              // container, one line hugging each edge); width and ink rules match ordinary segments exactly.
+              // 双线段：本站与前一站并行，控制流没有从那站走到这站。两条 1px 线相距 2px
+              // （容器 4px，上下各贴一条），宽度与墨色规则与普通段完全相同。
               <span
                 aria-hidden="true"
                 data-rail-segment={station.reached ? "strong" : "faint"}
@@ -66,26 +64,29 @@ export function WorkflowRunRail({
             )
           ) : null}
           {station.hole === undefined ? (
-            <span
-              aria-hidden="true"
-              data-rail-station={station.status}
-              title={station.name}
-              className={cn("size-1.5 rounded-full", STATUS_DOT[station.status])}
-            />
+            <SidebarNativeTooltip>
+              <span
+                aria-hidden="true"
+                data-rail-station={station.status}
+                title={station.name}
+                className={cn("size-1.5 rounded-full", STATUS_DOT[station.status])}
+              />
+            </SidebarNativeTooltip>
           ) : (
-            // Hole (docs/dynamic-workflow/presentation.md "Holes on the timeline", section "The sidebar"):
-            // a dashed 6px lamp, warning-colored while waiting. Once filled it becomes an ordinary
-            // station and this branch is no longer walked.
-            <span
-              aria-hidden="true"
-              data-rail-station={station.status}
-              data-rail-hole={station.hole}
-              title={station.name}
-              className={cn(
-                "size-1.5 rounded-full border border-dashed bg-transparent",
-                station.hole === "waiting" ? "border-warning" : "border-foreground-subtlest",
-              )}
-            />
+            // 留白（docs/dynamic-workflow/presentation.md「Holes on the timeline」的「The sidebar」）：
+            // 虚线 6px 灯，等待时警示色。补全后它就是普通站，这一支不再走。
+            <SidebarNativeTooltip>
+              <span
+                aria-hidden="true"
+                data-rail-station={station.status}
+                data-rail-hole={station.hole}
+                title={station.name}
+                className={cn(
+                  "size-1.5 rounded-full border border-dashed bg-transparent",
+                  station.hole === "waiting" ? "border-warning" : "border-foreground-subtlest",
+                )}
+              />
+            </SidebarNativeTooltip>
           )}
         </span>
       ))}

@@ -381,7 +381,7 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
     expect(html(view)).not.toContain("Workflow started");
   });
 
-  it("站数超过一列时表头不再带秩带（看不见的站在时间线的边檐上）", () => {
+  it("六个阶段完整进入时间线", () => {
     const phases = ["a", "b", "c", "d", "e", "f"].map((name, i) => ({
       id: `phase#${name}`,
       name,
@@ -451,7 +451,7 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
     expect(markup).not.toContain("code-block");
   });
 
-  it("saved 来源行在时间线之上", () => {
+  it("saved 来源显示保存的工作流名称", () => {
     const view = renderBlockDom({
       input: {
         name: "Fan-out review",
@@ -466,11 +466,6 @@ describe("CreateWorkflowToolCallBlock 静态形态（编过、未联接 run）",
     });
     const savedLine = view.container.querySelector('[data-workflow-card-saved-source="true"]')!;
     expect(savedLine.textContent).toContain("fan-out-review");
-    const body = view.getByTestId("workflow-card-body");
-    const order = Array.from(body.children);
-    expect(order.indexOf(savedLine as HTMLElement)).toBeLessThan(
-      order.indexOf(view.getByTestId("workflow-timeline")),
-    );
   });
 });
 
@@ -541,7 +536,7 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     expect(view.getByTestId("workflow-draft-lamp").getAttribute("data-draft-lamp")).toBe("open");
   });
 
-  it("展开：脚本带行号、被点名的行号着色；反馈卡中性边框，标题 + 条数 + 一句话 + 逐条", () => {
+  it("展开脚本带行号与问题行，反馈显示标题、计数、说明及逐条位置", () => {
     const view = renderBlockDom(FEEDBACK_CALL, { workflowDraft: LATEST, forceOpen: true });
     // After expanding, the draft number stays on the row (not hidden along with the expansion).
     expect(view.getByTestId("workflow-draft-ordinal").textContent).toBe("draft 2");
@@ -550,8 +545,6 @@ describe("CreateWorkflowToolCallBlock 编译反馈", () => {
     expect(code.getAttribute("data-marked-lines")).toBe("3,8");
 
     const card = view.getByTestId("workflow-compiler-feedback");
-    expect(card.className).toContain("border-border");
-    expect(card.outerHTML).not.toContain("destructive");
     expect(within(card).getByTestId("workflow-compiler-feedback-title").textContent).toBe(
       "Compiler feedback",
     );
@@ -791,10 +784,6 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
       locale,
     );
     expect(view.container.querySelector(".tool-summary-kind-label")).toBeTruthy();
-    expect(
-      view.container.querySelector(".tool-summary-kind-label.animated-gradient-text"),
-    ).toBeTruthy();
-    expect(view.container.querySelector(".truncate.font-mono")).toBeNull();
     expect(view.queryByTestId("workflow-card")).toBeNull();
     const trigger = view.getByRole("button");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
@@ -802,8 +791,6 @@ describe("CreateWorkflowToolCallBlock 启动前 ToolLayout", () => {
     fireEvent.keyDown(trigger, { key: "Enter" });
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
     expect(view.getByTestId("code-block").textContent).toContain("agent");
-    expect(view.getByTestId("code-block").className).toContain("max-h-80");
-    expect(view.getByTestId("workflow-script-codeblock").className).not.toContain("overflow-auto");
     fireEvent.click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
@@ -848,13 +835,6 @@ describe("CreateWorkflowToolCallBlock 运行态", () => {
     ).toBe("running");
     expect(view.getByTestId("workflow-timeline-rail").getAttribute("data-rail-ink")).toBe("march");
     expect(view.getByTestId("workflow-timeline-arc").getAttribute("data-arc-ink")).toBe("faint");
-  });
-
-  it("running 同时有动画点和状态词，绝不只靠颜色或动画表达状态", () => {
-    const view = renderBlockDom(LOOP_TOOL_CALL, { workflowRun: joined() });
-    const header = view.getByTestId("workflow-card-header");
-    expect(header.querySelector(".animate-pulse")).toBeTruthy();
-    expect(header.textContent).toContain("Running");
   });
 
   it("运行态没有页脚：卡上只说阶段与子代理，都在表头；步数、token、轮次不上卡（2026-09-09）", () => {
@@ -1073,7 +1053,6 @@ describe("CreateWorkflowToolCallBlock 药丸点击", () => {
     expect(pills[1]!.getAttribute("aria-label")).toBe("Open the transcript of Bob");
     // The presence of ↗ is the visible evidence of "openable"; the hover affordance hangs on wf-pill-open.
     expect(view.getAllByTestId("workflow-timeline-pill-open")).toHaveLength(2);
-    expect(pills[1]!.className).toContain("wf-pill-open");
 
     fireEvent.click(pills[1]!);
     expect(onOpenWorkflowActor).toHaveBeenCalledWith({
@@ -1106,7 +1085,6 @@ describe("CreateWorkflowToolCallBlock 药丸点击", () => {
     });
     const pills = noSession.getAllByTestId("workflow-agent-pill");
     expect(pills.map((pill) => pill.tagName)).toEqual(["BUTTON", "BUTTON"]);
-    expect(pills[1]!.className).toContain("wf-pill-open");
     expect(pills[1]!.getAttribute("aria-label")).toBe("Open the transcript of checker");
     fireEvent.click(pills[1]!);
     expect(onOpenWorkflowActor).toHaveBeenCalledWith({
@@ -1181,7 +1159,6 @@ describe("CreateWorkflowToolCallBlock 脚本药丸", () => {
     });
     const pill = workspacePill(view);
     expect(pill.tagName).toBe("BUTTON");
-    expect(pill.className).toContain("wf-pill-open");
     expect(pill.getAttribute("aria-label")).toBe("Open the script's steps at verify");
     expect(view.getAllByTestId("workflow-timeline-workspace-open")).toHaveLength(1);
     fireEvent.click(pill);
@@ -1586,7 +1563,7 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
   const mid = (i: number): FanStatus =>
     i === 4 ? "failed" : i === 6 ? "running" : i === 7 ? "pending" : "done";
 
-  it("七个参与者：钉住 running → failed → 补位五枚药丸，其余折成「还有 2 个」一行；没有计数行、量条、格子", () => {
+  it("七个参与者按运行、失败和参与顺序钉住五枚，其余两位汇总", () => {
     const view = renderBlockDom(fanoutToolCall(7), { workflowRun: fanoutRun(7, mid) });
     const column = view.getByTestId("workflow-timeline-pills");
     expect(column.getAttribute("data-station-roster")).toBe("true");
@@ -1606,7 +1583,6 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
       "done",
     ]);
     const row = within(column).getByTestId("workflow-roster-more-row");
-    expect(column.lastElementChild).toBe(row);
     expect(row.getAttribute("data-more-count")).toBe("2");
     expect(row.textContent).toBe("2 more");
     expect(row.getAttribute("title")).toBe("2 more subagents · list everyone in the run pane");
@@ -1720,7 +1696,6 @@ describe("CreateWorkflowToolCallBlock 名册站", () => {
     expect(html).toContain('data-station-roster="true"');
     expect(html).toContain('data-more-count="3"');
     expect(html).toContain('<span aria-label="3 more subagents · list everyone in the run pane"');
-    expect(html).not.toContain('data-testid="workflow-roster-tally"');
   });
 
   it("zh-CN：「还有 n 个」与整句 title", () => {

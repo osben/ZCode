@@ -18,6 +18,12 @@ import { logger } from "@/logger.js";
 export interface WindowControllerTaskListRegistry {
   subscribe(listener: () => void): () => void;
   getRevision(): number;
+  getDirectoryRevision(): number;
+  getSourceRevision(): number;
+  readActivities(): Array<{
+    address: WindowHostControllerTaskRow["address"];
+    activity: NonNullable<WindowHostControllerTaskRow["activity"]>;
+  }>;
   list(
     queryKey: string,
     version: WindowControllerTaskListVersion,
@@ -28,12 +34,25 @@ export interface WindowControllerTaskListRegistry {
 export interface WindowControllerTaskListVersion {
   controllerRevision: number;
   taskListVersionSignature: string;
-  /** Used only to invalidate the pre-connection cache when the remote session changes; not part of workspace identity. */
+  /** 只用于让连接前缓存随 remote session 换代失效，不参与 workspace identity。 */
   workspaceSourceGenerationSignature?: string;
   manualRefreshSerial?: number;
 }
 
 const registries = new WeakMap<object, WindowControllerTaskListRegistry>();
+
+function directoryFacts(row: WindowHostControllerTaskRow): string {
+  // 活动的时间、状态与阻塞摘要也会覆盖 meta，不能把这些变化误判为目录失效。
+  // 没有 live activity 时仍保留完整持久事实；首次接入或撤销 live 的边界也会刷新。
+  const facts = row.activity
+    ? Object.fromEntries(
+        Object.entries(row.meta).filter(
+          ([key]) => key !== "updatedAt" && key !== "status" && key !== "pendingInteraction",
+        ),
+      )
+    : row.meta;
+  return JSON.stringify([row.address, row.membership, row.sourceAvailability, facts]);
+}
 
 function taskAddressKey(address: WindowHostControllerTaskRow["address"]): string {
   return JSON.stringify([
@@ -54,9 +73,9 @@ function queryContainsWorkspace(
 }
 
 function cacheVersionKey(version: WindowControllerTaskListVersion): string {
-  // Controller frames only trigger hooks to reread; whether a specific query is invalidated depends on delta scope/membership.
-  // If a global controllerRevision were included in the cache key, a timeline live delta would still miss all pinned/archived entries,
-  // recreating multiple Host RPCs per frame. Legacy/manual versions keep their force-refresh semantics.
+  // Controller frame 只负责触发 hook 重读；具体 query 是否失效由 delta scope/membership 决定。
+  // 若把全局 controllerRevision 放进缓存 key，一个 timeline live delta 仍会让 pinned/archived
+  // 全部 miss，重新制造每个 frame 多轮 Host RPC。legacy/manual 版本继续保留强制刷新语义。
   return JSON.stringify({
     taskListVersionSignature: version.taskListVersionSignature,
     workspaceSourceGenerationSignature: version.workspaceSourceGenerationSignature,
@@ -64,7 +83,7 @@ function cacheVersionKey(version: WindowControllerTaskListVersion): string {
   });
 }
 
-/** One shared observer per Controller proxy; all list hooks consume only its revision. */
+/** 一个 Controller proxy 对应一个共享观察器；所有列表 hook 只消费其 revision。 */
 export function getWindowControllerTaskListRegistry(
   controller: IWindowControllerService,
 ): WindowControllerTaskListRegistry {
@@ -85,6 +104,8 @@ export function getWindowControllerTaskListRegistry(
   >();
   const taskRows = new Map<string, WindowHostControllerTaskRow>();
   let revision = 0;
+  let directoryRevision = 0;
+  let sourceRevision = 0;
   let started = false;
   let generation = 0;
   let notificationScheduled = false;
@@ -146,11 +167,16 @@ export function getWindowControllerTaskListRegistry(
         seq: frame.toSeq,
       });
       if (frame.topic === CONTROLLER_WORKSPACES_TOPIC) {
-        // Workspace facts are not included in task-list results; source online/offline/removal emits a separate tasks-index delta.
+        // Source 换代需要重新建立观察，即使 scope 和可见任务集合没有变化。
+        sourceRevision += 1;
+        directoryRevision += 1;
+        notifyOnce();
         return;
       }
       const taskFrame = frame as WindowHostControllerTaskFrame;
       if (taskFrame.payload.kind === "snapshot") {
+        directoryRevision += 1;
+        sourceRevision += 1;
         taskRows.clear();
         for (const row of taskFrame.payload.snapshot.tasks) {
           taskRows.set(taskAddressKey(row.address), row);
@@ -162,15 +188,21 @@ export function getWindowControllerTaskListRegistry(
           const key = taskAddressKey(address);
           const previous = taskRows.get(key);
           const next = delta.op === "task.upserted" ? delta.task : undefined;
+          if (!previous || !next || directoryFacts(previous) !== directoryFacts(next)) {
+            directoryRevision += 1;
+          }
+          if (previous && next && previous.sourceAvailability !== next.sourceAvailability) {
+            sourceRevision += 1;
+          }
           if (next) taskRows.set(key, next);
           else taskRows.delete(key);
 
           for (const [queryKey, cached] of queryCache) {
             const touchesWorkspace = queryContainsWorkspace(cached.query, address);
             if (!touchesWorkspace) continue;
-            // Previously, any task delta cleared every query. Invalidate precisely by before/after membership only when the old row is known;
-            // without the old row, we cannot rule out that it belonged to another kind,
-            // so conservatively invalidate this workspace to avoid stale timeline/active entries.
+            // 以前任意 task delta 都 clear 全部 query。只有明确掌握旧 row 时，
+            // 才按变更前后 membership 精确失效；缺少旧 row 时无法排除它曾属于其他 kind，
+            // 因此对当前 workspace 保守失效，避免 timeline/active 留下陈旧项。
             if (
               !previous ||
               matchesTaskListMembershipKind(previous.membership, cached.query.kind) ||
@@ -181,7 +213,7 @@ export function getWindowControllerTaskListRegistry(
           }
         }
       }
-      // Coalesce consecutive task frames in the same JavaScript scheduling cycle into one renderer revision.
+      // 同一 JavaScript 调度周期内的连续 task frame 合并成一个 renderer revision。
       notifyOnce();
     });
     void Promise.all(
@@ -214,6 +246,19 @@ export function getWindowControllerTaskListRegistry(
     },
     getRevision() {
       return revision;
+    },
+    getDirectoryRevision() {
+      return directoryRevision;
+    },
+    getSourceRevision() {
+      return sourceRevision;
+    },
+    readActivities() {
+      return Array.from(taskRows.values()).flatMap((row) =>
+        row.sourceAvailability === "online" && row.activity
+          ? [{ address: row.address, activity: row.activity }]
+          : [],
+      );
     },
     list(queryKey, version, query) {
       const versionKey = cacheVersionKey(version);

@@ -18,33 +18,54 @@ interface SavedWorkflowProjectTargets {
  * They differ only in whether they include remoteSessionId; references stay stable while dependencies are unchanged for memo/effect dependencies.
  */
 export function useSavedWorkflowProjectTargets(
-  project: Pick<AutomationWorkspaceOption, "workspacePath" | "workspaceIdentity">,
+  project: Pick<
+    AutomationWorkspaceOption,
+    "workspacePath" | "workspaceIdentity" | "projectId" | "hostId"
+  >,
   remoteSessionId: string | null,
 ): SavedWorkflowProjectTargets {
   const target = useMemo<ZCodeAgentWorkspaceTarget>(
     () => ({
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity?.trim()
         ? { workspaceIdentity: project.workspaceIdentity }
         : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
     }),
-    [project.workspacePath, project.workspaceIdentity, remoteSessionId],
+    [
+      project.projectId,
+      project.hostId,
+      project.workspacePath,
+      project.workspaceIdentity,
+      remoteSessionId,
+    ],
   );
   const projectTarget = useMemo<SavedWorkflowProjectTarget>(
     () => ({
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity ? { workspaceIdentity: project.workspaceIdentity } : {}),
     }),
-    [project.workspacePath, project.workspaceIdentity],
+    [project.projectId, project.hostId, project.workspacePath, project.workspaceIdentity],
   );
   const launchTarget = useMemo<SavedWorkflowLaunchTarget>(
     () => ({
+      projectId: project.projectId,
+      hostId: project.hostId,
       workspacePath: project.workspacePath,
       ...(project.workspaceIdentity ? { workspaceIdentity: project.workspaceIdentity } : {}),
       ...(remoteSessionId ? { remoteSessionId } : {}),
     }),
-    [project.workspacePath, project.workspaceIdentity, remoteSessionId],
+    [
+      project.projectId,
+      project.hostId,
+      project.workspacePath,
+      project.workspaceIdentity,
+      remoteSessionId,
+    ],
   );
   return { target, projectTarget, launchTarget };
 }

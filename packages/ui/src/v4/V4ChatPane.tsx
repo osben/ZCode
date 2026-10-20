@@ -1,3 +1,7 @@
+import {
+  RemoteConversationBanner,
+  RemoteConversationDisconnected,
+} from "@/project-sidebar/RemoteConversationDisconnected.js";
 import type { ReactNode } from "react";
 import type {
   GitChangeSourceId,
@@ -33,27 +37,23 @@ import type {
 export interface V4ChatPaneProps {
   workspacePath: string;
   workspaceIdentity?: string;
-  /** Remote session bound to the workspace identity; required to route a remote worktree opened from a created notice. */
   remoteSessionId?: string;
-  /** Prompt-template telemetry currently covers Desktop only. */
+  /** Side conversation (selection chat) embeds the composer without the main-pane chrome. */
+  selectionSideChat?: boolean;
+  /** Prompt 模板埋点当前仅覆盖 Desktop。 */
   isDesktop?: boolean;
   readOnly?: boolean;
-  selectionSideChat?: boolean;
+  allowEscapeStopOutsidePane?: boolean;
   compactForRemoteControl?: boolean;
-  /** CLI session ID; null = first send from a draft. */
+  /** CLI session id；null = draft 首发。 */
   sessionId: string | null;
-  /** Open a path through the app's existing workspace + draft flow. */
-  onCreateTaskInWorkspace?: (
-    workspacePath: string,
-    workspaceIdentity?: string,
-  ) => void | Promise<void>;
-  /** Open entry point for the current workspace's primary pane; count as sidebar when not provided. */
+  /** 当前 workspace 主 pane 的打开入口，未提供时按 sidebar 统计。 */
   openTrigger?: SessionOpenTrigger;
   provider?: ZCodeProvider;
   onSessionCreated?: (sessionId: string) => void;
-  /** deleteSession: return to draft after deleting the current session. */
+  /** deleteSession：删除当前会话后回到 draft。 */
   onSessionDeleted?: () => void;
-  /** Draft-mode composer contextHeader (m5, constructed and passed by the shell). */
+  /** 草稿态 composer contextHeader（m5，壳层构造下发）。 */
   draftComposerHeader?: ReactNode;
   gitSummary?: GitRepositorySummary | null;
   gitDirtyFileCount?: number;
@@ -63,11 +63,12 @@ export interface V4ChatPaneProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (
-    sourceId?: GitChangeSourceId,
-    executionWorkspacePath?: string,
-    executionSessionId?: string,
-  ) => void;
+  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  /** Opens a created worktree through the shared workspace + draft flow. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -92,19 +93,19 @@ export interface V4ChatPaneProps {
 }
 
 /**
- * Vertically split chat area: minimal replacement entry point for ChatView.
- * The outer layer wraps V4ConversationProvider per workspace; single-pane paneId is fixed to workspace-main.
+ * 竖切聊天区：替换 ChatView 的最小入口。
+ * 外层按 workspace 包 V4ConversationProvider；单 pane paneId 固定 workspace-main。
  */
 export function V4ChatPane({
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
+  selectionSideChat = false,
   isDesktop = false,
   readOnly = false,
-  selectionSideChat = false,
+  allowEscapeStopOutsidePane = false,
   compactForRemoteControl = false,
   sessionId,
-  onCreateTaskInWorkspace,
   openTrigger = "sidebar",
   provider,
   onSessionCreated,
@@ -119,6 +120,7 @@ export function V4ChatPane({
   onSummaryPanelVariantOverrideChange,
   onRefreshGit,
   onOpenGitReview,
+  onCreateTaskInWorkspace,
   onOpenBrowserUrl,
   onOpenAutomationsMain,
   onOpenCodeViewer,
@@ -142,13 +144,31 @@ export function V4ChatPane({
   onSearchResultHighlightDone,
 }: V4ChatPaneProps) {
   return (
-    <V4ConversationProvider workspacePath={workspacePath} workspaceIdentity={workspaceIdentity}>
+    <V4ConversationProvider
+      sessionId={sessionId ?? null}
+      workspacePath={workspacePath}
+      workspaceIdentity={workspaceIdentity}
+      unavailableFallback={
+        <RemoteConversationDisconnected
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          sessionId={sessionId}
+        />
+      }
+      disconnectedBanner={
+        <RemoteConversationBanner
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+          sessionId={sessionId}
+        />
+      }
+    >
       <SessionPane
         paneId="workspace-main"
         readOnly={readOnly}
         selectionSideChat={selectionSideChat}
+        allowEscapeStopOutsidePane={allowEscapeStopOutsidePane}
         sessionId={sessionId}
-        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         openTrigger={openTrigger}
         workspacePath={workspacePath}
         workspaceIdentity={workspaceIdentity}
@@ -168,6 +188,7 @@ export function V4ChatPane({
         onSummaryPanelVariantOverrideChange={onSummaryPanelVariantOverrideChange}
         onRefreshGit={onRefreshGit}
         onOpenGitReview={onOpenGitReview}
+        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         onOpenBrowserUrl={onOpenBrowserUrl}
         onOpenAutomationsMain={onOpenAutomationsMain}
         onOpenCodeViewer={onOpenCodeViewer}

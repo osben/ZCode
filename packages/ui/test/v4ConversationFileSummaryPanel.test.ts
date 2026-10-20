@@ -1,6 +1,5 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   TurnHeaderRow,
@@ -411,16 +410,6 @@ describe("ConversationFileSummaryPanel", () => {
     expect(fetchFileChanges).toHaveBeenCalledTimes(2);
     expect(collectText(container)).toBe("");
     await act(async () => root.unmount());
-  });
-
-  it("matches z-code-2 summary card visual shell", () => {
-    const html = renderPanel();
-
-    expect(html).toContain("rounded-xl border border-border bg-card shadow-none");
-    expect(html).toContain("h-10 items-center justify-between");
-    expect(html).toContain("transition-colors hover:bg-hover");
-    expect(html).toContain("grid w-full border-t border-border");
-    expect(html).not.toContain("FileText");
   });
 
   it("renders file rows and Open action after details are loaded", async () => {

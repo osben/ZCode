@@ -97,7 +97,6 @@ describe("Client Scenes automation template catalog", () => {
         title: { cn: "晨会动态", en: "Morning dev brief" },
         prompt: { cn: "中文定时指令", en: "English scheduled prompt" },
         cronExpr: "0 9 * * 1-5",
-        icon: "target",
       }),
     ]);
     expect(JSON.stringify(result.scheduled)).not.toContain("错误的服务端外显");
@@ -117,13 +116,11 @@ describe("Client Scenes automation template catalog", () => {
     expect(result.scheduled[0]).toEqual(
       expect.objectContaining({
         iconName: "calendar-clock",
-        icon: "target",
       }),
     );
     expect(result.offPeak[0]).toEqual(
       expect.objectContaining({
         iconName: "activity",
-        icon: "ciFlakyReport",
       }),
     );
   });
@@ -169,7 +166,6 @@ describe("Client Scenes automation template catalog", () => {
         title: { cn: "CI 报告", en: "CI report" },
         prompt: { cn: "中文闲时指令", en: "English idle prompt" },
         customize: false,
-        icon: "ciFlakyReport",
       }),
     ]);
   });

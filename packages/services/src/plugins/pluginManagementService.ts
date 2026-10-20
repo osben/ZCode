@@ -32,6 +32,13 @@ export interface PluginManagementServiceDependencies {
   >;
 }
 
+// Host-only telemetry (withPluginTelemetry) must not reach the CLI. Returns the same object when no telemetry is attached.
+function withoutTelemetry<T extends object>(params: T): T {
+  if (!("telemetry" in params)) return params;
+  const { telemetry: _telemetry, ...rest } = params as T & { telemetry?: unknown };
+  return rest as T;
+}
+
 export function createPluginManagementService(
   dependencies: PluginManagementServiceDependencies,
 ): IPluginManagementService {
@@ -43,19 +50,19 @@ export function createPluginManagementService(
     onDynamicPluginOperationProgress: (operationId) =>
       agent.onDynamicPluginOperationProgress(operationId),
     getPluginsOverview: (params) => agent.getPluginsOverview(params),
-    addPluginMarketplace: (params) => agent.addPluginMarketplace(params),
-    removePluginMarketplace: (params) => agent.removePluginMarketplace(params),
-    updatePluginMarketplace: (params) => agent.updatePluginMarketplace(params),
-    installPlugin: (params) => agent.installPlugin(params),
+    addPluginMarketplace: (params) => agent.addPluginMarketplace(withoutTelemetry(params)),
+    removePluginMarketplace: (params) => agent.removePluginMarketplace(withoutTelemetry(params)),
+    updatePluginMarketplace: (params) => agent.updatePluginMarketplace(withoutTelemetry(params)),
+    installPlugin: (params) => agent.installPlugin(withoutTelemetry(params)),
     cancelPluginOperation: (params) => agent.cancelPluginOperation(params),
-    uninstallPlugin: (params) => agent.uninstallPlugin(params),
-    updatePlugin: (params) => agent.updatePlugin(params),
-    restoreBuiltinPlugin: (params) => agent.restoreBuiltinPlugin(params),
-    configurePlugin: (params) => agent.configurePlugin(params),
-    resetPluginConfig: (params) => agent.resetPluginConfig(params),
+    uninstallPlugin: (params) => agent.uninstallPlugin(withoutTelemetry(params)),
+    updatePlugin: (params) => agent.updatePlugin(withoutTelemetry(params)),
+    restoreBuiltinPlugin: (params) => agent.restoreBuiltinPlugin(withoutTelemetry(params)),
+    configurePlugin: (params) => agent.configurePlugin(withoutTelemetry(params)),
+    resetPluginConfig: (params) => agent.resetPluginConfig(withoutTelemetry(params)),
     validatePlugin: (params) => agent.validatePlugin(params),
     describePlugin: (params) => agent.describePlugin(params),
-    setPluginEnabled: (params) => agent.setPluginEnabled(params),
+    setPluginEnabled: (params) => agent.setPluginEnabled(withoutTelemetry(params)),
     getLspPreferences: (params) => agent.getLspPreferences(params),
     setLspPreferences: (params) => agent.setLspPreferences(params),
     getLspStatus: (params) => agent.getLspStatus(params),

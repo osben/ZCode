@@ -34,9 +34,6 @@ import { resolveToolCallRenderer } from "../src/ToolCallBlocks/resolveRenderer.j
 // eslint-disable-next-line import/first -- same as above; the whole-chain routing assertion must go through the real entry component.
 import { ToolCallBlock } from "@/ToolCallBlocks.js";
 import { expectedCopy } from "./helpers/uiCopy.js";
-// eslint-disable-next-line import/first -- same as above; the locales are only used for bilingual existence assertions.
-
-// eslint-disable-next-line import/first -- same as above.
 
 interface ToolCallOverrides {
   input?: unknown;

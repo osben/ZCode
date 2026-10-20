@@ -1,8 +1,8 @@
 /**
- * Lightweight toast notification.
+ * 轻量 toast 提示
  *
- * Uses a React portal rendered into body, with no third-party library; disappears after 3 seconds.
- * Usage: `import { toast } from "@/components/ui/toast.js"; toast("message");`
+ * 不引入第三方库，用 React portal 渲染到 body，3 秒自动消失。
+ * 调用方式：`import { toast } from "@/components/ui/toast.js"; toast("message");`
  */
 import { TID_TOAST } from "@zcode/shared";
 import { createRoot } from "react-dom/client";
@@ -11,7 +11,7 @@ import { Info, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 
 export type ToastPosition = "top-center" | "top-right" | "bottom-left" | "bottom-center";
-type ToastVariant = "default" | "update" | "info" | "warning";
+type ToastVariant = "default" | "update" | "source-server-update" | "info" | "warning";
 
 export interface ToastOptions {
   durationMs?: number;
@@ -22,7 +22,7 @@ export interface ToastOptions {
   dismissible?: boolean;
   dismissLabel?: string;
   anchorId?: string;
-  /** Stable key for the same business target and action; a new result replaces the old one and moves to the bottom of the stack. */
+  /** 同一业务目标与动作的稳定键；新结果替换旧结果并移到栈底。 */
   dedupeKey?: string;
 }
 
@@ -95,7 +95,7 @@ function ToastContainer() {
         dismissedBeforeMountToastIds.delete(item.id);
         return;
       }
-      // Pre-mount progress updates and existing deduplication must both apply, so a share notification does not stack the same operation again.
+      // 挂载前的进度更新和既有去重必须同时生效，不能合入分享提示后又堆叠同一操作。
       setItems((prev) =>
         upsertToastItem(prev, pendingUpdate ? { ...item, ...pendingUpdate } : item),
       );
@@ -132,26 +132,25 @@ function ToastContainer() {
 
   return (
     <>
-      {/* Top center. */}
+      {/* 顶部居中 */}
       <div className={resolveToastStackClassName("top-center")}>
         {topCenterItems.map((item) => (
           <ToastMessage key={item.id} item={item} onDone={handleRemove} />
         ))}
       </div>
-      {/* Top right: actionable notices related to form state. */}
+      {/* 右上角：与表单状态相关的可操作提示。 */}
       <div className={resolveToastStackClassName("top-right")}>
         {topRightItems.map((item) => (
           <ToastMessage key={item.id} item={item} onDone={handleRemove} />
         ))}
       </div>
-      {/* Bottom left. */}
+      {/* 左下角 */}
       <div className={resolveToastStackClassName("bottom-left")}>
         {bottomLeftItems.map((item) => (
           <ToastMessage key={item.id} item={item} onDone={handleRemove} isBottom />
         ))}
       </div>
-      {/* Bottom center: keep results such as save and connectivity feedback at the bottom of the
-          window so they do not scroll with Settings content. */}
+      {/* 底部居中：保存和连通性等操作结果固定在窗口底部，不随设置内容滚动。 */}
       <div className={resolveToastStackClassName("bottom-center")}>
         {bottomCenterItems.map((item) => (
           <ToastMessage key={item.id} item={item} onDone={handleRemove} isBottom />
@@ -243,7 +242,7 @@ function ToastMessage({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    // Trigger the enter animation.
+    // 触发进入动画
     requestAnimationFrame(() => setVisible(true));
 
     if (!Number.isFinite(item.durationMs) || item.durationMs <= 0) {
@@ -252,12 +251,12 @@ function ToastMessage({
 
     const timer = setTimeout(() => {
       setVisible(false);
-      // Remove after the exit animation finishes.
+      // 等退出动画结束后移除
       setTimeout(() => onDone(item.id), TOAST_TRANSITION_DURATION_MS);
     }, item.durationMs);
 
     return () => clearTimeout(timer);
-    // Persistent toasts use duration=0; switching to a terminal state updates duration and restarts the auto-dismiss timer.
+    // 持续中的 Toast 使用 duration=0；切换到终态时更新 duration，重新启动自动消失计时器。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.durationMs]);
 
@@ -304,6 +303,7 @@ export function ToastMessageView({
   onDismiss?: () => void;
 }) {
   const isUpdate = item.variant === "update";
+  const isSourceServerUpdate = item.variant === "source-server-update";
   const isNotice = item.variant === "info" || item.variant === "warning";
   const isTopRight = item.position === "top-right";
   const [fallbackTitle, ...fallbackBodyLines] = item.message.split("\n");
@@ -315,12 +315,14 @@ export function ToastMessageView({
       data-testid={TID_TOAST}
       className={cn(
         "rounded-2xl border bg-toast/60 text-ui-base shadow-lg backdrop-blur-xl transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.77,0,0.175,1)] motion-reduce:transform-none motion-reduce:transition-opacity",
-        isUpdate
-          ? "origin-bottom-left w-[min(300px,calc(100vw-1rem))] max-w-[min(300px,calc(100vw-1rem))] border-popover-border text-foreground shadow-lg"
-          : isNotice
-            ? "w-[min(536px,calc(100vw-2rem))] border-border text-foreground"
-            : "border-border px-4 py-3 text-foreground whitespace-pre-line",
-        // The top-right toast previously reused the top-center vertical scale animation, which did not express its entrance from the right.
+        isSourceServerUpdate
+          ? "w-[min(480px,calc(100vw-2rem))] border-popover-border text-foreground"
+          : isUpdate
+            ? "origin-bottom-left w-[min(300px,calc(100vw-1rem))] max-w-[min(300px,calc(100vw-1rem))] border-popover-border text-foreground shadow-lg"
+            : isNotice
+              ? "w-[min(536px,calc(100vw-2rem))] border-border text-foreground"
+              : "border-border px-4 py-3 text-foreground whitespace-pre-line",
+        // Bug 原因：右上角 Toast 曾复用顶部居中的纵向缩放动画，无法表达其从右侧进入的空间关系。
         isTopRight
           ? visible
             ? "translate-x-0 opacity-100"
@@ -334,7 +336,43 @@ export function ToastMessageView({
               : "-translate-y-1 scale-[0.98] opacity-0",
       )}
     >
-      {isUpdate ? (
+      {isSourceServerUpdate ? (
+        <div className="flex min-w-0 items-start gap-3 px-4 py-3">
+          <span
+            className="mt-1.5 size-2 shrink-0 rounded-full bg-primary ring-4 ring-accent"
+            aria-hidden="true"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="break-words text-ui-base font-medium leading-5 text-foreground">
+              {displayTitle}
+            </div>
+            {displayBody ? (
+              <div className="mt-1 whitespace-pre-line break-words text-ui-sm leading-5 text-foreground-subtle">
+                {displayBody}
+              </div>
+            ) : null}
+          </div>
+          {item.actionLabel ? (
+            <button
+              type="button"
+              onClick={onAction ?? item.onAction}
+              className="h-8 shrink-0 whitespace-nowrap rounded-md bg-primary px-3 text-ui-base font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              {item.actionLabel}
+            </button>
+          ) : null}
+          {item.dismissible ? (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label={item.dismissLabel ?? "Close"}
+              className="flex size-7 shrink-0 items-center justify-center rounded-md text-foreground-subtle hover:bg-hover hover:text-foreground"
+            >
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      ) : isUpdate ? (
         <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2.5 py-2">
           <span
             className="size-2 shrink-0 rounded-full bg-primary/80 ring-4 ring-accent"
@@ -359,7 +397,7 @@ export function ToastMessageView({
           ) : null}
         </div>
       ) : isNotice ? (
-        // A fixed minimum height adds extra space beyond the content's 12px padding.
+        // 固定最小高度会在 12px 内容 padding 之外继续补高，产生额外上下留白。
         <div className="flex min-w-0 items-center gap-4 px-4">
           {item.variant === "warning" ? (
             <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden="true" />
@@ -375,13 +413,12 @@ export function ToastMessageView({
                 </div>
               ) : null}
             </div>
-            {/* Toast inherits the scalable UI font size; a fixed 18px line height would compress
-                  action text at larger sizes. */}
+            {/* Toast 继承可缩放 UI 字号，固定 18px 行高会在大字号下压缩操作文案。*/}
             {item.actionLabel ? (
               <button
                 type="button"
                 onClick={onAction ?? item.onAction}
-                // Long team names and other specific targets must not push narrow-screen toasts outside the viewport; preserve the full name and allow wrapping.
+                // 长团队名等具体目标不能把窄屏 Toast 撑出视口；保留完整名称并允许换行。
                 className="max-w-1/2 self-center shrink-0 whitespace-normal break-words text-left font-medium leading-snug text-foreground underline underline-offset-2 hover:text-foreground-subtle"
               >
                 {item.actionLabel}
@@ -408,8 +445,8 @@ export function ToastMessageView({
 
 export function toast(message: string, options?: ToastOptions): number {
   ensureHost();
-  // ensureHost is synchronous, but addToast becomes available only after React renders on the next frame.
-  // Use requestAnimationFrame to ensure the container has mounted.
+  // ensureHost 是同步的，但 addToast 在下一帧 React 渲染后才可用
+  // 用 requestAnimationFrame 保证 container 已挂载
   const id = nextId++;
   pendingToastIds.add(id);
   const durationMs = options?.durationMs ?? DEFAULT_TOAST_DURATION_MS;
@@ -448,7 +485,7 @@ export function toast(message: string, options?: ToastOptions): number {
   return id;
 }
 
-/** Update an existing toast, useful for keeping stage changes from the same long-running operation in one notification. */
+/** 更新已有 Toast，适合把同一长耗时操作的阶段变化收敛到一个提示中。 */
 export function updateToast(id: number, patch: ToastUpdate): void {
   if (pendingToastIds.has(id)) {
     pendingToastUpdates.set(id, {

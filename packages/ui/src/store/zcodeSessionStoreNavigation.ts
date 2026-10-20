@@ -4,6 +4,7 @@
  * Split from zcodeSessionStore.ts; encapsulates initial state and actions related to task navigation.
  * createNavigationSlice(set, get) returns an object that can be spread directly into the store.
  */
+import { Emitter } from "@zcode/rpc";
 import {
   createTaskNavigationHistory,
   goBack as navGoBack,
@@ -13,6 +14,7 @@ import {
   removeTaskFromHistory,
   type AutomationsNavigationTab,
   type WorkspaceNavEntry,
+  type TaskNavEntry,
 } from "@/lib/taskNavigationHistory.js";
 import type { ZCodeSessionStoreState } from "./zcodeSessionStoreTypes.js";
 
@@ -23,6 +25,13 @@ type SetFn = (
     | ((state: ZCodeSessionStoreState) => ZCodeSessionStoreState | Partial<ZCodeSessionStoreState>),
 ) => void;
 type GetFn = () => ZCodeSessionStoreState;
+
+// 查看事实只由完整导航提交发布；tab 激活与历史游标移动都可能暴露缓存任务，不能代替提交。
+const taskNavigationCommitted = new Emitter<TaskNavEntry>();
+export const onTaskNavigationCommitted = taskNavigationCommitted.event;
+export function notifyTaskNavigationCommitted(target: Omit<TaskNavEntry, "kind">): void {
+  taskNavigationCommitted.fire({ kind: "task", ...target });
+}
 
 /**
  * Creates a navigation slice for the store creator to spread:

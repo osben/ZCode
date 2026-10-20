@@ -1,15 +1,11 @@
 # Files allowed to exceed the staged-file size limit (scripts/check-staged-file-tokens.mjs).
 # Add one repo-relative path per line.
 
-# Existing generated legal inventories; the generator verifies their inputs and hashes.
 THIRD-PARTY-NOTICES.md
 third-party/inventory.json
-# Existing upstream-sized documents: only the pinned pnpm version changes here.
 UI_PLUGIN.md
 UI_PLUGIN.en.md
-# Existing remote component generator; this repair only adds Linux target selection.
 scripts/prepare-prebuilds.mjs
-# Existing merged service exceeds the limit by 35 bytes; its implementation is unchanged here.
 packages/services/src/highspeed/highspeedCardService.ts
 
 packages/ui/src/ChatEmptyState.tsx
@@ -25,11 +21,8 @@ packages/ui/test/composerRecoveryContexts.test.ts
 specs/composer-worktree-setup-steps.md
 docs/conversation-session-case-catalog.md
 docs/testing/conversation-session-e2e-coverage-matrix.md
-packages/ui/src/v4/ConversationComposer.tsx
 packages/ui/src/v4/SessionPane.tsx
 packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
-# Temporary (integration-owned, split later): oversize files brought in by the integration merge.
-# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration; split each later and remove its line.
 DESIGN.md
 packages/ui/src/WorkspaceHeaderSections.tsx
 packages/ui/src/styles.css
@@ -100,69 +93,6 @@ docs/v4-refactor/m5-composer-parity.md
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 packages/ui/test/useDraftConfigControl.test.ts
 
-# Temporary (PR #174 merge): integration-owned files over the size limit. Split each file later and remove its line.
-# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration; split each later and remove its line.
-docs/conversation-session-ui-testid-contract.md
-packages/desktop/test/e2e/automations-workflows-hub.test.ts
-packages/desktop/test/e2e/coding-plan-team-usage.test.ts
-packages/desktop/test/e2e/conversation-session/conversation-session-built-in-subagent-model-overrides.test.ts
-packages/desktop/test/e2e/conversation-session/conversation-session-hooks-lifecycle.test.ts
-packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-viewer.test.ts
-packages/ui/src/App.tsx
-packages/ui/src/WorkspaceSidebarFooter.tsx
-packages/ui/src/app-shell/WorkspaceShellLayout.tsx
-packages/ui/src/settings/AutomationsSection.tsx
-packages/ui/src/settings/model-provider-section/StatusCards.tsx
-packages/ui/src/v4/V4WorkspaceChatArea.tsx
-packages/ui/src/v4/WorkbenchPane.tsx
-packages/ui/test/UnifiedBrowserView.test.ts
-packages/ui/test/agentToolCallBlock.test.ts
-packages/ui/test/codingPlanQuotaResetAutoPlayBroadcast.test.ts
-packages/ui/test/conversationShareReadonlyTimeline.test.ts
-packages/ui/test/conversationShareSelection.test.ts
-packages/ui/test/createWorkflowToolCallBlock.test.ts
-packages/ui/test/feedbackSubmissionJob.test.ts
-packages/ui/test/highspeed/sessionPaneHighspeedActivation.test.ts
-packages/ui/test/hooksSection.test.ts
-packages/ui/test/memorySettingsSection.test.ts
-packages/ui/test/messageResponseStreamdownMode.test.ts
-packages/ui/test/messageTaskControlToolCallBlock.test.ts
-packages/ui/test/modelProviderCodingPlan.test.ts
-packages/ui/test/modelProviderModelRowEditor.test.ts
-packages/ui/test/modelTrajectoryPaneParts.test.ts
-packages/ui/test/permissionDialog.test.ts
-packages/ui/test/pptxPreviewViewerLifecycle.test.ts
-packages/ui/test/providerModelMetadataDialog.test.ts
-packages/ui/test/savedWorkflowToolCards.test.ts
-packages/ui/test/savedWorkflowsSection.test.ts
-packages/ui/test/toolCallBlocks.test.ts
-packages/ui/test/updateStatusButton.test.ts
-packages/ui/test/updateStatusButtonReleaseNotesCache.test.ts
-packages/ui/test/useCodingPlanQuotaResetUi.test.ts
-packages/ui/test/v4AssistantPreviewCards.test.ts
-packages/ui/test/v4ComposerToolbarRecovery.test.ts
-packages/ui/test/v4ConversationComposerPromptHistory.test.ts
-packages/ui/test/v4ConversationDraftSuggestedPromptsContainer.test.ts
-packages/ui/test/v4ConversationRowViewUserEdit.test.ts
-packages/ui/test/v4ConversationStatusPanel.test.ts
-packages/ui/test/v4ConversationTimelineScrollMemory.test.ts
-packages/ui/test/v4ConversationTurnGroup.test.ts
-packages/ui/test/v4SessionPaneComposerContinuity.test.ts
-packages/ui/test/v4SessionPaneEditUserQuery.test.ts
-packages/ui/test/v4SessionPaneLayoutParity.test.ts
-packages/ui/test/workflowArtifactSidePane.test.ts
-packages/ui/test/workflowAskSettings.test.ts
-packages/ui/test/workflowObservationToolCards.test.ts
-packages/ui/test/workflowParticipantModel.test.ts
-packages/ui/test/workflowPermissionBlock.test.ts
-packages/ui/test/workflowRunDigest.test.ts
-packages/ui/test/workflowRunSettingsPopover.test.ts
-packages/ui/test/workflowRunSidePane.test.ts
-packages/ui/test/workspaceSidebarRemoteNotice.test.ts
-packages/web/src/share/ConversationShareLandingPage.tsx
-packages/web/test/externalRelayFrameGapRecovery.test.ts
-# Temporary: integration-owned files over the staged-file size limit, added so the integration merge can land.
-# Each is to be split into smaller modules later and removed from this list.
 apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md
 apps/zcode-cli/packages/adapters/src/fs/index.ts
 apps/zcode-cli/packages/adapters/tests/fs-context.test.ts
@@ -197,22 +127,16 @@ packages/ui/src/Root.tsx
 packages/ui/src/root/useRootPlatformEffects.ts
 packages/ui/src/store/zcodeSessionStoreTypes.ts
 packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
-# Temporary (PR #174 sidebar PR probing): WorkspaceSidebar.tsx is over the limit; split it into sibling modules later and remove this line.
 packages/ui/src/WorkspaceSidebar.tsx
 
 specs/nested-agents-md.md
-# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
 
-
-# TEMPORARY upstream 3.16.1 sync - revert/split in final PR
 packages/shared/src/bots.ts
-packages/shared/src/channels.ts
 packages/shared/src/conversation-share.ts
-packages/shared/src/platform.ts
-packages/shared/src/protocol.ts
-packages/shared/src/test-ids.ts
 packages/shared/src/validationAppSettings.ts
 packages/shared/src/web-remote-control.ts
 packages/shared/src/zcode-protocol-v4/command.ts
@@ -245,30 +169,18 @@ packages/services/src/zcode-agent/zcodeAgent.ts
 packages/services/src/zcode-agent/runtimeCapabilitySupport.ts
 packages/services/src/zcode-agent/zcodeAgentService.ts
 
-
-=======
-
-
-
-# Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
 .agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
 config/provider/zcode-builtin.json
 config/provider/zcode-builtin.test.json
 
-# Existing oversized files touched by permanent session deletion; new modules stay below the limit.
 packages/desktop/src/host/index.ts
 packages/desktop/src/main/desktopHostProcess.ts
-packages/desktop/src/main/index.ts
 packages/desktop/wdio.conf.ts
-packages/services/src/node.ts
 packages/services/src/session/taskIndexRepo.ts
 packages/services/src/session/zcodeTaskService.ts
 packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts
 packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts
-packages/shared/src/channels.ts
-packages/shared/src/test-ids.ts
 packages/shared/src/validation.ts
-packages/shared/src/zcode-protocol/index.ts
 packages/ui/src/TaskListItem.tsx
 packages/ui/src/WebRemoteControlTaskIndex.tsx
 packages/ui/src/WorkspacePinnedTasksSection.tsx
@@ -276,23 +188,14 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
-
-
-# Composer destination Task/Base row fix: the branch-switcher spec is one contract cross-referenced
-# by file+section from code comments; already over the limit at HEAD (merged via merge commits).
-# Split it into per-section documents later and remove this line.
 specs/composer-branch-switcher-semantics.md
 
-
-# TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
 apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
 apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
 apps/zcode-cli/packages/adapters/tests/session-store.test.ts
-# Real sqlite histories used by session-migration-history.test.ts (binary fixtures, not editable source).
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
 apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
-# TEMPORARY upstream 3.16.1 sync: oversize upstream-owned files (differ from the 0a1fc56d blob only by fork edits); split in the final sync PR.
 apps/zcode-cli/packages/adapters/src/config/schema.ts
 apps/zcode-cli/packages/adapters/src/mcp/index.ts
 apps/zcode-cli/packages/adapters/src/mcp/pool.ts
@@ -308,7 +211,6 @@ apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts
 apps/zcode-cli/packages/contracts/src/model/index.ts
 apps/zcode-cli/packages/contracts/src/tools/create-workflow.ts
 apps/zcode-cli/packages/dynamic-workflow/tests/hole-sites.test.ts
-# TEMPORARY upstream 3.16.1 sync (slice 2): oversize upstream-owned core files; split in the final sync PR.
 apps/zcode-cli/packages/core/src/agent/message-history.ts
 apps/zcode-cli/packages/core/src/mcp/index.ts
 apps/zcode-cli/packages/core/src/runtime/helpers/project-memory-dream.ts
@@ -337,7 +239,6 @@ apps/zcode-cli/packages/core/tests/session-fork.test.ts
 apps/zcode-cli/packages/core/tests/subagent-explore.test.ts
 apps/zcode-cli/packages/core/tests/subagent-prompt-assembly.test.ts
 apps/zcode-cli/packages/core/tests/tool-contracts.test.ts
-# TEMPORARY upstream 3.16.1 sync (slice 3, bootstrap): fork-modified bootstrap files that stay oversize after the merge; split each one later and remove its line.
 apps/zcode-cli/packages/bootstrap/src/app/create-app.ts
 apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts
 apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts
@@ -364,23 +265,126 @@ apps/zcode-cli/packages/bootstrap/tests/v4-native-session-mgmt.test.ts
 apps/zcode-cli/packages/bootstrap/tests/workflow-concurrency-governor.test.ts
 apps/zcode-cli/packages/bootstrap/tests/workflow-driver.test.ts
 apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts
-# TEMPORARY upstream 3.16.1 sync (slice 4b, cli/tui): fork CLI code (ChatGPT plan login, incognito resume, dwf/dream wiring) and fork i18n locale; split with the translation follow-up.
 apps/zcode-cli/packages/cli/src/prompt-command.ts
 apps/zcode-cli/packages/cli/tests/cli.unit.test.ts
 apps/zcode-cli/packages/i18n/src/locales/uk-UA.ts
 
-# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
-packages/provider-node/test/provider-node-runtime.test.ts
-packages/provider/test/config-service.test.ts
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+packages/ui/src/command-center/worktreeTaskFlow.ts
+packages/ui/src/settings/PluginStoreDetailView.tsx
+packages/ui/src/settings/CodingPlanEmbeddedWebviewDialog.tsx
+packages/ui/src/settings/ModelProviderSection.tsx
+packages/ui/src/workspace-grouped-tasks/group-item.tsx
+packages/ui/test/commandCenterWorktreeDialog.test.ts
+packages/ui/test/commandCenterWorktreeFlow.test.ts
+packages/ui/test/offPeakFigmaLayout.test.ts
+packages/ui/test/useGroupedTaskView.test.ts
+packages/ui/src/ElicitationDialog.tsx
+packages/ui/src/GitActionMenu.tsx
+packages/ui/src/ToolCallBlocks/renderers/create-workflow.tsx
+packages/ui/src/TreemappingPane.tsx
+packages/ui/src/WelcomeScreen.tsx
+packages/ui/src/WorkspaceSidebarFooterUsageSummary.tsx
+packages/ui/src/app-shell/WorkflowRunPhaseList.tsx
+packages/ui/src/app-shell/WorkflowRunSidePane.tsx
+packages/ui/src/app-shell/WorkflowRunSidePaneSections.tsx
+packages/ui/src/app-shell/workflowRunPanel.ts
+packages/ui/src/assets/cloud-content/weekend-plan-hero.html
+packages/ui/src/browser-use/UnifiedBrowserView.tsx
+packages/ui/src/chat-input-toolbar/contextUsage.tsx
+packages/ui/src/components/ai-elements/diagram-preview-dialog.tsx
+packages/ui/src/components/ai-elements/markdown-table.tsx
+packages/ui/src/components/ai-elements/message.tsx
+packages/ui/src/components/ai-elements/prompt-input.tsx
+packages/ui/src/components/ai-elements/reasoning.tsx
+packages/ui/src/components/ui/code-viewer.tsx
+packages/ui/src/components/ui/pptx-preview-viewer.tsx
+packages/ui/src/components/workflow-timeline/WorkflowTimeline.tsx
+packages/ui/src/components/workflow-timeline/timeline-model.ts
+packages/ui/src/feedback/feedbackSubmissionJob.ts
+packages/ui/src/hooks/useCodingPlanQuotaResetUi.ts
+packages/ui/src/lib/codingPlanQuotaResetUi.ts
+packages/ui/src/lib/conversationTelemetryLegacyParityE2E.ts
+packages/ui/src/lib/conversationTelemetryParityScenarioDefinitions.ts
+packages/ui/src/lib/webElementPickerScript.ts
+packages/ui/src/lib/zcodeSessionProjection.ts
+packages/ui/src/remote-connection/RemoteConnectionConnectingStep.tsx
+packages/ui/src/settings/ComputerUseSection.tsx
+packages/ui/src/settings/ExternalAgentImportDialog.tsx
+packages/ui/src/settings/RemoteMcpSyncDialog.tsx
+packages/ui/src/settings/RemotePluginSyncDialog.tsx
+packages/ui/src/settings/model-provider-section/Detail.tsx
+packages/ui/src/settings/model-provider-section/InlineEditableProviderCard.tsx
+packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx
+packages/ui/src/settings/model-provider-section/providerFamilyConnectionVisibility.ts
+packages/ui/src/settings/model-provider-section/useModelProviderNavigation.ts
+packages/ui/src/settings/usage-stats/CodingPlanUsagePanel.tsx
+packages/ui/src/store/taskQueryCacheStore.ts
+packages/ui/src/store/zcodeSessionStoreTaskSlice.ts
+packages/ui/src/terminal/TerminalSession.tsx
+packages/ui/src/v4/ConversationRowView.tsx
+packages/ui/src/v4/agentConversationTransport.ts
+packages/ui/src/v4/featureSuggestedPrompts.ts
+packages/ui/src/v4/sessionsIndexStore.ts
+packages/ui/src/v4/workbenchGroupStore.ts
+packages/ui/src/workspace-file-tree/useWorkspaceFileTreeData.ts
+packages/ui/test/agentV4ConnectionTransports.test.ts
+packages/ui/test/codingPlanQuotaResetUi.test.ts
+packages/ui/test/modelProviderDraftSave.test.ts
+packages/ui/test/remoteWorkspaceHistory.test.ts
+packages/ui/test/skillsSection.test.ts
+packages/ui/test/v4AssistantWorkRenderItems.test.ts
+packages/ui/test/v4ConversationStatusPanelModel.test.ts
+packages/ui/test/v4ConversationTurnRenderUnits.test.ts
+packages/ui/test/workflowRunArtifactHooks.test.ts
+packages/ui/test/workflowRunPanel.test.ts
+packages/ui/test/workflowRunSettings.test.ts
+packages/ui/test/workflowRunSpine.test.ts
+packages/ui/test/workflowTimelineHoles.test.ts
+packages/ui/test/workflowTimelineModel.test.ts
+packages/ui/test/workflowTimelineTracks.test.ts
+packages/ui/test/zcodeSessionStore.test.ts
 
+packages/ui/test/subagentsSection.test.ts
+packages/ui/test/projectTreeBackgroundUnread.test.ts
+packages/ui/src/settings/AutomationEditView.tsx
+packages/ui/src/settings/McpSettingsSection.tsx
+packages/ui/src/settings/OffPeakEditView.tsx
+packages/ui/src/settings/PluginsSection.tsx
+packages/ui/src/settings/SkillsSection.tsx
+packages/ui/src/settings/SubagentsSection.tsx
+packages/ui/src/v4/ConversationTimeline.tsx
+packages/ui/src/hooks/useAppPanels.ts
+packages/ui/test/conversationShareConfirmationDock.test.ts
+packages/ui/src/v4/conversationProjectionStore.ts
+packages/ui/src/v4/composer/V4ComposerToolbar.tsx
+packages/ui/src/v4/composer/useComposerAttachments.ts
+packages/ui/src/workspace-file-tree/WorkspaceFileTree.tsx
+packages/ui/src/SettingsPage.tsx
+packages/ui/src/PermissionDialog.tsx
+packages/ui/test/chatContextUsageBreakdown.test.ts
+packages/ui/test/workspaceSidePane.test.ts
+packages/ui/test/v4PaneLayoutStore.test.ts
+packages/ui/test/savedWorkflowPermissionBlocks.test.ts
+packages/ui/test/settingsPageIntegratedTerminalShell.test.ts
+packages/ui/src/ModelConfigSelect.tsx
+packages/ui/src/v4/ConversationTurnGroup.tsx
+packages/ui/src/lib/builtinSkillI18n.ts
+packages/ui/src/lib/remoteWorkspaceHistory.ts
+packages/ui/src/lib/settingsNavigation.ts
+packages/ui/src/lib/workspaceSidePane.ts
+packages/ui/src/settingsPageHelpers.tsx
+packages/ui/test/taskListItemHoverActions.test.ts
+packages/services/src/window-controller/windowHostControllerProjection.ts
+packages/ui/test/sshDialogFlow.test.ts
+packages/ui/test/remoteConnectionFlowRecovery.test.ts
+packages/ui/test/projectCreation.test.ts
+packages/ui/test/sourceServerManagementPanel.test.ts
 
-# Existing oversized files touched by the bot lock resilience fix; split later.
 packages/services/src/bots/botsService.ts
 packages/services/test/botsChannelRuntime.test.ts
 
-
-# Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
 packages/services/test/highspeedCardService.test.ts
 
+specs/upstream-sync-cli-divergences.md

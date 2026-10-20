@@ -203,7 +203,7 @@ const executeToolStrategy: ToolDisplayStrategy = {
 
 const searchToolStrategy: ToolDisplayStrategy = {
   matches(context) {
-    return context.identity.family === "search";
+    return context.identity.family === "search" || context.identity.family === "web-fetch";
   },
   build(context) {
     // Inputs for search/fetch tools are usually just a query, path, or filter condition,

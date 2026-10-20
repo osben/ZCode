@@ -1,28 +1,29 @@
-/* eslint-disable max-lines -- The full-page Off-Peak task editor centralizes create/edit/History and the composer's project, permission, and model toolbar; splitting it would fragment form state. */
-/* Full-page Off-Peak task create/edit. Composer layout: page title +
-   back row + inline keep-computer-awake toggle + Settings/History tabs + title input + large composer box
-   (textarea + toolbar: project/permission | model/reasoning level). Permission defaults to build among four options; models use an allowlist (D31). */
+/* eslint-disable max-lines -- 闲时任务整页集中维护创建/编辑/History 与 composer 项目、权限、模型工具条，拆分会割裂表单状态。 */
+/* 闲时任务创建/编辑整页。composer 范式：页标题 +
+   返回行 + 内联保持电脑运行开关 + Settings/History tab + 标题输入 + 大 composer 盒
+   （textarea + 工具条：项目/权限｜模型/推理档位）。权限四档默认 build，模型走白名单（D31）。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ModelSelectionView } from "@zcode/services";
 import { completeNewModelSelection } from "@zcode/provider";
 import { FolderOpen } from "lucide-react";
 import {
-  TID_OFFPEAK_EDIT_SUBMIT,
-  TID_OFFPEAK_EDIT_VIEW,
-  TID_OFFPEAK_FORM_INSTRUCTIONS,
-  TID_OFFPEAK_FORM_TITLE,
   ZCODE_AGENT_PROVIDER,
   type ZCodeConfigOption,
   type ZCodeOffPeakTask,
   type ModelSelection,
 } from "@zcode/shared";
+import {
+  TID_OFFPEAK_EDIT_SUBMIT,
+  TID_OFFPEAK_EDIT_VIEW,
+  TID_OFFPEAK_FORM_INSTRUCTIONS,
+  TID_OFFPEAK_FORM_TITLE,
+} from "@zcode/shared/test-ids";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Input } from "@/components/ui/input.js";
 import { toast } from "@/components/ui/toast.js";
 import {
   AUTOMATION_FORM_FIELD_CLASSNAME,
-  AutomationChevronDownIcon,
   AutomationInfoIcon,
   AutomationSettingsHistoryTabs,
   type AutomationSettingsHistoryTab,
@@ -48,7 +49,14 @@ import {
   buildAutomationModeOption,
 } from "@/settings/automationAgentConfigOptions.js";
 import { ConfigSelect } from "@/chat-input-toolbar/display.js";
-import { ChatEmptyWorkspacePreviewMenu, type ChatEmptyWorkspaceMenuTab } from "@/ChatEmptyState.js";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select.js";
+import { resolveAutomationWorkspaceSelectionKey } from "@/settings/automationWorkspaceOptions.js";
 import { useAutomationProjectOptions } from "@/hooks/useAutomationProjectOptions.js";
 import {
   OFF_PEAK_CREATE_TOOLTIP_CLASSNAME,
@@ -75,6 +83,7 @@ export function buildOffPeakSubmissionModelSelection(
 }
 
 export interface OffPeakEditSubmit {
+  projectId?: string | null;
   title: string;
   prompt: string;
   permissionMode: string;
@@ -85,13 +94,13 @@ export interface OffPeakEditSubmit {
 
 interface OffPeakEditViewProps {
   editing: ZCodeOffPeakTask | null;
-  /** Create-mode prefill (navigation from a template card on the New task page); ignored in edit mode. */
+  /** 创建态预填（New task 页模板卡跳转）；编辑态忽略。 */
   initialDraft?: { title?: string; prompt?: string } | null;
   modelSelectionView: ModelSelectionView;
   defaultWorkspacePath: string;
   defaultWorkspaceIdentity?: string;
   saving: boolean;
-  /** Disable submit when the selected Coding Plan or server availability does not allow creation; editing is unaffected. */
+  /** selected Coding Plan 或服务端 availability 不允许创建时禁用提交；编辑不受影响。 */
   createBlocked?: boolean;
   createBlockedTooltip?: string;
   onBack: () => void;
@@ -183,8 +192,8 @@ export function OffPeakEditView({
     },
     [modelSelectionView, offPeakProviderId],
   );
-  const [createWorkspacePath, setCreateWorkspacePath] = useState(
-    preferredLocalWorkspace?.workspacePath ?? "",
+  const [createProjectKey, setCreateProjectKey] = useState(
+    preferredLocalWorkspace ? resolveAutomationWorkspaceSelectionKey(preferredLocalWorkspace) : "",
   );
   const modelSelectGroups = useMemo<ModelSelectGroup[]>(
     () =>
@@ -203,25 +212,22 @@ export function OffPeakEditView({
         : [],
     [allowedModels],
   );
-  const workspaceMenuTabs = useMemo<ChatEmptyWorkspaceMenuTab[]>(
-    () =>
-      localWorkspaceOptions.map((option) => ({
-        workspacePath: option.workspacePath,
-        label: option.label,
-      })),
-    [localWorkspaceOptions],
-  );
   useEffect(() => {
-    if (editing || localWorkspaceOptions.length === 0) return;
-    if (localWorkspaceOptions.some((option) => option.workspacePath === createWorkspacePath)) {
+    if (editing) return;
+    if (
+      localWorkspaceOptions.some(
+        (option) => resolveAutomationWorkspaceSelectionKey(option) === createProjectKey,
+      )
+    )
       return;
-    }
-    // If the current project is remote or its local tab has closed, fall back to the first available local project.
-    setCreateWorkspacePath(preferredLocalWorkspace?.workspacePath ?? "");
-    initialRef.current.workspacePath = preferredLocalWorkspace?.workspacePath ?? "";
-  }, [createWorkspacePath, editing, localWorkspaceOptions, preferredLocalWorkspace?.workspacePath]);
-  // Off-Peak task models and reasoning levels read only the Host-projected Built-in Config,
-  // preventing the Renderer from rebuilding a second set of model facts by model name.
+    const key = preferredLocalWorkspace
+      ? resolveAutomationWorkspaceSelectionKey(preferredLocalWorkspace)
+      : "";
+    setCreateProjectKey(key);
+    initialRef.current.projectKey = key;
+  }, [createProjectKey, editing, localWorkspaceOptions, preferredLocalWorkspace]);
+  // 闲时任务模型和 reasoning 档位只读取 Host 投影的 Built-in Config，
+  // 避免 Renderer 按模型名重建第二份模型事实。
   const thoughtLevelOption = useMemo<ZCodeConfigOption | null>(
     () =>
       resolveModelThoughtOption({
@@ -239,15 +245,17 @@ export function OffPeakEditView({
       ? thoughtLevelOption.currentValue
       : undefined;
 
-  // Unsaved-draft guard:
-  // Keep the initial-value snapshot from the first render; if there are unsaved changes when returning, show a confirmation dialog.
+  // 丢弃草稿守卫：
+  // 初值快照固定于首渲染，返回时有未保存改动 → 确认弹窗。
   const initialRef = useRef({
     title: editing?.title ?? defaultCreateTitle,
     prompt: editing?.prompt ?? initialDraft?.prompt ?? "",
     mode: editing?.permissionMode ?? AUTOMATION_DEFAULT_MODE,
     model: initialModel,
     thoughtLevel: editing?.modelSelection?.options?.reasoningLevel,
-    workspacePath: editing?.workspacePath ?? preferredLocalWorkspace?.workspacePath ?? "",
+    projectKey: preferredLocalWorkspace
+      ? resolveAutomationWorkspaceSelectionKey(preferredLocalWorkspace)
+      : "",
   });
   useEffect(() => {
     const nextTitle = resolveLocalizedOffPeakCreateTitle({
@@ -269,7 +277,7 @@ export function OffPeakEditView({
     mode !== initialRef.current.mode ||
     model !== initialRef.current.model ||
     thoughtLevel !== initialRef.current.thoughtLevel ||
-    (!editing && createWorkspacePath !== initialRef.current.workspacePath);
+    (!editing && createProjectKey !== initialRef.current.projectKey);
   const handleBack = useCallback(async () => {
     if (!dirty || readOnlyRef.current) {
       onBack();
@@ -288,14 +296,17 @@ export function OffPeakEditView({
   }, [confirmDialog, dirty, intl, onBack]);
 
   const keepAwake = settings?.keepAwakeWhileRunning ?? false;
-  // All fields are editable while queued/paused; lock editing once running and make terminal states read-only.
+  // queued/paused 全字段可编辑；running 起锁定编辑、终态只读。
   const readOnly = Boolean(editing && editing.status !== "queued" && editing.status !== "paused");
   readOnlyRef.current = readOnly;
-  const workspacePath = editing?.workspacePath ?? createWorkspacePath;
+  const selectedProject = localWorkspaceOptions.find(
+    (option) => resolveAutomationWorkspaceSelectionKey(option) === createProjectKey,
+  );
+  const workspacePath = editing?.workspacePath ?? selectedProject?.workspacePath ?? "";
   const canSubmit =
     title.trim().length > 0 &&
     prompt.trim().length > 0 &&
-    Boolean(workspacePath) &&
+    Boolean(editing || selectedProject) &&
     Boolean(model) &&
     Boolean(effectiveThoughtLevel) &&
     !saving &&
@@ -306,8 +317,8 @@ export function OffPeakEditView({
     if (!canSubmit) return;
     if (mode !== "yolo" && !fullAccessWarningShownRef.current) {
       fullAccessWarningShownRef.current = true;
-      // Permission guidance is non-blocking; warning would render this neutral suggestion as an orange alert.
-      // On the first submission below Full access, show an Info notice and continue creating on the same click without a second confirmation.
+      // 权限建议是非阻塞提示，使用 warning 会把中性建议渲染成橙色警告。
+      // 第一次非 Full access 提交时用 Info 提示，但同一次点击继续创建，不引入二次确认。
       showToast(intl.formatMessage({ id: "offPeak.form.fullAccessHint" }), {
         durationMs: 8000,
         position: "top-center",
@@ -317,6 +328,7 @@ export function OffPeakEditView({
       });
     }
     const ok = await onSubmit({
+      ...(!editing && selectedProject ? { projectId: selectedProject.projectId } : {}),
       title: title.trim(),
       prompt: prompt.trim(),
       permissionMode: mode,
@@ -342,9 +354,10 @@ export function OffPeakEditView({
     prompt,
     title,
     workspacePath,
+    selectedProject,
   ]);
 
-  // Off-peak and scheduled tasks reuse the same permission option and provider so their permission terminology matches sessions.
+  // 闲时与定时任务复用同一权限 option，并通过 provider 保持会话权限词表一致。
   const modeOption = useMemo(() => buildAutomationModeOption(mode), [mode]);
   const createSubmitButton = (
     <Button
@@ -413,8 +426,7 @@ export function OffPeakEditView({
         </div>
       </div>
 
-      {/* Segmented Settings/History tabs on the left and a Create button at the upper right, using
-            the same segmented style as the scheduled-task editor. */}
+      {/* Settings/History 分段 tab（左）+ 创建按钮（右上）；与定时任务编辑页同款分段样式。 */}
       <div className="flex items-center justify-between">
         <AutomationSettingsHistoryTabs
           value={tab}
@@ -489,7 +501,7 @@ export function OffPeakEditView({
       ) : (
         <div className="flex flex-col gap-4">
           {editing?.sessionId ? (
-            // A task created in a session is bound to and runs in that session. Show the session title and link, and clarify that Stop cancels it.
+            // 会话内创建的任务绑定并运行在创建它的会话里；露出会话标题与跳转，并提示 Stop 即取消。
             <div className={AUTOMATION_FORM_FIELD_CLASSNAME}>
               <div className="flex min-w-0 items-center gap-2 text-ui-base leading-5">
                 <span className="min-w-0 truncate text-foreground">
@@ -521,13 +533,12 @@ export function OffPeakEditView({
               </span>
             </div>
           ) : null}
-          {/* Task title. */}
+          {/* 任务标题 */}
           <div className={AUTOMATION_FORM_FIELD_CLASSNAME}>
             <span className="text-ui-base font-normal leading-5 text-foreground-subtle">
               {intl.formatMessage({ id: "offPeak.form.titleLabel" })}
             </span>
-            {/* Bug cause: the Off-Peak title once used a transparent border over the shared Input
-                state, making its outline inconsistent with scheduled tasks and Instructions. */}
+            {/* Bug 原因：闲时任务标题曾用透明边框覆盖共享 Input 状态，导致与定时任务及 Instructions 描边不一致。 */}
             <Input
               value={title}
               disabled={readOnly}
@@ -546,8 +557,7 @@ export function OffPeakEditView({
             />
           </div>
 
-          {/* Task instructions use the composer layout: textarea plus a bottom toolbar (project /
-                permission | model). */}
+          {/* 任务指令 = composer 盒：textarea + 底部工具条（项目 / 权限 | 模型） */}
           <div className={AUTOMATION_FORM_FIELD_CLASSNAME}>
             <span className="text-ui-base font-normal leading-5 text-foreground-subtle">
               {intl.formatMessage({ id: "offPeak.form.instructionsLabel" })}
@@ -564,10 +574,8 @@ export function OffPeakEditView({
               />
               <AutomationInstructionsToolbar>
                 <div className="flex min-w-0 flex-wrap items-center gap-0">
-                  {/* Project: creation can select only local projects open in the current window;
-                      editing is locked to the original project. */}
-                  {/* Fix rationale: UI font size scales with settings; a fixed 18px line height
-                      would compress the project text at larger sizes. */}
+                  {/* 项目：创建态读取本机虚拟项目；编辑态锁定原项目。 */}
+                  {/* 修复原因：UI 字号会随设置缩放，固定 18px 行高会在大字号下挤压项目文案。 */}
                   {editing ? (
                     <span className="flex h-7 min-w-0 items-center gap-1 rounded-full px-2 text-ui-base font-normal leading-snug text-foreground-subtle">
                       <FolderOpen className="size-4 shrink-0" aria-hidden="true" />
@@ -575,33 +583,29 @@ export function OffPeakEditView({
                         {workspaceBasename(workspacePath)}
                       </span>
                     </span>
-                  ) : workspaceMenuTabs.length > 0 ? (
-                    // Only Automations calls use the shared trigger; workspace chips in regular sessions are unaffected.
-                    <ChatEmptyWorkspacePreviewMenu
-                      workspacePath={workspacePath}
-                      workspaceTabs={workspaceMenuTabs}
-                      allowConversationWorkspaceSelection={false}
-                      onSelectWorkspace={(workspace) =>
-                        setCreateWorkspacePath(workspace.workspacePath)
-                      }
-                      onSelectConversationWorkspace={() => {}}
-                      allowOpenWorkspace={false}
-                      allowRemoteWorkspace={false}
-                      onOpenFolder={() => {}}
-                      onConnectRemote={async () => ""}
-                      onSelectRemoteProject={async () => {}}
-                      onCancelRemoteProject={async (_sessionId) => {}}
-                      containerClassName="contents"
-                      triggerClassName={cn(
-                        AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME,
-                        "min-w-0 gap-1 px-2",
-                      )}
-                      triggerIndicator={
-                        <span className="text-foreground-subtle">
-                          <AutomationChevronDownIcon size={14} containerSize={20} />
-                        </span>
-                      }
-                    />
+                  ) : localWorkspaceOptions.length > 0 ? (
+                    <Select value={createProjectKey} onValueChange={setCreateProjectKey}>
+                      <SelectTrigger
+                        data-testid="offpeak-project-select"
+                        variant="ghost"
+                        className={AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME}
+                      >
+                        <FolderOpen className="size-4" aria-hidden="true" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {localWorkspaceOptions.map((option) => (
+                          <SelectItem
+                            key={resolveAutomationWorkspaceSelectionKey(option)}
+                            value={resolveAutomationWorkspaceSelectionKey(option)}
+                            data-project-id={option.projectId}
+                            data-project-name={option.label}
+                          >
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <Button
                       type="button"
@@ -619,9 +623,8 @@ export function OffPeakEditView({
                       })}
                     </Button>
                   )}
-                  {/* Bugfix: the Off-Peak permission menu was rendered separately and lacked the
-                      home page's mode icon and standard selected state. Reuse ConfigSelect to
-                      prevent the two styles from drifting again. */}
+                  {/* Bugfix：闲时权限菜单曾单独渲染，缺少首页的模式图标和标准选中态。
+                      复用 ConfigSelect，避免两处样式再次分叉。 */}
                   <ConfigSelect
                     option={modeOption}
                     provider={ZCODE_AGENT_PROVIDER}
@@ -640,12 +643,10 @@ export function OffPeakEditView({
                     restoreFocusSelector={null}
                   />
                 </div>
-                {/* Bug cause: the right group and its child trigger once allowed shrinking,
-                    wrapping model and reasoning content across multiple lines. On small screens
-                    the whole group moves to the next row, but stays on one line internally. */}
+                {/* Bug 原因：右侧组曾允许自身和子 trigger 收缩，模型与推理内容会被压成纵向多行。
+                    小屏时整组占据下一行，组内始终保持单行。 */}
                 <div className="flex w-full shrink-0 flex-nowrap items-center justify-end gap-0 sm:w-auto">
-                  {/* The model list is still driven by the Off-Peak allowlist; reuse only the
-                        display picker from New Task. */}
+                  {/* 模型仍由闲时白名单驱动，只复用 New Task 的纯展示选择器。 */}
                   <ModelConfigSelect
                     modelGroups={modelSelectGroups}
                     normalizedValue={model}
@@ -669,8 +670,7 @@ export function OffPeakEditView({
                     )}
                     triggerLabelClassName="inline-flex min-w-0 truncate text-left"
                   />
-                  {/* Reasoning level (D34): shown only for reasoning models; defaults to the
-                      workspace setting. */}
+                  {/* 推理档位（D34）：仅推理模型显示；缺省=workspace 默认 */}
                   {thoughtLevelOption ? (
                     <ThoughtLevelCycleControl
                       intl={intl}
@@ -688,9 +688,8 @@ export function OffPeakEditView({
                 </div>
               </AutomationInstructionsToolbar>
             </AutomationInstructionsComposer>
-            {/* Fix rationale: this copy explains runtime behavior rather than warning about risk,
-                so an orange triangle would overstate its meaning. Add 4px between it and the
-                composite input so the supporting text does not sit against the input border. */}
+            {/* 修复原因：该文案是运行机制说明而非风险告警，橙色三角会错误强化语义；
+                与复合输入额外拉开 4px，避免辅助说明贴近输入框边界。 */}
             <div className="mt-1 flex items-start gap-1.5 text-ui-base leading-5 text-foreground-subtle">
               <span className="flex size-5 shrink-0 items-center justify-center" aria-hidden="true">
                 <AutomationInfoIcon className="size-4" />

@@ -1,10 +1,8 @@
+import { createConversationSharePopoverActions } from "@/conversation-share-interaction/conversationSharePopoverActions.js";
 import { create } from "zustand";
-import type { ConversationShareAccessMode } from "@zcode/shared";
+import type { ConversationShareAccessMode, ConversationShareRejection } from "@zcode/shared";
 import type { ConversationShareFailureIssue } from "@zcode/services";
 
-export type ConversationShareScope = "all" | "partial";
-export type ConversationShareSelectionView = "selection" | "timeline";
-export type ConversationShareSelectionStage = "selection" | "configuration";
 export const DEFAULT_CONVERSATION_SHARE_ACCESS_MODE: ConversationShareAccessMode =
   "public_importable";
 
@@ -23,11 +21,12 @@ export interface ConversationShareDisplayError {
   operationId?: string;
   status?: number;
   code?: number;
-  /** Actionable copy parsed from the error type, shown when the server provides no issues. */
+  rejection?: ConversationShareRejection;
+  /** 没有服务端 issues 时展示的、按错误类型解析出的可行动文案。 */
   messageId?: string;
 }
 
-/** Non-blocking notice when publishing succeeds but some artifacts are skipped. */
+/** 发布成功但有结果物被跳过时的非阻断提示。 */
 export interface ConversationShareDisplayWarnings {
   issues: readonly ConversationShareFailureIssue[];
   issueCount: number;
@@ -37,9 +36,8 @@ export interface ConversationShareDisplayWarnings {
 export type ConversationShareProgressPhase = "collecting" | "uploading" | "checking";
 
 export interface ConversationShareSelectionDraft {
-  scope: ConversationShareScope;
-  stage: ConversationShareSelectionStage;
-  view: ConversationShareSelectionView;
+  open?: boolean;
+  pendingExcludedRowIds?: readonly number[] | null;
   availableRowIds: readonly number[];
   excludedRowIds: readonly number[];
   productTurnIdByRowId: Readonly<Record<number, string>>;
@@ -59,35 +57,28 @@ export interface ConversationShareDockState {
   attempt: ConversationShareAttempt | null;
 }
 
-interface ConversationShareSelectionState {
-  popoverOpen: boolean;
+export interface ConversationShareSelectionState {
+  openShare: (taskId: string) => void;
+  closeShare: (taskId: string) => void;
+  beginSelectionEdit: (taskId: string) => void;
+  togglePendingRow: (taskId: string, rowId: number) => void;
+  setAllPendingRowsSelected: (taskId: string, selected: boolean) => void;
+  confirmSelectionEdit: (taskId: string) => void;
+  cancelSelectionEdit: (taskId: string) => void;
   drafts: Record<string, ConversationShareSelectionDraft>;
   dockStates: Record<string, ConversationShareDockState>;
-  setPopoverOpen: (open: boolean) => void;
-  setScope: (taskId: string, scope: ConversationShareScope) => void;
   setAccessMode: (taskId: string, accessMode: ConversationShareAccessMode) => void;
-  syncAvailableRowIds: (taskId: string, rowIds: readonly number[]) => void;
   syncAvailableTurns: (
     taskId: string,
     turns: readonly { rowId: number; productTurnId: string }[],
   ) => void;
-  toggleRow: (taskId: string, rowId: number) => void;
-  /** Deselects an entire turn by product-turn identity (the blocking-item "Deselect this turn" action). */
+  /** 按 product turn 身份整轮取消选择（阻断项的「取消选择该轮」入口）。 */
   deselectProductTurn: (taskId: string, productTurnId: string) => void;
-  setAllRowsSelected: (taskId: string, selected: boolean) => void;
-  goToConfiguration: (taskId: string) => void;
-  goToSelection: (taskId: string) => void;
-  showTimeline: (taskId: string) => void;
-  showSelectionPanel: (taskId: string) => void;
-  finishSelection: (taskId: string) => void;
   updateDockState: (taskId: string, patch: Partial<ConversationShareDockState>) => void;
   resetForTests: () => void;
 }
 
 const EMPTY_DRAFT: ConversationShareSelectionDraft = Object.freeze({
-  scope: "all",
-  stage: "selection",
-  view: "timeline",
   availableRowIds: Object.freeze([]),
   excludedRowIds: Object.freeze([]),
   productTurnIdByRowId: Object.freeze({}),
@@ -105,23 +96,6 @@ export const DEFAULT_CONVERSATION_SHARE_DOCK_STATE: ConversationShareDockState =
   warnings: null,
   attempt: null,
 });
-
-const SESSION_SWITCH_REOPEN_KEY = "__zcodeConversationShareReopenAfterTaskSwitch";
-
-type ConversationShareWindow = Window & Partial<Record<typeof SESSION_SWITCH_REOPEN_KEY, boolean>>;
-
-export function markConversationSharePopoverForSessionSwitch(): void {
-  if (typeof window === "undefined") return;
-  (window as ConversationShareWindow)[SESSION_SWITCH_REOPEN_KEY] = true;
-}
-
-export function consumeConversationSharePopoverSessionSwitch(): boolean {
-  if (typeof window === "undefined") return false;
-  const runtimeWindow = window as ConversationShareWindow;
-  const shouldReopen = runtimeWindow[SESSION_SWITCH_REOPEN_KEY] === true;
-  delete runtimeWindow[SESSION_SWITCH_REOPEN_KEY];
-  return shouldReopen;
-}
 
 function normalizeRowIds(rowIds: readonly number[]): number[] {
   return [...new Set(rowIds.filter(Number.isSafeInteger))].sort((left, right) => left - right);
@@ -153,62 +127,35 @@ export function getConversationShareSelectedRowIds(
 export function getConversationShareSelectedProductTurnIds(
   state: Pick<ConversationShareSelectionState, "drafts">,
   taskId: string,
+  source: "confirmed" | "pending" = "confirmed",
 ): string[] {
   const draft = getConversationShareDraft(state, taskId);
   const seen = new Set<string>();
-  return getConversationShareSelectedRowIds(state, taskId).flatMap((rowId) => {
-    const productTurnId = draft.productTurnIdByRowId[rowId];
-    if (!productTurnId || seen.has(productTurnId)) return [];
-    seen.add(productTurnId);
-    return [productTurnId];
-  });
+  const excluded = new Set(
+    source === "pending"
+      ? (draft.pendingExcludedRowIds ?? draft.excludedRowIds)
+      : draft.excludedRowIds,
+  );
+  return draft.availableRowIds
+    .filter((rowId) => !excluded.has(rowId))
+    .flatMap((rowId) => {
+      const productTurnId = draft.productTurnIdByRowId[rowId];
+      if (!productTurnId || seen.has(productTurnId)) return [];
+      seen.add(productTurnId);
+      return [productTurnId];
+    });
 }
 
 export const useConversationShareSelectionStore = create<ConversationShareSelectionState>()(
   (set) => ({
-    popoverOpen: false,
+    ...createConversationSharePopoverActions(
+      set,
+      getConversationShareDraft,
+      getConversationShareDockState,
+      DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
+    ),
     drafts: {},
     dockStates: {},
-    setPopoverOpen: (popoverOpen) => set({ popoverOpen }),
-    setScope: (taskId, scope) =>
-      set((state) => {
-        const currentDraft = state.drafts[taskId];
-        const dockStates = { ...state.dockStates };
-        if (scope === "partial") {
-          if (currentDraft?.scope !== "partial") {
-            const previousAttempt = state.dockStates[taskId]?.attempt;
-            dockStates[taskId] = previousAttempt
-              ? { ...DEFAULT_CONVERSATION_SHARE_DOCK_STATE, attempt: previousAttempt }
-              : DEFAULT_CONVERSATION_SHARE_DOCK_STATE;
-          }
-        } else {
-          delete dockStates[taskId];
-        }
-        return {
-          // After entering partial selection, the left panel becomes the only range-selection entry point, preventing two overlays from competing for focus.
-          popoverOpen: scope === "partial" ? false : state.popoverOpen,
-          drafts: {
-            ...state.drafts,
-            [taskId]:
-              scope === "partial"
-                ? {
-                    scope,
-                    stage: "selection",
-                    view: "selection",
-                    availableRowIds:
-                      state.drafts[taskId]?.availableRowIds ?? EMPTY_DRAFT.availableRowIds,
-                    // Each entry from "All conversations" starts a new selection draft, defaulting to select all per product semantics.
-                    excludedRowIds: [],
-                    productTurnIdByRowId:
-                      state.drafts[taskId]?.productTurnIdByRowId ??
-                      EMPTY_DRAFT.productTurnIdByRowId,
-                    accessMode: state.drafts[taskId]?.accessMode ?? EMPTY_DRAFT.accessMode,
-                  }
-                : EMPTY_DRAFT,
-          },
-          dockStates,
-        };
-      }),
     setAccessMode: (taskId, accessMode) =>
       set((state) => ({
         drafts: {
@@ -219,188 +166,41 @@ export const useConversationShareSelectionStore = create<ConversationShareSelect
           },
         },
       })),
-    syncAvailableRowIds: (taskId, rowIds) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial") return state;
-        const availableRowIds = normalizeRowIds(rowIds);
-        const available = new Set(availableRowIds);
-        const excludedRowIds = current.excludedRowIds.filter((rowId) => available.has(rowId));
-        if (
-          availableRowIds.length === current.availableRowIds.length &&
-          availableRowIds.every((rowId, index) => current.availableRowIds[index] === rowId) &&
-          excludedRowIds.length === current.excludedRowIds.length
-        ) {
-          return state;
-        }
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, availableRowIds, excludedRowIds },
-          },
-        };
-      }),
     syncAvailableTurns: (taskId, turns) =>
       set((state) => {
         const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial") return state;
+        if (!current.open) return state;
         const productTurnIdByRowId = Object.fromEntries(
           turns.map((turn) => [turn.rowId, turn.productTurnId]),
         );
         const availableRowIds = normalizeRowIds(turns.map((turn) => turn.rowId));
         const available = new Set(availableRowIds);
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: {
-              ...current,
-              availableRowIds,
-              excludedRowIds: current.excludedRowIds.filter((rowId) => available.has(rowId)),
-              productTurnIdByRowId,
-            },
-          },
+        const nextDraft = {
+          ...current,
+          availableRowIds,
+          excludedRowIds: current.excludedRowIds.filter((rowId) => available.has(rowId)),
+          productTurnIdByRowId,
         };
-      }),
-    toggleRow: (taskId, rowId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial" || !current.availableRowIds.includes(rowId)) {
-          return state;
-        }
-        const excluded = new Set(current.excludedRowIds);
-        if (excluded.has(rowId)) excluded.delete(rowId);
-        else excluded.add(rowId);
+        // 披露确认绑定有效分享范围；重开或运行轮次完成后新增内容，不能沿用旧确认。
+        const before = new Set(getConversationShareSelectedProductTurnIds(state, taskId));
+        const after = getConversationShareSelectedProductTurnIds(
+          { drafts: { [taskId]: nextDraft } },
+          taskId,
+        );
+        const changed = before.size !== after.length || after.some((id) => !before.has(id));
         return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: {
-              ...current,
-              excludedRowIds: [...excluded].sort((left, right) => left - right),
-            },
-          },
-        };
-      }),
-    /**
-     * Deselects an entire turn by product-turn identity.
-     *
-     * Do not let the UI use the service's turnOrdinal to index its own per-query list:
-     * the two numbering schemes necessarily diverge in sessions with system-context turns or multiple steer queries. Also, toggleRow excludes only
-     * one row, leaving other queries from the same turn selected, so the blocking turn is not actually removed.
-     * "Deselect this turn" means the whole turn, so exclude every row by productTurnId at once; the operation is idempotent.
-     */
-    deselectProductTurn: (taskId, productTurnId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial" || !productTurnId) return state;
-        const excluded = new Set(current.excludedRowIds);
-        let changed = false;
-        for (const rowId of current.availableRowIds) {
-          if (current.productTurnIdByRowId[rowId] !== productTurnId || excluded.has(rowId)) {
-            continue;
-          }
-          excluded.add(rowId);
-          changed = true;
-        }
-        if (!changed) return state;
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: {
-              ...current,
-              excludedRowIds: [...excluded].sort((left, right) => left - right),
-            },
-          },
-        };
-      }),
-    setAllRowsSelected: (taskId, selected) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial") return state;
-        const excludedRowIds = selected ? [] : [...current.availableRowIds];
-        if (
-          excludedRowIds.length === current.excludedRowIds.length &&
-          excludedRowIds.every((rowId, index) => current.excludedRowIds[index] === rowId)
-        ) {
-          return state;
-        }
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, excludedRowIds },
-          },
-        };
-      }),
-    goToConfiguration: (taskId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (
-          current.scope !== "partial" ||
-          current.stage === "configuration" ||
-          getConversationShareSelectedRowIds(state, taskId).length === 0
-        ) {
-          return state;
-        }
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, stage: "configuration" },
-          },
-        };
-      }),
-    goToSelection: (taskId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial" || current.stage === "selection") return state;
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, stage: "selection", view: "selection" },
-          },
-        };
-      }),
-    showTimeline: (taskId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial") return state;
-        return {
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, view: "timeline" },
-          },
-        };
-      }),
-    showSelectionPanel: (taskId) =>
-      set((state) => {
-        const current = getConversationShareDraft(state, taskId);
-        if (current.scope !== "partial" || current.stage !== "selection") return state;
-        return {
-          // The timeline is marked as a popover keep-open region, which causes the top-right dropdown to remain open
-          // when returning to the left panel. Centralize panel switching in the store and close the dropdown at the same time.
-          popoverOpen: false,
-          drafts: {
-            ...state.drafts,
-            [taskId]: { ...current, view: "selection" },
-          },
-        };
-      }),
-    finishSelection: (taskId) =>
-      set((state) => {
-        const dockStates = { ...state.dockStates };
-        const previousAttempt = dockStates[taskId]?.attempt;
-        if (previousAttempt) {
-          // Keep idempotent retry records by session, but clear visible results, progress, and errors after closing.
-          dockStates[taskId] = {
-            ...DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
-            attempt: previousAttempt,
-          };
-        } else {
-          delete dockStates[taskId];
-        }
-        return {
-          drafts: { ...state.drafts, [taskId]: EMPTY_DRAFT },
-          // When SessionPane reuses an instance, share-success state must not remain in the component,
-          // where it would continue to render after switching sessions; ending a share must clear only the current session's dock key.
-          dockStates,
+          drafts: { ...state.drafts, [taskId]: nextDraft },
+          ...(changed
+            ? {
+                dockStates: {
+                  ...state.dockStates,
+                  [taskId]: {
+                    ...getConversationShareDockState(state, taskId),
+                    disclosureAccepted: false,
+                  },
+                },
+              }
+            : {}),
         };
       }),
     updateDockState: (taskId, patch) =>
@@ -415,7 +215,6 @@ export const useConversationShareSelectionStore = create<ConversationShareSelect
       })),
     resetForTests: () =>
       set({
-        popoverOpen: false,
         drafts: {},
         dockStates: {},
       }),

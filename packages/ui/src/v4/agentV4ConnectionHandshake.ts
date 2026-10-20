@@ -30,6 +30,7 @@ export function ensureAgentV4ConnectionHandshake(
     // clientHello fail parsing and prevents the connection — this does not degrade gracefully; the whole session pane becomes unavailable.
     const capabilities: NonNullable<ClientHello["capabilities"]> = {
       workspaceHookReviewUi: true,
+      ...(hello.capabilities.historyFirst === true ? { historyFirst: true } : {}),
       ...(hostSupportsWorkflowRunDeltas(hello.capabilities) ? { workflowRunDeltas: true } : {}),
     };
     await service.initializeConversationV4({

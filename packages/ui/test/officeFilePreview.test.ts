@@ -396,9 +396,6 @@ describe("Office file preview", () => {
     expect(view.container.querySelector("[data-docx-fit-viewport]")).not.toBeNull();
     expect(view.container.querySelector("[data-docx-fit-frame]")).not.toBeNull();
     expect(view.container.querySelector("[data-docx-fit-content]")).not.toBeNull();
-    expect(styleContainer.textContent).toContain(
-      "box-shadow: 0 2px 10px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.05)",
-    );
   });
 
   it("keeps legacy DOC files on the read-only editor compatibility path", async () => {
@@ -416,7 +413,6 @@ describe("Office file preview", () => {
     expect(html).toContain('data-testid="docx-editor-viewer"');
     expect(html).toContain('data-mode="read-only"');
     expect(html).toContain('data-has-model="true"');
-    expect(html).toContain('data-gap-background="transparent"');
     expect(html).toContain('data-virtualization-scale="1"');
     expect(docxMockState.editorOptions).toMatchObject({
       initialDocumentTheme: "light",

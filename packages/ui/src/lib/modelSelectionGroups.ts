@@ -4,7 +4,6 @@ import {
   zcodeProviderAccountAccessSchema,
   type ZCodeProviderAccountAccess,
 } from "@zcode/shared";
-import type { ProviderConfigObject } from "@zcode/provider";
 import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectGroup } from "@/ModelConfigSelect.js";
 import { decodeCustomModelValue, encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
@@ -28,10 +27,7 @@ function supportsRegistryApiFormat(
   apiFormat: string | null | undefined,
 ): boolean {
   if (!apiFormat) return false;
-  // Only the glm (ZCode Agent) provider remains; third-party CLI api-format differences became irrelevant when those providers were removed.
-  // The ChatGPT plan runs through the same bundled agent (SIWC wiring in the CLI), so its
-  // sessions must keep the registry picker; otherwise selecting a gpt model collapses the
-  // menu to "Manage models" with no way back.
+  // 仅剩 glm（ZCode Agent）provider；三方 CLI 的 api format 差异已随 provider 下线。
   return (
     selectedProvider === ZCODE_AGENT_PROVIDER ||
     isChatGptPlanSubscriptionProviderId(selectedProvider)
@@ -52,23 +48,19 @@ export function buildRegistryModelSelectGroups(
     const accountPresentation = accountAccess.success
       ? getRegistryAccountProviderGroupPresentation(provider.providerId, accountAccess.data, labels)
       : null;
-    // Visual distinction inside the picker: the ChatGPT plan is subscription-backed while the
-    // api.openai.com API-key provider uses a personal key — both share the OpenAI models.
-    const accessTypeBadge = getAccessTypeGroupBadge(
-      provider.config.access,
-      provider.config.api?.baseUrl,
-      labels,
-    );
+
+    // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
+    // Only the ChatGPT plan and the api.openai.com key get an access badge; other API-key providers stay unbadged.
+    const labelBadge =
+      accountPresentation?.labelBadge ??
+      getAccessTypeGroupBadge(provider.config.access, provider.config.api?.baseUrl, labels);
 
     return [
       {
         key: `registry-provider:${provider.providerId}`,
         label: accountPresentation?.label || provider.providerName?.trim() || provider.providerId,
-        ...(accountPresentation?.labelBadge
-          ? { labelBadge: accountPresentation.labelBadge }
-          : accessTypeBadge
-            ? { labelBadge: accessTypeBadge }
-            : {}),
+        ...(provider.config.logo ? { logo: provider.config.logo } : {}),
+        ...(labelBadge ? { labelBadge } : {}),
         ...(accountPresentation ? { directItems: true } : {}),
         items: provider.models.map(({ modelId, config }) => ({
           key: `registry-provider:${provider.providerId}:${modelId}`,
@@ -88,7 +80,7 @@ export function buildRegistryModelSelectGroups(
 }
 
 function getAccessTypeGroupBadge(
-  access: ProviderConfigObject["access"],
+  access: { type: string } | null | undefined,
   baseUrl: string | null | undefined,
   labels: ModelProviderGroupLabelOptions,
 ): string | undefined {

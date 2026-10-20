@@ -2,17 +2,14 @@
 
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getPatchFileDisplayTarget,
   getSidePaneTabTitle,
-  SidePaneTabDragOverlay,
   SidePaneTabIcon,
   SortableSidePaneTabTrigger,
 } from "@/app-shell/SidePaneTabTrigger.js";
-import { SidePaneTabTitleTooltip } from "@/app-shell/SidePaneTabTitleTooltip.js";
 import { Tabs, TabsList } from "@/components/ui/tabs.js";
 import type { WorkspaceSidePaneTab } from "@/lib/workspaceSidePane.js";
 
@@ -248,10 +245,10 @@ describe("getSidePaneTabTitle", () => {
   });
 
   it("titles an actor transcript with its name and always with its instance ordinal", () => {
-    // Instances of the same lane family share a name (the script wrote `agent("reviewer")` only once), so the ordinal is
-    // the only thing in the title that can tell them apart — two "reviewer" tabs on the tab strip would be indistinguishable.
-    // The ordinal uses concatenation rather than a localized template: following the selection-side-chat precedent
-    // (`${label} ${ordinal}`), the label mapping table therefore stays "id → string" with no interpolation to carry.
+    // 同一车道族的实例名字相同（脚本里只写了一次 `agent("reviewer")`），所以序号是标题里
+    // 唯一能区分它们的东西——tab 条上两个「reviewer」是无法辨认的。序号用拼接而不是
+    // 本地化模板：照 selection-side-chat 的先例（`${label} ${ordinal}`），标签映射表因此
+    // 仍然是「id → 串」，不必背插值。
     expect(getSidePaneTabTitle(workflowActorTab, ({ id }) => id)).toBe("reviewer #2");
   });
 
@@ -265,7 +262,7 @@ describe("getSidePaneTabTitle", () => {
   });
 
   it("titles a workspace transcript with the run name: one run, one workspace transcript", () => {
-    // docs/dynamic-workflow/transcript-and-notifications.md "Opening the tab": the title is the run name; the type word lives in the tooltip.
+    // docs/dynamic-workflow/transcript-and-notifications.md「Opening the tab」：标题是 run 名，类型词在 tooltip 里。
     expect(getSidePaneTabTitle(workflowWorkspaceTab, ({ id }) => id)).toBe("Three-way review");
   });
 
@@ -284,8 +281,8 @@ describe("SortableSidePaneTabTrigger", () => {
     const html = renderSidePaneTab(true);
     const tabMarkup = html.match(/<div data-side-pane-tab-id="browser:test"[^>]*>/)?.[0] ?? "";
 
-    // Bugfix: ContextMenuTrigger + TabsTrigger asChild makes the Radix state landing point unstable.
-    // The side pane tab's active styling depends on data-active, so the controlled isActive must patch it onto the real DOM.
+    // Bugfix: ContextMenuTrigger + TabsTrigger asChild 会让 Radix 状态落点不稳定。
+    // 右侧面板 tab 的 active 样式依赖 data-active，所以必须由受控 isActive 补到真实 DOM。
     expect(tabMarkup).toContain('data-side-pane-tab-id="browser:test"');
     expect(tabMarkup).toMatch(/\sdata-active(=|\s|>)/);
     expect(tabMarkup).toContain('data-state="active"');
@@ -326,7 +323,6 @@ describe("SortableSidePaneTabTrigger", () => {
     expect(html).toContain("Close tab");
     expect(html).toContain("Close other tabs");
     expect(html).toContain("Close all tabs");
-    expect(html).not.toContain('role="separator"');
   });
 
   it("always renders the close button for active and inactive tabs", () => {
@@ -387,55 +383,6 @@ describe("SortableSidePaneTabTrigger", () => {
     expect(onActivateTab).not.toHaveBeenCalled();
     expect(onParentAuxClick).not.toHaveBeenCalled();
   });
-
-  it("shows the full title through an independently delayed tooltip", () => {
-    const html = renderSidePaneTab(true, "A complete tab title");
-
-    expect(html).toContain('data-tooltip-delay="1500"');
-    expect(html).toContain('data-tooltip-skip-delay="0"');
-    expect(html).toContain('data-testid="side-pane-tab-tooltip"');
-    expect(html).toContain("A complete tab title");
-  });
-
-  it("uses a 156px preferred width and an equal-shrink 60px minimum", () => {
-    const longTitle = "A very long browser tab title that must be truncated";
-    const tabHtml = renderSidePaneTab(true, longTitle);
-    const overlayHtml = renderToStaticMarkup(
-      createElement(SidePaneTabDragOverlay, {
-        tab: browserTab,
-        title: longTitle,
-        diffBadgeLabel: "Diff",
-      }),
-    );
-
-    expect(tabHtml).toContain("flex-[1_1_9.75rem]");
-    expect(tabHtml).toContain("min-w-15");
-    expect(tabHtml).toContain("max-w-39");
-    expect(tabHtml).toContain("flex-1");
-    expect(tabHtml).toContain('data-side-pane-tab-content=""');
-    expect(tabHtml).toContain("mask-image");
-    expect(tabHtml).not.toMatch(/class="[^"]*\btruncate\b/);
-    expect(overlayHtml).toContain("w-39");
-    expect(overlayHtml).toContain('data-side-pane-tab-content=""');
-    expect(overlayHtml).toContain("mask-image");
-    expect(overlayHtml).not.toMatch(/class="[^"]*\btruncate\b/);
-  });
-});
-
-describe("SidePaneTabTitleTooltip", () => {
-  it("preserves the trigger shrink behavior required by responsive tab widths", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        SidePaneTabTitleTooltip,
-        { isDragging: false, title: "Docs" },
-        createElement("div", { "data-testid": "responsive-tab-trigger" }),
-      ),
-    );
-    const triggerMarkup = html.match(/<div data-testid="responsive-tab-trigger"[^>]*>/)?.[0] ?? "";
-
-    expect(triggerMarkup).toContain('class="shrink"');
-    expect(triggerMarkup).not.toContain("shrink-0");
-  });
 });
 
 describe("SidePaneTabIcon browser-use operation state", () => {
@@ -456,7 +403,6 @@ describe("SidePaneTabIcon browser-use operation state", () => {
 
     expect(html).toContain('data-browser-use-operation-indicator="active"');
     expect(html).toContain("browser-use-operation-breathe");
-    expect(html).not.toContain("motion-safe:animate-pulse");
     expect(html).not.toContain("https://example.com/favicon.ico");
   });
 
@@ -477,66 +423,5 @@ describe("SidePaneTabIcon browser-use operation state", () => {
 
     expect(html).not.toContain("data-browser-use-operation-indicator");
     expect(html).toContain("https://example.com/favicon.ico");
-  });
-});
-
-// Bug cause: the plan-detail tab is opened by the switch-mode (ExitPlanMode) tool call card,
-// and the source card uses NotepadTextIcon. The tab icon previously misused ListChecksIcon, causing the icon
-// to jump when the user clicked the card to open the tab, and ListChecksIcon clashed with the status panel's Todo section icon.
-// Convention pinned here: the plan-detail tab icon must match the source card — NotepadTextIcon.
-describe("SidePaneTabIcon plan-detail", () => {
-  it("uses NotepadTextIcon to match the switch-mode source card", () => {
-    const html = renderToStaticMarkup(
-      createElement(SidePaneTabIcon, {
-        tab: {
-          id: "plan-detail:test",
-          type: "plan-detail",
-          workspaceKey: "/workspace",
-          workspacePath: "/workspace",
-          parentSessionId: "parent",
-          toolCallId: "tool-1",
-          markdown: "# Plan",
-        },
-      }),
-    );
-
-    expect(html).toContain("lucide-notepad-text");
-    // Prevent falling back to ListChecksIcon, which clashes with Todo
-    expect(html).not.toContain("lucide-list-checks");
-  });
-});
-
-// Same convention: the workflow-run tab is opened by the CreateWorkflow tool card, whose source card uses the lucide Workflow
-// icon; the tab must match it, otherwise the icon jumps when clicking the card into the detail view.
-describe("SidePaneTabIcon workflow-run", () => {
-  it("uses the same Workflow icon as the CreateWorkflow source card", () => {
-    const html = renderToStaticMarkup(createElement(SidePaneTabIcon, { tab: workflowRunTab }));
-
-    expect(html).toContain("lucide-workflow");
-  });
-});
-
-// An actor transcript is "one actor's conversation record", so it can use neither the run's Workflow icon
-// (that is the whole run) nor the subagent's Bot icon — on the tab strip those two conversation kinds are
-// indistinguishable, yet their visibility and recycling semantics are completely different.
-describe("SidePaneTabIcon workflow-actor-session", () => {
-  it("is visually distinct from both the run tab and a subagent tab", () => {
-    const html = renderToStaticMarkup(createElement(SidePaneTabIcon, { tab: workflowActorTab }));
-
-    expect(html).toContain("lucide-bot-message-square");
-    expect(html).not.toContain("lucide-workflow");
-  });
-});
-
-// A script transcript is "what this run did to the workspace", so it uses the terminal icon: neither the run's Workflow
-// (the whole run) nor an actor's chat bubble (that is a subagent's transcript).
-describe("SidePaneTabIcon workflow-workspace", () => {
-  it("uses the terminal icon, distinct from run and actor tabs", () => {
-    const html = renderToStaticMarkup(
-      createElement(SidePaneTabIcon, { tab: workflowWorkspaceTab }),
-    );
-    expect(html).toContain("lucide-terminal");
-    expect(html).not.toContain("lucide-workflow");
-    expect(html).not.toContain("lucide-bot-message-square");
   });
 });

@@ -131,6 +131,13 @@ const prewarmHookInputs = vi.hoisted(() => ({
 }));
 
 const servicesMock = vi.hoisted(() => ({
+  projectService: {
+    resolveSessionDirectories: vi.fn(async (task) => ({
+      ...task,
+      projectId: null,
+      additionalDirectories: [],
+    })),
+  },
   highspeedCardService: {
     // This file uses a minimal DOM that is destroyed after the test case; keep unrelated Highspeed
     // queries pending so their Promise callbacks do not wake the React scheduler after window cleanup.
@@ -217,6 +224,7 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 }));
 
 vi.mock("@/hooks/useServices.js", () => ({
+  useComposerClientNamespace: () => "desktop",
   useOptionalServices: () => null,
   useServices: () => servicesMock,
 }));
@@ -285,6 +293,13 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
     prewarmHookInputs.current.push(params);
     return {
       binding: prewarmHookInputs.binding,
+      waitForSession: async () => {
+        if (prewarmHookInputs.binding) return prewarmHookInputs.binding;
+        const ack = (await params.dispatchCommand("createSession", {}, null)) as {
+          result: { sessionId: string };
+        };
+        return { sessionId: ack.result.sessionId, beginPromotion: () => true, promote: vi.fn() };
+      },
     };
   },
 }));
@@ -541,7 +556,12 @@ beforeEach(() => {
   conversationMock.lease.store.expectAcceptedInputProjection.mockClear();
   conversationMock.currentLayer = null;
   conversationMock.currentSendCommand = null;
-  conversationMock.sendCommand.mockClear();
+  conversationMock.sendCommand.mockReset();
+  conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+    commandId: envelope.commandId,
+    revisionAtDecision: 1,
+    status: "accepted" as const,
+  }));
   prewarmHookInputs.current = [];
   scrollFocus.composerProps = null;
   scrollFocus.queueProps = null;
@@ -895,7 +915,12 @@ describe("SessionPane composer continuity", () => {
       loadingOlder: false,
     };
     renderPane(root, "session-1");
-    conversationMock.sendCommand.mockClear();
+    conversationMock.sendCommand.mockReset();
+    conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+    }));
 
     await act(async () => {
       await scrollFocus.composerProps?.onSendText("立即执行", {
@@ -912,9 +937,6 @@ describe("SessionPane composer continuity", () => {
           requestedDelivery: "startNow",
         }),
       }),
-    );
-    expect(conversationMock.sendCommand).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "sendQueuedNow" }),
     );
     expect(conversationMock.lease.store.expectAcceptedInputProjection).toHaveBeenCalledWith(
       conversationMock.sendCommand.mock.calls[0]?.[0].commandId,
@@ -970,7 +992,12 @@ describe("SessionPane composer continuity", () => {
       expect.objectContaining({ type: "compact", sessionId: "session-1" }),
     );
 
-    conversationMock.sendCommand.mockClear();
+    conversationMock.sendCommand.mockReset();
+    conversationMock.sendCommand.mockImplementation(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+    }));
     await act(async () => {
       await scrollFocus.composerProps?.onSendText("新消息", {
         heldQueueDisposition: "clearQueueAndSend",

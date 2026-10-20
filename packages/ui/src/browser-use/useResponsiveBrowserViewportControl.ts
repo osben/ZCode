@@ -71,7 +71,7 @@ export function useResponsiveBrowserViewportControl({
   );
 
   const applyResponsiveMode = useCallback((nextMode: boolean) => {
-    // Viewport events also synchronize dimensions within the mode; reset only on false → true so the user’s newly selected fixed zoom is not overwritten.
+    // viewport 事件也会用于模式内尺寸同步；仅在 false → true 时重置，避免覆盖用户刚选的固定缩放。
     if (nextMode && !isResponsiveModeRef.current) {
       responsiveViewportZoomRef.current = DEFAULT_BROWSER_VIEWPORT_ZOOM;
       setResponsiveViewportZoom(DEFAULT_BROWSER_VIEWPORT_ZOOM);
@@ -86,8 +86,8 @@ export function useResponsiveBrowserViewportControl({
       if (!request) return;
       void request
         .then(() => {
-          // Set the guest zoom back to 1 only after metrics have completed serially in main. If set earlier in
-          // a React effect, asynchronous propagation of Desktop page zoom will set the guest back to the global zoom.
+          // metrics 在 main 内串行完成后再把 guest zoom 固定回 1。若提前在
+          // React effect 中设置，Desktop page zoom 的异步传播会再将 guest 改回全局缩放。
           if (viewport) onViewportSynchronized();
         })
         .catch((error) => {
@@ -105,9 +105,8 @@ export function useResponsiveBrowserViewportControl({
     wasResponsiveModeForZoomRef.current = isResponsiveMode;
     lastDesktopZoomFactorRef.current = desktopZoomFactor;
     if (!isResponsiveMode || !wasResponsiveMode || !zoomChanged) return;
-    // After Electron increases Desktop page zoom, the guest native raster still uses the pre-zoom
-    // backing dimensions. Resend the same viewport on every zoom change so main can read the trusted
-    // zoom factor from BrowserWindow and replay metrics; do not write zoom into Agent viewport state.
+    // Electron 会把新的 Desktop page zoom 传播到 guest，时机可能晚于 React effect。
+    // zoom 每次变化都重发同一 viewport，让 main 在串行边界再次把 guest zoom 归一为 1。
     updateControlledViewport(responsiveViewportSize);
   }, [desktopZoomFactor, isResponsiveMode, responsiveViewportSize, updateControlledViewport]);
 
@@ -126,22 +125,11 @@ export function useResponsiveBrowserViewportControl({
         responsiveViewportSizeRef.current = { ...payload.viewport };
         setResponsiveViewportSize({ ...payload.viewport });
         applyResponsiveMode(true);
-        // The main path for Agent viewport creation/settings does not pass through renderer IPC; echo it only when the current window
-        // is zoomed in, so main can add the trusted zoom factor. Default and reduced zoom do not need an echo.
-        if (desktopZoomFactor > 1) updateControlledViewport(payload.viewport);
         return;
       }
       applyResponsiveMode(false);
     });
-  }, [
-    applyResponsiveMode,
-    browserKey,
-    desktopZoomFactor,
-    onAgentViewportChange,
-    platform,
-    sessionId,
-    updateControlledViewport,
-  ]);
+  }, [applyResponsiveMode, browserKey, onAgentViewportChange, platform, sessionId]);
 
   const toggleResponsiveMode = useCallback(() => {
     onViewportResize();

@@ -1,5 +1,5 @@
-/* eslint-disable max-lines -- BotsDialog now retains data loading, saving, and polling orchestration; the right-side cards have moved into BotsDialog/* subcomponents, and state hooks can be extracted later. */
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+/* eslint-disable max-lines -- BotsDialog 现在保留数据加载、保存和轮询编排；右侧卡片已拆到 BotsDialog/* 子组件，后续再继续下沉状态 hook。 */
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import QRCode from "qrcode";
 import { Bot, Loader2, Plus } from "lucide-react";
 import type {
@@ -34,7 +34,6 @@ import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import { logger } from "@/logger.js";
 import {
   BOT_PROVIDERS,
-  buildCurrentWorkspaceId,
   getBotProviderRegionTagLabelId,
   resolveBotProviderEntry,
   type BotProviderEntryId,
@@ -67,8 +66,8 @@ function createEmptyConfig(): BotsConfigFile {
 }
 
 function createDraftBot(params: { provider: BotProvider }): BotConfig {
-  // Bug fix: A Bot ID identifies a configuration entity and should not include a provider prefix.
-  // Seeing an ID such as telegram-* on a newly created bot could misleadingly suggest that its channel is fixed to Telegram.
+  // Bugfix: Bot id 只是配置实体身份，不应该带 provider 前缀；
+  // 新建时如果看到 telegram-* 这类 id，容易误以为渠道被固定到了 Telegram。
   const id = `bot-${createUuid()}`;
   return {
     id,
@@ -85,14 +84,10 @@ function createDraftBot(params: { provider: BotProvider }): BotConfig {
 export function BotsDialog({
   open,
   onOpenChange,
-  workspacePath,
-  workspaceIdentity,
   entryProvider,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  workspacePath: string;
-  workspaceIdentity?: string;
   entryProvider?: BotProvider | null;
 }) {
   const { intl } = useZCodeIntl();
@@ -130,19 +125,6 @@ export function BotsDialog({
   const autoBindCreatingBotIdsRef = useRef(new Set<string>());
   const handledEntryProviderRef = useRef<BotProvider | null>(null);
 
-  const currentWorkspaceId = useMemo(
-    () => buildCurrentWorkspaceId(workspacePath, workspaceIdentity),
-    [workspaceIdentity, workspacePath],
-  );
-  const currentWorkspace = useMemo(
-    () => ({
-      id: currentWorkspaceId,
-      label: workspacePath.split(/[\\/]/u).filter(Boolean).at(-1) ?? workspacePath,
-      workspacePath,
-      workspaceIdentity,
-    }),
-    [currentWorkspaceId, workspaceIdentity, workspacePath],
-  );
   const selectedBot = config.bots.find((bot) => bot.id === selectedBotId) ?? null;
   const selectedBotState = botStates.find((state) => state.botId === selectedBotId) ?? null;
   const selectedBotName =
@@ -162,8 +144,8 @@ export function BotsDialog({
   useEffect(() => {
     if (!open || !bindCode) return undefined;
     setNowMs(Date.now());
-    // Bugfix: after the binding code was shortened to 30 seconds, refreshing every second made the progress bar visibly jump.
-    // Drive the animation at a finer cadence; the text still updates by second through formatBindCountdown.
+    // Bugfix: 绑定码缩短到 30 秒后，1 秒刷新会让进度条明显跳格。
+    // 这里用更细的节奏驱动动画，文字仍由 formatBindCountdown 按秒展示。
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     return () => window.clearInterval(timer);
   }, [bindCode, open]);
@@ -179,8 +161,8 @@ export function BotsDialog({
         setConfig(nextConfig);
         const targetBot = nextConfig.bots.find((bot) => bot.id === bindCode.botId);
         if (targetBot?.providerUserId) {
-          // Bugfix: /bind writes configuration back from a third-party chat, so the UI has no direct event.
-          // Refresh configuration at a low rate while the binding code is expanded, then collapse the binding area as soon as binding succeeds.
+          // Bugfix: /bind 是从第三方聊天回写配置，UI 没有直接事件。
+          // 绑定码展开期间低频刷新配置，绑定成功后立即收起绑定区域。
           setBindCode(null);
         }
       } catch (error) {
@@ -206,8 +188,8 @@ export function BotsDialog({
     if (!bindCode || bindCode.botId !== selectedBot?.id || !selectedBot.providerUserId) {
       return;
     }
-    // Bugfix: successful /bind writes configuration back asynchronously in the service layer. Even if polling is interrupted by a switch/refresh,
-    // collapse the old binding code as soon as the current Bot has providerUserId.
+    // Bugfix: /bind 成功是服务层异步回写配置；即使轮询刚好被切换/刷新打断，
+    // 只要当前 Bot 已经带 providerUserId，就应该立即收起旧绑定码。
     setBindCode(null);
   }, [bindCode, selectedBot?.id, selectedBot?.providerUserId]);
 
@@ -230,7 +212,7 @@ export function BotsDialog({
       } catch (error) {
         logger.debug("[BotsDialog] 刷新 Bot 运行状态失败", error);
       } finally {
-        // Delivery completes in the background; refresh serially only while the dialog is visible to avoid piling up slow RPCs or writing after close.
+        // 投递在后台完成；只在弹窗可见时串行刷新，避免慢 RPC 堆积或关闭后回写。
         if (!cancelled) timer = setTimeout(() => void pollStatus(), 2000);
       }
     };
@@ -246,7 +228,7 @@ export function BotsDialog({
       const [nextConfig, nextStatus, nextWorkspaces, nextBotStates] = await Promise.all([
         botsService.getConfig(),
         botsService.getStatus(),
-        botsService.listWorkspaceRefs({ currentWorkspace }),
+        botsService.listWorkspaceRefs(),
         botsService.getBotStates(),
       ]);
       setConfig(nextConfig);
@@ -262,7 +244,7 @@ export function BotsDialog({
       logger.error("[BotsDialog] 加载 Bots 配置失败", message);
       toast(intl.formatMessage({ id: "bots.loadFailed" }, { error: message }));
     }
-  }, [botsService, creatingBot, currentWorkspace, intl]);
+  }, [botsService, creatingBot, intl]);
 
   useEffect(() => {
     if (
@@ -388,8 +370,8 @@ export function BotsDialog({
             ) {
               return current;
             }
-            // Bugfix: pending polling results usually do not change. Creating a new object each time changes effect dependencies,
-            // immediately restarting polling and causing an RPC storm at millisecond intervals.
+            // Bugfix: pending 轮询结果通常不变；如果每次都创建新对象，会触发 effect 依赖变化，
+            // 进而立即重启轮询并造成毫秒级 RPC 风暴。
             return {
               ...current,
               interval: result.interval,
@@ -400,8 +382,8 @@ export function BotsDialog({
           return;
         }
         if (result.status === "success") {
-          // Bugfix: the service layer has always supported Lark QR registration, but the refactored Bots UI kept only manual credentials.
-          // After QR success, reuse saveBot's secret-writing path to avoid leaving the App Secret in a plaintext config file.
+          // Bugfix: 服务层一直支持飞书扫码注册，但 Bots 重构后的 UI 只保留了手填凭据。
+          // 扫码成功后直接复用 saveBot 的 secret 写入路径，避免把 App Secret 留在明文配置文件里。
           const savedBot = await saveBot(
             {
               ...selectedBot,
@@ -412,8 +394,8 @@ export function BotsDialog({
             { credentialValue: result.appSecret },
           );
           if (!cancelled) {
-            // Bugfix: a successful Lark QR scan completes app-credential setup only; the shared “credentials present but unbound” state machine generates the binding code.
-            // Collapse only the QR here so it does not compete with the /bind panel for display priority in the same state update.
+            // Bugfix: 飞书/Lark 扫码成功只完成应用凭据接入；绑定码由“有凭据但未绑定”的统一状态机生成。
+            // 这里仅收起二维码，避免二维码和 /bind 面板在一次状态更新里互相抢展示优先级。
             setConfig((previous) => ({
               ...previous,
               bots: previous.bots.map((bot) => (bot.id === savedBot.id ? savedBot : bot)),
@@ -518,8 +500,8 @@ export function BotsDialog({
             { credentialValue: result.botToken },
           );
           if (!cancelled) {
-            // Bugfix: a successful WeChat QR scan completes the connection; keeping QR registration would show users an expired scan area.
-            // After clearing temporary state, the Bot token row switches to the connected Unbind action.
+            // Bugfix: 微信扫码成功即完成连接，保留 QR registration 会让用户看到过期的扫码区域。
+            // 清掉临时状态后，Bot token 行会切到已连通的 Unbind 操作。
             setWeixinRegistration(null);
             toast(intl.formatMessage({ id: "bots.weixinRegistrationSuccess" }));
           }
@@ -551,8 +533,8 @@ export function BotsDialog({
       scheduleNextPoll();
     };
 
-    // Bugfix: the WeChat QR status endpoint may wait a long time; setInterval would stack RPCs before the previous request returns.
-    // Serial polling avoids consecutive timeouts and prevents results from overwriting each other's UI state.
+    // Bugfix: 微信扫码状态接口会长等待，如果用 setInterval 会在上一次请求未返回时继续堆叠 RPC。
+    // 串行轮询可以避免连续 timeout，也避免多个结果互相覆盖 UI 状态。
     void runPoll();
 
     return () => {
@@ -583,9 +565,9 @@ export function BotsDialog({
     setBotNameDraft(null);
     setRenamingBotId(null);
     if (nextName === selectedBot.name) return;
-    // Bugfix: saving immediately while entering a Bot name lets the service's trimmed write-back remove a trailing space,
-    // preventing users from continuing to type a name with spaces. Save on submit instead and preserve the local draft while typing.
-    // An empty name is also a valid unnamed state; the display layer uses a localized fallback name.
+    // Bugfix: Bot 名称输入过程中如果立即保存，服务层 trim 后的回写会吃掉刚输入的尾部空格，
+    // 导致用户无法继续输入包含空格的名称；改为提交时保存，保留输入过程中的本地草稿。
+    // 同时空名称是合法的未命名状态，展示层统一用多语言 fallback 名称兜底。
     void saveBot({ ...selectedBot, name: nextName });
   }, [saveBot, selectedBot, selectedBotName]);
 
@@ -598,8 +580,8 @@ export function BotsDialog({
             nativeEvent: event.nativeEvent,
           })
         ) {
-          // Bugfix: during Bot renaming, Enter in a Chinese IME confirms a candidate rather than submitting the rename.
-          // Avoid triggering blur, which would continue to commitBotNameDraft.
+          // Bugfix: Bot 名称重命名时中文输入法 Enter 是候选词确认，不是提交重命名。
+          // 这里避免触发 blur，否则 blur 会继续走 commitBotNameDraft。
           logger.debug("[BotsDialog] ignore bot name enter during IME", {
             botId: selectedBot?.id ?? null,
           });
@@ -609,7 +591,7 @@ export function BotsDialog({
         return;
       }
       if (event.key === "Escape") {
-        // Bugfix: Escape in the rename input should cancel editing only and must not bubble up to trigger the Dialog close shortcut.
+        // Bugfix: 重命名输入框里的 Escape 只应该取消编辑，不能继续冒泡触发 Dialog 的关闭快捷键。
         setBotNameDraft(null);
         setRenamingBotId(null);
         event.preventDefault();
@@ -622,8 +604,8 @@ export function BotsDialog({
   const handleDialogEscapeKeyDown = useCallback(
     (event: Event) => {
       if (renamingBotId === null) return;
-      // Bugfix: Radix Dialog handles Escape and closes before the input's React onKeyDown bubbles.
-      // While renaming, intercept at the Dialog close entry so Escape cancels editing without closing the dialog.
+      // Bugfix: Radix Dialog 会在输入框 React onKeyDown 冒泡前处理 Escape 关闭。
+      // 正在重命名时需要在 Dialog 的关闭入口拦截，Esc 只取消编辑，不关闭弹窗。
       event.preventDefault();
       setBotNameDraft(null);
       setRenamingBotId(null);
@@ -731,8 +713,8 @@ export function BotsDialog({
       return;
     }
 
-    // Bugfix: after adding a Bot Channel shortcut to the remote-control dialog, opening BotsDialog must not remain on a blank selection page.
-    // Check and create only after configuration loads to avoid duplicates before the async refresh finds existing bots.
+    // Bugfix: 远程控制弹窗新增 Bot Channel 快捷入口后，进入 BotsDialog 不能停在空白选择页。
+    // 这里在配置加载完成后再判断并创建，避免异步刷新尚未拿到已有 bot 时重复新建。
     setCreatingBot(true);
     setSelectedBotId(null);
     void handleAddBot(entry.provider);
@@ -853,8 +835,8 @@ export function BotsDialog({
           return;
         }
 
-        // Bugfix: when opening details for a Lark Bot without a configured token, only showing a “Scan QR” button
-        // made users think they needed to expand something else. Start QR flow automatically so the missing-credentials state is immediately actionable.
+        // Bugfix: 未配置 token 的飞书/Lark Bot 首次进入详情时只显示“扫码”按钮，
+        // 用户会误以为还需要额外展开；自动启动一次二维码流程，让缺失凭据的默认状态直接可操作。
         autoQrStartedBotIdsRef.current.add(autoKey);
         void handleStartFeishuRegistration();
         return;
@@ -868,8 +850,8 @@ export function BotsDialog({
           return;
         }
 
-        // Bugfix: Lark credential setup and chat binding are separate stages; show /bind automatically when credentials exist but binding is incomplete.
-        // Binding codes now expire after 30 seconds; leaving an expired code visible would interrupt automatic binding, so generate a new one here.
+        // Bugfix: 飞书/Lark 的接入凭据和聊天绑定是两个阶段；已有凭据但未绑定时需要自动展示 /bind。
+        // 绑定码现在只有 30 秒有效期，过期后如果还停在旧码会打断自动绑定流程；这里自动续一枚新码。
         autoBindCreatingBotIdsRef.current.add(selectedBot.id);
         void createBindCodeForBot(selectedBot).finally(() => {
           autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
@@ -889,8 +871,8 @@ export function BotsDialog({
         return;
       }
 
-      // Bugfix: like Lark, Telegram has two stages: credential setup and private-chat binding.
-      // Show /bind automatically after saving the token and renew expired codes so the 30-second lifetime does not leave users stuck with an old code.
+      // Bugfix: Telegram 和飞书/Lark 一样分成凭据接入与私聊绑定两步；
+      // token 保存后自动展示 /bind；绑定码过期也自动续码，避免 30 秒有效期让用户卡在旧码上。
       autoBindCreatingBotIdsRef.current.add(selectedBot.id);
       void createBindCodeForBot(selectedBot).finally(() => {
         autoBindCreatingBotIdsRef.current.delete(selectedBot.id);
@@ -913,8 +895,8 @@ export function BotsDialog({
       return;
     }
 
-    // Bugfix: a WeChat Bot without token/binding state must immediately show a login QR code;
-    // otherwise, after creation, the right pane shows only a button, which does not match the primary “connect by QR” flow.
+    // Bugfix: 微信 Bot 没有 token/绑定状态时需要立即给出登录二维码，
+    // 否则新建后右侧默认只露出按钮，和“扫码接入”的主流程不一致。
     autoQrStartedBotIdsRef.current.add(autoKey);
     void handleStartWeixinRegistration();
   }, [
@@ -981,9 +963,10 @@ export function BotsDialog({
 
   const handleDelete = async () => {
     if (!selectedBot) return;
-    // Bugfix: deleting a Bot previously had no confirmation, so an accidental click removed credentials and the binding entry.
-    // Reuse the project's shared ConfirmDialog to keep destructive actions consistent with other settings pages.
+    // Bugfix: 删除机器人之前没有二次确认，误触会直接移除凭据和绑定入口。
+    // 这里复用项目统一 ConfirmDialog，让破坏性操作和其它设置页保持一致。
     const confirmed = await confirmDialog({
+      confirmVariant: "destructive",
       title: intl.formatMessage(
         { id: "bots.deleteConfirmTitle" },
         { name: formatBotDisplayName(selectedBot.name, fallbackBotName) },
@@ -1232,14 +1215,13 @@ export function BotsDialog({
                   <BotReplyGranularityCard bot={selectedBot} onPatchBot={patchSelectedBot} />
 
                   {/*
-                    Do not expose command permission editing until the bot is usable, so users cannot disable critical commands prematurely.
-                    To restore this UI, render the selectedBot.allowedCommands list again and save it with patchSelectedBot.
+                    暂不暴露命令权限编辑入口，避免用户在 bot 可用前把关键命令关掉。
+                    如果要恢复 UI，重新渲染 selectedBot.allowedCommands 的列表并用 patchSelectedBot 保存。
                   */}
 
                   <WorkspaceAccessCard
                     bot={selectedBot}
                     workspaceRefs={workspaceRefs}
-                    currentWorkspace={currentWorkspace}
                     loading={workspaceAccessSaving}
                     onPatchAllowedWorkspaces={patchAllowedWorkspaces}
                     onToggleWorkspaceAccess={toggleWorkspaceAccess}

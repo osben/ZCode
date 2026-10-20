@@ -1,11 +1,13 @@
 import { PluginUiWorkspaceProvider } from "@/plugin-ui/index.js";
-/* eslint-disable max-lines -- App currently orchestrates workspace-level state, navigation, derived Git data, and shell wiring; the new side-pane memory bridge has been extracted, and further splitting should follow shell boundaries. */
+/* eslint-disable max-lines -- App 当前集中编排 workspace 级状态、导航、Git 派生数据和 shell wiring；已将新增 side pane memory 桥接抽出，剩余拆分需要按 shell 边界单独重构。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } from "@zcode/shared";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
+import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useGitRepository } from "@/hooks/useGitRepository.js";
@@ -15,8 +17,6 @@ import { useWorkspaceProviderConfigFile } from "@/hooks/useWorkspaceProviderConf
 import { useWorkspaceActiveTaskState } from "@/hooks/useWorkspaceActiveTaskState.js";
 import { useEnsureWorkspaceMcpLoaded } from "@/hooks/useEnsureWorkspaceMcpLoaded.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
-import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
-import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { isWorkspaceReadOnly, isWorkspaceTab } from "@/store/tabStore.js";
 import type { TaskChatMessage as TestChatMessage } from "@/lib/taskChatMessageTypes.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -90,11 +90,10 @@ import type { SavedWorkflowsOpenTarget } from "@/settings/saved-workflows/SavedW
 import type { AssistantPreviewCardsAutoOpenRequest } from "@/lib/assistantPreviewCards.js";
 import { startMemoryDiagnosticsLogger } from "@/lib/memoryDiagnostics.js";
 
-const EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY: NonNullable<
-  AppProps["reconnectingRemoteWorkspaceLogsByWorkspaceKey"]
+const EMPTY_REMOTE_WORKSPACE_RECOVERY_BY_WORKSPACE_KEY: NonNullable<
+  AppProps["remoteWorkspaceRecoveryByWorkspaceKey"]
 > = {};
 const EMPTY_REMOTE_CONNECTION_LOGS: NonNullable<AppProps["remoteConnectionLogs"]> = [];
-const EMPTY_REMOTE_WORKSPACE_SESSIONS: NonNullable<AppProps["remoteWorkspaceSessions"]> = [];
 
 export function App({
   services,
@@ -107,25 +106,25 @@ export function App({
   onLogin,
   user,
   reconnectingRemoteWorkspaceKeys,
+  remoteWorkspaceRecoveryByWorkspaceKey = EMPTY_REMOTE_WORKSPACE_RECOVERY_BY_WORKSPACE_KEY,
   remoteWorkspaceErrorByWorkspaceKey,
-  reconnectingRemoteWorkspaceLogsByWorkspaceKey = EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY,
+
   remoteConnectionLogs = EMPTY_REMOTE_CONNECTION_LOGS,
   onCreateTask,
   onCreateConversationTask,
+  onCreateConversationTaskOnSource,
   onResolveConversationWorkspace,
   onOpenWorkspace,
   onOpenFolderFromWorkspaceMenu,
   onOpenRemoteWorkspace,
-  onCreateScratchWorkspace,
   remoteConnectionInProgress = false,
   onReturnToWorkspace,
   allowOpenWorkspace = true,
   webRemoteControlWorkspaceSwitcher,
+  initialSidebarFileTreeOpen,
   initialWebRemoteControlMobileNavigationIntent,
-  initialWebRemoteControlWorkspaceList,
   webRemoteControlTerminalTransportState,
   allowRemoteWorkspace = true,
-  remoteWorkspaceSessions = EMPTY_REMOTE_WORKSPACE_SESSIONS,
   workspaceAbsPath,
   workspaceRemoteSessionId,
   workspaceIdentity: explicitWorkspaceIdentity,
@@ -135,7 +134,7 @@ export function App({
   isWindowsDesktop,
   supportsEmbeddedBrowser: explicitSupportsEmbeddedBrowser,
 }: AppProps) {
-  // Read display labels from the effective shortcut map so tooltips update when users rebind keys; do not hard-code key names.
+  // 展示 label 统一从快捷键生效表取（用户改键后 tooltip 同步更新），不再硬编码键位。
   const toggleSidebarShortcutLabel = useShortcutCommandLabel("toggleSidebar");
   const newTaskShortcutLabel = useShortcutCommandLabel("newTask");
   const goBackShortcutLabel = useShortcutCommandLabel("navigateBack");
@@ -148,9 +147,9 @@ export function App({
   const { intl, locale, setLocale } = useZCodeIntl();
   const isOfficeMode = useIsOfficeMode();
   const platform = usePlatform();
-  // Local process-memory diagnostics use one 60-second sampler per window.
-  // After gating, data is written to the desktop main log; this is a no-op on Web without a logging bridge. The same reading also goes through the preload bridge to the main process's
-  // renderer_main resource event, and is likewise a no-op when no bridge is available.
+  // 进程内存本地诊断日志：每窗口一个 60s 采样器，
+  // 经门控后写桌面主日志；Web 端无日志桥时为 no-op。同一次读数还经 preload 桥把 heap 送 main 的
+  // renderer_main 资源事件，无桥时同样 no-op。
   const reportRendererHeapSample = platform.reportRendererHeapSample;
   useEffect(() => {
     const memoryDiagnosticsLogger = startMemoryDiagnosticsLogger({
@@ -193,8 +192,8 @@ export function App({
     explicitWorkspaceIdentity,
     explicitRemoteSessionId: workspaceRemoteSessionId,
   });
-  // When a Settings tab overlays a workspace, the active tab is not a workspace tab.
-  // Use the workspaceIdentity passed by Root as a fallback; otherwise, a disconnected remote workspace could warm up /home/... as the local base workspace.
+  // Settings tab 覆盖 workspace 时 active tab 不是 workspace tab。
+  // 这里必须使用 Root 传入的 workspaceIdentity 兜底，否则远程断连态会把 /home/... 当成本地 base workspace 预热。
   const workspaceIdentity = workspaceRpcTarget.workspaceIdentity;
   const { rpcReady: workspaceRpcReady } = useWorkspaceServicesResolution(
     workspaceAbsPath,
@@ -213,31 +212,9 @@ export function App({
     workspaceIdentity,
   );
   const activeTaskId = workspaceShellZCodeState.activeTaskId;
-  // The right sidebar's ownership ID is scoped to a conversation. During a draft, activeTaskId is null, so use draftSessionId instead
-  // (draftSessionId is stable, unique to each new conversation, and becomes activeTaskId after the first message is sent),
-  // preventing a new conversation from inheriting tabs left by the previous conversation or draft, while preserving ownership when the draft becomes a task.
-  const draftSessionId = useZCodeSessionStore(
-    (state) => state.getWorkspaceState(workspaceAbsPath, workspaceIdentity).draftSessionId,
-  );
-  const sidePaneOwnerId = activeTaskId ?? draftSessionId ?? null;
-  const {
-    resolvedActiveTaskMeta,
-    activeTraceId,
-    activeSessionId,
-    activeTaskProvider,
-    workspaceHeaderProvider,
-    activeTaskChangeSummary,
-    activeTaskTitle,
-    taskNativeSessionLogFile,
-    taskSessionFile,
-  } = useWorkspaceActiveTaskState({
-    workspaceAbsPath,
-    activeTaskId,
-    workspaceRemoteSessionId,
-    workspaceIdentity,
-    selectedProvider: workspaceShellZCodeState.selectedProvider,
-    intl,
-  });
+  // TEMPORARY upstream 3.16.1 sync (ui): upstream protocol-v4 drafts have no legacy draftSessionId,
+  // so a draft has no right-sidebar owner. Fork draft-scoped owner is ledgered in specs/ui-upstream-sync-integration.md.
+  const sidePaneOwnerId = activeTaskId ?? null;
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
@@ -259,9 +236,11 @@ export function App({
     handleOpenBrowserPermissionSettings,
     handleToggleGit,
     handleOpenGit,
-    handleOpenTreemapping,
     handleOpenWhiteboard,
     handleOpenDeveloperTools,
+    handleOpenFileManager,
+    handleNavigateFileManager,
+    handleOpenPluginMarket,
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
     handleOpenSubagentSession,
@@ -282,6 +261,7 @@ export function App({
     handleCloseCodeViewer,
     handleCloseGit,
     handleActivateSidePaneTab,
+    handleOpenNewSidePaneTab,
     handleReorderSidePaneTab,
     handleCloseSidePaneTab,
     handleCloseOtherSidePaneTabs,
@@ -291,7 +271,6 @@ export function App({
     handleBrowserPageMetadataChange,
   } = useAppPanels({
     workspaceAbsPath,
-    terminalCwd: resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -321,7 +300,7 @@ export function App({
     platform,
     formatMessage: intl.formatMessage,
   });
-  // Idle-task terminal-state / awaiting-confirmation notifications use only the local desktop path; the main process deduplicates cross-window duplicates by status:taskId.
+  // 闲时任务终态/等确认通知：仅桌面本地链路，main 进程按 status:taskId 去重多窗口重复。
   useOffPeakTaskNotifications({
     offPeakTaskService: services.offPeakTaskService,
     platform,
@@ -355,15 +334,16 @@ export function App({
       return;
     }
 
-    // Creating a task only changes activeTaskId to a draft; it does not trigger a workspace-level memory switch in the side pane.
-    // Use the version incremented by startDraft to consistently collapse the right pane across the button, menu, shortcut, and remote-control entry points.
+    // 新建任务只会把 activeTaskId 切到 draft，不会触发 side pane 的 workspace 级内存切换。
+    // 因此用 startDraft 递增的版本号统一收起右侧面板，覆盖按钮、菜单、快捷键和远控入口。
     const sidePaneTabCount = sidePaneState?.tabs.length ?? 0;
     if (!isSidePaneCollapsed) {
       logger.info(
         `[App] 新建任务时收起右侧面板 workspace=${workspaceAbsPath} tabs=${sidePaneTabCount}`,
       );
-      setIsSidePaneCollapsed(true);
     }
+    // scope effect 可能在同一轮更新展开态，不能用本次渲染的旧值跳过新草稿收起。
+    setIsSidePaneCollapsed(true);
   }, [
     draftFocusVersion,
     isSidePaneCollapsed,
@@ -387,6 +367,7 @@ export function App({
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
   const [gitReviewRefreshVersion, setGitReviewRefreshVersion] = useState(0);
+  // Worktree review target: a git pane opened from an execution worktree reads that worktree, not the workspace root.
   const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
     workspacePath: string;
     sessionId: string;
@@ -399,9 +380,8 @@ export function App({
     workspaceIdentity,
   });
   const theme = useZCodeStore((s) => s.theme);
-  const setTheme = useZCodeStore((s) => s.setTheme);
   const palette = useZCodeStore((s) => s.palette);
-  const setPalette = useZCodeStore((s) => s.setPalette);
+  // The OS scheme is tracked as state so a system change re-renders; a live matchMedia read would not.
   const [systemResolvedTheme, setSystemResolvedTheme] = useState<ResolvedTheme>(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -426,6 +406,8 @@ export function App({
     return () => mediaQuery.removeListener(syncSystemTheme);
   }, []);
   const resolvedTheme = theme === "system" ? systemResolvedTheme : resolveTheme(theme);
+  const setTheme = useZCodeStore((s) => s.setTheme);
+  const setPalette = useZCodeStore((s) => s.setPalette);
   const {
     isMacFullscreen,
     desktopWindowChromeState,
@@ -445,10 +427,24 @@ export function App({
   const addTab = useTabStore((s) => s.addTab);
   const activateTabByPath = useTabStore((s) => s.activateTabByPath);
 
-  const gitRepositoryWorkspacePath =
-    gitReviewExecutionTarget?.sessionId === activeTaskId
-      ? gitReviewExecutionTarget.workspacePath
-      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
+  const {
+    resolvedActiveTaskMeta,
+    activeTraceId,
+    activeSessionId,
+    activeTaskProvider,
+    workspaceHeaderProvider,
+    activeTaskChangeSummary,
+    activeTaskTitle,
+    taskNativeSessionLogFile,
+    taskSessionFile,
+  } = useWorkspaceActiveTaskState({
+    workspaceAbsPath,
+    activeTaskId,
+    workspaceRemoteSessionId,
+    workspaceIdentity,
+    selectedProvider: workspaceShellZCodeState.selectedProvider,
+    intl,
+  });
   const providerConfigFile = useWorkspaceProviderConfigFile(
     workspaceAbsPath,
     workspaceHeaderProvider,
@@ -476,13 +472,14 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
-    // Сигнал успешной git-мутации (смена ветки/создание/коммит) для проб
-    // merge-статуса: сервисный кэш уже инвалидирован, пробе остаётся
-    // переопросить. Untouched workspace'ы упрутся в сервисный TTL — дешёво.
+    // A successful git mutation (branch switch, commit) invalidates merge/PR probes; ask them to re-poll.
     useBranchMergeStatusStore.getState().requestRefresh();
-    // PR-статус: push/commit мог открыть или обновить PR сессии.
     usePullRequestStatusStore.getState().requestRefresh();
   }, []);
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
   const handleRefreshGitReview = useCallback(() => {
     if (gitRepositoryWorkspacePath === workspaceAbsPath) {
       handleRefreshGit();
@@ -539,8 +536,8 @@ export function App({
     gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
-    // Key business logic: the workspace header and Git pane use the same source statistics.
-    // Aggregate each source's +/- values into a stable mapping to avoid inconsistent display from duplicate calculations.
+    // 关键业务逻辑：workspace header 和 Git pane 都依赖同一套来源统计，
+    // 这里先把各来源的 +/- 汇总成稳定映射，避免不同位置各自重复计算后出现展示不一致。
     return Object.fromEntries(
       gitState.sourceOptions.map((option) => {
         const dataset = gitState.datasets[option.id] ?? gitState.datasets.unstaged;
@@ -600,10 +597,7 @@ export function App({
       }
       setGitReviewExecutionTarget(
         executionWorkspacePath && executionSessionId
-          ? {
-              workspacePath: executionWorkspacePath,
-              sessionId: executionSessionId,
-            }
+          ? { workspacePath: executionWorkspacePath, sessionId: executionSessionId }
           : null,
       );
       if (sourceId) {
@@ -625,9 +619,9 @@ export function App({
         return;
       }
 
-      // Cmd/Ctrl+W from the desktop menu reaches the main process first.
-      // Intercept it at the visible workspace layer so that when the right side pane is open, it closes the active tab
-      // instead of letting the Root fallback close the entire window.
+      // 桌面菜单的 Cmd/Ctrl+W 会先到 main 进程。
+      // 这里在可见 workspace 层拦下请求，确保右侧 side pane 打开时关闭的是 active tab，
+      // 而不是让 Root fallback 继续关闭整个窗口。
       event.preventDefault();
       handleCloseSidePaneTab(activeTab.id);
     };
@@ -641,9 +635,9 @@ export function App({
     };
   }, [handleCloseSidePaneTab, isSidePaneCollapsed, isWorkspaceVisible, sidePaneState]);
   const handleToggleSidePane = useCallback(() => {
-    // Interaction detail: toggle panel changes only the visibility of the right container; it does not implicitly create or switch tabs.
-    // Previously, with no tabs, it opened diff/browser content as a fallback, so users who only wanted the side pane
-    // got a new Browser or Review instead. The Open tab empty state now handles empty content.
+    // 交互说明：toggle panel 只改变右侧容器显隐，不隐式创建或切换任何 tab。
+    // 之前无 tab 时会按 diff/browser 兜底自动开内容，导致用户只是想打开 side pane
+    // 却得到一个新 Browser 或 Review。现在空内容统一交给 Open tab 空态承接。
     handleToggleSidePaneCollapse();
   }, [handleToggleSidePaneCollapse]);
   const runVisibleWorkspaceCommand = useCallback(
@@ -701,18 +695,10 @@ export function App({
     },
     [handleOpenCodeViewers, isDesktop, webRemoteControlWorkspaceSwitcher, workspaceReadOnlyReason],
   );
-  const handleOpenTreemappingIfWritable = useCallback(
-    (...args: Parameters<typeof handleOpenTreemapping>) => {
-      if (!workspaceReadOnlyReason) {
-        handleOpenTreemapping(...args);
-      }
-    },
-    [handleOpenTreemapping, workspaceReadOnlyReason],
-  );
   const projectName = getPathLeaf(workspaceAbsPath);
   const handleOpenTaskFind = useCallback(() => {
-    // Cmd/Ctrl+F means “find in conversation.” It previously reused the Cmd/Ctrl+P file-search entry,
-    // so selecting Find in quick pick or using the shortcut opened a file. Keep this as separate state to avoid affecting file search.
+    // Cmd/Ctrl+F 语义是“查找对话”，之前误复用了 Cmd/Ctrl+P 的文件搜索入口，
+    // 导致用户在 quick pick 里点 Find 或按快捷键时会跳到打开文件。这里拆成独立状态，避免影响文件搜索链路。
     runVisibleWorkspaceCommand(() => {
       setTaskFindFocusRequestId((requestId) => requestId + 1);
       setIsTaskFindOpen(true);
@@ -731,7 +717,7 @@ export function App({
     setConversationFindState((state) => changeTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleConversationFindNavigate = useCallback((query: string, activeIndex: number) => {
-    // With one match, Up/Down/Enter all return to the same index; a separate version ensures repeated navigation still scrolls.
+    // 单命中时上/下/Enter 都会回到同一 index；独立版本确保重复导航仍触发滚动。
     setConversationFindState((state) => navigateTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleConversationFindMatchStateChange = useCallback(
@@ -764,7 +750,7 @@ export function App({
     setFileChangeFindState((state) => changeTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleFileChangeFindNavigate = useCallback((query: string, activeIndex: number) => {
-    // A file-change range may also have only one match; repeated navigation must expand and focus the same location again.
+    // 文件变更范围也可能只有一个命中；重复导航必须重新展开并聚焦同一处。
     setFileChangeFindState((state) => navigateTaskFindSelection(state, query, activeIndex));
   }, []);
   const handleOpenQuickPick = useCallback(() => {
@@ -778,8 +764,8 @@ export function App({
   }, [platform]);
 
   useEffect(() => {
-    // The built-in feedback center combines the “Submit feedback / My feedback” tabs.
-    // The old OpenTicketsPanel IPC remains supported (opens the list directly) and can be reused if a separate entry is needed later.
+    // 内置反馈中心合并了"提交反馈 / 我的反馈"两个 Tab，
+    // 老的 OpenTicketsPanel IPC 仍然兼容（直接打开列表），未来如果还需要单独入口可以复用。
     const disposeFeedbackDialog = platform.onOpenFeedbackDialog?.(() => {
       openFeedbackSubmit();
     });
@@ -833,19 +819,14 @@ export function App({
         targetWorkspaceIdentity: resolvedTargetWorkspaceIdentity,
         workspaces: store.workspaces,
       });
-      const currentWorkspaceState = store.getWorkspaceState(workspaceAbsPath, workspaceIdentity);
-      const groupedDraftPlacement =
-        currentWorkspaceState.activeTaskId === null
-          ? currentWorkspaceState.groupedDraftTask?.placement
-          : undefined;
 
-      // The workspace selector in the empty state means “start working in this project.”
-      // If the target workspace has remembered its Agent, keep that choice after switching;
-      // inherit the Agent currently shown in the empty state only on first entry, before workspace UI state exists.
-      // Otherwise, switching between projects overwrites the target project's recently used Agent and appears to “reset to the default.”
-      // Fixed entries such as Home may not exist in the tab list, so activateTabByPath previously failed silently,
-      // appearing to do nothing. Ensure the target workspace is open first, then pass the current empty-state provider to startDraft
-      // so the current context is preserved on the first visit to a new workspace.
+      // 空态里的 workspace 选择器要表达"在这个项目里开始工作"，
+      // 目标 workspace 如果已经记住了自己的 Agent，切过去后应当继续沿用那份选择；
+      // 只有首次进入、还没建立 workspace UI 状态时，才继承当前空态里正在看的 Agent。
+      // 否则来回切项目时会把目标项目刚用过的 Agent 覆盖掉，看起来就像“总是重置成默认值”。
+      // 另外 Home 这类固定入口并不保证已经存在于 tab 列表里，之前直接 activateTabByPath 会静默失败，
+      // 看起来就像"点了没反应"。这里先确保目标 workspace 已打开，再把当前空态的 provider 一并传给 startDraft，
+      // 保证首次进入的新 workspace 也能继续沿用当前上下文。
       const targetTabOptions =
         resolvedTargetWorkspaceIdentity || targetWorkspacePurpose
           ? {
@@ -856,7 +837,7 @@ export function App({
             }
           : undefined;
       if (targetWorkspacePurpose) {
-        // purpose is category metadata; merge it even when the tab already exists so the first unlink from a project does not default it to project.
+        // purpose 是分类元数据；即使 tab 已存在也要合并，避免首次从项目解绑时被默认成 project。
         addTab(targetWorkspacePath, targetTabOptions);
       } else if (
         !activateTabByPath(
@@ -869,10 +850,9 @@ export function App({
         addTab(targetWorkspacePath, targetTabOptions);
       }
       if (!webRemoteControlWorkspaceSwitcher) {
-        // Root cause: “New conversation” in the workspace row used to call activateTab + startDraft
-        // directly from a leaf component, bypassing workbench group/pane restoration on exit/restart.
-        // The group primary binding could therefore still override the draft. Route all explicit
-        // desktop creation entries through a single primary pane first; mobile /remote does not use this local layout.
+        // 修复原因：workspace 行“新建对话”以前由叶子组件直接 activateTab + startDraft，
+        // 没有退出重启恢复的 workbench group/pane。group primary binding 因而仍可覆盖草稿。
+        // desktop 所有显式新建入口统一先回到单 primary pane；手机 /remote 不消费这份本地布局。
         useWorkbenchGroupStore.getState().deactivateActiveGroup();
         usePaneLayoutStore.getState().resetToPrimaryPane();
       }
@@ -880,20 +860,8 @@ export function App({
         targetWorkspacePath,
         targetSelectedProvider,
         resolvedTargetWorkspaceIdentity,
-        {
-          groupedDraftPlacement,
-          createSource: createSource ?? (groupedDraftPlacement ? "group" : "project"),
-        },
+        { createSource: createSource ?? "project" },
       );
-      if (
-        groupedDraftPlacement &&
-        (workspaceIdentity?.trim() || workspaceAbsPath) !==
-          (resolvedTargetWorkspaceIdentity?.trim() || targetWorkspacePath)
-      ) {
-        // The grouped left-side New task row represents the user's chosen creation location; switching workspace changes only the draft target.
-        // After migrating to the target workspace, clear the source bucket so switching back does not show two temporary New task rows.
-        store.clearGroupedDraftTask(workspaceAbsPath, workspaceIdentity);
-      }
     },
     [
       activateTabByPath,
@@ -905,14 +873,7 @@ export function App({
       webRemoteControlWorkspaceSwitcher,
     ],
   );
-
-  /**
-   * Command Center “New task in worktree” open contract: reuse the shared
-   * workspace-open + startDraft path. Worktree results are explicit project-scope
-   * creations, so never inherit the current workspace's grouped-draft placement.
-   * Web remote control has no local Host: ask the desktop to open the workspace and
-   * attach through the existing workspace bridge instead of adding a client-local tab.
-   */
+  // Opens a created worktree through the shared workspace + draft flow (fork contract for the command center and shell panes).
   const handleCreateTaskInWorkspace = useCallback(
     (targetWorkspacePath: string, targetWorkspaceIdentity?: string): void | Promise<void> => {
       if (webRemoteControlWorkspaceSwitcher?.openWorkspace) {
@@ -984,7 +945,6 @@ export function App({
   const [openAutomationTab, setOpenAutomationTab] = useState<NonNullable<
     AutomationsNavigationTarget["automationTab"]
   > | null>(null);
-  const [pluginStoreReturnScopeKey, setPluginStoreReturnScopeKey] = useState("user");
   const [pluginStoreOpenVersion, setPluginStoreOpenVersion] = useState(0);
   const handleNavigateToTaskMain = useCallback(() => {
     setWorkspaceMainView("chat");
@@ -1000,9 +960,6 @@ export function App({
     setWorkspaceMainView("automations");
   }, []);
   const handleNavigateToPluginStoreMain = useCallback(() => {
-    // Generic entries have no scope context and default to User. Settings entries with an explicit scope override
-    // this default after navigation so the previous Workspace scope is not reused.
-    setPluginStoreReturnScopeKey("user");
     setPluginStoreOpenVersion((version) => version + 1);
     preserveNextSettingsExit();
     setWorkspaceMainView("plugin-store");
@@ -1011,7 +968,7 @@ export function App({
     setOpenAutomationId(null);
     setOpenAutomationTab(null);
   }, []);
-  // Hub deep link (“Saved” chip → that workflow's details page): clear it in the callback after the hub navigates.
+  // 中枢深链（「已保存」芯片 → 那个工作流的详情页）：中枢定位后由它回调清空。
   const [openWorkflow, setOpenWorkflow] = useState<SavedWorkflowsOpenTarget | null>(null);
   const handleOpenWorkflowConsumed = useCallback(() => setOpenWorkflow(null), []);
   const {
@@ -1033,10 +990,9 @@ export function App({
     onNavigateToAutomations: handleNavigateToAutomationsMain,
     onNavigateToPluginStore: handleNavigateToPluginStoreMain,
   });
-  // Destination for the completion card's “Saved” chip (docs/dynamic-workflow/transcript-and-notifications.md,
-  // “Saving the run, and running it again”): use the same navigation as the Automations entry (open
-  // history and switch the main view), land on the Workflows tab, then use the deep link to focus
-  // that page in the hub. Find project-scoped workflows by workspaceKey and global ones by name alone.
+  // 完成卡「已保存」芯片的落点（docs/dynamic-workflow/transcript-and-notifications.md「Saving the
+  // run, and running it again」）：走「自动化」入口的同一条导航（进历史、切主视图），落在「工作流」
+  // 标签，再由深链把中枢定位到那一页。项目档按 workspaceKey 找组，全局档只要名字。
   const handleOpenSavedWorkflowInHub = useCallback(
     (target: SavedWorkflowHubTarget) => {
       setOpenWorkflow(
@@ -1059,16 +1015,12 @@ export function App({
   );
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
-      // Workspace Marketplace is now a global entry. Accept Workspace keys from old events, but normalize
-      // the destination to User so old sessionStorage/same-window events cannot return settings to an invalid scope.
-      const returnScopeKey = "user";
+      // 管理范围由市场内视图持有，重复打开只重置市场导航。
       if (workspaceMainView === "plugin-store") {
-        setPluginStoreReturnScopeKey(returnScopeKey);
         setPluginStoreOpenVersion((version) => version + 1);
         return;
       }
       handleOpenPluginStore();
-      setPluginStoreReturnScopeKey(returnScopeKey);
     },
     [handleOpenPluginStore, workspaceMainView],
   );
@@ -1083,8 +1035,8 @@ export function App({
         const workspaceState = sessionState.getWorkspaceState(workspaceAbsPath, workspaceIdentity);
         const fallbackTaskIds = getVisibleTaskMetas(workspaceState).map((task) => task.taskId);
         const taskQueryCacheState = useTaskQueryCacheStore.getState();
-        // Performance fix: task meta is frequently written to the query cache during recovery and streaming events.
-        // Previous/next conversation needs a fresh snapshot only when the shortcut is pressed; App must not subscribe to the whole cache and rerender the shell.
+        // 性能修复：task meta 在恢复和流式事件期间会高频写入 query cache。
+        // 上/下一个会话只在快捷键触发时需要最新快照，不能让 App 订阅整个 cache 后带动 shell 重渲染。
         const quickPickConversationNavigation = resolveQuickPickConversationNavigation({
           taskIds: selectQuickPickConversationTaskIds({
             workspacePath: workspaceAbsPath,
@@ -1120,28 +1072,21 @@ export function App({
   const handleSelectNextConversation = useCallback(() => {
     handleSelectAdjacentConversation("next");
   }, [handleSelectAdjacentConversation]);
-  const handleManageInstalledPlugins = useCallback(() => {
-    setPendingSettingsPluginIntent("plugins", {
-      origin: "plugin-store",
-      scopeKey: pluginStoreReturnScopeKey,
-    });
-    openSettingsTab();
-  }, [openSettingsTab, pluginStoreReturnScopeKey]);
   const handlePrimaryNavigationBack =
-    workspaceMainView === "plugin-store" ? handleManageInstalledPlugins : handleTaskNavBack;
+    workspaceMainView === "plugin-store" ? handleNavigateToTaskMain : handleTaskNavBack;
   const canPrimaryNavigationBack = workspaceMainView === "plugin-store" || canTaskNavBack;
   const shellPanelIds = useMemo(() => ["sidebar", "content"], []);
 
   useAppKeyboard({
     openCommandCenter: handleOpenQuickPick,
-    // Open settings: share tabStore.openSettingsTab with the settings button; default to ⌘,/Ctrl+, (system convention).
+    // 打开设置页：与设置入口按钮共用 tabStore.openSettingsTab；默认 ⌘,/Ctrl+,（系统惯例）
     openSettings: openSettingsTab,
     findInTask: handleOpenTaskFind,
     toggleSidebar: () => runVisibleWorkspaceCommand(handleToggleSidebar),
     switchTheme: handleSwitchTheme,
     toggleTerminal: () => runVisibleWorkspaceCommand(handleToggleTerminalIfWritable),
-    // ⌥⌘B and the rightmost Header button share the same toggle entry,
-    // preventing shortcut and button behavior from diverging; the Open tab empty state handles an empty pane.
+    // ⌥⌘B 与 header 最右侧按钮共用同一条 toggle 入口，
+    // 避免快捷键和按钮行为漂移；空面板的展示统一由 Open tab 空态承接。
     toggleSidePane: () => runVisibleWorkspaceCommand(handleToggleSidePane),
     previousConversation: handleSelectPreviousConversation,
     nextConversation: handleSelectNextConversation,
@@ -1180,15 +1125,11 @@ export function App({
         supportsTerminal: !isOfficeMode,
         supportsReview: !isOfficeMode,
         allowOpenWorkspace,
-        // Worktree tasks need the desktop command-center open contract or the Web remote-control
-        // desktop-open + bridge switch (switcher.openWorkspace); regular Web has neither.
-        supportsWorktreeTasks:
-          isDesktop === true || Boolean(webRemoteControlWorkspaceSwitcher?.openWorkspace),
         canOpenCommunity: canOpenCommunityFromQuickPick,
         isSidebarVisible,
         supportsEmbeddedBrowser,
-        // Quick-pick commands need only the signed-in boolean.
-        // Depending on the full user object recreates all command/run closures when the auth store returns an equivalent new reference.
+        // quick pick 命令只关心登录态布尔值。
+        // 如果依赖完整 user 对象，auth store 返回等价新引用时会重建整组 command/run 闭包。
         isLoggedIn,
         themeTarget,
         themeMode: theme,
@@ -1236,13 +1177,14 @@ export function App({
     [
       allowOpenWorkspace,
       isOfficeMode,
-      isDesktop,
       canOpenCommunityFromQuickPick,
       handleOpenCommunity,
       handleOpenFeedback,
       handleOpenProductDocs,
       handleOpenSettingsSection,
       handleSwitchTheme,
+      setTheme,
+      setPalette,
       handleOpenBrowserTab,
       handleOpenGitIfWritable,
       handleOpenTerminalTabIfWritable,
@@ -1256,19 +1198,16 @@ export function App({
       onLogin,
       onLogout,
       onOpenWorkspace,
-      palette,
       runVisibleWorkspaceCommand,
       openSettingsTab,
       openWorkspaceShortcutLabel,
-      setPalette,
-      setTheme,
       supportsEmbeddedBrowser,
-      theme,
-      resolvedTheme,
       toggleSidebarShortcutLabel,
       toggleTerminalShortcutLabel,
       themeTarget,
-      webRemoteControlWorkspaceSwitcher,
+      theme,
+      palette,
+      resolvedTheme,
     ],
   );
   const taskFindDialogProps = useMemo<TaskFindDialogProps>(
@@ -1324,8 +1263,8 @@ export function App({
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />
-      {/* Bugfix: Feedback is an application-level capability and must always use the local base host. While an SSH session is connecting or disconnected,
-          workspace-scoped services switch to a disconnected proxy, so feedback submission must not depend on the remote session. */}
+      {/* Bugfix: 反馈是应用级能力，必须固定走本机 base host；SSH session 连接中或断开时，
+          workspace-scoped services 会切成断连代理，不能让反馈提交跟随远程 session 失效。 */}
       <FeedbackHost feedbackService={baseFeedbackService} platform={platform} />
       <PluginUiWorkspaceProvider onOpenSidePane={handleOpenPluginUi}>
         <WorkspaceShellLayout
@@ -1342,7 +1281,6 @@ export function App({
           onOpenAutomationConsumed={handleOpenAutomationConsumed}
           handleOpenAutomations={handleOpenAutomations}
           handleOpenPluginStore={handleOpenPluginStoreForScope}
-          handleManageInstalledPlugins={handleManageInstalledPlugins}
           onConnectRemote={onConnectRemote}
           onSelectRemoteProject={onSelectRemoteProject}
           onCancelRemoteProject={onCancelRemoteProject}
@@ -1352,28 +1290,24 @@ export function App({
           user={user}
           reconnectingRemoteWorkspaceKeys={reconnectingRemoteWorkspaceKeys}
           remoteWorkspaceErrorByWorkspaceKey={remoteWorkspaceErrorByWorkspaceKey}
-          reconnectingRemoteWorkspaceLogsByWorkspaceKey={
-            reconnectingRemoteWorkspaceLogsByWorkspaceKey
-          }
+          remoteWorkspaceRecoveryByWorkspaceKey={remoteWorkspaceRecoveryByWorkspaceKey}
           remoteConnectionLogs={remoteConnectionLogs}
           onCreateTask={handleCreateTaskIfWritable}
           onCreateConversationTask={onCreateConversationTask}
-          onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
+          onCreateConversationTaskOnSource={onCreateConversationTaskOnSource}
           onResolveConversationWorkspace={onResolveConversationWorkspace}
           onOpenWorkspace={onOpenWorkspace}
           onOpenFolderFromWorkspaceMenu={onOpenFolderFromWorkspaceMenu}
           onOpenRemoteWorkspace={onOpenRemoteWorkspace}
-          onCreateScratchWorkspace={onCreateScratchWorkspace}
           remoteConnectionInProgress={remoteConnectionInProgress}
           allowOpenWorkspace={allowOpenWorkspace}
           webRemoteControlWorkspaceSwitcher={webRemoteControlWorkspaceSwitcher}
+          initialSidebarFileTreeOpen={initialSidebarFileTreeOpen}
           initialWebRemoteControlMobileNavigationIntent={
             initialWebRemoteControlMobileNavigationIntent
           }
-          initialWebRemoteControlWorkspaceList={initialWebRemoteControlWorkspaceList}
           webRemoteControlTerminalTransportState={webRemoteControlTerminalTransportState}
           allowRemoteWorkspace={allowRemoteWorkspace}
-          remoteWorkspaceSessions={remoteWorkspaceSessions}
           workspaceAbsPath={workspaceAbsPath}
           workspaceRemoteSessionId={workspaceRemoteSessionId}
           workspaceIdentity={workspaceIdentity}
@@ -1427,12 +1361,13 @@ export function App({
           gitReviewState={gitPaneState}
           handleRefreshGitReview={handleRefreshGitReview}
           gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
+          handleOpenModelTrajectory={handleOpenModelTrajectory}
+          onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}
           providerConfigFile={providerConfigFile}
           taskNativeSessionLogFile={taskNativeSessionLogFile}
           taskSessionFile={taskSessionFile}
-          testMessages={testMessages}
           conversationFindActiveIndex={conversationFindState.activeIndex}
           conversationFindNavigationRequestId={conversationFindState.navigationRequestId}
           conversationFindQuery={conversationFindState.query}
@@ -1462,11 +1397,12 @@ export function App({
           handleToggleBrowser={handleToggleBrowser}
           handleOpenBrowserTab={handleOpenBrowserTab}
           handleOpenBrowserPermissionSettings={handleOpenBrowserPermissionSettings}
-          handleOpenTreemapping={handleOpenTreemappingIfWritable}
           handleOpenWhiteboard={handleOpenWhiteboard}
           handleOpenDeveloperTools={handleOpenDeveloperTools}
+          handleOpenFileManager={handleOpenFileManager}
+          handleNavigateFileManager={handleNavigateFileManager}
+          handleOpenPluginMarket={handleOpenPluginMarket}
           handleOpenTerminalTab={handleOpenTerminalTabIfWritable}
-          handleOpenModelTrajectory={handleOpenModelTrajectory}
           handleToggleGit={handleToggleGitIfWritable}
           handleToggleSidePane={handleToggleSidePane}
           handleOpenBrowserUrl={handleOpenBrowserUrl}
@@ -1486,6 +1422,7 @@ export function App({
           handleCloseCodeViewer={handleCloseCodeViewer}
           handleCloseGit={handleCloseGit}
           handleActivateSidePaneTab={handleActivateSidePaneTab}
+          handleOpenNewSidePaneTab={handleOpenNewSidePaneTab}
           handleReorderSidePaneTab={handleReorderSidePaneTab}
           handleCloseSidePaneTab={handleCloseSidePaneTab}
           handleCloseOtherSidePaneTabs={handleCloseOtherSidePaneTabs}
@@ -1494,7 +1431,7 @@ export function App({
           handleBrowserNavigationRequestHandled={handleBrowserNavigationRequestHandled}
           setIsTerminalOpen={setIsTerminalOpen}
           setGitSelectedSourceId={setGitSelectedSourceId}
-          // taskFindDialogProps is an object prop; creating it inline makes the shell see a new reference on every streaming refresh.
+          // taskFindDialogProps 是对象 prop，内联创建会让 shell 在流式刷新中每轮都看到新引用。
           taskFindDialogProps={taskFindDialogProps}
         />
       </PluginUiWorkspaceProvider>

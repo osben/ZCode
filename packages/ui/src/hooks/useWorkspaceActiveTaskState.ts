@@ -1,20 +1,14 @@
-import { useMemo, useRef } from "react";
-import { useShallow } from "zustand/react/shallow";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
 import { useOptionalServices } from "@/hooks/useServices.js";
-import { useActiveTaskSnapshotMeta } from "@/hooks/useActiveTaskSnapshotMeta.js";
+import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
+import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useTaskNativeSessionLogFile } from "@/hooks/useTaskNativeSessionLogFile.js";
 import { useTaskSessionFilePath } from "@/hooks/useTaskSessionFilePath.js";
-import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
-import { mergeTaskMetaCandidates } from "@/lib/zcodeTaskMetaMerge.js";
+import { logger } from "@/logger.js";
 import { resolveWorkspaceHeaderProvider } from "@/lib/workspaceHeaderProvider.js";
-import {
-  getTaskMeta,
-  selectWorkspaceZCodeState,
-  useZCodeSessionStore,
-} from "@/store/zcodeSessionStore.js";
-import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
-import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
+import { selectWorkspaceZCodeState, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
 interface UseWorkspaceActiveTaskStateParams {
   workspaceAbsPath: string;
@@ -61,16 +55,6 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
     areTaskMetaJsonFieldsEqual(left.lastError, right.lastError) &&
     areTaskMetaJsonFieldsEqual(left.repairState, right.repairState) &&
     areTaskMetaJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
-    areTaskMetaJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
-    // Child-conversation facts: counters normalize absent ≈ 0; the capped list compares by value
-    // so a count or list change re-renders the row.
-    (left.sideChatCount ?? 0) === (right.sideChatCount ?? 0) &&
-    (left.subagentCount ?? 0) === (right.subagentCount ?? 0) &&
-    (left.runningSubagentCount ?? 0) === (right.runningSubagentCount ?? 0) &&
-    areTaskMetaJsonFieldsEqual(left.childSessions, right.childSessions) &&
-    // Normalized so absent ≈ false: only a real health flip (false ↔ true) counts as a change.
-    (left.executionWorktreeMissing ?? false) === (right.executionWorktreeMissing ?? false) &&
-    (left.incognito ?? false) === (right.incognito ?? false) &&
     areTaskMetaJsonFieldsEqual(left.target, right.target)
   );
 }
@@ -78,10 +62,8 @@ function areResolvedTaskMetasEqual(left: ZCodeTaskMeta | null, right: ZCodeTaskM
 export function useStableResolvedActiveTaskMeta(taskMeta: ZCodeTaskMeta | null) {
   const stableTaskMetaRef = useRef<ZCodeTaskMeta | null>(null);
   const stableTaskMeta = stableTaskMetaRef.current;
-  // When a stream chunk updates only the message stream, active task metadata may be recomposed by
-  // the list/optimistic layer with equal fields but a new reference. Header/Shell rely on memoized
-  // props, so reuse the old reference for equivalent metadata to avoid rerendering the title bar
-  // on every streaming update.
+  // stream chunk 只更新消息流时，active task meta 经列表/乐观层重新合成后可能字段相同但引用变了。
+  // Header/Shell 依赖 memo props；这里复用等价 meta 的旧引用，避免连续流式更新拖动标题栏重渲。
   if (!areResolvedTaskMetasEqual(stableTaskMeta, taskMeta)) {
     stableTaskMetaRef.current = taskMeta;
   }
@@ -96,6 +78,11 @@ export function useWorkspaceActiveTaskState({
   selectedProvider,
   intl,
 }: UseWorkspaceActiveTaskStateParams) {
+  const service = useZCodeTaskService(
+    workspaceAbsPath,
+    workspaceRemoteSessionId,
+    workspaceIdentity,
+  );
   const agentService = useOptionalServices()?.zcodeAgentService ?? undefined;
   const sessionIndexScopes = useMemo(
     () =>
@@ -112,74 +99,81 @@ export function useWorkspaceActiveTaskState({
     [agentService, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
   );
   const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  // The Host task meta does not carry the execution worktree; the sessions index does (worktree notices).
   const activeTaskExecutionWorktree = activeTaskId
     ? sessionIndexItems.find((task) => task.taskId === activeTaskId)?.executionWorktree
     : undefined;
-
-  // Subscribe to the active task's meta only. App calls this hook, and a whole-bucket subscription re-rendered App
-  // on every runtime/usage write. getTaskMeta may merge into a fresh object, so useShallow keeps the result stable.
-  const activeTaskMetaFromStore = useZCodeSessionStore(
-    useShallow((state) =>
-      activeTaskId
-        ? getTaskMeta(
-            selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity),
-            activeTaskId,
-          )
-        : null,
-    ),
+  const { broadcastService } = useBaseWorkspaceServices();
+  const version = useZCodeSessionStore(
+    (state) =>
+      selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity).taskListVersion,
   );
-  const activeTaskQueryMeta = useTaskQueryCacheStore((state) => {
-    if (!activeTaskId) {
-      return null;
-    }
-    return (
-      state.taskMetaByEntityKey[
-        buildTaskEntityKey({
-          taskId: activeTaskId,
-          workspacePath: workspaceAbsPath,
-          workspaceIdentity,
-        })
-      ] ?? null
-    );
+  const optimisticMeta = useZCodeSessionStore((state) => {
+    const workspace = selectWorkspaceZCodeState(state, workspaceAbsPath, workspaceIdentity);
+    return activeTaskId ? (workspace.optimisticTaskListByTaskId[activeTaskId] ?? null) : null;
   });
-  const activeTaskMeta = useMemo(() => {
-    if (!activeTaskId) {
-      return null;
-    }
-
-    // The App previously relied on zcodeTaskMetaMerge to fetch both the regular and pinned lists
-    // just to find metadata for the active task. Any list refresh then rerendered the entire App.
-    // Read the merged taskListCache and optimistic metadata directly from the workspace store instead.
-    // Regular tasks are available synchronously; snapshot metadata remains the fallback for pinned
-    // and archived tasks, so the App no longer needs to subscribe to the old list hook continuously.
-    // After restart recovery, raw snapshot metadata may enter the workspace store before the SQLite/list
-    // query cache, which may still contain a manually overridden title. The Header must merge both
-    // using the same title authority; otherwise the current task can appear to revert to a generated
-    // title or its first query.
-    return mergeTaskMetaCandidates(activeTaskMetaFromStore, activeTaskQueryMeta) ?? null;
-  }, [activeTaskId, activeTaskQueryMeta, activeTaskMetaFromStore]);
-
-  const activeTaskSnapshotMeta = useActiveTaskSnapshotMeta(
-    workspaceAbsPath,
+  const targetKey = JSON.stringify([
+    workspaceIdentity?.trim() || workspaceAbsPath,
     activeTaskId,
-    workspaceRemoteSessionId,
-    workspaceIdentity,
-    activeTaskMeta,
-  );
-  const resolvedTaskMeta = useMemo(() => {
-    const taskMeta = activeTaskMeta ?? activeTaskSnapshotMeta;
-    if (!taskMeta || !activeTaskExecutionWorktree) {
-      return taskMeta;
-    }
-    return {
-      ...taskMeta,
-      executionWorktree: activeTaskExecutionWorktree,
+    workspaceRemoteSessionId ?? null,
+  ]);
+  const [indexed, setIndexed] = useState<{
+    service: typeof service;
+    targetKey: string;
+    meta: ZCodeTaskMeta | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!activeTaskId) return;
+    let disposed = false;
+    let serial = 0;
+    const target = { workspacePath: workspaceAbsPath, workspaceIdentity, taskId: activeTaskId };
+    const refresh = async () => {
+      const request = ++serial;
+      try {
+        // Bugfix: 旧列表退场后，标题 fallback 的 readSession 早于 V4 冷恢复而报
+        // Session is not active。标题只读 Host 索引；正文恢复不再决定标题是否可用。
+        const meta = await service.getTaskMeta(target);
+        if (!disposed && request === serial) setIndexed({ service, targetKey, meta });
+      } catch (error) {
+        if (!disposed && request === serial)
+          logger.warn("[active-task-meta] 读取 Host 任务元数据失败", { ...target, error });
+      }
     };
-  }, [activeTaskExecutionWorktree, activeTaskMeta, activeTaskSnapshotMeta]);
+    // 先订阅再查询，避免读取与订阅之间漏掉重命名/归档；同目标的迟到结果也不能覆盖新结果。
+    const events = service.onDynamicWorkspaceEvent(target)((event) => {
+      if (event.type === "workspace_task_list_changed") void refresh();
+    });
+    const projects = broadcastService.onMessage((event) => {
+      if (event.channel === "state:projects") void refresh();
+    });
+    void refresh();
+    return () => {
+      disposed = true;
+      events.dispose();
+      projects.dispose();
+    };
+  }, [
+    service,
+    broadcastService,
+    workspaceAbsPath,
+    workspaceIdentity,
+    activeTaskId,
+    targetKey,
+    version,
+  ]);
+  // 同 ID 可存在于不同远端；渲染时即拒绝旧目标，不能等 effect 才清标题。
+  const indexedMeta =
+    indexed?.service === service && indexed.targetKey === targetKey ? indexed.meta : null;
+  const activeTaskMeta = indexedMeta ?? optimisticMeta;
+  const resolvedTaskMeta = useMemo(() => {
+    if (!activeTaskMeta || !activeTaskExecutionWorktree) {
+      return activeTaskMeta;
+    }
+    return { ...activeTaskMeta, executionWorktree: activeTaskExecutionWorktree };
+  }, [activeTaskExecutionWorktree, activeTaskMeta]);
   const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(resolvedTaskMeta);
-  // Store cleanup: taskMessagesByTaskId has no writers now that the old ChatView and broadcast
-  // message replay have been retired. The live change summary derived from the message stream is
-  // always empty; display falls back to task meta.changeSummary from persistence.
+  // M5② store 收尾：taskMessagesByTaskId 已无写入方（旧 ChatView/bot 消息回放均退役），
+  // 由消息流派生的实时改动摘要恒为空；摘要展示回落到 task meta.changeSummary（持久化侧）。
   const activeTaskChangeSummary = null;
   const activeTraceId = resolvedActiveTaskMeta?.traceId ?? null;
   const activeSessionId = resolvedActiveTaskMeta?.taskId ?? null;

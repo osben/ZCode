@@ -50,9 +50,25 @@ import type { IWindowControllerService } from "./window-controller/windowControl
 import type { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 import type { IConversationShareService } from "./conversation-share/conversationShare.js";
 import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js";
+// API members used by packages/ui (upstream 3.16.1). Optional so existing hosts and test doubles still compile.
+import type { ITaskGroupService } from "#src/task-groups/contract.js";
+import type { IProjectService } from "#src/project/contract.js";
+import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
+import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
+import type { ISourceServerWorkspaceService } from "./source-server-workspace/sourceServerWorkspace.js";
+import type { ISourceServerManagementService } from "./source-server-management/sourceServerManagement.js";
 
 /** Unified service interface consumed by the UI layer */
 export interface IServiceAccessor {
+  /** Task-group owner. Exported only; no writer is wired (the UI grouped-view PR switches to it). */
+  readonly taskGroupService?: ITaskGroupService;
+  readonly projectService?: IProjectService;
+  readonly remoteProjectService?: IRemoteProjectService;
+  readonly windowProjectDirectory?: WindowProjectDirectoryServices;
+  /** Source Server workspace identity resolution; optional until every host registers it. */
+  readonly sourceServerWorkspaceService?: ISourceServerWorkspaceService;
+  /** Desktop window Host base attachment only; remote and Web hosts do not provide it. */
+  readonly sourceServerManagementService?: ISourceServerManagementService;
   readonly fileService: IFileService;
   readonly mediaPreviewService?: IMediaPreviewService;
   readonly cloudContentService?: ICloudContentService;

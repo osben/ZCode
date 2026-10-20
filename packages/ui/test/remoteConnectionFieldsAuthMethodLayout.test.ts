@@ -1,11 +1,13 @@
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment jsdom
+import { createElement, type ComponentProps } from "react";
+import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -30,15 +32,32 @@ const platform: IPlatformService = {
   selectFile: vi.fn(),
 };
 
-// Locale-behavior test: this file compares the zh-CN and en-US auth-method layouts on purpose.
-function renderRemoteConnectionFields(locale: "zh-CN" | "en-US") {
-  return renderToStaticMarkup(
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+beforeEach(() => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+
+function renderRemoteConnectionFields(
+  overrides: Partial<ComponentProps<typeof RemoteConnectionFields>> = {},
+) {
+  return render(
     createElement(
       PlatformProvider,
       { platform },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: locale },
+        { initialLocale: TEST_LOCALE },
         createElement(RemoteConnectionFields, {
           kind: "ssh",
           host: "",
@@ -81,20 +100,66 @@ function renderRemoteConnectionFields(locale: "zh-CN" | "en-US") {
           setServerName: vi.fn(),
           setServerToken: vi.fn(),
           setServerWorkspacePath: vi.fn(),
+          ...overrides,
         }),
       ),
     ),
   );
 }
 
-describe("RemoteConnectionFields authentication method layout", () => {
-  it("keeps SSH auth method options wide enough and non-wrapping for Chinese and English labels", () => {
-    const zhHtml = renderRemoteConnectionFields("zh-CN");
-    const enHtml = renderRemoteConnectionFields("en-US");
+it("auth and download method groups expose names and selected state; password can be shown and hidden", () => {
+  renderRemoteConnectionFields();
+  const auth = screen.getByRole("group", { name: expectedCopy("ssh.authMethod") });
+  expect(within(auth).getByRole("button", { pressed: true }).textContent).toBe(
+    expectedCopy("ssh.auth.password"),
+  );
+  const password = screen.getByLabelText(expectedCopy("ssh.password"));
+  expect(password.getAttribute("type")).toBe("password");
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
+  expect(password.getAttribute("type")).toBe("text");
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
+  expect(password.getAttribute("type")).toBe("password");
+  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.advancedOptions") }));
+  const download = screen.getByRole("group", { name: expectedCopy("ssh.assetInstallMode") });
+  expect(within(download).getByRole("button", { pressed: true })).toBeTruthy();
+  expect(within(download).getByRole("button", { pressed: false })).toBeTruthy();
+});
 
-    for (const html of [zhHtml, enHtml]) {
-      expect(html).toContain("sm:grid-cols-[minmax(0,1fr)_12rem]");
-      expect(html).toContain("whitespace-nowrap");
-    }
+it.each([
+  { kind: "ssh", sshAuthMethod: "privateKey", labelKey: "ssh.privateKeyPassphrase" },
+  { kind: "server", sshAuthMethod: "password", labelKey: "server.token" },
+] as const)(
+  "$kind passphrase field can be shown and hidden and is label-associated",
+  ({ kind, sshAuthMethod, labelKey }) => {
+    renderRemoteConnectionFields({ kind, sshAuthMethod });
+    const input = screen.getByLabelText(expectedCopy(labelKey));
+    expect(input.getAttribute("type")).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
+    expect(input.getAttribute("type")).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
+    expect(input.getAttribute("type")).toBe("password");
+  },
+);
+
+it("Docker container list can be selected from the search box with arrow keys and Enter", async () => {
+  const setDockerContainer = vi.fn();
+  renderRemoteConnectionFields({
+    kind: "docker",
+    dockerContainer: "alpha",
+    dockerAvailable: true,
+    dockerContainers: ["alpha", "beta"].map((name) => ({
+      id: name,
+      name,
+      image: "ubuntu",
+      state: "running",
+      status: "Up",
+    })),
+    setDockerContainer,
   });
+  fireEvent.click(screen.getByTestId("docker-container-select"));
+  const search = await screen.findByRole("combobox");
+  await waitFor(() => expect(document.activeElement).toBe(search));
+  fireEvent.keyDown(search, { key: "ArrowDown" });
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(setDockerContainer).toHaveBeenCalledWith("beta");
 });

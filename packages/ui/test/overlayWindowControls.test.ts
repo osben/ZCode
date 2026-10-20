@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { DesktopCommandIds } from "@zcode/shared";
 import { EmbeddedWebsiteHeader } from "@/components/EmbeddedWebsiteHeader.js";
 

@@ -20,39 +20,23 @@ describe("side pane toggle empty state", () => {
   });
 
   it("renders an Open tab launcher when the side pane has no tabs", () => {
+    // Upstream 3.16.1 replaced the row-list launcher with the @container/launcher grid
+    // (SidePaneLauncherRow). These invariants keep the empty-state contract: the launcher
+    // replaces an empty tab list, and the content layer stays mounted but hidden when no tab is visible.
     const source = readSource("packages/ui/src/app-shell/AnimatedSidePanePanel.tsx");
-    const styles = readSource("packages/ui/src/styles.css");
 
     expect(source).toContain('id: "terminal"');
     expect(source).toContain('id: "browser"');
     expect(source).toContain('id: "review"');
     expect(source).toContain('id: "selection-side-conversation"');
-    expect(source).toContain('data-side-pane-add-item="selection-side-conversation"');
-    expect(source).toContain("data-side-pane-open-tab-item={item.id}");
     expect(source).toContain('id: "sidePane.openTab"');
-    expect(source).toContain('id: "sidePane.openTabDescription"');
-    expect(source).toContain("hasRenderedSidePane ? (");
-    expect(source).toContain("visibleTabs.length === 0 ? openTabLauncher : null");
-    // 截图 surface prepare 期间，即使当前对话没有可见 tab，也要保留后台 browser-use
-    // 的实际布局，不能回退为 display:none。
-    expect(source).toContain('visibleTabs.length === 0 && !screenshotSurfaceRequest && "hidden"');
-    expect(source).toContain("keeping TabsContent mounted");
+    expect(source).toContain("hasRenderedSidePane && sidePaneState ? (");
+    expect(source).toContain('tab.type === "new-tab" ? (');
     expect(source).toContain("openTabLauncher");
-    expect(source).toContain("flex-1 items-center justify-center");
-    expect(source).toContain("side-pane-open-tab-shell");
-    expect(source).toContain("side-pane-open-tab-list");
-    expect(styles).toContain("container: side-pane-open-tab / inline-size");
-    expect(styles).toContain("@container side-pane-open-tab (min-width: 480px)");
-    expect(styles).toContain("grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr))");
-    expect(styles).toContain("flex-direction: column");
-    expect(styles).toContain("height: 5.5rem");
-    expect(styles).toContain("text-align: center");
-    expect(source).toContain("rounded-xl");
-    expect(source).toContain("bg-surface");
-    expect(source).toContain("hover:bg-surface-hover");
-    expect(source).not.toContain("border border-card-border bg-card");
-    expect(source).toContain("text-ui-base");
-    expect(source).toContain("size-4 text-foreground-subtle");
+    expect(source).toContain("side-pane-open-tab-shell @container/launcher");
+    expect(source).toContain("@min-[36rem]/launcher:grid-cols-2");
+    expect(source).toContain('!hasVisibleTabs && !screenshotSurfaceRequest && "hidden"');
+    expect(source).toContain("<SidePaneLauncherRow");
     expect(source).not.toContain(
       '<div className="flex h-12 shrink-0 items-center justify-end border-b border-border px-3">',
     );
@@ -60,31 +44,35 @@ describe("side pane toggle empty state", () => {
 
   it("collapses the side pane after closing the final tab", () => {
     const source = readSource("packages/ui/src/hooks/useAppPanels.ts");
-    const syncStart = source.indexOf("const syncSidePaneCollapsedWithTabs = useCallback");
-    const syncEnd = source.indexOf("const handleOpenCodeViewer", syncStart);
-    const syncSource = source.slice(syncStart, syncEnd);
+    const commitStart = source.indexOf("const commitSidePaneState = useCallback");
+    const commitEnd = source.indexOf("\n  const ", commitStart + 1);
+    const commitSource = source.slice(commitStart, commitEnd);
 
-    expect(syncStart).toBeGreaterThanOrEqual(0);
-    expect(syncSource).not.toContain("setIsSidePaneCollapsed(false);");
-    expect(syncSource).toContain("setIsSidePaneCollapsed(true);");
+    expect(commitStart).toBeGreaterThanOrEqual(0);
+    expect(commitSource).toContain(
+      "getVisibleSidePaneTabs(next?.tabs ?? [], currentSidePaneScope()).length === 0",
+    );
+    expect(commitSource).toContain("setIsSidePaneCollapsed(true);");
+    expect(commitSource).not.toContain("setIsSidePaneCollapsed(false);");
 
+    const closeSelectedStart = source.indexOf("const closeSelectedSidePaneTabs = useCallback");
     const closeTabStart = source.indexOf("const handleCloseSidePaneTab = useCallback");
     const closeOtherTabStart = source.indexOf(
       "const handleCloseOtherSidePaneTabs = useCallback",
       closeTabStart,
     );
+    const closeSelectedSource = source.slice(closeSelectedStart, closeTabStart);
     const closeTabSource = source.slice(closeTabStart, closeOtherTabStart);
 
-    expect(closeTabSource).toContain("const next = commitSidePaneState((current) =>");
-    expect(closeTabSource).toContain("closeSidePaneTabForParent(");
-    expect(closeTabSource).toContain("syncSidePaneCollapsedWithTabs(next);");
+    expect(closeTabSource).toContain("closeSelectedSidePaneTabs(");
+    expect(closeSelectedSource).toContain("commitSidePaneState((current) =>");
+    expect(closeSelectedSource).toContain("closeSidePaneTabs(");
 
     const closeAllStart = source.indexOf("const handleCloseAllSidePaneTabs = useCallback");
     const reopenStart = source.indexOf("const handleReopenClosedSidePaneTab = useCallback");
     const closeAllSource = source.slice(closeAllStart, reopenStart);
 
-    expect(closeAllSource).toContain("const next = closeVisibleSidePaneTabs(");
-    expect(closeAllSource).toContain("syncSidePaneCollapsedWithTabs(next);");
+    expect(closeAllSource).toContain("closeSelectedSidePaneTabs(");
   });
 
   it("截图准备不参与侧栏展开，surface 改由固定的后台承载层提供尺寸", () => {

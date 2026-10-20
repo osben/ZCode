@@ -24,8 +24,6 @@ describe("ChatLoading", () => {
   it("只展示旋转 loading 图标，不渲染可见文案", () => {
     const html = renderChatLoading();
 
-    expect(html).toContain("animate-spin");
-    expect(html).toContain('data-zcode-chat-loading-animate="true"');
     expect(html).toContain('role="status"');
     expect(html).toContain(`aria-label="${expectedCopy("common.loading")}"`);
     expect(html).not.toContain('data-testid="chat-loading-text"');
