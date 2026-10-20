@@ -192,6 +192,7 @@ const desktopTsupBundleSecurityOptions = resolveDesktopTsupBundleSecurityOptions
 function createSharedDefines() {
   return {
     __ZCODE_VERSION__: JSON.stringify(buildMetadata.appVersion),
+    __ZCODE_MIN_COMPATIBLE_VERSION__: JSON.stringify(buildMetadata.minCompatibleVersion),
     __ZCODE_COMMIT__: JSON.stringify(buildMetadata.buildCommitId),
     __ZCODE_BUILD_TIME__: JSON.stringify(buildMetadata.buildTime),
     __ZCODE_ENV__: JSON.stringify(zcodeEnv),
@@ -258,6 +259,8 @@ export default defineConfig([
     outDir: "out",
     format: "esm",
     platform: "node",
+    // node:sqlite 只有带前缀的内置入口；tsup 去掉 node: 会错误加载第三方 sqlite 包。
+    removeNodeProtocol: false,
     target: "node22",
     // If undici is inlined into the main ESM bundle, it reaches its internal CommonJS require("assert") at runtime,
     // and Electron reports Dynamic require of "assert" is not supported while loading the main artifact.
@@ -305,6 +308,8 @@ export default defineConfig([
     outDir: "out",
     format: "cjs",
     platform: "node",
+    // node:sqlite 只有带前缀的内置入口；tsup 去掉 node: 会错误加载第三方 sqlite 包。
+    removeNodeProtocol: false,
     target: "node22",
     external: ["electron"],
     noExternal: ["@zcode/shared"],
@@ -347,11 +352,13 @@ export default defineConfig([
     name: "host",
     entry: {
       "host/index": "src/host/index.ts",
-      "host/tasksStorageWorker": "src/host/tasksStorageWorker.ts",
+      "host/tasksStorageWorker": "src/host/database-startup/tasksStorageWorker.ts",
     },
     outDir: "out",
     format: "esm",
     platform: "node",
+    // node:sqlite 只有带前缀的内置入口；tsup 去掉 node: 会错误加载第三方 sqlite 包。
+    removeNodeProtocol: false,
     target: "node22",
     // Host and main share the same services graph; inlining undici still triggers the same dynamic require crash in the Electron ESM runtime.
     // Keep it external here as well to prevent Host startup failures in Desktop development and packaged builds.
@@ -381,6 +388,8 @@ export default defineConfig([
     outDir: "out",
     format: "esm",
     platform: "node",
+    // node:sqlite 只有带前缀的内置入口；tsup 去掉 node: 会错误加载第三方 sqlite 包。
+    removeNodeProtocol: false,
     target: "node22",
     // Like host, the persistent cron scheduler process reuses @zcode/services (tasks-index + cron),
     // and keeps undici and similar packages external to avoid dynamic require crashes in the Electron ESM runtime.

@@ -6,6 +6,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { runCommand } from "./spawn-command.mjs";
+import { clearHoistedPatchedDependencyTargets } from "./bootstrap-patched-dependencies.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(scriptDir, "..");
@@ -65,9 +66,17 @@ function resolveBootstrapWithRemoteEnv(baseEnv = process.env) {
     return {};
   }
 
+  // 修复原因：默认 dev:desktop 使用生产账号；远程构建若沿用通用 test 默认值，
+  // 会把生产凭据发往测试模型地址并返回 401。入口统一选择环境并传给所有构建子进程。
+  const zcodeEnv = baseEnv.ZCODE_ENV?.trim().toLowerCase() || "production";
+  if (zcodeEnv !== "test" && zcodeEnv !== "production") {
+    throw new Error(`Invalid ZCODE_ENV for bootstrap:with-remote: ${zcodeEnv}`);
+  }
+
   const pathEntries = [resolvePinnedNodeBin(), resolveUserPnpmBin()].filter(Boolean);
 
   return {
+    ZCODE_ENV: zcodeEnv,
     // bootstrap:with-remote is the manual entry point for initializing remote resources. In automated non-TTY environments,
     // pnpm install may ask for confirmation before clearing node_modules. Disable confirmation only for this entry point; do not change CI/production build commands.
     HUSKY: "0",
@@ -210,6 +219,16 @@ function runBootstrapWithRemoteBuild() {
 
 runGit(["submodule", "update", "--init", "--recursive", "apps/zcode-cli"]);
 
+const clearedPatchedDependencies = await clearHoistedPatchedDependencyTargets({
+  rootDir,
+  packageJsonPath: resolve(rootDir, "package.json"),
+});
+if (clearedPatchedDependencies.length > 0) {
+  console.log(
+    `[bootstrap] refreshed hoisted patched dependencies: ${clearedPatchedDependencies.join(", ")}`,
+  );
+}
+
 runPnpm(withRemoteAssets ? ["install", "--config.confirmModulesPurge=false"] : ["install"]);
 
 runPnpm(["prepare:desktop-runtime"], {
@@ -225,6 +244,10 @@ runPnpm(["prepare:desktop-runtime"], {
 
 if (withRemoteAssets) {
   runBootstrapWithRemoteBuild();
+  // Bug 原因：R3 首装只消费 Source Server archive，旧 bootstrap 只生成 legacy
+  // manifest/components，导致开发态继续命中 gitignore 中的历史 dist-release。
+  // 放在最终 workspace build 之后，确保 archive 收集的是本轮最新编译产物。
+  runPnpm(["--filter", "@zcode/server-cli", "stage:remote-assets"]);
 } else {
   runPnpm(["run", "build:bootstrap"]);
 }

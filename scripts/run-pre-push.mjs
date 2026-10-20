@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 
-import { resolveDiffTarget } from "./run-affected-unit-tests.mjs";
+import { resolveDiffTarget } from "./pre-push-diff-target.mjs";
 
 const exec = promisify(execFile);
 const root = process.cwd();
@@ -32,7 +32,7 @@ async function isDocumentationOnly() {
   );
 }
 
-async function runStage(task, args = []) {
+async function runStage(task, args = [], extraEnv = {}) {
   const stageStarted = performance.now();
   print(`${task} started`);
   const status = await new Promise((resolve, reject) => {
@@ -45,6 +45,7 @@ async function runStage(task, args = []) {
       cwd: root,
       env: {
         ...process.env,
+        ...extraEnv,
         NODE_COMPILE_CACHE:
           process.env.NODE_COMPILE_CACHE || join(root, ".cache", "pre-push", "node-compile"),
       },
@@ -57,15 +58,35 @@ async function runStage(task, args = []) {
   return status;
 }
 
+// Returns the merge-base of the resolved comparison target and HEAD, or "" when no target exists.
+// An empty value leaves upstream's own base resolution in charge, which only applies when no target was found.
+async function affectedBase() {
+  const target = resolveDiffTarget(root);
+  if (!target) return "";
+  const { stdout } = await exec("git", ["merge-base", target.base, "HEAD"], { cwd: root });
+  return stdout.trim();
+}
+
 async function main() {
   if (!process.env.npm_execpath) {
     throw new Error("Run this gate with pnpm run verify:pre-push.");
   }
   const docsOnly = await isDocumentationOnly();
   const stages = [["lint"], ["architecture:check", ["--", "--changed"]], ["test-copy:check"]];
-  if (!docsOnly) stages.push(["test:unit:affected"], ["test:node"]);
+  if (!docsOnly) stages.push(["test:unit:affected", ["--", "--scope", "push"]], ["test:node"]);
   for (const [task, args] of stages) {
-    const status = await runStage(task, args);
+    // The affected stage receives the base resolved here, so upstream's first-push fallback (origin/staging) is never used.
+    // Node 26's experimental Web Storage shadows jsdom's localStorage; scripts/run-vitest.mjs sets the same flag for the full run.
+    const extraEnv =
+      task === "test:unit:affected"
+        ? {
+            ZCODE_AFFECTED_TEST_BASE: await affectedBase(),
+            NODE_OPTIONS: [process.env.NODE_OPTIONS, "--no-experimental-webstorage"]
+              .filter(Boolean)
+              .join(" "),
+          }
+        : {};
+    const status = await runStage(task, args, extraEnv);
     if (status !== 0) return status;
   }
   if (docsOnly) print("documentation-only changes: skip test:unit:affected and test:node");
