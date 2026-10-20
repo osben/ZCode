@@ -155,3 +155,43 @@ Verification (this PART):
 - Desktop unit tests excluding e2e: 323 files and 2497 tests passed.
 - Full `pnpm test`: run after the last commit; the result is recorded in the PR body.
 - wdio dry check: a plain `tsx` import fails on `istanbul-lib-coverage` named exports in `e2e-node-coverage.ts`, which this PART does not touch, so the pre-existing loader problem is not caused by the merge. The dry check is an esbuild bundle of `wdio.conf.ts`, which resolves every relative import.
+
+## Group C status (branch `claude/sync-desktop-group-c`)
+
+Status: the #214 service exports are on `origin/integration` (`source-server-workspace`, `window-controller`, `ServiceExposurePolicy`, `WindowHostTaskUnreadSignal`, `controllerRemoteIdentityMigration`), so the PART 4 blocker is gone. The group C source port is not in this change. The fork still lacks the upstream modules it needs, listed below, and porting them is a separate, larger change. This change records the owner/event-order design so that port starts from an agreed model.
+
+Fork files missing on this branch (upstream at `0a1fc56d`): `botRemoteWorkspaceResolver.ts`, `connectDesktopSourceServer.ts`, `connectSourceServerTarget.ts`, `remoteWorkspaceRpcContract.ts`, `sourceServerConnectionManager.ts`, `sourceServerDirectory.ts`, `sourceServerManagementService.ts`, `sourceServerMigrationCounts.ts`, `sourceServerRecoveryPolicy.ts`, `sourceServerReleaseResolver.ts`, `windowHostControllerProjection.ts`, `windowHostControllerService.ts`. The fork keeps `sourceServerOperationLogs.ts` and `sourceServerStartupReconnect.ts`, which need a diff against upstream before they are replaced.
+
+Owner and event order for source-server connect and reconnect (upstream behavior, to be ported as-is):
+
+- Owner of the physical Source connection: `SourceServerConnectionManager` (host). Manual connect enters through `connectSourceServerTarget`, which asks `SourceServerDirectory` for the profile and credentials. Startup and automatic reconnect enter through `sourceServerStartupReconnect`. Both end in `connectDesktopSourceServer`.
+- Each physical connection generation owns one topic-resource relay and one set of services. A reconnect creates a new generation. It never reuses the previous relay or services.
+- Order inside one generation: create relay bound to this generation's services, connect over the duplex, then read the desktop's dynamic-workflow user mode and push it with `syncDynamicWorkflowUserMode` before the connection is published. A missing or old Source that rejects the sync is reported through `onModeSyncError` and the connection still succeeds.
+- Close order: a generation's `onClose` disposes its relay first, then calls the manager's `onClose`. Failed connect disposes the relay and the partial connection, then rethrows.
+
+```mermaid
+sequenceDiagram
+  participant Caller as Manual connect or startup reconnect
+  participant Mgr as SourceServerConnectionManager
+  participant Conn as connectDesktopSourceServer (one generation)
+  participant Relay as Topic relay (generation N)
+  participant Src as Source server
+  Caller->>Mgr: connect(profile, target)
+  Mgr->>Conn: connect generation N
+  Conn->>Relay: create bound to generation N services
+  Conn->>Src: connectServerRemoteOverDuplex
+  Src-->>Conn: connection with services
+  Conn->>Src: syncDynamicWorkflowUserMode (failure tolerated)
+  Conn-->>Mgr: connection N published
+  Note over Src,Mgr: link drops
+  Src-->>Conn: onClose
+  Conn->>Relay: dispose
+  Conn-->>Mgr: onClose, then auto reconnect
+  Mgr->>Conn: connect generation N+1 (new relay, new services, mode re-synced)
+```
+
+Ledger for this change:
+
+- The port is not done here. Its size is about 1446 added lines in `host/index.ts` plus the modules above. It needs a dedicated change with its own compile and test run.
+- Locale: the Host does not yet track `ApplicationLocaleChanged`. Upstream stores it in a module variable that is read only by the group C client-language resolver. Adding the variable alone would be unused and would fail `noUnusedLocals`, so it lands with the resolver.
+- `InternalChannels.SourceSettingsServicePort` already exists in `packages/shared/src/channels.ts`. The `attachSourceSettings` port is blocked by the group C scope work, not by the channel.
