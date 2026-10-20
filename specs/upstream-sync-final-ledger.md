@@ -416,3 +416,33 @@ Not done and blocked:
 - Formatting: `pnpm fmt:check` fails on other slices' files (packages/web/src/webRemoteControlDeviceInfo.ts, packages/web/test/webRemoteControlWorkspaceBridgeSession.test.ts, and more). None of the files changed here is listed.
 - Test copy: `node scripts/check-test-copy.mjs` reports 7 locale violations, all in packages/desktop/test/e2e manual-review pending files outside this scope. In the touched test files, the comments the fork had already translated are English again, and every comment or title this slice added is English. About 40 Chinese `it` titles and assertion messages from upstream remain in `zcode-builtin-integrity.test.ts`; the check does not flag them. Translating them is open follow-up work.
 - Staged size: packages/web/src/main.tsx (about 103 KB) is already listed as TEMPORARY in `.staged-file-size-exemptions`; no new entry needed.
+
+## taskindex
+
+Scope: the services test files that exercise upstream task-index, project-execution, and bot-addressing modules (`taskIndexRepo*`, `sourceServerWorkspaceAliasRepo*`, `automationRepo`, `offPeakTask*`, `serverHostServices`, `projectWorkspaceNavigation`, `botsService.*`, `botsProjectBinding`, `botsStorageV3`). Single writer stays `syncTaskMeta`; upstream CLI-fact writers exist but have no runtime caller.
+
+Full `node scripts/run-vitest.mjs run packages/services/test packages/server/test`: 52 failed before this slice (17 files), 42 failed after (11 files). No test newly fails. `pnpm typecheck` 0, `pnpm lint` 0 errors, `pnpm fmt:check` ok.
+
+### Test isolation
+
+- `vitest.setup.ts` sets `HOME` to a per-worker `mkdtemp` directory and removes it on exit. `homedir()`, the default data base dir, `~/.zcode/v2/tasks-index.sqlite`, and `setting.json` all resolve under it. Child processes inherit it.
+
+### Ported (additive)
+
+- `session/taskIndexRepo.ts`: `ensureReady` runs the upstream project-storage migrations (`projectStorage.migrate`, ledger `schema_migration`, ids `0005_projects` and `0006_default_workspace_tasks`) on every path, including the prepared-startup path. `migrationBackupSkipped`, `getProjectRepository()`, `getOrganizationDatabase()`, and `applyCliFacts()` are added. `applyCliFacts` admits the task into project storage, which upstream does inside `writeRecord`. The fork `writeRecord` (used by `syncTaskMeta`) does not admit, so project membership is set only by CLI facts. `getTaskRow` also reads the `cli_*` and `handoff_pending` columns. Constructor gets an optional third `storageHostId` (owner Host for project rows).
+- `session/automationRepo.ts`, `session/offPeakTaskRepo.ts`: upstream `project_id`, `host_id`, `additional_directories` hunks (insert, row mapping, join select). Columns come from fork migration `0004_project_execution_scopes`, already in `tasksDatabase/migrations.ts`.
+- `bots/repo.ts`: `updateContext(botId, update)` under the file lock, and `readStateUnlocked` extracted from `readState`. `readState` behavior is unchanged.
+- `node.ts`: `createProjectService` and `createRemoteProjectService` are constructed and `IProjectService` / `IRemoteProjectService` are registered. The task index is built with `options.projectStorageHostId`. Task groups stay unwired.
+
+### Fixed
+
+- `automationRepo` (2), `offPeakTaskRepo` (1), `offPeakTaskService` (1), `serverHostServices` (1), `botsStorageV3` (1), `projectWorkspaceNavigation` (1), `taskIndexRepoUnreadCompareAndClear` "materializes reserved creation" and "exposes a skipped backup" (2), `taskIndexRepoWorkspaceIdentity` "CLI facts mirror" (1).
+- Test construction only (assertions unchanged): `projectWorkspaceNavigation.test.ts` passes the upstream storage host as the third constructor argument. The fork test had the path only, so the owner Host was missing.
+
+### Still failing (not fixed; decision or scope needed)
+
+- Read path must use CLI facts (`unreadCompareAndClear` "reads and sorts only CLI fact columns"; `sourceServerWorkspaceAliasRepo.projections`, 4 tests). The tests expect `queryTaskList`, `listTaskMetas`, and the alias merge to order and merge by `cli_*` columns. The fork read path uses the legacy `title`/`updated_at`. Changing it is a single-owner decision, not a port.
+- Settings-based project import (`taskIndexRepoWorkspaceIdentity` "records project migrations ... does not import settings again"). The test constructs `TaskIndexRepo` with the upstream settings object and expects `lastWorkspaceSession` to seed `project_roots`. The fork deliberately does not seed projects from settings (`prepareTasksIndexStorage` ignores settings). Decision needed.
+- Bots project binding and host/project addressing: `botsProjectBinding` (7), `botsService.permissionsWorkspace` (5), `botsService.messageFlow` (5), `botsService.groups` (1). These need `hostId` in `ensureConnected`, `workspaceId` as `[hostId, projectId]`, project-binding state, and project execution scope in `botsService.ts` (10k lines). Ledger services part 4 section 2 keeps this deferred. The fork `/remote` addressing (`remote:server:...`) is unchanged and `botsService.remoteLink` still passes.
+- `automation` and `offPeak` project freeze are now green; `AutomationService`/`OffPeakTaskService` `prepareProjectExecution` wiring in production is not changed by this slice.
+- Architecture check (`pnpm architecture:check --changed`) reports 4 unmanaged new files that are not in this diff (desktop host files, `packages/shared/src/zcode-protocol-v4/execution-worktree.ts`), as in the sync branch base. Not 0.

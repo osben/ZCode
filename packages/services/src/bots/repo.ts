@@ -4,6 +4,7 @@ import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
 import {
   botsConfigFileSchema,
   botsStateFileSchema,
+  type BotContextState,
   type BotsConfigFile,
   type BotsStateFile,
 } from "@zcode/shared";
@@ -56,20 +57,39 @@ export class BotsRepo {
 
   async readState(): Promise<BotsStateFile> {
     const path = join(getAppConfigDir(), BOTS_STATE_FILE);
+    return withFileLock(path, () => this.readStateUnlocked(path));
+  }
+
+  private async readStateUnlocked(path: string): Promise<BotsStateFile> {
+    const current = await readOptionalJson(path);
+    if (current !== undefined) return botsStateFileSchema.parse(current);
+    const v2 = await readOptionalJson(join(getAppConfigDir(), BOTS_V2_STATE_FILE));
+    const legacy =
+      v2 === undefined
+        ? await readOptionalJson(join(getAppConfigDir(), BOTS_LEGACY_STATE_FILE))
+        : v2;
+    const state = botsStateFileSchema.parse(
+      legacy === undefined ? { version: 3, bots: {} } : importLegacyBotState(legacy),
+    );
+    // Fix the migration result under the same file lock; later login/plan changes must not reinterpret the old identity.
+    await writeJson(path, state);
+    return state;
+  }
+
+  /** The file lock covers the whole read-modify-write, so two Bots or provider cursors cannot overwrite each other's context. */
+  async updateContext(
+    botId: string,
+    update: (current: BotContextState | undefined) => BotContextState | undefined,
+  ): Promise<BotContextState | undefined> {
+    const path = join(getAppConfigDir(), BOTS_STATE_FILE);
     return withFileLock(path, async () => {
-      const current = await readOptionalJson(path);
-      if (current !== undefined) return botsStateFileSchema.parse(current);
-      const v2 = await readOptionalJson(join(getAppConfigDir(), BOTS_V2_STATE_FILE));
-      const legacy =
-        v2 === undefined
-          ? await readOptionalJson(join(getAppConfigDir(), BOTS_LEGACY_STATE_FILE))
-          : v2;
-      const state = botsStateFileSchema.parse(
-        legacy === undefined ? { version: 3, bots: {} } : importLegacyBotState(legacy),
-      );
-      // Fix the migration result under the same file lock; later login/plan changes must not reinterpret the old identity.
-      await writeJson(path, state);
-      return state;
+      const state = await this.readStateUnlocked(path);
+      const next = update(state.bots[botId]);
+      if (next) state.bots[botId] = next;
+      else delete state.bots[botId];
+      const parsed = botsStateFileSchema.parse(state);
+      await writeJson(path, parsed);
+      return parsed.bots[botId];
     });
   }
 
