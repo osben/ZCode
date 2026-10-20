@@ -12,13 +12,18 @@ const { stageThirdPartyNotices } = await import(
 
 // tsup.config may be loaded from different working directories; resolve the repository-root package.json relative to this config file.
 const rootPackageJsonPath = resolve(import.meta.dirname, "../../package.json");
-const { version } = JSON.parse(readFileSync(rootPackageJsonPath, "utf-8"));
+const { version, zcodeCompatibility } = JSON.parse(readFileSync(rootPackageJsonPath, "utf-8")) as {
+  version: string;
+  zcodeCompatibility?: { minCompatibleVersion?: string };
+};
+const minCompatibleVersion = zcodeCompatibility?.minCompatibleVersion ?? version;
 
 const { environment: zcodeEnv, content: zcodeBuiltinProviderConfigJson } =
   await loadBuiltinProviderConfig();
 
 export const SERVER_HTTP_DEFINES = {
   __ZCODE_VERSION__: JSON.stringify(version),
+  __ZCODE_MIN_COMPATIBLE_VERSION__: JSON.stringify(minCompatibleVersion),
   __ZCODE_ENV__: JSON.stringify(zcodeEnv),
   __ZCODE_BUILTIN_PROVIDER_CONFIG_JSON__: JSON.stringify(zcodeBuiltinProviderConfigJson),
 };
@@ -66,6 +71,8 @@ export default defineConfig({
   outDir: "dist",
   format: "esm",
   platform: "node",
+  // node:sqlite 只有带前缀的内置入口；tsup 去掉 node: 会错误加载第三方 sqlite 包。
+  removeNodeProtocol: false,
   target: "node22",
   // Workspace package exports point to .ts source, which Node cannot load directly at runtime; bundle it.
   noExternal: [

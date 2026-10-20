@@ -41,7 +41,8 @@ test("an error-severity finding blocks, even when the filename matches the zero-
   try {
     const contrived = join(dir, "No files found to lint.ts");
     const lines = Array.from(
-      { length: 401 },
+      // The max-lines limit is 800 (upstream .oxlintrc.json); 801 lines exceed it.
+      { length: 801 },
       (_, index) => `export const probe${index} = ${index};`,
     );
     writeFileSync(contrived, `${lines.join("\n")}\n`);

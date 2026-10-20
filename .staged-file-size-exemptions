@@ -192,10 +192,16 @@ specs/nested-agents-md.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
+
 # TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
 packages/provider-node/test/provider-node-runtime.test.ts
 packages/provider/test/config-service.test.ts
 
+
+# Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
+.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
+config/provider/zcode-builtin.json
+config/provider/zcode-builtin.test.json
 
 # Existing oversized files touched by permanent session deletion; new modules stay below the limit.
 packages/desktop/src/host/index.ts
