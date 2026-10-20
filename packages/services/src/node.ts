@@ -1173,6 +1173,8 @@ export function createLocalServices(options: {
   hostApiNetworkTransport?: HostApiNetworkTransport;
   /** Let Desktop Host ask Main to register the exact local video path authorized for the Agent. */
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
+  /** Desktop Host can query Main's all-window workspace inventory; unavailable inventory fails closed. */
+  getOpenWorkspacePaths?: () => Promise<string[]>;
   /**
    * Forwarding hook for dynamic-workflow user-choice changes (docs/dynamic-workflow/launch.md “The user's choice”):
    * the Desktop Host pushes the local setting to every online desktop-attached remote Host in this window.
@@ -2412,6 +2414,8 @@ export function createLocalServices(options: {
     taskIndexRepo,
     forkWorkspacePinRepo,
     taskIndexSyncer: zcodeTaskIndexSyncer,
+    gitService,
+    getOpenWorkspacePaths: options?.getOpenWorkspacePaths,
     settingService,
     cuaProductMcpServerResolver,
   });

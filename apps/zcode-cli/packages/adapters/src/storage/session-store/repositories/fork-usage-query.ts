@@ -17,6 +17,8 @@ import {
   refreshForkUsageRollupForRead,
 } from "./fork-usage-rollup.js";
 import { ensureForkUsageRollupSchema } from "./fork-usage-rollup-schema.js";
+import { ensureForkUsageDetachedSchema } from "./fork-usage-detached-schema.js";
+import { syncForkUsageProtectedRawRows } from "./fork-usage-detached.js";
 import { queryAppUsage as queryAppUsageFromRawTables } from "./usage.js";
 
 const DAY_MS = 86_400_000;
@@ -84,6 +86,12 @@ export async function queryAppUsageWithRollup(
 ): Promise<AppUsageQueryResult> {
   try {
     ensureForkUsageRollupSchema(db);
+    ensureForkUsageDetachedSchema(db);
+    try {
+      syncForkUsageProtectedRawRows(db);
+    } catch {
+      // Busy lock or surrounding transaction: deltas are applied on the next read/recompute.
+    }
     refreshForkUsageRollupForRead(db, Date.now());
     // A skipped first recompute (busy lock, surrounding transaction) leaves empty tables that would
     // answer with zeros; "never computed" is unavailable, not empty.
@@ -92,6 +100,9 @@ export async function queryAppUsageWithRollup(
     }
     return queryAppUsageFromRollup(db, input);
   } catch (error) {
+    if (hasDetachedUsageState(db)) {
+      throw new Error("usage_rollup_unavailable", { cause: error });
+    }
     if (hasFilters(input.filters) || reachesBeyondRawRetention(input.since, Date.now())) {
       throw new Error("usage_rollup_unavailable", { cause: error });
     }
@@ -125,7 +136,7 @@ export function queryAppUsageFromRollup(
          coalesce(sum(model_error_count), 0) as modelErrorCount,
          coalesce(sum(ttft_sum_ms), 0) as ttftSum,
          coalesce(sum(ttft_count), 0) as ttftCount
-       from fork_usage_bucket where ${bucket.sql}`,
+       from fork_usage_bucket_all where ${bucket.sql}`,
     )
     .get(...bucket.params) as Record<string, number>;
 
@@ -136,7 +147,7 @@ export function queryAppUsageFromRollup(
          coalesce(sum(turn_count), 0) as totalTurns,
          coalesce(sum(completed_duration_sum_ms), 0) as durationSum,
          coalesce(sum(completed_count), 0) as durationCount
-       from fork_usage_turn where ${scoped.sql}`,
+       from fork_usage_turn_all where ${scoped.sql}`,
     )
     .get(...scoped.params) as Record<string, number>;
   const longestSession = db
@@ -144,7 +155,7 @@ export function queryAppUsageFromRollup(
       `select coalesce(max(sessionDurationMs), 0) as longestSessionMs
        from (
          select sum(completed_duration_sum_ms) as sessionDurationMs
-         from fork_usage_turn where ${scoped.sql}
+         from fork_usage_turn_all where ${scoped.sql}
          group by session_id
        )`,
     )
@@ -155,7 +166,7 @@ export function queryAppUsageFromRollup(
       `select
          coalesce(sum(call_count), 0) as toolCallCount,
          coalesce(sum(error_count), 0) as toolErrorCount
-       from fork_usage_tool where ${scoped.sql}`,
+       from fork_usage_tool_all where ${scoped.sql}`,
     )
     .get(...scoped.params) as Record<string, number>;
 
@@ -167,7 +178,7 @@ export function queryAppUsageFromRollup(
          coalesce(sum(input_tokens), 0) as inputTokens,
          coalesce(sum(output_tokens), 0) as outputTokens,
          coalesce(sum(request_count), 0) as requestCount
-       from fork_usage_bucket where ${bucket.sql}
+       from fork_usage_bucket_all where ${bucket.sql}
        group by model_id
        order by totalTokens desc`,
     )
@@ -181,7 +192,7 @@ export function queryAppUsageFromRollup(
          coalesce(sum(error_count), 0) as errorCount,
          coalesce(sum(duration_sum_ms), 0) as durationSum,
          coalesce(sum(duration_count), 0) as durationCount
-       from fork_usage_tool where ${scoped.sql}
+       from fork_usage_tool_all where ${scoped.sql}
        group by tool_name
        order by callCount desc`,
     )
@@ -192,19 +203,19 @@ export function queryAppUsageFromRollup(
   const tokenDays = db
     .prepare(
       `select ${dayExpr} as dayIndex, coalesce(sum(computed_total_tokens), 0) as totalTokens
-       from fork_usage_bucket where ${bucket.sql} group by dayIndex`,
+       from fork_usage_bucket_all where ${bucket.sql} group by dayIndex`,
     )
     .all(tzOffsetMs, DAY_MS, ...bucket.params) as Array<{ dayIndex: number; totalTokens: number }>;
   const turnDays = db
     .prepare(
       `select ${dayExpr} as dayIndex, coalesce(sum(turn_count), 0) as turnCount
-       from fork_usage_turn where ${scoped.sql} group by dayIndex`,
+       from fork_usage_turn_all where ${scoped.sql} group by dayIndex`,
     )
     .all(tzOffsetMs, DAY_MS, ...scoped.params) as Array<{ dayIndex: number; turnCount: number }>;
   const toolDays = db
     .prepare(
       `select ${dayExpr} as dayIndex, coalesce(sum(call_count), 0) as toolCallCount
-       from fork_usage_tool where ${scoped.sql} group by dayIndex`,
+       from fork_usage_tool_all where ${scoped.sql} group by dayIndex`,
     )
     .all(tzOffsetMs, DAY_MS, ...scoped.params) as Array<{
     dayIndex: number;
@@ -214,7 +225,7 @@ export function queryAppUsageFromRollup(
     .prepare(
       `select ${dayExpr} as dayIndex, model_id as modelId,
          coalesce(sum(computed_total_tokens), 0) as totalTokens
-       from fork_usage_bucket where ${bucket.sql} group by dayIndex, model_id`,
+       from fork_usage_bucket_all where ${bucket.sql} group by dayIndex, model_id`,
     )
     .all(tzOffsetMs, DAY_MS, ...bucket.params) as unknown as AppUsageDayModelRow[];
 
@@ -228,13 +239,12 @@ export function queryAppUsageFromRollup(
   };
   for (const row of tokenDays) dayRow(Number(row.dayIndex)).totalTokens = Number(row.totalTokens);
   for (const row of turnDays) dayRow(Number(row.dayIndex)).turnCount = Number(row.turnCount);
-  for (const row of toolDays) dayRow(Number(row.dayIndex)).toolCallCount = Number(row.toolCallCount);
+  for (const row of toolDays)
+    dayRow(Number(row.dayIndex)).toolCallCount = Number(row.toolCallCount);
 
   return {
     ...(input.includeFacets ? { facets: queryFacets(db, since, until) } : {}),
-    ...(input.include?.hourly
-      ? { hourlyTokens: queryHourlyTokens(db, bucket, tzOffsetMs) }
-      : {}),
+    ...(input.include?.hourly ? { hourlyTokens: queryHourlyTokens(db, bucket, tzOffsetMs) } : {}),
     ...(input.include?.sessions ? { topSessions: queryTopSessions(db, scoped) } : {}),
     totals: {
       totalTokens: Number(totals.totalTokens),
@@ -294,7 +304,7 @@ function queryFacets(db: DatabaseSync, since: number, until: number): AppUsageFa
   const where = "bucket_start >= ? and bucket_start <= ?";
   const bucketColumn = (column: string) =>
     distinct(
-      `select distinct ${column} as value from fork_usage_bucket where ${where} order by value limit ${FACET_LIMIT}`,
+      `select distinct ${column} as value from fork_usage_bucket_all where ${where} order by value limit ${FACET_LIMIT}`,
       range,
     );
   return {
@@ -303,9 +313,9 @@ function queryFacets(db: DatabaseSync, since: number, until: number): AppUsageFa
     querySources: bucketColumn("query_source"),
     workspaces: distinct(
       `select value from (
-         select workspace_key as value from fork_usage_bucket where ${where}
-         union select workspace_key from fork_usage_turn where ${where}
-         union select workspace_key from fork_usage_tool where ${where}
+         select workspace_key as value from fork_usage_bucket_all where ${where}
+         union select workspace_key from fork_usage_turn_all where ${where}
+         union select workspace_key from fork_usage_tool_all where ${where}
        ) order by value limit ${FACET_LIMIT}`,
       [...range, ...range, ...range],
     ),
@@ -324,7 +334,7 @@ function queryHourlyTokens(db: DatabaseSync, bucket: WhereClause, tzOffsetMs: nu
          (cast((bucket_start + ?) / ? as integer) + 4) % 7 as weekday,
          cast(((bucket_start + ?) % ?) / ? as integer) as hour,
          coalesce(sum(computed_total_tokens), 0) as totalTokens
-       from fork_usage_bucket where ${bucket.sql}
+       from fork_usage_bucket_all where ${bucket.sql}
        group by weekday, hour`,
     )
     .all(tzOffsetMs, DAY_MS, tzOffsetMs, DAY_MS, HOUR_MS, ...bucket.params) as Array<{
@@ -353,7 +363,7 @@ function queryTopSessions(db: DatabaseSync, scoped: WhereClause): AppUsageSessio
          coalesce(sum(t.turn_count), 0) as turnCount,
          coalesce(sum(t.completed_duration_sum_ms), 0) as durationMs
        from fork_usage_turn t
-       left join session s on s.id = t.session_id
+       join session s on s.id = t.session_id
        where ${scoped.sql.replace(/bucket_start/g, "t.bucket_start").replace(/workspace_key/g, "t.workspace_key")}
        group by t.session_id
        having totalTokens > 0
@@ -369,4 +379,14 @@ function queryTopSessions(db: DatabaseSync, scoped: WhereClause): AppUsageSessio
     turnCount: Number(row.turnCount),
     durationMs: Number(row.durationMs),
   }));
+}
+
+function hasDetachedUsageState(db: DatabaseSync): boolean {
+  for (const table of ["fork_usage_detached_turn", "fork_usage_protected_bucket"]) {
+    const exists = db
+      .prepare("select 1 from sqlite_master where type = 'table' and name = ?")
+      .get(table);
+    if (exists && db.prepare(`select 1 from ${table} limit 1`).get()) return true;
+  }
+  return false;
 }

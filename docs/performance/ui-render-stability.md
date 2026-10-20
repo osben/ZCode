@@ -22,6 +22,7 @@ Observed project-side symptoms:
 
 1. **Task row actions**
    - Keep `TaskList` callbacks stable across list-local state changes by reading mutable values through refs where the action only needs the latest value at invocation time.
+   - `WorkspaceSidebarItem` passes task actions to the memoized `TaskList` through stable callback references. Task-ID adapters use `useCallback` and preserve the existing action semantics.
    - Keep task row props stable when task identity, active state, pinned state, mobile active state, and visible metadata are unchanged.
 
 2. **Task row menu cost**

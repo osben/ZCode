@@ -8,6 +8,12 @@ import {
   type SessionId,
   type SessionTreeCounts,
 } from "@zcode/contracts";
+import {
+  recomputeForkUsageRollupInTransaction,
+  pruneForkUsageRollup,
+} from "./fork-usage-rollup.js";
+import { ensureForkUsageRollupSchema } from "./fork-usage-rollup-schema.js";
+import { preserveUsageBeforeSessionTreeDelete } from "./fork-usage-detached.js";
 
 /** Keeps every statement far below SQLite's bound-variable limit. */
 const ID_CHUNK_SIZE = 400;
@@ -60,7 +66,9 @@ function countByIds(
 ): number {
   let total = 0;
   for (const part of chunk(ids)) {
-    const row = db.prepare(sql(placeholders(part.length))).get(...part, ...extraValues) as unknown as {
+    const row = db
+      .prepare(sql(placeholders(part.length)))
+      .get(...part, ...extraValues) as unknown as {
       n: number;
     };
     total += Number(row.n);
@@ -81,9 +89,7 @@ export function listSessionTreeIdsWithSurvivingChildren(
   const retained = new Set<string>();
   for (const ids of chunk([...tree.keys()])) {
     const rows = db
-      .prepare(
-        `select id, parent_id from session where parent_id in (${placeholders(ids.length)})`,
-      )
+      .prepare(`select id, parent_id from session where parent_id in (${placeholders(ids.length)})`)
       .all(...ids) as unknown as Array<{ id: string; parent_id: string }>;
     for (const row of rows) {
       if (!tree.has(row.id)) retained.add(row.parent_id);
@@ -136,6 +142,14 @@ export function deleteSessionTree(
     // Resolve inside the write transaction so a concurrent writer cannot add a child between
     // resolution and deletion and leave it orphaned.
     const ids = [...resolveTreeIds(db, rootIds).keys()];
+    if (ids.length > 0) {
+      // Bring complete raw-backed buckets current, then transfer session identities and freeze
+      // aggregate baselines before FK cascades remove their raw usage rows.
+      ensureForkUsageRollupSchema(db);
+      recomputeForkUsageRollupInTransaction(db, Date.now());
+      preserveUsageBeforeSessionTreeDelete(db, ids as SessionId[]);
+      pruneForkUsageRollup(db, Date.now());
+    }
     for (const part of chunk(ids)) {
       const list = placeholders(part.length);
       // Order matters: the workflow rows still need the session ids to be matched, and deleting

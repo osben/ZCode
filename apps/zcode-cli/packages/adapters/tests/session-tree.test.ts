@@ -7,6 +7,8 @@ import {
   createMessageId,
   createProjectId,
   createSessionId,
+  createToolCallId,
+  createTurnId,
   type ModelId,
   type ModelProviderId,
   type SessionId,
@@ -226,6 +228,71 @@ describe("session tree count and erase", () => {
     }
   });
 
+  it("preserves aggregate usage for erased sessions without retaining their Top Sessions identities", async () => {
+    const h = await openStore();
+    const now = 1_900_000_000_000;
+    try {
+      const parent = await seedSession(h.store, "usage-parent", "interactive");
+      const child = await seedSession(h.store, "usage-child", "subagent_child", "usage-parent");
+      const survivor = await seedSession(h.store, "usage-survivor", "interactive");
+      for (const [id, sessionID, tokens, durationMs] of [
+        ["parent", parent, 100, 3000],
+        ["child", child, 200, 7000],
+        ["survivor", survivor, 50, 1000],
+      ] as const) {
+        const turnID = createTurnId(`usage-${id}`);
+        await h.store.recordModelUsage({
+          id: `model-${id}`,
+          logicalRequestId: `request-${id}`,
+          sessionID,
+          turnID,
+          querySource: "main_turn",
+          providerId: "provider",
+          modelId: "model",
+          status: "completed",
+          startedAt: now,
+          inputTokens: tokens,
+          outputTokens: 0,
+          computedTotalTokens: tokens,
+        });
+        await h.store.upsertTurnUsage({
+          sessionID,
+          turnID,
+          status: "completed",
+          startedAt: now,
+          durationMs,
+          computedTotalTokens: tokens,
+        });
+        await h.store.upsertToolUsage({
+          id: `tool-${id}`,
+          sessionID,
+          turnID,
+          toolCallID: createToolCallId(`call-${id}`),
+          toolName: "Read",
+          status: "completed",
+          startedAt: now,
+          durationMs,
+        });
+      }
+
+      const input = { since: 0, until: now + 60_000, tzOffsetMs: 0, include: { sessions: true } };
+      const before = await h.store.queryAppUsage!(input);
+      const erasedIds = new Set([String(parent), String(child)]);
+      const { erasedIds: deleted } = await h.store.deleteSessionTree!({ rootIds: [parent] });
+      expect(deleted.map(String).sort()).toEqual([...erasedIds].sort());
+
+      const after = await h.store.queryAppUsage!(input);
+      expect(after.totals).toEqual(before.totals);
+      expect(after.toolTotals).toEqual(before.toolTotals);
+      expect(after.turnTotals.totalSessions).toBe(3);
+      expect(after.turnTotals.longestSessionMs).toBe(7000);
+      expect(after.topSessions?.map((row) => row.sessionId)).toEqual([String(survivor)]);
+      expect(after.topSessions?.some((row) => erasedIds.has(row.sessionId))).toBe(false);
+    } finally {
+      h.close();
+    }
+  });
+
   it("erases the whole tree and every dependent row, leaving forks and unrelated sessions", async () => {
     const h = await openStore();
     try {
@@ -328,7 +395,13 @@ describe("session tree count and erase", () => {
       expect(countRows(inspect, "message", `session_id = '${raw("startup-child")}'`)).toBe(1);
       await store.deleteSessionTree!({ rootIds: [createSessionId("startup-root")] });
       // Only `delete from session` runs for these tables, so their rows vanishing proves the cascade.
-      expect(countRows(inspect, "session", `id in ('${raw("startup-root")}', '${raw("startup-child")}')`)).toBe(0);
+      expect(
+        countRows(
+          inspect,
+          "session",
+          `id in ('${raw("startup-root")}', '${raw("startup-child")}')`,
+        ),
+      ).toBe(0);
       expect(countRows(inspect, "message", `session_id like 'sess_startup-%'`)).toBe(0);
     } finally {
       inspect.close();

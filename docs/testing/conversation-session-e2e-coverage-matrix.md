@@ -2876,3 +2876,18 @@ specs/incognito-session.md scenarios 13 and 17: INCOGNITO-01/02 use pending
 `conversation-session-incognito-draft.test.ts` (composer toggle, per-session checklist, prompt-shell
 tint + chip, no upstream request before send; first send produces the sidebar incognito marker).
 Not run yet: written without a built desktop app or CLI in the authoring environment.
+
+## Permanent task deletion (2026-10-19)
+
+Contract: `specs/session-deletion-cascade.md`. The following cases are accepted; desktop evidence is pending until explicitly recorded. No formal promotion or Docker admission is implied.
+
+| ID    | Scenario                                                           | Required assertion                                                                                            | Status                                          |
+| ----- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| DEL01 | Sidebar Delete, cancel then confirm on an isolated stopped session | Cancel retains row/content; confirm removes content, keeps tombstone across reload                            | manual Desktop E2E passed; pending user review  |
+| DEL02 | Dirty execution worktree                                           | Bounded staged/unstaged/untracked preview; Delete anyway removes eligible folder, branch survives             | accepted, pending E2E                           |
+| DEL03 | Running descendant                                                 | Confirmation blocked before tombstone; no folder removal                                                      | accepted, pending E2E                           |
+| DEL04 | Pinned and archived batch                                          | Pinned opt-in; restored archived IDs skipped; successful IDs run permanent flow                               | archived Desktop E2E passed; pinned E2E pending |
+| DEL05 | Shared/preparing/open-window target                                | Folder retained with reason; content and worktree outcomes distinguished                                      | accepted, pending E2E                           |
+| DEL06 | Worktree failure after content deletion                            | Partial result; historical maintenance retries cleanup without session row                                    | accepted, pending E2E                           |
+| DEL07 | Aggregate usage                                                    | Totals, exact session metrics and series survive deletion/recompute; deleted session absent from Top Sessions | accepted, store integration coverage required   |
+| DEL08 | Remote/read-only/unsupported client                                | No executable permanent Delete and no silent hide-only fallback                                               | accepted, component coverage required           |

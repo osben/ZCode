@@ -3,7 +3,6 @@ import { ArchiveX, Cloud, CloudDownload, Folder, Smartphone, Trash2 } from "luci
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
-import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -20,7 +19,7 @@ import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { DeleteAllArchivedTasksButton } from "@/DeleteAllArchivedTasksButton.js";
-import { appendTreeChildrenCopy } from "@/lib/taskTreeCounts.js";
+import { useTaskDeleteDialog } from "@/hooks/useTaskDeleteDialog.js";
 
 export function WorkspaceArchivedTasksFlatSection({
   workspaceTabs,
@@ -46,7 +45,6 @@ export function WorkspaceArchivedTasksFlatSection({
   ) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const confirmDialog = useConfirmDialog();
   const baseServices = useBaseWorkspaceServices();
   const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
   const sessionIdByWorkspaceIdentity = useRemoteWorkspaceSessionStore(
@@ -64,7 +62,6 @@ export function WorkspaceArchivedTasksFlatSection({
     [sessionIdByWorkspaceIdentity, sessionIdByWorkspacePath, sessionsById],
   );
   const [showAllTasks, setShowAllTasks] = useState(false);
-  const [deletingTaskKeys, setDeletingTaskKeys] = useState<Set<string>>(() => new Set());
   const collapsedLimit = 20;
   const workspaceLabelByKey = useMemo(
     () =>
@@ -94,6 +91,7 @@ export function WorkspaceArchivedTasksFlatSection({
     collapsedLimit,
   });
   const canToggleExpanded = total > collapsedLimit;
+  const taskDeletion = useTaskDeleteDialog(refresh);
 
   return (
     <div>
@@ -108,6 +106,9 @@ export function WorkspaceArchivedTasksFlatSection({
           service: workspaceServiceLookup.get(
             buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
           )?.services.zcodeTaskService,
+          gitService: workspaceServiceLookup.get(
+            buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity),
+          )?.services.gitService,
         }))}
         onDeleted={removeTaskFromTaskCaches}
         onRefresh={refresh}
@@ -146,7 +147,7 @@ export function WorkspaceArchivedTasksFlatSection({
           const isActive = workspaceKey === activeWorkspaceKey && task.taskId === activeTaskId;
           const isMobileActive = mobileActiveTaskKey === `${workspaceKey}:${task.taskId}`;
           const taskKey = `${workspaceKey}:${task.taskId}`;
-          const isDeleting = deletingTaskKeys.has(taskKey);
+          const isDeleting = taskDeletion.busy;
 
           return (
             <li
@@ -264,7 +265,14 @@ export function WorkspaceArchivedTasksFlatSection({
                     )}
                   </Button>
                 </ControlHintTooltip>
-                <ControlHintTooltip title={deleteLabel} side="top">
+                <ControlHintTooltip
+                  title={
+                    isRemoteTask
+                      ? intl.formatMessage({ id: "taskDelete.remoteUnavailable" })
+                      : deleteLabel
+                  }
+                  side="top"
+                >
                   {/* Bugfix: The button is disabled while deletion is in progress, and disabled elements do not receive hover events;
                     use a real span as the tooltip trigger so the action remains explained while it is processing. */}
                   <span className="inline-flex shrink-0">
@@ -272,7 +280,7 @@ export function WorkspaceArchivedTasksFlatSection({
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      disabled={isDeleting}
+                      disabled={isDeleting || isRemoteTask}
                       className="shrink-0 text-destructive hover:text-destructive"
                       aria-label={deleteLabel}
                       onMouseDown={(event) => {
@@ -282,62 +290,7 @@ export function WorkspaceArchivedTasksFlatSection({
                       onClick={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
-                        void (async () => {
-                          const treeCounts = await services.zcodeTaskService
-                            .countTaskTrees?.({
-                              taskIds: [task.taskId],
-                              workspacePath: task.workspacePath,
-                              ...(task.workspaceIdentity
-                                ? { workspaceIdentity: task.workspaceIdentity }
-                                : {}),
-                            })
-                            .catch(() => null);
-                          const confirmed = await confirmDialog({
-                            title: intl.formatMessage({
-                              id: "confirmDialog.archivedTaskDeleteTitle",
-                            }),
-                            description: appendTreeChildrenCopy(
-                              intl,
-                              intl.formatMessage({
-                                id: "confirmDialog.archivedTaskDeleteDescription",
-                              }),
-                              treeCounts ?? null,
-                            ),
-                            confirmLabel: deleteLabel,
-                          });
-                          if (!confirmed) {
-                            return;
-                          }
-
-                          setDeletingTaskKeys((current) => new Set(current).add(taskKey));
-                          try {
-                            await services.zcodeTaskService.deleteTask({
-                              taskId: task.taskId,
-                              workspacePath: task.workspacePath,
-                              ...(task.workspaceIdentity
-                                ? { workspaceIdentity: task.workspaceIdentity }
-                                : {}),
-                            });
-                            // Bugfix: Deletion happens only in the archived list; do not write it back to the regular list as an “unarchive.”
-                            // Remove the target item directly from task caches to avoid invalidating the entire query cache and briefly emptying the list.
-                            removeTaskFromTaskCaches({
-                              workspacePath: task.workspacePath,
-                              workspaceIdentity: task.workspaceIdentity,
-                              taskId: task.taskId,
-                            });
-                          } catch (error) {
-                            logger.error(
-                              "[WorkspaceArchivedTasksFlatSection] 删除归档 task 失败:",
-                              error,
-                            );
-                          } finally {
-                            setDeletingTaskKeys((current) => {
-                              const next = new Set(current);
-                              next.delete(taskKey);
-                              return next;
-                            });
-                          }
-                        })();
+                        taskDeletion.open(task, false, true);
                       }}
                     >
                       <Trash2 className="size-3.5" />
@@ -349,6 +302,7 @@ export function WorkspaceArchivedTasksFlatSection({
           );
         })}
       </ul>
+      {taskDeletion.dialog}
       {syncingRemoteWorkspaces ? <TaskListRemoteSyncHint /> : null}
       {canToggleExpanded ? (
         <div className="cursor-pointer pl-8.5 pb-4">

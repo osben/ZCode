@@ -132,7 +132,10 @@ function normalize(result: AppUsageQueryResult): unknown {
   const round = (value: number | null) => (value === null ? null : Math.round(value * 1e6) / 1e6);
   return {
     totals: { ...result.totals, avgTimeToFirstTokenMs: round(result.totals.avgTimeToFirstTokenMs) },
-    turnTotals: { ...result.turnTotals, avgTurnDurationMs: round(result.turnTotals.avgTurnDurationMs) },
+    turnTotals: {
+      ...result.turnTotals,
+      avgTurnDurationMs: round(result.turnTotals.avgTurnDurationMs),
+    },
     toolTotals: result.toolTotals,
     models: [...result.models].sort((a, b) => String(a.modelId).localeCompare(String(b.modelId))),
     tools: [...result.tools]
@@ -330,7 +333,9 @@ describe("fork usage rollup", () => {
       await record("d2", NOW - 2 * MINUTE);
       expect((await store.queryAppUsage(input)).totals.modelRequestCount).toBe(2);
       expect(
-        probe.prepare("select count(*) as n from fork_usage_bucket where model_id = 'sentinel'").get(),
+        probe
+          .prepare("select count(*) as n from fork_usage_bucket where model_id = 'sentinel'")
+          .get(),
       ).toEqual({ n: 0 });
     } finally {
       probe.close();
@@ -377,16 +382,21 @@ describe("fork usage rollup", () => {
     expect(utc[1 * 24 + 12]).toBe(100);
     expect(utc.reduce((sum, value) => sum + value, 0)).toBe(100);
 
-    const kolkata = queryAppUsageFromRollup(db, { ...base, tzOffsetMs: 5.5 * 60 * MINUTE })
-      .hourlyTokens!;
+    const kolkata = queryAppUsageFromRollup(db, {
+      ...base,
+      tzOffsetMs: 5.5 * 60 * MINUTE,
+    }).hourlyTokens!;
     expect(kolkata[1 * 24 + 17]).toBe(100);
 
     // Crossing local midnight moves the cell to the previous weekday (Sunday 22:00 at UTC-14).
-    const farWest = queryAppUsageFromRollup(db, { ...base, tzOffsetMs: -14 * 60 * MINUTE })
-      .hourlyTokens!;
+    const farWest = queryAppUsageFromRollup(db, {
+      ...base,
+      tzOffsetMs: -14 * 60 * MINUTE,
+    }).hourlyTokens!;
     expect(farWest[0 * 24 + 22]).toBe(100);
-    expect(queryAppUsageFromRollup(db, { since: 0, until: NOW, tzOffsetMs: 0 }).hourlyTokens)
-      .toBeUndefined();
+    expect(
+      queryAppUsageFromRollup(db, { since: 0, until: NOW, tzOffsetMs: 0 }).hourlyTokens,
+    ).toBeUndefined();
   });
 
   it("ranks the busiest sessions with titles and honors the workspace filter", async () => {
@@ -397,7 +407,9 @@ describe("fork usage rollup", () => {
     const expected = new Map(
       (
         db
-          .prepare("select session_id as id, sum(computed_total_tokens) as tokens from turn_usage group by session_id")
+          .prepare(
+            "select session_id as id, sum(computed_total_tokens) as tokens from turn_usage group by session_id",
+          )
           .all() as Array<{ id: string; tokens: number }>
       ).map((row) => [row.id, Number(row.tokens)]),
     );
@@ -432,10 +444,13 @@ describe("fork usage rollup", () => {
     `);
     ensureForkUsageRollupSchema(db);
 
-    const columns = (db.prepare("pragma table_info(fork_usage_turn)").all() as Array<{ name: string }>)
-      .map((column) => column.name);
+    const columns = (
+      db.prepare("pragma table_info(fork_usage_turn)").all() as Array<{ name: string }>
+    ).map((column) => column.name);
     expect(columns).toContain("total_tokens");
-    expect(db.prepare("select 1 from fork_usage_meta where key = 'watermark_ms'").get()).toBeUndefined();
+    expect(
+      db.prepare("select 1 from fork_usage_meta where key = 'watermark_ms'").get(),
+    ).toBeUndefined();
   });
 
   it("falls back to raw tables for unfiltered reads and fails filtered reads when the rollup is gone", async () => {

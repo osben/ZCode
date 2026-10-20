@@ -21,7 +21,6 @@ import {
   type WebRemoteControlTaskTarget,
 } from "@zcode/shared";
 import { toast } from "@/components/ui/toast.js";
-import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
@@ -43,7 +42,6 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { WebRemoteControlTaskIndexRow } from "@/WebRemoteControlTaskIndexRow.js";
 import { DeleteAllArchivedTasksButton } from "@/DeleteAllArchivedTasksButton.js";
-import { appendTreeChildrenCopy } from "@/lib/taskTreeCounts.js";
 
 const WEB_REMOTE_CONTROL_TASK_INDEX_EMPTY_RETRY_DELAY_MS = 300;
 const WEB_REMOTE_CONTROL_TASK_INDEX_EMPTY_RETRY_MAX_ATTEMPTS = 3;
@@ -94,7 +92,6 @@ export function WebRemoteControlTaskIndex({
   onCrossWorkspaceSwitchingChange?: (switching: boolean) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const confirmDialog = useConfirmDialog();
   const baseServices = useBaseWorkspaceServices();
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
   const sessionsById = useRemoteWorkspaceSessionStore((state) => state.sessionsById);
@@ -261,18 +258,6 @@ export function WebRemoteControlTaskIndex({
     [],
   );
 
-  const removeTaskFromIndex = useCallback((task: WebRemoteControlTaskTarget) => {
-    setResult((current) => ({
-      ...current,
-      tasks: (current.tasks ?? []).filter(
-        (candidate) =>
-          candidate.taskId !== task.taskId ||
-          resolveWebRemoteControlWorkspaceKey(candidate) !==
-            resolveWebRemoteControlWorkspaceKey(task),
-      ),
-    }));
-  }, []);
-
   const handleToggleTaskPin = useCallback(
     (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => {
       event.preventDefault();
@@ -392,59 +377,6 @@ export function WebRemoteControlTaskIndex({
     [updateTaskMembership, workspaceServiceLookup],
   );
 
-  const handleDeleteArchivedTask = useCallback(
-    (event: ReactMouseEvent, task: WebRemoteControlTaskTarget) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void (async () => {
-        const confirmed = await confirmDialog({
-          title: intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteTitle" }),
-          // Remote workspaces cannot count children, so the generic sentence is always shown here.
-          description: appendTreeChildrenCopy(
-            intl,
-            intl.formatMessage({ id: "confirmDialog.archivedTaskDeleteDescription" }),
-            null,
-          ),
-          confirmLabel: intl.formatMessage({ id: "taskList.delete" }),
-        });
-        if (!confirmed) {
-          return;
-        }
-
-        const taskWorkspaceKey = resolveWebRemoteControlWorkspaceKey(task);
-        const workspaceServices = workspaceServiceLookup.get(taskWorkspaceKey);
-        if (!workspaceServices) {
-          return;
-        }
-
-        const rowKey = buildWebRemoteControlTaskRowKey(task);
-        setPendingArchiveTaskKey(null);
-        setMutatingTaskKey(rowKey);
-        try {
-          await workspaceServices.services.zcodeTaskService.deleteTask({
-            taskId: task.taskId,
-            workspacePath: task.workspacePath,
-            ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
-          });
-          // Bugfix: after deleting a task from the Web remote archive list there is no local query
-          // cache fallback refresh, so the entry must be removed from the current workspace-list
-          // snapshot directly, keeping deleted archive items from lingering until the next desktop push.
-          removeTaskFromIndex(task);
-          removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
-        } catch (error) {
-          logger.warn("[WebRemoteControlTaskIndex] 删除归档远控任务失败", {
-            error: error instanceof Error ? error.message : String(error),
-            taskId: task.taskId,
-            workspaceKey: taskWorkspaceKey,
-          });
-        } finally {
-          setMutatingTaskKey((current) => (current === rowKey ? null : current));
-        }
-      })();
-    },
-    [confirmDialog, intl, removeTaskFromIndex, removeTaskState, workspaceServiceLookup],
-  );
-
   const renderTaskRow = useCallback(
     (task: WebRemoteControlTaskTarget, options: { showWorkspaceLabel?: boolean } = {}) => {
       const taskWorkspaceKey = resolveWebRemoteControlWorkspaceKey(task);
@@ -457,7 +389,6 @@ export function WebRemoteControlTaskIndex({
           intl={intl}
           mutatingTaskKey={mutatingTaskKey}
           onArchiveTask={handleArchiveTask}
-          onDeleteArchivedTask={handleDeleteArchivedTask}
           onOpenTask={(targetTask) => {
             setPendingArchiveTaskKey(null);
             openTask(targetTask);
@@ -476,7 +407,6 @@ export function WebRemoteControlTaskIndex({
       activeTaskId,
       activeWorkspaceKey,
       handleArchiveTask,
-      handleDeleteArchivedTask,
       handleToggleTaskPin,
       handleUnarchiveTask,
       intl,
@@ -499,18 +429,9 @@ export function WebRemoteControlTaskIndex({
         <DeleteAllArchivedTasksButton
           actionsContainer={archivedActionsContainer}
           count={result.tasks?.filter((task) => task.archived).length ?? 0}
-          disabled={loading || !result.tasks?.some((task) => task.archived)}
-          workspaces={result.workspaces.map((workspace) => ({
-            workspacePath: workspace.workspacePath,
-            workspaceIdentity: workspace.workspaceIdentity,
-            label: workspace.label,
-            service:
-              workspace.connectionState === "disconnected" ||
-              workspace.connectionState === "reconnecting"
-                ? undefined
-                : workspaceServiceLookup.get(resolveWebRemoteControlWorkspaceKey(workspace))
-                    ?.services.zcodeTaskService,
-          }))}
+          disabled
+          disabledReason={intl.formatMessage({ id: "taskDelete.unsupported" })}
+          workspaces={[]}
           onDeleted={(target) => {
             setResult((current) => ({
               ...current,
