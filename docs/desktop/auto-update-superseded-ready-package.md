@@ -21,3 +21,21 @@ In the old state machine, after `update-downloaded` the menu stayed on “Restar
 - Explicitly trigger downloads from the main process: disable `electron-updater` `autoDownload`, then decide whether to call `downloadUpdate()` in the `update-available` event based on the ready-package version. A higher target may be recorded during a download, but do not start another download concurrently.
 - Compare versions using semver coercion to support strings such as `v3.1.4`; if parsing fails, treat differing strings as requiring a download.
 - Start automatic polling from `idle`, `update-available`, and `update-downloaded`. Continue skipping `checking` and actual `download-progress` states to avoid concurrent downloads. On macOS/Linux, retain automatic installation on quit only when the ready package version equals the current target.
+- The only install state is held by main in `quitAndInstallPhase`, which progresses `idle → preparing → installing`. A failure enters the terminal `recovering` state and restarts in a controlled way. Confirming installation locks the ready package immediately; background manifest requests do not take part in install admission. Late check results and check failures must not modify the locked package or be misreported as native install errors.
+- Download events are first recorded on the corresponding CancellationToken, and `ready` is published only after the download Promise settles successfully. Installation does not wait on network work: a pending download is not yet ready, and an existing ready package does not depend on background checks finishing. Canceled or failed downloads must not publish a stale ready state.
+- After `preparing` starts, no new check, download, or update result is accepted. Host/Agent cleanup cannot be reverted. Preparation failures, staging errors during preparation, and native install failures after handoff all trigger a controlled restart and never return to an old window whose services have been destroyed. Recovery runs only once; repeated errors do not restart again.
+- The return of `quitAndInstall()` does not mean installation has finished. After a successful handoff the phase stays `installing`, native `before-quit` is allowed through, and repeated install commands do not re-enter. Real install errors and errors with a check origin are handled separately, without guessing the origin from the current menu.
+- This fix changes only the desktop main-process update lifecycle. It does not change the Host/Agent exit barrier, the mobile shared-host attachment, or the desktop continuous / web remote replayable message boundaries.
+
+```text
+Download Promise settles successfully → ready → confirm install / lock package → preparing → installing → quit
+                                              background check does not take part in waiting  │          │
+                                                                                               └─ failure ─┴→ recovering → restart and recover
+```
+
+## Regression Verification
+
+- Unit tests cover quit being allowed through after macOS/Linux install calls return, idempotence of repeated commands, and retry back to ready after synchronous or asynchronous failures.
+- Unit tests cover a pending check not blocking ready-state installation, ready publication after download completion, target locking after preparation, native errors, and duplicate events. The Electron smoke test covers new-version events and duplicate IPC during preparation, confirming that after Host/Agent cleanup the install is still handed off only once.
+- The Electron process-level smoke test uses the real `MacUpdater.quitAndInstall()`, renderer IPC, and `app.before-quit`, and controls native staging callbacks so they arrive after the install call returns. It asserts that the install is initiated once and the process exits normally. The native updater uses fixtures and does not replace the user's app or perform a real ShipIt install.
+- ShipIt file replacement and automatic restart for signed release packages still require pre-release verification; the smoke test does not substitute for it.

@@ -1,5 +1,7 @@
 # Model Execution and Inheritance
 
+> **Implemented:** [Off-peak background lifecycle plan](../../../../off-peak-task/background-lifecycle-plan.md) adjusts idle Session continuation selection, background inheritance and takeover, and makes the accelerator-only fallback snapshot explicit. The text below describes the current execution rules.
+
 This document specifies how various executions obtain, maintain, or switch Models after a Submission enters Core. Selection state is documented in
 [`../interaction/interaction.md`](../interaction/interaction.md), Model creation and auth is documented in
 [`../registry/model-creation.md`](../registry/model-creation.md).
@@ -16,17 +18,17 @@ This document specifies how various executions obtain, maintain, or switch Model
 
 ## Execution Categories
 
-| Execution               | Selection Source                              | Model Lifecycle                  | Session Selection                 |
-| ----------------------- | --------------------------------------------- | -------------------------------- | --------------------------------- |
-| Normal start-now        | Current Submission                            | New Agent Loop                   | Updated on receipt                |
-| Normal Queue drain      | Submission saved in Queue item                | New Agent Loop                   | Updated when dequeued and started |
-| Guide / "Immediate"     | Guide Submission                              | Subsequent Steps in current Loop | Updated when Guide is received    |
-| Automatic Compact       | Current Loop Active Model                     | Current Loop                     | Not updated                       |
-| Manual Compact          | Compact Submission                            | New Loop                         | Normal rules                      |
-| Subagent                | override > Profile > Parent Selection         | Child lifecycle                  | Does not update parent Session    |
-| Background              | Selection determined at startup               | Background lifecycle             | Does not update back              |
-| Goal continuation       | Session Selection at the time of continuation | New main Loop per round          | No extra save                     |
-| Off-Peak automatic turn | ModelSelection from idle Submission           | Current automatic Loop           | Not updated                       |
+| Execution               | Selection Source                         | Model Lifecycle                                   | Session Selection                                |
+| ----------------------- | ---------------------------------------- | ------------------------------------------------- | ------------------------------------------------ |
+| Normal start-now        | Current Submission                       | New Agent Loop                                    | Updated on receipt                               |
+| Normal Queue drain      | Queue item's saved Submission            | New Agent Loop                                    | Updated on admission; not overwritten on dequeue |
+| Guide / "Immediate"     | Guide Submission                         | Subsequent Steps in current Loop                  | Updated when Guide is received                   |
+| Automatic Compact       | Current Loop Active Model                | Current Loop                                      | Not updated                                      |
+| Manual Compact          | Compact Submission                       | New Loop                                          | Normal rules                                     |
+| Subagent                | override > Profile > Parent Selection    | Child lifecycle                                   | Does not update parent Session                   |
+| Background              | Selection determined at each round start | Current background model round                    | Not reverse-updated                              |
+| Goal continuation       | Session Selection at continuation time   | New main Loop per round                           | No extra save                                    |
+| Off-Peak automatic turn | idle Submission's ModelSelection         | Model rounds within the item's resident execution | Temporarily updated, not persisted               |
 
 ## Normal Agent Loop
 
@@ -136,7 +138,7 @@ Goals do not save extra continuation Selections. New Loops use the Session Selec
 
 ## Background
 
-Background creates its own Model at startup, and maintains it for its own lifecycle:
+Background creates its own Model at startup and keeps it for the current model round; a new round triggered by message recovery or background wake-up reads the current Session Selection:
 
 ```text
 Turn 1: Selection A, starts Background A
@@ -180,30 +182,22 @@ The Provider's Visibility, Access, Endpoint, models, and Model Config all come f
 
 ### Session State
 
-Idle tasks do not modify and restore the user's Session Selection:
+The idle execution temporarily sets the Session Selection to the idle selection so that its owning background work can continue. The normal selection is still kept as the persisted value and does not change App Recent, Configured Default, or CLI Default.
 
 ```text
-Session Selection = U
-
-Idle Loop starts
-├─ Session Selection = U
-└─ Active Model = I
-
-Idle Loop terminal
-├─ Model I ends
-└─ Session Selection = U
-
-Next user Submission
-└─ Registry creates Model based on U
+User Session = U → idle execution Session = I
+                    ├─ whole item completes without takeover → restore U
+                    └─ user message admitted → Session = user-submitted selection V
+                                         └─ later restore/wake uses V
 ```
 
-There is no `previousModel`, temporary `setModel`, or restore `finally`.
+Idle sub-turns that have already started hold their own model and ticket until that turn ends. The old controller keeps only idempotent receipts and does not overwrite later user selections.
 
 ### Busy and Queue
 
 Idle dispatches only accept when the current Session can start-now. A busy race returns a typed admission rejection, which is re-dispatched by the Scheduler later; Request Auth/Ticket does not enter the ordinary Queue, Guide, held queue, or replayable pending input.
 
-Normal Submissions dispatched by running users enter the unique CLI Queue. After the Idle Turn terminal, queue items execute using their own saved Selection/Session normal semantics, inheriting no idle Access, Ticket, or attribution.
+After a normal Submission sent by a running user is admitted by the CLI, it takes over the whole idle item and enters the single CLI Queue. Queue items execute with their own saved Selection and do not inherit idle Access, Ticket, or attribution; later background recovery/wake-ups read the latest user selection. A main turn waiting for a new ticket resumes through the existing takeover path; sub-turns already started with a still-valid old ticket may finish first.
 
 ### Automatic Compact
 
@@ -213,7 +207,7 @@ Idle Automatic Compact directly uses the Idle Active Model and the current valid
 
 The general Subagent override for idle Submissions pins allowed Foreground Children to idle Selection. Each Child still creates its own Model through Registry/ModelFactory, using the current idle execution's Request Auth/Ticket context. Explore, general-purpose, and custom Profile Provider/model overrides in these are all overridden by this Core override for this round.
 
-Background Children fail-closed by Tool Policy before making model requests. This prohibition is an idle scheduling strategy; it is not written into Provider Config or Registry.
+Both background and foreground Children can start. They inherit the idle selection and their own independent ticket leases; SendMessage and background Bash continue to use the ordinary tools and notification mechanism. As long as background work or pending notifications remain after the main turn ends, the whole item stays resident.
 
 ### Permission / elicitation
 
@@ -232,7 +226,9 @@ No `awaiting_approval` idle state is added; users are not switched to their Prov
 
 ### Tickets and Re-runs
 
-Ticket expiration, cancellation, failure, success, or process restart ends the current valid execution context. The Scheduler retains the Task, Session, and transcript; after obtaining a new Ticket, it sends a new idle Submission and creates a new Idle Model. Ticket queuing, 3-hour timebox, continuation, and settle belong to the Off-Peak domain and do not enter Registry.
+When a ticket expires, executions already waiting for a renewal wait for the new ticket. The Scheduler hands over the new ticket idempotently using executionId + renewalId + ticketId; the original task is not re-sent and Bash is not re-run. Only model requests that have not yet delivered content may be retried. Ticket release is separate from item completion: the item completes only when the main turn, background work, pending notifications/input, ticket renewals, and model leases are all exhausted.
+
+After user takeover, no further idle tickets are requested; started sub-turns holding a valid ticket may end, and later turns use the user's selection. A restart does not restore background processes or notifications. Tickets, queueing, and settlement belong to the Off-Peak domain and do not enter Registry.
 
 ## Independent Model Tasks
 
@@ -241,6 +237,8 @@ Title, Repo Wiki, Memory, WebFetch/WebSearch, and other one-off model tasks shou
 - Belonging to the current Loop: use the current Active Model;
 - Independent execution: create their own Model from explicit Selection;
 - Subsequent wake main Loop: use the Session Selection at that time.
+
+The default title freezes its owning execution and Selection at enqueue time, and keeps its own idle ticket lease independently until generation/saving completes or exits early or fails. An explicitly configured title model runs under its own configuration; an external title without idle attribution does not borrow the temporary idle Session Selection.
 
 ## Attribution
 
@@ -254,7 +252,7 @@ Usage, Trace, and errors for each ModelRequest are attributed to the actual `pro
 - Automatic Compact uses the current Active Model.
 - Each Subagent creates its own Model.
 - Goal/Background do not reverse-modify Session Selection.
-- Idle tasks do not modify and then restore Session Selection.
-- The same Turn continues using the idle Model after an idle permission response.
+- Idle selection is only staged in the Session; the normal selection is persisted, and after user takeover the old idle wrap-up does not overwrite it.
+- After an idle permission response, the same Turn continues using the idle Model.
 - Dynamic Request Auth/Ticket does not enter Config, Registry View, ordinary Queue, or persistence.
 - Special executions do not create temporary Providers, a second Registry, or a second Model type.

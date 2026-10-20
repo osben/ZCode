@@ -35,6 +35,8 @@ Layout rules:
 
 1. Problem description / Issue description
    - One required multiline input.
+   - Show a red `*` required marker before the heading, reusing the same marker component as the product requirement dialog. The asterisk is hidden from screen readers; the input provides an accessible name in the current language plus required semantics.
+   - Empty or whitespace-only descriptions cannot be submitted. Once valid content is entered, submission is allowed; clearing it blocks submission again. Contact information remains optional.
    - Show `current character count/4000` to the right of the heading.
    - Limit the input to 4000 characters.
    - Show at most 5 lines in the input; scroll within it beyond that.
@@ -115,3 +117,8 @@ Treat background-submission notices as lightweight toast overlays, not large dia
 - The session-subscription error page shows both “Report a problem” and “Reconnect.” After reporting, the draft includes the current error, session ID, and redacted diagnostic summary; logs are enabled by default and no window screenshot is captured automatically.
 - Run `pnpm typecheck`.
 - Run `pnpm lint`.
+
+| Case ID    | Scenario                                                                               | Assertion                                                                                                                                        | E2E location                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| FB-DESC-01 | Problem reports in Chinese and English, narrow and wide windows, light and dark themes | The required marker is visible; the input has required semantics; empty values cannot be submitted                                               | `packages/desktop/test/e2e/feedback/manual-review/pending/feedback-upload-privacy.test.ts`, FB-PRIV-01/08 / FB-DESC-01 |
+| FB-DESC-02 | Real form and in-memory feedback service                                               | Empty, whitespace-only, and cleared values cannot be submitted and create no ticket, archive, or upload; a valid description can create a ticket | Same file; FB-DESC-02 isolated Chromium fixture                                                                        |

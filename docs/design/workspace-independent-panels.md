@@ -4,7 +4,7 @@
 
 Desktop and wide-screen Web retain the sidebar, splitting the previously shared-frame session and Side Pane into independent panels; the window root background and sidebar keep their original semantics.
 
-Platform corner radii for the workspace layout: Windows 5px, macOS Sequoia and earlier 6px, Tahoe 26+ 12px, unknown macOS version temporarily 6px; Linux and Web are `xl` (12px). The settings page retains the existing platform radii.
+Platform corner radii for the workspace layout: Windows uses `rounded-md` (default 6px), macOS Sequoia and earlier 6px, Tahoe 26+ 12px, unknown macOS version temporarily 6px; Linux and Web are `xl` (12px). On Windows, the settings page also uses 6px.
 
 macOS version queries must go through `IPlatformService.getDesktopWindowChromeState` to query and subscribe to window state events, then passed to `useAppChromeState` for workspace corner radius calculation. Previously the hook excluded macOS, causing all macOS to take the unknown-version 6px branch; each desktop platform shares the existing query/event revision override-prevention mechanism, and Web does not query desktop state. Regression tests must run the real hook, validating Sequoia/Tahoe radii after async queries and subscription cleanup — you cannot just inject the version into the radius function.
 
@@ -46,6 +46,22 @@ Window / Sidebar / transparent body layout
 ## Compatibility Boundaries
 
 Changes to React layout and styling only, no protocol/service/Host changes. Desktop `desktop-continuous` and mobile `web-remote-replayable` attachment, recovery, and CommandInbox boundaries remain unchanged; workspaceIdentity / remoteSessionId passed through as-is.
+
+## Platform Outer-Edge Dimensions (2026-10-09, supersedes the historical dimensions below)
+
+- Windows workspace right, bottom, and top extra gaps, and the left inset after the Sidebar collapses, are all 6px; Linux keeps 4px; the main panel corner radius remains 12px.
+- The Windows settings page also uses 6px gaps on the right, bottom, and top, plus a 6px corner radius; the left side where navigation meets content gets no extra spacing. macOS, Web, and mobile keep the existing rules.
+- New task, sessions, plugins, and Automations reuse the shared workspace boundary, and the terminal and Side Pane use the same corner radius. The 4px drag hotspot between panels is unchanged.
+- The drag indicator keeps its 2px width, edge-following length, and existing visibility rules. Sidebar indicator endpoints are inset by the platform outer-edge gap plus the corner radius: 12px on Windows, 16px on Linux.
+- SPT-E2E-000 verifies platform dimensions, the collapsed left inset, and dragging; UP-00 verifies the settings page; platform unit tests cover Linux, Windows with unknown capability, and normal and maximized windows.
+
+## Desktop Drag Indicator Color (2026-10-09)
+
+Sidebar, Side Pane, and the bottom terminal uniformly use the `resize-handle` token: sky-500 in the light theme and sky-400 in the dark theme, covering macOS, Windows, and Linux desktop. Web keeps `foreground-subtlest/50`; mobile hide rules are unchanged. The indicator keeps its 2px width, rounded endpoints, edge-following length, and hover, keyboard-focus, and drag-time display, and remains hidden by default. The 4px hotspot and drag logic are unchanged. SPT-E2E-000 verifies the three indicator colors, lengths, visibility, and actual dragging in both themes.
+
+## Platform Corner Radius Token (2026-10-12)
+
+Windows and older macOS 6px panel radii use `rounded-md`, and the left side of Windows' non-native-radius path uses `rounded-l-md`. The settings page reuses the same token. The 6px value in platform radius calculation, the drag-indicator inset, and other platform radii are retained; desktop and mobile layout and interaction are unchanged. The logo base continues to use `rounded`. Unit tests verify token selection, and E2E verifies both the platform class and the computed radius.
 
 ## Linux Aligned with Windows (2026-09-04)
 

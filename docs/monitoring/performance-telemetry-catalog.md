@@ -310,7 +310,7 @@ Both frozen by workspace attachment, cannot upload `remoteSessionId`, workspace 
 
 Input phase fields (`queuePromptTelemetry` injected into `message_completion`): `input_start_time` / `input_first_char_time` / `input_send_time`.
 `agent_step_cnt`, `tool_call_total`, `tool_call_failed` share same active prompt lifecycle; history assistant messages in same session not included in this completion count.
-Skill tool steps additionally carry `skill_qualified_name`, `skill_plugin_id`, `skill_source`; only when
+Skill tool steps always carry `skill_name` (only the telemetry-validated resolved name; otherwise `unknown`; request parameters are not read), and additionally carry `skill_qualified_name`, `skill_plugin_id`, `skill_source`; only when
 `tool_name=Skill` and runtime successfully parses metadata, not contain Skill body or description.
 Foreground handler and backend runtime monitor both must first send received step/terminal events into this lifecycle,
 then report `message_completion`; switching task cannot reset or drop counts for same round's backend

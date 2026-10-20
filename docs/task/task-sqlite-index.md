@@ -8,7 +8,7 @@ The index is not a replacement for ZCode Protocol session snapshots.
 
 ## Library-Level Migrations (Todo109)
 
-`tasks-index.sqlite` also holds Automation and Off-Peak tables. Three Repos reuse `runTasksDatabaseMigrations` before opening read/write access. The library-level `tasks_schema_migration` uses `BEGIN IMMEDIATE` for serial checking and applying migrations, rolling back on failure and recording no success.
+`tasks-index.sqlite` also holds Automation and Off-Peak tables. Three Repos reuse `runTasksDatabaseMigrations` before opening read/write access. The library-level `tasks_schema_migration` validates the checksums of registered migrations read-only. When migrations are pending, it serially re-checks and applies them via `BEGIN IMMEDIATE`, rolling back on failure and recording no success.
 
 `0001_adopt_task_schema` takes over eight existing tables, historical column additions, and indexes; `0002_provider_selection` consolidates decided-upon Automation conversions. From then on, only new migrations may be appended; published SQL, frozen conversion implementations, and their semantic versions must not be modified. Checksums cover declarative SQL, column lists, and conversion semantic versions — no function text that could be rewritten by bundlers.
 

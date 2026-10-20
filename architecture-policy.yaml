@@ -132,6 +132,7 @@ modules:
       - shared
       - ui
       - conversation-workspace-target
+      - web-remote-control-ui
       - remote-connection-flow
     publicEntrypoints:
       - packages/ui/src/project-sidebar/index.tsx
@@ -452,6 +453,33 @@ modules:
       - packages/ui/src/components/mobile-ui/bottom-sheet.tsx
     layers:
       contract: contract.ts
+      ui: .
+    owner: remote
+    layerOrder:
+      - contract
+      - domain
+      - app
+      - adapters
+      - ui
+  # web-remote-control-ui: registered by architecture:adopt (upstream 3.16.1)
+  - id: web-remote-control-ui
+    roots:
+      - packages/ui/src/web-remote-control
+    managed: true
+    requires:
+      - mobile-ui
+      - services
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/web-remote-control/index.ts
+      - packages/ui/src/web-remote-control/contract.ts
+      - packages/ui/src/web-remote-control/WebRemoteControlDeviceHeader.tsx
+      - packages/ui/src/web-remote-control/app/useWebRemoteControlAuthSync.ts
+    layers:
+      contract: contract.ts
+      domain: domain
+      app: app
       ui: .
     owner: remote
     layerOrder:

@@ -8,6 +8,8 @@
 >
 > Related tasks: [`Todo 33`](./todo-33-personal-provider-config-file-cutover.md)
 
+> 2026-09-17 follow-up decision: [Todo161](todo-161-cli-legacy-output-token-migration.md) only adds an explicit output-limit migration for the first Standalone CLI import. The CLI conclusion in this document, which is context-only, is superseded by that item. Desktop and historical implementation evidence remain.
+
 ## 1. Problem
 
 Todo 33 has switched formal Personal Provider/Model Config to `provider_config.json`, but existing Legacy Importer
