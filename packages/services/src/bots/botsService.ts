@@ -10020,20 +10020,38 @@ export function createBotsService(
     void telegramRuntime.refresh();
     void weixinRuntime.refresh();
     void feishuRuntime.refresh();
-    void ensureBotStorageMigrated()
-      .then(async () => {
-        for (const context of Object.values((await repo.readState()).bots)) {
-          await restoreGroupSynchronization(context);
-          if (!context.group) await reconcilePrivateSynchronization(context.botId);
-        }
-      })
-      .catch((error: unknown) => {
-        // A first-read failure must remain visible without creating an unhandled rejection; the interaction entry point still receives the error directly.
-        botsLogger.error(
-          undefined,
-          `Bot storage initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+    void initializeBotStorageWithRetry(0);
   }
   return service;
+
+  // Bug fix: several app instances share one user data dir, so the startup chain can lose the
+  // bot-state file lock race and time out. The chain previously gave up after one failure, leaving
+  // bot storage uninitialized (no group synchronization restore) for the host's lifetime. Every
+  // step is a read or an idempotent restore and the migration promise resets itself on failure, so
+  // retrying the whole chain is safe; only the final failure logs the terminal error.
+  async function initializeBotStorageWithRetry(attempt: number): Promise<void> {
+    try {
+      await ensureBotStorageMigrated();
+      for (const context of Object.values((await repo.readState()).bots)) {
+        await restoreGroupSynchronization(context);
+        if (!context.group) await reconcilePrivateSynchronization(context.botId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const retryDelayMs = BOT_STORAGE_INIT_RETRY_DELAYS_MS[attempt];
+      if (retryDelayMs === undefined) {
+        // A final failure must remain visible without creating an unhandled rejection; the interaction entry point still receives the error directly.
+        botsLogger.error(undefined, `Bot storage initialization failed: ${message}`);
+        return;
+      }
+      botsLogger.warn(
+        undefined,
+        `Bot storage initialization failed, retrying (${attempt + 1}/${BOT_STORAGE_INIT_RETRY_DELAYS_MS.length}): ${message}`,
+      );
+      await delay(retryDelayMs);
+      return initializeBotStorageWithRetry(attempt + 1);
+    }
+  }
 }
+
+const BOT_STORAGE_INIT_RETRY_DELAYS_MS = [1_000, 5_000] as const;
