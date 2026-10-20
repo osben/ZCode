@@ -239,21 +239,42 @@ export function startComposerWorktreePipeline({
           });
         } else {
           logger.warn("[WorktreePipeline] no marker sync; path differs");
-          useComposerWorktreePipelineStore
-            .getState()
-            .markFailed(
-              workspaceKey,
-              formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
-              sessionId,
-              attemptId,
-            );
-          return "failed";
+          return failPreparation({
+            message: formatMessage("worktreeSetup.reconcile.markerSyncUnavailable"),
+          });
         }
       }
       useComposerWorktreePipelineStore
         .getState()
         .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
       return "ready";
+    };
+    // Every failed preparation outcome settles through one exit: mark the entry failed, then offer
+    // the return-to-draft hand-off. The hand-off is ownership-gated and returns false when it cannot
+    // take over, which leaves the failed-row path (the entry already marked failed) in place.
+    const failPreparation = (failure: {
+      message: string;
+      issueCode?: string | null;
+      rawDetail?: string | null;
+    }): "failed" => {
+      useComposerWorktreePipelineStore
+        .getState()
+        .markFailed(workspaceKey, failure.message, sessionId, attemptId, {
+          issueCode: failure.issueCode ?? null,
+          rawDetail: failure.rawDetail ?? null,
+        });
+      if (sessionId) {
+        initiateComposerWorktreeFailureReturn({
+          workspaceKey,
+          sessionId,
+          attemptId,
+          params,
+          failureMessage: failure.message,
+          issueCode: failure.issueCode ?? null,
+          rawDetail: failure.rawDetail ?? null,
+        });
+      }
+      return "failed";
     };
     try {
       const outcome = await executeWorktreeCreation({
@@ -288,15 +309,9 @@ export function startComposerWorktreePipeline({
             branchName: params.branchName,
             targetPath: outcome.worktreePath,
           });
-          useComposerWorktreePipelineStore
-            .getState()
-            .markFailed(
-              workspaceKey,
-              formatMessage("worktreeSetup.reservation.conflict"),
-              sessionId,
-              attemptId,
-            );
-          return "failed";
+          return failPreparation({
+            message: formatMessage("worktreeSetup.reservation.conflict"),
+          });
         }
         // WT-04 unified: consume the existing directory in place (no draft transfer, no second one).
         logger.info("[WorktreePipeline] reusing existing worktree", {
@@ -313,28 +328,12 @@ export function startComposerWorktreePipeline({
         branchName: params.branchName,
         issues: outcome.issueCodes,
       });
-      useComposerWorktreePipelineStore
-        .getState()
-        .markFailed(workspaceKey, outcome.message, sessionId, attemptId, {
-          issueCode: outcome.issueCode,
-          rawDetail: outcome.rawDetail,
-        });
-      // Return-to-draft hand-off (live renderer only): when this process still owns the armed
-      // submission, the orchestrator transfers the recovery record and settles the preparing
-      // session so the user lands back on a restored draft with the failure modal. Every abort
-      // inside leaves the failed-row path above intact.
-      if (sessionId) {
-        initiateComposerWorktreeFailureReturn({
-          workspaceKey,
-          sessionId,
-          attemptId,
-          params,
-          failureMessage: outcome.message,
-          issueCode: outcome.issueCode,
-          rawDetail: outcome.rawDetail,
-        });
-      }
-      return "failed";
+      // Return-to-draft hand-off (live renderer only) runs inside failPreparation for every failure.
+      return failPreparation({
+        message: outcome.message,
+        issueCode: outcome.issueCode,
+        rawDetail: outcome.rawDetail,
+      });
     } catch (error) {
       // Only the error class is logged: the message can carry filesystem or transport detail.
       logger.warn("[WorktreePipeline] creation orchestration threw", {
@@ -344,16 +343,10 @@ export function startComposerWorktreePipeline({
       });
       // The primary message is the generic worktree summary; the raw error text is kept only as
       // memory-only detail for the failure modal (never logged, never shown inline).
-      useComposerWorktreePipelineStore
-        .getState()
-        .markFailed(
-          workspaceKey,
-          formatMessage("commandCenter.worktree.error.unknown"),
-          sessionId,
-          attemptId,
-          { rawDetail: getErrorMessage(error) },
-        );
-      return "failed";
+      return failPreparation({
+        message: formatMessage("commandCenter.worktree.error.unknown"),
+        rawDetail: getErrorMessage(error),
+      });
     } finally {
       inFlightByPipelineKey.delete(runKey);
     }
