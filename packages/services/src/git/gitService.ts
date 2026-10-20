@@ -13,6 +13,12 @@ import { matchesWorkspaceScope, toAbsolutePath } from "./gitServicePathHelpers.j
 import { filterCommitMessageFilesByCurrentSession } from "./commitMessageFileScope.js";
 import type { IGitService } from "./git.js";
 import type { GitCommitMessageGenerator } from "./gitCommitMessageGenerator.js";
+import { createGitCommandProvider } from "./providers/gitCommandProvider.js";
+import { createGhCommandProvider } from "./providers/ghCommandProvider.js";
+import {
+  createSessionPullRequestsService,
+  type SessionPullRequestsService,
+} from "./sessionPullRequestsService.js";
 import {
   createGitCliRepo,
   type GitBranchComparisonChange,
@@ -178,10 +184,20 @@ export function createGitService(options?: {
   commitMessageGenerator?: GitCommitMessageGenerator;
   logger?: ServiceLogger;
   now?: () => number;
+  sessionPullRequests?: SessionPullRequestsService;
 }): IGitService {
   const repo = options?.repo ?? createGitCliRepo();
   const branchMergeLog = options?.logger ?? createServiceLogger("branch-merge-status");
   const now = options?.now ?? Date.now;
+  const sessionPullRequests =
+    options?.sessionPullRequests ??
+    createSessionPullRequestsService({
+      repo,
+      gitRunner: createGitCommandProvider(),
+      gh: createGhCommandProvider(),
+      logger: options?.logger,
+      now,
+    });
   const branchMergeStatusCache = new Map<string, BranchMergeStatusCacheEntry>();
   // Bugfix: проба, ожидающая repo.getBranchMergeStatus, могла дописать в кэш
   // результат, вычисленный ДО инвалидации (смена ветки/коммит во время полёта),
@@ -357,6 +373,10 @@ export function createGitService(options?: {
         });
       }
       return status;
+    },
+
+    async getSessionPullRequests(params) {
+      return await sessionPullRequests.getSessionPullRequests(params);
     },
 
     async stagePaths(params) {

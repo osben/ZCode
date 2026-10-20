@@ -59,6 +59,40 @@ export function getGitBinaryCandidates(): string[] {
   return candidates.filter((candidate): candidate is string => Boolean(candidate));
 }
 
+export const DEFAULT_GH_DISCOVERY_TIMEOUT_MS = 3_000;
+export const DEFAULT_GH_COMMAND_TIMEOUT_MS = 20_000;
+export const DEFAULT_GH_OUTPUT_BYTES = 1024 * 1024;
+
+const WINDOWS_GH_BINARY_CANDIDATES = [
+  join(
+    process.env.ProgramW6432 ?? process.env.ProgramFiles ?? "C:\\Program Files",
+    "GitHub CLI",
+    "gh.exe",
+  ),
+  join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "GitHub CLI", "gh.exe"),
+];
+
+// sidebar-pr-status spec: binary candidates mirror getGitBinaryCandidates
+// (ZCODE_GH_BINARY override doubles as the E2E seam for a fake gh script).
+export function getGhBinaryCandidates(): string[] {
+  const candidates = [process.env.ZCODE_GH_BINARY?.trim(), "gh"];
+  if (process.platform === "win32") {
+    candidates.push(...WINDOWS_GH_BINARY_CANDIDATES);
+  }
+
+  return candidates.filter((candidate): candidate is string => Boolean(candidate));
+}
+
+// gh must never wait for input and output must stay machine-readable.
+export function getGhCommandEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GH_PROMPT_DISABLED: "1",
+    GH_NO_UPDATE_NOTIFIER: "1",
+    NO_COLOR: "1",
+  };
+}
+
 export function getGitCommandEnv(): NodeJS.ProcessEnv {
   const env = {
     ...process.env,

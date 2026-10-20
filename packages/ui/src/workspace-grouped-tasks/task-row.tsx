@@ -31,6 +31,7 @@ import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -261,6 +262,9 @@ function GroupedTaskRowComponent({
               // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
               // shared component owns glyph, colors, and the branch+directory tooltip).
               <WorktreeTaskMarker task={task} />
+            ) : null}
+            {!hasPendingInteraction && task.executionWorktree ? (
+              <TaskPullRequestMarker task={task} />
             ) : null}
             {!hasPendingInteraction && task.incognito ? <IncognitoTaskMarker task={task} /> : null}
             {!hasPendingInteraction ? (
@@ -535,6 +539,9 @@ function GroupedTaskRowComponent({
                 // Worktree-session marker, styled like the neighboring clock/moon meta icons (the
                 // shared component owns glyph, colors, and the branch+directory tooltip).
                 <WorktreeTaskMarker task={task} />
+              ) : null}
+              {!hasPendingInteraction && task.executionWorktree ? (
+                <TaskPullRequestMarker task={task} />
               ) : null}
               {!hasPendingInteraction && task.incognito ? (
                 <IncognitoTaskMarker task={task} />
