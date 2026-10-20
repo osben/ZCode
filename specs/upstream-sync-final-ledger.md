@@ -95,3 +95,15 @@
 ## Fork-feature tests
 
 - Not run yet. Regression gate is pending the hand-merge.
+
+## Hand-merge set after normalized three-way classification
+
+- Method: normalized (oxfmt, comments stripped) git merge-file with current=O (fork), base=B, other=T (upstream). Clean results equal to O are class a; conflicts that differ only in string/comment copy with CJK on the upstream side are class c; everything else is class d.
+- a (upstream already in, keep fork): 10. Literal sanity check demoted 4 more to d.
+- c (copy translation, keep fork): 3.
+- b (clean upstream hunks to apply): 0. No real-file merge was clean and different from O.
+- d (true hand merge): 319, including 26 with a side missing (added or deleted on one branch) and 21 real-file conflicts.
+- backend-owned (not touched; branch claude/final-backend): 67 (packages/services 38, packages/shared 19, packages/server 5, packages/client 2, packages/provider and packages/provider-node 3).
+- Per directory, d count / conflict hunks: packages/ui/test 137/323, packages/ui/src 53/117, apps/zcode-cli/packages 39/89, docs 27/52, packages/desktop/test 22/37, packages/desktop/src 9/25, scripts 7/8, apps/zcode-cli/docs 3/4, packages/zcode-server-cli/test 3/5, packages/web/test 4/7, packages/web/src 2/6, packages/desktop/scripts 2/2, third-party 1/24, packages/desktop/wdio.conf.ts 1/4, .oxlintrc.json 1/4, config 1/5, packages/web/vite.config.ts 1/1, README.md 1/2, .gitattributes 1/2, .agents 1/1, .gitignore 1/1, CONTEXT.md 1/1, architecture-policy.yaml 1/1.
+- Full d list with hunk counts and reasons: /Users/osben/Dev/ZCode-sync-backup/hand_merge_d.json.
+- Test copy: the ui/test d group mostly holds real logic and assertion differences, not copy only, so the English conversion is deferred to the hand merge.
