@@ -254,6 +254,12 @@ export function useDraftConfigControl(params: {
       currentState = { ...currentState, observedConfig };
     }
   }
+  // A fork child can first hydrate with mode only, then receive its inherited model selection
+  // in a later snapshot. Fill only the missing selection so the user can send immediately, while
+  // preserving any model choice already made in this session-scoped draft.
+  if (sessionId !== null && !draft.modelSelection && sessionConfig?.modelSelection) {
+    draft = { ...draft, modelSelection: sessionConfig.modelSelection };
+  }
   if (draft !== currentState.draft) currentState = { ...currentState, draft };
   if (currentState !== storedState) setStoredState(currentState);
   const stateRef = useRef(currentState);
