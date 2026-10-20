@@ -27,7 +27,7 @@ async function setup(options: SourceServerWorkspaceAliasRepoOptions = {}) {
   const root = await mkdtemp(join(tmpdir(), "zcode-alias-concurrent-"));
   roots.push(root);
   const taskDbPath = join(root, "tasks-index.sqlite");
-  const index = new TaskIndexRepo(undefined, undefined, taskDbPath);
+  const index = new TaskIndexRepo(taskDbPath);
   await index.ensureReady();
   index.close();
   const repo = new SourceServerWorkspaceAliasRepo({
@@ -40,7 +40,7 @@ async function setup(options: SourceServerWorkspaceAliasRepoOptions = {}) {
 }
 
 async function seedVariants(taskDbPath: string) {
-  const index = new TaskIndexRepo(undefined, undefined, taskDbPath);
+  const index = new TaskIndexRepo(taskDbPath);
   try {
     for (const [workspaceIdentity, taskId, updatedAt] of [
       [keyA, "task-a", 10],

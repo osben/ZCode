@@ -60,7 +60,7 @@ async function restartFromPreProjectionLegacyDb(wrapperKey: string): Promise<voi
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "zcode-alias-projections-"));
   taskDbPath = join(root, "tasks-index.sqlite");
-  index = new TaskIndexRepo(undefined, undefined, taskDbPath);
+  index = new TaskIndexRepo(taskDbPath);
   await index.ensureReady();
   aliases = new SourceServerWorkspaceAliasRepo({
     taskDbPath,

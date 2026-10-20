@@ -1,7 +1,11 @@
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 
-/** 测试分别设置 CLI 事实和 Host 组织态，不为夹具保留生产环境的整行写入入口。 */
+/**
+ * Seeds one task row through the fork's single task-index writer (`syncTaskMeta`).
+ * The fork has no CLI-facts writer on TaskIndexRepo, so tests that need a seeded row
+ * go through the same full-row path that production uses for the current fork schema.
+ */
 export async function seedTaskIndex(
   repo: TaskIndexRepo,
   input: {
@@ -14,45 +18,13 @@ export async function seedTaskIndex(
   },
 ): Promise<ZCodeTaskMeta> {
   const { meta } = input;
-  await repo.applyCliFacts({
+  await repo.syncTaskMeta({
     meta,
-    titleSource: (input.titleOverridden ?? meta.titleOverridden) ? "custom" : "generated",
-    lastOutcome: meta.status === "completed" || meta.status === "error" ? meta.status : undefined,
-  });
-  const {
-    mode,
-    model,
-    thoughtLevel,
-    lastError,
-    target,
-    migrationSource,
-    cronAutomationId,
-    offPeakTaskId,
-  } = meta;
-  await repo.updateTaskPresentation({
-    ...meta,
-    presentation: Object.fromEntries(
-      Object.entries({
-        mode,
-        model,
-        thoughtLevel,
-        lastError,
-        target,
-        migrationSource,
-        cronAutomationId,
-        offPeakTaskId,
-      }).filter(([, value]) => value !== undefined),
-    ),
+    pinned: input.pinned,
+    archived: input.archived,
+    deleted: input.deleted,
+    titleOverridden: input.titleOverridden ?? meta.titleOverridden,
     searchableText: input.searchableText,
   });
-  if (input.pinned !== undefined || input.archived !== undefined)
-    await repo.updateTaskState({
-      ...meta,
-      patch: {
-        ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
-        ...(input.archived !== undefined ? { archived: input.archived } : {}),
-      },
-    });
-  if (input.deleted) await repo.applyCliDeletion(meta);
   return (await repo.getTaskMeta(meta))!;
 }

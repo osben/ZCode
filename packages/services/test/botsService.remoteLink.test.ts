@@ -46,9 +46,10 @@ describe("botsService /remote link command", () => {
     });
 
     expect(replies[0]?.text).toContain("https://relay.example/remote/v4?sid=web-1&hash=h&t=1");
+    // The bound workspace identity comes from the fixture's bound workspace (remote:server identity format).
     expect(mintWebRemoteLink).toHaveBeenCalledWith({
       workspacePath: "/tmp/workspace",
-      workspaceIdentity: "ssh://host/tmp/workspace",
+      workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
     });
     service.disposeAll();
   });
