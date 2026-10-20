@@ -6355,6 +6355,7 @@ const ukUA: Record<string, string> = {
   "chat.error.noAvailableModel":
     "Немає доступної моделі. Оновіть план або налаштуйте власну модель.",
   "chat.error.sendFailed": "Не вдалося надіслати. Спробуйте пізніше.",
+  "chat.error.resumeBlocked": "Зараз не вдалося продовжити. Перевірте чат і спробуйте ще раз.",
   "chat.error.modelSettings": "Налаштування моделі",
   "chat.error.setModels": "Налаштувати",
   "chat.quota.startPlan.bucketDailyLow":

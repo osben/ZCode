@@ -1,4 +1,9 @@
 import { remoteHostIdFromWorkspaceIdentity } from "@zcode/shared";
+import {
+  selectComposerWorktreePipeline,
+  useComposerWorktreePipelineStore,
+} from "@/store/composerWorktreePipelineStore.js";
+import { incognitoUnsupportedMessageId } from "@/lib/incognitoUnsupportedMessage.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
 import {
   createRemoteWorkspaceDisconnectedError,
@@ -9,6 +14,7 @@ import { resolveSelectionSideInheritedModel } from "@/lib/selectionSideInherited
 import { useStartPlanRecommendation } from "@/hooks/useStartPlanRecommendation.js";
 import type { SessionCreateSource } from "@zcode/shared";
 import { reportSessionCreate } from "@/lib/sessionCreateTelemetry.js";
+import { reportAppTelemetryEvent } from "@/lib/appTelemetry.js";
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
 import { BotGroupDeliveryProvider } from "@/v4/BotGroupDeliveryAction.js";
 /* oxlint-disable eslint(max-lines) -- SessionPane 是单 pane 竖切的命令编排收口（订阅/发送/停止/fork/edit/retry/queue/slash 全集），与旧 ChatView 同粒度；HEAD 已超限（693 行计数），拆散命令组会打散 dispatchCommand/snapshotRef 的闭包纪律。 */
@@ -71,8 +77,13 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import {
+  selectDraftIncognito,
+  useDraftIncognitoIntentStore,
+} from "@/v4/composer/draftIncognitoIntent.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { CHAT_ERROR_RESUME_MESSAGE } from "@/lib/chatErrorResume.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
@@ -168,8 +179,11 @@ import { projectSessionConfigToTaskConfigOptions } from "@/v4/composer/sessionCo
 import { useDraftRuntimeRebuildGate } from "@/v4/composer/useDraftRuntimeRebuildGate.js";
 import { useDraftModelReadinessGate } from "@/v4/composer/useDraftModelReadinessGate.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useGitRepository } from "@/hooks/useGitRepository.js";
+import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import {
   DEFAULT_CONVERSATION_SHARE_ACCESS_MODE,
   DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
@@ -187,6 +201,12 @@ import {
 import type { ConversationDropTargetController } from "@/v4/composer/conversationDropTarget.js";
 import { shouldIgnoreEscapeForStopGeneration } from "@/v4/composer/escapeStop.js";
 import { ConversationDraftEmptyState } from "@/v4/ConversationDraftEmptyState.js";
+import type {
+  ComposerWorktreePreparationParams,
+  ComposerWorktreePreparationSyncParams,
+} from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { ConversationDraftSuggestedPromptsContainer } from "@/v4/ConversationDraftSuggestedPromptsContainer.js";
 import { ConversationHeader, type PaneWorkspaceBadge } from "@/v4/ConversationHeader.js";
 import { ConversationQueuePanel } from "@/v4/ConversationQueuePanel.js";
@@ -197,6 +217,8 @@ import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
+import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
+import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { ConversationShareImportNotice } from "@/v4/ConversationShareImportNotice.js";
 import { ConversationShareConfirmationDock } from "@/v4/ConversationShareConfirmationDock.js";
 import { ConversationShareSuccessDock } from "@/v4/ConversationShareSuccessDock.js";
@@ -241,6 +263,7 @@ import {
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
+import { useStructurallySharedMemo } from "@/v4/useStructurallySharedMemo.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -366,6 +389,10 @@ export interface SessionPaneProps {
   activeSelectionSideChatSessionId?: string | null;
   workspacePath: string;
   workspaceIdentity?: string;
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   remoteSessionId?: string | null;
   /** Prompt 模板埋点当前仅覆盖 Desktop；Web / 手机远控保留 UI 行为但不触发该事件。 */
   isDesktop?: boolean;
@@ -412,7 +439,11 @@ export interface SessionPaneProps {
   summaryPanelVariantOverride?: ChatViewSummaryPanelVariant | null;
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
-  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  onOpenGitReview?: (
+    sourceId?: GitChangeSourceId,
+    executionWorkspacePath?: string,
+    executionSessionId?: string,
+  ) => void;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -615,6 +646,7 @@ export function SessionPane({
   activeSelectionSideChatSessionId = null,
   workspacePath,
   workspaceIdentity,
+  onCreateTaskInWorkspace,
   remoteSessionId,
   isDesktop = false,
   compactForRemoteControl = false,
@@ -681,6 +713,7 @@ export function SessionPane({
     highspeedCardService,
     modelSelectionService,
     usageStatsService,
+    zcodeAgentService,
     zcodeSessionService,
     zcodeTaskService,
   } = useServices();
@@ -1261,6 +1294,7 @@ export function SessionPane({
   const timelineScrollToQueryRef = useRef<
     ((target: { unitIndex: number; rowId: number }) => void) | null
   >(null);
+  const timelineScrollToRowRef = useRef<((rowId: number) => void) | null>(null);
   const conversationLayoutContainerRef = useRef<HTMLDivElement>(null);
   const hasExternalSummaryPanelVariantControl = Boolean(onSummaryPanelVariantOverrideChange);
   const effectiveSummaryPanelVariantOverride = hasExternalSummaryPanelVariantControl
@@ -2033,6 +2067,12 @@ export function SessionPane({
       // 离线点击/快捷键不得进入 accepted 命令恢复账本，更不能在重连后自动发送。
       if (!remoteAvailable) throw createRemoteWorkspaceDisconnectedError();
       const submission = submissionConfigFromCommand(type, payload);
+      // A command aimed at another session (for example a worktree-prepared session created from this draft pane)
+      // must not be tracked in this pane's store, or its pending/projection state would leak across sessions.
+      const tracksOnPaneStore =
+        targetSessionId === null ||
+        targetSessionId === sessionId ||
+        targetSessionId === prewarmBindingRef.current?.sessionId;
       // 加速轮 payload 的 modelSelection 会被执行材料覆盖为隐藏加速 Provider；Recent 记录的是
       // 用户在 Composer 的原始选择（新任务草稿的模型种子），加速轮必须由调用方传入发送前
       // 冻结的 submission（spec §5.1）。接纳写入另有加速身份兜底拦截。
@@ -2139,7 +2179,7 @@ export function SessionPane({
               }
             : undefined,
       );
-      if (lease?.store && type !== "createSession") {
+      if (lease?.store && type !== "createSession" && tracksOnPaneStore) {
         lease.store.markCommandPending({
           commandId: envelope.commandId,
           type: envelope.type,
@@ -2201,6 +2241,7 @@ export function SessionPane({
       }
       if (
         lease?.store &&
+        tracksOnPaneStore &&
         requiresAcceptedInputProjection(type) &&
         (ack.status === "accepted" || ack.status === "duplicate")
       ) {
@@ -2301,6 +2342,187 @@ export function SessionPane({
     ],
   );
   dispatchCommandRef.current = dispatchCommand;
+  const updateWorktreePreparationMarker = useCallback(
+    async (
+      targetSessionId: string,
+      preparation: {
+        branchName: string;
+        targetPath: string;
+        baseBranch?: string;
+        attemptId?: string;
+      },
+      expectedAttemptId = preparation.attemptId,
+    ): Promise<void> => {
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          expectedAttemptId,
+          worktreePreparation: {
+            ...(preparation.attemptId ? { attemptId: preparation.attemptId } : {}),
+            branchName: preparation.branchName,
+            targetPath: preparation.targetPath,
+            ...(preparation.baseBranch ? { baseBranch: preparation.baseBranch } : {}),
+          },
+        },
+        targetSessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation update was rejected");
+      }
+    },
+    [dispatchCommand],
+  );
+  const prepareWorktreeSession = useCallback(
+    async (
+      { branchName, targetPath, baseBranch, attemptId }: ComposerWorktreePreparationParams,
+      options?: { shouldActivate: () => boolean },
+    ) => {
+      const existingSessionId = sessionIdRef.current;
+      const existingPreparation = snapshotRef.current?.meta.worktreePreparation;
+      if (existingSessionId && existingPreparation) {
+        const currentAttemptId =
+          selectComposerWorktreePipeline(
+            useComposerWorktreePipelineStore.getState(),
+            workspaceKey,
+            existingSessionId,
+          )?.params?.attemptId ?? existingPreparation.attemptId;
+        if (existingPreparation.status !== "preparing" || attemptId !== currentAttemptId) {
+          await updateWorktreePreparationMarker(
+            existingSessionId,
+            {
+              attemptId,
+              branchName,
+              targetPath,
+              ...(baseBranch ? { baseBranch } : {}),
+            },
+            currentAttemptId,
+          );
+        }
+        return existingSessionId;
+      }
+      const { draftCreateSource: createSource, draftTaskGroupId } = useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity);
+      const ack = await dispatchCommand(
+        "createSession",
+        {
+          workspaceId: workspaceKey,
+          worktreePreparation: {
+            branchName,
+            targetPath,
+            ...(baseBranch ? { baseBranch } : {}),
+            ...(attemptId ? { attemptId } : {}),
+          },
+        },
+        null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        createSource,
+      );
+      if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
+        throw new Error(ack.reasonCode ?? "Worktree session preparation was rejected");
+      }
+      const createdSessionId = ack.result.sessionId;
+      if (!options || options.shouldActivate()) {
+        void handleDraftSessionCreated(createdSessionId, createSource, undefined, draftTaskGroupId);
+      }
+      return createdSessionId;
+    },
+    [
+      dispatchCommand,
+      handleDraftSessionCreated,
+      updateWorktreePreparationMarker,
+      workspaceIdentity,
+      workspaceKey,
+      workspacePath,
+    ],
+  );
+  const syncWorktreePreparation = useCallback(
+    ({
+      sessionId: preparedSessionId,
+      branchName,
+      targetPath,
+      baseBranch,
+      attemptId,
+    }: ComposerWorktreePreparationSyncParams) =>
+      updateWorktreePreparationMarker(preparedSessionId, {
+        attemptId,
+        branchName,
+        targetPath,
+        ...(baseBranch ? { baseBranch } : {}),
+      }),
+    [updateWorktreePreparationMarker],
+  );
+  const handleWorktreePreparationFailed = useCallback(
+    (failedSessionId: string, failureMessage: string, attemptId?: string) =>
+      dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "failed", failureMessage, expectedAttemptId: attemptId },
+        failedSessionId,
+      ).then((ack) => {
+        if (ack.status !== "accepted")
+          throw new Error(ack.reasonCode ?? "Preparation failure update rejected");
+      }),
+    [dispatchCommand],
+  );
+  const handleWorktreePreparationRetry = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Worktree preparation session is unavailable");
+      const preparation = snapshotRef.current?.meta.worktreePreparation;
+      if (!preparation) throw new Error("Preparation is unavailable");
+      const pipeline = selectComposerWorktreePipeline(
+        useComposerWorktreePipelineStore.getState(),
+        workspaceKey,
+        sessionId,
+      );
+      const frozen = pipeline?.params;
+      const attemptId = crypto.randomUUID();
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        {
+          status: "preparing",
+          expectedAttemptId: expectedAttemptId ?? frozen?.attemptId ?? preparation.attemptId,
+          worktreePreparation: {
+            branchName: frozen?.branchName ?? preparation.branchName,
+            targetPath: frozen?.targetPath ?? preparation.targetPath,
+            baseBranch: frozen?.baseBranch ?? preparation.baseBranch,
+            attemptId,
+          },
+        },
+        sessionId,
+      );
+      if (ack.status !== "accepted") {
+        throw new Error(ack.reasonCode ?? "Worktree preparation retry was rejected");
+      }
+      return attemptId;
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
+  const handleWorktreePreparationCancel = useCallback(
+    async (expectedAttemptId?: string) => {
+      if (!sessionId) throw new Error("Preparation is unavailable");
+      const attemptId =
+        expectedAttemptId ??
+        selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        )?.params?.attemptId ??
+        snapshotRef.current?.meta.worktreePreparation?.attemptId;
+      const ack = await dispatchCommand(
+        "updateWorktreePreparation",
+        { status: "cancelled", expectedAttemptId: attemptId },
+        sessionId,
+      );
+      if (ack.status !== "accepted")
+        throw new Error(ack.reasonCode ?? "Preparation cancellation rejected");
+    },
+    [dispatchCommand, sessionId, workspaceKey],
+  );
 
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
@@ -2549,27 +2771,27 @@ export function SessionPane({
   );
   // 发起 toolCallId → 静态图：图是 run 的属性，
   // 三种来源的轮尾 run 卡都到这一张表取图。行窗口一遍建成，随窗口重建。
-  const workflowGraphByToolCallId = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowGraphByToolCallId = useStructurallySharedMemo(
+    buildWorkflowGraphByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：补全之后
   // run 卡与侧板取它。行窗口一遍建成，随窗口重建。
-  const workflowFillGraphByRunId = useMemo(
-    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowFillGraphByRunId = useStructurallySharedMemo(
+    buildWorkflowFillGraphByRunId,
+    snapshot?.rows.window,
   );
   // 工作流工具行 → 草稿位置：稿号与
   // 「后面还有更新的一稿」都只能从行序读出，行窗口一遍建成，随窗口重建。
-  const workflowDraftByToolCallId = useMemo(
-    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowDraftByToolCallId = useStructurallySharedMemo(
+    buildWorkflowDraftByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
   // 「Which workflow a run is saved as」规则 1）。行窗口一遍建成，随窗口重建。
-  const workflowSaveCandidatesByRunId = useMemo(
-    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowSaveCandidatesByRunId = useStructurallySharedMemo(
+    buildWorkflowSaveCandidatesByRunId,
+    snapshot?.rows.window,
   );
   // Workflow 通知 manifest 的升级条目 Waiting→Answered 联查表（runId → 停驻 qid 集合）。
   const workflowRunPendingQuestionsByRunId = useMemo(
@@ -3065,6 +3287,9 @@ export function SessionPane({
   // ── 草稿态 v4 draft session 预热（m5）──
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
+  const incognitoDraftActive = useDraftIncognitoIntentStore(
+    (state) => sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
+  );
   const { binding: prewarmBinding, waitForSession: waitForDraftSession } = useDraftSessionPrewarm({
     enabled: sessionId === null && draftAgentStartupAllowed && !recoveringDraft,
     workspaceKey,
@@ -3862,6 +4087,11 @@ export function SessionPane({
         return "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
+        const incognitoMessageId = incognitoUnsupportedMessageId(detail);
+        if (incognitoMessageId) {
+          toast(intl.formatMessage({ id: incognitoMessageId }), { variant: "warning" });
+          return "blocked";
+        }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
         // 首发前 switchModelConfig 失败只会抛回 Composer；Composer 为了保留草稿
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
@@ -4045,6 +4275,58 @@ export function SessionPane({
     [dispatchCommand, sessionId],
   );
 
+  const handleRowPin = useCallback<RowPinChangeHandler>(
+    async (target, pinned) => {
+      const current = snapshotRef.current;
+      if (!sessionId || current === null) return false;
+      const ack = await dispatchCommand(
+        "setRowPinned",
+        { target, pinned },
+        sessionId,
+        current.revision,
+        current.logEpoch,
+      );
+      const accepted = ack.status === "accepted" || ack.status === "duplicate";
+      if (!accepted) {
+        logger.warn(`[v4-pane] 消息固定被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+      }
+      return accepted;
+    },
+    [dispatchCommand, sessionId],
+  );
+  const handlePinnedJump = useCallback((rowId: number) => {
+    timelineScrollToRowRef.current?.(rowId);
+  }, []);
+  const handlePinnedUnpin = useCallback(
+    (row: PinnedConversationRow) => {
+      if (!row.entityId) return;
+      void Promise.resolve(handleRowPin({ rowId: row.rowId, entityId: row.entityId }, false)).then(
+        (accepted) => {
+          if (accepted && platform) {
+            void reportAppTelemetryEvent(
+              platform,
+              {
+                elementName: "message_pin",
+                eventRegion: "chat",
+                eventType: "ck",
+                eventExtraDetail: { pinned: "unpinned" },
+                ...(sessionId ? { talkId: sessionId } : {}),
+                messageId: row.entityId,
+              },
+              "SessionPane",
+            );
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] chip 取消固定提交失败", {
+            error: error instanceof Error ? error.message : String(error),
+            messageId: row.entityId,
+          });
+        },
+      );
+    },
+    [handleRowPin, platform, sessionId],
+  );
   const handleDeleteQueueItem = useCallback(
     (queueItemId: string) => {
       const current = snapshotRef.current;
@@ -4655,6 +4937,53 @@ export function SessionPane({
   // 提交时先 stop barrier 再 rewind/rerun；UI 不应再用 completed gate 把入口整轮隐藏。
   const editActionsEnabled = runtimeReady && !readOnly && !selectionSideChat && Boolean(sessionId);
   const isDraft = sessionId === null;
+  const sessionIndexScopes = useMemo(
+    () =>
+      remoteSessionId && !zcodeAgentService
+        ? []
+        : [
+            {
+              workspacePath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(remoteSessionId ? { endpointKey: remoteSessionId } : {}),
+              ...(zcodeAgentService ? { agentService: zcodeAgentService } : {}),
+            },
+          ],
+    [remoteSessionId, workspaceIdentity, workspacePath, zcodeAgentService],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  const sessionExecutionWorktree = isDraft
+    ? undefined
+    : sessionIndexItems.find((task) => task.taskId === sessionId)?.executionWorktree;
+  const executionGitPath = sessionExecutionWorktree?.path ?? workspacePath;
+  const [worktreeGitRefreshVersion, setWorktreeGitRefreshVersion] = useState(0);
+  const worktreeGitState = useGitRepository({
+    workspacePath: executionGitPath,
+    activeTaskId: sessionId,
+    enabled: Boolean(sessionExecutionWorktree),
+    refreshToken: worktreeGitRefreshVersion,
+    remoteSessionId,
+    workspaceIdentity,
+  });
+  const refreshWorktreeGit = useCallback(() => {
+    setWorktreeGitRefreshVersion((version) => version + 1);
+  }, []);
+  const worktreeGitDirtyFileCount =
+    (worktreeGitState.sourceOptions.find((option) => option.id === "unstaged")?.count ?? 0) +
+    (worktreeGitState.sourceOptions.find((option) => option.id === "staged")?.count ?? 0);
+  const worktreeGitChangeSummary = useMemo(() => {
+    const changes = [
+      ...worktreeGitState.datasets.unstaged.sections.flatMap((section) => section.changes),
+      ...worktreeGitState.datasets.staged.sections.flatMap((section) => section.changes),
+    ];
+    return changes.reduce(
+      (summary, change) => ({
+        added: summary.added + change.added,
+        removed: summary.removed + change.removed,
+      }),
+      { added: 0, removed: 0 },
+    );
+  }, [worktreeGitState.datasets]);
   // 滚动恢复必须使用与 sessionId 匹配的 lease projection。切换 session 的 render 与
   // passive effect 不在同一时刻，旧 lease 的 rows 若提前交给 timeline，会让新记忆按旧
   // 内容高度 clamp，后续目标 rows 到达时也无法区分这次临时落点。
@@ -4826,7 +5155,8 @@ export function SessionPane({
   const runningBackgroundWorkCount =
     statusPanelModel.runningBashWorks.length +
     statusPanelModel.runningSubagentWorks.length +
-    statusPanelModel.runningWorkflowRuns.length;
+    statusPanelModel.runningWorkflowRuns.length +
+    (statusPanelModel.latestDreamWork?.status === "running" ? 1 : 0);
   const runningTerminalCount = statusPanelModel.runningBashWorks.length;
   const runningAgentCount = statusPanelModel.runningSubagentWorks.length;
   const runningWorkflowCount = statusPanelModel.runningWorkflowRuns.length;
@@ -4860,8 +5190,10 @@ export function SessionPane({
     () => (onOpenWorkflowRun ? resolveSoleRunningWorkflowRunTarget(statusPanelModel) : null),
     [onOpenWorkflowRun, statusPanelModel],
   );
+  const canOpenBackgroundWorks =
+    runningBackgroundWorkCount > 0 || Boolean(statusPanelModel.latestDreamWork);
   const handleOpenRunningBackgroundWorks = useCallback(() => {
-    if (runningBackgroundWorkCount === 0) return;
+    if (!canOpenBackgroundWorks) return;
     if (soleRunningWorkflowRunTarget) {
       // 与面板行同一个 handler：不存在第二条打开路径。
       handleOpenWorkflowRunFromPanel(soleRunningWorkflowRunTarget);
@@ -4877,7 +5209,7 @@ export function SessionPane({
     handleOpenWorkflowRunFromPanel,
     handleSummaryPanelVariantChange,
     runningAgentCount,
-    runningBackgroundWorkCount,
+    canOpenBackgroundWorks,
     runningTerminalCount,
     runningWorkflowCount,
     soleRunningWorkflowRunTarget,
@@ -4926,6 +5258,32 @@ export function SessionPane({
     draftModelReadinessError ??
     sendSubmissionError ??
     (quotaBanner.takesOverError ? null : projectedComposerError);
+  const resumableComposerError =
+    projectedComposerError !== null && composerError === projectedComposerError;
+  const resumePendingErrorKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const pendingKey = resumePendingErrorKeyRef.current;
+    if (pendingKey !== null && pendingKey !== controlLastErrorKey) {
+      resumePendingErrorKeyRef.current = null;
+    }
+  }, [controlLastErrorKey]);
+  const handleResumeError = useCallback(() => {
+    if (!controlLastErrorKey || resumePendingErrorKeyRef.current !== null) return;
+    resumePendingErrorKeyRef.current = controlLastErrorKey;
+    void handleSendText(CHAT_ERROR_RESUME_MESSAGE)
+      .then((result) => {
+        if (result === "blocked" || result === "confirmationRequired") {
+          resumePendingErrorKeyRef.current = null;
+          toast(intl.formatMessage({ id: "chat.error.resumeBlocked" }));
+        }
+      })
+      .catch((error: unknown) => {
+        resumePendingErrorKeyRef.current = null;
+        logger.warn("[v4-pane] Resume send failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }, [controlLastErrorKey, handleSendText, intl]);
   useEffect(() => {
     setSendSubmissionError(null);
   }, [sessionId]);
@@ -5353,12 +5711,13 @@ export function SessionPane({
   const composerNode = readOnly ? null : (
     <ConversationComposer
       key="conversation-composer"
+      voiceDictationEnabled={isDesktop || compactForRemoteControl}
       // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
       snapshot={snapshot}
       sessionId={sessionId}
       // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
       // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
-      skillCatalogSessionId={effectiveSessionId}
+      skillCatalogSessionId={incognitoDraftActive ? sessionId : effectiveSessionId}
       draftMode={isDraft}
       draftConfig={draftConfig}
       composerDraft={composerDraft}
@@ -5400,6 +5759,9 @@ export function SessionPane({
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      onPrepareWorktreeSession={prepareWorktreeSession}
+      onSyncWorktreePreparation={syncWorktreePreparation}
+      onWorktreePreparationFailed={handleWorktreePreparationFailed}
       highspeedCard={activeHighspeedCard}
       highspeedActivationCardId={highspeedActivationCardId}
       onHighspeedActivationApplied={handleHighspeedActivationApplied}
@@ -5411,7 +5773,7 @@ export function SessionPane({
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
       onOpenRunningBackgroundWorks={
-        sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
+        sessionId && canOpenBackgroundWorks ? handleOpenRunningBackgroundWorks : undefined
       }
       backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
       // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
@@ -5422,6 +5784,7 @@ export function SessionPane({
       onSendCompressionCommand={handleSendCompressionCommand}
       error={composerError}
       onDismissError={handleDismissComposerError}
+      onResumeError={resumableComposerError ? handleResumeError : undefined}
       onRetryInitialization={handleRetrySubscribe}
       onOpenModelSettings={handleOpenModelSettings}
       onOpenModelUpgrade={handleOpenModelUpgrade}
@@ -5508,6 +5871,7 @@ export function SessionPane({
       !quotaBanner.dismissed &&
       (!projectedComposerError || quotaBanner.takesOverError || quotaBanner.state.blocksSubmit) ? (
         <ConversationQuotaBanner
+          key={`${snapshot?.sessionId ?? "session"}:${controlLastErrorKey ?? "quota-banner"}`}
           state={quotaBanner.state}
           onShown={quotaBanner.markShown}
           billingDiscountActive={billingDiscount.active}
@@ -5519,6 +5883,11 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
+          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={sharedSettings !== null}
+          onAutoContinue={
+            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
         />
       ) : null}
       {recoverableCommand ? (
@@ -5622,6 +5991,17 @@ export function SessionPane({
       uploadAttachment={pluginUiUploadAttachment}
       projectionStore={sessionLeaseReady ? lease?.store : null}
     >
+      {sessionExecutionWorktree ? (
+        <ExecutionWorktreeGitAutoRefresh
+          workspacePath={executionGitPath}
+          workspaceIdentity={workspaceIdentity}
+          remoteSessionId={remoteSessionId ?? undefined}
+          gitSummary={worktreeGitState.summary}
+          gitSummaryWorkspaceKey={worktreeGitState.workspaceKey}
+          enabled={focused}
+          onRefreshGit={refreshWorktreeGit}
+        />
+      ) : null}
       <div
         ref={paneRef}
         data-testid={testId(TID_V4_SESSION_PANE, paneId)}
@@ -5701,12 +6081,21 @@ export function SessionPane({
           {!isDraft ? (
             <ConversationStatusPanel
               workspacePath={workspacePath}
+              gitWorkspacePath={executionGitPath}
               workspaceIdentity={workspaceIdentity}
-              gitSummary={gitSummary}
-              gitDirtyFileCount={gitDirtyFileCount}
-              gitWorktreeReviewSourceId={gitWorktreeReviewSourceId}
-              gitWorktreeChangeSummary={gitWorktreeChangeSummary}
-              activeTaskChangeSummary={activeTaskChangeSummary}
+              activeTaskId={rootSessionId ?? sessionId ?? null}
+              gitSummary={sessionExecutionWorktree ? worktreeGitState.summary : gitSummary}
+              gitDirtyFileCount={
+                sessionExecutionWorktree ? worktreeGitDirtyFileCount : gitDirtyFileCount
+              }
+              executionWorktree={sessionExecutionWorktree}
+              gitWorktreeReviewSourceId={
+                sessionExecutionWorktree ? null : gitWorktreeReviewSourceId
+              }
+              gitWorktreeChangeSummary={
+                sessionExecutionWorktree ? worktreeGitChangeSummary : gitWorktreeChangeSummary
+              }
+              activeTaskChangeSummary={sessionExecutionWorktree ? null : activeTaskChangeSummary}
               goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
               sessionPlans={state.sessionPlans}
               plan={snapshot?.plan ?? null}
@@ -5727,8 +6116,12 @@ export function SessionPane({
               onAgentSectionOpenChange={setAgentSectionOpen}
               workflowSectionOpen={workflowSectionOpen}
               onWorkflowSectionOpenChange={setWorkflowSectionOpen}
-              onRefreshGit={onRefreshGit}
-              onOpenGitReview={onOpenGitReview}
+              onRefreshGit={sessionExecutionWorktree ? refreshWorktreeGit : onRefreshGit}
+              onOpenGitReview={
+                sessionExecutionWorktree && sessionId
+                  ? (sourceId) => onOpenGitReview?.(sourceId, executionGitPath, sessionId)
+                  : onOpenGitReview
+              }
               onPauseGoal={
                 !readOnly && !selectionSideChat && snapshot?.availability.pauseGoal.allowed
                   ? handlePauseGoal
@@ -5803,10 +6196,18 @@ export function SessionPane({
                 workspacePath={workspacePath}
                 workspaceIdentity={workspaceIdentity}
               >
+                {!readOnly && !selectionSideChat && sessionId ? (
+                  <ConversationPinnedBar
+                    rows={timelineSnapshot?.rows.window ?? []}
+                    onJumpToRow={handlePinnedJump}
+                    onUnpin={handlePinnedUnpin}
+                  />
+                ) : null}
                 <ConversationTimeline
                   compactForRemoteControl={compactForRemoteControl}
                   scrollToBottomActionRef={timelineScrollToBottomRef}
                   scrollToQueryActionRef={timelineScrollToQueryRef}
+                  scrollToRowActionRef={timelineScrollToRowRef}
                   selectionPanelLayoutContainerRef={conversationLayoutContainerRef}
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
@@ -5822,6 +6223,9 @@ export function SessionPane({
                       ? handleAssistantFeedback
                       : undefined
                   }
+                  onPinChange={
+                    !readOnly && !selectionSideChat && sessionId ? handleRowPin : undefined
+                  }
                   onEdit={editActionsEnabled ? handleEdit : undefined}
                   canLoadOlder={timelineSnapshot ? hasOlderRows(timelineSnapshot) : false}
                   loadingOlder={timelineSnapshot ? state.loadingOlder : false}
@@ -5832,26 +6236,67 @@ export function SessionPane({
                   hideTurnNavigator={shareSelectionPanelVisible && !compactForRemoteControl}
                   backgroundScrollLocked={false}
                   headerSlot={
+                    (!isDraft &&
+                      (snapshot?.meta.worktreePreparation || sessionExecutionWorktree)) ||
                     // unsupportedRowCount 也要开这个门：整份副本的行都被本 build 跳过时
                     // rows 为空，但只读块必须留下来显示「需要更新 ZCode」，不能整块消失。
-                    importedShare &&
-                    (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
-                      <ConversationShareImportNotice
-                        rows={importedShare.rows}
-                        contentBlocks={importedShare.contentBlocks}
-                        unsupportedRowCount={importedShare.unsupportedRowCount}
-                        artifactNames={importedShareArtifactNames}
-                        artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
-                        workspacePath={workspacePath}
-                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                        {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
-                        locale={locale}
-                        theme={theme}
-                        codePreviewSettings={codePreviewSettings}
-                        onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
-                        onOpenFileLink={onOpenFileLink}
-                        onOpenCodeViewer={onOpenCodeViewer}
-                      />
+                    (importedShare &&
+                      (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0)) ? (
+                      <>
+                        {!isDraft && snapshot?.meta.worktreePreparation ? (
+                          <ConversationWorktreeSetupSteps
+                            workspacePath={workspacePath}
+                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                            sessionId={sessionId!}
+                            preparation={snapshot.meta.worktreePreparation}
+                            remoteSessionId={remoteSessionId ?? undefined}
+                            onRetryPreparation={handleWorktreePreparationRetry}
+                            onCancelPreparation={handleWorktreePreparationCancel}
+                            onPreparationFailed={handleWorktreePreparationFailed}
+                            onSyncPreparation={syncWorktreePreparation}
+                          />
+                        ) : !isDraft && sessionExecutionWorktree ? (
+                          <ConversationWorktreeCreatedNotice
+                            branchName={sessionExecutionWorktree.branchName}
+                            currentBranchName={
+                              worktreeGitState.summary.isRepository
+                                ? worktreeGitState.summary.headRefType === "branch"
+                                  ? worktreeGitState.summary.branchName
+                                  : intl.formatMessage({ id: "git.head.detached" })
+                                : undefined
+                            }
+                            path={sessionExecutionWorktree.path}
+                            workspaceIdentity={workspaceIdentity}
+                            remoteSessionId={remoteSessionId}
+                            onOpenWorktree={onCreateTaskInWorkspace}
+                          />
+                        ) : null}
+                        {importedShare &&
+                        (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
+                          <ConversationShareImportNotice
+                            rows={importedShare.rows}
+                            contentBlocks={importedShare.contentBlocks}
+                            unsupportedRowCount={importedShare.unsupportedRowCount}
+                            artifactNames={importedShareArtifactNames}
+                            artifactWorkspaceRelativePaths={
+                              importedShareArtifactWorkspaceRelativePaths
+                            }
+                            workspacePath={workspacePath}
+                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                            {...(remoteSessionId
+                              ? { workspaceRemoteSessionId: remoteSessionId }
+                              : {})}
+                            locale={locale}
+                            theme={theme}
+                            codePreviewSettings={codePreviewSettings}
+                            onOpenShareUrl={
+                              onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined
+                            }
+                            onOpenFileLink={onOpenFileLink}
+                            onOpenCodeViewer={onOpenCodeViewer}
+                          />
+                        ) : null}
+                      </>
                     ) : null
                   }
                   emptyState={
@@ -5908,4 +6353,32 @@ export function SessionPane({
       </div>
     </PluginUiSessionProvider>
   );
+}
+function ExecutionWorktreeGitAutoRefresh({
+  workspacePath,
+  workspaceIdentity,
+  remoteSessionId,
+  gitSummary,
+  gitSummaryWorkspaceKey,
+  enabled,
+  onRefreshGit,
+}: {
+  workspacePath: string;
+  workspaceIdentity?: string | null;
+  remoteSessionId?: string | null;
+  gitSummary: GitRepositorySummary;
+  gitSummaryWorkspaceKey: string;
+  enabled: boolean;
+  onRefreshGit: () => void;
+}) {
+  useGitAutoRefresh({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+    gitSummary,
+    gitSummaryWorkspaceKey,
+    enabled,
+    onRefreshGit,
+  });
+  return null;
 }
