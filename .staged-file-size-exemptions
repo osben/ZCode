@@ -269,3 +269,5 @@ packages/ui/src/v4/composer/composerDraftStore.ts
 packages/ui/src/v4/composer/V4ComposerToolbar.tsx
 packages/ui/src/v4/composer/useComposerAttachments.ts
 packages/ui/src/v4/composer/useDraftConfigControl.ts
+# TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
+third-party/npm-overrides.json

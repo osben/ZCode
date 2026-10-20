@@ -156,8 +156,9 @@ vi.mock("@/hooks/useSettingService.js", () => ({
 
 vi.mock("@/hooks/useServices.js", () => ({
   useComposerClientNamespace: () => "desktop",
-  // Bug 根因：Highspeed 历史消息改用可选服务以支持无 Provider 的只读渲染；
-  // Vitest 的整模块 mock 未同步新导出，导致组件进入业务断言前就直接失败。
+  // Bug root cause: Highspeed history rows switched to an optional service to support
+  // Provider-less read-only rendering; the Vitest whole-module mock missed the new export and
+  // the component failed before reaching the business assertions.
   useOptionalServices: () => null,
   useServices: () => ({
     zcodeSessionService: {
@@ -440,8 +441,9 @@ function unitWithWorkRows(
     assistantFollowingRows: [],
     assistantTailRows: [],
     browserTurnEndRows: [],
-    // Bugfix：Hook footer 将该字段升级为必填后，手写 turn fixture 也必须显式提供空集合，
-    // 否则 SSR 会在计算 action row 时访问 undefined.some。
+    // Bugfix: after the Hook footer made this field required, hand-written turn fixtures must
+    // also provide the empty collection explicitly, or SSR hits undefined.some when computing the
+    // action row.
     hookInvocations: [],
     assistantTextRows: [],
     leadingBoundaryRows: [],
@@ -468,7 +470,7 @@ describe("v4 assistant preview cards helper", () => {
 
   it("builds interrupted turn cards from early assistant text but only for the latest row", () => {
     const early = assistantText(1, "Preview http://localhost:5173.");
-    const latest = assistantText(2, "已停止。", "interrupted");
+    const latest = assistantText(2, "Stopped.", "interrupted");
 
     expect(buildForRow(early, [early, latest])).toEqual([]);
     expect(buildForRow(latest, [early, latest])).toMatchObject([
@@ -532,7 +534,7 @@ describe("ConversationTurnGroup assistant preview cards", () => {
 });
 
 describe("ConversationTurnGroup assistant code-comment cards", () => {
-  it("running turn 的 assistant text 即使落在 history renderer 也隐藏 code-comment 协议", () => {
+  it("a running turn hides the code-comment protocol even when its assistant text lands in the history renderer", () => {
     const directive = '::code-comment{title="Review" body="Action" file="src/main.ts"}';
     const [unit] = buildConversationTurnRenderUnits([
       {
@@ -566,7 +568,7 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
     expect(html).not.toContain("mock-assistant-code-comment-cards");
   });
 
-  it("灰度关闭时保持既有正文原样且不展示卡片", () => {
+  it("with the feature flag off the body stays verbatim and no cards show", () => {
     const directive = '::code-comment{title="Review" body="Action" file="src/main.ts"}';
     const html = renderTurn(baseUnit([assistantText(1, directive)]));
 
@@ -574,7 +576,7 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
     expect(html).not.toContain("mock-assistant-code-comment-cards");
   });
 
-  it("灰度开启后隐藏有效指令，只在最新完成态正文下展示一次卡片", () => {
+  it("with the feature flag on valid directives are hidden and the card shows once under the latest completed text", () => {
     const directive =
       '::code-comment{title="[P1] Null risk" body="Guard user" file="src/main.ts" start=8 priority=1}';
     const early = assistantText(1, "Checking.");
@@ -587,12 +589,12 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
     expect(html).toContain('data-card-titles="[P1] Null risk"');
   });
 
-  it("streaming 时隐藏协议尾部但不生成卡片，终态才生成卡片", () => {
+  it("streaming hides the protocol tail without generating a card; only the final state does", () => {
     const onOpenCodeViewer = vi.fn();
     const completedDirective = '::code-comment{title="Ready" body="Open now" file="src/ready.ts"}';
     const streaming = assistantText(
       1,
-      `正文\n${completedDirective}\n::code-comment{title="Partial" body="Still streaming`,
+      `Body text\n${completedDirective}\n::code-comment{title="Partial" body="Still streaming`,
       "streaming",
     );
     const unit = { ...baseUnit([streaming]), isRunning: true };
@@ -601,7 +603,7 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
       onOpenCodeViewer,
     });
 
-    expect(html).toContain("正文");
+    expect(html).toContain("Body text");
     expect(html).not.toContain("::code-comment");
     expect(html).not.toContain("mock-assistant-code-comment-cards");
     expect(html).not.toContain("Still streaming");
@@ -617,7 +619,7 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
     expect(completeHtml).toContain('data-open-review="true"');
   });
 
-  it("failed turn 不展示卡片并恢复整轮有效 directive 原文，避免早段评论静默丢失", () => {
+  it("a failed turn shows no cards and restores the turn's valid directives verbatim, so early comments are not silently lost", () => {
     const earlyDirective =
       '::code-comment{title="Early review" body="Early action" file="src/early.ts"}';
     const failedDirective =
@@ -638,7 +640,7 @@ describe("ConversationTurnGroup assistant code-comment cards", () => {
     expect(html).not.toContain("mock-assistant-code-comment-cards");
   });
 
-  it("interrupted 轮尾仍投影已完整到达的卡片", () => {
+  it("an interrupted turn still projects cards that fully arrived", () => {
     const interrupted = assistantText(
       1,
       'Stopped.\n::code-comment{title="Review" body="Action" file="src/main.ts"}',

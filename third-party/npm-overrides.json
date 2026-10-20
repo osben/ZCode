@@ -419,16 +419,16 @@
     "source": "https://raw.githubusercontent.com/rrweb-io/rrweb/%40rrweb%2Futils%402.0.0/LICENSE"
   },
   {
-    "package": "@rive-app/react-webgl2@4.36.0",
+    "package": "@rive-app/react-webgl2@4.37.0",
     "file": "third-party/upstream/cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4.txt",
     "sha256": "cf81859d85e99ff2fad83d51d9dfd85ca5189b23c4442aacf1890c54665d92f4",
-    "source": "https://raw.githubusercontent.com/rive-app/rive-react/6910f089f841b5421fc4dded4530de6b4fec4cb5/LICENSE"
+    "source": "https://raw.githubusercontent.com/rive-app/rive-react/v4.37.0/LICENSE"
   },
   {
-    "package": "@rive-app/webgl2@2.44.0",
+    "package": "@rive-app/webgl2@2.45.0",
     "file": "third-party/upstream/8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a.txt",
     "sha256": "8a1efa755d19446b51a18e1c15f6308728da0b36283c4d38050698ad6954b69a",
-    "source": "https://raw.githubusercontent.com/rive-app/rive-wasm/b62850efe54fc0f1efe897141be96009d9e99027/LICENSE"
+    "source": "https://raw.githubusercontent.com/rive-app/rive-wasm/2.45.0/LICENSE"
   },
   {
     "package": "agent-base@6.0.2",
@@ -441,42 +441,6 @@
     "file": "third-party/upstream/8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a.txt",
     "sha256": "8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a",
     "source": "https://raw.githubusercontent.com/TooTallNate/proxy-agents/4813885d3f4e2ff837878ceffdba656a71dc31f0/packages/https-proxy-agent/LICENSE"
-  },
-  {
-    "package": "fastdom@1.0.12",
-    "repo": "wilsonpage/fastdom",
-    "refs": ["v1.0.12", "1.0.12", "v1.0.11"],
-    "file": "third-party/upstream/92f07fa720bf8f509f44291311936d09cf6fb3cdaea24855b1170d8ff35e81a2.txt",
-    "sha256": "92f07fa720bf8f509f44291311936d09cf6fb3cdaea24855b1170d8ff35e81a2",
-    "source": "https://registry.npmjs.org/fastdom/1.0.12",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-10-16",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "15e452be64ae3661c3cc9d736524ebb689c23f162765d60741dcc518ec182265",
-      "sourceRevision": "01524d7b90785fcac5a75bb9f149e14b9e5246c3",
-      "sourceTreeUrl": "https://api.github.com/repos/wilsonpage/fastdom/git/trees/01524d7b90785fcac5a75bb9f149e14b9e5246c3?recursive=1",
-      "upstreamLicenseFiles": []
-    }
-  },
-  {
-    "package": "strictdom@1.0.1",
-    "repo": "wilsonpage/strictdom",
-    "refs": ["v1.0.1", "1.0.1", "v1.0.0"],
-    "file": "third-party/upstream/0db32e3c0b080fbbc160b19c963ba5e75760f7bb8c1961e03adf41505db69665.txt",
-    "sha256": "0db32e3c0b080fbbc160b19c963ba5e75760f7bb8c1961e03adf41505db69665",
-    "source": "https://registry.npmjs.org/strictdom/1.0.1",
-    "evidenceKind": "publisher-license-identifier-and-standard-terms",
-    "license": "MIT",
-    "reviewEvidence": {
-      "checkedOn": "2026-10-16",
-      "result": "The versioned npm archive contains no standalone complete LICENSE; existing publisher declaration and original README license sections remain preserved. Upstream authorization/copyright material is still required to close this review.",
-      "npmArchiveSha256": "824b654d671c79365e96c87687dba8ce7bf36c45f2214365313c0a2d3e3ffbbb",
-      "sourceRevision": "3b4a4138ccc94e3c09505c7873907e3a5cc2544e",
-      "sourceTreeUrl": "https://api.github.com/repos/wilsonpage/strictdom/git/trees/3b4a4138ccc94e3c09505c7873907e3a5cc2544e?recursive=1",
-      "upstreamLicenseFiles": []
-    }
   },
   {
     "package": "proxy-agent-negotiate@1.1.0",

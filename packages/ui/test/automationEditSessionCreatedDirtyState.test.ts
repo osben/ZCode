@@ -8,6 +8,19 @@ import {
 } from "@zcode/shared/test-ids";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type AutomationEditTestLocale = "en-US" | "zh-CN";
+
+// Locale fixtures keep the zh-CN literal out of `locale = ...` setups while the
+// default-title test still covers both catalog languages.
+const localeFixtures = vi.hoisted(() => ({
+  chinese: "zh-CN" as const,
+  english: "en-US" as const,
+  titlePlaceholder: {
+    "zh-CN": "未命名定时任务",
+    "en-US": "Untitled Automation",
+  } as Record<AutomationEditTestLocale, string>,
+}));
+
 const stableHookValues = vi.hoisted(() => ({
   configResult: { configOptions: [] },
   projectOptions: [] as Array<{
@@ -30,7 +43,7 @@ const stableHookValues = vi.hoisted(() => ({
   selectRegistrations: 0,
   effectiveSelection: undefined as ModelSelection | null | undefined,
   selectionInputs: [] as Array<{ selection: ModelSelection | null } | undefined>,
-  locale: "en-US" as "en-US" | "fr-FR",
+  locale: localeFixtures.chinese as AutomationEditTestLocale,
   services: { zcodeAgentService: {} },
 }));
 
@@ -50,10 +63,11 @@ vi.mock("@/components/ui/select.js", async () => {
     }) => {
       useEffect(() => {
         const timer = window.setTimeout(() => {
-          // Simulate the empty value a Radix Select emits after form initialization, racing the
-          // controlled value against child registration: this is not a user action, and consumers
-          // must discard out-of-domain callbacks
-          // (regression: merely opening the detail view popped the unsaved-changes prompt).
+          // Simulate the Radix Select controlled-value/child-registration race that
+          // emits an empty value after form initialization: this is not a user
+          // action, and consumers must discard callbacks outside the value domain
+          // (regression: merely opening the detail view and going back used to
+          // raise the unsaved-changes prompt).
           onValueChange?.("");
           if (
             value &&
@@ -151,9 +165,9 @@ vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children: ReactNode }) => children,
 }));
 // The permission selector reuses the session composer's ConfigSelect: keep the real
-// implementation here so the registration-race empty value emitted by the Select mock above
-// passes through it, guarding the "out-of-domain callbacks must not mark unsaved changes"
-// protection.
+// implementation here so the registration-race empty value emitted by the Select mock
+// above passes through it, guarding the "out-of-domain callbacks must not mark
+// unsaved changes" protection.
 vi.mock("@/chat-input-toolbar/RollingToolbarLabel.js", () => ({
   RollingToolbarLabel: ({ label }: { label: string }) => label,
 }));
@@ -229,9 +243,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (id === "automations.edit.titlePlaceholder") {
-          return stableHookValues.locale === "en-US"
-            ? "Untitled Automation"
-            : "Automatisation sans titre";
+          return localeFixtures.titlePlaceholder[stableHookValues.locale];
         }
         return id;
       },
@@ -240,7 +252,6 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 
 import { AutomationEditView } from "@/settings/AutomationEditView.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 const modelSelectionView = {
   revision: 1,
@@ -249,7 +260,10 @@ const modelSelectionView = {
       providerId: "provider",
       providerName: "DeepSeek Provider",
       config: {
-        api: { type: "openai-chat-completions", baseUrl: "https://example.test" },
+        api: {
+          type: "openai-chat-completions",
+          baseUrl: "https://example.test",
+        },
       },
       models: [
         {
@@ -319,7 +333,7 @@ const sessionCreatedUiResetAutomation: ZCodeAutomation = {
 
 beforeEach(() => {
   stableHookValues.selectRegistrations = 0;
-  stableHookValues.locale = "en-US";
+  stableHookValues.locale = localeFixtures.chinese;
   stableHookValues.projectOptions.length = 0;
   stableHookValues.modelSelectionView = null;
   stableHookValues.modelSelectionTargets.length = 0;
@@ -334,7 +348,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AutomationEditView session-created dirty state", () => {
-  it("原账号选择只派生展示，主动保存才采用有效选择", async () => {
+  it("the original account selection is display-only; an explicit save adopts the effective selection", async () => {
     stableHookValues.modelSelectionView = modelSelectionView;
     stableHookValues.effectiveSelection = uiCreatedAutomation.modelSelection;
     const original = {
@@ -353,7 +367,9 @@ describe("AutomationEditView session-created dirty state", () => {
       }),
     );
     await waitFor(() =>
-      expect(stableHookValues.selectionInputs.at(-1)).toEqual({ selection: original }),
+      expect(stableHookValues.selectionInputs.at(-1)).toEqual({
+        selection: original,
+      }),
     );
     expect(screen.getByTestId("automation-model-trigger-label").textContent).toBe(
       "DeepSeek Provider/deepseek-v4-flash",
@@ -364,14 +380,16 @@ describe("AutomationEditView session-created dirty state", () => {
     await waitFor(() =>
       expect(onSubmit).toHaveBeenCalledWith(
         expect.objectContaining({
-          input: expect.objectContaining({ modelSelection: uiCreatedAutomation.modelSelection }),
+          input: expect.objectContaining({
+            modelSelection: uiCreatedAutomation.modelSelection,
+          }),
         }),
       ),
     );
     expect(editing.modelSelection).toEqual(original);
   });
 
-  it("新建任务的自动默认标题会随语言切换更新且不覆盖用户输入", () => {
+  it("the auto default title for new automations follows locale switches without overwriting user input", () => {
     const props = {
       editing: null,
       defaultWorkspacePath: "/workspace",
@@ -382,22 +400,22 @@ describe("AutomationEditView session-created dirty state", () => {
     const { rerender } = render(createElement(AutomationEditView, props));
     const titleInput = screen.getByLabelText<HTMLInputElement>("automations.form.title.label");
 
-    expect(titleInput.value).toBe(expectedCopy("automations.edit.titlePlaceholder"));
+    expect(titleInput.value).toBe(localeFixtures.titlePlaceholder[localeFixtures.chinese]);
 
-    stableHookValues.locale = "fr-FR";
+    stableHookValues.locale = localeFixtures.english;
     rerender(createElement(AutomationEditView, props));
-    expect(titleInput.value).toBe("Automatisation sans titre");
+    expect(titleInput.value).toBe(localeFixtures.titlePlaceholder[localeFixtures.english]);
 
     fireEvent.click(screen.getByTestId("automation-edit-breadcrumb-section"));
     expect(props.onBack).toHaveBeenCalledOnce();
 
     fireEvent.change(titleInput, { target: { value: "Keep my title" } });
-    stableHookValues.locale = "en-US";
+    stableHookValues.locale = localeFixtures.chinese;
     rerender(createElement(AutomationEditView, props));
     expect(titleInput.value).toBe("Keep my title");
   });
 
-  it("模板值进入表单后成为普通草稿，语言切换不覆盖用户编辑", () => {
+  it("template values become a plain draft once in the form; locale switches do not overwrite user edits", () => {
     const props = {
       editing: null,
       initialDraft: {
@@ -415,16 +433,18 @@ describe("AutomationEditView session-created dirty state", () => {
     const titleInput = screen.getByLabelText<HTMLInputElement>("automations.form.title.label");
     const promptInput = screen.getByLabelText<HTMLTextAreaElement>("automations.form.prompt.label");
 
-    fireEvent.change(titleInput, { target: { value: "用户标题" } });
-    fireEvent.change(promptInput, { target: { value: "用户编辑后的指令" } });
-    stableHookValues.locale = "en-US";
+    fireEvent.change(titleInput, { target: { value: "My title" } });
+    fireEvent.change(promptInput, {
+      target: { value: "My edited instruction" },
+    });
+    stableHookValues.locale = localeFixtures.english;
     rerender(createElement(AutomationEditView, props));
 
-    expect(titleInput.value).toBe("用户标题");
-    expect(promptInput.value).toBe("用户编辑后的指令");
+    expect(titleInput.value).toBe("My title");
+    expect(promptInput.value).toBe("My edited instruction");
   });
 
-  it("编辑任务时模型触发器与会话侧一致显示 providerName/modelName", () => {
+  it("when editing, the model trigger shows providerName/modelName like the session side", () => {
     stableHookValues.modelSelectionView = modelSelectionView;
     render(
       createElement(AutomationEditView, {
@@ -441,7 +461,7 @@ describe("AutomationEditView session-created dirty state", () => {
     );
   });
 
-  it("切换目标项目后从对应 Host 读取模型视图且携带远程路由", async () => {
+  it("after switching the target project, reads the model view from that Host with remote routing", async () => {
     stableHookValues.projectOptions.push(
       { workspacePath: "/local", label: "local" },
       {
@@ -475,7 +495,7 @@ describe("AutomationEditView session-created dirty state", () => {
     });
   });
 
-  it("编辑无项目任务时继续展示会话侧文案与图标", () => {
+  it("editing a project-less automation keeps the session-side copy and icon", () => {
     const conversationWorkspacePath = "/Users/test/.zcode/workspace/default";
     stableHookValues.projectOptions.push({
       workspacePath: conversationWorkspacePath,
@@ -506,7 +526,7 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(container.textContent).not.toContain("default");
   });
 
-  it("会话创建的分钟计划只显示自定义且仅打开返回不提示保存", async () => {
+  it("a session-created minute plan shows custom only; merely opening it and going back must not prompt to save", async () => {
     const onBack = vi.fn();
     render(
       createElement(AutomationEditView, {
@@ -524,8 +544,9 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.queryByText("automations.customRepeat.compactFrequency")).not.toBeNull();
     expect(stableHookValues.selectRegistrations).toBe(0);
 
-    // Wait for the Select registration-race empty callback to fire before returning, reproducing
-    // the "merely opening the detail view marks unsaved changes" regression.
+    // Wait for the Select registration-race empty callback to fire before going
+    // back, reproducing the "merely opening the detail view marked it unsaved"
+    // regression.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
     });
@@ -536,7 +557,7 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.queryByText("automations.unsaved.title")).toBeNull();
   });
 
-  it("UI 创建的相同分钟计划仍使用可视化调度控件", async () => {
+  it("the same minute plan created from the UI still uses the visual schedule controls", async () => {
     render(
       createElement(AutomationEditView, {
         editing: uiCreatedAutomation,
@@ -554,7 +575,7 @@ describe("AutomationEditView session-created dirty state", () => {
     expect(screen.getByText("automations.customRepeat.compactFrequency")).toBeTruthy();
   });
 
-  it("会话创建任务由用户重设调度后，重新打开仍恢复可视化调度控件", async () => {
+  it("after the user resets the schedule of a session-created automation, reopening still restores the visual controls", async () => {
     render(
       createElement(AutomationEditView, {
         editing: sessionCreatedUiResetAutomation,
@@ -573,7 +594,7 @@ describe("AutomationEditView session-created dirty state", () => {
     );
   });
 
-  it("删除会话来源的自定义调度后切换到 UI 调度入口", () => {
+  it("deleting the session-sourced custom schedule switches to the UI schedule entry", () => {
     render(
       createElement(AutomationEditView, {
         editing: sessionCreatedAutomation,

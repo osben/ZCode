@@ -57,7 +57,7 @@ function render(ui: ReactNode) {
 
 vi.mock("@/components/ui/toast.js", () => ({ dismissToast, toast }));
 
-// 推荐容器新增共享偏好读取；单测沿用独立 hook mock，避免依赖真实 ServiceProvider。
+// The recommendations container now reads shared preferences; this suite keeps a standalone hook mock to avoid the real ServiceProvider.
 vi.mock("@/hooks/useSettingService.js", () => {
   const value = {
     settings: { proactiveSuggestionsEnabled: false, onboardingOccupation: null },
@@ -81,7 +81,7 @@ vi.mock("@/logger.js", () => ({
 }));
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => {
-  // 生产 hook 会 memoize resolution/services；测试也必须保持引用稳定，否则 effect setState 后会被假服务引用反复触发。
+  // The production hook memoizes resolution/services; the test must keep references stable too, otherwise effect setState re-fires on each fake service reference.
   const services = {
     clientScenesService: { list: listClientScenes },
     pluginManagementService: {
@@ -1143,7 +1143,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
       )
       .mockReturnValueOnce(
         new Promise(() => {
-          // 第二次安装保持 pending，用于验证恢复后的确认按钮确实可重试。
+          // The second install stays pending to verify the restored confirm button really retries.
         }),
       );
     render(
@@ -1502,9 +1502,7 @@ describe("ConversationDraftSuggestedPromptsContainer", () => {
     });
     expect(getPluginReferenceCatalog).not.toHaveBeenCalled();
     expect(
-      toast.mock.calls.some(
-        ([message]) => String(message).includes("取消") || String(message).includes("中断"),
-      ),
+      toast.mock.calls.some(([message]) => /cancel|abort|interrupt/u.test(String(message))),
     ).toBe(false);
     expect(document.querySelector("[data-draft-suggested-plugin-popover]")).toBeNull();
   });

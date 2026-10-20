@@ -27,7 +27,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 }));
 afterEach(cleanup);
 
-it("恢复标签使用短句并分隔状态，详情保留完整恢复说明", () => {
+it("recovery tag uses short phrases and separates state; details keep the full recovery note", () => {
   const presentation = resolveRemoteConnectionPresentation({
     state: "retrying",
     recoveryAttempt: 2,
@@ -58,7 +58,7 @@ it("恢复标签使用短句并分隔状态，详情保留完整恢复说明", (
   expect(screen.getByText("Docker · dev")).toBeTruthy();
 });
 
-it("状态标签与详情卡显示需要处理及更新方向", () => {
+it("status tag and detail card show attention needed and the update direction", () => {
   const presentation = resolveRemoteConnectionPresentation({
     state: "needs-upgrade",
     upgradeTarget: "controller",
@@ -77,7 +77,7 @@ it("状态标签与详情卡显示需要处理及更新方向", () => {
   );
 });
 
-it("导航点读取模型的进行中色，恢复进度是可见文字", () => {
+it("navigation dot reads the model in-progress color; recovery progress stays visible text", () => {
   const presentation = resolveRemoteConnectionPresentation({
     state: "retrying",
     recoveryAttempt: 2,
@@ -101,7 +101,7 @@ it("导航点读取模型的进行中色，恢复进度是可见文字", () => {
   ).toContain("progress-surface-foreground");
 });
 
-it("任务行设备标签读取同一服务快照的安装门禁", async () => {
+it("task-row device label reads the install gate from the same service snapshot", async () => {
   const emitter = new Emitter();
   const management = {
     getSnapshot: async () => ({
@@ -128,7 +128,7 @@ it("任务行设备标签读取同一服务快照的安装门禁", async () => {
   expect(await screen.findByText(expectedCopy("remote.status.needsInstall"))).toBeTruthy();
 });
 
-it("向导按下载失败分类展示标题，只在本地下载时提供切换操作", () => {
+it("wizard shows the download-failure title by category and only offers the switch action for local downloads", () => {
   const onRetry = vi.fn();
   const target = {
     kind: "ssh" as const,
@@ -156,25 +156,28 @@ it("向导按下载失败分类展示标题，只在本地下载时提供切换�
   expect(onRetry).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])("连接中补凭据可显隐且不触发提交：口令=%s", (passphrase) => {
-  const onSubmit = vi.fn();
-  const child = createElement(RemoteConnectionConnectingStep, {
-    kind: "ssh",
-    errorMessage: "",
-    loading: false,
-    logs: [],
-    onBack: vi.fn(),
-    onRetry: vi.fn(),
-    credentials: { value: "secret", passphrase, onChange: vi.fn(), onSubmit },
-  });
-  render(createElement(PlatformProvider, { platform: {} as never, children: child }));
-  const input = screen.getByLabelText(
-    passphrase ? expectedCopy("ssh.privateKeyPassphrase") : expectedCopy("ssh.password"),
-  );
-  expect(input.getAttribute("type")).toBe("password");
-  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
-  expect(input.getAttribute("type")).toBe("text");
-  fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
-  expect(input.getAttribute("type")).toBe("password");
-  expect(onSubmit).not.toHaveBeenCalled();
-});
+it.each([false, true])(
+  "credentials shown while connecting toggle visibility without submitting: passphrase=%s",
+  (passphrase) => {
+    const onSubmit = vi.fn();
+    const child = createElement(RemoteConnectionConnectingStep, {
+      kind: "ssh",
+      errorMessage: "",
+      loading: false,
+      logs: [],
+      onBack: vi.fn(),
+      onRetry: vi.fn(),
+      credentials: { value: "secret", passphrase, onChange: vi.fn(), onSubmit },
+    });
+    render(createElement(PlatformProvider, { platform: {} as never, children: child }));
+    const input = screen.getByLabelText(
+      passphrase ? expectedCopy("ssh.privateKeyPassphrase") : expectedCopy("ssh.password"),
+    );
+    expect(input.getAttribute("type")).toBe("password");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.showPassword") }));
+    expect(input.getAttribute("type")).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: expectedCopy("ssh.hidePassword") }));
+    expect(input.getAttribute("type")).toBe("password");
+    expect(onSubmit).not.toHaveBeenCalled();
+  },
+);

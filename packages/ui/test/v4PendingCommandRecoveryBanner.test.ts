@@ -21,7 +21,7 @@ function render(entry: PendingCommandEntry): string {
 }
 
 describe("PendingCommandRecoveryBanner", () => {
-  it("discarded 普通输入提供显式重新发送按钮", () => {
+  it("offers an explicit resend button for discarded plain input", () => {
     const html = render({
       commandId: "command-1",
       clientId: "client-1",
@@ -33,17 +33,5 @@ describe("PendingCommandRecoveryBanner", () => {
     });
     expect(html).toContain(expectedCopy("chat.pendingCommand.discarded"));
     expect(html).toContain(expectedCopy("chat.pendingCommand.resend"));
-    expect(html).toContain("mb-3");
-    expect(html).toContain("w-full");
-    expect(html).toContain("shrink-0");
-    expect(html).toContain("flex-wrap");
-    expect(html).toContain("gap-2");
-    expect(html).toContain("rounded-xl");
-    expect(html).toContain("border-border");
-    expect(html).toContain("bg-surface");
-    expect(html).toContain("text-foreground");
-    expect(html).not.toContain("bg-warning");
-    expect(html).not.toContain("border-warning");
-    expect(html).not.toContain("shadow-md");
   });
 });

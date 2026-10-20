@@ -4,12 +4,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SourceServerManagementSnapshot } from "@zcode/shared";
 
-import { TEST_LOCALE } from "./helpers/uiCopy.js";
-
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: { formatMessage: ({ id }: { id: string }) => id },
-    locale: TEST_LOCALE,
+    locale: "en-US",
   }),
 }));
 
@@ -79,7 +77,7 @@ function renderDeviceStep(snapshot: SourceServerManagementSnapshot) {
   return onSelectProfile;
 }
 
-/** 合同 §8.1.1 线路选择规则：preferred 有效用之 → 已删/归档回退第一条 active → 无 active 禁用。 */
+/** Contract §8.1.1 route selection: use a valid preferred profile -> fall back to the first active one if retired/archived -> disable when none is active. */
 describe("RemoteConnectionDeviceStep preferred profile fallback", () => {
   it("connects through the preferred profile when it is still active", () => {
     const onSelectProfile = renderDeviceStep(

@@ -89,10 +89,11 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
-      # Tests do not diff against history; a shallow clone is enough.
+      # Affected selection diffs against the merge-base with the base branch (specs/pr-affected-unit-tests.md);
+      # the merge-base needs history, like the checks job.
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -156,4 +157,22 @@ jobs:
         run: node scripts/fork-format-pending.mjs --fetch
 
       - name: Tests
-        run: pnpm test
+        # Affected unit execution per specs/pr-affected-unit-tests.md: Vitest official selection against
+        # the PR's merge-base; full suite on manifest changes, full selection, and in the scheduled run.
+        env:
+          # Node 26's experimental Web Storage shadows jsdom's localStorage. scripts/run-vitest.mjs
+          # injects this flag for the full CLI run and run-pre-push.mjs for the affected runner; a
+          # direct affected invocation needs it on the process before Vitest starts.
+          NODE_OPTIONS: --no-experimental-webstorage
+        run: |
+          set -euo pipefail
+          base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          # Dependency manifests are invisible to the import graph (forceRerunTriggers globs do not
+          # match the files themselves), so manifest changes fall back to the full unit suite.
+          if git diff --name-only "$base" HEAD | grep -qxE 'pnpm-lock\.yaml|(.*/)?package\.json'; then
+            echo "[tests] dependency manifest changed since $base: running full unit suite"
+            pnpm test:unit
+          else
+            pnpm test:unit:affected -- --base "$base" --on-full run
+          fi
+          pnpm test:node

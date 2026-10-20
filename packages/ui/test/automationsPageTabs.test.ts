@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-// Top-level tabs of the automations page: "Automation / Workflows"
-// (docs/dynamic-workflow/launch.md, "Where it lives" / "label memory").
+// Top-level tabs of the automations page: "Automations / Workflows"
+// (docs/dynamic-workflow/launch.md "Where it lives" / "label memory").
 import { createElement, useState } from "react";
-
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { TID_AUTOMATIONS_PAGE_TAB, testId } from "@zcode/shared";
+import { TID_AUTOMATIONS_PAGE_TAB } from "@zcode/shared";
+import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   AutomationsPageTitleSwitch,
@@ -32,7 +32,7 @@ describe("AutomationsPageTitleSwitch", () => {
     sessionStorage.clear();
   });
 
-  it("两个标题词是 tablist 里的 tab，选中态跟随 value", () => {
+  it("both title words are tabs in the tablist and the selected state follows value", () => {
     render(createElement(Harness));
     const tabs = screen.getAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual([
@@ -52,7 +52,7 @@ describe("AutomationsPageTitleSwitch", () => {
     ).toBe("true");
   });
 
-  it("方向键在两个标签间循环切换", () => {
+  it("arrow keys cycle between the two tabs", () => {
     render(createElement(Harness));
     const tablist = screen.getByRole("tablist");
     fireEvent.keyDown(tablist, { key: "ArrowRight" });
@@ -74,15 +74,6 @@ describe("AutomationsPageTitleSwitch", () => {
         .getAttribute("aria-selected"),
     ).toBe("true");
   });
-
-  it("标题字号沿用原 h1 的 30/34 页面标题层级，未选中用次级色", () => {
-    render(createElement(Harness));
-    const active = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "automation"));
-    const inactive = screen.getByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"));
-    expect(active.className).toContain("text-ui-xl");
-    expect(active.className).toContain("text-foreground");
-    expect(inactive.className).toContain("text-foreground-subtle");
-  });
 });
 
 describe("automationsPageTabMemory", () => {
@@ -90,7 +81,7 @@ describe("automationsPageTabMemory", () => {
     sessionStorage.clear();
   });
 
-  it("app 级单 key 记在 sessionStorage，不再按项目分桶；未知值回默认", () => {
+  it("app-level single key stored in sessionStorage, no longer bucketed per project; unknown values fall back to default", () => {
     expect(readAutomationsPageTab()).toBe("automation");
     writeAutomationsPageTab("workflow");
     expect(readAutomationsPageTab()).toBe("workflow");

@@ -2,11 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import enUS from "@/i18n/locales/en-US.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 /**
- * §9 门禁 1（弹窗部分）：connectedBanner 与识别卡的占位符必须渲染为实值。
- * mock 复刻 IntlProvider 真实语义（真实 en-US 消息 + replaceAll 插值）。
+ * §9 gate 1 (dialog part): placeholders in connectedBanner and the recognized-device card must
+ * render as real values. The mock replicates IntlProvider's real semantics (real en-US messages
+ * + replaceAll interpolation).
  */
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -21,7 +21,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
         return message;
       },
     },
-    locale: TEST_LOCALE,
+    locale: "en-US",
   }),
 }));
 
@@ -65,10 +65,10 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("remote.status.connected"));
+    expect(html).toContain("Connected");
     expect(html).toContain("home-lab");
     expect(html).toContain("v3.8.1");
-    expect(html).not.toContain(`${expectedCopy("remote.status.connected")} dev`);
+    expect(html).not.toContain("Connected dev");
     expect(html).not.toMatch(/\{(?:device|profile|version)\}/u);
   });
 
@@ -86,17 +86,17 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("remote.phaseSub.identifyExisting", { device: "dev" }));
+    expect(html).toContain("Connected to device dev");
     expect(html).not.toContain("remote.recognizedDeviceBody");
     expect(html).not.toMatch(/\{(?:device|profile)\}/u);
   });
 
-  it("版本不兼容时将无效重试替换为就地更新", () => {
+  it("replaces the unusable retry with an in-place update on version incompatibility", () => {
     const html = renderToStaticMarkup(
       createElement(RemoteConnectionConnectingStep, {
         kind: "ssh",
         logs: [],
-        errorMessage: "远程设备版本不兼容",
+        errorMessage: "Remote device version incompatible",
         loading: false,
         upgradeRequired: true,
         onUpgrade: vi.fn(),
@@ -105,7 +105,7 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain(expectedCopy("remote.action.update-server"));
-    expect(html).not.toContain(`>${expectedCopy("common.retry")}</button>`);
+    expect(html).toContain("Update remote device");
+    expect(html).not.toMatch(/>Retry<\/button>/u);
   });
 });

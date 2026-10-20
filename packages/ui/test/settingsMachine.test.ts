@@ -11,7 +11,7 @@ import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
-describe("设置机器标注", () => {
+describe("settings machine annotation", () => {
   const remote: WorkspaceTabState = {
     id: "remote",
     kind: "workspace",
@@ -29,7 +29,7 @@ describe("设置机器标注", () => {
         SettingsMachinesProvider,
         {
           servers: [
-            { sourceServerId: "source-a", displayName: "Build machine", installState: "installed" },
+            { sourceServerId: "source-a", displayName: "Build server", installState: "installed" },
           ],
         },
         createElement(TooltipProvider, {}, child),
@@ -37,7 +37,7 @@ describe("设置机器标注", () => {
     );
   }
 
-  it("插件用户与项目菜单均写出设备名，远端用户不使用显示器图标", () => {
+  it("plugin user and project menus both write the device name; remote users do not use the monitor icon", () => {
     render(
       wrap(
         createElement(PluginScopeMenu, {
@@ -49,11 +49,16 @@ describe("设置机器标注", () => {
       ),
     );
     const trigger = screen.getByRole("button");
-    const machineName = expectedCopy("settings.machine.remote", { name: "Build machine" });
-    expect(trigger.textContent).toContain(machineName);
+    expect(trigger.textContent).toContain(
+      expectedCopy("settings.machine.remote", { name: "Build server" }),
+    );
     expect(trigger.querySelector(".lucide-monitor")).toBeNull();
     expect(trigger.querySelector(".lucide-cloud")).toBeTruthy();
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    expect(screen.getByRole("menuitemradio", { name: `project · ${machineName}` })).toBeTruthy();
+    expect(
+      screen.getByRole("menuitemradio", {
+        name: `project · ${expectedCopy("settings.machine.remote", { name: "Build server" })}`,
+      }),
+    ).toBeTruthy();
   });
 });
