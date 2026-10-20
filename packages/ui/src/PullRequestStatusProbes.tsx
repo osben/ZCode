@@ -73,6 +73,18 @@ export function PullRequestStatusProbes({
     [archivedTasks.items, pinnedTasks.items, timelineTasks.items],
   );
 
+  // Reason: taskCandidates is rebuilt on every task-list update, including streaming activity
+  // frames. Key the targets on the probe inputs only, so an unchanged probe does not re-run the
+  // probe effect (one RPC per workspace) on every frame.
+  const targetsSignature = JSON.stringify(
+    taskCandidates.map((task) => [
+      buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity),
+      task.taskId,
+      task.executionWorktree?.branchName ?? null,
+      task.executionWorktree?.path ?? null,
+      isTaskListRowRunning(task),
+    ]),
+  );
   const targets = useMemo(
     () =>
       workspaceTabs.flatMap((tab) => {
@@ -109,7 +121,10 @@ export function PullRequestStatusProbes({
           },
         ];
       }),
-    [taskCandidates, workspaceServiceLookup, workspaceTabs],
+    // taskCandidates is represented by targetsSignature; the closure reads the latest value
+    // whenever the signature changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Reason: content-keyed memo, see targetsSignature
+    [targetsSignature, workspaceServiceLookup, workspaceTabs],
   );
 
   usePullRequestStatuses(targets);

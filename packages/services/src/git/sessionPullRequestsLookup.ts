@@ -132,7 +132,12 @@ export function createSessionPullRequestsLookup(options: {
       return context;
     }
 
-    const auth = await options.gh.run({ cwd: workspacePath, args: ["auth", "status"] });
+    // Reason: without --hostname, gh exits non-zero when any configured host (e.g. GHE) has a
+    // bad token, which would disable GitHub.com PR status for a valid github.com login.
+    const auth = await options.gh.run({
+      cwd: workspacePath,
+      args: ["auth", "status", "--hostname", "github.com"],
+    });
     if (auth.exitCode !== 0 || auth.timedOut) {
       const context: WorkspaceContext = {
         state: "auth",
@@ -182,7 +187,9 @@ export function createSessionPullRequestsLookup(options: {
     for (const repository of defaultRepository
       ? [defaultRepository, ...githubRepositories]
       : githubRepositories) {
-      const id = `${repository.owner}/${repository.name}`;
+      // Reason: GitHub owner and repository names are case-insensitive; differently cased remotes
+      // are the same repository and must not produce duplicate jobs or PRs.
+      const id = `${repository.owner}/${repository.name}`.toLowerCase();
       if (seen.has(id)) {
         continue;
       }

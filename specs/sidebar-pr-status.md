@@ -6,8 +6,7 @@ Status: implemented (2026-10-18). Supersedes the "Merged" badge idea in
 ## Problem
 
 A worktree session usually ends in a pull request, but nothing in the app shows whether that PR is
-open, merged, closed, or blocked by failing checks. Users switch to GitHub to find out which
-sessions still need attention.
+open, merged, closed, or blocked by failing checks.
 
 ## Scope rules
 
@@ -37,15 +36,15 @@ sessions still need attention.
 
 ## Resolving `gh`
 
-- A Finder-launched app does not inherit the shell `PATH`. `gh` is spawned with the Host's runtime
-  env (`initializeRuntimeProcessEnv` applies the login-shell `PATH` before any spawn), the same env
-  the Git service uses, never a bare Main-process `PATH`.
+- `gh` is spawned with the Host's runtime env (login-shell `PATH` via `initializeRuntimeProcessEnv`),
+  the same env the Git service uses, never a bare Main-process `PATH`.
 - Binary candidates mirror `getGitBinaryCandidates`: optional `ZCODE_GH_BINARY` override, then `gh`,
   plus the standard Windows install path. Resolution is cached per Host like the git binary.
 - `GH_PROMPT_DISABLED=1`, `GH_NO_UPDATE_NOTIFIER=1`, `NO_COLOR=1`; every call has a timeout. `gh`
   must never wait for input.
-- Unauthenticated (`gh auth status` non-zero) → `unavailable` with reason `auth`; not found →
-  reason `no_gh`. Both are cached for the 10 min tier and shown as the muted line from scope rule 3.
+- Unauthenticated (`gh auth status --hostname github.com` non-zero; other hosts are ignored) →
+  `unavailable` with reason `auth`; not found → reason `no_gh`. Both are cached for the 10 min tier
+  and shown as the muted line from scope rule 3.
 
 ## Repository targeting (fork workflows)
 
@@ -53,9 +52,8 @@ sessions still need attention.
 
 - **Base repositories** (where PRs live): the `gh repo set-default --view` repository when set;
   otherwise **every distinct GitHub repository among the remotes** (typically `origin` and
-  `upstream`), each queried in its own batch. Picking one remote is wrong for long-lived forks: in
-  this repository `origin` = `osben/ZCode` (PRs into `integration`) and `upstream` =
-  `zai-org/ZCode`, and no `gh` default is set — an "upstream first" rule would miss every fork PR.
+  `upstream`), each queried in its own batch, deduplicated case-insensitively. Picking one remote
+  misses fork PRs (here `origin` and `upstream` each host PRs, and no `gh` default is set).
 - **Head owner** (who pushed the branch): owner of the branch's push remote
   (`branch.<name>.pushRemote` → `remote.pushDefault` → `branch.<name>.remote` → `origin`).
 - PRs whose `headRepositoryOwner` differs from the head owner are dropped (a contributor fork may use
@@ -71,8 +69,8 @@ The host resolves PRs for the union of:
 - the worktree's current `HEAD` branch (`git symbolic-ref --short HEAD` in `executionWorktree.path`),
   when the directory exists and HEAD is not detached.
 
-This covers an agent switching branches inside the worktree. `gh` runs with cwd = parent workspace
-(`workspacePath`), so a missing worktree directory still resolves the persisted branch.
+`gh` runs with cwd = `workspacePath`, so a missing worktree directory still resolves the persisted
+branch.
 
 ## Data contract
 
@@ -168,11 +166,12 @@ fragment Pr on PullRequest {
 Branch names are passed as GraphQL variables, never interpolated into the query text.
 
 - `checks` mapping over `statusCheckRollup`: `failing` if any CheckRun conclusion is `FAILURE`,
-  `ERROR`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, or any StatusContext state is `FAILURE` /
-  `ERROR` — except `optional_failing` when exactly those conclusions are present and
-  `mergeStateStatus === "UNSTABLE"` (all failing checks are non-required); else `running` if any
-  item is not completed (`QUEUED`, `IN_PROGRESS`, `PENDING`, `EXPECTED`); else `passing` when the
-  rollup is non-empty; else `none`.
+  `ERROR`, `TIMED_OUT`, `CANCELLED`, `ACTION_REQUIRED`, or any StatusContext state is `FAILURE`/
+  `ERROR` (`optional_failing` instead when `mergeStateStatus === "UNSTABLE"`); else `running` if any
+  item is not completed (`QUEUED`, `IN_PROGRESS`, `PENDING`, `EXPECTED`); else the aggregate
+  `statusCheckRollup.state` decides the contexts beyond the first 100 (`FAILURE`/`ERROR` → failing,
+  count 1; `PENDING`/`EXPECTED` → `running`); a truncated page (`totalCount > 100`) is `passing`
+  only for `SUCCESS`, else `running`; else `passing` when the rollup is non-empty; else `none`.
 
 **Primary PR:** open (non-draft) > draft > merged > closed; ties by newest `updatedAt`.
 **Row health:** the worst `checks`/`hasConflict` across all open and draft PRs, not only the primary

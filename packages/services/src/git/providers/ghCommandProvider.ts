@@ -96,9 +96,11 @@ export function createGhCommandProvider(options?: {
     }
     const binaryPath = ghBinary;
 
+    // Reason: --hostname is a `gh api` flag, not a root gh flag; placed before the subcommand gh
+    // rejects the call as unknown.
     const args =
-      command.hostname && command.hostname !== "github.com"
-        ? ["--hostname", command.hostname, ...command.args]
+      command.hostname && command.hostname !== "github.com" && command.args[0] === "api"
+        ? ["api", "--hostname", command.hostname, ...command.args.slice(1)]
         : command.args;
     const timeoutMs = command.timeoutMs ?? DEFAULT_GH_COMMAND_TIMEOUT_MS;
 

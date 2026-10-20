@@ -13,7 +13,11 @@ import {
   sessionPullRequestsTtlTier,
   sortSessionPullRequests,
 } from "./sessionPullRequestMapping.js";
-import { logStageChanges, unavailableStatus } from "./sessionPullRequestsStatus.js";
+import {
+  assembleBranchStatus,
+  logStageChanges,
+  unavailableStatus,
+} from "./sessionPullRequestsStatus.js";
 import {
   createSessionPullRequestsLookup,
   type BaseRepository,
@@ -221,13 +225,17 @@ export function createSessionPullRequestsService(options: {
 
     try {
       const branches = [...new Set(cacheKeys.map(branchOfCacheKey))].sort();
-      const ownerByBranch = new Map<string, string | null>();
-      for (const branch of branches) {
-        ownerByBranch.set(
-          branch,
-          await resolveHeadOwner(workspacePath, branch, context.remoteUrlByName),
-        );
-      }
+      const ownerByBranch = new Map<string, string | null>(
+        await Promise.all(
+          branches.map(
+            async (branch) =>
+              [
+                branch,
+                await resolveHeadOwner(workspacePath, branch, context.remoteUrlByName),
+              ] as const,
+          ),
+        ),
+      );
 
       const jobs: Array<{ repository: BaseRepository; branches: string[] }> = [];
       for (const repository of context.baseRepositories) {
@@ -260,6 +268,17 @@ export function createSessionPullRequestsService(options: {
         while (cursor < jobs.length) {
           const job = jobs[cursor]!;
           cursor += 1;
+          // Reason: the GraphQL quota is shared per token, so one rate-limit signal invalidates
+          // the rest of the flush. Skipped branches are marked rate limited, not failed.
+          if (rateLimitActive()) {
+            for (const branch of job.branches) {
+              const aggregate = aggregateByBranch.get(branch);
+              if (aggregate) {
+                aggregate.rateLimited = true;
+              }
+            }
+            continue;
+          }
           const batch = await runGraphqlBatch(
             workspacePath,
             job.repository,
@@ -403,7 +422,18 @@ export function createSessionPullRequestsService(options: {
           // as if the refresh had completed, and would leave an unhandled rejection behind.
           flushBranches(workspaceKey, workspacePath, context, keys).then(
             () => resolvePromise(),
-            (error: unknown) => rejectPromise(error),
+            (error: unknown) => {
+              // Reason: the fallback answers from the cache, so cached branches must be marked
+              // stale and held back for the retry delay; otherwise the next request re-probes at once.
+              const retryNotBeforeMs = now() + ERROR_RETRY_DELAY_MS;
+              for (const key of keys) {
+                const previous = branchEntries.get(key);
+                if (previous) {
+                  branchEntries.set(key, { ...previous, stale: true, retryNotBeforeMs });
+                }
+              }
+              rejectPromise(error);
+            },
           );
         }, coalesceWindowMs);
         timer.unref?.();
@@ -417,41 +447,10 @@ export function createSessionPullRequestsService(options: {
   }
 
   function assembleTaskStatus(workspaceKey: string, branches: string[]): SessionPullRequestStatus {
-    const servingStaleDueToRateLimit = rateLimitActive();
     const entries = branches
       .map((branch) => branchEntries.get(cacheKey(workspaceKey, branch)))
       .filter((entry): entry is BranchEntry => entry !== undefined);
-    const pullRequests = sortSessionPullRequests(entries.flatMap((entry) => entry.pullRequests));
-    const primary = pullRequests[0] ?? null;
-    const anyReady = entries.some((entry) => entry.state === "ready");
-    const stale =
-      entries.some((entry) => entry.stale) ||
-      (servingStaleDueToRateLimit && pullRequests.length > 0);
-    const fetchedAtMs =
-      entries.length > 0 ? Math.max(...entries.map((entry) => entry.fetchedAtMs)) : 0;
-    // A branch set with no entry at all means "never fetched": rate_limited
-    // while backoff blocks the refresh, otherwise a plain empty ready state.
-    let state: SessionPullRequestStatus["state"] = "ready";
-    if (entries.length === 0) {
-      state = servingStaleDueToRateLimit ? "rate_limited" : "ready";
-    } else if (!anyReady) {
-      state = entries.every((entry) => entry.state === "rate_limited")
-        ? "rate_limited"
-        : "unavailable";
-    }
-    return {
-      state,
-      unavailableReason:
-        state === "unavailable"
-          ? (entries.find((entry) => entry.unavailableReason !== null)?.unavailableReason ??
-            "error")
-          : null,
-      source: "branch",
-      pullRequests,
-      primaryNumber: primary?.number ?? null,
-      fetchedAt: fetchedAtMs > 0 ? new Date(fetchedAtMs).toISOString() : null,
-      stale,
-    };
+    return assembleBranchStatus(entries, rateLimitActive());
   }
 
   async function getSessionPullRequests(
