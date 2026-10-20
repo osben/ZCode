@@ -2535,7 +2535,8 @@ describe("workspaceSidePane", () => {
       },
       "subagent-directory": { tab: { ...base, type: "subagent-directory" }, owner: "root" },
       "selection-side-chat": { tab: { ...base, type: "selection-side-chat" }, owner: "parent" },
-      "plan-detail": { tab: { ...base, type: "plan-detail", markdown: "plan" }, owner: "parent" },
+      // 计划详情的生命周期与可见性属于 root task（rootSessionId ?? parentSessionId），与 fork 一致。
+      "plan-detail": { tab: { ...base, type: "plan-detail", markdown: "plan" }, owner: "root" },
       "plugin-ui": {
         tab: { ...base, type: "plugin-ui", pluginId: "example", resourceUri: "ui://example/app" },
         owner: "parent",
