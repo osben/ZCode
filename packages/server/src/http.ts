@@ -1,8 +1,9 @@
 /* eslint-disable max-lines -- HTTP, WebSocket, and static-asset routes are registered together to preserve one authorization order. */
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { basename, extname, relative, resolve, sep } from "node:path";
-import { hostname } from "node:os";
+import { hostname, userInfo } from "node:os";
+import * as nodePath from "node:path";
+import { basename, extname, resolve } from "node:path";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
@@ -17,7 +18,11 @@ import {
   ProxyChannel,
   type ISocket,
 } from "@zcode/rpc";
-import type { TopicResourcePeers } from "@zcode/services/node";
+import {
+  SourceServerWorkspaceIdentityChannelServer,
+  type SourceServerWorkspaceIdentityMapper,
+  type TopicResourcePeers,
+} from "@zcode/services/node";
 import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
 import { TOPIC_RESOURCE_RELAY_CHANNEL } from "@zcode/shared";
 import {
@@ -38,7 +43,9 @@ import {
   formatLogPrefix,
   formatZodError,
   remoteTargetSchema,
+  serverRemoteInfoOutputSchema,
   SERVER_REMOTE_PROTOCOL_VERSION,
+  ZCODE_COMPATIBILITY_MANIFEST,
   ZCODE_RPC_HOST_CAPABILITY_HEADER,
   ZCODE_VERSION,
   type BotProvider,
@@ -95,13 +102,18 @@ function setupChannelServer(
   ws: WebSocket,
   services: ServiceCollection,
   clientMode: "desktop-continuous" | "web-remote-replayable",
+  workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper,
   resourcePeers?: TopicResourcePeers,
 ) {
   const socket = wrapWebSocket(ws);
   const protocol = new SocketProtocol(socket);
   const rawServer = new ChannelServer(protocol, "server");
   // Wrap with logging middleware so all RPC calls are recorded consistently.
-  const server = new LoggingChannelServer(rawServer, log);
+  const loggedServer = new LoggingChannelServer(rawServer, log);
+  // Workspace identity mapping is applied only when the host supplies a mapper (standalone server-cli).
+  const server = workspaceIdentityMapper
+    ? new SourceServerWorkspaceIdentityChannelServer(loggedServer, workspaceIdentityMapper)
+    : loggedServer;
   const agentService = services.getOptional(IZCodeAgentService);
   const reverseClient =
     clientMode === "desktop-continuous" && resourcePeers ? new ChannelClient(protocol) : undefined;
@@ -196,6 +208,9 @@ function isLoopbackHost(host: string): boolean {
 export interface HttpServerOptions {
   topicResourcePeers?: TopicResourcePeers;
   serverId?: string;
+  virtualProjects?: boolean;
+  migrationFailedPathCount?: number;
+  workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper;
   name?: string;
   host?: string;
   authToken?: string;
@@ -209,7 +224,7 @@ function readTrimmedEnv(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function resolveServerId(options: HttpServerOptions): string {
+export function resolveHttpServerId(options: HttpServerOptions = {}): string {
   return (
     options.serverId?.trim() || readTrimmedEnv("ZCODE_SERVER_ID") || hostname() || "zcode-server"
   );
@@ -232,8 +247,8 @@ function createServerInfo(
   options: HttpServerOptions,
   authToken: string | undefined,
 ): ServerRemoteInfo {
-  return {
-    serverId: resolveServerId(options),
+  return serverRemoteInfoOutputSchema.parse({
+    serverId: resolveHttpServerId(options),
     ...(options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME")
       ? { name: options.name?.trim() || readTrimmedEnv("ZCODE_SERVER_NAME") }
       : {}),
@@ -242,12 +257,16 @@ function createServerInfo(
     // Derived from the token only, so the advertised state cannot diverge from enforcement.
     authRequired: Boolean(authToken),
     workspaces: resolveServerWorkspaces(options),
+    compatibility: ZCODE_COMPATIBILITY_MANIFEST,
+    migration: { failedPathCount: options.migrationFailedPathCount ?? 0 },
+    identity: { osUser: userInfo().username, hostname: hostname() },
     capabilities: {
       desktopContinuous: true,
       websocketRpc: true,
+      ...(options.virtualProjects ? { virtualProjects: true } : {}),
       processResourceTelemetry: true,
     },
-  };
+  });
 }
 
 const zcodeLiteTokenCookieName = "zcode_lite_token";
@@ -291,6 +310,13 @@ function parseCookieHeader(header: string | undefined): Map<string, string> {
 }
 
 function hasValidLiteToken(c: Context, token: string): boolean {
+  const authorization = c.req.header("authorization");
+  if (
+    authorization?.startsWith("Bearer ") &&
+    authorization.slice("Bearer ".length).trim() === token
+  ) {
+    return true;
+  }
   const url = new URL(c.req.url);
   if (url.searchParams.get("token") === token) {
     c.header(
@@ -352,9 +378,25 @@ function requiresToken(c: Context): boolean {
   return (c.req.method !== "GET" && c.req.method !== "HEAD") || targetsApiOrWs(c);
 }
 
-function isInsideDirectory(root: string, candidate: string): boolean {
-  const diff = relative(root, candidate);
-  return diff === "" || (!diff.startsWith("..") && !diff.includes(`..${sep}`));
+// Drive-qualified paths ("Z:/x", "Z:\x", "Z:x") resolve on Windows to another drive, including subst
+// and mapped network drives, so they are rejected before static resolution.
+const DRIVE_QUALIFIED_PATH_PATTERN = /^[a-zA-Z]:/;
+
+export function isPathDriveQualified(pathname: string): boolean {
+  return DRIVE_QUALIFIED_PATH_PATTERN.test(pathname);
+}
+
+// pathApi is injectable for cross-platform tests. On Windows, path.relative returns an absolute path
+// across drives (for example "Z:\marker.txt") that does not start with "..", so it was misread as
+// inside the static root. An absolute relative result is always treated as outside.
+export function isInsideDirectory(
+  root: string,
+  candidate: string,
+  pathApi: Pick<typeof nodePath, "relative" | "isAbsolute" | "sep"> = nodePath,
+): boolean {
+  const diff = pathApi.relative(root, candidate);
+  if (pathApi.isAbsolute(diff)) return false;
+  return diff === "" || (!diff.startsWith("..") && !diff.includes(`..${pathApi.sep}`));
 }
 
 async function resolveStaticFile(
@@ -365,6 +407,11 @@ async function resolveStaticFile(
   const root = resolve(staticRoot);
   const normalizedPathname = pathname === "/" ? "/index.html" : pathname;
   const relativePath = decodeURIComponent(normalizedPathname).replace(/^\/+/, "");
+  // Reject drive-qualified paths before resolve, including the %3A-decoded form. Respond 404 without
+  // entering the SPA fallback.
+  if (isPathDriveQualified(relativePath)) {
+    return null;
+  }
   let candidate = resolve(root, relativePath);
   if (!isInsideDirectory(root, candidate)) {
     return null;
@@ -453,7 +500,12 @@ export function createHttpServer(
     "/ws",
     upgradeWebSocket(() => ({
       onOpen(_event, ws) {
-        setupChannelServer(ws.raw as WebSocket, services, "web-remote-replayable");
+        setupChannelServer(
+          ws.raw as WebSocket,
+          services,
+          "web-remote-replayable",
+          options.workspaceIdentityMapper,
+        );
       },
     })),
   );
@@ -464,6 +516,7 @@ export function createHttpServer(
         ws.raw as WebSocket,
         services,
         "desktop-continuous",
+        options.workspaceIdentityMapper,
         options.topicResourcePeers,
       );
     },
@@ -572,7 +625,12 @@ export function createHttpServer(
             .register(ISystemService, connection.services.systemService)
             .register(ITerminalService, connection.services.terminalService);
 
-          setupChannelServer(ws.raw as WebSocket, remoteServices, "web-remote-replayable");
+          setupChannelServer(
+            ws.raw as WebSocket,
+            remoteServices,
+            "web-remote-replayable",
+            options.workspaceIdentityMapper,
+          );
         },
         onClose() {
           claimedConnection?.dispose();
