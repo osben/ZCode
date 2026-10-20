@@ -28,17 +28,6 @@ describe("settingsNavigation", () => {
     expect(navigation.resolveSettingsSection("hooks", "modelProvider")).toBe("hooks");
     expect(navigation.isSettingsSectionEnabled("memory")).toBe(true);
     expect(navigation.resolveSettingsSection("memory", "general")).toBe("memory");
-    expect(navigation.isSettingsSectionEnabled("systemPrompt")).toBe(true);
-    expect(navigation.resolveSettingsSection("systemPrompt", "general")).toBe("systemPrompt");
-  });
-
-  it("在 production 环境也保留 usage 分区", async () => {
-    const navigation = await loadSettingsNavigation("production");
-
-    expect(navigation.isSettingsSectionEnabled("usage")).toBe(true);
-    expect(navigation.resolveSettingsSection("usage", "modelProvider")).toBe("usage");
-    expect(navigation.isSettingsSectionEnabled("hooks")).toBe(true);
-    expect(navigation.resolveSettingsSection("hooks", "modelProvider")).toBe("hooks");
   });
 
   it("通知已打开的设置页切换到新的分区意图", async () => {

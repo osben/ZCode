@@ -1,9 +1,8 @@
-// Pure selectors for the dwf live overlay view: one run from workflowRuns + the static causality graph →
-// statuses / animatedEdges, plus lane → actor instance resolution (the phase 5 transcript drilldown consumes it).
-// See docs/dynamic-workflow/presentation.md "Node status" / "Status aggregation" and
-// apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md "Joining runtime instances" (live view v1 does not
-// expand; it joins by site id and aggregates over instances) and "Joining runtime instances" (copies with a source
-// are then narrowed by actor lane).
+// dwf 实时叠加视图的纯选择器：workflowRuns 的一条 run + 静态因果图 → statuses / animatedEdges，
+// 以及车道 → actor 实例的解析（phase 5 的 transcript 下钻消费它）。
+// 见 docs/dynamic-workflow/presentation.md「Node status」「状态聚合」与 apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md 的
+// 「Joining runtime instances」（live view v1 不展开，按 site id 关联并在实例上聚合）以及
+// 「Joining runtime instances」（带 source 的拷贝再按 actor 车道收窄）。
 import { describe, expect, it } from "vitest";
 import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -86,8 +85,7 @@ describe("workflowRunOverlay 相位映射", () => {
   it("没有实例的 step 没有条目：缺席不是状态，不写成 pending", () => {
     const { statuses } = workflowRunOverlay(runWith([]), graph);
     expect(statuses).toEqual({});
-    // When only one site is observed the table has only it: sites the control flow never reached do not appear as
-    // pending.
+    // 只观察到一个站点时表里只有它：控制流没走的站点不会以 pending 出现。
     expect(
       workflowRunOverlay(
         runWith([{ siteId: "ask#1", ordinal: 1, phase: "settled", outcome: "ok" }]),
@@ -144,7 +142,7 @@ describe("workflowRunOverlay 实例聚合（叠加视图必须坍缩）", () => 
       graph,
     );
     expect(statuses["ask#2"]).toBe("running");
-    // Failed + queued is also running (the old ruling that running outranks failed).
+    // 已失败 + 排队同样是 running（running 优先于 failed 的旧裁决）。
     expect(
       workflowRunOverlay(
         runWith([
@@ -196,9 +194,8 @@ describe("workflowRunOverlay animatedEdges", () => {
   });
 });
 
-// The graph after may-set lane expansion: one site, two cards, each assigned to its candidate lane; `source` is
-// their shared site id.
-// See apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md "Joining runtime instances".
+// may-set 车道展开后的图：一个站点两张卡片，各归其候选车道，`source` 是它们共同的站点 id。
+// 见 apps/zcode-cli/packages/dynamic-workflow/docs/analysis.md「Joining runtime instances」。
 const expandedGraph: WorkflowCausalityGraphData = {
   steps: [
     {
@@ -296,10 +293,9 @@ describe("workflowRunOverlay 展开拷贝的车道路由", () => {
   });
 });
 
-// ——— Addendum 2026-09-10 "the overlay view also narrows by birth phase": phase copies are narrowed by the
-// instance's phaseName ———
+// ——— 追记 2026-09-10「叠加视图也按出生阶段收窄」：阶段拷贝按实例的 phaseName 收 ———
 describe("workflowRunOverlay 阶段拷贝的阶段路由", () => {
-  // One ask site claimed by 5 phases: 5 copies, one source, one lane.
+  // 一个 ask 站点被 5 个阶段认领：5 份拷贝、同一个 source、同一条车道。
   const NAMES = ["调研", "起草", "校对", "复核", "收尾"];
   const phasedGraph: WorkflowCausalityGraphData = {
     steps: NAMES.map((_, i) => ({
@@ -392,16 +388,15 @@ describe("workflowRunOverlay 阶段拷贝的阶段路由", () => {
       ]),
       phasedGraph,
     );
-    // The unstamped failed lands on all five copies; the first also has a running stacked on it, and running wins.
+    // 无戳的 failed 落到全部五份；第 1 份还叠着一个 running，running 优先。
     expect(copies(statuses)).toEqual(["running", "failed", "failed", "failed", "failed"]);
   });
 });
 
 describe("workflowRunOverlay 不带 source 的 step 关联行为不变", () => {
   it("不做车道收窄：>4 候选回退的单卡在别的车道上跑也照常点亮", () => {
-    // The fallback single card (`lanes` exceeding the expansion cap) is drawn on lanes[0], but the instance may land
-    // on any candidate lane — narrowing by lane for steps without a source would permanently blank out this class of
-    // step's status.
+    // 回退单卡（`lanes` 超过展开上限）画在 lanes[0]，实例却可能落在任一候选车道上——
+    // 对不带 source 的 step 收窄车道等于把这类 step 的状态永久熄灭。
     const { statuses } = workflowRunOverlay(
       runWith([{ siteId: "ask#2", ordinal: 1, phase: "executing", actorSiteId: "actor#7" }]),
       expandedGraph,

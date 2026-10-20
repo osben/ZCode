@@ -13,7 +13,7 @@ it.each(["next input", "  submitted draft  "])(
   "PD06/07 首发未知跨 TTL 保留，重载后 duplicate 交接：%s",
   (restoredText) => {
     const storage = new MemoryStorage();
-    vi.stubGlobal("window", { localStorage: storage });
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn(() => true) });
     const scope = { clientNamespace: "desktop", hostId: "local", projectId: null };
     try {
       const pending = ensurePendingTaskDraft(scope);
@@ -66,7 +66,7 @@ it.each(["next input", "  submitted draft  "])(
 );
 it("PD06 首发账本写入失败时不能允许上行或留下不可恢复的锁定", () => {
   const storage = new MemoryStorage();
-  vi.stubGlobal("window", { localStorage: storage });
+  vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn(() => true) });
   try {
     const scope = { clientNamespace: "desktop", hostId: "local", projectId: null };
     const pending = ensurePendingTaskDraft(scope);

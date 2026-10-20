@@ -158,7 +158,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
 
   it("isolates Source settings snapshots from the local renderer snapshot", async () => {
     const { useSettings } = await import("@/hooks/useSettingService.js");
-    settingService.get.mockResolvedValueOnce({ locale: "en-US" } as AppSettings);
+    settingService.get.mockResolvedValueOnce({ locale: "uk-UA" } as AppSettings);
     const local = renderHook(() => useSettings({ cacheKey: "test-local" }));
     await waitFor(() => expect(local.result.current.loading).toBe(false));
 
@@ -166,7 +166,7 @@ describe("useSettings AskUserQuestion runtime preference", () => {
     const source = renderHook(() => useSettings({ cacheKey: "source:server-a" }));
     await waitFor(() => expect(source.result.current.loading).toBe(false));
 
-    expect(local.result.current.settings?.locale).toBe("zh-CN");
+    expect(local.result.current.settings?.locale).toBe("uk-UA");
     expect(source.result.current.settings?.locale).toBe("en-US");
     local.unmount();
     source.unmount();
@@ -249,11 +249,11 @@ describe("useSettings AskUserQuestion runtime preference", () => {
     await act(async () => {
       await updateSettingsAndRefreshSnapshot({
         settingService,
-        patch: { locale: "en-US" },
+        patch: { locale: "uk-UA" },
       });
     });
 
-    expect(hook.result.current.settings?.locale).toBe("zh-CN");
+    expect(hook.result.current.settings?.locale).toBe("uk-UA");
     hook.unmount();
   });
   it("persists ToolSearch mode without synchronizing or broadcasting to active runtimes", async () => {

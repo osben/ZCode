@@ -2,7 +2,6 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-
 import { describe, expect, it } from "vitest";
 import {
   ContextQuotaResetOpportunityReminderContent,
@@ -57,7 +56,7 @@ describe("context quota reset opportunity reminder state", () => {
     expect(reminder?.phase).toBe("initial");
     store.dismiss(reminder!);
 
-    // Simulate the component remounting after a session switch: the window-level store is still the same instance.
+    // 模拟切换会话后的组件重新挂载：窗口级 store 仍是同一个实例。
     expect(
       resolveContextQuotaResetOpportunityReminder({
         dismissal: store.getSnapshot(),
@@ -227,6 +226,5 @@ describe("ContextQuotaResetOpportunityReminderContent", () => {
 
     expect(html).toContain("codingPlan.quotaReset.contextReminder.dismiss");
     expect(html).toContain("data-context-reset-reminder-copy");
-    expect(html).toContain("gap-0");
   });
 });

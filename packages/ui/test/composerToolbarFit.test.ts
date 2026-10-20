@@ -46,8 +46,7 @@ it("does not clone a full toolbar that already fits on mount or resize", () => {
   expect(clone).not.toHaveBeenCalled();
 });
 
-// jsdom does no layout: only the geometry readings are substituted; the real DOM, the rulings,
-// and the per-phase spatial changes are preserved.
+// jsdom 不做排版：只替代几何读数，保留真实 DOM、裁决和各阶段的空间变化。
 function fixture() {
   const root = document.createElement("div");
   root.style.columnGap = "12px";
