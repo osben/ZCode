@@ -17,12 +17,11 @@ import {
   toolCallResumeWorkflowRunDisplaySchema,
 } from "./workflow-observation-display.js";
 
-// Structured display model for terminal toolCall output (ported from feat). The kind:"cua" branch
-// carries structured errorCode/suggestedAction/media (screenshot) content to the renderer. Before
-// consume-main, this union and toolOutputSchema.display were missing, so protocol-level Zod validation
-// stripped the Agent's entire display. The UI never received display?.kind === "cua", and CUA calls
-// fell back to generic rendering.
-const toolResultDisplaySchema = z.discriminatedUnion("kind", [
+// toolCall 终态 output 的结构化展示模型（port 自 feat；CUA 工具靠 kind:"cua" 分支把
+// errorCode/suggestedAction/media(screenshot) 等结构化内容带到 renderer）。consume-main 之前
+// 缺这个 union + toolOutputSchema.display 字段——协议层 zod 校验会把 agent 下发的 display 整个
+// strip 掉，导致 UI 永远拿不到 display?.kind==="cua"，CUA 工具调用退化成 fallback 渲染。
+export const toolResultDisplaySchema = z.discriminatedUnion("kind", [
   bashOutputDisplaySchema,
   z.object({
     kind: z.literal("file_diff"),

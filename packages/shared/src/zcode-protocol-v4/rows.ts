@@ -40,10 +40,12 @@ export type RowActions = NonNullable<z.infer<typeof rowActionsSchema>>;
 // Row-level metadata for workflow turns moved to workflow-row-meta.ts (max-lines); re-export names unchanged here.
 export {
   backgroundResultOriginMetaSchema,
+  workflowBlockedMetaSchema,
   workflowLaunchMetaSchema,
   workflowNotificationMetaSchema,
   workflowSettingsAmendMetaSchema,
   type BackgroundResultOriginMeta,
+  type WorkflowBlockedMeta,
   type WorkflowLaunchMeta,
   type WorkflowNotificationMeta,
   type WorkflowSettingsAmendMeta,

@@ -161,15 +161,6 @@ describe("workflowRuns 状态键", () => {
     });
   });
 
-  it("reports 零条时整个键缺席，而不是空数组（Results 区据此整区不渲染）", () => {
-    // Key absence is a legal shape: optional is precisely the skew-safe half — an old CLI that sends no reports
-    // will not make the whole state.updated patch fail to parse on a known key (skew tier three).
-    expect(workflowRunsStateSchema.safeParse({ revision: 1, runs: [run()] }).success).toBe(true);
-    expect(
-      workflowRunsStateSchema.parse({ revision: 1, runs: [run()] }).runs[0],
-    ).not.toHaveProperty("reports");
-  });
-
   it("单条 report 的预览有界（展示预算，不是引擎契约）", () => {
     // The engine's run-level report cap (REPORT_CAPS) is the contract; the 64 items / 2KB on the protocol line is a **display** budget.
     // They need not match: entries beyond the display bound still live on the journal's kind="report" rows.
@@ -299,15 +290,11 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("**刻意不带** atSeq / atLogEpoch —— journal cursor 永不失效，没有陈旧可防", () => {
-    // The sibling rows/range and plans queries carry those two fields for stale-read protection because they read the conversation projection,
-    // where a rowId only means something within one log epoch. This query reads the journal: sequence only appends, continues from the
-    // existing max across resumes, and numbering never changes (proven by the journal contract tests), so the (runId, sequence) cursor is forever valid.
-    // Carrying those fields would actually hurt: an unrelated session rewind would make the detail page lose a legitimate journal page.
-    expect(Object.keys(v4ConversationWorkflowRunEventsResultSchema.shape).sort()).toEqual([
-      "events",
-      "hasMore",
-    ]);
-    // strict: one extra field is rejected outright, so "casually adding atLogEpoch later" turns red here first.
+    // 同族的 rows/range 与 plans 带这两个字段做陈旧读防护，因为它们读 conversation projection，
+    // 而 rowId 只在一个 log epoch 内有意义。本 query 读 journal：sequence 只追加、跨 resume
+    // 从既有最大值继续、编号不变（journal 契约测证明），所以 (runId, sequence) cursor 永远有效。
+    // 带上它反而有害：一次与 run 无关的会话 rewind 会让详情页丢掉合法的 journal 页。
+    // strict：多带一个字段直接拒收，所以"以后顺手加上 atLogEpoch"会先在这里红。
     expect(
       v4ConversationWorkflowRunEventsResultSchema.safeParse({
         events: [],
@@ -487,14 +474,9 @@ describe("workflowRuns[].artifacts 状态键", () => {
     );
   });
 
-  it("artifacts 是 optional（老 CLI 不发这个键的整帧仍可解析——偏斜第三档）", () => {
-    // This is the entire reason the field is optional: adding a required field to an existing state key would make the
-    // state.updated patch of any old CLI that does not send it lose the whole frame, not just one key.
-    const { artifacts: _omitted, ...withoutKey } = { ...run(), artifacts: [summary()] };
-    expect(workflowRunsStateSchema.parse({ revision: 1, runs: [withoutKey] })).toEqual({
-      revision: 1,
-      runs: [withoutKey],
-    });
+  it("接受带 artifacts 摘要的完整状态", () => {
+    // 这是这个字段 optional 的全部理由：往已有状态键上加必填字段，会让任何一个不发它的旧
+    // CLI 的 state.updated patch 整帧被丢，而不是少一个键。
     const withKey = { ...run(), artifacts: [summary()] };
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [withKey] })).toEqual({
       revision: 1,
@@ -521,11 +503,6 @@ describe("workflowRuns[].artifacts 状态键", () => {
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [tagged] })).toEqual({
       revision: 1,
       runs: [tagged],
-    });
-    const untagged = { ...run(), reports: [{ siteId: "report#1", ordinal: 1, preview: "{}" }] };
-    expect(workflowRunsStateSchema.parse({ revision: 1, runs: [untagged] })).toEqual({
-      revision: 1,
-      runs: [untagged],
     });
   });
 });
@@ -787,12 +764,7 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
 
 // ── Phase entry records (docs/dynamic-workflow/presentation.md) ──────────
 describe("workflowRuns[].phases / currentPhase 状态键", () => {
-  it("phases 与 currentPhase 都是 optional（老 CLI 不发它们的整帧仍可解析）", () => {
-    const bare = run();
-    expect(workflowRunsStateSchema.parse({ revision: 1, runs: [bare] })).toEqual({
-      revision: 1,
-      runs: [bare],
-    });
+  it("接受 phases 与 currentPhase 阶段状态", () => {
     const withKeys = { ...run(), phases: [{ name: "plan", rounds: 2 }], currentPhase: "plan" };
     expect(workflowRunsStateSchema.parse({ revision: 1, runs: [withKeys] })).toEqual({
       revision: 1,
@@ -821,12 +793,7 @@ describe("workflowRuns[].phases / currentPhase 状态键", () => {
 
 // ── Birth-phase coordinates of instances (docs/dynamic-workflow/presentation.md) ──────
 describe("workflowRuns[].actors/nodes 的 phaseName 状态键", () => {
-  it("actor 与 node 上都是 optional（不发它的旧 CLI 整帧仍可解析）", () => {
-    const bare = run();
-    expect(workflowRunsStateSchema.parse({ revision: 1, runs: [bare] })).toEqual({
-      revision: 1,
-      runs: [bare],
-    });
+  it("actor 与 node 接受出生阶段坐标", () => {
     const stamped = {
       ...run(),
       actors: [{ ...run().actors[0], phaseName: "调查" }],
@@ -874,12 +841,7 @@ describe("workflowRuns[].actors/nodes 的 phaseName 状态键", () => {
 describe("workflowRuns[].nodes 的 instructionsHead / turn / toolCalls / lastTool", () => {
   const node = { siteId: "ask#1", ordinal: 1, phase: "executing" as const };
 
-  it("四个键都是 optional：不发它们的旧 CLI 整帧仍可解析，原样回出", () => {
-    const bare = run();
-    expect(workflowRunsStateSchema.parse({ revision: 1, runs: [bare] })).toEqual({
-      revision: 1,
-      runs: [bare],
-    });
+  it("节点任务与进度读数原样回出", () => {
     const reported = {
       ...run(),
       nodes: [

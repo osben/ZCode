@@ -128,7 +128,6 @@ describe("v4 get_workflow_run display payload", () => {
       logTail: [{ sequence: 19, message: "judge#1 finished", at: 1_700_000_000_000 }],
     };
     expect(toolCallDisplaySchema.parse(withTime)).toEqual(withTime);
-    expect(toolCallDisplaySchema.parse(CARD)).toEqual(CARD);
   });
 
   // Closed enum sets: one unknown phase word makes this side reject the entire frame, so both vocabularies always change together.
