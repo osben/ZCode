@@ -564,3 +564,17 @@ Status: PARTIAL. Only the `/plan` slice was done in this pass; the file hand-mer
 - Verified: `node scripts/check-test-copy.mjs` exit 0; `v4SlashCommands`, `promptInputTriggers`, `v4SessionPaneModelSwitchRecovery` tests 123/123 pass.
 - Not yet run: `pnpm typecheck`, `pnpm lint`, full `packages/ui/test` run.
 - Not done: task B (19-file hand-merge, `parts/uisrc3.txt`); task C (`workspace-grouped-tasks/` retirement).
+
+## ui parity composer
+
+Status: DONE for the six owned files. Working diff = upstream 0a1fc56d, with fork hunks kept only where a spec covers them.
+
+- `v4/ConversationComposer.tsx`: kept the fork. Every T-to-O hunk that changes behavior covers a spec'd feature: worktree queue and submission owner (composer-worktree-setup-steps), draft recovery and return-to-draft, incognito (incognito-session), voice dictation (voice-dictation), draft branch intent (composer-branch-switcher-semantics), and the props contract (ui-draft-send-path). Upstream B-to-T changes are present, checked by normalized diff. Fork English comments kept. `text-ui-xs` kept (ui-token-compliance).
+- `v4/composer/composerDraftStore.ts`: kept the fork. Its only changes are recovery records, the in-tab draft change event, and `moveV4ComposerDraft`, all for spec'd recovery. Upstream's blank-draft rule is replaced by the recovery-aware rule.
+- `v4/composer/useDraftConfigControl.ts`: kept the fork. Changes are the g2 model fill-in rules (`draft.modelSelection ?? ...`, and the root-draft fill-in). Spec: ui-upstream-sync-ledger-fix-g2.
+- `v4/composer/useComposerAttachments.ts`: kept the fork. Adds `captureSubmission`, `reuploadForSession`, and an id-scoped `prepareForSend`, which ui-draft-send-path and the worktree send path use. Comments are English (fork).
+- `v4/composer/V4ComposerToolbar.tsx`: kept the chatgpt plan picker badge (chatgpt-plan-signin.md). DROPPED the context-meter tone (`resolveContextBudgetTone`, `usageTone`, `data-usage-tone`, and the autoCompact fields in `taskUsage`). No spec covers it; the only record is ledger b5. The shared module `packages/shared/src/contextBudgetPolicy.ts` is now unused by the composer. Left in place (not owned here).
+- `v4/composer/ConversationBackgroundWorkTrigger.tsx`: taken from upstream verbatim. The fork's dream-work badge (`dreamCount`, MoonIcon, `getLatestDreamWork`) is dropped because no spec documents a composer dream badge. SessionPane's background-work condition (other agent) still counts dream works; coordinate there. `getLatestDreamWork` in `conversationStatusPanelModel.ts` is now unused by this file.
+- Tests: `packages/ui/test/v4ConversationBackgroundWorkTrigger.test.ts` replaced with upstream's test (CJK comments translated to English). Assertions unchanged.
+- Size guard: TEMPORARY block in `.staged-file-size-exemptions` for the five source files over 20 KB.
+- Verified: `pnpm typecheck` (ui refs, exit 0), `pnpm lint` 0 errors (94 warnings, none in owned files), `pnpm architecture:check --full` 0 violations, `node scripts/check-test-copy.mjs` exit 0, `pnpm fmt:check` ok, `node scripts/run-vitest.mjs run packages/ui/test` 1189 files passed, 3 skipped (pre-existing), 10980 tests passed.
