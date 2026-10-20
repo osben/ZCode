@@ -185,3 +185,6 @@ packages/ui/src/WorkspaceSidebar.tsx
 specs/nested-agents-md.md
 # Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
+# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
+packages/provider-node/test/provider-node-runtime.test.ts
+packages/provider/test/config-service.test.ts
