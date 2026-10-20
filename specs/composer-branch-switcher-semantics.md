@@ -1,6 +1,6 @@
 # Composer branch switcher semantics
 
-Status: §1 (draft branch intent) and §2 (guard) implemented 2026-10-15; §3 worktree-session Git targeting is implemented by per-path Git state; §4 decided (variant "Switch + branch rows") and implemented behind the renderer-local flag; ask-codex review adopted (Task/Base labels, dirty cues, HEAD-fallback disclosure, withdraw-not-disable); 2026-10-18: switching worktree mode ON selects the repository's main branch as the Base default.
+Status: §1 (draft branch intent) and §2 (guard) implemented 2026-10-15; §3 worktree-session Git targeting is implemented by per-path Git state; §4 decided (variant "Switch + branch rows") and implemented behind the renderer-local flag; ask-codex review adopted (Task/Base labels, dirty cues, HEAD-fallback disclosure, withdraw-not-disable); 2026-10-18: switching worktree mode ON selects the repository's main branch as the Base default; 2026-10-19: the Task/Base row value and the list checkmark are per-mode (the worktree Base override no longer names the project-mode task branch).
 
 ## Problem
 
@@ -68,6 +68,7 @@ Acceptance scenarios, validation and scope exclusions remain below.
 21. The project override wins over `origin/HEAD`; an `origin/HEAD`-derived name without a matching local branch resolves nothing → the Base row keeps the existing fallback (live current branch).
 22. A manual base pick after ON survives while the mode stays on; toggling OFF→ON again re-selects the main branch, replacing the previous stint's pick.
 23. Signals unavailable at toggle time (branch list still loading, merge-status probe failed, `baseRef` null) → no selection change; the existing fallback applies, and the toggle itself issues no git RPC.
+24. Toggling worktree OFF after any Base selection (manual pick or main-branch default) → the Task branch row, the chip, and the project-mode list checkmark all show the task branch (`intent ?? current`); the Base override is not rendered there and is never applied to the shared checkout. An explicit task-branch intent renders instead of the detached-HEAD label and is applied by the send switch.
 
 ## Validation
 

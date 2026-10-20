@@ -1,5 +1,17 @@
 # Files allowed to exceed the staged-file size limit (scripts/check-staged-file-tokens.mjs).
 # Add one repo-relative path per line.
+
+# Existing generated legal inventories; the generator verifies their inputs and hashes.
+THIRD-PARTY-NOTICES.md
+third-party/inventory.json
+# Existing upstream-sized documents: only the pinned pnpm version changes here.
+UI_PLUGIN.md
+UI_PLUGIN.en.md
+# Existing remote component generator; this repair only adds Linux target selection.
+scripts/prepare-prebuilds.mjs
+# Existing merged service exceeds the limit by 35 bytes; its implementation is unchanged here.
+packages/services/src/highspeed/highspeedCardService.ts
+
 packages/ui/src/ChatEmptyState.tsx
 packages/ui/src/i18n/locales/en-US.ts
 packages/ui/src/i18n/locales/uk-UA.ts
@@ -265,6 +277,13 @@ packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
 
+
+# Composer destination Task/Base row fix: the branch-switcher spec is one contract cross-referenced
+# by file+section from code comments; already over the limit at HEAD (merged via merge commits).
+# Split it into per-section documents later and remove this line.
+specs/composer-branch-switcher-semantics.md
+
+
 # TEMPORARY upstream 3.16.1 sync (PR 7b): the fork store keeps erase, children, usage rollup and compat factories; split with the sync factories removal.
 apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
 apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
@@ -356,5 +375,12 @@ packages/provider/test/config-service.test.ts
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
 
+
+# Existing oversized files touched by the bot lock resilience fix; split later.
+packages/services/src/bots/botsService.ts
+packages/services/test/botsChannelRuntime.test.ts
+
+
 # Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
 packages/services/test/highspeedCardService.test.ts
+
