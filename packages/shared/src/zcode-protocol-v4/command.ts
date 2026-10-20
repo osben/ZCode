@@ -146,12 +146,12 @@ export const commandPayloadSchemas = {
       newText: z.string(),
       conversationQuotes: conversationQuotesSchema.optional(),
       attachments: z.array(attachmentRefSchema).optional(),
-      // Treat an edited resend as a new active send: accept only the cards and execution materials prepared again for this request,
-      // and do not reuse credentials from the rewound historical message.
+      // 编辑重发按新的主动发送处理：只接受本次重新 prepare 得到的卡与执行材料，
+      // 不从被 rewind 的历史消息复用旧凭据。
       modelSelection: modelSelectionSchema.optional(),
       modelExecution: modelExecutionSchema.optional(),
       highspeedMeta: highspeedMessageMetaSchema.optional(),
-      // Default is preserve: switch only the conversation branch; rewind safely restores that turn’s files first.
+      // 缺省 preserve：仅切 conversation branch；rewind 会先安全恢复该轮文件。
       workspaceMode: z.enum(["preserve", "rewind"]).optional(),
     })
     .superRefine(requireModelSelectionForExecution),

@@ -326,12 +326,15 @@ export const useComposerWorktreePipelineStore = create<ComposerWorktreePipelineS
         createdAt: Date.now(),
         failureMessage,
       };
+      // The blocked submission is the draft composer's own scope, so its failure becomes the active
+      // entry even when another session's pipeline is active. Otherwise the destination control
+      // (which reads the active entry) would hide the specific message behind that pipeline.
       return {
         pipelineByWorkspaceKey: {
           ...state.pipelineByWorkspaceKey,
           [workspaceKey]: {
             ...workspace,
-            activeSessionKey: workspace.activeSessionKey ?? key,
+            activeSessionKey: key,
             entriesBySessionKey: { ...workspace.entriesBySessionKey, [key]: entry },
           },
         },

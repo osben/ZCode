@@ -32,6 +32,7 @@ export type {
   WebRemoteControlRelayAuthProofVector,
 } from "./web-remote-relay/index.js";
 export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
+import { z } from "zod";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
 /* eslint-disable max-lines -- the web remote-control shared protocol keeps both the legacy /web-remote types and the new external relay types; split by transport/app payload when it is broken up later. */
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
@@ -65,6 +66,14 @@ export interface WebRemoteControlContext {
   initialTaskId?: string;
   theme?: WebRemoteControlThemeSeed;
 }
+
+/** Renderer only notifies that the session changed; main must re-read local credentials. */
+export const webRemoteControlAuthStateChangeSchema = z
+  .object({
+    state: z.enum(["signed-in", "signed-out"]),
+  })
+  .strict();
+export type WebRemoteControlAuthStateChange = z.infer<typeof webRemoteControlAuthStateChangeSchema>;
 
 export type WebRemoteControlStatusKind =
   | "idle"

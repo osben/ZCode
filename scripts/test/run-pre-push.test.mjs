@@ -41,6 +41,7 @@ await appendFile(process.env.CALLS_PATH, JSON.stringify({
   args: process.argv.slice(2),
   cache: process.env.NODE_COMPILE_CACHE,
   disabled: process.env.NODE_DISABLE_COMPILE_CACHE,
+  affectedBase: process.env.ZCODE_AFFECTED_TEST_BASE,
 }) + '\\n');
 if (process.env.FAIL_STAGE && process.argv[3] === process.env.FAIL_STAGE) process.exit(7);
 `,
@@ -202,6 +203,19 @@ test("a failing stage preserves its status, reports timing and stops subsequent 
   assert.deepEqual(result.stages, allStages.slice(0, 2));
   assert.match(result.stdout, /architecture:check.*failed.*7.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
+});
+
+test("new branches pass the resolved merge-base to affected tests without origin/staging", async (t) => {
+  const f = await fixture(t);
+  await f.put("packages/example/src/index.ts", "changed\n");
+  const head = await f.commit();
+  // The fixture has no origin/staging; upstream's first-push fallback would fail here.
+  const result = await f.run({
+    ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${zeroSha}\n`,
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const affected = result.calls.find((call) => call.args[1] === "test:unit:affected");
+  assert.equal(affected.affectedBase, f.base);
 });
 
 test("invalid comparison bases fail rather than taking the skip path", async (t) => {

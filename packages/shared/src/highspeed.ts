@@ -239,5 +239,7 @@ export type HighspeedMockScenario =
   | "hit-fast"
   | "miss"
   | "hit-after-timeout"
+  | "hit-invalid-model"
+  | "hit-queue-edit"
   | "existing-foreign-task-card"
   | "expired-card";

@@ -3,6 +3,7 @@ import { projectTokenSuccessCodeSchema } from "./project-access-token-response.j
 import { API_KEY_USAGE_SCENE } from "./api-key-usage-scene.js";
 import { ProjectAccessTokenCache, ProjectAccessTokenError } from "./project-access-token.js";
 import { ZCODE_VERSION } from "./version.js";
+import { isCredentialDecryptError } from "./oauth.js";
 
 const DEFAULT_ORGANIZATION_NAME = "默认机构";
 const DEFAULT_PROJECT_NAME = "默认项目";
@@ -80,8 +81,9 @@ export class ProjectAccessTokenClient {
       observe?(event: { family: string; stage: "resolve"; code: string }): void;
       locationStore?: {
         load(key: string): Promise<string | null>;
-        save(key: string, value: string): Promise<void>;
-        delete(key: string): Promise<void>;
+        save(key: string, value: string, assertCurrent?: () => void): Promise<void>;
+        delete(key: string, assertCurrent?: () => void): Promise<void>;
+        recoverUnreadable?(key: string, assertCurrent: () => void): Promise<string | null>;
       };
       now?: () => number;
       random?: () => number;
@@ -140,7 +142,29 @@ export class ProjectAccessTokenClient {
       let pending = current.locations.get(locationKey);
       if (!pending) {
         pending = (async () => {
-          const saved = await this.options.locationStore?.load(storageKey);
+          let saved: string | null | undefined;
+          try {
+            saved = await this.options.locationStore?.load(storageKey);
+          } catch (error) {
+            // 异常分支也必须先校验代次；clear 后的迟到失败不得触发恢复副作用。
+            assertCurrent();
+            if (!isCredentialDecryptError(error) || !this.options.locationStore?.recoverUnreadable)
+              throw error;
+            // 恢复端口本身可能发生 IO 错误；先保留固定诊断，避免外层错误归一后丢失解密线索。
+            this.options.observe?.({
+              family: input.family,
+              stage: "resolve",
+              code: "project_token_location_unreadable",
+            });
+            // 位置是可重建缓存，不是登录事实。恢复端口在共享锁内重读并仅删除仍坏的记录。
+            saved = await this.options.locationStore.recoverUnreadable(storageKey, assertCurrent);
+            assertCurrent();
+            this.options.observe?.({
+              family: input.family,
+              stage: "resolve",
+              code: "project_token_location_recovery",
+            });
+          }
           assertCurrent();
           if (saved) {
             let parsed: unknown;
@@ -160,7 +184,7 @@ export class ProjectAccessTokenClient {
           }
           const result = await this.#resolveLocation(input, origin, loginToken, request);
           assertCurrent();
-          await this.options.locationStore?.save(storageKey, JSON.stringify(result));
+          await this.options.locationStore?.save(storageKey, JSON.stringify(result), assertCurrent);
           assertCurrent();
           return result;
         })();
@@ -195,7 +219,7 @@ export class ProjectAccessTokenClient {
           // Discard the ID only on an explicit not-found; permission/network/switch errors must not trigger creation or key fallback.
           if (raw && typeof raw === "object" && "code" in raw && raw.code === 404) {
             current.locations.delete(locationKey);
-            await this.options.locationStore?.delete(storageKey);
+            await this.options.locationStore?.delete(storageKey, assertCurrent);
           }
           return raw;
         },
@@ -229,8 +253,7 @@ export class ProjectAccessTokenClient {
     loginToken: string,
     request: (url: string, init: RequestInit) => Promise<unknown>,
   ): Promise<KeyLocation> {
-    // Management endpoints (getCustomerInfo) always take the raw login token; the zai Bearer
-    // convention applies only to the api_keys issuance endpoints below.
+    // customerInfo 要求裸业务 token；Bearer 格式拒绝会被误判为登录失效。
     const headers = {
       Authorization: loginToken,
       "Content-Type": "application/json",

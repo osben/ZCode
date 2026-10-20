@@ -19,6 +19,7 @@ import {
   pendingInteractionSchema,
   planStateSchema,
   queueStateSchema,
+  runtimeInitializationSchema,
   sessionActionAvailabilitySchema,
   sessionConfigStateSchema,
   sessionControlSchema,
@@ -38,6 +39,7 @@ import {
 
 // StatePatch: replace whole values at the key level (Object.assign); the set of keys is closed. Never deep-merge within a key.
 export const statePatchSchema = z.object({
+  runtimeInitialization: runtimeInitializationSchema.optional(),
   revision: z.number().optional(),
   control: sessionControlSchema.optional(),
   sharedContextImport: sharedContextImportStateSchema.optional(),

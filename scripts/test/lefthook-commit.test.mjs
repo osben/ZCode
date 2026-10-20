@@ -73,7 +73,8 @@ test("lint errors block commit and preserve unrelated files", async (t) => {
   const before = await f.git("rev-parse", "HEAD");
   await f.put(
     "too-many-lines.ts",
-    Array.from({ length: 401 }, (_, i) => `export const value${i} = ${i};`).join("\n"),
+    // The max-lines limit is 800 (upstream .oxlintrc.json); 801 short lines exceed it but stay under the 20000-byte staged-size limit.
+    Array.from({ length: 801 }, (_, i) => `export const v${i}=${i};`).join("\n"),
   );
   await f.git("add", "too-many-lines.ts");
   await f.put("untracked.txt", "keep me\n");

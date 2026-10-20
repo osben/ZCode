@@ -304,6 +304,8 @@ export function ComposerDestinationControl({
         // find the same destination.
         const draftIntent = useDraftBranchIntentStore.getState();
         const frozen = draftIntent.peekFrozenWorktreeIntent(workspaceKey);
+        // A frozen HEAD-default base stays HEAD-default on Retry: no explicit base is sent.
+        const frozenHeadDefault = frozen?.baseFromHeadDefault === true;
         const result = await beginWorktreePipelineCreation({
           gitService: baseServices.gitService,
           workspaceKey,
@@ -313,8 +315,8 @@ export function ComposerDestinationControl({
             ? { ...effectiveLocation, mode: "custom", customPath: frozen.customLocationPath }
             : effectiveLocation,
           branchName: frozen?.branchName ?? computeWorktreeBranchName(),
-          ...(resolvedBase ? { baseBranch: resolvedBase } : {}),
-          baseFromHeadDefault: headDefault,
+          ...(resolvedBase && !frozenHeadDefault ? { baseBranch: resolvedBase } : {}),
+          baseFromHeadDefault: headDefault || frozenHeadDefault,
           queuedPromptPreview,
           submissionId,
           prepareSession,

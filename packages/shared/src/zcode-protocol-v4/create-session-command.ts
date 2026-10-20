@@ -14,6 +14,9 @@ import * as worktreePreparationCommand from "./worktree-preparation-command.js";
 /** `createSession` command payload (§6.4), split out of command.ts. */
 export const createSessionPayloadSchema = z
   .object({
+    // Host-reserved stable session id; the CLI still rejects overwriting an existing session.
+    sessionId: z.string().min(1).optional(),
+    additionalDirectories: z.array(z.string().min(1)).max(256).optional(),
     workspaceId: z.string(),
     ...worktreePreparationCommand.worktreePreparationCreateSessionFields,
     permissionScope: z.literal("session").optional(),

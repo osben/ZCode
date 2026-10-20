@@ -43,6 +43,10 @@ jobs:
           cache: pnpm
       - name: Install dependencies and hooks
         run: pnpm install --frozen-lockfile
+      # The pre-commit wrapper fails loudly when fork-upstream-base.json names a pendingUpstreamCommit the clone lacks
+      # (specs/fork-format-scope.md); fetch it by URL first, as pr-checks.yml does. No-op when the field is absent.
+      - name: Fetch pending upstream commit
+        run: node scripts/fork-format-pending.mjs --fetch
       - name: Hook integration tests
         run: pnpm test:git-hooks
       - name: Existing formatter and staged-size regressions
