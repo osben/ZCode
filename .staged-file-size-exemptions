@@ -382,3 +382,7 @@ packages/ui/test/workflowTimelineHoles.test.ts
 packages/ui/test/workflowTimelineModel.test.ts
 packages/ui/test/workflowTimelineTracks.test.ts
 packages/ui/test/zcodeSessionStore.test.ts
+
+# TEMPORARY upstream 3.16.1 sync (ui bucket 7): oversize UI files re-applied with fork changes; split or reconcile in the UI-2 PR and remove these lines.
+packages/ui/src/ModelConfigSelect.tsx
+packages/ui/src/v4/ConversationTurnGroup.tsx
