@@ -46,8 +46,11 @@ describe("虚拟项目", () => {
     await prepareV4ConversationE2E({ skipProvider: true });
     // 本文件保留中文文案断言，显式设置语言，避免跟随测试机系统语言产生假失败。
     await browser.execute(() => {
-      const actions = (window as Window & { __testActions?: { setLocale(locale: "en-US"): void } })
-        .__testActions;
+      const actions = (
+        window as Window & {
+          __testActions?: { setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void };
+        }
+      ).__testActions;
       if (!actions) throw new Error("missing E2E locale bridge");
       actions.setLocale("zh-CN");
     });

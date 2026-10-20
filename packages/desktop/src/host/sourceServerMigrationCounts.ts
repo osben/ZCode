@@ -31,9 +31,16 @@ export function createSourceServerMigrationCounts(options: {
       let value: MigrationCount;
       try {
         const service = entry.connection.services.sourceServerWorkspaceService;
+        // Missing service is a failed count read, not a crash: the group reports "unavailable" below.
         const [failed, abandoned] = await Promise.allSettled([
-          Promise.resolve().then(() => service.getFailedPathCount()),
-          Promise.resolve().then(() => service.getAbandonedPathCount()),
+          Promise.resolve().then(() => {
+            if (!service) throw new Error("Source Server workspace service unavailable");
+            return service.getFailedPathCount();
+          }),
+          Promise.resolve().then(() => {
+            if (!service) throw new Error("Source Server workspace service unavailable");
+            return service.getAbandonedPathCount();
+          }),
         ]);
         // 一项失败也要等该组另一项收口，避免反复失效时堆积仍在途的请求。
         if (failed.status !== "fulfilled" || abandoned.status !== "fulfilled") {

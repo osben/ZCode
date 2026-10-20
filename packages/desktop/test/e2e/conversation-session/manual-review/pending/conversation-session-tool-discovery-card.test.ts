@@ -161,7 +161,7 @@ async function expectCard(callId: string, label: RegExp, status: string) {
   );
 }
 
-async function setPresentation(locale: "en-US", theme: "zai-light" | "zai-dark") {
+async function setPresentation(locale: "zh-CN" | "en-US", theme: "zai-light" | "zai-dark") {
   const changed = await browser.execute(
     (nextLocale, nextTheme) => {
       const actions = (window as typeof window & { __testActions?: Record<string, unknown> })

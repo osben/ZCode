@@ -52,7 +52,10 @@ export {
 export { createTopicResourceRelayChannel } from "./zcode-agent/topicResourceRelayChannel.js";
 
 export { createFileService } from "./file/fileService.js";
-export { createLegacySingleRootProjectService } from "#src/project/index.js";
+export {
+  bindRemoteProjectIdentities,
+  createLegacySingleRootProjectService,
+} from "#src/project/index.js";
 export {
   attributeHostProcessTree,
   createProcessResourceSampler,
@@ -375,6 +378,9 @@ import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/p
 import { createFileService } from "./file/fileService.js";
 import { createMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { WorkspaceFileSearchFilter } from "./file/workspaceFileMentionFilter.js";
+import type { IProjectService } from "./project/contract.js";
+import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
+import type { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
 import { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
 import { createGitCheckpointService } from "./git/gitCheckpointService.js";
@@ -1194,6 +1200,31 @@ export function createLocalServices(options: {
   feedback?: Partial<
     Omit<CreateFeedbackServiceOptions, "apiClient" | "credentialService" | "oauthService">
   >;
+  /**
+   * COMPILE BRIDGE (fork): upstream project-storage / Source-bot hooks. The fork still runs the legacy
+   * single-root project service and its own bot remote path, so these are accepted for the desktop host
+   * wiring but are not consumed here. Nothing in the fork calls them; see specs/upstream-sync-final-ledger.md.
+   */
+  resolveBotRemoteWorkspace?: (target: {
+    workspacePath: string;
+    workspaceIdentity: string;
+  }) => Promise<{ workspacePath: string; workspaceIdentity: string } | null>;
+  setWorkspaceProjection?: ReturnType<
+    typeof createSettingServiceWithMigrations
+  >["setWorkspaceProjection"];
+  resolveProjectHostService?: (hostId: string) => Promise<IProjectService>;
+  /** Bot reuse of an existing window Source connection (upstream); accepted, unwired in the fork's bot path. */
+  resolveBotProjectConnection?: (hostId: string) => BotProjectConnection | undefined;
+  /** Live UI language for X-Client-Language; the fork's source headers keep their own resolution (accepted, unwired). */
+  resolveClientLanguage?: () => string | undefined;
+  remoteProjectConnection?: Pick<
+    Parameters<typeof createRemoteProjectService>[0],
+    "connectHost" | "readConnectionStates"
+  >;
+  /** Plugin UI telemetry sink supplied by the desktop host; the fork's thin plugin-management service intentionally emits none. */
+  reportPluginTelemetryEvent?: (
+    event: import("@zcode/shared").RendererTelemetryEventPayload,
+  ) => void | Promise<void>;
   processLifecycleReporter?: RuntimeProcessLifecycleReporter;
   taskRuntimeReporter?: RuntimeTaskReporter;
   /** Workspace file search uses the built-in filter by default; Host assembly can inject the final implementation when another rule source is added. */
@@ -1668,6 +1699,7 @@ export function createLocalServices(options: {
   });
   invalidatePluginUiAccounts = () => pluginUiAccounts.invalidate();
   const pluginUiBridgeService = createPluginUiBridgeService({
+    reportTelemetryEvent: options?.reportPluginTelemetryEvent,
     openInstance: (params) => pluginUiAccounts.open(params),
     closeInstance: (params) => pluginUiAccounts.close(params),
     validateInstance: (params) => zcodeAgentService.validateMcpUiInstance(params),
@@ -3161,4 +3193,6 @@ export {
 } from "#src/remote-projects/index.js";
 export { createProjectWorkspaceNavigation } from "#src/project-workspace-navigation/index.js";
 export { migrateControllerRemoteWorkspaceIdentity } from "./session/controllerRemoteIdentityMigration.js";
+export type { ControllerRemoteIdentityMigrationReport } from "./session/controllerRemoteIdentityMigration.js";
+export type { BotProjectConnection } from "#src/bot-project-runtime/contract.js";
 export { prepareTasksIndexStorage } from "#src/project-storage/startup.js";

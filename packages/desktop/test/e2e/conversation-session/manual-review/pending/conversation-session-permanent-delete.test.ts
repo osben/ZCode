@@ -11,9 +11,9 @@ import {
 import {
   DEFAULT_WORKSPACE,
   clearAppData,
-  ensureWorkspaceItemExpanded,
   waitForWorkspaceApp,
 } from "../../../helpers/desktop-app.js";
+import { ensureProjectExpanded } from "../../../helpers/project-sidebar.js";
 import { PROVIDER_READINESS_HISTORY_SESSION_ID } from "../../../helpers/provider-readiness-history-fixture.js";
 
 const TASK_ID = PROVIDER_READINESS_HISTORY_SESSION_ID;
@@ -56,7 +56,7 @@ describe("DEL01: permanent task deletion from the sidebar", () => {
   it("cancel preserves content; confirm erases content and retains the tombstone after reload", async function () {
     this.timeout(CASE_TIMEOUT_MS);
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await ensureWorkspaceItemExpanded(DEFAULT_WORKSPACE);
+    await ensureProjectExpanded(DEFAULT_WORKSPACE);
     const before = readPersistedState();
     expect(before.sessions).toBe(1);
     expect(before.deleted).toBe(0);
@@ -82,7 +82,7 @@ describe("DEL01: permanent task deletion from the sidebar", () => {
 
     await browser.refresh();
     await waitForWorkspaceApp(DEFAULT_WORKSPACE, 45_000);
-    await ensureWorkspaceItemExpanded(DEFAULT_WORKSPACE);
+    await ensureProjectExpanded(DEFAULT_WORKSPACE);
     expect(await $(`[data-testid="${testId(TID_TASK_ITEM, TASK_ID)}"]`).isExisting()).toBe(false);
     expect(readPersistedState()).toMatchObject({ sessions: 0, deleted: 1 });
   });

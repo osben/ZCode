@@ -10,7 +10,10 @@ const HISTORY_ID = "sess_e2e_missing_primary_history";
 const HISTORY_BODY = "E2E_MISSING_PRIMARY_HISTORY_BODY";
 const REASON = "该项目主文件夹已被删除或移动";
 type TestWindow = Window & {
-  __testActions?: { setLocale(locale: "en-US"): void; setTheme(theme: string): void };
+  __testActions?: {
+    setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void;
+    setTheme(theme: string): void;
+  };
   __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath: string | null } };
 };
 

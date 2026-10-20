@@ -25,7 +25,7 @@ const artifactDir = resolve(
 const run = promisify(execFile);
 
 /** 只读远端当前 release；走 docker exec，不占用被测 SSH 连接。 */
-async function setAppearance(locale: "en-US", theme: "light" | "dark") {
+async function setAppearance(locale: "zh-CN" | "en-US", theme: "light" | "dark") {
   await browser.execute(
     (lang, appearance) => {
       const actions = (

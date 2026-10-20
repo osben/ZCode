@@ -125,8 +125,11 @@ describe(`${CASE_MARKER}: 设置防护、连接编辑与机器标注`, () => {
     await waitForWorkspaceApp(path, 120_000);
     const tab = await waitForRemoteTab({ caseMarker: CASE_MARKER, expectedPath: path });
     await browser.execute(() => {
-      const actions = (window as Window & { __testActions?: { setLocale(locale: "en-US"): void } })
-        .__testActions;
+      const actions = (
+        window as Window & {
+          __testActions?: { setLocale(locale: "zh-CN" | "en-US" | "uk-UA"): void };
+        }
+      ).__testActions;
       if (!actions) throw new Error("Missing locale actions");
       actions.setLocale("zh-CN");
     });
