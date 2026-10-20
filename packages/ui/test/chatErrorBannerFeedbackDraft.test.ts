@@ -110,4 +110,101 @@ describe("ChatErrorBanner feedback draft", () => {
       `${expectedCopy("feedback.submit.template.section.errorSummary")}\nProvider authentication failed.`,
     );
   });
+
+  it("does not offer an unavailable upgrade action without an upgrade handler", () => {
+    renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          PlatformProvider,
+          { platform: mockPlatform },
+          createElement(ChatErrorBanner, {
+            error: {
+              code: "model_config_missing",
+              message: "Model config is missing.",
+            },
+            onOpenModelSettings: vi.fn(),
+          }),
+        ),
+      ),
+    );
+
+    expect(
+      buttonMock.props.some(
+        (props) => props["aria-label"] === expectedCopy("chat.quota.action.upgrade"),
+      ),
+    ).toBe(false);
+    expect(
+      buttonMock.props.some(
+        (props) => props["aria-label"] === expectedCopy("chat.error.setModels"),
+      ),
+    ).toBe(true);
+  });
+
+  it("remote workspace without a model only changes wording; actions stay local config and upgrade", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(
+          PlatformProvider,
+          { platform: mockPlatform },
+          createElement(ChatErrorBanner, {
+            error: {
+              code: "model_config_missing",
+              message: "Model config is missing.",
+            },
+            modelConfigTarget: "remote",
+            onOpenModelSettings: vi.fn(),
+            onOpenUpgrade: vi.fn(),
+          }),
+        ),
+      ),
+    );
+
+    expect(html).toContain(expectedCopy("chat.error.remoteNoAvailableModel"));
+    expect(html).not.toContain(expectedCopy("chat.error.noAvailableModel"));
+    expect(
+      buttonMock.props.some(
+        (props) => props["aria-label"] === expectedCopy("chat.error.setModels"),
+      ),
+    ).toBe(true);
+    expect(
+      buttonMock.props.some(
+        (props) => props["aria-label"] === expectedCopy("chat.quota.action.upgrade"),
+      ),
+    ).toBe(true);
+    expect(buttonMock.props.some((props) => props["aria-label"] === "Sync now")).toBe(false);
+  });
+});
+
+it("remote send race offers reconnect; feedback is attributed to connection failure, not model calls", async () => {
+  const reconnect = vi.fn();
+  renderToStaticMarkup(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(
+        PlatformProvider,
+        { platform: mockPlatform },
+        createElement(ChatErrorBanner, {
+          error: {
+            code: "ZCODE_REMOTE_WORKSPACE_DISCONNECTED",
+            message: "ZCODE_REMOTE_WORKSPACE_DISCONNECTED",
+          },
+          remoteKind: "ssh",
+          onReconnect: reconnect,
+        }),
+      ),
+    ),
+  );
+  const button = buttonMock.props.find(
+    (props) => props.children === expectedCopy("remote.conversation.reconnect"),
+  );
+  expect(button).toBeDefined();
+  (button!.onClick as () => void)();
+  expect(reconnect).toHaveBeenCalledOnce();
+  await openFeedbackFromBanner();
+  expect(useFeedbackStore.getState().submitDraft?.module).toBe("SSH连接失败");
 });

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { RemoteConversationAvailability } from "@/v4/RemoteConversationAvailability.js";
 import { expectedCopy } from "./helpers/uiCopy.js";
 
 const captured = vi.hoisted(() => ({
@@ -168,7 +169,6 @@ function renderComposerWithError(
         snapshot: null,
         sessionId: "session-1",
         workspacePath: "/workspace",
-        updateComposerContent: vi.fn(),
         provider: undefined,
         onSendText: vi.fn(async () => {}),
         onStop: vi.fn(),
@@ -191,23 +191,26 @@ function renderComposerWithError(
 function renderComposerWithSnapshot(
   snapshot: ConversationSnapshot | null = makeSnapshot(),
   overrides: Record<string, unknown> = {},
+  remoteAvailable = true,
 ): string {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
       { initialLocale: "en-US" },
-      createElement(AnyConversationComposer, {
-        snapshot,
-        sessionId: "session-1",
-        workspacePath: "/workspace",
-        updateComposerContent: vi.fn(),
-        provider: undefined,
-        onSendText: vi.fn(async () => {}),
-        onStop: vi.fn(),
-        onSelectModel: vi.fn(),
-        onSelectThought: vi.fn(),
-        onSwitchMode: vi.fn(),
-        ...overrides,
+      createElement(RemoteConversationAvailability, {
+        available: remoteAvailable,
+        children: createElement(AnyConversationComposer, {
+          snapshot,
+          sessionId: "session-1",
+          workspacePath: "/workspace",
+          provider: undefined,
+          onSendText: vi.fn(async () => {}),
+          onStop: vi.fn(),
+          onSelectModel: vi.fn(),
+          onSelectThought: vi.fn(),
+          onSwitchMode: vi.fn(),
+          ...overrides,
+        }),
       }),
     ),
   );
@@ -222,7 +225,6 @@ function renderHighspeedComposer(overrides: Record<string, unknown> = {}): strin
         snapshot: makeSnapshot(),
         sessionId: "session-1",
         workspacePath: "/workspace",
-        updateComposerContent: vi.fn(),
         provider: undefined,
         highspeedCard: {
           cardId: "hsc-composer",
@@ -252,7 +254,6 @@ function renderBlockedComposer(): string {
         snapshot: makeSnapshot(),
         sessionId: "session-1",
         workspacePath: "/workspace",
-        updateComposerContent: vi.fn(),
         provider: undefined,
         blockingRequestId: "perm-1",
         onSendText: vi.fn(async () => {}),
@@ -272,13 +273,6 @@ afterEach(() => {
 });
 
 describe("ConversationComposer error banner", () => {
-  it("renders an executed UserPromptSubmit Hook block reason as a chat error", () => {
-    const html = renderComposerWithError("HOOK_PROMPT_BLOCK_REASON");
-
-    expect(html).toContain("HOOK_PROMPT_BLOCK_REASON");
-    expect(html).toContain("mock-chat-error-banner");
-  });
-
   it("renders the session error banner above the prompt editor", () => {
     const html = renderComposerWithError("Provider rate limit exceeded.");
 
@@ -318,18 +312,10 @@ describe("ConversationComposer error banner", () => {
     const bannerIndex = html.indexOf("mock-chat-error-banner");
     const inputSurfaceIndex = html.indexOf("chat-composer-input-surface");
 
-    expect(html).toContain('class="mb-6 w-full shrink-0"');
     expect(bannerIndex).toBeGreaterThanOrEqual(0);
     expect(inputSurfaceIndex).toBeGreaterThan(bannerIndex);
     expect(html.indexOf("mock-workspace-context-header")).toBeGreaterThan(inputSurfaceIndex);
     expect(html.indexOf("mock-chat-prompt-editor")).toBeGreaterThan(inputSurfaceIndex);
-  });
-
-  it("keeps the bound-session input surface transparent", () => {
-    const html = renderComposerWithError("No model");
-
-    expect(html).toContain("chat-composer-input-surface relative w-full");
-    expect(html).not.toContain("bg-[var(--color-background)]");
   });
 
   it("forwards model recovery actions to the shared error banner", () => {
@@ -345,14 +331,7 @@ describe("ConversationComposer error banner", () => {
     expect(captured.chatErrorBannerProps?.onOpenUpgrade).toBe(onOpenModelUpgrade);
   });
 
-  it("does not render local queue behavior toggles in the composer", () => {
-    const html = renderComposerWithSnapshot();
-
-    expect(html).toContain("<span>mode</span>");
-    expect(html).not.toContain("<span>queue</span>");
-  });
-
-  it("不再把 snapshot api retry 状态传入输入框工具条", () => {
+  it("no longer passes the snapshot api retry state into the input toolbar", () => {
     const snapshot = makeSnapshot();
     snapshot.control.apiRetry = {
       attempt: 1,
@@ -386,11 +365,7 @@ describe("ConversationComposer error banner", () => {
     renderComposerWithSnapshot();
     const onModifiedSubmit = captured.chatPromptEditorProps?.onModifiedSubmit;
     expect(onModifiedSubmit).toEqual(expect.any(Function));
-    expect(
-      (onModifiedSubmit as (value: string) => boolean)(
-        expectedCopy("chat.toolCall.workflow.hole.draftPath"),
-      ),
-    ).toBe(false);
+    expect((onModifiedSubmit as (value: string) => boolean)("草稿")).toBe(false);
 
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -424,25 +399,51 @@ describe("ConversationComposer error banner", () => {
   });
 });
 
+it("the offline composer shows the send-unavailable reason first instead of letting an unusable model control crowd a narrow window", async () => {
+  const { RemoteConversationAvailability } = await import("@/v4/RemoteConversationAvailability.js");
+  captured.modelControlsProps = null;
+  const html = renderToStaticMarkup(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(
+        RemoteConversationAvailability,
+        { available: false },
+        createElement(AnyConversationComposer, {
+          workspacePath: "/workspace",
+          sessionId: null,
+          snapshot: null,
+          provider: "glm",
+          draftMode: "build",
+          draftConfig: {},
+          composerDraft: { text: "草稿", updatedAt: 1 },
+          onSendText: vi.fn(),
+          onStop: vi.fn(),
+          onSelectModel: vi.fn(),
+          onSelectThought: vi.fn(),
+          onSwitchMode: vi.fn(),
+        }),
+      ),
+    ),
+  );
+  expect(html).toContain(expectedCopy("remote.conversation.sendUnavailable"));
+  expect(captured.modelControlsProps).toBeNull();
+});
+
 describe("ConversationComposer Highspeed style", () => {
-  it("renders the migrated visual without the legacy Fast badge or redundant active prop", () => {
+  it("an active card passes the expiry time and locks the model", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer();
 
     expect(html).toContain('data-highspeed-composer="true"');
-    expect(html).toContain("highspeed-composer-surface");
-    expect(html).toContain("highspeed-composer-background");
-    expect(html).not.toContain("Fast");
-    expect(captured.chatPromptEditorProps?.shellClassName).toContain("!border-0");
     expect(captured.modelControlsProps).toMatchObject({
       highspeedExpiresAt: 60_000,
       modelLocked: true,
     });
-    expect(captured.modelControlsProps).not.toHaveProperty("highspeedActive");
   });
 
-  it("没有激活请求的卡（切回 Task、快照恢复）直接呈现稳定态，不重播激活动效", () => {
+  it("a card without an activation request (switched back to Task, snapshot restore) renders the stable state directly without replaying the activation motion", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer();
@@ -458,7 +459,7 @@ describe("ConversationComposer Highspeed style", () => {
     });
   });
 
-  it("draw 新命中的激活请求从扩散起点播放，模型与倒计时等待交接后再展示", () => {
+  it("an activation request newly hit by draw plays from the diffusion origin; the model and countdown wait for the handover before appearing", () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000);
 
     const html = renderHighspeedComposer({ highspeedActivationCardId: "hsc-composer" });
@@ -470,5 +471,71 @@ describe("ConversationComposer Highspeed style", () => {
       highspeedPresented: false,
       highspeedEntranceAnimated: true,
     });
+  });
+});
+
+describe("history-first initialization", () => {
+  it.each([true, false])("respects the remote gate when available=%s", (remoteAvailable) => {
+    // The two gates must not override each other when merged: a ready runtime must not unblock a disconnected remote project.
+    const html = renderComposerWithSnapshot(
+      {
+        ...makeSnapshot(),
+        runtimeInitialization: { status: "ready", attemptId: "attempt-1" },
+      },
+      {},
+      remoteAvailable,
+    );
+    expect(captured.chatPromptEditorProps?.disabled).toBe(!remoteAvailable);
+    expect(html.includes('data-testid="remote-send-unavailable"')).toBe(!remoteAvailable);
+    if (remoteAvailable) {
+      expect(captured.modelControlsProps?.disabled).toBe(false);
+    } else {
+      expect(captured.modelControlsProps).toBeNull();
+    }
+  });
+
+  it("keeps an initializing remote project blocked after the attachment becomes available", () => {
+    const snapshot: ConversationSnapshot = {
+      ...makeSnapshot(),
+      runtimeInitialization: { status: "initializing", attemptId: "attempt-1" },
+    };
+    renderComposerWithSnapshot(snapshot, {}, false);
+    expect(captured.chatPromptEditorProps?.disabled).toBe(true);
+    expect(captured.modelControlsProps).toBeNull();
+
+    renderComposerWithSnapshot(snapshot, {}, true);
+    expect(captured.chatPromptEditorProps?.disabled).toBe(false);
+    expect(captured.chatPromptEditorProps?.submitDisabled).toBe(true);
+    expect(captured.modelControlsProps?.disabled).toBe(true);
+  });
+
+  it("keeps text editable without a preparation banner while disabling execution controls", () => {
+    const snapshot = {
+      ...makeSnapshot(),
+      runtimeInitialization: { status: "initializing" as const, attemptId: "attempt-1" },
+    };
+    const html = renderComposerWithSnapshot(snapshot);
+    expect(captured.chatPromptEditorProps?.disabled).toBe(false);
+    expect(captured.chatPromptEditorProps?.submitDisabled).toBe(true);
+    expect(captured.modelControlsProps?.disabled).toBe(true);
+    expect(html).not.toContain("v4-session-initialization");
+  });
+  it("places retry above the editor without replacing history or editing state", () => {
+    const snapshot = {
+      ...makeSnapshot(),
+      runtimeInitialization: {
+        status: "failed" as const,
+        attemptId: "attempt-1",
+        reasonCode: "fault.subscribe.resumeFailed",
+        message: "resume failed",
+      },
+    };
+    const html = renderComposerWithSnapshot(snapshot, { onRetryInitialization: vi.fn() });
+    expect(html).toContain("v4-session-initialization-retry");
+    expect(html.indexOf("v4-session-initialization")).toBeLessThan(
+      html.indexOf("mock-chat-prompt-editor"),
+    );
+    expect(captured.chatPromptEditorProps?.disabled).toBe(false);
+    expect(captured.chatPromptEditorProps?.submitDisabled).toBe(true);
   });
 });

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChatErrorBanner } from "@/ChatErrorBanner.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/components/ui/toast.js", () => ({
   toast: vi.fn(),
@@ -37,6 +38,7 @@ describe("ChatErrorBanner Hook errors", () => {
 
     expect(html).toContain("hooks_prompt_block: python3: missing file");
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_DETAILS_BUTTON}"`);
+    expect(html).toContain(expectedCopy("chat.error.expandDetails"));
     expect(html).toContain(`data-testid="${TID_CHAT_ERROR_HOOK_ICON}"`);
   });
 });

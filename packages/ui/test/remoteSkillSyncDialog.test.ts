@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { createElement, isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,9 +19,8 @@ import {
   resolveDefaultRemoteSkillSyncSelection,
   shouldToggleRemoteSkillSyncCardSelection,
 } from "../src/settings/RemoteSkillSyncDialog.js";
+import enUS from "../src/i18n/locales/en-US.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
-
-const LOCALE_ZH = "zh-CN";
 
 const controlHintTooltipMockState = vi.hoisted(() => ({
   latest: null as null | {
@@ -35,6 +34,13 @@ const controlHintTooltipMockState = vi.hoisted(() => ({
 const remoteSkillSyncIntlMockState = vi.hoisted(() => ({
   locale: "en-US" as "en-US" | "zh-CN",
 }));
+
+// zh-CN size-limit copy exercised by the locale-switch test; kept as data so locators stay
+// free of raw localized copy.
+const zhSizeLimitSelectedContent = vi.hoisted(
+  () =>
+    "同步失败：所选 Skills 的内容总大小约为 {actualSize}，超过单次同步上限 {maxSize}。请取消选择部分 Skills 后重试；远端未写入任何内容。",
+);
 
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({
@@ -121,7 +127,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
             "settings.skills.remoteSync.noSelection": "Select at least one missing skill.",
             "settings.skills.remoteSync.sizeLimit.selectedContent":
               locale === "zh-CN"
-                ? "同步失败：所选 Skills 的内容总大小约为 {actualSize}，超过单次同步上限 {maxSize}。请取消选择部分 Skills 后重试；远端未写入任何内容。"
+                ? zhSizeLimitSelectedContent
                 : "Sync failed: the selected Skills contain about {actualSize} of content, exceeding the {maxSize} per-sync limit. Deselect some Skills and try again. Nothing was written to the remote host.",
           };
           let message = messages[id] ?? id;
@@ -161,6 +167,19 @@ function createSkillSyncServiceStub(): ISkillSyncService {
 }
 
 describe("RemoteSkillSyncDialog helpers", () => {
+  it("provides size-limit copy in both supported locales", () => {
+    const messageIds = [
+      "settings.skills.remoteSync.sizeLimit.selectedContent",
+      "settings.skills.remoteSync.sizeLimit.archive",
+      "settings.skills.remoteSync.sizeLimit.extractedContent",
+    ];
+
+    for (const messageId of messageIds) {
+      expect(enUS[messageId]).toBeTruthy();
+      expect(zhCN[messageId]).toBeTruthy();
+    }
+  });
+
   it("localizes structured selected-content size limit errors", () => {
     const error = Object.assign(new Error("skill sync size limit exceeded"), {
       code: SKILL_SYNC_SIZE_LIMIT_ERROR_CODE,
@@ -348,15 +367,18 @@ describe("RemoteSkillSyncDialog", () => {
     };
 
     const view = render(createElement(RemoteSkillSyncDialog, props));
-    remoteSkillSyncIntlMockState.locale = LOCALE_ZH;
+    remoteSkillSyncIntlMockState.locale = "zh-CN";
     view.rerender(createElement(RemoteSkillSyncDialog, props));
     rejectFirstLoad(sizeLimitError);
 
-    const expectedMessage = zhCN["settings.skills.remoteSync.sizeLimit.selectedContent"]
-      .replace("{actualSize}", "53.6 MiB")
-      .replace("{maxSize}", "20 MiB");
     await waitFor(() => {
-      expect(document.body.textContent).toContain(expectedMessage);
+      expect(
+        screen.getByText(
+          zhSizeLimitSelectedContent
+            .replace("{actualSize}", "53.6 MiB")
+            .replace("{maxSize}", "20 MiB"),
+        ),
+      ).toBeTruthy();
     });
   });
 

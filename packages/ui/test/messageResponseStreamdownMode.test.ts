@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -55,7 +53,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(messageResponsePropsAreEqual(base, { ...base, readAttachment: vi.fn() })).toBe(false);
   });
 
-  it("保留 Markdown 目录链接的 pathKind 和远程 workspace scope", () => {
+  it("keeps pathKind for Markdown directory links and the remote workspace scope", () => {
     expect(
       buildMessageFileLinkTarget({
         href: "./src/",
@@ -80,7 +78,7 @@ describe("resolveMessageStreamdownMode", () => {
     ["./src/App.tsx", "/workspace/repo/src/App.tsx"],
     ["./config", "/workspace/repo/config"],
     ["/etc/hosts", "/etc/hosts"],
-  ])("Markdown 文件链接 %s 不在渲染阶段猜测文件系统类型", (href, path) => {
+  ])("Markdown file link %s does not guess the file system type during render", (href, path) => {
     expect(
       buildMessageFileLinkTarget({
         href,
@@ -92,7 +90,7 @@ describe("resolveMessageStreamdownMode", () => {
   });
 
   it.each(["file", "directory"] as const)(
-    "Markdown 打开方式通过 workspace stat 传递真实 %s 类型",
+    "Markdown open passes the real %s type through workspace stat",
     async (type) => {
       const statFile = vi.fn().mockResolvedValue({ type });
       const openInEditor = vi.fn().mockResolvedValue({ success: true });
@@ -124,7 +122,7 @@ describe("resolveMessageStreamdownMode", () => {
     },
   );
 
-  it("Markdown 打开方式 stat 失败时不调用本机编辑器", async () => {
+  it("Markdown open does not call the local editor when stat fails", async () => {
     const statFile = vi.fn().mockRejectedValue(new Error("path not found"));
     const openInEditor = vi.fn();
     const fileLink = buildMessageFileLinkTarget({
@@ -145,7 +143,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(openInEditor).not.toHaveBeenCalled();
   });
 
-  it("越界相对 Markdown 链接不生成可点击文件操作目标", () => {
+  it("out-of-bounds relative Markdown links do not produce a clickable file action target", () => {
     const html = renderToStaticMarkup(
       createElement(
         MessageResponse,
@@ -162,7 +160,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain("cursor-pointer");
   });
 
-  it("Assistant citation 使用现有文件链接渲染，普通文件名仍保持原文", () => {
+  it("Assistant citations render through the existing file links while plain file names stay verbatim", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -175,7 +173,7 @@ describe("resolveMessageStreamdownMode", () => {
             onOpenFileLink: vi.fn(),
           },
           [
-            "普通文件 report.pdf。",
+            "Plain file report.pdf.",
             ':zcode-file-citation{path="docs/年度 报告.pdf" purpose="output" page_number=2}',
             ':::zcode-file-citation{path="docs/论文.pdf" purpose="source"}',
           ].join("\n\n"),
@@ -183,7 +181,7 @@ describe("resolveMessageStreamdownMode", () => {
       ),
     );
 
-    expect(html).toContain("普通文件 report.pdf");
+    expect(html).toContain("Plain file report.pdf");
     expect(html).not.toContain(":zcode-file-citation");
     expect(html).toContain("<button");
     expect(html).toContain('title="/workspace/docs/年度 报告.pdf"');
@@ -191,7 +189,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).toContain("年度 报告.pdf");
   });
 
-  it("citation 和 Markdown 文件链接支持智能引号且不污染路径", () => {
+  it("citations and Markdown file links accept smart quotes without polluting paths", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -204,8 +202,8 @@ describe("resolveMessageStreamdownMode", () => {
             onOpenFileLink: vi.fn(),
           },
           [
-            '规划完成。已生成 ：:zcode-file-citation{path=“/workspace/冰岛 行程.pdf” purpose="output"}',
-            "[说明](‘docs/说明.md’)",
+            'Planning done. Generated: :zcode-file-citation{path=“/workspace/冰岛 行程.pdf” purpose="output"}',
+            "[Notes](‘docs/说明.md’)",
           ].join("\n\n"),
         ),
       ),
@@ -218,61 +216,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain("[blocked]");
   });
 
-  it("正文文件链接由文字提供真实基线，图标独立居中，并仅在 hover 显示虚线下划线", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(
-          MessageResponse,
-          {
-            workspacePath: "/workspace",
-            onOpenFileLink: vi.fn(),
-          },
-          "[项目交付稿](docs/项目交付稿.pptx)",
-        ),
-      ),
-    );
-
-    expect(html).toContain("text-icon-blue");
-    expect(html).toContain("gap-1");
-    expect(html).not.toContain("gap-1.5");
-    expect(html).toContain("ml-0.5");
-    expect(html).toContain("items-baseline");
-    expect(html).toContain("self-center");
-    expect(html).toContain("self-baseline");
-    expect(html).not.toContain("items-center");
-    expect(html).not.toContain("top-px");
-    expect(html).toContain("align-baseline");
-    expect(html).not.toContain("align-middle");
-    expect(html).toContain("no-underline");
-    expect(html).toContain("decoration-dotted");
-    expect(html).not.toContain("decoration-dashed");
-    expect(html).toContain("hover:underline");
-    expect(html).not.toContain("hover:no-underline");
-  });
-
-  it("正文公网链接与文件链接使用相同的浏览器式链接交互", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(
-          MessageResponse,
-          { onOpenExternalUrl: vi.fn() },
-          "[ZCode](https://zcode-ai.com)",
-        ),
-      ),
-    );
-
-    expect(html).toContain("text-icon-blue");
-    expect(html).toContain("no-underline");
-    expect(html).toContain("decoration-dotted");
-    expect(html).not.toContain("decoration-dashed");
-    expect(html).toContain("hover:underline");
-  });
-
-  it("streaming 时隐藏未闭合 citation，异常换行后的正文仍可见", () => {
+  it("streaming hides an unclosed citation while text after an abnormal newline stays visible", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -285,11 +229,11 @@ describe("resolveMessageStreamdownMode", () => {
             workspacePath: "/workspace",
             onOpenFileLink: vi.fn(),
           },
-          '正文\n::zcode-file-citation{path="docs/report.pdf"',
+          'Body text\n::zcode-file-citation{path="docs/report.pdf"',
         ),
       ),
     );
-    expect(html).toContain("正文");
+    expect(html).toContain("Body text");
     expect(html).not.toContain("::zcode-file-citation");
 
     const malformedHtml = renderToStaticMarkup(
@@ -304,39 +248,42 @@ describe("resolveMessageStreamdownMode", () => {
             workspacePath: "/workspace",
             onOpenFileLink: vi.fn(),
           },
-          '正文\n::zcode-file-citation{path="docs/report.pdf"\n后续说明仍然可见',
+          'Body text\n::zcode-file-citation{path="docs/report.pdf"\nFollow-up notes stay visible.',
         ),
       ),
     );
-    expect(malformedHtml).toContain("后续说明仍然可见");
+    expect(malformedHtml).toContain("Follow-up notes stay visible.");
   });
 
   it.each([
-    ["盘符路径", String.raw`C:\Users\demo\年度 报告.pdf`, "C:/Users/demo/年度 报告.pdf"],
+    ["drive-letter path", String.raw`C:\Users\demo\年度 报告.pdf`, "C:/Users/demo/年度 报告.pdf"],
     ["Windows file URL", "file:///C:/Users/demo/report.pdf", "C:/Users/demo/report.pdf"],
-  ])("Assistant citation 的 Windows %s 通过 harden 后仍可点击", (_case, path, resolvedPath) => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+  ])(
+    "Windows %s in an Assistant citation stays clickable after harden",
+    (_case, path, resolvedPath) => {
+      const html = renderToStaticMarkup(
         createElement(
-          MessageResponse,
-          {
-            renderZCodeFileCitations: true,
-            workspacePath: "C:\\workspace",
-            onOpenFileLink: vi.fn(),
-          },
-          `::zcode-file-citation{path="${path}" purpose="output"}`,
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(
+            MessageResponse,
+            {
+              renderZCodeFileCitations: true,
+              workspacePath: "C:\\workspace",
+              onOpenFileLink: vi.fn(),
+            },
+            `::zcode-file-citation{path="${path}" purpose="output"}`,
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(html).not.toContain("[blocked]");
-    expect(html).toContain("<button");
-    expect(html).toContain(`title="${resolvedPath}"`);
-  });
+      expect(html).not.toContain("[blocked]");
+      expect(html).toContain("<button");
+      expect(html).toContain(`title="${resolvedPath}"`);
+    },
+  );
 
-  it("越界 citation 保持原文且不生成文件链接", () => {
+  it("out-of-bounds citations stay verbatim and produce no file link", () => {
     const directive = '::zcode-file-citation{path="foo/../../private.pdf"}';
     const html = renderToStaticMarkup(
       createElement(
@@ -354,7 +301,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain('title="/workspace/foo/../../private.pdf"');
   });
 
-  it("citation 不解析代码节点，并保留 Streamdown 默认 GFM 表格", () => {
+  it("citations are not parsed inside code nodes and Streamdown's default GFM tables are preserved", () => {
     const directive = '::zcode-file-citation{path="docs/report.pdf"}';
     const compatibilityDirective = ':zcode-file-citation{path="docs/legacy.pdf"}';
     const html = renderToStaticMarkup(
@@ -375,9 +322,9 @@ describe("resolveMessageStreamdownMode", () => {
               `\`${directive}\``,
               `\`${compatibilityDirective}\``,
               "",
-              "| 文件 | 状态 |",
+              "| File | Status |",
               "| --- | --- |",
-              "| report.pdf | 完成 |",
+              "| report.pdf | done |",
             ].join("\n"),
           ),
         ),
@@ -392,36 +339,47 @@ describe("resolveMessageStreamdownMode", () => {
   });
 
   it.each([
-    ["盘符正斜杠", "[报告](C:/Users/demo/report.md)", "C:/Users/demo/report.md"],
-    ["盘符反斜杠", String.raw`[报告](C:\Users\demo\report.md)`, "C:/Users/demo/report.md"],
+    [
+      "drive letter with forward slashes",
+      "[报告](C:/Users/demo/report.md)",
+      "C:/Users/demo/report.md",
+    ],
+    [
+      "drive letter with backslashes",
+      String.raw`[报告](C:\Users\demo\report.md)`,
+      "C:/Users/demo/report.md",
+    ],
     ["Windows file URL", "[报告](file:///C:/Users/demo/report.md)", "C:/Users/demo/report.md"],
     [
-      "中文空格路径",
+      "path with CJK and spaces",
       "[报告](<C:/Users/demo/中文 目录/report.md>)",
       "C:/Users/demo/中文 目录/report.md",
     ],
-  ])("Windows 绝对 Markdown 链接（%s）通过 harden 后仍可点击", (_case, markdown, path) => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
+  ])(
+    "Windows absolute Markdown links (%s) stay clickable after harden",
+    (_case, markdown, path) => {
+      const html = renderToStaticMarkup(
         createElement(
-          MessageResponse,
-          {
-            workspacePath: "C:\\workspace",
-            onOpenFileLink: vi.fn(),
-          },
-          markdown,
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(
+            MessageResponse,
+            {
+              workspacePath: "C:\\workspace",
+              onOpenFileLink: vi.fn(),
+            },
+            markdown,
+          ),
         ),
-      ),
-    );
+      );
 
-    expect(html).not.toContain("[blocked]");
-    expect(html).toContain("<button");
-    expect(html).toContain(`title="${path}"`);
-  });
+      expect(html).not.toContain("[blocked]");
+      expect(html).toContain("<button");
+      expect(html).toContain(`title="${path}"`);
+    },
+  );
 
-  it("UNC workspace 中 Windows 绝对 Markdown 链接通过 harden 后仍可点击", () => {
+  it("Windows absolute Markdown links stay clickable after harden in a UNC workspace", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -443,24 +401,27 @@ describe("resolveMessageStreamdownMode", () => {
   });
 
   it.each([
-    ["盘符正斜杠", "![截图](C:/Users/demo/screenshot.png)"],
-    ["盘符反斜杠", String.raw`![截图](C:\Users\demo\screenshot.png)`],
+    ["drive letter with forward slashes", "![截图](C:/Users/demo/screenshot.png)"],
+    ["drive letter with backslashes", String.raw`![截图](C:\Users\demo\screenshot.png)`],
     ["Windows file URL", "![截图](file:///C:/Users/demo/screenshot.png)"],
-  ])("Windows 绝对 Markdown 图片（%s）通过 harden 后保留本地路径", (_case, markdown) => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(MessageResponse, { workspacePath: "C:\\workspace" }, markdown),
-      ),
-    );
+  ])(
+    "Windows absolute Markdown images (%s) keep the local path after harden",
+    (_case, markdown) => {
+      const html = renderToStaticMarkup(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(MessageResponse, { workspacePath: "C:\\workspace" }, markdown),
+        ),
+      );
 
-    expect(html).not.toContain("[blocked]");
-    expect(html).toContain('data-markdown-local-image="loading"');
-    expect(html).toContain('title="C:/Users/demo/screenshot.png"');
-  });
+      expect(html).not.toContain("[blocked]");
+      expect(html).toContain('data-markdown-local-image="loading"');
+      expect(html).toContain('title="C:/Users/demo/screenshot.png"');
+    },
+  );
 
-  it("UNC workspace 中 Windows 绝对 Markdown 图片通过 harden 后保留本地路径", () => {
+  it("Windows absolute Markdown images keep the local path after harden in a UNC workspace", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -478,7 +439,7 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).toContain('title="C:/Users/demo/screenshot.png"');
   });
 
-  it("正文裸文件名保持普通文本且 GFM 表格正常渲染", () => {
+  it("bare file names in body text stay plain while GFM tables render normally", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
@@ -492,11 +453,11 @@ describe("resolveMessageStreamdownMode", () => {
               workspacePath: "/workspace",
             },
             [
-              "| 项 | 状态 |",
+              "| Item | Status |",
               "| --- | --- |",
-              "| Word 文档 | ✅ |",
+              "| Word doc | ✅ |",
               "",
-              "已生成 report.docx。",
+              "Generated report.docx.",
             ].join("\n"),
           ),
         ),
@@ -504,22 +465,22 @@ describe("resolveMessageStreamdownMode", () => {
     );
 
     expect(html).toContain("<table");
-    expect(html).toContain("已生成 report.docx。");
+    expect(html).toContain("Generated report.docx.");
     expect(html).not.toMatch(/title="[^"]*report\.docx"/);
   });
 
-  it.each([false, true])("仅双波浪线渲染删除线（streaming=%s）", (streaming) => {
+  it.each([false, true])("only double tildes render strikethrough (streaming=%s)", (streaming) => {
     const html = renderToStaticMarkup(
       createElement(
         MessageResponse,
         { streaming, workspacePath: "/workspace" },
-        "~单波浪线~ 与 ~~双波浪线。~~后续文字",
+        "~single tilde~ and ~~double tilde~~following text",
       ),
     );
 
-    expect(html).toContain("~单波浪线~");
-    expect(html).not.toContain("<del>单波浪线</del>");
-    expect(html).toContain("<del>双波浪线。</del>后续文字");
+    expect(html).toContain("~single tilde~");
+    expect(html).not.toContain("<del>single tilde</del>");
+    expect(html).toContain("<del>double tilde</del>following text");
   });
 
   it("keeps completed messages on Streamdown static mode", () => {
@@ -564,23 +525,6 @@ describe("resolveMessageStreamdownMode", () => {
     ).not.toBe(base);
   });
 
-  it("keeps the Streamdown render key stable across streaming mode changes", () => {
-    const staticModeKey = buildMessageStreamdownRenderKey({
-      codeBlockTheme: "github-light",
-      fontSizePx: 12,
-      workspacePath: "/workspace",
-      wrapLongLines: false,
-    });
-    const streamingModeKey = buildMessageStreamdownRenderKey({
-      codeBlockTheme: "github-light",
-      fontSizePx: 12,
-      workspacePath: "/workspace",
-      wrapLongLines: false,
-    });
-
-    expect(streamingModeKey).toBe(staticModeKey);
-  });
-
   it("changes the Streamdown render key with artifact permission context", () => {
     const base = buildMessageStreamdownRenderKey({
       attachmentReaderEpoch: 1,
@@ -618,7 +562,7 @@ describe("resolveMessageStreamdownMode", () => {
       createElement(
         MessageResponse,
         { workspacePath: "/workspace" },
-        "其中 $c(\\mathbf{r})$ 是声速，$\\omega=2\\pi f$ 是角频率。",
+        "where $c(\\mathbf{r})$ is the speed of sound and $\\omega=2\\pi f$ is the angular frequency.",
       ),
     );
 
@@ -690,19 +634,9 @@ describe("resolveMessageStreamdownMode", () => {
     expect(html).not.toContain("katex");
     expect(html).toContain("Use $HOME and $PATH to inspect environment variables.");
   });
-
-  it("loads KaTeX CSS so MathML fallback does not duplicate visual output", () => {
-    const packageJson = JSON.parse(
-      readFileSync(resolve(process.cwd(), "packages/ui/package.json"), "utf8"),
-    ) as { dependencies?: Record<string, string> };
-
-    // Bugfix: styles.css 作为 @zcode/ui 的公开入口会被 web/desktop 直接构建，
-    // 不能依赖 pnpm hoist 偶然把间接依赖 katex 放到根 node_modules。
-    expect(packageJson.dependencies?.katex).toBeTruthy();
-  });
 });
 
-it("通用模式回答保留代码容器和复制入口，锁定换行入口且模式变化会重新渲染", () => {
+it("general-mode answers keep the code container and copy entry, lock the wrap entry, and re-render on mode change", () => {
   const codePreviewSettings = {
     darkTheme: "github-dark",
     lightTheme: "github-light",

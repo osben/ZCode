@@ -22,7 +22,6 @@ import {
   BUILTIN_MODEL_PROVIDER_IDS,
   getModelProviderFamilySpec,
   resolveModelProviderFamilySpecByProviderId,
-  resolveContextBudgetTone,
   ZCODE_AGENT_PROVIDER,
   type ProviderFamilyConnectionSelection,
   type ProviderFamilyConnectionSelectionSettings,
@@ -1142,28 +1141,8 @@ function V4ComposerModelControlsImpl({
       size: contextWindow.maxTokens,
       ...(contextWindow.cache ? { cache: contextWindow.cache } : {}),
       ...(contextWindow.breakdown ? { breakdown: contextWindow.breakdown } : {}),
-      ...(contextWindow.autoCompactThresholdTokens !== undefined
-        ? { autoCompactThresholdTokens: contextWindow.autoCompactThresholdTokens }
-        : {}),
-      ...(contextWindow.autoCompactThresholdAuthoritative === true
-        ? { autoCompactThresholdAuthoritative: true }
-        : {}),
-      ...(contextWindow.microcompactThresholdTokens !== undefined
-        ? { microcompactThresholdTokens: contextWindow.microcompactThresholdTokens }
-        : {}),
     };
   }, [usage?.contextWindow]);
-  const usageTone = taskUsage
-    ? resolveContextBudgetTone({
-        autoCompactThresholdTokens:
-          taskUsage.autoCompactThresholdAuthoritative === true
-            ? taskUsage.autoCompactThresholdTokens
-            : undefined,
-        contextWindow: taskUsage.size,
-        microcompactThresholdTokens: taskUsage.microcompactThresholdTokens,
-        usedTokens: taskUsage.used,
-      })
-    : "normal";
   // Toolbar shortcuts are now command-table commands: tooltip shortcut labels read from the active bindings,
   // so button hints update immediately after rebinding (do not hard-code their text).
   const modelShortcutLabel = useShortcutCommandLabel("openModelMenu");
@@ -1286,7 +1265,6 @@ function V4ComposerModelControlsImpl({
         data-plan-enabled={draftConfig?.planEnabled ?? false}
         data-usage-used={usage?.contextWindow?.usedTokens ?? ""}
         data-usage-max={usage?.contextWindow?.maxTokens ?? ""}
-        data-usage-tone={usageTone}
         className="hidden"
       />
       {/* A Highspeed card locks the model the moment it activates; do not wait for the motion handoff to finish before hiding, or the usage ring briefly flashes. */}

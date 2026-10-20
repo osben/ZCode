@@ -16,7 +16,7 @@ function renderHeader(overrides: Record<string, unknown> = {}): string {
       ZCodeIntlProvider,
       { initialLocale: "en-US" },
       createElement(ConversationHeader, {
-        title: "这是个啥项目",
+        title: "What is this project",
         onSplitRight: vi.fn(),
         onSplitDown: vi.fn(),
         onClosePane: vi.fn(),
@@ -43,7 +43,10 @@ describe("ConversationHeader split chrome", () => {
   });
 
   it("does not render an empty floating action group when only split callbacks are provided", () => {
-    const html = renderHeader({ workspaceBadge: undefined, onClosePane: undefined });
+    const html = renderHeader({
+      workspaceBadge: undefined,
+      onClosePane: undefined,
+    });
 
     expect(html).not.toContain('data-v4-pane-actions="floating"');
     expect(html).not.toContain(`data-testid="${TID_V4_SPLIT_OPEN}"`);

@@ -5,6 +5,7 @@ import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/
 // Node.js service implementations — NOT safe to import in browser code
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -533,6 +534,7 @@ import { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport
 import { OffPeakTaskService } from "./session/offPeakTaskService.js";
 import { OffPeakTaskRepo } from "./session/offPeakTaskRepo.js";
 import { ForkWorkspacePinRepo } from "./session/forkWorkspacePinRepo.js";
+import { migrateForkWorkspacePinsToProjects } from "./project-storage/forkWorkspacePinMigration.js";
 import { createOffPeakServerClient } from "./session/offPeakServerClient.js";
 import {
   buildOffPeakRequestAuth,
@@ -2465,7 +2467,6 @@ export function createLocalServices(options: {
   const zcodeTaskService = createZCodeTaskServiceAdapter({
     zcodeAgentService,
     taskIndexRepo,
-    forkWorkspacePinRepo,
     taskIndexSyncer: zcodeTaskIndexSyncer,
     gitService,
     getOpenWorkspacePaths: options?.getOpenWorkspacePaths,
@@ -2600,6 +2601,18 @@ export function createLocalServices(options: {
     workspaceDirectory: join(projectDataRoot(), "workspace"),
     afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
   });
+  // One-time import of fork sidebar pins into upstream project pins (specs/ui-pins-upstream-migration.md).
+  // Startup must not wait on or fail because of it: a failed run is retried on the next start.
+  const forkPinLog = createServiceLogger("project-pins-migration");
+  void migrateForkWorkspacePinsToProjects({
+    source: forkWorkspacePinRepo,
+    projects: projectService,
+    isDirectory: async (path) => (await stat(path).catch(() => null))?.isDirectory() ?? false,
+    log: {
+      info: (message, data) => forkPinLog.info(undefined, message, data),
+      warn: (message, data) => forkPinLog.warn(undefined, message, data),
+    },
+  }).catch((error: unknown) => forkPinLog.error(undefined, "fork pin migration failed", { error }));
   const services = new ServiceCollection()
     .register(
       IMarketingTouchService,

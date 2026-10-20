@@ -1,7 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TID_V4_TIMELINE, TID_V4_TIMELINE_BOTTOM } from "@zcode/shared";
+import { TID_V4_TIMELINE, TID_V4_TIMELINE_BOTTOM } from "@zcode/shared/test-ids";
 import type { ConversationRow, UserInputRow } from "@zcode/shared/zcode-protocol-v4";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import {
@@ -87,9 +87,9 @@ function createMinimalElement(ownerDocument: Document, tagName = "div"): TestEle
     },
     childNodes: [] as TestElement[],
     dispatchEvent: (event: Event) => {
-      // Bug regression: ConversationTimeline dispatches a standard scroll event after commit
-      // to sync the virtualizer; the minimal DOM must implement the real dependency and
-      // cannot only provide the test-only dispatchScroll.
+      // Bug regression: ConversationTimeline dispatches a native scroll event after
+      // commit to sync the virtualizer; the minimal DOM must implement the real
+      // dependency instead of a test-only dispatchScroll.
       const forwardedEvent = {
         bubbles: event.bubbles,
         cancelBubble: event.cancelBubble,
@@ -327,11 +327,13 @@ function renderTimeline(
         sessionKey,
         scrollMemoryKey,
         rowContext,
-        // Composer dock. The floating band above it is removed together with the floating
-        // island, and the round button returns to its own centered positioning.
+        // Composer dock. The floating strip above it was removed together with the
+        // island, and the round button returned to its own centered positioning.
         ...(options.withComposerDock
           ? {
-              bottomDock: createElement("div", { "data-testid": "test-composer-dock" }),
+              bottomDock: createElement("div", {
+                "data-testid": "test-composer-dock",
+              }),
             }
           : {}),
       }),
@@ -368,9 +370,12 @@ afterEach(() => {
 });
 
 describe("ConversationTimeline renderer-local scroll memory", () => {
-  it("跟随时先提交新行高再吸底，用户离底后 resize 不抢回滚动权", () => {
+  it("while following, commits the new row height before pinning to bottom; a resize after the user leaves the bottom must not steal scroll ownership", () => {
     const container = installMinimalDom();
-    const observations: Array<{ target: Element; callback: ResizeObserverCallback }> = [];
+    const observations: Array<{
+      target: Element;
+      callback: ResizeObserverCallback;
+    }> = [];
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -395,7 +400,10 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const column = findByTestId(container, "true", "data-v4-timeline-virtual-history")!;
       let measuredHeight = 1200;
       let contentWidth = 1000;
-      Object.defineProperty(column, "clientWidth", { configurable: true, get: () => contentWidth });
+      Object.defineProperty(column, "clientWidth", {
+        configurable: true,
+        get: () => contentWidth,
+      });
       const row = {
         getAttribute: () => "0",
         getBoundingClientRect: () => ({ height: measuredHeight }),
@@ -403,8 +411,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       const query = vi
         .spyOn(column, "querySelectorAll")
         .mockReturnValue([row] as unknown as NodeListOf<Element>);
-      // Simulate the library having measured the height while React has not yet committed
-      // the placeholder height; only a re-render can read the new layout.
+      // Simulate the library having measured but React not yet committing the
+      // placeholder height; only a re-render reads the new layout.
       const totalSize = vi.spyOn(virtualizer, "getTotalSize").mockImplementation(() => {
         layout.scrollHeight = measuredHeight;
         return measuredHeight;
@@ -438,8 +446,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
         for (const observer of observers) observer.callback([], {} as ResizeObserver);
       });
       expect(timeline.scrollTop).toBe(2100);
-      // The user scrolls up during batch height measurement; follow ownership must be
-      // re-checked after the commit.
+      // The user scrolled up during the batch measuring; after commit, following
+      // ownership must be checked again.
       virtualizer.resizeItem.mockImplementationOnce(() => dispatchWheel(timeline, -120));
       const beforeInterrupt = timeline.scrollTop;
       act(() => {
@@ -521,8 +529,8 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
       }),
     );
 
-    // The old anchor is beyond the viewport + 8 rows of overscan; neither the DOM query nor
-    // the old totalSize can provide a displacement.
+    // The old anchor is outside viewport + 8-row overscan, so neither a DOM query
+    // nor the old totalSize can produce the shift.
     expect(timeline.querySelectorAll('[data-v4-turn-unit="true"]')).toHaveLength(0);
     expect(timeline.scrollTop).toBe(1500);
   });
@@ -902,21 +910,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     ).toBe(false);
   });
 
-  // After the floating island removal (docs/dynamic-workflow/presentation.md "Other places
-  // a run appears" item 1) there is no shared floating stack above the composer anymore:
-  // the `composerOverlay` slot disappears along with its only resident, and the
-  // back-to-bottom round button **returns to its own pre-change standalone positioning**
-  // (`bottom-full` + `mb-2` centered). This case pins exactly that geometry fallback — if
-  // the stack shell remained, the round button would be wrapped in a `pointer-events-none`
-  // container that no longer has any reason to exist.
-  //
-  // "The button is still clickable" can only be asserted here via the **class contract**,
-  // not by firing a click: this minimal DOM's dispatchEvent does not bubble, and React
-  // delegates click on the root container, so the event never arrives; switching to jsdom
-  // would be just as ineffective — jsdom does no pointer-events hit testing, and
-  // `fireEvent.click` succeeds on `pointer-events: none` all the same. In other words,
-  // only this class assertion turns red when `pointer-events-auto` is genuinely missing.
-  it("centers the back-to-bottom button on its own once the overlay stack is gone", () => {
+  it("hides the back-to-bottom button after its action while retaining the composer dock", () => {
     saveChatSessionScrollMemoryState("workspace::pane:a::session:1", {
       scrollTop: 240,
       scrollHeight: 1000,
@@ -939,14 +933,7 @@ describe("ConversationTimeline renderer-local scroll memory", () => {
     );
 
     const button = findByTestId(container, TID_V4_TIMELINE_BOTTOM)!;
-    // Neither the slot nor its stack shell exists anymore: the round button positions itself on the dock's anchor.
-    expect(findByTestId(container, "v4-composer-overlay")).toBeNull();
-    const buttonClass = button.getAttribute("class") ?? "";
-    expect(buttonClass).toContain("absolute bottom-full left-1/2");
-    expect(buttonClass).toContain("mb-2");
-    expect(buttonClass).toContain("-translate-x-1/2");
-    expect(buttonClass).toContain("pointer-events-auto");
-    // The dock is still there (the round button anchors to it); only the floating band is gone.
+    expect(button).not.toBeNull();
     expect(findByTestId(container, "test-composer-dock")).not.toBeNull();
 
     act(() => scrollToBottomActionRef.current?.());

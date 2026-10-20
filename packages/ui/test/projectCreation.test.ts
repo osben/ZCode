@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { IProjectService } from "@/project-sidebar/contract.js";
 import { ProjectCreation } from "@/project-sidebar/ProjectCreation.js";
 import { ProjectEditor } from "@/project-sidebar/ProjectEditor.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 
@@ -14,7 +15,7 @@ const state = vi.hoisted(() => ({
   boundaryVersion: 1,
   readBoundary: vi.fn<() => Promise<{ remoteBoundaryIntroAcknowledgedVersion: number }>>(),
   markBoundary: vi.fn(),
-  locale: undefined as undefined | "en-US",
+  locale: undefined as undefined | "zh-CN" | "en-US",
   devices: [{ sourceServerId: "source", displayName: "Saved device", aggregatedStatus: "online" }],
   confirm: vi.fn(async () => true),
   select: undefined as undefined | (() => Promise<string[]>),
@@ -25,7 +26,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }) => {
         if (!state.locale) return id;
-        const messages: Record<string, string> = enUS;
+        const messages: Record<string, string> = state.locale?.startsWith("zh") ? zhCN : enUS;
         return messages[id] ?? id;
       },
     },
@@ -677,16 +678,19 @@ it("background cancellation leaves the project draft hidden until its original t
 });
 
 it.each([
+  ["zh-CN", "remote-project.host-removed", "此设备已从项目列表移除，请重新选择设备。"],
   [
     "en-US",
     "remote-project.host-removed",
     "This device was removed from the project list. Select a device again.",
   ],
+  ["zh-CN", "project.connection-unavailable", "此设备不可用，请在设置中重新连接。"],
   [
     "en-US",
     "project.connection-unavailable",
     "This device is unavailable. Reconnect it in settings.",
   ],
+  ["zh-CN", "permission denied: /project", "permission denied: /project"],
   ["en-US", "permission denied: /project", "permission denied: /project"],
 ] as const)("shows project save errors in %s: %s", async (locale, code, message) => {
   state.locale = locale;
@@ -698,11 +702,13 @@ it.each([
 });
 
 it.each([
+  ["zh-CN", "remote-project.host-removed", "此设备已从项目列表移除，请重新选择设备。"],
   [
     "en-US",
     "remote-project.host-removed",
     "This device was removed from the project list. Select a device again.",
   ],
+  ["zh-CN", "permission denied: /project", "permission denied: /project"],
   ["en-US", "permission denied: /project", "permission denied: /project"],
 ] as const)("shows existing-project errors in %s: %s", async (locale, code, message) => {
   state.locale = locale;

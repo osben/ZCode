@@ -23,7 +23,7 @@ vi.mock("@/lib/conversationSelectionReference.js", async (importOriginal) => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// 永不 resolve：这些文件不测发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
+// Never resolves: these files do not test the discovery query; resolving would trigger setState after environment teardown (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -72,7 +72,7 @@ const servicesMock = vi.hoisted(() => ({
     healthy: vi.fn(),
     share: vi.fn(),
   },
-  // 修复原因：readiness hook 将 service 作为 effect 依赖；每次 render 重建会导致无限重渲染直至 OOM。
+  // Fix reason: the readiness hook takes the service as an effect dependency; rebuilding it every render causes infinite re-renders up to OOM.
   zcodeSessionService: {
     updateProviderRegistry: vi.fn(),
     readSession: vi.fn(async () => ({})),
@@ -82,7 +82,7 @@ const servicesMock = vi.hoisted(() => ({
   },
 }));
 
-// 本组隔离编辑/设置行为，群投递服务由独立单测及 Host/CLI E2E 覆盖。
+// This suite isolates edit/settings behavior; group delivery is covered by dedicated unit tests and Host/CLI E2E.
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
@@ -113,8 +113,8 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: layerMock,
     sendCommand: sendCommandMock,
     attachmentPut: vi.fn(),
-    // SessionPane 挂载即拉 journal 兜底的 run 发现查询：缺桩会在 effect 里 TypeError；
-    // 桩必须是稳定引用——effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
+    // SessionPane pulls the journal-fallback run discovery query on mount; a missing stub throws TypeError in an effect.
+    // The stub must be a stable reference — the effect depends on workflowRuns, and a fresh function per render would loop forever.
     workflowRuns: workflowRunsQueryMock,
   }),
 }));
@@ -329,71 +329,74 @@ afterEach(() => {
 });
 
 describe("SessionPane followupMode app setting sync", () => {
-  it.each([false, true])("主控制器保留 Markdown 引用路由，辅助阻塞=%s", async (blocked) => {
-    projectionState.current = {
-      status: "live",
-      snapshot: makeSnapshot(),
-      subscriptionId: "sub-1",
-      lastError: null,
-      optimisticCommands: [],
-      loadingOlder: false,
-    };
-    setSelectionSideChatBlocked("side-child", blocked);
-    const onOpen = vi.fn();
-    const key = buildSelectionSideChatKey("/workspace", "session-1");
-    const reference = {
-      id: "markdown-selection",
-      contentType: "markdown" as const,
-      sourceKey: "file:/workspace/readme.md",
-      sourceTitle: "readme.md",
-      path: "/workspace/readme.md",
-      text: "selected paragraph",
-    };
-    const root = createRoot(installMinimalDom());
-    try {
-      await act(async () => {
-        root.render(
-          createElement(
-            ZCodeIntlProvider,
-            { initialLocale: "en-US" },
-            createElement(SessionPane, {
-              paneId: "workspace-main",
-              sessionId: "session-1",
-              workspacePath: "/workspace",
-              activeSelectionSideChatSessionId: "side-child",
-              onOpenSelectionSideChat: onOpen,
-            }),
-          ),
-        );
-        await flushMicrotasks();
-      });
-      expect(getSelectionSideChatOpenState(key)).toBe(blocked ? "blocked" : "ready");
-      await act(async () => {
-        expect(requestSelectionSideChatOpen(key, reference)).toBe(!blocked);
-        await flushMicrotasks();
-      });
-      if (blocked) {
-        expect(onOpen).not.toHaveBeenCalled();
-        expect(dispatchConversationSelectionAdd).not.toHaveBeenCalled();
-      } else {
-        expect(onOpen).toHaveBeenCalledWith(
-          expect.objectContaining({ childSessionId: "side-child" }),
-        );
-        expect(dispatchConversationSelectionAdd).toHaveBeenCalledWith({
-          targetSessionId: "side-child",
-          workspaceKey: "/workspace",
-          reference,
+  it.each([false, true])(
+    "the main controller keeps Markdown reference routing, side-chat blocked=%s",
+    async (blocked) => {
+      projectionState.current = {
+        status: "live",
+        snapshot: makeSnapshot(),
+        subscriptionId: "sub-1",
+        lastError: null,
+        optimisticCommands: [],
+        loadingOlder: false,
+      };
+      setSelectionSideChatBlocked("side-child", blocked);
+      const onOpen = vi.fn();
+      const key = buildSelectionSideChatKey("/workspace", "session-1");
+      const reference = {
+        id: "markdown-selection",
+        contentType: "markdown" as const,
+        sourceKey: "file:/workspace/readme.md",
+        sourceTitle: "readme.md",
+        path: "/workspace/readme.md",
+        text: "selected paragraph",
+      };
+      const root = createRoot(installMinimalDom());
+      try {
+        await act(async () => {
+          root.render(
+            createElement(
+              ZCodeIntlProvider,
+              { initialLocale: "en-US" },
+              createElement(SessionPane, {
+                paneId: "workspace-main",
+                sessionId: "session-1",
+                workspacePath: "/workspace",
+                activeSelectionSideChatSessionId: "side-child",
+                onOpenSelectionSideChat: onOpen,
+              }),
+            ),
+          );
+          await flushMicrotasks();
         });
-        expect(
-          sendCommandMock.mock.calls.some(
-            ([command]) => command.type === "createSelectionSideSession",
-          ),
-        ).toBe(false);
+        expect(getSelectionSideChatOpenState(key)).toBe(blocked ? "blocked" : "ready");
+        await act(async () => {
+          expect(requestSelectionSideChatOpen(key, reference)).toBe(!blocked);
+          await flushMicrotasks();
+        });
+        if (blocked) {
+          expect(onOpen).not.toHaveBeenCalled();
+          expect(dispatchConversationSelectionAdd).not.toHaveBeenCalled();
+        } else {
+          expect(onOpen).toHaveBeenCalledWith(
+            expect.objectContaining({ childSessionId: "side-child" }),
+          );
+          expect(dispatchConversationSelectionAdd).toHaveBeenCalledWith({
+            targetSessionId: "side-child",
+            workspaceKey: "/workspace",
+            reference,
+          });
+          expect(
+            sendCommandMock.mock.calls.some(
+              ([command]) => command.type === "createSelectionSideSession",
+            ),
+          ).toBe(false);
+        }
+      } finally {
+        await act(async () => root.unmount());
       }
-    } finally {
-      await act(async () => root.unmount());
-    }
-  });
+    },
+  );
 
   it("syncs guide app setting to the mounted v4 session", async () => {
     projectionState.current = {

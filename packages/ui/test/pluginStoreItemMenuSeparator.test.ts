@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { StorePluginItem } from "../src/settings/pluginStoreListing.js";
 import type { PluginStoreActions } from "../src/settings/PluginStoreCard.js";
 
-// Radix 菜单关闭时不会渲染内容，这里把菜单原语替换为直出子节点，只验证菜单项结构。
+// Radix menus render nothing while closed; replace the primitives with pass-through wrappers and verify the item structure only.
 vi.mock("@/components/ui/dropdown-menu.js", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => createElement("div", null, children),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => children,
@@ -52,15 +52,15 @@ async function renderMenu(item: StorePluginItem, actions: PluginStoreActions): P
 }
 
 describe("PluginStoreItemMenu separator", () => {
-  // Bug：菜单只剩「卸载」一项时仍在其上方渲染分隔线，用户看到一条孤立横线。
-  it("菜单只有卸载一项时不渲染分隔线", async () => {
+  // Bug: with only the uninstall action left, a separator still rendered above it as an orphan line.
+  it("renders no separator when the menu has only the uninstall action", async () => {
     const html = await renderMenu(storeItem(), makeActions());
 
     expect(html).toContain('data-testid="plugin-store-menu-uninstall"');
     expect(html).not.toContain('data-slot="dropdown-menu-separator"');
   });
 
-  it("更新移到行内后，只有卸载的菜单不留分隔线", async () => {
+  it("leaves no separator in an uninstall-only menu once update moved inline", async () => {
     const html = await renderMenu(
       storeItem({
         installedMeta: {
@@ -79,7 +79,7 @@ describe("PluginStoreItemMenu separator", () => {
     expect(html).not.toContain('data-slot="dropdown-menu-separator"');
   });
 
-  it("卸载前有其他操作项时保留分隔线", async () => {
+  it("keeps the separator when other actions precede uninstall", async () => {
     const html = await renderMenu(
       storeItem({ info: { enabled: true } as StorePluginItem["info"] }),
       makeActions({ onSetEnabled: () => {} }),

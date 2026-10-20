@@ -36,9 +36,9 @@ function createFeedbackService(): IFeedbackService {
 function createTicket(id: string): FeedbackTicketDetail {
   const summary: FeedbackTicketSummary = {
     id,
-    title: "功能建议",
+    title: "Feature request",
     type: "feature",
-    status: "已提交",
+    status: "Submitted",
     created_at: "2026-06-17T10:00:00.000Z",
     updated_at: "2026-06-17T10:00:00.000Z",
   };
@@ -75,14 +75,17 @@ describe("FeedbackSubmitForm", () => {
   it.each([
     ["zh-CN", "问题描述"],
     ["en-US", "Issue description"],
-  ] as const)("%s 问题描述明确声明必填并提供可访问名称", (locale, label) => {
-    const html = renderFeedbackSubmitForm(locale);
-    expect(html).toMatch(/<span[^>]*aria-hidden="true"[^>]*>\*<\/span>/);
-    const textarea = html.match(/<textarea\b[^>]*>/)?.[0];
-    expect(textarea).toContain('required=""');
-    expect(textarea).toContain('aria-required="true"');
-    expect(textarea).toContain(`aria-label="${label}"`);
-  });
+  ] as const)(
+    "%s declares the issue description required with an accessible name",
+    (locale, label) => {
+      const html = renderFeedbackSubmitForm(locale);
+      expect(html).toMatch(/<span[^>]*aria-hidden="true"[^>]*>\*<\/span>/);
+      const textarea = html.match(/<textarea\b[^>]*>/)?.[0];
+      expect(textarea).toContain('required=""');
+      expect(textarea).toContain('aria-required="true"');
+      expect(textarea).toContain(`aria-label="${label}"`);
+    },
+  );
 
   it("uses English copy when the app locale is English", () => {
     const html = renderFeedbackSubmitForm("en-US");
@@ -95,10 +98,10 @@ describe("FeedbackSubmitForm", () => {
     expect(html).toContain("safe projection of CLI configuration");
     expect(html).toContain("model-call traces");
     expect(html).not.toContain("问题描述");
-    expect(html).not.toContain(expectedCopy("feedback.submit.type.label"));
+    expect(html).not.toContain("反馈类型");
   });
 
-  it("从当前模型配置读取选中的模型展示名", () => {
+  it("reads the selected model display name from the current model configuration", () => {
     const selectedModel = "315c04c4-1234-5678-9abc-000000000000/claude-opus-4-7";
 
     const context = readCurrentAgentModelContext([
@@ -123,31 +126,32 @@ describe("FeedbackSubmitForm", () => {
     });
   });
 
-  it("不再展示旧提交弹窗里的分类字段，但保留简化日志开关", () => {
+  it("drops legacy category fields but keeps the simplified log toggle", () => {
     const html = renderFeedbackSubmitForm();
 
     expect(html).toContain(expectedCopy("feedback.submit.simple.descriptionTitle"));
     expect(html).toContain(expectedCopy("feedback.submit.simple.screenshotTitle"));
     expect(html).toContain(expectedCopy("feedback.submit.simple.contactTitle"));
-    expect(html).toContain(expectedCopy("feedback.submit.simple.logsLabel"));
+    expect(html).toContain("Upload diagnostic logs");
     expect(html).toContain('aria-checked="true"');
     expect(html).toContain("On by default");
+    expect(html).toContain("safe projection of CLI configuration");
     expect(html).toContain("model-call traces");
-    expect(html).not.toContain(expectedCopy("feedback.submit.type.label"));
-    expect(html).not.toContain(expectedCopy("feedback.submit.module.label"));
-    expect(html).not.toContain(expectedCopy("feedback.submit.severity.label"));
-    expect(html).not.toContain(expectedCopy("feedback.submit.model.label"));
-    expect(html).not.toContain("附带完整日志");
+    expect(html).not.toContain("Feedback type");
+    expect(html).not.toContain("Module");
+    expect(html).not.toContain("Impact");
+    expect(html).not.toContain("Current model");
+    expect(html).not.toContain("Include full logs");
   });
 
-  it("截图附件区域保持可聚焦，方便用户定位截图上传入口", () => {
+  it("keeps the screenshot attachment area focusable so the upload entry is easy to reach", () => {
     const html = renderFeedbackSubmitForm();
 
     expect(html).toContain(expectedCopy("feedback.submit.simple.screenshotHint"));
     expect(html).toContain('tabindex="0"');
   });
 
-  it("只有存在后台附件上传时才在工单创建后收起提交窗口", () => {
+  it("auto-closes the submit window after ticket creation only when a background upload exists", () => {
     expect(shouldAutoCloseFeedbackOnTicketCreated({ includeLogs: true, screenshotCount: 0 })).toBe(
       true,
     );
@@ -159,7 +163,7 @@ describe("FeedbackSubmitForm", () => {
     );
   });
 
-  it("提交 helper 会保留入口预设的反馈类型和日志开关", async () => {
+  it("submission helper keeps the entry-preset feedback type and log toggle", async () => {
     const feedbackService = createFeedbackService();
     vi.mocked(feedbackService.getDeviceSnapshot).mockResolvedValue({});
     vi.mocked(feedbackService.create).mockResolvedValue(createTicket("ticket-feature"));
@@ -167,8 +171,8 @@ describe("FeedbackSubmitForm", () => {
     const ticketCreated = vi.fn();
     const job = await startSimplifiedFeedbackSubmission({
       feedbackService,
-      title: "增加帮助菜单",
-      description: "  我想建议：增加帮助菜单  \n",
+      title: "Add a help menu",
+      description: "  I would like to suggest: add a help menu  \n",
       contact: "",
       screenshots: [],
       includeLogs: false,
@@ -210,7 +214,7 @@ describe("FeedbackSubmitForm", () => {
 
     expect(feedbackService.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "增加帮助菜单",
+        title: "Add a help menu",
         type: "feature",
         severity: "P3-低",
         module: "其它",
@@ -224,8 +228,8 @@ describe("FeedbackSubmitForm", () => {
     expect(ticketCreated).toHaveBeenCalledWith("ticket-feature");
     expect(completed).toHaveBeenCalledWith("ticket-feature");
     expect(job.formDraft).toEqual({
-      title: "增加帮助菜单",
-      description: "  我想建议：增加帮助菜单  \n",
+      title: "Add a help menu",
+      description: "  I would like to suggest: add a help menu  \n",
       contact: "",
       screenshots: [],
       includeLogs: false,

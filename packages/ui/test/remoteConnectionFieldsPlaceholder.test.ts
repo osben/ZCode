@@ -6,7 +6,7 @@ import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { RemoteConnectionFields } from "@/RemoteConnectionFields.js";
 import type { IPlatformService } from "@zcode/shared";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const platform: IPlatformService = {
   activateOrSetWorkspace: vi.fn(),
@@ -38,7 +38,7 @@ function renderRemoteConnectionFields() {
       { platform },
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: TEST_LOCALE },
+        { initialLocale: "en-US" },
         createElement(RemoteConnectionFields, {
           kind: "docker",
           host: "",
@@ -88,7 +88,7 @@ function renderRemoteConnectionFields() {
 }
 
 describe("RemoteConnectionFields placeholder", () => {
-  it("Docker 手动模式保留切换列表入口与空输入提示", () => {
+  it("Docker manual mode keeps the switch-to-list entry and the empty-input hint", () => {
     const html = renderRemoteConnectionFields();
 
     expect(html).toContain(expectedCopy("docker.inputMode.select"));

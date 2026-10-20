@@ -39,7 +39,7 @@ function createServices(params: {
 }
 
 describe("ensureProviderFamilyDomainMigration", () => {
-  it("从旧 active OAuth provider 迁移 providerFamilyDomain", async () => {
+  it("migrates providerFamilyDomain from the previous active OAuth provider", async () => {
     const services = createServices({ activeProvider: "zai" });
 
     await ensureProviderFamilyDomainMigration(services);
@@ -52,7 +52,7 @@ describe("ensureProviderFamilyDomainMigration", () => {
     );
   });
 
-  it("没有 active OAuth 时从唯一可用 Account Provider 推断", async () => {
+  it("infers from the only available account provider when there is no active OAuth", async () => {
     const services = createServices({
       selectableProviderIds: [BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan],
     });
@@ -67,7 +67,7 @@ describe("ensureProviderFamilyDomainMigration", () => {
     );
   });
 
-  it("两边都有可用凭据时只标记已迁移，不猜测 domain", async () => {
+  it("only marks migrated without guessing the domain when both sides have usable credentials", async () => {
     const services = createServices({
       selectableProviderIds: [
         BUILTIN_MODEL_PROVIDER_IDS.zaiStartPlan,
@@ -89,7 +89,7 @@ describe("ensureProviderFamilyDomainMigration", () => {
     );
   });
 
-  it("active provider 和 provider 缓存都未恢复时暂不标记已迁移", async () => {
+  it("does not mark migrated while neither the active provider nor the provider cache has recovered", async () => {
     const services = createServices({
       activeProvider: null,
       selectableProviderIds: [],
@@ -100,7 +100,7 @@ describe("ensureProviderFamilyDomainMigration", () => {
     expect(services.update).not.toHaveBeenCalled();
   });
 
-  it("已有 providerFamilyDomain 时不重复迁移", async () => {
+  it("does not migrate again when providerFamilyDomain already exists", async () => {
     const services = createServices({
       settings: {
         providerFamilyDomain: "bigmodel",

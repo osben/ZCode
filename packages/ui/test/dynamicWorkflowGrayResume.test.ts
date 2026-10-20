@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-// When the gray release does not match, no path to start the engine remains (docs/dynamic-workflow/launch.md "Gray
-// release", DWG-07).
+// When the gray release misses, no path may start an engine (docs/dynamic-workflow/launch.md "Gray release" DWG-07).
 //
-// There is a single supply point: SessionPane puts the Resume callback into the session context. The tool card footer
-// and the end-of-turn digest card both gate their buttons on "is the callback present", so here the callback is
-// computed through the real gate (resolveWorkflowResumeHandler) and both surfaces are actually rendered to see whether
-// the button is there — instead of restating the rule in each place.
+// There is a single supply point: SessionPane puts the Resume callback into the conversation
+// context. Both the tool-card footer and the turn-end digest card gate their button on
+// "is the callback present", so this file computes the callback through the real gate
+// (resolveWorkflowResumeHandler) and then actually renders both surfaces to see whether the
+// button exists — instead of restating the rule in each place.
 import { cleanup, render } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -20,21 +20,20 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
   CodeBlock: ({ code }: { code: string; children?: ReactNode }) =>
     createElement("pre", { "data-testid": "code-block" }, code),
 }));
-// ControlHintTooltip depends on the app root's TooltipProvider; following existing convention, the test replaces it
-// with a pass-through stub.
+// ControlHintTooltip needs the TooltipProvider from the app root; stub it as a pass-through per existing convention.
 vi.mock("@/ControlHintTooltip.js", () => ({
   ControlHintTooltip: ({ children }: { children?: ReactNode }) => children,
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after the mocks above.
+// eslint-disable-next-line import/first -- the component under test must be imported after the mocks above.
 import { CreateWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/create-workflow.js";
-// eslint-disable-next-line import/first -- Same as above.
+// eslint-disable-next-line import/first -- same as above.
 import {
   WorkflowRunDigest,
   type WorkflowRunDigestProps,
 } from "@/components/workflow-timeline/WorkflowRunDigest.js";
 
-/** The callback in the session context: computed through the real gate; `undefined` means "this path is gone". */
+/** The conversation-context callback: computed by the real gate; `undefined` means "this path is gone". */
 function resumeHandlerFor(dynamicWorkflowEnabled: boolean) {
   return resolveWorkflowResumeHandler({
     readOnly: false,
@@ -44,13 +43,29 @@ function resumeHandlerFor(dynamicWorkflowEnabled: boolean) {
 }
 
 const GRAPH = {
-  steps: [{ id: "ask#1", kind: "ask", label: "plan", line: 2, column: 21, lane: "actor#1" }],
+  steps: [
+    {
+      id: "ask#1",
+      kind: "ask",
+      label: "plan",
+      line: 2,
+      column: 21,
+      lane: "actor#1",
+    },
+  ],
   lanes: [{ id: "actor#1", name: "planner", line: 1, column: 11 }],
-  participants: [{ id: "unphased:actor#1", phase: "unphased", lane: "actor#1", steps: ["ask#1"] }],
+  participants: [
+    {
+      id: "unphased:actor#1",
+      phase: "unphased",
+      lane: "actor#1",
+      steps: ["ask#1"],
+    },
+  ],
   handoffs: [],
 } as const;
 
-/** Stopped and resumable: the kind of run where all three Resume affordances appear. */
+/** Stopped and resumable: the one run state where all three Resume surfaces appear. */
 function stoppedResumableRun(): WorkflowRunState {
   return {
     runId: "dwfrun-42",
@@ -94,7 +109,7 @@ function renderCard(
             status: "completed",
           },
           childToolCalls: [],
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- The test context only fills the fields the renderer reads.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the test fills only the fields the renderer reads.
         } as any,
         workspacePath: "/workspace",
         displayModel: {
@@ -106,12 +121,12 @@ function renderCard(
           showInput: false,
           showOutput: true,
           showKind: false,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Same as above.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- same as above.
         } as any,
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已停止",
+        statusLabel: "Stopped",
         childToolList: null,
         forceOpen: true,
         canToggle: true,
@@ -145,38 +160,58 @@ afterEach(() => {
 });
 
 describe("resolveWorkflowResumeHandler", () => {
-  it("灰度命中且可写 → 回调照常供给", () => {
+  it("gray release hit and writable → the callback is supplied as usual", () => {
     const handler = vi.fn();
     expect(
-      resolveWorkflowResumeHandler({ readOnly: false, dynamicWorkflowEnabled: true, handler }),
+      resolveWorkflowResumeHandler({
+        readOnly: false,
+        dynamicWorkflowEnabled: true,
+        handler,
+      }),
     ).toBe(handler);
-    // An absent readOnly (undefined) is equivalent to writable.
+    // A missing readOnly (undefined) counts as writable.
     expect(
-      resolveWorkflowResumeHandler({ readOnly: undefined, dynamicWorkflowEnabled: true, handler }),
+      resolveWorkflowResumeHandler({
+        readOnly: undefined,
+        dynamicWorkflowEnabled: true,
+        handler,
+      }),
     ).toBe(handler);
   });
 
-  it("灰度未命中 → 不供给；只读会话照旧不供给；两者都成立时也不供给", () => {
+  it("gray release miss → not supplied; read-only sessions still not supplied; neither when both hold", () => {
     const handler = vi.fn();
     expect(
-      resolveWorkflowResumeHandler({ readOnly: false, dynamicWorkflowEnabled: false, handler }),
+      resolveWorkflowResumeHandler({
+        readOnly: false,
+        dynamicWorkflowEnabled: false,
+        handler,
+      }),
     ).toBeUndefined();
     expect(
-      resolveWorkflowResumeHandler({ readOnly: true, dynamicWorkflowEnabled: true, handler }),
+      resolveWorkflowResumeHandler({
+        readOnly: true,
+        dynamicWorkflowEnabled: true,
+        handler,
+      }),
     ).toBeUndefined();
     expect(
-      resolveWorkflowResumeHandler({ readOnly: true, dynamicWorkflowEnabled: false, handler }),
+      resolveWorkflowResumeHandler({
+        readOnly: true,
+        dynamicWorkflowEnabled: false,
+        handler,
+      }),
     ).toBeUndefined();
   });
 });
 
-describe("灰度关掉后工具卡页脚与摘要卡的 Resume", () => {
-  it("工具卡页脚：灰度关 → 没有 Resume；灰度开 → 有", () => {
+describe("tool-card footer and digest card Resume after the gray release is off", () => {
+  it("tool-card footer: gray off → no Resume; gray on → present", () => {
     expect(renderCard(resumeHandlerFor(false))).not.toContain("workflow-card-resume");
     expect(renderCard(resumeHandlerFor(true))).toContain("workflow-card-resume");
   });
 
-  it("轮尾摘要卡：灰度关 → 没有 Resume；灰度开 → 有", () => {
+  it("turn-end digest card: gray off → no Resume; gray on → present", () => {
     expect(
       renderDigest(resumeHandlerFor(false)).queryByTestId("workflow-digest-resume"),
     ).toBeNull();
@@ -186,8 +221,8 @@ describe("灰度关掉后工具卡页脚与摘要卡的 Resume", () => {
     ).not.toBeNull();
   });
 
-  it("灰度关只收走 Resume：卡与摘要本身照常渲染", () => {
-    // "Existing runs still render" — the kind word, the status, and so on are all still there, just untouched.
+  it("turning gray off only removes Resume: the card and digest still render", () => {
+    // "Existing runs still render" — the kind word and status remain, just not clickable.
     expect(renderCard(resumeHandlerFor(false))).toContain("workflow-card-kind");
     expect(
       renderDigest(resumeHandlerFor(false)).queryByTestId("workflow-card-kind"),

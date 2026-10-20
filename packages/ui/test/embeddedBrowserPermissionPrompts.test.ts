@@ -11,12 +11,12 @@ import {
   TID_BROWSER_PERMISSION_PROMPTS,
 } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
-// 与组件相同的 "@/..." 说明符：vitest alias 下相对路径与别名会解析成两个模块实例，
-// 导致 setState 与组件订阅落在不同 store 上。
+// Same "@/..." specifier as the component: under the vitest alias a relative path and the alias
+// resolve to two module instances, putting setState and the component subscription on different stores.
 import { useEmbeddedBrowserPermissionStore } from "@/store/embeddedBrowserPermissionStore.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
-/** 模拟 main 的设备列表热更新：同 requestId 的推送应替换列表而非追加。 */
+/** Simulates main pushing a hot device-list update: pushes with the same requestId replace the list instead of appending. */
 function pushDeviceListUpdate(
   requestId: string,
   devices: Array<{ deviceId: string; name?: string }>,
@@ -32,7 +32,7 @@ function pushDeviceListUpdate(
 
 const resolveEmbeddedBrowserPermissionPrompt = vi.fn();
 
-// 真实环境的 platform 是稳定单例；mock 若每次渲染返回新对象，加载 effect 的依赖会失效。
+// The real platform is a stable singleton; if the mock returned a fresh object each render, the load effect's dependencies would break.
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => ({
     onEmbeddedBrowserPermissionPrompt: () => () => undefined,
@@ -51,7 +51,7 @@ function renderWithPrompts(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "en-US" },
+      { initialLocale: TEST_LOCALE },
       createElement(EmbeddedBrowserPermissionPrompts, { guestWebContentsId }),
     ),
   );
@@ -74,19 +74,19 @@ afterEach(() => {
   cleanup();
 });
 
-describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
-  it("无请求时不渲染气泡", () => {
+describe("EmbeddedBrowserPermissionPrompts Chrome-style permission bubble", () => {
+  it("does not render the bubble when there is no request", () => {
     renderWithPrompts([]);
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
   });
 
-  it("渲染 origin、按 mediaTypes 细分的权限名与 阻止/允许/✕ 按钮", () => {
+  it("renders origin, per-mediaTypes capability names and deny/allow/✕ buttons", () => {
     renderWithPrompts([permissionPrompt]);
     expect(screen.getByText("https://example.com")).toBeTruthy();
-    // mediaTypes: ["video"] → 摄像头，而不是笼统的「摄像头和麦克风」
+    // mediaTypes: ["video"] → camera, not the generic "camera and microphone"
     expect(screen.getByText(expectedCopy("browser.permission.mediaVideo"))).toBeTruthy();
-    expect(screen.queryByText(expectedCopy("browser.permission.mediaBoth"))).toBeNull();
-    // 平铺三选项：不允许 / 仅本次允许 / 访问此网站时允许
+    expect(screen.queryByText(expectedCopy("browser.permission.media"))).toBeNull();
+    // Three stacked options: don't allow / allow once / allow on every visit
     expect(
       screen.getByRole("button", { name: expectedCopy("browser.permission.denyThisTime") }),
     ).toBeTruthy();
@@ -96,21 +96,21 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     expect(
       screen.getByRole("button", { name: expectedCopy("browser.permission.allowAlways") }),
     ).toBeTruthy();
-    // 气泡头部带 ✕ 关闭（= 不允许·本次），仍不提供「永久阻止」
+    // The bubble header has an ✕ close (= don't allow this time); still no "block forever"
     expect(
       screen.queryByRole("button", { name: expectedCopy("browser.permission.blockAlways") }),
     ).toBeNull();
     expect(screen.getByTestId(TID_BROWSER_PERMISSION_DISMISS)).toBeTruthy();
   });
 
-  it("clipboard-read 显示「读取剪贴板」", () => {
+  it("clipboard-read shows clipboard reading", () => {
     renderWithPrompts([
       { ...permissionPrompt, permission: "clipboard-read", mediaTypes: undefined },
     ]);
     expect(screen.getByText(expectedCopy("browser.permission.clipboardRead"))).toBeTruthy();
   });
 
-  it("「仅本次允许」回传 allow-session 并出队", () => {
+  it('"allow once" reports allow-session and dequeues', () => {
     renderWithPrompts([permissionPrompt]);
     fireEvent.click(screen.getByTestId(TID_BROWSER_PERMISSION_ALLOW_ONCE));
     expect(resolveEmbeddedBrowserPermissionPrompt).toHaveBeenCalledWith({
@@ -120,7 +120,7 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
   });
 
-  it("「访问此网站时允许」回传 allow-always", () => {
+  it('"allow on this site" reports allow-always', () => {
     renderWithPrompts([permissionPrompt]);
     fireEvent.click(screen.getByTestId(TID_BROWSER_PERMISSION_ALLOW_ALWAYS));
     expect(resolveEmbeddedBrowserPermissionPrompt).toHaveBeenCalledWith({
@@ -129,7 +129,7 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     });
   });
 
-  it("「不允许」回传 dismiss（本次拒绝，不记忆）", () => {
+  it('"don\'t allow" reports dismiss (deny this time, not remembered)', () => {
     renderWithPrompts([permissionPrompt]);
     fireEvent.click(screen.getByTestId(TID_BROWSER_PERMISSION_DENY));
     expect(resolveEmbeddedBrowserPermissionPrompt).toHaveBeenCalledWith({
@@ -139,29 +139,29 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
   });
 
-  it("permission 请求按 guest 归属过滤：后台 tab 的请求不在当前 tab 渲染", () => {
-    // 当前 tab 的 guest id = 42；请求来自 99（后台 tab）
+  it("permission requests are filtered by guest ownership: a background tab's request does not render in the current tab", () => {
+    // Current tab's guest id = 42; the request comes from 99 (background tab)
     renderWithPrompts([{ ...permissionPrompt, guestWebContentsId: 99 }], 42);
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
 
-    // 请求来自当前 tab（42）：渲染
+    // The request comes from the current tab (42): render
     cleanup();
     renderWithPrompts([{ ...permissionPrompt, guestWebContentsId: 42 }], 42);
     expect(screen.getByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeTruthy();
     expect(screen.getByText("https://example.com")).toBeTruthy();
 
-    // 请求缺归属 id（兜底路径）：渲染并由 origin 标明来源
+    // The request has no owning id (fallback path): render, with origin marking the source
     cleanup();
     renderWithPrompts([permissionPrompt], 42);
     expect(screen.getByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeTruthy();
 
-    // 当前 tab 无 guest（空 tab）：同样只渲染兜底请求
+    // The current tab has no guest (empty tab): again only fallback requests render
     cleanup();
     renderWithPrompts([{ ...permissionPrompt, guestWebContentsId: 99 }], undefined);
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
   });
 
-  it("✕ 关闭回传 dismiss（本次拒绝，不记忆）", () => {
+  it("✕ close reports dismiss (deny this time, not remembered)", () => {
     renderWithPrompts([permissionPrompt]);
     fireEvent.click(screen.getByTestId(TID_BROWSER_PERMISSION_DISMISS));
     expect(resolveEmbeddedBrowserPermissionPrompt).toHaveBeenCalledWith({
@@ -171,14 +171,14 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
     expect(screen.queryByTestId(TID_BROWSER_PERMISSION_PROMPTS)).toBeNull();
   });
 
-  it("media 同时申请摄像头与麦克风时能力列表列两行", () => {
+  it("media requesting camera and microphone at once lists two capability rows", () => {
     renderWithPrompts([{ ...permissionPrompt, mediaTypes: ["video", "audio"] }]);
     expect(screen.getByText(expectedCopy("browser.permission.mediaVideo"))).toBeTruthy();
     expect(screen.getByText(expectedCopy("browser.permission.mediaAudio"))).toBeTruthy();
-    expect(screen.queryByText(expectedCopy("browser.permission.mediaBoth"))).toBeNull();
+    expect(screen.queryByText(expectedCopy("browser.permission.media"))).toBeNull();
   });
 
-  it("不同请求可并存渲染", () => {
+  it("different requests can render side by side", () => {
     renderWithPrompts([
       permissionPrompt,
       { ...permissionPrompt, requestId: "req-2", permission: "geolocation" },
@@ -188,8 +188,8 @@ describe("EmbeddedBrowserPermissionPrompts Chrome 式权限气泡", () => {
   });
 });
 
-describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
-  it("屏幕共享弹窗按「整个屏幕 / 窗口」分组列出源", () => {
+describe("EmbeddedBrowserPermissionPrompts picker dialogs", () => {
+  it("screen-share dialog groups sources by Entire Screen / Window", () => {
     renderWithPrompts([
       {
         requestId: "req-share",
@@ -198,7 +198,7 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
         screens: [
           {
             sourceId: "screen:1",
-            name: "Built-in Display",
+            name: "Main Display",
             kind: "screen",
             thumbnailDataUrl: "data:image/jpeg;base64,AAAA",
           },
@@ -207,13 +207,13 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
         ],
       },
     ]);
-    // 标题含 ICU 插值（{origin} 想要共享你的屏幕），按 textContent 包含断言
+    // The title has an ICU interpolation ({origin} wants to share your screen); assert by textContent inclusion
     expect(
       screen.getAllByText(
         (_, element) => element?.textContent?.includes("https://meet.example.com") ?? false,
       ).length,
     ).toBeGreaterThan(0);
-    // 分组标题
+    // Group headings
     expect(screen.getByText(expectedCopy("browser.permission.screenGroup.screen"))).toBeTruthy();
     expect(screen.getByText(expectedCopy("browser.permission.screenGroup.window"))).toBeTruthy();
     expect(screen.getByText("Doc — Preview")).toBeTruthy();
@@ -223,7 +223,7 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
     ).toBeTruthy();
   });
 
-  it("同 requestId 的推送热更新设备列表（蓝牙扫描渐进出设备）", async () => {
+  it("pushes with the same requestId hot-update the device list (bluetooth scan finds devices progressively)", async () => {
     renderWithPrompts([
       {
         requestId: "req-bt",
@@ -233,14 +233,14 @@ describe("EmbeddedBrowserPermissionPrompts 选择器弹窗", () => {
         devices: [],
       },
     ]);
-    // 首扫为空：列表无设备
+    // First scan is empty: no devices in the list
     expect(screen.queryByText("Headphones")).toBeNull();
 
     pushDeviceListUpdate("req-bt", [{ deviceId: "bt-1", name: "Headphones" }]);
     await waitFor(() => expect(screen.getByText("Headphones")).toBeTruthy());
   });
 
-  it("设备选择弹窗列出设备名与厂商/序列号元信息，未选中时连接按钮禁用", () => {
+  it("device picker lists device names with vendor/serial metadata and disables Connect until a selection is made", () => {
     renderWithPrompts([
       {
         requestId: "req-device",
