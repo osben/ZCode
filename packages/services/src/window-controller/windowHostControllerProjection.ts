@@ -68,7 +68,11 @@ export type WindowHostControllerMutation =
   | { kind: "open" }
   | { kind: "resume" };
 
-export type WindowHostControllerMutationResult = void | boolean | ZCodeArchivedTaskDeletionResult;
+export type WindowHostControllerMutationResult =
+  | void
+  | boolean
+  | ZCodeArchivedTaskDeletionResult
+  | ZCodeTaskMeta;
 
 interface ControllerSource {
   scope: WindowHostControllerSourceScope;
