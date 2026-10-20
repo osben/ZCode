@@ -5,6 +5,8 @@ export type SettingsSectionId =
   | "general"
   | "appearance"
   | "migration"
+  // Fork section (voice dictation settings, specs/voice-dictation.md); re-applied in UI-2.
+  | "voiceDictation"
   | "browser"
   | "modelProvider"
   | "remoteDevices"
@@ -513,4 +515,10 @@ export function consumePendingSettingsSourceServerDetails(): boolean {
   } catch {
     return false;
   }
+}
+
+/** Fork: sessions settings scope (specs/manage-sessions-table.md); re-applied in UI-2. */
+export interface SettingsSessionsScope {
+  workspacePath: string;
+  workspaceIdentity?: string;
 }

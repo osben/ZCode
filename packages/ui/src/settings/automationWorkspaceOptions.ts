@@ -1,4 +1,5 @@
 import { resolveWorkspaceKey, type RemoteTarget, type WorkspacePurpose } from "@zcode/shared";
+import { isWorkspaceTab, isWorkspaceTabReadOnly, type WindowTabState } from "@/store/tabStore.js";
 
 export interface AutomationWorkspaceOption {
   projectId?: string | null;
@@ -52,4 +53,42 @@ export function reconcileAutomationWorkspaceSelectionKey(
 
   const first = options[0];
   return first ? resolveAutomationWorkspaceSelectionKey(first) : null;
+}
+
+// Fork port (UI-1): restored from the fork; used by WorkflowRunSaveControls.
+function workspaceLabelFromPath(path: string): string {
+  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? path;
+}
+
+/**
+ * Build project-only candidates for boundaries that do not allow a "no project session."
+ * The single "no project session" target additionally shown by the scheduled-task form is explicitly combined by useAutomationProjectOptions;
+ * recentProjects, conversation backing, and invalid directories must not be mixed in as ordinary projects here.
+ */
+export function buildAutomationWorkspaceOptions(
+  tabs: readonly WindowTabState[],
+): AutomationWorkspaceOption[] {
+  const byKey = new Map<string, AutomationWorkspaceOption>();
+  for (const tab of tabs) {
+    if (
+      !isWorkspaceTab(tab) ||
+      tab.workspacePurpose === "conversation" ||
+      isWorkspaceTabReadOnly(tab)
+    ) {
+      continue;
+    }
+    const key = resolveWorkspaceKey({
+      workspacePath: tab.workspacePath,
+      workspaceIdentity: tab.workspaceIdentity,
+    });
+    if (byKey.has(key)) continue;
+    byKey.set(key, {
+      workspacePath: tab.workspacePath,
+      ...(tab.workspaceIdentity ? { workspaceIdentity: tab.workspaceIdentity } : {}),
+      ...(tab.remoteSessionId ? { remoteSessionId: tab.remoteSessionId } : {}),
+      ...(tab.remoteTarget ? { remoteTarget: tab.remoteTarget } : {}),
+      label: tab.label || workspaceLabelFromPath(tab.workspacePath),
+    });
+  }
+  return [...byKey.values()];
 }

@@ -953,11 +953,22 @@ export const hostRemoteWorkspaceConnectionLogResponseSchema = z
   })
   .strict();
 
+// Resolved WSL identity echoed on install/upgrade-required failures (shape of Required<WSLConnectOptions>).
+// Optional: older hosts do not send it. Deferred compat item from #189; keep in step with remoteTarget.ts.
+const resolvedWslTargetSchema = z
+  .object({
+    kind: z.literal("wsl"),
+    distro: nonEmptyStringSchema,
+    user: nonEmptyStringSchema,
+  })
+  .strict();
+
 export const hostRemoteWorkspaceConnectFailedResponseSchema = z
   .object({
     type: z.literal("remote-workspace-connect-failed"),
     requestId: nonEmptyStringSchema,
     error: nonEmptyStringSchema,
+    resolvedWslTarget: resolvedWslTargetSchema.optional(),
   })
   .strict();
 

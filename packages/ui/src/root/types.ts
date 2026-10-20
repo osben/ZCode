@@ -32,6 +32,8 @@ export interface WebRemoteControlWorkspaceSwitcherApi {
   };
   listWorkspaces(): Promise<WebRemoteControlWorkspaceListResult>;
   openProjectDraft?(request: CreateTaskOptions): Promise<void>;
+  // TEMPORARY relay-decision placeholder: the web entry implements it (fork relay feature). Remove with the relay decision.
+  openWorkspace?(target: WebRemoteControlTaskTarget): Promise<void>;
   onWorkspaceListUpdated?(
     listener: (result: WebRemoteControlWorkspaceListResult) => void,
   ): () => void;

@@ -16,7 +16,9 @@ export function attachPluginUiToolResults(
 ): () => void {
   if (!platform.pluginSandbox || !services.pluginUiBridgeService) return () => {};
   let disposed = false;
-  const subscription = services.zcodeAgentService.onDynamicPluginUiToolResult()((result) => {
+  const subscribeToolResult = services.zcodeAgentService.onDynamicPluginUiToolResult?.();
+  if (!subscribeToolResult) return () => {};
+  const subscription = subscribeToolResult((result) => {
     if (disposed || isRemoteWorkspaceIdentity(result.workspaceIdentity ?? "")) return;
     const presentation = { ...result.ui, serverName: result.serverName };
     const scope = {

@@ -640,7 +640,8 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     (command: QuickPickCommand) => {
       rememberSearch("commands");
       closeDialog();
-      void Promise.resolve(command.run()).catch((error) => {
+      // The command may omit run() for navigation-only entries; a missing run is a no-op.
+      void Promise.resolve(command.run?.()).catch((error) => {
         logger.error("[CommandCenter] 命令执行失败", {
           commandId: command.id,
           error,
