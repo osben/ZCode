@@ -2045,6 +2045,17 @@ Chat status panel 是 V4 conversation renderer 的 UI 投影状态，不改变 s
 
 附加 Git 资源回归复用 SP13 的隔离工作区和只读历史 task：新增 8 × 32 MiB 二进制文件及超过 1 MiB 的文本，再将小文件改为四行；真实文件 watcher 自动刷新后 Changes 显示 `+4 -0`，Host working set 峰值增量小于 96 MiB。大文件条目保留和零行回退由 repo/service 单测验证，读取预算见 [未跟踪文件统计 spec](./git/untracked-file-stat-budget.md)。该回归不依赖 Git pane 导航，不产生 provider 请求。
 
+SP13 accepted fault regression (2026-10-19): in the same isolated desktop workspace,
+configure a tracking branch whose remote-tracking ref is absent, open Git Review through
+Changes, and assert the unstaged file rows remain visible together with the original
+comparison error. Restore the ref and click Refresh; the error clears and the rows remain.
+Navigation targets the Changes action in expanded Git Tools; the separate Expand status
+capsule may also display Changes in its preview and must not match that action. Auto mode
+can report expanded while CSS renders the narrow capsule; expand based on action visibility.
+This makes no provider request. Status-timeout retention, bounded retries, exact identity/path
+isolation and stale-result rejection are deterministic hook tests at the RPC boundary;
+see [Git refresh resilience](../specs/git-refresh-resilience.md).
+
 ## APC. Assistant Preview Cards / 助手预览卡片
 
 Assistant Preview Cards 是 assistant 消息正文的派生 UI：只从当前 turn 已持久化的 assistant text 中筛选本地预览/文件入口，不新增 agent 协议、session snapshot、replayable queue、relay 或服务层状态。桌面端 `desktop-continuous`、普通 Web 和手机 `/remote` 的 `web-remote-replayable` 都在 renderer 中按相同规则重建卡片；remote 恢复只恢复 row 文本，不恢复独立卡片状态。
