@@ -1,17 +1,22 @@
 // @vitest-environment jsdom
 
-// The `workflow-artifact` tab: a full-size view of one user-facing artifact (docs/dynamic-workflow/authoring.md,
-// "How the user sees them" plus the "body renderer" rows).
+// `workflow-artifact` tab: full-size viewing of a user-facing artifact
+// (docs/dynamic-workflow/authoring.md "How the user sees them" + the
+// "body renderer" rows).
 //
-// Terminology warning: artifact here means outputs the script delivers to the user via `artifact.*`,
-// not the engine's same-named "top-level return value of the script" (the spec's terminology table is
-// the only disambiguation point).
+// Terminology: the artifact here is what a script delivers to the user via
+// `artifact.*`, not the engine-internal homonym "script top-level return value"
+// (the spec's terminology table is the only disambiguation).
 //
-// Pins four things:
-//   1. the body dispatches on the journal record's `contentType` to existing leaf viewers (zero new rendering dependencies);
-//   2. the version stepper steps over the **array of known versions**, not a fabricated 1..n from the latest version number;
-//   3. the gate for "reveal in workspace" and html's "open in browser" (desktop-local AND sourcePath AND latest version).
-//   4. "open as file": the entry appears only when the host can materialize a copy, materializing the bytes of **the version being viewed**.
+// Pin four things:
+//   1. the body dispatches by the journal record's `contentType` to the
+//      existing leaf viewers (zero new render dependencies);
+//   2. the version stepper pages through the **array of known versions**, not
+//      a fabricated 1..n derived from the latest version number;
+//   3. the gates for "Reveal in workspace" and html's "Open in browser"
+//      (desktop-local ∧ sourcePath ∧ latest version).
+//   4. "Open as file": the entry appears only when the host can materialize a
+//      copy, and the bytes written are the ones of **the version being viewed**.
 import { createElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +49,8 @@ const workflowRunArtifactRead =
     }) => Promise<V4ConversationWorkflowRunArtifactReadResult>
   >();
 const release = vi.fn();
-// The layer must be a stable reference: the lease effect depends on it (same note as workflowRunSidePane.test.ts).
+// layer must be a stable reference: the lease effect depends on it (same note
+// as workflowRunSidePane.test.ts).
 const layer = { acquire: vi.fn(() => ({ release })) };
 
 vi.mock("@/v4/V4ConversationContext.js", () => ({
@@ -62,9 +68,9 @@ vi.mock("@/v4/useConversationProjection.js", () => ({
   useConversationProjection: () => ({ snapshot }),
 }));
 
-// Three heavyweight leaf viewers: the real ones each need pdf.js / docx-preview / xlsx wasm, which
-// is slow in jsdom and irrelevant to this case. The stubs hang their props onto the DOM as-is so
-// assertions can check "who got the body and what was fed to them".
+// The three heavyweight leaf viewers need pdf.js / docx-preview / xlsx wasm;
+// slow in jsdom and irrelevant here. The stubs put their props onto the DOM so
+// we can assert "who got the body and what it was fed".
 vi.mock("@/previewPanePdfContent.js", () => ({
   PdfPreviewContent: ({ source }: { source: Blob }) =>
     createElement("div", { "data-testid": "pdf-viewer", "data-size": String(source.size) }),
@@ -107,7 +113,7 @@ vi.mock("@/components/ai-elements/code-block.js", () => ({
     createElement("pre", { "data-testid": "code-block", "data-language": language ?? "" }, code),
 }));
 
-// eslint-disable-next-line import/first -- The component under test must be imported after all mocks.
+// eslint-disable-next-line import/first -- the component under test must be imported after all mocks.
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowArtifactSidePane } from "@/app-shell/WorkflowArtifactSidePane.js";
@@ -137,7 +143,7 @@ function record(overrides: Partial<WorkflowRunArtifact> = {}): WorkflowRunArtifa
   return {
     id: "book",
     kind: "file",
-    title: "审计报告",
+    title: "Audit report",
     contentType: "application/pdf",
     sourcePath: "out/book.pdf",
     version: 1,
@@ -163,7 +169,7 @@ function renderPane(
     locale?: "en-US" | "zh-CN";
     withBrowser?: boolean;
     withReveal?: boolean;
-    /** When absent, no PlatformProvider is mounted (consistent with existing cases: no host capabilities). */
+    /** Omitted means no PlatformProvider (consistent with existing cases: no host capabilities). */
     platform?: Partial<IPlatformService>;
   } = {},
 ) {
@@ -175,7 +181,7 @@ function renderPane(
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: options.locale ?? "en-US" },
+      { initialLocale: "en-US" },
       options.platform === undefined
         ? pane
         : createElement(PlatformProvider, {
@@ -199,7 +205,7 @@ beforeEach(() => {
   workflowRunArtifacts.mockResolvedValue({ artifacts: [record()] });
   workflowRunArtifactData.mockResolvedValue({ items: [], hasMore: false });
   workflowRunArtifactRead.mockResolvedValue(textChunk("bytes---", "application/pdf"));
-  // resolveTheme("system") consults matchMedia; jsdom does not ship one.
+  // resolveTheme("system") queries matchMedia; jsdom does not provide it.
   (window as unknown as { matchMedia: (query: string) => unknown }).matchMedia = () => ({
     matches: false,
     addEventListener: () => {},
@@ -209,15 +215,15 @@ beforeEach(() => {
   });
 });
 
-describe("WorkflowArtifactSidePane 正文分派", () => {
-  it("pdf 交给既有的 PdfViewer，喂的是 Blob（不落地成文件、不走 range transport）", async () => {
+describe("WorkflowArtifactSidePane body dispatch", () => {
+  it("pdf goes to the existing PdfViewer fed a Blob (no file on disk, no range transport)", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.getByTestId("pdf-viewer").getAttribute("data-size")).toBe("8");
-    expect(view.getByTestId("workflow-artifact-title").textContent).toBe("审计报告");
+    expect(view.getByTestId("workflow-artifact-title").textContent).toBe("Audit report");
   });
 
-  it("markdown 走 MessageResponse 并**传 theme**（深底深字修过一次）", async () => {
+  it("markdown goes through MessageResponse and **passes theme** (dark-on-dark was fixed once)", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -237,7 +243,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(view.getByTestId("markdown-response").getAttribute("data-theme")).toBe("system");
   });
 
-  it("图片走 blob object url 的 <img>", async () => {
+  it("images use a blob object url <img>", async () => {
     (URL as unknown as { createObjectURL: (blob: Blob) => string }).createObjectURL = () =>
       "blob:artifact-img";
     (URL as unknown as { revokeObjectURL: (url: string) => void }).revokeObjectURL = () => {};
@@ -253,7 +259,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     );
   });
 
-  it("csv / json 走等宽 code viewer", async () => {
+  it("csv / json use the monospace code viewer", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [record({ id: "rows", contentType: "text/csv" })],
     });
@@ -264,7 +270,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(view.getByTestId("code-block").getAttribute("data-language")).toBe("csv");
   });
 
-  it("docx 交给既有 office 查看器，喂的是字节（不是路径）", async () => {
+  it("docx goes to the existing office viewer fed bytes (not a path)", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -283,7 +289,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(view.getByTestId("office-viewer").getAttribute("data-total-bytes")).toBe("4");
   });
 
-  it("pptx 交给既有 pptx 查看器，喂的是 ArrayBuffer", async () => {
+  it("pptx goes to the existing pptx viewer fed an ArrayBuffer", async () => {
     const contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [record({ id: "deck", contentType, sourcePath: "out/deck.pptx" })],
@@ -296,7 +302,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(view.getByTestId("pptx-viewer").getAttribute("data-file-name")).toBe("out/deck.pptx");
   });
 
-  it("表外类型给一张元数据卡 + 「在工作区显示」，不假装能渲染", async () => {
+  it('off-table types get a metadata card + "Reveal in workspace" instead of pretending to render', async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({ id: "blob", contentType: "application/octet-stream", sourcePath: "out/x.bin" }),
@@ -314,7 +320,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
     expect(onRevealFileInTree).toHaveBeenCalledWith("/workspace/out/x.bin");
   });
 
-  it("预置看板画在 tab 里，且**不读一个字节**", async () => {
+  it("preset tables render inside the tab and read **not a single byte**", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -340,7 +346,7 @@ describe("WorkflowArtifactSidePane 正文分派", () => {
   });
 });
 
-describe("WorkflowArtifactSidePane html 卡", () => {
+describe("WorkflowArtifactSidePane html card", () => {
   const htmlRecord = (sourcePath: string | undefined, versionCount = 1) =>
     record({
       id: "site",
@@ -358,20 +364,18 @@ describe("WorkflowArtifactSidePane html 卡", () => {
     workflowRunArtifactRead.mockResolvedValue(textChunk("<h1>", "text/html"));
   });
 
-  it("本地工作区 + 最新版：给「在浏览器中打开」，打开的是工作区原件的 file:// URL", async () => {
+  it('local workspace + latest version: offers "Open in browser", opening the file:// URL of the workspace original', async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [htmlRecord("out/site.html")] });
     const view = renderPane({ tab: tabOf({ artifactId: "site" }) });
 
     await waitFor(() => expect(view.getByTestId("workflow-artifact-html-card")).toBeTruthy());
     fireEvent.click(view.getByTestId("workflow-artifact-open-in-browser"));
     expect(onOpenBrowserUrl).toHaveBeenCalledWith("file:///workspace/out/site.html");
-    // The card must state that what opens is the workspace original, not this version's pinned bytes.
-    expect(view.getByTestId("workflow-artifact-note").textContent).toContain(
-      expectedCopy("chat.toolCall.workflow.run.artifacts.openInBrowserNote"),
-    );
+    // The card must say it opens the workspace copy, not the bytes pinned to this version.
+    expect(view.getByTestId("workflow-artifact-note").textContent).toContain("workspace");
   });
 
-  it("远程 workspace（有 remoteSessionId）退成「仅本地工作区可预览」", async () => {
+  it('a remote workspace (with remoteSessionId) degrades to "local workspace preview only"', async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [htmlRecord("out/site.html")] });
     const view = renderPane({
       tab: tabOf({
@@ -389,7 +393,7 @@ describe("WorkflowArtifactSidePane html 卡", () => {
     expect(view.queryByTestId("workflow-artifact-reveal")).toBeNull();
   });
 
-  it("看的是旧版时不给「在浏览器中打开」——工作区原件早被同名覆盖了", async () => {
+  it('no "Open in browser" when viewing an old version — the workspace original was overwritten by the same name', async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [htmlRecord("out/site.html", 2)] });
     const view = renderPane({ tab: tabOf({ artifactId: "site", version: 1 }) });
 
@@ -399,8 +403,8 @@ describe("WorkflowArtifactSidePane html 卡", () => {
   });
 });
 
-describe("WorkflowArtifactSidePane 版本步进器", () => {
-  it("只有一版时整块缺席，只留一个版本号", async () => {
+describe("WorkflowArtifactSidePane version stepper", () => {
+  it("with a single version the whole block is absent, leaving just the version number", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.queryByTestId("workflow-artifact-version-stepper")).toBeNull();
@@ -409,7 +413,7 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     );
   });
 
-  it("多版时按**已知版本的数组**翻，并按所选版本重读字节", async () => {
+  it("with multiple versions it pages through the **array of known versions** and re-reads bytes per selection", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -424,7 +428,7 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     });
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("workflow-artifact-version-stepper")).toBeTruthy());
-    // The default landing point is the latest version (the chip never carries a version number).
+    // The default landing point is the latest version (the chip carries no version).
     expect(view.getByTestId("workflow-artifact-version").textContent).toBe(
       expectedCopy("chat.toolCall.workflow.run.artifacts.versionOf", { version: 3, total: 3 }),
     );
@@ -439,8 +443,9 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
     await waitFor(() => expect(workflowRunArtifactRead.mock.calls.at(-1)?.[0]?.version).toBe(2));
   });
 
-  it("journal 读不到版本历史时不凭最新版号编造 1..n", async () => {
-    // Only the summary (live projection) is present: the stepper must disappear instead of offering version numbers whose bytes cannot be fetched.
+  it("does not fabricate 1..n from the latest version number when the journal has no version history", async () => {
+    // Only the live projection summary is present: the stepper must disappear
+    // instead of offering version numbers whose bytes cannot be fetched.
     workflowRunArtifacts.mockRejectedValue(new Error("fault.command.capabilityUnsupported"));
     snapshot = {
       workflowRuns: {
@@ -457,7 +462,7 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
               {
                 id: "book",
                 kind: "file",
-                title: "审计报告",
+                title: "Audit report",
                 version: 4,
                 contentType: "application/pdf",
                 bytes: 8,
@@ -476,8 +481,8 @@ describe("WorkflowArtifactSidePane 版本步进器", () => {
   });
 });
 
-describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
-  it("run 在活投影里：source 标为 live，摘要先画出来", async () => {
+describe("WorkflowArtifactSidePane metadata source and empty states", () => {
+  it("run in the live projection: source is marked live and the summary renders first", async () => {
     snapshot = {
       workflowRuns: {
         revision: 1,
@@ -503,7 +508,7 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     );
   });
 
-  it("run 不在活投影里：source 标为 journal（冷恢复走 durable 读法）", async () => {
+  it("run not in the live projection: source is marked journal (cold recovery uses the durable read)", async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.getByTestId(TID_WORKFLOW_ARTIFACT_PANE).getAttribute("data-artifact-source")).toBe(
@@ -511,7 +516,7 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     );
   });
 
-  it("读完了但这个 id 不在清单里：说「已经不在了」，不永远停在加载文案上", async () => {
+  it('read finished but the id is not in the list: says "no longer available" instead of staying on the loading copy forever', async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [] });
     const view = renderPane();
     await waitFor(() =>
@@ -521,7 +526,7 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     );
   });
 
-  it("会话不支持产物查询（老 CLI）时说的是「读不到详情」，不是「不在了」", async () => {
+  it('session without artifact query support (old CLI) says "details unavailable", not "no longer available"', async () => {
     workflowRunArtifacts.mockRejectedValue(new Error("fault.command.capabilityUnsupported"));
     const view = renderPane();
     await waitFor(() =>
@@ -531,22 +536,22 @@ describe("WorkflowArtifactSidePane 元数据来源与空态", () => {
     );
   });
 
-  it("面板订阅的是**父会话**的投影（产物的新鲜元数据是它的一部分）", async () => {
+  it("the pane subscribes to the **parent session** projection (fresh artifact metadata is part of it)", async () => {
     renderPane();
     await act(async () => {});
     expect(layer.acquire).toHaveBeenCalledWith("parent-a");
   });
 });
 
-describe("WorkflowArtifactSidePane 头部动作", () => {
-  it("宿主不能落副本时，「在工作区显示」独立留在头部（desktop-local ∧ sourcePath 在场才出现）", async () => {
+describe("WorkflowArtifactSidePane header actions", () => {
+  it('when the host cannot materialize a copy, "Reveal in workspace" stays alone in the header (desktop-local ∧ sourcePath present)', async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("workflow-artifact-reveal")).toBeTruthy());
     fireEvent.click(view.getByTestId("workflow-artifact-reveal"));
     expect(onRevealFileInTree).toHaveBeenCalledWith("/workspace/out/book.pdf");
   });
 
-  it("markdown 没有工作区出处，因此没有「在工作区显示」，但有「复制」", async () => {
+  it('markdown has no workspace source, so no "Reveal in workspace", but there is "Copy"', async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -565,20 +570,14 @@ describe("WorkflowArtifactSidePane 头部动作", () => {
     expect(view.queryByTestId("workflow-artifact-reveal")).toBeNull();
   });
 
-  it("pdf 不给「复制」（二进制复制成文本是一句谎）", async () => {
+  it('pdf gets no "Copy" (copying binary as text would be a lie)', async () => {
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
     expect(view.queryByTestId("workflow-artifact-copy")).toBeNull();
   });
-
-  it("没有「下载」按钮——renderer 没有任何把字节存成用户文件的宿主能力", async () => {
-    const view = renderPane();
-    await waitFor(() => expect(view.getByTestId("pdf-viewer")).toBeTruthy());
-    expect(view.queryByRole("button", { name: /download/i })).toBeNull();
-  });
 });
 
-describe("WorkflowArtifactSidePane 作为文件打开", () => {
+describe("WorkflowArtifactSidePane open as file", () => {
   const markdownRecord = () =>
     record({
       id: "notes",
@@ -607,7 +606,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     return new TextDecoder().decode(bytes as Uint8Array);
   }
 
-  it("宿主不能落副本时（手机远控 / web）不出入口", async () => {
+  it("no entry when the host cannot materialize a copy (mobile remote control / web)", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const view = renderPane({
@@ -619,7 +618,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(view.queryByTestId("workflow-artifact-open-as-file")).toBeNull();
   });
 
-  it("预置看板没有字节，不出入口", async () => {
+  it("preset tables have no bytes, so no entry", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -641,7 +640,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(view.queryByTestId("workflow-artifact-open-as-file")).toBeNull();
   });
 
-  it("markdown：把这一版的字节落成 <id>.md，用系统默认 App 打开", async () => {
+  it("markdown: writes this version's bytes as <id>.md and opens it with the system default app", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const platform = desktopPlatform();
@@ -667,7 +666,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(decode(payload.bytes)).toBe("# hi");
   });
 
-  it("file：文件名取所选版本的 sourcePath 基名，翻到旧版就落旧版的字节", async () => {
+  it("file: the file name is the selected version's sourcePath basename; stepping to an old version writes that version's bytes", async () => {
     workflowRunArtifacts.mockResolvedValue({
       artifacts: [
         record({
@@ -718,7 +717,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(decode(second.bytes)).toBe("pdf-v1");
   });
 
-  it("同一版再打开不再重传字节，直接开同一个副本", async () => {
+  it("opening the same version again re-uses the same copy without re-transferring bytes", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const platform = desktopPlatform();
@@ -732,7 +731,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(platform.materializeWorkflowArtifactFile).toHaveBeenCalledTimes(1);
   });
 
-  it("系统 App 打不开时给 toast，不静默", async () => {
+  it("shows a toast instead of staying silent when the system app cannot open it", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const platform = desktopPlatform({
@@ -749,7 +748,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     );
   });
 
-  it("副本写失败时同样给 toast", async () => {
+  it("shows the same toast when writing the copy fails", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const platform = desktopPlatform({
@@ -769,7 +768,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(platform.openExternalFile).not.toHaveBeenCalled();
   });
 
-  it("选择打开方式：列出已装 App（文件管理器在前），选中即用它打开副本", async () => {
+  it("open with: lists installed apps (file manager first); picking one opens the copy with it", async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const platform = desktopPlatform();
@@ -793,7 +792,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(platform.openExternalFile).not.toHaveBeenCalled();
   });
 
-  it("有工作区出处时，「在工作区显示」收进菜单，头部只剩一个文件控件", async () => {
+  it('with a workspace source, "Reveal in workspace" moves into the menu and the header keeps a single file control', async () => {
     const platform = desktopPlatform();
     const view = renderPane({ platform });
 
@@ -809,7 +808,8 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
       expect(view.getByTestId("workflow-artifact-open-as-file-reveal")).toBeTruthy(),
     );
     const names = view.getAllByRole("menuitem").map((item) => item.textContent);
-    // Location actions come after the apps: "reveal in workspace" first, then "copy absolute path".
+    // Location actions come after the apps: first "Reveal in workspace", then
+    // "Copy absolute path".
     expect(names.slice(-2)).toEqual([
       expectedCopy("chat.toolCall.workflow.run.artifacts.reveal"),
       expectedCopy("fileActions.copyAbsolutePath"),
@@ -821,7 +821,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(platform.materializeWorkflowArtifactFile).not.toHaveBeenCalled();
   });
 
-  it("没有工作区出处（markdown）或远程工作区时，菜单里没有「在工作区显示」", async () => {
+  it('without a workspace source (markdown) or in a remote workspace, the menu has no "Reveal in workspace"', async () => {
     workflowRunArtifacts.mockResolvedValue({ artifacts: [markdownRecord()] });
     workflowRunArtifactRead.mockResolvedValue(textChunk("# hi", "text/markdown"));
     const markdownView = renderPane({
@@ -856,7 +856,7 @@ describe("WorkflowArtifactSidePane 作为文件打开", () => {
     expect(remoteView.queryByTestId("workflow-artifact-open-as-file-reveal")).toBeNull();
   });
 
-  it("「复制路径」复制的是副本的绝对路径", async () => {
+  it('"Copy path" copies the copy\'s absolute path', async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,

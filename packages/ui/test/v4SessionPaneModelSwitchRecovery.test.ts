@@ -3,9 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelSelectionView } from "@zcode/services";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
-import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
 import {
-  INCOGNITO_LOCKDOWN_PROFILE,
   type ModelSelection,
   ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
   type ZCodeWorkspaceStateSnapshot,
@@ -19,11 +17,11 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import type { ConversationComposer } from "@/v4/ConversationComposer.js";
 import type { V4InteractionDialogsProps } from "@/v4/V4InteractionDialogs.js";
 import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
 import { logger } from "@/logger.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const recommendation = vi.hoisted(() =>
   vi.fn(async (selection: ModelSelection): Promise<ModelSelection | null> => selection),
@@ -49,7 +47,7 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// 本组只验证模型恢复；群同步服务由独立组件测试和真实 Host/CLI E2E 覆盖。
+// This suite only verifies model recovery; group sync services are covered by dedicated component tests and real Host/CLI E2E.
 vi.mock("@/v4/BotGroupDeliveryAction.js", () => ({
   BotGroupDeliveryProvider: ({ children }: { children: unknown }) => children,
   ConnectedBotGroupDeliveryAction: () => null,
@@ -77,7 +75,7 @@ function seedModelProviderNames(): void {
   };
 }
 
-// 永不 resolve：这些文件不测发现查询；resolve 会在环境拆除后触发 setState（未处理异常）。
+// Never resolves: these files do not test discovery queries; resolving would trigger setState after environment teardown (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
   vi.fn(() => new Promise<{ runs: unknown[] }>(() => {})),
 );
@@ -237,13 +235,13 @@ const projectionState = vi.hoisted(() => ({
   } | null,
 }));
 
-// Bugfix：本文件只验证 SessionPane 的模型恢复，隔离闲时入口对真实 TabStore 的依赖。
+// Bugfix: this file only verifies SessionPane model recovery, isolating the idle-time entry from the real TabStore.
 vi.mock("@/v4/OffPeakNewTaskEntry.js", () => ({
   OffPeakNewTaskEntry: () => null,
 }));
 
-// 同理隔离推荐提示词容器：它通过 useWorkspaceServicesResolution 依赖 TabStoreProvider，
-// 而本文件只验证草稿 provider/model 恢复链路，不提供 Tab store。
+// Likewise isolate the recommended-prompt container: it depends on TabStoreProvider through
+// useWorkspaceServicesResolution, while this file only verifies draft provider/model recovery and provides no Tab store.
 vi.mock("@/v4/ConversationDraftSuggestedPromptsContainer.js", () => ({
   ConversationDraftSuggestedPromptsContainer: () => null,
 }));
@@ -282,8 +280,8 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", async (importOriginal) => {
     ...actual,
     useDraftSessionPrewarm: (params: Parameters<typeof actual.useDraftSessionPrewarm>[0]) => {
       prewarmHookMock.lastEnabled = params.enabled;
-      // 每个挂载实例冻结 mock/真实分支，避免测试在 rerender 中修改全局 binding
-      // 导致 Hook 数量变化；生产 hook 本身不存在这个测试替身问题。
+      // Freeze the mock/real branch per mounted instance: mutating the global binding during
+      // rerender would change the hook count; the production hook has no such test-double problem.
       const useActual = useRef(prewarmHookMock.binding === undefined).current;
       return useActual
         ? actual.useDraftSessionPrewarm(params)
@@ -292,7 +290,8 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", async (importOriginal) => {
               ? { beginPromotion: () => true, ...prewarmHookMock.binding }
               : null,
             waitForSession: async () => {
-              if (!prewarmHookMock.binding) throw new Error("草稿会话创建失败，请重试");
+              if (!prewarmHookMock.binding)
+                throw new Error("Draft session creation failed, please retry");
               return { beginPromotion: () => true, ...prewarmHookMock.binding };
             },
           };
@@ -328,8 +327,8 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
     layer: mocks.layer,
     sendCommand: mocks.sendCommand,
     attachmentPut: mocks.attachmentPut,
-    // SessionPane 挂载即拉 journal 兜底的 run 发现查询：缺桩会在 effect 里 TypeError；
-    // 桩必须是稳定引用——effect 以 workflowRuns 为依赖，每次渲染换新函数会死循环。
+    // SessionPane pulls the journal-fallback run discovery query on mount: a missing stub throws a TypeError in an effect;
+    // the stub must be a stable reference — the effect depends on workflowRuns, and a fresh function per render would loop forever.
     workflowRuns: workflowRunsQueryMock,
   }),
 }));
@@ -635,7 +634,7 @@ function makeWorkspaceStateSnapshot(): ZCodeWorkspaceStateSnapshot {
 function createPaneElement(props: Partial<ComponentProps<typeof SessionPane>> = {}) {
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: TEST_LOCALE },
+    { initialLocale: "en-US" },
     createElement(SessionPane, {
       paneId: "workspace-main",
       sessionId: "session-1",
@@ -653,8 +652,8 @@ async function rerenderPane(root: Root, props: Partial<ComponentProps<typeof Ses
 }
 
 async function renderPane(props: Partial<ComponentProps<typeof SessionPane>> = {}) {
-  // 本文件 mock 了 Composer owner。仅在 fixture 初始挂载时建立完整草稿，不能再让
-  // 生产 Submission helper 从 Snapshot/平铺别名救活缺失的 fixture。
+  // This file mocks the Composer owner. Build the full draft only on the fixture's initial mount;
+  // the production Submission helper must not revive a missing fixture from Snapshot/flat aliases.
   const seed = {
     ...projectionState.current?.snapshot?.config,
     ...draftConfigMock.resolveInitialDraftConfig(),
@@ -777,9 +776,12 @@ describe("SessionPane draft provider readiness", () => {
       promote: vi.fn(),
       discard: vi.fn(),
     };
-    const providerNotReady = Object.assign(new Error("当前没有可用的模型供应商和模型"), {
-      code: ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
-    });
+    const providerNotReady = Object.assign(
+      new Error("No model provider and model are currently available"),
+      {
+        code: ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
+      },
+    );
     mocks.sendCommand.mockRejectedValue(providerNotReady);
 
     const root = await renderPane({ sessionId: null });
@@ -817,7 +819,9 @@ describe("SessionPane send failure feedback", () => {
       loadingOlder: false,
     };
     mocks.sendCommand.mockRejectedValue(
-      new Error("switchModelConfig 未在首发前收敛: failed provider.notInRegistry"),
+      new Error(
+        "switchModelConfig did not settle before first send: failed provider.notInRegistry",
+      ),
     );
 
     const root = await renderPane();
@@ -843,7 +847,7 @@ describe("SessionPane send failure feedback", () => {
 });
 
 describe("SessionPane draft prewarm admission lifecycle", () => {
-  it("只为已有 Session 打开埋点，不记录草稿预热提升的首次绑定", async () => {
+  it("only records session-open telemetry for existing sessions, not the first prewarm promotion binding", async () => {
     const prewarmSessionId = "draft-prewarm-session-open-excluded";
     const existingSessionId = "existing-session-open-included";
     const prewarmSnapshot = makeSnapshot();
@@ -941,7 +945,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
       const root = await renderPane({ sessionId: entry === "existing" ? targetSessionId : null });
       try {
         await act(async () => {
-          await captured.composerProps?.onSendText("继续分享上下文", {
+          await captured.composerProps?.onSendText("continue sharing context", {
             sharedContextRefs: [{ kind: "shared_context_import", context_id: "shared-1" }],
           });
           await flushMicrotasks();
@@ -953,7 +957,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
         expect(sends[0]?.[0]).toMatchObject({
           sessionId: targetSessionId,
           payload: {
-            text: "继续分享上下文",
+            text: "continue sharing context",
             modelSelection,
             mode: "build",
             context_refs: [{ kind: "shared_context_import", context_id: "shared-1" }],
@@ -965,7 +969,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
     },
   );
 
-  it("不记录预热尚无投影时首发的首次绑定", async () => {
+  it("does not record the first binding for a first send while prewarm has no projection yet", async () => {
     const createdSessionId = "fallback-created-session-open-excluded";
     projectionState.current = {
       status: "live",
@@ -976,7 +980,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
       loadingOlder: false,
     };
     prewarmHookMock.binding = undefined;
-    // 首发始终复用预热创建；尚无投影时也不能作为已有任务打开记录。
+    // The first send always reuses the prewarm-created session; without a projection it still must not be recorded as an existing-task open.
     draftConfigMock.resolveInitialDraftConfig.mockReturnValue({
       provider: "alternate-provider",
       model: "deepseek-v4-pro",
@@ -1061,7 +1065,7 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
               reasonCode: "fault.projectionEventCommit.timeout",
             });
           }
-          // Bug 复现：写入是否到达 Agent 未知，transport error 不能证明 command 未 admission。
+          // Bug reproduction: whether the write reached the Agent is unknown; a transport error does not prove the command was not admitted.
           throw new Error("connection closed after command write");
         }
         if (envelope.type === "createSession") {
@@ -1241,8 +1245,8 @@ describe("SessionPane draft prewarm admission lifecycle", () => {
       type: "sendText",
     });
 
-    // Bug 复现：Agent 已经 admission 首发，但 MCP 初始化让 renderer ACK 仍在途。
-    // 此时 pane/owner cleanup 不能把运行中的预热会话当作未使用草稿删除。
+    // Bug reproduction: the Agent already admitted the first input, but MCP initialization keeps the renderer ACK in flight.
+    // Pane/owner cleanup must not delete the running prewarm session as an unused draft at this point.
     await act(async () => {
       root.unmount();
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1346,7 +1350,7 @@ describe("SessionPane stop foreground execution", () => {
         type: "stop",
         payload: { expectedForegroundExecutionId: "foreground-1" },
       });
-      // 普通 info 在生产禁用；停止归因必须走生命周期通道，同时保留执行 ID 防误停。
+      // Plain info is disabled in production; stop attribution must go through the lifecycle channel and keep the execution id to avoid stopping the wrong run.
       expect(infoSpy).toHaveBeenCalledWith("[v4-pane] stop 命令发出", {
         source: source === "button" ? "button" : "escape",
         sessionId: "session-1",
@@ -1386,7 +1390,7 @@ describe("SessionPane stop foreground execution", () => {
 });
 
 describe("SessionPane remote provider admission", () => {
-  it("desktop remote runtime 重建后直接发送模型命令，由远端 Registry 自行恢复", async () => {
+  it("sends the model command directly after a desktop remote runtime rebuild; the remote registry recovers itself", async () => {
     const workspaceIdentity = "remote:ssh:dev:/workspace";
     const remoteSessionId = "remote-session-stable";
     projectionState.current = {
@@ -1417,7 +1421,7 @@ describe("SessionPane remote provider admission", () => {
     }
   });
 
-  it("本地 desktop workspace 不触发远端 provider registry 同步", async () => {
+  it("local desktop workspace does not trigger remote provider registry sync", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -1445,7 +1449,7 @@ describe("SessionPane remote provider admission", () => {
     }
   });
 
-  it("mobile web remote replayable pane 不复用 desktop provider preflight", async () => {
+  it("mobile web remote replayable pane does not reuse the desktop provider preflight", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -1591,15 +1595,15 @@ describe("SessionPane model switch recovery", () => {
       queueMicrotask(() => modelTransitionMock.listener?.(transition));
     };
 
-    // act 会在该 microtask 前冲刷下一轮 effect，掩盖生产调度中的 listener 空窗。
+    // act would flush the next effect round before that microtask, hiding the listener gap in production scheduling.
     const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
     globalThis.IS_REACT_ACT_ENVIRONMENT = false;
     const root = createRoot(installMinimalDom());
     try {
       root.render(createPaneElement());
-      // 并行测试下 React 调度可能超过 20ms；等待可观察结果，仍不使用 act 冲刷 effect。
+      // React scheduling can exceed 20ms under parallel tests; wait for the observable result instead of flushing effects with act.
       await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledTimes(1));
-      // 自动 fallback 只修正当前执行事实；App Recent 只能由接受的普通 Submission 写入。
+      // An automatic fallback only corrects the current execution fact; App Recent may only be written by an accepted ordinary Submission.
       expect(composerRecentMocks.acceptSubmission).not.toHaveBeenCalled();
     } finally {
       root.unmount();
@@ -1608,7 +1612,7 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("I56：聚焦 pane 的自动 fallback 复用手动切换 toast，后台 pane 不提示", async () => {
+  it("I56: a focused pane automatic fallback reuses the manual switch toast; background panes stay silent", async () => {
     seedModelProviderNames();
     projectionState.current = {
       status: "live",
@@ -1659,7 +1663,7 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed Turn 在降级模型也不可用时仍作废卡并解锁 Composer", async () => {
+  it("Highspeed turn still invalidates the card and unlocks the Composer when the fallback model is also unavailable", async () => {
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1668,7 +1672,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "provider_not_found",
-        message: "原模型当前不可用",
+        message: "original model is currently unavailable",
         recoverable: true,
         at: now,
         source: "provider",
@@ -1680,7 +1684,7 @@ describe("SessionPane model switch recovery", () => {
         },
       },
     };
-    // 模型创建期尚无 userInput 行；错误事实中的 cardId 仍必须解锁 Composer。
+    // There is no userInput row yet during model creation; the cardId in the error fact must still unlock the Composer.
     projectionState.current = {
       status: "live",
       snapshot,
@@ -1716,10 +1720,10 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 请求期失败且无处可退时按 Core 归因作废卡并解锁模型选择器", async () => {
-    // Bug 根因：请求期 3402/网络失败没有 fallback 事件，TurnError 的 code 是 provider 错误码 "3402"，
-    // 旧实现只认目录错误白名单，卡一直锁住选择器、下一轮继续复用失败的卡。退卡只看 Core 发布的
-    // highspeedFallbackUnavailable 事实（spec §2.2），原错误保留在 Banner。
+  it("Highspeed invalidates the card by Core attribution and unlocks the model picker when the request fails with nowhere to fall back", async () => {
+    // Root cause: request-phase 3402/network failures emit no fallback event and the TurnError code is the provider error code "3402";
+    // the old implementation only trusted a catalog-error allowlist, so the card kept the picker locked and the failed card was reused next turn.
+    // Invalidation follows only the Core-published highspeedFallbackUnavailable fact (spec §2.2); the original error stays in the banner.
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1773,7 +1777,7 @@ describe("SessionPane model switch recovery", () => {
         "hsc-request-unavailable",
       );
       expect(captured.composerProps?.highspeedCard).toBeNull();
-      // 卡作废后选择器可用：切模不再被“加速期间模型已锁定”拦截。
+      // After the card is invalidated the picker is usable: model switching is no longer blocked by "Model is locked while Highspeed is active".
       await act(async () => {
         captured.composerProps?.onSelectModel?.("alternate-provider", "deepseek-v4-pro", null);
         await flushMicrotasks();
@@ -1784,9 +1788,9 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 归因到当前卡但 Core 未判定无处可退的错误不清卡", async () => {
-    // 上下文超窗、本地 runtime 失败等不参与退回，Core 不发布 highspeedFallbackUnavailable；
-    // Renderer 不得再按错误码自行推断，否则会把不该退的卡作废。
+  it("does not clear the card when the error is attributed to the current card but Core has not judged there is nowhere to fall back", async () => {
+    // Context overflow and local runtime failures do not participate in fallback; Core does not publish highspeedFallbackUnavailable.
+    // The renderer must not infer from error codes on its own, or it would invalidate cards that should be kept.
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1840,9 +1844,9 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 持卡期间普通轮的目录错误不清无关的有效卡", async () => {
-    // spec §2.2 错误归因：普通轮显式发布 null（排队后执行前 Registry 变化），
-    // 其目录错误不得消耗无关加速权益。
+  it("an ordinary turn catalog error while a Highspeed card is held does not clear the unrelated valid card", async () => {
+    // spec §2.2 error attribution: an ordinary turn explicitly publishes null (registry changed after queueing, before execution);
+    // its catalog error must not consume unrelated acceleration credit.
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1851,7 +1855,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "provider_not_found",
-        message: "排队普通轮的模型不可用",
+        message: "queued ordinary turn model unavailable",
         recoverable: true,
         at: now,
         source: "provider",
@@ -1892,8 +1896,8 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 归因到旧卡的目录错误不清当前卡", async () => {
-    // 失败输入用的是上一张卡；滞留错误不得清掉随后抽到的新卡，即使错误时间晚于新卡发卡时间。
+  it("a catalog error attributed to an old card does not clear the current card", async () => {
+    // The failed input used the previous card; a lingering error must not clear the newly drawn card even if the error timestamp is later than the new card issue time.
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1902,7 +1906,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "model_not_found",
-        message: "上一张卡的加速模型不可用",
+        message: "previous card accelerated model unavailable",
         recoverable: true,
         at: now,
         source: "provider",
@@ -1943,8 +1947,8 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed lastError 无 highspeedCardId 时按时间下界兼容清卡", async () => {
-    // 兼容旧 Agent：错误终态没有卡归因字段时退回保守行为，发卡之后的目录错误仍清卡解锁。
+  it("falls back to the time-lower-bound compat path when the Highspeed lastError has no highspeedCardId", async () => {
+    // Old-Agent compat: when the error terminal state lacks card attribution fields, fall back to conservative behavior — a catalog error after card issuance still clears and unlocks.
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -1953,7 +1957,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "provider_not_found",
-        message: "原模型当前不可用",
+        message: "original model is currently unavailable",
         recoverable: true,
         at: now,
         source: "provider",
@@ -1993,9 +1997,9 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 旧目录错误早于发卡时间时不清新抽的卡", async () => {
-    // spec §2.2 兼容路径（无 highspeedCardId）的时间下界：错误终态在下一轮开始前一直留在投影里，
-    // 而抽卡发生在发送之前；上一轮的目录错误不得清掉刚抽到的新卡（claim key 含新 cardId，去重防不住）。
+  it("does not clear a freshly drawn card when an old catalog error predates the card issuance time", async () => {
+    // Time lower bound of the spec §2.2 compat path (no highspeedCardId): the error terminal state stays in the projection until the next turn starts,
+    // while the card draw happens before the send; the previous turn catalog error must not clear the freshly drawn card (the claim key contains the new cardId, so dedupe does not help).
     const now = Date.now();
     const snapshot = makeSnapshot();
     snapshot.control = {
@@ -2004,7 +2008,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "provider_not_found",
-        message: "上一轮的原模型不可用",
+        message: "previous turn original model unavailable",
         recoverable: true,
         at: now - 120_000,
         source: "provider",
@@ -2044,7 +2048,7 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 持卡期间的非模型错误不误作废卡", async () => {
+  it("non-model errors while a Highspeed card is held do not wrongly invalidate the card", async () => {
     const snapshot = makeSnapshot();
     snapshot.control = {
       ...snapshot.control,
@@ -2052,7 +2056,7 @@ describe("SessionPane model switch recovery", () => {
       sessionEnded: false,
       lastError: {
         code: "fault.runtime.toolFailed",
-        message: "工具执行失败",
+        message: "tool execution failed",
         recoverable: true,
         at: Date.now(),
         source: "tool",
@@ -2092,8 +2096,8 @@ describe("SessionPane model switch recovery", () => {
     }
   });
 
-  it("Highspeed 降级行按 fallbackReason 区分 Toast 文案；旧数据无原因时按卡过期处理", async () => {
-    // docs/highspeed/highspeed-card-spec.md §2.2：卡过期与加速服务不可用分别提示，且每轮只提示一次。
+  it("Highspeed fallback rows pick toast copy by fallbackReason; legacy data without a reason is treated as card expiry", async () => {
+    // docs/highspeed/highspeed-card-spec.md §2.2: card expiry and Highspeed unavailability are announced separately, at most once per turn.
     const fallbackAt = Date.now();
     const highspeedRow = (
       sourceCommandId: string,
@@ -2241,7 +2245,7 @@ describe("SessionPane model switch recovery", () => {
       });
     }
 
-    // 同一 sourceCommandId 重挂载不重复提示（模块级 claim）。
+    // Remounting with the same sourceCommandId does not toast again (module-level claim).
     mocks.toast.mockClear();
     const remountRoot = await renderWithRow(highspeedRow("command-hs-legacy", undefined));
     try {
@@ -2255,18 +2259,18 @@ describe("SessionPane model switch recovery", () => {
 
   it.each([
     {
-      name: "历史行属于旧卡",
+      name: "history row belongs to an old card",
       compactForRemoteControl: false,
       rowCardId: "hsc-history-old",
       activeCardId: "hsc-current",
     },
     {
-      name: "手机端没有 Highspeed 写能力",
+      name: "mobile has no Highspeed write capability",
       compactForRemoteControl: true,
       rowCardId: "hsc-mobile-current",
       activeCardId: "hsc-mobile-current",
     },
-  ])("$name 时只显示降级 Toast，不调用作废 RPC", async (fixture) => {
+  ])("$name only shows the fallback toast without calling the invalidate RPC", async (fixture) => {
     const fallbackAt = Date.now();
     const snapshot = makeSnapshot();
     snapshot.rows = {
@@ -2503,7 +2507,7 @@ describe("SessionPane model switch recovery", () => {
     });
   });
 
-  it("加速轮 accepted 后 Recent 记录 Composer 原始选择，不记隐藏加速 Provider（spec §5.1）", async () => {
+  it("records the Composer original selection in Recent after an accelerated turn is accepted, not the hidden accelerated provider (spec §5.1)", async () => {
     prewarmHookMock.binding = {
       workspaceKey: "/workspace",
       sessionId: "session-1",
@@ -2521,7 +2525,7 @@ describe("SessionPane model switch recovery", () => {
     mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
       ackFor(envelope, { status: "accepted" }),
     );
-    // 抽中卡：execution 携带隐藏加速 Provider 的执行 Selection，会覆盖 payload.modelSelection。
+    // Card drawn: execution carries the hidden accelerated provider execution selection, which overrides payload.modelSelection.
     mocks.highspeedCardService.prepareTurn.mockResolvedValueOnce({
       kind: "accelerated",
       card: {
@@ -2560,7 +2564,7 @@ describe("SessionPane model switch recovery", () => {
       await flushMicrotasks();
     });
 
-    // payload 的 Selection 确已被执行材料覆盖为隐藏加速 Provider（证明本轮真的加速）。
+    // The payload selection has indeed been overridden by execution material to the hidden accelerated provider (proving the turn was accelerated).
     expect(mocks.sendCommand).toHaveBeenCalledTimes(1);
     expect(mocks.sendCommand.mock.calls[0]?.[0]).toMatchObject({
       type: "sendText",
@@ -2569,7 +2573,7 @@ describe("SessionPane model switch recovery", () => {
         mode: "build",
       },
     });
-    // Recent 只记发送前 Composer 冻结的原始选择；否则新任务草稿种子解析为空选择器。
+    // Recent records only the original selection frozen by the Composer before sending; otherwise new-task draft seeding resolves to an empty picker.
     expect(composerRecentMocks.acceptSubmission).toHaveBeenCalledWith(
       expect.objectContaining({
         selection: {
@@ -2589,7 +2593,7 @@ describe("SessionPane model switch recovery", () => {
     });
   });
 
-  it("Highspeed 退回目标在 ACK 前不可用时作废卡并保留 Composer 提交", async () => {
+  it("invalidates the card and keeps the Composer submission when the Highspeed fallback target is unavailable before ACK", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -2630,11 +2634,13 @@ describe("SessionPane model switch recovery", () => {
     try {
       let result: Awaited<ReturnType<ComposerProps["onSendText"]>>;
       await act(async () => {
-        result = await captured.composerProps!.onSendText("双模型都不可用时保留这段输入");
+        result = await captured.composerProps!.onSendText(
+          "keep this input when both models are unavailable",
+        );
         await flushMicrotasks();
       });
 
-      // blocked 由 Composer 的既有提交事务恢复正文和附件；不得抛错触发通用发送错误横幅。
+      // "blocked" lets the Composer's existing submission transaction restore text and attachments; it must not throw and trigger the generic send-error banner.
       expect(result!).toBe("blocked");
       expect(mocks.highspeedCardService.invalidateCard).toHaveBeenCalledWith(
         "hsc-admission-rejected",
@@ -2648,7 +2654,7 @@ describe("SessionPane model switch recovery", () => {
   });
 
   it.each(["accepted", "rejected", "failed", "duplicate"] as const)(
-    "运行中提交的 %s ACK 只在已接纳时记住提交瞬间的权限",
+    "the %s ACK of a running submission records the permission snapshot from the submission moment only when admitted",
     async (status) => {
       const running = makeSnapshot();
       running.control = { ...running.control, phase: "running", canStop: true };
@@ -2819,7 +2825,7 @@ describe("SessionPane model switch recovery", () => {
     });
   });
 
-  it("prewarm 的迟到模型事件不覆盖 Composer，本次发送保持用户选择", async () => {
+  it("a late prewarm model event does not overwrite the Composer; this send keeps the user selection", async () => {
     const promote = vi.fn();
     prewarmHookMock.binding = {
       workspaceKey: "/workspace",
@@ -2841,7 +2847,7 @@ describe("SessionPane model switch recovery", () => {
       options: { reasoningLevel: "high" },
     };
     draftConfigMock.draftConfigRef.current = { mode: "build", modelSelection: selection };
-    // Todo71：prewarm 只消费配置，不再拥有 Composer 选择；真正失效由 Ready View 留空。
+    // Todo71: prewarm only consumes config and no longer owns the Composer selection; real invalidation empties the Ready View.
     draftConfigMock.resolveInitialDraftConfig.mockReturnValue({
       provider: "primary-provider",
       model: "deepseek-v4-flash",
@@ -2864,7 +2870,7 @@ describe("SessionPane model switch recovery", () => {
       ...projectionState.current,
       snapshot: fallbackSnapshot,
     };
-    // 普通 snapshot 差异不具备 delivery 来源，不能推断成自动 fallback。
+    // A plain snapshot difference has no delivery provenance and must not be inferred as an automatic fallback.
     await rerenderPane(root, { sessionId: null });
 
     await act(async () => {
@@ -3052,7 +3058,7 @@ describe("SessionPane model switch recovery", () => {
     });
   });
 
-  it("本地 Registry 拒绝模型时不使用旧 Provider Snapshot 恢复", async () => {
+  it("does not recover with a stale provider snapshot when the local registry rejects the model", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -3089,7 +3095,7 @@ describe("SessionPane model switch recovery", () => {
     });
   });
 
-  it("远端 Registry 拒绝模型时不注入 Desktop runtimeModel 重试", async () => {
+  it("does not inject the desktop runtimeModel retry when the remote registry rejects the model", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -3345,7 +3351,7 @@ describe("SessionPane Plan picker action", () => {
     await act(async () => root.unmount());
   });
 
-  it.each(["/plan", "/PLAN 帮我做 X"])(
+  it.each(["/plan", "/PLAN do X for me"])(
     "sends literal %s without changing Plan or stripping text",
     async (text) => {
       projectionState.current = {
@@ -3384,7 +3390,7 @@ describe("SessionPane Plan picker action", () => {
 });
 
 describe("SessionPane Plan mode goal guard", () => {
-  it.each(["/goal", "/goal 保留这段输入", "/target 保留别名输入", "/goal resume"])(
+  it.each(["/goal", "/goal keep this input", "/target keep alias input", "/goal resume"])(
     "blocks %s before any conversation command is dispatched",
     async (command) => {
       const planSnapshot = makeSnapshot();
@@ -3431,7 +3437,7 @@ describe("SessionPane Plan mode goal guard", () => {
     const root = await renderPane();
     let sendResult: unknown;
     await act(async () => {
-      sendResult = await captured.composerProps?.onSendText("/goal 正常目标");
+      sendResult = await captured.composerProps?.onSendText("/goal normal objective");
       await flushMicrotasks();
     });
 
@@ -3440,8 +3446,8 @@ describe("SessionPane Plan mode goal guard", () => {
     expect(mocks.sendCommand.mock.calls[0]?.[0]).toMatchObject({
       type: "sendGoalCommand",
       payload: {
-        text: "正常目标",
-        displayText: "/goal 正常目标",
+        text: "normal objective",
+        displayText: "/goal normal objective",
       },
     });
     expect(mocks.toast).not.toHaveBeenCalled();
@@ -3488,42 +3494,45 @@ describe("SessionPane Plan mode goal guard", () => {
   });
 });
 
-describe("Start 提交推荐只修改本次 Submission", () => {
-  it.each([false, true])("桌面/手机(%s)确认切换保留思考强度且只发送一次", async (mobile) => {
-    projectionState.current = {
-      status: "live",
-      snapshot: makeSnapshot(),
-      subscriptionId: "start154",
-      lastError: null,
-      optimisticCommands: [],
-      loadingOlder: false,
-    };
-    recommendation.mockImplementation(async (selection) => ({
-      ...selection,
-      providerId: "account:bigmodel-start-plan",
-    }));
-    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
-      ackFor(envelope, { status: "accepted" }),
-    );
-    const root = await renderPane({ compactForRemoteControl: mobile });
-    try {
-      await act(async () => {
-        await captured.composerProps?.onSendText("start154-submit");
-      });
-      expect(recommendation).toHaveBeenCalledOnce();
-      const original = recommendation.mock.calls[0]![0];
-      const commands = mocks.sendCommand.mock.calls
-        .map(([envelope]) => envelope)
-        .filter((envelope) => envelope.type === "sendText");
-      expect(commands).toHaveLength(1);
-      expect(commands[0]).toMatchObject({
-        payload: { modelSelection: { ...original, providerId: "account:bigmodel-start-plan" } },
-      });
-    } finally {
-      await act(async () => root.unmount());
-    }
-  });
-  it("关闭推荐框不提交新消息，沿用原预热规则", async () => {
+describe("Start submission recommendation only modifies this submission", () => {
+  it.each([false, true])(
+    "desktop/mobile (%s) confirm-switch keeps the reasoning level and sends only once",
+    async (mobile) => {
+      projectionState.current = {
+        status: "live",
+        snapshot: makeSnapshot(),
+        subscriptionId: "start154",
+        lastError: null,
+        optimisticCommands: [],
+        loadingOlder: false,
+      };
+      recommendation.mockImplementation(async (selection) => ({
+        ...selection,
+        providerId: "account:bigmodel-start-plan",
+      }));
+      mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
+        ackFor(envelope, { status: "accepted" }),
+      );
+      const root = await renderPane({ compactForRemoteControl: mobile });
+      try {
+        await act(async () => {
+          await captured.composerProps?.onSendText("start154-submit");
+        });
+        expect(recommendation).toHaveBeenCalledOnce();
+        const original = recommendation.mock.calls[0]![0];
+        const commands = mocks.sendCommand.mock.calls
+          .map(([envelope]) => envelope)
+          .filter((envelope) => envelope.type === "sendText");
+        expect(commands).toHaveLength(1);
+        expect(commands[0]).toMatchObject({
+          payload: { modelSelection: { ...original, providerId: "account:bigmodel-start-plan" } },
+        });
+      } finally {
+        await act(async () => root.unmount());
+      }
+    },
+  );
+  it("closing the recommendation dialog does not submit a new message and keeps the original prewarm rules", async () => {
     projectionState.current = {
       status: "live",
       snapshot: makeSnapshot(),
@@ -3551,10 +3560,10 @@ describe("Start 提交推荐只修改本次 Submission", () => {
   });
 });
 
-describe("副屏首条推荐的桌面与手机提交边界", () => {
+describe("desktop and mobile submission boundaries for the side-pane first recommendation", () => {
   for (const mobile of [false, true]) {
     it.each(["confirm", "decline", "close"] as const)(
-      `mobile=${mobile}：%s 只决定 child 首条，不改父草稿`,
+      `mobile=${mobile}: %s only decides the child first input and never touches the parent draft`,
       async (choice) => {
         projectionState.current = {
           status: "live",
@@ -3632,200 +3641,6 @@ describe("副屏首条推荐的桌面与手机提交边界", () => {
       },
     );
   }
-});
-
-// specs/ui-draft-send-path.md: first sends that need a session created on the send path.
-describe("SessionPane draft send route (create route)", () => {
-  it("activates the prepared worktree with attachments and context in the same submission", async () => {
-    const snapshot = makeSnapshot();
-    projectionState.current = {
-      status: "live",
-      snapshot,
-      subscriptionId: "sub-1",
-      lastError: null,
-      optimisticCommands: [],
-      loadingOlder: false,
-    };
-    const attachments = [
-      {
-        ref: "zcode-artifact://pasted",
-        fileName: "pasted-text.txt",
-        mime: "text/plain",
-        bytes: 20000,
-      },
-    ];
-    const contextRefs = [{ kind: "shared_context_import" as const, context_id: "plan-context" }];
-    const conversationQuotes = [{ text: "Planning requirements", messageId: "quoted-message" }];
-    const executionWorktree = { path: "/workspace-worktrees/plan", branchName: "zcode/plan" };
-    const reuploadAttachmentsForSession = vi.fn(async () => attachments);
-    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
-      ackFor(envelope, {
-        status: "accepted",
-        ...(envelope.type === "createSession"
-          ? { result: { type: "createSession" as const, sessionId: snapshot.sessionId } }
-          : {}),
-      }),
-    );
-    const root = await renderPane();
-    try {
-      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
-      await act(async () => {
-        await captured.composerProps?.onSendText("inspect the context", {
-          attachments,
-          sharedContextRefs: contextRefs,
-          conversationQuotes,
-          contextAttachmentCount: 2,
-          executionWorktree,
-          preparedSessionId: snapshot.sessionId,
-          preparedAttemptId: "plan-attempt",
-          reuploadAttachmentsForSession,
-        });
-        await flushMicrotasks();
-      });
-      const submitted = mocks.sendCommand.mock.calls
-        .slice(callsBeforeSubmit)
-        .map(([command]) => command);
-      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
-      expect(submitted[0]).toMatchObject({
-        payload: {
-          preparedSessionId: snapshot.sessionId,
-          expectedAttemptId: "plan-attempt",
-          executionWorktree,
-        },
-      });
-      expect(submitted[1]).toMatchObject({
-        sessionId: snapshot.sessionId,
-        payload: {
-          text: "inspect the context",
-          attachments,
-          context_refs: contextRefs,
-          conversationQuotes,
-        },
-      });
-      expect(reuploadAttachmentsForSession).toHaveBeenCalledExactlyOnceWith(snapshot.sessionId);
-    } finally {
-      await act(async () => root.unmount());
-    }
-  });
-
-  it("creates the execution-worktree session on the send path and never promotes the warm draft", async () => {
-    const warmSessionId = "warm-draft-not-promoted";
-    const createdSessionId = "worktree-created-session";
-    const warmSnapshot = makeSnapshot();
-    warmSnapshot.sessionId = warmSessionId;
-    projectionState.current = {
-      status: "live",
-      snapshot: null,
-      subscriptionId: "worktree-draft-subscription",
-      lastError: null,
-      optimisticCommands: [],
-      loadingOlder: false,
-    };
-    const beginPromotion = vi.fn(() => true);
-    const promote = vi.fn();
-    // A warm draft exists, but a worktree send must not read or promote it (the warm cwd is the parent workspace).
-    prewarmHookMock.binding = {
-      workspaceKey: "/workspace",
-      sessionId: warmSessionId,
-      promote,
-      discard: vi.fn(),
-      beginPromotion,
-    } as typeof prewarmHookMock.binding;
-    const reuploadAttachmentsForSession = vi.fn(async () => [
-      { ref: "zcode-artifact://worktree-copy", fileName: "a.txt", mime: "text/plain", bytes: 4 },
-    ]);
-    const attachments = [
-      { ref: "zcode-artifact://parent-copy", fileName: "a.txt", mime: "text/plain", bytes: 4 },
-    ];
-    const executionWorktree = { path: "/workspace-worktrees/draft", branchName: "zcode/draft" };
-    const onSessionCreated = vi.fn();
-    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
-      ackFor(envelope, {
-        status: "accepted",
-        ...(envelope.type === "createSession"
-          ? { result: { type: "createSession" as const, sessionId: createdSessionId } }
-          : {}),
-      }),
-    );
-    const root = await renderPane({ sessionId: null, onSessionCreated });
-    try {
-      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
-      await act(async () => {
-        await captured.composerProps?.onSendText("edit in the worktree", {
-          attachments,
-          executionWorktree,
-          reuploadAttachmentsForSession,
-        });
-        await flushMicrotasks();
-      });
-      // Config CAS commands from the draft barrier are not part of the create route.
-      const submitted = mocks.sendCommand.mock.calls
-        .slice(callsBeforeSubmit)
-        .map(([command]) => command)
-        .filter((command) => command.type === "createSession" || command.type === "sendText");
-      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
-      expect(submitted[0]).toMatchObject({ payload: { executionWorktree } });
-      expect(submitted[1]).toMatchObject({
-        sessionId: createdSessionId,
-        payload: {
-          text: "edit in the worktree",
-          attachments: [{ ref: "zcode-artifact://worktree-copy", fileName: "a.txt" }],
-        },
-      });
-      expect(reuploadAttachmentsForSession).toHaveBeenCalledExactlyOnceWith(createdSessionId);
-      expect(beginPromotion).not.toHaveBeenCalled();
-      expect(promote).not.toHaveBeenCalled();
-      expect(onSessionCreated).toHaveBeenCalledWith(createdSessionId);
-    } finally {
-      await act(async () => root.unmount());
-    }
-  });
-
-  it("disables the warm draft for an incognito first send and creates the frozen profile on the send path", async () => {
-    const createdSessionId = "incognito-created-session";
-    prewarmHookMock.binding = null;
-    useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
-    projectionState.current = {
-      status: "live",
-      snapshot: null,
-      subscriptionId: "incognito-draft-subscription",
-      lastError: null,
-      optimisticCommands: [],
-      loadingOlder: false,
-    };
-    const onSessionCreated = vi.fn();
-    mocks.sendCommand.mockImplementation(async (envelope: CommandEnvelope) =>
-      ackFor(envelope, {
-        status: "accepted",
-        ...(envelope.type === "createSession"
-          ? { result: { type: "createSession" as const, sessionId: createdSessionId } }
-          : {}),
-      }),
-    );
-    const root = await renderPane({ sessionId: null, onSessionCreated });
-    try {
-      expect(prewarmHookMock.lastEnabled).toBe(false);
-      const callsBeforeSubmit = mocks.sendCommand.mock.calls.length;
-      await act(async () => {
-        await captured.composerProps?.onSendText("clean start", {
-          incognito: INCOGNITO_LOCKDOWN_PROFILE,
-        });
-        await flushMicrotasks();
-      });
-      const submitted = mocks.sendCommand.mock.calls
-        .slice(callsBeforeSubmit)
-        .map(([command]) => command);
-      expect(submitted.map((command) => command.type)).toEqual(["createSession", "sendText"]);
-      expect(submitted[0]).toMatchObject({
-        payload: { incognito: INCOGNITO_LOCKDOWN_PROFILE },
-      });
-      expect(submitted[1]).toMatchObject({ sessionId: createdSessionId });
-      expect(onSessionCreated).toHaveBeenCalledWith(createdSessionId);
-    } finally {
-      useDraftIncognitoIntentStore.getState().deactivate("/workspace");
-      await act(async () => root.unmount());
-    }
-  });
 });
 
 describe("SessionPane lease ownership", () => {

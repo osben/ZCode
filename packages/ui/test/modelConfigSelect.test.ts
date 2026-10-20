@@ -52,18 +52,18 @@ function renderInteractive(element: ReactElement, locale: Locale) {
 afterEach(() => cleanup());
 
 describe("ModelConfigSelect menu hierarchy", () => {
-  it("多个 provider 时展示 provider 一级菜单", () => {
+  it("shows the provider level menu with multiple providers", () => {
     expect(
       shouldShowModelProviderLevel([createGroup("Provider A"), createGroup("Provider B")]),
     ).toBe(true);
   });
 
-  it("单个 provider 时也展示 provider 分组层级", () => {
+  it("still shows the provider group level with a single provider", () => {
     expect(shouldShowModelProviderLevel([createGroup("Provider A")])).toBe(true);
     expect(shouldShowModelProviderLevel([])).toBe(false);
   });
 
-  it("单个 provider family 有连接方式时仍展示 provider 一级菜单", () => {
+  it("still shows the provider level menu when a single provider family has connection options", () => {
     expect(
       shouldShowModelProviderLevel([
         {
@@ -83,7 +83,7 @@ describe("ModelConfigSelect menu hierarchy", () => {
     ).toBe(true);
   });
 
-  it("provider 一级菜单能识别当前选中的 model 所在分组", () => {
+  it("the provider level menu recognizes the group of the currently selected model", () => {
     const providerA = createGroup("Provider A");
     const providerB = createGroup("Provider B");
 
@@ -91,7 +91,7 @@ describe("ModelConfigSelect menu hierarchy", () => {
     expect(isModelSelectGroupSelected(providerB, "Provider B/model")).toBe(true);
   });
 
-  it("family 模型块和普通 provider 区之间展示分割线，普通 provider 之间不展示", () => {
+  it("separates a family model block from regular provider groups but not two regular providers", () => {
     const bigModelFamily: ModelSelectGroup = {
       ...createGroup("BigModel"),
       key: "family:bigmodel",
@@ -110,46 +110,49 @@ describe("ModelConfigSelect vision capability", () => {
   it.each([
     ["zh-CN", "视觉"],
     ["en-US", "Vision"],
-  ] as const)("模型项在模型名后展示 %s 视觉能力标签", (locale, label) => {
-    renderInteractive(
-      createElement(ModelConfigSelect, {
-        modelGroups: [
-          {
-            ...createGroup("Provider A"),
-            items: [
-              {
-                key: "vision-model",
-                value: "Provider A/openrouter/nvidia/ox-alpha",
-                name: "openrouter/nvidia/ox-alpha",
-                supportsVisionInput: true,
-              },
-            ],
-          },
-        ],
-        normalizedValue: "Provider A/openrouter/nvidia/ox-alpha",
-        triggerLabel: "openrouter/nvidia/ox-alpha",
-        showManageModelsAction: false,
-        lockReasonMessage: "Locked",
-        isItemLocked: () => false,
-        onValueChange: () => {},
-        open: true,
-        showProviderLevel: false,
-      }),
-      locale,
-    );
+  ] as const)(
+    "model items show the %s vision capability badge after the model name",
+    (locale, label) => {
+      renderInteractive(
+        createElement(ModelConfigSelect, {
+          modelGroups: [
+            {
+              ...createGroup("Provider A"),
+              items: [
+                {
+                  key: "vision-model",
+                  value: "Provider A/openrouter/nvidia/ox-alpha",
+                  name: "openrouter/nvidia/ox-alpha",
+                  supportsVisionInput: true,
+                },
+              ],
+            },
+          ],
+          normalizedValue: "Provider A/openrouter/nvidia/ox-alpha",
+          triggerLabel: "openrouter/nvidia/ox-alpha",
+          showManageModelsAction: false,
+          lockReasonMessage: "Locked",
+          isItemLocked: () => false,
+          onValueChange: () => {},
+          open: true,
+          showProviderLevel: false,
+        }),
+        locale,
+      );
 
-    const badge = screen.getByLabelText(label);
-    const modelItem = badge.closest('[role="menuitemradio"]');
-    const modelName = modelItem?.querySelector('[title="openrouter/nvidia/ox-alpha"]');
+      const badge = screen.getByLabelText(label);
+      const modelItem = badge.closest('[role="menuitemradio"]');
+      const modelName = modelItem?.querySelector('[title="openrouter/nvidia/ox-alpha"]');
 
-    expect(badge.getAttribute("data-model-input-capability")).toBe("vision");
-    expect(modelName).not.toBeNull();
-    expect(modelName?.compareDocumentPosition(badge)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
+      expect(badge.getAttribute("data-model-input-capability")).toBe("vision");
+      expect(modelName).not.toBeNull();
+      expect(modelName?.compareDocumentPosition(badge)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    },
+  );
 });
 
 describe("ModelConfigSelect trigger label", () => {
-  it("允许调用方省略通用 tooltip 并保留模型名可访问文案", () => {
+  it("lets callers omit the generic tooltip while keeping the accessible model-name label", () => {
     const html = renderWithTooltipProvider(
       createElement(ModelConfigSelect, {
         modelGroups: [createGroup("Provider A")],
@@ -166,7 +169,7 @@ describe("ModelConfigSelect trigger label", () => {
     expect(html).toContain('title="GLM-5"');
   });
 
-  it("pending 状态下 loading 显示在模型文字后面", () => {
+  it("in pending state the loading indicator shows after the model text", () => {
     const html = renderWithTooltipProvider(
       createElement(ModelConfigSelect, {
         modelGroups: [createGroup("Provider A")],

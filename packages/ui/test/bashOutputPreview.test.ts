@@ -61,7 +61,7 @@ describe("Bash bounded output preview", () => {
       expect(html).not.toContain("bash-output-preview-short");
       expect(html).not.toContain("1,234");
       expect(html).not.toContain("40,960");
-      expect(html).not.toContain("约");
+      expect(html).not.toContain("~");
     },
   );
 });
@@ -120,7 +120,7 @@ describe("Bash final output content", () => {
         },
         expanded,
       );
-      expect(html).not.toContain("仅显示部分输出");
+      expect(html).not.toContain("Only showing partial output");
       expect(html).not.toContain("/中文 空格/output.log");
       expect(html).not.toContain("bash-output-notice");
       expect(html).not.toContain("bash-output-file");
@@ -136,8 +136,8 @@ describe("Bash final output content", () => {
   it("keeps only the output when a truncated file was cleaned up", () => {
     const html = renderResult({ kind: "bash_output", output: "head", truncated: true });
     expect(html).toContain("head");
-    expect(html).not.toContain("仅显示部分输出");
-    expect(html).not.toContain("完整输出");
+    expect(html).not.toContain("Only showing partial output");
+    expect(html).not.toContain("Full output");
   });
   it("keeps old output text without adding a notice or exposing the protocol truncation ref", () => {
     const html = renderResult(undefined, true, {
@@ -145,7 +145,7 @@ describe("Bash final output content", () => {
       truncated: { totalBytes: 100000, ref: "tool-output/result-bash" },
     });
     expect(html).toContain("legacy head and tail");
-    expect(html).not.toContain("仅显示部分输出");
+    expect(html).not.toContain("Only showing partial output");
     expect(html).not.toContain("tool-output/result-bash");
   });
 });

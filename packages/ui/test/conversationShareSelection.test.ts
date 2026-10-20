@@ -36,7 +36,7 @@ describe("conversation partial share selection store", () => {
     useConversationShareSelectionStore.getState().resetForTests();
   });
 
-  it("首次进入默认全选，补齐历史时新候选仍默认选中", async () => {
+  it("selects all turns by default on first open and keeps newly synced candidates selected", async () => {
     const {
       getConversationShareDraft,
       getConversationShareSelectedRowIds,
@@ -68,7 +68,7 @@ describe("conversation partial share selection store", () => {
     ).toEqual([5, 11]);
   });
 
-  it("按 productTurnId 整轮取消：同一轮的多条 query 一起移除，其他轮不受影响", async () => {
+  it("deselects a whole product turn by productTurnId: same-turn queries go together, other turns stay", async () => {
     const {
       getConversationShareSelectedProductTurnIds,
       getConversationShareSelectedRowIds,
@@ -77,7 +77,7 @@ describe("conversation partial share selection store", () => {
     const store = useConversationShareSelectionStore.getState();
 
     store.openShare("task-a");
-    // product-turn-1 含两条 steer query，UI 目录里是两项，但「取消该轮」必须整轮生效。
+    // product-turn-1 has two steer queries; the catalog lists two items, but deselecting the turn must affect the whole turn.
     store.syncAvailableTurns("task-a", [
       { rowId: 11, productTurnId: "product-turn-1" },
       { rowId: 12, productTurnId: "product-turn-1" },
@@ -90,13 +90,13 @@ describe("conversation partial share selection store", () => {
     expect(getConversationShareSelectedRowIds(state, "task-a")).toEqual([21]);
     expect(getConversationShareSelectedProductTurnIds(state, "task-a")).toEqual(["product-turn-2"]);
 
-    // 幂等：重复取消不改变状态，也不会把已排除的行再翻回来（toggle 语义的老 bug）。
+    // Idempotent: repeated deselect keeps state and never flips excluded rows back (old toggle-semantics bug).
     store.deselectProductTurn("task-a", "product-turn-1");
     state = useConversationShareSelectionStore.getState();
     expect(getConversationShareSelectedRowIds(state, "task-a")).toEqual([21]);
   });
 
-  it("进入局部选择时保留用户选择的分享权限", async () => {
+  it("keeps the user-chosen share access mode when entering partial selection", async () => {
     const { getConversationShareDraft, useConversationShareSelectionStore } =
       await import("@/store/conversationShareSelectionStore.js");
     const store = useConversationShareSelectionStore.getState();
@@ -111,7 +111,7 @@ describe("conversation partial share selection store", () => {
 });
 
 describe("ConversationShareSelectionPanel", () => {
-  it("按会话容器和底部 dock 的实时位置计算面板最大高度", async () => {
+  it("computes the panel max height from the live positions of the conversation container and bottom dock", async () => {
     const {
       CONVERSATION_SHARE_SELECTION_PANEL_CENTER_Y_PROPERTY,
       CONVERSATION_SHARE_SELECTION_PANEL_MAX_HEIGHT_PROPERTY,
@@ -152,7 +152,7 @@ describe("ConversationShareSelectionPanel", () => {
     expect(expanded.maxHeightPx).toBeGreaterThan(shrunk.maxHeightPx);
     expect(shrunk.bottomPx).toBeLessThanOrEqual(484);
 
-    // 短视口/高 dock 下先回收顶部安全距，再保底最小高度，不允许压成零高度薄片。
+    // On a short viewport / high dock, reclaim the top safe margin first, then keep a minimum height; never collapse to a zero-height sliver.
     const collided = resolveConversationShareSelectionPanelLayout({
       containerHeightPx: 400,
       dockStartPx: 100,
@@ -160,7 +160,7 @@ describe("ConversationShareSelectionPanel", () => {
     expect(collided.topPx).toBe(0);
     expect(collided.maxHeightPx).toBe(120);
 
-    // 容器本身比最小高度还矮时，面板仍必须留在容器内。
+    // When the container itself is shorter than the minimum height, the panel must still stay inside it.
     const tiny = resolveConversationShareSelectionPanelLayout({
       containerHeightPx: 100,
       dockStartPx: 60,
@@ -203,7 +203,7 @@ describe("ConversationShareSelectionPanel", () => {
     ).toBe("327.5px");
   });
 
-  it("把减半后的可见 thumb 映射到完整轨道", async () => {
+  it("maps the halved visible thumb onto the full track", async () => {
     const { resolveConversationShareScrollbarIndicatorMetrics } =
       await import("@/v4/conversationShareScrollbarMetrics.js");
     const input = {
@@ -235,7 +235,7 @@ describe("ConversationShareSelectionPanel", () => {
         unitIndex: 0,
         rowId: 11,
         userPreview: "First user question",
-        assistantPreview: "第一条回答摘要",
+        assistantPreview: "First answer summary",
         assistantPreviewKind: "text" as const,
         isRunning: false,
       },
@@ -245,7 +245,7 @@ describe("ConversationShareSelectionPanel", () => {
         unitIndex: 1,
         rowId: 22,
         userPreview: "Second user question",
-        assistantPreview: "第二条回答摘要",
+        assistantPreview: "Second answer summary",
         assistantPreviewKind: "text" as const,
         isRunning: false,
       },
@@ -297,7 +297,7 @@ describe("ConversationShareSelectionPanel", () => {
 });
 
 describe("ConversationShareConfirmationDock", () => {
-  it("浮窗配置使用范围按钮调整内容，关闭和生成各自触发回调", async () => {
+  it("popover uses the range button to adjust content; close and confirm each trigger their callback", async () => {
     const { ConversationShareConfirmationDock } =
       await import("@/v4/ConversationShareConfirmationDock.js");
     const onCancel = vi.fn(),
@@ -328,7 +328,7 @@ describe("ConversationShareConfirmationDock", () => {
 });
 
 describe("ConversationSharePreflightStatus", () => {
-  it("只展示预检诊断与问题操作，检查态由范围按钮承载", async () => {
+  it("shows only preflight diagnostics and issue actions; the checking state lives on the range button", async () => {
     const { ConversationSharePreflightStatus } =
       await import("@/conversation-share-interaction/ConversationSharePreflightStatus.js");
     const common = {
@@ -352,7 +352,7 @@ describe("ConversationSharePreflightStatus", () => {
           logEpoch: "epoch-1",
           capabilitiesFingerprint: "fingerprint",
           blockingIssues: [
-            // turnOrdinal 只用于文案；「取消该轮」按 productTurnId 定位。
+            // turnOrdinal is only used for copy; deselecting the turn targets by productTurnId.
             {
               code: "running_turn",
               scope: "turn",
@@ -401,7 +401,7 @@ describe("ConversationSharePreflightStatus", () => {
     expect(screen.getByTestId("conversation-share-selection-preflight-status")).toBeTruthy();
   });
 
-  it("传输类阻断提供重新检查入口，轮次级阻断仍只给取消勾选", async () => {
+  it("transport-level blocks offer a re-check entry; turn-level blocks still only offer deselect", async () => {
     const { ConversationSharePreflightStatus } =
       await import("@/conversation-share-interaction/ConversationSharePreflightStatus.js");
     const common = {
@@ -454,7 +454,7 @@ describe("ConversationSharePreflightStatus", () => {
 });
 
 describe("conversation share selection mode motion", () => {
-  it("面板保持 200ms 动效，减弱动效时立即切换", async () => {
+  it("panel keeps a 200ms motion and switches instantly under reduced motion", async () => {
     const { resolveConversationShareSelectionPanelMotion } =
       await import("@/v4/conversationShareModeMotion.js");
     expect(resolveConversationShareSelectionPanelMotion(false)).toEqual({
@@ -473,7 +473,7 @@ describe("conversation share selection mode motion", () => {
 });
 
 describe("conversation share selection interaction policy", () => {
-  it("局部勾选期间禁用全局 message 框选，退出后恢复", async () => {
+  it("disables global message selection while partial selection is active and restores it after exit", async () => {
     const { resolveConversationSelectionTooltipEnabled } =
       await import("@/v4/conversationShareModePolicy.js");
 
@@ -532,33 +532,36 @@ describe("ConversationBottomDockTransition", () => {
   });
 });
 
-it.each(["idle", "stale", "checking"] as const)("有选择但预检 %s 时不能确认", async (status) => {
-  const { ConversationShareSelectionPanel } =
-    await import("@/v4/ConversationShareSelectionPanel.js");
-  const confirm = vi.fn();
-  render(
-    createElement(ConversationShareSelectionPanel, {
-      visible: true,
-      items: [
-        {
-          key: "1",
-          rowId: 1,
-          unitIndex: 0,
-          userPreview: "hello",
-          assistantPreview: "world",
-          isRunning: false,
-        },
-      ],
-      selectedRowIds: new Set([1]),
-      preflight: { status },
-      onToggle: vi.fn(),
-      onInspect: vi.fn(),
-      onCancel: vi.fn(),
-      onConfirm: confirm,
-    }),
-  );
-  const apply = screen.getByTestId("conversation-share-selection-apply") as HTMLButtonElement;
-  expect(apply.disabled).toBe(true);
-  fireEvent.click(apply);
-  expect(confirm).not.toHaveBeenCalled();
-});
+it.each(["idle", "stale", "checking"] as const)(
+  "cannot confirm when there is a selection but preflight is %s",
+  async (status) => {
+    const { ConversationShareSelectionPanel } =
+      await import("@/v4/ConversationShareSelectionPanel.js");
+    const confirm = vi.fn();
+    render(
+      createElement(ConversationShareSelectionPanel, {
+        visible: true,
+        items: [
+          {
+            key: "1",
+            rowId: 1,
+            unitIndex: 0,
+            userPreview: "hello",
+            assistantPreview: "world",
+            isRunning: false,
+          },
+        ],
+        selectedRowIds: new Set([1]),
+        preflight: { status },
+        onToggle: vi.fn(),
+        onInspect: vi.fn(),
+        onCancel: vi.fn(),
+        onConfirm: confirm,
+      }),
+    );
+    const apply = screen.getByTestId("conversation-share-selection-apply") as HTMLButtonElement;
+    expect(apply.disabled).toBe(true);
+    fireEvent.click(apply);
+    expect(confirm).not.toHaveBeenCalled();
+  },
+);

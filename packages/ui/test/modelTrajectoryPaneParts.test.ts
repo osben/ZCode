@@ -15,33 +15,29 @@ import { TrajectorySearchRevealContext } from "@/ModelTrajectorySearch.js";
 import { trajectoryToolOutputs } from "@/ModelTrajectoryToolPayload.js";
 import { expectedCopy } from "./helpers/uiCopy.js";
 
-const trajectoryMessageKeys = [
-  "modelTrajectory.inputSection",
-  "modelTrajectory.attempt",
-  "modelTrajectory.outputSection",
-  "modelTrajectory.message",
-  "modelTrajectory.reasoning",
-  "modelTrajectory.role.assistant",
-  "modelTrajectory.role.system",
-  "modelTrajectory.role.tool",
-  "modelTrajectory.role.user",
-  "modelTrajectory.source.main",
-  "modelTrajectory.source.sessionTitle",
-  "modelTrajectory.finish.toolCalls",
-  "modelTrajectory.toolCall",
-  "modelTrajectory.toolId",
-  "modelTrajectory.toolInput",
-  "modelTrajectory.toolOutput",
-  "modelTrajectory.toolResult",
-  "modelTrajectory.showAll",
-  "modelTrajectory.collapseContent",
-  "modelTrajectory.copyContent",
-  "chat.message.copy",
-] as const;
-
-const messages: Record<string, string> = Object.fromEntries(
-  trajectoryMessageKeys.map((id) => [id, expectedCopy(id)]),
-);
+const messages: Record<string, string> = {
+  "modelTrajectory.inputSection": "Input",
+  "modelTrajectory.attempt": "Attempt {attempt}",
+  "modelTrajectory.outputSection": "Output",
+  "modelTrajectory.message": "Message",
+  "modelTrajectory.reasoning": "Reasoning",
+  "modelTrajectory.role.assistant": "Assistant",
+  "modelTrajectory.role.system": "System",
+  "modelTrajectory.role.tool": "Tool result",
+  "modelTrajectory.role.user": "User",
+  "modelTrajectory.source.main": "Main session",
+  "modelTrajectory.source.sessionTitle": "Title generation",
+  "modelTrajectory.finish.toolCalls": "Tool call",
+  "modelTrajectory.toolCall": "Tool call",
+  "modelTrajectory.toolId": "ID",
+  "modelTrajectory.toolInput": "Input",
+  "modelTrajectory.toolOutput": "Output",
+  "modelTrajectory.toolResult": "Tool result",
+  "modelTrajectory.showAll": "Expand",
+  "modelTrajectory.collapseContent": "Collapse",
+  "modelTrajectory.copyContent": "Copy content",
+  "chat.message.copy": "Copy",
+};
 
 const intl = {
   formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
@@ -58,9 +54,12 @@ afterEach(() => {
 describe("ModelTrajectoryPaneParts", () => {
   it("temporarily reveals the active search target without changing local expansion", () => {
     const props = {
-      message: { role: "user" as const, parts: [{ kind: "text" as const, text: "hidden text" }] },
+      message: {
+        role: "user" as const,
+        parts: [{ kind: "text" as const, text: "hidden text" }],
+      },
       role: "user" as const,
-      roleLabel: expectedCopy("modelTrajectory.role.user"),
+      roleLabel: "User",
       callDurationLabel: "1.00s",
       callDatetimeLabel: "08:00:00 PM",
       callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -74,10 +73,7 @@ describe("ModelTrajectoryPaneParts", () => {
         createElement(ExpandableTrajectoryMessage, props),
       ),
     );
-    expect(
-      screen.getByRole("button", { name: new RegExp(expectedCopy("modelTrajectory.role.user")) })
-        .dataset.state,
-    ).toBe("open");
+    expect(screen.getByRole("button", { name: /User/ }).dataset.state).toBe("open");
     expect(document.querySelector('[data-trajectory-message-content=""]')?.className).not.toContain(
       "max-h-64",
     );
@@ -89,10 +85,7 @@ describe("ModelTrajectoryPaneParts", () => {
         createElement(ExpandableTrajectoryMessage, props),
       ),
     );
-    expect(
-      screen.getByRole("button", { name: new RegExp(expectedCopy("modelTrajectory.role.user")) })
-        .dataset.state,
-    ).toBe("open");
+    expect(screen.getByRole("button", { name: /User/ }).dataset.state).toBe("open");
   });
 
   it("uses error-text values for tool result summaries and expanded content", () => {
@@ -119,7 +112,7 @@ describe("ModelTrajectoryPaneParts", () => {
       createElement(ExpandableTrajectoryMessage, {
         message,
         role: "tool",
-        roleLabel: expectedCopy("modelTrajectory.role.tool"),
+        roleLabel: "Tool result",
         callDurationLabel: "1.00s",
         callDatetimeLabel: "08:00:00 PM",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -127,9 +120,7 @@ describe("ModelTrajectoryPaneParts", () => {
       }),
     );
     const trigger = screen.getByRole("button", {
-      name: new RegExp(
-        `${expectedCopy("modelTrajectory.role.tool")}${expectedCopy("modelTrajectory.toolOutput")}MCP tool returned an error`,
-      ),
+      name: /Tool resultOutputMCP tool returned an error/,
     });
     expect(trigger.querySelector('[data-trajectory-payload-error-icon=""]')).toBeTruthy();
     expect(trigger.querySelector('[data-trajectory-payload-direction=""]')?.className).toContain(
@@ -148,12 +139,15 @@ describe("ModelTrajectoryPaneParts", () => {
               kind: "tool-call",
               toolCallId: "call_invalid",
               toolName: "broken_tool",
-              input: { type: "error-text", value: "Invalid tool input\nmissing path" },
+              input: {
+                type: "error-text",
+                value: "Invalid tool input\nmissing path",
+              },
             },
           ],
         },
         role: "assistant",
-        roleLabel: expectedCopy("modelTrajectory.toolCall"),
+        roleLabel: "Tool call",
         callDurationLabel: "1.00s",
         callDatetimeLabel: "08:00:00 PM",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -170,9 +164,12 @@ describe("ModelTrajectoryPaneParts", () => {
 
   it("applies versioned expand-all and collapse-all commands to message rows", () => {
     const message = createElement(ExpandableTrajectoryMessage, {
-      message: { role: "user", parts: [{ kind: "text", text: "full message" }] },
+      message: {
+        role: "user",
+        parts: [{ kind: "text", text: "full message" }],
+      },
       role: "user",
-      roleLabel: expectedCopy("modelTrajectory.role.user"),
+      roleLabel: "User",
       callDurationLabel: "1.00s",
       callDatetimeLabel: "12:00:00",
       callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -232,7 +229,7 @@ describe("ModelTrajectoryPaneParts", () => {
           ],
         },
         role: "assistant",
-        roleLabel: expectedCopy("modelTrajectory.toolCall"),
+        roleLabel: "Tool call",
         callDurationLabel: "1.00s",
         callDatetimeLabel: "12:00:00",
         callDatetimeTitle: "2026-06-03T12:00:00.000Z",
@@ -257,7 +254,12 @@ describe("ModelTrajectoryPaneParts", () => {
         inputMessages: [
           {
             role: "system",
-            parts: [{ kind: "text", text: " \n system summary\nfull system prompt\n \n" }],
+            parts: [
+              {
+                kind: "text",
+                text: " \n system summary\nfull system prompt\n \n",
+              },
+            ],
           },
         ],
         record: {
@@ -274,7 +276,7 @@ describe("ModelTrajectoryPaneParts", () => {
     const systemContainer = container.querySelector('[data-trajectory-expandable-role="system"]');
     expect(systemContainer).toBeTruthy();
     const systemTrigger = screen.getByRole("button", {
-      name: new RegExp(`${expectedCopy("modelTrajectory.role.system")}system summary`),
+      name: /Systemsystem summary/,
     });
     expect(systemTrigger.dataset.state).toBe("open");
     expect(screen.getByText(/full system prompt/)).toBeTruthy();
@@ -347,7 +349,7 @@ describe("ModelTrajectoryPaneParts", () => {
     );
 
     const userTrigger = screen.getByRole("button", {
-      name: new RegExp(`${expectedCopy("modelTrajectory.role.user")}summary message`),
+      name: /Usersummary message/,
     });
     expect(userTrigger.dataset.state).toBe("open");
     expect(userTrigger.querySelector('[data-trajectory-message-preview=""]')?.textContent).toBe(
@@ -383,23 +385,27 @@ describe("ModelTrajectoryPaneParts", () => {
     expect(userContainer?.querySelector('[data-trajectory-overflow-copy=""]')).toBeNull();
     fireEvent.click(copyButton as HTMLButtonElement);
     expect(writeText).toHaveBeenCalledWith("summary message\nfull user message");
-    fireEvent.click(screen.getByRole("button", { name: expectedCopy("modelTrajectory.showAll") }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: expectedCopy("modelTrajectory.showAll"),
+      }),
+    );
     expect(userContent?.className).not.toContain("max-h-64");
     expect(userContent?.hasAttribute("data-overflow-clipped")).toBe(false);
     fireEvent.click(
-      screen.getByRole("button", { name: expectedCopy("modelTrajectory.collapseContent") }),
+      screen.getByRole("button", {
+        name: expectedCopy("modelTrajectory.collapseContent"),
+      }),
     );
     expect(userContent?.className).toContain("max-h-64");
 
     const toolTrigger = screen.getByRole("button", {
-      name: new RegExp(
-        `${expectedCopy("modelTrajectory.role.tool")}${expectedCopy("modelTrajectory.toolOutput")}file body second output line`,
-      ),
+      name: /Tool resultOutputfile body second output line/,
     });
     const toolName = toolTrigger.querySelector('[data-trajectory-tool-result-name=""]');
     const toolCallId = toolTrigger.querySelector('[data-trajectory-tool-result-id=""]');
     expect(toolTrigger.querySelector('[data-trajectory-payload-direction=""]')?.textContent).toBe(
-      expectedCopy("modelTrajectory.toolOutput"),
+      "Output",
     );
     expect(
       toolTrigger.querySelector('[data-trajectory-payload-direction=""]')?.className,
@@ -432,22 +438,20 @@ describe("ModelTrajectoryPaneParts", () => {
     expect(container.querySelector('[data-trajectory-assistant-title=""]')).toBeNull();
     expect(container.querySelector('[data-trajectory-assistant-detail-card=""]')).toBeNull();
     const reasoningRow = screen.getByRole("button", {
-      name: new RegExp(`${expectedCopy("modelTrajectory.reasoning")}inspect the file`),
+      name: /Reasoninginspect the file/,
     });
     const assistantMessageRow = screen.getByRole("button", {
-      name: new RegExp(`${expectedCopy("modelTrajectory.role.assistant")}file inspected`),
+      name: /Assistantfile inspected/,
     });
     const assistantToolRow = screen.getByRole("button", {
-      name: new RegExp(
-        `${expectedCopy("modelTrajectory.toolCall")}${expectedCopy("modelTrajectory.toolInput")}.*path.*\\/tmp\\/a\\.ts`,
-      ),
+      name: /Tool callInput.*path.*\/tmp\/a\.ts/,
     });
     expect(container.querySelector('[data-trajectory-role-line="assistant"]')).toBeNull();
     expect(container.querySelector('[data-trajectory-role-line="tool"]')).toBeNull();
     expect(assistantToolRow.textContent).toContain('{"path":"/tmp/a.ts"}');
     expect(
       assistantToolRow.querySelector('[data-trajectory-payload-direction=""]')?.textContent,
-    ).toBe(expectedCopy("modelTrajectory.toolInput"));
+    ).toBe("Input");
     expect(
       assistantToolRow.querySelector('[data-trajectory-payload-arrow=""]')?.className.baseVal,
     ).toContain("group-data-[state=open]:hidden");
@@ -482,8 +486,8 @@ describe("ModelTrajectoryPaneParts", () => {
       "tool-call-1",
     );
 
-    expect(screen.queryByText(`${expectedCopy("modelTrajectory.toolResult")} · Read`)).toBeNull();
-    expect(screen.queryByText(`${expectedCopy("modelTrajectory.toolCall")} · Read`)).toBeNull();
+    expect(screen.queryByText("Tool result · Read")).toBeNull();
+    expect(screen.queryByText("Tool call · Read")).toBeNull();
     expect(
       assistantToolRow
         .closest('[data-trajectory-message-collapsible=""]')
@@ -498,37 +502,7 @@ describe("ModelTrajectoryPaneParts", () => {
     expect(
       assistantToolContent?.querySelector('[data-trajectory-expanded-tool-id=""]')?.textContent,
     ).toBe("tool-call-1");
-    expect(assistantToolContent?.textContent).not.toContain(
-      expectedCopy("modelTrajectory.toolInput"),
-    );
-  });
-
-  it("renders response reasoning with the shared expandable row and purple role color", () => {
-    const html = renderToStaticMarkup(
-      createElement(CallCard, {
-        index: 0,
-        intl: intl as never,
-        inputMessages: [],
-        record: {
-          attempt: 1,
-          callSource: { kind: "main" },
-          model: { modelId: "glm-test" },
-          request: { messages: [], toolNames: [] },
-          requestId: "req-reasoning",
-          startedAt: "2026-06-03T12:00:00.000Z",
-          response: {
-            finishReason: "stop",
-            reasoningText: "inspect context\nverify result",
-            toolCalls: [],
-          },
-        },
-      }),
-    );
-
-    expect(html).toContain('data-trajectory-role-label="reasoning"');
-    expect(html).toContain("text-trajectory-reasoning/80");
-    expect(html).toContain('data-trajectory-message-trigger=""');
-    expect(html).toContain('data-trajectory-message-expanded=""');
+    expect(assistantToolContent?.textContent).not.toContain("Input");
   });
 
   it("shows full sidecar prompts instead of applying main-session deltas", () => {

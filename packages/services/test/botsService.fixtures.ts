@@ -58,6 +58,8 @@ export function createMemoryRepo(config: BotsConfigFile, state?: BotsStateFile) 
       currentState = nextState;
       return currentState;
     },
+    /** In-memory repo has no files to back up; the file-backed repo copies v3 once. */
+    async backupBeforeProjectIdentityMigration() {},
     async updateContext(
       botId: string,
       update: (

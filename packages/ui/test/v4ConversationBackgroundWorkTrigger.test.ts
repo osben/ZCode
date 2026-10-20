@@ -65,7 +65,6 @@ describe("ConversationBackgroundWorkTrigger", () => {
     expect(getComposerBackgroundWorkCounts(works, 1)).toEqual({
       bashCount: 2,
       workflowCount: 0,
-      dreamCount: 0,
       subagentCount: 1,
       totalCount: 3,
     });
@@ -112,9 +111,9 @@ describe("ConversationBackgroundWorkTrigger", () => {
   });
 });
 
-// workflow 从 bashCount 拆成自己的一类（docs/dynamic-workflow/presentation.md「Other places a run appears」item 6）。
-// 拆分不能顺手把入口也拆掉：**只有 workflow 在跑时 badge 仍必须出现**，因为面板里才有停止
-// 按钮（取消的三个入口之一）——这正是拆分前把它塞进 bashCount 所保住的那件事。
+// Workflow runs are split out of bashCount into their own kind (docs/dynamic-workflow/presentation.md, "Other places a run appears", item 6).
+// The split must not also remove the entry point: **the badge must still appear when only a workflow is running**, because the panel
+// holds the Stop button (one of the three cancel entry points). That is what the old bashCount grouping protected before the split.
 describe("getComposerBackgroundWorkCounts with dwf workflow runs", () => {
   it("counts running workflow runs as their own type instead of Bash", async () => {
     const { getComposerBackgroundWorkCounts } =
@@ -129,7 +128,7 @@ describe("getComposerBackgroundWorkCounts with dwf workflow runs", () => {
         ],
         1,
       ),
-    ).toEqual({ dreamCount: 0, bashCount: 1, workflowCount: 2, subagentCount: 1, totalCount: 4 });
+    ).toEqual({ bashCount: 1, workflowCount: 2, subagentCount: 1, totalCount: 4 });
   });
 
   it("ignores settled workflow runs", async () => {
@@ -141,7 +140,7 @@ describe("getComposerBackgroundWorkCounts with dwf workflow runs", () => {
         backgroundWork({ workId: "dwfrun-1", kind: "workflow", status: "failed" }),
         backgroundWork({ workId: "dwfrun-2", kind: "workflow", status: "resultPending" }),
       ]),
-    ).toEqual({ dreamCount: 0, bashCount: 0, workflowCount: 0, subagentCount: 0, totalCount: 0 });
+    ).toEqual({ bashCount: 0, workflowCount: 0, subagentCount: 0, totalCount: 0 });
   });
 
   it("keeps the badge and its own icon when only a workflow runs", async () => {
@@ -169,8 +168,8 @@ describe("getComposerBackgroundWorkCounts with dwf workflow runs", () => {
     expect(html).toContain("lucide-square-terminal");
   });
 
-  // 直达（docs/dynamic-workflow/presentation.md）：宿主判定唯一在跑的工作流可直开详情页时，
-  // 徽标换 tooltip 并把落点暴露成结构化属性；缺省仍是展开胶囊。
+  // Direct target (docs/dynamic-workflow/presentation.md): when the host resolves the only running workflow to a direct details page,
+  // the badge swaps the tooltip and exposes the destination as a structured attribute; by default it stays the expanded pill.
   it("announces the direct run-details target when the host resolves one", async () => {
     const direct = await renderTrigger(
       [backgroundWork({ workId: "dwfrun-1", kind: "workflow" })],
@@ -201,46 +200,5 @@ describe("getComposerBackgroundWorkCounts with dwf workflow runs", () => {
 
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual([...order].sort((left, right) => left - right));
-  });
-});
-
-describe("Dream background badge", () => {
-  it("counts Dream separately and keeps the last result reachable with zero running work", async () => {
-    const { getComposerBackgroundWorkCounts } =
-      await import("@/v4/composer/ConversationBackgroundWorkTrigger.js");
-    expect(getComposerBackgroundWorkCounts([backgroundWork({ kind: "dream" })])).toMatchObject({
-      dreamCount: 1,
-      bashCount: 0,
-      totalCount: 1,
-    });
-    const running = await renderTrigger([backgroundWork({ kind: "dream" })]);
-    expect(running).toContain('data-background-dream-count="1"');
-    // Exact attribute match: "tooltipDream" is a substring of "tooltipDreamResult", so a
-    // toContain("tooltipDream") assertion would not distinguish the two branches.
-    expect(running).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipDream"');
-    const finished = await renderTrigger([
-      backgroundWork({ kind: "dream", status: "resultPending" }),
-    ]);
-    expect(finished).toContain('data-background-total-count="0"');
-    expect(finished).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipDreamResult"');
-    // With zero running work the count interpolation is meaningless; the accessible name must
-    // fall back to the result tooltip instead.
-    expect(finished).toContain('aria-label="chat.composer.backgroundWorks.tooltipDreamResult"');
-    // Compact layout shows a lone moon icon (not the activity icon + total) at zero.
-    expect(finished).toContain('data-composer-background-layout="compact"');
-    const compactSpan =
-      /data-composer-background-layout="compact"[^>]*>((?:(?!<\/span>).)*)<\/span>/s.exec(finished);
-    expect(compactSpan?.[1]).toContain("lucide-moon");
-    expect(compactSpan?.[1]).not.toContain("lucide-activity");
-  });
-
-  it("uses the mixed tooltip when Dream runs alongside other background work", async () => {
-    const html = await renderTrigger([
-      backgroundWork({ kind: "dream" }),
-      backgroundWork({ workId: "bash-1" }),
-    ]);
-    expect(html).toContain('data-background-dream-count="1"');
-    expect(html).toContain('data-background-bash-count="1"');
-    expect(html).toContain('data-tooltip="chat.composer.backgroundWorks.tooltipMixed"');
   });
 });

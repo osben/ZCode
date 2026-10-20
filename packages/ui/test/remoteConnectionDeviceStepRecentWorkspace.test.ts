@@ -107,9 +107,11 @@ function renderDeviceStep(snapshot: SourceServerManagementSnapshot) {
 }
 
 /**
- * 设备卡「最近目录」交互合同（docs/design/r3-remote-ui-redesign.md 首屏：最近目录一键打开）：
- * 点击目录行 = 直接沿该目录所属线路打开工作区；「选择其他目录」= 只负责进入目录浏览器。
- * 两者互不耦合，目录行不再是一个需要二次确认的“选中”态。
+ * Device-card "recent directory" interaction contract
+ * (docs/design/r3-remote-ui-redesign.md first screen: one-click open of recent directories):
+ * clicking a directory row opens the workspace directly along the line that directory belongs to;
+ * "choose another directory" only enters the directory browser.
+ * The two are decoupled, and a directory row is no longer a "selected" state needing confirmation.
  */
 describe("RemoteConnectionDeviceStep recent workspace entries", () => {
   it("opens the workspace immediately when a recent directory row is clicked", () => {
@@ -127,7 +129,8 @@ describe("RemoteConnectionDeviceStep recent workspace entries", () => {
   it("always opens the directory browser from the choose-directory button", () => {
     const onSelectProfile = renderDeviceStep(snapshotOf(true));
 
-    // 先点过目录行，再点「选择其他目录」：按钮不能继承任何“已选目录”，必须进入目录浏览器。
+    // A directory row was clicked first, then "choose another directory": the button must not
+    // inherit any "selected directory" and must enter the directory browser.
     fireEvent.click(screen.getByText("/home/dev"));
     fireEvent.click(screen.getByText("devbox"));
 

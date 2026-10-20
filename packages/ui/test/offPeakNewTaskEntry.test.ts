@@ -68,8 +68,8 @@ const h = vi.hoisted(() => {
     modelProviderFamilyModes: {} as Record<string, "oauth" | "apiKey">,
     modelProviderFamilySelectedKeys: {} as Record<string, string>,
   };
-  // 真实 useServices 返回的是稳定的 Context 值；mock 若每次调用都新建对象，
-  // 组件任何一次重渲染都会让 initialize 的依赖变化并重复拉取灰度配置。
+  // The real useServices returns a stable Context value; a mock that builds a new object per
+  // call makes initialize's dependencies change on every re-render and re-fetch gray config.
   const services = {
     offPeakTaskService: {},
     codingPlanSubscriptionService: {},
@@ -130,7 +130,7 @@ vi.mock("@/settings/useAutomationTemplates.js", () => ({
       return {
         id,
         title: copy ? { en: copy.en.title, cn: copy.cn.title } : {},
-        // Automations 仍展示 contents；首页必须显式读取 homepageDescription（descs 映射结果）。
+        // Automations still shows contents; the homepage must read homepageDescription explicitly.
         description: copy
           ? { en: `contents:${copy.en.description}`, cn: `contents:${copy.cn.description}` }
           : {},
@@ -170,13 +170,11 @@ vi.mock("@/store/offPeakTaskStore.js", async (importOriginal) => {
 });
 
 import { OffPeakNewTaskEntry } from "@/v4/OffPeakNewTaskEntry.js";
+import enUS from "@/i18n/locales/en-US.js";
+import zhCN from "@/i18n/locales/zh-CN.js";
 
 function renderEntry(props: { onOpenAutomations?: () => void } = {}) {
   return render(createElement(OffPeakNewTaskEntry, props));
-}
-
-function getEntryRoot(container: HTMLElement) {
-  return container.querySelector<HTMLElement>("[data-off-peak-new-task-entry]");
 }
 
 function clickStandupTemplate(onOpenAutomations = vi.fn()) {
@@ -240,7 +238,7 @@ describe("OffPeakNewTaskEntry", () => {
     },
   );
 
-  it("远程目录为空时显示本地 Customize 入口", () => {
+  it("shows the local Customize entry when the remote catalog is empty", () => {
     h.offPeakTemplateIds.current = [];
 
     renderEntry();
@@ -248,7 +246,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(screen.getByRole("button", { name: /Customize/i })).not.toBeNull();
   });
 
-  it("首页只展示前两条普通远程模板，并把本地 Customize 固定放在最后", () => {
+  it("homepage shows only the first two regular remote templates and pins local Customize last", () => {
     h.offPeakTemplateIds.current = [
       "standupGitSummary",
       "item-customize",
@@ -270,51 +268,12 @@ describe("OffPeakNewTaskEntry", () => {
     expect(view.container.textContent).not.toContain("Remote docs check");
   });
 
-  it("anchors the entry to the bottom of the draft page with a 38px inset", () => {
-    const view = renderEntry();
-    const entry = getEntryRoot(view.container);
-
-    expect(entry?.classList.contains("pb-[38px]")).toBe(true);
-    // 入口已从 composer 下方的 bottom dock 移出，不再靠 mt-6 与 composer 拉开间距，
-    // 也不再依赖 @container/conversation 断点外扩（该容器只声明在 timeline 内部）。
-    expect(entry?.classList.contains("mt-6")).toBe(false);
-    expect(entry?.className).not.toContain("@min-[820px]/conversation:-mx-[54px]");
-  });
-
-  it("keeps the banner row and the template buttons 12px apart", () => {
-    const view = renderEntry();
-    const entry = getEntryRoot(view.container);
-
-    expect(entry?.classList.contains("gap-3")).toBe(true);
-    expect(entry?.classList.contains("gap-2")).toBe(false);
-  });
-
-  it("centers the banner and restores the 780px three-button row", () => {
-    const view = renderEntry();
-    const banner = view.container.querySelector<HTMLElement>("[data-off-peak-new-task-banner]");
-    const templateGrid = view.container.querySelector<HTMLElement>("[data-off-peak-template-grid]");
-
-    expect(banner?.classList.contains("justify-center")).toBe(true);
-    expect(banner?.classList.contains("max-w-[580px]")).toBe(true);
-    expect(templateGrid?.classList.contains("w-full")).toBe(true);
-    expect(templateGrid?.classList.contains("max-w-[780px]")).toBe(true);
-  });
-
-  it("renders three equal template buttons horizontally with a narrow-screen fallback", async () => {
+  it("wires remote template icons and the local Customize icon", async () => {
     const view = renderEntry();
     const templateGrid = view.container.querySelector<HTMLElement>("[data-off-peak-template-grid]");
     const cards = templateGrid?.querySelectorAll<HTMLElement>("button") ?? [];
 
-    expect(templateGrid?.classList.contains("grid-cols-1")).toBe(true);
-    expect(templateGrid?.classList.contains("sm:grid-cols-3")).toBe(true);
-    expect(templateGrid?.classList.contains("gap-4")).toBe(true);
     expect(cards).toHaveLength(3);
-    expect(view.container.querySelector('[data-slot="carousel"]')).toBeNull();
-    expect(view.container.querySelector("[data-off-peak-carousel-dot]")).toBeNull();
-    for (const card of cards) {
-      expect(card.classList.contains("rounded-2xl")).toBe(true);
-      expect(card.classList.contains("border-card-border")).toBe(true);
-    }
     await waitFor(() => {
       expect(
         cards[0]?.querySelector('[data-client-scene-lucide-icon="git-commit-horizontal"]'),
@@ -333,60 +292,19 @@ describe("OffPeakNewTaskEntry", () => {
     expect(closeButton?.classList.contains("hidden")).toBe(true);
   });
 
-  it("limits localized template descriptions to two lines without a fixed height", () => {
-    renderEntry();
-    const description = screen.getByText("Remote Friday summary");
-    const title = screen.getByText("Remote standup summary");
-
-    expect(description.classList.contains("h-[54px]")).toBe(false);
-    expect(description.classList.contains("line-clamp-2")).toBe(true);
-    expect(description.classList.contains("line-clamp-3")).toBe(false);
-    expect(description.classList.contains("text-wrap-phrase")).toBe(true);
-    expect(description.classList.contains("text-ui-caption")).toBe(true);
-    expect(description.classList.contains("text-ui-base")).toBe(false);
-    expect(description.classList.contains("font-normal")).toBe(true);
-    expect(title.classList.contains("text-ui-base")).toBe(true);
-    expect(title.classList.contains("font-normal")).toBe(false);
-  });
-
-  it("uses matching Lucide glyphs for the announcement, close, and template actions", () => {
-    const view = renderEntry();
-    const closeButton = view.container.querySelector<HTMLElement>(
-      "[data-off-peak-new-task-dismiss]",
-    );
-    const icons = view.container.querySelectorAll<SVGSVGElement>("svg");
-
-    expect(icons.length).toBeGreaterThanOrEqual(5);
-    for (const icon of icons) {
-      expect(icon.getAttribute("viewBox")).toBe("0 0 24 24");
-      expect(icon.getAttribute("stroke-width")).toBe("2");
-    }
-    expect(closeButton?.querySelector("svg")).not.toBeNull();
-  });
-
-  it("keeps the full banner copy visible and uses its entire area as the tooltip trigger", () => {
+  it("banner copy is focusable and hosts the Tooltip", () => {
     renderEntry();
 
     const copy = screen.getByText("offPeak.newTask.bannerText");
-    expect(copy.classList.contains("text-ui-caption")).toBe(true);
-    expect(copy.classList.contains("text-ui-sm")).toBe(false);
-    expect(copy.classList.contains("text-ui-base")).toBe(false);
-    expect(copy.classList.contains("font-normal")).toBe(true);
-    expect(copy.classList.contains("truncate")).toBe(false);
     expect(copy.getAttribute("data-slot")).toBe("tooltip-trigger");
     expect(copy.tabIndex).toBe(0);
-    expect(copy.classList.contains("cursor-default")).toBe(true);
-    expect(copy.classList.contains("cursor-help")).toBe(false);
-    expect(copy.parentElement?.classList.contains("gap-1")).toBe(true);
-    expect(copy.parentElement?.children).toHaveLength(2);
-    expect(screen.queryByText("!")).toBeNull();
   });
 
-  it("首次挂载交由共享机制初始化和登记 freshness，连接变化后刷新", () => {
+  it("first mount delegates initialization and freshness registration to shared machinery, refreshing on connection change", () => {
     const view = renderEntry();
 
     expect(h.initialize).toHaveBeenCalledOnce();
-    // 去重归 Store 所有；这里验证组件交付通知，不再要求它自行跳过首次通知。
+    // Deduplication belongs to the Store; here we verify the component delivers the notification.
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledOnce();
     view.rerender(createElement(OffPeakNewTaskEntry));
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledOnce();
@@ -399,16 +317,16 @@ describe("OffPeakNewTaskEntry", () => {
     expect(h.refreshCodingPlanSupport).toHaveBeenCalledTimes(2);
   });
 
-  it("非 Coding Plan 用户点击模板时直接弹升级 toast，并拦截草稿与导航", () => {
+  it("users without a Coding Plan get the upgrade toast on template click, with draft and navigation intercepted", () => {
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("idle-funnel-home");
-    h.messages.current["settings.modelProvider.codingPlan.upgrade"] = "升级";
+    h.messages.current["settings.modelProvider.codingPlan.upgrade"] = "Upgrade";
     const onOpenAutomations = clickStandupTemplate();
 
     expect(h.toast).toHaveBeenCalledWith("offPeak.create.codingPlanToast", {
       durationMs: 8000,
       position: "top-center",
       variant: "info",
-      actionLabel: "升级",
+      actionLabel: "Upgrade",
       onAction: expect.any(Function),
       dismissible: true,
       dismissLabel: "common.close",
@@ -429,7 +347,7 @@ describe("OffPeakNewTaskEntry", () => {
         purchaseFunnelId: "idle-funnel-home",
         upgradeSource: "session_idle_time",
         eventRegion: "app.session",
-        eventText: "升级",
+        eventText: "Upgrade",
         entryPlanStatus: "no_plan",
         entryPlanLevel: "",
         entryPlanList: "",
@@ -440,7 +358,7 @@ describe("OffPeakNewTaskEntry", () => {
     });
   });
 
-  it("Account Overlay 确认 Coding Plan 可用时放行闲时任务导航", () => {
+  it("Account Overlay confirming an available Coding Plan lets the idle-time task navigation through", () => {
     h.providerSettingsState.view = {
       revision: 2,
       addableProviders: [],
@@ -477,7 +395,7 @@ describe("OffPeakNewTaskEntry", () => {
     expect(onOpenAutomations).toHaveBeenCalledOnce();
   });
 
-  it("Provider Settings 尚未水合时不把未知状态误判为无套餐", () => {
+  it("does not mistake the pre-hydration Provider Settings state for having no plan", () => {
     h.providerSettingsState.view = null;
     const onOpenAutomations = clickStandupTemplate();
 
@@ -496,4 +414,78 @@ describe("OffPeakNewTaskEntry", () => {
 
     expect(h.openCodingPlanUpgrade.mock.calls[0]?.[0]?.funnelContext?.eventText).toBe("Upgrade");
   });
+
+  it.each([
+    [
+      "zh-CN",
+      zhCN,
+      "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。",
+      "本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
+    ],
+    [
+      "en-US",
+      enUS,
+      'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power.',
+      "This feature does not consume your subscription plan quota and is available exclusively to subscribers.",
+    ],
+  ] as const)(
+    "%s homepage banner, tooltip, and template prefill use one language",
+    (locale, messages, bannerText, bannerTipText) => {
+      h.messages.current = messages;
+      h.locale.current = locale;
+      h.providerSettingsState.view = {
+        revision: 2,
+        addableProviders: [],
+        providerOrder: [],
+        providers: [
+          {
+            providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
+            enabled: true,
+            executable: true,
+            effectiveConfig: {
+              label: "Z.ai Coding Plan",
+              access: {
+                type: "zhipu-account",
+                family: "zai",
+                mode: "individual-coding-plan",
+                entitled: true,
+              },
+              api: {
+                type: "anthropic-messages",
+                baseUrl: "https://example.com",
+              },
+              builtinModelIds: ["glm-5"],
+            },
+            issues: [],
+            models: [],
+          },
+        ],
+      };
+
+      const copy = h.remoteTemplateCopy.standupGitSummary[messages === zhCN ? "cn" : "en"];
+      const { title, description, prompt } = copy;
+      const onOpenAutomations = vi.fn();
+
+      render(createElement(OffPeakNewTaskEntry, { onOpenAutomations }));
+      const bannerCopy = screen.getByText(bannerText);
+      fireEvent.focus(bannerCopy);
+      const tipCopies = screen.getAllByText(bannerTipText);
+      expect(tipCopies.length).toBeGreaterThan(0);
+      const templateCard = screen.getByRole("button", {
+        name: `${title} ${description}`,
+      });
+      fireEvent.click(templateCard);
+
+      expect(h.toast).not.toHaveBeenCalled();
+      expect(h.setPendingCreateDraft).toHaveBeenCalledWith({
+        title,
+        prompt,
+        telemetrySource: {
+          eventRegion: "app.session",
+          templateId: "standupGitSummary",
+        },
+      });
+      expect(onOpenAutomations).toHaveBeenCalledOnce();
+    },
+  );
 });

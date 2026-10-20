@@ -114,7 +114,8 @@ describe("WindowsCaptionMenuButton", () => {
     capturedDropdownContentProps.calls = [];
     capturedWindowsCaptionMenu.menuItems = [];
     const { WindowsCaptionMenuButton } = await import("@/WindowsCaptionMenuButton.js");
-    // 快捷键特性后组件经 useShortcutCommandLabel 读设置，裸渲染需提供最小 ServiceProvider
+    // Since the shortcut feature, the component reads settings through useShortcutCommandLabel;
+    // bare rendering needs a minimal ServiceProvider.
     const { ServiceProvider } = await import("@/hooks/useServices.js");
     const { createSettingsTestServices } = await import("./lib/settingsTestServices.js");
     return renderToStaticMarkup(
@@ -134,10 +135,10 @@ describe("WindowsCaptionMenuButton", () => {
     );
   }
 
-  it("Preview 隐藏更新入口，生产版继续保留", async () => {
+  it("Preview hides the update entry while production keeps it", async () => {
     const { shouldShowDesktopUpdateEntry } = await import("@/WindowsCaptionMenuButton.js");
 
-    // 更新入口跟随产品身份：生产后端的 Preview 同样隐藏。
+    // The update entry follows product identity: Preview on the production backend is hidden too.
     expect(shouldShowDesktopUpdateEntry("preview")).toBe(false);
     expect(shouldShowDesktopUpdateEntry("production")).toBe(true);
 
@@ -188,7 +189,8 @@ describe("WindowsCaptionMenuButton", () => {
   it("keeps the menu surface clear of the native Windows caption buttons", async () => {
     await renderButton("header");
 
-    // Bugfix: Windows 原生 titleBarOverlay 宽度存在 DPI/取整差异，右对齐菜单需要轻微左移避开最小化按钮。
+    // Bugfix: the native Windows titleBarOverlay width has DPI/rounding variance, so the
+    // right-aligned menu shifts slightly left to avoid the minimize button.
     expect(capturedDropdownContentProps.calls[0]).toMatchObject({
       align: "end",
       alignOffset: -12,

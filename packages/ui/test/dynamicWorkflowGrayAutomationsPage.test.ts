@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// 动态工作流灰度关掉之后的自动化页（docs/dynamic-workflow/launch.md「Gray release」DWG-07）：
-// 灰度关闭时标题不提供工作流标签。
+// Automations page with the dynamic workflow gray release disabled
+// (docs/dynamic-workflow/launch.md "Gray release" DWG-07):
+// with the gate off, the title offers no workflow tab.
 //
 import { createElement, useState } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -8,11 +9,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TID_AUTOMATIONS_PAGE_TAB } from "@zcode/shared";
 import { testId } from "@zcode/shared/test-ids";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import {
   AutomationsPageTitle,
   type AutomationsPageTab,
 } from "@/settings/saved-workflows/AutomationsPageTitleSwitch.js";
-import { expectedCopy } from "./helpers/uiCopy.js";
 
 function Title({
   workflowTabEnabled,
@@ -33,12 +34,12 @@ function Title({
   );
 }
 
-describe("AutomationsPageTitle 灰度门", () => {
+describe("AutomationsPageTitle gray gate", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("灰度关 → 平铺的「自动化」标题，没有 tablist，也没有「工作流」这个词", () => {
+  it("gate off → flat 「Automations」 title, no tablist, no 「Workflows」 wording", () => {
     render(createElement(Title, { workflowTabEnabled: false }));
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"))).toBeNull();
@@ -46,12 +47,12 @@ describe("AutomationsPageTitle 灰度门", () => {
     expect(heading.textContent).toBe(expectedCopy("settings.automations.title"));
   });
 
-  it("灰度关 + en-US → 标题走同一个 i18n key，不是硬编码中文", () => {
+  it("gate off + en-US → title comes from the same i18n key, not hardcoded copy", () => {
     render(createElement(Title, { workflowTabEnabled: false, locale: "en-US" }));
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Automations");
   });
 
-  it("灰度开 → 与改动前一致：两个标题词组成 tablist", () => {
+  it("gate on → same as before the change: both title words form a tablist", () => {
     render(createElement(Title, { workflowTabEnabled: true }));
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       expectedCopy("automations.pageTab.automation"),

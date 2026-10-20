@@ -325,8 +325,8 @@ afterEach(() => {
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
 });
 
-describe("会话切换滚动恢复（ZCT 复现）", () => {
-  it("lease 迟一拍时，恢复必须以新会话内容为坐标系，而不是把旧会话钳制值当成最终落点", () => {
+describe("session-switch scroll restore (ZCT repro)", () => {
+  it("when the lease arrives one tick late, restore must use the new session content as its coordinate system, not the clamped old-session value", () => {
     const container = installMinimalDom();
     mountedRoot = createRoot(container);
 
@@ -382,7 +382,7 @@ describe("会话切换滚动恢复（ZCT 复现）", () => {
     expect(timeline.scrollTop).toBe(2100);
   });
 
-  it("冷开时记忆的全量坐标像素被分片尾窗钳制后，内容补齐必须重新锚定回保存位置", () => {
+  it("after a cold open clamps the remembered full-coordinate pixels into the tail shard, backfill must re-anchor to the saved position", () => {
     // Last leave: reading at 12000px inside the full window (20000px tall).
     saveChatSessionScrollMemoryState(KEY_B, {
       scrollTop: 12000,

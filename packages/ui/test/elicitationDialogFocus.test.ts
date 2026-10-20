@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("ElicitationDialog custom answer focus", () => {
   it.each(["single", "multi", "plan"])(
-    "%s: 上下键可进入及离开自定义输入框，保留草稿且不隐式提交",
+    "%s: arrow keys enter and leave the custom input, keep the draft, and do not implicitly submit",
     async (kind) => {
       vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
         window.setTimeout(() => callback(performance.now()), 0),
@@ -60,7 +60,7 @@ describe("ElicitationDialog custom answer focus", () => {
       await waitFor(() => expect(document.activeElement).toBe(input));
       fireEvent.change(input, { target: { value: "保留我的自定义答案\n第二行" } });
 
-      // 输入法上下选词不能误切到选项；同时覆盖 native 和 composition ref 两种保护。
+      // IME candidate navigation must not switch focus to options; cover both the native and composition-ref guards.
       fireEvent.keyDown(input, { key: "ArrowUp", isComposing: true });
       await act(async () => {
         await new Promise((resolve) => window.setTimeout(resolve, 0));

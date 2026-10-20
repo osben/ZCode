@@ -82,7 +82,7 @@ it("shows a status dot for every remote device and text only when it is not onli
   expect(await option(expectedCopy("project.thisComputer"))).toBeNull();
   const online = (await option("Online box"))!;
   expect(online.querySelector(".bg-success")).toBeTruthy();
-  // 在线只保留圆点，文字只给读屏。
+  // Online keeps only the dot; the text is exposed to screen readers only.
   expect(online.querySelector(".sr-only")?.textContent).toBe(
     expectedCopy("project.deviceStatus.online"),
   );
