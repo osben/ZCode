@@ -38,7 +38,7 @@ import type {
 } from "#src/session/zcodeTaskListTypes.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getTasksIndexDatabasePath, getZCodeDataRootDir } from "#src/paths.js";
-import { projectStorage } from "#src/project-storage/index.js";
+import { projectStorage, type ProjectMigrationContext } from "#src/project-storage/index.js";
 import { runTasksDatabaseMigrations } from "#src/session/tasksDatabase/migrations.js";
 
 const require = createRequire(import.meta.url);
@@ -238,7 +238,34 @@ function resolveTaskIndexRowWorkspaceIdentity(row: TaskIndexMetaRow): string | u
   return undefined;
 }
 
+// A row admitted through CLI facts (applyCliFacts) has cli_created_at populated. For such rows the CLI fact columns are the
+// read authority for title, created/updated time and outcome, so a stale meta_json or legacy column cannot override them.
+// Rows without facts keep the legacy projection, which is the only path the fork's syncTaskMeta writer produces.
+const CLI_FACT_UPDATED_AT_SQL =
+  "(CASE WHEN cli_created_at IS NULL THEN updated_at ELSE cli_updated_at END)";
+const CLI_FACT_CREATED_AT_SQL =
+  "(CASE WHEN cli_created_at IS NULL THEN created_at ELSE cli_created_at END)";
+const CLI_FACT_TITLE_SQL =
+  "(CASE WHEN cli_created_at IS NULL OR title_overridden = 1 THEN title ELSE cli_title END)";
+
+function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
+  if (row.cli_created_at == null) return meta;
+  const outcome =
+    row.cli_last_outcome === "interrupted" ? "completed" : (row.cli_last_outcome ?? undefined);
+  return {
+    ...meta,
+    title: row.title_overridden === 1 ? row.title : (row.cli_title ?? meta.title),
+    createdAt: row.cli_created_at,
+    updatedAt: row.cli_updated_at ?? meta.updatedAt,
+    status: (outcome ?? row.task_status ?? meta.status) as ZCodeTaskMeta["status"],
+  };
+}
+
 function rowToMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
+  return projectCliFacts(row, rowToStoredMeta(row));
+}
+
+function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
   const workspaceIdentity = resolveTaskIndexRowWorkspaceIdentity(row);
   try {
     const parsed = zcodeTaskMetaSchema.safeParse(JSON.parse(row.meta_json));
@@ -569,12 +596,24 @@ export class TaskIndexRepo {
   /** Startup migration result for the Host startup barrier; not a task fact or organization state. */
   migrationBackupSkipped = false;
 
+  // Opt-in settings seed: a settings object as the first argument (no path) lets the one-time project migration
+  // read the legacy lastWorkspaceSession. The ledger marker makes that import run once per database; the default
+  // Host path passes a path or nothing, so production never seeds projects from settings.
+  private readonly startupDbPath?: string;
+  private readonly migrationSettings?: ProjectMigrationContext["settings"];
+
   constructor(
-    private readonly startupDbPath?: string,
+    startupDbPathOrSettings?: string | ProjectMigrationContext["settings"],
     private readonly startupBusyTimeoutMs = 5000,
     // Trusted owner Host of project rows (the Source Server storage identity on a standalone server); undefined means local.
     private readonly storageHostId?: string,
-  ) {}
+  ) {
+    if (typeof startupDbPathOrSettings === "string") {
+      this.startupDbPath = startupDbPathOrSettings;
+    } else {
+      this.migrationSettings = startupDbPathOrSettings;
+    }
+  }
   private db: DatabaseSyncInstance | null = null;
   private dbPath: string | null = null;
   private initializePromise: Promise<void> | null = null;
@@ -653,10 +692,11 @@ export class TaskIndexRepo {
   /**
    * Upstream additive project-storage migrations (ledger `schema_migration`, ids 0005_projects and
    * 0006_default_workspace_tasks). They add project tables and the upstream `tasks` CLI-fact columns.
-   * The fork passes no settings, so no project is seeded from the settings file here.
+   * Settings are passed only when the caller supplied them (see constructor); the default Host path seeds no projects.
    */
   private async runProjectStorageMigrations(): Promise<void> {
     const migration = await projectStorage.migrate(this.getDatabase(), {
+      settings: this.migrationSettings,
       hostId: this.storageHostId,
       backupDirectories: [join(getZCodeDataRootDir(), "backup")],
       warn: (message, details) =>
@@ -1671,7 +1711,15 @@ export class TaskIndexRepo {
           deleted = excluded.deleted,
           title_overridden = excluded.title_overridden,
           searchable_text = excluded.searchable_text,
-          meta_json = excluded.meta_json`,
+          meta_json = excluded.meta_json,
+          -- Mirror the organization write into the CLI fact columns of CLI-admitted rows. The project migration backfills
+          -- cli_* from the legacy columns once; without this mirror a later fork write would leave the read projection stale.
+          cli_title = CASE WHEN tasks.cli_created_at IS NULL OR excluded.title_overridden = 1
+            THEN tasks.cli_title ELSE excluded.title END,
+          cli_created_at = CASE WHEN tasks.cli_created_at IS NULL THEN NULL ELSE excluded.created_at END,
+          cli_updated_at = CASE WHEN tasks.cli_created_at IS NULL THEN NULL ELSE excluded.updated_at END,
+          cli_last_outcome = CASE WHEN tasks.cli_created_at IS NULL THEN tasks.cli_last_outcome
+            WHEN excluded.task_status IN ('completed', 'error') THEN excluded.task_status ELSE NULL END`,
       )
       .run({
         workspace_key: workspaceKey(record.meta),
@@ -2238,6 +2286,10 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
+          cli_title,
+          cli_created_at,
+          cli_updated_at,
+          cli_last_outcome,
           meta_json
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
@@ -2246,7 +2298,7 @@ export class TaskIndexRepo {
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
           AND (@archived IS NULL OR archived = @archived)
-        ORDER BY updated_at DESC, created_at DESC, task_id DESC`,
+        ORDER BY ${CLI_FACT_UPDATED_AT_SQL} DESC, ${CLI_FACT_CREATED_AT_SQL} DESC, task_id DESC`,
       )
       .all({
         workspace_key: targetWorkspaceKey,
@@ -2600,7 +2652,7 @@ export class TaskIndexRepo {
     if (normalizedSearchLike) {
       // Previously, fuzzy matching searched only title and never matched chat body, so TaskSearchDialog could not find content.
       // Now a match in either title or searchable_text is sufficient; body snippets are built in the result stage.
-      where.push("(LOWER(title) LIKE ? OR LOWER(searchable_text) LIKE ?)");
+      where.push(`(LOWER(${CLI_FACT_TITLE_SQL}) LIKE ? OR LOWER(searchable_text) LIKE ?)`);
     }
 
     if (normalizedSearchLike) {
@@ -2619,8 +2671,8 @@ export class TaskIndexRepo {
     }
     const orderBy =
       params.sortBy === "created"
-        ? "created_at DESC, updated_at DESC, task_id DESC"
-        : "updated_at DESC, created_at DESC, task_id DESC";
+        ? `${CLI_FACT_CREATED_AT_SQL} DESC, ${CLI_FACT_UPDATED_AT_SQL} DESC, task_id DESC`
+        : `${CLI_FACT_UPDATED_AT_SQL} DESC, ${CLI_FACT_CREATED_AT_SQL} DESC, task_id DESC`;
     const rows = this.getDatabase()
       .prepare(
         `SELECT
@@ -2644,6 +2696,10 @@ export class TaskIndexRepo {
           archived,
           deleted,
           title_overridden,
+          cli_title,
+          cli_created_at,
+          cli_updated_at,
+          cli_last_outcome,
           ${normalizedSearchLike ? "searchable_text," : ""}
           meta_json
         FROM tasks

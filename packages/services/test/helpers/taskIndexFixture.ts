@@ -2,9 +2,9 @@ import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 
 /**
- * Seeds one task row through the fork's single task-index writer (`syncTaskMeta`).
- * The fork has no CLI-facts writer on TaskIndexRepo, so tests that need a seeded row
- * go through the same full-row path that production uses for the current fork schema.
+ * Seeds one task row through the fork's organization writer (`syncTaskMeta`), then records the CLI facts
+ * (`applyCliFacts`). Production admits CLI facts through the CLI path; this helper mirrors that path so the
+ * read projection (`cli_*` columns) and the alias merge see the same facts a real CLI-admitted row carries.
  */
 export async function seedTaskIndex(
   repo: TaskIndexRepo,
@@ -25,6 +25,12 @@ export async function seedTaskIndex(
     deleted: input.deleted,
     titleOverridden: input.titleOverridden ?? meta.titleOverridden,
     searchableText: input.searchableText,
+  });
+  await repo.applyCliFacts({
+    meta,
+    titleSource: (input.titleOverridden ?? meta.titleOverridden) ? "custom" : "default",
+    lastOutcome: meta.status === "completed" || meta.status === "error" ? meta.status : undefined,
+    deleted: input.deleted,
   });
   return (await repo.getTaskMeta(meta))!;
 }
