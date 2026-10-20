@@ -354,3 +354,6 @@ packages/services/src/session/offPeakTaskRepo.ts
 
 # Existing oversized files touched by the highspeed draw-failure cooldown fix; split later.
 packages/services/test/highspeedCardService.test.ts
+
+# Temporary (upstream-sync-bugfix-security PR, split later): packages/server/src/http.ts already exceeded the limit on origin/integration; static-route hunks added here.
+packages/server/src/http.ts
