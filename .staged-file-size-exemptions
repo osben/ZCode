@@ -314,3 +314,5 @@ packages/ui/test/remoteConnectionFlowRecovery.test.ts
 # TEMPORARY upstream 3.16.1 sync (ui): oversize test files converted to English copy locators; split in UI-2.
 packages/ui/test/projectCreation.test.ts
 packages/ui/test/sourceServerManagementPanel.test.ts
+# TEMPORARY upstream 3.16.1 sync (web): upstream webAuthService test exceeds 20000 bytes; split with the relay unit
+packages/web/test/webAuthService.test.ts

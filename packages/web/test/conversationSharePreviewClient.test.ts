@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationSharePreviewClient,
-  ConversationSharePreviewClientError,
   buildShareImportDeepLink,
   parseConversationShareRoute,
 } from "../src/share/conversationSharePreviewClient.js";
@@ -19,11 +18,32 @@ const preview = {
   integrity: { projection_sha256: "a".repeat(64), artifact_set_sha256: "b".repeat(64) },
 };
 
-// Beyond the wire shape the client attaches a row-by-row degradation result:
-// rows it cannot recognize are counted and left for the UI to soft-warn about.
+// 客户端在 wire 形状之外附带逐行降级的结果：认不出的行数交给 UI 出软提示。
 const decodedPreview = { ...preview, unsupportedRowCount: 0 };
 
 describe("conversation share preview client", () => {
+  it.each([
+    [429, "<html>limit</html>", "rate_limited"],
+    [403, "", "not_found"],
+    [403, "<html>forbidden</html>", "not_found"],
+    [400, "<html>bad request</html>", "unknown"],
+    [400, JSON.stringify({ message: "bad request" }), "unknown"],
+    [502, "<html>gateway</html>", "service_unavailable"],
+    [503, "", "service_unavailable"],
+    [
+      500,
+      JSON.stringify({ code: 2001, msg: "database error", logid: "web-log-id" }),
+      "service_unavailable",
+    ],
+    [404, JSON.stringify({ code: 3200, msg: "disabled" }), "feature_disabled"],
+  ])("classifies HTTP %s without blaming the content", async (status, body, kind) => {
+    const client = new ConversationSharePreviewClient({
+      baseUrl: "https://api.example.com",
+      fetchImpl: vi.fn(async () => new Response(body, { status })),
+    });
+    await expect(client.getPreview("share-1")).rejects.toMatchObject({ kind, status });
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -138,9 +158,6 @@ describe("conversation share preview client", () => {
     expect(fetchImpl.mock.calls[1]?.[1]).toMatchObject({
       headers: { Authorization: "Bearer jwt-1" },
     });
-    expect(
-      new ConversationSharePreviewClientError({ kind: "expired", message: "expired" }).kind,
-    ).toBe("expired");
   });
 
   it("maps an empty 401 response to authentication_required", async () => {
@@ -154,8 +171,25 @@ describe("conversation share preview client", () => {
     });
   });
 
-  // The landing-page image is deployed and rolled back independently, so it can
-  // be older than the client that published the share at any time.
+  it("retains unknown server codes and logid for support", async () => {
+    const client = new ConversationSharePreviewClient({
+      baseUrl: "https://api.example.com",
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: 9999, msg: "server text", logid: "web-request-id" }),
+            { status: 500 },
+          ),
+      ),
+    });
+    await expect(client.getPreview("share-1")).rejects.toMatchObject({
+      kind: "service_unavailable",
+      code: 9999,
+      requestId: "web-request-id",
+    });
+  });
+
+  // 落地页镜像独立部署、独立回滚，所以随时可能比发布分享的客户端旧。
   it("载荷版本比本 build 新时报 unsupported_schema_version，不报「格式无效」", async () => {
     const client = new ConversationSharePreviewClient({
       baseUrl: "https://zcode.z.ai/api/v1",

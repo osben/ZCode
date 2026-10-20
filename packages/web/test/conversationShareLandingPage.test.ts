@@ -45,6 +45,30 @@ const preview: ConversationSharePreview = {
 };
 
 describe("ConversationShareLandingPage", () => {
+  it.each([
+    ["rate_limited", "访问过于频繁", "Too many requests", true],
+    ["service_unavailable", "分享服务暂时异常", "Sharing service unavailable", true],
+    ["feature_disabled", "分享服务暂未开放", "Sharing is currently unavailable", false],
+  ] as const)(
+    "renders a specific localized action and diagnostics for %s",
+    (error, zh, en, retryable) => {
+      for (const locale of ["zh-CN", "en-US"] as const) {
+        const html = renderToStaticMarkup(
+          createElement(ConversationShareLandingStatus, {
+            state: { kind: "error", error, status: 503, code: 3217, requestId: "web-request-123" },
+            locale,
+            onRetry: () => {},
+          }),
+        );
+        expect(html).toContain(locale === "zh-CN" ? zh : en);
+        expect(html).toContain("web-request-123");
+        expect(html).toContain("3217");
+        expect(html.includes(locale === "zh-CN" ? ">重试<" : ">Try again<")).toBe(retryable);
+        expect(html).not.toContain("请检查网络");
+      }
+    },
+  );
+
   it("renders public content and only the importable deep link", () => {
     const html = renderToStaticMarkup(
       createElement(ConversationShareLandingPage, {

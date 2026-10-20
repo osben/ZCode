@@ -83,9 +83,8 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(localStorage.getItem("oauth:zai:user_info")).toBeNull();
   });
 
-  // The owner identity for private shares is provider-specific (bigmodel uses a
-  // numeric ID, z.ai a UUID), so BigModel login must store and load
-  // independently and must not be blocked by zai's key segments and checks.
+  // private 分享的 owner 身份是 provider 特定的（bigmodel 是数字 ID，z.ai 是 UUID），
+  // 所以 BigModel 登录必须能独立存取，不能被 zai 的 key 段和判定挡掉。
   it("saves and restores a complete BigModel web session", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
@@ -102,7 +101,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     });
     expect(repo.loadZCodeJwtToken()).toBe("jwt-token");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
-    // must not pollute zai's key segments
+    // 不能污染 zai 的 key 段
     expect(localStorage.getItem("oauth:zai:access_token")).toBeNull();
   });
 
@@ -125,6 +124,34 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.loadCachedSession()?.id).toBe("53291785835589288");
   });
 
+  it("只读返回当前 provider 的账号展示资料，缺 JWT 或资料损坏也不清理存储", () => {
+    const localStorage = new MemoryStorage();
+    const sessionStorage = new MemoryStorage();
+    const repo = new BrowserOAuthCredentialRepo({ localStorage, sessionStorage });
+
+    expect(repo.loadActiveAccount()).toBeNull();
+    repo.saveUserInfo(
+      { user_id: "53291785835589288", name: "Ada", avatar: "https://example.com/a.png" },
+      "bigmodel",
+    );
+    repo.setActiveProvider("bigmodel");
+    expect(repo.loadActiveAccount()).toEqual({
+      provider: "bigmodel",
+      userInfo: {
+        id: "53291785835589288",
+        username: "Ada",
+        displayName: "Ada",
+        avatarUrl: "https://example.com/a.png",
+      },
+    });
+
+    localStorage.setItem("oauth:bigmodel:user_info", "{not json");
+    expect(repo.loadActiveAccount()).toBeNull();
+    // 展示读取不是登录门禁：不能像 loadCachedSessionState 那样顺手清理残缺凭据。
+    expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
+    expect(localStorage.getItem("oauth:bigmodel:user_info")).toBe("{not json");
+  });
+
   it("记住并归还本次跳出去登录用的 provider", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
@@ -133,7 +160,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.loadPendingProvider()).toBeNull();
     repo.savePendingProvider("bigmodel");
     expect(repo.loadPendingProvider()).toBe("bigmodel");
-    // session storage only, never localStorage
+    // 只进 sessionStorage，不落 localStorage
     expect(localStorage.getItem("oauth_pending_provider")).toBeNull();
     repo.clearPendingProvider();
     expect(repo.loadPendingProvider()).toBeNull();

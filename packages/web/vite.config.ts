@@ -10,6 +10,7 @@ import { resolveRemoteFrontendVersion } from "./vite/remoteFrontendVersion.mjs";
 // Bugfix: Vite config runs while Node is loading; do not import the @zcode/shared root entry here.
 // It contains NodeNext-style source re-exports, so Node looks for real .js files and fails during bootstrap.
 import {
+  resolveBigModelApiOrigin,
   resolveRuntimeZCodeEndpointOrigin,
   resolveZaiOAuthClientId,
   resolveZaiOAuthOrigin,
@@ -35,6 +36,8 @@ export default defineConfig(({ mode }) => {
   };
   const zcodeEndpointOrigin = resolveRuntimeZCodeEndpointOrigin(endpointEnv);
   const zaiOAuthOrigin = resolveZaiOAuthOrigin(endpointEnv);
+  // BigModel authorization must follow the product environment, the same as Desktop and the share pages.
+  const bigmodelOAuthOrigin = resolveBigModelApiOrigin(endpointEnv);
   // The ZAI OAuth client_id is a public identifier and may be injected into the browser bundle; secrets/tokens must not use VITE_.
   const zaiOAuthClientId = resolveZaiOAuthClientId(endpointEnv);
 
@@ -93,6 +96,7 @@ export default defineConfig(({ mode }) => {
       // Inject public OAuth configuration explicitly so Web does not implicitly depend on source fallbacks in different modes.
       "import.meta.env.VITE_ZAI_OAUTH_CLIENT_ID": JSON.stringify(zaiOAuthClientId),
       "import.meta.env.VITE_ZAI_OAUTH_ORIGIN": JSON.stringify(zaiOAuthOrigin),
+      "import.meta.env.VITE_BIGMODEL_OAUTH_ORIGIN": JSON.stringify(bigmodelOAuthOrigin),
     },
     build: {
       // Do not expose sourceMappingURL in production browser assets, to prevent reconstructing application source on the client.
