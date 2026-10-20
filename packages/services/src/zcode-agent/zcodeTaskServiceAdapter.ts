@@ -216,7 +216,6 @@ interface TaskTarget {
 }
 
 interface TaskTargetWithMcpServers extends TaskTarget {
-  additionalDirectories?: string[];
   model?: string;
   thoughtLevel?: string;
   mcpServers?: ZCodeAgentMcpServer[];
@@ -1214,11 +1213,6 @@ export function createZCodeTaskServiceAdapter(
       workspacePath: params.workspacePath,
       workspaceIdentity: params.workspaceIdentity,
       sessionId: params.taskId,
-      // Forward only a defined list. An undefined value lets the agent service resolve the session's
-      // directories itself, so the adapter must not overwrite that with an explicit undefined.
-      ...(params.additionalDirectories !== undefined
-        ? { additionalDirectories: params.additionalDirectories }
-        : {}),
       // Mobile replayable recovery still goes through the task adapter, but the stale-model guard runs
       // during session resume. Pass the current UI model here so the guard also protects this path, not
       // only the desktop-continuous primary path.
@@ -2025,11 +2019,17 @@ export function createZCodeTaskServiceAdapter(
             "createSession",
             await options.zcodeAgentService.sendConversationCommandV4({
               ...target,
+              // Same guard as the legacy createSession path: a defined projectId reaches the agent
+              // envelope builder, which rejects it when no project creation port is wired.
+              ...(params.projectId !== undefined ? { projectId: params.projectId } : {}),
               envelope: createHostCommandEnvelope({
                 type: "createSession",
                 sessionId: null,
                 payload: {
                   workspaceId: target.workspaceIdentity?.trim() || target.workspacePath,
+                  ...(params.additionalDirectories !== undefined
+                    ? { additionalDirectories: params.additionalDirectories }
+                    : {}),
                   ...(params.permissionScope ? { permissionScope: params.permissionScope } : {}),
                   config: {
                     ...(model ? { provider: model.providerId, model: model.modelId } : {}),

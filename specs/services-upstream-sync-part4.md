@@ -4,62 +4,89 @@ Parent spec: `specs/services-upstream-sync.md`. Base `aac47556` (v3.15.1), targe
 
 This part closes the items deferred in 8b and 8c, one file per commit. Where the fork never changed behavior (fork == base), the upstream behavior and test win. Where the fork changed behavior on purpose, the fork test is the spec.
 
-## Decisions carried in (not reopened here)
+## Coordinator decisions carried in (not reopened here)
 
 - `packages/server/src/http.ts`: the fork keeps `/api/connect-remote` and `/ws/remote/:id` (fork remote features and bots `/remote` depend on them, see `specs/bot-remote-command.md`). Every other upstream hunk is taken.
 - The fork `zcodeTask*` path is the single writer of task state (AGENTS.md single-owner rule). Upstream `task-facts` and `task-groups` stay unwired.
 - The grouped-view surface (`ZCodeGroupedTaskView`) stays fork-owned. It moves to UI-2 together with the sidebar switch.
 
+## Status
+
+| #   | Item                                                                            | Result                                                                                                                                     | Commit                              |
+| --- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| 1   | `server/src/http.ts`                                                            | Done. Upstream hunks taken, fork routes kept and tested.                                                                                   | `6f4f7932`                          |
+| 2   | `bots/botsService.ts`, `BotsRepo.updateContext`                                 | Not done. The coordinator decision is reopened (section 2).                                                                                | none                                |
+| 3   | `zcodeTaskServiceAdapter.ts`, `zcodeTaskIndexSyncer.ts`, `zcodeAgentService.ts` | Partly done: adapter pass-through of `projectId` and `additionalDirectories` on the create paths. The rest stays at fork HEAD (section 3). | `c5db924a` and the follow-up commit |
+| 4   | `session/taskIndexRepo.ts` non-group hunks                                      | Deferred (section 5).                                                                                                                      | none                                |
+| 5   | `oauth/oauthService.ts` business JWT expiry                                     | Deferred, with a verified blocking await (section 6).                                                                                      | none                                |
+| 6   | `prepareTasksIndexStorage` 3-argument form                                      | Deferred: no live consumer for the settings argument (section 7).                                                                          | none                                |
+| 7   | `windowController` base                                                         | Base is `origin/claude/upstream-sync-ui`; nothing further.                                                                                 | n/a                                 |
+
 ## 1. `packages/server/src/http.ts` (done)
 
-Owners: the HTTP layer owns routing and auth order. It owns no task state.
+Owner: the HTTP layer owns routing and auth order. It owns no task state.
 
-Applied upstream hunks: `hostname`/`userInfo` and the `nodePath` namespace import; the containment helper (`isInsideDirectory` with an injectable `pathApi`, absolute `relative` results treated as outside, `isPathDriveQualified` rejected before `resolve`); `Bearer` token acceptance in `hasValidLiteToken`; `resolveHttpServerId` (exported); the richer `serverRemoteInfoOutputSchema` payload (`compatibility`, `migration`, `identity`, `virtualProjects`); optional `workspaceIdentityMapper`, `virtualProjects`, `migrationFailedPathCount` options. The identity mapper is optional and falls back to the plain `LoggingChannelServer`, because server-cli #205 is not in this base.
+Applied upstream hunks: `hostname`/`userInfo` and the `nodePath` namespace import; the containment helper (`isInsideDirectory` with an injectable `pathApi`, absolute `relative` results treated as outside, `isPathDriveQualified` rejected before `resolve`); `Bearer` token acceptance in `hasValidLiteToken`; `resolveHttpServerId` (exported); the richer `serverRemoteInfoOutputSchema` payload (`compatibility`, `migration`, `identity`, `virtualProjects`); optional `workspaceIdentityMapper`, `virtualProjects` and `migrationFailedPathCount` options.
+
+Identity mapper placement: the mapper is passed to `/ws` and `/ws/host` only. The fork `/ws/remote/:id` route serves a different backend (an SSH/Docker target), and the mapper translates this server's own source-server identities. That route passes `undefined`, so its behavior is unchanged. The mapper is optional and falls back to the plain `LoggingChannelServer`, because server-cli #205 is not in this base.
 
 Fork kept: `/api/connect-remote`, `/ws/remote/:id` and their `createRemoteConnectionStore`, the derived `authRequired`, `resolveHttpListenHost`, and the standalone window controller.
 
 Tests: `serverInfoHttp.test.ts` (upstream payload expectations, plus `keeps the fork web-mode remote routes reachable`: the POST returns 400 for an invalid body, and an unknown `/ws/remote/:id` closes with 4004). `staticRoutePathContainment.test.ts` (upstream, waits for `listeningAddress` instead of reading `address()` synchronously).
 
-## Status and remaining items
+## 2. `bots/botsService.ts` and `BotsRepo.updateContext` (not done; coordinator decision reopened)
 
-Items 2 to 7 are tracked in the sections below and updated per commit.
+The coordinator decision was to adopt upstream's project binding additively, through optional deps. It is not done here, and the reason is below, so the decision needs to be made again.
 
-## 2. `bots/botsService.ts`, `BotsRepo.updateContext` (deferred, design decision needed)
+- Upstream binds each bot context to a project from the project catalog (`readContext` → `bindProject`, `workspaceRefsFromCatalog`, `context.projectId`). The fork binds a context to a workspace (`workspaceId`, `resolveCanonicalContextWorkspace`, settings-derived `listWorkspaceRefs`).
+- No host in this repo passes `projectService` into `createBotsService`. Desktop-3 (`remoteWorkspaceServiceCollection.ts`) and the services `node.ts` both omit it. An additive port would therefore be inert everywhere today, and it would still add a second context-write path next to the fork's (AGENTS.md single-owner rule).
+- Making `projectService` required, as upstream does, would break the unsynced desktop consumer.
+- Not applied: `BotsRepo.updateContext`, the project deps on `BotsServiceDeps`, `bindProject`. `/remote` and `botRemote*` are unchanged.
 
-Upstream binds each bot context to a project from the project catalog (`readContext` → `bindProject`, `workspaceRefsFromCatalog`, `context.projectId`). The fork binds a context to a workspace (`workspaceId`, `resolveCanonicalContextWorkspace`, settings-derived `listWorkspaceRefs`). The two models cannot both own a context: a hunk-level port would leave two write paths for the same bot context (AGENTS.md single-owner rule).
+Requested: re-decide whether bot workspace binding moves to projects in this sync, or stays on the fork's workspace model until the project feature is wired.
 
-Not applied: `BotsRepo.updateContext` (no caller without the binding), the project deps on `BotsServiceDeps`, and `bindProject`. The desktop consumer (`remoteWorkspaceServiceCollection.ts`) passes no project deps and still compiles. Upstream's `projectService` is required, so making it required would break that consumer. Adopting project binding for bots is a product decision (workspace model), to be aligned with the user first. `/remote` and `botRemote*` are unchanged.
+## 3. `zcode-agent/zcodeTaskServiceAdapter.ts`, `zcodeTaskIndexSyncer.ts`, `zcodeAgentService.ts`
 
-## 3. `zcode-agent/zcodeTaskServiceAdapter.ts` and `zcodeTaskIndexSyncer.ts` (partly done, ownership kept)
+### 3a. Adapter (done, pass-through only)
 
-Owner: the fork `zcodeTask*` path is the only task-state writer. Upstream's `task-facts` writes (`mutateSessionFacts`, `updateIndexedPresentation`, `syncTaskIndexSnapshot`) are not taken.
-
-Taken (non-ownership, pass-through only):
-
-- `resumeSnapshot` forwards `additionalDirectories` when defined.
-- `createTask` forwards `projectId` and `additionalDirectories` to `zcodeAgentService.createSession` only when the caller supplies them. Upstream always sends `projectId: params.projectId ?? null`; the fork agent service throws `project.creation-unavailable` for any defined `projectId` when no project creation port is wired, so an unconditional `null` would break task creation. This is a deliberate departure from upstream.
+- `createTask` forwards `projectId` and `additionalDirectories` to `zcodeAgentService.createSession` only when the caller supplies them. Upstream always sends `projectId: params.projectId ?? null`. The fork agent service throws `project.creation-unavailable` for any defined `projectId` when no project creation port is wired, so an unconditional `null` would break task creation. This is a deliberate departure from upstream.
+- The native v4 path (`v4Create: true`, used by bots) sends the same fields: `additionalDirectories` in the `createSession` envelope payload, and `projectId` at the `sendConversationCommandV4` call level under the same guard.
 - Contract: `ZCodeTaskService.createTask` gains the two optional fields (`session/zcodeTaskService.ts`).
-- Test: `zcodeLegacyTaskCompatTaskIndex.test.ts` "forwards project and directory fields to createSession only when the caller supplies them".
+- The resume path is not changed. `resumeTask`'s contract cannot carry `additionalDirectories`, and the agent service already resolves the directories itself when the field is undefined. An adapter pass-through there would be dead code, so it is not added.
+- Tests: `zcodeLegacyTaskCompatTaskIndex.test.ts` "forwards project and directory fields to createSession only when the caller supplies them" (legacy path and `v4Create` path, including the absent case).
 
-Still at fork HEAD (per hunk, ownership or fork-decided): overlay writes (`TaskOverlay`, `applyOverlayToMeta`), `closeTask` and deletion writes, `initializeGroupedTaskAtTop`, every `syncTaskIndexMeta` to `updateIndexedPresentation` rename, `moveGroupedTaskToTop`, live tool projection. The `zcodeTaskIndexSyncer.ts` upstream diff is task-facts writes only and is not taken.
+### 3b. Syncer (not taken; ownership)
 
-## 4. `zcode-agent/zcodeAgentService.ts` (verified present or fork-decided)
+`zcodeTaskIndexSyncer.ts` upstream diff is 349 changed lines. Hunk classes, checked against the diff:
 
-Checked by name and behavior against the upstream hunks: `additionalDirectories` plumbing in create and resume params, `PendingSessionRuntimePreferencesRequest.workspace`, off-peak lifecycle and plugin UI tool result emitters with their notification parsing and disposal, `resolveSessionDirectories` in subscribe with the subagent lineage check, `historyFirst` subscribe, `prepareSessionCreation` and project creation guard, `reconcileSessionsIndexV4`.
+- Task-state writes through `task-facts`: `createTaskFacts`, `taskFacts.ingest`/`mutate`/`reconcile`/`removed`, `mirrorSummary`, `refreshSessionFacts`, `mutateSessionFacts`. Ownership: not taken.
+- Fork-owned writes renamed upstream: `applyAgentPatch`, `updateTaskState`, `syncTaskMeta`, `seedTaskMetaIfMissing` become `updateTaskPresentation`, and `syncTaskMetaAtGroupedTop` is added. Not taken (fork writer).
+- Grouped ordering: `moveGroupedTaskToTop`, `initializedGroupedOrder`. Not taken (fork grouped view, UI-2).
+- Repair path: upstream imports `#src/task-facts/repairSubagentTaskIndex.js`. Not taken; the fork copy `zcode-agent/repairSubagentTaskIndex.ts` stays the only owner (main spec, single owners).
+- Presentation and title derivation (`buildPresentationFromSnapshot`, removal of `deriveTitleFromSnapshot`): tied to the new writer. Not taken.
+- Not taken, no current consumer: `activeTaskRefs()` (an observer for upstream auto-archive, which the fork does not wire), and removing the unused `_options` argument of `ensureSessionSubscription` (cosmetic).
 
-Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (8c; the fork test pins that createSession sends no refresh), `includeArchived` removal in `sessionList` (the fork archive repair uses it), `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`, see 8c).
+### 3c. `zcodeAgentService.ts` (presence check by symbol name, not a full review)
 
-Not verified hunk by hunk: the remaining body differences are fork-changed code; treat this as a presence check, not a complete review.
+Checked by symbol name only: `additionalDirectories` in create and resume params, `PendingSessionRuntimePreferencesRequest.workspace`, off-peak lifecycle and plugin UI tool result emitters with their parsing and disposal, `resolveSessionDirectories` in subscribe with the subagent lineage check, `historyFirst` subscribe, the `prepareSessionCreation` guard, `reconcileSessionsIndexV4`. A presence match does not prove the same behavior. The body differences are fork-changed code and have not been reviewed hunk by hunk.
 
-## 5. `session/taskIndexRepo.ts` non-group hunks (deferred)
+Fork-decided, not taken: the `refreshRegistry` barrier on `ensureAccountProviderConfigSynced` (8c; the fork test pins that createSession sends no refresh), `includeArchived` removal in `sessionList` (the fork archive repair uses it), and `updateTaskPresentation` in the automation path (the fork owner is `syncTaskMeta`, see 8c).
 
-Upstream constructor `(migrationSettings, storageHostId, startupDbPath, busyTimeout)` feeds `projectStorage.migrate` and `admitTaskIdentity`. The fork's live migration path (`session/tasksDatabase/migrations.ts`) does not call `projectStorage.migrate`; the only callers are tests and the unwired upstream repo. Adopting the constructor means wiring project schema migrations (`0005_projects`, `0006_default_workspace_tasks`) into the shared tasks database, which changes the shared migration ledger. That is a DB design decision, so it is deferred with the project binding work. The grouped surface (`ZCodeGroupedTaskView`) stays fork-owned until UI-2.
+## 4. Grouped surface and fork writer
+
+Unchanged by this part. The grouped-view surface (`ZCodeGroupedTaskView`, `taskIndexRepo` group parts, `zcodeTaskListTypes.ts`) stays fork-owned until UI-2.
+
+## 5. `session/taskIndexRepo.ts` non-group hunks (deferred, no live consumer)
+
+Upstream constructor `(migrationSettings, storageHostId, startupDbPath, busyTimeout)` passes `migrationSettings` to `projectStorage.migrate` and calls `projectStorage.admitTaskIdentity`. The fork's constructor is `(startupDbPath, busyTimeout)`.
+
+Verified: the fork's live tasks-database migration list (`session/tasksDatabase/migrations.ts`) contains neither upstream's `0005_projects` nor `0006_default_workspace_tasks`, and `git grep` finds no `projectStorage`, `PROJECT_SCHEMA_SQL` or `0005_projects` in that directory. Project-storage migrations run only through the unwired upstream repo and in tests. The constructor change therefore has no live consumer for its project seeding, and it is deferred until project binding is wired. This reason is about the missing consumer, not about the migration ledger.
 
 ## 6. `oauth/oauthService.ts`: business JWT expiry check (deferred, verified)
 
-Upstream's restore checks the provider access token (`oauth:<provider>:access_token`) in addition to the shared JWT. The fork's restore path reads only the shared JWT, by design: a provider token read on the first-screen restore re-blocks the background BigModel migration (comment in `restoreCachedSessionState`).
+Upstream's restore checks the provider access token (`oauth:<provider>:access_token`) in addition to the shared JWT. The fork restore path reads only the shared JWT, by design: a provider token read on the first-screen restore re-blocks the background BigModel migration (comment in `restoreCachedSessionState`).
 
-Experiment (reverted): adding the provider token read to the restore path makes `does not send zai token to BigModel when migration token load races with provider switch` time out at 8 s. The test holds the first `oauth:bigmodel:access_token` load and releases it only after `restoreCachedSession()` resolves, so an await on that load inside restore can never finish. This is the await that hangs, and no delay-based fix is acceptable. The check cannot coexist with that test as specified, so it stays deferred.
+Experiment (reverted, file back to HEAD): adding the provider token read to the restore path makes `does not send zai token to BigModel when migration token load races with provider switch` time out at 8 s. The test holds the first `oauth:bigmodel:access_token` load and releases it only after `restoreCachedSession()` resolves, so an await on that load inside restore can never finish. This is the await that hangs, and no delay-based fix is acceptable. The check cannot coexist with that test as specified, so it stays deferred.
 
 ```mermaid
 sequenceDiagram
@@ -75,9 +102,9 @@ sequenceDiagram
   Note over Test,Cred: Deadlock: restore waits for a release that follows its own resolution
 ```
 
-## 7. `project-storage` startup, 3-argument `prepareTasksIndexStorage` (deferred)
+## 7. `project-storage` startup, 3-argument `prepareTasksIndexStorage` (deferred, no live consumer)
 
-The desktop worker keeps the 2-argument call (marked `DEFERRED`); no consumer passes settings, so the fork signature stays. Upstream's third argument (`settings`) only seeds project records through `TaskIndexRepo` → `projectStorage.migrate`. Until the project schema migrations are part of the live fork path (section 5), an optional third argument would be accepted and ignored. That is dead surface, so it is not added. `project-storage/startup-entry.ts` is identical to upstream.
+The desktop worker keeps the 2-argument call (marked `DEFERRED`). Upstream's third argument (`settings`) only seeds project records through `TaskIndexRepo` → `projectStorage.migrate`, and that path has no live consumer in the fork (section 5). An optional third argument would be accepted and then ignored, which is dead surface, so it is not added. `project-storage/startup-entry.ts` is identical to upstream.
 
 ```mermaid
 sequenceDiagram
@@ -89,14 +116,13 @@ sequenceDiagram
   Start->>DB: migrations under write lock (fork ledger)
   Start->>Repos: ensureReady (fork constructor path/busyTimeout)
   Start-->>Desktop: ready (markTasksStoragePrepared)
-  Note over Start,DB: Upstream 3rd arg (settings) would feed projectStorage.migrate, which is not on the live path
+  Note over Start,DB: Upstream 3rd arg (settings) would feed projectStorage.migrate, which has no live consumer
 ```
 
 ## 8. `window-controller` base
 
-Branch is based on `origin/claude/upstream-sync-ui` (#215), which carries the G5 window-controller change. No further change in this PR.
+The branch is based on `origin/claude/upstream-sync-ui` (#215), which carries the G5 window-controller change. No further change in this PR.
 
 ## Verification log
 
-- Typecheck: `pnpm exec tsc -b packages/services` and `packages/server` pass after the changes above.
-- Tests run: `serverInfoHttp.test.ts`, `staticRoutePathContainment.test.ts`, `botsHttp.test.ts`, `remoteConnectionStore.test.ts` (44 pass); `zcodeLegacyTaskCompatTaskIndex.test.ts` (110 pass).
+Recorded at the end of this section once the full run finishes.

@@ -625,11 +625,13 @@ export function createHttpServer(
             .register(ISystemService, connection.services.systemService)
             .register(ITerminalService, connection.services.terminalService);
 
+          // This route serves a different backend (SSH/Docker target). The source-server identity mapper
+          // translates this server's own workspace identities, so it must not apply here.
           setupChannelServer(
             ws.raw as WebSocket,
             remoteServices,
             "web-remote-replayable",
-            options.workspaceIdentityMapper,
+            undefined,
           );
         },
         onClose() {

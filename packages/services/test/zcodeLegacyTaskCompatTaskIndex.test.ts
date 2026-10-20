@@ -964,6 +964,28 @@ describe("ZCode legacy task compat task index", () => {
         additionalDirectories: ["/extra"],
       }),
     );
+
+    // The native v4 path (bots use v4Create) must carry the same fields in its command envelope.
+    await service.createTask({
+      workspacePath: "/repo",
+      provider: "glm",
+      projectId: "project-1",
+      additionalDirectories: ["/extra"],
+      v4Create: true,
+    });
+    expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        envelope: expect.objectContaining({
+          type: "createSession",
+          payload: expect.objectContaining({ additionalDirectories: ["/extra"] }),
+        }),
+      }),
+    );
+    await service.createTask({ workspacePath: "/repo", provider: "glm", v4Create: true });
+    expect(agent.sendConversationCommandV4).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ projectId: expect.anything() }),
+    );
   });
 
   it("keeps automation mutation isolation turn-scoped when creating an execution task", async () => {
