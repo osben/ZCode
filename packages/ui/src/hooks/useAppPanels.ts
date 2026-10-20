@@ -141,6 +141,8 @@ function createTerminalSidePaneTitle(
 
 export function useAppPanels(options: {
   workspaceAbsPath: string;
+  /** Working directory for new terminal tabs; defaults to the workspace path (a worktree task passes its execution path). */
+  terminalCwd?: string;
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string | null;
   activeTaskId: string | null;
@@ -173,6 +175,7 @@ export function useAppPanels(options: {
 }) {
   const {
     workspaceAbsPath,
+    terminalCwd = workspaceAbsPath,
     workspaceIdentity,
     workspaceRemoteSessionId,
     activeTaskId,
@@ -890,7 +893,7 @@ export function useAppPanels(options: {
       const title = createTerminalSidePaneTitle(current, workspaceAbsPath);
       const next = openTerminalSidePane(current, {
         title,
-        cwd: workspaceAbsPath,
+        cwd: terminalCwd,
         remoteSessionId: workspaceRemoteSessionId,
       });
       logger.info(
@@ -902,6 +905,7 @@ export function useAppPanels(options: {
     isOfficeMode,
     commitOpenedSidePaneState,
     revealSidePaneForCurrentOwner,
+    terminalCwd,
     workspaceAbsPath,
     workspaceRemoteSessionId,
   ]);

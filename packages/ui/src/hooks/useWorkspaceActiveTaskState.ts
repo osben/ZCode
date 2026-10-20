@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
+import { useOptionalServices } from "@/hooks/useServices.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useWorkspaceSessionsIndexItems } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { useTaskNativeSessionLogFile } from "@/hooks/useTaskNativeSessionLogFile.js";
 import { useTaskSessionFilePath } from "@/hooks/useTaskSessionFilePath.js";
 import { logger } from "@/logger.js";
@@ -81,6 +83,26 @@ export function useWorkspaceActiveTaskState({
     workspaceRemoteSessionId,
     workspaceIdentity,
   );
+  const agentService = useOptionalServices()?.zcodeAgentService ?? undefined;
+  const sessionIndexScopes = useMemo(
+    () =>
+      workspaceRemoteSessionId && !agentService
+        ? []
+        : [
+            {
+              workspacePath: workspaceAbsPath,
+              ...(workspaceIdentity ? { workspaceIdentity } : {}),
+              ...(workspaceRemoteSessionId ? { endpointKey: workspaceRemoteSessionId } : {}),
+              ...(agentService ? { agentService } : {}),
+            },
+          ],
+    [agentService, workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+  );
+  const { items: sessionIndexItems } = useWorkspaceSessionsIndexItems(sessionIndexScopes);
+  // The Host task meta does not carry the execution worktree; the sessions index does (worktree notices).
+  const activeTaskExecutionWorktree = activeTaskId
+    ? sessionIndexItems.find((task) => task.taskId === activeTaskId)?.executionWorktree
+    : undefined;
   const { broadcastService } = useBaseWorkspaceServices();
   const version = useZCodeSessionStore(
     (state) =>
@@ -143,7 +165,13 @@ export function useWorkspaceActiveTaskState({
   const indexedMeta =
     indexed?.service === service && indexed.targetKey === targetKey ? indexed.meta : null;
   const activeTaskMeta = indexedMeta ?? optimisticMeta;
-  const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(activeTaskMeta);
+  const resolvedTaskMeta = useMemo(() => {
+    if (!activeTaskMeta || !activeTaskExecutionWorktree) {
+      return activeTaskMeta;
+    }
+    return { ...activeTaskMeta, executionWorktree: activeTaskExecutionWorktree };
+  }, [activeTaskExecutionWorktree, activeTaskMeta]);
+  const resolvedActiveTaskMeta = useStableResolvedActiveTaskMeta(resolvedTaskMeta);
   // M5② store 收尾：taskMessagesByTaskId 已无写入方（旧 ChatView/bot 消息回放均退役），
   // 由消息流派生的实时改动摘要恒为空；摘要展示回落到 task meta.changeSummary（持久化侧）。
   const activeTaskChangeSummary = null;
