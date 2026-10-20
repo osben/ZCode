@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { ZCodeTaskTreeCounts } from "@zcode/services";
 import { TaskDeleteConfirmationDialog } from "@/task-deletion/TaskDeleteConfirmationDialog.js";
 import type {
@@ -45,33 +45,34 @@ export function SessionManagerDeleteDialog({
     [selectedRows],
   );
 
+  // Stable identities: the dialog re-fetches (and disables confirm) whenever a loader changes.
+  const toSessionRows = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) =>
+      rows.flatMap((row) => {
+        const sessionRow = rowById.get(row.id);
+        return sessionRow ? [sessionRow] : [];
+      }),
+    [rowById],
+  );
+  const loadCounts = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) => loadTreeCounts(toSessionRows(rows)),
+    [loadTreeCounts, toSessionRows],
+  );
+  const loadSupported = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) => loadCapability(toSessionRows(rows)),
+    [loadCapability, toSessionRows],
+  );
+  const loadPreview = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) => loadWorktreePreview(toSessionRows(rows)),
+    [loadWorktreePreview, toSessionRows],
+  );
+
   return (
     <TaskDeleteConfirmationDialog
       rows={dialogRows}
-      loadTreeCounts={(rows) =>
-        loadTreeCounts(
-          rows.flatMap((row) => {
-            const sessionRow = rowById.get(row.id);
-            return sessionRow ? [sessionRow] : [];
-          }),
-        )
-      }
-      loadCapability={(rows) =>
-        loadCapability(
-          rows.flatMap((row) => {
-            const sessionRow = rowById.get(row.id);
-            return sessionRow ? [sessionRow] : [];
-          }),
-        )
-      }
-      loadWorktreePreview={(rows) =>
-        loadWorktreePreview(
-          rows.flatMap((row) => {
-            const sessionRow = rowById.get(row.id);
-            return sessionRow ? [sessionRow] : [];
-          }),
-        )
-      }
+      loadTreeCounts={loadCounts}
+      loadCapability={loadSupported}
+      loadWorktreePreview={loadPreview}
       onCancel={onCancel}
       onConfirm={(rows) =>
         onConfirm(

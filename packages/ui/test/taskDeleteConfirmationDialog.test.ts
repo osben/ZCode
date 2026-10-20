@@ -126,6 +126,16 @@ describe("TaskDeleteConfirmationDialog", () => {
     expect(onConfirm).toHaveBeenCalledWith([row("normal"), row("pinned", { pinned: true })]);
   });
 
+  it("treats an explicit single pinned row as opted in", async () => {
+    const { onConfirm } = mount({ rows: [row("p", { pinned: true })], counts: counts() });
+    const confirm = await screen.findByRole("button", { name: "taskDelete.confirm:1" });
+    await waitFor(() => expect((confirm as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText("taskDelete.unsupported")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith([row("p", { pinned: true })]);
+  });
+
   it("warns about dirty worktree paths and labels the destructive action Delete anyway", async () => {
     const worktrees = [
       {

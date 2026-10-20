@@ -58,7 +58,7 @@ export function TaskDeleteConfirmationDialog({
   onConfirm: (rows: readonly TaskDeleteDialogRow[]) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const [includePinned, setIncludePinned] = useState(false);
+  const [includePinned, setIncludePinned] = useState(rows.length === 1);
   const [capability, setCapability] = useState<boolean | undefined>(supported);
   const [counts, setCounts] = useState<ZCodeTaskTreeCounts | null | undefined>(undefined);
   const [worktreePreview, setWorktreePreview] = useState<
@@ -105,7 +105,8 @@ export function TaskDeleteConfirmationDialog({
       };
     }
     setCapability(undefined);
-    if (!loadCapability || candidates.length === 0) {
+    if (candidates.length === 0) return undefined;
+    if (!loadCapability) {
       setCapability(false);
       return undefined;
     }
@@ -181,7 +182,7 @@ export function TaskDeleteConfirmationDialog({
             {intl.formatPlural({ id: "taskDelete.running" }, runningCount)}
           </p>
         ) : null}
-        {pinnedCount > 0 ? (
+        {pinnedCount > 0 && rows.length > 1 ? (
           <label className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
             <Checkbox
               checked={includePinned}

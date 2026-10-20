@@ -97,16 +97,20 @@ export function createTaskEraseOperations(options: {
     if (isRemote(params) || !agent.eraseSessionTrees || !agent.countSessionTrees) {
       return { supported: false };
     }
-    try {
-      const probe = await agent.countSessionTrees({
-        workspacePath: params.workspacePath,
-        sessionIds: ["__zcode_deletion_capability_probe__"],
-        runtimePolicy: "start-if-needed",
-      });
-      return { supported: probe !== null };
-    } catch {
-      return { supported: false };
+    // Prefer a live runtime so opening a dialog does not spawn one CLI process per workspace.
+    for (const runtimePolicy of ["existing-only", "start-if-needed"] as const) {
+      try {
+        const probe = await agent.countSessionTrees({
+          workspacePath: params.workspacePath,
+          sessionIds: ["__zcode_deletion_capability_probe__"],
+          runtimePolicy,
+        });
+        return { supported: probe !== null };
+      } catch {
+        // existing-only rejects when no runtime exists; fall through once.
+      }
     }
+    return { supported: false };
   }
 
   /** Chunked count; null when the CLI does not support it. Throws when the agent cannot be reached. */

@@ -170,6 +170,8 @@ export function useSessionManagerRowActions(
   const resolveRowServices = (row: SessionManagerRow) =>
     lookup.get(row.workspaceKey)?.services.zcodeTaskService ?? null;
   const resolveTaskDeleteServices = (row: TaskDeleteTarget): TaskDeleteServices | null => {
+    // Remote workspaces never execute permanent Delete; do not rely on the remote Host's capability answer.
+    if (row.workspaceIdentity?.trim()) return null;
     const services = lookup.get(
       buildTaskWorkspaceKey(row.workspacePath, row.workspaceIdentity),
     )?.services;

@@ -158,7 +158,8 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 1. Project menu "Manage sessions" on workspace W opens Settings on the sessions section scoped to W (chip visible, Path column hidden); clearing the chip shows the universe grouped by workspace key; nothing view-related persists across app restart except §5 preferences.
 2. Status=Archived shows only archived rows with Restore in the menu; Restore returns the row to the Active view without reload.
-3. Deleting a running session (tombstone) removes the row immediately and it does not resurrect after restart; the CLI session directory still exists on disk.
+3. Deleting a stopped session erases its session content, removes the row immediately, and the tombstone keeps it from resurrecting after restart.
+   3a. Deleting a session whose tree is known to be running is blocked before tombstoning; the row and its content are untouched.
 4. Bulk-selecting 3 rows of which 1 is pinned: dialog shows "Include 1 pinned session" unchecked; confirming deletes 2 rows and keeps the pinned row.
 5. Filter/sort/columns/collapse state survives an app restart on the same device and does **not** appear on another device (no broadcast).
 6. Offline remote workspace: rows render dimmed with disabled mutations and a read-only reason; nothing throws.

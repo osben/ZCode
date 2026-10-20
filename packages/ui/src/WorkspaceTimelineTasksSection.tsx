@@ -49,6 +49,7 @@ export function WorkspaceTimelineTasksSection({
   taskRowVariant = "timeline",
   emptyMessage,
   mobileActiveTaskKey,
+  isWebRemoteControl = false,
   onSelectTask,
 }: {
   workspaceTabs: WorkspaceTabState[];
@@ -60,6 +61,7 @@ export function WorkspaceTimelineTasksSection({
   taskRowVariant?: "default" | "timeline";
   emptyMessage?: string;
   mobileActiveTaskKey?: string | null;
+  isWebRemoteControl?: boolean;
   onSelectTask: (
     targetWorkspacePath: string,
     taskId: string,
@@ -735,7 +737,9 @@ export function WorkspaceTimelineTasksSection({
         </ContextMenuTrigger>
         {contextMenuItem && contextMenuWorkspaceServices && contextMenuItemKey ? (
           <TaskListItemContextMenuContent
-            onDeleteTask={() => taskDeletion.open(contextMenuItem, false)}
+            onDeleteTask={
+              isWebRemoteControl ? undefined : () => taskDeletion.open(contextMenuItem, false)
+            }
             workspacePath={contextMenuItem.workspacePath}
             remoteSessionId={contextMenuWorkspaceServices.remoteSessionId}
             task={contextMenuItem}

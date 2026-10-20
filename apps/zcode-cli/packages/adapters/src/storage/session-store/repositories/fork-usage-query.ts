@@ -87,7 +87,11 @@ export async function queryAppUsageWithRollup(
   try {
     ensureForkUsageRollupSchema(db);
     ensureForkUsageDetachedSchema(db);
-    syncForkUsageProtectedRawRows(db);
+    try {
+      syncForkUsageProtectedRawRows(db);
+    } catch {
+      // Busy lock or surrounding transaction: deltas are applied on the next read/recompute.
+    }
     refreshForkUsageRollupForRead(db, Date.now());
     // A skipped first recompute (busy lock, surrounding transaction) leaves empty tables that would
     // answer with zeros; "never computed" is unavailable, not empty.

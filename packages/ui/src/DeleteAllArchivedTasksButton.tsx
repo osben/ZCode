@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LoaderIcon, MoreHorizontal, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -24,6 +24,7 @@ import {
 import { formatTaskDeletionResult } from "@/task-deletion/taskDeletion.js";
 import { TaskDeleteConfirmationDialog } from "@/task-deletion/TaskDeleteConfirmationDialog.js";
 import type { TaskDeleteTarget } from "@/task-deletion/taskDeletion.js";
+import type { TaskDeleteDialogRow } from "@/task-deletion/taskDeletionTypes.js";
 import { logger } from "@/logger.js";
 
 export function DeleteAllArchivedTasksButton({
@@ -164,6 +165,25 @@ export function DeleteAllArchivedTasksButton({
     </DropdownMenu>
   );
 
+  // Stable identities: the dialog re-fetches (and disables confirm) whenever a loader changes.
+  const loadPendingTreeCounts = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) =>
+      pendingSelection
+        ? countArchivedTaskDeletionTrees(pendingSelection, rows as readonly TaskDeleteTarget[])
+        : Promise.resolve(null),
+    [pendingSelection],
+  );
+  const loadPendingWorktreePreview = useCallback(
+    (rows: readonly TaskDeleteDialogRow[]) =>
+      pendingSelection
+        ? loadArchivedTaskDeletionWorktreePreview(
+            pendingSelection,
+            rows as readonly TaskDeleteTarget[],
+          )
+        : Promise.resolve([]),
+    [pendingSelection],
+  );
+
   return (
     <>
       {/* Only the control’s render position moves; querying, confirmation, and deletion remain alive with the archived-task list, so closing the menu does not unmount this state. */}
@@ -192,15 +212,8 @@ export function DeleteAllArchivedTasksButton({
                 )
               : undefined
           }
-          loadTreeCounts={(rows) =>
-            countArchivedTaskDeletionTrees(pendingSelection, rows as readonly TaskDeleteTarget[])
-          }
-          loadWorktreePreview={(rows) =>
-            loadArchivedTaskDeletionWorktreePreview(
-              pendingSelection,
-              rows as readonly TaskDeleteTarget[],
-            )
-          }
+          loadTreeCounts={loadPendingTreeCounts}
+          loadWorktreePreview={loadPendingWorktreePreview}
           onCancel={() => setPendingSelection(null)}
           onConfirm={(rows) => void handleConfirmDelete(rows as readonly TaskDeleteTarget[])}
         />

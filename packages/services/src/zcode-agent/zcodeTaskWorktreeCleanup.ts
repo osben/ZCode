@@ -182,7 +182,7 @@ export function createTaskWorktreeCleanup(options: WorktreeCleanupOptions) {
         retain(group.targetPath, "worktree preparation is active");
         continue;
       }
-      let sameBranchPreparation = false;
+      let sameBranchPreparation: string | null = null;
       for (const preparation of preparations) {
         const branchName = group.tasks[0]?.executionWorktree?.branchName;
         if (!branchName || preparation.branchName !== branchName) continue;
@@ -191,14 +191,14 @@ export function createTaskWorktreeCleanup(options: WorktreeCleanupOptions) {
             workspacePath: preparation.workspacePath,
           });
           if (summary.isRepository && summary.repoRoot === group.repoPath)
-            sameBranchPreparation = true;
+            sameBranchPreparation ??= "worktree preparation uses the same repository branch";
         } catch {
-          retain(group.targetPath, "preparation repository inventory unavailable");
-          sameBranchPreparation = true;
+          sameBranchPreparation = "preparation repository inventory unavailable";
+          break;
         }
       }
       if (sameBranchPreparation) {
-        retain(group.targetPath, "worktree preparation uses the same repository branch");
+        retain(group.targetPath, sameBranchPreparation);
         continue;
       }
       const remainingOwners = ownerTasks.filter((task) => task.deleted);

@@ -208,7 +208,10 @@ plan: `docs/specs/usage-stats-history-and-filters.md`.
 - Read path: `queryAppUsage` reads the rollup and detached turn aggregates. Fallback to the legacy raw query happens when the
   rollup tables are missing, were never computed (no watermark: the first recompute was skipped by a
   busy lock or a surrounding transaction), or the rollup read throws; the result then carries
-  `rollupFallbackReason` and the host logs a `warn`. Requests the raw tables cannot answer correctly
+  `rollupFallbackReason` and the host logs a `warn`. Once `fork_usage_detached_turn` or
+  `fork_usage_protected_bucket` holds any rows, the raw fallback is disabled entirely (raw-only totals would drop
+  the usage of deleted sessions) and the query fails with `usage_rollup_unavailable`. The read-time protected-row
+  sync is best-effort: a busy lock skips it and the next read or recompute applies the deltas. Requests the raw tables cannot answer correctly
   (any filter, or a bounded window that starts before the 30-day raw retention) fail with
   `usage_rollup_unavailable` instead. The all-time range (`since` = 0) keeps its legacy meaning and may
   fall back. Windows snap to 15-minute bucket boundaries (the bucket containing `since` is included),
