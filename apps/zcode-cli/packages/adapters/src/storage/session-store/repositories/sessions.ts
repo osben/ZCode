@@ -115,8 +115,7 @@ export async function updateSession(
   set("title_source", input.titleSource);
   set("title_message_id", input.titleMessageID);
   set("share_url", input.shareURL);
-  // TEMPORARY: upstream also writes last_outcome; the fork contract has no UpdateSessionInput.lastOutcome yet.
-  // Add it with the contracts sync (deferred, see the PR description).
+  set("last_outcome", input.lastOutcome);
   if (input.summary !== undefined) {
     set("summary_additions", input.summary?.additions ?? null);
     set("summary_deletions", input.summary?.deletions ?? null);

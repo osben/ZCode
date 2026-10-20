@@ -343,6 +343,36 @@ describe("SQLite session store", () => {
     }
   });
 
+  it("persists the terminal outcome through the partial update and keeps it across later writes", async () => {
+    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const sessionID = createSessionId("last-outcome");
+    try {
+      await store.createSession({
+        id: sessionID,
+        projectID: createProjectId("last-outcome"),
+        workspaceID: "local:/home/dev/project" as WorkspaceId,
+        slug: "last-outcome",
+        directory: "/home/dev/project",
+        path: "/home/dev/project",
+        title: "last outcome",
+        version: "0.1.0",
+        time: { created: 1, updated: 2 },
+      });
+
+      await expect(
+        store.updateSession({ id: sessionID, lastOutcome: "error", timeUpdated: 3 }),
+      ).resolves.toMatchObject({ lastOutcome: "error", title: "last outcome" });
+
+      // A title-only write omits lastOutcome, so the stored terminal state must survive it.
+      await expect(store.updateSession({ id: sessionID, title: "renamed" })).resolves.toMatchObject({
+        lastOutcome: "error",
+        title: "renamed",
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   it("persists execution worktree facts beside the parent workspace identity", async () => {
     const store = createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("worktree-execution");
