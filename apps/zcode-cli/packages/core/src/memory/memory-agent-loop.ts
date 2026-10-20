@@ -64,14 +64,17 @@ export async function runMemoryAgentLoop(input: {
     options: { abortSignal?: AbortSignal },
   ) => Promise<ToolExecutionResult>;
   maxTurns: number;
-  messages: readonly ModelInputMessage[];
+  request: {
+    messages: readonly ModelInputMessage[];
+    tools: readonly ModelToolContract[];
+    toolSearchEnabled: boolean;
+  };
   model: Model;
   rootDir: string;
-  tools: readonly ModelToolContract[];
   workingDirectory: string;
   workspaceRoot: string;
 }): Promise<MemoryAgentLoopResult> {
-  const messages = input.messages.map(cloneModelMessage);
+  const messages = input.request.messages.map(cloneModelMessage);
   const requests: MemoryAgentLoopRequestUsage[] = [];
   let turns = 0;
 
@@ -88,7 +91,8 @@ export async function runMemoryAgentLoop(input: {
       messages: mediaProjection.messages,
       options: auxiliaryModelOptions(input.model),
       // The Memory agent's provider request must preserve Main's real tool catalog; execution permissions are narrowed only at the tool-use boundary.
-      tools: input.tools as ModelToolContract[],
+      tools: input.request.tools as ModelToolContract[],
+      toolSearchEnabled: input.request.toolSearchEnabled,
     };
     input.onRequestStart?.(turns);
     const startedAt = Date.now();
@@ -134,7 +138,7 @@ export async function runMemoryAgentLoop(input: {
         const decision = evaluateMemoryAgentToolPolicy({
           rootDir: input.rootDir,
           toolCall,
-          tools: input.tools,
+          tools: input.request.tools,
           workingDirectory: input.workingDirectory,
           workspaceRoot: input.workspaceRoot,
         });

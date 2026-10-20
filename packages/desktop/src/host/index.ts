@@ -13,7 +13,7 @@
  * 2. Main sends init-local once to initialize the window Host.
  * 3. The same Host handles later remote connections and scoped attachments.
  */
-import { createHostDatabaseStartup } from "./hostDatabaseStartup.js";
+import { createHostDatabaseStartup } from "./database-startup/hostDatabaseStartup.js";
 import { createHostNetworkCapture } from "./hostNetworkCapture.js";
 import { randomUUID } from "node:crypto";
 import { createPluginSandboxRegistrationBridge } from "./pluginSandbox/index.js";

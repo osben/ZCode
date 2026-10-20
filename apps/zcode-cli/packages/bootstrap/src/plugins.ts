@@ -99,7 +99,7 @@ export interface ZCodeMarketplaceSummaryData {
     failedAt: string;
     message: string;
   };
-  // Top-level curated featured list from the catalog (Featured section in the store's "Public" segment), shipped with the manifest.
+  // 目录顶层 featured 策展名单（商店「公开」分段 Featured 区），随 manifest 下发。
   featured?: string[];
 }
 
@@ -112,7 +112,7 @@ export interface ZCodeAvailablePluginData {
   installed: boolean;
   componentTypes?: string[];
   hookDetails?: PluginHookDetail[];
-  // Store metadata (display name/icon/category/author/links/hero/example prompts) from the catalog entry.
+  // 商店信息（显示名/icon/分类/作者/链接/hero/示例提示词），来自目录条目。
   listing?: PluginStoreListing;
 }
 
@@ -130,7 +130,7 @@ export interface ZCodeInstalledPluginData {
   hookDetails?: PluginHookDetail[];
   updateStatus?: "none" | "update-available" | "version-changed";
   latestVersion?: string;
-  // Store metadata for installed plugins is joined from catalog entries by ID (missing when a marketplace is removed; UI falls back).
+  // 已安装插件的商店信息由目录条目按 id join 得到（市场被移除时缺失，UI 走降级）。
   listing?: PluginStoreListing;
 }
 
@@ -151,7 +151,7 @@ export interface AddZCodeMarketplaceOptions extends ResolveZCodePluginsOptions {
   abortSignal?: AbortSignal;
   dryRun?: boolean;
   source: string;
-  /** `marketplace add --sparse`: only git/github sources support sparse-checking out a subdirectory. */
+  /** `marketplace add --sparse`：仅 git/github 源支持 sparse checkout 子目录。 */
   sparsePaths?: string[];
 }
 
@@ -177,7 +177,7 @@ export interface UninstallZCodeMarketplacePluginOptions extends ResolveZCodePlug
   pluginName?: string;
   marketplace?: string;
   removeCache?: boolean;
-  /** Preserve the user data directory at data/<plugin-id> (`zcode plugins uninstall --keep-data`). */
+  /** 保留 data/<plugin-id> 用户数据目录（`zcode plugins uninstall --keep-data`）。 */
   keepData?: boolean;
 }
 
@@ -230,16 +230,14 @@ export interface ZCodePluginInstallData {
 }
 
 /**
- * Count only user-visible marketplace plugins.
+ * 市场插件计数只数用户可见条目。
  *
- * node-repl-host is the runtime host shared by Browser Use and Computer Use. It must remain in the
- * official manifest (otherwise it cannot be discovered, installed, or enabled), but it has no
- * skill or listing and should not appear in settings. Counting it would make the displayed plugin
- * count one greater than the number of listed entries.
+ * node-repl-host 是 Browser Use 与 Computer Use 共用的运行时宿主：它必须留在官方 manifest 里
+ * （否则不会被发现、安装、启用），但没有 skill、没有 listing，也不该出现在设置页。计进去会让
+ * 显示的插件数比它能列出的条目多一个。
  *
- * The check deliberately targets this named entry in the official marketplace, not "entries with
- * no listing." The latter would incorrectly affect third-party marketplaces, whose custom manifest
- * entries may legitimately omit listings and remain visible plugins.
+ * 判据故意是「官方市场里的这个具名条目」，而不是「没有 listing 的条目」—— 后者会误伤第三方
+ * 市场：自定义 manifest 里的条目本来就可以不带 listing，它们是真实可见的插件。
  */
 function countVisibleMarketplacePlugins(
   marketplaceId: string,
@@ -258,7 +256,7 @@ export function resolveZCodePlugins(options: ResolveZCodePluginsOptions = {}): P
     env: options.env ?? process.env,
     officialPluginRoots: resolveOfficialPluginRoots({
       extraRoots: options.officialPluginRoots,
-      // Cache lock conflicts are degraded rather than fatal now, so ordinary plugin entry points must retain diagnostic logs too.
+      // cache 锁冲突已从 fatal 改为 degraded，普通插件入口也必须保留诊断日志。
       logger: options.logger,
       storageRoot: pluginStorageRoot,
       suppressedBuiltins: new Set(configResult.config.plugins.suppressedBuiltins),
@@ -293,17 +291,16 @@ export function getZCodePluginsOverview(
   const installed = listInstalledPluginRecords(pluginStorageRoot);
   const installedIds = new Set(installed.map((record) => record.id));
 
-  // Read each marketplace manifest once to obtain both entries (catalog items) and featured (curated list).
-  // The adapter merges built-in and CDN shards of zcode-plugins-official into one canonical manifest.
+  // 每个市场的 manifest 只读一次：同时取 entries（目录条目）与 featured（策展名单）。
+  // zcode-plugins-official 的内置与 CDN 分片已在 adapter 层合并为唯一 canonical manifest。
   const catalogs: Array<{
     summary: ZCodeMarketplaceSummaryData;
     entries: PluginMarketplaceEntry[];
   }> = [];
   for (const { record, useCachedManifest } of effectiveMarketplaces) {
-    // Marketplace sources come only from User/Host configuration. Read Host cache only after the
-    // target Host explicitly materializes the same source through refresh/install. The same ID with
-    // a different source must fail closed to prevent another Host or stale config from using the
-    // wrong global marketplace snapshot.
+    // Marketplace source 只来自 User/Host 配置。只有目标 Host 已经通过显式 refresh/install
+    // 物化了同一 source 时，才读取 Host cache；同 id 不同 source 必须 fail closed，避免
+    // 不同 Host 或旧配置误用错误的全局 marketplace 快照。
     const manifest = useCachedManifest
       ? loadMarketplaceManifestSync(pluginStorageRoot, record.id)
       : null;
@@ -317,12 +314,12 @@ export function getZCodePluginsOverview(
     });
   }
 
-  // While traversing marketplace catalogs, record the latest version pin for each plugin ID for update detection.
+  // 边遍历 marketplace catalog 边记录每个插件 id 的最新「版本 pin」用于更新检测。
 
-  // An entry may have version, sha, or both, so collect both dimensions and let comparePluginUpdate
-  // choose which to compare with the installed record.
+  // 条目可能只有 version、只有 sha 或两者兼有，因此同时收集 version 与 sha
+  // 两个轴，由 comparePluginUpdate 决定用哪条轴比对 installed 记录。
   const latestPinByPluginId = new Map<string, { version?: string; sha?: string }>();
-  // Also collect store metadata by ID for installed-plugin joins (shared by detail, icon-strip, and management views).
+  // 同时按 id 收集目录条目的商店信息，供已安装插件 join（详情/图标条/管理视图共用）。
   const listingByPluginId = new Map<string, PluginStoreListing>();
   const availablePlugins = catalogs.flatMap((catalog) =>
     catalog.entries.map((entry) => {
@@ -339,15 +336,14 @@ export function getZCodePluginsOverview(
   );
   const loadedById = new Map(outcome.plugins.map((plugin) => [plugin.id, plugin]));
 
-  // Suppressed (uninstalled) built-in (official) plugins can be restored with one click: select
-  // entries in OFFICIAL_PLUGIN_DEFINITIONS whose IDs are in suppressedBuiltins and map them to the
-  // available shape for the UI's Restore action. The full catalog/cache remains; restorable is only
-  // a projection of Runtime suppression state, and store metadata comes directly from the definition's listing seed.
+  // 被抑制（uninstall）的内置（官方）插件可一键恢复：从 OFFICIAL_PLUGIN_DEFINITIONS
+  // 里挑出 id 落在 suppressedBuiltins 集合内的，映射成 available 形态供 UI 的「恢复」入口使用。
+  // 完整 Catalog/cache 仍然保留，restorable 只是 Runtime 抑制态的投影，商店信息直接取定义里的 listing seed。
   const suppressed = new Set(configResult.config.plugins.suppressedBuiltins);
   const restorableBuiltins: ZCodeAvailablePluginData[] = OFFICIAL_PLUGIN_DEFINITIONS.filter(
     (def) =>
       suppressed.has(`${def.name}@${ZCODE_OFFICIAL_PLUGIN_MARKETPLACE}`) &&
-      // Computer Use's restore action requires the internal feature to be enabled (same rule as restoreBuiltinPluginCore).
+      // computer-use 的恢复入口需要 internal 特性开启（与 restoreBuiltinPluginCore 同口径）。
       (def.name !== "computer-use" || isZCodeCuaInternalFeatureEnabled(options.env ?? process.env)),
   ).map((def) => {
     const listing = def.listing
@@ -377,7 +373,7 @@ export function getZCodePluginsOverview(
         latestVersion: pin?.version,
         latestSha: pin?.sha,
       });
-      // Display latestVersion using manifest version when available; otherwise use the latest short (7-character) SHA for a readable UI hint.
+      // latestVersion 展示：优先用 manifest 的 version；否则用最新 sha（短 7 位）让 UI 有可读提示。
       const latestLabel = pin?.version ?? (pin?.sha ? pin.sha.slice(0, 7) : undefined);
       const listing = listingByPluginId.get(record.id);
       return {
@@ -411,8 +407,7 @@ export function enrichCachedClaudeMarketplaceIconsForOverview(
   options: ResolveZCodePluginsOptions = {},
 ): void {
   const { pluginStorageRoot } = resolvePluginContext(options);
-  // Icons are an optional display enhancement: the overview does not wait for the network; only
-  // the write-back phase takes the storage lock.
+  // 图标是可选展示增强：overview 不等待网络；仅写回阶段进入 storage lock。
   void enrichCachedClaudeMarketplaceIcons(pluginStorageRoot, (write) =>
     withPluginStorageLock(pluginStorageRoot, write),
   );
@@ -423,8 +418,8 @@ export function listZCodePlugins(options: ListZCodePluginsOptions = {}): PluginL
   const { pluginStorageRoot } = resolvePluginContext(options);
   return {
     ...outcome,
-    // Resolve user-visible names from the marketplace listing. Pass the full ID to the CLI here;
-    // do not mix display metadata into the adapter's runtime PluginMetadata or guess from a bare name.
+    // 用户可见名称必须从 marketplace listing 解析；这里按完整 id 传递给 CLI，
+    // 不把展示元数据混入 adapter 的运行时 PluginMetadata，也不按裸 name 猜测。
     pluginListingsById: loadPluginListingsById(pluginStorageRoot),
   };
 }
@@ -432,7 +427,7 @@ export function listZCodePlugins(options: ListZCodePluginsOptions = {}): PluginL
 function loadPluginListingsById(storageRoot: string): Record<string, PluginStoreListing> {
   const listings = new Map<string, PluginStoreListing>();
 
-  // Without a marketplace snapshot, the bundled official definition remains the safe fallback for built-in plugin listings.
+  // 没有 marketplace 快照时，bundled official definition 仍是内置插件 listing 的安全回退。
   for (const definition of OFFICIAL_PLUGIN_DEFINITIONS) {
     if (!definition.listing) continue;
     const listing = parseEntryStoreListing({ name: definition.name, ...definition.listing });
@@ -441,7 +436,7 @@ function loadPluginListingsById(storageRoot: string): Record<string, PluginStore
     }
   }
 
-  // Join catalog entries by the full `${name}@${marketplace}` key so same-named plugins do not overwrite each other.
+  // 目录条目按完整 `${name}@${marketplace}` 关联；同名插件不会互相覆盖。
   for (const marketplace of loadKnownMarketplacesSync(storageRoot)) {
     const manifest = loadMarketplaceManifestSync(storageRoot, marketplace.id);
     for (const entry of manifest?.plugins ?? []) {
@@ -583,7 +578,7 @@ export async function updateZCodePluginMarketplace(
     );
   }
 
-  // The map callback takes only its first argument: toMarketplaceSummaryData's second argument is featured, not map's index.
+  // map 回调只吃第一个参数：toMarketplaceSummaryData 的第二参是 featured，不能接 map 的 index。
   const records = loadKnownMarketplacesSync(pluginStorageRoot);
   const selectedFailures = records.flatMap((record): PluginLoadOutcome["diagnostics"] => {
     if (options.marketplace && record.id !== options.marketplace) return [];
@@ -662,12 +657,11 @@ export async function installZCodeMarketplacePlugin(
     configResult.config.plugins.suppressedBuiltins.includes(pluginId) &&
     (bundledEntry?.source === "filesystem" || bundledEntry?.source === "sea");
   if (isSuppressedBundledOfficial) {
-    // A built-in plugin's filesystem/SEA entry is only a catalog pointer, not an ordinary
-    // Marketplace source. Direct installation must reuse restore so the same official cache is not
-    // written to installed_plugins.json; otherwise uninstall/update would mistake built-in assets
-    // for user installs and break restore semantics.
-    // The protocol layer already protects this call with a storage lock, so invoke the unlocked
-    // core here; otherwise the promise-chain lock for the same storageRoot would wait on itself forever.
+    // 内置插件的 filesystem/SEA entry 只是 Catalog 指针，不是普通 Marketplace source。
+    // 直接安装必须复用 restore，避免把同一份官方 cache 写进 installed_plugins.json，
+    // 否则卸载/更新会把内置资产误判成用户安装并破坏恢复语义。
+    // 当前调用由协议层的 storage lock 保护；这里必须调用不再加锁的核心，
+    // 否则同一 storageRoot 的 promise-chain lock 会等待自身而永久阻塞。
     await restoreBuiltinPluginCore({ ...options, configResult, pluginId });
     const fresh = resolvePluginContext({ ...options, configResult: undefined });
     const outcome = resolveZCodePlugins({
@@ -725,10 +719,9 @@ export async function installZCodeMarketplacePlugin(
       signal: options.abortSignal,
       marketplace: options.marketplace,
       name: options.pluginName,
-      // The package/cache/installed record belongs to the target Host's User inventory.
-      // Legacy protocol Workspace scope remains for compatibility only and must not change the
-      // Marketplace behavior of writing default-enabled state to User config. Installed records
-      // have no workspace identity and cannot participate in Workspace config ownership.
+      // package/cache/installed record 是目标 Host 的 User inventory；
+      // 旧协议的 Workspace scope 仅为兼容保留，不能改变 Marketplace 默认启用写入 User config
+      // 的语义。installed record 没有 workspace identity，不能让它参与 Workspace 配置归属。
       scope: "user",
       storageRoot: pluginStorageRoot,
     });
@@ -742,22 +735,21 @@ export async function installZCodeMarketplacePlugin(
     };
   }
   if (options.marketplace === ZCODE_OFFICIAL_PLUGIN_MARKETPLACE) {
-    // The official marketplace shares the built-in plugin ID space. When reinstalling a same-named
-    // CDN plugin, clear historical built-in suppression or Runtime will still treat the owned install as suppressed.
+    // 官方 marketplace 复用内置插件的 id 空间。若同名 CDN 插件重新安装，
+    // 清掉历史内置 suppression，否则 Runtime 仍会把已拥有的安装误判为 suppressed。
     for (const record of installed.installed) {
       await removeSuppressedBuiltinInFileConfig(configResult.sources.user.path, record.id);
     }
   }
-  // Marketplace manages only Host User inventory. Even if a legacy protocol caller passes Workspace
-  // scope, installation's default-enabled state must go to User config rather than becoming a
-  // Workspace override. Apply only to IDs not explicitly declared in user config (do not overwrite
-  // explicit choices such as reinstalling after disabling).
+  // Marketplace 只管理 Host User inventory；即使旧协议调用方传入 workspace scope，
+  // 安装即默认启用也必须写入 User config，不能把 Marketplace 动作变成 Workspace override。
+  // 仅作用于用户配置里尚未显式声明的 id（停用后重装等显式选择不被覆盖）。
   const { enabledIds } = await enablePluginsByDefaultInFileConfig(
     configResult.sources.user.path,
     installed.installed.map((record) => record.id),
   );
   const enabledIdSet = new Set(enabledIds);
-  // Preserve the current enabled state for explicit config; mark newly default-enabled entries true.
+  // 已有显式配置的，沿用其当前启用态；本次新置默认启用的标记为 true。
   const enabledById = (id: string): boolean =>
     enabledIdSet.has(id) || (configResult.config.plugins.enabledPlugins[id] ?? false);
   return {
@@ -776,20 +768,18 @@ export async function uninstallZCodeMarketplacePlugin(
   return withPluginStorageLock(pluginStorageRoot, async () => {
     const pluginId = resolvePluginIdForMutation(options);
 
-    // The official CDN marketplace and built-in plugins share the zcode-plugins-official ID space,
-    // and its cache also lives under the official cache. If runtime source="official" is checked
-    // first, a CDN plugin with an installed_plugins.json record is mistaken for a built-in plugin;
-    // only suppression is written and the install record remains, leaving the UI permanently
-    // installed and preventing reinstall. The persisted install record is authoritative for
-    // Marketplace ownership and must take precedence over runtime source classification. Also clear
-    // any stale incorrect suppression so state can self-heal.
+    // 官方 CDN marketplace 与内置插件共享 zcode-plugins-official id 空间，且其缓存
+    // 也位于 official cache 下。若先看 runtime source="official"，会把已有
+    // installed_plugins.json 记录的 CDN 插件误判成内置插件，只写 suppression 却不删安装记录，
+    // 导致 UI 永远保持 installed、无法重装。持久化安装记录是 marketplace 所有权的权威证据，
+    // 必须优先于运行时来源分类；同时清掉可能遗留的错误 suppression，让状态自愈。
     const installedRecord = listInstalledPluginRecords(pluginStorageRoot).find(
       (record) => record.id === pluginId,
     );
     if (installedRecord) {
       const removed = await uninstallMarketplacePlugin({
         pluginId,
-        // Uninstall means full removal: delete cache and data directories too unless the caller explicitly sets removeCache=false.
+        // 卸载语义即彻底清除：除非调用方显式传 removeCache=false，否则连缓存与 data 目录一起删。
         removeCache: options.removeCache ?? true,
         keepData: options.keepData,
         storageRoot: pluginStorageRoot,
@@ -800,10 +790,9 @@ export async function uninstallZCodeMarketplacePlugin(
       return toInstalledPluginData(removed, false);
     }
 
-    // Built-in (official) plugins are not in installed_plugins.json and cannot use the Marketplace
-    // uninstall path. Uninstall changes only Runtime suppression state and clears user data/config;
-    // keep the catalog and immutable cache so detail pages can still read components offline and
-    // restore does not require a download or directory reconstruction.
+    // 内置（官方）插件不在 installed_plugins.json 里，无法走 marketplace 卸载路径。
+    // 卸载只改变 Runtime 抑制态并清理用户数据/config；Catalog 与不可变 cache 必须保留，
+    // 这样详情页仍能离线读取组件，且恢复动作不依赖重新下载或重新构造目录。
     const outcome = resolveZCodePlugins({
       ...options,
       configResult,
@@ -815,12 +804,11 @@ export async function uninstallZCodeMarketplacePlugin(
     );
     if (builtin) {
       await addSuppressedBuiltinInFileConfig(configResult.sources.user.path, pluginId);
-      // Clear enabledPlugins[id] and options[id] from user config before deleting directories:
-      // the suppression marker is already the sole source of truth (written atomically via
-      // temp+rename), so even if later deletion throws, the next resolve skips and completes cache
-      // removal. Clearing config first guarantees "restore starts clean" even if deletion fails midway.
+      // 先清掉 user config 里的 enabledPlugins[id] 与 options[id]，再删目录：抑制标记已是
+      // 唯一真相源（写入用原子 temp+rename），即使后续删除抛错，下次 resolve 也会跳过并补删
+      // 缓存；把 config 清理放在删除之前可保证「恢复时从干净状态开始」即便删除中途失败。
       await removePluginFromFileConfig(configResult.sources.user.path, pluginId);
-      // Keep the official cache: like the Marketplace Catalog, it is read-only data needed for detail and restore.
+      // 不删除官方 cache：它与 Marketplace Catalog 同属详情/恢复所需的只读资产。
       if (options.keepData !== true) {
         await rm(getPluginDataDir(pluginStorageRoot, pluginId), { force: true, recursive: true });
       }
@@ -845,10 +833,9 @@ export async function uninstallZCodeMarketplacePlugin(
 }
 
 /**
- * `zcode plugins update <plugin>`: refresh the owning marketplace catalog, then reinstall from the same entry.
- * cacheMarketplacePlugin overwrites an existing install record in place and preserves installedAt;
- * enabled state receives a default only for IDs not explicitly declared in user config, so updates
- * do not change the user's existing toggle choices.
+ * `zcode plugins update <plugin>`：先刷新所属 marketplace 目录，再按同一条目重装。
+ * cacheMarketplacePlugin 对已存在的安装记录做原地覆盖并保留 installedAt；启用态只会给
+ * 用户配置里尚未显式声明的 id 补默认值，因此更新不会改变用户已经做过的开关选择。
  */
 export async function updateZCodeMarketplacePlugin(
   options: UpdateZCodeMarketplacePluginOptions,
@@ -880,7 +867,7 @@ export async function updateZCodeMarketplacePlugin(
   return { ...installed, previousVersion: record.version };
 }
 
-/** `zcode plugins validate <path>`: read-only validation of a local plugin or marketplace directory. */
+/** `zcode plugins validate <path>`：只读校验本地插件目录或 marketplace 目录。 */
 export async function validateZCodePluginPath(
   options: ValidateZCodePluginPathOptions,
 ): Promise<PluginLoadOutcome["diagnostics"]> {
@@ -907,11 +894,10 @@ function applySparsePaths(
 }
 
 /**
- * Unlocked core for restoring a suppressed (uninstalled) built-in (official) plugin.
+ * 恢复一个被抑制（uninstall）的内置（官方）插件的无锁核心。
  *
- * The caller may already hold the storage lock for this storageRoot (for example, a protocol
- * install handler), so this core must not acquire the promise-chain lock again. The public entry
- * point provides locking.
+ * 调用方可能已经持有同一 storageRoot 的 storage lock（例如协议 install handler），
+ * 因此核心不能再次获取 promise-chain lock；公开入口再负责提供锁保护。
  */
 async function restoreBuiltinPluginCore(options: RestoreBuiltinPluginOptions): Promise<void> {
   const zcodeCuaPluginId = ZCODE_CUA_OFFICIAL_PLUGIN_ID;
@@ -919,16 +905,16 @@ async function restoreBuiltinPluginCore(options: RestoreBuiltinPluginOptions): P
     options.pluginId === zcodeCuaPluginId &&
     !isZCodeCuaInternalFeatureEnabled(options.env ?? process.env)
   ) {
-    // Although overview hides the restore action, protocol calls can still bypass the UI and write
-    // user config. If the feature flag is off, fail before writing so user config and plugin cache remain untouched.
+    // overview 虽然隐藏了恢复入口，但协议调用仍可绕过 UI 写用户配置。
+    // 功能开关关闭时在写盘前失败，确保用户配置与插件缓存都保持零痕迹。
     throw new Error("computer-use built-in plugin requires ZCODE_CUA_PRODUCT_HELPER to be enabled");
   }
   const { configResult } = resolvePluginContext(options);
   await removeSuppressedBuiltinInFileConfig(configResult.sources.user.path, options.pluginId);
-  // Reread the latest config from disk (after the patch) to ensure the suppression set no longer
-  // contains the restored ID; do not reuse the configResult that may have been passed before patching.
+  // 重读磁盘上的最新 config（patch 后），确保抑制集合不再包含刚恢复的 id；
+  // 不能复用 patch 前可能被传入的 configResult。
   const fresh = resolvePluginContext({ ...options, configResult: undefined });
-  // Reseed immediately so the plugin is available without waiting for the next resolve.
+  // 立即重新 seed，让插件即刻可用，无需等待下一次 resolve。
   resolveOfficialPluginRoots({
     storageRoot: fresh.pluginStorageRoot,
     suppressedBuiltins: new Set(fresh.configResult.config.plugins.suppressedBuiltins),
@@ -960,15 +946,15 @@ export async function configureZCodePlugin(options: ConfigureZCodePluginOptions)
   );
 }
 
-/** Remove Plugin config keys for the given scope so Workspace scope falls back to User. */
+/** 删除指定 scope 的 Plugin 配置键，使 Workspace scope 回退到 User。 */
 export async function resetZCodePluginConfig(
   options: ResetZCodePluginConfigOptions,
 ): Promise<{ path: string; pluginId: string }> {
   const { configResult, workingDirectory } = resolvePluginContext(options);
   const path = resolvePluginConfigPath(options, configResult, workingDirectory);
   if (options.scope === "workspace") {
-    // "Restore inheritance" removes only the Workspace enable override. Options are an independent
-    // config dimension; restoring inherited enable state must not also erase Workspace options/secrets.
+    // “恢复继承”只删除 Workspace 的 enable override。options 是独立配置维度，
+    // 不能因为用户恢复开关继承而把 Workspace options/secret 一并抹掉。
     await removePluginEnabledFromFileConfig(path, options.pluginId);
   } else {
     await removePluginFromFileConfig(path, options.pluginId);
@@ -1080,8 +1066,8 @@ function resolveDeclaredMarketplaceSource(
   source: ConfigResult["config"]["plugins"]["extraKnownMarketplaces"][string]["source"],
   baseDirectory: string,
 ): MarketplaceSource {
-  // Resolve User Marketplace relative paths from the User config directory. Reading config does
-  // not touch the source; only explicit refresh/install reads, copies, or accesses the network.
+  // User Marketplace 的相对路径按 User config 所在目录解析；配置读取不触碰 source，
+  // 只有显式 refresh/install 才会真正读取、复制或联网。
   if (source.source === "file" || source.source === "directory") {
     return {
       ...source,
@@ -1104,9 +1090,8 @@ function resolveEffectiveMarketplaceRecords(input: {
     if (isDeepStrictEqual(record.source, declarationSource)) {
       return { record, useCachedManifest: true };
     }
-    // The official marketplace ID is reserved by the Host. A Workspace declaration with the same
-    // ID but a different source may produce diagnostics only; it must not replace the official
-    // cache projection with an empty catalog showing pluginCount=0.
+    // 官方 marketplace id 是 Host 保留身份。Workspace 声明同 id 异 source
+    // 只能产生诊断，不能把官方缓存投影替换成 pluginCount=0 的空目录。
     if (isOfficialMarketplaceId(record.id)) {
       return { record, useCachedManifest: true };
     }
@@ -1267,12 +1252,13 @@ function inferComponentTypes(raw: Record<string, unknown>): string[] {
   if ("hooks" in raw) types.push("hook");
   if ("mcpServers" in raw) types.push("mcp");
   if ("lspServers" in raw) types.push("lsp");
+  if (Array.isArray(raw.componentTypes) && raw.componentTypes.includes("ui")) types.push("ui");
   return types;
 }
 
 function inferComponentTypesFromMetadata(plugin: PluginMetadata): string[] {
   const types: string[] = [];
-  // Agents are enumerated from a conventional directory and may not appear in the manifest; checking only the manifest would omit installed subagent capabilities.
+  // agent 由约定目录枚举，不一定出现在 manifest；只看 manifest 会让已安装列表漏报子代理能力。
   if (plugin.components.some((group) => group.kind === "agent" && group.items.length > 0)) {
     types.push("agent");
   }
@@ -1283,6 +1269,7 @@ function inferComponentTypesFromMetadata(plugin: PluginMetadata): string[] {
   }
   if (plugin.lspServerNames.length > 0) types.push("lsp");
   if (plugin.hookDetails.length > 0) types.push("hook");
+  if (plugin.uiSurfaces?.length) types.push("ui");
   return types;
 }
 
@@ -1319,10 +1306,9 @@ function resolvePluginConfigPath(
     return configResult.sources.user.path;
   }
 
-  // Workspace Plugin config always lives at the current `<workspace>/.zcode/config.json`. Nested
-  // workspaces may discover both the repository-root config and their own; reads prefer the
-  // innermost, and writes must target the current workspace rather than the first outermost file
-  // found by project discovery.
+  // Workspace Plugin 配置固定落在当前 `<workspace>/.zcode/config.json`。嵌套 workspace
+  // 可能同时发现仓库根与自身的配置，读取端 innermost 优先；写入端也必须锁定当前
+  // workspace，不能用 project discovery 的第一个 outermost 文件。
   const workspaceConfigPath = join(workingDirectory, ".zcode", "config.json");
   const projectConfigPaths = [
     ...(options.projectConfigPath ? [options.projectConfigPath] : []),
@@ -1364,9 +1350,8 @@ export function resolveMarketplaceRefreshTargetIds(input: {
   marketplace?: string;
 }): string[] {
   if (input.marketplace) return [input.marketplace];
-  // refresh-all updates only already-materialized Host known records. Project declarations must
-  // be materialized explicitly one by one, preventing a bulk refresh from writing arbitrary
-  // Workspace declarations into global Marketplace state.
+  // refresh-all 只刷新已经物化的 Host known records；项目声明必须逐个显式物化，
+  // 避免一次全量刷新把任意 Workspace 声明写进全局 marketplace 状态。
   return [...new Set(input.knownIds)];
 }
 

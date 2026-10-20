@@ -2,6 +2,7 @@ import { beginLocalTurnPreparation, type LocalTtftDetail } from "@zcode/contract
 import { runtimeInputMetadata } from "../../agent/runtime-input-presentation.js";
 import { withConversationQuotes } from "../helpers/conversation-quotes.js";
 import { ensureGroupTaskPermissionScope } from "./input-intent-persistence.js";
+import { prepareOffPeakTurn } from "../off-peak/runtime.js";
 import {
   CoreErrorType,
   HookEventName,
@@ -9,9 +10,9 @@ import {
   createChildTraceContext,
   createQueryId,
   createModelUsageSummaryFromEvents,
+  latestProviderRateLimitReadingFromEvents,
   createMessageId,
   createTurnId,
-  latestProviderRateLimitReadingFromEvents,
   runWithContextAsync,
   traceContextToLogContext,
   TurnMachineImpl,
@@ -21,6 +22,8 @@ import type {
   HookRunResult,
   MessageId,
   MessagePart,
+  Model,
+  ModelSelection,
   QueryId,
   SessionEvent,
   SessionGoal,
@@ -72,13 +75,22 @@ import { scheduleProjectMemoryExtraction } from "../helpers/project-memory-extra
 import { appendBrowserTurnScreenshot } from "./browser-turn-screenshot.js";
 import { clearBrowserTurnState } from "../../repl/browser-turn-state.js";
 import {
+  acceptSubmissionModelSelection,
+  captureHighspeedFallbackSelection,
   applySubmissionExecutionState,
   createTurnModel,
   resolveExecutionModelRetryBudget,
 } from "./turn-model.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
+import {
+  matchExecutionSelectionCreationFallback,
+  resolveExecutionFallbackCandidates,
+} from "./turn-execution-fallback.js";
 
 const TARGET_RUN_HEARTBEAT_MS = 15_000;
+const MODEL_CREATION_FAILED_MESSAGE = "Model creation failed";
+const MODEL_CREATION_TURN_PHASE = "model_creation";
+const TURN_EXECUTION_FAILED_MESSAGE = "Turn execution failed";
 
 export async function executeTurn(
   this: AgentRuntimeInternal,
@@ -86,8 +98,25 @@ export async function executeTurn(
   attachments?: TurnState["attachments"],
   options?: ExecuteTurnOptions,
 ): Promise<TurnResult> {
+  if (options?.modelExecution) {
+    options = {
+      ...options,
+      modelExecution: captureHighspeedFallbackSelection(this, options.modelExecution),
+    };
+  }
   return await enqueueCancellableRuntimeCommand<TurnResult, PromptRuntimeCommand>(this, {
     abortSignal: options?.abortSignal,
+    onCommandAccepted: () => {
+      // 原始 executeTurn 与协议 admission 共用接纳语义；Loop 开始后不再倒写旧选择。
+      void acceptSubmissionModelSelection(
+        this,
+        options?.intent,
+        options?.traceContext ?? this.rootTraceContext,
+        options?.modelExecution,
+      ).catch((error) => {
+        this.logger?.warn("Accepted model selection projection failed", { error: String(error) });
+      });
+    },
     createCommand: ({ reject, resolve }) => ({
       attachments,
       createdAt: new Date(),
@@ -110,10 +139,24 @@ export async function executeTurnCommand(
   options?: ExecuteTurnOptions,
   startReservation?: ActiveTurnStartReservation,
 ): Promise<TurnResult> {
-  // Ordinary Turns previously read Session Selection/output style only after asynchronous initialization completed.
-  // A model switch during initialization could cross the admission boundary and incorrectly affect a Turn that had already started.
-  // Freeze the facts for this turn before any await; later configuration changes apply only to the next turn.
-  const admittedModelSelection = options?.intent?.modelSelection ?? this.getSessionModelSelection();
+  // 普通 Turn 过去在异步初始化完成后才读取 Session Selection/输出样式，
+  // 初始化期间发生的切模会越过 admission 边界，错误影响已经开始的 Turn。
+  // 这里在任何 await 之前冻结本轮事实；后续配置变化只作用于下一轮。
+  const offPeakTurn = prepareOffPeakTurn(this, options);
+  options = offPeakTurn.options;
+  const admittedModelSelection =
+    options?.intent?.modelSelection ??
+    (options && "executionSelection" in options
+      ? options.executionSelection
+      : this.getSessionModelSelection());
+  // 加速轮期间新输入可以更新 Session 续跑选择；卡过期必须回到本轮启动时的普通模型。
+  const highspeedFallbackSelection = options?.modelExecution?.selectionFallback
+    ? structuredClone(
+        "highspeedFallbackSelection" in options.modelExecution
+          ? options.modelExecution.highspeedFallbackSelection
+          : this.getSessionModelSelection(),
+      )
+    : undefined;
   const admittedOutputStyle = this.config.outputStyle;
   const compactInstructions = parseCompactCommand(input);
   const dreamCommand = parseDreamCommand(input);
@@ -147,8 +190,8 @@ export async function executeTurnCommand(
   let userMessageId: MessageId | undefined;
   let loopState: RegularTurnLoopState | undefined;
   let shouldRetryTitleGenerationAfterTurn = false;
-  // A likely cause of "worked for N seconds" with no terminal state in production is an await rejecting
-  // before the inner Turn try/catch. Record the current phase and whether the inner handler processed it, so production logs can identify the stuck point.
+  // 线上“已工作 N 秒”但没有终态的根因候选是：内层 Turn try/catch 之前的 await
+  // 拒绝直接穿出。记录当前阶段并区分是否已被内层处理，便于生产日志还原卡点。
   let turnPhase = "queued";
   let turnFailureHandled = false;
   let finishPreparation: () => void = () => {};
@@ -199,14 +242,27 @@ export async function executeTurnCommand(
       const executionStartedAt = performance.timeOrigin + performance.now();
       beginLocalTurnPreparation(turnTraceContext, "execution")();
       throwIfTurnAborted(turnAbortSignal);
-      let admittedModel;
+      let admittedModel: Model | undefined;
+      let effectiveExecutionSelection = admittedModelSelection;
+      let effectiveRequestDependencies = options?.modelExecution?.requestDependencies;
+      let creationFallback:
+        | {
+            reason: "highspeed_selection_unavailable";
+            fromModelSelection: ModelSelection;
+            toModelSelection: ModelSelection;
+          }
+        | undefined;
+      // 普通轮创建模型失败后仍要保留已接纳输入；这里只记下原始错误，由主生命周期落库并收尾。
+      let creationFailure: { error: unknown } | undefined;
+      // 创建期退回声明命中但所有候选都无法创建：TurnError 归因要带上该事实，Renderer 才能作废匹配卡。
+      let creationFallbackUnavailable = false;
       try {
         admittedModel =
           rewindCommand === null
             ? createTurnModel(this, {
                 requestDependencies: options?.modelExecution?.requestDependencies,
                 selection: admittedModelSelection,
-                // Execution handles with a fallback declaration allow zero retries; pass failures immediately to the turn step to fall back to the session model.
+                // 带退回声明的执行句柄 0 次重试：失败立刻交给 turn step 退回会话模型。
                 retryBudget: resolveExecutionModelRetryBudget({
                   selection: admittedModelSelection,
                   selectionFallback: options?.modelExecution?.selectionFallback,
@@ -214,47 +270,149 @@ export async function executeTurnCommand(
               })
             : undefined;
       } catch (error) {
-        // Sync lag/model invalidation can fail before the inner Turn try begins. Logging alone would leave accepted input
-        // without a terminal state, hiding the error from desktop and mobile. Reuse outcome; do not wait for sync or change the original selection.
-        turnFailureHandled = true;
-        const coreError = createTurnFailureError(error, turnAbortSignal, "Model creation failed");
-        await appendTurnOutcomeEvent(this, {
-          coreError,
-          events,
-          durationMs: Date.now() - turnStartedAtMs,
-          turnPhase: "model_creation",
-          inputId: options?.inputId,
-          traceContext: turnTraceContext,
-          fallbackMessage: "Model creation failed",
-          logEvent: "turn.failed",
-          logLabel: "Turn",
+        let reportedCreationError = error;
+        const creationFallbackMatch = matchExecutionSelectionCreationFallback({
+          error,
+          selection: admittedModelSelection,
+          selectionFallback: options?.modelExecution?.selectionFallback,
+          selectionScope: options?.modelExecution?.selectionScope,
         });
-        throw coreError;
+        const selectionFallback = options?.modelExecution?.selectionFallback;
+        if (creationFallbackMatch && admittedModelSelection && selectionFallback) {
+          const skippedCandidates: Array<{
+            source: string;
+            providerId: string;
+            modelId: string;
+            error: string;
+          }> = [];
+          const candidates = resolveExecutionFallbackCandidates({
+            declaredTarget: selectionFallback.target,
+            executionProviderId: admittedModelSelection.providerId,
+            sessionSelection: highspeedFallbackSelection,
+          });
+          for (const candidate of candidates) {
+            try {
+              admittedModel = createTurnModel(this, { selection: candidate.selection });
+              effectiveExecutionSelection = candidate.selection;
+              effectiveRequestDependencies = undefined;
+              creationFallback = {
+                reason: creationFallbackMatch.reason,
+                fromModelSelection: admittedModelSelection,
+                toModelSelection: candidate.selection,
+              };
+              this.logger?.warn(
+                "Execution model selection was unavailable; falling back before the request",
+                {
+                  ...traceContextToLogContext(turnTraceContext),
+                  event: "model.execution_selection.creation_fallback",
+                  module: "core.runtime",
+                  status: "completed",
+                  reason: creationFallbackMatch.reason,
+                  fromProviderId: admittedModelSelection.providerId,
+                  fromModelId: admittedModelSelection.modelId,
+                  toProviderId: candidate.selection.providerId,
+                  toModelId: candidate.selection.modelId,
+                  toSource: candidate.source,
+                  ...(skippedCandidates.length > 0 ? { skippedCandidates } : {}),
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                },
+              );
+              break;
+            } catch (fallbackError) {
+              // Highspeed 已确认不可用后，若普通模型也无法创建，用户应看到可操作的普通模型错误，
+              // 不能继续暴露隐藏执行 Provider 的 Registry 错误。
+              reportedCreationError = fallbackError;
+              skippedCandidates.push({
+                source: candidate.source,
+                providerId: candidate.selection.providerId,
+                modelId: candidate.selection.modelId,
+                error:
+                  fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+              });
+            }
+          }
+          if (!creationFallback) {
+            creationFallbackUnavailable = true;
+            this.logger?.warn(
+              "Execution model selection was unavailable and no fallback model could be created",
+              {
+                ...traceContextToLogContext(turnTraceContext),
+                event: "model.execution_selection.creation_fallback_unavailable",
+                module: "core.runtime",
+                status: "failed",
+                reason: creationFallbackMatch.reason,
+                fromProviderId: admittedModelSelection.providerId,
+                fromModelId: admittedModelSelection.modelId,
+                skippedCandidates,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              },
+            );
+          }
+        }
+        // Bug 根因：Provider/Model 在 Registry 中短暂缺失时，旧逻辑在请求前直接结束 Turn，
+        // 请求期 selectionFallback 永远没有机会运行。成功创建声明目标后继续既有 Turn 主链。
+        if (!admittedModel) {
+          if (compactInstructions === null) {
+            // Bug 根因：edit/retry 的 branch cut 已提交后，Registry 仍可能在 Core 创建模型前变化；
+            // 已接纳输入必须提升为 TurnStarted + 持久消息，否则只剩历史截断，重启也无法恢复文本。
+            // CR-01：上一版复制了一份落库流程并在主 try 外执行，附件、取消或存储失败会直接穿出，
+            // TurnStarted 之后没有终态，原始创建错误也被覆盖。这里只记下错误，落库与终态交给主链。
+            creationFailure = { error: reportedCreationError };
+          } else {
+            // /compact 不产生用户消息，创建失败直接写终态。
+            turnFailureHandled = true;
+            const coreError = createTurnFailureError(
+              reportedCreationError,
+              turnAbortSignal,
+              MODEL_CREATION_FAILED_MESSAGE,
+            );
+            await appendTurnOutcomeEvent(this, {
+              coreError,
+              events,
+              durationMs: Date.now() - turnStartedAtMs,
+              turnPhase: MODEL_CREATION_TURN_PHASE,
+              inputId: options?.inputId,
+              // 卡身份仍以接纳时冻结的 intent 为准，不能依赖分页窗口中的 userInput 反查。
+              highspeedCardId: options?.intent?.highspeed?.cardId,
+              highspeedFallbackUnavailable: creationFallbackUnavailable,
+              traceContext: turnTraceContext,
+              fallbackMessage: MODEL_CREATION_FAILED_MESSAGE,
+              logEvent: "turn.failed",
+              logLabel: "Turn",
+            });
+            throw coreError;
+          }
+        }
       }
-      let phaseStartedAt = startTurnPhase("context_initialization");
-      if (this.contextInitialized) {
-        // Re-project Context for each later model step using the Model actually held by that step.
-        // Session Selection determines which Model to create in the future; it is not evidence of what is executing now.
-        rebuildContextPrefix(this, { model: admittedModel });
-      } else {
-        // First-turn initialization has already built and installed the full Context with the admitted Model; rebuilding afterward
-        // would construct the same Prefix twice. The initialized and uninitialized branches are mutually exclusive, so each model step builds it once.
-        await this.ensureContextInitialized(turnTraceContext, admittedModel);
+      let phaseStartedAt: number;
+      // Bug 根因：创建错误确定后仍执行 Context/SessionStart，会在 TurnStarted 前被二次 I/O 错误覆盖，
+      // 并提前消费一次性 SessionStart。失败轮跳过它们，只复用后续输入持久化与终态主链。
+      if (!creationFailure) {
+        phaseStartedAt = startTurnPhase("context_initialization");
+        if (this.contextInitialized) {
+          // 每个后续 model step 都按该步骤实际持有的 Model 重新投影 Context；
+          // Session Selection 只决定未来创建哪个 Model，不能充当执行事实。
+          rebuildContextPrefix(this, { model: admittedModel });
+        } else {
+          // 首轮初始化已经用 admitted Model 构造并安装完整 Context，随后再 rebuild
+          // 会把同一 Prefix 连续构造两次。未初始化与已初始化分支互斥，每个 model step 只构造一次。
+          await this.ensureContextInitialized(turnTraceContext, admittedModel);
+        }
+        completeTurnPhase("context_initialization", phaseStartedAt);
+        throwIfTurnAborted(turnAbortSignal);
+        phaseStartedAt = startTurnPhase("session_start_hooks");
+        const sessionStartHookResult = await this.runSessionStartHooks(
+          "startup",
+          turnTraceContext,
+          turnAbortSignal,
+          admittedModel,
+        );
+        completeTurnPhase("session_start_hooks", phaseStartedAt);
+        this.injectHookAdditionalContextIntoMessageHistory(
+          HookEventName.SessionStart,
+          sessionStartHookResult.additionalContexts,
+        );
       }
-      completeTurnPhase("context_initialization", phaseStartedAt);
-      throwIfTurnAborted(turnAbortSignal);
-      phaseStartedAt = startTurnPhase("session_start_hooks");
-      const sessionStartHookResult = await this.runSessionStartHooks(
-        "startup",
-        turnTraceContext,
-        turnAbortSignal,
-        admittedModel,
-      );
-      completeTurnPhase("session_start_hooks", phaseStartedAt);
-      this.injectHookAdditionalContextIntoMessageHistory(
-        HookEventName.SessionStart,
-        sessionStartHookResult.additionalContexts,
-      );
 
       if (compactInstructions !== null) {
         const compactModel = await applySubmissionExecutionState(
@@ -297,9 +455,16 @@ export async function executeTurnCommand(
           options?.inputId,
         );
       }
-      activeTurn = this.beginActiveTurn(turnId, turnTraceContext, "regular", true, {
-        ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
-      });
+      // 创建失败轮不会进入 model step，guide 无法被消费；不可 steer 时调用方会改走队列。
+      activeTurn = this.beginActiveTurn(
+        turnId,
+        turnTraceContext,
+        "regular",
+        creationFailure === undefined,
+        {
+          ...(options?.inputId === undefined ? {} : { inputId: options.inputId }),
+        },
+      );
       this.logger?.info("Turn started", {
         ...traceContextToLogContext(turnTraceContext),
         event: "turn.started",
@@ -312,16 +477,22 @@ export async function executeTurnCommand(
       phaseStartedAt = startTurnPhase("session_persistence");
       await this.ensureSessionPersisted(displayInput, turnTraceContext);
       await ensureGroupTaskPermissionScope(this.sessionStore, this.sessionId, options?.intent);
-      // An execution-scoped temporary Provider (such as an off-peak task) owns its own model for this turn and does not change
-      // Session Selection. Ordinary submissions apply their atomic selection only when execution actually starts.
-      const submissionModel = await applySubmissionExecutionState(
-        this,
-        options?.intent,
-        turnTraceContext,
-        options?.modelExecution,
-        admittedModel,
-      );
-      startedTarget = await this.readSessionTargetForContext(turnTraceContext);
+      // execution-scoped 临时 Provider（例如闲时任务）拥有本轮自己的模型，不改写
+      // Session Selection；普通 Submission 才在真正开跑时应用其原子选择。
+      // 创建失败轮不再应用：重复建模会在主 try 之外再次抛错；也不改写选择、mode、plan，
+      // 不占用目标轮次。
+      const submissionModel = creationFailure
+        ? undefined
+        : await applySubmissionExecutionState(
+            this,
+            options?.intent,
+            turnTraceContext,
+            options?.modelExecution,
+            admittedModel,
+          );
+      startedTarget = creationFailure
+        ? null
+        : await this.readSessionTargetForContext(turnTraceContext);
       completeTurnPhase("target_read", phaseStartedAt);
       if (startedTarget?.status !== "active") {
         startedTarget = null;
@@ -330,9 +501,9 @@ export async function executeTurnCommand(
         options?.skipInputRecord === true
           ? (options.recordedInputMessageId ?? createMessageId())
           : createMessageId();
-      // Send attachment display metadata with TurnStarted (v4 projection → userInput row.attachments).
-      // A workspace checkpoint is attached to the user messageId. Generate the id before TurnStarted so the v4 projection
-      // can find this turn's file checkpoint through the turn rowId, avoiding a summary with a count but no expanded contents.
+      // 附件展示元信息随 TurnStarted 下发（v4 投影 → userInput row.attachments）。
+      // workspace checkpoint 挂在 user messageId 上；先生成 id 再发 TurnStarted，
+      // v4 投影才能用 turn rowId 找回该轮文件 checkpoint，避免摘要有计数但展开查空。
       const attachmentMetas = summarizeTurnAttachmentsForEvent(attachments);
       const turnStartedEvent = this.createEvent(
         SessionEventType.TurnStarted,
@@ -455,7 +626,7 @@ export async function executeTurnCommand(
           userPromptHookResult.additionalContexts,
         );
         injectReferencedSessionContextReminderIntoMessageHistory.call(this, input, options);
-        // Read the original topic text on demand from the standard text attachment; trusted source archives must not generate hidden context again.
+        // 话题原文由标准文本附件按需读取，可信来源归档不能再次生成隐藏上下文。
         injectDateChangeReminderIntoMessageHistory.call(this);
         const resolvedAttachments = await resolveTurnAttachments(attachments, {
           abortSignal: turnAbortSignal,
@@ -516,9 +687,9 @@ export async function executeTurnCommand(
             runtimeInputMetadata(options.inputPresentation) ??
               runtimeMetadataForSyntheticUserMessageSource(inputSource),
           );
-          // /goal automatic continuation is an internal user-role input injected by the runtime for the model,
-          // not a new message sent by the user in chat. Preserve the raw input when persisting for recovery/diagnostics,
-          // but mark it model-only so UI-facing snapshots do not render it as a user bubble.
+          // /goal 自动续跑是 runtime 注入给模型的内部 user-role 输入，
+          // 不是用户在聊天里新发的一条消息。持久化时保留 raw 输入供恢复/排查使用，
+          // 但用 model-only 语义阻止 UI-facing snapshot 把它渲染成用户气泡。
           await this.persistSyntheticUserNoticeForSession({
             messageID: userMessageId,
             metadata: {
@@ -551,9 +722,9 @@ export async function executeTurnCommand(
               return entry.kind !== "attachment" && metadata ? { ...entry, metadata } : entry;
             }),
           );
-          // /init and custom slash commands expand model input into a longer internal prompt.
-          // Model-visible history must use the expanded input, while the UI, session title, and recovery snapshot
-          // must show only the original query submitted by the user.
+          // /init 和自定义 slash command 会把模型输入展开成较长的内部
+          // prompt。模型可见的历史必须使用展开后的 input，但 UI 展示、会话标题和
+          // 恢复快照只能展示用户真实提交的原始 query。
           await this.persistUserPrompt(
             userMessageId,
             displayInput,
@@ -570,16 +741,36 @@ export async function executeTurnCommand(
             },
           );
         }
-        // Configuration was previously read before displaying/persisting input, so a read failure made a sent message disappear from the UI.
-        // Freeze this turn's definition after recording the input; reuse this layer's cleanup for errors/cancellation and do not start title generation or a model request.
+        if (creationFailure) {
+          // 已接纳输入已随 TurnStarted 和用户消息落库；不准备 Agent、不生成标题、不请求模型，
+          // 终态由下方 catch 统一写入。
+          throw creationFailure.error;
+        }
+        if (creationFallback) {
+          // TurnStarted 与用户消息已先落库，continuous/replayable 投影都能把退回事实关联到同一输入行。
+          const fallbackEvent = this.createEvent(
+            SessionEventType.TurnExecutionModelFallback,
+            {
+              ...(options?.inputId ? { inputId: options.inputId } : {}),
+              reason: creationFallback.reason,
+              fromModelSelection: creationFallback.fromModelSelection,
+              toModelSelection: creationFallback.toModelSelection,
+            },
+            turnTraceContext,
+          );
+          await this.appendEvent(fallbackEvent, turnTraceContext);
+          events.push(fallbackEvent);
+        }
+        // 配置读取曾早于输入展示/持久化，失败会让已发送消息从界面消失。
+        // 在原有输入记录后固定本轮定义，错误/取消复用本层收尾，且不启动标题或模型请求。
         await this.prepareAgentDefinitions({
           signal: turnAbortSignal,
           traceContext: turnTraceContext,
         });
         throwIfTurnAborted(turnAbortSignal);
         if (options?.skipInputRecord !== true && options?.inputVisibility !== "model-only") {
-          // Reason for the fix: title generation used to wait for the main turn to succeed, so if the user stopped/cancelled the first request
-          // the generated title was never started. Generate it asynchronously after persisting the first query so cancellation of the main path cannot block it.
+          // 修复原因：标题生成以前等主 turn 成功后才启动，用户 stop/cancel 首轮请求时
+          // generated title 永远没有机会发起。首条 query 持久化后即可异步生成，避免被主链路取消拖死。
           const titleGenerationStarted = maybeStartSessionTitleGeneration.call(
             this,
             displayInput,
@@ -587,15 +778,16 @@ export async function executeTurnCommand(
             turnTraceContext,
             {
               deferIfProviderRuntimeHeadersRefresh: true,
+              offPeakExecutionId: options?.offPeakExecutionId,
             },
           );
           shouldRetryTitleGenerationAfterTurn = !titleGenerationStarted;
         }
-        // Append the Plugin reminder only after its corresponding user message is written to history and the session store.
-        // This keeps provider order stable as user → system, and cold hydration restores the same causal order.
-        // The input may already have been expanded by a custom command; parsing it would incorrectly treat plugin://
-        // inside the command template as a user reference. Parse only the canonical displayInput actually persisted.
-        // A runtime-internal model-only continuation is not new user intent, so do not parse it again.
+        // Plugin reminder 必须在对应 user 消息写入历史和 session store 后再追加：
+        // provider 形态因此稳定为 user → system，cold hydration 也按同一因果顺序恢复。
+        // 根因：input 可能已经被自定义命令展开，解析它会让命令模板里的 plugin://
+        // 凭空获得“用户引用”语义；这里只解析真实持久化的 canonical displayInput。
+        // runtime 内部的 model-only continuation 不代表新的用户意图，不重复解析。
         if (options?.inputVisibility !== "model-only") {
           await this.injectPluginReferenceReminderFromTurn(
             displayInput,
@@ -621,8 +813,11 @@ export async function executeTurnCommand(
         loopState = {
           activeTurn,
           ...(options?.automationId ? { automationId: options.automationId } : {}),
-          // Put the off-peak dispatch turn identity in loop state so tool execution boundaries can deny OffPeakCreate.
+          // 闲时派发轮的身份进入 loop state，供工具执行边界 deny OffPeakCreate。
           ...(options?.offPeakTaskId ? { offPeakTaskId: options.offPeakTaskId } : {}),
+          ...(options?.offPeakExecutionId
+            ? { offPeakExecutionId: options.offPeakExecutionId }
+            : {}),
           anomalyWarningsInjected: 0,
           backgroundSubagentResultConsumed: options?.backgroundSubagentResultConsumed === true,
           workflowResultConsumed: options?.workflowResultConsumed === true,
@@ -636,15 +831,18 @@ export async function executeTurnCommand(
           ...(options?.modelExecution?.selectionScope === "execution"
             ? { modelSelectionScope: "execution" as const }
             : {}),
-          // If the accelerated card expires during tool execution, do not fail the whole turn; fall back to Session Selection and finish it.
-          ...(options?.modelExecution?.selectionFallback
-            ? { selectionFallback: options.modelExecution.selectionFallback }
+          // 加速卡回退仅使用启动时快照，不随随后接纳的用户选择变化。
+          ...(!creationFallback && options?.modelExecution?.selectionFallback
+            ? {
+                selectionFallback: options.modelExecution.selectionFallback,
+                highspeedFallbackSelection,
+              }
             : {}),
-          ...(options?.modelExecution?.subagents && options.intent?.modelSelection
+          ...(options?.modelExecution?.subagents && effectiveExecutionSelection
             ? {
                 subagentModelOverride: {
-                  selection: options.intent.modelSelection,
-                  requestDependencies: options.modelExecution.requestDependencies,
+                  selection: effectiveExecutionSelection,
+                  requestDependencies: effectiveRequestDependencies,
                   background: options.modelExecution.subagents.background,
                 },
               }
@@ -659,8 +857,8 @@ export async function executeTurnCommand(
           tokenCount: 0,
           toolCallCount: 0,
           turnRequestState: {
-            // The Turn borrows the canonical member set once and advances it only through an explicit commit; the entry itself
-            // follows MessageHistory's immutability contract.
+            // Turn 只借一次 canonical 成员集合，之后由显式 commit 推进；entry 本身
+            // 遵循 MessageHistory 的不可变约定。
             entries: [...this.messageHistory.borrowReadOnlyRuntimeEntries()],
             outputTokenContinuationCount: 0,
           },
@@ -686,18 +884,8 @@ export async function executeTurnCommand(
         turnMachine = loopState.turnMachine;
 
         const turnUsage = createModelUsageSummaryFromEvents(events);
-        // ChatGPT plan (SIWC) usage windows ride the completion usage so the host can record the
-        // latest per-account snapshot without extra network calls; absent for every other provider.
-        const providerRateLimitReading = latestProviderRateLimitReadingFromEvents(events);
-        const turnUsagePayload = providerRateLimitReading
-          ? {
-              ...(turnUsage ?? {}),
-              providerRateLimits: providerRateLimitReading.usage,
-              providerRateLimitProviderId: providerRateLimitReading.providerId,
-            }
-          : turnUsage;
-        // Settle goal usage/active-run first, then persist the exact goal/verifier boundary. TurnComplete may expose the final
-        // assistant fork in the projection/UI only after both have been persisted.
+        // goal usage/active-run 先结算，再固定 exact goal/verifier boundary；只有两者都
+        // 已持久化，TurnComplete 才能让 projection/UI 开放最终 assistant fork。
         await this.accountTargetTurnCompletion({
           inputID: targetRunInputID,
           startedAtMs: turnStartedAtMs,
@@ -720,6 +908,16 @@ export async function executeTurnCommand(
             loopState.stableBoundaryAssistantMessageId,
           );
         }
+        // ChatGPT plan (SIWC) usage windows ride the completion usage so the host can record the
+        // latest per-account snapshot without extra network calls; absent for every other provider.
+        const providerRateLimitReading = latestProviderRateLimitReadingFromEvents(events);
+        const turnUsagePayload = providerRateLimitReading
+          ? {
+              ...(turnUsage ?? {}),
+              providerRateLimits: providerRateLimitReading.usage,
+              providerRateLimitProviderId: providerRateLimitReading.providerId,
+            }
+          : turnUsage;
         const completeEvent = this.createEvent(
           SessionEventType.TurnComplete,
           {
@@ -751,13 +949,14 @@ export async function executeTurnCommand(
           userMessageId,
         });
         if (shouldRetryTitleGenerationAfterTurn && userMessageId) {
-          // For models that refresh provider runtime headers before a request, generating the title before the main turn
-          // would consume the authentication-refresh window first and cause the actual user message to fail.
+          // 需要请求前刷新 provider runtime headers 的模型
+          // 若在主 turn 前生成标题，会先占用鉴权刷新窗口，导致真正的用户消息失败。
           maybeStartDeferredSessionTitleGeneration.call(
             this,
             displayInput,
             userMessageId,
             turnTraceContext,
+            options?.offPeakExecutionId,
           );
         }
         this.turnNumber++;
@@ -771,7 +970,7 @@ export async function executeTurnCommand(
           status: "completed",
           toolCallCount: loopState.toolCallCount,
         });
-        // The per-turn execution strategy suppresses background extraction for this successful Turn only; it does not change Session Memory configuration.
+        // 单轮执行策略只抑制本次成功 Turn 的后台提取，不修改 Session Memory 配置。
         if (options?.modelExecution?.memoryExtraction !== "skip") {
           scheduleProjectMemoryExtraction(this, {
             model: loopState.model,
@@ -790,7 +989,30 @@ export async function executeTurnCommand(
         return result;
       } catch (error) {
         turnFailureHandled = true;
-        const coreError = createTurnFailureError(error, turnAbortSignal, "Turn execution failed");
+        // CR-01：创建失败轮进入主链只为保留已接纳输入。落库中的普通失败不能覆盖模型创建错误，
+        // 只记 warn。用户取消仍收口为 cancelled；宿主 fault 只经 abort signal 传入，
+        // createTurnFailureError 会先于创建错误识别它。
+        const reportedCreationFailure =
+          creationFailure && !isTurnCancellationError(error, turnAbortSignal)
+            ? creationFailure
+            : undefined;
+        if (reportedCreationFailure && error !== reportedCreationFailure.error) {
+          this.logger?.warn("Accepted input persistence failed after model creation failed", {
+            ...traceContextToLogContext(turnTraceContext),
+            errorMessage: error instanceof Error ? error.message : String(error),
+            event: "turn.model_creation.input_persistence_failed",
+            module: "core.runtime",
+            status: "failed",
+          });
+        }
+        const fallbackMessage = reportedCreationFailure
+          ? MODEL_CREATION_FAILED_MESSAGE
+          : TURN_EXECUTION_FAILED_MESSAGE;
+        const coreError = createTurnFailureError(
+          reportedCreationFailure ? reportedCreationFailure.error : error,
+          turnAbortSignal,
+          fallbackMessage,
+        );
         const preserveQueueAutoDrainOnCancel =
           coreError.type === CoreErrorType.TurnCancelled &&
           this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
@@ -815,9 +1037,9 @@ export async function executeTurnCommand(
             });
           }
         }
-        // An ordinary TurnError ends only the current turn; it does not revoke already accepted future input.
-        // The V4 TurnError projection pauses the queue on error, so runtime also closes inline drain and
-        // preserves queued input until the user explicitly resumes.
+        // 普通 TurnError 只结束当前 turn，不撤销已经 accepted 的 future input。
+        // V4 TurnError 投影将队列切成 error-paused，runtime 同步关闭行内 drain，
+        // 保留排队输入，等待用户显式继续。
         if (activeTurn && coreError.type !== CoreErrorType.TurnCancelled) {
           const pendingInputs = (await this.rebuildProjection()).pendingSteerInputs;
           if (pendingInputs.length > 0) {
@@ -830,14 +1052,14 @@ export async function executeTurnCommand(
           !preserveQueueAutoDrainOnCancel &&
           activeTurn.pendingInputs.length > 0
         ) {
-          // Keep the runtime authorization bit in sync with the projection: when TurnComplete(cancelled)+queue>0,
-          // the projection sets queue.autoDrain to false (held), so runtime's drain gate must flip too.
-          // Otherwise a new turn started while held would drain later queued items and diverge from projection semantics.
+          // runtime 授权位与投影同步：投影在 TurnComplete(cancelled)+queue>0 时把
+          // queue.autoDrain 置 false（held），runtime 的 drain 门也必须同步翻转，
+          // 否则 held 期间新起的 turn 会把后续入队项 drain 掉，与投影语义分叉。
           this.queueAutoDrain = false;
           this.queueExternalDrainActive = false;
         }
 
-        // A background wake may be cancelled before loopState initializes; preserve the fact that it was already dequeued.
+        // background wake 可能在 loopState 初始化前取消；此时仍要保留已 dequeue 的结果事实。
         const backgroundSubagentResultConsumed =
           options?.backgroundSubagentResultConsumed === true ||
           loopState?.backgroundSubagentResultConsumed === true;
@@ -847,10 +1069,13 @@ export async function executeTurnCommand(
           coreError,
           events,
           durationMs: Date.now() - turnMachine.state.startedAt.getTime(),
-          turnPhase: turnMachine.state.phase,
+          turnPhase: reportedCreationFailure ? MODEL_CREATION_TURN_PHASE : turnMachine.state.phase,
           inputId: options?.inputId,
+          highspeedCardId: options?.intent?.highspeed?.cardId,
+          highspeedFallbackUnavailable:
+            creationFallbackUnavailable || loopState?.highspeedFallbackUnavailable === true,
           traceContext: turnTraceContext,
-          fallbackMessage: "Turn execution failed",
+          fallbackMessage,
           logEvent: "turn.failed",
           logLabel: "Turn",
           preserveQueueAutoDrainOnCancel,
@@ -904,6 +1129,13 @@ export async function executeTurnCommand(
     this.releaseTurnStart(turnId);
     clearBrowserTurnState(this.sessionId, turnId);
     this.finishActiveTurn(activeTurn);
+    offPeakTurn.release(
+      turnAbortSignal.aborted
+        ? "stopped"
+        : events.some((event) => event.type === SessionEventType.TurnError)
+          ? "failed"
+          : "succeeded",
+    );
     turnAbortScope.dispose();
     try {
       await this.browserControlPort?.turnEnded?.({
@@ -912,7 +1144,7 @@ export async function executeTurnCommand(
         traceContext: turnTraceContext,
       });
     } catch (error) {
-      // Lifecycle cleanup failure must not override a main turn that already completed/failed; the backend retries cleanup when the session closes.
+      // 生命周期清理失败不能覆盖已经完成/失败的主 turn；backend 会在 session close 再兜底释放。
       this.logger?.warn("Browser turn cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
         event: "browser.turn_cleanup.failed",

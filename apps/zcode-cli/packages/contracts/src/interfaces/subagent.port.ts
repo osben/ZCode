@@ -23,13 +23,13 @@ export interface SubagentRunRequest {
 
 export interface SubagentRunOptions {
   signal?: AbortSignal;
-  /** Immutable Model inherited from the parent Agent Loop when the child has no explicit model selection. */
+  /** 未显式选模的 child 从父 Agent Loop 继承的不可变 Model。 */
   model?: Model;
-  /** Highest-priority Selection from Core Server for a foreground child; each child still creates its own Model. */
+  /** Core Server 对前台 child 的最高优先级 Selection；每个 child 仍自行创建 Model。 */
   modelOverride?: {
     selection: ModelSelection;
     requestDependencies?: ModelRequestDependencies;
-    background: "deny";
+    background: "deny" | "allow";
   };
 }
 
@@ -41,11 +41,7 @@ export type SubagentLaunchOptions = SubagentRunOptions;
 
 export type SubagentStartRequest = SubagentRunRequest;
 
-export interface SubagentStartOptions {
-  signal?: AbortSignal;
-  /** Regular Model inherited when a background child starts; temporary turn models are still prohibited in the background. */
-  model?: Model;
-}
+export type SubagentStartOptions = SubagentRunOptions;
 
 export interface SubagentWaitOptions {
   signal?: AbortSignal;
@@ -67,9 +63,7 @@ export interface SubagentSendMessageRequest {
   trace: TraceContext;
 }
 
-export interface SubagentSendMessageOptions {
-  signal?: AbortSignal;
-}
+export type SubagentSendMessageOptions = SubagentRunOptions;
 
 export type SubagentSendMessageDelivery = "queued" | "steered" | "resumed_background";
 

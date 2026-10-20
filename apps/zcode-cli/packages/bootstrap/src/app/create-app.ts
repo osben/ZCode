@@ -1,4 +1,5 @@
-import { subagentProfilesFromSnapshot } from "../subagent-runtime-config.js";
+import { subagentProfilesFromSnapshot } from "../runtime-subagents/index.js";
+import { CliDefaultSelection } from "./cli-default-selection.js";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createInMemorySessionEventStore,
@@ -150,8 +151,7 @@ function decodePromptAttachmentDataUrl(
     !mediaType.startsWith("image/") &&
     !mediaType.startsWith("video/") &&
     mediaType !== "application/pdf" &&
-    // Root cause: text materials reuse uploaded artifacts, but the original data URL decoder
-    // accepted only media types, so a legitimate preview was rejected a second time.
+    // 根因：文本材料复用上传 artifact，但原 data URL 解码器仅接受媒体，合法预览被二次拒绝。
     !(
       mediaType === "text/plain" &&
       fallbackMime.split(";", 1)[0]?.trim().toLowerCase() === "text/plain"
@@ -255,7 +255,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         });
     const zcodeSubagentProfileOutcome = hostSubagentSnapshot
       ? subagentProfilesFromSnapshot(hostSubagentSnapshot)
-      : await loadZCodeAgentProfiles({ logger, storageRoot, workingDirectory });
+      : await loadZCodeAgentProfiles({
+          logger,
+          storageRoot,
+          workingDirectory,
+          additionalDirectories: options.additionalDirectories,
+        });
     const zcodeSubagentProfiles = zcodeSubagentProfileOutcome.profiles;
     const pluginOutcome = resolveStartupPlugins({
       cliStorageRoot,
@@ -290,8 +295,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       pluginOutcome,
       workingDirectory,
     });
-    // The user directory was migrated in place before the loader ran; do not add an in-memory
-    // compatibility bypass for legacy project/plugin identities.
+    // 用户目录已在 loader 前完成原地迁移；不能给项目/插件旧身份加内存兼容旁路。
     const subagentProfiles = [...zcodeSubagentProfiles, ...pluginSubagentProfiles];
     const ownsSessionStore = options.sessionStore === undefined;
     const sessionStore =
@@ -309,14 +313,18 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     // Session-level overrides win; otherwise fall back to the persisted files on disk.
     // The loader reads the fixed ~/.zcode/system-prompt location (same rule as the global
     // AGENTS.md), not the redirected storage root, so it stays in sync with the host service.
+    // skipUserConfig also skips operator files (settings.json, prompt overrides), as in createConfig.
     const persistedSystemPromptOverrides =
       options.runtimeConfig?.systemPromptOverrides ||
+      options.skipUserConfig ||
       incognitoExcludes(incognito, "systemPromptOverrides")
         ? undefined
         : await loadPersistedSystemPromptOverrides({ env: options.env ?? process.env, logger });
     // Session-level output style wins; otherwise fall back to the persisted active style on disk.
     const persistedOutputStyle =
-      options.runtimeConfig?.outputStyle || incognitoExcludes(incognito, "outputStyle")
+      options.runtimeConfig?.outputStyle ||
+      options.skipUserConfig ||
+      incognitoExcludes(incognito, "outputStyle")
         ? undefined
         : await loadPersistedOutputStyle({ storageRoot, logger });
     let { configuredMcpServers, runtimeConfig, untrustedProjectMcpServers } =
@@ -369,12 +377,15 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       event: "bootstrap.app.startup.runtime_config.completed",
       stage: "resolve_runtime_config",
     });
-    // Plugin conversation references: freeze the identity catalog once when the App (Session
-    // runtime) is created. Cold restore rebuilds the App and naturally gets the new catalog;
-    // existing Sessions do not hot-load new Plugins.
+    // Plugin 对话引用：身份 catalog 在 App（Session runtime）
+    // 创建时冻结一次。冷恢复会重建 App，天然拿到新 catalog；已有 Session 不热加载新 Plugin。
     const pluginReferenceCatalog = buildPluginReferenceCatalog(pluginOutcome.plugins);
     runtimeConfig.pluginReferenceCatalog = pluginReferenceCatalog;
     let runtime: AgentRuntime | undefined;
+    const cliDefaultSelection =
+      options.modelSelectionMode === "cli-default"
+        ? new CliDefaultSelection(runtimeConfig.modelSelection)
+        : undefined;
     const workspaceHookRuntimeSecurity = createWorkspaceHookRuntimeSecurity({
       appVersion,
       logger,
@@ -384,11 +395,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       reviewHost: options.workspaceHookReviewHost,
       workspaceHookTrustEnabled: options.workspaceHookTrustEnabled,
       runtimeRoot: configResult.sources.project.workspaceHookRuntimeRoot ?? {
-        // The fallback applies only when config-factory is not exported (which should not happen).
-        // Previously this unconditionally rebuilt runtimeRoot from the single runtimeConfig.hooks
-        // layer, unlike config-factory, which walks default/user/project/env/cli layers. This
-        // caused review snapshots and toggle rebuilds to produce different bundleDigest values,
-        // so a "toggle during review" was incorrectly reported as workspace_hooks_snapshot_mismatch.
+        // Fallback 只在 config-factory 未导出时生效（理论上不会发生）。
+        // 此处原本无条件按单层 runtimeConfig.hooks 重建 runtimeRoot，与
+        // config-factory 遍历 default/user/project/env/cli 全部层的推导不一致，
+        // 导致 review 快照与 toggle 重建的 bundleDigest 不同，
+        // 「审核中 toggle」被误报为 workspace_hooks_snapshot_mismatch。
         enabled: runtimeConfig.hooks?.enabled === true,
         timeoutMs: runtimeConfig.hooks?.timeoutMs ?? 60_000,
         maxOutputBytes: runtimeConfig.hooks?.maxOutputBytes ?? 32_768,
@@ -553,12 +564,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       const registry = options.providerRegistry;
       let selection: ResumeSessionResult["modelSelection"];
       try {
-        // Database startup already completed the versioned migration; restore reads only the new
-        // field and does not repeat the migration per session.
+        // 数据库启动已完成版本化迁移；恢复只读新字段，不按会话重复补迁。
         selection = await readSessionModelSelection(sessionStore, sessionId);
       } catch (error) {
-        // A failure to read/parse the selection entry must not break independent history restore.
-        // Preserve the real storage error; do not mask it by reading old messages or a default model.
+        // 选择 entry 的读取/解析故障不能拖垮独立的历史恢复；留下真实存储错误，
+        // 不读取旧消息或默认模型来掩盖失败。
         logger.warn("Session model selection restore failed", {
           error: error instanceof Error ? error.message : String(error),
           event: "session.model_selection.restore_failed",
@@ -567,12 +577,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       }
       const validation = selection && registry.validateSelection(selection);
       if (selection && validation && !validation.ok) {
-        // Observability: a validation failure affects only the runtime binding, not the saved
-        // intent; but once unbound, a later acceleration turn scoped to execution only has no
-        // chance to rebind. This once silently cleared the selection in the ~600ms window where
-        // the Registry was ready but account entitlements were unresolved; it only surfaced when
-        // the expired acceleration card downgraded and found no target to fall back to, while
-        // the logs showed no trace of this step.
+        // 观测：校验失败只影响运行绑定、不影响保存意图；但一旦不绑定，之后若只发送 execution 作用域的
+        // 加速轮就没有机会重新绑定。曾在 Registry 刚就绪、账号权益未解析的 600ms 窗口内静默置空，
+        // 直到加速卡过期降级找不到退回目标才暴露，日志里却看不到这一步。
         logger.warn("Session model selection restored but not bound to the runtime", {
           event: "session.model_selection.restore_unbound",
           modelId: selection.modelId,
@@ -581,13 +588,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           validationCode: validation.code,
         });
       }
-      // Checking only whether a model exists would rebind selections with a missing level or a
-      // deleted model into Runtime, undoing unbound initialization. History restore does not
-      // require an executable model; only a complete selection can be bound.
+      // 只查模型是否存在会把缺档位/已删除的选择重新绑定进 Runtime，
+      // 抵消了未绑定初始化。历史恢复不要求可执行模型，只有完整选择可以绑定。
       getRuntime().setSessionModelSelection(validation?.ok ? selection : undefined);
-      // The restore result is a saved intent, not an executable binding. Clearing it or removing
-      // its level here previously prevented the Host Selection View from retrieving that intent,
-      // so it could not be re-resolved after an account switch or configuration restore.
+      cliDefaultSelection?.set(validation?.ok ? selection : undefined);
+      // 恢复结果是保存意图，不是执行绑定。过去在这里置空/删档位，Host 的
+      // Selection View 就再也拿不到原意图，账号切换和配置恢复后也无法重新解析。
       return selection;
     };
 
@@ -603,9 +609,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         await initializeSessionShellEnvironment();
         const result = await runtime.resumeFromStore({
           ...(resumeOptions?.abortSignal ? { abortSignal: resumeOptions.abortSignal } : {}),
-          // Pass only the caller's original mode. Project/global defaults must not masquerade as
-          // invocation overrides, or interactive resume cannot restore the actually persisted
-          // session mode.
+          // 只传调用方原始 mode；项目/全局默认值不能伪装成 invocation override，
+          // 否则交互式 resume 将无法恢复真正持久化的 session mode。
           modeOverride: options.runtimeConfig?.mode,
           persistedMessages: resumeOptions?.persistedMessages,
           traceContext: resumeTraceContext,
@@ -631,10 +636,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     };
 
     const prepareUserExecutionBoundary: PrepareUserExecutionBoundary = async (boundaryOptions) => {
-      // The Bash shell snapshot belongs to the "first real user execution" boundary, not only
-      // chat input. A regular prompt, expert workflow, or script workflow can each be the first
-      // model/subagent entry point in a new session. Resolve it once before resume/context
-      // initialization so the shell shown to the model does not diverge from the shell Bash runs.
+      // Bash shell 快照属于“首次真实用户执行”边界，而不是 chat
+      // input 独有状态。普通 prompt、expert workflow、script workflow 都可能
+      // 作为新 session 的第一个模型/子 agent 入口，必须统一在 resume/context
+      // 初始化前落定一次，避免模型看到的 Shell 与 Bash 执行 shell 分叉。
       await initializeSessionShellEnvironment();
       await prepareResume(boundaryOptions?.traceContext, boundaryOptions?.abortSignal);
     };
@@ -659,12 +664,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     if (options.modelAdapter && modelTelemetry.statusSink) {
       modelAdapter.addStatusSink(modelTelemetry.statusSink);
     }
-    // Process-level concurrency governor: the run service passes its narrow port to the driver
-    // (one request-admission port per actor runtime); the main runtime attaches its observer
-    // (below in deps). It does not queue or inspect cooldown, but counts in-flight requests and
-    // feeds signals. It is a process singleton because quotas belong to the account, not each
-    // session. Do not feed signals through adapter-level addStatusSink anymore; each event must
-    // flow through the ticket exactly once.
+    // 进程级并发治理器：run service 拿它的窄端口给
+    // driver（每个 actor runtime 一个请求级准入端口）；主 runtime 挂它的 observer（下面 deps）——
+    // 不排队、不看冷却，但计入在飞并喂信号。进程级单例——配额本就在账号上，不按会话分。
+    // 不再经 adapter 级 addStatusSink 喂信号：同一事件只能沿 ticket 喂一次。
     const workflowConcurrencyGovernor = getWorkflowConcurrencyGovernor();
     modelAdapter.setModelIoFullRetentionEnabled(options.modelIoFullRetentionEnabled ?? false);
     providerModelRuntime = new ApiProviderModelRuntime({
@@ -672,10 +675,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       modelAdapter,
     });
     providerModelRuntime.start();
-    // Construct the model factory before assembling the three workflow child paths: the script
-    // workflow bridge, dwf actor runtime, and expert workflow facade all **share** the parent
-    // session's factory. Newly created Models see Registry view updates; children do not each
-    // freeze their own copy.
+    // model factory 提前到三条 workflow child 装配线之前构造：script workflow bridge、dwf actor
+    // runtime 与 expert workflow facade 都**共享**父会话这一份 factory——Registry 视图更新后
+    // 新建的 Model 才看得到，child 不各自冻结一份。
     const modelFactory = providerModelRuntime.modelFactory;
     const scriptWorkflowFacade = createScriptWorkflowBridge({
       agentTelemetry: modelTelemetry.agentExecution,
@@ -702,12 +704,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       workingDirectory,
     });
 
-    // Workflow run service: this is the side that actually starts the engine after the
-    // CreateWorkflow confirmation dialog's Allow action. If journal narrowing fails (the store
-    // lacks dwf_* tables), **do not construct** the service; leave the port undefined so
-    // CreateWorkflow returns to its placeholder diagnostic path. This is a logged, visible
-    // degradation, not a run path that silently loses persistence (see the header of
-    // dynamic-workflow-run-service.ts).
+    // workflow run service：CreateWorkflow 的确认窗 Allow 之后真启动引擎的那一侧。
+    // journal 窄化失败（store 不带 dwf_* 表）时**不构造**服务——端口保持 undefined，
+    // CreateWorkflow 因此回到占位诊断路径。这是一个记了日志的可见降级，而不是一条
+    // 会静默丢掉持久化的运行路径（详见 dynamic-workflow-run-service.ts 的文件头）。
     const dynamicWorkflowJournal = resolveDynamicWorkflowJournalStore(sessionStore, logger);
     const dynamicWorkflowRunPort =
       dynamicWorkflowJournal === undefined
@@ -730,37 +730,29 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               createScriptWorkflowAgentRuntime({
                 childSessionId: actorSessionId,
                 configOverrides: {
-                  // Persona identity (effective name + system) → workflow-subagent path in the
-                  // context builder. Omit the field for anonymous personas or those without a
-                  // system prompt, so the builder omits the named clause and persona section.
+                  // persona 的身份（有效名 + system）→ context builder 的工作流子代理路径。
+                  // 匿名 / 无 system 时字段缺席，builder 据此省略 named 从句与 persona 段。
                   workflowActor: {
                     ...(persona.name === undefined ? {} : { name: persona.name }),
                     ...(persona.system === undefined ? {} : { persona: persona.system }),
                   },
-                  // The actor tool surface is subtractive (all tools minus plan and
-                  // authority-exceeding meta-tools), so it must be expressed through
-                  // configOverrides (request.opts.tools supports only an allowlist).
+                  // actor 的工具面是减法（全集减去 plan 与越权的元工具），只能经 configOverrides
+                  // 表达（request.opts.tools 只有 allowlist）。
                   ...workflowActorToolPolicy(),
-                  // Permission surface: subagents run the launching session's permission mode
-                  // (plan excepted); when nothing was recorded, YOLO applies
-                  // (docs/dynamic-workflow/launch.md "Permissions inside a run").
+                  // 权限面：子代理跑发起会话的权限模式（plan 除外），未记录即 YOLO
+                  // （docs/dynamic-workflow/launch.md「Permissions inside a run」）。
                   ...workflowActorPermissionPolicy(subagentPermissionMode),
-                  // Model selection: `runSubagentModel` is specific to this run (`subagent_model`)
-                  // and overrides the full selection when present, taking precedence over the
-                  // pin; it does not affect the main agent. If neither it nor a pin is present,
-                  // do not override: the child runtime baseline is already the parent session's
-                  // current model (the factory baseline; see script-workflow-child-runtime.ts).
-                  // A pin from resume locks the model used in the previous run (the persisted
-                  // part of the persona-freezing invariant; see the priority table in
-                  // workflow-actor-model.ts). parentSelection reads the parent session's
-                  // **current** selection from the same source as the factory baseline, so pin
-                  // comparisons do not drift.
+                  // 模型面：`runSubagentModel` 是本 run 自己的选择（`subagent_model`），在场时整条
+                  // 覆盖，排在 pin 之上——主代理不受它影响。没有它也没有 pin 就不覆盖——child runtime
+                  // 的基线本就是父会话当前模型（工厂的基线，见 script-workflow-child-runtime.ts）。
+                  // resume 带来的 pin 钉住上一次实际跑的模型（persona 冻结不变式的持久化那一半，见
+                  // workflow-actor-model.ts 的优先级表）；parentSelection 取父会话**当前**的选择，
+                  // 与工厂基线同源，pin 比对才不会漂移。
                   ...workflowActorModelPolicy(
                     {
                       parentSelection: getRuntime().getSessionModelSelection(),
                       ...(runSubagentModel === undefined ? {} : { runSelection: runSubagentModel }),
-                      // A model named by the persona (`agent(…, { model })` in the script) takes
-                      // precedence over the run selection.
+                      // persona 点名的模型（脚本里的 `agent(…, { model })`）排在 run 选择之上。
                       ...(actorModel === undefined ? {} : { actorSelection: actorModel }),
                     },
                     pinnedModel,
@@ -777,8 +769,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                   imageProcessorPort,
                   logger,
                   mcpPort,
-                  // Parent session's model factory: actor and main turn create Models from the
-                  // same Registry view instead of freezing separate copies.
+                  // 父会话的 model factory：actor 与主 turn 从同一份 Registry 视图造 Model，
+                  // 不各自冻结一份。
                   modelFactory,
                   permissionService,
                   pluginSkillRoots: pluginOutcome.skillRoots,
@@ -789,93 +781,73 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                   storageRoot,
                   workingDirectory,
                 },
-                // Persona no longer replaces the subagent's entire system prompt through
-                // request.opts.systemPrompt; workflowActor layers it on top of the base.
-                // request is only a placeholder for the factory signature here: empty opts means
-                // "override nothing."
+                // persona 不再经 request.opts.systemPrompt 整段替换子代理的系统提示，而是经
+                // workflowActor 叠加到基座之上。
+                // request 在这里只是工厂签名的占位：opts 为空即「不覆盖任何东西」。
                 request: { opts: {} } as never,
-                // The permission window's source badge names this subagent:
-                // `<persona name> (<siteId>@<ordinal>)`.
+                // 权限窗的来源徽标点名这个子代理：`<persona 名> (<siteId>@<ordinal>)`。
                 interactionDescription: workflowActorInteractionDescription({ actor, persona }),
-                // Browser Use for subagents: the parent session's port, from which the factory
-                // derives a child port via forChildSession (tab ownership belongs to the actor's
-                // own sessionId). The actor runtime calls closeBrowserSession on run dispose,
-                // which closes the tab as well and revokes its registration
-                // (dynamic-workflow/docs/execution-engine.md "Subagent sessions").
+                // 子代理的 Browser Use：父会话的端口，由工厂经 forChildSession 派生子端口（tab 归属是
+                // actor 自己的 sessionId）。actor runtime 在 run dispose 时 closeBrowserSession，
+                // 那一步连 tab 一起关并撤销登记（dynamic-workflow/docs/execution-engine.md「Subagent sessions」）。
                 ...(browserControlPort === undefined ? {} : { browserControlPort }),
                 traceContext,
-                // Submit profile → submit_result shape:
-                // `untyped` does not inject the port (core registers the tool only when the port is
-                // present, so a fully untyped subagent has nowhere to submit); `mono` injects the
-                // port + typed declaration; `generic` injects only the port (generic declaration).
+                // submit profile → submit_result 形态：
+                // `untyped` 不注入端口（core 的注册门是端口在场，于是没有这个工具——全 untyped 的子代理
+                // 本来就无处可提交）；`mono` 注入端口 + typed 声明；`generic` 只注入端口（通用声明）。
                 ...(submitProfile.kind === "untyped" ? {} : { workflowSubmitPort: submitPort }),
-                // Spread the schema: dwf's JsonSchema is an interface without an index signature,
-                // while contracts uses Record. Spreading the literal supplies the implicit index
-                // signature, avoiding a conversion helper between the two packages.
+                // 展开：dwf 的 JsonSchema 是无索引签名的 interface，contracts 的是 Record；
+                // 字面量展开拿到隐式索引签名，不必在两包之间造一个转换函数。
                 ...(submitProfile.kind === "mono"
                   ? { workflowSubmitSchema: { ...submitProfile.schema } }
                   : {}),
-                // Escalation and submit ports are injected together: both are control channels
-                // for the actor session, and port presence is the core-side registration gate.
-                // Always pass them (the run service always constructs the ports); do not make
-                // this opt-in, since the actor most likely to hit an unforeseen blocker is the
-                // one the author did not mark.
+                // 升级端口与 submit 端口同进同出：两者都是 actor 会话的控制通道，而端口在场
+                // 就是 core 侧的注册门。恒传（端口在 run service 里恒被构造），不做 opt-in——
+                // 最可能撞上未预见之墙的 actor 恰是作者没标记的那一个。
                 workflowEscalatePort: escalatePort,
-                // Request-level admission port: the driver provides it when the governor is
-                // present, and the runner checks the gate before every attempt.
+                // 请求级准入端口：driver 在治理器在场时给出，runner 每次尝试先过闸门。
                 ...(modelRequestAdmission === undefined ? {} : { modelRequestAdmission }),
               }),
-            // Boundary accounting and transcript truncation both read/write actor-session
-            // messages, so they must use the same store.
+            // 边界记账与转录截断都读写 actor 会话的消息，走的必须是同一个 store。
             actorTranscriptStore: sessionStore,
-            // Byte destination for user-facing artifacts: share the same tool-artifact store as
-            // the main session and workflow subagents, so artifacts live alongside other large results.
+            // 用户面产物的字节落点：与主会话、workflow 子
+            // 代理共用同一个 tool-artifact store，产物因此和别的大结果落在同一棵目录树下。
             artifactStore,
             executionPort,
             fileSystemPort,
             journal: dynamicWorkflowJournal,
             logger,
-            // Progress projection seam: one engine event → one session event in the parent
-            // session → a v4 workflowRuns state key. Use the runtime append path (not a direct
-            // eventSink push): it persists, assigns sequenceNumber, and fans out together, which
-            // makes cold restore and replayable reconnection work automatically.
+            // 进度投影的接缝：一条引擎事件 → 一条父会话的会话事件 → v4 的 workflowRuns 状态键。
+            // 走 runtime 的 append 链路（而不是直接推 eventSink）是必需的：只有它同时做持久化、
+            // 补 sequenceNumber 与扇出，冷恢复与 replayable 重连因此免费。
             //
-            // The three fallback paths (identity gate, runtime not ready, and append failure) are
-            // collected here along with their unit tests; see the header of
-            // dynamic-workflow-run-progress-sink.ts.
+            // 身份闸门、runtime 未就绪与 append 失败三条降级路径都在这个汇里（连同它们的单测），
+            // 见 dynamic-workflow-run-progress-sink.ts 的文件头。
             onRunEvent: createDynamicWorkflowRunProgressSink({
-              // Lazy: the run service is created before the runtime (it is one of AgentRuntime's dependencies).
+              // 惰性：run service 在 runtime 构造之前就建好了（它是 AgentRuntime 的依赖之一）。
               getRuntime,
               logger,
               sessionId,
             }),
-            // Orphan recovery is scoped to this app's session. During construction, settle
-            // nonterminal runs in the journal for **this session** (remnants of a dead process)
-            // as failed, so in-flight runs belonging to sibling sessions are never affected.
+            // 孤儿收敛的作用域：本 app 的会话。构造时把**这个会话**留在 journal 里的非终态
+            // run（死进程的遗物）收敛成 failed；兄弟会话的在飞 run 因此绝不会被误伤。
             parentSessionId: sessionId,
-            // Mints a draft when a fill lands on a run that has none
-            // (docs/dynamic-workflow/launch.md "The draft after a fill"): the inline rules have a
-            // single implementation in the tool layer, injected here instead of duplicated in the
-            // run service.
+            // 补全落在没有草稿的 run 上时铸草稿（docs/dynamic-workflow/launch.md「The draft after a
+            // fill」）：内联规则只在工具层有一份实现，这里注入而不是让 run service 复制它。
             writeWorkflowDraft,
-            // The session's permission mode at the moment the run was created (recorded in
-            // run-launched; subagents follow it).
-            // Lazy like onRunEvent: starts come only from tool calls or v4 commands, when the
-            // runtime is necessarily ready.
+            // 建 run 那一刻会话的权限模式（记进 run-launched，子代理随之）。
+            // 惰性同 onRunEvent：启动只来自工具调用或 v4 命令，那时 runtime 必已就绪。
             permissionMode: () => getRuntime().getMode(),
-            // An in-flight engine pins this session as resident. 2026-09-15 bug: the engine was
-            // not registered in the runtime task registry, so the residency pool closed an App
-            // with an in-flight run as idle (10 minutes), and resume then started a second engine.
-            // Resolve runtime lazily, like onRunEvent: the run service is an AgentRuntime
-            // dependency and is constructed earlier, while starts come only from tool calls or
-            // v4 commands, when the runtime is ready.
+            // 在飞的引擎把本会话钉成常驻。2026-09-15 的 bug：引擎不进 runtime task registry，
+            // 常驻池把带着在飞 run 的 App 按 idle（10 分钟）关掉，resume 又起了第二个引擎。
+            // 惰性取 runtime 同 onRunEvent：run service 是 AgentRuntime 的依赖，构造更早；
+            // 而启动只来自工具调用或 v4 命令，那时 runtime 必已就绪。
             registerResidencyBlockingWork: (work) => {
               void getRuntime().trackResidencyBlockingWork(work);
             },
-            // Launch anchor: CreateWorkflow runs during an active turn in the parent session, and
-            // that turn's inputId is the message the subagent agent_step should attach to. If
-            // trace.turnId does not match the active turn (which should be impossible), let the
-            // submit side mint a fallback; never record another turn's ID as the anchor.
+            // 发起锚点：CreateWorkflow 在父会话的活动轮里执行，
+            // 那一轮的 inputId 就是子代理 agent_step 要挂的 message。trace.turnId 对不上活动轮
+            // （理论上不该发生）就交回 submit 侧兜底铸值，绝不把别的轮的 id 记成锚点。
             resolveLaunchInputId: (trace) => {
               const active = getRuntime().getActiveTurnInfo();
               return active !== undefined && active.turnId === trace.turnId
@@ -886,17 +858,15 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               ? { taskLinkStore: sessionStore }
               : {}),
           });
-    // dwf snippet service: execution surface for EvalWorkflowSnippet. It deliberately does
-    // **not** depend on the dwf journal; snippets are fully transient (in-memory journal) and
-    // should not inherit the run service's durability requirements. The experimental path
-    // therefore remains available even if the run port is not constructed because the journal is absent.
+    // dwf snippet service：EvalWorkflowSnippet 的执行面。刻意**不**依赖 dwf journal——
+    // snippet 完全瞬态（内存 journal），不该被 run service 的 durability 前提连坐；
+    // 所以即使 run 端口因 journal 缺席而不构造，实验通道仍然可用。
     const dynamicWorkflowSnippetPort = createDynamicWorkflowSnippetService({
       executionPort,
       fileSystemPort,
       logger,
     });
-    // Model catalog: the tool layer resolves a model name from the user into a workflow-run
-    // subagent selection (model-catalog-port.ts).
+    // 模型目录：工具层把用户说的模型名解析成 workflow run 的子代理选型（model-catalog-port.ts）。
     const modelCatalogPort = createModelCatalogPort({
       registry: options.providerRegistry,
       currentSelection: () => getRuntime().getSessionModelSelection(),
@@ -938,8 +908,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           }
         : {}),
       agentTelemetry: modelTelemetry.agentExecution,
-      // Main-agent model requests pass through the governor's observer: allow immediately, but
-      // expose 429s and successes to the governor.
+      // 主代理的模型请求过治理器的 observer：立即放行，但让治理器看见它的 429 / 成功。
       modelRequestAdmission: workflowConcurrencyGovernor.observer(),
       eventStore: options.eventStore ?? createInMemorySessionEventStore(),
       sessionStore,
@@ -960,13 +929,13 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         configResult.config.features.skill && configResult.config.skills.enabled
           ? (options.skillPort ??
             createNodeSkillAdapter({
+              additionalDirectories: options.additionalDirectories,
               extraRoots: configResult.config.skills.roots,
               extraResolvedRoots: [...pluginOutcome.skillRoots, ...bundledSkillRoots],
               disabledPaths: [
                 ...collectDisabledPaths(configResult.config.skillOverrides),
-                // Do not provide the dynamic-workflows skill when dynamic workflows are disabled:
-                // with all ten tools unavailable, showing the model how to write workflow scripts
-                // would only prompt it to call nonexistent tools.
+                // 动态工作流关闭时不提供 dynamic-workflows 技能：
+                // 十个工具都不在场，再让模型读到「怎么写工作流脚本」只会诱导它去调不存在的工具。
                 ...(runtimeConfig.dynamicWorkflowEnabled === false
                   ? collectDynamicWorkflowDisabledSkillPaths(bundledSkillRoots)
                   : []),
@@ -975,6 +944,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           : undefined,
       mcpPort,
       eventSink: options.eventSink,
+      onOffPeakLifecycleEvent: options.onOffPeakLifecycleEvent
+        ? (event) => options.onOffPeakLifecycleEvent!({ ...event, sessionId })
+        : undefined,
       modelFactory,
       modelIoDir,
       providerRuntimeHeadersPort: options.providerRuntimeHeadersPort,
@@ -1007,24 +979,21 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     });
     scheduleStartupLogRetentionCleanup(loggerFactory, logger);
     const inputFacade = createInputFacade({
+      cliDefaultSelection,
       artifactStore,
       customCommandPromptResolver: async (text, resolverOptions) => {
         const builtin = resolveZCodeBuiltinPromptCommandInvocation(text, {
-          // Do not expand the built-in `/workflow` when the dynamic-workflow rollout gate is off
-          // (DWG-03). The catalog already removes it from the `/` panel, but users can still
-          // type the command name manually, so both paths must reach the same conclusion. The
-          // standalone CLI's TUI and headless modes use the explicit --workflow-mode value; when
-          // it is absent (in-process embedders), do not gate (see the runtimeConfig field comment).
+          // 动态工作流灰度关闭时内置 `/workflow` 不得展开（DWG-03）。目录侧已经把它从 `/` 面板
+          // 剔除，但用户仍可手打命令名，两条路径必须给出同一个结论。独立 CLI 的 TUI 与 headless
+          // 按 --workflow-mode 显式取值；缺席（进程内嵌入方）不设门禁，见 runtimeConfig 字段注释。
           dynamicWorkflowEnabled: runtimeConfig.dynamicWorkflowEnabled,
           workingDirectory,
         });
         if (builtin !== undefined) {
           if (builtin.name === BUILTIN_WORKFLOW_COMMAND_NAME) {
-            // The `/workflow` expansion point is also the onDemand session's activation point
-            // (launch.md "On demand: activation"): it runs before executeTurn, so the first model
-            // request of the turn already carries the ten tools. It is a no-op in alwaysOn or
-            // already-activated sessions. Ask the runtime, not the runtimeConfig captured in the
-            // closure — the config was copied at construction, so the closure cannot observe flips.
+            // `/workflow` 的展开处就是 onDemand 会话的激活点（launch.md「On demand: activation」）：
+            // 它先于 executeTurn，本轮首个模型请求就带着十个工具。alwaysOn / 已激活会话里是 no-op。
+            // 问的是 runtime 而不是闭包里的 runtimeConfig——构造时 config 被拷贝，闭包看不到翻转。
             await runtime?.activateDynamicWorkflowTools({
               source: "command",
               traceContext: resolverOptions?.traceContext ?? traceContext,
@@ -1033,6 +1002,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           return builtin.prompt;
         }
         return await resolveZCodeCustomCommandPrompt(text, {
+          additionalDirectories: options.additionalDirectories,
           env: options.env,
           executionPort,
           logger,
@@ -1076,9 +1046,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       workingDirectory,
     });
     const sessionFacade = createSessionFacade({
-      // Stop dwf runs owned by this session when the App closes:
-      // the engine lives in this App's closure, so closing the App without stopping it leaves
-      // journal rows in running until the next orphan recovery.
+      cliDefaultSelection,
+      // App 关闭时停下本会话拥有的 dwf run：
+      // 引擎活在本 App 的闭包里，关掉 App 而不停它，journal 行会停在 running 等下一次孤儿收敛。
       ...(dynamicWorkflowRunPort === undefined
         ? {}
         : { closeDynamicWorkflowRuns: () => dynamicWorkflowRunPort.close() }),
@@ -1125,9 +1095,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       let mediaType = input.mime;
       let artifactUri: string | undefined;
       if (input.messageId && input.attachmentIndex !== undefined) {
-        // Previewing one attachment used to decode the entire conversation through messages();
-        // long sessions synchronously scanned every part, and unrelated corrupt rows could fail
-        // the target preview. Read the specific session/message instead.
+        // 预览单个附件曾通过 messages() 解码整段会话；长会话会同步扫描
+        // 所有 parts，且无关坏行也会让目标预览失败。按 session/message 定点读取即可。
         const persistedMessage = await sessionStore.messageWithParts({
           sessionID: sessionId,
           messageID: input.messageId as MessageId,
@@ -1137,9 +1106,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         ];
         if (persistedAttachment?.type === "file") {
           mediaType = persistedAttachment.mime;
-          // A live row's ref remains the original path. Reading it directly means that deleting
-          // or overwriting the source makes the active preview disagree with the cold-restored
-          // artifact. Prefer the immutable copy for the same message/index.
+          // live row 的 ref 仍是原始路径；如果直接读取，源文件删除或覆盖后
+          // 热态预览会和冷恢复 artifact 不一致。同一 message/index 必须优先取不可变副本。
           artifactUri =
             persistedAttachment.metadata?.artifactUri ??
             (persistedAttachment.url.startsWith("zcode-artifact://")
@@ -1149,9 +1117,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             artifactUri ??
             (!persistedAttachment.url.startsWith("data:") ? persistedAttachment.url : input.ref);
         }
-        // Message rows are persisted before later FileParts, one at a time. If the target part is
-        // not visible yet, use input.ref already authorized by the current projection instead of
-        // creating a temporary preview-failure window.
+        // message row 会先于后续 FilePart 逐条落库；目标 part 尚未可见时仍应
+        // 使用已经由当前 projection 授权的 input.ref，不能制造短暂的预览失败窗口。
       }
       return { ref, mediaType, ...(artifactUri ? { artifactUri } : {}) };
     };
@@ -1228,18 +1195,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           accepted: false as const,
           reasonCode: "workspace_hooks_require_trust_capable_host" as const,
         }),
-      // Called by the server per workspace after Settings pretrust is persisted: reload the
-      // Trust store into this session's coordinator and resend admission state (see the comment
-      // in types.ts).
+      // Settings pretrust 写盘后由 server 按 workspace 调用：重载 Trust store 到本
+      // session 的 coordinator 并重发 admission 状态（详见 types.ts 注释）。
       reloadWorkspaceHookTrust: () =>
         workspaceHookRuntimeSecurity?.reloadTrust() ?? Promise.resolve(),
       setModelIoFullRetentionEnabled: (enabled) =>
         modelAdapter.setModelIoFullRetentionEnabled(enabled),
       readToolResultArtifact: (uri) =>
         artifactStore.readToolResultArtifact({ uri, trace: traceContext }),
-      // Wire/staging uses decoded chunks throughout; restore the existing data-URL artifact
-      // shape inside the CLI process only after the full checksum commit, preserving compatibility
-      // with provider reads.
+      // wire/staging 全程是 decoded chunk；只有完整 checksum commit 后才在
+      // CLI 进程内恢复既有 data-URL artifact 形态，保持 provider 读取链兼容。
       writePromptAttachment: async (input) => {
         const artifact = await artifactStore.writeToolResultArtifact({
           content: `data:${input.mime};base64,${Buffer.from(input.bytes).toString("base64")}`,
@@ -1255,8 +1220,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
           input.mime.startsWith("video/") ||
           input.mime.split(";", 1)[0]?.trim().toLowerCase() === "application/pdf"
         ) {
-          // Derived media is only a rebuildable cache. A real I/O failure does not damage the
-          // durable data URL; the final request projection will ensure it again.
+          // 派生媒体只是可重建缓存；真实 IO 失败不破坏 durable data URL，最终请求投影会再次 ensure。
           void artifactStore
             .primeMediaAttachmentPath?.({
               bytes: input.bytes,
@@ -1269,8 +1233,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       },
       readPromptAttachment: async (input) => {
         const { ref, mediaType } = await resolvePromptAttachment(input);
-        // Keep reads inside the session runtime: artifacts use the session store, and paths use
-        // the current FileSystemPort so SSH/WSL/Docker reach the correct remote filesystem.
+        // 读取必须留在 session runtime 内：artifact 走 session store，路径走当前
+        // FileSystemPort，SSH/WSL/Docker 才会命中正确的远端文件系统。
         if (ref.startsWith("zcode-artifact://")) {
           const artifact = await artifactStore.readToolResultArtifact({
             uri: ref,
@@ -1303,9 +1267,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         }
         const result = await fileSystemPort.stat({ path: ref, trace: traceContext });
         if (result.kind !== "file") {
-          // A directory, symlink, or missing path means this attachment is no longer a shareable
-          // file. Throw a stable code so share preflight can classify it deterministically
-          // instead of guessing from error text.
+          // 目录/符号链接/已消失都意味着「这个附件不再是可分享的文件」，用稳定码上抛，
+          // 让 share 预检按确定分类处理，而不是靠错误文本猜。
           throw new ZCodeAttachmentFaultError(ZCODE_ATTACHMENT_FAULT_CODES.statNotFile);
         }
         return {
@@ -1332,8 +1295,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               };
             }
           } catch {
-            // The artifact remains the immutable fact; if the derived file fails, the gateway
-            // may fall back only to the artifact chunk.
+            // artifact 仍是不可变事实；派生文件失败只允许 gateway 回到 artifact chunk。
           }
           return { kind: "chunked" };
         }
@@ -1361,10 +1323,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       },
       ...workflowFacade,
       ...scriptWorkflowFacade,
-      // Read surface for the dwf event log. **Optional capability**: if the journal is
-      // unavailable, the run service is not constructed and this method is absent. The v4
-      // gateway returns a structured unsupported-capability error so the renderer can
-      // distinguish "no events" from "this session lacks this capability."
+      // dwf 事件日志的读面。**可选能力**：journal 不可用时 run service 整个不构造，
+      // 这个方法随之缺席，v4 网关据此回结构化的能力不支持错误——「没有事件」与
+      // 「这个会话没有这个能力」必须能被 renderer 区分。
       ...(dynamicWorkflowRunPort === undefined
         ? {}
         : {
@@ -1382,12 +1343,10 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                 ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
               }),
           }),
-      // Read surface for **user-facing artifacts** from workflow runs. Register or omit all three
-      // together: they are three slices of the same journal read surface, and partial presence
-      // would give the UI a card whose side panel cannot open. All three port members are
-      // optional (stub ports do not implement them), so probe each one.
-      // Terminology: artifact means output published by a script for the user, not the port's
-      // `output` (the top-level return value).
+      // workflow run 的**用户面产物**读面。三条一起注册、
+      // 一起缺席：它们是同一个 journal 读面的三个切片，部分在场只会让 UI 拿到一张有卡片
+      // 却打不开的侧板。三个端口成员都是可选的（stub 端口不陪跑），所以逐个探测。
+      // ⚠ 术语：artifact = 脚本发布给用户看的产出，不是端口上的 `output`（顶层返回值）。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.listArtifacts !== "function" ||
       typeof dynamicWorkflowRunPort.listArtifactItems !== "function" ||
@@ -1419,8 +1378,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             }) =>
               dynamicWorkflowRunPort.readArtifact!(input.runId, input.artifactId, input.version),
           }),
-      // Workspace transcript for workflow runs: register or omit both together, for the same
-      // reason as the three artifact methods above.
+      // workflow run 的工作区 transcript：两条一起
+      // 注册、一起缺席，理由同产物的三条。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.listWorkspaceNodes !== "function" ||
       typeof dynamicWorkflowRunPort.readWorkspaceNodeResult !== "function"
@@ -1441,14 +1400,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                 { maxBytes: input.maxBytes },
               ),
           }),
-      // Session-level lifecycle read surface for workflow runs (in-flight count + settlement
-      // subscription). The consumer is the host's provider registry safety boundary: subagents
-      // share this session's live adapter, and replacing the registry during an in-flight run
-      // would dispose the request resources they are bound to. Same absence condition as above.
+      // dwf run 的会话级生命周期读面（在飞计数 + 结算订阅）。消费者是宿主的 provider registry
+      // 安全边界：子代理共用本会话的 live adapter，在飞 run 期间 replace registry 会 dispose
+      // 它们绑定的请求资源。缺席条件同上。
       ...(dynamicWorkflowRunPort === undefined ? {} : {}),
-      // Enumeration surface for workflow runs (discovery query after restart). Same capability
-      // absence condition as above; listRunsForSession is optional on the port, so do not register
-      // this capability if the method is absent.
+      // dwf run 的枚举面（重启后的发现查询）。能力缺席条件同上；端口的 listRunsForSession
+      // 是可选成员，方法缺席时本能力同样不注册。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.listRunsForSession !== "function"
         ? {}
@@ -1456,7 +1413,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             listDynamicWorkflowRuns: async (input: { limit?: number }) =>
               dynamicWorkflowRunPort.listRunsForSession!(input.limit),
           }),
-      // Cold replay for workflow runs. Same capability absence condition as above.
+      // workflow run 的冷回放。能力缺席条件同上。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.replayProgressForSession !== "function"
         ? {}
@@ -1464,10 +1421,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             replayDynamicWorkflowRuns: async (input: { excludeRunIds: ReadonlySet<string> }) =>
               dynamicWorkflowRunPort.replayProgressForSession!(input),
           }),
-      // Resume a dwf run. Same capability absence condition as above. In addition, resume is an
-      // optional port member (stub ports do not implement it); do not register this capability
-      // when the method is absent. For the renderer, "port absent" and "method absent" are the
-      // same business fact.
+      // dwf run 的恢复。能力缺席条件同上；此外
+      // 端口的 resume 是可选成员（stub 端口不陪跑），方法缺席时本能力同样不注册——
+      // 对 renderer「端口缺席」与「方法缺席」是同一个业务事实。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.resume !== "function"
         ? {}
@@ -1475,11 +1431,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             resumeWorkflowRun: async (input: { workId: string; name?: string }) => {
               const result = await dynamicWorkflowRunPort.resume!(input.workId);
               if (result.ok) {
-                // Re-arm tracking immediately after a successful resume: register with the
-                // registry (collection guard), add a backgroundWorks entry (cancellable), and
-                // send terminal notifications. port.resume already replaced the registry entry,
-                // so the waiter attaches to the new settlement promise (invariant 5 in the run
-                // service header).
+                // 追踪重臂必须紧随成功的 resume：registry 登记（回收护栏）、backgroundWorks
+                // 条目（cancellable）、终态通知。port.resume 已先替换注册表条目，
+                // waiter 因此挂在新的结算 promise 上（run service 文件头不变式 5）。
                 await getRuntime().trackResumedDynamicWorkflowRun({
                   runId: result.runId,
                   ...(result.toolCallId === undefined ? {} : { toolCallId: result.toolCallId }),
@@ -1490,14 +1444,11 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               return result;
             },
           }),
-      // Start a saved workflow directly from the hub. Capability absence follows the same rule
-      // as resumeWorkflowRun: do not register it when the entire dwf port is absent (stub/test
-      // host). The GUI then receives and displays an unsupported-capability error instead of
-      // mistaking "direct start unsupported" for a failed start.
-      // Like the /goal control turn, go through the unified user-execution boundary first
-      // (otherwise shell selection is empty before first persistence and cold restore falls back
-      // to legacy behavior), then let runtime resolve + validate + compile + persist the launch
-      // turn + submit.
+      // 中枢直接启动一个已保存的工作流。能力缺席条件与
+      // resumeWorkflowRun 家族一致：dwf 端口整体缺席（stub / 单测宿主）时不注册——GUI 据此拿到
+      // 能力不支持错误并原样显示，而不是把「不支持直接启动」误当成一次失败的启动。
+      // 与 /goal 控制轮同构：先走统一用户执行边界（否则首次持久化前 shell selection 为空，
+      // 冷恢复退回 legacy fallback），再由 runtime 解析 + 校验 + 编译 + 落启动轮 + submit。
       ...(dynamicWorkflowRunPort === undefined
         ? {}
         : {
@@ -1510,11 +1461,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
               return await getRuntime().startSavedWorkflowRun({ ...input, traceContext });
             },
           }),
-      // GUI "configure". It reuses the predecessor's script, so the port must both amend and
-      // read back the script. If either is missing, do not register this capability and let the
-      // GUI report it as unsupported.
-      // Use the same user-execution boundary as startSavedWorkflow: on cold restore, restore the
-      // Session boundary before persisting the settings turn.
+      // GUI「配置」。它
+      // 沿用前驱的脚本，所以端口必须既能 amend 又能读回脚本；缺一就不注册，GUI 拿到能力不支持。
+      // 与 startSavedWorkflow 同一条用户执行边界：冷恢复的会话先恢复 Session 边界再落设置轮。
       ...(dynamicWorkflowRunPort === undefined ||
       typeof dynamicWorkflowRunPort.amend !== "function" ||
       typeof dynamicWorkflowRunPort.getScript !== "function"
@@ -1530,9 +1479,8 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       ...createPluginFacadeForApp({ configResult, options, workingDirectory }),
       getPluginReferenceCatalog: () => pluginReferenceCatalog,
       getSkillCatalog: async () => {
-        // The skill directory is part of context initialization. On cold restore, restore the
-        // Session boundary first, then read the new runtime snapshot; do not bypass resume and
-        // scan independently using the old working directory.
+        // Skill 目录属于 context 初始化结果。冷恢复必须先恢复 Session 边界，再读取
+        // 新 runtime 的快照，不能绕开 resume 后用旧工作目录独立扫描。
         await prepareUserExecutionBoundary({ traceContext });
         return await getRuntime().getSkillCatalog(traceContext);
       },

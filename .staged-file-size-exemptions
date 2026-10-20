@@ -14,8 +14,6 @@ docs/conversation-session-case-catalog.md
 docs/testing/conversation-session-e2e-coverage-matrix.md
 packages/ui/src/v4/SessionPane.tsx
 packages/ui/test/v4SessionPaneModelSwitchRecovery.test.ts
-# Temporary (integration-owned, split later): oversize files brought in by the integration merge.
-# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration; split each later and remove its line.
 DESIGN.md
 packages/ui/src/WorkspaceHeaderSections.tsx
 packages/ui/src/styles.css
@@ -86,9 +84,6 @@ docs/v4-refactor/m5-composer-parity.md
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 packages/ui/test/useDraftConfigControl.test.ts
 
-# Temporary (PR #174 merge): integration-owned files over the size limit. Split each file later and remove its line.
-# Temporary: integration-owned files over the staged-file size limit, added so the integration merge can land.
-# Each is to be split into smaller modules later and removed from this list.
 apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md
 apps/zcode-cli/packages/adapters/src/fs/index.ts
 apps/zcode-cli/packages/adapters/tests/fs-context.test.ts
@@ -123,18 +118,14 @@ packages/ui/src/Root.tsx
 packages/ui/src/root/useRootPlatformEffects.ts
 packages/ui/src/store/zcodeSessionStoreTypes.ts
 packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
-# Temporary (PR #174 sidebar PR probing): WorkspaceSidebar.tsx is over the limit; split it into sibling modules later and remove this line.
 packages/ui/src/WorkspaceSidebar.tsx
 
 specs/nested-agents-md.md
-# Owned by this PR (already over the limit before this change): split the file into per-section test modules.
 packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 
-# TEMPORARY upstream 3.16.1 sync: oversize leaf-package tests merged with fork changes; split later and remove these lines.
 packages/provider-node/test/provider-node-runtime.test.ts
 packages/provider/test/config-service.test.ts
 
-# TEMPORARY upstream 3.16.1 sync - revert/split in final PR
 packages/shared/src/bots.ts
 packages/shared/src/conversation-share.ts
 packages/shared/src/validationAppSettings.ts
@@ -169,12 +160,10 @@ packages/services/src/zcode-agent/zcodeAgent.ts
 packages/services/src/zcode-agent/runtimeCapabilitySupport.ts
 packages/services/src/zcode-agent/zcodeAgentService.ts
 
-# Temporary: fork provider and feature-graph data files restored to their PR 0 content in the upstream tooling PR; the guard blocks them as modifications. Split later.
 .agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
 config/provider/zcode-builtin.json
 config/provider/zcode-builtin.test.json
 
-# Existing oversized files touched by permanent session deletion; new modules stay below the limit.
 packages/desktop/src/host/index.ts
 packages/desktop/src/main/desktopHostProcess.ts
 packages/desktop/wdio.conf.ts
@@ -190,9 +179,89 @@ packages/ui/src/WorkspaceSidebarItem.tsx
 packages/ui/src/WorkspaceTimelineTasksSection.tsx
 specs/manage-sessions-table.md
 
+specs/composer-branch-switcher-semantics.md
+
+apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
+apps/zcode-cli/packages/adapters/tests/dwf-journal-store.test.ts
+apps/zcode-cli/packages/adapters/tests/session-store.test.ts
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
+apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
+apps/zcode-cli/packages/adapters/src/config/schema.ts
+apps/zcode-cli/packages/adapters/src/mcp/index.ts
+apps/zcode-cli/packages/adapters/src/mcp/pool.ts
+apps/zcode-cli/packages/adapters/src/model/runner-generate.ts
+apps/zcode-cli/packages/adapters/src/model/runner-stream.ts
+apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts
+apps/zcode-cli/packages/adapters/tests/auth.test.ts
+apps/zcode-cli/packages/adapters/tests/config.test.ts
+apps/zcode-cli/packages/adapters/tests/runner.test.ts
+apps/zcode-cli/packages/contracts/src/events/session.events.ts
+apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts
+apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts
+apps/zcode-cli/packages/contracts/src/model/index.ts
+apps/zcode-cli/packages/contracts/src/tools/create-workflow.ts
+apps/zcode-cli/packages/dynamic-workflow/tests/hole-sites.test.ts
+apps/zcode-cli/packages/core/src/agent/message-history.ts
+apps/zcode-cli/packages/core/src/mcp/index.ts
+apps/zcode-cli/packages/core/src/runtime/helpers/project-memory-dream.ts
+apps/zcode-cli/packages/core/src/runtime/methods/events.ts
+apps/zcode-cli/packages/core/src/runtime/methods/model.ts
+apps/zcode-cli/packages/core/src/runtime/methods/steering.ts
+apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts
+apps/zcode-cli/packages/core/src/runtime/methods/turn-model-step.ts
+apps/zcode-cli/packages/core/src/runtime/methods/turn.ts
+apps/zcode-cli/packages/core/src/runtime/types.ts
+apps/zcode-cli/packages/core/src/subagent/runner.ts
+apps/zcode-cli/packages/core/src/tool/handlers/amend-workflow.ts
+apps/zcode-cli/packages/core/src/tool/handlers/create-workflow.ts
+apps/zcode-cli/packages/core/src/tool/types.ts
+apps/zcode-cli/packages/core/tests/bash-handler.test.ts
+apps/zcode-cli/packages/core/tests/context-builder.test.ts
+apps/zcode-cli/packages/core/tests/create-workflow-permission.test.ts
+apps/zcode-cli/packages/core/tests/dynamic-workflow-run-settings.test.ts
+apps/zcode-cli/packages/core/tests/dynamic-workflow-run-start.test.ts
+apps/zcode-cli/packages/core/tests/edit-tool-contract.test.ts
+apps/zcode-cli/packages/core/tests/runtime-compact.test.ts
+apps/zcode-cli/packages/core/tests/runtime-memory-dream.test.ts
+apps/zcode-cli/packages/core/tests/runtime-memory-extraction.test.ts
+apps/zcode-cli/packages/core/tests/runtime-tool-loop.test.ts
+apps/zcode-cli/packages/core/tests/session-fork.test.ts
+apps/zcode-cli/packages/core/tests/subagent-explore.test.ts
+apps/zcode-cli/packages/core/tests/subagent-prompt-assembly.test.ts
+apps/zcode-cli/packages/core/tests/tool-contracts.test.ts
+apps/zcode-cli/packages/bootstrap/src/app/create-app.ts
+apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts
+apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts
+apps/zcode-cli/packages/bootstrap/src/app/types.ts
+apps/zcode-cli/packages/bootstrap/src/plugins.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/conversation-topic-publisher.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts
+apps/zcode-cli/packages/bootstrap/tests/conversation-topic-publisher.test.ts
+apps/zcode-cli/packages/bootstrap/tests/dynamic-workflow-run-service.test.ts
+apps/zcode-cli/packages/bootstrap/tests/plugins.test.ts
+apps/zcode-cli/packages/bootstrap/tests/product-projection.test.ts
+apps/zcode-cli/packages/bootstrap/tests/session-resident-pool.test.ts
+apps/zcode-cli/packages/bootstrap/tests/sessions-index-projection.test.ts
+apps/zcode-cli/packages/bootstrap/tests/transcript-hydration.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-cold-resume.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-gateway.test.ts
+apps/zcode-cli/packages/bootstrap/tests/v4-native-session-mgmt.test.ts
+apps/zcode-cli/packages/bootstrap/tests/workflow-concurrency-governor.test.ts
+apps/zcode-cli/packages/bootstrap/tests/workflow-driver.test.ts
+apps/zcode-cli/packages/bootstrap/tests/zcode-protocol.test.ts
+apps/zcode-cli/packages/cli/src/prompt-command.ts
+apps/zcode-cli/packages/cli/tests/cli.unit.test.ts
+apps/zcode-cli/packages/i18n/src/locales/uk-UA.ts
+
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
-# TEMPORARY upstream 3.16.1 sync (ui): oversize upstream UI files that differ from the pending upstream blob; split or reconcile in the UI-2 / i18n PRs and remove these lines.
 packages/ui/src/command-center/worktreeTaskFlow.ts
 packages/ui/src/settings/PluginStoreDetailView.tsx
 packages/ui/src/settings/CodingPlanEmbeddedWebviewDialog.tsx
@@ -268,7 +337,6 @@ packages/ui/test/workflowTimelineModel.test.ts
 packages/ui/test/workflowTimelineTracks.test.ts
 packages/ui/test/zcodeSessionStore.test.ts
 
-# TEMPORARY upstream 3.16.1 sync (ui bucket 3)
 packages/ui/test/subagentsSection.test.ts
 packages/ui/test/projectTreeBackgroundUnread.test.ts
 packages/ui/src/settings/AutomationEditView.tsx
@@ -277,40 +345,36 @@ packages/ui/src/settings/OffPeakEditView.tsx
 packages/ui/src/settings/PluginsSection.tsx
 packages/ui/src/settings/SkillsSection.tsx
 packages/ui/src/settings/SubagentsSection.tsx
-# TEMPORARY upstream 3.16.1 sync (ui bucket 4): oversize files re-applied with fork changes; split or reconcile in the UI-2 / i18n PRs and remove these lines.
 packages/ui/src/v4/ConversationTimeline.tsx
 packages/ui/src/hooks/useAppPanels.ts
 packages/ui/test/conversationShareConfirmationDock.test.ts
-# TEMPORARY upstream 3.16.1 sync (ui bucket 5)
 packages/ui/src/v4/conversationProjectionStore.ts
 packages/ui/src/v4/composer/V4ComposerToolbar.tsx
 packages/ui/src/v4/composer/useComposerAttachments.ts
 packages/ui/src/workspace-file-tree/WorkspaceFileTree.tsx
-# TEMPORARY upstream 3.16.1 sync (ui bucket 6)
 packages/ui/src/SettingsPage.tsx
 packages/ui/src/PermissionDialog.tsx
-# TEMPORARY upstream 3.16.1 sync (ui bucket 6 tests)
 packages/ui/test/chatContextUsageBreakdown.test.ts
 packages/ui/test/workspaceSidePane.test.ts
 packages/ui/test/v4PaneLayoutStore.test.ts
 packages/ui/test/savedWorkflowPermissionBlocks.test.ts
 packages/ui/test/settingsPageIntegratedTerminalShell.test.ts
-# TEMPORARY upstream 3.16.1 sync (ui bucket 7): oversize UI files re-applied with fork changes; split or reconcile in the UI-2 PR and remove these lines.
 packages/ui/src/ModelConfigSelect.tsx
 packages/ui/src/v4/ConversationTurnGroup.tsx
-# TEMPORARY upstream 3.16.1 sync (ui bucket 8): oversize UI files re-applied with fork changes; reconcile in the UI-2 / i18n PRs and remove these lines.
 packages/ui/src/lib/builtinSkillI18n.ts
 packages/ui/src/lib/remoteWorkspaceHistory.ts
 packages/ui/src/lib/settingsNavigation.ts
 packages/ui/src/lib/workspaceSidePane.ts
 packages/ui/src/settingsPageHelpers.tsx
-# TEMPORARY upstream 3.16.1 sync (ui): fork test spec restored over the upstream test; split later.
 packages/ui/test/taskListItemHoverActions.test.ts
-# TEMPORARY upstream 3.16.1 sync (ui fix G5)
 packages/services/src/window-controller/windowHostControllerProjection.ts
-# TEMPORARY upstream 3.16.1 sync (ui): oversize test files converted to English copy locators; split into sibling modules in UI-2.
 packages/ui/test/sshDialogFlow.test.ts
 packages/ui/test/remoteConnectionFlowRecovery.test.ts
-# TEMPORARY upstream 3.16.1 sync (ui): oversize test files converted to English copy locators; split in UI-2.
 packages/ui/test/projectCreation.test.ts
 packages/ui/test/sourceServerManagementPanel.test.ts
+
+packages/services/test/highspeedCardService.test.ts
+
+# Temporary (integration-owned, split later): files over 20000 bytes already on origin/integration, unchanged by this merge.
+packages/services/src/highspeed/highspeedCardService.ts
+specs/upstream-sync-cli-divergences.md

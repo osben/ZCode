@@ -4929,6 +4929,8 @@ export const config: WebdriverIO.Config = {
           recordBeforeSession: e2eReporter.beforeSession,
           resetHome: resetE2EHome,
           startCodingPlanTeamMockIfNeeded,
+          // TEMPORARY (PR 1): required by the upstream E2EBeforeSessionSetupOptions; full wdio sync is PR 3.
+          startCodingPlanDataPlaneProxyIfNeeded: startCodingPlanDataPlaneProxy,
           startCodingPlanUpgradeMockIfNeeded: startCodingPlanUpgradeE2EMock,
           startUpstreamHttpIfNeeded: startUpstreamE2EHttp,
           startPluginCdnZipFixtureIfNeeded,

@@ -7,6 +7,7 @@ export function getDefaultSessionDbPath(): string {
   return join(homedir(), ".zcode", "cli", "db", "db.sqlite");
 }
 
+// TEMPORARY fork compatibility (remove in final PR): upstream moved parent-directory creation out of paths.ts.
 export function ensureParentDir(filePath: string): void {
   const parent = dirname(filePath);
   if (!existsSync(parent)) {
