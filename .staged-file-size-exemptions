@@ -255,3 +255,4 @@ packages/services/src/session/offPeakTaskService.ts
 packages/services/src/zcode-agent/zcodeAgentProcessManager.ts
 packages/services/src/zcode-session/zcodeSessionService.ts
 scripts/architecture/upstream-snapshot.json
+architecture-policy.yaml
