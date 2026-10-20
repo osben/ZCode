@@ -75,6 +75,8 @@ packages/desktop/resources/apple-fm/
 /.tmp/
 # Disposable git repositories created by scripts/run-pre-commit-checks.test.mjs under scripts/
 scripts/.tmp-pre-commit-*/
+# Deployed commit marker written by the R3 server deployment (harness/remote/deploy-server.sh, varies per environment)
+.deployed-commit
 # Python 字节码（docker/plugin-eval/summarize.py 在主机上跑会生成）。
 __pycache__/
 *.pyc

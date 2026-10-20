@@ -53,3 +53,4 @@ packages/ui/test/v4ConversationFileSummaryPanel.test.ts
 # Temporary: upstream 3.16.1 sync (PR 3): data files consumed whole by the architecture governance gate; split later.
 architecture-policy.yaml
 .agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
+config/provider/zcode-builtin.json
