@@ -181,6 +181,9 @@ import {
   applyDraftBranchIntentForSend,
   selectDraftBranchIntent,
   selectWorktreeIntentActive,
+  applyPersistedWorktreeIntent,
+  isSamePersistedWorktreeIntent,
+  selectPersistableWorktreeIntent,
   useDraftBranchIntentStore,
 } from "@/v4/composer/draftBranchIntent.js";
 import {
@@ -2516,22 +2519,7 @@ function ConversationComposerImpl({
         workspacePath,
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
       });
-      const intent = draft.worktreeIntent;
-      if (intent) {
-        const destinationStore = useDraftBranchIntentStore.getState();
-        destinationStore.setWorktreeIntentActive(workspaceKey, true);
-        if (intent.baseBranch) {
-          destinationStore.setDraftBranchIntent(workspaceKey, intent.baseBranch);
-        } else if (intent.baseFromHeadDefault) {
-          // A HEAD-default base must not keep a live base choice made after the failure.
-          destinationStore.clearDraftBranchIntent(workspaceKey);
-        }
-        // Retry creates the frozen branch at the frozen location instead of generating a new name.
-        destinationStore.setFrozenWorktreeIntent(workspaceKey, {
-          branchName: intent.branchName,
-          ...(intent.customLocationPath ? { customLocationPath: intent.customLocationPath } : {}),
-        });
-      }
+      if (draft.worktreeIntent) applyPersistedWorktreeIntent(workspaceKey, draft.worktreeIntent);
     },
     [
       clearCodeCommentContexts,
@@ -2549,6 +2537,47 @@ function ConversationComposerImpl({
       workspacePath,
     ],
   );
+
+  // Frozen destination persistence (spec §Return to draft on failure, "Restored intent survives
+  // reload"). The draft store is the store's mirror, not a second owner: the in-memory frozen
+  // destination wins while mounted, and the root draft's `worktreeIntent` is hydrated only once per
+  // mount so a released destination is not re-armed from the stale mirror.
+  const frozenWorktreeDestination = useDraftBranchIntentStore(
+    (state) => state.frozenWorktreeIntentByWorkspaceKey[workspaceKey],
+  );
+  const draftBranchBase = useDraftBranchIntentStore(
+    (state) => state.intentByWorkspaceKey[workspaceKey],
+  );
+  const hydratedWorktreeIntentKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (draftScopeId !== V4_DRAFT_SCOPE_ROOT) return;
+    const hydrationKey = `${workspaceKey}\0${draftScopeId}`;
+    const persisted = composerDraft.worktreeIntent;
+    if (hydratedWorktreeIntentKeyRef.current !== hydrationKey) {
+      hydratedWorktreeIntentKeyRef.current = hydrationKey;
+      if (
+        persisted &&
+        !useDraftBranchIntentStore.getState().frozenWorktreeIntentByWorkspaceKey[workspaceKey]
+      ) {
+        applyPersistedWorktreeIntent(workspaceKey, persisted);
+        return;
+      }
+    }
+    const desired = selectPersistableWorktreeIntent(
+      useDraftBranchIntentStore.getState(),
+      workspaceKey,
+    );
+    if (!isSamePersistedWorktreeIntent(desired, persisted)) {
+      replaceComposerDraft({ ...composerDraft, worktreeIntent: desired });
+    }
+  }, [
+    composerDraft,
+    draftBranchBase,
+    draftScopeId,
+    frozenWorktreeDestination,
+    replaceComposerDraft,
+    workspaceKey,
+  ]);
 
   // ── Return-to-draft requests (workspace-scoped store; spec §Return to draft on failure) ──
   // The failure hand-off moves the frozen submission into the draft pending recovery scope and

@@ -43,6 +43,81 @@ interface DraftBranchIntentState {
 export interface FrozenWorktreeDestination {
   branchName: string;
   customLocationPath?: string;
+  /** The frozen submission fell back to HEAD as its base (no base branch existed to name). */
+  baseFromHeadDefault?: boolean;
+}
+
+/**
+ * Persisted form of the frozen destination (the `worktreeIntent` of the root draft record). It
+ * mirrors V4ComposerWorktreeIntent in composerDraftStore; the base branch lives in the draft
+ * branch intent store, so it is carried alongside the frozen destination.
+ */
+export interface PersistedWorktreeIntent {
+  branchName: string;
+  baseBranch?: string;
+  baseFromHeadDefault?: boolean;
+  customLocationPath?: string;
+}
+
+/**
+ * Snapshot of the in-memory frozen destination for persistence, or undefined when none is pending.
+ * The root draft mirrors this value so a reload hydrates the same destination back.
+ */
+export function selectPersistableWorktreeIntent(
+  state: Pick<
+    DraftBranchIntentState,
+    "frozenWorktreeIntentByWorkspaceKey" | "intentByWorkspaceKey"
+  >,
+  workspaceKey: string,
+): PersistedWorktreeIntent | undefined {
+  const frozen = state.frozenWorktreeIntentByWorkspaceKey[workspaceKey];
+  if (!frozen) return undefined;
+  const baseBranch = state.intentByWorkspaceKey[workspaceKey];
+  return {
+    branchName: frozen.branchName,
+    ...(frozen.customLocationPath ? { customLocationPath: frozen.customLocationPath } : {}),
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(frozen.baseFromHeadDefault ? { baseFromHeadDefault: true } : {}),
+  };
+}
+
+/** Field-wise equality of two persisted destinations (undefined equals undefined). */
+export function isSamePersistedWorktreeIntent(
+  left: PersistedWorktreeIntent | undefined,
+  right: PersistedWorktreeIntent | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.branchName === right.branchName &&
+    left.baseBranch === right.baseBranch &&
+    Boolean(left.baseFromHeadDefault) === Boolean(right.baseFromHeadDefault) &&
+    left.customLocationPath === right.customLocationPath
+  );
+}
+
+/**
+ * Apply a persisted destination to the store: Retry/Change prefill (base and mode) plus the frozen
+ * branch and location used by the next creation. Used by the restore action and by hydration after
+ * reload, so both paths reach the same state.
+ */
+export function applyPersistedWorktreeIntent(
+  workspaceKey: string,
+  intent: PersistedWorktreeIntent,
+): void {
+  const store = useDraftBranchIntentStore.getState();
+  store.setWorktreeIntentActive(workspaceKey, true);
+  if (intent.baseBranch) {
+    store.setDraftBranchIntent(workspaceKey, intent.baseBranch);
+  } else if (intent.baseFromHeadDefault) {
+    // A HEAD-default base must not keep a live base choice made after the failure.
+    store.clearDraftBranchIntent(workspaceKey);
+  }
+  // Retry creates the frozen branch at the frozen location instead of generating a new name.
+  store.setFrozenWorktreeIntent(workspaceKey, {
+    branchName: intent.branchName,
+    ...(intent.customLocationPath ? { customLocationPath: intent.customLocationPath } : {}),
+    ...(intent.baseFromHeadDefault ? { baseFromHeadDefault: true } : {}),
+  });
 }
 
 export const useDraftBranchIntentStore = create<DraftBranchIntentState>((set, get) => ({

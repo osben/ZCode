@@ -506,12 +506,22 @@ Live renderer (Git runner settles failed)   Draft store (localStorage)      Host
    |    (empty draft ⇄ non-empty draft branch)     | under the draft recovery scope |
    | 3. report failure (existing effect) -------------------------------------> | status=failed, attempt CAS
    | 4. settle hidden: updateWorktreePreparation  -----------------------------> | status=cancelled, attempt CAS
-   | 5. tombstone: deleteTask (existing Hide path) --------------------------->  | tasks.deleted=1
+   | 4a. FENCE A: entry still this attempt with    |                                |
+   |     returningToDraft; else stop (keep the    |                                |
+   |     pending record, no removal, no discard)  |                                |
+   | 5. tombstone: deleteTask (existing Hide path) --------------------------->  | tasks.deleted=1 (no attempt CAS)
+   | 5a. FENCE B: same check after the await; else|                                |
+   |     skip discard/release/modal/navigation   |                                |
    | 6. discard() local pipeline entry             |                                |
    | 7. navigate startDraft when the active view is the failed session;        |
    |    otherwise an action toast (the modal defers until the user returns)   |
    | 8. open the failure modal from the workspace-scoped modal store (memory) |
 ```
+
+Residual window: a newer attempt started by another window between step 4 and step 5 is visible
+to this renderer only through the Host snapshot; deleteTask has no attempt CAS, so a tombstone
+written in that window can hide the newer session. Closing it needs an attempt-scoped Hide command
+on the Host (a protocol change, not in this revision). Fence B bounds the local cleanup only.
 
 Ordering constraints:
 
@@ -527,6 +537,11 @@ Ordering constraints:
   the Host session store, or the worktree directory.
 - If the tombstone fails, the hand-off attempts to return the recovery record to the failed session
   scope and keeps the failed-row pipeline and continuation; it does not open the return modal.
+
+Restored intent persistence: the frozen destination (branch, custom location, base branch, and the
+HEAD-default flag) is mirrored into the root draft's `worktreeIntent`, so reload hydrates the same
+destination and keeps worktree mode on. The store owns the state; the draft is its mirror. Hydration
+runs once per mount, and a released destination clears the mirror.
 
 ### Failure modal
 
@@ -584,6 +599,10 @@ when its editor is still empty, drops the queue-time recovery record for that su
 the admission name claim. If text was typed while the reservation was pending, the submission stays
 on the recovery card and the typed text is not overwritten (decision 2). Preflight and the reservation
 conflict both use this path.
+
+Validation failures surface for the blocked submission's scope: the draft composer's entry becomes
+the active pipeline entry even when another session's pipeline is active, so the specific message is
+visible in the destination control.
 
 Automatic restore: the failure hand-off names the recovery record it moved (the modal store carries
 the pending scope). The composer restores exactly that record and never the oldest pending one. The
