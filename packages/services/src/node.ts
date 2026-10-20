@@ -3068,3 +3068,9 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
     .catch(() => {});
 }
 export { localRuntimeNetworkCapture } from "./zcode-agent/localRuntimeNetworkCapture.js";
+export { SourceServerWorkspaceAliasRepo } from "./session/sourceServerWorkspaceAliasRepo.js";
+export {
+  SourceServerWorkspaceIdentityChannelServer,
+  SourceServerWorkspaceIdentityMapper,
+} from "./source-server-workspace/sourceServerWorkspaceIdentityChannelServer.js";
+export { scopeConversationShareServiceForAttachment } from "./conversation-share/conversationShareConnectionScope.js";

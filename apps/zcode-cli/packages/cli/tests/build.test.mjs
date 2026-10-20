@@ -305,3 +305,19 @@ test("request security subpath bundles through its edition entry", async () => {
     ),
   );
 });
+
+test("bundles the public SQLite migration entrypoint without treating index.ts as a directory", async () => {
+  const result = await build({
+    stdin: {
+      contents: 'import * as migrations from "@zcode/shared/sqlite-migrations"; console.log(migrations);',
+      resolveDir: resolve(import.meta.dirname, ".."),
+    },
+    alias: resolveBuildAliases(),
+    bundle: true,
+    platform: "node",
+    write: false,
+    logLevel: "silent",
+  });
+  assert.equal(result.errors.length, 0);
+  assert.ok(result.outputFiles[0].text.length > 0);
+});

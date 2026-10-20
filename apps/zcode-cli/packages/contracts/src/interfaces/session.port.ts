@@ -1,5 +1,3 @@
-import type { HighspeedMessageMetadata } from "./highspeed-message-metadata.js";
-export type { HighspeedMessageMetadata } from "./highspeed-message-metadata.js";
 import type { RuntimeInputPresentation } from "./runtime-input-presentation.js";
 // ============================================================
 // Session Ports - Core interfaces for session management
@@ -261,6 +259,10 @@ export interface Session {
 }
 
 export interface TurnSteerInput {
+  /** 临时执行的选型不可成为普通 Session 续跑默认；不包含请求凭据。 */
+  modelSelectionScope?: "execution";
+  /** 仅加速卡输入携带普通模型快照，不含凭据；用于接纳时更新 Session。 */
+  highspeedFallbackSelection?: ModelSelection;
   input: string;
   inputId?: string;
   queryId?: QueryId;
@@ -289,6 +291,29 @@ export type TurnSteerSource = "plan_approval_feedback" | "workflow_refine_feedba
  * and ledger semantics differ.
  */
 export type TurnSteerDeliveryMode = "guide" | "queue";
+
+/** Persistence contract for message.data metadata.highspeed; excludes runtime credentials. */
+export interface HighspeedMessageMetadata {
+  schemaVersion: 1;
+  cardId: string;
+  taskId: string;
+  provider: string;
+  model: string;
+  issuedAt: number;
+  expiresAt: number;
+  regularTps?: number;
+  outputTokens?: number;
+  durationMs?: number;
+  savedDurationMs?: number;
+  modelDurationMs?: number;
+  toolDurationMs?: number;
+  otherDurationMs?: number;
+  fallbackAt?: number;
+  fallbackReason?:
+    | "highspeed_card_expired"
+    | "highspeed_request_failed"
+    | "highspeed_selection_unavailable";
+}
 
 /** Protocol-independent input intent metadata; bootstrap v4 assembles ConversationInputIntent at the event boundary. */
 export type TurnInputSourceMetadata =

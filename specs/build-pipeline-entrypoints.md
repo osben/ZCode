@@ -49,10 +49,15 @@ or migration definition changes.
 
 Highspeed metadata and execution fallback events in Agent contracts accept the same
 three reasons as the shared schema, including `highspeed_selection_unavailable`.
-Use one Agent metadata type as the owner of that reason set, and retain the public
+Retain the synchronized Agent metadata and execution event contracts and their public
 exports. Cold hydration and persistence preserve the selection-unavailable reason.
 
-The shared wire schema can describe background execution overrides from newer runtimes.
-This Core's execution-scoped child policy remains foreground-only. Its bootstrap
-projection explicitly rejects `background: allow` before execution and preserves
-`background: deny`; it must not silently reinterpret the unsupported policy.
+Background execution model policies use the current Agent session-execution owner.
+The toolchain migration does not override policies supported by the synchronized Core.
+
+The standalone Web share entry imports the existing Web theme seed module from its
+current location. Import-path repair must preserve initial theme selection behavior.
+
+Agent bundling resolves `@zcode/shared/sqlite-migrations` through its public source
+entrypoint before the generic shared alias. The bundler must not append that subpath
+to `src/index.ts`; migration definitions and checksum inputs remain unchanged.

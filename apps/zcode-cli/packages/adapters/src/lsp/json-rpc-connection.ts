@@ -257,6 +257,8 @@ export class LspJsonRpcConnection {
     return new LspError(
       unsupported ? "lsp_operation_unsupported" : "lsp_request_failed",
       `${this.options.serverId} ${unsupported ? "does not support" : "rejected"} ${method} (code ${error.code}): ${error.message}`,
+      // The numeric code is kept structured so lifecycle logs can carry it without the message text.
+      { cause: new JsonRpcResponseError(error.code, error.message) },
     );
   }
 

@@ -2464,6 +2464,8 @@ Original copyright, license and NOTICE text is retained below. Identical text is
 
 - zod@3.25.76 — MIT
 
+- zod@4.6.5 — MIT
+
 - zod@4.6.7 — MIT
 
 - zrender@6.1.0 — BSD-3-Clause
@@ -40499,6 +40501,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ### Notice 3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8
 
 - zod@3.25.76: LICENSE
+
+- zod@4.6.5: LICENSE
 
 - zod@4.6.7: LICENSE
 

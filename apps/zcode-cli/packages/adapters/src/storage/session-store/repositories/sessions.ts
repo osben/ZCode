@@ -100,78 +100,69 @@ export async function updateSession(
   db: DatabaseSync,
   input: UpdateSessionInput,
 ): Promise<SessionInfo> {
-  const current = await getSession(db, input.id);
-  if (!current) {
-    throw new Error(`Session not found: ${input.id}`);
+  const fields: string[] = [];
+  const values: SQLInputValue[] = [];
+  const set = (column: string, value: SQLInputValue | undefined) => {
+    if (value === undefined) return;
+    fields.push(`${column} = ?`);
+    values.push(value);
+  };
+  // Only the columns owned by this input are written: a read-then-write of the whole row lets a
+  // concurrent title, permission or outcome update be overwritten with the stale snapshot.
+  set("directory", input.directory);
+  set("path", input.path);
+  set("title", input.title);
+  set("title_source", input.titleSource);
+  set("title_message_id", input.titleMessageID);
+  set("share_url", input.shareURL);
+  // TEMPORARY: upstream also writes last_outcome; the fork contract has no UpdateSessionInput.lastOutcome yet.
+  // Add it with the contracts sync (deferred, see the PR description).
+  if (input.summary !== undefined) {
+    set("summary_additions", input.summary?.additions ?? null);
+    set("summary_deletions", input.summary?.deletions ?? null);
+    set("summary_files", input.summary?.files ?? null);
+    set("summary_diffs", encodeJson(input.summary?.diffs));
   }
-
-  const summary =
-    input.summary === undefined
-      ? {
-          additions: current.summaryAdditions,
-          deletions: current.summaryDeletions,
-          files: current.summaryFiles,
-          diffs: current.summaryDiffs,
-        }
-      : input.summary;
-  const now = Date.now();
+  if (input.revert !== undefined) set("revert", encodeJson(input.revert));
+  if (input.permission !== undefined) set("permission", encodeJson(input.permission));
+  set("time_compacting", input.timeCompacting);
+  // Fork-owned archive state (time_archived) is index-only; it is not activity.
+  set("time_archived", input.timeArchived);
   if (
-    input.title !== undefined &&
-    input.expectedTitleSources &&
-    input.expectedTitleSources.length > 0 &&
-    !input.expectedTitleSources.includes(current.titleSource ?? "first_input")
+    input.title !== undefined ||
+    input.titleSource !== undefined ||
+    input.titleMessageID !== undefined
   ) {
-    return current;
+    set("time_title_updated", Date.now());
   }
-  const titleChanged = input.title !== undefined && input.title !== current.title;
-  const nextTitleSource = input.titleSource ?? current.titleSource ?? "first_input";
-
-  db.prepare(
-    `
-      update session set
-        directory = ?,
-        path = ?,
-        title = ?,
-        title_source = ?,
-        title_message_id = ?,
-        share_url = ?,
-        summary_additions = ?,
-        summary_deletions = ?,
-        summary_files = ?,
-        summary_diffs = ?,
-        revert = ?,
-        permission = ?,
-        time_title_updated = ?,
-        time_compacting = ?,
-        time_archived = ?,
-        -- Fix cause: path self-healing may carry a timestamp from before a concurrent read; do
-        -- not roll back the actual activity time.
-        time_updated = max(time_updated, ?)
-      where id = ?
-      `,
-  ).run(
-    input.directory ?? current.directory,
-    input.path === undefined ? (current.path ?? null) : input.path,
-    input.title ?? current.title,
-    nextTitleSource,
-    input.titleMessageID === undefined ? (current.titleMessageID ?? null) : input.titleMessageID,
-    input.shareURL === undefined ? (current.shareURL ?? null) : input.shareURL,
-    summary === null ? null : (summary.additions ?? null),
-    summary === null ? null : (summary.deletions ?? null),
-    summary === null ? null : (summary.files ?? null),
-    summary === null ? null : encodeJson(summary.diffs),
-    input.revert === undefined ? encodeJson(current.revert) : encodeJson(input.revert),
-    input.permission === undefined ? encodeJson(current.permission) : encodeJson(input.permission),
-    titleChanged || input.titleSource !== undefined || input.titleMessageID !== undefined
-      ? now
-      : (current.time.titleUpdated ?? null),
-    input.timeCompacting === undefined ? (current.time.compacting ?? null) : input.timeCompacting,
-    input.timeArchived === undefined ? (current.time.archived ?? null) : input.timeArchived,
-    input.timeUpdated ?? now,
-    input.id,
-  );
-
+  // Title and organization state are not session activity; activity is committed explicitly by
+  // messages or terminal states, and never moves backwards.
+  if (input.timeUpdated !== undefined) {
+    fields.push("time_updated = max(time_updated, ?)");
+    values.push(input.timeUpdated);
+  }
+  if (fields.length) {
+    values.push(input.id);
+    const sources = input.title !== undefined ? input.expectedTitleSources : undefined;
+    const guard = sources?.length
+      ? ` and coalesce(title_source, 'first_input') in (${sources.map(() => "?").join(",")})`
+      : "";
+    if (sources?.length) values.push(...sources);
+    db.prepare(`update session set ${fields.join(",")} where id=?${guard}`).run(...values);
+  }
   return mustGetSession(db, input.id);
+}
+
+/** Upstream tombstone: idempotent, keeps message/part rows and the activity time; listings hide it. */
+export function softDeleteSession(
+  db: DatabaseSync,
+  sessionID: SessionId,
+  timeDeleted: number,
+): void {
+  db.prepare("update session set time_deleted = coalesce(time_deleted, ?) where id = ?").run(
+    timeDeleted,
+    sessionID,
+  );
 }
 
 export function getSession(db: DatabaseSync, sessionID: SessionId): SessionInfo | null {
@@ -185,7 +176,8 @@ export async function listSessions(
   db: DatabaseSync,
   input: ListSessionsInput = {},
 ): Promise<SessionInfo[]> {
-  const clauses: string[] = [];
+  // Soft-deleted (tombstoned) sessions are hidden from every listing.
+  const clauses: string[] = ["time_deleted is null"];
   const values: SQLInputValue[] = [];
 
   if (input.projectID) {
@@ -250,7 +242,7 @@ function buildChildSessionScope(parentIds: readonly SessionId[]): {
   values: SQLInputValue[];
 } {
   return {
-    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_archived is null`,
+    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_archived is null and time_deleted is null`,
     values: [...parentIds, ...CHILD_SESSION_TASK_TYPES],
   };
 }

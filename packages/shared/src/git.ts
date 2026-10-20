@@ -471,6 +471,8 @@ export interface GitRefreshResult {
   unstagedChanges: GitFileChange[];
   stagedChanges: GitFileChange[];
   branchComparison: GitBranchComparison | null;
+  /** Auxiliary comparison failure; summary, changes and identity are still current. */
+  branchComparisonError?: string | null;
 }
 
 export type GitCheckpointScope = "workspace";

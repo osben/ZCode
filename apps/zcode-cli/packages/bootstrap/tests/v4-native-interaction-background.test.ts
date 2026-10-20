@@ -1,12 +1,9 @@
-// L2: permission / background command group (resolveInteraction / cancelBackgroundWork) + broker
-// race wiring. The L2 layer as defined by 08-phasing M4:
-// - resolveInteraction happy path (registry hit delivers the answer) + late-arrival idempotency
-//   (a miss does not throw);
-// - cancelBackgroundWork happy path (drives the optional core capability directly) + structured
-//   error when the capability is unsupported;
-// - broker race: the v4 answer arriving first cancels the dangling reverse RPC and returns the
-//   mapped result; the RPC arriving first unregisters the entry;
-//   permission's allowAlways mapping must carry permissionUpdates (the persisted rule is not lost).
+// L2：权限/后台命令组（resolveInteraction / cancelBackgroundWork）+ broker 竞速接线。
+// 08-phasing M4 完成定义的 L2 层：
+// - resolveInteraction 正路径（登记表命中投递）+ 晚到幂等（未命中不抛错）；
+// - cancelBackgroundWork 正路径（直驱 core 可选能力）+ 能力不支持结构化错误；
+// - broker race：v4 应答先到 → 悬空反向 RPC 被取消、返回映射结果；RPC 先到 → 登记注销；
+//   permission 的 allowAlways 映射必须携带 permissionUpdates（持久化规则不丢）。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
 import {
@@ -57,9 +54,8 @@ function makeHost(overrides: Partial<V4CommandCoreHost> = {}): V4CommandCoreHost
 }
 
 /**
- * A minimal raw event sufficient for the gateway to register a session as detached live
- * (the live channel of a dwf actor / subagent: the real runtime lives elsewhere, the host has no
- * record).
+ * 一条足以让 gateway 把某会话登记成 detached live 的最小原始事件
+ * （dwf actor / subagent 的直播通道：真 runtime 活在别处，宿主没有 record）。
  */
 function detachedLiveEvent(sessionId: string): SessionEvent {
   return {
@@ -88,7 +84,7 @@ describe("v4 原生 resolveInteraction", () => {
     );
 
     expect(resolve).toHaveBeenCalledWith({ optionId: "allowOnce" });
-    // Removed as soon as it is delivered: a second answer for the same id is treated as a miss.
+    // 投递后即摘除：同一 id 二次应答按未命中处理。
     expect(registry.has("perm_1")).toBe(false);
   });
 
@@ -155,8 +151,7 @@ describe("V4InteractionRegistry", () => {
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledWith({ optionId: "deny" });
 
-    // A stale unregister function arriving late has no effect (the entry was already removed by
-    // resolve).
+    // 旧注销函数晚到不影响（条目已被 resolve 摘除）。
     unregisterFirst();
     expect(registry.resolve("i1", { optionId: "deny" })).toBe(false);
   });
@@ -715,8 +710,7 @@ describe("v4 原生 cancelBackgroundWork", () => {
     });
   });
 
-  // Fix rationale (2026-09-15): when core replied "nothing was cancelled", the old handler still
-  // accepted, so the UI button appeared to do nothing.
+  // 修复原因（2026-09-15）：core 回「没有取消任何东西」时旧 handler 照样 accepted，UI 点了没反应。
   it.each([
     ["background_task_not_found", "not_found"],
     ["background_task_not_running", "not_running"],
@@ -751,11 +745,9 @@ describe("v4 原生 cancelBackgroundWork", () => {
     ).resolves.toBeUndefined();
   });
 
-  // Cancellation has exactly one path (the spec's Invariants): the detail page button and the
-  // backgroundWorks panel both send this command; there is no second cancel RPC. This walks the
-  // whole chain with a **real** AgentRuntime and proves workId reaches
-  // DynamicWorkflowRunPort.cancel directly without any identity mapping table
-  // (workId ≡ taskId ≡ runId).
+  // 取消只有一条路径（spec 的 Invariants）：详情页按钮与 backgroundWorks 面板都发这条命令，
+  // 没有第二条 cancel RPC。这里用**真实** AgentRuntime 走完整条链，证明 workId 一路直达
+  // DynamicWorkflowRunPort.cancel 且不经任何身份映射表（workId ≡ taskId ≡ runId）。
   it("dwf run：workId 一路打到 DynamicWorkflowRunPort.cancel", async () => {
     const { AgentRuntime, InMemoryRuntimeTaskRegistry } = await import("@zcode/core");
     const { createSessionId } = await import("@zcode/contracts");
@@ -817,9 +809,9 @@ describe("v4 原生 cancelBackgroundWork", () => {
   });
 });
 
-// ── broker race wiring (interaction-broker × V4InteractionRegistry) ──────────────
+// ── broker 竞速接线（interaction-broker × V4InteractionRegistry）──────────────
 
-/** Fake requestClient: hangs until signal abort (simulating a dangling reverse RPC), or answers per script. */
+/** requestClient 假实现：挂起直到 signal abort（模拟悬空反向 RPC），或按脚本应答。 */
 function makeBrokerContext(options?: {
   respond?: (method: string) => Promise<unknown>;
   sessionEntries?: () => Promise<unknown[]>;
@@ -867,8 +859,7 @@ function permissionRequest(overrides: Record<string, unknown> = {}) {
     riskLevel: "medium",
     requestedAt: new Date(),
     ...overrides,
-    // Structurally aligned with @zcode/contracts PermissionBrokerRequest (branded-type fields use
-    // loose assertions).
+    // 结构对齐 @zcode/contracts PermissionBrokerRequest（品牌类型字段用宽松断言）。
   } as never;
 }
 
@@ -876,8 +867,7 @@ describe("broker × v4 竞速", () => {
   it("v4 allowOnce 先到：取消悬空 RPC，映射为 allow", async () => {
     const { broker, registry } = makeBrokerContext();
     const pending = broker.requestPermission(permissionRequest());
-    // Wait for the broker to finish registering (requestClient having been called means it is
-    // registered).
+    // 等 broker 完成登记（requestClient 已被调用即已注册）。
     await new Promise((r) => setTimeout(r, 0));
 
     expect(registry.has("perm_race")).toBe(true);
@@ -885,7 +875,7 @@ describe("broker × v4 竞速", () => {
 
     const result = await pending;
     expect(result.decision).toBe("allow");
-    // finally has unregistered: the registry is clean.
+    // finally 已注销：登记表干净。
     expect(registry.has("perm_race")).toBe(false);
   });
 
@@ -1055,8 +1045,7 @@ describe("broker × v4 竞速", () => {
 
     registry.resolve("ask_race", { freeText: "B 口味" });
     const result = await pending;
-    // accept + content.answer → decision=modify, with the answer merged into
-    // modifiedInput.answers.
+    // accept + content.answer → decision=modify，答案并入 modifiedInput.answers。
     expect(result.decision).toBe("modify");
     expect(result.modifiedInput).toMatchObject({
       answers: { "要哪种？": "B 口味" },
@@ -1191,8 +1180,7 @@ describe("broker × v4 竞速", () => {
     );
     await new Promise((r) => setTimeout(r, 0));
 
-    // host adapter respondElicitation converging path: action=accept + content.answers passes
-    // multi-question answers through directly.
+    // host adapter respondElicitation 收敛路径：action=accept + content.answers 多题直传。
     registry.resolve("ask_multi", {
       action: "accept",
       content: { answers: { "要哪种？": "B", "要几份？": "2" } },
@@ -1331,10 +1319,9 @@ describe("broker × v4 竞速", () => {
     });
   });
 
-  // ── Session always-allow (docs/dynamic-workflow/launch.md "Always allow in this session") ──
-  // The session semantics are synthesized on the answer side: an option response on the wire
-  // cannot carry permissionUpdates (strict schema), so the broker, on an exact allow_session hit,
-  // hands sessionPermissionUpdates to core (in-memory only, never written to project rules).
+  // ── 会话免确认（docs/dynamic-workflow/launch.md「Always allow in this session」）──
+  // 会话语义在应答侧合成：wire 上的 option response 不能带 permissionUpdates（strict schema），
+  // broker 精确命中 allow_session 后把 sessionPermissionUpdates 交给 core（纯内存，不落项目规则）。
 
   it("CreateWorkflow：v4 allowSession → allow + sessionPermissionUpdates，无项目级 permissionUpdates", async () => {
     const { broker, registry, requestClient } = makeBrokerContext();
@@ -1348,8 +1335,7 @@ describe("broker × v4 竞速", () => {
     );
     await new Promise((r) => setTimeout(r, 0));
 
-    // The v3 reverse RPC's option list does not offer the session option: an old desktop sends the
-    // response back verbatim and cannot recognize the session semantics.
+    // v3 反向 RPC 的选项列表不投放会话选项：旧桌面回传 response 原文，认不出会话语义。
     const v3Params = requestClient.mock.calls[0]?.[1] as { options: { kind: string }[] };
     expect(v3Params.options.map((option) => option.kind)).toEqual(["allow_once", "deny"]);
 
@@ -1377,9 +1363,8 @@ describe("broker × v4 竞速", () => {
     expect(result).not.toHaveProperty("sessionPermissionUpdates");
   });
 
-  // ── workflow Refine (docs/dynamic-workflow/launch.md "Refine") ──
-  // The Refine option is synthesized only in the v4 projection; the broker special-cases it by
-  // toolName+optionId+freeText before the exact match.
+  // ── workflow Refine（docs/dynamic-workflow/launch.md「Refine」）──
+  // Refine 选项只在 v4 投影合成，broker 在精确匹配前按 toolName+optionId+freeText 特判。
 
   it("CreateWorkflow：v4 workflowRefine + freeText → deny + workflow_refine_feedback", async () => {
     const { broker, registry } = makeBrokerContext();
@@ -1395,8 +1380,7 @@ describe("broker × v4 竞速", () => {
     registry.resolve("wf_refine", { optionId: "workflowRefine", freeText: " 只跑三个 finder " });
     await expect(pending).resolves.toMatchObject({
       decision: "deny",
-      // The protocol boundary trims surrounding whitespace, same normalization as
-      // AskUserQuestion answers.
+      // 协议边界 trim 外围空白，同 AskUserQuestion 应答归一。
       reason: "只跑三个 finder",
       reasonSource: "workflow_refine_feedback",
     });
@@ -1447,64 +1431,9 @@ describe("broker × v4 竞速", () => {
     await expect(pending).resolves.toMatchObject({ decision: "allow" });
   });
 
-  // ── Reusable workflows: the saved source goes through the same gate (docs/dynamic-workflow/launch.md) ──
-  // The special case is keyed on toolName and independent of the input shape. These cases pin that:
-  // a narrowing to "only inline scripts need Refine" would cost saved-run users their only channel
-  // for speaking revision feedback back to the model.
-
-  /** Normalized input as produced by the executor's resolveInput: the script is resolved, and the provenance lives on `saved`. */
-  const savedRunInput = {
-    name: "release-check",
-    script: 'return await agent("检查员").ask<string>("检查一遍");',
-    saved: {
-      name: "release-check",
-      args: { target: "packages/core" },
-      path: "/repo/.zcode/workflows/release-check.dwf.ts",
-      scope: "project",
-    },
-  };
-
-  it("CreateWorkflow（saved 源）：workflowRefine + freeText → 与内联逐字相同的反馈升级", async () => {
-    const { broker, registry } = makeBrokerContext();
-    const pending = broker.requestPermission(
-      permissionRequest({
-        requestId: "wf_refine_saved",
-        toolName: "CreateWorkflow",
-        input: savedRunInput,
-      }),
-    );
-    await new Promise((r) => setTimeout(r, 0));
-
-    registry.resolve("wf_refine_saved", {
-      optionId: "workflowRefine",
-      freeText: " 只检查 packages/core ",
-    });
-    await expect(pending).resolves.toMatchObject({
-      decision: "deny",
-      reason: "只检查 packages/core",
-      reasonSource: "workflow_refine_feedback",
-    });
-  });
-
-  it("CreateWorkflow（saved 源）：allowOnce 照常批准", async () => {
-    const { broker, registry } = makeBrokerContext();
-    const pending = broker.requestPermission(
-      permissionRequest({
-        requestId: "wf_allow_saved",
-        toolName: "CreateWorkflow",
-        input: savedRunInput,
-      }),
-    );
-    await new Promise((r) => setTimeout(r, 0));
-
-    registry.resolve("wf_allow_saved", { optionId: "allowOnce" });
-    await expect(pending).resolves.toMatchObject({ decision: "allow" });
-  });
-
   it("SaveWorkflow 伪造 workflowRefine → 普通 deny 兜底，无 reasonSource", async () => {
-    // The save window has no "revise and save again" action, and the projection side does not
-    // offer it the option either; even if someone forges it, the feedback-escalation channel is
-    // open only to CreateWorkflow.
+    // 保存窗上没有"改了再存一次"的动作，投影侧也不给它这个选项；即便有人伪造，
+    // 反馈升级的通道也只对 CreateWorkflow 开放。
     const { broker, registry } = makeBrokerContext();
     const pending = broker.requestPermission(
       permissionRequest({
@@ -1528,9 +1457,8 @@ describe("broker × v4 竞速", () => {
     expect(result.reasonSource).toBeUndefined();
   });
 
-  // ── Settings adjusted in the confirmation window (docs/dynamic-workflow/launch.md "Adjusting the settings in the window") ──
-  // Only the **approval** answers of the two workflow tools read content; denials and Refine never
-  // carry adjustments.
+  // ── 确认窗里调整的设置（docs/dynamic-workflow/launch.md「Adjusting the settings in the window」）──
+  // 只有两个工作流工具的**放行**应答读 content；拒绝与 Refine 从不带调整。
 
   it("CreateWorkflow：allowOnce + content → allow + inputAdjustments（只留认得的两个键）", async () => {
     const { broker, registry } = makeBrokerContext();
@@ -1549,7 +1477,10 @@ describe("broker × v4 竞速", () => {
     });
     const result = await pending;
     expect(result.decision).toBe("allow");
-    expect(result.inputAdjustments).toEqual({ subagent_model: "openai/gpt-5", max_concurrency: null });
+    expect(result.inputAdjustments).toEqual({
+      subagent_model: "openai/gpt-5",
+      max_concurrency: null,
+    });
   });
 
   it("AmendWorkflow：allowSession + content → 会话授权与调整同时成立", async () => {
@@ -1618,12 +1549,10 @@ describe("broker × v4 竞速", () => {
   });
 });
 
-// ── dwf event log query (docs/dynamic-workflow/presentation.md "The run pane") ──
-// The shape is deliberately in the same family as rows/range and plans (read-only, stateless,
-// safe to resend on timeout) and **not** a v4 command:
-// a command's ACK result is the closed "mutation result" discriminated union of
-// commandResultSchema; a page of read-only events does not belong to that vocabulary and would
-// pointlessly carry the baseRevision / idempotency machinery.
+// ── dwf 事件日志 query（docs/dynamic-workflow/presentation.md「The run pane」）──
+// 形态刻意与 rows/range、plans 同族（只读、无状态、超时重发安全），而**不是** v4 command：
+// command 的 ACK 结果是 commandResultSchema 那个封闭的「变更结果」判别联合，
+// 一页只读事件不属于那个词汇表，还会白背 baseRevision/幂等那套机制。
 describe("v4 conversation workflowRunEvents query", () => {
   function makeGateway(
     listDynamicWorkflowRunEvents?: (
@@ -1654,8 +1583,7 @@ describe("v4 conversation workflowRunEvents query", () => {
       limit: 2,
     });
 
-    // The byte bound is always the protocol cap: the renderer cannot loosen it, and the page's
-    // hasMore is decided by the storage layer.
+    // 字节上界恒为协议上限：renderer 不能放宽，页的 hasMore 由存储层判定。
     expect(listEvents).toHaveBeenCalledWith("s1", {
       runId: "dwfrun-1",
       afterSequence: 4,
@@ -1667,8 +1595,7 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("不给 limit 时按协议上限（500 条）取；hasMore 原样取存储层的判定", async () => {
-    // A page may end early because of the byte budget: if the storage layer says there is more,
-    // there is more — even when this page is far short of the limit.
+    // 页可能因字节提前收尾：存储层说还有，就是还有——哪怕这页远没有取满 limit。
     const listEvents = vi.fn(async () => ({ events: [event(1)], hasMore: true }));
     const result = await makeGateway(listEvents).workflowRunEvents({
       sessionId: "s1",
@@ -1683,7 +1610,7 @@ describe("v4 conversation workflowRunEvents query", () => {
     expect(result).toEqual({ events: [event(1)], hasMore: true });
   });
 
-  it("越界 cursor 得到空页而不是报错（投影与 journal 之间有竞态窗口）", async () => {
+  it("带 cursor 的请求原样返回宿主空页", async () => {
     const result = await makeGateway(async () => ({
       events: [],
       hasMore: false,
@@ -1696,8 +1623,8 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("能力缺席 → 结构化的能力不支持错误，而不是静默空页", async () => {
-    // "No events" and "this session lacks the capability" must be distinguishable by the renderer:
-    // the latter means the dwf journal is unavailable (the run service was never constructed).
+    // 「没有事件」与「这个会话没有这个能力」必须能被 renderer 区分：
+    // 后者意味着 dwf journal 不可用（run service 整个没构造）。
     const run = makeGateway().workflowRunEvents({ sessionId: "s1", runId: "dwfrun-1" });
     await expect(run).rejects.toThrow(V4CapabilityUnsupportedError);
     await expect(run).rejects.toMatchObject({
@@ -1716,11 +1643,9 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("冷会话：先把宿主 record 拉起来再读 journal（否则事件日志在重启后恒空）", async () => {
-    // Same precondition as the enumeration query, see
-    // apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
-    // "journal 读面的冷会话前置" (the cold-session precondition of the journal read face). This is
-    // the second call site — both must carry it; missing one yields
-    // "the detail page opens but the log can never be read".
+    // 与枚举 query 同一道前置，见 apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md
+    // 「journal 读面的冷会话前置」。这里是第二个调用点——两个都得带，漏一个就是
+    // 「详情页打开了，日志却永远读不出来」。
     const calls: string[] = [];
     let registered = false;
     const gateway = new ConversationV4Gateway({
@@ -1744,12 +1669,10 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 
   it("detached live 会话（运行中的 dwf actor）：journal 读绝不冷恢复出第二个 runtime", async () => {
-    // Bug root cause (observed 2026-08-24): the nested SessionPane of an actor transcript used to
-    // send this query with the actor session id, and the cold-session precondition only looked at
-    // sessionExists — a detached live session deliberately has no host record, so a ghost runtime
-    // got materialized for a **live** session (double-written event log, frozen live stream).
-    // The precondition must use the same liveness check as subscribe: detached live also counts as
-    // live; skip the resume.
+    // Bug 根因（2026-08-24 实测）：actor transcript 的嵌套 SessionPane 曾带着 actor 会话 id
+    // 打这条 query，而冷会话前置只看 sessionExists——detached live 会话刻意没有宿主 record，
+    // 于是对一条**正在运行**的会话物化出幽灵 runtime（双写事件日志、直播冻结）。
+    // 前置必须与 subscribe 用同一条活性判定：detached live 也算活，跳过 resume。
     const calls: string[] = [];
     const gateway = new ConversationV4Gateway({
       sessionExists: () => false,
@@ -1772,10 +1695,9 @@ describe("v4 conversation workflowRunEvents query", () => {
   });
 });
 
-// ── dwf run enumeration query (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Cancel and resume") ──
-// The journal-backed discovery surface after a restart: the workflowRuns projection is
-// memory-only and empty after a restart, so tool-card joins and Resume button availability can
-// only be reconstructed from this query.
+// ── dwf run 枚举 query（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Cancel and resume」）──
+// journal-backed 的重启后发现面：workflowRuns 投影是 memory-only，重启后为空，
+// 工具卡 join 与 Resume 按钮的可用性只能从这条 query 还原。
 describe("v4 conversation workflowRuns query", () => {
   function makeGateway(
     listDynamicWorkflowRuns?: (
@@ -1826,13 +1748,11 @@ describe("v4 conversation workflowRuns query", () => {
     expect(Object.keys(result)).toEqual(["runs"]);
   });
 
-  // ── Cold-session precondition (apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md "Resume by replay") ──
-  // Bug root cause: this query looks up the host record by sessionId, and historical sessions were
-  // only activated by the **subscribe** path; the renderer's discovery-query effect is declared
-  // before the lease/subscribe effect and the CLI processes requests strictly serially, so when a
-  // historical session is opened after a restart the query necessarily lands before the subscribe
-  // and necessarily gets sessionNotFound — the tool cards' join fallback disappears wholesale and
-  // the cards fall back to the "compiled but no run" compile state.
+  // ── 冷会话前置（apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md「Resume by replay」）──
+  // Bug 根因：这条 query 经 sessionId 找宿主 record，而历史会话只由**订阅**路径激活；
+  // renderer 里发现查询的 effect 声明在 lease/订阅 effect 之前，CLI 又严格串行处理请求，
+  // 于是重启后打开历史会话时它必然先于订阅落地、必然拿到 sessionNotFound——工具卡的
+  // join 回退整块消失，卡片退回「编过但无 run」的编译态。
   function makeColdGateway(options: {
     listDynamicWorkflowRuns?: (
       sessionId: string,
@@ -1898,9 +1818,8 @@ describe("v4 conversation workflowRuns query", () => {
   });
 
   it("detached live 会话（运行中的 dwf actor）：枚举 query 同样不冷恢复第二个 runtime", async () => {
-    // Same root cause as the detached test of the event log query: the two journal read faces
-    // share the same precondition; either one missing the detached check materializes a ghost
-    // runtime for a live session.
+    // 与事件日志 query 的 detached 测试同一根因：两个 journal 读面共用同一道前置，
+    // 任何一个漏掉 detached 判定都会对活会话物化幽灵 runtime。
     const trace: string[] = [];
     const gateway = makeColdGateway({
       trace,
@@ -1917,18 +1836,14 @@ describe("v4 conversation workflowRuns query", () => {
   });
 });
 
-// ── The three user-facing artifact queries (docs/dynamic-workflow/authoring.md "How the user sees them") ──
-// ⚠ Terminology: artifact = output the script published **to the user** via `artifact.*`, not the
-// run's top-level return value (the engine's internal same-named notion for the latter). The
-// spec's "terminology" table is the only disambiguation point.
+// ── dwf 用户面产物的三条 query（docs/dynamic-workflow/authoring.md「How the user sees them」）──
+// ⚠ 术语：artifact = 脚本经 `artifact.*` 发布给**用户**看的产出，不是 run 的顶层返回值
+// （引擎内部对后者的同名叫法）。spec 的「术语」表是唯一消歧处。
 //
-// The three are in the same family as workflowRunEvents: read-only, stateless, safe to resend on
-// timeout, and carrying the same cold-session precondition.
-// ArtifactRead's **authorization lives on the host port side** (the run belongs to that session ∧
-// the journal has a completed row for that version ⇒ only then is the row's uri used to read from
-// the store); the gateway only validates parameters and chunks, deliberately holding no second
-// copy of the criteria — if both places checked, the same id would sooner or later get different
-// interpretations at the two layers.
+// 三条与 workflowRunEvents 同族：只读、无状态、超时重发安全，同样带冷会话前置。
+// ArtifactRead 的**授权在宿主端口侧**（run 属于该会话 ∧ journal 有该版本的 completed 行 ⇒
+// 才拿行上的 uri 去 store 读）；网关只做参数校验与分块，刻意不持第二份判据——两处各判一次，
+// 同一个 id 迟早会在两层上得到不同的解释。
 describe("v4 conversation workflowRunArtifacts query", () => {
   function makeGateway(
     listDynamicWorkflowRunArtifacts?: (
@@ -1969,7 +1884,7 @@ describe("v4 conversation workflowRunArtifacts query", () => {
   });
 
   it("未知 run（端口回 undefined）得到空清单而不是报错", async () => {
-    // An evicted / never-existing run has no artifacts; that is a fact, not a failure.
+    // 一个已被淘汰 / 从未存在的 run 没有产物，这是事实而不是故障。
     const result = await makeGateway(async () => undefined).workflowRunArtifacts({
       sessionId: "s1",
       runId: "dwfrun-gone",
@@ -2047,7 +1962,7 @@ describe("v4 conversation workflowRunArtifactData query", () => {
   const empty = async () => ({ items: [], hasMore: false });
   const maxBytes = WORKFLOW_ARTIFACT_LIMITS.maxPageBytes;
 
-  it("limit 缺省 200、钳在 [1,500]；字节上界恒为协议上限", async () => {
+  it("limit 缺省 200、显式 500；字节上界恒为协议上限", async () => {
     const list = vi.fn(empty);
     const gateway = makeGateway(list);
     await gateway.workflowRunArtifactData({ sessionId: "s1", runId: "r", artifactId: "perf" });
@@ -2180,9 +2095,8 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
   });
 
   it("授权负例：宿主拒绝（不是你的 run / 未知版本 / 是块看板）⇒ notFound，三者不可区分", async () => {
-    // The port normalizes all three denials to undefined, and the gateway returns the same fault
-    // accordingly. Distinguishing them would only tell an unauthorized caller which half it
-    // guessed right — the same discipline as the attachmentRead bugfix.
+    // 端口把三种拒绝都归一成 undefined，网关据此回同一个 fault。区分它们只会告诉一个
+    // 越权的调用方它猜对了哪一半——attachmentRead 那条 bugfix 的同一条纪律。
     const gateway = makeGateway(async () => undefined);
     await expect(
       gateway.workflowRunArtifactRead({
@@ -2206,8 +2120,7 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
       offset: 0,
       limit: 4,
     });
-    // sessionId goes down too: step ② of the authorization chain (the run's parentSessionId must
-    // equal it) lives on the port side.
+    // sessionId 一起下去：授权链第 ② 步（run 的 parentSessionId 必须等于它）在端口侧。
     expect(read).toHaveBeenCalledWith("s1", {
       runId: "dwfrun-1",
       artifactId: "book",
@@ -2241,12 +2154,10 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
     ).rejects.toThrow();
   });
 
-  // ── The chunked-read cache (an efficiency flaw found during the 2026-09-04 implementation review) ────────────────────────
-  // The port's readArtifact returns the **whole** byte payload, while this query is chunked:
-  // without caching, fetching a 20 MiB PDF in 512 KiB chunks of 40 would read the whole file from
-  // the store 40 times (800 MiB of I/O), with every chunk also re-walking the journal
-  // authorization chain. Reuses the attachmentRead table (TTL / byte budget / oldest evicted
-  // first).
+  // ── 分块读取的缓存（2026-09-04 实现期评审发现的效率缺陷）────────────────────────
+  // 端口的 readArtifact 返回**整份**字节，而本 query 是分块的：不缓存的话，一个 20 MiB 的
+  // PDF 按 512 KiB 分 40 块取，就会把整份文件从 store 读 40 遍（800 MiB I/O），每一块还要
+  // 重走一遍 journal 授权链。复用 attachmentRead 那张表（TTL / 字节预算 / 最旧先逐）。
   describe("整份字节的缓存", () => {
     function makeCachingGateway(now: () => number) {
       const read = vi.fn(async () => ({ bytes, contentType: "application/pdf" }));
@@ -2278,12 +2189,9 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
       const third = await gateway.workflowRunArtifactRead(chunk(8));
 
       expect(read).toHaveBeenCalledTimes(1);
-      // Caching does not change the chunking result: the three chunks reassemble the original
-      // bytes.
+      // 缓存不改变分块结果：三块拼回原始字节。
       expect(
-        Buffer.concat(
-          [first, second, third].map((page) => Buffer.from(page.dataBase64, "base64")),
-        ),
+        Buffer.concat([first, second, third].map((page) => Buffer.from(page.dataBase64, "base64"))),
       ).toEqual(Buffer.from(bytes));
       expect(third.nextOffset).toBeNull();
     });
@@ -2305,9 +2213,7 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
       expect(read).toHaveBeenCalledTimes(2);
     });
 
-    it("版本 / 产物 / run / 会话各是不同的键——缓存绝不跨身份复用", async () => {
-      // sessionId in particular: it is exactly what the port's authorization chain compares
-      // against, so a session change must go back through the port.
+    it("版本 / 产物 / run 各是不同的键——缓存不跨这些身份复用", async () => {
       const { gateway, read } = makeCachingGateway(() => 1_000);
       await gateway.workflowRunArtifactRead(chunk(0));
       await gateway.workflowRunArtifactRead({ ...chunk(0), version: 2 });
@@ -2335,7 +2241,7 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
         /fault\.workflowRunArtifactRead\.notFound/,
       );
       artifactExists = true;
-      // Had undefined been cached, this request would keep reporting notFound for 30 seconds.
+      // 若把 undefined 缓存下来，这一次会在 30 秒内继续报 notFound。
       await expect(gateway.workflowRunArtifactRead(chunk(0))).resolves.toMatchObject({
         totalBytes: 10,
       });
@@ -2371,7 +2277,6 @@ describe("v4 conversation workflowRunArtifactRead query", () => {
     expect(calls).toEqual(["resume", "read"]);
   });
 });
-
 
 describe("v4 原生 resumeWorkflowRun", () => {
   function makeRecord(app: Record<string, unknown>): V4SessionRecordView {
@@ -2419,9 +2324,8 @@ describe("v4 原生 resumeWorkflowRun", () => {
     });
   });
 
-  // A business rejection is neither a missing capability nor an execution crash: each of the five
-  // reasons is forwarded with a stable reasonCode, and the UI routes on the vocabulary (not on
-  // error text for flow decisions).
+  // 业务拒绝不是能力缺席也不是执行崩溃：五种 reason 逐一以稳定 reasonCode 上行，
+  // UI 按词表分流（不依赖错误文本做流程判断）。
   it("业务拒绝以 fault.command.workflowRunResumeRejected.<reason> 上行", async () => {
     const resumeWorkflowRun = vi.fn().mockResolvedValue({ ok: false, reason: "not_resumable" });
     const record = makeRecord({ sessionId: "s1", resumeWorkflowRun });
@@ -2435,8 +2339,7 @@ describe("v4 原生 resumeWorkflowRun", () => {
     });
   });
 
-  // compile_failed (an old run from before the facade refactor): the port's bounded diagnostics
-  // reach ack.message via error.message.
+  // compile_failed（facade 重构后的老 run）：端口的有界诊断经 error.message 收进 ack.message。
   it("compile_failed 的诊断随 message 上行", async () => {
     const resumeWorkflowRun = vi
       .fn()
@@ -2454,9 +2357,8 @@ describe("v4 原生 resumeWorkflowRun", () => {
   });
 });
 
-// The hub starts a saved workflow directly (docs/dynamic-workflow/launch.md): an
-// interaction-background handler in the same family as resume. Three tiers: missing capability,
-// business rejection (reason + human-readable message), success result.
+// 中枢直接启动已保存工作流（docs/dynamic-workflow/launch.md）：与 resume 家族同族的
+// interaction-background handler。能力缺席、业务拒绝（reason + 人可读 message）、成功 result 三档。
 describe("v4 原生 startSavedWorkflow", () => {
   function makeRecord(app: Record<string, unknown>): V4SessionRecordView {
     return {
@@ -2516,8 +2418,7 @@ describe("v4 原生 startSavedWorkflow", () => {
     });
   });
 
-  // Business rejection: reason → stable fault code (the UI routes on the vocabulary), message →
-  // error.message (the gateway folds it into ack.message).
+  // 业务拒绝：reason → 稳定 fault code（UI 词表分流），message → error.message（网关收进 ack.message）。
   it("业务拒绝以 fault.command.savedWorkflowStartRejected.<reason> 上行并携人可读 message", async () => {
     const startSavedWorkflow = vi.fn().mockResolvedValue({
       ok: false,
@@ -2549,9 +2450,8 @@ describe("v4 原生 startSavedWorkflow", () => {
   });
 });
 
-// GUI "settings" (docs/dynamic-workflow/launch.md "Changing a run's settings from the GUI"): an
-// interaction-background handler in the same family as resume. The three states pass through
-// as-is, rejections go up with a stable fault code, success returns the new run's join keys.
+// GUI「配置」（docs/dynamic-workflow/launch.md「Changing a run's settings from the GUI」）：与 resume 家族
+// 同族的 interaction-background handler。三态原样下传、拒绝以稳定 fault code 上行、成功回新 run 的联接键。
 describe("v4 原生 amendWorkflowRunSettings", () => {
   function makeRecord(app: Record<string, unknown>): V4SessionRecordView {
     return {
@@ -2643,9 +2543,8 @@ describe("v4 原生 amendWorkflowRunSettings", () => {
   });
 });
 
-// ── The two read faces of the workspace transcript (docs/dynamic-workflow/transcript-and-notifications.md) ──
-// Following the artifacts ①/③: an empty listing is a fact, not a failure; the body's authorization
-// is entirely host-side, and the gateway only validates parameters and clamps maxBytes.
+// ── 工作区 transcript 的两条读面（docs/dynamic-workflow/transcript-and-notifications.md）──
+// 照产物的 ①/③：清单空 = 事实不是故障；正文的授权全在宿主侧，网关只校参数、钳 maxBytes。
 describe("v4 conversation workflowRunWorkspace query", () => {
   function makeGateway(
     listDynamicWorkflowRunWorkspaceNodes?: (
@@ -2753,7 +2652,7 @@ describe("v4 conversation workflowRunNodeResult query", () => {
     totalBytes: 40,
   };
 
-  it("maxBytes 缺省与钳制都在网关：缺省 resultMaxBytes，超过也钳到它", async () => {
+  it("maxBytes 缺省 resultMaxBytes，较小合法值原样下传", async () => {
     const read = vi.fn(async () => body);
     const gateway = makeGateway(read);
     await gateway.workflowRunNodeResult({

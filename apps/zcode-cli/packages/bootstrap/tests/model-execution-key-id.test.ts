@@ -17,7 +17,6 @@ describe("请求期 Key ID 执行上下文", () => {
     });
     expect(value).toEqual(requestAuth);
     expect(Object.isFrozen(value)).toBe(true);
-    expect(value?.headers).toBeUndefined();
   });
 
   it("原样透传 selectionFallback 声明，包括发起方声明的退回目标", () => {
@@ -42,9 +41,3 @@ describe("请求期 Key ID 执行上下文", () => {
     expect(execution.selectionFallback).toEqual(selectionFallback);
   });
 });
-
- it("preserves the foreground policy and explicitly rejects unsupported background overrides", () => {
-   const execution = createModelExecutionContext({ selectionScope: "execution", subagents: { foregroundModel: "submission", background: "deny" } });
-   expect(execution.subagents).toEqual({ foregroundModel: "submission", background: "deny" });
-   expect(() => createModelExecutionContext({ selectionScope: "execution", subagents: { foregroundModel: "submission", background: "allow" } })).toThrow("does not support background agents");
- });

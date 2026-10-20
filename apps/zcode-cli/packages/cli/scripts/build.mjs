@@ -208,6 +208,10 @@ export const resolveBuildAliases = ({
     rootDirectory,
     "../../packages/shared/src/model-provider-types.ts",
   ),
+  "@zcode/shared/sqlite-migrations": resolve(
+    rootDirectory,
+    "../../packages/shared/src/sqlite-migrations/index.ts",
+  ),
   "@zcode/shared": resolve(rootDirectory, "../../packages/shared/src/index.ts"),
   "@zcode/core": resolve(cliDirectory, "../core/dist/index.js"),
 });

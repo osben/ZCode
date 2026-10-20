@@ -23,7 +23,7 @@ import type {
 import { runJournalStoreContract } from "@zcode/dynamic-workflow/testing";
 import type { DwfRunIntrospectionQueries, DwfRunSessionListItem } from "../src/storage/index.js";
 import { createDwfJournalStore, createSqliteSessionStore } from "../src/storage/index.js";
-import { runSqliteSessionMigrations } from "../src/storage/session-store/migration-runner.js";
+import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
 
 const openDatabases: DatabaseSync[] = [];
 
@@ -31,7 +31,7 @@ const openDatabases: DatabaseSync[] = [];
 function openJournalDb(dbPath = ":memory:"): { db: DatabaseSync; journal: JournalStorePort } {
   const db = new DatabaseSync(dbPath);
   openDatabases.push(db);
-  runSqliteSessionMigrations(db, dbPath);
+  runSqliteSessionMigrationsSync(db, dbPath);
   return { db, journal: createDwfJournalStore(db) };
 }
 
@@ -1207,7 +1207,7 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
   it("枚举查询的 SQL 取 failure_json 而不取 result_json", () => {
     const db = new DatabaseSync(":memory:");
     openDatabases.push(db);
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
     const prepared: string[] = [];
     // A bypass recorder for prepare: only to see the real column list this query sends.
     const recordingDb = new Proxy(db, {

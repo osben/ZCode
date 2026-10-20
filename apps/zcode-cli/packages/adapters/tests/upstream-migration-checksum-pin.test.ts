@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { SQLITE_MIGRATIONS } from "../src/storage/session-store/migrations.js";
-import { runSqliteSessionMigrations } from "../src/storage/session-store/migration-runner.js";
+import { createHash } from "node:crypto";
+import { FORK_LEDGER_SQL_VARIANTS } from "../src/storage/session-store/fork-migrations.js";
+import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
 
 // Upstream (zai-org/ZCode) ledger checksums. The fork shares ~/.zcode/cli/db/db.sqlite with the
 // upstream app, so any change to these migrations' SQL text, comments included, makes the other
@@ -41,6 +42,9 @@ const UPSTREAM_CHECKSUMS: Record<string, string> = {
   "0021_official_glm_selection": "433a8da454682406e962b043f2e0f412e9801bf7e4641ff25760aa16625ebafe",
   "0022_backfilled_session_reasoning":
     "aee472fe499e9c25d2e71df0fbc68d92e462b30d1d02919ca35d540bf133c99a",
+  "0023_session_soft_delete_outcome":
+    "999cc9840e30c94f8a6628440f3e729c24e7ee839720f3e76099b3c3127a8bd8",
+  "0024_session_database_identity": "3eb41922313d66d492544ac05e0b314d55cdccbfc49f118768c0b4b0121e18b3",
 };
 
 describe("upstream session migration checksum pin", () => {
@@ -56,7 +60,7 @@ describe("upstream session migration checksum pin", () => {
   it("a fresh database writes exactly the upstream checksum for every upstream migration", () => {
     const db = new DatabaseSync(":memory:");
     databases.push(db);
-    runSqliteSessionMigrations(db, ":memory:");
+    runSqliteSessionMigrationsSync(db, ":memory:");
     const ledger = Object.fromEntries(
       db
         .prepare("SELECT id, checksum FROM schema_migration")
@@ -68,10 +72,9 @@ describe("upstream session migration checksum pin", () => {
     }
   });
 
-  it("still accepts the fork-written translated 0020 checksum", () => {
-    const migration = SQLITE_MIGRATIONS.find((m) => m.id === "0020_provider_model_selection");
-    expect(migration?.acceptedHistoricalChecksums).toContain(
-      "31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788",
-    );
+  it("pins the fork-written translated 0020 checksum to its historical SQL variant", () => {
+    const variant = FORK_LEDGER_SQL_VARIANTS.find((entry) => entry.id === "0020_provider_model_selection");
+    expect(variant?.acceptedChecksum).toBe("31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788");
+    expect(createHash("sha256").update(variant!.sql.trim()).digest("hex")).toBe(variant?.acceptedChecksum);
   });
 });
