@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
@@ -111,6 +111,78 @@ test("a staged YAML-only set passes oxlint and is formatted in place", () => {
     const result = runWrapper([fixture]);
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
     assert.equal(readFileSync(fixture, "utf8"), 'on: push\nname: "ci"\n');
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+// Hooks inject GIT_DIR/GIT_WORK_TREE and GIT_INDEX_FILE; strip them so the
+// fixture repository below is the one git operates on.
+const gitEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+);
+
+function git(cwd, ...args) {
+  return execFileSync("git", args, { cwd, env: gitEnv, encoding: "utf8" }).trim();
+}
+
+// Fixture repository whose pendingUpstreamCommit is its first commit, which
+// holds pending-same.json. The fixture lives under scripts/ like the other
+// fixtures, so oxlint sees paths inside its own root.
+function makePendingHookFixture(pendingUpstreamCommit) {
+  const dir = makeFixtureDir();
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "test@example.com");
+  git(dir, "config", "user.name", "Test");
+  git(dir, "config", "commit.gpgsign", "false");
+  writeFileSync(join(dir, "pending-same.json"), '{"b":2,"a":1}');
+  git(dir, "add", "-A");
+  git(dir, "commit", "-q", "-m", "pending upstream");
+  const pending = git(dir, "rev-parse", "HEAD");
+  const pin = { upstreamCommit: pending, pendingUpstreamCommit: pendingUpstreamCommit ?? pending };
+  writeFileSync(join(dir, "fork-upstream-base.json"), `${JSON.stringify(pin, null, 2)}\n`);
+  return dir;
+}
+
+function runWrapperIn(cwd, files) {
+  return spawnSync(process.execPath, [wrapperPath, ...files], {
+    cwd,
+    env: gitEnv,
+    encoding: "utf8",
+  });
+}
+
+test("pre-commit does not reformat a staged file byte-identical to the pending blob, but formats the rest", () => {
+  const dir = makePendingHookFixture();
+  try {
+    writeFileSync(join(dir, "other-fork.json"), '{"b":2,"a":1}');
+    git(dir, "add", "pending-same.json", "other-fork.json");
+
+    const result = runWrapperIn(dir, [
+      join(dir, "pending-same.json"),
+      join(dir, "other-fork.json"),
+    ]);
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    assert.equal(readFileSync(join(dir, "pending-same.json"), "utf8"), '{"b":2,"a":1}');
+    assert.equal(
+      readFileSync(join(dir, "other-fork.json"), "utf8").includes('{ "b": 2, "a": 1 }'),
+      true,
+    );
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+});
+
+test("pre-commit fails loudly when the pending commit is not in the clone", () => {
+  const dir = makePendingHookFixture("1".repeat(40));
+  try {
+    writeFileSync(join(dir, "other-fork.json"), '{"b":2,"a":1}');
+    git(dir, "add", "other-fork.json");
+
+    const result = runWrapperIn(dir, [join(dir, "other-fork.json")]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /git fetch upstream/);
+    assert.equal(readFileSync(join(dir, "other-fork.json"), "utf8"), '{"b":2,"a":1}');
   } finally {
     rmSync(dir, { force: true, recursive: true });
   }
