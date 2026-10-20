@@ -2878,6 +2878,7 @@ const enUS: Record<string, string> = {
   "taskList.unpin": "Unpin task",
   "taskList.rename": "Rename task",
   "taskList.archive": "Archive task",
+  "taskList.delete": "Delete task",
   "taskList.archiveFailed": "Could not archive task",
   "taskList.unarchive": "Unarchive task",
   "taskList.renamePlaceholder": "Task name",
