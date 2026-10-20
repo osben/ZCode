@@ -268,3 +268,6 @@ specs/manage-sessions-table.md
 
 packages/services/src/session/automationRepo.ts
 packages/services/src/session/offPeakTaskRepo.ts
+
+# TEMPORARY upstream 3.16.1 sync (desktop 4): the desktop sync ledger is over the staged-file limit; split it by section later.
+specs/desktop-upstream-sync.md
