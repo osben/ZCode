@@ -20,6 +20,8 @@ export interface LspServerEntry {
   lastErrorCode?: LspErrorCode;
   lastErrorMessage?: string;
   notInstalledAt?: number;
+  /** Set when the restart budget ran out; undefined means `unavailable` is final (`restartOnCrash: false`). */
+  unavailableAt?: number;
   process?: LspServerProcess;
   connection?: LspServerConnection;
   /** Set while a graceful stop is running; acquire reports `starting` until it finishes. */
