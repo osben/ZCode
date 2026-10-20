@@ -6,7 +6,12 @@ import type { IPlatformService, RemoteTarget } from "@zcode/shared";
 import { useRemoteWorkspaceHistory } from "@/root/useRemoteWorkspaceHistory.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { createTabStore } from "@/store/tabStore.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
+
+const reusedConnectionText = expectedCopy("remote.reusedConnection", {
+  connection: "SSH · dev@actual.example.com:22",
+});
 
 afterEach(() => {
   cleanup();
@@ -50,7 +55,7 @@ it.each([false, true])(
       useRemoteWorkspaceHistory({
         intl: {
           formatMessage: ({ id }, values = {}) =>
-            (zhCN[id as keyof typeof zhCN] ?? id).replace(/\{(\w+)\}/gu, (_, key) =>
+            (enUS[id as keyof typeof enUS] ?? id).replace(/\{(\w+)\}/gu, (_, key) =>
               String(values[key] ?? `{${key}}`),
             ),
         },
@@ -72,12 +77,8 @@ it.each([false, true])(
       );
     });
     if (announceReusedConnection)
-      expect(
-        await screen.findByText(
-          "这台设备已通过 SSH · dev@actual.example.com:22 连接，已直接使用现有连接",
-        ),
-      ).toBeTruthy();
-    else expect(screen.queryByText(/已直接使用现有连接/u)).toBeNull();
+      expect(await screen.findByText(reusedConnectionText)).toBeTruthy();
+    else expect(screen.queryByText(reusedConnectionText)).toBeNull();
     await act(async () => {
       await result.current.handleSelectRemoteProject(sessionId, "/srv/project");
     });

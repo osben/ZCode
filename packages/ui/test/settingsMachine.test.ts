@@ -7,6 +7,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { SettingsMachinesProvider } from "@/settings/SettingsMachine.js";
 import { PluginScopeMenu } from "@/settings/PluginScopeMenu.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 afterEach(cleanup);
 
@@ -23,12 +24,12 @@ describe("设置机器标注", () => {
   function wrap(child: React.ReactNode) {
     return createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(
         SettingsMachinesProvider,
         {
           servers: [
-            { sourceServerId: "source-a", displayName: "构建机", installState: "installed" },
+            { sourceServerId: "source-a", displayName: "Build machine", installState: "installed" },
           ],
         },
         createElement(TooltipProvider, {}, child),
@@ -48,10 +49,11 @@ describe("设置机器标注", () => {
       ),
     );
     const trigger = screen.getByRole("button");
-    expect(trigger.textContent).toContain("构建机（远程）");
+    const machineName = expectedCopy("settings.machine.remote", { name: "Build machine" });
+    expect(trigger.textContent).toContain(machineName);
     expect(trigger.querySelector(".lucide-monitor")).toBeNull();
     expect(trigger.querySelector(".lucide-cloud")).toBeTruthy();
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    expect(screen.getByRole("menuitemradio", { name: "project · 构建机（远程）" })).toBeTruthy();
+    expect(screen.getByRole("menuitemradio", { name: `project · ${machineName}` })).toBeTruthy();
   });
 });

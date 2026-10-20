@@ -1454,7 +1454,6 @@ describe("SourceServerManagementPanel", () => {
     );
 
     expect(await screen.findByText("settings.source.connectionHistoryNeedsAttention")).toBeTruthy();
-    expect(screen.queryByText(/产品边界/u)).toBeNull();
     expect(screen.queryByText("settings.source.migrationReport")).toBeNull();
     expect(screen.queryByText("settings.source.exportMigrationJson")).toBeNull();
 

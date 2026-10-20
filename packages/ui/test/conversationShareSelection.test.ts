@@ -234,7 +234,7 @@ describe("ConversationShareSelectionPanel", () => {
         turnId: "turn-1",
         unitIndex: 0,
         rowId: 11,
-        userPreview: "第一条用户问题",
+        userPreview: "First user question",
         assistantPreview: "第一条回答摘要",
         assistantPreviewKind: "text" as const,
         isRunning: false,
@@ -244,7 +244,7 @@ describe("ConversationShareSelectionPanel", () => {
         turnId: "turn-2",
         unitIndex: 1,
         rowId: 22,
-        userPreview: "第二条用户问题",
+        userPreview: "Second user question",
         assistantPreview: "第二条回答摘要",
         assistantPreviewKind: "text" as const,
         isRunning: false,
@@ -265,12 +265,12 @@ describe("ConversationShareSelectionPanel", () => {
     expect(screen.queryByRole("button", { name: "conversationShare.selection.close" })).toBeNull();
     expect(panel.getAttribute("data-conversation-share-keep-open")).toBeNull();
 
-    const summaryButton = screen.getByRole("button", { name: "第一条用户问题" });
+    const summaryButton = screen.getByRole("button", { name: "First user question" });
     const firstItem = summaryButton.parentElement;
     expect(firstItem?.getAttribute("data-conversation-share-selection-state")).toBe("selected");
 
     const secondSummaryButton = screen.getByRole("button", {
-      name: "第二条用户问题",
+      name: "Second user question",
     });
     const secondItem = secondSummaryButton.parentElement;
     expect(secondItem?.getAttribute("data-conversation-share-selection-state")).toBe("unselected");

@@ -2,11 +2,12 @@
 import { createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 const ports = vi.hoisted(() => ({ reconnect: vi.fn(), details: vi.fn() }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    intl: { formatMessage: ({ id }: { id: keyof typeof zhCN }) => zhCN[id] ?? id },
+    intl: { formatMessage: ({ id }: { id: keyof typeof enUS }) => enUS[id] ?? id },
   }),
 }));
 vi.mock("@/project-sidebar/useRemoteProjectConnectionPresentation.js", () => ({
@@ -45,14 +46,19 @@ describe("断线会话占位", () => {
         sessionId: "task-a",
       }),
     );
-    expect(screen.getByText("设备未连接，连接后继续此会话")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("remote.conversation.placeholder"))).toBeTruthy();
     const input = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(input.value).toBe("保留这份草稿");
     expect(input.readOnly).toBe(true);
-    expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: expectedCopy("chat.send") }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(ports.reconnect).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("remote.conversation.reconnect") }),
+    );
     expect(ports.reconnect).toHaveBeenCalledOnce();
     expect(readV4ComposerDraft("/repo", identity, "task-a")?.text).toBe("保留这份草稿");
   });

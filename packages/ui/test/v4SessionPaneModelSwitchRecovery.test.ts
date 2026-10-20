@@ -17,6 +17,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import type { ConversationComposer } from "@/v4/ConversationComposer.js";
 import type { V4InteractionDialogsProps } from "@/v4/V4InteractionDialogs.js";
 import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
@@ -632,7 +633,7 @@ function makeWorkspaceStateSnapshot(): ZCodeWorkspaceStateSnapshot {
 function createPaneElement(props: Partial<ComponentProps<typeof SessionPane>> = {}) {
   return createElement(
     ZCodeIntlProvider,
-    { initialLocale: "zh-CN" },
+    { initialLocale: TEST_LOCALE },
     createElement(SessionPane, {
       paneId: "workspace-main",
       sessionId: "session-1",
@@ -1629,7 +1630,10 @@ describe("SessionPane model switch recovery", () => {
         await flushMicrotasks();
       });
       expect(mocks.toast).toHaveBeenCalledWith(
-        "已从 Primary Coding Plan/deepseek-v4-flash 切换至 Alternate API/deepseek-v4-pro",
+        expectedCopy("chat.modelChangeNotice.changed", {
+          fromModel: "Primary Coding Plan/deepseek-v4-flash",
+          toModel: "Alternate API/deepseek-v4-pro",
+        }),
       );
     } finally {
       await act(async () => {
@@ -1772,7 +1776,7 @@ describe("SessionPane model switch recovery", () => {
         captured.composerProps?.onSelectModel?.("alternate-provider", "deepseek-v4-pro", null);
         await flushMicrotasks();
       });
-      expect(mocks.toast).not.toHaveBeenCalledWith("加速期间模型已锁定");
+      expect(mocks.toast).not.toHaveBeenCalledWith(expectedCopy("chat.highspeed.modelLocked"));
     } finally {
       await act(async () => root.unmount());
     }
@@ -2155,7 +2159,7 @@ describe("SessionPane model switch recovery", () => {
       expect(captured.composerProps?.highspeedCard).toBeNull();
       expect(mocks.toast).toHaveBeenCalledTimes(1);
       expect(mocks.toast).toHaveBeenCalledWith(
-        "加速服务暂不可用，本轮后续内容将使用原模型继续生成",
+        expectedCopy("chat.highspeed.requestFailedFallback"),
       );
     } finally {
       await act(async () => {
@@ -2187,7 +2191,7 @@ describe("SessionPane model switch recovery", () => {
       expect(mocks.highspeedCardService.invalidateCard).toHaveBeenCalledWith("hsc-1");
       expect(captured.composerProps?.highspeedCard).toBeNull();
       expect(mocks.toast).toHaveBeenCalledWith(
-        "加速服务暂不可用，本轮后续内容将使用原模型继续生成",
+        expectedCopy("chat.highspeed.requestFailedFallback"),
       );
     } finally {
       await act(async () => {
@@ -2218,7 +2222,7 @@ describe("SessionPane model switch recovery", () => {
       });
       expect(mocks.highspeedCardService.invalidateCard).toHaveBeenCalledWith("hsc-1");
       expect(captured.composerProps?.highspeedCard).toBeNull();
-      expect(mocks.toast).toHaveBeenCalledWith("加速卡已到期，本轮后续内容将使用原模型继续生成");
+      expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.highspeed.cardExpiredFallback"));
     } finally {
       await act(async () => {
         expiredRoot.unmount();
@@ -2228,7 +2232,7 @@ describe("SessionPane model switch recovery", () => {
     mocks.toast.mockClear();
     const legacyRoot = await renderWithRow(highspeedRow("command-hs-legacy", undefined));
     try {
-      expect(mocks.toast).toHaveBeenCalledWith("加速卡已到期，本轮后续内容将使用原模型继续生成");
+      expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.highspeed.cardExpiredFallback"));
     } finally {
       await act(async () => {
         legacyRoot.unmount();
@@ -2320,7 +2324,7 @@ describe("SessionPane model switch recovery", () => {
       });
       expect(mocks.highspeedCardService.invalidateCard).not.toHaveBeenCalled();
       expect(mocks.toast).toHaveBeenCalledWith(
-        "加速服务暂不可用，本轮后续内容将使用原模型继续生成",
+        expectedCopy("chat.highspeed.requestFailedFallback"),
       );
     } finally {
       await act(async () => root.unmount());
@@ -3155,7 +3159,10 @@ describe("SessionPane model switch recovery", () => {
 
     expect(mocks.sendCommand).not.toHaveBeenCalled();
     expect(mocks.toast).toHaveBeenCalledWith(
-      "已从 Primary Coding Plan/deepseek-v4-flash 切换至 Alternate API/deepseek-v4-pro",
+      expectedCopy("chat.modelChangeNotice.changed", {
+        fromModel: "Primary Coding Plan/deepseek-v4-flash",
+        toModel: "Alternate API/deepseek-v4-pro",
+      }),
     );
     expect(draftConfigMock.handleDraftSelectModel).toHaveBeenCalledWith(
       "alternate-provider",
@@ -3211,8 +3218,8 @@ describe("SessionPane model switch recovery", () => {
 
 describe("SessionPane compact blocked feedback", () => {
   it.each([
-    ["activeTurn", "运行中不能压缩上下文，请等待当前任务结束。"],
-    ["compactOperationLock", "已有压缩任务正在运行或排队。"],
+    ["activeTurn", expectedCopy("chat.compact.runningBlocked")],
+    ["compactOperationLock", expectedCopy("chat.compact.duplicateBlocked")],
   ])("shows a toast when /compact is rejected with %s", async (reasonCode, expectedToast) => {
     projectionState.current = {
       status: "live",
@@ -3277,7 +3284,7 @@ describe("SessionPane compact blocked feedback", () => {
       await flushMicrotasks();
     });
 
-    expect(mocks.toast).toHaveBeenCalledWith("已加入队列，将按顺序压缩上下文。");
+    expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.compact.queued"));
     await act(async () => {
       root.unmount();
     });
@@ -3306,7 +3313,10 @@ describe("SessionPane Plan picker action", () => {
     const root = await renderPane(props);
     const callsBefore = mocks.sendCommand.mock.calls.length;
     const action = captured.composerProps?.appSlashCommands?.find((item) => item.value === "plan");
-    expect(action).toMatchObject({ label: "计划模式", description: "开启计划模式" });
+    expect(action).toMatchObject({
+      label: expectedCopy("chat.slash.app.plan.label"),
+      description: expectedCopy("chat.slash.app.plan.description"),
+    });
     await act(async () => {
       action?.run();
       action?.run();
@@ -3395,7 +3405,7 @@ describe("SessionPane Plan mode goal guard", () => {
 
       expect(sendResult).toBe("blocked");
       expect(mocks.sendCommand).not.toHaveBeenCalled();
-      expect(mocks.toast).toHaveBeenCalledWith("Goal 无法在 Plan 模式下使用，请切换模式。");
+      expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.goal.planModeBlocked"));
 
       await act(async () => {
         root.unmount();
@@ -3468,7 +3478,7 @@ describe("SessionPane Plan mode goal guard", () => {
     expect(result).toBe("blocked");
     expect(mocks.sendCommand).toHaveBeenCalledTimes(callsBeforeSubmit);
     expect(onSessionCreated).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("Goal 无法在 Plan 模式下使用，请切换模式。");
+    expect(mocks.toast).toHaveBeenCalledWith(expectedCopy("chat.goal.planModeBlocked"));
 
     await act(async () => {
       root.unmount();

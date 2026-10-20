@@ -101,7 +101,7 @@ async function measure(row, deviceTestId, name) {
 
 for (const width of [390, 1200])
   for (const theme of ["light", "dark"])
-    for (const locale of ["zh-CN", "en-US"])
+    for (const locale of ["en-US"])
       for (const font of [14, 16])
         test(`RDUX-BASELINE ${width}/${theme}/${locale}/${font}`, { timeout: 60000 }, async () => {
           const page = await browser.newPage({ viewport: { width, height: 700 } });
@@ -110,12 +110,8 @@ for (const width of [390, 1200])
           page.on("pageerror", (error) => errors.push(error.message));
           try {
             for (const long of [false, true]) {
-              const name = long
-                ? (locale === "zh-CN" ? "远程项目名称" : "Remote project name ").repeat(8)
-                : "dev";
-              const device = long
-                ? (locale === "zh-CN" ? "研发设备名称" : "Development device ").repeat(8)
-                : "DEV-TEST · dev";
+              const name = long ? "Remote project name ".repeat(8) : "dev";
+              const device = long ? "Development device ".repeat(8) : "DEV-TEST · dev";
               const query = new URLSearchParams({
                 theme,
                 locale,

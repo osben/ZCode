@@ -24,18 +24,18 @@ describe("破坏性确认键盘防护", () => {
       let result!: Promise<boolean>;
       act(() => {
         result = useConfirmDialogStore.getState().requestConfirmation({
-          title: "删除",
-          description: "删除操作不可恢复",
+          title: "Delete",
+          description: "This action cannot be undone",
           presentation,
           confirmVariant: "destructive",
-          confirmLabel: "删除",
-          cancelLabel: "取消",
+          confirmLabel: "Delete",
+          cancelLabel: "Cancel",
         });
       });
-      expect(document.activeElement).toBe(screen.getByRole("button", { name: /取消/ }));
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /Cancel/ }));
       fireEvent.keyDown(document.activeElement!, { key: "Enter" });
       expect(useConfirmDialogStore.getState().pendingRequest).toBeDefined();
-      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
       await expect(result).resolves.toBe(true);
     },
   );

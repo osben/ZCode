@@ -1,17 +1,18 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 /**
  * §9 门禁 1（弹窗部分）：connectedBanner 与识别卡的占位符必须渲染为实值。
- * mock 复刻 IntlProvider 真实语义（真实 zh-CN 消息 + replaceAll 插值）。
+ * mock 复刻 IntlProvider 真实语义（真实 en-US 消息 + replaceAll 插值）。
  */
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
       formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) => {
-        let message = (zhCN as Record<string, string>)[id] ?? id;
+        let message = (enUS as Record<string, string>)[id] ?? id;
         if (values) {
           for (const [key, value] of Object.entries(values)) {
             message = message.replaceAll(`{${key}}`, String(value));
@@ -20,7 +21,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
         return message;
       },
     },
-    locale: "zh-CN",
+    locale: TEST_LOCALE,
   }),
 }));
 
@@ -64,10 +65,10 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain("已连接");
+    expect(html).toContain(expectedCopy("remote.status.connected"));
     expect(html).toContain("home-lab");
     expect(html).toContain("v3.8.1");
-    expect(html).not.toContain("已连接 dev");
+    expect(html).not.toContain(`${expectedCopy("remote.status.connected")} dev`);
     expect(html).not.toMatch(/\{(?:device|profile|version)\}/u);
   });
 
@@ -85,7 +86,7 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain("已连接设备 dev");
+    expect(html).toContain(expectedCopy("remote.phaseSub.identifyExisting", { device: "dev" }));
     expect(html).not.toContain("remote.recognizedDeviceBody");
     expect(html).not.toMatch(/\{(?:device|profile)\}/u);
   });
@@ -104,7 +105,7 @@ describe("remote connection dialog placeholder values", () => {
       }),
     );
 
-    expect(html).toContain("更新远端");
-    expect(html).not.toMatch(/>重试<\/button>/u);
+    expect(html).toContain(expectedCopy("remote.action.update-server"));
+    expect(html).not.toContain(`>${expectedCopy("common.retry")}</button>`);
   });
 });

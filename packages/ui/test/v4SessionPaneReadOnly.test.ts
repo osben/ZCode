@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import type { ConversationShareSelectionDraft } from "@/store/conversationShareSelectionStore.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
@@ -268,7 +269,7 @@ function renderReadOnlyPane({
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: TEST_LOCALE },
       createElement(SessionPane, {
         allowWorkspaceFileRewind,
         paneId: "pane-1",
@@ -382,7 +383,7 @@ describe("SessionPane 分享模式接线", () => {
     return renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(SessionPane, {
           paneId: "pane-1",
           readOnly: false,

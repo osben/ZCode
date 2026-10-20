@@ -5,16 +5,20 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Emitter } from "@zcode/rpc";
 import type { SourceServerManagementSnapshot } from "@zcode/shared";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
 import { SourceServerManagementPanel } from "@/settings/SourceServerManagementPanel.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 
 /**
  * §9 门禁 1：本轮触达的带占位符 i18n key 必须有「渲染含实值」断言，防 {time} 类回归。
- * mock 复刻 IntlProvider.createIntl 的真实语义（真实 zh-CN 消息 + {key} replaceAll 插值），
+ * mock 复刻 IntlProvider.createIntl 的真实语义（真实 en-US 消息 + {key} replaceAll 插值），
  * 断言渲染结果含具体值且不残留任何 `{placeholder}` 字面量。
  */
-function formatZhMessage({ id }: { id: string }, values?: Record<string, string | number>): string {
-  let message = zhCN[id] ?? id;
+function formatTestMessage(
+  { id }: { id: string },
+  values?: Record<string, string | number>,
+): string {
+  let message = enUS[id] ?? id;
   if (values) {
     for (const [key, value] of Object.entries(values)) {
       message = message.replaceAll(`{${key}}`, String(value));
@@ -25,8 +29,8 @@ function formatZhMessage({ id }: { id: string }, values?: Record<string, string 
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    intl: { formatMessage: formatZhMessage },
-    locale: "zh-CN",
+    intl: { formatMessage: formatTestMessage },
+    locale: TEST_LOCALE,
   }),
 }));
 
@@ -147,10 +151,16 @@ describe("SourceServerManagementPanel placeholder values", () => {
     expect(await screen.findByRole("button", { name: "b" })).toBeTruthy();
     expect(container.querySelectorAll("[data-device-project]")).toHaveLength(3);
     expect(screen.queryByText("+2")).toBeNull();
-    expect(screen.queryByText("显示全部 (3)")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("settings.source.showAllProjects", { count: 3 })),
+    ).toBeNull();
     const connection = container.querySelector("[data-device-connection]")?.textContent ?? "";
     expect(connection).toContain("v3.8.1");
-    expect(connection).toContain("最近在线 16 分钟前");
+    expect(connection).toContain(
+      expectedCopy("settings.source.lastOnline", {
+        time: expectedCopy("common.minutesAgo", { count: 16 }),
+      }),
+    );
     expectNoRawPlaceholders(container);
   });
 
@@ -169,9 +179,11 @@ describe("SourceServerManagementPanel placeholder values", () => {
 
     const { container } = renderPanel(snapshot);
 
-    expect(await screen.findByText("0 个项目")).toBeTruthy();
+    expect(
+      await screen.findByText(expectedCopy("settings.source.projectCount", { count: 0 })),
+    ).toBeTruthy();
     // 单条连接时“当前 / 默认”没有区分意义，不显示。
-    expect(screen.queryByText("当前")).toBeNull();
+    expect(screen.queryByText(expectedCopy("settings.source.currentProfile"))).toBeNull();
     expectNoRawPlaceholders(container);
   });
 
@@ -193,9 +205,15 @@ describe("SourceServerManagementPanel placeholder values", () => {
 
     const { container } = renderPanel(snapshot);
 
-    expect(await screen.findByText("可更新到 v3.8.2")).toBeTruthy();
     expect(
-      screen.getByText("当前 v3.8.1 · 最低兼容 v3.7.0 · 更新期间远程任务会短暂中断"),
+      await screen.findByText(
+        expectedCopy("settings.source.updateAvailableVersion", { version: "3.8.2" }),
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        expectedCopy("settings.source.versionDetails", { current: "3.8.1", minimum: "3.7.0" }),
+      ),
     ).toBeTruthy();
     expectNoRawPlaceholders(container);
   });

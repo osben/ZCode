@@ -34,16 +34,16 @@ describe("远控设备导航", () => {
     const chooseOtherDevice = vi.fn();
     const page = render(
       createElement(WebRemoteControlDeviceHeader, {
-        navigation: { deviceName: "  研发电脑  ", chooseOtherDevice },
+        navigation: { deviceName: "  Dev computer  ", chooseOtherDevice },
       }),
     );
     const button = page.getByRole("button", { name: "webRemoteControl.switchDevice" });
-    const name = page.getByText("研发电脑");
-    expect(name.textContent).toBe("研发电脑");
+    const name = page.getByText("Dev computer");
+    expect(name.textContent).toBe("Dev computer");
     expect(button.contains(name)).toBe(true);
     expect(name.className).toContain("truncate");
     expect(button.getAttribute("title")).toBe("webRemoteControl.switchDevice");
-    expect(button.textContent).toBe("研发电脑");
+    expect(button.textContent).toBe("Dev computer");
     fireEvent.click(name);
     expect(chooseOtherDevice).toHaveBeenCalledOnce();
   });

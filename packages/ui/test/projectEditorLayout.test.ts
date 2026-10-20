@@ -4,7 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectEditor } from "@/project-sidebar/ProjectEditor.js";
 import type { ProjectDevice } from "@/project-sidebar/contract.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 Element.prototype.scrollIntoView = vi.fn();
 vi.mock("@/i18n/IntlProvider.js", () => ({
@@ -13,7 +14,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
       formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
         Object.entries(values ?? {}).reduce(
           (text, [key, value]) => text.replace(`{${key}}`, value),
-          (zhCN as Record<string, string>)[id] ?? id,
+          (enUS as Record<string, string>)[id] ?? id,
         ),
     },
   }),
@@ -72,32 +73,40 @@ it("shows a status dot for every remote device and text only when it is not onli
   const trigger = screen.getByTestId("virtual-project-device");
   const triggerStatus = within(trigger).getByTestId("virtual-project-device-status");
   expect(triggerStatus.dataset.status).toBe("offline");
-  expect(triggerStatus.textContent).toBe("离线");
+  expect(triggerStatus.textContent).toBe(expectedCopy("project.deviceStatus.offline"));
   fireEvent.click(trigger);
   const option = async (label: string) =>
     within(await screen.findByRole("option", { name: new RegExp(label) })).queryByTestId(
       "virtual-project-device-status",
     );
-  expect(await option("此电脑")).toBeNull();
+  expect(await option(expectedCopy("project.thisComputer"))).toBeNull();
   const online = (await option("Online box"))!;
   expect(online.querySelector(".bg-success")).toBeTruthy();
   // 在线只保留圆点，文字只给读屏。
-  expect(online.querySelector(".sr-only")?.textContent).toBe("在线");
+  expect(online.querySelector(".sr-only")?.textContent).toBe(
+    expectedCopy("project.deviceStatus.online"),
+  );
   const connecting = (await option("Connecting box"))!;
   expect(connecting.querySelector(".animate-spin")).toBeTruthy();
-  expect(connecting.textContent).toBe("连接中");
+  expect(connecting.textContent).toBe(expectedCopy("project.deviceStatus.connecting"));
   expect((await option("Pending box"))!.querySelector(".bg-warning")).toBeTruthy();
-  expect((await option("Pending box"))!.textContent).toBe("需要处理");
+  expect((await option("Pending box"))!.textContent).toBe(
+    expectedCopy("project.deviceStatus.pending"),
+  );
   expect((await option("Failed box"))!.querySelector(".bg-destructive")).toBeTruthy();
-  expect((await option("Failed box"))!.textContent).toBe("连接失败");
-  expect(await screen.findByRole("option", { name: "添加远程设备…" })).toBeTruthy();
+  expect((await option("Failed box"))!.textContent).toBe(
+    expectedCopy("project.deviceStatus.failed"),
+  );
+  expect(
+    await screen.findByRole("option", { name: expectedCopy("project.addRemoteDevice") }),
+  ).toBeTruthy();
 });
 
 it("remote existing-project entry returns focus after browsing", async () => {
   const { onBrowseExisting } = editor();
   const entry = screen.getByTestId("virtual-project-existing");
-  expect(entry.textContent).toBe("添加到侧栏");
-  expect(entry.closest("p")?.textContent).toContain("这台设备上已有项目？");
+  expect(entry.textContent).toBe(expectedCopy("project.existingOnDeviceAction"));
+  expect(entry.closest("p")?.textContent).toContain(expectedCopy("project.existingOnDeviceHint"));
   expect(before(screen.getByTestId("virtual-project-device"), entry)).toBe(true);
   expect(before(screen.getByTestId("virtual-project-name"), entry)).toBe(true);
   expect(before(entry, screen.getByTestId("virtual-project-browse"))).toBe(true);
@@ -105,8 +114,8 @@ it("remote existing-project entry returns focus after browsing", async () => {
   fireEvent.click(entry);
   await waitFor(() => expect(onBrowseExisting).toHaveBeenCalledOnce());
   const back = await screen.findByTestId("remote-project-back");
-  expect(back.getAttribute("aria-label")).toBe("返回新建项目");
-  expect(screen.queryByText("返回新建项目")).toBeNull();
+  expect(back.getAttribute("aria-label")).toBe(expectedCopy("project.backToCreate"));
+  expect(screen.queryByText(expectedCopy("project.backToCreate"))).toBeNull();
   fireEvent.click(back);
   await waitFor(() =>
     expect(document.activeElement).toBe(screen.getByTestId("virtual-project-existing")),
@@ -121,13 +130,17 @@ it("hides the existing-project entry for this computer", () => {
 it("explains connection for a device that is not online", () => {
   editor();
   const browse = screen.getByTestId("virtual-project-browse");
-  expect(browse.getAttribute("aria-label")).toBe("连接并选择文件夹");
-  expect(browse.textContent).toContain("设备当前离线，点击后先连接");
+  expect(browse.getAttribute("aria-label")).toBe(expectedCopy("project.connectAndBrowse"));
+  expect(browse.textContent).toContain(
+    expectedCopy("project.connectAndBrowseHint", {
+      status: expectedCopy("project.deviceStatus.offline"),
+    }),
+  );
 });
 
 it("uses the choose-folder empty state for an online device", () => {
   editor("remote:online");
   const browse = screen.getByTestId("virtual-project-browse");
-  expect(browse.getAttribute("aria-label")).toBe("选择文件夹");
-  expect(browse.textContent).toContain("ZCode 可读取和编辑这些文件夹");
+  expect(browse.getAttribute("aria-label")).toBe(expectedCopy("project.browse"));
+  expect(browse.textContent).toContain(expectedCopy("project.browseHint"));
 });

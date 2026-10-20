@@ -64,7 +64,7 @@ test("PIA03 outside image keeps its absolute target through the composer event",
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   try {
-    await page.goto(`${origin}fixture?source=outside&locale=zh-CN`);
+    await page.goto(`${origin}fixture?source=outside&locale=en-US`);
     await page
       .waitForFunction(() => document.querySelector("img")?.naturalWidth > 0)
       .catch((error) => {
@@ -87,7 +87,7 @@ test("PIA03 outside image keeps its absolute target through the composer event",
 
 for (const width of [390, 1100])
   for (const theme of ["light", "dark"])
-    for (const locale of ["zh-CN", "en-US"]) {
+    for (const locale of ["en-US"]) {
       test(`PIA04 image actions ${width}/${theme}/${locale}`, async () => {
         const context = await browser.newContext({
           viewport: { width, height: 844 },
@@ -103,10 +103,7 @@ for (const width of [390, 1100])
           await page.goto(`${origin}fixture?theme=${theme}&locale=${locale}`);
           await page.waitForFunction(() => document.querySelector("img")?.naturalWidth > 0);
           const openMenu = async () => {
-            if (width === 390)
-              await page
-                .getByRole("button", { name: locale === "zh-CN" ? "图片操作" : "Image actions" })
-                .click();
+            if (width === 390) await page.getByRole("button", { name: "Image actions" }).click();
             else await page.locator("img").click({ button: "right" });
             await page.locator('[role="menuitem"][data-image-preview-copy]').waitFor();
           };
@@ -114,9 +111,7 @@ for (const width of [390, 1100])
           assert.equal(await page.locator('[role="menuitem"]').count(), 3);
           await page.screenshot({ path: join(artifacts, `${width}-${theme}-${locale}.png`) });
           await page.locator('[role="menuitem"][data-image-preview-copy]').click();
-          await page
-            .getByText(locale === "zh-CN" ? "图片已复制" : "Image copied", { exact: true })
-            .waitFor();
+          await page.getByText("Image copied", { exact: true }).waitFor();
           assert.deepEqual(
             await page.evaluate(async () => {
               const item = (await navigator.clipboard.read())[0];

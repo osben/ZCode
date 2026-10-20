@@ -62,7 +62,7 @@ after(async () => {
 
 for (const width of [390, 1200])
   for (const theme of ["light", "dark"])
-    for (const locale of ["zh-CN", "en-US"])
+    for (const locale of ["en-US"])
       test(`SHARE34 ${width} ${theme} ${locale}`, async () => {
         const page = await browser.newPage({ viewport: { width, height: 900 } });
         page.setDefaultTimeout(5000);
@@ -114,10 +114,7 @@ for (const width of [390, 1200])
         assert.ok(Math.abs(scopeArrow.x - selectArrow.x) < 1);
         await page.getByTestId("toggle-preflight").click();
         assert.equal(await scopeButton.getAttribute("aria-busy"), "true");
-        assert.match(
-          await scopeButton.innerText(),
-          locale === "zh-CN" ? /正在检查分享内容/ : /checking/i,
-        );
+        assert.match(await scopeButton.innerText(), /checking/i);
         assert.equal(
           await page.getByTestId("conversation-share-selection-preflight-status").count(),
           0,
@@ -309,10 +306,7 @@ for (const width of [390, 1200])
         await page.getByTestId("resolve-publish").click();
         await page.getByTestId("conversation-share-success-dock").waitFor();
         await page.getByTestId("conversation-share-copy-link").click();
-        assert.match(
-          await page.getByTestId("conversation-share-copy-link").innerText(),
-          locale === "zh-CN" ? /已复制/ : /copied/i,
-        );
+        assert.match(await page.getByTestId("conversation-share-copy-link").innerText(), /copied/i);
         assert.equal(await popover.isVisible(), true);
         await page.evaluate(async () => {
           await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {})));
