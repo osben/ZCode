@@ -46,7 +46,14 @@ describe("settingsPageConfig", () => {
     ).toEqual([
       {
         id: "basics",
-        sections: ["general", "appearance", "modelProvider", "shortcuts", "voiceDictation"],
+        sections: [
+          "general",
+          "appearance",
+          "modelProvider",
+          "remoteDevices",
+          "shortcuts",
+          "voiceDictation",
+        ],
       },
       {
         id: "agentCapabilities",
@@ -67,7 +74,7 @@ describe("settingsPageConfig", () => {
       },
       {
         id: "dataAndStats",
-        sections: ["usage", "sessions"],
+        sections: ["usage", "sessions", "archives"],
       },
     ]);
     expect(settingsSections.map((section) => section.id)).toEqual([
@@ -86,10 +93,12 @@ describe("settingsPageConfig", () => {
       "commands",
       "hooks",
       "browser",
+      "remoteDevices",
       "shortcuts",
       "voiceDictation",
       "usage",
       "sessions",
+      "archives",
     ]);
   });
 
@@ -113,10 +122,12 @@ describe("settingsPageConfig", () => {
       "commands",
       "hooks",
       "browser",
+      "remoteDevices",
       "shortcuts",
       "voiceDictation",
       "usage",
       "sessions",
+      "archives",
     ]);
     const sessionsSection = settingsSections.find((section) => section.id === "sessions");
     expect(sessionsSection?.titleId).toBe("sessionManager.title");
@@ -161,6 +172,7 @@ describe("settingsPageConfig", () => {
       "general",
       "appearance",
       "modelProvider",
+      "remoteDevices",
       "shortcuts",
       "voiceDictation",
       "worktrees",
