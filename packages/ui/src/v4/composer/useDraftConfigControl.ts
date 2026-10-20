@@ -228,7 +228,8 @@ export function useDraftConfigControl(params: {
         ...draft,
         mode: currentMode,
         planEnabled: currentPlan,
-        modelSelection: draft.mode ? draft.modelSelection : sessionConfig.modelSelection,
+        // Keep a model chosen before mode hydration; the first session snapshot must not overwrite it.
+        modelSelection: draft.modelSelection ?? sessionConfig.modelSelection,
       };
     } else if (previous) {
       // 只处理本次打开后出现的新关联；使用最新快照值，不能从历史事件推导固定 yolo/Plan。

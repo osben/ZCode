@@ -280,3 +280,8 @@ packages/ui/src/settings/SubagentsSection.tsx
 packages/ui/src/v4/ConversationTimeline.tsx
 packages/ui/src/hooks/useAppPanels.ts
 packages/ui/test/conversationShareConfirmationDock.test.ts
+# TEMPORARY upstream 3.16.1 sync (ui bucket 5)
+packages/ui/src/v4/conversationProjectionStore.ts
+packages/ui/src/v4/composer/V4ComposerToolbar.tsx
+packages/ui/src/v4/composer/useComposerAttachments.ts
+packages/ui/src/workspace-file-tree/WorkspaceFileTree.tsx

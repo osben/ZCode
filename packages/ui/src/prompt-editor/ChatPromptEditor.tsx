@@ -8,6 +8,7 @@ import type {
   ReactNode,
 } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { VoiceTranscriptionPreview } from "@zcode/services";
 import { TID_CHAT_SEND_BUTTON } from "@zcode/shared/test-ids";
 import { ArrowUpIcon, Hand, XIcon } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -39,6 +40,7 @@ function runAfterFrame(callback: () => void) {
 }
 
 export function ChatPromptEditor({
+  voicePreview,
   workspacePath,
   workspaceIdentity,
   taskId,
@@ -126,6 +128,7 @@ export function ChatPromptEditor({
   /** 行内编辑专用：固定插在取消与主提交之间的第二动作。 */
   betweenCancelAndSubmitAction?: ReactNode;
   submitControl?: ReactNode;
+  voicePreview?: VoiceTranscriptionPreview | null;
   inputTestId?: string;
   submitTestId?: string;
   cancelTestId?: string;
@@ -338,13 +341,14 @@ export function ChatPromptEditor({
 
   const editorNode = (
     <LexicalChatInput
+      voicePreview={voicePreview}
       placeholder={placeholder}
       disabled={disabled}
       submitDisabled={submitDisabled}
       allowSubmitWhenEmpty={allowSubmitWhenEmpty}
-          enterSubmits={enterSubmits}
-          onSubmit={handleEditorSubmit}
-          onModifiedSubmit={onModifiedSubmit}
+      enterSubmits={enterSubmits}
+      onSubmit={handleEditorSubmit}
+      onModifiedSubmit={onModifiedSubmit}
       onChange={handleTextChange}
       onFocus={onFocus}
       triggerPanelContainer={resolvedTriggerPanelContainer}

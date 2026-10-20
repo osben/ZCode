@@ -121,8 +121,8 @@ export function WorkspaceFileTreeRowView({
     directoryGitStatuses,
   });
   const rowStatusTextClassName = getWorkspaceFileGitStatusTextClassName(rowDisplayStatus);
-  // 目录展开加载时右侧已经有 loading spinner，继续显示 Git 小圆点会让状态含义混在一起。
-  // 加载期间隐藏目录聚合状态点，等目录加载完成后再展示真实 Git 状态。
+  // While an expanded directory is loading, a loading spinner is already shown on the right; keeping the Git dot would mix the meaning of these states.
+  // Hide the aggregated directory-status dot while loading and show the actual Git state after loading finishes.
   const shouldShowDirectoryGitDots = !row.loading && directoryGitStatuses.length > 0;
   const workspaceFilePayload = {
     type: row.type === "directory" ? ("directory" as const) : ("file" as const),
@@ -143,12 +143,12 @@ export function WorkspaceFileTreeRowView({
       return;
     }
     if (isDeletedFile) {
-      // 修复：Git deleted 行是从状态里补出来的虚拟文件，真实文件已不存在。
-      // 点击时只保留选中能力，避免继续打开预览导致文件读取失败。
+      // Fix: A Git-deleted row is a virtual file reconstructed from status; the real file no longer exists.
+      // Keep only the selection action on click to avoid opening a preview that will fail to read the file.
       return;
     }
-    // 文件树单击文件之前只更新选中态，必须双击才打开预览。
-    // 这里让文件和目录都保持“单击执行主要动作”：目录展开，文件预览。
+    // Previously, a single click in the file tree only selected a file; users had to double-click to open its preview.
+    // Use “single click performs the primary action” for both files and directories: expand a directory or preview a file.
     onOpenPreview(row);
   };
   const handleCopyAbsolutePath = async () => {
@@ -171,8 +171,8 @@ export function WorkspaceFileTreeRowView({
     if (isDeletedFile) {
       return;
     }
-    // 远程文件树以前整项禁用第三方打开，且调用只传 Linux path；
-    // 这里把已脱敏 remoteTarget 与文件/目录类型交给 main，由唯一平台边界生成正确 URI。
+    // Previously, third-party open was disabled for the entire remote file-tree row, and the call passed only a Linux path;
+    // pass the redacted remoteTarget and file/directory type to main so the single platform boundary can create the correct URI.
     const result = await platform.openInEditor(editor.id, row.path, {
       pathKind: isDirectory ? "directory" : "file",
       remoteTarget,
@@ -331,8 +331,8 @@ export function WorkspaceFileTreeRowView({
       </div>
     </SidebarNativeTooltip>
   );
-  // 普通远程路径不能交给本机文件管理器，但 WSL Explorer 会在 main 边界
-  // 转成 UNC；因此它和“打开方式 → 资源管理器”必须共享相同的可用性与执行路径。
+  // A regular remote path cannot be passed to the local file manager, but WSL Explorer converts it to UNC at the main-process boundary
+  // so it must share the same availability and execution path as “Open with → File Explorer.”
   const canRevealInFileManager =
     (!isDeletedFile && Boolean(wslFileManagerEditor)) ||
     fileActions.canRevealInFileManager({
@@ -355,8 +355,8 @@ export function WorkspaceFileTreeRowView({
         <ContextMenuTrigger asChild>{rowElement}</ContextMenuTrigger>
         <ContextMenuContent className="w-52">
           <ContextMenuItem disabled={!canOpenPrimary} onSelect={handleOpenPrimary}>
-            {/* 修复：第一项之前复用了默认外部应用文案，Finder/Explorer 置顶后会显示成“在 Finder 中打开”。
-                这里改为复用行主动作：文件打开预览，目录走当前行的展开/收起逻辑。 */}
+            {/* Fix: The first option reused the default external-app label, so after Finder/Explorer was pinned it appeared as “Open in Finder.”
+                Reuse the row’s primary action here: open a file preview or use the current row’s expand/collapse behavior for a directory. */}
             {contextMenuLabels.open}
           </ContextMenuItem>
           <ContextMenuSub>

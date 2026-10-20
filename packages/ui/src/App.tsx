@@ -209,7 +209,12 @@ export function App({
     workspaceIdentity,
   );
   const activeTaskId = workspaceShellZCodeState.activeTaskId;
-  const sidePaneOwnerId = activeTaskId;
+  // Scope the right sidebar owner to the conversation. A draft has no activeTaskId, so draftSessionId
+  // keeps a new conversation from inheriting tabs left by the previous draft, and stays stable when the draft becomes a task.
+  const draftSessionId = useZCodeSessionStore(
+    (state) => state.getWorkspaceState(workspaceAbsPath, workspaceIdentity).draftSessionId,
+  );
+  const sidePaneOwnerId = activeTaskId ?? draftSessionId ?? null;
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;

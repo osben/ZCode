@@ -1,3 +1,4 @@
+import { useOpenExistingSession } from "@/hooks/useOpenExistingSession.js";
 import { ProjectDirectoryProvider } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { RemoteProjectPicker } from "@/project-sidebar/RemoteProjectPicker.js";
 import {
@@ -1011,9 +1012,7 @@ function RootInner({
     startDraftInWorkspace,
     startNewTaskFromActiveWorkspace,
     openWorkspace: handleOpenWorkspace,
-    openWorkspacePath: (path) => {
-      void handleSelectProject(path);
-    },
+    openWorkspacePath: (path) => handleSelectProject(path),
     setWorkspaceActionError,
     allowOpenWorkspace,
     isDesktop,
@@ -1437,8 +1436,12 @@ function RootInner({
     }
     previousRemoteConnectionInProgressRef.current = remoteConnectionInProgress;
   }, [remoteConnectionInProgress, resetRemoteConnectionLogs]);
+  const handleOpenExistingSession = useOpenExistingSession(
+    webRemoteControlWorkspaceSwitcher?.openWorkspace,
+  );
 
   const settingsLayerProps = {
+    onOpenSession: handleOpenExistingSession,
     isDesktop,
     isMacDesktop,
     isWindowsDesktop,
@@ -1563,6 +1566,7 @@ function RootInner({
               }
             >
               <RootWorkspaceContent
+                onOpenSession={handleOpenExistingSession}
                 workspaceScopedServices={workspaceScopedServices}
                 baseFeedbackService={services.feedbackService}
                 workspaceShellPath={workspaceShellPath}
