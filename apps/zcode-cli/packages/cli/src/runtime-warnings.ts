@@ -49,7 +49,7 @@ export function interceptKnownRuntimeWarnings(
   stderr.write = ((chunk, encodingOrCallback, callback) => {
     const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
     const text = stringifyChunk(chunk, encoding);
-    // An empty write is a flush barrier before exit; wait for the underlying queue instead of treating it as a filtered warning.
+    // 空 write 是退出前的 flush barrier，必须等底层队列完成，不能当成被过滤的警告。
     if (text.length === 0) return writeOriginal(chunk, encodingOrCallback, callback);
     const filtered = filterKnownRuntimeWarningChunk(text, {
       onSuppressed: () => {

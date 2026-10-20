@@ -23,10 +23,11 @@ describe("upstream tasks index migration checksum pin", () => {
     expect(Object.keys(UPSTREAM_CHECKSUMS).filter((id) => id.startsWith("9001_fork_"))).toEqual([]);
   });
 
-  it("a fresh database writes exactly the upstream checksum for every upstream migration", () => {
+  it("a fresh database writes exactly the upstream checksum for every upstream migration", async () => {
     const db = new DatabaseSync(":memory:");
     databases.push(db);
-    runTasksDatabaseMigrations(db);
+    // Only await was added: the shared runner is async since the upstream 3.16.1 sync. Pinned constants are unchanged.
+    await runTasksDatabaseMigrations(db);
     const ledger = Object.fromEntries(
       db
         .prepare("SELECT id, checksum FROM tasks_schema_migration")

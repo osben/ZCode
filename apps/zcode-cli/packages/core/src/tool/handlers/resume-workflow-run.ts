@@ -175,6 +175,7 @@ function formatResumeWorkflowRunModelContent(output: unknown): ModelMessageConte
 export const resumeWorkflowRunToolEntry: ToolEntry = {
   capability: "Resume a stopped dynamic-workflow run under the same run ID",
   metadata: {
+    shouldDefer: true,
     name: RESUME_WORKFLOW_RUN_TOOL_NAME,
     description: RESUME_WORKFLOW_RUN_DESCRIPTION,
     // Resuming restarts the execution child process and actor session (replay settled nodes and redispatch unfinished ones), matching

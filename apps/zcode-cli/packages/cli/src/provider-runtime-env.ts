@@ -27,7 +27,7 @@ export function createCliProviderRefreshReporter(
       );
     },
     onBuiltinRefreshResult(event: ZCodeBuiltinRefreshEvent) {
-      // TTL checks are not production events; log successful updates by default, and never output CDN URL query parameters or content.
+      // TTL 检查不是生产事件；成功更新才默认留痕，不能输出 CDN URL 查询参数或内容。
       if (event.result === "updated" || process.env.NODE_ENV !== "production") {
         stderr.write(
           `ZCode Built-in ${event.result}${event.reason ? ` (${event.reason})` : ""}${event.revision === undefined ? "" : ` revision=${event.revision} source=CDN`}\n`,
@@ -49,7 +49,7 @@ interface PrepareCliProviderRuntimeEnvOptions {
   readonly platform?: string;
 }
 
-/** Locate the Provider Config for the same Environment as the CLI Entry used to run Core or write model selection. */
+/** 为运行 Core 或写入模型选择的 CLI Entry 定位同一 Environment 的 Provider Config。 */
 export async function prepareCliProviderRuntimeEnv(
   options: PrepareCliProviderRuntimeEnvOptions,
 ): Promise<Record<string, string>> {
@@ -88,7 +88,7 @@ export async function prepareCliProviderRuntimeEnv(
     activeFilePath: cachePaths.activeFilePath,
     watch: false,
   });
-  // The entry point prepares only resources and paths; download is owned and cancellable by the long-lived Prompt/TUI Runtime.
+  // 入口只准备资源和路径；下载由 Prompt/TUI 长生命周期 Runtime 持有并取消。
   try {
     await source.read();
   } finally {
@@ -144,7 +144,7 @@ async function resolveBundledZCodeBuiltinProviderConfig(input: {
 
   const entrypoint = input.entrypoint?.trim();
   if (!entrypoint) throw new Error("无法定位 CLI ZCode Built-in Provider Config：缺少入口路径");
-  // The global bin may be a symlink, so locate bundled config relative to the real entry path.
+  // 全局 bin 可以是软链接，随包配置必须相对真实入口定位。
   const entryDirectory = dirname(realpathSync(resolve(entrypoint)));
   const candidates = [
     join(entryDirectory, "provider", "zcode-builtin.json"),

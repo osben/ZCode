@@ -1,48 +1,61 @@
 # @zcode/dynamic-workflow-runtime
 
-A sandbox harness for phase 1.4 of the dynamic workflow execution engine. It runs a workflow script in a controlled child process and uses NDJSON to bridge the child's `__host.*` calls to the pure engine core in `@zcode/dynamic-workflow`.
+沙箱 harness（dynamic workflow 执行引擎的 phase 1.4）。把一份 workflow 脚本在受控子进程里跑起来，
+用 NDJSON 把子进程的 `__host.*` 调用桥接到 `@zcode/dynamic-workflow` 的纯引擎核心。
 
-Spec: `@zcode/dynamic-workflow/docs/execution-engine.md` (this package is named under “The sandbox” and “The shape of a run: three boundaries”).
+规范：`@zcode/dynamic-workflow/docs/execution-engine.md`（"The sandbox" 与 "The shape of a run:
+three boundaries" 里点名本包）。
 
-## Dependency Boundary
+## 依赖边界
 
-Depends **only** on `@zcode/dynamic-workflow` (workspace) and Node built-ins. It must **never** import `@zcode/core` / `@zcode/contracts` / `@zcode/bootstrap` / `@zcode/adapters`—this package proves that phase 1’s full sandbox-to-engine pipeline can run without the app.
+**仅**依赖 `@zcode/dynamic-workflow`（workspace）与 node 内建。**绝不** import `@zcode/core` /
+`@zcode/contracts` / `@zcode/bootstrap` / `@zcode/adapters`——本包是 phase 1 "整条 sandbox↔engine
+管线 app-free 可跑"的证明。
 
-## Usage
+## 用法
 
 ```ts
+import { runWorkflowScript } from "@zcode/dynamic-workflow-runtime";
+
 const settlement = await runWorkflowScript({
-  scriptText,                 // or lowered: <async function body>
+  scriptText,                 // 或 lowered: <async 函数体>
   caps: { maxConcurrency: 16 },
-  askSpecs,                   // a site ID listed in synthetic schemas is typed
-  validate,                   // validate from @zcode/dynamic-workflow, adapted to ValidateFn
-  makeDriver: (sink) => driver, // driver includes journal + emit; sink is the engine's upward reporting channel
-  signal,                     // optional: AbortSignal
-  timeoutMs,                  // optional: wall-clock timeout
+  askSpecs,                   // site id ∈ 合成 schemas 记录即 typed
+  validate,                   // @zcode/dynamic-workflow 的 validate（适配到 ValidateFn）
+  makeDriver: (sink) => driver, // driver 自带 journal + emit；sink 是引擎的向上回报面
+  signal,                     // 可选：AbortSignal
+  timeoutMs,                  // 可选：墙钟超时
 });
 // settlement: { status: "completed", artifact } | { status: "failed", error } | { status: "cancelled" }
 ```
 
-## Architecture
+## 架构
 
 ```
 ┌─ parent (harness) ──────────────┐  NDJSON  ┌─ child (vm.createContext) ──────┐
-│ runWorkflowScript               │  stdio   │ ES intrinsics + __host only       │
-│  - lower(scriptText)            │◀────────▶│ createActor returns a local handle synchronously │
-│  - WorkflowEngine(driver,...)   │          │ ask/worldRead → request to parent process       │
-│  - bridge __host.* ↔ engine     │          │ args frozen global (cross boundary once on spawn) │
-│  - spawn/kill/timeout/abort     │          │ Date.now/Math.random prohibited at runtime      │
+│ runWorkflowScript               │  stdio   │ 只含 ES intrinsics + __host       │
+│  - lower(scriptText)            │◀────────▶│  createActor 同步返回 local 句柄  │
+│  - WorkflowEngine(driver,...)   │          │  ask/worldRead → 请求父进程       │
+│  - 桥接 __host.* ↔ engine       │          │  args 冻结全局（spawn 时过界一次）  │
+│  - spawn/kill/timeout/abort     │          │  Date.now/Math.random 运行期禁令  │
 └─────────────────────────────────┘          └──────────────────────────────────┘
 ```
 
-## NDJSON Wire Protocol
+## NDJSON 线协议
 
-See `src/protocol.ts` (the single source of truth). Child → parent: `create-actor` (fire and forget) / `request` (`ask`, `world-read`) / `event` (`log`) / `complete`; parent → child: `response`.
+见 `src/protocol.ts`（唯一真源）。child→parent：`create-actor`（即发即忘）/ `request`（ask、
+world-read）/ `event`（log）/ `complete`；parent→child：`response`。
 
-## Build Order
+## 构建顺序
 
-Tests and typecheck resolve dependencies through the **built `dist`** of `@zcode/dynamic-workflow`, so `pretest` / `pretypecheck` first run `pnpm --filter @zcode/dynamic-workflow build`. On a fresh checkout, run `pnpm test` directly; it will not encounter stale dist output.
+测试与 typecheck 通过 `@zcode/dynamic-workflow` 的**已构建 dist** 解析依赖，故 `pretest` /
+`pretypecheck` 会先 `pnpm --filter @zcode/dynamic-workflow build`。全新检出直接 `pnpm test` 即可，
+不会踩到 stale-dist。
 
-## Failure Ownership and Tradeoffs
+## 失败裁决与取舍
 
-- The engine owns run settlement. All terminal failures (script exception / child-process crash / timeout / protocol corruption) call `engine.fail(error)`—settling as `failed`, cancelling in-flight asks on the driver side, and recording `dwf_run.status = "failed"` plus `failure_json` in the journal so the journal and caller see the same result. The abort signal is the only true cancellation; it calls `engine.cancel()` (settles as `cancelled` and can be resumed). The harness's first-wins finalize handles child-process cleanup only (clear timer, close stdin, kill child); it does not create its own settlement.
+- run 的裁决归引擎所有。终结失败（脚本抛错 / 子进程崩溃 / 超时 / 协议损坏）都调
+  `engine.fail(error)`——结算 `failed`、driver 侧取消在飞 ask、journal 记 `dwf_run.status =
+  "failed"` + `failure_json`，journal 与调用方看到的结果一致。abort 信号是唯一的"真取消"，
+  调 `engine.cancel()`（结算 `cancelled`，可 resume）。harness 侧的 first-wins finalize 只管
+  子进程清理（清 timer、关 stdin、kill child），不自造结算。

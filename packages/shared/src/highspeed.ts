@@ -160,6 +160,7 @@ export interface HighspeedCardSnapshot {
 export type HighspeedPrepareFallbackReason =
   | "automation"
   | "cooldown"
+  | "draw-failed"
   | "draw-miss"
   | "draw-timeout"
   | "expired"

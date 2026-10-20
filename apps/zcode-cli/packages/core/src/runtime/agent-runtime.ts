@@ -1,4 +1,5 @@
 import type { LspService } from "../lsp/service.js";
+import { configureOffPeakRuntime, controlOffPeakRuntime } from "./off-peak/runtime.js";
 import {
   createTurnAgentDefinitions,
   createAgentDefinitionsReader,
@@ -131,6 +132,8 @@ import type {
 import type { AgentRuntimeInternal } from "./internal.js";
 import { NestedInstructionTracker } from "../context/nested-instructions/tracker.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { WorkflowBlockedReminderClock } from "../runtime-task/workflow-blocked-reminder.js";
+import { createWorkflowBlockedReminder } from "./methods/dynamic-workflow-blocked-reminder.js";
 import { createMemoryRecallState } from "../memory/recall/index.js";
 import type { MemoryRecallState } from "../memory/recall/index.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
@@ -145,6 +148,14 @@ import { cloneModelSelection } from "./model-selection.js";
 
 // oxlint-disable typescript-eslint/no-unsafe-declaration-merging
 export class AgentRuntime {
+  controlOffPeakExecution(
+    input: import("@zcode/shared").OffPeakControlParams,
+  ): Promise<import("@zcode/shared").OffPeakControlResult> {
+    return controlOffPeakRuntime(
+      this as unknown as import("./internal.js").AgentRuntimeInternal,
+      input,
+    );
+  }
   private sessionId: SessionId;
   private turnNumber: number;
   private config: AgentRuntimeConfig;
@@ -209,6 +220,8 @@ export class AgentRuntime {
   private dynamicWorkflowRunPort?: DynamicWorkflowRunPort;
   private modelCatalogPort?: ModelCatalogPort;
   private runtimeTaskRegistry: RuntimeTaskRegistry;
+  // 「run 还欠着决定、主代理闲着」的提醒钟；由命令队列的忙 / 闲沿驱动，beginShutdown 停掉。
+  private workflowBlockedReminder: WorkflowBlockedReminderClock;
   private branchGeneration = 0;
   private artifactStore?: ToolArtifactStorePort;
   private executionPort?: ExecutionPort;
@@ -265,10 +278,10 @@ export class AgentRuntime {
     this.sessionId = sessionId;
     this.turnNumber = 0;
     // 3.12.2: accept legacy from older Hosts/internal callers, but this Runtime version, logs, and subagents use only preflight.
-    this.config = projectPersistentAgentMemoryTools({
+    this.config = {
       ...config,
       modelContextBudgetStrategy: DEFAULT_ZCODE_MODEL_CONTEXT_BUDGET_STRATEGY,
-    });
+    };
     Object.assign(this.config, resolveExecutionState(config));
     const definitions = createTurnAgentDefinitions(
       deps.getAgentDefinitions ??
@@ -277,7 +290,10 @@ export class AgentRuntime {
         }),
       deps.loadAgentDefinitions,
     );
-    this.getAgentDefinitions = definitions.get;
+    // Host 每轮加载的快照会替代启动配置；在统一读取出口补齐 Memory 工具，
+    // 避免子 Agent 有持久记忆提示却没有 Write/Edit，也不回写原始配置。
+    this.getAgentDefinitions = () =>
+      projectPersistentAgentMemoryTools(definitions.get(), this.config.memory);
     this.prepareAgentDefinitions = definitions.prepare;
     this.agentTelemetry = new RuntimeTelemetryFacade({
       agentName: config.agentName,
@@ -316,6 +332,11 @@ export class AgentRuntime {
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
     // A missing selection in an old session must not block history restoration; do not create a default model here.
+    configureOffPeakRuntime(
+      this as unknown as import("./internal.js").AgentRuntimeInternal,
+      deps.onOffPeakLifecycleEvent,
+    );
+    // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。
     this.sessionModelSelection =
       config.modelSelection && cloneModelSelection(config.modelSelection);
     this.messageHistory = new MessageHistoryImpl();
@@ -328,6 +349,7 @@ export class AgentRuntime {
     this.mcpPort = deps.mcpPort;
     this.runtimeTaskRegistry = deps.runtimeTaskRegistry ?? new InMemoryRuntimeTaskRegistry();
     this.runtimeTaskRegistry.setActiveBranchGeneration?.(this.branchGeneration);
+    this.workflowBlockedReminder = createWorkflowBlockedReminder(runtime);
     this.artifactStore = deps.artifactStore;
     this.executionPort = deps.executionPort;
     this.fileSystemPort = deps.fileSystemPort;
@@ -380,6 +402,10 @@ export class AgentRuntime {
     this.shuttingDown = true;
     // The process remains alive after one session closes, so stop this runtime's
     // Extraction first rather than merely abandoning the wait after a timeout.
+    // 同一条理由：会话在关，提醒钟不能再到点唤起一轮。
+    this.workflowBlockedReminder.stop();
+    // 关闭单个 session 后进程仍存活，
+    // 因此必须先终止该 runtime 的 Extraction，不能只在超时后放弃等待。
     this.memoryExtractionScheduler?.shutdown();
     for (const run of this.backgroundDreamRuns.values()) run.controller.abort();
   }
