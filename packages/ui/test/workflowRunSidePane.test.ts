@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
-// dwf run 详情页（docs/dynamic-workflow/presentation.md「The run pane」）：状态头 / 用量行 / Cancel /
-// 结果与失败面板 / 待答问题 / 产物 / 空态，双语言。
+// dwf run detail pane (docs/dynamic-workflow/presentation.md "The run pane"): status header /
+// usage line / Cancel / result and failure panels / pending questions / artifacts / empty
+// states, in both languages.
 //
-// 2026-09-04 用户指令：Results（`report` 条目）、事件日志、Script 三节已从面板撤走（技术细节，
-// 不给用户看），对应的用例整段删除；journal 的读面没有变化，只是这块面板不再显示它们。
+// User instruction of 2026-09-04: the Results (`report` entries), event log, and Script sections
+// were removed from the pane (technical detail, not for users), and their test cases were
+// deleted wholesale; the journal's read surface is unchanged — this pane just no longer shows
+// them.
 //
-// 纯规则（Cancel 可用性、结果判定、事件摘要）在 workflowRunPanel.test.ts 里穷举；
-// 这里只钉「那些结果真的接到了 DOM 上」以及交互（点击 Cancel 发出哪条命令）。
+// Pure rules (Cancel availability, result adjudication, event summaries) are exhaustively
+// covered in workflowRunPanel.test.ts;
+// this file only pins "those results are actually wired to the DOM" plus interactions (which
+// command a Cancel click sends).
 import { createElement, type ReactNode } from "react";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,8 +24,9 @@ vi.mock("@/logger.js", () => ({
   logger: { debug: vi.fn(), warn: vi.fn() },
 }));
 
-// 提示只渲染 children（不改 DOM 形状），但把 title / description 记下来：Stop 钮的第二行
-// 「停下的运行可以恢复」只活在提示里。
+// The tooltip only renders children (does not change the DOM shape) but records title /
+// description: the Stop button's second line "stopped runs can be resumed" lives only in the
+// tooltip.
 const tooltips = vi.hoisted(() => ({
   calls: [] as Array<{ title: unknown; description?: string }>,
 }));
@@ -41,13 +47,15 @@ vi.mock("@/ControlHintTooltip.js", () => ({
 
 const sendCommand = vi.fn(async () => ({ status: "accepted" }) as never);
 const release = vi.fn();
-// layer 必须是**稳定引用**：组件的租约 effect 以 layer 为依赖，每次渲染换一个新对象
-// 会让 acquire → setLease → 重渲染 → 新 layer 无限循环（生产里 useV4Conversation
-// 返回的是 useMemo 过的 bundle，本来就稳定）。
+// layer must be a **stable reference**: the component's lease effect depends on layer, and a new
+// object on every render would loop forever through acquire → setLease → rerender → new layer
+// (in production useV4Conversation returns a useMemo'd bundle, which is stable by construction).
 const layer = { acquire: vi.fn(() => ({ release })) };
 const workflowRunsQuery = vi.fn<() => Promise<{ runs: unknown[] }>>(async () => ({ runs: [] }));
-// 产物（docs/dynamic-workflow/authoring.md）：清单走 journal 查询，看板条目走取数查询。
-// 两条都在这里桩掉——面板挂载时无条件问一次清单（活投影不带 spec 与版本历史）。
+// Artifacts (docs/dynamic-workflow/authoring.md): the catalog goes through the journal query,
+// board entries through the data query.
+// Both are stubbed here — on mount the pane asks for the catalog unconditionally (the live
+// projection carries no spec or version history).
 const workflowRunArtifactsQuery = vi.fn<() => Promise<{ artifacts: unknown[] }>>(async () => ({
   artifacts: [],
 }));
@@ -72,8 +80,9 @@ vi.mock("@/v4/useConversationProjection.js", () => ({
   useConversationProjection: () => ({ snapshot }),
 }));
 
-// 「配置」弹层的模型清单（docs/dynamic-workflow/presentation.md「The settings popover」）：面板本身不读它，
-// 只有弹层打开时才订阅；给一份空清单即可（字段本身在 workflowRunSettingsPopover.test.ts 里钉）。
+// The settings popover's model list (docs/dynamic-workflow/presentation.md "The settings
+// popover"): the pane itself does not read it, it is subscribed only while the popover is open;
+// an empty list suffices (the fields themselves are pinned in workflowRunSettingsPopover.test.ts).
 vi.mock("@/hooks/useModelSelectionView.js", () => ({
   useModelSelectionView: () => ({
     state: { status: "ready", view: { revision: 1, providers: [] } },
@@ -81,14 +90,16 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
   }),
 }));
 
-// eslint-disable-next-line import/first -- 必须在全部 mock 之后再引入被测组件。
+// eslint-disable-next-line import/first -- the component under test must be imported after all mocks.
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 // eslint-disable-next-line import/first
 import { WorkflowRunSidePane } from "@/app-shell/WorkflowRunSidePane.js";
 // eslint-disable-next-line import/first
 import { useDynamicWorkflowAvailabilityStore } from "@/store/dynamicWorkflowAvailabilityStore.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
-/** 灰度快照（docs/dynamic-workflow/launch.md「Gray release」）：默认命中，面板与改动前一致。 */
+/** Gray-release snapshot (docs/dynamic-workflow/launch.md "Gray release"): enabled by default, so the pane matches its pre-change behavior. */
 function setDynamicWorkflowEnabled(enabled: boolean): void {
   useDynamicWorkflowAvailabilityStore.setState({
     status: "ready",
@@ -123,10 +134,11 @@ const STEPS: GraphStep[] = [
     kind: "ask",
     label: "plan",
     lane: "actor#1",
-    // 检视器 SOURCE 区的 `L{n}` 需要一个落点：车道没有行号时退回它第一步的行。
+    // The inspector's SOURCE section `L{n}` needs an anchor: when the lane has no line number,
+    // fall back to its first step's line.
     line: 4,
   },
-  // 检视用的另外几张卡：workspace 车道（合成，无会话）与两条匿名车道。
+  // Extra cards for inspection: the workspace lane (synthetic, no session) and two anonymous lanes.
   {
     id: "world-read#1",
     kind: "world-read",
@@ -149,13 +161,14 @@ const STEPS: GraphStep[] = [
 
 const LANES = [
   { id: "actor#1", name: "planner" },
-  // 两条匿名车道：编号必须出现（Anonymous Subagent 1 / 2），且与图里那份同源。
+  // Two anonymous lanes: the numbering must appear (Anonymous Subagent 1 / 2) and come from the
+  // same source as the graph's.
   { id: "actor#2" },
   { id: "actor#3" },
   { id: "workspace" },
 ];
 
-/** 参与者 = 每阶段每车道一张卡，id 按分析器的 `${phase}:${lane}`；无标记脚本归 `unphased`。 */
+/** Participants = one card per phase per lane, id per the analyzer's `${phase}:${lane}`; unmarked scripts land in `unphased`. */
 function participantsOf(steps: readonly GraphStep[]) {
   const byId = new Map<string, { id: string; phase: string; lane: string; steps: string[] }>();
   for (const step of steps) {
@@ -190,9 +203,11 @@ const graphRow = {
 };
 
 /**
- * 阶段词汇表在场的变体：单开手风琴与阶段选择需要真的有两个阶段可开。
- * 基础图刻意**没有**阶段——绝大多数用例与阶段无关，给它们平白加一层商图只会让
- * 「这条用例在验什么」变模糊。
+ * Variant with the phase vocabulary present: the single-open accordion and phase selection need
+ * two phases that can actually be opened.
+ * The base graph deliberately has **no** phases — the vast majority of cases are
+ * phase-independent, and gratuitously adding a phase layer to them only blurs what each case
+ * is verifying.
  */
 const PHASES = [
   { id: "phase#a", name: "plan", line: 3 },
@@ -222,7 +237,7 @@ function setSnapshot(
   options: {
     run?: WorkflowRunState;
     withGraphRow?: boolean;
-    /** 换成带 `phase()` 词汇表的图（模块板面）；缺省是今天的 step/车道图。 */
+    /** Swap in a graph carrying the `phase()` vocabulary (phased board); the default is today's step/lane graph. */
     phased?: boolean;
   } = {},
 ) {
@@ -233,7 +248,8 @@ function setSnapshot(
           ...graphRow.display.causalityGraph,
           participants: participantsOf(phasedSteps),
           phases: PHASES,
-          // 相邻两站之间的边：脊线只在有边的相邻两站之间画轨道段（与卡同一条规则）。
+          // Edges between adjacent stations: the spine draws rail segments only between adjacent
+          // stations joined by an edge (same rule as the cards).
           phaseEdges: [{ from: "phase#a", to: "phase#b" }],
           steps: phasedSteps,
         }
@@ -256,7 +272,7 @@ function renderPane(
     withActorCallback?: boolean;
     withArtifactCallback?: boolean;
     withWorkspaceCallback?: boolean;
-    /** 「已被 run X 替代」的链接要宿主给开 run 的回调；缺省不给（多数用例与 lineage 无关）。 */
+    /** The "superseded by run X" link needs the host's open-run callback; omitted by default (most cases are lineage-independent). */
     withOpenRunCallback?: boolean;
   } = {},
 ) {
@@ -275,13 +291,15 @@ function renderPane(
   );
 }
 
-// 待答问题区默认收起，所以任何**条目级**断言都要先点开。这个小助手让「先展开」在用例里
-// 只占一行，读者的注意力留给真正被钉的东西。
+// The pending-questions section is collapsed by default, so any **item-level** assertion has to
+// expand it first. This helper keeps "expand first" to one line per case, leaving the reader's
+// attention for what is actually being pinned.
 type Pane = ReturnType<typeof renderPane>;
 /**
- * 换了投影之后重渲染同一棵树（行是活的，不是打开那一刻的快照）。面板是 memo 组件，投影在
- * 真实应用里经由 context 订阅推进；这里的投影是 mock 出来的模块变量，所以给一个新的 tab
- * 对象让 memo 放行。
+ * Rerenders the same tree after the projection changed (the rows are live, not a snapshot from
+ * open time). The pane is a memo component; in the real app the projection advances via a
+ * context subscription, while here the projection is a mocked module variable, so we hand it a
+ * new tab object to let memo through.
  */
 function rerenderPane(view: Pane, locale: "en-US" | "zh-CN" = "en-US"): Pane {
   view.rerender(
@@ -295,8 +313,9 @@ function rerenderPane(view: Pane, locale: "en-US" | "zh-CN" = "en-US"): Pane {
 }
 
 beforeEach(() => {
-  // 本仓 vitest 没开 globals，所以 @testing-library 的自动 cleanup 不会注册；
-  // 不显式清理，上一条用例的 DOM 会留下来，getByTestId 随即报「找到多个」。
+  // This repo's vitest does not enable globals, so @testing-library's auto cleanup never
+  // registers; without an explicit cleanup the previous case's DOM lingers and getByTestId
+  // starts reporting "found multiple elements".
   cleanup();
   sendCommand.mockClear();
   workflowRunsQuery.mockClear();
@@ -314,7 +333,7 @@ beforeEach(() => {
 
 describe("WorkflowRunSidePane 状态头与阶段清单", () => {
   it("阶段清单按声明序一节一阶段，正在运行的阶段自己展开", () => {
-    // docs/dynamic-workflow/presentation.md「The spine」：时间线读作一份纵向清单。
+    // docs/dynamic-workflow/presentation.md "The spine": the timeline reads as a vertical checklist.
     setSnapshot({
       run: run({ nodes: [{ siteId: "ask#2", ordinal: 1, phase: "executing" }] }),
       phased: true,
@@ -363,8 +382,8 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
   });
 
   it("脊线：轨道段按模型的墨迹分两截画在相邻两站上，灯带状态，行进段在进入运行站的那一段", () => {
-    // docs/dynamic-workflow/presentation.md「The spine」。plan 已结算、review 在跑：
-    // a→b 那段轨道是行进；plan 的灯绿、review 的灯琥珀带搏动。
+    // docs/dynamic-workflow/presentation.md "The spine". plan is settled, review is running:
+    // the a→b rail segment is marching; plan's lamp is green, review's amber with a pulse.
     setSnapshot({
       run: run({
         nodes: [
@@ -377,33 +396,40 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
     });
     const view = renderPane();
     const rails = view.getAllByTestId("workflow-run-spine-rail");
-    // 两截都得带着 `data-rail-position`：样式表按它选行进段的渐变（下半截淡入、上半截涨到满）。
+    // Both halves must carry `data-rail-position`: the stylesheet picks the marching gradient by
+    // it (lower half fades in, upper half ramps to full).
     expect(rails.map((rail) => rail.getAttribute("data-rail-position"))).toEqual([
       "below",
       "above",
     ]);
     expect(rails.map((rail) => rail.getAttribute("data-rail-ink"))).toEqual(["march", "march"]);
     expect(rails[0]!.className).toContain("wf-spine-march");
+    expect(rails[0]!.className).toContain("w-[1.5px]");
     const lamps = view.getAllByTestId("workflow-run-phase-lamp");
     expect(lamps.map((lamp) => lamp.getAttribute("data-lamp"))).toEqual(["done", "running"]);
     expect(lamps[1]!.className).toContain("wf-lamp-running");
-    // 灯在节头按钮里：悬停节头时既有的 `.wf-station-open:hover .wf-lamp` 光环规则接得上。
+    // The lamp sits inside the section-header button: the existing `.wf-station-open:hover
+    // .wf-lamp` halo rule keeps working when the header is hovered.
     expect(lamps[0]!.closest('[data-testid="workflow-run-phase-toggle"]')).toBeTruthy();
   });
 
-  it("脊线：折起的阶段在节头带头像串，展开后头像串让位给药丸", () => {
+  it("脊线：没有边的相邻两站之间不画轨道段；折起的阶段在节头带头像串，展开后头像串让位给药丸", () => {
     setSnapshot({
       run: run({ nodes: [{ siteId: "ask#2", ordinal: 1, phase: "executing" }] }),
       phased: true,
     });
     const view = renderPane();
-    // plan 折着：头像串在场（planner + workspace = 2 枚，无 +n）；review 展开：没有头像串。
+    // plan collapsed: the avatar cluster is present (planner + workspace = 2 avatars, no +n);
+    // review expanded: no avatar cluster.
     const [plan, review] = view.getAllByTestId("workflow-run-phase");
     const cluster = within(plan!).getByTestId("workflow-run-phase-cluster");
     expect(cluster.querySelectorAll("[title]")).toHaveLength(2);
+    expect(cluster.className).toContain("gap-1");
+    expect(cluster.querySelector(".rounded-full")).toBeNull();
+    expect(cluster.querySelectorAll("img.size-4, svg.size-4")).toHaveLength(2);
     expect(cluster.textContent).not.toContain("+");
     expect(within(review!).queryByTestId("workflow-run-phase-cluster")).toBeNull();
-    // 展开 plan 后头像串消失，药丸出现。
+    // After expanding plan, the avatar cluster disappears and pills appear.
     fireEvent.click(within(plan!).getByTestId("workflow-run-phase-toggle"));
     expect(within(plan!).queryByTestId("workflow-run-phase-cluster")).toBeNull();
     expect(within(plan!).getAllByTestId("workflow-agent-pill").length).toBeGreaterThan(0);
@@ -414,7 +440,8 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
       run: run({ nodes: [{ siteId: "ask#2", ordinal: 1, phase: "executing" }] }),
       phased: true,
     });
-    // 把边拿掉：轨道段整个缺席（相邻无边留空，与卡同一条规则）。
+    // Remove the edges: rail segments are absent entirely (adjacent stations without an edge
+    // stay blank, same rule as the cards).
     snapshot = {
       ...(snapshot as { rows: { window: { display: { causalityGraph: object } }[] } }),
       rows: {
@@ -465,8 +492,9 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
     expect(view.queryByTestId("workflow-run-graph-unavailable")).toBeNull();
   });
 
-  // 直接启动的来龙去脉（docs/dynamic-workflow/launch.md「The launch turn」）：作用域、说明、实参与「由你从
-  // 工作流中枢启动 · 时刻」只在这里说——聊天区的 run 卡与工具路径发起的一模一样。
+  // Provenance of a direct launch (docs/dynamic-workflow/launch.md "The launch turn"): scope,
+  // description, args, and "Started by you from the workflows hub · time" are stated only here —
+  // the run card in the chat area is identical to a tool-path launch.
   it("直接启动的 run：状态头下有来龙去脉节——脚注、作用域徽标、说明、实参表", () => {
     const workflowLaunch = {
       runId: "dwfrun-1",
@@ -513,7 +541,7 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
     expect(args).toContain("adaptive concurrency");
     expect(args).toContain("depth");
     expect(args).toContain("3");
-    // 来龙去脉排在状态头之后、结果区 / 脊线之前。
+    // Provenance comes after the status header and before the result section / spine.
     const header = view.getByTestId("workflow-run-status").closest("div.border-b")!;
     expect(
       header.compareDocumentPosition(provenance) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -537,13 +565,17 @@ describe("WorkflowRunSidePane 状态头与阶段清单", () => {
   });
 });
 
-// ── 子代理模型（docs/dynamic-workflow/presentation.md「The run pane」）──
-// 用户在启动时把这次 run 的子代理定在了另一个模型上；主代理仍是会话模型，所以只说子代理。
-// 状态头第一行**不再**摆模型芯片（它放不下，截断后剩下的正是 provider id）：模型名成了摘要行的
-// 第一段——这一行本来就是「这条 run 的几个数」。规范串与强度退进 tooltip。
-// 没指定过模型的 run 整段缺席——跟随会话模型是常态，没有可说的。
+// ── Subagent model (docs/dynamic-workflow/presentation.md "The run pane") ──
+// At launch the user pinned this run's subagents to a different model; the main agent stays on
+// the session model, so only subagents are mentioned.
+// The status header's first line **no longer** holds a model chip (it does not fit; what
+// survives truncation is exactly the provider id): the model name became the first segment of
+// the usage line — that line is already "this run's handful of numbers". The canonical string
+// and the reasoning level retreat into the tooltip.
+// For a run without a specified model the whole segment is absent — following the session model
+// is the norm, nothing to say.
 describe("WorkflowRunSidePane 子代理模型", () => {
-  // 团队套餐的 provider id 是一串十六进制：这次改动要挡的就是它。
+  // The team plan's provider id is a string of hex: exactly what this change keeps off screen.
   const TEAM_PLAN_MODEL = "4fc7f541-2382-4c32-be11-f021b8d7ed1d/GLM-5.3-Flash$high";
 
   it("模型名是摘要行的第一段，不再是状态头上的芯片", () => {
@@ -552,7 +584,8 @@ describe("WorkflowRunSidePane 子代理模型", () => {
 
     const segment = view.getByTestId("workflow-run-subagent-model");
     expect(segment.textContent).toBe("Subagents glm-5.3-flash");
-    // 它住在摘要行里，不在状态头那一行（与并发芯片、Stop 钮同排的那一行）。
+    // It lives in the usage line, not the status header row (the row shared with the concurrency
+    // chip and the Stop button).
     expect(segment.closest('[data-testid="workflow-run-usage"]')).not.toBeNull();
     const summary = view.getByTestId("workflow-run-usage").textContent ?? "";
     expect(summary.indexOf("Subagents glm-5.3-flash")).toBe(0);
@@ -564,9 +597,11 @@ describe("WorkflowRunSidePane 子代理模型", () => {
 
     const segment = view.getByTestId("workflow-run-subagent-model");
     expect(segment.textContent).toBe("Subagents GLM-5.3-Flash");
+    expect(segment.textContent).not.toContain("4fc7f541");
     expect(document.body.textContent).not.toContain("4fc7f541");
     expect(segment.getAttribute("title")).toContain(TEAM_PLAN_MODEL);
-    // 强度不上屏，它跟规范串一起住在 tooltip 里。
+    // The reasoning level stays off screen; it lives in the tooltip together with the canonical
+    // string.
     expect(segment.getAttribute("title")).toContain("thinking High");
   });
 
@@ -590,7 +625,7 @@ describe("WorkflowRunSidePane 子代理模型", () => {
     expect(segment.textContent).toBe("Subagents GLM-5.3-Flash");
     expect(document.body.textContent).not.toContain("4fc7f541");
     expect(segment.getAttribute("title")).toContain(TEAM_PLAN_MODEL);
-    // 同一行里，模型在前，用量标签与读数照旧跟在后面。
+    // Within the same line the model comes first; the usage label and readings still follow.
     const usage = view.getByTestId("workflow-run-usage").textContent ?? "";
     expect(usage.indexOf("Subagents GLM-5.3-Flash")).toBe(0);
     expect(usage).toContain("Usage");
@@ -642,8 +677,9 @@ describe("WorkflowRunSidePane 摘要行", () => {
     expect(usage).toContain("12,345 tokens · 3 steps");
   });
 
-  // 实例表撞界（docs/dynamic-workflow/presentation.md「The run pane」）：摘要行里的步数已经把
-  // 表外的实例算进来了，脊柱却只列得出表内那些——这一句说的正是这个差额。
+  // Instance table overflow (docs/dynamic-workflow/presentation.md "The run pane"): the usage
+  // line's step count already includes the unlisted instances, but the spine can only list those
+  // in the table — this sentence states exactly that difference.
   it("撞界的 run 在摘要行下多一句「仅展示 n/m 步的详情」，计数仍是真实步数", () => {
     setSnapshot({
       run: run({
@@ -668,7 +704,8 @@ describe("WorkflowRunSidePane 摘要行", () => {
     setSnapshot({ run: run({ nodes: [{ siteId: "ask#1", ordinal: 1, phase: "settled" }] }) });
     expect(renderPane().queryByTestId("workflow-run-truncated")).toBeNull();
     cleanup();
-    // `truncated` 也会被 reports / artifacts / phases 触界置位；那时再念「仅展示 1/1 步」是句废话。
+    // `truncated` can also be set by reports / artifacts / phases hitting their caps; in that
+    // case saying "details shown for 1 of 1 steps" would be a tautology.
     setSnapshot({
       run: run({ nodes: [{ siteId: "ask#1", ordinal: 1, phase: "settled" }], truncated: true }),
     });
@@ -721,12 +758,17 @@ describe("WorkflowRunSidePane Stop", () => {
     expect(view.getByTestId<HTMLButtonElement>("workflow-run-cancel").disabled).toBe(true);
   });
 
-  it("停止按钮提供 Stop run 无障碍名与可见文案", () => {
+  it("按钮说 Stop run，图标与卡上那枚同款：实心方块", () => {
     setSnapshot({ run: run({ status: "running" }) });
     const view = renderPane();
     const button = view.getByTestId("workflow-run-cancel");
     expect(button.getAttribute("aria-label")).toBe("Stop run");
     expect(button.textContent).toContain("Stop run");
+    // Same shape as WorkflowRunDigest's Stop button: a square filled with currentColor, not a
+    // cross.
+    const icon = button.querySelector("svg");
+    expect(icon?.getAttribute("class")).toContain("fill-current");
+    expect(icon?.querySelector("rect")).toBeTruthy();
   });
 
   it("可点时提示带第二行「停下的运行可以恢复」；禁用时只剩为什么不可用", () => {
@@ -748,8 +790,10 @@ describe("WorkflowRunSidePane Stop", () => {
   });
 });
 
-// 修复原因（2026-09-15，桌面实测）：老 run 被误留在 running 时 Cancel 点了没反应；Resume 撞上
-// 不再编译的老脚本同样只在控制台留 warn。被拒的 ACK 现在按词表变成状态头下的一句话。
+// Reason for the fix (2026-09-15, observed on desktop): when an old run was wrongly left in
+// running, Cancel clicks did nothing; Resume hitting a script that no longer compiles likewise
+// only left a warn in the console. Rejected ACKs now become a sentence under the status header,
+// per the reason-code vocabulary.
 describe("WorkflowRunSidePane 被拒提示", () => {
   it("cancel 被拒（not_found）→ 状态头下出现一句话；run 状态一变即收起", async () => {
     setSnapshot({ run: run({ status: "running" }) });
@@ -763,7 +807,7 @@ describe("WorkflowRunSidePane 被拒提示", () => {
 
     const hint = await view.findByTestId("workflow-run-rejection");
     expect(hint.textContent).toContain("not running in this agent");
-    // 按钮不被锁死：提示只是解释，不改变可点性。
+    // The button is not locked out: the hint only explains, it does not change clickability.
     expect(view.getByTestId<HTMLButtonElement>("workflow-run-cancel").disabled).toBe(false);
 
     setSnapshot({ run: run({ status: "stopped", stopReason: "user" }) });
@@ -839,6 +883,20 @@ describe("WorkflowRunSidePane 结果与失败面板", () => {
     expect(panel.textContent).toContain("节点数超过上限 100");
   });
 
+  it("错误原文按正文排版，不用等宽字体", () => {
+    // What the projection writes into error is WorkflowErrorJson.message (product-projection.ts's
+    // run-settled branch keeps only .message and drops the code), and those messages are short
+    // human sentences — "run 已取消", "typed ask 结束时未提交结果", "节点数超过上限 100". DESIGN.md
+    // reserves font-mono for paths/commands/code/identifiers/terminal data; a human sentence
+    // belongs to none of those categories.
+    setSnapshot({ run: run({ status: "errored", error: "typed ask 结束时未提交结果" }) });
+    const view = renderPane();
+    const message = view.getByTestId("workflow-run-error-message");
+    expect(message.className).not.toContain("font-mono");
+    // pre-wrap is still kept: if the message ever carries newlines they must not be collapsed.
+    expect(message.className).toContain("whitespace-pre-wrap");
+  });
+
   it("stopped 且没有错误详情时说明没有，而不是留一片空白", () => {
     setSnapshot({ run: run({ status: "stopped" }) });
     const view = renderPane();
@@ -857,11 +915,14 @@ describe("WorkflowRunSidePane 结果与失败面板", () => {
     expect(view.getByTestId("workflow-run-error").textContent).toContain("Sign-in expired.");
   });
 
-  // 「停止」这个动词说不出后果，所以后果回到状态行：可恢复是投影带来的状态位，不从 status 推。
+  // The verb "stopped" cannot express the consequence, so the consequence goes back to the
+  // status line: resumable is a state bit carried by the projection, not inferred from status.
   it("状态行第三个词：run 带 resumable 时说「resumable」，不带就没有那个词", () => {
     setSnapshot({ run: run({ status: "stopped", stopReason: "user", resumable: true }) });
     const withBit = renderPane();
-    expect(withBit.getByTestId("workflow-run-status-resumable").textContent).toContain("resumable");
+    expect(withBit.getByTestId("workflow-run-status-resumable").textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.resumable"),
+    );
     expect(withBit.getByTestId("workflow-run-status-reason").textContent).toContain("by you");
 
     cleanup();
@@ -872,7 +933,9 @@ describe("WorkflowRunSidePane 结果与失败面板", () => {
     cleanup();
     setSnapshot({ run: run({ status: "stopped", stopReason: "user", resumable: true }) });
     const zh = renderPane("zh-CN");
-    expect(zh.getByTestId("workflow-run-status-resumable").textContent).toContain("可恢复");
+    expect(zh.getByTestId("workflow-run-status-resumable").textContent).toContain(
+      zhCN["chat.toolCall.workflow.run.resumable"],
+    );
   });
 
   it("running 时既没有结果面板也没有失败面板", () => {
@@ -935,9 +998,10 @@ describe("WorkflowRunSidePane 升级问题", () => {
     expect(pill.textContent).toContain("poet");
     expect(rows[0]!.textContent).toContain("这个门是不是坏了？");
     expect(rows[0]!.textContent).toContain("已经试过 4 轮，最高分 95。");
-    // qid 是主代理作答要用的 token；用户答不了，但能指着它让主代理去答。
+    // The qid is the token the main agent needs to answer; the user cannot answer, but can point
+    // at it and have the main agent answer.
     expect(rows[0]!.textContent).toContain("dwfq-dwfrun1-1");
-    // 挂在行下的问题不重复提问者的名字。
+    // A question attached under a row does not repeat the asker's name.
     expect(rows[0]!.textContent).not.toContain("poet");
     expect(view.queryByTestId("workflow-run-orphan-questions")).toBeNull();
   });
@@ -1030,9 +1094,9 @@ describe("WorkflowRunSidePane 升级问题", () => {
       });
       const view = renderPane("zh-CN");
       const text = view.getByTestId("workflow-run-orphan-questions").textContent ?? "";
-      expect(text).toContain("待答问题");
+      expect(text).toContain(zhCN["chat.toolCall.workflow.run.questions.title"]);
       expect(text).toContain("42 分钟前");
-      expect(text).toContain("未命名子代理");
+      expect(text).toContain(zhCN["chat.toolCall.workflow.graph.lane.anonymous"]);
       expect(text).not.toContain("Waiting on an answer");
       expect(text).not.toContain("ago");
     } finally {
@@ -1047,8 +1111,9 @@ describe("WorkflowRunSidePane 淘汰 / 冷启动空态", () => {
     const view = renderPane();
     const panel = view.getByTestId("workflow-run-untracked");
     expect(panel.textContent).toContain("No longer tracked live");
-    // 关键：不能读成「这次运行不存在了」——journal 里的记录仍然完整，那正是留着这个
-    // tab 的理由（产物仍列得出来，见产物区那条用例）。
+    // Key: this must not read as "this run no longer exists" — the journal record is still
+    // complete, which is exactly why the tab is kept (artifacts can still be listed; see the
+    // artifacts-section case).
     expect(panel.textContent).toContain("record is still complete");
   });
 });
@@ -1065,20 +1130,21 @@ describe("WorkflowRunSidePane 国际化", () => {
     const text = view.container.textContent ?? "";
 
     expect(view.getByTestId("workflow-run-status").textContent).toBe("已完成");
-    expect(text).toContain("停止运行");
-    // 摘要行与聊天卡页脚同文案：三条子代理车道 + 步数 + token。
+    expect(text).toContain(zhCN["chat.toolCall.workflow.run.cancel"]);
+    // The usage line shares copy with the chat card footer: three subagent lanes + steps + tokens.
     expect(view.getByTestId("workflow-run-usage").textContent).toContain("3 个子代理");
     expect(view.getByTestId("workflow-run-usage").textContent).toContain("1,000 tokens");
     expect(text).toContain("结果");
-    // 没有英文兜底漏出来。
+    // No English fallback leaks through.
     expect(text).not.toContain("Stop run");
-    // 旧动词彻底退场。
+    // The old verb is fully retired.
     expect(text).not.toContain("取消运行");
   });
 });
 
-// ── 阶段清单的子代理行（docs/dynamic-workflow/presentation.md「The spine」）──
-// 与卡上同一枚药丸，加「正在做什么」（当前步的 label）、计数、状态标记与打开 transcript 的箭头。
+// ── Subagent rows in the phase checklist (docs/dynamic-workflow/presentation.md "The spine") ──
+// The same pill as on the cards, plus "what it is doing now" (the current step's label), a count,
+// a status mark, and the arrow that opens the transcript.
 describe("WorkflowRunSidePane 子代理行", () => {
   function actor(overrides: Record<string, unknown> = {}) {
     return {
@@ -1107,12 +1173,12 @@ describe("WorkflowRunSidePane 子代理行", () => {
     expect(pill.getAttribute("data-agent-status")).toBe("running");
     expect(pill.querySelector('[data-testid="workflow-run-agent-activity"]')).toBeNull();
     expect(pill.textContent).toContain("1 tasks");
-    // 状态不只靠颜色或图形：标记带可读文字。
+    // Status must not rely on color or shape alone: the mark carries readable text.
     const mark = pill.querySelector('[data-testid="workflow-pill-status"]');
     expect(mark?.getAttribute("aria-label")).toBe("running");
   });
 
-  /** 行尾的 ↗：一行一枚（活的 run 里每枚子代理药丸都可开），按行里的名字取。 */
+  /** The row-end ↗: one per row (in a live run every subagent pill can be opened), looked up by the row's name. */
   const openOf = (view: ReturnType<typeof renderPane>, name: string) =>
     view
       .getAllByTestId("workflow-agent-pill")
@@ -1144,6 +1210,9 @@ describe("WorkflowRunSidePane 子代理行", () => {
     expect(pill.tagName).toBe("BUTTON");
     expect(pill.getAttribute("aria-label")).toBe("Open the transcript of planner");
     expect(pill.querySelector('[data-testid="workflow-run-agent-open"]')).toBeTruthy();
+    // A <button> inside a block-level parent only wraps its content; the row's container is a
+    // vertical flex so the pill fills the section's width and every row stays the same width.
+    expect(pill.parentElement?.className).toContain("flex-col");
     fireEvent.click(pill);
     expect(onOpenWorkflowActorSession).toHaveBeenCalledTimes(1);
     expect(onOpenWorkflowActorSession).toHaveBeenCalledWith(
@@ -1152,7 +1221,7 @@ describe("WorkflowRunSidePane 子代理行", () => {
   });
 
   it("会话未落库的实例仍然成行，也可开：请求带槽位、不带会话 id（tab 里是占位，自愈）", () => {
-    // docs/dynamic-workflow/presentation.md「The pill」。
+    // docs/dynamic-workflow/presentation.md "The pill".
     const { sessionId: _absent, ...pending } = actor({ name: "planner" });
     setSnapshot({ run: run({ actors: [pending], nodes: [executing()] }) });
     const view = renderPane();
@@ -1161,6 +1230,7 @@ describe("WorkflowRunSidePane 子代理行", () => {
       .getAllByTestId("workflow-agent-pill")
       .find((candidate) => candidate.textContent?.includes("planner"))!;
     expect(pill.tagName).toBe("BUTTON");
+    expect(pill.className).toContain("wf-pill-open");
     fireEvent.click(pill);
     expect(onOpenWorkflowActorSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1174,7 +1244,8 @@ describe("WorkflowRunSidePane 子代理行", () => {
   });
 
   it("还没出现的子代理（静态车道）在活的 run 里同样可开：期望序号 1", () => {
-    // 脚本还没走到它的 agent()：投影里没有这个 actor，药丸交出车道 + 将来的序号。
+    // The script has not reached its agent() yet: the projection has no such actor, so the pill
+    // hands over the lane + the future ordinal.
     setSnapshot({ run: run({ actors: [actor({ name: "planner" })], nodes: [executing()] }) });
     const view = renderPane();
     const opens = view.getAllByTestId("workflow-run-agent-open");
@@ -1227,8 +1298,10 @@ describe("WorkflowRunSidePane 子代理行", () => {
     expect(pill.querySelector('[data-testid="workflow-run-agent-open"]')).toBeNull();
     expect(pill.textContent).toContain("1 reads");
     expect(pill.tagName).toBe("BUTTON");
+    expect(pill.className).toContain("wf-pill-open");
     const open = pill.querySelector('[data-testid="workflow-run-workspace-open"]')!;
-    // 无标记脚本：隐式站的 id 是 "workflow"，落点就落它。
+    // Unmarked script: the implicit station's id is "workflow", and that is where the landing
+    // goes.
     expect(open.getAttribute("data-phase-id")).toBe("workflow");
     fireEvent.click(pill);
     expect(onOpenWorkflowActorSession).not.toHaveBeenCalled();
@@ -1332,7 +1405,9 @@ describe("WorkflowRunSidePane Resume", () => {
       sessionId: string;
       payload: { workId: string; name?: string };
     };
-    // name 喂恢复后完成通知的主题（重启后原工具 input 不可得，tab 上的展示名是仅存来源）。
+    // name feeds the subject of the completion notification after the resume (after a restart
+    // the original tool input is unavailable; the tab's display name is the only surviving
+    // source).
     expect(envelope.payload).toEqual({ workId: "dwfrun-1", name: "Fan-out review" });
     expect(envelope.sessionId).toBe("parent-a");
   });
@@ -1373,8 +1448,9 @@ describe("WorkflowRunSidePane Resume", () => {
     expect(workflowRunsQuery).not.toHaveBeenCalled();
   });
 
-  // 灰度（docs/dynamic-workflow/launch.md「Gray release」DWG-07）：Resume 会真的起一台引擎，
-  // 是这块面板上唯一被收走的动作；面板其余部分照旧渲染。
+  // Gray release (docs/dynamic-workflow/launch.md "Gray release" DWG-07): Resume really starts an
+  // engine, so it is the only action withdrawn on this pane; the rest of the pane renders as
+  // before.
   it("灰度关 → resumable 的 run 也不渲染 Resume，但状态头与阶段清单照旧", async () => {
     setDynamicWorkflowEnabled(false);
     setSnapshot({ run: run({ status: "stopped", resumable: true }) });
@@ -1382,7 +1458,8 @@ describe("WorkflowRunSidePane Resume", () => {
     await Promise.resolve();
 
     expect(view.queryByTestId("workflow-run-resume")).toBeNull();
-    // 「只收 Resume」：Stop 那枚钮与阶段清单仍在，run 本身没有被藏起来。
+    // "Only Resume is withdrawn": the Stop button and the phase checklist remain, and the run
+    // itself is not hidden.
     expect(view.queryByTestId("workflow-run-cancel")).not.toBeNull();
     expect(view.queryByTestId("workflow-run-phases")).not.toBeNull();
   });
@@ -1405,12 +1482,16 @@ describe("WorkflowRunSidePane Resume", () => {
   });
 });
 
-// ── 产物区（docs/dynamic-workflow/authoring.md「How the user sees them」）──
-// 区自己的形态（默认展开、卡片字段、点击回调）在 workflowRunArtifactsSection.test.ts 里穷举；
-// 这里只钉「它在这块面板上的位置与在场条件」——那两件事只有在完整面板里才成立。
+// ── Artifacts section (docs/dynamic-workflow/authoring.md "How the user sees them") ──
+// The section's own shape (expanded by default, card fields, click callback) is exhaustively
+// covered in workflowRunArtifactsSection.test.ts;
+// here we only pin "its position on this pane and its presence conditions" — two things that only
+// hold in the full pane.
 //
-// ⚠ 术语：产物 = 脚本经 `artifact.*` 交付给用户的产出，与「结果」（顶层返回值）是两件事，
-// spec 的不变式要求两者同屏可区分。（`report` 条目那一节已于 2026-09-04 按用户指令撤走。）
+// ⚠ Terminology: artifacts = what the script delivers to the user via `artifact.*`, distinct
+// from "results" (the top-level return value); the spec's invariant requires the two to be
+// distinguishable on screen. (The `report` entries section was removed on 2026-09-04 per user
+// instruction.)
 describe("WorkflowRunSidePane 产物区", () => {
   const summary = (overrides: Record<string, unknown> = {}) => ({
     id: "book",
@@ -1436,10 +1517,11 @@ describe("WorkflowRunSidePane 产物区", () => {
 
     const artifacts = view.getByTestId(TID_WORKFLOW_ARTIFACTS_SECTION);
     const phases = view.getByTestId("workflow-run-phases");
-    // Node.DOCUMENT_POSITION_FOLLOWING === 4：a 在 b 之前。升级问题挂在清单里的提问者下面
-    // （不再是独立一节），所以产物区紧跟阶段清单。
+    // Node.DOCUMENT_POSITION_FOLLOWING === 4: a comes before b. Escalation questions hang under
+    // their asker inside the checklist (no longer a standalone section), so the artifacts section
+    // directly follows the phase checklist.
     expect(phases.compareDocumentPosition(artifacts) & 4).toBeTruthy();
-    // 面板到此为止：产物区之后没有兄弟节点。
+    // The pane ends here: no sibling node after the artifacts section.
     expect(artifacts.nextElementSibling).toBeNull();
   });
 
@@ -1451,7 +1533,8 @@ describe("WorkflowRunSidePane 产物区", () => {
   });
 
   it.each(["errored", "stopped"] as const)("%s 的 run 一样渲染产物区", async (status) => {
-    // 一个死在第 12 步的 run 仍然可能已经发布了一份 pdf；只报一句「失败」等于把它扔了。
+    // A run that died at step 12 may still have published a pdf; reporting just "failed" would
+    // throw it away.
     setSnapshot({ run: run({ status, artifacts: [summary()] } as never) });
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId(TID_WORKFLOW_ARTIFACTS_SECTION)).toBeTruthy());
@@ -1470,14 +1553,15 @@ describe("WorkflowRunSidePane 产物区", () => {
       runId: "dwfrun-1",
       artifactId: "book",
       title: "审计报告",
-      // 宿主据 contentType 分流（html 直接开浏览器 tab），所以这块面板手上的那份合并视图
-      // 带得到就交出去。
+      // The host routes by contentType (html opens a browser tab directly), so the merged view
+      // this pane holds is handed over whenever it is available.
       contentType: "application/pdf",
     });
   });
 
   it("合并视图里有 sourcePath 时一并交出去——宿主不必再为「在工作区显示」查一次 journal", async () => {
-    // 出处只在 journal 里（活投影那份摘要刻意不带它），所以这里让 journal 答上同一个 id。
+    // The source path lives only in the journal (the live projection's summary deliberately
+    // omits it), so here we make the journal answer for the same id.
     workflowRunArtifactsQuery.mockImplementation(async () => ({
       artifacts: [
         {
@@ -1517,12 +1601,13 @@ describe("WorkflowRunSidePane 产物区", () => {
   });
 
   it("run 已被活投影淘汰时，产物仍从 journal 列得出来", async () => {
+    const markdownArtifactTitle = "综述";
     workflowRunArtifactsQuery.mockImplementation(async () => ({
       artifacts: [
         {
           id: "notes",
           kind: "markdown",
-          title: "综述",
+          title: markdownArtifactTitle,
           version: 1,
           versions: [{ version: 1, publishedAt: 1, bytes: 12 }],
           itemCount: 0,
@@ -1532,7 +1617,7 @@ describe("WorkflowRunSidePane 产物区", () => {
     setSnapshot({});
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId(TID_WORKFLOW_ARTIFACTS_SECTION)).toBeTruthy());
-    expect(view.getByText("综述")).toBeTruthy();
+    expect(view.getByText(markdownArtifactTitle)).toBeTruthy();
   });
 
   it("zh-CN 下区名念「产物」——与顶部「结果」措辞不重叠", async () => {
@@ -1543,10 +1628,11 @@ describe("WorkflowRunSidePane 产物区", () => {
   });
 });
 
-// ── 阶段名册（docs/dynamic-workflow/presentation.md「Past six participants」）──
-// 过了六个参与者的站：钉 5 枚（asking → running → failed → 补位）、问题挂在钉住的提问者下面、
-// 其余每人一格、「列出全部」展开两列密排（展开时格子收起，追记「五枚药丸与一扇门」）；折叠节头上
-// 头像串换成迷你量条。
+// ── Phase roster (docs/dynamic-workflow/presentation.md "Past six participants") ──
+// Stations past six participants: pin 5 (asking → running → failed → backfill), questions hang
+// under the pinned asker, everyone else gets one cell, "list them all" expands into a dense
+// two-column roll (cells collapse while expanded; see the follow-up "five pills and a door"); on
+// the collapsed section header the avatar cluster is replaced by a mini meter.
 describe("WorkflowRunSidePane 阶段名册", () => {
   type FanStatus = "done" | "running" | "failed" | "pending";
   function fanoutSnapshot(
@@ -1555,7 +1641,8 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     pendingQuestions: WorkflowRunState["pendingQuestions"] = [],
     unlistedByPhase?: WorkflowRunState["unlistedByPhase"],
   ) {
-    // 一条车道跑出 N 个实例：静态图是一张 `many` 卡，run 一来按实例拆成 N 枚药丸。
+    // One lane spawning N instances: the static graph is a single `many` card, and the run splits
+    // it into N pills per instance.
     const steps: GraphStep[] = [
       { id: "ask#1", kind: "ask", label: "review", lane: "actor#1", phase: "phase#a" },
     ];
@@ -1633,7 +1720,7 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(section.getAttribute("data-phase-open")).toBe("true");
     const pins = within(section).getByTestId("workflow-roster-pins");
     const pills = within(pins).getAllByTestId("workflow-agent-pill");
-    // asking 的 6 领头，再是 running 的 2、8，然后 failed 的 4，最后补位的 1。
+    // Asking's 6 leads, then running's 2 and 8, then failed's 4, finally backfill's 1.
     expect(pills.map((pill) => pill.textContent)).toEqual([
       "reviewer-61 tasks",
       "reviewer-21 tasks",
@@ -1641,11 +1728,12 @@ describe("WorkflowRunSidePane 阶段名册", () => {
       "reviewer-41 tasks",
       "reviewer-11 tasks",
     ]);
-    // 问题紧跟 reviewer-6 那一行（同一个纵向 flex 容器里）。
+    // The question follows reviewer-6's row directly (same vertical flex container).
     const row = within(pins).getByTestId("workflow-run-question");
     expect(row.getAttribute("data-qid")).toBe("q-6");
     expect(row.parentElement).toBe(pills[0]!.parentElement);
-    // 门：其余四个（3 5 7 9，全 done）——两张脸、「4 more」、计数只数其余、下箭头。
+    // The door: the remaining four (3 5 7 9, all done) — two faces, "4 more", the tally counts
+    // only the rest, and a down chevron.
     const door = within(section).getByTestId("workflow-roster-more-row");
     expect(door.tagName).toBe("BUTTON");
     expect(door.getAttribute("data-door")).toBe("closed");
@@ -1659,7 +1747,7 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     ).toEqual(["done:4"]);
     expect(within(door).getByTestId("workflow-more-chevron")).toBeTruthy();
     expect(within(door).queryByTestId("workflow-more-open")).toBeNull();
-    // 门关着：没有名单；正文里也没有格子、量条、头像串。
+    // Door closed: no roll; no cells, meter, or avatar cluster in the body either.
     expect(within(section).queryByTestId("workflow-roster-roll")).toBeNull();
     expect(within(section).queryByTestId("workflow-agent-cell")).toBeNull();
     expect(within(section).queryByTestId("workflow-roster-meter")).toBeNull();
@@ -1668,12 +1756,12 @@ describe("WorkflowRunSidePane 阶段名册", () => {
   });
 
   it("门后是名单：只有其余的人、按状态分组、组头是计数；再点门收起；名单里的行开 transcript 带 workspace scope", () => {
-    // 60 人：1、7 running，6 failed，其余 done。
+    // 60 people: 1 and 7 running, 6 failed, the rest done.
     fanoutSnapshot(60, (i) => (i === 1 || i === 7 ? "running" : i === 6 ? "failed" : "done"));
     const view = renderPane();
     const section = view.getByTestId("workflow-run-phase");
     const door = within(section).getByTestId("workflow-roster-more-row");
-    // running 先钉：钉位 = 1、7、6、2、3；其余 55 = 4 5 8…60。
+    // running pins first: pins = 1, 7, 6, 2, 3; the remaining 55 = 4 5 8…60.
     expect(door.getAttribute("data-more-count")).toBe("55");
     expect(door.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(door);
@@ -1686,13 +1774,13 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     const rows = within(roll).getAllByTestId("workflow-agent-pill");
     expect(rows).toHaveLength(55);
     expect(rows.every((entry) => entry.getAttribute("data-pill-size") === "row")).toBe(true);
-    // 钉住的五个不在名单里。
+    // The pinned five are not in the roll.
     const names = rows.map((entry) => entry.getAttribute("title"));
     for (const pinned of ["reviewer-6", "reviewer-1", "reviewer-7", "reviewer-2", "reviewer-3"]) {
       expect(names).not.toContain(pinned);
     }
     expect(names.slice(0, 3)).toEqual(["reviewer-4", "reviewer-5", "reviewer-8"]);
-    // 名单里的行是按钮，开 transcript 带 tab 自己的 workspace scope。
+    // Rows in the roll are buttons; opening a transcript carries the tab's own workspace scope.
     const target = rows.find((entry) => entry.getAttribute("title") === "reviewer-5")!;
     expect(target.tagName).toBe("BUTTON");
     fireEvent.click(target);
@@ -1705,14 +1793,15 @@ describe("WorkflowRunSidePane 阶段名册", () => {
       ordinal: 5,
       actorName: "reviewer-5",
     });
-    // 再点门：名单收起，计数行回来。
+    // Clicking the door again: the roll collapses, the tally row returns.
     fireEvent.click(door);
     expect(within(section).queryByTestId("workflow-roster-roll")).toBeNull();
     expect(within(door).getByTestId("workflow-roster-tally")).toBeTruthy();
   });
 
   it("名单按注意力序分组：running、pending 在 done 前面；第六个提问者落在名单里带 ?", () => {
-    // 九人：1 2 3 4 5 6 都在提问（钉五个，第六个落进名单）；7 running、8 pending、9 done。
+    // Nine people: 1 2 3 4 5 6 are all asking (five pinned, the sixth lands in the roll);
+    // 7 running, 8 pending, 9 done.
     const asks = [1, 2, 3, 4, 5, 6].map((i) => ({
       qid: `q-${i}`,
       actorSiteId: "actor#1",
@@ -1736,7 +1825,8 @@ describe("WorkflowRunSidePane 阶段名册", () => {
       "reviewer-6",
       "reviewer-9",
     ]);
-    // 第六个提问者 reviewer-6：行上一枚 ?；问题本身不在名单里重复（孤儿块也不收它——它有提问者）。
+    // The sixth asker reviewer-6: a ? on its row; the question itself is not duplicated in the
+    // roll (the orphan block does not take it either — it has an asker).
     expect(within(rows[2]!).getByTestId("workflow-roll-asking")).toBeTruthy();
     expect(within(roll).queryByTestId("workflow-run-question")).toBeNull();
   });
@@ -1749,7 +1839,7 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(section.getAttribute("data-phase-open")).toBe("false");
     expect(within(section).getByTestId("workflow-roster-meter-mini")).toBeTruthy();
     expect(within(section).queryByTestId("workflow-run-phase-cluster")).toBeNull();
-    // 六个及以下仍是头像串。
+    // Six or fewer still get the avatar cluster.
     fanoutSnapshot(6, mid);
     const few = rerenderPane(view);
     const small = few.getByTestId("workflow-run-phase");
@@ -1757,8 +1847,9 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(within(small).queryByTestId("workflow-roster-meter-mini")).toBeNull();
   });
 
-  // 表外的那些（docs/dynamic-workflow/presentation.md「Past six participants」「The spine」）：
-  // 被归约淘汰的子代理没有药丸也没有行，但门、计数行、量条与 settled/observed 都得算上它们。
+  // The unlisted ones (docs/dynamic-workflow/presentation.md "Past six participants", "The
+  // spine"): subagents evicted by reduction have no pill and no row, but the door, tally row,
+  // meter, and settled/observed counts must all include them.
   it("被淘汰的子代理进门的人数、计数行、迷你量条与 settled/observed，名单末尾一行淡字交代差额", () => {
     fanoutSnapshot(
       8,
@@ -1768,7 +1859,7 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     );
     const view = renderPane();
     const section = view.getByTestId("workflow-run-phase");
-    // 门：表内其余三个 + 表外三百个。
+    // Door: the three remaining in-table plus the three hundred unlisted.
     const door = within(section).getByTestId("workflow-roster-more-row");
     expect(door.getAttribute("data-more-count")).toBe("303");
     expect(door.getAttribute("title")).toBe("303 more subagents · list them here");
@@ -1779,9 +1870,11 @@ describe("WorkflowRunSidePane 阶段名册", () => {
           .querySelectorAll("[data-roster-count]"),
       ].map((item) => `${item.getAttribute("data-roster-count")}:${item.textContent}`),
     ).toEqual(["done:301", "failed:2"]);
-    // 步数：表内 8 个里结算了 7 个，表外 300 个分子分母一起抬。
+    // Steps: 7 of the 8 in-table have settled, and the 300 unlisted raise numerator and
+    // denominator together.
     expect(within(section).getByTestId("workflow-run-phase-fraction").textContent).toBe("307/308");
-    // 名单只列得出表内的三个，末尾一行说清剩下的三百个。
+    // The roll can only list the three in-table; a trailing line accounts for the remaining
+    // three hundred.
     fireEvent.click(door);
     const roll = within(section).getByTestId("workflow-roster-roll");
     expect(within(roll).getAllByTestId("workflow-agent-pill")).toHaveLength(3);
@@ -1793,7 +1886,8 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(within(roll).getByTestId("workflow-roll-unlisted").textContent).toBe(
       "300 more agents not listed",
     );
-    // 折起：节头是迷你量条（名册的判定同样算上表外的）。
+    // Collapsed: the section header shows the mini meter (the roster's adjudication counts the
+    // unlisted too).
     fireEvent.click(within(section).getByTestId("workflow-run-phase-toggle"));
     expect(within(section).getByTestId("workflow-roster-meter-mini")).toBeTruthy();
   });
@@ -1805,7 +1899,8 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(within(section).getAllByTestId("workflow-agent-pill")).toHaveLength(4);
     const door = within(section).getByTestId("workflow-roster-more-row");
     expect(door.getAttribute("data-more-count")).toBe("300");
-    // `actorsSettled` 缺席：三百个一个都没跑完，计数行不能把它们说成 done。
+    // `actorsSettled` absent: not one of the three hundred has finished, so the tally must not
+    // call them done.
     expect(
       [
         ...within(door)
@@ -1829,8 +1924,10 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(view.getByTestId("workflow-roll-heading").textContent).toBe("4个已完成");
   });
 
-  // ── 落点（追记「五枚药丸与一扇门」）：卡上「还有 n 个」那一行 / 站头把站 id 交给宿主，tab 带着
-  // focusPhaseId 到这里——展开、开门、节头滚到顶、亮一下；同一站换 openedAt 再落一次。
+  // ── Landing (follow-up "five pills and a door"): the card's "n more" row / station header
+  // hands the station id to the host, and the tab arrives here with focusPhaseId — expand, open
+  // the door, scroll the header to the top, and flash once; the same station lands again when
+  // openedAt changes.
   const landedTree = (overrides: Partial<WorkflowRunSidePaneTab>) =>
     createElement(
       ZCodeIntlProvider,
@@ -1843,9 +1940,10 @@ describe("WorkflowRunSidePane 阶段名册", () => {
 
   it("tab 带 focusPhaseId：那一站展开、门开着、节头滚到顶并亮一下；换 openedAt 再落；不带就不落", () => {
     const scrollIntoView = vi.fn();
-    // jsdom 没有 scrollIntoView。
+    // jsdom has no scrollIntoView.
     Element.prototype.scrollIntoView = scrollIntoView;
-    // 没有在跑的站：默认全部折起，展开只能来自落点。
+    // No station is running: everything is collapsed by default, so expansion can only come from
+    // the landing.
     fanoutSnapshot(9, () => "done");
     const view = render(landedTree({ focusPhaseId: "phase#a", openedAt: 1 }));
     const section = view.getByTestId("workflow-run-phase");
@@ -1860,10 +1958,10 @@ describe("WorkflowRunSidePane 阶段名册", () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "start" }));
     expect(scrollIntoView.mock.instances[0]).toBe(head);
-    // 同一站再点一次（openedAt 刷新）：再落。
+    // Clicking the same station again (openedAt refreshed): lands again.
     view.rerender(landedTree({ focusPhaseId: "phase#a", openedAt: 2 }));
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
-    // 不带落点重开（表头的 ⤢）：不滚、不收。
+    // Reopening without a landing (the header's ⤢): no scroll, no collapse.
     view.rerender(landedTree({ openedAt: 3 }));
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
     expect(view.getByTestId("workflow-run-phase").getAttribute("data-phase-open")).toBe("true");
@@ -1888,7 +1986,7 @@ describe("WorkflowRunSidePane 阶段名册", () => {
   });
 });
 
-// ── 状态头下的 lineage 行（docs/dynamic-workflow/presentation.md「The run pane」）──
+// ── The lineage line under the status header (docs/dynamic-workflow/presentation.md "The run pane") ──
 describe("WorkflowRunSidePane lineage", () => {
   it.each([
     ["en-US", "Amends run"],
@@ -1920,7 +2018,7 @@ describe("WorkflowRunSidePane lineage", () => {
     const view = renderPane("en-US", { withOpenRunCallback: true });
     expect(view.getByTestId("workflow-run-status").textContent).toBe("Stopped");
     expect(view.getByTestId("workflow-run-status-reason").textContent).toContain("superseded");
-    // 被替代的 run 没有 resumable 位：没有 Resume。
+    // A superseded run has no resumable bit: no Resume.
     expect(view.queryByTestId("workflow-run-resume")).toBeNull();
     const link = view.getByTestId("workflow-run-superseded-by");
     expect(link.tagName).toBe("BUTTON");
@@ -1938,7 +2036,7 @@ describe("WorkflowRunSidePane lineage", () => {
     );
   });
 
-  it("后继不在投影里时那一行是静态文字", () => {
+  it("后继不在投影里（或宿主没给回调）时那一行是静态文字", () => {
     setSnapshot({
       run: run({
         status: "stopped",
@@ -1949,7 +2047,7 @@ describe("WorkflowRunSidePane lineage", () => {
     const view = renderPane("zh-CN", { withOpenRunCallback: true });
     const line = view.getByTestId("workflow-run-superseded-by");
     expect(line.tagName).toBe("DIV");
-    expect(line.textContent).toContain("已被替代，后继 run");
+    expect(line.textContent).toContain(zhCN["chat.toolCall.workflow.run.supersededBy"]);
     expect(line.textContent).toContain("dwfrun-gone");
   });
 
@@ -1961,9 +2059,11 @@ describe("WorkflowRunSidePane lineage", () => {
   });
 });
 
-// ── 「配置」（docs/dynamic-workflow/presentation.md「The run pane」「The settings popover」）──
-// 状态头两行：名字 + Configure / Resume / Stop，其下是灯与状态词 + 并发芯片。Configure 与 Resume 同一道
-// 灰度门；能配置的 run 上，摘要行的模型段也是一个入口。Apply 被接受后面板原地换成新 run 的 tab。
+// ── Configure (docs/dynamic-workflow/presentation.md "The run pane", "The settings popover") ──
+// The status header has two rows: name + Configure / Resume / Stop, with lamp and status word +
+// concurrency chip below. Configure and Resume share the same gray-release gate; on a
+// configurable run, the model segment in the usage line is another entry point. Once Apply is
+// accepted, the pane swaps in place to the new run's tab.
 describe("WorkflowRunSidePane 配置", () => {
   beforeEach(() => {
     setDynamicWorkflowEnabled(true);
@@ -2001,8 +2101,9 @@ describe("WorkflowRunSidePane 配置", () => {
     expect(statusRow.contains(configure)).toBe(false);
   });
 
-  // 芯片与 Configure 同进同退（docs/dynamic-workflow/concurrency.md「What the user sees」）：
-  // 完成或被替代的 run 上，界已经没有东西在它下面跑、也没有控件能改它，留下的数只会被读成实时读数。
+  // The chip comes and goes with Configure (docs/dynamic-workflow/concurrency.md "What the user
+  // sees"): on a completed or superseded run nothing is running under it anymore and no control
+  // can change it, so the remaining number would only be read as a live reading.
   it.each([
     ["completed", run({ status: "completed" })],
     ["superseded", run({ status: "stopped", stopReason: "superseded", supersededBy: "run-next" })],
@@ -2075,7 +2176,7 @@ describe("WorkflowRunSidePane 配置", () => {
         sessionId: "parent-a",
       }),
     );
-    // 被接受的那一刻新 run 还没进投影：先不动。
+    // At the moment of acceptance the new run is not in the projection yet: hold still.
     expect(onOpenWorkflowRun).not.toHaveBeenCalled();
     snapshot = {
       ...(snapshot as object),
@@ -2105,8 +2206,10 @@ describe("WorkflowRunSidePane 配置", () => {
     });
   });
 
-  // 只改并发上限、run 又在飞：就地生效，结果里的 runId 就是这个 run 自己、没有 supersededRunId
-  // （docs/dynamic-workflow/concurrency.md）。没有后继可跟——这个 tab 已经是它了。
+  // Changing only the concurrency cap while the run is in flight: takes effect in place, and the
+  // result's runId is this run itself with no supersededRunId
+  // (docs/dynamic-workflow/concurrency.md). There is no successor to follow — this tab already
+  // is it.
   it("就地生效的结果（runId 是自己、无 supersededRunId）：不请求换 tab", async () => {
     sendCommand.mockImplementationOnce(
       async () =>
@@ -2126,7 +2229,7 @@ describe("WorkflowRunSidePane 配置", () => {
     setSnapshot({ run: current });
     const view = renderPane("en-US", { withOpenRunCallback: true });
     fireEvent.click(view.getByTestId("workflow-run-configure"));
-    // 就地生效的后果句：不再念「将停止当前运行」。
+    // The in-place consequence sentence: no longer says "will stop the current run".
     fireEvent.click(
       document.querySelector('[data-testid="workflow-run-settings-bound-decrease"]')!,
     );
@@ -2139,7 +2242,8 @@ describe("WorkflowRunSidePane 配置", () => {
     expect(sendCommand).toHaveBeenCalledWith(
       expect.objectContaining({ payload: { workId: "dwfrun-1", maxConcurrency: 3 } }),
     );
-    // 这个 run 一直在投影里：跟随逻辑若不认得「后继就是自己」，这里会立刻请求把 tab 换掉。
+    // This run has been in the projection the whole time: if the follow logic did not recognize
+    // "the successor is itself", this is where it would immediately request a tab swap.
     await act(async () => {});
     expect(onOpenWorkflowRun).not.toHaveBeenCalled();
   });
@@ -2159,7 +2263,7 @@ describe("WorkflowRunSidePane 配置", () => {
     const borrowed = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: settingsTab }),
       ),
     );
@@ -2199,24 +2303,33 @@ describe("WorkflowRunSidePane 配置", () => {
     const landed = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: settingsTab }),
       ),
     );
     const provenance = landed.getByTestId("workflow-run-provenance");
     expect(provenance.getAttribute("data-workflow-launch-kind")).toBe("settings");
-    expect(provenance.textContent).toContain("由你调整设置");
+    expect(provenance.textContent).toContain(
+      expectedCopy("chat.workflowLaunch.settingsChangedByYou"),
+    );
     expect(landed.queryByTestId("workflow-run-provenance-scope")).toBeNull();
     const rows = landed.getByTestId("workflow-run-provenance-settings").textContent ?? "";
-    expect(rows).toContain("子代理模型");
-    expect(rows).toContain("会话模型 → glm-5.3-flash");
-    expect(rows).toContain("最大并发数");
-    expect(rows).toContain("默认 13 → 4");
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.model"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.sessionModel")} → glm-5.3-flash`,
+    );
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.limit"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.defaultLimitValue", { n: 13 })} → 4`,
+    );
   });
 
-  // 就地生效的设置轮（docs/dynamic-workflow/concurrency.md）：`amend` 不带 predecessorRunId。
-  // 来龙去脉块按 toolCallId 认轮次，所以只有当用户开的正是那一轮的 tab 时才会读到它——
-  // 这一块从不读 predecessorRunId，缺了它照常把改了什么念出来，不炸。
+  // In-place settings turn (docs/dynamic-workflow/concurrency.md): the `amend` carries no
+  // predecessorRunId.
+  // The provenance block identifies turns by toolCallId, so it is read only when the user has
+  // opened exactly that turn's tab —
+  // this block never reads predecessorRunId, and without it still reads out what changed instead
+  // of blowing up.
   it("就地生效的设置轮落在来龙去脉块上：没有前驱也照常念「由你调整设置」与上限那一行", () => {
     const retuned = run({ runId: "dwfrun-1", toolCallId: "tool-1" });
     const retuneTab = { ...tab, toolCallId: "settings-9", runId: "dwfrun-1" };
@@ -2245,16 +2358,20 @@ describe("WorkflowRunSidePane 配置", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: retuneTab }),
       ),
     );
     const provenance = view.getByTestId("workflow-run-provenance");
     expect(provenance.getAttribute("data-workflow-launch-kind")).toBe("settings");
-    expect(provenance.textContent).toContain("由你调整设置");
+    expect(provenance.textContent).toContain(
+      expectedCopy("chat.workflowLaunch.settingsChangedByYou"),
+    );
     const rows = view.getByTestId("workflow-run-provenance-settings").textContent ?? "";
-    expect(rows).toContain("最大并发数");
-    expect(rows).toContain("默认 13 → 4");
-    expect(rows).not.toContain("子代理模型");
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.limit"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.defaultLimitValue", { n: 13 })} → 4`,
+    );
+    expect(rows).not.toContain(expectedCopy("chat.workflowLaunch.settings.model"));
   });
 });

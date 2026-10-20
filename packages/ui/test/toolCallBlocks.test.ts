@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import type { ToolCallRow } from "@zcode/shared/zcode-protocol-v4";
 import { ToolCallBlock } from "../src/ToolCallBlocks.js";
@@ -131,7 +132,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(
           TooltipProvider,
           null,
@@ -146,6 +147,10 @@ describe("ToolCallBlock agent routing", () => {
     expect(html).toContain(">MCP<");
     expect(html).toContain("Get environment");
     expect(html).toContain('class="text-foreground-subtle">Firebase</span>');
+    expect(html).not.toContain(
+      'class="text-foreground-subtlest">·</span><span class="text-foreground-subtle">Firebase</span>',
+    );
+    expect(html).not.toMatch(/class="[^"]*(?:border|bg-background-alt)[^"]*">Firebase<\/span>/u);
     expect(html).not.toContain("Plugin:firebase:firebase");
     expect(html).not.toContain("Firebase get environment");
     expect(html).not.toContain(">mcp__plugin_firebase_firebase__firebase_get_environment<");
@@ -171,7 +176,7 @@ describe("ToolCallBlock agent routing", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",
@@ -183,13 +188,15 @@ describe("ToolCallBlock agent routing", () => {
     expect(summary.textContent).toContain("MCP");
     expect(summary.textContent).toContain("Firebase");
     expect(summary.textContent).toContain("Get environment");
-    expect(summary.textContent).toContain("已停止");
+    expect(summary.textContent).toContain(expectedCopy("chat.toolCall.status.stopped"));
     expect(summary.innerHTML).toContain(">·</span>");
     expect(summary.textContent).not.toContain(syntheticName);
 
     fireEvent.click(summary);
     expect(screen.queryByTestId("mcp-expanded-content")).toBeNull();
-    expect(screen.queryByRole("button", { name: "查看调用详情" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("chat.toolCall.mcp.callDetails") }),
+    ).toBeNull();
     expect(screen.queryByText("PARAMETERS")).toBeNull();
     expect(screen.queryByText(syntheticName)).toBeNull();
     expect(screen.queryByText(/toolId/u)).toBeNull();
@@ -220,7 +227,7 @@ describe("ToolCallBlock agent routing", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",
@@ -231,19 +238,23 @@ describe("ToolCallBlock agent routing", () => {
     expect(screen.queryByText(description)).toBeNull();
     const summary = screen.getByTestId("tool-summary-trigger-call-mcp-detail");
     fireEvent.click(summary);
+    expect(screen.getByTestId("mcp-result-surface").className).toContain("rounded-xl");
+    expect(screen.getByTestId("mcp-result-surface").className).toContain("border-border");
     expect(screen.queryByText("Result")).toBeNull();
     expect(screen.queryByText("Parameters")).toBeNull();
     expect(screen.queryByText(description)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "查看调用详情" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: expectedCopy("chat.toolCall.mcp.callDetails") }),
+    );
     expect(screen.getByText(description)).toBeTruthy();
-    expect(screen.getByText("调用参数")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.mcp.parameters"))).toBeTruthy();
   });
 
   it.each([
-    ["inputStreaming", "等待中", false],
-    ["pendingApproval", "等待中", false],
-    ["running", "执行中", true],
-    ["cancelled", "已停止", false],
+    ["inputStreaming", expectedCopy("chat.toolCall.status.pending"), false],
+    ["pendingApproval", expectedCopy("chat.toolCall.status.pending"), false],
+    ["running", expectedCopy("chat.toolCall.status.running"), true],
+    ["cancelled", expectedCopy("chat.toolCall.status.stopped"), false],
   ] as const)("controls %s MCP detail availability", (status, label, canExpand) => {
     const row: ToolCallRow = {
       rowId: 5,
@@ -266,7 +277,7 @@ describe("ToolCallBlock agent routing", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",
@@ -316,7 +327,7 @@ describe("ToolCallBlock agent routing", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(ToolCallBlock, {
           toolCallNode: toolCallRowToLegacyNode(row),
           workspacePath: "/workspace",
@@ -331,11 +342,11 @@ describe("ToolCallBlock agent routing", () => {
     fireEvent.click(summary);
     const detail = screen.getByTestId("mcp-expanded-content");
     expect(detail.textContent).toContain("Firebase authentication failed.");
-    expect(detail.textContent).toContain("查看调用详情");
+    expect(detail.textContent).toContain(expectedCopy("chat.toolCall.mcp.callDetails"));
     expect(screen.getByTestId("mcp-error-surface").className).toContain("bg-destructive/10");
   });
 
-  it("renders multiline MCP result actions", () => {
+  it("uses the BUA bounded code surface for multiline MCP results", () => {
     const row: ToolCallRow = {
       rowId: 7,
       turnId: "turn-1",
@@ -358,7 +369,7 @@ describe("ToolCallBlock agent routing", () => {
     render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(
           TooltipProvider,
           null,
@@ -371,9 +382,14 @@ describe("ToolCallBlock agent routing", () => {
     );
 
     fireEvent.click(screen.getByTestId("tool-summary-trigger-call-mcp-long-result"));
-    screen.getByTestId("mcp-result-surface");
-    expect(screen.getByRole("button", { name: "复制结果" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "切换自动换行" })).toBeTruthy();
+    const surface = screen.getByTestId("mcp-result-surface");
+    expect(surface.className).toContain("max-h-72");
+    expect(
+      screen.getByRole("button", { name: expectedCopy("chat.toolCall.mcp.copyResult") }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: expectedCopy("chat.toolCall.mcp.wrapLines") }),
+    ).toBeTruthy();
   });
 
   it("renders adapted v4 output-only tool failures as an error surface", () => {
@@ -397,7 +413,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBody, {
           childToolList: null,
           displayModel: buildToolDisplayModel(toolCall),
@@ -431,7 +447,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBody, {
           childToolList: null,
           displayModel: buildToolDisplayModel(toolCall),
@@ -449,7 +465,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -478,7 +494,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -511,7 +527,7 @@ describe("ToolCallBlock agent routing", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -583,7 +599,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -617,13 +633,20 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).toContain("读取");
+    expect(html).toContain(expectedCopy("chat.toolCall.read.read"));
+    expect(html).toMatch(
+      /class="[^"]*tool-summary-kind-label[^"]*@max-\[360px\]\/conversation:hidden/,
+    );
+    expect(html).toMatch(/class="[^"]*tool-summary-content[^"]*flex-1[^"]*overflow-hidden/);
+    expect(html).toMatch(
+      /class="[^"]*text-foreground-subtlest[^"]*@max-\[360px\]\/conversation:hidden/,
+    );
     expect(html).not.toContain("主 Agent");
     expect(html).not.toContain("SubAgent");
     expect(html).toContain("index.html");
-    expect(html).not.toContain("已写入");
-    expect(html).not.toContain("已删除");
-    expect(html).not.toContain("已编辑");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.wrote"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.deleted"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.edited"));
   });
 
   it("does not infer edit summaries for explore nodes backed by Read tool metadata", () => {
@@ -932,7 +955,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -972,16 +995,16 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).not.toContain("已写入");
-    expect(html).not.toContain("已删除");
-    expect(html).not.toContain("已编辑");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.wrote"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.deleted"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.edited"));
   });
 
   it("keeps execute tools with delete-like raw changes out of edit renderer", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1012,9 +1035,9 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).toContain("终端");
-    expect(html).not.toContain("已删除");
-    expect(html).not.toContain("已编辑");
+    expect(html).toContain(expectedCopy("chat.toolCall.execute.terminal"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.deleted"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.edited"));
     expect(html).not.toContain("Deleting");
     expect(html).not.toContain("Deleted");
   });
@@ -1025,7 +1048,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1058,7 +1081,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1089,7 +1112,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1120,7 +1143,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1152,7 +1175,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1186,7 +1209,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1235,17 +1258,17 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).toContain("待办");
+    expect(html).toContain(expectedCopy("todo.panel.title"));
     expect(html).toContain("更新 index.html 标题");
     expect(html).toContain("0/2");
-    expect(html).not.toContain("已写入");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.wrote"));
   });
 
   it("routes fixed AskUserQuestion tools without renaming the tool identity", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1280,18 +1303,18 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).toContain("已询问");
-    expect(html).toContain("1 个问题");
+    expect(html).toContain(expectedCopy("chat.askQuestion.asked"));
+    expect(html).toContain(expectedCopy("chat.askQuestion.questionsCount", { count: 1 }));
     expect(html).toContain("AskUserQuestion");
     expect(html).not.toContain("AskQuestion");
-    expect(html).not.toContain("已写入");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.edit.wrote"));
   });
 
   it("shows an automatic-continuation history label for explicit empty answers", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {
@@ -1322,7 +1345,7 @@ describe("readRawToolCallFileSummaries", () => {
       ),
     );
 
-    expect(html).toContain("未回答，已自动继续");
+    expect(html).toContain(expectedCopy("chat.askQuestion.autoContinued"));
     expect(html).not.toContain("未提供回答");
   });
 
@@ -1330,7 +1353,7 @@ describe("readRawToolCallFileSummaries", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ToolCallBlock, {
           toolCallNode: {
             toolCall: {

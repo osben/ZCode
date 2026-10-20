@@ -93,25 +93,64 @@ vi.mock("@/components/ui/tooltip.js", () => ({
     ),
 }));
 
-import { ConfigSelect, isHighPermissionModeValue } from "@/chat-input-toolbar/display.js";
+import {
+  ConfigSelect,
+  isHighPermissionModeValue,
+  resolveModeOptionIcon,
+} from "@/chat-input-toolbar/display.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 beforeEach(() => {
   mockSelectContentProps.length = 0;
 });
 
-function renderConfigSelect(locale: "zh-CN" | "en-US", props: Parameters<typeof ConfigSelect>[0]) {
+function renderConfigSelect(locale: "en-US" | "en-US", props: Parameters<typeof ConfigSelect>[0]) {
   return renderToStaticMarkup(
     createElement(ZCodeIntlProvider, { initialLocale: locale }, createElement(ConfigSelect, props)),
   );
 }
 
 describe("ConfigSelect mode options", () => {
+  it("restores focus through the owning trigger instead of the global input", () => {
+    const scopedFocus = vi.fn();
+    const globalFocus = vi.fn();
+    const closest = vi.fn(() => ({ querySelector: () => ({ focus: scopedFocus }) }));
+    vi.stubGlobal("document", { querySelector: () => ({ focus: globalFocus }) });
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: false }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    try {
+      renderConfigSelect("en-US", {
+        option: {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "build",
+          options: [{ value: "build", name: "Build" }],
+        },
+        tooltipTitle: "Mode",
+        triggerRef: { current: { closest } as unknown as HTMLSpanElement },
+        onValueChange: vi.fn(),
+      });
+      mockSelectContentProps[0]?.onCloseAutoFocus?.({ preventDefault: vi.fn() });
+      expect(closest).toHaveBeenCalled();
+      expect(scopedFocus).toHaveBeenCalledOnce();
+      expect(globalFocus).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([
     ["zh-CN", "自主模式", "在有风险时询问"],
     ["en-US", "Autonomous mode", "Ask when there’s risk"],
   ] as const)(
-    "Guarded 在 %s 下使用本地化自主模式文案并保持普通权限",
+    "Guarded 在 %s 下使用浅蓝色和 Edit 图标，不复用 YOLO 警示样式",
     (locale, label, description) => {
       const html = renderConfigSelect(locale, {
         provider: "glm",
@@ -130,8 +169,11 @@ describe("ConfigSelect mode options", () => {
       expect(html).toContain(label);
       expect(html).toContain(description);
       expect(html).toContain('data-value="guarded"');
-
+      expect(resolveModeOptionIcon("guarded")).toBe(resolveModeOptionIcon("edit"));
+      expect(html.match(/lucide-shield-check/g)).toHaveLength(2);
+      expect(html).toContain("text-icon-blue hover:text-icon-blue aria-expanded:text-icon-blue");
       expect(html).not.toContain("text-warning");
+      expect(html).not.toContain("lucide-shield-alert");
     },
   );
 
@@ -159,6 +201,26 @@ describe("ConfigSelect mode options", () => {
     expect(html).toContain(label);
     expect(html).not.toContain('data-value="edit"');
     expect(onValueChange).not.toHaveBeenCalled();
+  });
+
+  it("允许 composer 在窄宽度隐藏 mode 下拉箭头", () => {
+    const html = renderConfigSelect("zh-CN", {
+      provider: "codex",
+      option: {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "read-only",
+        options: [{ value: "read-only", name: "read-only" }],
+      },
+      onValueChange: () => {},
+      tooltipTitle: "Mode",
+      indicatorClassName: "hidden @xl/composer:block",
+    });
+
+    expect(html).toContain("lucide-chevron-down");
+    expect(html).toContain("hidden @xl/composer:block");
   });
 
   it("触控设备关闭 mode 菜单后不会重新聚焦聊天输入框", () => {
@@ -246,10 +308,11 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
-    expect(html).toContain("自动编辑");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
+    expect(html).toContain(zhCN["mode.label.glm.edit"]);
     expect(html).not.toContain("变更前确认 / Build");
-    expect(html).toContain("改文件前先问我。");
+    expect(html).toContain(zhCN["mode.description.glm.build"]);
+    expect(html).toContain("pr-8");
   });
 
   it("mode trigger 使用当前文案而不是 SelectValue 自动回填", () => {
@@ -276,7 +339,7 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
     expect(html).not.toContain(">value<");
   });
 
@@ -306,7 +369,7 @@ describe("ConfigSelect mode options", () => {
 
     expect(html).toContain("Ask before changes");
     expect(html).toContain("Edit automatically");
-    expect(html).not.toContain("默认模式");
+    expect(html).not.toContain(expectedCopy("mode.label.glm.default"));
   });
 
   it("GLM 模式列表只渲染 agent 返回的可用模式", () => {
@@ -329,11 +392,11 @@ describe("ConfigSelect mode options", () => {
       tooltipTitle: "Mode",
     });
 
-    expect(html).toContain("变更前确认");
-    expect(html).toContain("自动编辑");
+    expect(html).toContain(zhCN["mode.label.glm.build"]);
+    expect(html).toContain(zhCN["mode.label.glm.edit"]);
     expect(html).toContain("计划模式");
     expect(html).toContain("完全访问");
-    expect(html).toContain("自动编辑文件。");
+    expect(html).toContain(zhCN["mode.description.glm.edit"]);
     expect(html).not.toContain("Auto");
   });
 
@@ -397,8 +460,9 @@ describe("ConfigSelect mode options", () => {
   );
 
   it("restoreFocusSelector 为 null 时保留 Radix 默认回焦（不 preventDefault）", () => {
-    // Bugfix 回归：Automations 权限选择器没有聊天输入框可恢复；之前 onCloseAutoFocus
-    // 无条件 preventDefault，null 时把 Radix 默认“回焦到 trigger”一并吃掉，焦点掉 body。
+    // Bugfix regression: the Automations permission selector has no chat input to restore focus
+    // to; previously onCloseAutoFocus unconditionally preventDefault'ed, and with null it also
+    // swallowed Radix's default "refocus the trigger", dropping focus onto body.
     const focus = vi.fn();
     const preventDefault = vi.fn();
     const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -408,7 +472,8 @@ describe("ConfigSelect mode options", () => {
       configurable: true,
       value: {
         addEventListener: vi.fn(),
-        // 桌面指针环境（非触屏）：非 null selector 本应恢复输入框焦点的场景。
+        // Desktop pointer environment (not touch): the scenario where a non-null selector should
+        // restore the input's focus.
         matchMedia: vi.fn(() => ({ matches: false })),
         removeEventListener: vi.fn(),
       },
@@ -461,7 +526,8 @@ describe("ConfigSelect mode options", () => {
   });
 
   it("不传 provider 时 label/description 回退到预本地化 entry", () => {
-    // ConfigSelect 仍支持没有 provider 词表的调用方直接提供本地化名称与说明。
+    // ConfigSelect still supports callers without a provider vocabulary supplying localized names
+    // and descriptions directly.
     const html = renderConfigSelect("zh-CN", {
       option: {
         id: "mode",
@@ -482,8 +548,8 @@ describe("ConfigSelect mode options", () => {
     expect(html).toContain("完全访问");
     expect(html).toContain("自定义确认说明。");
     expect(html).toContain("更少确认地执行。");
-    expect(html).not.toContain("变更前确认");
-    // 高权限 warning 语义只依赖 entry.value，不依赖 provider。
+    expect(html).not.toContain(expectedCopy("mode.label.glm.build"));
+    // High-privilege warning semantics depend only on entry.value, not on the provider.
     expect(html).toContain("text-warning");
   });
 });

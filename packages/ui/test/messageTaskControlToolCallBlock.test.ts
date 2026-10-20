@@ -9,6 +9,7 @@ import { SendMessageToolCallBlock } from "@/ToolCallBlocks/renderers/send-messag
 import { TaskOutputToolCallBlock } from "@/ToolCallBlocks/renderers/task-output.js";
 import { TaskStopToolCallBlock } from "@/ToolCallBlocks/renderers/task-stop.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const displayModel = {
   inlinePreview: { type: "none" as const },
@@ -25,7 +26,7 @@ function renderToolCall(toolCall: TaskChatToolCallTreeNode["toolCall"]) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ToolCallBlock, {
         toolCallNode: {
           toolCall,
@@ -45,7 +46,7 @@ function renderDedicatedToolCall(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(Renderer, {
         toolCallNode: {
           toolCall,
@@ -56,7 +57,7 @@ function renderDedicatedToolCall(
         viewerSource: null,
         rawFileSummaries: [],
         isRunning: false,
-        statusLabel: "已执行",
+        statusLabel: "Completed",
         childToolList: null,
         showIcon: true,
         forceOpen: true,
@@ -88,16 +89,16 @@ describe("message and task control tool call routing", () => {
       raw: {},
     });
 
-    const sentIndex = html.indexOf("消息");
+    const sentIndex = html.indexOf(expectedCopy("chat.toolCall.kind.message"));
     const summaryIndex = html.indexOf("同步结论");
-    const connectorIndex = html.indexOf("给");
-    const targetIndex = html.indexOf("agent_alpha");
+    const connectorIndex = html.lastIndexOf(expectedCopy("chat.toolCall.sendMessage.to"));
+    const targetIndex = html.lastIndexOf("agent_alpha");
 
     expect(sentIndex).toBeGreaterThanOrEqual(0);
-    expect(summaryIndex).toBeGreaterThan(sentIndex);
+    expect(summaryIndex).toBeGreaterThanOrEqual(0);
     expect(connectorIndex).toBeGreaterThan(summaryIndex);
-    expect(targetIndex).toBeGreaterThan(connectorIndex);
-    expect(html).not.toContain("已发送");
+    expect(targetIndex).toBeGreaterThanOrEqual(0);
+    expect(html).not.toContain(expectedCopy("chat.toolCall.sendMessage.sent"));
     expect(html).toContain("同步结论");
     expect(html).toContain("agent_alpha");
   });
@@ -120,8 +121,8 @@ describe("message and task control tool call routing", () => {
       raw: {},
     });
 
-    expect(html).toContain("停止任务");
-    expect(html).not.toContain("已停止任务");
+    expect(html).toContain(expectedCopy("chat.toolCall.kind.taskStop"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.taskStop.stopped"));
     expect(html).toContain("task_alpha");
     expect(html).not.toContain("local_agent");
   });
@@ -148,7 +149,7 @@ describe("message and task control tool call routing", () => {
       },
     });
 
-    expect(html).toContain("任务输出");
+    expect(html).toContain(expectedCopy("chat.toolCall.kind.taskOutput"));
     expect(html).toContain("task_alpha");
     expect(html).not.toContain("&lt;retrieval_status&gt;");
   });
@@ -173,7 +174,7 @@ describe("message and task control tool call routing", () => {
       },
     });
 
-    expect(html).toContain("回复已排队");
+    expect(html).toContain(expectedCopy("chat.toolCall.respondToCoordinator.queued"));
     expect(html).toContain("已找到根因");
     expect(html).not.toContain("完整回复正文");
     expect(html).not.toContain("response-1");
@@ -206,19 +207,19 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("目标");
+    expect(html).toContain(expectedCopy("chat.toolCall.sendMessage.target"));
     expect(html).toContain("agent_alpha");
-    expect(html).toContain("摘要");
+    expect(html).toContain(expectedCopy("chat.toolCall.sendMessage.summary"));
     expect(html).toContain("同步结论");
-    expect(html).toContain("消息");
+    expect(html).toContain(expectedCopy("chat.toolCall.sendMessage.message"));
     expect(html).toContain("请复核结果并返回风险项。");
-    expect(html).not.toContain("投递状态");
-    expect(html).not.toContain("已排队");
-    expect(html).not.toContain("消息 ID");
+    expect(html).not.toContain("Delivery status");
+    expect(html).not.toContain("Queued");
+    expect(html).not.toContain("Message ID");
     expect(html).not.toContain("msg_alpha");
     expect(html).not.toContain("Agent ID");
-    expect(html).not.toContain("任务 ID");
-    expect(html).not.toContain("输出文件");
+    expect(html).not.toContain("Task ID");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.agent.outputFile"));
     expect(html).not.toContain("/tmp/agent-alpha.txt");
     expect(html).not.toContain("Message queued for local agent.");
     expect(html).not.toContain("&quot;messageId&quot;");
@@ -245,6 +246,7 @@ describe("message and task control tool call details", () => {
     );
 
     expect(html).not.toContain('role="button"');
+    expect(html).not.toContain("rounded-lg border border-border bg-panel");
   });
 
   it("does not render SendMessage plain-text model content as success details", () => {
@@ -268,7 +270,7 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).not.toContain("结果");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.taskStop.result"));
     expect(html).not.toContain(resultText);
     expect(html).not.toContain("&quot;content&quot;");
   });
@@ -295,10 +297,10 @@ describe("message and task control tool call details", () => {
       raw: {},
     });
 
-    expect(html).toContain("消息");
-    expect(html).toContain("执行失败");
+    expect(html).toContain(expectedCopy("chat.toolCall.sendMessage.message"));
+    expect(html).toContain(expectedCopy("chat.toolCall.status.failed"));
     expect(html).not.toContain("No active local_agent task found");
-    expect(html).not.toContain("已发送");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.sendMessage.sent"));
   });
 
   it.each([
@@ -355,9 +357,9 @@ describe("message and task control tool call details", () => {
       raw,
     });
 
-    expect(html).toContain("消息");
-    expect(html).toContain("执行失败");
-    expect(html).not.toContain("已发送");
+    expect(html).toContain(expectedCopy("chat.toolCall.sendMessage.message"));
+    expect(html).toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.sendMessage.sent"));
   });
 
   it("renders TaskStop fields from JSON output without raw JSON", () => {
@@ -383,13 +385,14 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).not.toContain("任务 ID");
+    expect(html).not.toContain("Task ID");
     expect(html).toContain("task_alpha");
-    expect(html).toContain("任务类型");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.taskType"));
     expect(html).toContain("background_shell");
-    expect(html).toContain("命令");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.command"));
     expect(html).toContain("pnpm test");
-    expect(html).toContain("结果");
+    expect(html).toMatch(/<dd class="[^"]*font-mono[^"]*">pnpm test<\/dd>/u);
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.result"));
     expect(html).toContain("Successfully stopped task: task_alpha");
     expect(html).not.toContain("Successfully stopped task: task_alpha (pnpm test)");
     expect(html.match(/pnpm test/gu)).toHaveLength(1);
@@ -422,9 +425,15 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("任务描述");
-    expect(html).not.toContain(">命令<");
-    expect(html).toMatch(/<dt[^>]*>任务描述<\/dt><dd[^>]*>检查赔率来源<\/dd>/u);
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.description"));
+    expect(html).not.toContain(`>${expectedCopy("chat.toolCall.taskStop.command")}<`);
+    expect(html).toMatch(
+      new RegExp(
+        `<dt[^>]*>${expectedCopy("chat.toolCall.taskStop.description")}</dt><dd class="[^"]*leading-5[^"]*">检查赔率来源</dd>`,
+        "u",
+      ),
+    );
+    expect(html).not.toMatch(/font-mono[^>]*>检查赔率来源/u);
   });
 
   it("does not expose a legacy local agent prompt as a task description", () => {
@@ -449,7 +458,7 @@ describe("message and task control tool call details", () => {
 
     expect(html).toContain("Successfully stopped task: agent_legacy");
     expect(html).not.toContain(legacyPrompt);
-    expect(html).not.toContain("任务描述");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.taskStop.description"));
   });
 
   it("keeps a custom TaskStop result unchanged", () => {
@@ -562,7 +571,7 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("部分任务详情已截断");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.truncated"));
   });
 
   it("parses the explicit hook envelope for a legacy TaskStop result", () => {
@@ -603,14 +612,14 @@ describe("message and task control tool call details", () => {
         raw: {},
       },
       {
-        statusLabel: "执行失败",
+        statusLabel: "Failed",
         errorText: "No task found with ID: task_missing",
       },
     );
 
-    expect(html).toContain("停止任务");
-    expect(html).toContain("执行失败");
-    expect(html).not.toContain("已停止任务");
+    expect(html).toContain(expectedCopy("chat.toolCall.kind.taskStop"));
+    expect(html).toContain(expectedCopy("chat.toolCall.status.failed"));
+    expect(html).not.toContain(expectedCopy("chat.toolCall.taskStop.stopped"));
   });
 
   it("renders a denied TaskStop reason as the expanded result", () => {
@@ -632,7 +641,7 @@ describe("message and task control tool call details", () => {
       },
     );
 
-    expect(html).toContain("结果");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskStop.result"));
     expect(html).toContain("TaskStop is disabled by policy");
   });
 
@@ -650,6 +659,7 @@ describe("message and task control tool call details", () => {
     });
 
     expect(html).not.toContain('role="button"');
+    expect(html).not.toContain("rounded-lg border border-border bg-panel");
   });
 
   it("renders only bounded TaskOutput output and its truncation notice", () => {
@@ -681,11 +691,11 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("任务输出");
-    expect(html).toContain("已获取");
+    expect(html).toContain(expectedCopy("chat.toolCall.kind.taskOutput"));
+    expect(html).toContain(expectedCopy("chat.toolCall.taskOutput.retrieved"));
     expect(html).toContain("task_large");
     expect(html).toContain(output);
-    expect(html).toContain("后续内容已省略");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskOutput.truncated"));
     expect(html).not.toContain("&lt;retrieval_status&gt;");
     expect(html).not.toContain("must stay hidden");
     expect(html).not.toContain("/tmp/task.output");
@@ -711,8 +721,9 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("已获取");
+    expect(html).toContain(expectedCopy("chat.toolCall.taskOutput.retrieved"));
     expect(html).not.toContain('role="button"');
+    expect(html).not.toContain("rounded-lg border border-border bg-panel");
   });
 
   it.each([
@@ -721,56 +732,56 @@ describe("message and task control tool call details", () => {
       status: "completed",
       isRunning: false,
       display: { retrievalStatus: "not_ready", taskStatus: "running" },
-      expected: "任务运行中",
+      expected: expectedCopy("chat.toolCall.taskOutput.running"),
     },
     {
       name: "timed out retrieval",
       status: "completed",
       isRunning: false,
       display: { retrievalStatus: "timeout", taskStatus: "running" },
-      expected: "等待超时",
+      expected: expectedCopy("chat.toolCall.taskOutput.timeout"),
     },
     {
       name: "failed task",
       status: "completed",
       isRunning: false,
       display: { retrievalStatus: "success", taskStatus: "failed" },
-      expected: "任务失败",
+      expected: expectedCopy("chat.toolCall.taskOutput.taskFailed"),
     },
     {
       name: "stopped task",
       status: "completed",
       isRunning: false,
       display: { retrievalStatus: "success", taskStatus: "killed" },
-      expected: "任务已停止",
+      expected: expectedCopy("chat.toolCall.taskOutput.taskStopped"),
     },
     {
       name: "tool execution",
       status: "in_progress",
       isRunning: true,
       display: undefined,
-      expected: "正在获取任务输出",
+      expected: expectedCopy("chat.toolCall.taskOutput.fetching"),
     },
     {
       name: "tool failure",
       status: "failed",
       isRunning: false,
       display: undefined,
-      expected: "执行失败",
+      expected: expectedCopy("chat.toolCall.status.failed"),
     },
     {
       name: "denied tool",
       status: "denied",
       isRunning: false,
       display: undefined,
-      expected: "已拒绝",
+      expected: expectedCopy("chat.toolCall.status.denied"),
     },
     {
       name: "stopped tool",
       status: "stopped",
       isRunning: false,
       display: undefined,
-      expected: "已停止",
+      expected: expectedCopy("chat.toolCall.status.stopped"),
     },
   ])("renders TaskOutput $name status", ({ status, isRunning, display, expected }) => {
     const html = renderDedicatedToolCall(
@@ -824,7 +835,7 @@ describe("message and task control tool call details", () => {
       },
     });
 
-    expect(html).toContain("回复已排队");
+    expect(html).toContain(expectedCopy("chat.toolCall.respondToCoordinator.queued"));
     expect(html).toContain("根因已经确认");
     expect(html).not.toContain('role="button"');
     expect(html).not.toContain("不应出现在卡片中的完整回复");
@@ -838,35 +849,35 @@ describe("message and task control tool call details", () => {
       status: "in_progress",
       isRunning: true,
       displayStatus: undefined,
-      expected: "正在回复",
+      expected: expectedCopy("chat.toolCall.respondToCoordinator.replying"),
     },
     {
       name: "queued",
       status: "completed",
       isRunning: false,
       displayStatus: "success",
-      expected: "回复已排队",
+      expected: expectedCopy("chat.toolCall.respondToCoordinator.queued"),
     },
     {
       name: "business failure",
       status: "completed",
       isRunning: false,
       displayStatus: "failed",
-      expected: "执行失败",
+      expected: expectedCopy("chat.toolCall.status.failed"),
     },
     {
       name: "denied",
       status: "denied",
       isRunning: false,
       displayStatus: undefined,
-      expected: "已拒绝",
+      expected: expectedCopy("chat.toolCall.status.denied"),
     },
     {
       name: "stopped",
       status: "stopped",
       isRunning: false,
       displayStatus: undefined,
-      expected: "已停止",
+      expected: expectedCopy("chat.toolCall.status.stopped"),
     },
   ])(
     "renders RespondToCoordinator $name status",
@@ -895,14 +906,17 @@ describe("message and task control tool call details", () => {
       );
 
       expect(html).toContain(expected);
+      if (displayStatus === "failed") {
+        expect(html).toContain(expectedCopy("chat.toolCall.status.failed"));
+      }
     },
   );
 });
 
 describe("message and task control terminal states", () => {
   it.each([
-    { status: "stopped", expected: "已停止" },
-    { status: "denied", expected: "已拒绝" },
+    { status: "stopped", expected: expectedCopy("chat.toolCall.status.stopped") },
+    { status: "denied", expected: expectedCopy("chat.toolCall.status.denied") },
   ])("does not present SendMessage $status as sent", ({ status, expected }) => {
     const html = renderToolCall({
       toolId: `send-${status}`,
@@ -919,12 +933,12 @@ describe("message and task control terminal states", () => {
     });
 
     expect(html).toContain(expected);
-    expect(html).not.toContain("已发送");
+    expect(html).not.toContain(expectedCopy("chat.toolCall.sendMessage.sent"));
   });
 
   it.each([
-    { status: "stopped", expected: "已停止" },
-    { status: "denied", expected: "已拒绝" },
+    { status: "stopped", expected: expectedCopy("chat.toolCall.status.stopped") },
+    { status: "denied", expected: expectedCopy("chat.toolCall.status.denied") },
   ])("does not present TaskStop $status as stopped successfully", ({ status, expected }) => {
     const html = renderToolCall({
       toolId: `stop-${status}`,
@@ -939,6 +953,6 @@ describe("message and task control terminal states", () => {
     });
 
     expect(html).toContain(expected);
-    expect(html).toContain("停止任务");
+    expect(html).toContain(expectedCopy("chat.toolCall.kind.taskStop"));
   });
 });

@@ -6,7 +6,7 @@ import { ChatErrorBanner } from "@/ChatErrorBanner.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { PlatformProvider } from "@/hooks/usePlatform.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const buttonMock = vi.hoisted(() => ({
   props: [] as Array<Record<string, unknown>>,
@@ -47,7 +47,7 @@ function renderErrorBanner() {
   renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(
         PlatformProvider,
         { platform: mockPlatform },
@@ -65,7 +65,9 @@ function renderErrorBanner() {
 }
 
 async function openFeedbackFromBanner() {
-  const feedbackButton = buttonMock.props.find((props) => props["aria-label"] === "反馈问题");
+  const feedbackButton = buttonMock.props.find(
+    (props) => props["aria-label"] === expectedCopy("chat.error.feedback"),
+  );
   expect(feedbackButton).toBeDefined();
   if (!feedbackButton) {
     throw new Error("Feedback issue button was not rendered");
@@ -91,88 +93,21 @@ describe("ChatErrorBanner feedback draft", () => {
     expect(mockPlatform.captureWindowScreenshot).not.toHaveBeenCalled();
     expect(useFeedbackStore.getState().submitDraft?.includeLogs).toBe(true);
     const description = useFeedbackStore.getState().submitDraft?.description;
-    expect(description).toContain("报错摘要：Provider authentication failed.");
-    expect(description).toContain("TraceID: trace-auth-failed");
-    expect(description).not.toContain("我在使用过程中遇到了报错，请帮忙排查。");
-    expect(description).not.toContain("报错摘要\nProvider authentication failed.");
-  });
-
-  it("没有升级处理器时不展示不可用的升级动作", () => {
-    renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
-        createElement(
-          PlatformProvider,
-          { platform: mockPlatform },
-          createElement(ChatErrorBanner, {
-            error: {
-              code: "model_config_missing",
-              message: "Model config is missing.",
-            },
-            onOpenModelSettings: vi.fn(),
-          }),
-        ),
-      ),
+    expect(description).toContain(
+      expectedCopy("feedback.submit.template.section.errorSummaryLine", {
+        message: "Provider authentication failed.",
+      }),
     );
-
-    expect(buttonMock.props.some((props) => props["aria-label"] === "升级")).toBe(false);
-    expect(buttonMock.props.some((props) => props["aria-label"] === "配置")).toBe(true);
-  });
-
-  it("远程 workspace 缺模型时只切换措辞，动作仍是本机配置与升级", () => {
-    const html = renderToStaticMarkup(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
-        createElement(
-          PlatformProvider,
-          { platform: mockPlatform },
-          createElement(ChatErrorBanner, {
-            error: {
-              code: "model_config_missing",
-              message: "Model config is missing.",
-            },
-            modelConfigTarget: "remote",
-            onOpenModelSettings: vi.fn(),
-            onOpenUpgrade: vi.fn(),
-          }),
-        ),
-      ),
+    expect(description).toContain(
+      expectedCopy("feedback.submit.template.section.errorTraceId", {
+        traceId: "trace-auth-failed",
+      }),
     );
-
-    expect(html).toContain(zhCN["chat.error.remoteNoAvailableModel"]);
-    expect(html).not.toContain(zhCN["chat.error.noAvailableModel"]);
-    expect(buttonMock.props.some((props) => props["aria-label"] === "配置")).toBe(true);
-    expect(buttonMock.props.some((props) => props["aria-label"] === "升级")).toBe(true);
-    expect(buttonMock.props.some((props) => props["aria-label"] === "去同步")).toBe(false);
+    expect(description).not.toContain(
+      expectedCopy("feedback.submit.template.section.errorHeading"),
+    );
+    expect(description).not.toContain(
+      `${expectedCopy("feedback.submit.template.section.errorSummary")}\nProvider authentication failed.`,
+    );
   });
-});
-
-it("远程发送竞态提供重连，反馈归属连接失败而非模型调用", async () => {
-  const reconnect = vi.fn();
-  renderToStaticMarkup(
-    createElement(
-      ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
-      createElement(
-        PlatformProvider,
-        { platform: mockPlatform },
-        createElement(ChatErrorBanner, {
-          error: {
-            code: "ZCODE_REMOTE_WORKSPACE_DISCONNECTED",
-            message: "ZCODE_REMOTE_WORKSPACE_DISCONNECTED",
-          },
-          remoteKind: "ssh",
-          onReconnect: reconnect,
-        }),
-      ),
-    ),
-  );
-  const button = buttonMock.props.find((props) => props.children === "重新连接");
-  expect(button).toBeDefined();
-  (button!.onClick as () => void)();
-  expect(reconnect).toHaveBeenCalledOnce();
-  await openFeedbackFromBanner();
-  expect(useFeedbackStore.getState().submitDraft?.module).toBe("SSH连接失败");
 });

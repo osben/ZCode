@@ -18,16 +18,20 @@ import {
 } from "@/ToolCallBlocks/renderers/list-saved-workflows.js";
 import { SaveWorkflowToolCallBlock } from "@/ToolCallBlocks/renderers/save-workflow.js";
 import type { ToolCallBlockRenderContext } from "@/ToolCallBlocks/shared.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const SCRIPT = 'const r = await agent("a").ask<string>("检查");';
 const SAVED_PATH = "/workspace/.zcode/workflows/release-check.dwf.ts";
+const WORKFLOW_DESCRIPTION = "发布前检查：lint、测试、变更日志";
+const WORKFLOW_WHEN_TO_USE = "用户说要发版时";
 
 const LIST_RESULT = {
   workflows: [
     {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       args: { target: { type: "string", required: true }, skipTests: { type: "boolean" } },
       scope: "project",
       path: SAVED_PATH,
@@ -65,7 +69,7 @@ function buildContext(
     statusLabel: "",
     childToolList: null,
     showIcon: true,
-    // 卡体默认折叠，测试里强制展开以断言内容。
+    // The card body is collapsed by default; tests force it open to assert on content.
     forceOpen: true,
     canToggle: false,
     ...overrides,
@@ -95,8 +99,8 @@ function buildSaveToolCall(input: Record<string, unknown> = {}) {
     status: "completed",
     input: {
       name: "release-check",
-      description: "发布前检查：lint、测试、变更日志",
-      whenToUse: "用户说要发版时",
+      description: WORKFLOW_DESCRIPTION,
+      whenToUse: WORKFLOW_WHEN_TO_USE,
       script: SCRIPT,
       path: SAVED_PATH,
       overwrite: false,
@@ -120,10 +124,11 @@ function buildListToolCall(output: unknown = LIST_RESULT) {
 
 afterEach(cleanup);
 
-// ── spec 测试地图「归一化 (b)」──
-// 归一化入参对**既有**读取规则原样命中。这是「旧桌面渲染按构造成立」这条安全属性的
-// 渲染侧一半（CLI 侧那一半钉在 bootstrap 的 session-mapper 测试里）：saved run 的确认窗
-// 之所以在没有来源徽标的旧客户端上也显示完整脚本，靠的就是这两个函数读得到东西。
+// ── Spec test map "normalized (b)" ──
+// The normalized input hits the **existing** reader rules as-is. This is the rendering-side half of the safety
+// property "old-desktop rendering holds by construction" (the CLI-side half is pinned in bootstrap's session-mapper
+// tests): the saved run's confirmation window shows the full script even on old clients without a source badge,
+// precisely because these two functions can read it.
 describe("normalized saved-run input feeds the existing reader helpers", () => {
   const NORMALIZED_SAVED_RAW = {
     name: "Release check",
@@ -144,6 +149,12 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
     expect(readWorkflowName(NORMALIZED_SAVED_RAW)).toBe("Release check");
   });
 
+  it("falls back to the saved name when the model sent no label", () => {
+    // The normalization rule is `name: input.name ?? savedName`, so the input always has a name.
+    const { name: _dropped, ...withoutLabel } = NORMALIZED_SAVED_RAW;
+    expect(readWorkflowName({ ...withoutLabel, name: "release-check" })).toBe("release-check");
+  });
+
   it("readWorkflowSaved reads provenance and the validated argument bag", () => {
     const saved = readWorkflowSaved(NORMALIZED_SAVED_RAW);
     expect(saved).toEqual({
@@ -156,12 +167,12 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
   it("treats an inline run as having no saved source", () => {
     expect(readWorkflowSaved({ name: "Inline", script: SCRIPT })).toBeUndefined();
-    // 不变式 7：args 恒有定义——saved 在场但没有实参时是空对象，不是 undefined。
+    // Invariant 7: args is always defined — saved present with no arguments means an empty object, not undefined.
     expect(readWorkflowSaved({ script: SCRIPT, saved: { name: "x" } })?.args).toEqual({});
   });
 
   it("formats argument values by declared type", () => {
-    // 字符串原样（引号只会给中文实参添噪），其余走 JSON。
+    // Strings verbatim (quotes would only add noise to Chinese arguments); everything else goes through JSON.
     expect(formatWorkflowArgValue("packages/ui")).toBe("packages/ui");
     expect(formatWorkflowArgValue(false)).toBe("false");
     expect(formatWorkflowArgValue(3)).toBe("3");
@@ -171,8 +182,8 @@ describe("normalized saved-run input feeds the existing reader helpers", () => {
 
 describe("resolveToolCallRenderer saved-workflow dispatch", () => {
   it("routes both tools by name even though shared does not know them", () => {
-    // 前置事实：这两个名字不在 shared 的已知工具表里，identity 会回 unknown。
-    // 分流必须按名字命中，否则整包 toolCall JSON 会被摊进聊天区。
+    // Prerequisite fact: these two names are not in shared's known-tool table; identity would return unknown.
+    // Dispatch must hit by name, otherwise the whole toolCall JSON is dumped into the chat area.
     expect(resolveToolCallRenderer(buildContext(buildSaveToolCall()))).toBe(
       SaveWorkflowToolCallBlock,
     );
@@ -185,11 +196,25 @@ describe("resolveToolCallRenderer saved-workflow dispatch", () => {
     const snakeCase = { ...buildSaveToolCall(), toolName: "save_workflow", kind: "save_workflow" };
     expect(resolveToolCallRenderer(buildContext(snakeCase))).toBe(SaveWorkflowToolCallBlock);
   });
+
+  it("does not steal CreateWorkflow", () => {
+    const createWorkflow = {
+      toolId: "tool-create-1",
+      toolName: "CreateWorkflow",
+      kind: "CreateWorkflow",
+      title: "CreateWorkflow",
+      status: "completed",
+      input: { script: SCRIPT },
+    };
+    const renderer = resolveToolCallRenderer(buildContext(createWorkflow));
+    expect(renderer).not.toBe(SaveWorkflowToolCallBlock);
+    expect(renderer).not.toBe(ListSavedWorkflowsToolCallBlock);
+  });
 });
 
 describe("SaveWorkflowToolCallBlock", () => {
-  // 2026-08-29 增补（spec：docs/dynamic-workflow/launch.md「`SaveWorkflow`」）：
-  // 折叠行收敛为「名字 + overwrite 徽标」，说明/落点/whenToUse 只在展开卡体出现。
+  // 2026-08-29 addition (spec: docs/dynamic-workflow/launch.md "`SaveWorkflow`"):
+  // the collapsed row converges to "name + overwrite badge"; description/path/whenToUse appear only in the expanded body.
   it("collapsed row shows only the name; details live in the expanded body", () => {
     renderCard(
       SaveWorkflowToolCallBlock,
@@ -198,16 +223,16 @@ describe("SaveWorkflowToolCallBlock", () => {
 
     expect(screen.getByText("Saved workflow")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
-    // 折叠行不出现说明与落点——它们是详情，不是状态。
-    expect(screen.queryByText("发布前检查：lint、测试、变更日志")).toBeNull();
+    // The collapsed row shows no description or path — they are details, not status.
+    expect(screen.queryByText(WORKFLOW_DESCRIPTION)).toBeNull();
     expect(screen.queryByText(SAVED_PATH)).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText(SAVED_PATH)).toBeTruthy();
-    expect(screen.getByText("用户说要发版时")).toBeTruthy();
-    // 脚本归确认窗，不在卡上重复一遍。
+    expect(screen.getByText(WORKFLOW_WHEN_TO_USE)).toBeTruthy();
+    // The script belongs to the confirmation window and is not repeated on the card.
     expect(document.body.textContent).not.toContain('await agent("a")');
   });
 
@@ -224,39 +249,45 @@ describe("SaveWorkflowToolCallBlock", () => {
 
   it("uses the running phrase while the save is in flight", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall(), { isRunning: true }));
-    expect(screen.getByText("Saving workflow")).toBeTruthy();
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saving"))).toBeTruthy();
   });
 
-  it("renders the overwrite card in zh-CN", () => {
+  it("renders both locales", () => {
     renderCard(
       SaveWorkflowToolCallBlock,
       buildContext(buildSaveToolCall({ overwrite: true })),
       "zh-CN",
     );
-    expect(screen.getByText("已保存工作流")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.saved"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-overwrite-badge="true"]')?.textContent).toBe(
       "覆盖",
     );
+    cleanup();
+
+    renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()), "en-US");
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.saved"))).toBeTruthy();
   });
 
-  // ── docs/dynamic-workflow/launch.md「`SaveWorkflow`」──
+  // ── docs/dynamic-workflow/launch.md "`SaveWorkflow`" ──
   it("shows a scope row above the path (project vs global) and stays silent on unknown scope", () => {
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall()));
-    expect(screen.getByText("Scope")).toBeTruthy();
-    expect(screen.getByText("Project")).toBeTruthy();
-    // 项目档折叠行不加全局小标。
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeTruthy();
+    expect(
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.project")),
+    ).toBeTruthy();
+    // The project copy's collapsed row gets no global badge.
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
     cleanup();
 
     renderCard(SaveWorkflowToolCallBlock, buildContext(buildSaveToolCall({ scope: "global" })));
-    expect(screen.getByText("Global · visible from every project")).toBeTruthy();
-    // 全局档折叠行加一个「全局」小标（与 overwrite 徽标同排）。
+    expect(screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.global"))).toBeTruthy();
+    // The global copy's collapsed row gets a "Global" badge (on the same row as the overwrite badge).
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      "Global",
+      expectedCopy("chat.toolCall.workflow.scope.global"),
     );
     cleanup();
 
-    // scope 缺席（旧 agent）→ 不渲染作用域行。
+    // scope absent (old agent) → no scope row is rendered.
     const { scope: _dropped, ...withoutScope } = buildSaveToolCall().input as Record<
       string,
       unknown
@@ -265,7 +296,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       SaveWorkflowToolCallBlock,
       buildContext({ ...buildSaveToolCall(), input: withoutScope }),
     );
-    expect(screen.queryByText("Scope")).toBeNull();
+    expect(screen.queryByText(expectedCopy("chat.toolCall.workflow.save.scope.label"))).toBeNull();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')).toBeNull();
   });
 
@@ -275,7 +306,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global", shadowing: "hides_global" })),
     );
     expect(
-      screen.getByText("A global workflow with this name will be hidden by this one"),
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hidesGlobal")),
     ).toBeTruthy();
     cleanup();
 
@@ -284,9 +315,7 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "project", shadowing: "hidden_by_project" })),
     );
     expect(
-      screen.getByText(
-        "This project already has a workflow with this name, which will hide this one here",
-      ),
+      screen.getByText(expectedCopy("chat.toolCall.workflow.save.scope.hiddenByProject")),
     ).toBeTruthy();
   });
 
@@ -296,10 +325,10 @@ describe("SaveWorkflowToolCallBlock", () => {
       buildContext(buildSaveToolCall({ scope: "global" })),
       "zh-CN",
     );
-    expect(screen.getByText("作用域")).toBeTruthy();
-    expect(screen.getByText("全局 · 对所有项目可见")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.label"])).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.save.scope.global"])).toBeTruthy();
     expect(document.querySelector('[data-workflow-scope-badge="global"]')?.textContent).toBe(
-      "全局",
+      zhCN["chat.toolCall.workflow.scope.global"],
     );
   });
 });
@@ -373,13 +402,13 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(
       readListSavedWorkflowsResult(buildListToolCall(JSON.stringify(LIST_RESULT)))?.workflows,
     ).toHaveLength(2);
-    // 读不懂就是 null——空列表与解析失败必须可分辨。
+    // Unreadable means null — an empty list and a parse failure must be distinguishable.
     expect(readListSavedWorkflowsResult(buildListToolCall("not json"))).toBeNull();
   });
 
   it("prefers the saved_workflow_list display over the model-facing text projection", () => {
-    // 根因回归钉：v4 wire 上 output 是 formatModelContent 的 XML 风格投影（JSON 探针
-    // 永不命中）；display 通道在场时必须优先于一切文本探针。
+    // Root-cause regression pin: on the v4 wire, output is formatModelContent's XML-style projection (a JSON probe
+    // never hits); when the display channel is present it must take priority over any text probe.
     const toolCall = {
       ...buildListToolCall(
         '<saved_workflows count="1"><workflow name="release-check"/></saved_workflows>',
@@ -390,7 +419,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
           workflows: [
             {
               name: "release-check",
-              description: "发布前检查：lint、测试、变更日志",
+              description: WORKFLOW_DESCRIPTION,
               scope: "project",
               path: SAVED_PATH,
               argNames: ["target", "skipTests"],
@@ -418,11 +447,11 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     expect(screen.getByText("2 workflows")).toBeTruthy();
     expect(screen.getByText("release-check")).toBeTruthy();
     expect(screen.getByText("translate-docs")).toBeTruthy();
-    expect(screen.getByText("发布前检查：lint、测试、变更日志")).toBeTruthy();
+    expect(screen.getByText(WORKFLOW_DESCRIPTION)).toBeTruthy();
     expect(screen.getByText("target")).toBeTruthy();
     expect(screen.getByText("skipTests")).toBeTruthy();
 
-    // 通用兜底会打印整包 toolCall；专用卡必须没有这些结构键。
+    // The generic fallback prints the whole toolCall; the dedicated card must have none of these structural keys.
     expect(document.body.textContent).not.toContain('"toolId"');
     expect(document.body.textContent).not.toContain('"workflows"');
   });
@@ -432,7 +461,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
 
     expect(screen.getByText("1 file could not be read")).toBeTruthy();
     expect(screen.getByText("/workspace/.zcode/workflows/broken.dwf.ts")).toBeTruthy();
-    // 坏文件不该把好文件挤掉。
+    // A broken file must not push good files out.
     expect(screen.getByText("release-check")).toBeTruthy();
   });
 
@@ -455,15 +484,23 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall("not json")));
 
     expect(document.querySelector('[data-saved-workflow-list="true"]')).toBeNull();
-    // 降级路径存在即可——重点是不画一张假的空列表。
+    // The degraded path existing is enough — the point is not to draw a fake empty list.
     expect(document.body.textContent).not.toContain("No saved workflows in this project");
   });
 
-  it("renders the listing in zh-CN", () => {
+  it("renders both locales", () => {
     renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "zh-CN");
-    expect(screen.getByText("已保存的工作流")).toBeTruthy();
-    expect(screen.getByText("2 个工作流")).toBeTruthy();
-    expect(screen.getByText("1 个文件无法解析")).toBeTruthy();
+    expect(screen.getByText(zhCN["chat.toolCall.workflow.list.listed"])).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.count.other"].replace("{count}", "2")),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(zhCN["chat.toolCall.workflow.list.invalid.other"].replace("{count}", "1")),
+    ).toBeTruthy();
+    cleanup();
+
+    renderCard(ListSavedWorkflowsToolCallBlock, buildContext(buildListToolCall()), "en-US");
+    expect(screen.getByText("2 workflows")).toBeTruthy();
   });
 
   it("tags global-scoped entries next to the name", () => {
@@ -486,7 +523,7 @@ describe("ListSavedWorkflowsToolCallBlock", () => {
     );
     const tag = document.querySelector('[data-workflow-scope-tag="global"]');
     expect(tag?.textContent).toBe("Global");
-    // 项目档不加这个标（scope 文本还是 project）。
+    // The project copy gets no such tag (its scope text is still project).
     expect(document.querySelectorAll('[data-workflow-scope-tag="global"]').length).toBe(1);
   });
 });
