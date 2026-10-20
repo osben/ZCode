@@ -50,6 +50,7 @@ import {
   zcodeToolExecResourceSchema,
 } from "./zcode-protocol/index.js";
 import { zcodeTaskModeSchema } from "./zcode-task-mode-schema.js";
+import { localeSchema } from "./validationAppSettings.js";
 
 export {
   appSettingsOccupationEnum,
@@ -876,6 +877,13 @@ export const hostCuaPipFocusChangedMessageSchema = z
   })
   .strict();
 
+export const hostApplicationLocaleChangedMessageSchema = z
+  .object({
+    type: z.literal("application-locale-changed"),
+    locale: localeSchema,
+  })
+  .strict();
+
 export const hostProviderProvisioningExecuteMessageSchema = z
   .object({
     type: z.literal("provider-provisioning-execute"),
@@ -933,6 +941,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostLocalMediaPreviewPathAuthorizeResultMessageSchema,
   hostPluginSandboxRegisterResultMessageSchema,
   hostCuaPipFocusChangedMessageSchema,
+  hostApplicationLocaleChangedMessageSchema,
   hostProviderProvisioningExecuteMessageSchema,
 ]);
 
@@ -1169,6 +1178,16 @@ export const hostMcpTelemetryResponseSchema = z
   .strict();
 export type HostMcpTelemetryResponse = z.infer<typeof hostMcpTelemetryResponseSchema>;
 
+export const hostPluginTelemetryResponseSchema = z
+  .object({
+    type: z.literal("plugin-telemetry"),
+    event: rendererTelemetryEventPayloadSchema.refine((event) =>
+      ["plugin_lifecycle", "plugin_usage", "plugin_runtime_error"].includes(event.elementName),
+    ),
+  })
+  .strict();
+export type HostPluginTelemetryResponse = z.infer<typeof hostPluginTelemetryResponseSchema>;
+
 export const hostSessionCreateTelemetryResponseSchema = z
   .object({
     type: z.literal("session-create-telemetry"),
@@ -1332,6 +1351,8 @@ export const hostOffPeakRunResultResponseSchema = z.object({
   type: z.literal("off-peak-run-result"),
   offPeakTaskId: nonEmptyStringSchema,
   ok: z.boolean(),
+  // The Host accepted and persisted the run before the CLI lifecycle event; the scheduler only clears backoff.
+  lifecycleManaged: z.literal(true).optional(),
   conversationId: z.string().optional(),
   sessionId: z.string().optional(),
   error: z.string().optional(),
@@ -1511,6 +1532,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostMcpResourceSamplesResponseSchema,
   hostToolExecResourceResponseSchema,
   hostSessionCreateTelemetryResponseSchema,
+  hostPluginTelemetryResponseSchema,
   hostAgentRunningTaskCountChangedResponseSchema,
   hostWorkspaceRunningTaskCountChangedResponseSchema,
   hostCuaOperationStateResponseSchema,
