@@ -126,15 +126,13 @@ describe("ZCode plugins", () => {
         }),
       );
       let resolveFetch!: (response: Response) => void;
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(
-          () =>
-            new Promise<Response>((resolve) => {
-              resolveFetch = resolve;
-            }),
-        ),
+      const fetchMock = vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
       );
+      vi.stubGlobal("fetch", fetchMock);
 
       expect(
         enrichCachedClaudeMarketplaceIconsForOverview({
@@ -145,6 +143,9 @@ describe("ZCode plugins", () => {
         }),
       ).toBeUndefined();
 
+      // The fork loads TLS CA certificates asynchronously before the request, so fetch starts after
+      // a tick rather than synchronously; wait for it before resolving the mocked response.
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
       resolveFetch(
         new Response(
           JSON.stringify([{ name: "figma", icon: "figma/icon.png", mimeType: "image/png" }]),
