@@ -16,26 +16,19 @@ const nativeSearchReleasePlan = resolveNativeSearchReleasePlan({
   platform: target.os,
   arch: target.arch,
 });
-// The Windows Chrome import entry point is disabled. Compiling its helper by default would increase CI
-// time and the release signing surface. Keep an explicit switch so the existing native implementation
-// and supply-chain checks can be reused if the entry point is restored.
+// Windows Chrome 导入入口未启用，默认构建继续编译 helper 会增加 CI 时间和发布签名面。
+// 保留显式开关，后续恢复入口时仍可复用既有原生实现和供应链校验。
 const shouldPrepareWindowsBrowserImportHelper =
   target.os === "win32" && process.env.ZCODE_ENABLE_WINDOWS_BROWSER_IMPORT === "1";
-// The Windows Computer Use Helper comes from the real producer; the open-source placeholder package has
-// no Helper runtime, so skip preparation.
+// Windows Computer Use Helper 由真实 producer 提供；开源占位包没有 Helper runtime，跳过准备。
 const shouldPrepareWindowsCuaHelper =
   target.os === "win32" && isRealComputerUseProducerInstalled({ desktopPackageRoot: desktopRoot });
-// Provides snap targets for the CUA permission panel. macOS only; if swiftc is unavailable, the script
-// skips this helper and the panel falls back to the bottom of the screen. The panel remains usable, so
-// always running this on darwin does not make the build fragile.
+// CUA 权限浮窗的吸附数据源。仅 macOS；缺 swiftc 时脚本内部自行降级为跳过（浮窗 fail-open
+// 到屏幕底部，仍可用），所以无条件挂在 darwin 上不会让构建变脆。
 const shouldPrepareMacosWindowBounds = target.os === "darwin";
 
-// The desktop package bundles the local agent JavaScript bundle (prepare:agent-bundle), which runs on
-// the app's Electron Node runtime. Remote cross-platform native binaries still come from
-// prepare:remote-assets above.
-// native-search is prepared uniformly by prepare-native-search-tools.mjs: it downloads the pinned
-// digest archive when the internal dependency source is configured, or unpacks the identically named
-// archive shipped with the repository otherwise; neither path needs an extra switch.
+// 本机桌面包不再内置 glm 原生二进制（prepare:glm），改为内置 agent 的 JS bundle（prepare:agent-bundle），
+// 运行时由 app 的 Electron Node runtime 执行。Source Server 资源由独立 stage:remote-assets 入口负责。
 const localRuntimeScripts = [
   "prepare:agent-bundle",
   ...(shouldPrepareWindowsCuaHelper ? ["prepare:windows-cua-helper"] : []),
@@ -61,15 +54,15 @@ function runTimedPnpmScript(scriptName) {
   }
 }
 
+// Fork divergence: the open-source installer build still needs the remote Source Server assets through
+// prepare:remote-assets (see docs/bootstrap.md), so the call stays unless the Windows job opts out.
+// The Windows desktop installer job sets ZCODE_SKIP_REMOTE_ASSETS=1 because it does not use mock-cdn
+// remote assets; running them there serialized cross-platform downloads and approached the CI time limit.
 const shouldSkipRemoteAssets = process.env.ZCODE_SKIP_REMOTE_ASSETS === "1";
 
 if (!shouldSkipRemoteAssets) {
   runTimedPnpmScript("prepare:remote-assets");
 } else {
-  // The desktop installer in the Windows build job does not depend on mock-cdn remote assets.
-  // This previously ran prepare:remote-assets unconditionally, serially downloading and packaging
-  // cross-platform resources in the same job and bringing CI close to its one-hour limit. Use an
-  // explicit switch to prepare remote assets only when needed.
   console.log("[prepare:runtime-assets] skip prepare:remote-assets (ZCODE_SKIP_REMOTE_ASSETS=1)");
 }
 
