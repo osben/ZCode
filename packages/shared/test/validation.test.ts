@@ -832,6 +832,8 @@ describe("hostResponseMessageSchema", () => {
       {
         kind: "remote",
         workspacePath: "/workspace/demo",
+        // Upstream 3.16.1: remote session entries default workspacePurpose to "project".
+        workspacePurpose: "project",
         target: {
           kind: "docker",
           container: "demo",

@@ -64,6 +64,10 @@ export type ZCodeAutomationRunOutcome = "running" | "succeeded" | "failed" | "st
 
 /** An automation definition and its scheduling state. */
 export interface ZCodeAutomation {
+  projectId?: string | null;
+  hostId?: string;
+  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  additionalDirectories?: string[];
   automationId: string;
   title: string;
   /** Five-field cron expression in local time. */
@@ -149,6 +153,10 @@ export interface ZCodeAutomationRun {
 
 /** Automation creation parameters (workspace is injected by the caller from session context). */
 export interface ZCodeAutomationCreateParams {
+  projectId?: string | null;
+  hostId?: string;
+  /** 创建定义时固化，之后不跟随虚拟项目 roots 编辑。 */
+  additionalDirectories?: string[];
   title: string;
   cronExpr: string;
   /** Used only during creation: the service layer derives cronExpr from the actual current time; this is not stored in the database. */
@@ -203,4 +211,13 @@ export interface ZCodeAutomationUpdateParams {
   interval?: number;
   /** Set only by the management page when the user actually changes the schedule; undefined preserves the original source state. */
   scheduleEditedByUser?: boolean;
+}
+
+/** Host 在定义创建时解析的执行目录；派发只读取此快照，不重新解析项目 roots。 */
+export interface ProjectExecutionSnapshot {
+  projectId: string | null;
+  hostId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+  additionalDirectories: string[];
 }

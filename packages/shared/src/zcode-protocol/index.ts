@@ -39,6 +39,8 @@ import { zcodeAutomationBotDeliveryTargetSchema } from "../bots.js";
 import { executionOutputPreviewSchema } from "../execution-output-preview.js";
 import { completeModelPropertiesDataSchema } from "../model-config.js";
 import { modelExecutionSchema } from "../model-execution.js";
+export type { ModelExecutionSelectionFallback } from "../model-execution.js";
+export * from "../off-peak-execution.js";
 import { modelSelectionSchema } from "../model-selection.js";
 import {
   APP_USAGE_RANGES,
@@ -85,8 +87,10 @@ import {
 } from "../browser-use/backend.js";
 import { browserClientModeSchema, browserCommandSchema } from "../browser-use/commands.js";
 import { browserCommandResultSchema } from "../browser-use/result.js";
-import { OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS } from "../official-mcp-auth.js";
+import { appToolSearchModeSchema } from "../app-runtime-preferences.js";
 import { integratedTerminalShellSelectionSchema } from "../validationAppSettings.js";
+import { zcodeTaskModeSchema } from "../zcode-task-mode-schema.js";
+import { OFFICIAL_MCP_AUTH_PORT_FAILURE_REASONS } from "../official-mcp-auth.js";
 import {
   zcodeSyntheticUserMessageSourceSchema as legacyZcodeSyntheticUserMessageSourceSchema,
   zcodeDeliveryKindSchema,
@@ -110,7 +114,6 @@ import {
   zcodeToolStateSchema,
   zcodeWorkspaceRefSchema,
 } from "../zcode-protocol-legacy-types.js";
-import { zcodeTaskModeSchema } from "../zcode-task-mode-schema.js";
 
 export * from "../localTtft.js";
 export {
@@ -125,6 +128,7 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 // V4 wire and the legacy main protocol coexist; do not change the legacy version for V4 physical framing.
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
+  historyFirst: z.boolean().optional(),
   independentPlanState: z.boolean().optional(),
   // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
   incognitoSession: z.boolean().optional(),
@@ -758,6 +762,7 @@ export const zcodeProtocolMcpServerSchema = z.union([
       env: z.array(zcodeProtocolMcpEntrySchema),
       isolation: z.enum(["session", "workspace"]).optional(),
       protocolVersion: z.enum(["legacy", "auto", "2026-07-28"]).optional(),
+      alwaysLoad: z.boolean().optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
     .strict(),
@@ -770,6 +775,7 @@ export const zcodeProtocolMcpServerSchema = z.union([
       oauth: zcodeProtocolMcpOAuthSchema.optional(),
       isolation: z.enum(["session", "workspace"]).optional(),
       protocolVersion: z.enum(["legacy", "auto", "2026-07-28"]).optional(),
+      alwaysLoad: z.boolean().optional(),
       timeoutMs: z.number().int().positive().optional(),
     })
     .strict(),
@@ -1936,6 +1942,7 @@ export type ZCodeExecutionWorktree = z.infer<typeof zcodeExecutionWorktreeSchema
 
 export const zcodeSessionCreateParamsSchema = z
   .object({
+    additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     sessionId: nonEmptyString.optional(),
     workspace: zcodeWorkspaceRefSchema,
     executionWorktree: zcodeExecutionWorktreeSchema.optional(),
@@ -1967,6 +1974,7 @@ export type ZCodeSessionCreateParams = z.infer<typeof zcodeSessionCreateParamsSc
 
 export const zcodeSessionResumeParamsSchema = z
   .object({
+    additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     sessionId: nonEmptyString,
     workspace: zcodeWorkspaceRefSchema.optional(),
     // For older sessions without a runtime/model_selection entry, use migration hints from the same task's index metadata.
@@ -1987,9 +1995,7 @@ export type ZCodeSessionResumeParams = z.infer<typeof zcodeSessionResumeParamsSc
 export const zcodeSessionListParamsSchema = z
   .object({
     workspace: zcodeWorkspaceRefSchema.optional(),
-    // Explicit identity queries include hidden sessions; ordinary lists still return only primary tasks, so index repair cannot activate a runtime.
     sessionIds: z.array(nonEmptyString).min(1).max(64).optional(),
-    includeArchived: z.boolean().default(false),
     limit: z.number().int().positive().optional(),
   })
   .strict();
@@ -2101,7 +2107,10 @@ export type ZCodeModelContextBudgetStrategy = z.infer<typeof zcodeModelContextBu
 
 export const zcodeSessionRuntimePreferencesResultSchema = z
   .object({
+    additionalDirectories: z.array(nonEmptyString).max(256).optional(),
     nativeSearchEnhancementsEnabled: z.boolean(),
+    // Compat: unsynced Host/CLI builds do not emit toolSearchMode yet; upstream requires it (default "off").
+    toolSearchMode: appToolSearchModeSchema.default("off"),
     subagentRuntimeConfigEnabled: z.boolean().optional(),
     memoryEnabled: z.boolean().default(false),
     memoryIndexAsContext: z.boolean().default(false),
@@ -2113,9 +2122,12 @@ export const zcodeSessionRuntimePreferencesResultSchema = z
     ),
   })
   .strict();
-export type ZCodeSessionRuntimePreferencesResult = z.infer<
-  typeof zcodeSessionRuntimePreferencesResultSchema
->;
+// Compat: parsed output defaults toolSearchMode to "off", but the type accepts it as optional so
+// unsynced Host/services code that builds this object without the field still type-checks.
+export type ZCodeSessionRuntimePreferencesResult = Omit<
+  z.infer<typeof zcodeSessionRuntimePreferencesResultSchema>,
+  "toolSearchMode"
+> & { toolSearchMode?: z.infer<typeof appToolSearchModeSchema> };
 
 /**
  * Read-only snapshot of visible IAB state collected by the app before submitting a prompt. This field is only for provider-visible
@@ -2648,6 +2660,23 @@ export const zcodeProviderUpdateAccountConfigResultSchema = z
 export type ZCodeProviderUpdateAccountConfigResult = z.infer<
   typeof zcodeProviderUpdateAccountConfigResultSchema
 >;
+/** Worker 从所属 Environment 的正式 Config Store 重建进程内 Provider Registry。 */
+export const zcodeProviderRefreshRegistryParamsSchema = z
+  .object({
+    reason: nonEmptyString,
+  })
+  .strict();
+export const zcodeProviderRefreshRegistryResultSchema = z
+  .object({
+    refreshed: z.literal(true),
+  })
+  .strict();
+export type ZCodeProviderRefreshRegistryParams = z.infer<
+  typeof zcodeProviderRefreshRegistryParamsSchema
+>;
+export type ZCodeProviderRefreshRegistryResult = z.infer<
+  typeof zcodeProviderRefreshRegistryResultSchema
+>;
 export const zcodeInteractionPreferencesSchema = z
   .object({
     askUserQuestionAutoResolutionEnabled: z.boolean(),
@@ -3024,6 +3053,21 @@ export const zcodePluginComponentGroupSchema = z
   .strict();
 export type ZCodePluginComponentGroup = z.infer<typeof zcodePluginComponentGroupSchema>;
 
+export const zcodePluginUiSurfaceSchema = z
+  .object({
+    pluginId: nonEmptyString,
+    pluginName: nonEmptyString,
+    id: nonEmptyString.max(128),
+    title: z.union([nonEmptyString, z.record(z.string(), z.string())]),
+    icon: z.string().optional(),
+    // 运行时 namespaced server 名（plugin:<name>:<server>），可直接用于 mcp/uiReadResource。
+    server: nonEmptyString,
+    resourceUri: nonEmptyString.max(2048),
+    availability: z.literal("session"),
+  })
+  .strict();
+export type ZCodePluginUiSurface = z.infer<typeof zcodePluginUiSurfaceSchema>;
+
 export const zcodePluginInfoSchema = z
   .object({
     id: nonEmptyString,
@@ -3043,6 +3087,7 @@ export const zcodePluginInfoSchema = z
     // Authoritative component list (name + optional description), enumerated by the CLI from the plugin root regardless of enabled state.
     // Details UI renders it directly, replacing the fragile old approach of getting counts from the protocol and joining names in the UI. Optional for old payload compatibility.
     components: z.array(zcodePluginComponentGroupSchema).optional(),
+    uiSurfaces: z.array(zcodePluginUiSurfaceSchema).optional(),
     declaredMcpServerNames: z.array(z.string()).optional(),
     hostMcpServerNames: z.array(z.string()).optional(),
     mcpServerNames: z.array(z.string()),
@@ -3083,22 +3128,8 @@ export const zcodePluginsListResultSchema = z
   .strict();
 export type ZCodePluginsListResult = z.infer<typeof zcodePluginsListResultSchema>;
 
-// ── Plugin UI panel entry point ──
-// Workspace-level read-only projection of valid entries in enabled plugins' `ui.surfaces[]`; Host refetches after plugin enablement changes.
-export const zcodePluginUiSurfaceSchema = z
-  .object({
-    pluginId: nonEmptyString,
-    pluginName: nonEmptyString,
-    id: nonEmptyString.max(128),
-    title: z.union([nonEmptyString, z.record(z.string(), z.string())]),
-    icon: z.string().optional(),
-    // Runtime namespaced server name (`plugin:<name>:<server>`), ready to pass to mcp/uiReadResource.
-    server: nonEmptyString,
-    resourceUri: nonEmptyString.max(2048),
-    availability: z.literal("session"),
-  })
-  .strict();
-export type ZCodePluginUiSurface = z.infer<typeof zcodePluginUiSurfaceSchema>;
+// ── 插件 UI 面板入口──
+// 工作区级只读投影：已启用插件清单 `ui.surfaces[]` 的合法条目；插件启停后 host 重新拉取。
 export const zcodePluginsListUiSurfacesParamsSchema = z
   .object({ workspace: zcodeWorkspaceRefSchema })
   .strict();
@@ -3459,14 +3490,13 @@ export const zcodeWorkflowsMoveResultSchema = z.union([
 ]);
 export type ZCodeWorkflowsMoveResult = z.infer<typeof zcodeWorkflowsMoveResultSchema>;
 
-// ── Save a workflow from a run (docs/dynamic-workflow/transcript-and-notifications.md, "Saving the
-// run, and running it again") ──
-// The completion card's "Save directly" action uses this path: **accept runId only, not script text**.
-// The body to write is the script this run actually executed, read by the agent from the journal's `scriptText`.
-// Keeping the script out of the GUI has two useful effects: revised runs save the version that settled them,
-// and older conversations whose tool-row arguments were snapshot-truncated to a preview can still save the same bytes.
-// Name validation, overwrite, shadowing, and type checking all reuse SaveWorkflow's implementation (invariant 3).
-/** A same-named definition in another scope (shadowing); matches contracts' SavedWorkflowShadowing exactly. */
+// ── 从一次 run 保存工作流（docs/dynamic-workflow/transcript-and-notifications.md「Saving the
+// run, and running it again」）──
+// 完成卡的「直接保存」走这条：**不收脚本，只收 runId**——要写的那份正文是这次 run 实际执行的
+// 脚本，agent 从 journal 记录（`scriptText`）里读。脚本不经 GUI 走一圈有两个后果值得写下来：
+// 修订过的 run 存下的是**结算它的**那一份，而工具行入参被快照裁成预览的老对话也照样存得出
+// 同样的字节。名字合法性、覆盖、遮��与类型检查全部复用 SaveWorkflow 的同一套实现（不变式 3）。
+/** 另一档已有同名定义（遮蔽事实）；与 contracts 的 SavedWorkflowShadowing 逐字对齐。 */
 export const zcodeSavedWorkflowShadowingSchema = z.enum(["hides_global", "hidden_by_project"]);
 export type ZCodeSavedWorkflowShadowing = z.infer<typeof zcodeSavedWorkflowShadowingSchema>;
 
@@ -3624,6 +3654,7 @@ export const zcodePluginStoreListingSchema = z
     descriptionI18n: z.record(z.string(), z.string()).optional(),
     icon: z.string().optional(),
     category: z.string().optional(),
+    publisherType: z.enum(["official", "community"]).optional(),
     author: z.string().optional(),
     authorUrl: z.string().optional(),
     homepage: z.string().optional(),
@@ -4302,6 +4333,7 @@ export const zcodeProtocolMethods = {
   workspaceHookTrustGrant: "workspace/hooks/trustGrant",
   // Process-level Account Provider Config is separate from the workspace runtime directory.
   providerUpdateAccountConfig: "provider/updateAccountConfig",
+  providerRefreshRegistry: "provider/refreshRegistry",
   workspaceUpdateInteractionPreferences: "workspace/updateInteractionPreferences",
   workspaceUpdateModelIoPreferences: "workspace/updateModelIoPreferences",
   // Off-Peak tool-surface admission is a workspace-level fact (rollout + local/remote), synchronized by Host when the Agent is ready;
@@ -4496,7 +4528,13 @@ export const zcodeProtocolSessionMethodContracts = {
 export type ZCodeProtocolSessionMethodContract =
   (typeof zcodeProtocolSessionMethodContracts)[keyof typeof zcodeProtocolSessionMethodContracts];
 
-/** Private control frame used only to prepare the child process; raw paths are excluded from business events and telemetry. */
+// 启动入口的独立存储命令与严格结果 schema，和 CLI 共用一份契约。
+export {
+  STORAGE_MIGRATION_COMMAND,
+  storageMigrationReportSchema,
+} from "../sqlite-migrations/contract.js";
+
+/** 仅存储准备子进程的私有控制帧，原始路径不进入业务事件或遥测。 */
 export const zcodeStoragePreparationFrameSchema = z.discriminatedUnion("method", [
   z
     .object({

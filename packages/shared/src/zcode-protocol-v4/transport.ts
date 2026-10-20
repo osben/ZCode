@@ -43,6 +43,7 @@ export const hostCapabilitiesSchema = z.object({
   incognitoSession: z.boolean().optional(),
   // This Host forwards the thirteen-key incognito profile (see specs/incognito-session.md, Protocol).
   incognitoPromptToggles: z.boolean().optional(),
+  historyFirst: z.boolean().optional(),
 });
 export type HostCapabilities = z.infer<typeof hostCapabilitiesSchema>;
 
@@ -90,6 +91,7 @@ export const clientHelloSchema = z
          * causing the entire clientHello to fail parsing and the connection handshake to fail.
          */
         workflowRunDeltas: z.boolean().optional(),
+        historyFirst: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -120,7 +122,9 @@ export const subscribeParamsSchema = z
     topic: z.string(),
     // High-water invariant: include only if the client actually has a consistent state at that point.
     base: z.object({ logEpoch: z.string(), seq: z.number() }).optional(),
-    // QoS hint affects scheduling only, not semantics.
+    // 手动重试仅消费当前 failed attempt；普通重连不重跑 hook。
+    retryInitialization: z.string().min(1).optional(),
+    // QoS hint，只影响调度，不影响语义。
     visibility: z.enum(["foreground", "background"]).optional(),
   })
   .strict();
@@ -150,6 +154,7 @@ export const conversationOpenTimingSchema = z
     cliRequestMs: openTimingMsSchema,
     cliBootstrapMs: openTimingMsSchema,
     cliSessionRestoreMs: openTimingMsSchema,
+    historyReadyMs: openTimingMsSchema,
     initialFrameEncodeMs: openTimingMsSchema,
     cliProcessState: z.enum(["spawned", "reused"]).optional(),
     sessionRuntimeState: z.enum(["cold", "warm"]).optional(),
@@ -343,6 +348,7 @@ export const V4_METHODS = {
   controllerResync: "v4/controller/resync",
   controllerUnsubscribe: "v4/controller/unsubscribe",
   conversationSubscribe: "v4/conversation/subscribe",
+  sessionsIndexReconcile: "v4/sessionsIndex/reconcile",
   conversationResync: "v4/conversation/resync",
   conversationUnsubscribe: "v4/conversation/unsubscribe",
   // Row pagination query (rows/range): read-only, stateless, safe to retry after timeout.
@@ -351,6 +357,7 @@ export const V4_METHODS = {
   conversationPlans: "v4/conversation/plans",
   conversationFileChanges: "v4/conversation/fileChanges",
   backgroundBashOutput: "v4/conversation/backgroundBashOutput",
+  offPeakControl: "v4/conversation/offPeakControl",
   conversationFileRewindPreview: "v4/conversation/fileRewindPreview",
   // Paginated workflow run event log (details-page audit view): read-only, stateless, safe to retry after timeout.
   // New methods are naturally skew-safe — older Desktop clients never call them.
@@ -413,13 +420,15 @@ export type V4ConnectionFlowParams = z.infer<typeof v4ConnectionFlowParamsSchema
 export const v4ConnectionFlowResultSchema = z.object({}).strict();
 
 export const V4_NOTIFICATIONS = {
-  // Downstream frame (snapshot / deltas), params = ConversationTopicFrame.
+  offPeakLifecycle: "v4/offPeak/lifecycle",
+  // 下行帧（snapshot / deltas），params = ConversationTopicFrame。
   conversationFrame: "v4/conversation/frame",
   // Body-free facts for live ingest only; excluded from topic snapshot/recovery.
   conversationTelemetryFact: "v4/telemetry/event",
   localTtftFacts: "v4/telemetry/local-ttft",
   // Produced only by live ToolCallResult in the current process; history and replayable paths must not synthesize it.
   cuaPermissionObservation: "v4/cua/permission-observation",
+  pluginUiToolResult: "v4/plugin-ui/tool-result",
 } as const;
 
 /** SSH historical-task ownership proof in 3.3.6 shares the same bounded window as sessions-index cold seeding. */
@@ -428,6 +437,7 @@ export const MAX_LEGACY_TASK_IDS_PER_SUBSCRIBE = 200;
 // subscribe request = generic SubscribeParams + connectionId (resubscription replaces by
 // (connectionId, topic); for a single stdio pipe, Host assigns one per downstream client).
 export const v4ConversationSubscribeParamsSchema = subscribeParamsSchema.extend({
+  additionalDirectories: z.array(z.string().trim().min(1)).max(256).optional(),
   connectionId: z.string(),
   clientMode: z.enum(["desktop-continuous", "web-remote-replayable"]),
   // Workspace from the current trusted attachment; cold resume uses it first to restore identity; live paths do not consume it.
@@ -442,6 +452,7 @@ export const v4ConversationSubscribeParamsSchema = subscribeParamsSchema.extend(
    * not a per-subscription preference. Missing means treat as a legacy consumer (whole-key patch + old-limit clamping).
    */
   workflowRunDeltas: z.boolean().optional(),
+  historyFirst: z.boolean().optional(),
 });
 export type V4ConversationSubscribeParams = z.infer<typeof v4ConversationSubscribeParamsSchema>;
 

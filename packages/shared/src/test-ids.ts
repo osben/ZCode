@@ -197,7 +197,13 @@ export const TID_SSH_PORT_INPUT = "ssh-port-input";
 export const TID_SSH_USERNAME_INPUT = "ssh-username-input";
 /** SSH config alias selector. */
 export const TID_SSH_CONFIG_ALIAS_SELECT = "ssh-config-alias-select";
-/** SSH password input. */
+/** 设置入口「从 SSH config 导入」按钮。 */
+export const TID_SSH_CONFIG_IMPORT = "remote-ssh-config-import";
+/** 已关联 SSH config Host 的标签。 */
+export const TID_SSH_CONFIG_ALIAS_CHIP = "remote-ssh-config-alias-chip";
+/** 新建连接表单头部的实时目标预览。 */
+export const TID_REMOTE_NEW_CONNECTION_PREVIEW = "remote-new-connection-preview";
+/** SSH 密码输入框 */
 export const TID_SSH_PASSWORD_INPUT = "ssh-password-input";
 /** SSH private-key path input. */
 export const TID_SSH_PRIVATE_KEY_INPUT = "ssh-private-key-input";
@@ -245,11 +251,33 @@ export const TID_WORKSPACE_PIN_DIVIDER = "workspace-pin-divider";
 export const TID_CONVERSATION_SECTION = "conversation-section";
 /** Project subsection in the project view. */
 export const TID_PROJECT_SECTION = "project-section";
-/** New-task button in the conversation section. */
-export const TID_CONVERSATION_NEW_TASK = "conversation-new-task";
-/** Add-menu button in the project section. */
-export const TID_PROJECT_ADD = "project-add";
-/** Composer workspace selection trigger. */
+/** 项目分区新建项目按钮 */
+export const TID_VIRTUAL_PROJECT_ADD = "virtual-project-add";
+/** 任务分区新建任务按钮（全局新建，cwd 为默认执行目录） */
+export const TID_VIRTUAL_PROJECT_NEW_TASK = "virtual-project-new-task";
+/** 项目行（父级 section 带 data-project-id / data-project-name） */
+export const TID_VIRTUAL_PROJECT_ROW = "virtual-project-row";
+/** 项目行展开/收起触发器（aria-expanded 表示任务列表是否展开） */
+export const TID_VIRTUAL_PROJECT_TOGGLE = "virtual-project-toggle";
+/** 项目行折叠态未读指示 */
+export const TID_VIRTUAL_PROJECT_UNREAD = "virtual-project-unread";
+/** 项目行任务列表容器 */
+export const TID_VIRTUAL_PROJECT_TASKS = "virtual-project-tasks";
+/** 项目行 hover 操作区 */
+export const TID_VIRTUAL_PROJECT_ACTIONS = "virtual-project-actions";
+/** 项目行更多菜单触发器 */
+export const TID_VIRTUAL_PROJECT_MENU = "virtual-project-menu";
+/** 项目行打开文件树按钮（多 root 时为下拉触发器） */
+export const TID_VIRTUAL_PROJECT_FILES = "virtual-project-files";
+/** 项目行新建任务按钮（cwd = 项目主要目录） */
+export const TID_VIRTUAL_PROJECT_CREATE_TASK = "virtual-project-create-task";
+/** 项目行菜单 / 右键动作前缀，见 virtualProjectActionTestId */
+export const TID_VIRTUAL_PROJECT_ACTION_PREFIX = "virtual-project";
+/** 全局置顶任务区 */
+export const TID_PROJECT_PINNED_TASKS = "project-pinned-tasks";
+/** 远端 host 分组（data-host-id 为 host id） */
+export const TID_REMOTE_PROJECT_HOST = "remote-project-host";
+/** Composer workspace 选择触发器 */
 export const TID_COMPOSER_WORKSPACE_TRIGGER = "composer-workspace-trigger";
 /** Remote-connection entry in the Composer workspace menu. */
 export const TID_COMPOSER_REMOTE_CONNECTION = "composer-remote-connection";
@@ -365,7 +393,9 @@ export const TID_SETTINGS_PAGE = "settings-page";
 export const TID_SETTINGS_BACK_BUTTON = "settings-back-button";
 /** Settings left-side section entry (dynamic suffix is the section ID). */
 export const TID_SETTINGS_SECTION_NAV = "settings-section-nav";
-/** Enhanced Find/Grep toggle in General Settings. */
+/** 常规设置中的增强 Find/Grep 开关 */
+export const TID_SETTINGS_TOOL_SEARCH_SELECT = "settings-tool-search-select";
+export const TID_SETTINGS_TOOL_SEARCH_OPTION = "settings-tool-search-option";
 export const TID_SETTINGS_NATIVE_SEARCH_SWITCH = "settings-native-search-switch";
 /** Read-only data-storage path input in General Settings. */
 export const TID_SETTINGS_DATA_BASE_DIR_INPUT = "settings-data-base-dir-input";
@@ -493,9 +523,7 @@ export const TID_SUBAGENT_ROW = "subagent-row";
 export const TID_SUBAGENT_BUILT_IN_MODEL_TRIGGER = "subagent-built-in-model-trigger";
 /** Top-level usage-statistics tab in Settings (dynamic suffix is the usage tab ID). */
 export const TID_SETTINGS_USAGE_TAB = "settings-usage-tab";
-/** Remaining-usage submenu entry in the sidebar avatar menu. */
-export const TID_SIDEBAR_USAGE_REMAINING_TRIGGER = "sidebar-usage-remaining-trigger";
-/** Usage-statistics entry in the sidebar avatar menu. */
+/** 侧边栏头像菜单使用统计入口 */
 export const TID_SIDEBAR_CODING_PLAN_USAGE_BUTTON = "sidebar-coding-plan-usage-button";
 /** Interface zoom submenu trigger in the sidebar account menu. */
 export const TID_SIDEBAR_INTERFACE_ZOOM_TRIGGER = "sidebar-interface-zoom-trigger";
@@ -591,9 +619,7 @@ export const TID_WORKSPACE_MORE_BUTTON = "workspace-more-button";
 export const TID_WORKSPACE_HELP_MENU_TRIGGER = "workspace-help-menu-trigger";
 /** "Resource Manager" item in the question-mark help menu (Desktop only). */
 export const TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER = "workspace-help-menu-resource-manager";
-/** Sidebar open-workspace-file-tree button (dynamic suffix is workspacePath). */
-export const TID_WORKSPACE_FILE_TREE_BUTTON = "workspace-file-tree-button";
-/** Workspace file-tree panel. */
+/** 工作区文件树面板 */
 export const TID_WORKSPACE_FILE_TREE_PANEL = "workspace-file-tree-panel";
 /** Workspace file-tree refresh button. */
 export const TID_WORKSPACE_FILE_TREE_REFRESH_BUTTON = "workspace-file-tree-refresh-button";
@@ -610,9 +636,7 @@ export const TID_SSH_SUCCESS = "ssh-success";
 export const TID_V4_SESSION_PANE = "v4-session-pane";
 /** v4 message timeline container. */
 export const TID_V4_TIMELINE = "v4-timeline";
-/** v4 timeline empty-state placeholder. */
-export const TID_V4_TIMELINE_EMPTY = "v4-timeline-empty";
-/** v4 projection row (dynamic suffix is rowId). */
+/** v4 投影行（动态后缀为 rowId） */
 export const TID_V4_ROW = "v4-row";
 /** v4 workspace Hook pending-review banner container. */
 export const TID_V4_WORKSPACE_HOOK_PENDING_BANNER = "v4-workspace-hook-pending-banner";
@@ -836,7 +860,16 @@ export function testId(base: string, suffix: string): string {
   return `${base}-${suffix}`;
 }
 
-/** Manually claimable Start Plan banner above the avatar in the left sidebar. */
+/**
+ * 项目行菜单 / 右键动作的 test id（动作 id 如 edit / pin / delete / remove-entry / create-task /
+ * files-<index>）。右键菜单里 create-task 与 files-* 带 `context-` 前缀，和更多菜单区分。
+ */
+export function virtualProjectActionTestId(actionId: string, context = false): string {
+  const scoped = context && (actionId.startsWith("files-") || actionId === "create-task");
+  return `${TID_VIRTUAL_PROJECT_ACTION_PREFIX}-${scoped ? "context-" : ""}${actionId}`;
+}
+
+/** 左侧栏头像上方的可手动领取 Start Plan banner。 */
 export const TID_MANUAL_CLAIM_PLAN_BANNER = "manual-claim-plan-banner";
 
 /** Plugin UI sandbox card container and the webview inside it. */
@@ -887,3 +920,13 @@ export const TID_SETTINGS_SYSTEM_PROMPT_RESET_ALL_CONFIRM =
   "settings-system-prompt-reset-all-confirm";
 export const TID_SETTINGS_SYSTEM_PROMPT_ASSEMBLED = "settings-system-prompt-assembled";
 export const TID_SETTINGS_SYSTEM_PROMPT_SIZE = "settings-system-prompt-size";
+
+// Compat: fork UI and e2e still use these ids; remove once the unsynced packages move to the upstream names.
+/** New-task button in the conversation section. */
+export const TID_CONVERSATION_NEW_TASK = "conversation-new-task";
+/** Add-menu button in the project section. */
+export const TID_PROJECT_ADD = "project-add";
+/** Remaining-usage submenu entry in the sidebar avatar menu. */
+export const TID_SIDEBAR_USAGE_REMAINING_TRIGGER = "sidebar-usage-remaining-trigger";
+/** Sidebar open-workspace-file-tree button (dynamic suffix is workspacePath). */
+export const TID_WORKSPACE_FILE_TREE_BUTTON = "workspace-file-tree-button";
