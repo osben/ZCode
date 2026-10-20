@@ -58,6 +58,17 @@ export default defineConfig(({ mode }) => {
           find: "@zcode/ui/conversation-share-readonly",
           replacement: resolve(REPO_ROOT, "packages/share-ui/src/index.ts"),
         },
+        // The read-only timeline protocol subpath is also the admission declaration for the shareBuildBoundary guard.
+        {
+          find: "@zcode/shared/zcode-protocol-v4",
+          replacement: resolve(REPO_ROOT, "packages/shared/src/zcode-protocol-v4/index.ts"),
+        },
+        // test-ids is imported through its subpath by the share closure; the share image has no packages/ui dependency link,
+        // so the alias must be registered explicitly or the Docker build cannot resolve it.
+        {
+          find: "@zcode/shared/test-ids",
+          replacement: resolve(REPO_ROOT, "packages/shared/src/test-ids.ts"),
+        },
         // The login card needs provider icons (svg resolved via the
         // @ -> packages/ui/src alias). This module only depends on
         // shared/lucide/cn, keeping the services/rpc closure out of the share

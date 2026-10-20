@@ -2,7 +2,7 @@
 
 ## Background (current source facts)
 
-- This repository is a fork of `zai-org/ZCode` (origin=`osben/ZCode`). Upstream releases via the root `package.json` `version` + release-it with tags `v<version>`; the fork already carries upstream tags (e.g. `v3.14.3`, `v3.15.1`; upstream has no `v3.15.3` tag). The root package version follows the upstream base used for the current build; it is now `3.15.3`, matching the inspected official ZCode.app.
+- This repository is a fork of `zai-org/ZCode` (origin=`osben/ZCode`). Upstream releases via the root `package.json` `version` + release-it with tags `v<version>`; the fork already carries upstream tags (e.g. `v3.14.3`, `v3.15.1`; upstream has no `v3.15.3` tag). The root package version follows the upstream base used for the current build; it is now `3.16.1`, the base of the upstream tooling sync (the former fork base `3.15.3` is superseded).
 - Version injection chain: root `package.json` → per-bundler `define __ZCODE_VERSION__` (desktop tsup/vite, server, web) → `ZCODE_VERSION` in `packages/shared/src/version.ts`.
 - Version consumers fall into two groups:
   - **Outbound (wire)**: version strings visible to the z.ai / Zai backend — source headers (`User-Agent: ZCode/<v>`, `X-ZCode-App-Version`, see `packages/shared/src/zcode-source-headers.ts`), the `app_version` query param of the OAuth login URL (`configUtils.ts`; the website uses it to decide deep-link behavior), Start Plan billing and the coding-plan client/configs `app_version` query, the builtin provider CDN download `app_version` (`packages/provider-node/src/zcode-builtin-download.ts`), the OTel telemetry `app_version` attribute, and feedback device snapshots / log-archive headers.

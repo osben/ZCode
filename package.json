@@ -1,6 +1,6 @@
 {
   "name": "zcode",
-  "version": "3.15.3",
+  "version": "3.16.1",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -21,7 +21,7 @@
     "dev:web-share:mock": "node scripts/dev-web-share-env.mjs mock",
     "dev:server": "pnpm --filter @zcode/server dev",
     "dev:official-mcp": "node scripts/dev-official-mcp-server.mjs",
-    "prepare": "node scripts/install-git-hooks.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs && pnpm build:cua",
     "prepare:desktop-runtime": "pnpm --filter @zcode/desktop prepare:runtime-assets",
     "dep:graph": "node scripts/dependency-graph.mjs",
     "dep:refs": "node scripts/dep-refs.mjs",
@@ -47,9 +47,6 @@
     "build": "pnpm -r build",
     "build:desktop-agent:bytecode": "node scripts/build-desktop-agent-bytecode.mjs",
     "build:docs": "pnpm --filter @zcode/dev-docs build",
-    "build:web-remote-control": "pnpm --filter @zcode/web exec vite build --base=/remote/",
-    "build:web-remote-control:v3": "pnpm --filter @zcode/web exec vite build --base=/remote/v3/",
-    "build:web-remote-control:v4": "pnpm --filter @zcode/web exec vite build --base=/remote/v4/",
     "build:web-remote-control:test": "pnpm --filter @zcode/web exec vite build --base=/remote/__test__/",
     "build:web-share": "pnpm --filter @zcode/web-share build",
     "build:zcode": "node scripts/build-zcode.mjs",
@@ -68,8 +65,10 @@
     "fmt:check": "node scripts/fork-format.mjs --check",
     "knip": "knip",
     "count-lines": "bash scripts/count-lines.sh",
-    "prepare:remote-assets": "pnpm --filter @zcode/desktop prepare:remote-assets",
+    "prepare:remote-assets": "pnpm --filter @zcode/server-cli stage:remote-assets",
+    "prepare:remote-assets:linux": "pnpm --filter @zcode/server-cli stage:remote-assets --linux",
     "ci:assert-node": "node scripts/assert-node-version.mjs",
+    "build:cua": "pnpm --filter @zcode/zcode-cua build",
     "doctor:macos-release": "bash scripts/doctor-macos-release-app.sh",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix --fix-suggestions",
@@ -83,7 +82,8 @@
     "architecture:report": "node scripts/architecture/architecture-check.mjs report",
     "architecture:baseline:update": "node scripts/architecture/architecture-check.mjs baseline:update",
     "architecture:context": "node scripts/architecture/architecture-check.mjs context",
-    "test:architecture": "node --test scripts/test/architecture-governance.test.mjs"
+    "test:architecture": "node --test scripts/test/architecture-governance.test.mjs scripts/test/architecture-governance-review.test.mjs scripts/test/architecture-upstream-admission.test.mjs scripts/test/source-size-policy.test.mjs",
+    "architecture:adopt": "node scripts/architecture/architecture-check.mjs adopt"
   },
   "dependencies": {
     "border-beam": "^1.4.1",
@@ -96,6 +96,7 @@
     "@tanstack/react-virtual": "^3.14.17",
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.1",
+    "@zcode/zcode-cua": "workspace:*",
     "concurrently": "^9.1.2",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "conventional-changelog-writer": "^8.4.0",
@@ -130,6 +131,7 @@
       "extract-zip>yauzl": "3.4.0"
     },
     "patchedDependencies": {
+      "@radix-ui/react-collapsible@1.1.12": "patches/@radix-ui__react-collapsible@1.1.12.patch",
       "vitest@4.1.7": "patches/vitest@4.1.7.patch",
       "wdio-electron-service@9.2.1": "patches/wdio-electron-service@9.2.1.patch",
       "@arms/rum-electron@0.0.3": "patches/@arms__rum-electron@0.0.3.patch",
