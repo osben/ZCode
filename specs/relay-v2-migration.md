@@ -172,3 +172,28 @@ editing `scripts/check-test-copy.mjs`.
 `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --full`, `node scripts/check-test-copy.mjs`,
 `pnpm fmt:check`, and vitest for `packages/shared`, `packages/desktop/test` (excluding e2e),
 `packages/web/test`, `packages/remote-relay` tests. Report real results only.
+
+## 10. Owner decisions (final, supersede section 5)
+
+1. Server and JWT. `packages/remote-relay` is the V2 server. It issues and validates its OWN account and
+   device JWTs. The fork owns the key set: signing keys or a JWKS come from environment config
+   (`ZCODE_REMOTE_RELAY_JWT_*`, exact names fixed in the S4 PR), with a documented rotation story
+   (multiple active `kid`s, old key removed after max token lifetime). There is no dependency on the
+   ZAI/BigModel account service and none on zcode-server. Mobile login keeps the fork's existing
+   identity flow (`specs/oauth-callback-page.md`); the relay exchanges that identity for relay JWTs.
+   Trust boundary: the relay trusts only tokens it signed; the OAuth identity is verified once at
+   login, then the relay JWT is the only credential used on `/api/v1/remote/*` and `ws2`.
+2. Endpoint. Relay base URL comes from environment/release config, never a hardcoded production host.
+   Env var: `ZCODE_REMOTE_RELAY_URL` (WebSocket base, e.g. `wss://relay.example.com`), read through the
+   existing runtime env helper (`packages/shared/src/runtimeEnv.ts`, `readRuntimeEnvValue`). Dev default:
+   the self-hosted relay on `ws://127.0.0.1:<port>` (fork default). Shared endpoint builders read this
+   base and append `/api/v1/remote/ws2` and the HTTP paths.
+3. Re-pair. All paired devices must re-pair after upgrade. The app shows an explicit "needs re-pair"
+   state (not a silent failure) when a stored device is unknown to the relay or the relay returns
+   `AUTH_FAILED`/401 for a stored SID.
+4. OAuth redirect. The fork handles `/remote/v4` for the login callback (client route and relay
+   callback). `/web-remote/callback` stays only if it is cheap to keep. The PR body lists the exact
+   redirect URI(s) the owner must register in the OAuth app.
+
+Compatibility: the desktop and web clients must remain compatible with upstream's V2 client contract
+(`packages/shared/src/web-remote-relay/**`) so they can talk to either server.
