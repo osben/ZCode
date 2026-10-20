@@ -314,3 +314,6 @@ packages/ui/test/remoteConnectionFlowRecovery.test.ts
 # TEMPORARY upstream 3.16.1 sync (ui): oversize test files converted to English copy locators; split in UI-2.
 packages/ui/test/projectCreation.test.ts
 packages/ui/test/sourceServerManagementPanel.test.ts
+
+# TEMPORARY upstream 3.16.1 sync (ui 2b): grouped task row was already over the limit at the base (22790 bytes); UI-2b adds the archive confirm and markers. Split into sibling modules and remove this line.
+packages/ui/src/project-sidebar/grouped/task-row.tsx

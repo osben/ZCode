@@ -1,13 +1,34 @@
-import { TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
+import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
 import { isCronTask, isOffPeakTask } from "@zcode/shared";
-import { ArrowUpToLine, Clock, Cloud, Folder, ListTree, LoaderIcon, Moon, X } from "lucide-react";
+import {
+  Archive,
+  ArrowUpToLine,
+  Clock,
+  Cloud,
+  CloudUpload,
+  Folder,
+  ListTree,
+  LoaderIcon,
+  Moon,
+} from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { Button } from "@/components/ui/button.js";
+import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
+import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
+import {
+  isChildSessionsExpanded,
+  persistChildSessionsExpanded,
+} from "@/lib/childSessionExpansionPreference.js";
+import { TaskChildSessionRows } from "@/workspace-grouped-tasks/task-child-sessions.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -244,6 +265,60 @@ function GroupedTaskRowComponent({
       typeof window.matchMedia === "function" &&
       window.matchMedia("(hover: none)").matches,
   );
+  const [archiveConfirming, setArchiveConfirming] = useState(false);
+  const taskRowElementRef = useRef<HTMLDivElement | null>(null);
+  const archiveConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Set only when Archive held focus (keyboard activation); mouse clicks never focus Confirm.
+  const focusArchiveConfirmRef = useRef(false);
+  const hasPendingInteractionForArchive = Boolean(task.pendingInteraction);
+  useEffect(() => {
+    // A pending interaction unmounts the action cluster; drop the armed state so the row never
+    // returns with a ready-to-fire Confirm button.
+    if (hasPendingInteractionForArchive) {
+      focusArchiveConfirmRef.current = false;
+      setArchiveConfirming(false);
+    }
+  }, [hasPendingInteractionForArchive]);
+  useEffect(() => {
+    if (archiveConfirming && focusArchiveConfirmRef.current) {
+      focusArchiveConfirmRef.current = false;
+      // Archive unmounts when it turns into Confirm; hand focus over so a second Enter confirms.
+      archiveConfirmButtonRef.current?.focus();
+    }
+  }, [archiveConfirming]);
+  useEffect(() => {
+    if (!archiveConfirming) {
+      return;
+    }
+    const cancel = () => setArchiveConfirming(false);
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") cancel();
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && taskRowElementRef.current?.contains(event.target)) {
+        return;
+      }
+      cancel();
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [archiveConfirming]);
+  // Child-conversation list expansion is per parent and per device; the marker doubles as the expander.
+  const [childSessionsExpanded, setChildSessionsExpanded] = useState(() =>
+    isChildSessionsExpanded(task.taskId),
+  );
+  const handleToggleChildSessions = () => {
+    const next = !childSessionsExpanded;
+    persistChildSessionsExpanded(task.taskId, next);
+    setChildSessionsExpanded(next);
+  };
+  const archiveLabel = intl.formatMessage({
+    id: archiveConfirming ? "common.confirm" : "taskList.archive",
+  });
   const openFeedbackSubmit = useFeedbackStore((state) => state.openSubmit);
   const {
     taskSessionFile,
@@ -266,12 +341,20 @@ function GroupedTaskRowComponent({
   const handleSelect = () => {
     onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity);
   };
-  const handleCloseTask = (event: MouseEvent<HTMLButtonElement>) => {
+  // The hover action archives the task, so it takes a two-step inline confirmation: one stray click
+  // must not archive. Spec: specs/ui-sidebar-fork-reapplication.md, ui-accidental-action-guards.md #4.
+  const handleArchiveAction = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     if (workspaceActionsDisabled) {
       return;
     }
+    if (!archiveConfirming) {
+      focusArchiveConfirmRef.current = event.currentTarget === document.activeElement;
+      setArchiveConfirming(true);
+      return;
+    }
+    setArchiveConfirming(false);
     onCloseTask(task);
   };
   const handleOpenFileTree = (event: MouseEvent<HTMLButtonElement>) => {
@@ -338,6 +421,7 @@ function GroupedTaskRowComponent({
   });
 
   const setTaskRowRef = (element: HTMLDivElement | null) => {
+    taskRowElementRef.current = element;
     draggable.setNodeRef(element);
     droppable.setNodeRef(element);
   };
@@ -347,10 +431,10 @@ function GroupedTaskRowComponent({
   // 同时保留键盘、触摸设备和手机远控 active task 的入口。
   const shouldMountHoverActions =
     !task.pendingInteraction &&
-    (taskRowHovered || taskRowFocusWithin || isHoverNone || isMobileActive);
+    (taskRowHovered || taskRowFocusWithin || isHoverNone || isMobileActive || archiveConfirming);
   // 触屏端 isHoverNone 只负责常驻 action；时间、状态点和 cron/off-peak 元信息
   // 仍应保留，仅在真实 hover / focus 交互时让位，避免手机端永久丢失任务状态。
-  const shouldSuppressTaskMetadata = taskRowHovered || taskRowFocusWithin;
+  const shouldSuppressTaskMetadata = taskRowHovered || taskRowFocusWithin || archiveConfirming;
 
   const interactiveTaskRow = (
     <div
@@ -425,8 +509,27 @@ function GroupedTaskRowComponent({
                   className="size-3.5 shrink-0"
                 />
               ) : null}
+              {!hasPendingInteraction && task.executionWorktree ? (
+                // Worktree-session marker; the shared component owns glyph, colors and the tooltip.
+                <WorktreeTaskMarker task={task} />
+              ) : null}
+              {!hasPendingInteraction && task.executionWorktree ? (
+                <TaskPullRequestMarker task={task} />
+              ) : null}
+              {!hasPendingInteraction && task.incognito ? (
+                <IncognitoTaskMarker task={task} />
+              ) : null}
               {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
             </span>
+          ) : null}
+          {!hasPendingInteraction ? (
+            // Outside the hover-suppressed span: the marker is also the child-list expander and must
+            // stay clickable while hover/focus swap the metadata for the action cluster.
+            <ChildSessionCountsMarker
+              task={task}
+              expanded={childSessionsExpanded}
+              onToggle={handleToggleChildSessions}
+            />
           ) : null}
           {shouldMountHoverActions ? (
             <span className="flex shrink-0 items-center gap-0.5">
@@ -448,19 +551,54 @@ function GroupedTaskRowComponent({
               >
                 <ArrowUpToLine className="size-3.5" />
               </TaskRowActionButton>
-              <TaskRowActionButton
-                label={intl.formatMessage({ id: "common.close" })}
-                onClick={handleCloseTask}
-                showTooltip
-                disabledReason={workspaceActionsDisabledReason}
-              >
-                <X className="size-3.5" />
-              </TaskRowActionButton>
+              {archiveConfirming ? (
+                <ControlHintTooltip title={archiveLabel} side="top" align="center">
+                  <Button
+                    ref={archiveConfirmButtonRef}
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    // Same as TaskRowActionButton: keep the row's dnd-kit pointer listener from starting a drag.
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                    onClick={handleArchiveAction}
+                    data-testid={testId(TID_TASK_ARCHIVE, task.taskId)}
+                    className="shrink-0 border-destructive/20 px-2"
+                    aria-label={archiveLabel}
+                  >
+                    <span>{archiveLabel}</span>
+                  </Button>
+                </ControlHintTooltip>
+              ) : (
+                <TaskRowActionButton
+                  label={archiveLabel}
+                  onClick={handleArchiveAction}
+                  showTooltip
+                  disabledReason={workspaceActionsDisabledReason}
+                  testId={testId(TID_TASK_ARCHIVE, task.taskId)}
+                >
+                  {task.workspaceIdentity?.trim() ? (
+                    // Remote archive writes to the remote host's index; match TaskListItem's cloud glyph.
+                    <CloudUpload className="size-3.5" />
+                  ) : (
+                    <Archive className="size-3.5" />
+                  )}
+                </TaskRowActionButton>
+              )}
             </span>
           ) : null}
         </span>
       </span>
       {workflowRunLinesNode}
+      {childSessionsExpanded ? (
+        <TaskChildSessionRows task={task} onSelectTask={onSelectTask} />
+      ) : null}
     </div>
   );
 
