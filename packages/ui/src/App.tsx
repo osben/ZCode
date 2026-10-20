@@ -6,6 +6,8 @@ import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } fr
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
+import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
 import { useGitRepository } from "@/hooks/useGitRepository.js";
@@ -45,6 +47,7 @@ import {
 import {
   setPendingSettingsPluginIntent,
   setPendingSettingsSection,
+  setPendingSettingsSectionIntent,
   type SettingsSectionId,
 } from "@/lib/settingsNavigation.js";
 import { runWorkspaceVisibleCommand } from "@/lib/workspaceVisibleCommand.js";
@@ -209,12 +212,9 @@ export function App({
     workspaceIdentity,
   );
   const activeTaskId = workspaceShellZCodeState.activeTaskId;
-  // Scope the right sidebar owner to the conversation. A draft has no activeTaskId, so draftSessionId
-  // keeps a new conversation from inheriting tabs left by the previous draft, and stays stable when the draft becomes a task.
-  const draftSessionId = useZCodeSessionStore(
-    (state) => state.getWorkspaceState(workspaceAbsPath, workspaceIdentity).draftSessionId,
-  );
-  const sidePaneOwnerId = activeTaskId ?? draftSessionId ?? null;
+  // TEMPORARY upstream 3.16.1 sync (ui): upstream protocol-v4 drafts have no legacy draftSessionId,
+  // so a draft has no right-sidebar owner. Fork draft-scoped owner is ledgered in specs/ui-upstream-sync-integration.md.
+  const sidePaneOwnerId = activeTaskId ?? null;
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
@@ -242,6 +242,7 @@ export function App({
     handleNavigateFileManager,
     handleOpenPluginMarket,
     handleOpenTerminalTab,
+    handleOpenModelTrajectory,
     handleOpenSubagentSession,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
@@ -365,6 +366,12 @@ export function App({
   const [canOpenCommunityFromQuickPick, setCanOpenCommunityFromQuickPick] = useState(false);
   const [gitSelectedSourceId, setGitSelectedSourceId] = useState<GitChangeSourceId>("unstaged");
   const [gitRefreshVersion, setGitRefreshVersion] = useState(0);
+  const [gitReviewRefreshVersion, setGitReviewRefreshVersion] = useState(0);
+  // Worktree review target: a git pane opened from an execution worktree reads that worktree, not the workspace root.
+  const [gitReviewExecutionTarget, setGitReviewExecutionTarget] = useState<{
+    workspacePath: string;
+    sessionId: string;
+  } | null>(null);
   const { browserRestoreUrls, handleBrowserUrlChange } = useTaskSidePaneMemoryBridge({
     activeTaskId,
     gitSelectedSourceId,
@@ -374,6 +381,7 @@ export function App({
   });
   const theme = useZCodeStore((s) => s.theme);
   const setTheme = useZCodeStore((s) => s.setTheme);
+  const setPalette = useZCodeStore((s) => s.setPalette);
   const {
     isMacFullscreen,
     desktopWindowChromeState,
@@ -438,18 +446,55 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
+    // A successful git mutation (branch switch, commit) invalidates merge/PR probes; ask them to re-poll.
+    useBranchMergeStatusStore.getState().requestRefresh();
+    usePullRequestStatusStore.getState().requestRefresh();
   }, []);
+  const gitRepositoryWorkspacePath =
+    gitReviewExecutionTarget?.sessionId === activeTaskId
+      ? gitReviewExecutionTarget.workspacePath
+      : (resolvedActiveTaskMeta?.executionWorktree?.path ?? workspaceAbsPath);
+  const handleRefreshGitReview = useCallback(() => {
+    if (gitRepositoryWorkspacePath === workspaceAbsPath) {
+      handleRefreshGit();
+      return;
+    }
+    setGitReviewRefreshVersion((value) => value + 1);
+    useBranchMergeStatusStore.getState().requestRefresh();
+    usePullRequestStatusStore.getState().requestRefresh();
+  }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const gitState = useGitRepository({
     workspacePath: workspaceAbsPath,
     activeTaskId,
-    includeExtendedData: hasGitTab,
-    // 关键逻辑：真实 Git 只在 workspace 变化、Git pane 打开、或用户显式点刷新时重拉。
-    // task 切换 / last-turn 摘要变化只更新本地衍生数据，不再顺带重跑 Git 命令。
+    includeExtendedData: hasGitTab && gitRepositoryWorkspacePath === workspaceAbsPath,
+    // Key logic: fetch real Git data only when the workspace changes, the Git pane opens, or the user explicitly refreshes.
+    // Task switches and last-turn summary changes update only local derived data; they do not rerun Git commands.
     refreshToken: gitRefreshVersion,
     remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
     remoteTarget: workspaceRpcTarget.remoteTarget,
     workspaceIdentity,
+  });
+  const worktreeGitReviewState = useGitRepository({
+    workspacePath: gitRepositoryWorkspacePath,
+    activeTaskId,
+    enabled: gitRepositoryWorkspacePath !== workspaceAbsPath,
+    includeExtendedData: hasGitTab,
+    refreshToken: gitReviewRefreshVersion,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    remoteTarget: workspaceRpcTarget.remoteTarget,
+    workspaceIdentity,
+  });
+  const gitPaneState =
+    gitRepositoryWorkspacePath === workspaceAbsPath ? gitState : worktreeGitReviewState;
+  useGitAutoRefresh({
+    workspacePath: gitRepositoryWorkspacePath,
+    workspaceIdentity,
+    remoteSessionId: workspaceRpcTarget.remoteSessionId ?? null,
+    gitSummary: worktreeGitReviewState.summary,
+    gitSummaryWorkspaceKey: worktreeGitReviewState.workspaceKey,
+    enabled: isWorkspaceVisible && hasGitTab && gitRepositoryWorkspacePath !== workspaceAbsPath,
+    onRefreshGit: handleRefreshGitReview,
   });
   useGitAutoRefresh({
     workspacePath: workspaceAbsPath,
@@ -461,8 +506,8 @@ export function App({
     onRefreshGit: handleRefreshGit,
   });
   const activeGitSourceId =
-    gitState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
-    gitState.sourceOptions[0]?.id ??
+    gitPaneState.sourceOptions.find((option) => option.id === gitSelectedSourceId)?.id ??
+    gitPaneState.sourceOptions[0]?.id ??
     "unstaged";
   const gitChangeSummaryBySourceId = useMemo(() => {
     // 关键业务逻辑：workspace header 和 Git pane 都依赖同一套来源统计，
@@ -516,10 +561,19 @@ export function App({
     return null;
   }, [gitChangeSummaryBySourceId]);
   const handleOpenGitReview = useCallback(
-    (sourceId?: GitChangeSourceId) => {
+    (
+      sourceId?: GitChangeSourceId,
+      executionWorkspacePath?: string,
+      executionSessionId?: string,
+    ) => {
       if (workspaceReadOnlyReason) {
         return;
       }
+      setGitReviewExecutionTarget(
+        executionWorkspacePath && executionSessionId
+          ? { workspacePath: executionWorkspacePath, sessionId: executionSessionId }
+          : null,
+      );
       if (sourceId) {
         setGitSelectedSourceId(sourceId);
       }
@@ -793,6 +847,24 @@ export function App({
       webRemoteControlWorkspaceSwitcher,
     ],
   );
+  // Opens a created worktree through the shared workspace + draft flow (fork contract for the command center and shell panes).
+  const handleCreateTaskInWorkspace = useCallback(
+    (targetWorkspacePath: string, targetWorkspaceIdentity?: string): void | Promise<void> => {
+      if (webRemoteControlWorkspaceSwitcher?.openWorkspace) {
+        return webRemoteControlWorkspaceSwitcher.openWorkspace({
+          workspacePath: targetWorkspacePath,
+          ...(targetWorkspaceIdentity ? { workspaceIdentity: targetWorkspaceIdentity } : {}),
+        });
+      }
+      handleStartDraftInWorkspace(
+        targetWorkspacePath,
+        targetWorkspaceIdentity,
+        undefined,
+        "project",
+      );
+    },
+    [handleStartDraftInWorkspace, webRemoteControlWorkspaceSwitcher],
+  );
 
   useWorkspaceShellLifecycle({
     workspaceAbsPath,
@@ -1044,6 +1116,11 @@ export function App({
           createTask: () => runVisibleWorkspaceCommand(() => handleCreateTaskIfWritable()),
           openWorkspace: () => runVisibleWorkspaceCommand(onOpenWorkspace),
           openSettings: openSettingsTab,
+          openSessionManager: () => {
+            // Sessions management is a Settings section; the command opens it unscoped.
+            setPendingSettingsSectionIntent("sessions");
+            openSettingsTab();
+          },
           openSkillsSettings: () => {
             setPendingSettingsPluginIntent("skills");
             openSettingsTab();
@@ -1053,6 +1130,8 @@ export function App({
             openSettingsTab();
           },
           switchTheme: handleSwitchTheme,
+          setThemeMode: setTheme,
+          setThemePalette: setPalette,
           openFeedback: handleOpenFeedback,
           openCommunity: handleOpenCommunity,
           openProductDocs: handleOpenProductDocs,
@@ -1075,6 +1154,8 @@ export function App({
       handleOpenProductDocs,
       handleOpenSettingsSection,
       handleSwitchTheme,
+      setTheme,
+      setPalette,
       handleOpenBrowserTab,
       handleOpenGitIfWritable,
       handleOpenTerminalTabIfWritable,
@@ -1146,6 +1227,7 @@ export function App({
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
         onSelectTask={handleSelectTask}
+        onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}
       />
@@ -1244,6 +1326,11 @@ export function App({
           gitWorktreeChangeSummary={gitWorktreeChangeSummary}
           activeGitSourceId={activeGitSourceId}
           gitState={gitState}
+          gitReviewState={gitPaneState}
+          handleRefreshGitReview={handleRefreshGitReview}
+          gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
+          handleOpenModelTrajectory={handleOpenModelTrajectory}
+          onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}
           providerConfigFile={providerConfigFile}

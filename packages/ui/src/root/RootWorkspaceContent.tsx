@@ -55,6 +55,7 @@ interface RootWorkspaceContentProps {
 }
 
 export function RootWorkspaceContent({
+  onOpenSession,
   workspaceScopedServices,
   baseFeedbackService,
   workspaceShellPath,

@@ -32,8 +32,7 @@ export interface WebRemoteControlWorkspaceSwitcherApi {
   };
   listWorkspaces(): Promise<WebRemoteControlWorkspaceListResult>;
   openProjectDraft?(request: CreateTaskOptions): Promise<void>;
-  // TEMPORARY relay-decision placeholder: the web entry implements it (fork relay feature). Remove with the relay decision.
-  openWorkspace?(target: WebRemoteControlTaskTarget): Promise<void>;
+  openWorkspace?(target: { workspacePath: string; workspaceIdentity?: string }): Promise<void>;
   onWorkspaceListUpdated?(
     listener: (result: WebRemoteControlWorkspaceListResult) => void,
   ): () => void;
@@ -104,6 +103,8 @@ export interface RootProps {
 }
 
 export interface WorkspaceSettingsLayerProps {
+  /** Opens a session from Settings (session manager, automation runs) through the shared open-existing flow. */
+  onOpenSession?: (target: OpenExistingSessionTarget) => Promise<void>;
   workspaceScopedServices?: IServiceAccessor;
   isDesktop?: boolean;
   isMacDesktop?: boolean;

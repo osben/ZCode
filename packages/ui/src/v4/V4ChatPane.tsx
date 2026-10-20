@@ -64,6 +64,11 @@ export interface V4ChatPaneProps {
   onSummaryPanelVariantOverrideChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
   onRefreshGit?: () => void;
   onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  /** Opens a created worktree through the shared workspace + draft flow. */
+  onCreateTaskInWorkspace?: (
+    workspacePath: string,
+    workspaceIdentity?: string,
+  ) => void | Promise<void>;
   onOpenBrowserUrl?: (url: string) => void;
   onOpenAutomationsMain?: OpenAutomationsMain;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
@@ -115,6 +120,7 @@ export function V4ChatPane({
   onSummaryPanelVariantOverrideChange,
   onRefreshGit,
   onOpenGitReview,
+  onCreateTaskInWorkspace,
   onOpenBrowserUrl,
   onOpenAutomationsMain,
   onOpenCodeViewer,
@@ -182,6 +188,7 @@ export function V4ChatPane({
         onSummaryPanelVariantOverrideChange={onSummaryPanelVariantOverrideChange}
         onRefreshGit={onRefreshGit}
         onOpenGitReview={onOpenGitReview}
+        onCreateTaskInWorkspace={onCreateTaskInWorkspace}
         onOpenBrowserUrl={onOpenBrowserUrl}
         onOpenAutomationsMain={onOpenAutomationsMain}
         onOpenCodeViewer={onOpenCodeViewer}
