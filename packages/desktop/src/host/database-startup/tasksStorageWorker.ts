@@ -1,19 +1,20 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { tasksStorageWorkerDataSchema } from "./contract.js";
-import { prepareTasksIndexStorage } from "@zcode/services/storage-startup";
+import { prepareTasksIndexStorage, createSettingService } from "@zcode/services/storage-startup";
 import {
   classifyDatabaseStartupError,
   databaseStartupErrorDetails,
   databaseMigrationFactsSchema,
 } from "@zcode/shared";
 
-// DEFERRED (desktop PR 1): upstream passes the legacy settings snapshot as a third argument so
-// project migration runs before Host start. The fork services startup API is still 2-arg until the
-// services startup-entry sync lands; see specs/desktop-upstream-sync.md.
 const data = tasksStorageWorkerDataSchema.parse(workerData);
 try {
-  await prepareTasksIndexStorage(data.path, (phase, migration) =>
-    parentPort?.postMessage({ type: "progress", phase, migration }),
+  // Worker 必须携带旧设置完成项目迁移，否则后续 Host 只能看到已记账的空项目种子。
+  const settings = await createSettingService().get();
+  await prepareTasksIndexStorage(
+    data.path,
+    (phase, migration) => parentPort?.postMessage({ type: "progress", phase, migration }),
+    settings,
   );
   parentPort?.postMessage({ type: "done" });
 } catch (error) {

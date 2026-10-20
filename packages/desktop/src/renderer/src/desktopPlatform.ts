@@ -15,12 +15,15 @@ export function createDesktopPlatform(options: {
 }): IPlatformService {
   return {
     canSelectFilePath: true,
+    canOpenLocalFiles: true,
     pluginSandbox: createDesktopPluginSandboxPlatform(),
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
     isLocalDevelopmentRuntime: options.isLocalDevelopmentRuntime,
     selectDirectory: () => window.zcode.selectDirectory(),
-    // Expose only when the (possibly older) preload bridge actually has the method,
-    // so consumers' capability gating cannot offer a mode that would throw.
+    selectDirectories: () => window.zcode.selectDirectories(),
+    selectFile: () => window.zcode.selectFile(),
+    selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
+    createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),
     ...(window.zcode.getAppWorktreesDir
       ? { getAppWorktreesDir: () => window.zcode.getAppWorktreesDir() }
       : {}),
@@ -29,26 +32,26 @@ export function createDesktopPlatform(options: {
           setDictationSystemMute: (active: boolean) => window.zcode.setDictationSystemMute!(active),
         }
       : {}),
-    selectFile: () => window.zcode.selectFile(),
-    selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),
-    createTempTextAttachment: (payload) => window.zcode.createTempTextAttachment(payload),
     materializeWorkflowArtifactFile: (payload) =>
       window.zcode.materializeWorkflowArtifactFile(payload),
     onRemoteConnectionLog: (handler) => window.zcode.onRemoteConnectionLog(handler),
     onRemoteSessionClosed: (handler) => window.zcode.onRemoteSessionClosed(handler),
-    onBotRemoteWorkspaceReconnected: (handler) =>
-      window.zcode.onBotRemoteWorkspaceReconnected(handler),
+    // Source 自动重连会替换 logical session；统一由 preload bridge 转发换代事件。
+    onRemoteSessionReconnected: (handler) =>
+      window.zcode.onRemoteSessionReconnected?.(handler) ?? (() => {}),
     activateOrSetWorkspace: (path) =>
       window.zcode.activateOrSetWorkspace?.(path) ?? Promise.resolve({ activated: false }),
     connectRemote: (remoteOptions, requestId, context) =>
       window.zcode.connectRemote(remoteOptions, requestId, context),
+    requestSourceSettingsAttachment: (sourceServerId) =>
+      window.zcode.requestSourceSettingsAttachment?.(sourceServerId) ??
+      Promise.reject(new Error("Source settings attachment bridge unavailable")),
     cancelPendingRemoteConnection: (requestId) =>
       window.zcode.cancelPendingRemoteConnection?.(requestId) ?? Promise.resolve(),
     bindRemoteWorkspaceSessionContext: (context) =>
-      window.zcode.bindRemoteWorkspaceSessionContext?.(context) ?? Promise.resolve(),
+      window.zcode.bindRemoteWorkspaceSessionContext?.(context) ??
+      Promise.reject(new Error("Desktop bindRemoteWorkspaceSessionContext bridge unavailable")),
     startWebRemoteControl: (context) => window.zcode.startWebRemoteControl(context),
-    refreshWebRemoteControlPairing: (context) =>
-      window.zcode.refreshWebRemoteControlPairing(context),
     stopWebRemoteControl: () => window.zcode.stopWebRemoteControl(),
     getWebRemoteControlStatus: () => window.zcode.getWebRemoteControlStatus(),
     onWebRemoteControlStatusChanged: (handler) =>
@@ -80,6 +83,8 @@ export function createDesktopPlatform(options: {
     startCuaHelperPermissionDrag: window.zcode.startCuaHelperPermissionDrag
       ? () => window.zcode.startCuaHelperPermissionDrag?.()
       : undefined,
+    notifyWebRemoteControlAuthStateChanged: (change) =>
+      window.zcode.notifyWebRemoteControlAuthStateChanged(change),
     registerOAuthState: (payload) => window.zcode.registerOAuthState(payload),
     onOAuthCallback: (callback) => window.zcode.onOAuthCallback(callback),
     onPaymentCallback: (callback) => window.zcode.onPaymentCallback(callback),
@@ -107,13 +112,12 @@ export function createDesktopPlatform(options: {
     syncWindowTabs: (paths) => window.zcode.syncWindowTabs(paths),
     syncWebRemoteControlWorkspaces: (workspaces) =>
       window.zcode.syncWebRemoteControlWorkspaces?.(workspaces),
-    syncWebRemoteControlTasks: (tasks) => window.zcode.syncWebRemoteControlTasks?.(tasks),
     onWebRemoteControlReconnectWorkspace: (handler) =>
       window.zcode.onWebRemoteControlReconnectWorkspace?.(handler) ?? (() => {}),
     syncWindowUnreadCount: (count) => window.zcode.syncWindowUnreadCount(count),
     syncActiveTaskSession: (sessionId) => window.zcode.syncActiveTaskSession(sessionId),
     syncAppSettings: (patch) => window.zcode.syncAppSettings?.(patch),
-    // When the bridge is missing (old preload in an upgraded window), fall back to supported, matching the Windows behavior so the settings toggle stays usable.
+    // 桥缺失（旧 preload 升级窗口）时按 supported 兜底，与 Windows 现状一致，设置开关可用。
     getCloseToTrayCapability: () =>
       window.zcode.getCloseToTrayCapability?.() ??
       Promise.resolve({ supported: true, gnomeLikeWithoutTray: false }),
@@ -143,15 +147,14 @@ export function createDesktopPlatform(options: {
       window.zcode.browserViewScreenshotSurfaceReady?.(payload),
     ...desktopBrowserPlatformBridge,
     onNewTask: (handler) => window.zcode.onNewTask(handler),
+    onOpenTaskDraft: (handler) => window.zcode.onOpenTaskDraft?.(handler) ?? (() => {}),
     onOpenWorkspace: (handler) => {
-      // A development window or an old window after an upgrade may still use a preload that does not
-      // expose onOpenWorkspace. Calling it directly from the renderer would crash at startup. Use the
-      // same compatibility fallback as activateOrSetWorkspace; if the bridge is missing, disable only
-      // the native menu callback and let the app continue opening.
+      // 开发态或升级后的旧窗口可能仍运行未暴露 onOpenWorkspace 的 preload，
+      // renderer 直接调用会在启动时崩溃。这里和 activateOrSetWorkspace 一样做兼容兜底，
+      // 缺少该 bridge 时只禁用原生菜单回调，不影响应用继续打开。
       return window.zcode.onOpenWorkspace?.(handler) ?? (() => {});
     },
     onOpenWorkspacePath: (handler) => window.zcode.onOpenWorkspacePath?.(handler) ?? (() => {}),
-    onOpenTaskDraft: (handler) => window.zcode.onOpenTaskDraft?.(handler) ?? (() => {}),
     onOpenFeedbackDialog: (handler) => window.zcode.onOpenFeedbackDialog?.(handler) ?? (() => {}),
     onOpenTicketsPanel: (handler) => window.zcode.onOpenTicketsPanel?.(handler) ?? (() => {}),
     onWindowFullscreenChanged: (handler) => window.zcode.onWindowFullscreenChanged(handler),
@@ -199,7 +202,7 @@ export function createDesktopPlatform(options: {
       window.zcode.acknowledgePostUpdateReleaseNotes(version),
     skipUpdateVersion: (version) => window.zcode.skipUpdateVersion?.(version) ?? Promise.resolve(),
     quitAndInstallUpdate: () => window.zcode.quitAndInstallUpdate(),
-    getInstalledEditors: () => window.zcode.getInstalledEditors(),
+    getInstalledEditors: (filePath) => window.zcode.getInstalledEditors(filePath),
     getApplicationIcon: (bundleId) =>
       window.zcode.getApplicationIcon?.(bundleId) ?? Promise.resolve(null),
     openInEditor: (editorId, path, editorOptions) =>
