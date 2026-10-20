@@ -335,6 +335,8 @@ describe("Review pane: Group by directory checkbox visibility", () => {
   it("hides the checkbox in the error state", () => {
     mountPane(paneProps({ gitState: makeState({ error: "boom" }) }));
     expect(getCheckbox()).toBeNull();
+    expect(renderedCardPaths()).toEqual(ALL_PATHS);
+    expect(screen.getByRole("alert").textContent).toContain("git.error.description");
   });
 });
 
