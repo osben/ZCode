@@ -14,6 +14,9 @@
 //   FAKE_LSP_CONFIG_REQUEST=1   after `initialized`, sends workspace/configuration (section "fake.mode")
 //                               and forwards the answer as notification `fake/configuration` {result}.
 //   FAKE_LSP_STDERR_TEXT        text written to stderr at startup (for start-failure tail tests).
+//   FAKE_LSP_REQUIRE_FILE       absolute path; while it does not exist, `initialize` is answered with
+//                               JSON-RPC -32603 the way typescript-language-server rejects a workspace
+//                               without a usable TypeScript. Creating the file models `pnpm install`.
 //
 // Behaviour:
 //   - Every line containing FAKE_ERROR gets one diagnostic: severity 1, message "fake error".
@@ -23,6 +26,8 @@
 //   - `fake/sleep` {ms} answers null after ms, unless `$/cancelRequest` for it arrived first.
 //   - `$/cancelRequest` emits notification `fake/cancelled` {id}.
 
+import { existsSync } from "node:fs";
+
 const MODE = process.env.FAKE_LSP_DIAGNOSTICS ?? "versioned";
 const STARTUP_DELAY_MS = Number(process.env.FAKE_LSP_STARTUP_DELAY_MS ?? 0);
 const PUBLISH_DELAY_MS = Number(process.env.FAKE_LSP_PUBLISH_DELAY_MS ?? 0);
@@ -30,8 +35,10 @@ const CRASH_ON = process.env.FAKE_LSP_CRASH_ON;
 const IGNORE_SHUTDOWN = process.env.FAKE_LSP_IGNORE_SHUTDOWN === "1";
 const CONFIG_REQUEST = process.env.FAKE_LSP_CONFIG_REQUEST === "1";
 const CONFIG_REQUEST_ID = "fake-config";
+const REQUIRE_FILE = process.env.FAKE_LSP_REQUIRE_FILE;
 const ERROR_MARKER = "FAKE_ERROR";
 const JSON_RPC_METHOD_NOT_FOUND = -32601;
+const JSON_RPC_INTERNAL_ERROR = -32603;
 const JSON_RPC_REQUEST_CANCELLED = -32800;
 const LSP_FUNCTION_KIND = 12;
 const LSP_ERROR_SEVERITY = 1;
@@ -142,6 +149,10 @@ function onRequest(message) {
   const { id, params } = message;
   switch (message.method) {
     case "initialize":
+      if (REQUIRE_FILE && !existsSync(REQUIRE_FILE)) {
+        respondError(id, JSON_RPC_INTERNAL_ERROR, "fake: required workspace dependency is missing");
+        return;
+      }
       setTimeout(() => {
         const capabilities = {
           textDocumentSync: 1,

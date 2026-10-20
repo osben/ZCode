@@ -137,6 +137,24 @@ sequenceDiagram
   every successful start (initialized), so only consecutive failed or crashing starts count.
   A restart is triggered only by the next acquire, never by a timer, so a server that keeps
   crashing after start cannot loop on its own.
+- **Unavailable is a retry window, not a final state.** A failed start often has a cause
+  that is fixed outside ZCode: a fresh worktree has no `node_modules/typescript` until its
+  dependencies are installed, and typescript-language-server rejects `initialize` until then.
+  - When the restart budget runs out, the pool records the time and logs
+    `adapters.lsp.unavailable` (warn, with `restarts` and `lastErrorCode`).
+  - Acquires inside the retry window (`LSP_DEFAULT_UNAVAILABLE_RETRY_MS`, 30 s, the same as for
+    `not_installed`) return `lsp_server_unavailable` without spawning.
+  - The first acquire after the window makes **one** start attempt (`adapters.lsp.retry`).
+    Success resets the counter. Failure returns the entry to `unavailable` for another window.
+  - It is still acquire-triggered, so an idle session spawns nothing.
+  - `restartOnCrash: false` stays terminal, because there the user chose no restarts.
+- **Rejected `initialize`:** a server that answers `initialize` with a JSON-RPC error has
+  refused the workspace. This is a failed start with code `lsp_request_failed`.
+  - The `adapters.lsp.start_failed` log adds `rpcCode` (for example `-32603`). It never adds
+    the server's message text, which can contain paths.
+  - The message text (plus the stderr tail) reaches the model only in the tool result. The
+    `lsp_server_unavailable` result also carries the last error message, so the model sees why
+    the server is unavailable.
 - **Freshness.** A diagnostics result counts for the document's current version `v`
   only when one of these holds:
   1. it is a pull `textDocument/diagnostic` response for `v`;
@@ -289,3 +307,21 @@ SKILL.md files in `zcode-guide-plugin` ("recorded but not executed").
 5. The architecture is multi-language and validated on TypeScript.
 
 Open: multiple servers per file (TS + ESLint, Vue + TS) in V2.
+
+## 12. Regression: worktree before `pnpm install` (2026-10-19)
+
+In ZCode Preview, typescript-language-server started inconsistently in sessions running in
+worktrees under `ZCode-worktrees/`. The log showed 25 `spawned` events, 20 `start_failed` with
+`lsp_request_failed`, and 5 `ready`.
+
+- **Why `initialize` failed:** these worktrees sit outside the main checkout and have no
+  `node_modules` until `pnpm install`. The server's fallback resolved to a global TypeScript 7,
+  which has no `tsserver.js`. The server therefore answered `initialize` with `-32603` ("Could
+  not find a valid TypeScript installation").
+- **When it recovered:** every first `ready` came 1–23 s after the worktree's `node_modules`
+  appeared.
+- **The ZCode defect:** one worktree used up its three restarts in bursts of Reads before
+  `pnpm install` finished. It then stayed `unavailable` for the rest of the process, through
+  dozens of later `.ts` reads and edits.
+- **Fix:** §5 now defines the retry window and the `rpcCode` / unavailable logging. Regression
+  tests are in `adapters/tests/lsp-pool-unavailable-retry.test.ts`.
