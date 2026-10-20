@@ -9296,8 +9296,8 @@ const enUS: Record<string, string> = {
   "remote.step.selectDirectory": "Choose directory",
   "remote.success": "Connected. Choose a directory to continue.",
   "wsl.description":
-    "Connect to the default distro, or choose a specific distro installed on this device.",
-  "docker.description": "Connect to a local container using docker exec and docker cp.",
+    "Connect to the default WSL environment, or choose a specific WSL environment installed on this device.",
+  "docker.description": "Connect to a running Docker container on this device.",
   "chat.empty.worktree.newWorktree": "New worktree",
   "chat.empty.worktree.creating": "Creating worktree…",
   "chat.message.pinned": "Pinned",
