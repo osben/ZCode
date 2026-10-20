@@ -15,6 +15,10 @@ vi.mock("@/hooks/useGlobalTaskList.js", () => ({
 vi.mock("@/hooks/useServices.js", () => ({
   useServices: () => ({ fileService: {} }),
 }));
+// The fork's worktree flow reads global settings; this fixture has no PlatformProvider, so stub the settings hook.
+vi.mock("@/hooks/useSettingService.js", () => ({
+  useSettings: () => ({ settings: undefined }),
+}));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
 }));
