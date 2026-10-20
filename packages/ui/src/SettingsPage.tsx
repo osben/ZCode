@@ -1885,8 +1885,8 @@ export function SettingsPage({
                   onLogout={onLogout}
                   settingsButtonMode="back"
                   user={user}
-                  // 头像菜单是 WorkspaceSidebarFooter 的共享菜单，Settings 场景不能丢失桌面平台能力。
-                  // 之前这里没透传 isDesktop，导致同一个头像菜单在设置页缺少界面缩放入口。
+                  // The avatar menu is shared with WorkspaceSidebarFooter; Settings must retain desktop-platform capabilities.
+                  // isDesktop was not passed here, so the same avatar menu lacked its UI scaling entry in Settings.
                   isDesktop={isDesktop}
                 />
               </div>
@@ -1921,7 +1921,7 @@ export function SettingsPage({
               {!usesInlineWindowControls ? (
                 <div
                   className={cn(
-                    // Settings 使用和 new task 一致的问号定位：在内容面板内定位，外层让出自绘窗口按钮区，内层保持 top-2.5/right-2.5。
+                    // Settings positions the question mark as in new task: inside the content panel, with the outer layer yielding the custom window-button area and the inner layer using top-2.5/right-2.5.
                     "absolute top-0 z-50 h-10 w-10 pointer-events-auto [app-region:no-drag]",
                     "right-0",
                   )}
