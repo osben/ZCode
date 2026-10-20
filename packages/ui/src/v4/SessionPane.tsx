@@ -3291,7 +3291,9 @@ export function SessionPane({
     (state) => sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
   );
   const { binding: prewarmBinding, waitForSession: waitForDraftSession } = useDraftSessionPrewarm({
-    enabled: sessionId === null && draftAgentStartupAllowed && !recoveringDraft,
+    // An incognito draft never warms a session: it would start with every extra loaded (specs/incognito-session.md).
+    enabled:
+      sessionId === null && draftAgentStartupAllowed && !recoveringDraft && !incognitoDraftActive,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
@@ -3828,8 +3830,17 @@ export function SessionPane({
           submission = { ...submission, modelSelection: chosen };
         }
       }
+      // Create route (specs/ui-draft-send-path.md): these sends cannot use the prewarm session.
+      // A worktree send needs the linked cwd, an incognito send needs its profile frozen at
+      // creation, and a prepared send must adopt the session reserved by the worktree pipeline.
+      const executionWorktree = options?.executionWorktree;
+      const incognito = options?.incognito;
+      const preparedSessionId = options?.preparedSessionId;
+      const createRoute =
+        preparedSessionId !== undefined ||
+        (sessionId === null && (executionWorktree !== undefined || incognito !== undefined));
       const prewarmTargetBeforeSend =
-        sessionId === null ? prewarmBindingRef.current?.sessionId : null;
+        sessionId === null && !incognito ? prewarmBindingRef.current?.sessionId : null;
       if (prewarmTargetBeforeSend) {
         // 屏障只保证已经入队的命令完成；若点击配置时预热 session/snapshot 尚未
         // 就绪，命令可能当时没有目标。首发绑定确定的预热 session 前再同步一次
@@ -3875,6 +3886,113 @@ export function SessionPane({
           );
           return;
         }
+      }
+      if (createRoute) {
+        // Only this route creates a session on the send path (specs/ui-draft-send-path.md, route 2).
+        // A failed or unknown createSession/sendText never retries under a new session or command.
+        const createAck = await dispatchSubmissionCommand(
+          "createSession",
+          {
+            workspaceId: workspaceKey,
+            ...buildDraftCreateConfigPayload(
+              { ...draftConfigRef.current, modelSelection: submission.modelSelection },
+              appFollowupMode,
+            ),
+            ...(executionWorktree ? { executionWorktree } : {}),
+            ...(incognito ? { incognito } : {}),
+            ...(preparedSessionId
+              ? { preparedSessionId, expectedAttemptId: options?.preparedAttemptId }
+              : {}),
+          },
+          null,
+        );
+        if (createAck.status !== "accepted") {
+          throw new Error(createAck.reasonCode ?? "createSession 被拒绝");
+        }
+        if (createAck.result?.type !== "createSession") {
+          throw new Error("createSession 缺少 sessionId");
+        }
+        const createdSessionId = createAck.result.sessionId;
+        // A prepared session was already activated by prepareWorktreeSession; only a plain draft creation is new here.
+        if (draftSlashCommand) {
+          const consumed = await dispatchSlashCommand(
+            draftSlashCommand,
+            createdSessionId,
+            0,
+            heldQueueDisposition,
+            expectedHeldQueueItemIds,
+            submission,
+            (messageId) => reportDraftCreated(createdSessionId, createSourceAtSend, messageId),
+          );
+          if (consumed === "confirmationRequired") return consumed;
+          if (consumed) {
+            if (!preparedSessionId) {
+              handleDraftSessionCreated(
+                createdSessionId,
+                createSourceAtSend,
+                undefined,
+                taskGroupIdAtSend,
+              );
+            }
+            return;
+          }
+        }
+        // Execution-worktree attachments belong to the worktree session; the Composer's
+        // pre-upload is bound to the parent workspace and cannot be reused there.
+        const sessionAttachments = executionWorktree
+          ? readyAttachments.length > 0
+            ? await options?.reuploadAttachmentsForSession?.(createdSessionId)
+            : []
+          : readyAttachments;
+        if (executionWorktree && readyAttachments.length > 0 && !sessionAttachments) {
+          throw new Error(
+            "Execution-worktree attachments could not be transferred to the new session",
+          );
+        }
+        const highspeed = await prepareHighspeedSendContext(
+          createdSessionId,
+          prepareHighspeedTurn,
+          submission.modelSelection,
+        );
+        const sendAck = await dispatchSubmissionCommand(
+          "sendText",
+          {
+            text,
+            ...submission,
+            ...(options?.requestedDelivery ? { requestedDelivery: options.requestedDelivery } : {}),
+            ...(sessionAttachments?.length ? { attachments: sessionAttachments } : {}),
+            ...(sharedContextRefs?.length ? { context_refs: sharedContextRefs } : {}),
+            ...(options?.source ? { source: options.source } : {}),
+            ...highspeed.override,
+            conversationQuotes: options?.conversationQuotes,
+          },
+          createdSessionId,
+          undefined,
+          undefined,
+          options?.telemetrySeed,
+          highspeed.acceleratedCard,
+          options?.onCommandCreated
+            ? (envelope) => {
+                if (envelope.type === "sendText") options.onCommandCreated?.(envelope.commandId);
+              }
+            : undefined,
+          undefined,
+          undefined,
+          // Recent records the Composer's original selection before acceleration, not the payload Selection that was overridden.
+          submission,
+        );
+        if (sendAck.status !== "accepted") {
+          throw new Error(sendAck.reasonCode ?? "sendText 被拒绝");
+        }
+        if (!preparedSessionId) {
+          handleDraftSessionCreated(
+            createdSessionId,
+            createSourceAtSend,
+            sendAck.commandId,
+            taskGroupIdAtSend,
+          );
+        }
+        return;
       }
       // Bug 根因：首发曾把 binding=null 当成无预热，绕过 owner 再建一个会话。
       // 文本、附件/context 和 goal 都等待同一创建任务，创建失败或换代直接保留草稿。
@@ -4005,6 +4123,9 @@ export function SessionPane({
       sessionId,
       settleCurrentQueueInputs,
       waitForDraftSession,
+      appFollowupMode,
+      draftConfigRef,
+      workspaceKey,
     ],
   );
 
