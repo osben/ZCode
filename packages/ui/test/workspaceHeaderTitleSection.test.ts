@@ -104,6 +104,8 @@ vi.mock("@/hooks/useGlobalTaskList.js", () => ({
 
 vi.mock("@/hooks/usePlatform.js", () => ({
   usePlatform: () => ({}),
+  // The header's pull request chip opens PRs through the optional platform.
+  useOptionalPlatform: () => null,
 }));
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({

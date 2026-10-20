@@ -96,6 +96,8 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { WorkflowRunSidePane } from "@/app-shell/WorkflowRunSidePane.js";
 // eslint-disable-next-line import/first
 import { useDynamicWorkflowAvailabilityStore } from "@/store/dynamicWorkflowAvailabilityStore.js";
+import zhCN from "../src/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 /** Gray-release snapshot (docs/dynamic-workflow/launch.md "Gray release"): enabled by default, so the pane matches its pre-change behavior. */
 function setDynamicWorkflowEnabled(enabled: boolean): void {
@@ -918,7 +920,9 @@ describe("WorkflowRunSidePane 结果与失败面板", () => {
   it("状态行第三个词：run 带 resumable 时说「resumable」，不带就没有那个词", () => {
     setSnapshot({ run: run({ status: "stopped", stopReason: "user", resumable: true }) });
     const withBit = renderPane();
-    expect(withBit.getByTestId("workflow-run-status-resumable").textContent).toContain("resumable");
+    expect(withBit.getByTestId("workflow-run-status-resumable").textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.resumable"),
+    );
     expect(withBit.getByTestId("workflow-run-status-reason").textContent).toContain("by you");
 
     cleanup();
@@ -929,7 +933,9 @@ describe("WorkflowRunSidePane 结果与失败面板", () => {
     cleanup();
     setSnapshot({ run: run({ status: "stopped", stopReason: "user", resumable: true }) });
     const zh = renderPane("zh-CN");
-    expect(zh.getByTestId("workflow-run-status-resumable").textContent).toContain("可恢复");
+    expect(zh.getByTestId("workflow-run-status-resumable").textContent).toContain(
+      zhCN["chat.toolCall.workflow.run.resumable"],
+    );
   });
 
   it("running 时既没有结果面板也没有失败面板", () => {
@@ -1088,9 +1094,9 @@ describe("WorkflowRunSidePane 升级问题", () => {
       });
       const view = renderPane("zh-CN");
       const text = view.getByTestId("workflow-run-orphan-questions").textContent ?? "";
-      expect(text).toContain("待答问题");
+      expect(text).toContain(zhCN["chat.toolCall.workflow.run.questions.title"]);
       expect(text).toContain("42 分钟前");
-      expect(text).toContain("未命名子代理");
+      expect(text).toContain(zhCN["chat.toolCall.workflow.graph.lane.anonymous"]);
       expect(text).not.toContain("Waiting on an answer");
       expect(text).not.toContain("ago");
     } finally {
@@ -1124,7 +1130,7 @@ describe("WorkflowRunSidePane 国际化", () => {
     const text = view.container.textContent ?? "";
 
     expect(view.getByTestId("workflow-run-status").textContent).toBe("已完成");
-    expect(text).toContain("停止运行");
+    expect(text).toContain(zhCN["chat.toolCall.workflow.run.cancel"]);
     // The usage line shares copy with the chat card footer: three subagent lanes + steps + tokens.
     expect(view.getByTestId("workflow-run-usage").textContent).toContain("3 个子代理");
     expect(view.getByTestId("workflow-run-usage").textContent).toContain("1,000 tokens");
@@ -1595,12 +1601,13 @@ describe("WorkflowRunSidePane 产物区", () => {
   });
 
   it("run 已被活投影淘汰时，产物仍从 journal 列得出来", async () => {
+    const markdownArtifactTitle = "综述";
     workflowRunArtifactsQuery.mockImplementation(async () => ({
       artifacts: [
         {
           id: "notes",
           kind: "markdown",
-          title: "综述",
+          title: markdownArtifactTitle,
           version: 1,
           versions: [{ version: 1, publishedAt: 1, bytes: 12 }],
           itemCount: 0,
@@ -1610,7 +1617,7 @@ describe("WorkflowRunSidePane 产物区", () => {
     setSnapshot({});
     const view = renderPane();
     await waitFor(() => expect(view.getByTestId(TID_WORKFLOW_ARTIFACTS_SECTION)).toBeTruthy());
-    expect(view.getByText("综述")).toBeTruthy();
+    expect(view.getByText(markdownArtifactTitle)).toBeTruthy();
   });
 
   it("zh-CN 下区名念「产物」——与顶部「结果」措辞不重叠", async () => {
@@ -2040,7 +2047,7 @@ describe("WorkflowRunSidePane lineage", () => {
     const view = renderPane("zh-CN", { withOpenRunCallback: true });
     const line = view.getByTestId("workflow-run-superseded-by");
     expect(line.tagName).toBe("DIV");
-    expect(line.textContent).toContain("已被替代，后继 run");
+    expect(line.textContent).toContain(zhCN["chat.toolCall.workflow.run.supersededBy"]);
     expect(line.textContent).toContain("dwfrun-gone");
   });
 
@@ -2256,7 +2263,7 @@ describe("WorkflowRunSidePane 配置", () => {
     const borrowed = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: settingsTab }),
       ),
     );
@@ -2296,19 +2303,25 @@ describe("WorkflowRunSidePane 配置", () => {
     const landed = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: settingsTab }),
       ),
     );
     const provenance = landed.getByTestId("workflow-run-provenance");
     expect(provenance.getAttribute("data-workflow-launch-kind")).toBe("settings");
-    expect(provenance.textContent).toContain("由你调整设置");
+    expect(provenance.textContent).toContain(
+      expectedCopy("chat.workflowLaunch.settingsChangedByYou"),
+    );
     expect(landed.queryByTestId("workflow-run-provenance-scope")).toBeNull();
     const rows = landed.getByTestId("workflow-run-provenance-settings").textContent ?? "";
-    expect(rows).toContain("子代理模型");
-    expect(rows).toContain("会话模型 → glm-5.3-flash");
-    expect(rows).toContain("最大并发数");
-    expect(rows).toContain("默认 13 → 4");
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.model"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.sessionModel")} → glm-5.3-flash`,
+    );
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.limit"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.defaultLimitValue", { n: 13 })} → 4`,
+    );
   });
 
   // In-place settings turn (docs/dynamic-workflow/concurrency.md): the `amend` carries no
@@ -2345,16 +2358,20 @@ describe("WorkflowRunSidePane 配置", () => {
     const view = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(WorkflowRunSidePane, { tab: retuneTab }),
       ),
     );
     const provenance = view.getByTestId("workflow-run-provenance");
     expect(provenance.getAttribute("data-workflow-launch-kind")).toBe("settings");
-    expect(provenance.textContent).toContain("由你调整设置");
+    expect(provenance.textContent).toContain(
+      expectedCopy("chat.workflowLaunch.settingsChangedByYou"),
+    );
     const rows = view.getByTestId("workflow-run-provenance-settings").textContent ?? "";
-    expect(rows).toContain("最大并发数");
-    expect(rows).toContain("默认 13 → 4");
-    expect(rows).not.toContain("子代理模型");
+    expect(rows).toContain(expectedCopy("chat.workflowLaunch.settings.limit"));
+    expect(rows).toContain(
+      `${expectedCopy("chat.workflowLaunch.settings.defaultLimitValue", { n: 13 })} → 4`,
+    );
+    expect(rows).not.toContain(expectedCopy("chat.workflowLaunch.settings.model"));
   });
 });

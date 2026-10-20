@@ -30,6 +30,7 @@ const platform: IPlatformService = {
   selectFile: vi.fn(),
 };
 
+// Locale-behavior test: this file compares the zh-CN and en-US auth-method layouts on purpose.
 function renderRemoteConnectionFields(locale: "zh-CN" | "en-US") {
   return renderToStaticMarkup(
     createElement(

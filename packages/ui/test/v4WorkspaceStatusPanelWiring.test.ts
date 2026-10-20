@@ -226,4 +226,59 @@ describe("v4 workspace status panel wiring", () => {
       sessionId: "sess-child",
     });
   });
+
+  it("passes the worktree-open callback from the desktop workbench shell to each pane's SessionPane", () => {
+    sessionPaneCapture.props = [];
+    const onCreateTaskInWorkspace = vi.fn();
+    const shell = {
+      workspacePath: "/repo",
+      workspaceIdentity: "local:/repo",
+      sessionId: "sess-primary",
+      onCreateTaskInWorkspace,
+    } as unknown as WorkbenchShellBinding;
+
+    renderToStaticMarkup(
+      createElement(WorkbenchLeafPane, {
+        paneId: "pane-1",
+        rect: { left: "50%", top: "0%", width: "50%", height: "100%" },
+        focused: true,
+        showFocusIndicator: true,
+        canSplit: true,
+        shellWorkspaceKey: "local:/repo",
+        binding: {
+          sessionId: "sess-child",
+          workspaceScope: { workspacePath: "/repo", workspaceIdentity: "local:/repo" },
+        },
+        shell,
+        onFocusRequest: vi.fn(),
+        onSplit: vi.fn(),
+        onClosePane: vi.fn(),
+        onBindSession: vi.fn(),
+      }),
+    );
+
+    expect(sessionPaneCapture.props).toHaveLength(1);
+    expect(sessionPaneCapture.props[0]?.onCreateTaskInWorkspace).toBe(onCreateTaskInWorkspace);
+  });
+
+  it("passes the remote session ID and worktree-open callback through the single-pane workspace path", () => {
+    sessionPaneCapture.props = [];
+    const onCreateTaskInWorkspace = vi.fn();
+
+    renderToStaticMarkup(
+      createElement(V4ChatPane, {
+        workspacePath: "/home/dev/repo",
+        workspaceIdentity: "remote:ssh:devbox:22:dev:/home/dev/repo",
+        remoteSessionId: "session-devbox",
+        sessionId: "sess-primary",
+        onCreateTaskInWorkspace,
+      }),
+    );
+
+    expect(sessionPaneCapture.props).toHaveLength(1);
+    expect(sessionPaneCapture.props[0]).toMatchObject({
+      remoteSessionId: "session-devbox",
+      onCreateTaskInWorkspace,
+    });
+  });
 });

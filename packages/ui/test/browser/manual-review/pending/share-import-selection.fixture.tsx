@@ -99,6 +99,7 @@ function Fixture() {
   return (
     <main className="bg-background text-foreground min-h-screen p-4 space-y-4">
       <button
+        data-testid="share-import"
         onClick={() => {
           seedImportedSessionDraft({ workspacePath, sessionId: "imported", reused: false });
           setSessionId("imported");
@@ -107,6 +108,7 @@ function Fixture() {
         Import
       </button>
       <button
+        data-testid="share-reopen"
         onClick={() => {
           seedImportedSessionDraft({ workspacePath, sessionId: "imported", reused: true });
           setSessionId("imported");
@@ -114,8 +116,12 @@ function Fixture() {
       >
         Reopen
       </button>
-      <button onClick={() => setSessionId(null)}>Ordinary new task</button>
-      <button onClick={() => setReady(true)}>Registry ready</button>
+      <button data-testid="ordinary-new-task" onClick={() => setSessionId(null)}>
+        Ordinary new task
+      </button>
+      <button data-testid="registry-ready" onClick={() => setReady(true)}>
+        Registry ready
+      </button>
       <p data-testid="content">{sessionId === "imported" ? "IMPORTED CONTENT" : "other"}</p>
       <div className="flex flex-wrap gap-2">
         <V4ComposerModeSwitch
@@ -168,6 +174,7 @@ function Fixture() {
         onChange={(event) => control.updateComposerContent({ text: event.target.value })}
       />
       <button
+        data-testid="share-submit"
         disabled={!config}
         onClick={() => {
           const frozen = createComposerSubmissionConfig(control.draftConfig, view);

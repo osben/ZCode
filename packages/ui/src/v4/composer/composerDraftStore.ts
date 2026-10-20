@@ -9,6 +9,12 @@
 // Attachments are not persisted in drafts (objectUrl/File cannot be serialized, and ownership of localPath attachments is hard to validate after restart —
 // consistent with the decision that the v4 composer does not persist attachment drafts).
 import { logger } from "@/logger.js";
+import {
+  readRecoveryAttachment,
+  readWorktreeIntent,
+  type V4ComposerRecoveryAttachment,
+  type V4ComposerWorktreeIntent,
+} from "./composerRecoveryRecord.js";
 import { modelSelectionSchema, type ModelSelection } from "@zcode/shared";
 import { submissionModeSchema, type SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ComposerMentionPrefill } from "@/store/zcodeSessionStoreTypes.js";
@@ -34,11 +40,17 @@ export interface V4ComposerRecoveryContexts {
   sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
 }
 
+/**
+ * Manifest entry of an attachment frozen into a recovery record, and the frozen worktree intent,
+ * live in composerRecoveryRecord.ts; the draft store persists them as opaque record fields.
+ */
 export interface V4ComposerDraft {
   /** Manifest only; browser File objects remain owned by the attachment store. */
-  recoveryAttachments?: { id: string; filename: string }[];
+  recoveryAttachments?: V4ComposerRecoveryAttachment[];
   /** Contexts actually included in the frozen submission (recovery records only). */
   recoveryContexts?: V4ComposerRecoveryContexts;
+  /** Worktree creation intent of the frozen submission (worktree recovery records only). */
+  worktreeIntent?: V4ComposerWorktreeIntent;
   text: string;
   editorStateJson?: string;
   mention?: ComposerMentionPrefill;
@@ -187,15 +199,16 @@ function readDraft(value: unknown): V4ComposerDraft | null {
       String(mention.category),
     );
   const recoveryContexts = readRecoveryContexts(value.recoveryContexts);
+  const worktreeIntent = readWorktreeIntent(value.worktreeIntent);
   return {
     text: value.text,
     ...(recoveryContexts ? { recoveryContexts } : {}),
+    ...(worktreeIntent ? { worktreeIntent } : {}),
     ...(Array.isArray(value.recoveryAttachments)
       ? {
-          recoveryAttachments: value.recoveryAttachments.filter(
-            (item): item is { id: string; filename: string } =>
-              isRecord(item) && typeof item.id === "string" && typeof item.filename === "string",
-          ),
+          recoveryAttachments: value.recoveryAttachments
+            .map(readRecoveryAttachment)
+            .filter((item): item is V4ComposerRecoveryAttachment => item !== null),
         }
       : {}),
     ...(typeof value.editorStateJson === "string"

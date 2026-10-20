@@ -4,6 +4,7 @@ import type { ZCodeGroupedTaskViewNode } from "@zcode/services";
 import { CRON_DEFAULT_GROUP_ID } from "@zcode/shared";
 import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { GroupDragOverlay } from "@/workspace-grouped-tasks/group-drag-overlay.js";
 
 type GroupNode = Extract<ZCodeGroupedTaskViewNode, { type: "group" }>;
@@ -12,7 +13,7 @@ function renderOverlay(node: GroupNode) {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(GroupDragOverlay, { node }),
     ),
   );
@@ -36,7 +37,7 @@ describe("GroupDragOverlay", () => {
   it("拖动 cron 系统分组时显示本地化标题而不是存储占位名", () => {
     const html = renderOverlay(createGroupNode(CRON_DEFAULT_GROUP_ID, "cron"));
 
-    expect(html).toContain("定时任务");
+    expect(html).toContain(expectedCopy("taskGroup.cronGroupName"));
     expect(html).not.toContain(">cron<");
   });
 

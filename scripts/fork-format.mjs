@@ -9,17 +9,20 @@
 //   --check    fail if any selected file is not formatted
 //   --list     print the selected files without running oxfmt
 
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import {
+  UPSTREAM_BASE_FILE,
+  chunkPaths,
+  git,
+  gitSucceeds,
+  loadPendingUpstream,
+  pendingIdenticalPaths,
+} from "./fork-format-pending.mjs";
 import { resolveToolBin } from "./run-pre-commit-checks.mjs";
-
-const execFileAsync = promisify(execFile);
-
-export const UPSTREAM_BASE_FILE = "fork-upstream-base.json";
 
 // The local remote-tracking ref used only for the stale-pin assertion.
 const UPSTREAM_TRACKING_REF = "refs/remotes/upstream/main";
@@ -66,28 +69,6 @@ const FORMATTABLE_EXTENSION_SET = new Set(
 );
 const FORMATTABLE_BASENAME_SET = new Set(FORMATTABLE_BASENAMES);
 
-// Windows caps a command line at 32767 characters; leave room for the node
-// and oxfmt bin paths plus flags.
-const MAX_ARGV_CHARS = 24_000;
-
-async function git(cwd, args) {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return stdout;
-}
-
-async function gitSucceeds(cwd, args) {
-  try {
-    await git(cwd, args);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function isFormattable(path) {
   const name = basename(path);
   return (
@@ -100,26 +81,6 @@ export function isFormattable(path) {
 // has no nocase option); see specs/fork-format-scope.md.
 export function formattableFilesGlob() {
   return `**/{*.{${FORMATTABLE_EXTENSIONS.join(",")}},${FORMATTABLE_BASENAMES.join(",")}}`;
-}
-
-export function chunkPaths(paths, maxChars = MAX_ARGV_CHARS) {
-  const chunks = [];
-  let current = [];
-  let currentChars = 0;
-  for (const path of paths) {
-    const cost = path.length + 1;
-    if (current.length > 0 && currentChars + cost > maxChars) {
-      chunks.push(current);
-      current = [];
-      currentChars = 0;
-    }
-    current.push(path);
-    currentChars += cost;
-  }
-  if (current.length > 0) {
-    chunks.push(current);
-  }
-  return chunks;
 }
 
 async function readPinnedCommit(repoRoot) {
@@ -226,7 +187,11 @@ async function main() {
 
   const repoRoot = (await git(process.cwd(), ["rev-parse", "--show-toplevel"])).trim();
   const base = await resolveUpstreamBase(repoRoot);
-  const files = await listForkChangedFiles(repoRoot, base);
+  const pending = await loadPendingUpstream(repoRoot);
+  const selected = await listForkChangedFiles(repoRoot, base);
+  // Files byte-identical to the declared pending upstream commit are out of scope.
+  const identical = await pendingIdenticalPaths(repoRoot, selected, pending, "worktree");
+  const files = selected.filter((path) => !identical.has(path));
 
   if (args.includes("--list")) {
     for (const file of files) {
@@ -255,8 +220,11 @@ async function main() {
   }
   const mode = check ? "check" : "write";
   const status = exitCode === 0 ? "ok" : "FAILED";
+  const pendingNote = pending
+    ? `, ${identical.size} identical to pending upstream ${pending.commit.slice(0, 8)} skipped`
+    : "";
   console.log(
-    `fmt (${mode}): ${files.length} fork-changed files since upstream base ${base.slice(0, 8)}, before oxfmt ignore rules: ${status}`,
+    `fmt (${mode}): ${files.length} fork-changed files since upstream base ${base.slice(0, 8)}${pendingNote}, before oxfmt ignore rules: ${status}`,
   );
   return exitCode;
 }

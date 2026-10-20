@@ -14,10 +14,11 @@ import {
   AutomationsPageTitle,
   type AutomationsPageTab,
 } from "@/settings/saved-workflows/AutomationsPageTitleSwitch.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function Title({
   workflowTabEnabled,
-  locale = "zh-CN",
+  locale = "en-US",
 }: {
   workflowTabEnabled: boolean;
   locale?: "zh-CN" | "en-US";
@@ -44,7 +45,7 @@ describe("AutomationsPageTitle 灰度门", () => {
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryByTestId(testId(TID_AUTOMATIONS_PAGE_TAB, "workflow"))).toBeNull();
     const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading.textContent).toBe("自动化");
+    expect(heading.textContent).toBe(expectedCopy("settings.automations.title"));
     // 沿用 text-ui-xl 页面标题层级——切换存在与否不该改变标题本身的视觉层级。
     expect(heading.className).toContain("text-ui-xl");
   });
@@ -56,7 +57,10 @@ describe("AutomationsPageTitle 灰度门", () => {
 
   it("灰度开 → 与改动前一致：两个标题词组成 tablist", () => {
     render(createElement(Title, { workflowTabEnabled: true }));
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["自动化", "工作流"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      expectedCopy("automations.pageTab.automation"),
+      expectedCopy("automations.pageTab.workflow"),
+    ]);
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 });

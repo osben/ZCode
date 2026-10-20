@@ -13,11 +13,13 @@ import type {
 export async function restartPreparedWorktreeCreation(input: {
   workspaceKey: string;
   workspacePath: string;
+  workspaceIdentity?: string;
   sessionId: string;
   preparation: WorktreePreparationState;
   gitService: WorktreeCreationGitService;
   prepareSession: (params: ComposerWorktreePreparationParams) => Promise<string>;
   syncPreparedWorktree?: ComposerWorktreePreparationSync;
+  submissionId?: string;
   formatMessage: (id: string, values?: Record<string, string>) => string;
 }): Promise<ComposerWorktreeBeginResult> {
   const attemptId = nanoid();
@@ -32,7 +34,9 @@ export async function restartPreparedWorktreeCreation(input: {
   if (reserved !== input.sessionId)
     throw new Error("Retry must retain the prepared session identity");
   const params = {
+    ...(input.submissionId ? { submissionId: input.submissionId } : {}),
     workspacePath: input.workspacePath,
+    ...(input.workspaceIdentity ? { workspaceIdentity: input.workspaceIdentity } : {}),
     branchName,
     targetPath,
     baseBranch,

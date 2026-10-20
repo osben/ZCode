@@ -19,7 +19,7 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: { formatMessage: ({ id }: { id: string }) => id },
-    locale: "zh-CN",
+    locale: "en-US",
   }),
 }));
 

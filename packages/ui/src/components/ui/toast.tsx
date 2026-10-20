@@ -4,6 +4,7 @@
  * Uses a React portal rendered into body, with no third-party library; disappears after 3 seconds.
  * Usage: `import { toast } from "@/components/ui/toast.js"; toast("message");`
  */
+import { TID_TOAST } from "@zcode/shared";
 import { createRoot } from "react-dom/client";
 import { useEffect, useState } from "react";
 import { Info, TriangleAlert, X } from "lucide-react";
@@ -311,6 +312,7 @@ export function ToastMessageView({
 
   return (
     <div
+      data-testid={TID_TOAST}
       className={cn(
         "rounded-2xl border bg-toast/60 text-ui-base shadow-lg backdrop-blur-xl transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.77,0,0.175,1)] motion-reduce:transform-none motion-reduce:transition-opacity",
         isUpdate

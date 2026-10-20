@@ -17,7 +17,11 @@ import {
   type BrowserViewScreenshotSurfacePreparePayload,
   TID_BROWSER_ADDRESS_INPUT,
   TID_BROWSER_BACK_BUTTON,
+  TID_BROWSER_DEVTOOLS_BUTTON,
   TID_BROWSER_ELEMENT_PICKER_BUTTON,
+  TID_BROWSER_GUEST_RETRY,
+  TID_BROWSER_MORE_BUTTON,
+  TID_BROWSER_OPEN_EXTERNAL_ITEM,
   TID_BROWSER_LOAD_ERROR,
   TID_BROWSER_LOAD_ERROR_CERT_HINT,
   TID_BROWSER_RESPONSIVE_BUTTON,
@@ -418,16 +422,16 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("新 human tab 与未提交地址草稿不创建 webview，回车后才创建并导航", () => {
     renderView("browser:empty-draft", "task-a", undefined, true, undefined, undefined, true);
 
-    expect(screen.getByText("browser.empty")).toBeTruthy();
+    expect(document.body.textContent).toContain("browser.empty");
     expect(screen.queryByTestId(TID_BROWSER_WEBVIEW)).toBeNull();
 
     const addressInput = screen.getByTestId(TID_BROWSER_ADDRESS_INPUT);
     fireEvent.change(addressInput, { target: { value: "example.com" } });
-    expect(screen.getByText("browser.empty")).toBeTruthy();
+    expect(document.body.textContent).toContain("browser.empty");
     expect(screen.queryByTestId(TID_BROWSER_WEBVIEW)).toBeNull();
 
     fireEvent.submit(addressInput.closest("form")!);
-    expect(screen.queryByText("browser.empty")).toBeNull();
+    expect(document.body.textContent).not.toContain("browser.empty");
     const webview = stubWebview(screen.getByTestId(TID_BROWSER_WEBVIEW));
     fireDomReady(webview);
     expect(webview.loadURL).toHaveBeenCalledWith("https://example.com");
@@ -794,8 +798,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     });
 
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW)).toBe(originalWebview);
-    expect(screen.getByText("browser.guestFailed.title")).toBeTruthy();
-    expect(screen.getByText(/killed \(73\)/)).toBeTruthy();
+    expect(document.body.textContent).toContain("browser.guestFailed.title");
+    expect(document.body.textContent).toContain("killed (73)");
   });
 
   it("证书失败后再输入非法地址，错误态不沿用上一次的证书指引", () => {
@@ -817,7 +821,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
     fireEvent.change(addressInput, { target: { value: "javascript:alert(1)" } });
     fireEvent.submit(addressInput.closest("form")!);
 
-    expect(screen.getByText("browser.invalidUrl")).toBeTruthy();
+    expect(document.body.textContent).toContain("browser.invalidUrl");
     expect(screen.queryByTestId(TID_BROWSER_LOAD_ERROR_CERT_HINT)).toBeNull();
   });
 
@@ -865,7 +869,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const loadURL = (webview as unknown as { loadURL: ReturnType<typeof vi.fn> }).loadURL;
     loadURL.mockClear();
-    fireEvent.click(screen.getByText("browser.loadError.retry"));
+    fireEvent.click(screen.getByTestId(TID_BROWSER_LOAD_ERROR).querySelector("button")!);
 
     expect(loadURL).toHaveBeenCalledWith(restoreUrl);
     // The same guest stays in use; a single failed navigation must not rebuild it and drop the
@@ -930,10 +934,10 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     fireRenderProcessGone(webview, "launch-failed", 72);
 
-    expect(screen.getByText("browser.guestFailed.title")).toBeTruthy();
-    expect(screen.getByText("browser.guestFailed.description")).toBeTruthy();
-    expect(screen.getByText(/launch-failed \(72\)/)).toBeTruthy();
-    expect(screen.queryByText("browser.empty")).toBeNull();
+    expect(document.body.textContent).toContain("browser.guestFailed.title");
+    expect(document.body.textContent).toContain("browser.guestFailed.description");
+    expect(document.body.textContent).toContain("launch-failed (72)");
+    expect(document.body.textContent).not.toContain("browser.empty");
     expect(screen.getByTestId(TID_BROWSER_WEBVIEW).className).toContain("hidden");
   });
 
@@ -964,13 +968,13 @@ describe("UnifiedBrowserView (<webview>)", () => {
     fireRenderProcessGone(originalWebview, "launch-failed", 72);
     h.attachGuest.mockClear();
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "browser.guestFailed.retry" }));
+      fireEvent.click(screen.getByTestId(TID_BROWSER_GUEST_RETRY));
       await Promise.resolve();
     });
 
     const retriedWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(retriedWebview).not.toBe(originalWebview);
-    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
+    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
 
     stubWebview(retriedWebview, { getWebContentsId: vi.fn(() => 43) });
     fireDomReady(retriedWebview);
@@ -1001,7 +1005,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const replacementWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(replacementWebview).not.toBe(originalWebview);
-    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
+    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
 
     stubWebview(replacementWebview, { getWebContentsId: vi.fn(() => 44) });
     fireDomReady(replacementWebview);
@@ -1040,7 +1044,7 @@ describe("UnifiedBrowserView (<webview>)", () => {
 
     const replacementWebview = screen.getByTestId(TID_BROWSER_WEBVIEW);
     expect(replacementWebview).not.toBe(originalWebview);
-    expect(screen.queryByText("browser.guestFailed.title")).toBeNull();
+    expect(document.body.textContent).not.toContain("browser.guestFailed.title");
     expect(onNavigationRequestHandled).not.toHaveBeenCalled();
 
     let finishNavigation: (() => void) | undefined;
@@ -1234,9 +1238,9 @@ describe("UnifiedBrowserView (<webview>)", () => {
   it("地址栏右侧只常驻自由尺寸、元素选择和更多，并按优先级折叠外部打开与调试", () => {
     renderView();
 
-    const responsiveButton = screen.getByLabelText("browser.responsive.enter");
-    const elementPickerButton = screen.getByLabelText("browser.elementPicker.start");
-    const moreButton = screen.getByLabelText("browser.more");
+    const responsiveButton = screen.getByTestId(TID_BROWSER_RESPONSIVE_BUTTON);
+    const elementPickerButton = screen.getByTestId(TID_BROWSER_ELEMENT_PICKER_BUTTON);
+    const moreButton = screen.getByTestId(TID_BROWSER_MORE_BUTTON);
 
     expect(
       responsiveButton.compareDocumentPosition(elementPickerButton) &
@@ -1245,8 +1249,8 @@ describe("UnifiedBrowserView (<webview>)", () => {
     expect(
       elementPickerButton.compareDocumentPosition(moreButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
-    expect(screen.queryByLabelText("browser.openExternal")).toBeNull();
-    expect(screen.queryByLabelText("browser.devtools")).toBeNull();
+    expect(screen.queryByTestId(TID_BROWSER_OPEN_EXTERNAL_ITEM)).toBeNull();
+    expect(screen.queryByTestId(TID_BROWSER_DEVTOOLS_BUTTON)).toBeNull();
 
     fireEvent.pointerDown(moreButton, { button: 0, ctrlKey: false });
 

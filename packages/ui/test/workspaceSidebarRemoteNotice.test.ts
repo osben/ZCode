@@ -140,8 +140,8 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "workspaceSidebar.sshConnectionPath": "Path",
           "workspaceSidebar.unavailableLocalDirectory":
             "工作区目录不存在或无法访问，当前仅可查看历史记录。恢复该目录后重启 ZCode 即可继续使用。",
-          "settings.skills.remoteSync.open": "同步 Skill",
-          "settings.mcp.remoteSync.open": "同步 MCP",
+          "settings.skills.remoteSync.open": "Sync Skill",
+          "settings.mcp.remoteSync.open": "Sync MCP",
           "taskList.newThread": "新建任务",
         };
         return messages[id] ?? id;
@@ -303,6 +303,7 @@ function renderWorkspaceItem(params?: {
 }
 
 import { WorkspaceSidebarItem } from "@/WorkspaceSidebarItem.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 describe("WorkspaceSidebarItem remote notice", () => {
   beforeEach(() => {
@@ -450,15 +451,15 @@ describe("WorkspaceSidebarItem remote notice", () => {
     });
 
     expect(html).toContain('data-icon="upload-cloud"');
-    expect(html).toContain("同步 Skill");
-    expect(html).toContain("同步 MCP");
+    expect(html).toContain(expectedCopy("settings.skills.remoteSync.open"));
+    expect(html).toContain(expectedCopy("settings.mcp.remoteSync.open"));
   });
 
   it("未连接远程工作区的更多菜单不显示同步 Skills 和 MCP 入口", () => {
     const html = renderWorkspaceItem();
 
-    expect(html).not.toContain("同步 Skill");
-    expect(html).not.toContain("同步 MCP");
+    expect(html).not.toContain(expectedCopy("settings.skills.remoteSync.open"));
+    expect(html).not.toContain(expectedCopy("settings.mcp.remoteSync.open"));
   });
 
   it("远程项目重连中时，右侧 loading 图标使用连接日志 tooltip", () => {

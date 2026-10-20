@@ -257,8 +257,8 @@ function setupExternalRelayGlobals(pathname = "/remote") {
     },
   });
   vi.stubGlobal("navigator", {
-    language: "zh-CN",
-    languages: ["zh-CN"],
+    language: "en-US",
+    languages: ["en-US"],
     onLine: true,
     userAgent: "Mobile Safari",
   });

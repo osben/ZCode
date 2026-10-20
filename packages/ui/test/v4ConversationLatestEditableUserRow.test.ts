@@ -121,7 +121,7 @@ describe("authoritative conversation row actions", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationTurnGroup, {
             unit,
             context,
@@ -155,7 +155,7 @@ describe("authoritative conversation row actions", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationTurnGroup, {
             unit,
             context,

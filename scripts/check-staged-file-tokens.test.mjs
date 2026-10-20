@@ -172,6 +172,11 @@ test("the actual hook rechecks the index after formatter changes", async (t) => 
   const f = await fixture(t);
   await mkdir(path.join(f.cwd, "scripts"));
   await writeFile(path.join(f.cwd, "scripts/check-staged-file-tokens.mjs"), await readFile(script));
+  // The guard imports the shared pending-upstream helper from its sibling module.
+  await writeFile(
+    path.join(f.cwd, "scripts/fork-format-pending.mjs"),
+    await readFile(new URL("./fork-format-pending.mjs", import.meta.url)),
+  );
   const config = (await readFile(hookConfig, "utf8")).replace(
     "pnpm exec lint-staged --config lint-staged.pre-commit.config.mjs",
     "node scripts/fake-formatter.mjs",
@@ -212,6 +217,48 @@ execFileSync('git', ['add', '--', 'code.ts']);
   assert.equal(await readFile(path.join(f.cwd, "formatter-ran"), "utf8"), "ran\n");
 });
 
+// Pending-upstream fixture: commit A holds an oversized file at `notes/upstream.md`
+// and is the pending commit; the fork then changes it. The caller decides what
+// is staged afterwards.
+async function pendingSizeFixture(t, { stagePin = true } = {}) {
+  const f = await fixture(t);
+  await f.git("config", "user.email", "test@example.com");
+  await f.git("config", "user.name", "Test");
+  await f.git("config", "commit.gpgsign", "false");
+  const upstream = "a".repeat(21_000);
+  await f.stage("notes/upstream.md", upstream);
+  await f.git("commit", "--quiet", "-m", "pending upstream");
+  const pending = (await f.git("rev-parse", "HEAD")).stdout.trim();
+  await f.stage("notes/upstream.md", "small fork version");
+  await f.git("commit", "--quiet", "-m", "fork");
+  await writeFile(
+    path.join(f.cwd, "fork-upstream-base.json"),
+    `${JSON.stringify({ upstreamCommit: pending, pendingUpstreamCommit: pending }, null, 2)}\n`,
+  );
+  if (stagePin) await f.git("add", "--", "fork-upstream-base.json");
+  return { ...f, upstream, pending };
+}
+
+test("an oversize staged blob identical to the pending commit passes the size guard", async (t) => {
+  const f = await pendingSizeFixture(t);
+  await f.stage("notes/upstream.md", f.upstream);
+  assert.equal((await f.check()).code, 0);
+});
+
+test("an oversize staged blob that differs from the pending commit by one byte still blocks", async (t) => {
+  const f = await pendingSizeFixture(t);
+  await f.stage("notes/upstream.md", `${f.upstream}\n`);
+  const result = await f.check();
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /notes\/upstream\.md/);
+});
+
+test("the size guard ignores an unstaged pin: an identical blob still blocks", async (t) => {
+  const f = await pendingSizeFixture(t, { stagePin: false });
+  await f.stage("notes/upstream.md", f.upstream);
+  assert.equal((await f.check()).code, 1);
+});
+
 test("a staged file listed in the exemptions file may exceed the limit", async (t) => {
   const f = await fixture(t);
   await f.stage("locale.ts", "a".repeat(20_001));
@@ -222,4 +269,12 @@ test("a staged file listed in the exemptions file may exceed the limit", async (
   );
   await f.git("add", "--", ".staged-file-size-exemptions");
   assert.equal((await f.check()).code, 0);
+});
+
+test("oversize markdown under docs/ is not size-limited, other markdown still is", async (t) => {
+  const f = await fixture(t);
+  await f.stage("docs/guide/big.md", "a".repeat(40_000));
+  assert.equal((await f.check()).code, 0);
+  await f.stage("notes/big.md", "a".repeat(40_000));
+  assert.notEqual((await f.check()).code, 0);
 });

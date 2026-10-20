@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import type { AppUsageRange, AppUsageSnapshot } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import {
   AppUsageLifetimeSummaryStrip,
@@ -120,23 +121,23 @@ describe("AppUsageLifetimeSummaryStrip", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(AppUsageLifetimeSummaryStrip, {
           snapshot: createSnapshot(),
         }),
       ),
     );
 
-    expect(html).toContain("累计 Token 数");
-    expect(html).toContain("峰值 Token 数");
-    expect(html).toContain("最长聊天时长");
-    expect(html).toContain("当前连续天数");
-    expect(html).toContain("最长连续天数");
-    expect(html).toContain("206.5 亿");
-    expect(html).toContain("3.7 亿");
-    expect(html).toContain("2 小时 15 分");
-    expect(html).toContain("5 天");
-    expect(html).toContain("34 天");
+    expect(html).toContain(expectedCopy("settings.usage.lifetimeTotalTokens"));
+    expect(html).toContain(expectedCopy("settings.usage.lifetimePeakTokens"));
+    expect(html).toContain(expectedCopy("settings.usage.longestSession"));
+    expect(html).toContain(expectedCopy("settings.usage.currentStreak"));
+    expect(html).toContain(expectedCopy("settings.usage.longestStreak"));
+    expect(html).toContain("20.7B");
+    expect(html).toContain("370M");
+    expect(html).toContain("2 h 15 m");
+    expect(html).toContain("5 d");
+    expect(html).toContain("34 d");
     expect(html).toContain("rounded-xl");
     expect(html).toContain("h-7");
     expect(html).toContain("w-px");
@@ -161,11 +162,11 @@ describe("AppUsageLifetimeSummaryStrip", () => {
       createElement(
         ServiceProvider,
         { services: createServices() },
-        createElement(ZCodeIntlProvider, { initialLocale: "zh-CN" }, createElement(AppUsagePanel)),
+        createElement(ZCodeIntlProvider, { initialLocale: "en-US" }, createElement(AppUsagePanel)),
       ),
     );
 
-    await screen.findByText("累计 Token 数");
+    await screen.findAllByRole("tab");
     // Bugfix: while loading, multiple "calculating" placeholders can appear at once and
     // queryByText throws when it matches more than one element (under full-suite load, waitFor's
     // default 1s budget expires with a multiple elements error before things settle).
@@ -173,39 +174,42 @@ describe("AppUsageLifetimeSummaryStrip", () => {
     // to tolerate slow convergence under load.
     await waitFor(
       () => {
-        expect(screen.queryAllByText("正在统计中")).toHaveLength(0);
+        expect(screen.queryAllByText(expectedCopy("settings.usage.loadingTitle"))).toHaveLength(0);
       },
       { timeout: 5000 },
     );
 
-    const lifetimeTitle = screen.getByText("累计 Token 数");
-    const tokenActivityTitle = screen.getByText("Token 活动");
-    const rangeTitle = screen.getByText("时间范围");
+    const renderedCopy = document.body.textContent ?? "";
+    expect(renderedCopy).toContain(expectedCopy("settings.usage.lifetimeTotalTokens"));
+    expect(renderedCopy).toContain(expectedCopy("settings.usage.heatmapTitle"));
     expect(
-      lifetimeTitle.compareDocumentPosition(tokenActivityTitle) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      tokenActivityTitle.compareDocumentPosition(rangeTitle) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(rangeTitle).toBeTruthy();
-    expect(document.body.innerHTML).toContain("99");
-    const sevenDayTab = screen.getByText("近 7 日");
-    const thirtyDayTab = screen.getByText("近 30 日");
+      screen.queryByRole("tablist", {
+        name: expectedCopy("settings.usage.granularity.label"),
+      }),
+    ).toBeNull();
+    await waitFor(() => {
+      expect(document.body.innerHTML).toContain("99 tokens");
+    });
+    const tabs = screen.getAllByRole("tab");
+    const sevenDayTab = tabs[0];
+    const thirtyDayTab = tabs[1];
     expect(sevenDayTab.getAttribute("aria-selected")).toBe("true");
     expect(thirtyDayTab.getAttribute("aria-selected")).toBe("false");
-    expect(await screen.findByText("每日 Token 趋势图")).toBeTruthy();
-    expect(screen.queryByText("趋势图")).toBeNull();
-    expect(screen.queryByText("按天 Token 趋势")).toBeNull();
+    await waitFor(() => {
+      expect(document.body.textContent).toContain(expectedCopy("settings.usage.dailyChartTitle"));
+    });
+    expect(document.body.textContent).not.toContain("趋势图");
+    expect(document.body.textContent).not.toContain("按天 Token 趋势");
     expect(document.body.innerHTML).toContain("rounded-full bg-surface");
     expect(document.body.innerHTML).toContain("group-data-horizontal/tabs:h-7");
     expect(document.body.innerHTML).toContain("px-2.5 py-0 text-ui-sm");
     expect(document.body.innerHTML).not.toContain("w-16");
     expect(document.body.innerHTML).not.toContain("rounded-lg border border-border");
-    expect(screen.queryByText("tokens 用量")).toBeNull();
-    expect(screen.queryByText("会话数量")).toBeNull();
-    expect(screen.queryByText("消息数量")).toBeNull();
-    expect(screen.queryByText("活跃天数")).toBeNull();
-    expect(screen.queryByText("最常用模型")).toBeNull();
+    expect(document.body.textContent).not.toContain(expectedCopy("settings.usage.totalTokens"));
+    expect(document.body.textContent).not.toContain(expectedCopy("settings.usage.sessions"));
+    expect(document.body.textContent).not.toContain(expectedCopy("settings.usage.messages"));
+    expect(document.body.textContent).not.toContain(expectedCopy("settings.usage.activeDays"));
+    expect(document.body.textContent).not.toContain(expectedCopy("settings.usage.favoriteModel"));
   });
 
   it("uses small typography for chart content while keeping chart titles unchanged", async () => {

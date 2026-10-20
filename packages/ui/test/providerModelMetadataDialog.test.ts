@@ -5,6 +5,7 @@ import {
   ProviderModelMetadataDialog,
   selectFocusedInputText,
 } from "@/settings/model-provider-section/ProviderModelMetadataDialog.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 function extractInputTag(html: string, needle: string) {
   return html.match(/<input[^>]*>/g)?.find((tag) => tag.includes(needle)) ?? "";
@@ -55,54 +56,21 @@ vi.mock("@/components/ui/popover.js", () => ({
   PopoverTrigger: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    intl: {
-      formatMessage: ({ id }: { id: string }) => {
-        const messages: Record<string, string> = {
-          "common.cancel": "取消",
-          "common.loading": "加载中...",
-          "common.save": "保存",
-          "settings.modelProvider.resetForm": "重置表单",
-          "settings.modelProvider.followRecommendedConfig": "跟随推荐配置",
-          "settings.modelProvider.addModel": "添加模型",
-          "settings.modelProvider.apiFormat": "API 格式",
-          "settings.modelProvider.apiFormat.anthropicMessages":
-            "Anthropic Messages (/anthropic/v1/messages)",
-          "settings.modelProvider.apiFormat.chatCompletions":
-            "Chat Completions (/v1/chat/completions)",
-          "settings.modelProvider.apiFormat.responses": "Responses (/responses)",
-          "settings.modelProvider.apiFormat.short.anthropicMessages": "Anthropic",
-          "settings.modelProvider.apiFormat.short.chatCompletions": "Chat",
-          "settings.modelProvider.apiFormat.short.responses": "Responses",
-          "settings.modelProvider.apiFormat.title.anthropicMessages": "Anthropic Messages",
-          "settings.modelProvider.apiFormat.title.chatCompletions": "Chat Completions",
-          "settings.modelProvider.apiFormat.title.responses": "Responses",
-          "settings.modelProvider.contextWindow": "上下文窗口",
-          "settings.modelProvider.capabilities": "模型能力",
-          "settings.modelProvider.enableModel": "启用",
-          "settings.modelProvider.advancedConfig": "高级配置",
-          "settings.modelProvider.reasoning": "推理设置",
-          "settings.modelProvider.editModel": "编辑模型配置",
-          "settings.modelProvider.editModelDescription": "编辑模型配置描述",
-          "settings.modelProvider.maxOutputTokens": "最大输出 Token",
-          "settings.modelProvider.modelId": "模型 ID",
-          "settings.modelProvider.inputModalities": "输入类型",
-          "settings.modelProvider.outputModalities": "输出类型",
-          "settings.modelProvider.otherSettings": "其他设置",
-          "settings.modelProvider.modality.text": "Text",
-          "settings.modelProvider.modality.image": "Image",
-          "settings.modelProvider.modality.video": "Video",
-          "settings.modelProvider.modality.audio": "Audio",
-          "settings.modelProvider.modality.pdf": "PDF",
-          "settings.modelProvider.modelMetadata.invalid.id": "模型 ID 不能为空",
-          "settings.modelProvider.modelMetadata.invalid.kinds": "至少选择一种 API 格式",
-        };
-        return messages[id] ?? id;
+vi.mock("@/i18n/IntlProvider.js", async () => {
+  const enUS = (await import("@/i18n/locales/en-US.js")).default as Record<string, string>;
+  return {
+    useZCodeIntl: () => ({
+      locale: "en-US",
+      intl: {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
+          Object.entries(values ?? {}).reduce(
+            (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+            enUS[id] ?? id,
+          ),
       },
-    },
-  }),
-}));
+    }),
+  };
+});
 
 describe("ProviderModelMetadataDialog", () => {
   it.each([true, false])("Todo134：模型 ID 只读权限不随布局改变：%s", (modelIdReadOnly) => {
@@ -262,7 +230,7 @@ describe("ProviderModelMetadataDialog", () => {
     expect(reasoningLevelAddButton).toContain('data-size="icon-lg"');
     expect(html).toContain(">low<");
     expect(html).toContain(">high<");
-    expect(html).toContain("高级配置");
+    expect(html).toContain(expectedCopy("settings.modelProvider.advancedConfig"));
     const reasoningGroup =
       html.match(/<section[^>]*data-model-settings-group="reasoning"[\s\S]*?<\/section>/)?.[0] ??
       "";
@@ -274,7 +242,7 @@ describe("ProviderModelMetadataDialog", () => {
     expect(reasoningGroup).not.toContain("settings.modelProvider.requiresMfjsToolSchema");
     expect(advancedGroup).not.toContain("settings.modelProvider.requiresMfjsToolSchema");
     expect(html).not.toContain('data-model-settings-advanced-trigger="true"');
-    expect(html).toContain("settings.modelProvider.reasoningLevelsOrdered");
+    expect(html).toContain(expectedCopy("settings.modelProvider.reasoningLevelsOrdered"));
     expect(html).not.toContain("settings.modelProvider.requiresMfjsToolSchema");
     expect(html).not.toContain("settings.modelProvider.maxOutputTokensOptionSpecJson");
     expect(html).not.toContain("data-effective-json-preview");
@@ -309,26 +277,33 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).toContain("高级配置");
+    expect(html).toContain(expectedCopy("settings.modelProvider.advancedConfig"));
     expect(html).not.toContain('data-model-settings-advanced-trigger="true"');
     expect(html).toContain('data-model-advanced="true"');
     expect(html).toContain('data-model-reasoning-level-editor="true"');
     expect(html).toContain('data-model-settings-scroll="true"');
     expect(html).toContain("-mr-3");
     expect(html).toContain("pr-4");
-    expect(extractInputTag(html, 'aria-label="最大输出 Token"')).toContain('placeholder="32000"');
+    expect(
+      extractInputTag(
+        html,
+        `aria-label="${expectedCopy("settings.modelProvider.maxOutputTokens")}"`,
+      ),
+    ).toContain('placeholder="32000"');
     expect(html).toContain('data-model-recommended-config="true"');
-    expect(html).toContain(">跟随推荐配置<");
+    expect(html).toContain(`>${expectedCopy("settings.modelProvider.followRecommendedConfig")}<`);
     const footer = html.slice(html.indexOf('data-model-settings-footer="true"'));
     expect(footer).not.toContain('data-model-recommended-config="true"');
     expect(footer).not.toContain('role="switch"');
-    expect(footer).toContain(">重置表单<");
-    expect(footer.indexOf(">取消<")).toBeLessThan(footer.indexOf(">保存<"));
+    expect(footer).toContain(`>${expectedCopy("settings.modelProvider.resetForm")}<`);
+    expect(footer.indexOf(`>${expectedCopy("common.cancel")}<`)).toBeLessThan(
+      footer.indexOf(`>${expectedCopy("common.save")}<`),
+    );
     expect(html.indexOf('data-model-max-output="true"')).toBeLessThan(
       html.indexOf('data-model-advanced="true"'),
     );
-    expect(footer).toContain(">保存<");
-    expect(footer).toContain(">取消<");
+    expect(footer).toContain(`>${expectedCopy("common.save")}<`);
+    expect(footer).toContain(`>${expectedCopy("common.cancel")}<`);
   });
 
   it("跟随推荐配置开关始终展示，且不存在旧的恢复默认按钮", () => {
@@ -355,7 +330,7 @@ describe("ProviderModelMetadataDialog", () => {
     );
 
     expect(html).toContain('data-model-recommended-config="true"');
-    expect(html).not.toContain("全部恢复默认");
+    expect(html).not.toContain(expectedCopy("settings.shortcuts.resetAll"));
     expect(html).not.toContain("settings.modelProvider.restoreInheritedValue");
   });
 
@@ -452,15 +427,15 @@ describe("ProviderModelMetadataDialog", () => {
     );
     expect(indexes.every((index) => index >= 0)).toBe(true);
     expect(indexes).toEqual([...indexes].sort((left, right) => left - right));
-    expect(html).not.toContain("基本信息");
+    expect(html).not.toContain(expectedCopy("workflows.hub.detail.basics"));
     expect(html).not.toContain("Token 限制");
     expect(html).not.toContain("输入与输出");
-    expect(html).toContain("模型能力");
+    expect(html).toContain(expectedCopy("settings.modelProvider.capabilities"));
     const capabilitiesLabel =
       html.match(/<div[^>]*data-model-capabilities-label="true"[^>]*>/)?.[0] ?? "";
     expect(capabilitiesLabel).toContain("mb-1");
     expect(html).toContain('data-model-capabilities-options="true"');
-    expect(html).toContain("高级配置");
+    expect(html).toContain(expectedCopy("settings.modelProvider.advancedConfig"));
   });
 
   it("模型后缀不会覆盖传入的上下文配置", () => {
@@ -508,7 +483,10 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    const modelIdInput = extractInputTag(html, 'placeholder="模型 ID"');
+    const modelIdInput = extractInputTag(
+      html,
+      `placeholder="${expectedCopy("settings.modelProvider.modelId")}"`,
+    );
     const contextWindowInput = extractInputTag(html, 'inputMode="numeric"');
 
     expect(modelIdInput).not.toContain("autofocus");
@@ -535,7 +513,9 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).not.toMatch(/placeholder="模型 ID"[^>]*autofocus/);
+    expect(html).not.toMatch(
+      /placeholder=expectedCopy("settings.modelProvider.modelId")[^>]*autofocus/,
+    );
     expect(html).toMatch(/<input[^>]*autofocus[^>]*inputMode="numeric"[^>]*>/);
   });
 
@@ -580,19 +560,20 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).toContain("添加模型");
-    expect(html).toContain("模型 ID");
-    expect(html).not.toContain("API 格式");
+    expect(html).toContain(expectedCopy("settings.modelProvider.addModel"));
+    expect(html).toContain(expectedCopy("settings.modelProvider.modelId"));
+    expect(html).not.toContain('data-api-format-option="');
+    expect(html).not.toContain('data-api-format-selected-tag="');
     expect(html).not.toContain(">/anthropic/v1/messages<");
     expect(html).not.toContain(">/v1/chat/completions<");
     expect(html).not.toContain("Responses (/responses)");
-    expect(html).toContain("上下文窗口");
-    expect(html).toContain("最大输出 Token");
-    expect(html).toContain("输入类型");
+    expect(html).toContain(expectedCopy("settings.modelProvider.contextWindow"));
+    expect(html).toContain(expectedCopy("settings.modelProvider.maxOutputTokens"));
+    expect(html).toContain(expectedCopy("settings.modelProvider.inputModalities"));
     expect(html).not.toContain('data-model-input-modalities-description="true"');
     expect(html).not.toContain("暂不支持作为附件");
-    expect(html).not.toContain("输出类型");
-    expect(html).toContain("高级配置");
+    expect(html).not.toContain(expectedCopy("settings.modelProvider.outputModalities"));
+    expect(html).toContain(expectedCopy("settings.modelProvider.advancedConfig"));
     expect(html).not.toContain('data-model-settings-advanced-trigger="true"');
     expect(html).toContain('data-model-advanced="true"');
     expect(html).toContain('data-model-reasoning-level-editor="true"');
@@ -645,16 +626,20 @@ describe("ProviderModelMetadataDialog", () => {
     expect(html).toContain('value="1000000"');
     expect(html).not.toContain("settings.modelProvider.reasoningLevelOptionSpecJson");
     expect(html).toContain('data-model-settings-footer="true"');
-    expect(html).toContain(">取消<");
-    expect(html).toContain(">保存<");
-    const saveButton = extractButtonOpeningTag(html, "保存");
-    const cancelButton = extractButtonOpeningTag(html, "取消");
+    expect(html).toContain(`>${expectedCopy("common.cancel")}<`);
+    expect(html).toContain(`>${expectedCopy("common.save")}<`);
+    const saveButton = extractButtonOpeningTag(html, expectedCopy("common.save"));
+    const cancelButton = extractButtonOpeningTag(html, expectedCopy("common.cancel"));
     expect(saveButton).toContain('data-variant="default"');
     expect(saveButton).toContain('data-size="lg"');
     expect(cancelButton).toContain('data-variant="ghost"');
     expect(cancelButton).toContain('data-size="lg"');
-    expect(html.lastIndexOf(">取消<")).toBeLessThan(html.lastIndexOf(">保存<"));
-    expect(html.match(/添加模型/g)).toHaveLength(1);
+    expect(html.lastIndexOf(`>${expectedCopy("common.cancel")}<`)).toBeLessThan(
+      html.lastIndexOf(`>${expectedCopy("common.save")}<`),
+    );
+    expect(
+      html.match(new RegExp(expectedCopy("settings.modelProvider.addModel"), "g")),
+    ).toHaveLength(1);
   });
 
   it("解析模型配置时展示 loading，并允许保存按钮主动等待当前解析", () => {
@@ -678,12 +663,17 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).toContain("加载中...");
+    expect(html).toContain(expectedCopy("common.loading"));
     expect(html).toContain("animate-spin");
-    expect(extractInputTag(html, 'aria-label="最大输出 Token"')).not.toMatch(
-      /\sdisabled(?:=|\s|\/|>)/,
+    expect(
+      extractInputTag(
+        html,
+        `aria-label="${expectedCopy("settings.modelProvider.maxOutputTokens")}"`,
+      ),
+    ).not.toMatch(/\sdisabled(?:=|\s|\/|>)/);
+    expect(extractButtonOpeningTag(html, expectedCopy("common.save"))).not.toContain(
+      ' disabled=""',
     );
-    expect(extractButtonOpeningTag(html, "保存")).not.toContain(' disabled=""');
   });
 
   it("添加模型弹窗默认聚焦模型 ID，不自动聚焦上下文窗口", () => {
@@ -706,7 +696,10 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    const modelIdInput = extractInputTag(html, 'placeholder="模型 ID"');
+    const modelIdInput = extractInputTag(
+      html,
+      `placeholder="${expectedCopy("settings.modelProvider.modelId")}"`,
+    );
     const contextWindowInput = extractInputTag(html, 'inputMode="numeric"');
 
     expect(modelIdInput).toContain('autofocus=""');
@@ -733,10 +726,10 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).toContain("编辑模型配置");
+    expect(html).toContain(expectedCopy("settings.modelProvider.editModel"));
     expect(html).toContain('data-model-settings-footer="true"');
-    expect(html).toContain(">取消<");
-    expect(html).toContain(">保存<");
+    expect(html).toContain(`>${expectedCopy("common.cancel")}<`);
+    expect(html).toContain(`>${expectedCopy("common.save")}<`);
   });
 
   it("模型弹窗不展示 API 格式选项", () => {
@@ -760,7 +753,8 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).not.toContain("API 格式");
+    expect(html).not.toContain('data-api-format-option="');
+    expect(html).not.toContain('data-api-format-selected-tag="');
     expect(html).not.toContain('data-api-format-selected-tag="anthropic"');
     expect(html).not.toContain('data-api-format-option="anthropic"');
     expect(html).not.toContain(">/anthropic/v1/messages<");
@@ -792,7 +786,8 @@ describe("ProviderModelMetadataDialog", () => {
       }),
     );
 
-    expect(html).not.toContain("API 格式");
+    expect(html).not.toContain('data-api-format-option="');
+    expect(html).not.toContain('data-api-format-selected-tag="');
     expect(html).not.toContain(">/custom/chat<");
     expect(html).not.toContain(">/v1/chat/completions<");
   });

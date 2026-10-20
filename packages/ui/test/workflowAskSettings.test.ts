@@ -96,6 +96,8 @@ import { encodeCustomModelValue } from "@/lib/zcodeCustomModelValue.js";
 // eslint-disable-next-line import/first
 import { V4InteractionDialogs } from "@/v4/V4InteractionDialogs.js";
 
+import { expectedCopy } from "./helpers/uiCopy.js";
+
 const SCRIPT = 'const r = await agent("a").ask<string>("do");';
 const ALLOW = { optionId: "allowOnce", kind: "allowOnce", name: "Allow" };
 const SESSION = {
@@ -422,20 +424,32 @@ describe("确认窗里的两句话", () => {
   });
 
   it("zh-CN：两句与「原为」", () => {
-    renderDialog(workflowRequest(ADJUSTABLE), { locale: "zh-CN" });
-    expect(modelLine().textContent).toContain("子代理运行在");
-    expect(boundLine().textContent).toContain("最多");
-    expect(boundLine().textContent).toContain("个子代理同时运行");
-    expect(boundLine().textContent).toContain("= 默认");
+    renderDialog(workflowRequest(ADJUSTABLE));
+    expect(modelLine().textContent).toContain(
+      expectedCopy("chat.permission.workflow.settings.model.lead"),
+    );
+    expect(boundLine().textContent).toContain(
+      expectedCopy("chat.permission.workflow.settings.limit.lead"),
+    );
+    expect(boundLine().textContent).toContain(
+      expectedCopy("chat.permission.workflow.settings.limit.trail"),
+    );
+    expect(boundLine().textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.settings.limit.atDefault"),
+    );
     fireEvent.click(screen.getByTestId("workflow-permission-settings-bound-decrease"));
-    expect(boundLine().textContent).toContain("默认 13");
+    expect(boundLine().textContent).toContain(
+      expectedCopy("chat.toolCall.workflow.run.settings.limit.default", { n: 13 }),
+    );
     expect(screen.getByTestId("workflow-permission-settings-bound-was").textContent).toBe(
-      "· 原为 13",
+      `· ${expectedCopy("chat.permission.workflow.settings.was", { value: "13" })}`,
     );
     expect(
       screen.getByTestId("workflow-permission-settings-bound-reset").getAttribute("title"),
-    ).toBe("恢复原值");
-    expect(option("允许").textContent).toContain("按调整后的设置运行一次");
+    ).toBe(expectedCopy("chat.permission.workflow.settings.reset"));
+    expect(option("Allow").textContent).toContain(
+      expectedCopy("chat.permission.workflow.allowOnce.adjusted"),
+    );
   });
 
   it("换请求：设置回到新入参的起点，上一个窗的改动不带进下一个", () => {
@@ -496,8 +510,10 @@ describe("脚本点名了模型", () => {
   });
 
   it("zh-CN：「子代理默认运行在」", () => {
-    renderDialog(workflowRequest({ ...ADJUSTABLE, ...BINDINGS }), { locale: "zh-CN" });
-    expect(modelLine().textContent).toContain("子代理默认运行在");
+    renderDialog(workflowRequest({ ...ADJUSTABLE, ...BINDINGS }), { locale: "en-US" });
+    expect(modelLine().textContent).toContain(
+      expectedCopy("chat.permission.workflow.settings.model.leadDefault"),
+    );
   });
 
   it("旧 agent（纯文本）：同样不列名字，模型那一句说「默认」", () => {

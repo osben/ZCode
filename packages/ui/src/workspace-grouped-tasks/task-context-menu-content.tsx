@@ -7,6 +7,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu.js";
+import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 import { TaskGroupColorDot } from "@/workspace-grouped-tasks/colors.js";
 import type { TaskGroupMenuItem } from "@/workspace-grouped-tasks/types.js";
 
@@ -132,6 +133,13 @@ export function GroupedTaskContextMenuContent({
       >
         {intl.formatMessage({ id: "taskList.markAsUnread" })}
       </ContextMenuItem>
+      <TaskPullRequestMenuItems
+        task={task}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        onCopyText={onCopyText}
+      />
       <ContextMenuSeparator />
       <ContextMenuItem
         disabled={Boolean(disabledReason)}
@@ -146,10 +154,7 @@ export function GroupedTaskContextMenuContent({
       </ContextMenuItem>
       <ContextMenuItem
         onSelect={() =>
-          onCopyText(
-            intl.formatMessage({ id: "appHeader.copyPath" }),
-            task.workspacePath,
-          )
+          onCopyText(intl.formatMessage({ id: "appHeader.copyPath" }), task.workspacePath)
         }
       >
         {intl.formatMessage({ id: "appHeader.copyPath" })}
@@ -157,18 +162,13 @@ export function GroupedTaskContextMenuContent({
       <ContextMenuItem
         disabled={taskSessionFile.loading || !taskSessionFile.path}
         onSelect={() =>
-          onCopyText(
-            intl.formatMessage({ id: "appHeader.copyTaskPath" }),
-            taskSessionFile.path,
-          )
+          onCopyText(intl.formatMessage({ id: "appHeader.copyTaskPath" }), taskSessionFile.path)
         }
       >
         {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
       </ContextMenuItem>
       <ContextMenuItem
-        disabled={
-          taskNativeSessionLogFile.loading || !taskNativeSessionLogFile.path
-        }
+        disabled={taskNativeSessionLogFile.loading || !taskNativeSessionLogFile.path}
         onSelect={() =>
           onCopyText(
             intl.formatMessage({ id: "appHeader.copyLogPath" }),
@@ -180,10 +180,7 @@ export function GroupedTaskContextMenuContent({
       </ContextMenuItem>
       <ContextMenuItem
         onSelect={() =>
-          onCopyText(
-            intl.formatMessage({ id: "appHeader.copySessionId" }),
-            task.taskId,
-          )
+          onCopyText(intl.formatMessage({ id: "appHeader.copySessionId" }), task.taskId)
         }
       >
         {intl.formatMessage({ id: "appHeader.copySessionId" })}

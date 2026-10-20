@@ -7,6 +7,7 @@ import {
   buildFeatureRequestDescription,
 } from "@/feedback/FeatureRequestDialog.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const capturedFeatureRequestStore = vi.hoisted(() => ({
   open: true,
@@ -67,27 +68,27 @@ describe("FeatureRequestDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(FeatureRequestDialog, {
           feedbackService: createFeedbackService(),
         }),
       ),
     );
 
-    expect(html).toContain("给产品提需求");
-    expect(html).toContain("需求描述");
-    expect(html).toContain("期望的解决方案");
-    expect(html).toContain("重置内容");
-    expect(html).toContain("提交需求");
+    expect(html).toContain(expectedCopy("feedback.featureRequest.title"));
+    expect(html).toContain(expectedCopy("feedback.featureRequest.descriptionLabel"));
+    expect(html).toContain(expectedCopy("feedback.featureRequest.solutionLabel"));
+    expect(html).toContain(expectedCopy("feedback.featureRequest.reset"));
+    expect(html).toContain(expectedCopy("feedback.featureRequest.submit"));
     expect(html).not.toContain("截图");
-    expect(html).not.toContain("上传诊断日志");
+    expect(html).not.toContain(expectedCopy("feedback.submit.simple.logsLabel"));
   });
 
   it("aligns the feature request shell with the feedback dialog style", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(FeatureRequestDialog, {
           feedbackService: createFeedbackService(),
         }),
@@ -107,7 +108,7 @@ describe("FeatureRequestDialog", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(FeatureRequestDialog, {
           feedbackService: createFeedbackService(),
         }),

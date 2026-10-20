@@ -5,9 +5,15 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { expectedCopy } from "./helpers/uiCopy.js";
+
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    locale: "zh-CN",
+    locale: "en-US",
+    intl: {
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
+        expectedCopy(id, values),
+    },
   }),
 }));
 
@@ -53,10 +59,10 @@ describe("ConversationDraftSuggestedPrompts", () => {
 
     expect(rows).toHaveLength(items.length);
     for (const [index, item] of items.entries()) {
-      expect(rows[index]?.textContent).toBe(item.label.cn);
-      expect(rows[index]?.getAttribute("aria-label")).toBe(item.label.cn);
-      expect(rows[index]?.getAttribute("title")).toBe(item.label.cn);
-      expect(rows[index]?.textContent).not.toBe(item.prompt.cn);
+      expect(rows[index]?.textContent).toBe(item.label.en);
+      expect(rows[index]?.getAttribute("aria-label")).toBe(item.label.en);
+      expect(rows[index]?.getAttribute("title")).toBe(item.label.en);
+      expect(rows[index]?.textContent).not.toBe(item.prompt.en);
       expect(rows[index]?.getAttribute("data-draft-suggested-prompt")).toBe(item.id);
     }
     expect(view.container.textContent).not.toContain(items[1]?.plugin?.label.cn);
@@ -202,7 +208,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
         onSelect: vi.fn(),
       }),
     );
-    const originalPluginButton = screen.getByRole("button", { name: "制作 PDF" });
+    const originalPluginButton = screen.getByRole("button", { name: "Create PDF" });
 
     view.rerender(
       createElement(ConversationDraftSuggestedPrompts, {
@@ -213,15 +219,15 @@ describe("ConversationDraftSuggestedPrompts", () => {
           operationId: "install-document-skills",
           phase: "confirmation",
           message: "Enable Document Skills Plugin",
-          actionLabel: "确认",
+          actionLabel: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
           onAction,
           onDismiss,
         },
       }),
     );
 
-    const plainButton = screen.getByRole("button", { name: "检查 commit" });
-    const pluginButton = screen.getByRole("button", { name: "制作 PDF" });
+    const plainButton = screen.getByRole("button", { name: "Check commits" });
+    const pluginButton = screen.getByRole("button", { name: "Create PDF" });
     expect(pluginButton).toBe(originalPluginButton);
     expect(plainButton.hasAttribute("data-draft-suggested-plugin-popover-anchor")).toBe(false);
     expect(pluginButton.getAttribute("data-draft-suggested-plugin-popover-anchor")).toBe("true");
@@ -250,7 +256,9 @@ describe("ConversationDraftSuggestedPrompts", () => {
     expect(confirmationMessage?.textContent).toBe("Enable Document Skills Plugin");
     expect(confirmationMessage?.classList.contains("leading-4.5")).toBe(true);
 
-    const confirmButton = screen.getByRole("button", { name: "确认" });
+    const confirmButton = screen.getByRole("button", {
+      name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+    });
     expect(confirmButton.classList.contains("self-end")).toBe(true);
     fireEvent.click(confirmButton);
     expect(onAction).toHaveBeenCalledOnce();
@@ -267,7 +275,7 @@ describe("ConversationDraftSuggestedPrompts", () => {
           anchorItemId: "create-pdf",
           operationId: "install-document-skills",
           phase: "success",
-          message: "安装成功",
+          message: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded"),
         },
       }),
     );
@@ -291,7 +299,9 @@ describe("ConversationDraftSuggestedPrompts", () => {
     const successIcon = resultPopover.querySelector<SVGElement>(
       '[data-draft-suggested-plugin-success-icon="true"]',
     );
-    expect(successContent?.textContent).toBe("安装成功");
+    expect(successContent?.textContent).toBe(
+      expectedCopy("chat.draft.suggestedPrompt.pluginFlow.installSucceeded"),
+    );
     expect(successIcon?.classList.contains("size-4")).toBe(true);
     expect(componentSource).toContain('<AnimatePresence initial={false} mode="popLayout">');
     expect(componentSource).toContain('key={state.phase === "success" ? "success" : "steady"}');
@@ -301,7 +311,11 @@ describe("ConversationDraftSuggestedPrompts", () => {
     expect(componentSource).toContain("ease: [0.4, 0, 0.2, 1]");
     expect(componentSource).toContain("useReducedMotion");
     expect(stylesSource).not.toContain("zcode-draft-plugin-success-flip");
-    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: expectedCopy("chat.draft.suggestedPrompt.pluginFlow.confirm"),
+      }),
+    ).toBeNull();
   });
 
   it("renders nothing when the recommendation list is empty", () => {

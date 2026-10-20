@@ -52,38 +52,6 @@ function stepGlyphClassName(entry: ComposerWorktreePipelineEntry): string {
 const setupCardClassName =
   "mx-4 my-3 flex w-auto max-w-2xl flex-col items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground";
 
-/** Persistent first-in-history summary after Host activation clears the preparation marker. */
-export function ConversationWorktreeCreatedNotice({
-  branchName,
-  currentBranchName,
-  path,
-}: {
-  branchName?: string;
-  /** Undefined until Git status loads; null when the current worktree has no branch. */
-  currentBranchName?: string | null;
-  path: string;
-}) {
-  const { intl } = useZCodeIntl();
-  const displayBranchName = currentBranchName === undefined ? branchName : currentBranchName;
-
-  return (
-    <div
-      data-worktree-created="true"
-      className="mx-4 my-3 flex w-auto max-w-2xl items-start gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-ui-sm text-foreground"
-      role="status"
-    >
-      <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="font-medium">{intl.formatMessage({ id: "worktreeSetup.created" })}</span>
-        {displayBranchName ? (
-          <span className="text-ui-caption text-foreground-subtle">{displayBranchName}</span>
-        ) : null}
-        <span className="break-all text-ui-caption text-foreground-subtle">{path}</span>
-      </div>
-    </div>
-  );
-}
-
 export function ConversationWorktreeSetupSteps({
   workspacePath,
   workspaceIdentity,
@@ -240,6 +208,12 @@ export function ConversationWorktreeSetupSteps({
     // Rows disappear when the pipeline settles. The Host seed cannot reach live subscribers
     // (preparation metadata produces no delta), so its stale "preparing" value must never
     // resurrect the spinner after the local lifecycle already finished.
+    return null;
+  }
+  if (entry.status === "failed" && entry.returningToDraft) {
+    // The return-to-draft hand-off owns this failure and is about to settle the session and
+    // navigate back to the restored draft (spec §Return to draft on failure); the transient row
+    // must not offer Retry/Discard actions that would race the hand-off.
     return null;
   }
 

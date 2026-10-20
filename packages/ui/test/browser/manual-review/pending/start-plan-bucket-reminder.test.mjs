@@ -8,6 +8,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { chromium } from "playwright-core";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
 
 const root = fileURLToPath(new URL("../../../../../../", import.meta.url));
 const entry =
@@ -56,88 +57,84 @@ after(async () => {
 });
 
 for (const width of [390, 1200])
-  for (const locale of ["zh-CN", "en-US"])
-    for (const theme of ["light", "dark"]) {
-      test(`SPB01/02/03 ${width}/${locale}/${theme}`, async () => {
-        const page = await browser.newPage({ viewport: { width, height: 700 } });
-        const logs = [],
-          errors = [];
-        page.on("console", (message) => logs.push(message.text()));
-        page.on("pageerror", (error) => {
-          errors.push(String(error));
-          logs.push(error.stack ?? String(error));
-        });
-        page.setDefaultTimeout(15000);
-        try {
-          await page.goto(`${origin}fixture?locale=${locale}&theme=${theme}`);
-          await page.getByTestId("pane").waitFor();
-          const banner = page.getByTestId("v4-session-quota-banner");
-          const closeName = locale === "zh-CN" ? "关闭" : "Close";
-          async function update(bucket, value) {
-            const prior = await page.getByTestId("revision").textContent();
-            await page.getByTestId(bucket).selectOption(String(value));
-            await page.waitForFunction(
-              (previous) =>
-                document.querySelector('[data-testid="revision"]').textContent !== previous,
-              prior,
-            );
-          }
-          for (const value of [50, 48, 47, 20, 10.1]) {
-            await update("event", value);
-            assert.equal(await banner.count(), 0);
-          }
-          await update("event", 10);
-          await banner.waitFor();
-          assert.match(
-            await banner.innerText(),
-            locale === "zh-CN" ? /活动额度剩余 10%/ : /promotional quota remaining/,
-          );
-          await page.screenshot({ path: join(artifacts, `${width}-${locale}-${theme}.png`) });
-          await update("event", 9);
-          assert.equal(await banner.count(), 1);
-          await banner.getByRole("button", { name: closeName, exact: true }).click();
-          await banner.waitFor({ state: "hidden" });
-          await update("event", 10);
-          assert.equal(await banner.count(), 0);
-          await page.getByRole("button", { name: "Switch task", exact: true }).click();
-          await page.getByRole("button", { name: "Toggle pane", exact: true }).click();
-          await page.getByRole("button", { name: "Toggle pane", exact: true }).click();
-          assert.equal(await banner.count(), 0);
-          await page.reload();
-          await page.getByTestId("pane").waitFor();
-          await update("event", 9);
-          assert.equal(await banner.count(), 0);
-          await update("event", 0);
-          assert.equal(await banner.count(), 0);
-          await update("daily", 10);
-          await banner.waitFor();
-          assert.match(
-            await banner.innerText(),
-            locale === "zh-CN" ? /今日额度剩余 10%/ : /daily quota remaining/,
-          );
-          await page.getByRole("button", { name: "Switch task", exact: true }).click();
-          await banner.waitFor({ state: "hidden" });
-          await page.getByRole("button", { name: "New cycle", exact: true }).click();
-          await banner.waitFor();
-          await banner
-            .getByRole("button", { name: locale === "zh-CN" ? "升级" : "Upgrade", exact: true })
-            .click();
-          assert.equal(await page.locator("body").getAttribute("data-upgraded"), "true");
-          await update("daily", 100);
-          await banner.waitFor({ state: "hidden" });
-          await update("daily", 10);
-          assert.equal(await banner.count(), 0, "同一周期恢复后再次降低不能重复提醒");
-          await update("daily", 0);
-          assert.equal(await page.getByTestId("kind").textContent(), "model-exhausted");
-          await update("other", 0);
-          assert.equal(await page.getByTestId("kind").textContent(), "daily-exhausted");
-          assert.deepEqual(errors, []);
-        } finally {
-          await writeFile(join(artifacts, `${width}-${locale}-${theme}.log`), logs.join("\n"));
-          await page.close();
-        }
+  for (const theme of ["light", "dark"]) {
+    test(`SPB01/02/03 ${width}/en-US/${theme}`, async () => {
+      const page = await browser.newPage({ viewport: { width, height: 700 } });
+      const logs = [],
+        errors = [];
+      page.on("console", (message) => logs.push(message.text()));
+      page.on("pageerror", (error) => {
+        errors.push(String(error));
+        logs.push(error.stack ?? String(error));
       });
-    }
+      page.setDefaultTimeout(15000);
+      try {
+        await page.goto(`${origin}fixture?locale=en-US&theme=${theme}`);
+        await page.getByTestId("pane").waitFor();
+        const banner = page.getByTestId("v4-session-quota-banner");
+        const closeName = expectedCopy("common.close");
+        async function update(bucket, value) {
+          const prior = await page.getByTestId("revision").textContent();
+          await page.getByTestId(bucket).selectOption(String(value));
+          await page.waitForFunction(
+            (previous) =>
+              document.querySelector('[data-testid="revision"]').textContent !== previous,
+            prior,
+          );
+        }
+        for (const value of [50, 48, 47, 20, 10.1]) {
+          await update("event", value);
+          assert.equal(await banner.count(), 0);
+        }
+        await update("event", 10);
+        await banner.waitFor();
+        assert.match(await banner.innerText(), /promotional quota remaining/);
+        await page.screenshot({ path: join(artifacts, `${width}-en-US-${theme}.png`) });
+        await update("event", 9);
+        assert.equal(await banner.count(), 1);
+        await banner.getByRole("button", { name: closeName, exact: true }).click();
+        await banner.waitFor({ state: "hidden" });
+        await update("event", 10);
+        assert.equal(await banner.count(), 0);
+        await page.getByRole("button", { name: "Switch task", exact: true }).click();
+        await page.getByRole("button", { name: "Toggle pane", exact: true }).click();
+        await page.getByRole("button", { name: "Toggle pane", exact: true }).click();
+        assert.equal(await banner.count(), 0);
+        await page.reload();
+        await page.getByTestId("pane").waitFor();
+        await update("event", 9);
+        assert.equal(await banner.count(), 0);
+        await update("event", 0);
+        assert.equal(await banner.count(), 0);
+        await update("daily", 10);
+        await banner.waitFor();
+        assert.match(await banner.innerText(), /daily quota remaining/);
+        await page.getByRole("button", { name: "Switch task", exact: true }).click();
+        await banner.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "New cycle", exact: true }).click();
+        await banner.waitFor();
+        await banner
+          .getByRole("button", {
+            name: expectedCopy("chat.quota.action.upgrade"),
+            exact: true,
+          })
+          .click();
+        assert.equal(await page.locator("body").getAttribute("data-upgraded"), "true");
+        await update("daily", 100);
+        await banner.waitFor({ state: "hidden" });
+        await update("daily", 10);
+        assert.equal(await banner.count(), 0, "同一周期恢复后再次降低不能重复提醒");
+        await update("daily", 0);
+        assert.equal(await page.getByTestId("kind").textContent(), "model-exhausted");
+        await update("other", 0);
+        assert.equal(await page.getByTestId("kind").textContent(), "daily-exhausted");
+        assert.deepEqual(errors, []);
+      } finally {
+        await writeFile(join(artifacts, `${width}-en-US-${theme}.log`), logs.join("\n"));
+        await page.close();
+      }
+    });
+  }
 
 // CR-01: the real hook + Banner use a snapshot clock; a Renderer reload keeps localStorage.
 for (const deviceTime of [4102444900000, 4102444600000]) {

@@ -13,8 +13,36 @@ import {
 import {
   dismissFeedbackSubmissionJob,
   startFeedbackSubmissionJob,
+  type FeedbackSubmissionCopy,
 } from "@/feedback/feedbackSubmissionJob.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
+
+function createSubmissionCopy(): FeedbackSubmissionCopy {
+  return {
+    connectingLabel: expectedCopy("feedback.submission.connectingLabel"),
+    connectingDetail: expectedCopy("feedback.submission.connectingDetail"),
+    cancelingCreateLabel: expectedCopy("feedback.submission.cancelingCreateLabel"),
+    cancelingCreateDetail: expectedCopy("feedback.submission.cancelingCreateDetail"),
+    canceledLabel: expectedCopy("feedback.submission.canceledLabel"),
+    canceledDetail: expectedCopy("feedback.submission.canceledDetail"),
+    uploadingScreenshotLabel: expectedCopy("feedback.submission.uploadingScreenshotLabel"),
+    submittedLabel: expectedCopy("feedback.submission.submittedLabel"),
+    submittedDetail: expectedCopy("feedback.submission.submittedDetail"),
+    failedLabel: expectedCopy("feedback.submission.failedLabel"),
+    networkErrorDetail: expectedCopy("feedback.submission.networkErrorDetail"),
+    postCreateNetworkErrorDetail: expectedCopy("feedback.submission.postCreateNetworkErrorDetail"),
+    pausingLogLabel: expectedCopy("feedback.submission.pausingLogLabel"),
+    pausingLogDetail: expectedCopy("feedback.submission.pausingLogDetail"),
+    exportingLogLabel: expectedCopy("feedback.submission.exportingLogLabel"),
+    exportingLogDetail: expectedCopy("feedback.submission.exportingLogDetail"),
+    uploadingLogLabel: expectedCopy("feedback.submission.uploadingLogLabel"),
+    logUploadSuccessLabel: expectedCopy("feedback.submission.logUploadSuccessLabel"),
+    logUploadPausedLabel: expectedCopy("feedback.submission.logUploadPausedLabel"),
+    logUploadPausedDetail: expectedCopy("feedback.submission.logUploadPausedDetail"),
+    preparingUploadDetail: expectedCopy("feedback.submission.preparingUploadDetail"),
+  };
+}
 
 function createTicket(id: string): FeedbackTicketDetail {
   const summary: FeedbackTicketSummary = {
@@ -63,12 +91,12 @@ function renderIndicator(props?: Partial<FeedbackBackgroundUploadIndicatorViewPr
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(FeedbackBackgroundUploadIndicatorView, {
         status: "running",
         progress: {
           kind: "uploading-log",
-          label: "正在上传完整日志",
+          label: expectedCopy("feedback.submission.uploadingLogLabel"),
           detail: "2.0 MB / 4.0 MB",
           progress: 50,
         },
@@ -126,6 +154,7 @@ describe("FeedbackBackgroundUploadIndicator", () => {
     });
     const job = startFeedbackSubmissionJob({
       feedbackService,
+      copy: createSubmissionCopy(),
       ticketInput: {
         title: "后台上传反馈",
         description: "desc",
@@ -146,7 +175,7 @@ describe("FeedbackBackgroundUploadIndicator", () => {
       renderToStaticMarkup(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(FeedbackBackgroundUploadIndicator, {
             feedbackDialogOpen: true,
           }),
@@ -165,6 +194,7 @@ describe("FeedbackBackgroundUploadIndicator", () => {
     const jobs = ["并发反馈 A", "并发反馈 B"].map((title) =>
       startFeedbackSubmissionJob({
         feedbackService,
+        copy: createSubmissionCopy(),
         ticketInput: {
           title,
           description: title,
@@ -185,14 +215,14 @@ describe("FeedbackBackgroundUploadIndicator", () => {
     const html = renderToStaticMarkup(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(FeedbackBackgroundUploadIndicator, {
           feedbackDialogOpen: false,
         }),
       ),
     );
 
-    expect(html.match(/正在提交反馈/g)).toHaveLength(2);
+    expect(html.match(new RegExp(expectedCopy("feedback.background.title"), "g"))).toHaveLength(2);
     expect(html).toContain("flex-col");
     for (const job of jobs) {
       dismissFeedbackSubmissionJob(job.id);
@@ -202,17 +232,17 @@ describe("FeedbackBackgroundUploadIndicator", () => {
   it("renders a folded status capsule by default to avoid covering the workspace", () => {
     const html = renderIndicator();
 
-    expect(html).toContain("正在提交反馈");
+    expect(html).toContain(expectedCopy("feedback.background.title"));
     expect(html).toContain("rounded-xl border border-popover-border bg-popover");
     expect(html).toContain("grid-cols-[auto_minmax(0,1fr)_auto]");
     expect(html).toContain("gap-0.5");
     expect(html).not.toContain("rounded-md border border-border bg-surface");
-    expect(html).toContain("正在上传完整日志");
+    expect(html).toContain(expectedCopy("feedback.submission.uploadingLogLabel"));
     expect(html).toContain("50%");
-    expect(html).toContain("打开反馈提交详情");
-    expect(html).not.toContain("展开反馈提交状态");
+    expect(html).toContain(expectedCopy("feedback.background.open"));
+    expect(html).not.toContain(expectedCopy("feedback.background.expand"));
     expect(html).not.toContain("2.0 MB / 4.0 MB");
-    expect(html).not.toContain("暂停日志");
+    expect(html).not.toContain(expectedCopy("feedback.background.pauseLogs"));
   });
 
   it("keeps the success state folded with progress visible", () => {
@@ -220,34 +250,34 @@ describe("FeedbackBackgroundUploadIndicator", () => {
       status: "success",
       progress: {
         kind: "success",
-        label: "反馈已提交",
-        detail: "我们会尽快处理。",
+        label: expectedCopy("feedback.submission.submittedLabel"),
+        detail: expectedCopy("feedback.submission.submittedDetail"),
         progress: 100,
       },
     });
 
-    expect(html).toContain("反馈已提交");
+    expect(html).toContain(expectedCopy("feedback.submission.submittedLabel"));
     expect(html).toContain("100%");
     expect(html).toContain("width:100%");
-    expect(html).toContain("打开反馈提交详情");
-    expect(html).not.toContain("展开反馈提交状态");
-    expect(html).not.toContain("我们会尽快处理。");
+    expect(html).toContain(expectedCopy("feedback.background.open"));
+    expect(html).not.toContain(expectedCopy("feedback.background.expand"));
+    expect(html).not.toContain(expectedCopy("feedback.submission.submittedDetail"));
   });
 
   it("renders full progress details without log skip actions when expanded", () => {
     const html = renderIndicator({ defaultExpanded: true });
 
-    expect(html).toContain("正在提交反馈");
+    expect(html).toContain(expectedCopy("feedback.background.title"));
     expect(html).toContain("rounded-xl border border-popover-border bg-popover");
     expect(html).toContain("grid-cols-[auto_minmax(0,1fr)_auto]");
     expect(html).toContain("gap-0.5");
     expect(html).not.toContain("rounded-md border border-border bg-surface");
-    expect(html).toContain("正在上传完整日志");
+    expect(html).toContain(expectedCopy("feedback.submission.uploadingLogLabel"));
     expect(html).toContain("2.0 MB / 4.0 MB");
     expect(html).toContain("width:50%");
-    expect(html).toContain("点击查看详情");
-    expect(html).toContain("打开反馈提交详情");
-    expect(html).not.toContain("暂停日志");
+    expect(html).toContain(expectedCopy("feedback.background.openDetail"));
+    expect(html).toContain(expectedCopy("feedback.background.open"));
+    expect(html).not.toContain(expectedCopy("feedback.background.pauseLogs"));
     expect(html).not.toContain("不传日志");
   });
 
@@ -257,15 +287,15 @@ describe("FeedbackBackgroundUploadIndicator", () => {
       status: "paused-log",
       progress: {
         kind: "paused-log",
-        label: "已暂停日志上传",
-        detail: "日志是定位问题的必需材料，请继续上传。",
+        label: expectedCopy("feedback.submission.logUploadPausedLabel"),
+        detail: expectedCopy("feedback.submission.logUploadPausedDetail"),
         progress: 0,
       },
     });
 
-    expect(html).toContain("已暂停日志上传");
-    expect(html).toContain("继续上传");
-    expect(html).not.toContain("隐藏反馈提交状态");
+    expect(html).toContain(expectedCopy("feedback.submission.logUploadPausedLabel"));
+    expect(html).toContain(expectedCopy("feedback.submit.continueUpload"));
+    expect(html).not.toContain(expectedCopy("feedback.background.dismiss"));
     expect(html).not.toContain("不传日志");
   });
 });

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderModelsSection } from "@/settings/model-provider-section/ProviderCardSections.js";
 import { ProviderModelMetadataDialog } from "@/settings/model-provider-section/ProviderModelMetadataDialog.js";
 import { MODEL_PROVIDER_TEXT_IDLE_TRIGGER_MS } from "@/settings/model-provider-section/useIdleTrigger.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const providerSettingsServiceMock = vi.hoisted(() => ({
   resolveModelConfig: vi.fn(),
@@ -53,31 +53,21 @@ vi.mock("@/components/ui/dialog.js", () => ({
   DialogTrigger: ({ children }: { children: ReactNode }) => children,
 }));
 
-vi.mock("@/i18n/IntlProvider.js", () => ({
-  useZCodeIntl: () => ({
-    locale: "zh-CN",
-    intl: {
-      formatMessage: ({ id }: { id: string }) => {
-        const messages: Record<string, string> = {
-          "common.cancel": "取消",
-          "common.loading": "加载中...",
-          "common.save": "保存",
-          "settings.modelProvider.addModel": "添加模型",
-          "settings.modelProvider.advanced": "高级",
-          "settings.modelProvider.contextWindow": "上下文窗口",
-          "settings.modelProvider.editModel": "编辑模型配置",
-          "settings.modelProvider.editModelDescription": "编辑模型配置描述",
-          "settings.modelProvider.maxOutputTokens": "最大输出 Token",
-          "settings.modelProvider.modelId": "模型 ID",
-          "settings.modelProvider.models": "模型列表",
-          "settings.modelProvider.modelDefaultsLoaded":
-            zhCN["settings.modelProvider.modelDefaultsLoaded"],
-        };
-        return messages[id] ?? id;
+vi.mock("@/i18n/IntlProvider.js", async () => {
+  const enUS = (await import("@/i18n/locales/en-US.js")).default as Record<string, string>;
+  return {
+    useZCodeIntl: () => ({
+      locale: "en-US",
+      intl: {
+        formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
+          Object.entries(values ?? {}).reduce(
+            (result, [name, value]) => result.replaceAll(`{${name}}`, String(value)),
+            enUS[id] ?? id,
+          ),
       },
-    },
-  }),
-}));
+    }),
+  };
+});
 
 function createModelConfigResolution(maxOutputTokens = 32_000, contextWindow = 128_000) {
   const optionSpecs = {
@@ -143,16 +133,22 @@ function renderAddModelSection(onAddModel = vi.fn(() => true)) {
       onAddModel,
     }),
   );
-  fireEvent.click(screen.getByRole("button", { name: "添加模型" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: expectedCopy("settings.modelProvider.addModel") }),
+  );
   const contextWindowInput = document.querySelector<HTMLInputElement>('input[inputmode="numeric"]');
   if (!contextWindowInput) throw new Error("上下文窗口输入框未渲染");
   return {
     contextWindowInput,
-    maxOutputTokensInput: screen.getByLabelText("最大输出 Token") as HTMLInputElement,
-    modelIdInput: screen.getByPlaceholderText("模型 ID") as HTMLInputElement,
+    maxOutputTokensInput: screen.getByLabelText(
+      expectedCopy("settings.modelProvider.maxOutputTokens"),
+    ) as HTMLInputElement,
+    modelIdInput: screen.getByPlaceholderText(
+      expectedCopy("settings.modelProvider.modelId"),
+    ) as HTMLInputElement,
     onAddModel,
     saveButton: screen.getByRole("button", {
-      name: "保存",
+      name: expectedCopy("settings.modelProvider.save"),
     }) as HTMLButtonElement,
   };
 }
@@ -195,9 +191,13 @@ describe("provider model config resolution", () => {
       }),
     );
 
-    const maxOutputTokensInput = screen.getByLabelText("最大输出 Token");
+    const maxOutputTokensInput = screen.getByLabelText(
+      expectedCopy("settings.modelProvider.maxOutputTokens"),
+    );
     expect(maxOutputTokensInput.tagName).toBe("INPUT");
-    expect(screen.getByLabelText("上下文窗口").tagName).toBe("INPUT");
+    expect(
+      screen.getByLabelText(expectedCopy("settings.modelProvider.contextWindow")).tagName,
+    ).toBe("INPUT");
     for (const help of document.querySelectorAll("[data-model-help]")) {
       expect(help.closest("label")).toBeNull();
     }
@@ -206,7 +206,9 @@ describe("provider model config resolution", () => {
         .closest("[data-model-settings-group]")
         ?.getAttribute("data-model-settings-group"),
     ).toBe("tokens");
-    expect(screen.queryByRole("button", { name: "高级" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("settings.hooks.advanced") }),
+    ).toBeNull();
     expect(document.querySelector('[data-model-reasoning-level-editor="true"]')).toBeTruthy();
     expect(maxOutputTokensInput).toBeTruthy();
   });
@@ -311,7 +313,7 @@ describe("provider model config resolution", () => {
     });
     fireEvent.click(document.querySelector<HTMLButtonElement>("[data-model-advanced-trigger]")!);
     const webSearch = screen.getByRole("checkbox", {
-      name: "settings.modelProvider.supportsNativeWebSearch",
+      name: expectedCopy("settings.modelProvider.supportsNativeWebSearch"),
     });
     fireEvent.click(webSearch);
     expect(webSearch.getAttribute("aria-checked")).toBe("true");
@@ -485,9 +487,13 @@ describe("provider model config resolution", () => {
       }),
     );
 
-    const maxOutputTokensInput = screen.getByLabelText("最大输出 Token") as HTMLInputElement;
+    const maxOutputTokensInput = screen.getByLabelText(
+      expectedCopy("settings.modelProvider.maxOutputTokens"),
+    ) as HTMLInputElement;
 
-    expect(screen.queryByRole("button", { name: "高级" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: expectedCopy("settings.hooks.advanced") }),
+    ).toBeNull();
     // Todo141：最大输出在基础区，高级仍默认收起；查看/编辑/展开都不应触发 catalog 查询。
     const advanced = document.querySelector<HTMLElement>("[data-model-advanced]")!;
     const trigger = advanced.querySelector<HTMLButtonElement>("[data-model-advanced-trigger]")!;
@@ -530,13 +536,17 @@ describe("provider model config resolution", () => {
     expect(document.querySelector("textarea")?.getAttribute("placeholder")).toBe(
       "{'reasoning_effort': reasoningLevel}",
     );
-    expect(screen.getAllByText("已匹配到智能配置")).toHaveLength(1);
+    expect(
+      screen.getAllByText(expectedCopy("settings.modelProvider.modelDefaultsLoaded")),
+    ).toHaveLength(1);
 
     fireEvent.blur(modelIdInput);
     await act(async () => {
       await Promise.resolve();
       await vi.advanceTimersByTimeAsync(3_501);
     });
-    expect(screen.queryByText("已匹配到智能配置")).toBeNull();
+    expect(
+      screen.queryByText(expectedCopy("settings.modelProvider.modelDefaultsLoaded")),
+    ).toBeNull();
   });
 });

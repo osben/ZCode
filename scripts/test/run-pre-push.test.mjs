@@ -83,7 +83,15 @@ if (process.env.FAIL_STAGE && process.argv[3] === process.env.FAIL_STAGE) proces
   return { root, git, put, base, commit, run, pnpmCli };
 }
 
-const allStages = ["lint", "architecture:check", "test:unit:affected", "test:node"];
+const allStages = [
+  "lint",
+  "architecture:check",
+  "test-copy:check",
+  "test:unit:affected",
+  "test:node",
+];
+// Documentation-only pushes run the static stages and skip both test stages.
+const staticStages = allStages.slice(0, 3);
 
 test("supports executable package managers as well as JS entry points", async (t) => {
   const f = await fixture(t);
@@ -98,7 +106,7 @@ test("supports executable package managers as well as JS entry points", async (t
   );
   const result = await f.run({ npm_execpath: process.execPath });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(result.stages, allStages.slice(0, 2));
+  assert.deepEqual(result.stages, staticStages);
 });
 
 test("documentation-only commits run static checks and skip both test stages", async (t) => {
@@ -108,7 +116,7 @@ test("documentation-only commits run static checks and skip both test stages", a
   await f.commit();
   const result = await f.run();
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(result.stages, allStages.slice(0, 2));
+  assert.deepEqual(result.stages, staticStages);
   assert.match(result.stdout, /documentation-only.*skip/iu);
   assert.match(result.stdout, /lint.*passed.*\d+\.\d+s/u);
   assert.match(result.stdout, /total.*\d+\.\d+s/u);
@@ -119,7 +127,7 @@ test("deleted documentation is safe to skip", async (t) => {
   const f = await fixture(t);
   await rm(join(f.root, "README.md"));
   await f.commit();
-  assert.deepEqual((await f.run()).stages, allStages.slice(0, 2));
+  assert.deepEqual((await f.run()).stages, staticStages);
 });
 
 test("source, configuration, runtime Markdown, MDX and mixed changes retain tests", async (t) => {
@@ -156,7 +164,7 @@ test("existing branch pushes compare against the remote SHA supplied by Git", as
   const result = await f.run({
     ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${remote}\n`,
   });
-  assert.deepEqual(result.stages, allStages.slice(0, 2));
+  assert.deepEqual(result.stages, staticStages);
 });
 
 test("new branches prefer the actual default even with a stale staging ref", async (t) => {
@@ -170,7 +178,7 @@ test("new branches prefer the actual default even with a stale staging ref", asy
   const result = await f.run({
     ZCODE_PRE_PUSH_STDIN: `refs/heads/feature ${head} refs/heads/feature ${zeroSha}\n`,
   });
-  assert.deepEqual(result.stages, allStages.slice(0, 2));
+  assert.deepEqual(result.stages, staticStages);
 });
 
 test("multiple push refs and missing targets cannot use the documentation shortcut", async (t) => {

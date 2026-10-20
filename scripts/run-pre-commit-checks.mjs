@@ -23,8 +23,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { git, loadPendingUpstream, pendingIdenticalPaths } from "./fork-format-pending.mjs";
 
 export function resolveToolBin(packageName) {
   const require = createRequire(import.meta.url);
@@ -64,13 +65,23 @@ function runTool(packageName, args) {
   }
 }
 
-function main() {
+async function main() {
   const files = process.argv.slice(2).map((file) => file.replaceAll("\\", "/"));
   if (files.length === 0) {
     return;
   }
 
-  runTool("oxfmt", files);
+  // A staged file byte-identical to the pendingUpstreamCommit blob is left
+  // unformatted by oxfmt; oxlint still checks it. Spec: specs/fork-format-scope.md.
+  const repoRoot = (await git(process.cwd(), ["rev-parse", "--show-toplevel"])).trim();
+  const pending = await loadPendingUpstream(repoRoot, "index");
+  const repoPaths = files.map((file) => relative(repoRoot, resolve(file)).replaceAll("\\", "/"));
+  const identical = await pendingIdenticalPaths(repoRoot, repoPaths, pending, "index");
+  const formatTargets = files.filter((_, index) => !identical.has(repoPaths[index]));
+
+  if (formatTargets.length > 0) {
+    runTool("oxfmt", formatTargets);
+  }
   runTool("oxlint", files);
 }
 
@@ -78,5 +89,8 @@ const invokedDirectly =
   typeof process.argv[1] === "string" &&
   realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
 if (invokedDirectly) {
-  main();
+  main().catch((error) => {
+    console.error(`pre-commit: ${error.message}`);
+    process.exit(1);
+  });
 }

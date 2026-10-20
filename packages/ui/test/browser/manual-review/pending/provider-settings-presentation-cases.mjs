@@ -3,6 +3,8 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { registerProviderAppIconCases } from "./provider-app-icon-cases.mjs";
+import { expectedCopy } from "../../../helpers/uiCopy.js";
+import zhCN from "../../../../src/i18n/locales/zh-CN.js";
 
 export function registerProviderPresentationCases(getEnvironment) {
   registerProviderAppIconCases(getEnvironment);
@@ -42,7 +44,12 @@ export function registerProviderPresentationCases(getEnvironment) {
         );
         await page
           .getByTestId("subagent-error")
-          .getByText(locale === "zh-CN" ? "执行失败" : "Failed", { exact: true })
+          .getByText(
+            locale === "zh-CN"
+              ? zhCN["chat.toolCall.status.failed"]
+              : expectedCopy("chat.toolCall.status.failed"),
+            { exact: true },
+          )
           .hover();
         const detail = page
           .locator('[data-slot="tooltip-content"]')

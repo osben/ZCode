@@ -321,7 +321,7 @@ describe("coding plan embedded webview bridge", () => {
     const script = createCodingPlanAuthInjectionScript({
       provider: "bigmodel",
       theme: "zai-light",
-      locale: "zh-CN",
+      locale: "en-US",
       credentials: {
         bigmodelAccessToken: "bigmodel-business-token",
         zcodeJwtToken: "zcode-jwt",

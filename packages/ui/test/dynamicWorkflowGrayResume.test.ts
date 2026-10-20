@@ -83,7 +83,7 @@ function renderCard(
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(CreateWorkflowToolCallBlock, {
         toolCallNode: {
           toolCall: {
@@ -127,7 +127,7 @@ function renderDigest(onResume: (() => void) | undefined) {
   return render(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(WorkflowRunDigest, {
         graph: GRAPH as unknown as WorkflowRunDigestProps["graph"],
         name: "implement-verify",

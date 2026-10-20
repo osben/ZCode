@@ -7,10 +7,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import {
-  ConversationWorktreeCreatedNotice,
-  ConversationWorktreeSetupSteps,
-} from "@/v4/ConversationWorktreeSetupSteps.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,

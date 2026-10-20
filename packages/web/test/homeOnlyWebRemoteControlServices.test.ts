@@ -28,7 +28,7 @@ describe("createHomeOnlyWebRemoteControlServices", () => {
       matchMedia: () => ({ matches: false }),
       location: { search: "", pathname: "/" },
     });
-    vi.stubGlobal("navigator", { language: "zh-CN" });
+    vi.stubGlobal("navigator", { language: "en-US" });
 
     const { createHomeOnlyWebRemoteControlServices } = await import("../src/main.js");
     const services = createHomeOnlyWebRemoteControlServices();
@@ -92,7 +92,7 @@ describe("createHomeOnlyWebRemoteControlServices", () => {
       matchMedia: () => ({ matches: false }),
       location: { search: "", pathname: "/" },
     });
-    vi.stubGlobal("navigator", { language: "zh-CN" });
+    vi.stubGlobal("navigator", { language: "en-US" });
 
     const { createHomeOnlyWebRemoteControlServices } = await import("../src/main.js");
     const services = createHomeOnlyWebRemoteControlServices();

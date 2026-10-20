@@ -1,5 +1,6 @@
 import type { MouseEvent, UIEvent } from "react";
 import { useEffect, useRef, useState } from "react";
+import { TID_CODING_PLAN_QUOTA_RESET_ACTION } from "@zcode/shared";
 import type { CodingPlanResetType } from "@zcode/shared";
 import { CheckIcon, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -319,6 +320,8 @@ export function CodingPlanQuotaResetDialog({
                           </div>
                           <Button
                             type="button"
+                            data-testid={TID_CODING_PLAN_QUOTA_RESET_ACTION}
+                            data-reset-type={item.resetType}
                             variant="default"
                             size="sm"
                             aria-label={

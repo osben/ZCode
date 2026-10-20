@@ -10,6 +10,7 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ConversationFileSummaryPanel } from "@/v4/ConversationFileSummaryPanel.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 const { collapsibleOpenChanges, openSplitButtonProps } = vi.hoisted(() => ({
   collapsibleOpenChanges: [] as Array<(open: boolean) => void>,
@@ -49,7 +50,11 @@ vi.mock("@/OpenSplitButton.js", async () => {
   return {
     OpenSplitButton: (props: Record<string, unknown>) => {
       openSplitButtonProps.push(props);
-      return React.createElement("button", { type: "button" }, "打开");
+      return React.createElement(
+        "button",
+        { type: "button" },
+        expectedCopy("chat.changeSummary.openInEditor"),
+      );
     },
   };
 });
@@ -109,7 +114,7 @@ function renderPanel(contextOverrides: Partial<ConversationRowRenderContext> = {
   return renderToStaticMarkup(
     createElement(
       ZCodeIntlProvider,
-      { initialLocale: "zh-CN" },
+      { initialLocale: "en-US" },
       createElement(ConversationFileSummaryPanel, {
         header: header(),
         context,
@@ -264,7 +269,7 @@ describe("ConversationFileSummaryPanel", () => {
         root.render(
           createElement(
             ZCodeIntlProvider,
-            { initialLocale: "zh-CN" },
+            { initialLocale: "en-US" },
             createElement(ConversationFileSummaryPanel, {
               header: header({
                 fileChanges: { files: 2, additions: 77, deletions: 3, state: "active" },
@@ -282,7 +287,9 @@ describe("ConversationFileSummaryPanel", () => {
         );
       });
       expect(fetchFileChanges).toHaveBeenCalledTimes(1);
-      expect(collectText(container)).toContain("1 个文件已更改");
+      expect(collectText(container)).toContain(
+        expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+      );
       expect(collectText(container)).toContain("+7");
       expect(collectText(container)).toContain("-2");
       expect(collectText(container)).not.toContain("+77");
@@ -302,7 +309,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -345,7 +352,7 @@ describe("ConversationFileSummaryPanel", () => {
     const render = (rowId: number) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({ rowId, entityId: `header-${rowId}` }),
           context,
@@ -383,7 +390,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             assistantText: `::visualize${JSON.stringify({ path })}`,
@@ -397,7 +404,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       ),
     );
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
     await act(async () => collapsibleOpenChanges.at(-1)?.(true));
     expect(fetchFileChanges).toHaveBeenCalledTimes(2);
     expect(collectText(container)).toBe("");
@@ -452,7 +461,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             context,
@@ -460,7 +469,9 @@ describe("ConversationFileSummaryPanel", () => {
         ),
       );
     });
-    expect(collectText(container)).toContain("1 个文件已更改");
+    expect(collectText(container)).toContain(
+      expectedCopy("chat.changeSummary.filesChanged.one", { count: 1 }),
+    );
 
     await act(async () => {
       collapsibleOpenChanges.at(-1)?.(true);
@@ -471,10 +482,10 @@ describe("ConversationFileSummaryPanel", () => {
     expect(text).toContain("input.html");
     expect(text).toContain("+11");
     expect(text).not.toContain("2 次修改");
-    expect(text).toContain("审查");
-    expect(text).toContain("打开");
+    expect(text).toContain(expectedCopy("chat.changeSummary.review"));
+    expect(text).toContain(expectedCopy("chat.changeSummary.openInEditor"));
     expect(collectClassNames(container)).toContain("w-full bg-background/50 overflow-hidden");
-    expect(text).not.toContain("暂时无法预览这份 Diff。");
+    expect(text).not.toContain(expectedCopy("chat.changeSummary.diffUnavailable"));
     expect(openSplitButtonProps.at(-1)).toMatchObject({
       hideOpenWithMenu: false,
       target: {
@@ -519,7 +530,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             context,
@@ -577,7 +588,7 @@ describe("ConversationFileSummaryPanel", () => {
       root.render(
         createElement(
           ZCodeIntlProvider,
-          { initialLocale: "zh-CN" },
+          { initialLocale: "en-US" },
           createElement(ConversationFileSummaryPanel, {
             header: header(),
             context,
@@ -648,7 +659,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForState = (state: TurnHeaderRow["state"]) =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({ state }),
           context,
@@ -711,7 +722,7 @@ describe("ConversationFileSummaryPanel", () => {
     const renderPanelForFileState = (state: "active" | "reverted") =>
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: "en-US" },
         createElement(ConversationFileSummaryPanel, {
           header: header({
             fileChanges: {

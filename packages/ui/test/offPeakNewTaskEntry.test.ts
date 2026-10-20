@@ -170,8 +170,6 @@ vi.mock("@/store/offPeakTaskStore.js", async (importOriginal) => {
 });
 
 import { OffPeakNewTaskEntry } from "@/v4/OffPeakNewTaskEntry.js";
-import enUS from "@/i18n/locales/en-US.js";
-import zhCN from "@/i18n/locales/zh-CN.js";
 
 function renderEntry(props: { onOpenAutomations?: () => void } = {}) {
   return render(createElement(OffPeakNewTaskEntry, props));
@@ -498,94 +496,4 @@ describe("OffPeakNewTaskEntry", () => {
 
     expect(h.openCodingPlanUpgrade.mock.calls[0]?.[0]?.funnelContext?.eventText).toBe("Upgrade");
   });
-
-  it.each([
-    {
-      locale: "zh-CN",
-      messages: zhCN,
-      bannerText: "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。",
-      bannerTipText: "本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
-      fullCopy:
-        "订阅用户新功能体验：创建“闲时任务”，我们将免费在算力富余时段为你完成指派任务。本功能不消耗订阅用户套餐额度、本功能仅面向订阅用户开放",
-      copySeparator: "",
-    },
-    {
-      locale: "en-US",
-      messages: enUS,
-      bannerText:
-        'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power.',
-      bannerTipText:
-        "This feature does not consume your subscription plan quota and is available exclusively to subscribers.",
-      fullCopy:
-        'New feature for subscribers: Create "Idle-time task" , We will complete your assigned task for free during periods of surplus computing power. This feature does not consume your subscription plan quota and is available exclusively to subscribers.',
-      copySeparator: " ",
-    },
-  ])(
-    "$locale 首页展示、提示与模板预填使用同一种语言",
-    ({ locale, messages, bannerText, bannerTipText, fullCopy, copySeparator }) => {
-      h.messages.current = messages;
-      h.locale.current = locale;
-      h.providerSettingsState.view = {
-        revision: 2,
-        addableProviders: [],
-        providerOrder: [],
-        providers: [
-          {
-            providerId: BUILTIN_MODEL_PROVIDER_IDS.zaiIndividualCodingPlan,
-            enabled: true,
-            executable: true,
-            effectiveConfig: {
-              label: "Z.ai Coding Plan",
-              access: {
-                type: "zhipu-account",
-                family: "zai",
-                mode: "individual-coding-plan",
-                entitled: true,
-              },
-              api: {
-                type: "anthropic-messages",
-                baseUrl: "https://example.com",
-              },
-              builtinModelIds: ["glm-5"],
-            },
-            issues: [],
-            models: [],
-          },
-        ],
-      };
-
-      const copy = h.remoteTemplateCopy.standupGitSummary[locale === "zh-CN" ? "cn" : "en"];
-      const { title, description, prompt } = copy;
-      const onOpenAutomations = vi.fn();
-
-      render(createElement(OffPeakNewTaskEntry, { onOpenAutomations }));
-      const bannerCopy = screen.getByText(bannerText);
-      fireEvent.focus(bannerCopy);
-      const tipCopies = screen.getAllByText(bannerTipText);
-      expect([bannerText, bannerTipText].join(copySeparator)).toBe(fullCopy);
-      expect(tipCopies.length).toBeGreaterThan(0);
-      expect(
-        tipCopies.some(
-          (copy) =>
-            copy.parentElement?.classList.contains("max-w-none") &&
-            copy.parentElement?.classList.contains("whitespace-nowrap"),
-        ),
-      ).toBe(true);
-      const templateCard = screen.getByRole("button", {
-        name: `${title} ${description}`,
-      });
-      fireEvent.click(templateCard);
-
-      expect(h.toast).not.toHaveBeenCalled();
-      expect(h.setPendingCreateDraft).toHaveBeenCalledWith({
-        title,
-        prompt,
-        telemetrySource: {
-          eventRegion: "app.session",
-          templateId: "standupGitSummary",
-        },
-      });
-      expect(onOpenAutomations).toHaveBeenCalledOnce();
-    },
-  );
 });

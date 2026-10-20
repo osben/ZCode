@@ -26,9 +26,10 @@ describe("chat input context usage formatting", () => {
   });
 
   it("uses localized compact token units for Chinese locale", () => {
+    const chineseLocale = "zh-CN";
     expect(
       formatContextUsageSummary({
-        locale: "zh-CN",
+        locale: chineseLocale,
         percent: 0.125,
         size: 1_000_000,
         used: 125_000,

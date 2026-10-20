@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { TID_ASSISTANT_CODE_COMMENT_ITEM, TID_ASSISTANT_CODE_COMMENT_TOGGLE } from "@zcode/shared";
 import { AssistantCodeCommentCards } from "@/AssistantCodeCommentCards.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
+import { TEST_LOCALE } from "./helpers/uiCopy.js";
 import {
   buildAssistantCodeCommentCards,
   projectAssistantCodeComments,
@@ -25,10 +27,10 @@ describe("web remote control Assistant code-comment capability", () => {
     expect(projection.visibleText).not.toContain("::code-comment");
     expect(cards).toHaveLength(1);
 
-    render(
+    const { getByTestId } = render(
       createElement(
         ZCodeIntlProvider,
-        { initialLocale: "zh-CN" },
+        { initialLocale: TEST_LOCALE },
         createElement(AssistantCodeCommentCards, {
           cards,
           workspacePath,
@@ -39,8 +41,9 @@ describe("web remote control Assistant code-comment capability", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /展开 1 条评论/ }));
-    fireEvent.click(screen.getByRole("button", { name: /检查入口/ }));
+    fireEvent.click(getByTestId(TID_ASSISTANT_CODE_COMMENT_TOGGLE));
+    const commentCard = getByTestId(TID_ASSISTANT_CODE_COMMENT_ITEM);
+    fireEvent.click(commentCard);
 
     expect(onOpenCodeViewer).toHaveBeenCalledWith(
       expect.objectContaining({
