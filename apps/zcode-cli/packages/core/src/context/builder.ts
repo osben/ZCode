@@ -126,7 +126,9 @@ export class ContextBuilder {
         }),
       );
     } else if (workflowActor !== undefined) {
-      sections.push(buildWorkflowActorIdentitySection(workflowActor, { includeHarness: !harnessOff }));
+      sections.push(
+        buildWorkflowActorIdentitySection(workflowActor, { includeHarness: !harnessOff }),
+      );
     } else {
       sections.push(
         buildIdentitySection(
@@ -159,10 +161,10 @@ export class ContextBuilder {
       const sessionGuidanceSection =
         isWorkflowActor || harnessOff
           ? null
-        : buildSessionGuidanceSection(
-            this.config.guidanceToolNames ?? [],
-            (this.config.skills?.skills.length ?? 0) > 0,
-          );
+          : buildSessionGuidanceSection(
+              this.config.guidanceToolNames ?? [],
+              (this.config.skills?.skills.length ?? 0) > 0,
+            );
       if (sessionGuidanceSection) {
         sections.push(sessionGuidanceSection);
       }

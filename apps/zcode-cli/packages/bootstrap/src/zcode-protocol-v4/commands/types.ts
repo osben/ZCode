@@ -39,6 +39,9 @@ export interface V4CommandLogger {
 
 export type V4QueueItemCommand = QueueItem;
 
+/** Protocol shape of one turn's execution material. */
+export type V4TurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
+
 /**
  * Prepared-worktree activation outcome reported by host.createSessionRecord:
  * - "materialized": this call created the runtime; the handler applies startup config and admits
@@ -54,9 +57,6 @@ export type PreparedWorktreeActivationOutcome =
   | "input-pending"
   | "input-admitted"
   | "already-active";
-
-/** 单轮执行材料的协议原形。 */
-export type V4TurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelExecution"]>;
 
 /**
  * Highspeed 队列项的临时执行包。QueueItem.modelSelection 只保存普通提交模型；

@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { resolveExecutionContextBudgetThresholds } from "../src/runtime/methods/compact.js";
 import {
-  resolveExecutionContextBudgetThresholds,
-} from "../src/runtime/methods/compact.js";
-import {
-  DEFAULT_AUTOCOMPACT_OUTPUT_RESERVE_TOKENS,
-  MAX_OUTPUT_TOKENS_FOR_SUMMARY,
   estimateMessageTokens,
   getAutoCompactOutputReserveTokens,
   getAutoCompactThreshold,

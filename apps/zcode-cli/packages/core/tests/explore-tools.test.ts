@@ -32,8 +32,8 @@ describe("Explore tool policy", () => {
       "WebSearch",
       "TodoWrite",
     ]);
-    expect(
-      formatExploreAllowedToolsForAgentDescription({ embeddedSearchEnabled: true }),
-    ).toBe("Read, Bash, WebFetch, WebSearch, TodoWrite, LSP");
+    expect(formatExploreAllowedToolsForAgentDescription({ embeddedSearchEnabled: true })).toBe(
+      "Read, Bash, WebFetch, WebSearch, TodoWrite, LSP",
+    );
   });
 });

@@ -1275,9 +1275,15 @@ export async function createSessionRecordForV4(
   rawParams: unknown,
   preparedSessionId?: string,
 ) {
-  return createSessionWithProjection(context, rawParams, undefined, async (record) => ({
-    value: { sessionId: record.app.sessionId },
-  }), preparedSessionId);
+  return createSessionWithProjection(
+    context,
+    rawParams,
+    undefined,
+    async (record) => ({
+      value: { sessionId: record.app.sessionId },
+    }),
+    preparedSessionId,
+  );
 }
 
 async function createSessionWithProjection<T>(

@@ -281,7 +281,12 @@ export function appendFormattedContextToSerialization(
     entry.modelContentProtection === OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION &&
     hasImageBlock(serialization.modelContent ?? serialization.content)
   ) {
-    return appendHookWithoutReorderingStructuredContent(serialization, formattedContext, suffix, maxModelBytes);
+    return appendHookWithoutReorderingStructuredContent(
+      serialization,
+      formattedContext,
+      suffix,
+      maxModelBytes,
+    );
   }
   const previewDirection = entry.resultBudget?.preview?.direction ?? "head";
   const modelContent = serialization.modelContent ?? serialization.content;

@@ -225,9 +225,7 @@ async function sessionHasAdmittedInput(
   const store = context.deps.sessionStore;
   if (!store?.listSessionInputs) return true;
   const inputs = await store.listSessionInputs({ sessionID: sessionId as SessionId });
-  return inputs.some(
-    (input) => input.status === "admitted" || input.status === "promoted",
-  );
+  return inputs.some((input) => input.status === "admitted" || input.status === "promoted");
 }
 
 async function persistPreparedWorktreeStatus(
