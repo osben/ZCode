@@ -84,7 +84,8 @@ test("full selection with --on-full run executes the suite instead of skipping",
   assert.match(result.stdout, /选中 1\/1/u);
   assert.match(result.stderr, /--on-full run：执行全量/u);
   assert.doesNotMatch(result.stderr, /已跳过 UT/u);
-  assert.match(result.stdout, /Test Files\s+1 passed/u);
+  // CI forces ANSI colors into the captured non-TTY output; strip them before asserting the summary.
+  assert.match(result.stdout.replaceAll(/\x1B\[\d+m/gu, ""), /Test Files\s+1 passed/u);
 });
 
 test("full selection with --on-full run propagates test failures", async (t) => {
