@@ -50,14 +50,10 @@ export function buildRegistryModelSelectGroups(
       : null;
 
     // 合并菜单仍需区分同名供应商的接入方式；API 标识直接来自 access，不能从名称猜测。
+    // Only the ChatGPT plan and the api.openai.com key get an access badge; other API-key providers stay unbadged.
     const labelBadge =
       accountPresentation?.labelBadge ??
-      (provider.config.access?.type === "chatgpt-account"
-        ? (labels.chatgptPlanBadgeLabel ?? "Subscription")
-        : provider.config.access?.type === "api-key" ||
-            provider.config.access?.type === "zhipu-coding-plan-api-key"
-          ? (labels.apiKeyBadgeLabel ?? "API")
-          : undefined);
+      getAccessTypeGroupBadge(provider.config.access, provider.config.api?.baseUrl, labels);
 
     return [
       {
@@ -81,6 +77,30 @@ export function buildRegistryModelSelectGroups(
       },
     ];
   });
+}
+
+function getAccessTypeGroupBadge(
+  access: { type: string } | null | undefined,
+  baseUrl: string | null | undefined,
+  labels: ModelProviderGroupLabelOptions,
+): string | undefined {
+  if (access?.type === "chatgpt-account") {
+    return labels.chatgptPlanBadgeLabel ?? "Subscription";
+  }
+  if (access?.type === "api-key" && isApiOpenAiBaseUrl(baseUrl)) {
+    return labels.apiKeyBadgeLabel ?? "API";
+  }
+  return undefined;
+}
+
+function isApiOpenAiBaseUrl(baseUrl: string | null | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    return hostname === "api.openai.com" || hostname.endsWith(".api.openai.com");
+  } catch {
+    return false;
+  }
 }
 
 function getRegistryAccountProviderGroupPresentation(

@@ -67,7 +67,9 @@ describe("归档更多菜单", () => {
     expect(service.deleteArchivedTasks).not.toHaveBeenCalled();
   });
 
-  it("取消后可以重新打开；确认期间禁用入口，菜单关闭后仍展示完成结果", async () => {
+  // TEMPORARY(UI-2): the fork replaced the archived bulk-delete useConfirmDialog flow with TaskDeleteConfirmationDialog (eraseTasks);
+  // the fork test for that flow imports the fork-only WebRemoteControlTaskIndex, which upstream 3.16.1 does not have. Ledger: ui-fix-g3.
+  it.skip("取消后可以重新打开；确认期间禁用入口，菜单关闭后仍展示完成结果", async () => {
     const { toolbar, container, service, onDeleted } = mount();
     confirm.mockResolvedValueOnce(false);
     fireEvent.click(await openMenu(toolbar));

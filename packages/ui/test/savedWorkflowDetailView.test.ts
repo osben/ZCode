@@ -289,7 +289,7 @@ describe("SavedWorkflowDetailView", () => {
   it("文件读不到时标题旁仍写着项目归属", async () => {
     detailResult.current = { ok: false, reason: "not_found" };
     mount({ entry: undefined, projectLabel: "Alpha" });
-    await screen.findByText("这个工作流已不在项目里。");
+    await screen.findByText(expectedCopy("workflows.hub.detail.notFound"));
     expect(screen.getByTestId(TID_WORKFLOW_DETAIL_PROJECT).textContent).toBe("Alpha");
   });
 
