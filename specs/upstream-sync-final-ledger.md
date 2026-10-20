@@ -552,3 +552,15 @@ Spec: `specs/ui-pins-upstream-migration.md`. Upstream project pin (`projects.pin
 - Tests: `packages/services/test/forkWorkspacePinMigration.test.ts` (11 cases including idempotency and crash-before-marker).
 - Known failing before this change, unchanged: `botsProjectBinding`, `botsService.groups`, `botsService.messageFlow`, `botsService.permissionsWorkspace` (18 tests, see "Still failing" above; verified identical on the base tree in this branch).
 - `/plan` shortcut: NOT done in this PR. See the PR1b note below.
+
+## ui parity src3
+
+Status: PARTIAL. Only the `/plan` slice was done in this pass; the file hand-merge (task B) and sidebar retirement (task C) were not started.
+
+- `docs/plan-slash-command.md`: replaced with upstream 3.16.1 (toggle-only palette term; raw `/plan` text sent literally).
+- `packages/desktop/test/e2e/conversation-session/conversation-session-v4-plan-shortcut.test.ts`: replaced with upstream (raw `/plan` does not switch mode).
+- Source check: no `/plan` text-shortcut parser remains in `packages/ui/src`. `v4SlashCommands.test.ts` and `promptInputTriggers.test.ts` already equal upstream.
+- Kept: `v4SessionPaneModelSwitchRecovery.test.ts` (holds the incognito/worktree draft-send cases that must survive; its literal `/plan` case passes).
+- Verified: `node scripts/check-test-copy.mjs` exit 0; `v4SlashCommands`, `promptInputTriggers`, `v4SessionPaneModelSwitchRecovery` tests 123/123 pass.
+- Not yet run: `pnpm typecheck`, `pnpm lint`, full `packages/ui/test` run.
+- Not done: task B (19-file hand-merge, `parts/uisrc3.txt`); task C (`workspace-grouped-tasks/` retirement).
