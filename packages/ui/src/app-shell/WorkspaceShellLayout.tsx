@@ -402,7 +402,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleStartDraftInWorkspace,
   handleOpenCommandCenter,
   handleRefreshGit,
-  handleOpenModelTrajectory,
   handleBrowserUrlChange,
   handleBrowserPageMetadataChange,
   handleToggleSidebar,
@@ -1903,14 +1902,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       });
     }
   }, [activeTaskId, workspaceKey]);
-  // The launcher entry targets the active task only; the tab owner dedupes by `model-trajectory:<taskId>`.
-  const handleOpenModelTrajectoryLauncher = useCallback(() => {
-    if (!activeTaskId) return;
-    handleOpenModelTrajectory({
-      taskId: activeTaskId,
-      title: resolvedActiveTaskMeta?.title ?? null,
-    });
-  }, [activeTaskId, handleOpenModelTrajectory, resolvedActiveTaskMeta]);
   const renderSidePanePanel = (options: { mobileOverlay?: boolean } = {}) => (
     <AnimatedSidePanePanel
       services={services}
@@ -1980,7 +1971,6 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       onOpenTerminalTab={handleOpenTerminalTab}
       onOpenReviewTab={handleToggleGit}
       onOpenSelectionSideConversation={handleOpenSelectionSideConversationLauncher}
-      onOpenModelTrajectory={handleOpenModelTrajectoryLauncher}
       onOpenPlanDetail={handleOpenPlanDetail}
       onRevealGitFileInTree={handleRevealGitFileInTree}
       onOpenBrowserUrl={handleOpenBrowserUrl}
