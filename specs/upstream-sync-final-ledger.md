@@ -541,6 +541,21 @@ The four bots files (18 tests) need the upstream bot workspace model end to end,
 
 Recommendation recorded for the coordinator: decide whether the bot workspace id moves to `[hostId, projectId]` (upstream) or stays on the fork identity (`/remote`). Until then, `botsService.ts` is unchanged in this slice, so production bots behavior is unchanged. Production (`node.ts`) does not pass `projectService` to `createBotsService`, so the upstream bot path is test-only, as it was before this slice.
 
+## relay v2 desktop
+
+Full design notes: `specs/relay-v2-migration.md` section 12. Ledger rows for this slice:
+
+- `packages/desktop/src/main/web-remote-relay/**`: taken from upstream 0a1fc56d (contract, device storage, V2 HTTP, WS transport, module, CONTRACT.md); CJK comments translated; new `webRemoteControlRelaySession.ts` (bearer exchange, spec 11.2).
+- `packages/desktop/src/main/webRemoteControlManager.ts`: upstream 0a1fc56d manager with the fork hunks re-applied (`openWorkspace` / `workspace-open-request`, bots `findLinkForWorkspace` on V2, `resetPairing` for the refresh QR, `repairRequired`, `relayBearer` seam). CJK comments translated. Upstream mobile task view behavior comes with it.
+- Removed V1 desktop files: `webRemoteControlTransport.ts`, `webRemoteControlRelayAuthProvider.ts`, `webRemoteControlRelayAuthStorageProvider.ts`. Removed V1 tests: `webRemoteControlRelayAuthProvider.test.ts`, `webRemoteControlRelayAuthStorageProvider.test.ts` (V1 HMAC proof and pass-hash storage; V2 has no proof).
+- Not ported: upstream `webRemoteControlAuthGateFixture.test.ts` (auth-gate fixture is web-client slice S3).
+- Intentional behavior changes (ledgered, fork tests replaced by V2 tests): `zcodeEndpoint` relay URL and callback values (ws2 and `/remote/v4`), QR without credentials, task-list sync removed (bootstrap `tasks: []`), relay HTTP on the relay origin.
+- Test expectations moved from V1 values in `webRemoteControlManagerExternalRelay.test.ts`: relay input is the origin (`ws://relay.test`, was `.../ws`), mobile QR base is `/remote/v4` (was `/remote/v3`). The endpoint-derived default QR base in the "current endpoint resolver" test stays `/remote/v3`, because `buildZCodeEndpointUrls` picks the path version from the app version.
+- Shared additions (additive): see spec 12 item 11; channel `ResetWebRemoteControlPairing` restored; `WebRemoteControlStatus.repairRequired`.
+- `packages/desktop/tsconfig.e2e.json`: the TEMPORARY(relay-decision) exclude is removed; the four relay-v2 e2e files compile.
+- `architecture-policy.yaml`: new managed module `desktop-web-remote-relay`.
+- Not in this PR: `packages/remote-relay/test/clientCompatibility.test.ts` (V1 end-to-end test with HMAC proofs). The server slice (S4) owns that file and removes it there.
+
 ## UI parity: pins (ui-parity-pins, PR1a)
 
 Spec: `specs/ui-pins-upstream-migration.md`. Upstream project pin (`projects.pinned`) is the only pin writer.
@@ -608,3 +623,20 @@ Result: no source hunk was changed. Every fork-only hunk in these files is docum
 | `settingsPageHelpers.tsx`                                    | fork kept                             | Terminal WebGL (`themes.md`), resource telemetry (`resource-telemetry-toggle.md`), coding-plan auto-continue (`ui-upstream-sync-ledger-b8.md`, `forkAppSettings.ts`), uk-UA locale option (`ukrainian-locale.md`).                                                                                                                                          |
 
 Tests: the 19 test files that cover these sources pass on this branch (`node scripts/run-vitest.mjs run` over `settingsPageConfig`, `taskListItemHoverActions`, `memorySettingsSection`, `workspaceSidePane`, `conversationShareError`, `modelSelectionGroups`, `settingsNavigation`, `taskFileTreeTarget`, `taskListMetaSync`, `pluginUiBackground`, `groupedTaskRowArchiveConfirm`, `chatPromptEditorActionOrder`, `mcpSettings`, `skillsSection`, `providerTemplatePicker`, `automationWorkspaceOptions`, `automationsSectionOffPeakTelemetry`, `worktreeTaskRowMarker`, `taskRowActionButton`: 19 files, 277 tests). No test was skipped or deleted.
+
+## Relay v2 web client (S2, `claude/relay-v2-web`)
+
+Source of truth for the decisions: `specs/relay-v2-migration.md` section 12.
+
+- `packages/web/src/web-remote-control/**`: taken from upstream 0a1fc56d. CJK comments and test titles translated to English. zh-CN UI copy tables kept (`webRemoteControlScreenCopy.ts`; the fork already ships zh-CN screen copy).
+- Removed (V1 only): `packages/web/src/webRemoteControl{RelayAuthProvider,Transport,WorkspaceBridgeSession}.ts`, `webRemoteControlLifecycle/Route/TaskRead/ThemeSeed/DeviceInfo/Version/VersionNotice/FailureScreen.ts(x)` (moved under `web-remote-control/`), `packages/web/src/auth/WebLoggedInWaitingPage.tsx` (upstream deletion; its four TEMPORARY waiting-copy keys removed from `webAuthLocale.ts`).
+- Kept (fork): `packages/web/src/webRemoteControlWorkspaceOpen.ts` (docs/specs/web-remote-workspace-open.md) and its wiring in `main.tsx` (`requestWorkspaceOpen`, now a V2 `workspace-open-request`).
+- Tests removed with ledger reason (V1 only): `webRemoteControlRelayAuthProvider.test.ts`, `webRemoteControlFailures.test.ts` (upstream deleted both).
+- Tests rewritten to V2 with the same intent: `webPlatformOpenOnDesktop.test.ts` (open/editor methods go through the desktop platform proxy, not the V1 HTTP `/api/remote-control/platform` endpoint; `createWebPlatform` is exported for the test).
+- Tests whose locale or copy changed: `webLoginPage`, `webRemoteControlConnectingScreen`, `webRemoteControlFailureScreen`, `webRemoteControlDeviceListPage`, `webRemoteControlSwitchAccount`, `webRemoteControlAssistantCodeCommentCapability`. The `zh-CN` cases are converted to `en-US` because `scripts/check-test-copy.mjs` requires English UI-test locales; the same assertions now run against the English copy.
+- Re-enabled: the 12 `webAuthService.test.ts` cases (upstream unskipped) and the `webOAuthCallbackEntry` `/remote/v4` cases. `webRemoteCallbackUrl` is `${origin}/remote/v4` (shared `zcodeEndpoint.ts`).
+- Shared (intentional behavior change, owner decision 10.1/10.2 and 11.1): `zcodeEndpoint.ts`: `relayWsUrl` is `${wsOrigin}/api/v1/remote/ws2`; `resolveWebRemoteControlRelayWsUrl` derives it from the endpoint origin (the test-endpoint special case and the hardcoded production relay are removed; the baked `defaultUrl` stays). `zcodeEndpoint.test.ts` and `webRemoteControl.test.ts` updated to these values; the V1 QR tests are replaced by V2 tests.
+- Shared (`web-remote-control.ts`): V2 QR helpers (`WebRemoteControlV2QrParams`, `buildWebRemoteControlExternalQrUrl`, `parseWebRemoteControlExternalQrParams` rejecting `hash`/`t`); `WebRemoteControlMobileTaskViewUpdatePayload`/`RequestPayload`; `workspace-bridge-open` gains `project`/`taskHostId`/`fileTreeTaskId`; `capabilities` on external remote bridges; `mobileTaskViewEpoch` on bootstrap; `tasks` on bootstrap is optional (V2 omits it); `telemetry-report` accepts plugin-discovery events.
+- Vite: `/api/v1/remote` proxy (ws) added. `__ZCODE_MIN_COMPATIBLE_VERSION__` dropped (root `package.json` has no `zcodeCompatibility`; no web remote code reads it).
+- `.staged-file-size-exemptions`: TEMPORARY entry for `web-remote-control/adapters/webRemoteControlTransport.ts` (~27 KB).
+- Not ported (documented gaps): upstream `packages/web/test/e2e/manual-review/pending/*` (manual review scripts, not run by CI); the desktop side of the mobile task view publisher and workspace-open bridging (desktop branch).

@@ -79,50 +79,30 @@ describe("external relay QR helpers", () => {
       ).toBeNull();
     }
   });
-  it("builds an encoded web remote control QR URL without theme params", () => {
+  it("builds a V2 QR URL with routing hints only and no credential or theme params", () => {
     expect(
       buildWebRemoteControlExternalQrUrl({
-        baseUrl: "https://zcode.z.ai/remote",
+        baseUrl: "https://zcode.z.ai/remote?hash=old&t=1",
         deviceSid: "sid-1",
-        passHash: "hash+with/slash=",
-        timestamp: 1710000000000,
         deviceMid: "mid-1",
         deviceName: "MacBook",
         appVersion: "1.5.0",
-        theme: "zai-dark",
       }),
-    ).toBe(
-      "https://zcode.z.ai/remote?sid=sid-1&hash=hash%2Bwith%2Fslash%3D&t=1710000000000&mid=mid-1&name=MacBook&app_version=1.5.0",
-    );
+    ).toBe("https://zcode.z.ai/remote?sid=sid-1&mid=mid-1&name=MacBook&app_version=1.5.0");
   });
 
-  it("parses required external relay QR params", () => {
+  it("parses V2 routing hints without carrying theme state", () => {
+    expect(
+      parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=sid-1&mid=mid-1&theme=light")),
+    ).toEqual({ deviceSid: "sid-1", deviceMid: "mid-1" });
+  });
+
+  it("rejects V1 links that carry the hash or t credential", () => {
     expect(
       parseWebRemoteControlExternalQrParams(
-        new URLSearchParams("sid=sid-1&hash=hash&t=1710000000000&mid=mid-1&theme=light"),
+        new URLSearchParams("sid=sid-1&hash=hash&t=1710000000000&mid=mid-1"),
       ),
-    ).toEqual({
-      deviceSid: "sid-1",
-      passHash: "hash",
-      timestamp: 1710000000000,
-      deviceMid: "mid-1",
-      theme: "light",
-    });
-  });
-
-  it("ignores invalid external relay QR theme params", () => {
-    expect(
-      parseWebRemoteControlExternalQrParams(
-        new URLSearchParams("sid=sid-1&hash=hash&t=1710000000000&theme=midnight"),
-      ),
-    ).toEqual({
-      deviceSid: "sid-1",
-      passHash: "hash",
-      timestamp: 1710000000000,
-    });
-  });
-
-  it("rejects missing required external relay QR params", () => {
+    ).toBeNull();
     expect(
       parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=sid-1&t=1710000000000")),
     ).toBeNull();

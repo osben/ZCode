@@ -249,6 +249,8 @@ export const PlatformChannels = {
   BindRemoteWorkspaceSessionContext: "zcode:bind-remote-workspace-session-context",
   /** Enable Web remote control for the current workspace */
   StartWebRemoteControl: "zcode:start-web-remote-control",
+  /** Refresh the Web remote-control QR code: closes the runtime and registers a new device. */
+  ResetWebRemoteControlPairing: "zcode:reset-web-remote-control-pairing",
   /** 关闭当前窗口的 Web 远程控制 */
   StopWebRemoteControl: "zcode:stop-web-remote-control",
   /** Query the current window’s Web remote-control status */
@@ -895,6 +897,10 @@ export interface PlatformChannelMap {
   [PlatformChannels.BindRemoteWorkspaceSessionContext]: {
     request: BindRemoteWorkspaceSessionContextRequest;
     response: import("./platform.js").BindRemoteWorkspaceSessionContextIpcResult;
+  };
+  [PlatformChannels.ResetWebRemoteControlPairing]: {
+    request: WebRemoteControlContext;
+    response: WebRemoteControlStartOperationResult;
   };
   [PlatformChannels.StartWebRemoteControl]: {
     request: WebRemoteControlContext;

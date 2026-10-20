@@ -66,6 +66,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
+        "/api/v1/remote": {
+          target: zcodeEndpointOrigin,
+          changeOrigin: true,
+          secure: true,
+          ws: true,
+        },
         // 将 /ws 和 /api 请求代理到 server（默认 3030 端口）
         "/ws": { target: "ws://127.0.0.1:3030", ws: true },
         "/api": { target: "http://127.0.0.1:3030" },

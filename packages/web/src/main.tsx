@@ -1,8 +1,20 @@
-import { sessionCreateTelemetrySchema, type RendererTelemetryEventPayload } from "@zcode/shared";
-/* eslint-disable max-lines -- Web remote-control startup, error pages, and platform bridging are currently coordinated in the entry point. */
+import { mobilePluginDiscoveryTelemetrySchema } from "@zcode/shared";
+import {
+  sessionCreateTelemetrySchema,
+  type RendererTelemetryEventPayload,
+  WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
+  createWebRemoteControlConnectionRecoveryTimeoutFailure,
+  resolveWebRemoteControlRelayWsUrl,
+  matchesWebRemoteControlRoutePath,
+  resolveWebRemoteControlInitialWorkspaceSelection,
+  resolveWebRemoteControlWorkspaceKey,
+} from "@zcode/shared";
+/* eslint-disable max-lines -- Web remote-control startup, error pages, and web platform bridging are coordinated in the entry point for now. */
+import type { ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AppErrorBoundary,
+  ensurePendingTaskDraft,
   Root,
   ZCodeIntlProvider,
   generateMobileDeviceFingerprint,
@@ -17,14 +29,9 @@ import {
   connectViaProtocol,
   connectViaWebSocket,
   createAcknowledgedWebRemoteControlRelayProtocol,
-  type WebSocketConnectionCloseEvent,
 } from "@zcode/client";
-import {
-  WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
-  resolveWebRemoteControlRelayWsUrl,
-} from "@zcode/shared";
+
 import { WebCallbackPage } from "./auth/WebCallbackPage.js";
-import { WebLoggedInWaitingPage } from "./auth/WebLoggedInWaitingPage.js";
 import { WebLoginPage } from "./auth/WebLoginPage.js";
 import { createWebAuthService } from "./auth/webAuthService.js";
 import { WEB_ZAI_OAUTH_CONFIG, resolveWebAuthDevReturnTo } from "./auth/webZaiOAuthConfig.js";
@@ -47,7 +54,6 @@ import { applyTheme, readStoredThemeSelection } from "@zcode/ui/useTheme";
 // Apply the color mode and palette synchronously at startup to prevent a first-screen flash. Share pages default to light without local settings; other Web pages default to dark.
 import type {
   IPlatformService,
-  WebRemoteControlBootstrapErrorResponse,
   WebRemoteControlFailure,
   WebRemoteControlFailureReason,
   WebRemoteControlPlatformMethod,
@@ -56,7 +62,6 @@ import type {
   WebRemoteControlPlatformRequestPayload,
   WebRemoteControlPlatformResponsePayload,
   WebRemoteControlWindowBootstrapResult,
-  WebRemoteControlWindowControlReadyEvent,
   WebRemoteControlWorkspaceBridge,
   WebRemoteControlWorkspaceListResult,
   WebRemoteControlMobileNavigationIntent,
@@ -67,42 +72,48 @@ import type {
   WebRemoteControlExternalWorkspaceBridge,
   RemoteTarget,
   ServerRemoteInfo,
-  UserInfo,
 } from "@zcode/shared";
+
 import {
-  matchesWebRemoteControlRoutePath,
-  parseWebRemoteControlExternalQrParams,
-  resolveWebRemoteControlFailureReasonFromCloseCode,
-  resolveWebRemoteControlInitialWorkspaceSelection,
-  resolveWebRemoteControlWorkspaceKey,
-} from "@zcode/shared";
-import { createBrowserWebRemoteControlRelayAuthProvider } from "./webRemoteControlRelayAuthProvider.js";
-import {
+  WebRemoteControlEntry,
+  isWebRemoteControlOAuthCallback,
+  type WebRemoteControlEntryConnection,
+  createWebRemoteControlV2TokenClient,
+  readKnownDevices,
+  createWebRemoteControlDeviceClient,
+  createWebRemoteControlBridgeRecoveryRunner,
+  getWebRemoteControlBridgeRecoveryRetryDelay,
   WebRemoteControlTerminalTransport,
   type WebRemoteControlTerminalTransportDiagnostic,
   type WebRemoteControlTerminalTransportState,
   createWebRemoteControlAppPayloadRequester,
   createWebRemoteControlRelayRequestRecovery,
-} from "./webRemoteControlTransport.js";
-import { createWebRemoteControlLifecycleRecovery } from "./webRemoteControlLifecycle.js";
-import { seedWebRemoteControlThemePreference } from "./webRemoteControlThemeSeed.js";
-import {
-  WebRemoteControlFailureScreen,
-  resolveWebRemoteControlScreenLocale,
-} from "./webRemoteControlFailureScreen.js";
-import { collectWebRemoteControlMobileDeviceInfo } from "./webRemoteControlDeviceInfo.js";
-import { createWebRemoteControlVersionGuard } from "./webRemoteControlVersion.js";
-import { showWebRemoteControlVersionNotice } from "./webRemoteControlVersionNotice.js";
-import { resolveWebRemoteControlRoutePath } from "./webRemoteControlRoute.js";
-import {
+  createWebRemoteControlLifecycleRecovery,
+  WEB_REMOTE_CONTROL_DEFAULT_THEME,
+  resolveWebRemoteControlInitialTheme,
+  collectWebRemoteControlMobileDeviceInfo,
+  createWebRemoteControlVersionGuard,
+  resolveWebRemoteControlRoutePath,
   registerWebRemoteControlWorkspaceBridgeServices,
+  connectWebRemoteControlWorkspaceBridgeServices,
+  replayWebRemoteControlWorkspaceBridgeFrames,
+  createWebRemoteControlTaskViewPublisher,
   type WebRemoteControlWorkspaceBridgeServiceRegistration,
-} from "./webRemoteControlWorkspaceBridgeSession.js";
-import {
   markWebRemoteControlBridgeTaskRead,
   markWebRemoteControlTaskRead,
-} from "./webRemoteControlTaskRead.js";
+} from "#src/web-remote-control/index.js";
+
+import {
+  WebRemoteControlDeviceListPage,
+  WebRemoteControlLoadingScreen,
+  type WebRemoteControlConnectingDevice,
+  WebRemoteControlFailureScreen,
+  WebRemoteControlRepairNoticeScreen,
+  resolveWebRemoteControlScreenLocale,
+  showWebRemoteControlVersionNotice,
+} from "#src/web-remote-control/views.js";
 import { openWebRemoteControlWorkspace } from "./webRemoteControlWorkspaceOpen.js";
+
 type RootServices = Parameters<typeof Root>[0]["services"];
 type ServiceMethod = (...args: any[]) => unknown;
 
@@ -110,7 +121,7 @@ function logWebRemoteControlTaskReadFailure(
   error: unknown,
   context: { taskId: string; workspaceKey: string },
 ): void {
-  console.warn("[web-remote-control] 标记手机端 task 已读失败", {
+  console.warn("[web-remote-control] Failed to mark the mobile task as read", {
     error: error instanceof Error ? error.message : String(error),
     taskId: context.taskId,
     workspaceKey: context.workspaceKey,
@@ -129,7 +140,7 @@ async function markCurrentWebRemoteControlBridgeTaskRead({
   const taskWorkspaceKey = resolveWebRemoteControlWorkspaceKey(task);
   if (taskWorkspaceKey !== bridge.workspaceKey) {
     // Fix rationale: remote workspaces at the same path can have different identities; do not use the current bridge to write to another connection.
-    console.warn("[web-remote-control] 跳过跨 workspace 的 task 已读写入", {
+    console.warn("[web-remote-control] Skipped a task read write across workspaces", {
       taskId: task.taskId,
       taskWorkspaceKey,
       bridgeWorkspaceKey: bridge.workspaceKey,
@@ -197,7 +208,6 @@ installDocumentHiddenMotionPause();
 const root = createRoot(document.getElementById("root")!);
 const webAuthService = createWebAuthService();
 let isPageUnloading = false;
-let isSwitchingWebRemoteControlWorkspace = false;
 
 // Initialize the Web streaming clientId so every hook uses a stable ID before the first render.
 {
@@ -207,13 +217,6 @@ let isSwitchingWebRemoteControlWorkspace = false;
 window.addEventListener("beforeunload", () => {
   isPageUnloading = true;
 });
-
-interface WebRemoteControlProxyOptions {
-  token: string;
-  relayOrigin: string;
-  windowControlSessionId: string;
-  mobileConnectionId: string;
-}
 
 interface WebRemoteControlPlatformProxy {
   reportTelemetryEvent?: (event: RendererTelemetryEventPayload) => void;
@@ -241,8 +244,26 @@ function renderWebRemoteControlFailure(failure: WebRemoteControlFailure): void {
     <WebRemoteControlFailureScreen
       failure={failure}
       locale={resolveWebRemoteControlScreenLocale(navigator.language)}
+      primaryActionLabel={
+        failure.reason === "device-not-owned"
+          ? isZhLocale()
+            ? "切换账号"
+            : "Switch account"
+          : undefined
+      }
+      secondaryAction={
+        isWebRemoteControlRoute()
+          ? {
+              label: isZhLocale() ? "选择其他设备" : "Choose another device",
+              onClick: () => {
+                void remoteEntry.chooseOtherDevice();
+              },
+            }
+          : undefined
+      }
       onReload={() => {
-        window.location.reload();
+        if (failure.reason === "device-not-owned") void remoteEntry.switchAccount();
+        else window.location.reload();
       }}
     />,
   );
@@ -252,30 +273,12 @@ function isWebOAuthCallback(params: URLSearchParams): boolean {
   // Tolerate a trailing slash: the fork redirect URI is /web-remote/callback and hosts may append "/".
   const pathname = window.location.pathname.replace(/\/+$/, "");
   return (
-    ["/web-remote/callback", "/cn/share/callback", "/share/callback"].includes(pathname) &&
-    params.has("state") &&
-    // BigModel authCode must reach the callback page first, where the provider normalizes it to a code.
-    (params.has("code") || params.has("authCode") || params.has("error"))
+    isWebRemoteControlOAuthCallback(new URL(window.location.href)) ||
+    (["/cn/share/callback", "/share/callback"].includes(window.location.pathname) &&
+      params.has("state") &&
+      // BigModel's authCode must reach the callback page first, where the provider normalizes it to a code.
+      (params.has("code") || params.has("authCode") || params.has("error")))
   );
-}
-
-function isWebRemoteRoute(): boolean {
-  return window.location.pathname === "/web-remote" || window.location.pathname === "/web-remote/";
-}
-
-function shouldUseWebRemoteAuth(params: URLSearchParams): boolean {
-  void params;
-  return isWebRemoteRoute();
-}
-
-function resolveWebRemoteAppReturnTo(params: URLSearchParams): string {
-  if (isWebRemoteRoute() || !params.has("remoteControlToken")) {
-    return window.location.href;
-  }
-
-  const appReturnTo = new URL(window.location.href);
-  appReturnTo.pathname = "/web-remote";
-  return appReturnTo.toString();
 }
 
 function renderWebAuthCallbackPage(): void {
@@ -288,10 +291,10 @@ function renderWebAuthCallbackPage(): void {
     <WebCallbackPage
       authService={webAuthService}
       onSuccess={({ appReturnTo }) => {
-        window.location.replace(appReturnTo ?? "/web-remote");
+        window.location.replace(appReturnTo ?? "/remote/v4");
       }}
       onRetry={() => {
-        window.location.replace(safeRetryTarget ?? "/web-remote");
+        window.location.replace(safeRetryTarget ?? "/remote/v4");
       }}
     />,
   );
@@ -372,31 +375,58 @@ async function renderConversationSharePage(): Promise<void> {
 
 function renderWebLoginPage(): void {
   document.title = "ZCode - Web Remote Control Sign In";
-  root.render(
-    <WebLoginPage
-      onLogin={() => {
-        const params = new URLSearchParams(window.location.search);
-        webAuthService.startLogin({
-          devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG),
-          appReturnTo: resolveWebRemoteAppReturnTo(params),
-        });
-      }}
-    />,
-  );
+  root.render(<WebLoginPage onLogin={(provider) => remoteEntry.startLogin(provider)} />);
 }
 
-function renderWebLoggedInWaitingPage(user: UserInfo): void {
-  document.title = "ZCode - Web Remote Control";
-  root.render(
-    <WebLoggedInWaitingPage
-      user={user}
-      onLogout={async () => {
-        await webAuthService.logout();
-        window.location.replace("/web-remote");
-      }}
-    />,
-  );
-}
+// Accessing window.localStorage itself can throw in some browsers, so the methods are wrapped and callers fall back.
+const webRemoteControlStorage: Pick<Storage, "getItem" | "setItem"> = {
+  getItem: (key) => window.localStorage.getItem(key),
+  setItem: (key, value) => window.localStorage.setItem(key, value),
+};
+
+const remoteEntry = new WebRemoteControlEntry({
+  auth: webAuthService,
+  getHref: () => window.location.href,
+  replaceHref: (href) => window.history.replaceState(window.history.state, "", href),
+  storage: webRemoteControlStorage,
+  locale: resolveWebRemoteControlScreenLocale(navigator.language),
+  devices: createWebRemoteControlDeviceClient(window.location.origin),
+  subscribeVisible: (listener) => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") listener();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  },
+  loginOptions: { devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG) },
+  token: createWebRemoteControlV2TokenClient(window.location.origin),
+  connect: (connection) => {
+    void bootstrapExternalRelayWebRemoteControl(connection);
+  },
+  onView: (view) => {
+    if (view.kind === "callback") renderWebAuthCallbackPage();
+    else if (view.kind === "login") renderWebLoginPage();
+    else if (view.kind === "devices") {
+      document.title = "ZCode - Web Remote Control";
+      root.render(
+        <WebRemoteControlDeviceListPage
+          view={view}
+          onSelect={(sid) => remoteEntry.selectDevice(sid)}
+          onRefresh={() => {
+            void remoteEntry.refreshDevices();
+          }}
+          onSwitchAccount={() => {
+            void remoteEntry.switchAccount();
+          }}
+          locale={resolveWebRemoteControlScreenLocale(navigator.language)}
+        />,
+      );
+    } else if (view.kind === "failure") renderWebRemoteControlFailure(view.failure);
+    else if (view.kind === "repair-needed") {
+      root.render(<WebRemoteControlRepairNoticeScreen message={view.message} />);
+    }
+  },
+});
 
 function toWebRemoteControlFailure(
   reason: WebRemoteControlFailureReason,
@@ -405,228 +435,14 @@ function toWebRemoteControlFailure(
   return { reason, message };
 }
 
-function parseWebRemoteControlBootstrapError(payload: unknown): WebRemoteControlFailure | null {
-  if (typeof payload !== "object" || payload == null) {
-    return null;
-  }
-
-  const record = payload as Partial<WebRemoteControlBootstrapErrorResponse>;
-  if (typeof record.reason !== "string") {
-    return null;
-  }
-
-  return toWebRemoteControlFailure(
-    record.reason as WebRemoteControlFailureReason,
-    typeof record.error === "string" ? record.error : undefined,
-  );
-}
-
-function mapWebRemoteControlSocketCloseToFailure(event: {
-  code: number;
-  reason: string;
-}): WebRemoteControlFailure {
-  const resolvedReason =
-    resolveWebRemoteControlFailureReasonFromCloseCode(event.code) ??
-    (event.reason as WebRemoteControlFailureReason | "");
-
-  switch (resolvedReason) {
-    case "session-not-found":
-    case "session-expired":
-    case "session-conflict":
-    case "workspace-closed":
-    case "desktop-disconnected":
-    case "invalid-mobile-connection":
-    case "desktop-bootstrap-timeout":
-    case "connection-recovery-timeout":
-      return toWebRemoteControlFailure(resolvedReason, event.reason || undefined);
-    default:
-      return toWebRemoteControlFailure(
-        "relay-unavailable",
-        event.reason || "Web remote control connection closed unexpectedly.",
-      );
-  }
-}
-
-async function requestWebRemoteControlPlatformMethod<K extends WebRemoteControlPlatformMethod>(
-  proxy: WebRemoteControlProxyOptions,
-  method: K,
-  args?: WebRemoteControlPlatformMethodArgsMap[K],
-): Promise<WebRemoteControlPlatformMethodResultMap[K]> {
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/platform/${proxy.token}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, args }),
-    },
-  );
-  const payload = (await response.json()) as
-    | { result: WebRemoteControlPlatformMethodResultMap[K] }
-    | { error?: string };
-
-  if (!response.ok) {
-    const errorMessage = "error" in payload ? payload.error : undefined;
-    throw new Error(
-      errorMessage || `Failed to invoke Web remote control platform method: ${method}`,
-    );
-  }
-
-  if (!("result" in payload)) {
-    throw new Error(`Missing Web remote control platform result: ${method}`);
-  }
-
-  return payload.result;
-}
-
-async function requestWebRemoteControlWorkspaces(
-  proxy: WebRemoteControlProxyOptions,
-): Promise<WebRemoteControlWorkspaceListResult> {
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/bootstrap/${proxy.token}`,
-  );
-  const payload = (await response.json()) as
-    | WebRemoteControlWindowBootstrapResult
-    | { error?: string };
-
-  if (!response.ok) {
-    const errorMessage = "error" in payload ? payload.error : undefined;
-    throw new Error(errorMessage || "Failed to list Web remote control workspaces");
-  }
-
-  if (!("workspaces" in payload)) {
-    throw new Error("Missing Web remote control workspace list");
-  }
-
-  return {
-    workspaces: payload.workspaces,
-    tasks: payload.tasks,
-    activeWorkspaceKey:
-      payload.mobileViewState?.activeWorkspaceKey ?? payload.initialViewState?.activeWorkspaceKey,
-    activeTaskId: payload.mobileViewState?.activeTaskId ?? payload.initialViewState?.activeTaskId,
-  };
-}
-
-async function requestWebRemoteControlWorkspaceBridge(
-  proxy: WebRemoteControlProxyOptions,
-  workspaceKey: string,
-  options?: WebRemoteControlWorkspaceSwitchOptions,
-): Promise<WebRemoteControlWorkspaceBridge> {
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/${proxy.token}/workspace-bridge`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-ZCode-Mobile-Connection-Id": proxy.mobileConnectionId,
-      },
-      body: JSON.stringify({
-        workspaceKey,
-        ...(options?.taskId ? { taskId: options.taskId } : {}),
-      }),
-    },
-  );
-  const payload = (await response.json()) as
-    | WebRemoteControlWorkspaceBridge
-    | WebRemoteControlBootstrapErrorResponse
-    | { error?: string };
-
-  if (!response.ok) {
-    const parsedFailure = parseWebRemoteControlBootstrapError(payload);
-    if (parsedFailure) {
-      throw parsedFailure;
-    }
-    const errorMessage = "error" in payload ? payload.error : undefined;
-    throw new Error(errorMessage || "Failed to switch Web remote control workspace");
-  }
-  if (!("wsUrl" in payload)) {
-    throw new Error("Missing Web remote control bridge wsUrl");
-  }
-
-  return payload;
-}
-
-async function requestWebRemoteControlWorkspaceOpen(
-  proxy: WebRemoteControlProxyOptions,
-  target: { workspacePath: string; workspaceIdentity?: string },
-): Promise<void> {
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/${proxy.token}/workspace-open`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-ZCode-Mobile-Connection-Id": proxy.mobileConnectionId,
-      },
-      body: JSON.stringify({
-        workspacePath: target.workspacePath,
-        ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
-      }),
-    },
-  );
-  const payload = (await response.json().catch(() => null)) as
-    | { success?: boolean; error?: string }
-    | WebRemoteControlBootstrapErrorResponse
-    | null;
-
-  if (!response.ok || !payload || !("success" in payload) || payload.success !== true) {
-    const parsedFailure = parseWebRemoteControlBootstrapError(payload);
-    if (parsedFailure) {
-      throw parsedFailure;
-    }
-    const errorMessage =
-      payload && "error" in payload && typeof payload.error === "string"
-        ? payload.error
-        : "Failed to open workspace on the desktop";
-    throw new Error(errorMessage);
-  }
-}
-
-async function updateWebRemoteControlMobileViewState(
-  proxy: WebRemoteControlProxyOptions,
-  workspaceKey: string,
-  taskId?: string,
-): Promise<void> {
-  const deviceInfo = collectWebRemoteControlMobileDeviceInfo();
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/${proxy.token}/mobile-view-state`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-ZCode-Mobile-Connection-Id": proxy.mobileConnectionId,
-      },
-      body: JSON.stringify({
-        activeWorkspaceKey: workspaceKey,
-        ...(taskId ? { activeTaskId: taskId } : {}),
-        updatedAt: Date.now(),
-        deviceInfo,
-      }),
-    },
-  );
-  const payload = (await response.json().catch(() => null)) as
-    | WebRemoteControlBootstrapErrorResponse
-    | { error?: string }
-    | null;
-
-  if (!response.ok) {
-    const parsedFailure = parseWebRemoteControlBootstrapError(payload);
-    if (parsedFailure) {
-      throw parsedFailure;
-    }
-    const errorMessage = payload && "error" in payload ? payload.error : undefined;
-    throw new Error(errorMessage || "Failed to update Web remote control mobile view state");
-  }
-}
-
 export function createWebPlatform(options?: {
-  webRemoteControlProxy?: WebRemoteControlProxyOptions;
   externalWebRemoteControlProxy?: WebRemoteControlPlatformProxy;
 }): IPlatformService {
-  const webRemoteControlProxy = options?.webRemoteControlProxy;
   const platformProxy = options?.externalWebRemoteControlProxy;
 
   return {
     canSelectFilePath: false,
+    canOpenLocalFiles: false,
     // The Web platform cannot open the system directory picker.
     selectDirectory: () => Promise.resolve(null),
     // The Web platform cannot open the system file picker.
@@ -636,13 +452,7 @@ export function createWebPlatform(options?: {
     createTempTextAttachment: (payload) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("createTempTextAttachment", payload)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(
-              webRemoteControlProxy,
-              "createTempTextAttachment",
-              payload,
-            )
-          : Promise.reject(new Error("Temporary text attachments require a desktop host")),
+        : Promise.reject(new Error("Temporary text attachments require a desktop host")),
     onRemoteConnectionLog: () => () => {},
     onRemoteSessionClosed: () => () => {},
     onBotRemoteWorkspaceReconnected: () => () => {},
@@ -661,7 +471,7 @@ export function createWebPlatform(options?: {
         connectTrigger?: import("@zcode/shared").RemoteWorkspaceConnectTrigger;
       },
     ) {
-      if (webRemoteControlProxy || platformProxy) {
+      if (platformProxy) {
         return {
           success: false,
           error: `Remote connect is not supported in Web remote control mode yet: ${options.kind}`,
@@ -691,65 +501,37 @@ export function createWebPlatform(options?: {
     isDockerAvailable: () =>
       platformProxy
         ? platformProxy.requestPlatformMethod("isDockerAvailable")
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "isDockerAvailable")
-          : Promise.resolve(false),
+        : Promise.resolve(false),
     listWSLDistros: () =>
-      platformProxy
-        ? platformProxy.requestPlatformMethod("listWSLDistros")
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "listWSLDistros")
-          : Promise.resolve([]),
+      platformProxy ? platformProxy.requestPlatformMethod("listWSLDistros") : Promise.resolve([]),
     listDockerContainers: () =>
       platformProxy
         ? platformProxy.requestPlatformMethod("listDockerContainers")
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "listDockerContainers")
-          : Promise.resolve([]),
+        : Promise.resolve([]),
     listSSHConfigAliases: () =>
       platformProxy
         ? platformProxy.requestPlatformMethod("listSSHConfigAliases")
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "listSSHConfigAliases")
-          : Promise.resolve([]),
+        : Promise.resolve([]),
     loadMcpFromUserDirectory: (payload) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("loadMcpFromUserDirectory", payload)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(
-              webRemoteControlProxy,
-              "loadMcpFromUserDirectory",
-              payload,
-            )
-          : Promise.resolve({ servers: [] }),
+        : Promise.resolve({ servers: [] }),
     saveMcpToUserDirectory: (payload) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("saveMcpToUserDirectory", payload)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(
-              webRemoteControlProxy,
-              "saveMcpToUserDirectory",
-              payload,
-            )
-          : Promise.resolve({
-              success: false,
-              error: "MCP native directory management requires a desktop attachment",
-            }),
+        : Promise.resolve({
+            success: false,
+            error: "MCP native directory management requires a desktop attachment",
+          }),
     migrateLegacyCommonMcp: (payload) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("migrateLegacyCommonMcp", payload)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(
-              webRemoteControlProxy,
-              "migrateLegacyCommonMcp",
-              payload,
-            )
-          : Promise.resolve({
-              servers: {},
-              totalCount: 0,
-              importedCount: 0,
-              skippedCount: 0,
-            }),
+        : Promise.resolve({
+            servers: {},
+            totalCount: 0,
+            importedCount: 0,
+            skippedCount: 0,
+          }),
     openExternal: (url) => {
       window.open(url, "_blank", "noopener,noreferrer");
     },
@@ -775,23 +557,21 @@ export function createWebPlatform(options?: {
     openInFileManager: (path) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("openInFileManager", path)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInFileManager", path)
-          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
+        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     openExternalFile: (path) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("openExternalFile", path)
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openExternalFile", path)
-          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
+        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     registerOAuthState: (_payload) => {},
     onOAuthCallback: () => () => {},
     onPaymentCallback: () => () => {},
     onShareImport: () => () => {},
     notifyRendererReady: () => {},
     reportTelemetryEvent: async (event) => {
-      // Mobile exposes only session_create; do not also enable the existing Desktop conversation events.
-      const parsed = sessionCreateTelemetrySchema.safeParse(event);
+      // The phone only forwards session_create and plugin-discovery events; management results are reported only by the Desktop Host.
+      const parsed = sessionCreateTelemetrySchema
+        .or(mobilePluginDiscoveryTelemetrySchema)
+        .safeParse(event);
       if (parsed.success) platformProxy?.reportTelemetryEvent?.(parsed.data);
     },
     reportArmsCustomEvent: () => Promise.resolve(),
@@ -865,19 +645,11 @@ export function createWebPlatform(options?: {
     getInstalledEditors: () =>
       platformProxy
         ? platformProxy.requestPlatformMethod("getInstalledEditors")
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "getInstalledEditors")
-          : Promise.resolve([]),
+        : Promise.resolve([]),
     openInEditor: (editorId, path, options) =>
       platformProxy
         ? platformProxy.requestPlatformMethod("openInEditor", { editorId, path, options })
-        : webRemoteControlProxy
-          ? requestWebRemoteControlPlatformMethod(webRemoteControlProxy, "openInEditor", {
-              editorId,
-              path,
-              options,
-            })
-          : Promise.resolve({ success: false, error: "Not supported in web mode" }),
+        : Promise.resolve({ success: false, error: "Not supported in web mode" }),
     executeDesktopCommand: () => Promise.resolve(),
     setApplicationLocale: (_locale) => Promise.resolve(),
     setTitleBarTheme: () => Promise.resolve(),
@@ -934,122 +706,6 @@ async function resolveWebBootstrap(): Promise<WebBootstrapResult> {
   }
 }
 
-async function requestWebRemoteControlWindowBootstrap(
-  proxy: Pick<WebRemoteControlProxyOptions, "token" | "relayOrigin">,
-): Promise<WebRemoteControlWindowBootstrapResult> {
-  const response = await fetch(
-    `${proxy.relayOrigin.replace(/\/$/, "")}/api/remote-control/windows/bootstrap/${proxy.token}`,
-  );
-  const payload = (await response.json()) as
-    | WebRemoteControlWindowBootstrapResult
-    | WebRemoteControlBootstrapErrorResponse
-    | { error?: string };
-
-  if (!response.ok) {
-    throw (
-      parseWebRemoteControlBootstrapError(payload) ??
-      toWebRemoteControlFailure(
-        "unexpected-error",
-        "error" in payload ? payload.error : "Failed to bootstrap Web remote control",
-      )
-    );
-  }
-  if (!("workspaces" in payload)) {
-    throw toWebRemoteControlFailure(
-      "unexpected-error",
-      "Missing Web remote control bootstrap workspaces",
-    );
-  }
-
-  return payload;
-}
-
-function parseWindowControlReadyEvent(
-  raw: MessageEvent,
-): WebRemoteControlWindowControlReadyEvent | null {
-  if (typeof raw.data !== "string") {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(raw.data) as WebRemoteControlWindowControlReadyEvent;
-    if (
-      parsed?.type === "window-control-ready" &&
-      typeof parsed.windowControlSessionId === "string" &&
-      typeof parsed.mobileConnectionId === "string"
-    ) {
-      return parsed;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-async function connectWebRemoteControlWindow(
-  proxy: Pick<WebRemoteControlProxyOptions, "token" | "relayOrigin">,
-  onClose: (event: WebSocketConnectionCloseEvent) => void,
-): Promise<{
-  socket: WebSocket;
-  ready: WebRemoteControlWindowControlReadyEvent;
-}> {
-  return await new Promise((resolve, reject) => {
-    const wsOrigin = proxy.relayOrigin.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
-    const socket = new WebSocket(
-      `${wsOrigin.replace(/\/$/, "")}/ws/remote-control/window/${proxy.token}`,
-    );
-    let settled = false;
-
-    const cleanup = () => {
-      socket.removeEventListener("message", handleMessage);
-      socket.removeEventListener("error", handleError);
-      socket.removeEventListener("close", handleCloseBeforeReady);
-    };
-
-    const handleMessage = (event: MessageEvent) => {
-      const ready = parseWindowControlReadyEvent(event);
-      if (!ready) {
-        return;
-      }
-
-      settled = true;
-      cleanup();
-      socket.addEventListener("close", (closeEvent) => {
-        onClose({
-          code: closeEvent.code,
-          reason: closeEvent.reason,
-          wasClean: closeEvent.wasClean,
-        });
-      });
-      resolve({ socket, ready });
-    };
-
-    const handleError = () => {
-      cleanup();
-      if (!settled) {
-        reject(new Error("Web remote control window socket failed"));
-      }
-    };
-
-    const handleCloseBeforeReady = (event: CloseEvent) => {
-      cleanup();
-      if (!settled) {
-        reject(
-          toWebRemoteControlFailure(
-            resolveWebRemoteControlFailureReasonFromCloseCode(event.code) ?? "relay-unavailable",
-            event.reason || "Web remote control window socket closed before ready",
-          ),
-        );
-      }
-    };
-
-    socket.addEventListener("message", handleMessage);
-    socket.addEventListener("error", handleError);
-    socket.addEventListener("close", handleCloseBeforeReady);
-  });
-}
-
 function selectInitialWebRemoteControlWorkspace(
   snapshot: WebRemoteControlWindowBootstrapResult,
 ): ReturnType<typeof resolveWebRemoteControlInitialWorkspaceSelection> {
@@ -1057,9 +713,12 @@ function selectInitialWebRemoteControlWorkspace(
 }
 
 function isWebRemoteControlRoute(): boolean {
-  return matchesWebRemoteControlRoutePath(
-    window.location.pathname,
-    resolveWebRemoteControlRoutePath(import.meta.env),
+  return (
+    matchesWebRemoteControlRoutePath(window.location.pathname, "/remote/v4") ||
+    matchesWebRemoteControlRoutePath(
+      window.location.pathname,
+      resolveWebRemoteControlRoutePath(import.meta.env),
+    )
   );
 }
 
@@ -1098,13 +757,21 @@ function createUnsupportedHomeOnlyService<T extends object>(serviceName: string)
   ) as T;
 }
 
+const emptyHomeOnlyEvent = () => ({ dispose() {} });
+
 function createEmptyHomeOnlyService<T extends object>(handlers: Record<string, ServiceMethod>): T {
   return new Proxy(handlers, {
     get: (target, property) => {
       if (typeof property !== "string") {
         return undefined;
       }
-      return target[property] ?? (async () => undefined);
+      if (target[property]) return target[property];
+      // Bug: bridge services are generated by ProxyChannel; onDynamicXxx(arg) synchronously returns an Event and onXxx is itself an Event.
+      // The home-only services used to treat every unlisted member as an RPC method returning a Promise, so subscribing to task events crashed the phone home sidebar.
+      // Return a never-firing empty Event for the same naming contract instead of patching each subscription.
+      if (/^onDynamic[A-Z]/.test(property)) return () => emptyHomeOnlyEvent;
+      if (/^on[A-Z]/.test(property)) return emptyHomeOnlyEvent;
+      return async () => undefined;
     },
   }) as T;
 }
@@ -1235,7 +902,6 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
     }),
     broadcastService: createEmptyHomeOnlyService<RootServices["broadcastService"]>({
       send: async () => {},
-      onMessage: () => ({ dispose: () => {} }),
     }),
     zcodeTaskService: homeOnlyZCodeTaskService,
     zcodeAgentService: createEmptyHomeOnlyService<RootServices["zcodeAgentService"]>({
@@ -1267,7 +933,6 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       adopt: async () => {},
       cancel: async () => {},
       cleanup: async () => {},
-      onDynamicProgress: () => () => ({ dispose: () => {} }),
     }),
     botsService: createUnsupportedHomeOnlyService<RootServices["botsService"]>("botsService"),
     fileWatcherService: createEmptyHomeOnlyService<RootServices["fileWatcherService"]>({
@@ -1288,11 +953,9 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       getView: async () => ({ revision: 0, providers: [] }),
       refresh: async () => ({ revision: 0, providers: [] }),
       testModelConnectivity: async () => ({ results: [] }),
-      onDidChange: () => ({ dispose() {} }),
     }),
     modelSelectionService: createEmptyHomeOnlyService<RootServices["modelSelectionService"]>({
       getView: async () => ({ revision: 0, providers: [] }),
-      onDidChange: () => ({ dispose() {} }),
     }),
     usageStatsService:
       createUnsupportedHomeOnlyService<RootServices["usageStatsService"]>("usageStatsService"),
@@ -1300,7 +963,11 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
       RootServices["codingPlanSubscriptionService"]
     >("codingPlanSubscriptionService"),
     clientConfigService: createEmptyHomeOnlyService<RootServices["clientConfigService"]>({
-      getSnapshot: async () => ({ pluginStoreOrder: null, zsrcUrl: null }),
+      getSnapshot: async () => ({
+        pluginStoreOrder: null,
+        zsrcUrl: null,
+        uiPluginRecommendations: [],
+      }),
     }),
     // When mobile Web is not connected to a shared-host attachment, do not call the scenes HTTP endpoint directly; return an empty configuration so the home page remains usable.
     clientScenesService: createEmptyHomeOnlyService<RootServices["clientScenesService"]>({
@@ -1380,158 +1047,66 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
 }
 
 function resolveExternalRelayWsUrl(): string {
-  const endpointOrigin =
-    import.meta.env.VITE_ZCODE_BASE_URL?.trim() ||
-    import.meta.env.VITE_ZCODE_ENDPOINT_ORIGIN?.trim();
-  return resolveWebRemoteControlRelayWsUrl({
-    endpointOrigin,
-    overrideUrl: import.meta.env.VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL,
-  });
+  return resolveWebRemoteControlRelayWsUrl({ endpointOrigin: window.location.origin });
 }
 
 function isZhLocale(): boolean {
   return /^zh\b/i.test(navigator.language);
 }
 
-function resolveWebRemoteControlLoadingCopy(state: WebRemoteControlTerminalTransportState): {
-  title: string;
-  description: string;
-  steps: string[];
-} {
-  const zh = isZhLocale();
-  const steps = zh
-    ? ["连接中转服务", "设备鉴权", "等待桌面端配对", "同步工作区"]
-    : [
-        "Connect to relay service",
-        "Authenticate device",
-        "Wait for desktop pairing",
-        "Sync workspace",
-      ];
-
-  switch (state) {
-    case "connecting":
-      return {
-        title: zh ? "正在连接中转服务…" : "Connecting relay service…",
-        description: zh
-          ? "正在建立手机与远控中转服务的连接。"
-          : "Establishing a connection between your phone and the relay.",
-        steps,
-      };
-    case "authenticating":
-      return {
-        title: zh ? "正在认证设备…" : "Authenticating device…",
-        description: zh
-          ? "已连接中转服务，正在完成远控身份校验。"
-          : "Relay connected. Verifying your remote-control identity.",
-        steps,
-      };
-    case "waiting":
-      return {
-        title: zh ? "等待桌面端确认配对…" : "Waiting for desktop pairing…",
-        description: zh
-          ? "手机端已就绪，等待桌面端会话匹配当前连接。"
-          : "Phone is ready. Waiting for desktop to match this connection.",
-        steps,
-      };
-    case "reconnecting":
-      return {
-        title: zh ? "连接中断，正在重连…" : "Connection interrupted, reconnecting…",
-        description: zh
-          ? "网络或休眠恢复后会自动重连，请稍候。"
-          : "Auto-reconnecting after network or wake-up changes.",
-        steps,
-      };
-    case "paired":
-      return {
-        title: zh ? "已配对，正在加载工作区…" : "Paired. Loading workspace…",
-        description: zh
-          ? "连接已建立，正在同步桌面端工作区和任务。"
-          : "Connection established. Syncing workspace and tasks.",
-        steps,
-      };
-    case "suspended":
-      return {
-        title: zh ? "页面在后台，等待恢复…" : "Page is in background, waiting to recover…",
-        description: zh
-          ? "回到前台后会自动恢复连接。"
-          : "Connection will recover automatically when back in foreground.",
-        steps,
-      };
-    default:
-      return {
-        title: zh ? "正在准备远程控制…" : "Preparing remote control…",
-        description: zh
-          ? "正在初始化手机端远程控制会话。"
-          : "Initializing mobile remote-control session.",
-        steps,
-      };
-  }
-}
-
-function WebRemoteControlLoadingScreen({
-  state,
-}: {
-  state: WebRemoteControlTerminalTransportState;
-}) {
-  const copy = resolveWebRemoteControlLoadingCopy(state);
-  return (
-    <div className="h-dvh min-h-dvh w-screen bg-background text-foreground">
-      <div className="mx-auto flex h-full w-full max-w-lg items-center px-4">
-        <section className="w-full rounded-xl border border-card-border bg-card p-5">
-          <div className="flex items-center gap-3">
-            <span className="size-2 rounded-full bg-warning animate-pulse" />
-            <h1 className="text-ui-xs font-medium">{copy.title}</h1>
-          </div>
-          <p className="mt-2 text-ui-xs/relaxed text-foreground-subtle">{copy.description}</p>
-          <div className="mt-4 grid gap-2">
-            {copy.steps.map((step, index) => (
-              <div
-                key={step}
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-xs text-foreground-subtle"
-              >
-                {`${index + 1}. ${step}`}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-    </div>
+function renderWebRemoteControlLoading(
+  state: WebRemoteControlTerminalTransportState,
+  device: WebRemoteControlConnectingDevice,
+): void {
+  document.title = "ZCode - Web Remote Control";
+  root.render(
+    <WebRemoteControlLoadingScreen
+      state={state}
+      locale={resolveWebRemoteControlScreenLocale(navigator.language)}
+      device={device}
+    />,
   );
 }
 
-function renderWebRemoteControlLoading(state: WebRemoteControlTerminalTransportState): void {
-  document.title = "ZCode - Web Remote Control";
-  root.render(<WebRemoteControlLoadingScreen state={state} />);
-}
-
-async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): Promise<void> {
-  const relayParams = parseWebRemoteControlExternalQrParams(params);
-  if (!relayParams) {
-    renderWebRemoteControlFailure(
-      toWebRemoteControlFailure(
-        "invalid-mobile-connection",
-        "Missing or invalid Web remote control relay parameters.",
-      ),
-    );
-    return;
-  }
-
-  seedWebRemoteControlThemePreference(relayParams.theme);
+async function bootstrapExternalRelayWebRemoteControl(
+  connection: WebRemoteControlEntryConnection,
+): Promise<void> {
+  if (connection.signal.aborted) return;
+  const { params: relayParams, getToken } = connection;
   seedStableWebRemoteControlClientId(relayParams.deviceSid);
+  // Platform info is display-only: use the record remembered locally for this MID; an unknown device connecting by QR shows the generic computer icon.
+  const connectingDevice: WebRemoteControlConnectingDevice = {
+    name: relayParams.deviceName,
+    platform: relayParams.deviceMid
+      ? readKnownDevices(webRemoteControlStorage).get(relayParams.deviceMid)?.platform
+      : undefined,
+  };
+  // Only the entry owner cancels the connection and selects a device; restarting start() would reconnect to the most recent device automatically.
+  const deviceNavigation = {
+    deviceName: relayParams.deviceName,
+    devicePlatform: connectingDevice.platform,
+    chooseOtherDevice: () => {
+      if (!connection.signal.aborted) void remoteEntry.chooseOtherDevice();
+    },
+  };
 
   let bootstrapping = false;
-  let recovering = false;
   let ready = false;
   let terminated = false;
   let terminalTransportState: UiWebRemoteControlTerminalTransportState = "idle";
   let currentWorkspaceKey: string | undefined;
   let currentTaskId: string | undefined;
   let currentRecoveryId: string | undefined;
+  let bridgeRecoveryRetryAttempt = 0;
+  let bridgeRecoveryRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let nextBridgeGeneration = 0;
   const checkVersionOnRecovery = window.location.pathname.replace(/\/+$/, "") === "/remote/v4";
   let disposeVersionNotice: (() => void) | undefined;
   const versionGuard = createWebRemoteControlVersionGuard({
     requestBootstrap: () => requestBootstrap(),
+    onAccepted: (result) => {
+      if (terminalTransportState === "paired") taskViewPublisher.seed(result.mobileTaskViewEpoch);
+    },
     getUrl: () => window.location.href,
     isPageReady: () => ready,
     navigate: (url) => window.location.replace(url),
@@ -1551,6 +1126,8 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
   let activeRelayProtocol:
     | ReturnType<typeof createAcknowledgedWebRemoteControlRelayProtocol>
     | undefined;
+  let pendingRelayProtocol: typeof activeRelayProtocol;
+  let pendingBridgeAbort: AbortController | undefined;
   let activeBridgeServiceRegistration:
     | WebRemoteControlWorkspaceBridgeServiceRegistration
     | undefined;
@@ -1638,21 +1215,34 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     );
   };
 
-  const renderBootstrapFailure = (failure: WebRemoteControlFailure) => {
-    if (terminated || versionGuard.isBlocked()) {
-      return;
-    }
-    sendMobileFailureDiagnostic(failure);
+  const disposeConnection = () => {
+    if (terminated) return;
     terminated = true;
+    if (bridgeRecoveryRetryTimer) clearTimeout(bridgeRecoveryRetryTimer);
+    bridgeRecoveryRetryTimer = undefined;
     versionGuard.dispose();
     disposeVersionInputGuard();
+    disposeVersionNotice?.();
     activeBridgeServiceRegistration?.dispose();
     activeBridgeServiceRegistration = undefined;
     activeRelayProtocol?.dispose();
     activeRelayProtocol = undefined;
+    pendingBridgeAbort?.abort();
+    pendingBridgeAbort = undefined;
+    pendingRelayProtocol?.dispose();
+    pendingRelayProtocol = undefined;
     requester.dispose();
     transport.dispose();
-    renderWebRemoteControlFailure(failure);
+    lifecycle.dispose();
+    window.removeEventListener("beforeunload", disposeConnection);
+    connection.signal.removeEventListener("abort", disposeConnection);
+  };
+
+  const renderBootstrapFailure = (failure: WebRemoteControlFailure) => {
+    if (terminated || versionGuard.isBlocked()) return;
+    sendMobileFailureDiagnostic(failure);
+    disposeConnection();
+    connection.onFailure(failure);
   };
 
   const renderBootstrapError = (error: unknown) => {
@@ -1666,20 +1256,55 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
   const isLifecycleRecoveryReason = (reason: string): boolean =>
     reason === "visible" || reason === "pageshow" || reason === "online" || reason === "resume";
 
-  const recoverVisibleSession = async (reason: string): Promise<void> => {
-    if (recovering || isPageUnloading || terminated || versionGuard.isBlocked()) {
+  const clearBridgeRecoveryRetry = (): void => {
+    if (bridgeRecoveryRetryTimer) clearTimeout(bridgeRecoveryRetryTimer);
+    bridgeRecoveryRetryTimer = undefined;
+    bridgeRecoveryRetryAttempt = 0;
+  };
+
+  const scheduleBridgeRecoveryRetry = (): void => {
+    if (bridgeRecoveryRetryTimer || terminated || isPageUnloading || versionGuard.isBlocked())
+      return;
+    const delay = getWebRemoteControlBridgeRecoveryRetryDelay(bridgeRecoveryRetryAttempt);
+    if (delay === null) {
+      // Bug: an exhausted retry budget used to be treated as a silent stop, leaving a degraded protocol and a stale React root behind.
+      // Exhausting the budget must enter the existing terminal boundary: release bridge resources and offer a manual retry.
+      renderBootstrapFailure(
+        createWebRemoteControlConnectionRecoveryTimeoutFailure(
+          "Mobile connection did not rebuild the workspace bridge within the retry budget.",
+        ),
+      );
       return;
     }
-    recovering = true;
+    bridgeRecoveryRetryAttempt += 1;
+    bridgeRecoveryRetryTimer = setTimeout(() => {
+      bridgeRecoveryRetryTimer = undefined;
+      void recoverVisibleSession("bridge-rebuild-retry");
+    }, delay);
+  };
+
+  const recoverVisibleSession = createWebRemoteControlBridgeRecoveryRunner(async (reason) => {
+    if (isPageUnloading || terminated || versionGuard.isBlocked()) {
+      return;
+    }
     const preferredWorkspaceKey = currentWorkspaceKey;
     const preferredTaskId = currentTaskId;
-    currentRecoveryId = createWebRemoteControlRequestId("recovery");
+    const isBridgeRebuildRetry = reason === "bridge-rebuild-retry";
+    if (!isBridgeRebuildRetry) {
+      bridgeRecoveryRetryAttempt = 0;
+      currentRecoveryId = createWebRemoteControlRequestId("recovery");
+    } else {
+      // Each bridge open within one degraded recovery flight gets a new bridge generation, but recoveryId stays the same,
+      // so a late response is still rejected at the recovery boundary.
+      currentRecoveryId ??= createWebRemoteControlRequestId("recovery");
+    }
     const requiresBridgeRebuild =
       !isLifecycleRecoveryReason(reason) || activeRelayProtocol?.isDegraded() === true;
     if (requiresBridgeRebuild) {
       activeRelayProtocol?.markDegraded();
     }
     bootstrapping = true;
+    let transportRecovered = false;
     try {
       if (!import.meta.env.PROD) {
         console.info("[web-remote-control] recover terminal session", {
@@ -1690,6 +1315,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         });
       }
       await transport.recoverConnection();
+      transportRecovered = true;
       if (!requiresBridgeRebuild && activeRelayProtocol && !activeRelayProtocol.isDegraded()) {
         if (checkVersionOnRecovery) {
           try {
@@ -1712,6 +1338,7 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         preferredWorkspaceKey,
         preferredTaskId,
       });
+      clearBridgeRecoveryRetry();
     } catch (error) {
       if (!import.meta.env.PROD) {
         console.warn(
@@ -1719,37 +1346,51 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (!terminated && !isPageUnloading) {
-        // Bug fix: after mobile stays in the background for a long time, recoverConnection may exceed a single wait window.
-        // This does not mean Desktop is offline and should not unmount the current React page; otherwise, an error page interrupts the input draft.
-        // Keep the current page and input state, and let the transport reconnect state machine recover automatically.
+      if (!terminated && !isPageUnloading && transportRecovered && requiresBridgeRebuild) {
+        // Bug: when the transport recovered but a single bridge open failed, the old code only called transport background recovery.
+        // The old bridge is degraded and no later event would start another open.
+        scheduleBridgeRecoveryRetry();
+      } else if (!terminated && !isPageUnloading) {
+        // Bugfix: after a long background period, recoverConnection may exceed a single wait window.
+        // That does not mean the desktop is offline, and the current React page must not unmount; otherwise a draft is interrupted by an error page.
+        // Keep the page and input state here and let the transport's reconnect state machine recover automatically.
         transport.recoverInBackground();
       }
     } finally {
-      recovering = false;
       bootstrapping = false;
     }
-  };
+  });
 
-  renderWebRemoteControlLoading("connecting");
+  renderWebRemoteControlLoading("connecting", connectingDevice);
 
+  const taskViewPublisher = createWebRemoteControlTaskViewPublisher(
+    (payload) => !terminated && !versionGuard.isBlocked() && transport.sendPayload(payload),
+  );
   const transport = new WebRemoteControlTerminalTransport({
     relayWsUrl: resolveExternalRelayWsUrl(),
     deviceSid: relayParams.deviceSid,
-    passHash: relayParams.passHash,
     deviceMid: relayParams.deviceMid,
     appVersion: relayParams.appVersion,
-    authProvider: createBrowserWebRemoteControlRelayAuthProvider(),
-    onRawTransportPayload: (payload) => activeRelayProtocol?.acceptPayload(payload) ?? false,
+    getToken,
+    onRawTransportPayload: (payload) =>
+      pendingRelayProtocol?.acceptPayload(payload) ||
+      activeRelayProtocol?.acceptPayload(payload) ||
+      false,
     onRawTransportFault: (reasonCode) => {
+      pendingRelayProtocol?.markDegraded(reasonCode);
       activeRelayProtocol?.markDegraded(reasonCode);
     },
     onPayload: (payload) => {
       if (terminated) {
         return;
       }
+      if (payload.zcode_type === "mobile-task-view-request") {
+        taskViewPublisher.request(payload.epoch);
+        return;
+      }
       if (payload.zcode_type === "rpc-frame" || payload.zcode_type === "rpc-frame-ack") {
-        activeRelayProtocol?.acceptPayload(payload);
+        if (!pendingRelayProtocol?.acceptPayload(payload))
+          activeRelayProtocol?.acceptPayload(payload);
         return;
       }
       if (requester.acceptPayload(payload)) {
@@ -1760,6 +1401,11 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         return;
       }
       if (payload.zcode_type === "bridge-degraded") {
+        if (
+          pendingRelayProtocol &&
+          payload.bridgeSessionId === pendingRelayProtocol.getBridgeSessionId()
+        )
+          pendingRelayProtocol.markDegraded(payload.reason);
         if (payload.bridgeSessionId === activeRelayProtocol?.getBridgeSessionId()) {
           activeRelayProtocol?.markDegraded();
           void recoverVisibleSession(payload.reason);
@@ -1767,9 +1413,16 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         return;
       }
       if (payload.zcode_type === "workspace-bridge-error") {
+        if (
+          pendingRelayProtocol &&
+          payload.bridgeSessionId === pendingRelayProtocol.getBridgeSessionId()
+        )
+          pendingRelayProtocol.markDegraded(payload.reason);
         if (payload.bridgeSessionId === activeRelayProtocol?.getBridgeSessionId()) {
-          // Bug fix: closing a remote session asynchronously invalidates the current bridge and does not correspond to any pending request.
-          // Rebuild the view through hard recovery so the disconnected remote workspace returns to the home-only/reconnect state.
+          // An invalidation notice has no pending request; first close the workspace RPC gate so the existing session shows the disconnect banner
+          // and keeps the draft, and old services are not treated as ready.
+          activeBridgeServiceRegistration?.dispose();
+          activeBridgeServiceRegistration = undefined;
           activeRelayProtocol?.markDegraded();
           void recoverVisibleSession(payload.reason);
         }
@@ -1783,16 +1436,18 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       if (terminated || versionGuard.isBlocked()) {
         return;
       }
+      taskViewPublisher.transportStateChanged(state, terminalTransportState);
       terminalTransportState = state;
       if (state !== "paired") versionGuard.invalidate();
       setWebRemoteControlTerminalTransportState(state);
       if (!ready) {
-        renderWebRemoteControlLoading(state);
+        renderWebRemoteControlLoading(state, connectingDevice);
       }
       if (state !== "paired") {
         return;
       }
-      // An existing validation operation consumes its own retry across reconnects; a pairing event must not start another recovery owner.
+      connection.onPaired();
+      // An existing validation operation consumes one retry across reconnects by itself; a pairing event must not start a second recovery owner.
       if (bootstrapping && pendingVersionCheck) return;
       // A healthy bridge or in-flight initialization must not create another bridge concurrently, but a new pairing must still check the Desktop version.
       if ((activeRelayProtocol && !activeRelayProtocol.isDegraded()) || bootstrapping) {
@@ -1835,11 +1490,8 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     },
     onSendReady: () => {
       if (versionGuard.isBlocked()) return;
-      if (activeRelayProtocol?.isDegraded()) return;
-      // Bug fix: same-socket matched means only that the relay is reachable again; the Desktop peer may have changed,
-      // or only lost the previous batch of data/ACKs. Replay the unacknowledged batch on the same bridge and deduplicate by messageSeq;
-      // the adapter retains the original 45-second age so heartbeats cannot keep an unrecoverable link alive indefinitely.
-      activeRelayProtocol?.replayUnacknowledged();
+      taskViewPublisher.flush();
+      replayWebRemoteControlWorkspaceBridgeFrames({ activeRelayProtocol, pendingRelayProtocol });
     },
     reloadPage: () => {
       window.location.reload();
@@ -1987,6 +1639,12 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     if (!response.success) {
       throw new Error(response.error);
     }
+    if (workspaceKey === currentWorkspaceKey && activeRelayProtocol?.isDegraded()) {
+      await recoverVisibleSession(
+        "workspace-reconnected",
+        () => workspaceKey === currentWorkspaceKey && activeRelayProtocol?.isDegraded() === true,
+      );
+    }
   };
 
   const requestWorkspaceOpen = async (target: {
@@ -2017,97 +1675,123 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
 
   const openWorkspaceBridge = async (
     workspaceKey: string,
-    options?: WebRemoteControlWorkspaceSwitchOptions,
+    options?: WebRemoteControlWorkspaceSwitchOptions & {
+      project?: Extract<
+        WebRemoteControlAppPayload,
+        { zcode_type: "workspace-bridge-open" }
+      >["project"];
+    },
   ): Promise<{
     bridge: WebRemoteControlExternalWorkspaceBridge;
     services: Awaited<ReturnType<typeof connectViaProtocol>>;
     relayProtocol: ReturnType<typeof createAcknowledgedWebRemoteControlRelayProtocol>;
   }> => {
-    isSwitchingWebRemoteControlWorkspace = true;
-    try {
-      const bridgeSessionId = createWebRemoteControlRequestId("bridge");
-      const bridgeGeneration = ++nextBridgeGeneration;
-      const response = await requestWithRelayRecovery(() =>
-        requestAppPayload(
-          {
-            zcode_type: "workspace-bridge-open",
-            requestId: createWebRemoteControlRequestId("workspace-bridge"),
-            bridgeSessionId,
-            bridgeGeneration,
-            ...(currentRecoveryId ? { recoveryId: currentRecoveryId } : {}),
-            workspaceKey,
-            ...(options?.taskId ? { taskId: options.taskId } : {}),
-          },
-          (
-            payload,
-          ): payload is Extract<
-            WebRemoteControlAppPayload,
-            { zcode_type: "workspace-bridge-ready" }
-          > =>
-            payload.zcode_type === "workspace-bridge-ready" &&
-            payload.bridgeSessionId === bridgeSessionId,
-        ),
-      );
-      currentRecoveryId = undefined;
-      if (terminated || versionGuard.isBlocked()) {
-        throw new Error(
-          "Web remote control version changed before the workspace bridge was ready.",
-        );
-      }
-      const relayProtocol = createAcknowledgedWebRemoteControlRelayProtocol({
-        bridgeSessionId: response.bridge.bridgeSessionId,
-        bridgeGeneration: response.bridge.bridgeGeneration,
-        recoveryId: response.bridge.recoveryId,
-        measureFrameBytes: (frame) => transport.measurePayloadBytes(frame),
-        sendFrame: (frame) => {
-          if (versionGuard.isBlocked()) return false;
-          const result = transport.sendPayloadResult(frame);
-          if (result.kind === "oversize") {
-            throw new Error("remote.rpcFrame.envelopeTooLarge");
-          }
-          return result.kind === "sent";
+    const bridgeSessionId = createWebRemoteControlRequestId("bridge");
+    const bridgeGeneration = ++nextBridgeGeneration;
+    pendingBridgeAbort?.abort();
+    const bridgeAbort = new AbortController();
+    pendingBridgeAbort = bridgeAbort;
+    const isCurrent = () =>
+      !terminated && !versionGuard.isBlocked() && bridgeGeneration === nextBridgeGeneration;
+    const response = await requestWithRelayRecovery(() =>
+      requestAppPayload(
+        {
+          zcode_type: "workspace-bridge-open",
+          requestId: createWebRemoteControlRequestId("workspace-bridge"),
+          bridgeSessionId,
+          bridgeGeneration,
+          ...(currentRecoveryId ? { recoveryId: currentRecoveryId } : {}),
+          workspaceKey,
+          ...(options?.taskId ? { taskId: options.taskId } : {}),
+          ...(options?.taskHostId ? { taskHostId: options.taskHostId } : {}),
+          ...(options?.fileTreeTaskId ? { fileTreeTaskId: options.fileTreeTaskId } : {}),
+          ...(options?.project ? { project: options.project } : {}),
         },
-      });
-      relayProtocol.onDegraded((fault) => {
-        if (activeRelayProtocol !== relayProtocol) return;
-        if (!import.meta.env.PROD) {
-          console.warn("[web-remote-control] raw relay bridge degraded", {
-            bridgeSessionId: relayProtocol.getBridgeSessionId(),
-            reasonCode: fault.reasonCode,
-          });
-        }
-        void recoverVisibleSession(fault.reasonCode);
-      });
-      const services = connectViaProtocol(relayProtocol.protocol);
-      const bridgeServiceRegistration = registerWebRemoteControlWorkspaceBridgeServices({
-        bridge: response.bridge,
-        services,
-      });
-      // Marking a task as read is a side effect of opening it; do not wait for completion, so slow disk or remote I/O cannot block bridge switching.
-      void markOpenedWebRemoteControlBridgeTaskRead({
-        bridge: response.bridge,
-        expectedUnreadAt: options?.markTaskReadExpectedUnreadAt,
-        services,
-      });
-      const previousRelayProtocol = activeRelayProtocol;
-      const previousBridgeServiceRegistration = activeBridgeServiceRegistration;
-      activeRelayProtocol = relayProtocol;
-      activeBridgeServiceRegistration = bridgeServiceRegistration;
-      previousRelayProtocol?.dispose();
-      previousBridgeServiceRegistration?.dispose();
-      currentWorkspaceKey = response.bridge.workspaceKey;
-      currentTaskId = response.bridge.initialTaskId;
-      await updateMobileViewState(response.bridge.workspaceKey, response.bridge.initialTaskId);
-      return { bridge: response.bridge, services, relayProtocol };
-    } finally {
-      isSwitchingWebRemoteControlWorkspace = false;
+        (
+          payload,
+        ): payload is Extract<
+          WebRemoteControlAppPayload,
+          { zcode_type: "workspace-bridge-ready" }
+        > =>
+          payload.zcode_type === "workspace-bridge-ready" &&
+          payload.bridgeSessionId === bridgeSessionId,
+      ),
+    );
+    if (!isCurrent() || bridgeAbort.signal.aborted) {
+      throw new Error("Web remote control version changed before the workspace bridge was ready.");
     }
+    currentRecoveryId = undefined;
+    const relayProtocol = createAcknowledgedWebRemoteControlRelayProtocol({
+      bridgeSessionId: response.bridge.bridgeSessionId,
+      bridgeGeneration: response.bridge.bridgeGeneration,
+      recoveryId: response.bridge.recoveryId,
+      measureFrameBytes: (frame) => transport.measurePayloadBytes(frame),
+      sendFrame: (frame) => {
+        if (versionGuard.isBlocked()) return false;
+        const result = transport.sendPayloadResult(frame);
+        if (result.kind === "oversize") {
+          throw new Error("remote.rpcFrame.envelopeTooLarge");
+        }
+        return result.kind === "sent";
+      },
+    });
+    relayProtocol.onDegraded((fault) => {
+      if (activeRelayProtocol !== relayProtocol) return;
+      if (!import.meta.env.PROD) {
+        console.warn("[web-remote-control] raw relay bridge degraded", {
+          bridgeSessionId: relayProtocol.getBridgeSessionId(),
+          reasonCode: fault.reasonCode,
+        });
+      }
+      void recoverVisibleSession(fault.reasonCode);
+    });
+    const services = await connectWebRemoteControlWorkspaceBridgeServices({
+      relayProtocol,
+      windowProjectDirectory:
+        response.bridge.kind === "remote" &&
+        response.bridge.capabilities?.windowProjectDirectory === true,
+      activateTransport: () => {
+        // Capability RPCs need a frame sink first; services and Root still wait for readiness before switching.
+        pendingRelayProtocol = relayProtocol;
+        return () => {
+          if (pendingRelayProtocol === relayProtocol) pendingRelayProtocol = undefined;
+        };
+      },
+      isCurrent,
+      signal: bridgeAbort.signal,
+    });
+    const bridgeServiceRegistration = registerWebRemoteControlWorkspaceBridgeServices({
+      bridge: response.bridge,
+      services,
+    });
+    // Marking a task read is a companion action of opening it; do not wait for it, so slow disk or remote I/O does not block the bridge switch.
+    void markOpenedWebRemoteControlBridgeTaskRead({
+      bridge: response.bridge,
+      expectedUnreadAt: options?.markTaskReadExpectedUnreadAt,
+      services,
+    });
+    const previousRelayProtocol = activeRelayProtocol;
+    const previousBridgeServiceRegistration = activeBridgeServiceRegistration;
+    activeRelayProtocol = relayProtocol;
+    taskViewPublisher.setBridge(response.bridge);
+    if (pendingRelayProtocol === relayProtocol) pendingRelayProtocol = undefined;
+    if (pendingBridgeAbort === bridgeAbort) pendingBridgeAbort = undefined;
+    activeBridgeServiceRegistration = bridgeServiceRegistration;
+    previousRelayProtocol?.dispose();
+    previousBridgeServiceRegistration?.dispose();
+    currentWorkspaceKey = response.bridge.workspaceKey;
+    currentTaskId = response.bridge.initialTaskId;
+    await updateMobileViewState(response.bridge.workspaceKey, response.bridge.initialTaskId);
+    if (!isCurrent()) throw new Error("Workspace bridge request was superseded.");
+    return { bridge: response.bridge, services, relayProtocol };
   };
 
   const renderExternalRelayRoot = (
     services: Awaited<ReturnType<typeof connectViaProtocol>>,
     bridge: WebRemoteControlExternalWorkspaceBridge,
     initialNavigationIntent?: WebRemoteControlMobileNavigationIntent,
+    initialTaskDraft?: ComponentProps<typeof Root>["initialTaskDraft"],
+    initialSidebarFileTreeOpen = false,
   ) => {
     if (terminated || versionGuard.isBlocked()) return;
     ready = true;
@@ -2125,7 +1809,9 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
               externalWebRemoteControlProxy: {
                 requestPlatformMethod,
                 reportTelemetryEvent: (event) => {
-                  const parsed = sessionCreateTelemetrySchema.safeParse(event);
+                  const parsed = sessionCreateTelemetrySchema
+                    .or(mobilePluginDiscoveryTelemetrySchema)
+                    .safeParse(event);
                   if (parsed.success)
                     transport.sendPayload({ zcode_type: "telemetry-report", event: parsed.data });
                 },
@@ -2140,18 +1826,35 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
               bridge.kind === "remote" ? bridge.workspaceIdentity : undefined
             }
             initialTaskId={bridge.initialTaskId}
+            initialTaskDraft={initialTaskDraft}
+            composerClientNamespace={`mobile:${relayParams.deviceMid ?? relayParams.deviceSid}`}
+            initialSidebarFileTreeOpen={initialSidebarFileTreeOpen}
             initialWebRemoteControlMobileNavigationIntent={initialNavigationIntent}
             webRemoteControlTerminalTransportState={terminalTransportState}
-            initialWorkspaceLoadingFallback={<WebRemoteControlLoadingScreen state="paired" />}
+            initialWorkspaceLoadingFallback={
+              <WebRemoteControlLoadingScreen
+                state="paired"
+                locale={resolveWebRemoteControlScreenLocale(navigator.language)}
+                device={connectingDevice}
+              />
+            }
             restoreSession={false}
             allowOpenWorkspace={false}
             webRemoteControlWorkspaceSwitcher={{
+              deviceNavigation,
               listWorkspaces,
               onWorkspaceListUpdated: subscribeWorkspaceListUpdates,
+              openProjectDraft,
               switchWorkspace: async (workspaceKey, options) => {
                 const initialNavigationIntent = options?.mobileNavigationIntent;
                 const result = await openWorkspaceBridge(workspaceKey, options);
-                renderExternalRelayRoot(result.services, result.bridge, initialNavigationIntent);
+                renderExternalRelayRoot(
+                  result.services,
+                  result.bridge,
+                  initialNavigationIntent,
+                  undefined,
+                  Boolean(options?.fileTreeTaskId || options?.openFileManager),
+                );
               },
               markTaskRead: (task) =>
                 markCurrentWebRemoteControlBridgeTaskRead({
@@ -2183,6 +1886,9 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
                 });
               },
               updateMobileViewState,
+              updateMobileTaskView: async (view) => {
+                taskViewPublisher.update(bridge, view);
+              },
             }}
             preferDirectoryBrowser
             supportsEmbeddedBrowser={false}
@@ -2191,6 +1897,34 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
         </ZCodeIntlProvider>
       </AppErrorBoundary>,
     );
+  };
+
+  const openProjectDraft = async (
+    request: NonNullable<ComponentProps<typeof Root>["initialTaskDraft"]>,
+  ) => {
+    const projectId = request.projectId ?? null;
+    const pendingDraft =
+      !projectId && (!request.hostId || request.hostId === "local")
+        ? ensurePendingTaskDraft({
+            clientNamespace: `mobile:${relayParams.deviceMid ?? relayParams.deviceSid}`,
+            hostId: "local",
+            projectId: null,
+          })
+        : null;
+    const result = await openWorkspaceBridge(currentWorkspaceKey ?? "project-navigation", {
+      project: {
+        projectId,
+        ...(request.hostId ? { hostId: request.hostId } : {}),
+        ...(pendingDraft
+          ? { draftId: pendingDraft.draftId, reuseDraft: Boolean(pendingDraft.workspacePath) }
+          : {}),
+      },
+    });
+    renderExternalRelayRoot(result.services, result.bridge, "chat", {
+      ...request,
+      projectId,
+      ...(pendingDraft ? { draftId: pendingDraft.draftId } : {}),
+    });
   };
 
   const renderExternalRelayHomeOnlyRoot = async (
@@ -2202,19 +1936,24 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     currentTaskId = taskId;
     await updateMobileViewState(workspaceKey, taskId);
     document.title = "ZCode - Web Remote Control";
-    const initialResult = await listWorkspaces();
     if (terminated || versionGuard.isBlocked()) return;
+    // Bug: a staging merge (a861a83cbc) dropped the ready flag here, so every pairing-state flicker on home-only mounts re-rendered the loading page,
+    // and a pairing recovery remounted the whole page, losing onboarding and local state.
+    // As with the bridge Root, the Root's own banner shows the disconnect state once mounted.
     ready = true;
     root.render(
       <AppErrorBoundary key={`home-only-${workspaceKey}`}>
         <ZCodeIntlProvider>
           <Root
+            composerClientNamespace={`mobile:${relayParams.deviceMid ?? relayParams.deviceSid}`}
             services={createHomeOnlyWebRemoteControlServices()}
             platform={createWebPlatform({
               externalWebRemoteControlProxy: {
                 requestPlatformMethod,
                 reportTelemetryEvent: (event) => {
-                  const parsed = sessionCreateTelemetrySchema.safeParse(event);
+                  const parsed = sessionCreateTelemetrySchema
+                    .or(mobilePluginDiscoveryTelemetrySchema)
+                    .safeParse(event);
                   if (parsed.success)
                     transport.sendPayload({ zcode_type: "telemetry-report", event: parsed.data });
                 },
@@ -2224,20 +1963,34 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
             initialTaskId={taskId}
             initialWebRemoteControlMobileNavigationIntent={undefined}
             webRemoteControlTerminalTransportState={terminalTransportState}
-            initialWorkspaceLoadingFallback={<WebRemoteControlLoadingScreen state="paired" />}
+            initialWorkspaceLoadingFallback={
+              <WebRemoteControlLoadingScreen
+                state="paired"
+                locale={resolveWebRemoteControlScreenLocale(navigator.language)}
+                device={connectingDevice}
+              />
+            }
             restoreSession={false}
             allowOpenWorkspace={false}
             webRemoteControlWorkspaceSwitcher={{
+              deviceNavigation,
               listWorkspaces: async () => ({
                 ...(await listWorkspaces()),
                 activeWorkspaceKey: currentWorkspaceKey,
                 activeTaskId: currentTaskId,
               }),
               onWorkspaceListUpdated: subscribeWorkspaceListUpdates,
+              openProjectDraft,
               switchWorkspace: async (nextWorkspaceKey, options) => {
                 const initialNavigationIntent = options?.mobileNavigationIntent;
                 const result = await openWorkspaceBridge(nextWorkspaceKey, options);
-                renderExternalRelayRoot(result.services, result.bridge, initialNavigationIntent);
+                renderExternalRelayRoot(
+                  result.services,
+                  result.bridge,
+                  initialNavigationIntent,
+                  undefined,
+                  Boolean(options?.fileTreeTaskId || options?.openFileManager),
+                );
               },
               startDraft: async (nextWorkspaceKey, options) => {
                 const initialNavigationIntent = options?.mobileNavigationIntent;
@@ -2251,7 +2004,6 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
             preferDirectoryBrowser
             supportsEmbeddedBrowser={false}
             allowRemoteWorkspace={false}
-            initialWebRemoteControlWorkspaceList={initialResult}
           />
         </ZCodeIntlProvider>
       </AppErrorBoundary>,
@@ -2286,6 +2038,13 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
       );
     }
     if (!selectedWorkspace.canBridge) {
+      // After a source disconnect, bootstrap only confirms offline and does not replace the current Root; content and drafts stay with the original session owner.
+      // A cold start has no loaded bridge, so it keeps the original home-only boundary.
+      if (activeRelayProtocol && selectedWorkspace.workspaceKey === currentWorkspaceKey) {
+        activeBridgeServiceRegistration?.dispose();
+        activeBridgeServiceRegistration = undefined;
+        return;
+      }
       await renderExternalRelayHomeOnlyRoot(
         selectedWorkspace.workspaceKey,
         selectedWorkspace.taskId,
@@ -2303,223 +2062,25 @@ async function bootstrapExternalRelayWebRemoteControl(params: URLSearchParams): 
     documentTarget: document,
     windowTarget: window,
     onSuspend: () => {
-      // Bug fix: after mobile hidden/pagehide, the system may pause JavaScript timers and WebSockets.
-      // Only save the current workspace/task and pause heartbeats here; do not refresh. Reconnect and bootstrap again when the app returns to the foreground.
+      // After hidden/pagehide/freeze, JS and the WebSocket may both be paused; first revoke the view, then close the send gate.
+      // The navigation restore point is kept; whether the bridge is rebuilt is still decided by the existing recovery flow.
+      taskViewPublisher.suspend();
       transport.suspend();
     },
     onRecover: (reason) => {
       void recoverVisibleSession(reason);
     },
   });
-  window.addEventListener(
-    "beforeunload",
-    () => {
-      terminated = true;
-      versionGuard.dispose();
-      disposeVersionInputGuard();
-      disposeVersionNotice?.();
-      activeBridgeServiceRegistration?.dispose();
-      activeBridgeServiceRegistration = undefined;
-      lifecycle.dispose();
-    },
-    { once: true },
-  );
+  window.addEventListener("beforeunload", disposeConnection, { once: true });
+  connection.signal.addEventListener("abort", disposeConnection, { once: true });
   transport.start();
-}
-
-async function bootstrapWebRemoteControlByToken(params: URLSearchParams): Promise<void> {
-  const remoteControlToken = params.get("remoteControlToken")?.trim();
-  if (!remoteControlToken) {
-    return;
-  }
-
-  const relayOrigin = params.get("relayOrigin")?.trim() || window.location.origin;
-  let activeBridgeSocket: WebSocket | null = null;
-  let activeBridgeServiceRegistration:
-    | WebRemoteControlWorkspaceBridgeServiceRegistration
-    | undefined;
-  let currentWorkspaceKey: string | undefined;
-  let currentTaskId: string | undefined;
-  let pendingMobileNavigationIntent: WebRemoteControlMobileNavigationIntent | undefined;
-  let webRemoteControlCloseFailure: WebRemoteControlFailure | null = null;
-
-  const renderFailure = (failure: WebRemoteControlFailure) => {
-    webRemoteControlCloseFailure = failure;
-    activeBridgeServiceRegistration?.dispose();
-    activeBridgeServiceRegistration = undefined;
-    renderWebRemoteControlFailure(failure);
-  };
-
-  const bootstrapProxy = { token: remoteControlToken, relayOrigin };
-  const snapshot = await requestWebRemoteControlWindowBootstrap(bootstrapProxy);
-  const windowConnection = await connectWebRemoteControlWindow(bootstrapProxy, (event) => {
-    if (isPageUnloading) {
-      return;
-    }
-    renderFailure(mapWebRemoteControlSocketCloseToFailure(event));
-  });
-  const proxy: WebRemoteControlProxyOptions = {
-    token: remoteControlToken,
-    relayOrigin,
-    windowControlSessionId: windowConnection.ready.windowControlSessionId,
-    mobileConnectionId: windowConnection.ready.mobileConnectionId,
-  };
-
-  const renderBridgeRoot = (
-    services: Awaited<ReturnType<typeof connectViaWebSocket>>,
-    bridge: WebRemoteControlWorkspaceBridge,
-    initialNavigationIntent?: WebRemoteControlMobileNavigationIntent,
-  ) => {
-    const initialWorkspaceIdentity =
-      bridge.kind === "remote" ? bridge.workspaceIdentity : undefined;
-    document.title = "ZCode - Web Remote Control";
-    root.render(
-      <AppErrorBoundary key={bridge.bridgeSessionId}>
-        <ZCodeIntlProvider
-          settingService={services.settingService}
-          broadcastService={services.broadcastService}
-          preferSettingServiceLocale
-        >
-          <Root
-            services={services}
-            platform={createWebPlatform({ webRemoteControlProxy: proxy })}
-            // Keep the same Renderer projection as the external relay; regular Web Server Root continues to use the disabled default.
-            assistantCodeCommentCardsEnabled
-            initialWorkspaceAbsPath={bridge.workspacePath}
-            initialWorkspaceIdentity={initialWorkspaceIdentity}
-            initialTaskId={bridge.initialTaskId}
-            initialWebRemoteControlMobileNavigationIntent={initialNavigationIntent}
-            initialWorkspaceLoadingFallback={<WebRemoteControlLoadingScreen state="paired" />}
-            restoreSession={false}
-            allowOpenWorkspace={false}
-            webRemoteControlWorkspaceSwitcher={{
-              listWorkspaces: () =>
-                requestWebRemoteControlWorkspaces(proxy).then((result) => ({
-                  ...result,
-                  activeWorkspaceKey: result.activeWorkspaceKey ?? currentWorkspaceKey,
-                  activeTaskId: result.activeTaskId ?? currentTaskId,
-                })),
-              switchWorkspace: async (workspaceKey, options) => {
-                await openWorkspaceBridge(workspaceKey, options);
-              },
-              markTaskRead: (task) =>
-                markCurrentWebRemoteControlBridgeTaskRead({
-                  bridge,
-                  services,
-                  task,
-                }),
-              startDraft: async (workspaceKey, options) => {
-                pendingMobileNavigationIntent = options?.mobileNavigationIntent;
-                await openWorkspaceBridge(workspaceKey, undefined);
-              },
-              openWorkspace: async (target) => {
-                // The worktree flow is the single sanctioned open path: the DESKTOP opens the
-                // workspace (its window Host owns local workspaces); this client only attaches
-                // through the existing workspace bridge afterwards.
-                await openWebRemoteControlWorkspace({
-                  target,
-                  deps: {
-                    requestWorkspaceOpen: (openTarget) =>
-                      requestWebRemoteControlWorkspaceOpen(proxy, openTarget),
-                    listWorkspaces: () => requestWebRemoteControlWorkspaces(proxy),
-                    switchWorkspace: (workspaceKey) => openWorkspaceBridge(workspaceKey),
-                    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-                  },
-                });
-              },
-              updateMobileViewState: async (workspaceKey, taskId) => {
-                currentWorkspaceKey = workspaceKey;
-                currentTaskId = taskId;
-                await updateWebRemoteControlMobileViewState(proxy, workspaceKey, taskId);
-              },
-            }}
-            preferDirectoryBrowser
-            supportsEmbeddedBrowser={false}
-            allowRemoteWorkspace={false}
-          />
-        </ZCodeIntlProvider>
-      </AppErrorBoundary>,
-    );
-  };
-
-  const openWorkspaceBridge = async (
-    workspaceKey: string,
-    options?: WebRemoteControlWorkspaceSwitchOptions,
-  ): Promise<void> => {
-    isSwitchingWebRemoteControlWorkspace = true;
-    pendingMobileNavigationIntent = options?.mobileNavigationIntent;
-    let bridgeSocket: WebSocket | null = null;
-    try {
-      const bridge = await requestWebRemoteControlWorkspaceBridge(proxy, workspaceKey, options);
-      const services = await connectViaWebSocket(bridge.wsUrl, {
-        onOpenSocket: (socket) => {
-          bridgeSocket = socket;
-        },
-        onClose: (event) => {
-          if (
-            isPageUnloading ||
-            isSwitchingWebRemoteControlWorkspace ||
-            bridgeSocket !== activeBridgeSocket
-          ) {
-            return;
-          }
-
-          renderFailure(mapWebRemoteControlSocketCloseToFailure(event));
-        },
-      });
-      const bridgeServiceRegistration = registerWebRemoteControlWorkspaceBridgeServices({
-        bridge,
-        services,
-      });
-      // The helper records a failure to mark as read; navigation continues with the target bridge that is already established.
-      void markOpenedWebRemoteControlBridgeTaskRead({
-        bridge,
-        expectedUnreadAt: options?.markTaskReadExpectedUnreadAt,
-        services,
-      });
-
-      const previousBridgeSocket = activeBridgeSocket;
-      const previousBridgeServiceRegistration = activeBridgeServiceRegistration;
-      activeBridgeSocket = bridgeSocket;
-      activeBridgeServiceRegistration = bridgeServiceRegistration;
-      previousBridgeSocket?.close();
-      previousBridgeServiceRegistration?.dispose();
-      currentWorkspaceKey = bridge.workspaceKey;
-      currentTaskId = bridge.initialTaskId;
-      await updateWebRemoteControlMobileViewState(proxy, bridge.workspaceKey, bridge.initialTaskId);
-      const initialNavigationIntent = pendingMobileNavigationIntent;
-      pendingMobileNavigationIntent = undefined;
-      renderBridgeRoot(services, bridge, initialNavigationIntent);
-    } finally {
-      pendingMobileNavigationIntent = undefined;
-      isSwitchingWebRemoteControlWorkspace = false;
-    }
-  };
-
-  const selectedWorkspace = selectInitialWebRemoteControlWorkspace(snapshot);
-  if (!selectedWorkspace) {
-    throw toWebRemoteControlFailure(
-      "workspace-closed",
-      "No opened desktop workspace is available for Web remote control.",
-    );
-  }
-
-  try {
-    await openWorkspaceBridge(selectedWorkspace.workspaceKey, {
-      taskId: selectedWorkspace.taskId,
-    });
-  } catch (error) {
-    windowConnection.socket.close();
-    throw error;
-  }
-
-  if (webRemoteControlCloseFailure) {
-    windowConnection.socket.close();
-  }
 }
 
 async function bootstrapWebApp() {
   const params = new URLSearchParams(window.location.search);
+  if (isWebRemoteControlRoute() || isWebRemoteControlOAuthCallback(new URL(window.location.href))) {
+    document.documentElement.lang = resolveWebRemoteControlScreenLocale(navigator.language);
+  }
   if (isWebOAuthCallback(params)) {
     renderWebAuthCallbackPage();
     return;
@@ -2531,34 +2092,7 @@ async function bootstrapWebApp() {
   }
 
   if (isWebRemoteControlRoute()) {
-    await bootstrapExternalRelayWebRemoteControl(params);
-    return;
-  }
-
-  if (params.has("remoteControlToken")) {
-    try {
-      await bootstrapWebRemoteControlByToken(params);
-    } catch (error) {
-      renderWebRemoteControlFailure(
-        error && typeof error === "object" && "reason" in error
-          ? (error as WebRemoteControlFailure)
-          : toWebRemoteControlFailure(
-              "unexpected-error",
-              error instanceof Error ? error.message : String(error),
-            ),
-      );
-    }
-    return;
-  }
-
-  if (shouldUseWebRemoteAuth(params)) {
-    const auth = await webAuthService.restoreCachedSession();
-    if (!auth) {
-      renderWebLoginPage();
-      return;
-    }
-
-    renderWebLoggedInWaitingPage(auth);
+    await remoteEntry.start();
     return;
   }
 

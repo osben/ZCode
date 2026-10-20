@@ -2557,6 +2557,8 @@ const enUS: Record<string, string> = {
     "The mobile connection did not recover in time, so Web remote control cannot keep syncing yet.",
   "webRemoteControl.failure.relayUnavailable":
     "The external relay connection is unavailable. Make sure desktop is online, then try again.",
+  "webRemoteControl.failure.repairRequired":
+    "Remote control was upgraded to the new relay. Your previous phone pairing no longer works: scan the new QR code with your phone to pair again.",
   "webRemoteControl.failure.unsupportedAction":
     "Web remote control mode can only open workspaces that are already open in the current desktop window.",
   "webRemoteControl.failure.unexpectedError":
