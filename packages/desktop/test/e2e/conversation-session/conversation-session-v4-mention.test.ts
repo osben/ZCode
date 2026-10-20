@@ -1,11 +1,12 @@
-// S01 / S05 / S08 gate: composer aggregated entry points, legacy triggers, and the Session Skill catalog lifecycle.
-// Evidence layer L3:
-// 1) A first-round fixed reply establishes a session (written into sessions-index);
-// 2) Creating a new draft → both `@` and `#` discover candidates from the same sessions-index;
-// 3) Selecting from either entry writes the original `#session-id` canonical mention;
-// 4) `$` / `¥` / `￥` still open the Skills panel and write the original Skill mention;
-// 5) The `+` menu shows @ / / / $ hints at the bottom; typing $ manually opens skill candidates;
-// 6) After Session initialization, manually adding a SKILL.md leaves the old Session's catalog frozen while a new task rediscovers it.
+import { openWorkspaceDraftFromSidebar } from "../helpers/workspace-agent-warmup.js";
+// S01 / S05 / S08 门禁：composer 聚合入口、兼容触发器与 Session Skill catalog 生命周期。
+// 证据层 L3：
+// 1) 首轮固定回复建立一个 session（写入 sessions-index）；
+// 2) 新建 draft → `@` 与 `#` 都能发现同一 sessions-index 候选；
+// 3) 两条入口选中后都写入原 `#session-id` canonical mention；
+// 4) `$` / `¥` / `￥` 继续打开 Skills 面板并写入原 Skill mention；
+// 5) `+` 菜单展示 @ / / / $ 底部提示，手动输入 $ 打开技能候选；
+// 6) Session 初始化后手动新增 SKILL.md，旧 Session 目录冻结，新建任务重新发现。
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -13,7 +14,7 @@ import {
   getE2EAppDataPaths,
   setInputValueByTestIdDom,
 } from "../helpers/desktop-app.js";
-import { TID_CHAT_ATTACHMENT_BUTTON, TID_V4_COMPOSER_INPUT } from "@zcode/shared";
+import { TID_CHAT_ATTACHMENT_BUTTON, TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import {
   clickV4SlashOption,
   getV4ComposerText,
@@ -22,7 +23,6 @@ import {
   prepareV4ConversationE2E,
   selectV4TaskById,
   sendV4Prompt,
-  startNewV4Draft,
   waitForV4MentionOptionPrefix,
   waitForV4Pane,
   waitForV4TimelineContaining,
@@ -71,9 +71,8 @@ async function waitForSessionSkillAbsent(trigger: "/" | "$") {
         stableEmptyPolls = 0;
         return false;
       }
-      // The `$` single-group panel omits the Skills row entirely when filtered results are empty, so there is no explicit empty state.
-      // Observe the panel being present, not loading, and without the target candidate several polls in a row,
-      // to avoid mistaking an incomplete first frame for the final empty result.
+      // `$` 的单分组面板在过滤结果为空时会直接省略 Skills row，因此没有 explicit empty 状态。
+      // 连续观察到面板存在、无 loading 且无目标候选，避免把首帧未完成误判为最终空结果。
       stableEmptyPolls += 1;
       return stableEmptyPolls >= 3;
     },
@@ -115,7 +114,7 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
   it("@ 与 # 共用 sessions-index，+ 菜单突出 @、/ 和 $", async () => {
     await prepareV4ConversationE2E();
 
-    // 1) Establish a session (for both @ / # catalogs to hit)
+    // 1) 建立一个 session（供 @ / # 目录共同命中）
     await sendV4Prompt("E2E_V4_MENTION_SEED 建立可被 mention 的会话");
     await waitForV4TimelineContaining("V4_MENTION_SEED_OK", 45000);
     const seedPane = await waitForV4Pane(
@@ -128,10 +127,11 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       throw new Error(`没有拿到可引用的 seed session: ${JSON.stringify(seedPane)}`);
     }
 
-    // 2) New draft → clean composer
-    await startNewV4Draft();
+    // 2) 新建 draft → 干净输入框
+    // 全局新建会分配虚拟目录；Hook、Skill 与会话候选必须继续使用夹具所属项目。
+    await openWorkspaceDraftFromSidebar(getE2EAppDataPaths().workspace);
 
-    // 3) The `@` aggregated entry loads sessions-index and still writes the # canonical mention.
+    // 3) `@` 聚合入口加载 sessions-index，并仍写入 # canonical mention。
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "@E2E_V4_MENTION_SEED", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
@@ -151,7 +151,7 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       timeoutMsg: "选中 @ 会话候选后面板没有关闭",
     });
 
-    // 4) The legacy `#` panel keeps working and shares the same sessions-index authority as @.
+    // 4) 兼容 `#` 面板继续工作，并与 @ 使用同一 sessions-index authority。
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "#E2E_V4_MENTION_SEED", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
@@ -171,7 +171,7 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       timeoutMsg: "选中 # 会话候选后面板没有关闭",
     });
 
-    // 5) Legacy Skills triggers (including both Yen keyboard aliases) keep opening the same candidate panel.
+    // 5) Skills 旧触发器（含两种 Yen 键盘别名）继续打开同一候选面板。
     let expectedSkillOptionId: string | undefined;
     let expectedSkillMarkdown: string | undefined;
     for (const skillTrigger of ["$", "¥", "￥"] as const) {
@@ -211,8 +211,8 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       });
     }
 
-    // 6) The + menu introduces quick inputs via bottom hints; the hints are no longer clickable menu items.
-    // Placed after the mention assertions to avoid the Radix menu's close focus racing with Lexical input.
+    // 6) + 菜单以底部提示介绍快捷输入；提示不再是可点击的菜单项。
+    // 放在 mention 断言之后，避免 Radix 菜单的关闭焦点与 Lexical 输入竞争。
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", {
       timeout: 15000,
       timeoutMsg: "验证动作菜单前无法清空输入框",
@@ -238,15 +238,15 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
     expect((await waitForV4MentionOptionPrefix("skill:")).startsWith("skill:")).toBe(true);
     await browser.keys("Escape");
 
-    // Clear the draft so the old mention does not interfere with S08's unique-name filtering.
+    // 清空草稿，避免旧 mention 干扰 S08 的唯一名称过滤。
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", {
       timeout: 15000,
       timeoutMsg: "v4 composer 输入框没有出现或不可输入",
     });
 
-    // 7) Return to the initialized S1 first, then manually add a Skill from the file system.
-    // Bug root cause: the old Composer reused the UI snapshot taken at workspace mount for a long time, so new tasks could not see file changes either;
-    // the correct boundary pinned here is that the old resident Session does not hot-reload, while the new runtime created by a new task rediscovers.
+    // 7) 先回到已初始化的 S1，再从文件系统手动新增 Skill。
+    // Bug 根因：旧 Composer 曾长期复用 workspace mount 时的 UI 快照，导致新任务也看不到文件变化；
+    // 这里固定正确边界是旧 resident Session 不热更新，而新任务创建的新 runtime 会重新发现。
     await selectV4TaskById(seedSessionId);
     await mkdir(SESSION_SKILL_DIRECTORY, { recursive: true });
     await writeFile(
@@ -262,7 +262,7 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       "utf-8",
     );
 
-    // 8) S1 still reads the runtime catalog frozen at first context initialization; neither / nor $ can see the new Skill.
+    // 8) S1 仍读取首次 context 初始化时冻结的 runtime catalog，/ 与 $ 都不能看到新 Skill。
     for (const trigger of ["/", "$"] as const) {
       await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, `${trigger}${SESSION_SKILL_NAME}`, {
         timeout: 15000,
@@ -275,8 +275,9 @@ describe("S01 / S05 / S08：composer 候选入口与 Session Skill catalog", () 
       });
     }
 
-    // 9) A new task creates a new prewarm/runtime; the same real SKILL.md must appear in both / and $ candidates.
-    await startNewV4Draft();
+    // 9) 新建任务创建新的 prewarm/runtime；同一个真实 SKILL.md 必须同时进入 / 与 $ 候选。
+    // 全局新建会分配虚拟目录；Hook、Skill 与会话候选必须继续使用夹具所属项目。
+    await openWorkspaceDraftFromSidebar(getE2EAppDataPaths().workspace);
     let slashSkillOptionId: string | undefined;
     for (const trigger of ["/", "$"] as const) {
       await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, `${trigger}${SESSION_SKILL_NAME}`, {

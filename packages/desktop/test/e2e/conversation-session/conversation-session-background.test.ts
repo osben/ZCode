@@ -15,7 +15,7 @@ import {
   TID_V4_SESSION_PANE,
   TID_V4_TURN_NAVIGATOR_ITEM,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import { clearAppData, seedSettings } from "../helpers/desktop-app.js";
 import {
   waitForCompactMarkerStatus,
@@ -50,7 +50,6 @@ import {
   selectV4TaskById,
   sendV4Prompt,
   sendV4PromptAndWaitAccepted,
-  startNewV4Draft,
   waitForV4AssistantMessageContaining,
   waitForV4ComposerText,
   waitForV4ConversationState,
@@ -66,7 +65,6 @@ import {
   beginConversationTelemetryCapture,
   checkpointConversationTelemetryCase,
   waitForConversationReportDelta,
-  type ConversationTelemetryCaptureHandle,
   type ConversationTelemetryReport,
 } from "../helpers/conversation-telemetry-parity-capture.js";
 
@@ -200,8 +198,6 @@ async function waitForBackgroundResultPresentation(options: {
 }
 
 describe("会话区 Background Runtime Task E2E", () => {
-  let telemetryCapture: ConversationTelemetryCaptureHandle | null = null;
-
   before(async function () {
     this.timeout(BACKGROUND_E2E_TIMEOUT_MS);
     await mkdir(BACKGROUND_RUNTIME_ROOT, { recursive: true });
@@ -212,8 +208,8 @@ describe("会话区 Background Runtime Task E2E", () => {
   });
 
   afterEach(async () => {
-    // BG21 / send-now child Bash use file barriers; teardown must release them first even on failure,
-    // to avoid leaving background processes behind.
+    // BG21 / send-now 的 child Bash 使用文件 barrier；失败收尾也要先释放，
+    // 避免遗留后台进程。
     await Promise.all([
       writeFile(BG21_RELEASE_FILE, "release\n", "utf-8").catch(() => undefined),
       writeFile(BACKGROUND_SEND_NOW_QUEUE_RELEASE_FILE, "release\n", "utf-8").catch(
@@ -274,9 +270,9 @@ describe("会话区 Background Runtime Task E2E", () => {
 
     expect(notificationIndex).toBeGreaterThan(launchIndex);
     await waitForV4AssistantMessageContaining("background-agent-notification-consumed-ok");
-    // Bug root cause: a V4 completed turn collects the old Agent tool card into timeline history;
-    // this case's main contract is covered jointly by the notification request order, the independent result
-    // turn, and no synthetic user, so it no longer re-depends on the legacy card's transient expanded state.
+    // Bug 根因：V4 completed turn 会把旧 Agent tool card 收进 timeline history；
+    // 本 case 的主合同由 notification 请求顺序、独立结果轮和无 synthetic user 共同覆盖，
+    // 不再重复依赖 legacy card 的瞬时展开状态。
     await waitForIdle("background Agent notification 后会话没有回到 idle");
     await waitForBackgroundResultPresentation({
       assistantMarker: "background-agent-notification-consumed-ok",
@@ -297,7 +293,7 @@ describe("会话区 Background Runtime Task E2E", () => {
     this.timeout(BACKGROUND_E2E_TIMEOUT_MS);
 
     await startNewBackgroundDraft();
-    const capture = (telemetryCapture ??= await beginConversationTelemetryCapture());
+    const capture = await beginBackgroundTelemetryCapture();
     const prompt =
       "E2E_BACKGROUND_BASH: Run a background Bash command and report after notification.";
     const requestCountBefore = await getUpstreamRequestRecordCount();
@@ -460,8 +456,8 @@ describe("会话区 Background Runtime Task E2E", () => {
 
     await sendV4Prompt("/compact");
     await waitForV4ComposerText("", "background running 时 /compact 发送后输入框没有清空");
-    // Bug root cause: the V4 compact row updates in place from running to success; under fast replay,
-    // started may close out before WDIO's first poll; completed equally proves the command was admitted.
+    // Bug 根因：V4 compact row 会原位从 running 更新成 success，快速 replay 下
+    // started 可能在 WDIO 首次轮询前就收口；completed 同样能证明命令已被 admission。
     const compactMarker = await waitForCompactMarkerStatuses(["started", "completed"], "manual");
     expect(compactMarker.inputId).toBeTruthy();
     if (compactMarker.status !== "completed") {
@@ -569,7 +565,7 @@ describe("会话区 Background Runtime Task E2E", () => {
       launchResult?.content ?? "",
     )?.[1];
     expect(outputPath).toBeTruthy();
-    // Root-cause regression: a successful background launch cannot substitute for live on-disk evidence; read the same path before DONE.
+    // 根因回归：后台 launch 成功不能代替实时落盘证据；在 DONE 之前读取同一路径。
     const runningOutput = await readFile(outputPath!, "utf8");
     expect(runningOutput).toContain("E2E_BG37_STARTED");
     expect(runningOutput).not.toContain("E2E_BG37_DONE");
@@ -795,7 +791,7 @@ describe("会话区 Background Runtime Task E2E", () => {
       const full = await $('[data-testid="bash-output-preview-full"]');
       expect(await full.getText()).toContain("progress-line-30");
       expect(await full.getText()).toContain("progress-line-120");
-      // The shared renderer keeps preview line wrapping; long output must not use single-line truncation styling.
+      // 共享 renderer 保持预览换行，长输出不能使用单行截断样式。
       expect(
         await browser.execute(() => {
           const node = document.querySelector('[data-testid="bash-output-preview-full"]');
@@ -818,14 +814,13 @@ describe("会话区 Background Runtime Task E2E", () => {
     await waitForV4AssistantMessageContaining("foreground-long-bash-loading-completed-ok");
     await waitForIdle("foreground long Bash 完成后会话没有回到 idle");
     expect(await $('[data-testid="bash-output-preview-full"]').isExisting()).toBe(false);
-    // After the turn completes, the tool moves into the collapsed assistant history; re-expand history via the product entry first.
+    // turn 完成后工具进入已折叠的 assistant history；先按产品入口重新展开历史。
     await waitForToolCallBlockByToolCallId("toolu_e2e_foreground_long_bash_loading");
     const resultTrigger = await $(
       '[data-testid="tool-summary-trigger-toolu_e2e_foreground_long_bash_loading"]',
     );
     if ((await resultTrigger.getAttribute("aria-expanded")) !== "true") await resultTrigger.click();
-    // The history expand animation mounts the node before showing the body; wait for the actual output.
-    // The foreground no longer shows the file entry.
+    // 历史展开动画会先挂载节点再显示正文，等待实际输出，前台不再展示文件入口。
     const result = await $('[data-testid="bash-result-output"]');
     await browser.waitUntil(
       async () =>
@@ -836,7 +831,7 @@ describe("会话区 Background Runtime Task E2E", () => {
     expect(await $('[data-testid="bash-output-file"]').isExisting()).toBe(false);
     expect(await result.getText()).not.toContain("E2E_FOREGROUND_LONG_BASH_DONE");
     expect(await result.getText()).not.toContain("<persisted-output>");
-    // The provider keeps its original small summary and full-file contract; Desktop only displays Bash's head body.
+    // provider 保持原有小摘要和完整文件契约，Desktop 仅显示 Bash 的头部正文。
     const modelResult = await getLatestUpstreamToolResultByToolCallId(
       "toolu_e2e_foreground_long_bash_loading",
     );
@@ -890,8 +885,8 @@ describe("会话区 Background Runtime Task E2E", () => {
         readPosixProcessGroupId(launcherPid),
         readPosixProcessGroupId(workerPid),
       ]);
-      // Bug root cause: Bash job control puts the launcher/worker into a PGID outside the root shell's;
-      // this only verifies the real construct succeeds, avoiding a false positive in the kill-tree regression from ordinary same-group processes.
+      // Bug 根因：Bash job control 会把 launcher/worker 放入根 shell 之外的 PGID；
+      // 这里只验证真实构造成功，避免普通同组进程让杀树回归得到假阳性。
       expect(launcherProcessGroupId).not.toBe(rootProcessGroupId);
       expect(workerProcessGroupId).toBe(launcherProcessGroupId);
     }
@@ -1131,8 +1126,8 @@ describe("会话区 Background Runtime Task E2E", () => {
       ),
     ).toBe(0);
     await waitForV4ConversationState(
-      // Bug root cause: the old chat root projected a verified goal as complete, while the V4 status panel expresses
-      // the same terminal state as verified; the promotion case must be compatible with both display contracts.
+      // Bug 根因：旧聊天根节点把已验证目标投影为 complete，V4 状态面板使用
+      // verified 表达同一终态；转正用例必须兼容两套展示契约。
       (snapshot) => snapshot.targetStatus === "complete" || snapshot.targetStatus === "verified",
       "background goal verifier 没有把 target 标记为 complete/verified",
       90000,
@@ -1184,7 +1179,7 @@ describe("会话区 Background Runtime Task E2E", () => {
         "E2E_BACKGROUND_SEND_MESSAGE_PAYLOAD",
       ],
     };
-    // Acceptance on the real wire; the old debug file checked both requests and responses and depended on retention — not a stable provider contract.
+    // 验收真实 wire；旧 debug 文件同时检查请求和响应且依赖 retention，不是稳定的 provider 合同。
     await waitForFirstRequestIndex(
       coordinatorQuery,
       requestCountBefore - 1,
@@ -1218,7 +1213,7 @@ describe("会话区 Background Runtime Task E2E", () => {
     this.timeout(BACKGROUND_E2E_TIMEOUT_MS);
 
     await startNewBackgroundDraft();
-    const capture = (telemetryCapture ??= await beginConversationTelemetryCapture());
+    const capture = await beginBackgroundTelemetryCapture();
     const prompt =
       "E2E_FOREGROUND_AGENT_CHILD_TOOL_STREAMING_STATUS: Launch a foreground agent that runs a visible child Bash tool while the parent conversation is still running.";
     const requestCountBefore = await getUpstreamRequestRecordCount();
@@ -1228,8 +1223,8 @@ describe("会话区 Background Runtime Task E2E", () => {
     await waitForToolCallBlockByToolCallId("toolu_e2e_foreground_child_tool_agent", 60000);
     await respondToBackgroundBlockers();
 
-    // Bug root cause: V4 deliberately keeps child tool history in the child conversation topic while the parent
-    // timeline only keeps Agent facts; main loading should be maintained by the foreground parent Agent's lifecycle.
+    // Bug 根因：V4 明确把 child tool history 留在 child conversation topic，
+    // 父 timeline 只保留 Agent 事实；main loading 应由前台父 Agent 生命周期维持。
     await waitForMainLoading("foreground subagent 运行 child tool 时应保持 main 底部 loading");
     await assertNoMainToolCallById(
       "toolu_e2e_foreground_child_tool_bash",
@@ -1254,11 +1249,8 @@ describe("会话区 Background Runtime Task E2E", () => {
       agent_step: 1,
       message_completion: 1,
     });
-    // Earlier non-telemetry cases also write into the same capture; validate only this session, so an old completion is not mistaken for a duplicate report of this round.
-    const sessionId = (await getV4PaneSnapshot()).sessionId;
-    const sessionReports = reports.filter((report) => report.talk_id === sessionId);
-    assertMainCompletionAgentCompositions(sessionReports, ["main_plus_fg"]);
-    assertMainCompletionMessageSources(sessionReports, ["chat"]);
+    assertMainCompletionAgentCompositions(reports, ["main_plus_fg"]);
+    assertMainCompletionMessageSources(reports, ["chat"]);
   });
 
   it("同一 main turn 同时消费 foreground 和 background subagent 结果", async function () {
@@ -1266,7 +1258,7 @@ describe("会话区 Background Runtime Task E2E", () => {
 
     await startNewBackgroundDraft();
     await rm(BACKGROUND_MIXED_FOREGROUND_RELEASE_FILE, { force: true });
-    const capture = (telemetryCapture ??= await beginConversationTelemetryCapture());
+    const capture = await beginBackgroundTelemetryCapture();
     const prompt =
       "E2E_AGENT_COMPOSITION_MIXED: Launch one foreground Agent and one background Agent, then summarize both results.";
     const requestCountBefore = await getUpstreamRequestRecordCount();
@@ -1355,7 +1347,7 @@ describe("会话区 Background Runtime Task E2E", () => {
     this.timeout(BACKGROUND_E2E_TIMEOUT_MS);
 
     await startNewBackgroundDraft();
-    const capture = (telemetryCapture ??= await beginConversationTelemetryCapture());
+    const capture = await beginBackgroundTelemetryCapture();
     await rm(BACKGROUND_CHILD_TOOL_IDLE_RELEASE_FILE, { force: true });
     const prompt =
       "E2E_BACKGROUND_AGENT_CHILD_TOOL_IDLE_STATUS: Launch a background agent that runs a visible child Bash tool while the parent conversation is idle.";
@@ -1422,7 +1414,7 @@ describe("会话区 Background Runtime Task E2E", () => {
     this.timeout(BACKGROUND_E2E_TIMEOUT_MS);
 
     await startNewBackgroundDraft();
-    const capture = (telemetryCapture ??= await beginConversationTelemetryCapture());
+    const capture = await beginBackgroundTelemetryCapture();
     const prompt =
       "E2E_BACKGROUND_CHILD_TOOL_PARENT_ANCHOR: Launch a background agent whose child tool update arrives after my next main prompt has completed.";
     const followUpPrompt =
@@ -1582,8 +1574,8 @@ describe("会话区 Background Runtime Task E2E", () => {
       "E2E background session switch child tool",
       "background session switch 切回后父 Agent control 没有收口",
     );
-    // Bug root cause: V4's terminal Agent facts are carried by timeline/subagent rows and no longer written back to the
-    // legacy renderer ToolCallBlock; the close-out after switching back should verify the current V4 timeline and the control's disappearance.
+    // Bug 根因：V4 终态 Agent 事实由 timeline/subagent row 承载，不再写回 legacy
+    // renderer ToolCallBlock；切回后的收口应验证当前 V4 timeline 与 control 消失。
     await waitForV4TimelineContaining("E2E background session switch child tool", 60000);
     expect((await getV4PaneSnapshot()).timelineText).not.toContain("Unknown");
     await assertNoMainToolCallById(
@@ -1732,9 +1724,9 @@ describe("会话区 Background Runtime Task E2E", () => {
       "background send-now queue child tool update 不应让 idle main 显示底部 loading",
     );
 
-    // Bug root cause: the old case called the removed renderer store enqueue API directly, constructing a state the
-    // product UI cannot reach. Now it first starts a stoppable main turn and really queues, then stops into
-    // idle + paused queue; the background Agent keeps running, and afterwards "Send now" is clicked from the queue.
+    // Bug 根因：旧 case 直接调用已删除的 renderer store enqueue API，构造的是
+    // 产品 UI 无法到达的状态。现在先启动可停止的主 turn、真实排队，再 stop 进入
+    // idle + paused queue；background Agent 仍 running，随后从队列点击“立即”。
     await sendV4Prompt(holdPrompt);
     await waitForV4ComposerText("", "background send-now hold prompt 发送后输入框没有清空");
     await waitForV4UserMessageContaining("E2E_BACKGROUND_SEND_NOW_QUEUE_HOLD");
@@ -1781,9 +1773,9 @@ describe("会话区 Background Runtime Task E2E", () => {
 
     expect(queuedPromptIndex).toBeGreaterThan(launchIndex);
     await waitForV4AssistantMessageContaining("background-send-now-queue-received-ok");
-    // Bug root cause: under a 25-frame full-replay load, a fixed sleep window could end before the UI assertions,
-    // making the case occasionally miss the running control. Releasing the child only after the "Send now" click
-    // completes ensures the test window is decided by interaction events instead of machine speed.
+    // Bug 根因：固定 sleep 窗口在 25 条全量回放负载下可能先于 UI 断言结束，
+    // 让用例偶发看不到 running control。点击“立即”完成后再释放 child，才能
+    // 确保测试窗口由交互事件决定，而不是依赖机器速度。
     await writeFile(BACKGROUND_SEND_NOW_QUEUE_RELEASE_FILE, "release\n", "utf-8");
     const notificationIndex = await waitForFirstRequestIndex(
       {
@@ -1813,9 +1805,9 @@ describe("会话区 Background Runtime Task E2E", () => {
     const queuedPromptFour =
       "E2E_BACKGROUND_QUEUE_DRAIN_AFTER_MAIN_END_Q4: Q4 should queue behind Q3 while the background launch turn is still active.";
     const requestCountBefore = await getUpstreamRequestRecordCount();
-    // Bug root cause: the capture's afterIndex uses the last array index; passing the pre-launch count directly would
-    // miss the first request of this round landing exactly at index=requestCountBefore, making later queue-drain
-    // proofs report a miss even when the real request already completed.
+    // Bug 根因：capture 的 afterIndex 使用最后一个数组下标；启动前记录数直接传入
+    // 会漏掉本轮恰好落在 index=requestCountBefore 的首条请求，导致后续 queue drain
+    // 证明在真实请求已完成时仍被报告为未命中。
     const lastRequestIndexBefore = requestCountBefore - 1;
 
     await sendV4Prompt(backgroundLaunchPrompt);
@@ -2019,10 +2011,10 @@ describe("会话区 Background Runtime Task E2E", () => {
     await waitForV4AssistantMessageContaining("background-nested-bash-notification-consumed-ok");
     await waitForIdle("nested background Agent notification 后会话没有回到 idle");
     await browser.pause(2500);
-    // Bug root cause: TaskOutput's tool description itself contains `<task-notification>`; the old assertion scanned
-    // the whole model-io JSONL and could stitch a tool schema plus a Bash tool call ID from the child's normal first
-    // request into a fake wake. This now checks the provider's actual requests and limits the notification to the
-    // latest user message; the unique Bash tool call ID and time boundary remain, so a real sealed-child wake is still caught accurately.
+    // Bug 根因：TaskOutput 的工具 description 本身包含 `<task-notification>`；旧断言扫描
+    // 整条 model-io JSONL，会把正常 child 首次请求里的工具 schema 与 Bash tool call ID
+    // 拼成一次伪 wake。这里改查 provider 实际请求，并把通知限定在 latest user message；
+    // 唯一 Bash tool call ID 与时间边界仍保留，真实的 sealed-child wake 仍会被准确捕获。
     const unexpectedChildWakeCount = await countUpstreamRequests(
       {
         includes: ["toolu_e2e_background_nested_child_bash"],
@@ -2415,7 +2407,7 @@ async function cleanupBg08ProcessTree(): Promise<void> {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
-      // Teardown races with natural process exit; already exited counts as done.
+      // 测试收尾与进程自然退出存在竞争，已退出即视为完成。
     }
   }
 }
@@ -2589,8 +2581,8 @@ async function waitForMainLoading(timeoutMsg: string) {
     async () => {
       latestSnapshot = await getV4ConversationState();
       latestLoadingTexts = await getVisibleChatLoadingTexts();
-      // Bugfix: under Windows Electron, a foreground Bash sometimes only exposes the chat root's streaming state and
-      // renders the old bottom loading node unreliably; verifying the main session has not fallen into background-only idle is enough here.
+      // Bugfix: Windows Electron 下 foreground Bash 有时只暴露 chat root streaming 状态，
+      // 不稳定渲染旧的底部 loading 节点；这里验证主会话没有退成 background-only idle 即可。
       return latestSnapshot.state === "streaming";
     },
     {
@@ -2605,22 +2597,9 @@ async function waitForMainLoading(timeoutMsg: string) {
 
 async function getVisibleChatLoadingTexts(): Promise<string[]> {
   return browser.execute((chatLoadingTestId) => {
-    const isElementVisible = (element: HTMLElement) => {
-      let current: HTMLElement | null = element;
-      while (current) {
-        const style = window.getComputedStyle(current);
-        const rects = Array.from(current.getClientRects());
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          rects.every((rect) => rect.width <= 0 || rect.height <= 0)
-        ) {
-          return false;
-        }
-        current = current.parentElement;
-      }
-      return true;
-    };
+    // display: contents 祖先没有布局盒但子元素仍可见，不能用祖先零尺寸判隐藏。
+    const isElementVisible = (element: HTMLElement) =>
+      element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     return Array.from(
       document.querySelectorAll<HTMLElement>(`[data-testid="${chatLoadingTestId}"]`),
     )
@@ -2637,18 +2616,26 @@ async function assertNoMainToolCallById(toolCallId: string, failureMessage: stri
   }
 }
 
+async function beginBackgroundTelemetryCapture() {
+  // 跨 case 复用采集器会混入中间用例的 completion，失败后游标也可能只推进一半。
+  // 每条 case 从空 HTTP 调用记录和 ARMS 缓冲开始，保留精确数量断言。
+  const capture = await beginConversationTelemetryCapture();
+  await capture.telemetryFetch.mockClear();
+  return capture;
+}
+
 async function startNewBackgroundDraft() {
-  await startNewV4Draft();
-  // Bug root cause: the suite only sets yolo in before; after a new draft restores the default build, a child Bash
-  // would stall at approval. Lifecycle cases run this fixed preamble before every draft admission; permission
-  // proxying is still verified by a separate interaction spec.
+  // Bash fixture 的相对路径属于夹具项目；全局新建会切到另一个 cwd，读不到 PID/释放文件。
+  // 初始空草稿直接复用，避免准备步骤重复新建；已有任务仍走同一项目的新建入口。
+  await prepareV4ConversationE2E({ skipProvider: true });
+  // Bug 根因：suite 只在 before 设置 yolo，新草稿恢复默认 build 后 child Bash 会停在审批。
+  // 生命周期用例在每次 draft admission 前固定前置；权限代理仍由独立 interaction spec 验证。
   await ensureToolCrossProductFullAccessMode();
 }
 
 async function respondToBackgroundBlockers() {
-  // Under the full-access preamble the normal path has no blockers; probe for compatibility only once, and do not
-  // wait a fixed 3 seconds — otherwise a 4-second child Bash would finish before the UI running assertions,
-  // masking the real lifecycle window.
+  // Full access 前置条件下正常路径没有 blocker；只做一次兼容探测，不能再固定等待
+  // 3 秒，否则 4 秒 child Bash 会在 UI running 断言前结束，掩盖真实生命周期窗口。
   await respondToToolCrossProductBlockers();
 }
 
@@ -2781,22 +2768,9 @@ async function startBackgroundTaskControlPresenceProbe(
         startedAt: performance.now(),
         wasPresent: null,
       };
-      const isElementVisible = (element: HTMLElement) => {
-        let current: HTMLElement | null = element;
-        while (current) {
-          const style = window.getComputedStyle(current);
-          const rects = Array.from(current.getClientRects());
-          if (
-            style.display === "none" ||
-            style.visibility === "hidden" ||
-            rects.every((rect) => rect.width <= 0 || rect.height <= 0)
-          ) {
-            return false;
-          }
-          current = current.parentElement;
-        }
-        return true;
-      };
+      // display: contents 祖先没有布局盒但子元素仍可见，不能用祖先零尺寸判隐藏。
+      const isElementVisible = (element: HTMLElement) =>
+        element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
       const sample = () => {
         const legacyTaskId = document
           .querySelector<HTMLElement>('[data-testid="chat-view"]')
@@ -2804,8 +2778,8 @@ async function startBackgroundTaskControlPresenceProbe(
         const v4SessionId = document
           .querySelector<HTMLElement>(`[data-testid="${v4SessionPanePrefix}-workspace-main"]`)
           ?.getAttribute("data-session-id");
-        // Bug root cause: V4 has no legacy chat-view; the presence probe must read the session id from the main pane,
-        // otherwise after switching back to the target task it would still be misjudged as "not yet returned".
+        // Bug 根因：V4 无 legacy chat-view；presence probe 需要从主 pane
+        // 读取 session id，否则切回目标 task 后仍会被误判成“尚未返回”。
         const activeTaskId =
           legacyTaskId || (v4SessionId && v4SessionId !== "draft" ? v4SessionId : null);
         if (activeTaskId !== expectedTaskId) {
@@ -2916,22 +2890,9 @@ async function clickStopBackgroundTaskControlRow(
       await openV4ComposerRunningBackgroundWorks();
       latest = await browser.execute(
         (expectedKind, expectedText, cancelButtonPrefix) => {
-          const isElementVisible = (element: HTMLElement) => {
-            let current: HTMLElement | null = element;
-            while (current) {
-              const style = window.getComputedStyle(current);
-              const rects = Array.from(current.getClientRects());
-              if (
-                style.display === "none" ||
-                style.visibility === "hidden" ||
-                rects.every((rect) => rect.width <= 0 || rect.height <= 0)
-              ) {
-                return false;
-              }
-              current = current.parentElement;
-            }
-            return true;
-          };
+          // display: contents 祖先没有布局盒但子元素仍可见，不能用祖先零尺寸判隐藏。
+          const isElementVisible = (element: HTMLElement) =>
+            element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
           const rows = Array.from(
             document.querySelectorAll<HTMLElement>("[data-background-task-kind]"),
           );
@@ -2941,8 +2902,8 @@ async function clickStopBackgroundTaskControlRow(
               candidate.getAttribute("data-background-task-kind") === expectedKind &&
               candidate.innerText.includes(expectedText),
           );
-          // Bug root cause: the first button of a V4 Agent row is the transparent child-session drill-down entry, and
-          // the old helper clicked details by mistake without issuing a stop. The cancel action must be located by its dedicated test id.
+          // Bug 根因：V4 Agent 行的第一个 button 是透明的 child session 下钻入口，
+          // 旧 helper 会误点详情而没有发出 stop。取消动作必须按专用 test id 定位。
           const button = row?.querySelector<HTMLButtonElement>(
             `[data-testid^="${cancelButtonPrefix}-"]`,
           );
@@ -2981,22 +2942,9 @@ async function getBackgroundTaskControlRows({
   visibleOnly: boolean;
 }): Promise<BackgroundTaskControlRowSnapshot[]> {
   return browser.execute((filterVisible) => {
-    const isElementVisible = (element: HTMLElement) => {
-      let current: HTMLElement | null = element;
-      while (current) {
-        const style = window.getComputedStyle(current);
-        const rects = Array.from(current.getClientRects());
-        if (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          rects.every((rect) => rect.width <= 0 || rect.height <= 0)
-        ) {
-          return false;
-        }
-        current = current.parentElement;
-      }
-      return true;
-    };
+    // display: contents 祖先没有布局盒但子元素仍可见，不能用祖先零尺寸判隐藏。
+    const isElementVisible = (element: HTMLElement) =>
+      element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
     return Array.from(document.querySelectorAll<HTMLElement>("[data-background-task-kind]"))
       .map((row) => ({
         buttonDisabled: row.querySelector<HTMLButtonElement>("button")?.disabled ?? false,
@@ -3058,8 +3006,8 @@ function assertBackgroundToolStepTelemetry(
   expect(String(detail?.tool_call_id)).toBe(
     `tool_subagent_${String(detail?.agent_id)}_${childToolCallId}`,
   );
-  // The two fixture child requests each have input=128, tool_use output=16, and final text output=12.
-  // usage appears only on the closing Agent step; it must not be copied to the child Bash nor leak into the following main turn.
+  // 两个 fixture child 请求各 input=128，tool_use output=16、最终 text output=12。
+  // usage 只出现在收口 Agent step，不能复制到 child Bash，也不能串到后续 main turn。
   const aggregate = backgroundSteps[1]!;
   const aggregateDetail = aggregate.event_extra_detail as Record<string, unknown>;
   expect(aggregateDetail).toMatchObject({

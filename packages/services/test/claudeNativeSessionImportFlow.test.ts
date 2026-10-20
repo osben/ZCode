@@ -1,6 +1,7 @@
+import { seedTaskIndex } from "./helpers/taskIndexFixture.js";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const originalHome = process.env.HOME;
@@ -16,7 +17,7 @@ afterEach(async () => {
   process.env.HOME = originalHome;
   delete process.env.ZCODE_DATA_BASE_DIR;
   vi.doUnmock("node:os");
-  // Windows: wait a moment to let file handles be released
+  // Windows:等待一下让文件句柄释放
   await new Promise((resolve) => setTimeout(resolve, 50));
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -24,7 +25,7 @@ afterEach(async () => {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
-        // Windows sometimes still has permission issues; safe to ignore
+        // Windows 有时仍会有权限问题，忽略即可
       }
     }
   }
@@ -70,7 +71,7 @@ describe("Claude native import flow", () => {
       await import("#src/session/claude-native/claudeNativeSessionImportParser.js");
     const { buildImportedClaudeTaskFile, buildImportedClaudeTaskId } =
       await import("#src/session/claude-native/buildImportedClaudeTaskFile.js");
-    const { persistImportedClaudeTask } =
+    const { writeImportedClaudeTaskSnapshot } =
       await import("#src/session/claude-native/persistImportedClaudeTask.js");
     const { TaskIndexRepo } = await import("#src/session/taskIndexRepo.js");
     const { getLegacyTaskSessionSnapshotPath } = await import("#src/paths.js");
@@ -98,11 +99,8 @@ describe("Claude native import flow", () => {
     expect(sessionFile.messages[1]).not.toHaveProperty("model");
 
     const repo = new TaskIndexRepo();
-    const meta = await persistImportedClaudeTask({
-      taskIndexRepo: repo,
-      sessionFile,
-    });
-    const snapshotPath = getLegacyTaskSessionSnapshotPath(workspacePath, meta.taskId);
+    await writeImportedClaudeTaskSnapshot({ sessionFile });
+    const snapshotPath = getLegacyTaskSessionSnapshotPath(workspacePath, taskId);
     expect(existsSync(snapshotPath)).toBe(true);
     const persisted = JSON.parse(readFileSync(snapshotPath, "utf-8")) as {
       meta: {
@@ -122,29 +120,12 @@ describe("Claude native import flow", () => {
     expect(persisted.messages).toHaveLength(2);
     expect(persisted.messages[1]?.model).toBeUndefined();
 
-    const listed = await repo.listTaskMetas({ workspacePath });
-    expect(listed.some((item) => item.taskId === taskId)).toBe(true);
-
-    await repo.updateTaskState({
-      workspacePath,
-      taskId,
-      patch: { archived: true, deleted: true },
-    });
-    await persistImportedClaudeTask({
-      taskIndexRepo: repo,
-      sessionFile,
-    });
-    // Bugfix: when re-importing a deleted/archived Claude session, the old index row's hidden state must
-    // be cleared, otherwise the import API reports success but the regular task list still cannot find it.
-    await expect(repo.listTaskMetas({ workspacePath, archived: false })).resolves.toEqual([
-      expect.objectContaining({
-        taskId,
-        migrationSource: "claudeCode",
-      }),
-    ]);
+    // 备份写入不能凭空创建索引；只有真实 CLI 导入完成后才出现任务。
+    expect(await repo.listTaskMetas({ workspacePath })).toEqual([]);
+    repo.close();
   });
 
-  // Skip on Windows: the path encoding logic is incompatible with Unix and needs a path-handling refactor
+  // Windows 上跳过此测试：路径编码逻辑与 Unix 不兼容，需要重构路径处理逻辑
   if (process.platform !== "win32") {
     it("导入为真实 ZCode session，保留续聊和切模型能力", async () => {
       const home = makeTempDir("zcode-claude-import-live-");
@@ -158,12 +139,12 @@ describe("Claude native import flow", () => {
       });
 
       const workspacePath = makeTempDir("zcode-claude-import-workspace-");
-      // On Windows workspacePath is in C:\... form; use POSIX-style path encoding to avoid Windows path parsing issues
-      const encodedWorkspace = "ws_" + workspacePath.replace(/[\/\\]/g, "_");
+      // Windows 上 workspacePath 是 C:\...格式，用posix 路径格式避免 Windows 路径解析问题
+      const encodedWorkspace = "ws_" + workspacePath.replace(/[/\\]/g, "_");
       const sessionId = "session-live";
-      // First convert home to forward-slash form
+      // 先把 home转换为正斜杠格式
       const homeSlash = home.replace(/\\/g, "/");
-      // Use forward-slash (Unix-style) paths, which Node.js recognizes
+      // 使用正斜杠路径（Unix风格），Node.js 可以识别
       const projectsDir = homeSlash + "/.claude/projects/" + encodedWorkspace;
       const nativePath = projectsDir + "/" + sessionId + ".jsonl";
       mkdirSync(projectsDir, { recursive: true });
@@ -193,9 +174,9 @@ describe("Claude native import flow", () => {
       const { getLegacyTaskSessionSnapshotPath } = await import("#src/paths.js");
 
       const repo = new TaskIndexRepo();
-      await repo.syncTaskMeta({
+      await seedTaskIndex(repo, {
         meta: {
-          taskId: "sess_imported_live",
+          taskId: "sess_imported_deleted",
           traceId: "trace_old_hidden_import",
           title: "Hidden imported task",
           workspacePath,
@@ -217,19 +198,21 @@ describe("Claude native import flow", () => {
         sessionIds: [sessionId],
         createImportedSession: async (source) => {
           createdSessions.push(source);
-          return {
-            taskId: "sess_imported_live",
-            traceId: "trace_sess_imported_live",
-            title: source.title ?? "Imported",
-            workspacePath: source.workspacePath,
-            createdAt: source.createdAt,
-            updatedAt: source.updatedAt,
-            mode: "default",
-            model: "glm:glm-4.6",
-            provider: "glm",
-            migrationSource: "claudeCode",
-            status: "completed",
-          };
+          return seedTaskIndex(repo, {
+            meta: {
+              taskId: "sess_imported_live",
+              traceId: "trace_sess_imported_live",
+              title: source.title ?? "Imported",
+              workspacePath: source.workspacePath,
+              createdAt: source.createdAt,
+              updatedAt: source.updatedAt,
+              mode: "default",
+              model: "glm:glm-4.6",
+              provider: "glm",
+              migrationSource: "claudeCode",
+              status: "completed",
+            },
+          });
         },
         onTaskImported: () => {},
       });

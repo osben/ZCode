@@ -27,8 +27,11 @@ _Avoid_: "Refresh" or "check for updates" in documentation; use "manual refresh.
 ## Store Page Structure
 
 **Public Segment**:
-One segment of the store listing page. It displays only the Official Marketplace catalog (Featured plus category sections).
+One segment of the store listing page. It displays entries in the Official Marketplace maintained by the product team. The `publisherType` field is `official`; entries from older catalogs that do not provide it default to public.
 _Avoid_: "Official tab," "store tab."
+
+**Community Segment**:
+Externally maintained plugins that the Official Marketplace includes. They are published from `external_plugins/` with `publisherType: community`, independent of the usage category.
 
 **Personal Segment**:
 The other segment of the store listing page. It displays catalogs from all personal sources, grouped by marketplace.
@@ -47,8 +50,14 @@ A row of icons for installed plugins at the top of the listing page. Clicking an
 _Avoid_: "Installed list" (that refers to the Manage Installed view).
 
 **Manage Installed View**:
-The management interface opened by the gear icon to the right of the installed strip. It contains plugin-level enable/disable switches, updates, uninstall actions, and enabled-state filters.
+The "Plugin Management" entry at the top right of the store opens a management view within the same page. It keeps global defaults and project overrides, and returning to browsing preserves the search, source, and management scope. The more menu offers only pause/enable and uninstall; updates and restoring inherited state use separate actions.
 _Avoid_: "Installed tab" (deprecated IA terminology).
+
+**UI Plugin**:
+A plugin whose manifest declares valid `ui.surfaces`; its catalog entry carries `componentTypes: ["ui", …]`. Before installation, catalog capabilities are used; after installation, the actual manifest is authoritative. Pausing does not change its category. Ownership, purpose, and UI capability are independent dimensions. The UI section and search are scoped to the current source segment.
+
+**Default UI Recommendations**:
+A curated list for the Side Pane, delivered by the client configuration endpoint's `uiPluginRecommendations`. It is linked to the full marketplace catalog and can recommend plugins that are neither installed nor enabled. Clicking one installs, enables, or opens the real panel. Development and user installs are not added automatically, and this list differs from the full UI section inside the marketplace.
 
 ## Metadata
 

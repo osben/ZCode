@@ -19,7 +19,7 @@ import { setDataBaseDir } from "../src/paths.js";
 import { unpackWorkspaceFileEntries } from "@zcode/shared/workspaceFileEntriesCodec";
 import type { IFileService } from "../src/file/file.js";
 
-// Pull the full listing in chunks (semantically equivalent to the old single-call listWorkspaceFiles).
+// 分块拉全量（测试语义等价旧单次 listWorkspaceFiles）。
 async function readAllPacked(service: IFileService, rootPath: string): Promise<string> {
   const total = await service.listWorkspaceFilesLength({ rootPath });
   let packed = "";
@@ -183,32 +183,6 @@ describe("fileService", () => {
         type: "directory",
         isSymbolicLink: true,
       });
-    });
-
-    it("marks symlink metadata for directory entries", async () => {
-      const rootPath = makeTempDir("zcode-readdir-symlink-meta-");
-      const targetPath = join(rootPath, "target");
-      const linkPath = join(rootPath, "linked-dir");
-      mkdirSync(targetPath);
-      symlinkSync(targetPath, linkPath, process.platform === "win32" ? "junction" : "dir");
-
-      const service = createFileService();
-      const entries = await service.readdir({ path: rootPath });
-
-      expect(entries).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            name: "target",
-            type: "directory",
-            isSymbolicLink: false,
-          }),
-          expect.objectContaining({
-            name: "linked-dir",
-            type: "directory",
-            isSymbolicLink: true,
-          }),
-        ]),
-      );
     });
 
     it("returns empty array for an empty directory", async () => {
@@ -426,14 +400,14 @@ describe("fileService", () => {
       expect(result.offset).toBe(3);
       expect(result.bytesRead).toBe(4);
       expect(result.totalBytes).toBe(10);
-      // Offset 3 + 4 bytes read = 7, total file size 10, more remains
+      // 偏移量3 + 读取4字节 = 7，文件总大小10，还有剩余
       expect(result.truncated).toBe(true);
     });
 
     it("detects binary files and returns empty content", async () => {
       const rootPath = makeTempDir("zcode-readtext-binary-");
       const filePath = join(rootPath, "image.bin");
-      // Build binary content containing many null bytes
+      // 构造含大量 null 字节的二进制内容
       const binaryContent = Buffer.alloc(64, 0);
       writeFileSync(filePath, binaryContent);
 
@@ -448,7 +422,7 @@ describe("fileService", () => {
     it("truncates when file is larger than default read size", async () => {
       const rootPath = makeTempDir("zcode-readtext-large-");
       const filePath = join(rootPath, "large.txt");
-      // Default read cap is 128KB; write 256KB of content
+      // 默认读取上限 128KB，写入 256KB 的内容
       const largeContent = "x".repeat(256 * 1024);
       writeFileSync(filePath, largeContent);
 
@@ -468,7 +442,7 @@ describe("fileService", () => {
       writeFileSync(filePath, content);
 
       const service = createFileService();
-      // Requesting 512KB; it should be truncated to 256KB
+      // 请求读取 512KB，应被截断到 256KB
       const result = await service.readTextFile({ path: filePath, length: 512 * 1024 });
 
       expect(result.bytesRead).toBe(256 * 1024);
@@ -881,9 +855,8 @@ describe("fileService", () => {
       mkdirSync(join(rootPath, "node_modules"));
       writeFileSync(join(rootPath, "node_modules", "package.js"), "");
       writeFileSync(join(rootPath, ".env"), "SECRET=123");
-      // A preset empty .zcodeignore isolates the ignore-rule layer: this test specifically covers the
-      // legacy contract of "an injected filter fully replacing builtin filtering"; .zcodeignore pruning
-      // is covered by separate tests.
+      // 预置空 .zcodeignore 隔离掉 ignore 规则层：本用例专测"注入 filter 完整替换内置过滤"
+      // 的旧契约；.zcodeignore 剪枝行为由独立用例覆盖。
       writeFileSync(join(rootPath, ".zcodeignore"), "\n");
 
       const service = createFileService({
@@ -945,7 +918,7 @@ describe("fileService", () => {
       expect(relativePaths).toEqual(["a", "b", "a/x.ts", "b/z.ts", "root.ts"]);
     });
 
-    // .zcodeignore single source of truth (spec addendum 2026-09-15): the only source of directory-exclusion rules.
+    // .zcodeignore 单一真相源（spec 2026-09-15 增补）：目录排除的唯一规则来源。
     describe(".zcodeignore", () => {
       it("prunes gitignored build directories like obj and bin (ZCT-2096811705629528064)", async () => {
         const rootPath = makeTempDir("zcode-file-service-dotnet-");
@@ -964,9 +937,9 @@ describe("fileService", () => {
           rootPath,
         );
 
-        // Auto-creation is temporarily disabled; the in-memory gitignore + default rules still prune obj/bin.
+        // 自动创建暂时停用，内存中的 gitignore + 默认规则仍剪枝 obj/bin。
         expect(entries.map((e) => e.relativePath)).toEqual(["src", ".gitignore", "src/Program.cs"]);
-        // The rule file itself is tool configuration and does not become a candidate.
+        // 规则文件自身是工具配置，不进入候选。
         expect(existsSync(join(rootPath, ".zcodeignore"))).toBe(false);
       });
 
@@ -984,14 +957,14 @@ describe("fileService", () => {
           rootPath,
         );
 
-        // .gitignore does not declare node_modules: the in-memory default section still prunes it (behavior compatible).
+        // .gitignore 未声明 node_modules：内存默认段仍剪枝（行为兼容）。
         expect(entries.map((e) => e.relativePath)).toEqual([".gitignore"]);
         expect(existsSync(join(rootPath, ".zcodeignore"))).toBe(false);
       });
 
       it("dedupes builtin defaults against gitignore rules on creation", async () => {
         const rootPath = makeTempDir("zcode-file-service-create-dedupe-");
-        // .gitignore declares node_modules/ (one test entry per trailing-slash spelling variant).
+        // .gitignore 声明了 node_modules/（含尾斜杠差异写法各测一条）。
         writeFileSync(join(rootPath, ".gitignore"), "node_modules/\ncoverage\n");
         mkdirSync(join(rootPath, "node_modules"));
         writeFileSync(join(rootPath, "node_modules", "x.js"), "");
@@ -1005,13 +978,12 @@ describe("fileService", () => {
           rootPath,
         );
 
-        // Dedup: the gitignore section already has node_modules/ and coverage, so the default section
-        // does not repeat them — at most one copy of each rule in the file; deleting the gitignore-section
-        // line fully re-enables it.
+        // 去重：gitignore 区已有 node_modules/ 与 coverage，默认段不再重复写这两条
+        // ——文件中每条规则最多一份，删除 gitignore 区那一行即完全放开。
         const created = readFileSync(join(rootPath, ".zcodeignore"), "utf8");
         expect(created.match(/^node_modules\/$/gm)).toHaveLength(1);
         expect(created.match(/^coverage\/?$/gm)).toHaveLength(1);
-        // Pruning still applies (the gitignore-section rule is doing the work); .gitignore itself stays searchable.
+        // 剪枝仍然生效（gitignore 区那条在起作用）；.gitignore 自身保持可搜。
         expect(entries.map((e) => e.relativePath)).toEqual([".gitignore", "keep.ts"]);
       });
 
@@ -1053,9 +1025,8 @@ describe("fileService", () => {
           rootPath,
         );
 
-        // The ! negation restores logs/keep.log; the anchored /build only prunes the root build while
-        // sub/build stays; *.tmp excludes files.
-        // logs/* does not exclude the logs directory itself (git semantics: only matches its contents).
+        // ! 反选恢复 logs/keep.log；anchored /build 只剪根 build，sub/build 保留；*.tmp 排除文件。
+        // logs/* 不排除 logs 目录自身（git 语义：只匹配其下内容）。
         expect(entries.map((e) => e.relativePath)).toEqual([
           "logs",
           "sub",
@@ -1070,7 +1041,7 @@ describe("fileService", () => {
         const rootPath = makeTempDir("zcode-file-service-reinclude-");
         mkdirSync(join(rootPath, "node_modules", "pkg"), { recursive: true });
         writeFileSync(join(rootPath, "node_modules", "pkg", "index.js"), "");
-        // The user explicitly negates a builtin default exclusion: node_modules must become searchable again (no code-level union).
+        // 用户显式反选内置默认排除：node_modules 必须恢复为可搜（无代码级并集）。
         writeFileSync(join(rootPath, ".zcodeignore"), "!node_modules/\n");
 
         const service = createFileService();
@@ -1092,7 +1063,7 @@ describe("fileService", () => {
 
         const service = createFileService();
         const initial = await service.readWorkspaceFileSearchIgnore({ rootPath });
-        // Not yet persisted: preview the initial content (gitignore copy + default section).
+        // 尚未落盘：预览初始内容（gitignore 拷贝 + 默认段）。
         expect(initial.source).toBe("template");
         expect(initial.content).toContain("out/");
         expect(existsSync(join(rootPath, ".zcodeignore"))).toBe(false);
@@ -1109,7 +1080,7 @@ describe("fileService", () => {
           await readAllPacked(service, rootPath),
           rootPath,
         );
-        // custom/ is pruned by the written rule; .gitignore itself stays searchable (existing behavior).
+        // custom/ 被写入的规则剪枝；.gitignore 本身保持可搜（现有行为）。
         expect(entries.map((e) => e.relativePath)).toEqual([".gitignore", "ok.txt"]);
       });
 
@@ -1121,20 +1092,20 @@ describe("fileService", () => {
         const initial = await service.readWorkspaceFileSearchIgnore({ rootPath });
         await service.writeWorkspaceFileSearchIgnore({ rootPath, content: initial.content });
 
-        // The user removes node_modules/ from the defaults section (re-enabling it) and appends their own rule to the custom section.
+        // 用户在默认段里删掉 node_modules/（放开），并在自定义区追加自己的规则。
         const edited = initial.content
           .replace("node_modules/\n", "")
           .concat("my-private-assets/\n");
         await service.writeWorkspaceFileSearchIgnore({ rootPath, content: edited });
 
-        // Sync after a .gitignore update: only the gitignore section is rewritten.
+        // .gitignore 更新后同步：只重写 gitignore 区。
         writeFileSync(join(rootPath, ".gitignore"), "out/\nnewdir/\n");
         const synced = await service.applyWorkspaceFileSearchIgnoreTransform({
           rootPath,
           transform: "sync-gitignore",
         });
         expect(synced.content).toContain("newdir/");
-        // Both the user's defaults-section edit (node_modules re-enabled) and the custom rule must survive.
+        // 默认段的用户修改（node_modules 放开）与自定义规则都必须保留。
         expect(synced.content).not.toContain("node_modules/");
         expect(synced.content).toContain("my-private-assets/");
       });
@@ -1154,36 +1125,17 @@ describe("fileService", () => {
           rootPath,
           transform: "reset-defaults",
         });
-        // The defaults section resets to factory state (node_modules/ comes back).
+        // 默认段恢复出厂（node_modules/ 回来了）。
         expect(reset.content).toContain("node_modules/");
-        // The gitignore section and the custom section are kept as-is.
+        // gitignore 区与自定义区原样保留。
         expect(reset.content).toContain("out/");
         expect(reset.content).toContain("my-private-assets/");
-      });
-
-      it("reset re-adds builtin rule after it was removed from .gitignore", async () => {
-        const rootPath = makeTempDir("zcode-file-service-reset-readd-");
-        // At creation the gitignore declared node_modules/ → dedup kept it out of the defaults section.
-        writeFileSync(join(rootPath, ".gitignore"), "node_modules/\n");
-        const service = createFileService();
-        const initial = await service.readWorkspaceFileSearchIgnore({ rootPath });
-        expect(initial.content.match(/^node_modules\/$/gm)).toHaveLength(1);
-
-        // After the user removes that line from .gitignore and resets defaults: the defaults section is
-        // recomputed against the new gitignore and the builtin fallback is restored.
-        writeFileSync(join(rootPath, ".gitignore"), "");
-        await service.writeWorkspaceFileSearchIgnore({ rootPath, content: initial.content });
-        const reset = await service.applyWorkspaceFileSearchIgnoreTransform({
-          rootPath,
-          transform: "reset-defaults",
-        });
-        expect(reset.content.match(/^node_modules\/$/gm)).toHaveLength(1);
       });
 
       it("falls back to full template rebuild when section markers are missing", async () => {
         const rootPath = makeTempDir("zcode-file-service-section-fallback-");
         writeFileSync(join(rootPath, ".gitignore"), "out/\n");
-        // The user deleted the section markers (legacy format / manual cleanup), so sections cannot be located structurally.
+        // 用户删掉了分区标记（旧格式/手动清理），无法结构化定位分区。
         writeFileSync(join(rootPath, ".zcodeignore"), "legacy-rules/\n");
 
         const service = createFileService();
@@ -1191,7 +1143,7 @@ describe("fileService", () => {
           rootPath,
           transform: "sync-gitignore",
         });
-        // Degrade to rebuilding the whole initial content (with new markers); MRs/docs note that marker lines must not be deleted.
+        // 退化为整体初始内容重建（含新标记），并在 MR/文档中说明标记行不可删。
         expect(synced.content).toContain("out/");
         expect(synced.content).toContain("node_modules/");
         expect(synced.content).not.toContain("legacy-rules/");

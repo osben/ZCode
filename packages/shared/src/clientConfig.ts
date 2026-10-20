@@ -50,6 +50,8 @@ export function parseClientConfigSnapshot(payload: unknown): ClientConfigSnapsho
   const configs = parsed.data.data?.configs;
   const snapshot: ClientConfigSnapshot = {
     pluginStoreOrder: parsePluginStoreOrder(configs?.pluginStoreOrder),
+    uiPluginRecommendations:
+      uiPluginRecommendationsSchema.safeParse(configs?.uiPluginRecommendations).data ?? [],
     zsrcUrl: zsrcSchema.safeParse(configs?.zsrc).data?.url ?? null,
   };
   const recommendations = uiPluginRecommendationsSchema.safeParse(configs?.uiPluginRecommendations);

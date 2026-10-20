@@ -1,18 +1,19 @@
-/* eslint-disable max-lines -- The off-peak orchestration service keeps create/cancel/pause/continue/delete,
-   polling sync (offPeakTaskSync), terminal settlement outbox, and 3102 continuation ticket renewal together until they can be split by responsibility. */
-/* Off-peak task orchestration service (host domain, modeled after automationService).
-   Responsibilities:
-   - Request a ticket on creation (persist only after POST /ticket succeeds, §4.1); throw typed 3103/3101 errors for the UI
-   - Orchestrate state guards for cancel/pause/continue/delete/edit (D29-3/D30-7/D30-10)
-   - offPeakTaskSync: batch-poll /ticket/status only when non-terminal tasks exist (polling triggers server promotion, D25/D26),
-     write back schedulable/position/next_poll_at; automatically request a new ticket with the same task_id for expired tasks that are not paused (D26/D27)
-   - Terminal settlement outbox: settle on terminal state, retry failures with poll cycles, and scan at startup (D22/§7.7)
-   - 3102 continuation: after host terminal writeback recognizes the marker, call handleTicketExpiredDuringRun → requeue and request a new ticket (§4.6) */
+/* eslint-disable max-lines -- off-peak 任务编排服务集中维护 创建/取消/暂停/继续/删除、
+   轮询同步（offPeakTaskSync）、终态核销 outbox 与 3102 续跑重取号，稳定后再按职责拆分。 */
+/* off-peak 任务编排服务（host 域，仿 automationService 形态）。
+   职责：
+   - 创建即取号（POST /ticket 成功才落库，§4.1）；3103/3101 抛类型化错误给 UI
+   - 取消/暂停/继续/删除/编辑 的状态守卫编排（D29-3/D30-7/D30-10）
+   - offPeakTaskSync：有非终态任务才批量轮询 /ticket/status（轮询触发服务端晋级，D25/D26），
+     写回 schedulable/位次/next_poll_at；expired 且非 paused → 同 task_id 自动重取号（D26/D27）
+   - 终态核销 outbox：终态即 settle、失败随轮询周期捎带补报、启动扫描（D22/§7.7）
+   - 3102 续跑：host 终态回写识别标记后调 handleTicketExpiredDuringRun → 回队重取号（§4.6） */
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import {
   isOffPeakTerminalStatus,
   resolveWorkspaceKey,
+  type ProjectExecutionSnapshot,
   type OffPeakCodingPlanSupport,
   type OffPeakTaskCreateErrorCategory,
   type OffPeakTaskCreateFailureStage,
@@ -25,20 +26,22 @@ import { isOffPeakBoundSessionConflict, type OffPeakTaskRepo } from "./offPeakTa
 import type { IOffPeakTaskService, OffPeakUpdateTaskParams } from "./offPeakTask.js";
 import { OffPeakServerError, type OffPeakServerClient } from "./offPeakServerClient.js";
 import type { ModelSelection, ModelSelectionValidation } from "@zcode/provider";
+import { OffPeakResidentExecutions } from "./offPeakResidentExecutions.js";
 
-/** Polling minimum/maximum and failure backoff (prefer server next_poll_after and clamp it to avoid over-polling/starvation). */
+/** 轮询下限/上限与失败退避（服务端 next_poll_after 优先，钳制防打爆/防饿死）。 */
 export const OFF_PEAK_SYNC_MIN_INTERVAL_MS = 5_000;
 export const OFF_PEAK_SYNC_MAX_INTERVAL_MS = 5 * 60_000;
 const SYNC_FAILURE_BASE_MS = 10_000;
 
 export interface OffPeakTaskServiceDeps {
   repo: OffPeakTaskRepo;
+  prepareProjectExecution?: (projectId: string) => Promise<ProjectExecutionSnapshot>;
   client: OffPeakServerClient;
-  /** Redacted result from the resolver shared with ticket/runtime, used to gate creation in the renderer. */
+  /** 与 ticket/runtime 共用 resolver 后的脱敏结果，供 renderer 创建门控。 */
   resolveCodingPlanSupport: () => Promise<OffPeakCodingPlanSupport>;
-  /** Return only a safe hostname; return an empty string on failure without affecting task creation. */
+  /** 只返回安全 hostname；解析失败返回空串，不能影响创建业务结果。 */
   resolveTelemetryProviderName: () => Promise<string>;
-  /** Resolve and validate the fixed Off-Peak Provider selection against the current complete Registry. */
+  /** 用当前完整 Registry 解析并校验固定 Off-Peak Provider 的选择。 */
   resolveModelSelection: (input: {
     readonly modelId?: string;
     readonly reasoningLevel?: string;
@@ -47,19 +50,19 @@ export interface OffPeakTaskServiceDeps {
     | { readonly ok: false; readonly validation: ModelSelectionValidation }
   >;
   logger: ServiceLogger;
-  /** Wake the scheduler tick immediately when schedulable becomes true (otherwise wait for the default 20s poll). */
+  /** schedulable 翻 1 后立即唤醒 scheduler tick（缺省等 20s 轮询）。 */
   requestSchedulerWake?: () => void;
-  /** Abort the agent loop when cancelling a running task (injected by host; best effort). */
+  /** 取消 running 任务时中止其 agent loop（host 注入；best-effort）。 */
   stopRunningTask?: (params: {
     conversationId: string;
     workspacePath: string;
     workspaceIdentity?: string;
   }) => Promise<void>;
-  /** Broadcast hook for list changes (refresh UI). */
+  /** 列表变化广播钩子（UI 刷新）。 */
   onTasksChanged?: () => void;
-  /** Clock injected by tests. */
+  /** 测试注入时钟。 */
   now?: () => number;
-  /** Additional cleanup during disposeAll (for example, close the mock gateway). */
+  /** disposeAll 附加清理（如关闭 mock 网关）。 */
   onDispose?: () => void;
 }
 
@@ -83,8 +86,8 @@ function isValidCreateParams(params: ZCodeOffPeakTaskCreateParams): boolean {
     params.title.trim().length > 0 &&
     typeof params.prompt === "string" &&
     params.prompt.trim().length > 0 &&
-    typeof params.workspacePath === "string" &&
-    params.workspacePath.trim().length > 0 &&
+    ((typeof params.projectId === "string" && params.projectId.trim().length > 0) ||
+      (typeof params.workspacePath === "string" && params.workspacePath.trim().length > 0)) &&
     typeof params.permissionMode === "string" &&
     VALID_CREATE_PERMISSION_MODES.has(params.permissionMode)
   );
@@ -110,8 +113,8 @@ export function classifyOffPeakCreateFailure(
   } else if (error instanceof ZodError) {
     errorCategory = "invalid_response";
   } else {
-    // Credentials/RPC/fetch/abort inside the ticket client may throw ordinary Errors across layers;
-    // they still belong to ticket_request and must not be classified by guessing from raw messages or exposing server responses.
+    // ticket client 内的 credential/RPC/fetch/abort 都可能以普通 Error 跨层抛出；
+    // 它们仍属于 ticket_request，不能靠 raw message 猜测或泄漏服务端响应。
     errorCategory = "network";
   }
   return { failureStage, errorCategory, errorCode };
@@ -124,12 +127,46 @@ const OFF_PEAK_SESSION_BOUND_FAILURE = {
 } as const;
 
 export class OffPeakTaskService implements IOffPeakTaskService {
+  readonly residentExecutions: OffPeakResidentExecutions;
+  private readonly retakes = new Map<string, Promise<void>>();
+  private readonly releasedTicketOutbox = new Set<string>();
   private syncTimer: ReturnType<typeof setTimeout> | null = null;
   private syncRunning = false;
   private syncStopped = true;
   private consecutiveSyncFailures = 0;
 
-  constructor(private readonly deps: OffPeakTaskServiceDeps) {}
+  constructor(private readonly deps: OffPeakTaskServiceDeps) {
+    this.residentExecutions = new OffPeakResidentExecutions({
+      renew: (taskId, current) => this.handleTicketExpiredDuringRun(taskId, current),
+      takeover: async (taskId) => {
+        await this.deps.repo.markRunning(taskId, { startedAt: this.now() });
+        await this.deps.repo.updateSchedulingSnapshot(taskId, {
+          schedulable: false,
+          queuePosition: null,
+          now: this.now(),
+        });
+        this.emitChanged();
+      },
+      release: (ticketId) => this.releaseExecutionTicket(ticketId),
+    });
+  }
+
+  /** 释放票据不改变任务终态；失败捎带现有 sync 重试，不增加计时器或持久化凭据。 */
+  private async releaseExecutionTicket(ticketId: string): Promise<void> {
+    this.releasedTicketOutbox.add(ticketId);
+    try {
+      await this.deps.client.settle(ticketId);
+      this.releasedTicketOutbox.delete(ticketId);
+    } catch (error) {
+      if (error instanceof OffPeakServerError && error.httpStatus < 500)
+        this.releasedTicketOutbox.delete(ticketId);
+      else
+        this.deps.logger.warn(
+          `off-peak execution ticket release failed ticket=${ticketId}:`,
+          error,
+        );
+    }
+  }
 
   private now(): number {
     return this.deps.now?.() ?? Date.now();
@@ -143,13 +180,13 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     }
   }
 
-  // ---- Management operations ----
+  // ---- 管理操作 ----
 
   async getCodingPlanSupport(): Promise<OffPeakCodingPlanSupport> {
     return this.deps.resolveCodingPlanSupport();
   }
 
-  /** Narrow check before Host dispatch; the target Agent ModelFactory still performs final validation. */
+  /** Host 派发前的窄检查；最终执行仍由目标 Agent ModelFactory 重新校验。 */
   async validateDispatchModelSelection(selection: ModelSelection): Promise<boolean> {
     const resolved = await this.deps.resolveModelSelection({
       modelId: selection.modelId,
@@ -168,13 +205,13 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     return this.deps.client.getTakeNumberAvailability();
   }
 
-  /** Request a ticket at creation time (persist only on success); failures return only a stable category, never a raw error over RPC. */
+  /** 创建即取号（取号成功才落库）；失败只返回稳定分类，绝不跨 RPC 返回 raw error。 */
   async createTask(params: ZCodeOffPeakTaskCreateParams): Promise<OffPeakTaskCreateResult> {
     let providerName = "";
     try {
       providerName = await this.deps.resolveTelemetryProviderName();
     } catch {
-      // provider_name is only a telemetry dimension; resolution failures must not affect creation, toast, or task execution.
+      // provider_name 只是埋点维度；解析失败不得改变创建、toast 或任务执行。
     }
     if (!isValidCreateParams(params)) {
       return {
@@ -196,12 +233,27 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         providerName,
       };
     }
+    let execution: ProjectExecutionSnapshot | undefined;
+    if (params.projectId) {
+      try {
+        if (params.boundSessionId || !this.deps.prepareProjectExecution)
+          throw new Error("project.creation-unavailable");
+        execution = await this.deps.prepareProjectExecution(params.projectId);
+      } catch (error) {
+        return {
+          ok: false,
+          ...classifyOffPeakCreateFailure(error, "client_validation"),
+          providerName,
+        };
+      }
+    }
     const normalizedParams: ZCodeOffPeakTaskCreateParams = {
       ...params,
+      ...execution,
       modelSelection: selection.selection,
     };
-    // Reject when the bound session already has a non-terminal task, before requesting a ticket to avoid wasting quota;
-    // idx_off_peak_bound_active rejects a concurrent request that passed precheck during INSERT (see the local_persist branch below).
+    // 绑定会话已有未终态任务即拒，先于取号避免浪费额度；
+    // 并发穿过预检的一方由 idx_off_peak_bound_active 在 INSERT 时拒绝（见下方 local_persist 分支）。
     if (
       params.boundSessionId &&
       (await this.deps.repo.hasActiveBoundTask(
@@ -232,7 +284,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         serverTicketId: ticket.ticketId,
         registeredAt: ticket.registeredAt,
         ...(ticket.position !== undefined ? { queuePosition: ticket.position } : {}),
-        // Dispatch immediately when the ticket is ready at request time (off-peak is idle and promotion is immediate).
+        // 取号即 ready（低峰空闲直接晋级）时随建随派
         schedulable: ticket.state === "ready",
       });
       if (ticket.nextPollAfterMs !== undefined) {
@@ -242,7 +294,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       }
     } catch (error) {
       if (isOffPeakBoundSessionConflict(error)) {
-        // The requested ticket becomes invalid with the task and the server reclaims it on expiry; do not add a release endpoint for this.
+        // 已取的票随任务作废，服务端按过期回收；不为此加释放接口。
         return { ok: false, ...OFF_PEAK_SESSION_BOUND_FAILURE, providerName };
       }
       return {
@@ -273,8 +325,8 @@ export class OffPeakTaskService implements IOffPeakTaskService {
   }
 
   /**
-   * Cancel (any non-terminal state): persist the terminal state before stopping the loop, so a late stopped writeback
-   * is rejected by the terminal-state guard and cannot overwrite cancelled (idempotent).
+   * 取消（任意非终态）：先落终态再停 loop——顺序保证 loop 的 stopped 迟到回写
+   * 被终态守卫丢弃，不会覆盖 cancelled（幂等）。
    */
   async cancelTask(offPeakTaskId: string): Promise<ZCodeOffPeakTask | null> {
     const existing = await this.deps.repo.get(offPeakTaskId);
@@ -284,7 +336,17 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       endedAt: this.now(),
     });
     if (!cancelled) return this.deps.repo.get(offPeakTaskId);
-    if (existing.status === "running" && existing.conversationId && this.deps.stopRunningTask) {
+    if (this.residentExecutions.has(offPeakTaskId)) {
+      try {
+        await this.residentExecutions.cancel(offPeakTaskId);
+      } catch (error) {
+        this.deps.logger.warn(`off-peak lifecycle cancel failed task=${offPeakTaskId}:`, error);
+      }
+    } else if (
+      existing.status === "running" &&
+      existing.conversationId &&
+      this.deps.stopRunningTask
+    ) {
       try {
         await this.deps.stopRunningTask({
           conversationId: existing.conversationId,
@@ -300,7 +362,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     return cancelled;
   }
 
-  /** Pause: stop local dispatch while the ticket remains queued on the server. */
+  /** Pause：停止本地派发，票留服务端队列继续排。 */
   async pauseTask(offPeakTaskId: string): Promise<ZCodeOffPeakTask | null> {
     const paused = await this.deps.repo.setPaused(offPeakTaskId, true, {
       now: this.now(),
@@ -310,8 +372,8 @@ export class OffPeakTaskService implements IOffPeakTaskService {
   }
 
   /**
-   * Continue: if the ticket is active, resume dispatch (no cost); if it is invalid (expired/not_found/no ticket), manually
-   * request a new one now and rejoin the queue (quota use must be triggered explicitly by the user).
+   * Continue：票活着 = 恢复派发（零成本）；票已废（expired/not_found/无票）= 此刻手动
+   * 重取号回队尾（额度消耗必须由用户显式动作触发）。
    */
   async continueTask(offPeakTaskId: string): Promise<ZCodeOffPeakTask | null> {
     const resumed = await this.deps.repo.setPaused(offPeakTaskId, false, {
@@ -322,7 +384,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     if (resumed.serverTicketId) {
       try {
         const status = await this.deps.client.batchStatus([resumed.serverTicketId]);
-        // Match by ticketId; do not use tickets[0], because batch response order/content is not guaranteed to match the request.
+        // 必须按 ticketId 匹配，不能取 tickets[0]——批量应答顺序/内容不保证与请求一致。
         const entry = status.tickets.find((t) => t.ticketId === resumed.serverTicketId);
         ticketAlive =
           entry !== undefined && entry.state !== "expired" && entry.state !== "not_found";
@@ -334,7 +396,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
           });
         }
       } catch (error) {
-        // Treat a failed status query as an active ticket and let polling handle it; do not waste a ticket request during Continue.
+        // 状态查询失败按票活处理，交给轮询兜底；不在 Continue 上白耗一次取号额度。
         this.deps.logger.warn(
           `off-peak continue status check failed task=${offPeakTaskId}:`,
           error,
@@ -350,7 +412,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     return this.deps.repo.get(offPeakTaskId);
   }
 
-  /** Delete: cancel non-terminal tasks first (stop loop + settle), then delete the row; delete terminal tasks directly. */
+  /** 删除：非终态先按取消处理（停 loop + settle），再删行；终态直接删。 */
   async deleteTask(offPeakTaskId: string): Promise<void> {
     const existing = await this.deps.repo.get(offPeakTaskId);
     if (!existing) return;
@@ -361,7 +423,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     this.emitChanged();
   }
 
-  /** Delete history: write only a local visibility marker; retain the task and session. */
+  /** Delete history：仅写本地可见性标记，任务与会话继续保留。 */
   async deleteHistory(offPeakTaskId: string): Promise<ZCodeOffPeakTask | null> {
     const updated = await this.deps.repo.markHistoryDeleted(offPeakTaskId, {
       now: this.now(),
@@ -370,7 +432,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     return updated;
   }
 
-  /** Edit (all fields are editable while queued/paused; the ticket locks only queue identity, and prompt is read at dispatch). */
+  /** 编辑（queued/paused 全字段可编辑；票只锁队列身份，prompt 派发时才读）。 */
   async updateTask(
     offPeakTaskId: string,
     params: OffPeakUpdateTaskParams,
@@ -378,11 +440,11 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     const existing = await this.deps.repo.get(offPeakTaskId);
     if (!existing) return null;
     if (existing.status !== "queued" && existing.status !== "paused") {
-      // Running locks editing (only cancellation remains); terminal tasks are read-only.
+      // running 起锁定编辑（仅取消），终态只读。
       return null;
     }
-    // Off-peak tasks must save an explicit model resolvable by the current Registry; clearing the model must not fall back to
-    // “choose the first one later,” or the selection shown during editing may differ from the model actually dispatched.
+    // 闲时任务必须保存一个可由当前 Registry 解析的明确模型；清空模型不能退化成
+    // “稍后取第一个”，否则编辑时看到的选择和真正派发的模型会发生漂移。
     if (params.modelSelection === null) return null;
     const candidate = params.modelSelection ?? existing.modelSelection;
     if (!candidate) return null;
@@ -415,7 +477,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
   }
 
   /**
-   * Derive diagnostics for the current configuration only; do not write to the database. Legacy fields are handled only by migration.
+   * 只派生当前配置诊断，不写数据库；旧字段仅由 migration 处理。
    */
   private async projectModelSelectionIssues(
     tasks: readonly ZCodeOffPeakTask[],
@@ -423,8 +485,8 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     const repaired: ZCodeOffPeakTask[] = [];
     for (const task of tasks) {
       if (task.modelSelection) {
-        // Writing NULL when the current account is unavailable during a read would permanently discard the original choice and trigger rebinding from legacy fields.
-        // The new structure derives diagnostics only and does not write the task or ticket; terminal tasks no longer use a model and need no recheck.
+        // 读取时把当前账号不可用写成 NULL，会永久丢掉原选择并诱发旧字段重绑。
+        // 新结构只派生诊断，不写任务或 Ticket；终态不再使用模型，无需重新检查。
         const usable =
           isOffPeakTerminalStatus(task.status) ||
           (await this.validateDispatchModelSelection(task.modelSelection));
@@ -443,19 +505,28 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         );
         continue;
       }
-      // Keep the provider absent when database migration cannot determine the legacy Provider; reads do not perform migration or rebind the ticket.
+      // 数据库迁移无法确定旧 Provider 时保持缺失；读取不补迁、不重绑 Ticket。
       repaired.push({ ...task, schedulable: false });
     }
     return repaired;
   }
 
-  // ---- 3102 continuation (called after host terminal writeback recognizes the marker) ----
+  // ---- 3102 续跑（host 终态回写识别标记后调用）----
 
-  /** Ticket expired (active 3h limit/invalid ready ticket): requeue while keeping the session → request a new ticket for the same task_id. */
-  async handleTicketExpiredDuringRun(offPeakTaskId: string): Promise<void> {
+  /** 票据过期（active 3h 到期/ready 废票）：回队保 session → 同 task_id 重取号。 */
+  async handleTicketExpiredDuringRun(
+    offPeakTaskId: string,
+    current = this.residentExecutions.retakeGuard(offPeakTaskId),
+  ): Promise<void> {
+    if (!current()) return;
     const requeued = await this.deps.repo.requeueForContinuation(offPeakTaskId, {
       now: this.now(),
     });
+    if (!current()) {
+      if (this.residentExecutions.isUserOwned(offPeakTaskId))
+        await this.deps.repo.markRunning(offPeakTaskId, { startedAt: this.now() });
+      return;
+    }
     if (!requeued) {
       this.deps.logger.info(
         `off-peak ticket-expired requeue dropped (not running) task=${offPeakTaskId}`,
@@ -467,10 +538,27 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     this.ensureSyncScheduled(0);
   }
 
-  /** Request a new ticket for the same task_id (multiple requests are confirmed as allowed); let the polling cycle retry failures. */
+  /** 同 task_id 重新取号（已确认允许多次），失败留给轮询周期重试。 */
   private async retakeTicket(offPeakTaskId: string): Promise<void> {
+    const existing = this.retakes.get(offPeakTaskId);
+    if (existing) return existing;
+    const current = this.residentExecutions.retakeGuard(offPeakTaskId);
+    if (!current()) return;
+    const pending = this.runRetakeTicket(offPeakTaskId, current).finally(() => {
+      this.retakes.delete(offPeakTaskId);
+    });
+    this.retakes.set(offPeakTaskId, pending);
+    return pending;
+  }
+
+  private async runRetakeTicket(offPeakTaskId: string, current: () => boolean): Promise<void> {
     try {
       const ticket = await this.deps.client.takeTicket(offPeakTaskId);
+      const task = await this.deps.repo.get(offPeakTaskId);
+      if (!current() || !task || isOffPeakTerminalStatus(task.status)) {
+        await this.releaseExecutionTicket(ticket.ticketId);
+        return;
+      }
       await this.deps.repo.updateSchedulingSnapshot(offPeakTaskId, {
         serverTicketId: ticket.ticketId,
         registeredAt: ticket.registeredAt,
@@ -481,22 +569,34 @@ export class OffPeakTaskService implements IOffPeakTaskService {
           : {}),
         now: this.now(),
       });
+      if (!current()) {
+        await this.releaseExecutionTicket(ticket.ticketId);
+        if (this.residentExecutions.isUserOwned(offPeakTaskId)) {
+          await this.deps.repo.markRunning(offPeakTaskId, { startedAt: this.now() });
+          await this.deps.repo.updateSchedulingSnapshot(offPeakTaskId, {
+            serverTicketId: task.serverTicketId,
+            schedulable: false,
+            now: this.now(),
+          });
+        }
+        return;
+      }
       if (ticket.state === "ready") this.deps.requestSchedulerWake?.();
       this.deps.logger.info(
         `off-peak re-take ticket task=${offPeakTaskId} ticket=${ticket.ticketId} state=${ticket.state}`,
       );
     } catch (error) {
-      // Do not terminalize on ticket request failure (quota/network); leave the task queued so the next poll can request a ticket if none is valid.
+      // 取号失败（额度/网络）不终态化——任务留在 queued，下个轮询周期发现无有效票再补取。
       this.deps.logger.warn(`off-peak re-take ticket failed task=${offPeakTaskId}:`, error);
     }
   }
 
-  // ---- offPeakTaskSync: batch polling + promotion writeback + settlement outbox ----
+  // ---- offPeakTaskSync：批量轮询 + 晋级写回 + 核销 outbox ----
 
   startSync(): void {
     if (!this.syncStopped) return;
     this.syncStopped = false;
-    // Scan for unsettled terminal tasks once at startup (host startup scan).
+    // 启动即扫一次未核销终态（host 启动扫描）。
     this.ensureSyncScheduled(0);
   }
 
@@ -508,8 +608,9 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     }
   }
 
-  /** disposeServiceResources hook: clean up on host exit (stop polling + additional cleanup). */
+  /** disposeServiceResources 钩子：host 退出统一回收（停轮询 + 附加清理）。 */
   disposeAll(): void {
+    this.residentExecutions.dispose();
     this.stopSync();
     try {
       this.deps.onDispose?.();
@@ -525,31 +626,40 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       this.syncTimer = null;
       void this.runSyncCycle();
     }, delayMs);
-    // Node timers do not prevent process exit (the host lifecycle is managed externally).
+    // Node 定时器不阻止进程退出（host 生命周期由外部管理）。
     this.syncTimer.unref?.();
   }
 
-  /** One sync cycle; explicit calls (tests/startup scan) are unaffected by stopSync, which controls only automatic rescheduling. */
+  /** 单次同步周期；显式调用（测试/启动扫描）不受 stopSync 影响，仅自动重排循环受控。 */
   async runSyncCycle(): Promise<void> {
     if (this.syncRunning) return;
     this.syncRunning = true;
     let nextDelay = OFF_PEAK_SYNC_MAX_INTERVAL_MS;
     try {
-      // 1) Retry settlement outbox items opportunistically (no additional timer).
+      // 1) 核销 outbox 捎带补报（不新增计时器）。
       await this.flushSettleOutbox();
-      // 2) Poll only when non-terminal tasks exist.
+      for (const ticketId of this.releasedTicketOutbox) await this.releaseExecutionTicket(ticketId);
+      try {
+        await this.residentExecutions.retryPendingTickets();
+      } catch (error) {
+        // 交接确认失败保留原票，下个同步周期继续；不能阻断其他任务轮询与票据释放。
+        this.deps.logger.warn("off-peak ticket confirmation pending:", error);
+      }
+      // 2) 有非终态任务才轮询。
       const nonTerminal = await this.projectModelSelectionIssues(
         await this.deps.repo.listNonTerminal(),
       );
-      const withTickets = nonTerminal.filter((task) => task.serverTicketId);
-      // Re-request tickets for queued tasks without a ticket (left behind by an earlier failed request).
+      const withTickets = nonTerminal.filter(
+        (task) => task.serverTicketId && !this.residentExecutions.isUserOwned(task.offPeakTaskId),
+      );
+      // 无票的 queued 任务（重取号失败残留）：补取号。
       for (const task of nonTerminal) {
         if (!task.serverTicketId && task.status === "queued") {
           await this.retakeTicket(task.offPeakTaskId);
         }
       }
       if (withTickets.length === 0 && nonTerminal.length === 0) {
-        // No tasks: stop automatic rescheduling and wait for the next create/continue action.
+        // 无任务：不再自动重排，等下一次 create/continue 触发。
         this.consecutiveSyncFailures = 0;
         return;
       }
@@ -577,7 +687,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       }
       this.consecutiveSyncFailures = 0;
     } catch (error) {
-      // Retry polling with backoff after failure; do not dispatch during backoff, and do not affect running tasks.
+      // 轮询失败退避重试：期间不派发、在跑不受影响。
       this.consecutiveSyncFailures += 1;
       nextDelay = Math.min(
         SYNC_FAILURE_BASE_MS * 2 ** Math.max(0, this.consecutiveSyncFailures - 1),
@@ -597,7 +707,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     }
   }
 
-  /** Map one ticket state across the two axes; return whether it became dispatchable. */
+  /** 单票状态映射（两轴）：返回是否翻为可派发。 */
   private async applyTicketStatus(
     task: ZCodeOffPeakTask,
     state: string,
@@ -623,16 +733,16 @@ export class OffPeakTaskService implements IOffPeakTaskService {
         });
         return false;
       case "active":
-        // The client loop is running (or dispatch is in flight); the snapshot does not change the state machine, only clears the displayed position.
+        // 客户端 loop 在跑（或派发在途）；快照不动状态机，仅清位次展示。
         await this.deps.repo.updateSchedulingSnapshot(task.offPeakTaskId, {
           queuePosition: null,
           now,
         });
         return false;
       case "expired": {
-        // Any expired ticket requests a new ticket for the same task_id and rejoins the queue (consistent rule).
-        // Exception: paused tasks wait for manual Continue; the 3h expiry for running tasks is handled by the messages 400/3102 path,
-        // so this handles only invalid tickets in the queue.
+        // 任何 expired → 同 task_id 重新取号续排（统一口径）；
+        // 例外：paused 停在原地等手动 Continue；running 的 3h 到期
+        // 由 messages 400/3102 路径触发，这里只处理排队中的废票。
         if (task.status === "queued") {
           await this.deps.repo.updateSchedulingSnapshot(task.offPeakTaskId, {
             schedulable: false,
@@ -650,7 +760,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
     }
   }
 
-  /** Retry settlement for terminal tasks (idempotent; permanent failure is harmless because the server silently reclaims after timeout). */
+  /** 终态未核销任务补报（幂等，永远失败也无害——服务端静默超时回收兜底）。 */
   private async flushSettleOutbox(): Promise<void> {
     const unsettled = await this.deps.repo.listUnsettledTerminal();
     for (const task of unsettled) {
@@ -660,7 +770,7 @@ export class OffPeakTaskService implements IOffPeakTaskService {
 
   private async settleOne(task: ZCodeOffPeakTask): Promise<void> {
     if (!task.serverTicketId) {
-      // No ticket (mock-first or ticket was never requested): nothing can be settled, so mark it directly to prevent the outbox from stalling forever.
+      // 无票（mock 先行/取号从未成功）：无可核销对象，直接标记防止 outbox 永久滞留。
       await this.deps.repo.markSettled(task.offPeakTaskId, this.now());
       return;
     }
@@ -669,11 +779,11 @@ export class OffPeakTaskService implements IOffPeakTaskService {
       await this.deps.repo.markSettled(task.offPeakTaskId, this.now());
     } catch (error) {
       if (error instanceof OffPeakServerError && error.httpStatus < 500) {
-        // Treat 4xx responses (such as unknown ticket) as idempotent acknowledgments: the server has no such ticket left to release.
+        // 4xx（未知票等）按幂等 ack 处理：服务端已无此票可释放。
         await this.deps.repo.markSettled(task.offPeakTaskId, this.now());
         return;
       }
-      // Network/5xx: keep it unsettled and retry opportunistically in the next cycle (no additional timer).
+      // 网络/5xx：保持未核销，下个周期捎带补报（不新增计时器）。
       this.deps.logger.warn(`off-peak settle failed ticket=${task.serverTicketId}:`, error);
     }
   }

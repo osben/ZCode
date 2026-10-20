@@ -3,13 +3,15 @@ import { compileModelOptionMaps } from "@zcode/model-option-map";
 import { fileURLToPath } from "node:url";
 import {
   ApiKeyAccessConfig,
+  ChatgptAccountAccessConfig,
   ModelConfigRules,
-  ProviderConfig,
   ProviderApiConfig,
+  ProviderConfig,
   ProviderConfigMap,
   ProviderConfigResolver,
-  ChatgptAccountAccessConfig,
+  ProviderRegistry,
   ZhipuAccountAccessConfig,
+  parseModelConfig,
 } from "@zcode/provider";
 import { describe, expect, it } from "vitest";
 import { NodeZCodeBuiltinProviderConfigSource } from "../src/index.js";
@@ -26,9 +28,9 @@ function reasoningPatch(map: string, reasoningLevel: string) {
   );
 }
 
-describe("ZCode Built-in Provider Config 完整性", () => {
+describe("ZCode Built-in Provider Config integrity", () => {
   it.each(["anthropic-messages", "openai-chat-completions", "openai-responses"] as const)(
-    "未知模型在 %s 下拥有完整两档兜底并可进入 Registry",
+    "unknown models under %s get complete two-tier fallbacks and enter the Registry",
     async (apiType) => {
       const source = new NodeZCodeBuiltinProviderConfigSource({
         bundledFilePath: zcodeBuiltinProviderConfigFilePath,
@@ -43,7 +45,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
           baseUrl: "https://unknown.example/v1",
         });
         expect(model.validateComplete()).toEqual([]);
-        expect(model.optionSpecs?.maxOutputTokens?.max).toBe(32_000);
+        expect(model.optionSpecs?.maxOutputTokens?.max).toBe(128_000);
         expect(model.optionSpecs?.reasoningLevel?.values).toEqual(["disabled", "enabled"]);
         expect(model.properties?.inputFormat.supportsImage).toBe(false);
         const result = new ProviderConfigResolver().resolve({
@@ -77,7 +79,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       }
     },
   );
-  it("GLM-5.3-Flash 的媒体输入能力及 GLM-5.3 的套餐桥接保持明确", async () => {
+  it("GLM-5.3-Flash media input capability and the GLM-5.3 plan bridge stay explicit", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -118,13 +120,13 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       ] as const;
       for (const templateId of apiTemplateIds) {
         const modelIds = snapshot.providerTemplates?.get(templateId)?.config.builtinModelIds ?? [];
-        expect(modelIds, `${templateId} 必须同时提供 GLM-5.3 系列`).toEqual(
+        expect(modelIds, `${templateId} must also provide the GLM-5.3 series`).toEqual(
           expect.arrayContaining(["GLM-5.3", "GLM-5.3-Flash"]),
         );
       }
       for (const providerId of accountProviderIds) {
         const modelIds = snapshot.providers.get(providerId)?.builtinModelIds ?? [];
-        expect(modelIds, `${providerId} 必须提供 GLM-5.3-Flash`).toContain("GLM-5.3-Flash");
+        expect(modelIds, `${providerId} must provide GLM-5.3-Flash`).toContain("GLM-5.3-Flash");
       }
 
       for (const providerId of [
@@ -174,15 +176,15 @@ describe("ZCode Built-in Provider Config 完整性", () => {
           const planModel = resolveAt(planProviderId, modelId);
           expect(
             highspeedModel.properties?.inputFormat.toJSON(),
-            `${highspeedProviderId}/${modelId} 输入形态偏离 Coding Plan 站点`,
+            `${highspeedProviderId}/${modelId} input shape deviates from the Coding Plan site`,
           ).toEqual(planModel.properties?.inputFormat.toJSON());
           expect(
             highspeedModel.properties?.supportsMidConversationSystem,
-            `${highspeedProviderId}/${modelId} MCS 偏离 Coding Plan 站点`,
+            `${highspeedProviderId}/${modelId} MCS deviates from the Coding Plan site`,
           ).toBe(planModel.properties?.supportsMidConversationSystem);
           expect(
             highspeedModel.properties?.supportsNativeWebSearch,
-            `${highspeedProviderId}/${modelId} 原生搜索偏离 Coding Plan 站点`,
+            `${highspeedProviderId}/${modelId} native search deviates from the Coding Plan site`,
           ).toBe(planModel.properties?.supportsNativeWebSearch);
         }
       }
@@ -236,7 +238,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("按当前官方证据声明各厂商主推模型和关键静态属性", async () => {
+  it("declare each vendor's flagship models and key static attributes from current official evidence", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -377,7 +379,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("聚合供应商按维护清单提供独立模板，不复用上游 Provider 配置", async () => {
+  it("aggregator providers supply independent templates from the maintained list and do not reuse upstream Provider config", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -402,7 +404,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("聚合供应商同型号命中模型规则和 API Map，保留完整 ID 且每家至少启用一个代表型号", async () => {
+  it("aggregator providers match model rules and the API Map for the same model, keep the full ID, and enable at least one representative model per provider", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -470,7 +472,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("每个 Provider 的默认 enabled 模型形成成员前缀，历史或 alias 型号默认关闭", async () => {
+  it("each Provider's default-enabled models form a member prefix; legacy or alias models default to disabled", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -503,16 +505,17 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       for (const [ownerId, owner] of memberships) {
         const states = (owner.builtinModelIds ?? []).map((modelId) => {
           const enabled = exactEnabled.get(`${ownerId}\0${modelId}`);
-          expect(enabled, `${ownerId}/${modelId} 必须显式声明 Built-in 默认 enabled`).toBeTypeOf(
-            "boolean",
-          );
+          expect(
+            enabled,
+            `${ownerId}/${modelId} must explicitly declare the Built-in default enabled flag`,
+          ).toBeTypeOf("boolean");
           return enabled!;
         });
         const firstDisabled = states.indexOf(false);
         if (firstDisabled >= 0) {
           expect(
             states.slice(firstDisabled).every((enabled) => !enabled),
-            `${ownerId} 的 enabled 成员必须在 disabled 成员之前`,
+            `${ownerId}  enabled members must come before disabled members`,
           ).toBe(true);
         }
       }
@@ -526,7 +529,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("按产品分组声明 Zhipu 系统 Provider 与外部主流 Provider", async () => {
+  it("declare Zhipu system Providers and external mainstream Providers by product group", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -558,6 +561,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "qwen-alibaba-model-studio-cn",
         "qwen-alibaba-model-studio-intl",
         "xiaomi-mimo",
+        "xiaomi-mimo-token-plan",
         "openai",
         "anthropic",
         "xai",
@@ -572,18 +576,20 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       for (const [templateId, template] of snapshot.providerTemplates?.entries() ?? []) {
         expect(
           template.templateNameMap["zh-CN"]?.trim(),
-          `${templateId} 缺少中文 Template 名称`,
+          `${templateId} missing Chinese Template name`,
         ).toBeTruthy();
         expect(
           template.templateNameMap["en-US"]?.trim(),
-          `${templateId} 缺少英文 Template 名称`,
+          `${templateId} missing English Template name`,
         ).toBeTruthy();
-        expect(template.config.logo, `${templateId} 缺少 Built-in Logo 引用`).toMatchObject({
-          type: "builtin",
-        });
+        expect(template.config.logo, `${templateId} missing Built-in Logo reference`).toMatchObject(
+          {
+            type: "builtin",
+          },
+        );
       }
       for (const [providerId, provider] of snapshot.providers.entries()) {
-        expect(provider.logo, `${providerId} 缺少 Built-in Logo 引用`).toMatchObject({
+        expect(provider.logo, `${providerId} missing Built-in Logo reference`).toMatchObject({
           type: "builtin",
         });
       }
@@ -656,52 +662,58 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("按模型家族连续排列 Rule，且不保留语义等价的重复 matcher", async () => {
+  it("does not keep semantically duplicate matchers", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
     });
 
     try {
-      const rules = (await source.read()).models.rules().filter((rule) => rule.type === "match");
+      // Each of the three matcher groups is independent, but semantically equivalent selectors must not be repeated across groups.
+      const rules = (await source.read()).models
+        .rules()
+        .filter(
+          (rule) =>
+            rule.type === "model" || rule.type === "model-api" || rule.type === "provider-site",
+        );
       const selectorKeys = rules.map((rule) =>
         JSON.stringify([
-          rule.providerMatch ?? "",
           rule.modelMatch.toLowerCase(),
-          rule.apiMatch ?? "",
-          rule.baseUrlMatch ?? "",
+          "apiTypeMatch" in rule ? (rule.apiTypeMatch ?? "") : "",
+          "baseUrlMatch" in rule ? rule.baseUrlMatch : "",
         ]),
       );
       expect(new Set(selectorKeys).size).toBe(selectorKeys.length);
-
-      // After grouping, "model families are contiguous" constrains only the Model Rule group itself.
-      // Concatenating the Model/API/Site groups would artificially create duplicate families and make
-      // the intended authoring-order check impossible.
-      const rawRelease = JSON.parse(await readFile(zcodeBuiltinProviderConfigFilePath, "utf8")) as {
-        config: { modelConfigRules: { modelRules: readonly { modelMatch: string }[] } };
-      };
-      const modelRules = rawRelease.config.modelConfigRules.modelRules;
-      const familySequence = modelRules
-        .map((rule) => builtinRuleFamily(rule))
-        .filter((family, index, families) => family !== families[index - 1]);
-      expect(familySequence).toEqual([
-        "fallback",
-        "glm",
-        "gpt",
-        "claude",
-        "grok",
-        "kimi",
-        "minimax",
-        "deepseek",
-        "qwen",
-        "mimo",
-      ]);
     } finally {
       source.dispose();
     }
   });
 
-  it("Reasoning 公开档位按语义强度从低到高排列", async () => {
+  it("keeps Model Rule families contiguous", async () => {
+    // Fork-owned check kept from integration: model families in the Model Rule group must stay contiguous.
+    // Only the Model Rule group is checked; concatenating the Model/API/Site groups would create duplicate families.
+    const rawRelease = JSON.parse(await readFile(zcodeBuiltinProviderConfigFilePath, "utf8")) as {
+      config: { modelConfigRules: { modelRules: readonly { modelMatch: string }[] } };
+    };
+    const modelRules = rawRelease.config.modelConfigRules.modelRules;
+    const familySequence = modelRules
+      .map((rule) => builtinRuleFamily(rule))
+      .filter((family, index, families) => family !== families[index - 1]);
+    expect(familySequence).toEqual([
+      "fallback",
+      "glm",
+      "gpt",
+      "claude",
+      "grok",
+      "kimi",
+      "minimax",
+      "deepseek",
+      "qwen",
+      "mimo",
+    ]);
+  });
+
+  it("public Reasoning levels are ordered from lowest to highest semantic strength", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -728,11 +740,11 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         const ranks = values.map((value) => levelRank[value]);
         expect(
           ranks.every((rank) => rank !== undefined),
-          `${rule.modelMatch} 存在未知 Reasoning 档位，需先声明其顺序语义`,
+          `${rule.modelMatch} has an unknown Reasoning level; declare its ordering semantics first`,
         ).toBe(true);
         expect(
           ranks.every((rank, index) => index === 0 || rank! >= ranks[index - 1]!),
-          `${rule.modelMatch} 的 Reasoning 档位必须从低到高排列`,
+          `${rule.modelMatch}  Reasoning levels must be ordered from lowest to highest`,
         ).toBe(true);
       }
     } finally {
@@ -740,7 +752,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("解析 OpenAI Responses 与 Anthropic Messages 的模型事实和 reasoning 映射", async () => {
+  it("resolve model facts and reasoning mappings for OpenAI Responses and Anthropic Messages", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -909,7 +921,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("每个 Built-in Provider 与模型成员都完整，启用成员在补齐访问材料后进入正式 Registry", async () => {
+  it("every Built-in Provider and model member is complete; enabled members enter the formal Registry once access material is supplied", async () => {
     const source = new NodeZCodeBuiltinProviderConfigSource({
       bundledFilePath: zcodeBuiltinProviderConfigFilePath,
       watch: false,
@@ -927,9 +939,10 @@ describe("ZCode Built-in Provider Config 完整性", () => {
 
       for (const [providerId, provider] of snapshot.providers.entries()) {
         const builtinModelIds = provider.builtinModelIds ?? [];
-        expect(new Set(builtinModelIds).size, `${providerId} 存在重复 Built-in 模型成员`).toBe(
-          builtinModelIds.length,
-        );
+        expect(
+          new Set(builtinModelIds).size,
+          `${providerId} has duplicate Built-in model members`,
+        ).toBe(builtinModelIds.length);
         const enabledModelIds = builtinModelIds.filter((modelId) => {
           const model = snapshot.models.resolve({
             providerId,
@@ -963,9 +976,10 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       for (const [templateId, template] of snapshot.providerTemplates?.entries() ?? []) {
         const providerId = `template:${templateId}`;
         const builtinModelIds = template.config.builtinModelIds ?? [];
-        expect(new Set(builtinModelIds).size, `${templateId} 存在重复 Template 模型成员`).toBe(
-          builtinModelIds.length,
-        );
+        expect(
+          new Set(builtinModelIds).size,
+          `${templateId} has duplicate Template model members`,
+        ).toBe(builtinModelIds.length);
         const enabledModelIds = builtinModelIds.filter((modelId) => {
           const model = snapshot.models.resolve({
             providerId,
@@ -980,7 +994,10 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         expectedModelIds.set(providerId, enabledModelIds);
         expect(["api-key", "zhipu-coding-plan-api-key"]).toContain(template.config.access?.type);
         if (template.config.access?.type !== "zhipu-account") {
-          expect(template.config.access.apiKey, `${templateId} 不得保存 API Key`).toBeUndefined();
+          expect(
+            template.config.access.apiKey,
+            `${templateId} must not store an API Key`,
+          ).toBeUndefined();
         }
         personalProviders.push({
           providerId,
@@ -1027,6 +1044,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
         "template:qwen-alibaba-model-studio-cn",
         "template:qwen-alibaba-model-studio-intl",
         "template:xiaomi-mimo",
+        "template:xiaomi-mimo-token-plan",
         "template:openai",
         "template:anthropic",
         "template:xai",
@@ -1042,7 +1060,7 @@ describe("ZCode Built-in Provider Config 完整性", () => {
       for (const provider of resolution.registryProviders) {
         expect(
           provider.models.map(({ modelId }) => modelId),
-          `${provider.providerId} 的 Registry 模型成员必须与 Built-in Config 一致`,
+          `${provider.providerId}  Registry model members must match the Built-in Config`,
         ).toEqual(expectedModelIds.get(provider.providerId));
         for (const model of provider.models) {
           expect(
@@ -1073,7 +1091,110 @@ describe("ZCode Built-in Provider Config 完整性", () => {
     }
   });
 
-  it("正式 Built-in JSON 不携带旧模型能力字段", async () => {
+  it("complete fallbacks let any unknown model ID enter the Registry under every API type and template (R3A-B-03)", async () => {
+    const source = new NodeZCodeBuiltinProviderConfigSource({
+      bundledFilePath: zcodeBuiltinProviderConfigFilePath,
+      watch: false,
+    });
+
+    try {
+      const snapshot = await source.read();
+      const fallbackRule = snapshot.models
+        .rules()
+        .find((rule) => rule.type === "model" && rule.modelMatch === ".*");
+      const fallbackMax = fallbackRule?.config.optionSpecs?.maxOutputTokens?.max;
+      expect(fallbackMax, "the fallback rule must declare maxOutputTokens.max").toEqual(
+        expect.any(Number),
+      );
+
+      const unknownModelId = "b03-unknown-model-x";
+      const scenarios = [
+        { providerId: "custom-chat", apiType: "openai-chat-completions" as const },
+        { providerId: "custom-messages", apiType: "anthropic-messages" as const },
+        { providerId: "custom-responses", apiType: "openai-responses" as const },
+        {
+          providerId: "custom-deepseek",
+          templateId: "deepseek",
+          apiType: "openai-chat-completions" as const,
+          baseURL: "https://api.deepseek.com",
+          // Probe only with known models enabled by the catalog default: deepseek-v4-flash is marked by the Built-in catalog as
+          // enabled:false, so the sparse Personal rule does not override it and the Registry naturally omits it.
+          knownModelId: "deepseek-v4-pro",
+        },
+        {
+          providerId: "custom-zai",
+          templateId: "zai-api",
+          apiType: "anthropic-messages" as const,
+          baseURL: "https://api.z.ai/api/anthropic",
+          knownModelId: "glm-5.3",
+        },
+      ];
+      const personalProviders = scenarios.map((scenario) => ({
+        providerId: scenario.providerId,
+        ...(scenario.templateId ? { templateId: scenario.templateId } : {}),
+        config: new ProviderConfig({
+          group: "standard-personal",
+          access: new ApiKeyAccessConfig({ apiKey: `test-key-for-${scenario.providerId}` }),
+          api: new ProviderApiConfig({
+            type: scenario.apiType,
+            baseUrl: scenario.baseURL ?? "https://custom.example.com/v1",
+          }),
+          personalModelIds: [
+            unknownModelId,
+            ...(scenario.knownModelId ? [scenario.knownModelId] : []),
+          ],
+        }),
+      }));
+      // When the settings page adds a model, config-service writes only {enabled:true}; reuse the same sparse Personal rule here.
+      const personalModels = new ModelConfigRules(
+        scenarios.map((scenario) => ({
+          type: "provider-model" as const,
+          providerId: scenario.providerId,
+          modelId: unknownModelId,
+          config: parseModelConfig({ enabled: true }),
+        })),
+      );
+      const resolution = new ProviderConfigResolver().resolve({
+        zcodeBuiltinProviders: ProviderConfigMap.empty(),
+        zcodeBuiltinProviderTemplates: snapshot.providerTemplates,
+        accountProviders: ProviderConfigMap.empty(),
+        personalProviders: new ProviderConfigMap(personalProviders),
+        zcodeBuiltinModelRules: snapshot.models,
+        personalModels,
+      });
+      const registry = new ProviderRegistry(resolution.registryProviders);
+
+      expect(resolution.issues).toEqual([]);
+      for (const scenario of scenarios) {
+        const unknown = registry.getModel(scenario.providerId, unknownModelId);
+        expect(
+          unknown,
+          `${scenario.providerId}/${unknownModelId} should enter the Registry`,
+        ).toBeDefined();
+        expect(unknown?.config.optionSpecs.maxOutputTokens).toEqual({
+          max: fallbackMax,
+          map: expect.any(String),
+        });
+        if (scenario.knownModelId) {
+          const known = registry.getModel(scenario.providerId, scenario.knownModelId);
+          expect(
+            known,
+            `${scenario.providerId}/${scenario.knownModelId} should enter the Registry`,
+          ).toBeDefined();
+          expect(known?.config.optionSpecs.maxOutputTokens.max).toEqual(expect.any(Number));
+          // A new generic limit may match a known model; known models still resolve through their own rules, so a different value must not be used to judge a match.
+          expect(known?.config.optionSpecs.reasoningLevel.values).not.toEqual([
+            "disabled",
+            "enabled",
+          ]);
+        }
+      }
+    } finally {
+      source.dispose();
+    }
+  });
+
+  it("the formal Built-in JSON carries no legacy model capability fields", async () => {
     const document = JSON.parse(
       await readFile(zcodeBuiltinProviderConfigFilePath, "utf8"),
     ) as unknown;

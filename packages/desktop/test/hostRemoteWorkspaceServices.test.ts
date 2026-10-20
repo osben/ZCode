@@ -133,6 +133,25 @@ function makeRemoteServices() {
       getView: vi.fn(async () => ({ revision: 0, providers: [] })),
     },
     providerSettingsService: { remote: "provider-settings" },
+    // RPC v1 contract channels (upstream 3.16.x): the remote must provide every one of them.
+    genUiService: { remote: "gen-ui" },
+    settingService: { remote: "setting" },
+    onboardingRecordService: { remote: "onboarding-record" },
+    credentialService: { remote: "credential" },
+    broadcastService: { remote: "broadcast" },
+    conversationShareService: { remote: "conversation-share" },
+    botsService: { remote: "bots" },
+    oauthService: { remote: "oauth" },
+    mediaPreviewService: { remote: "media-preview" },
+    sourceServerWorkspaceService: { remote: "source-server-workspace" },
+    usageStatsService: { remote: "usage-stats" },
+    codingPlanSubscriptionService: { remote: "coding-plan-subscription" },
+    clientScenesService: { remote: "client-scenes" },
+    subagentsService: { remote: "subagents" },
+    memoryService: { remote: "memory" },
+    outputStyleService: { remote: "output-style" },
+    settingsSyncService: { remote: "settings-sync" },
+    promptAttachmentTransferService: { remote: "prompt-attachment-transfer" },
   } as never;
 }
 

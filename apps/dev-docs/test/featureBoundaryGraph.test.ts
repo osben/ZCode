@@ -59,7 +59,7 @@ const fixture: FeatureBoundaryGraph = {
 };
 
 describe("feature boundary graph helpers", () => {
-  it("保留节点、边和按类型统计", () => {
+  it("keeps nodes, edges and per-kind statistics", () => {
     expect(getFeatureBoundaryGraphStats(fixture)).toEqual({
       nodeCount: 3,
       edgeCount: 2,
@@ -72,7 +72,7 @@ describe("feature boundary graph helpers", () => {
     });
   });
 
-  it("返回选中节点的一阶邻居，并补出未声明端点", () => {
+  it("returns first-order neighbors and adds undeclared endpoints", () => {
     const graph: FeatureBoundaryGraph = {
       ...fixture,
       edges: [
@@ -100,7 +100,7 @@ describe("feature boundary graph helpers", () => {
     });
   });
 
-  it("解析当前 feature boundary YAML 并保留未声明端点", async () => {
+  it("parses the current feature boundary YAML and keeps undeclared endpoints", async () => {
     const source = await readFile(
       resolve(
         process.cwd(),
@@ -112,8 +112,9 @@ describe("feature boundary graph helpers", () => {
     const stats = getFeatureBoundaryGraphStats(graph);
 
     expect(stats).toMatchObject({
-      nodeCount: 324,
-      edgeCount: 629,
+      // 416 declared nodes plus 2 unresolved endpoints; the YAML is hand-maintained, so update these when it grows.
+      nodeCount: 418,
+      edgeCount: 799,
       unresolvedEndpointCount: 2,
     });
     expect(graph.nodes.filter((node) => node.kind === "unresolved").map((node) => node.id)).toEqual(

@@ -897,6 +897,14 @@ export function createZCodeAgentConnectionScope(
         withTrustedConnection(workspaceTarget(params), forwardedConnection(params)),
       );
     },
+    onDynamicPluginUiToolResult() {
+      assertOpen();
+      // 页面创建只属于本地桌面；手机回放和 relay 不拥有原生 guest。
+      if (role !== "terminal-client" || context.clientMode !== "desktop-continuous")
+        return RpcEvent.None;
+      // The member is optional on the agent contract until the desktop consumer is synced (services part 4).
+      return base.onDynamicPluginUiToolResult?.() ?? RpcEvent.None;
+    },
     onDynamicCuaPermissionObservation() {
       assertOpen();
       // Permission dialogs are local desktop side effects; mobile replay attachments may consume only replayable conversation facts.

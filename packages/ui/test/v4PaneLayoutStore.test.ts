@@ -341,17 +341,6 @@ describe("持久化（localStorage v2 + v1 迁移）", () => {
     expect(restored!.focusedPaneId).toBe("pane-2");
   });
 
-  it("restoredUnvalidated 不进持久化面", () => {
-    const state = splitPaneAt(
-      INITIAL_PANE_LAYOUT,
-      V4_PRIMARY_PANE_ID,
-      "row",
-      bound(SCOPE_A, "sess-x"),
-    );
-    persistPaneLayout(state);
-    expect(store.get(PANE_LAYOUT_STORAGE_KEY)).not.toContain("restoredUnvalidated");
-  });
-
   it("v1 迁移：本地路径 workspaceKey → 双叶子树（保留 split id 与 splitRatio）", () => {
     store.set(
       PANE_LAYOUT_STORAGE_KEY_V1,

@@ -1670,6 +1670,44 @@ describe("createZCodeAgentService", () => {
     await service.disposeAllAndWait();
   });
 
+  it("reserves native create ownership before sending the assigned session ID", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "zcode-native-project-"));
+    createdDirs.push(workspacePath);
+    const scriptPath = join(workspacePath, "agent.cjs");
+    const logPath = join(workspacePath, "protocol.log");
+    writeFileSync(scriptPath, SHELL_SETTINGS_SNAPSHOT_FAKE_AGENT);
+    const prepareSessionCreation = vi.fn(async () => ["/extra"]);
+    const service = createReadyZCodeAgentService({
+      prepareSessionCreation,
+      commandResolver: () => ({ command: process.execPath, args: [scriptPath, logPath] }),
+    });
+    try {
+      await service.createSession({ workspacePath, projectId: "p" });
+      const create = readFileSync(logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((entry) => entry.method === "session/create");
+      expect(prepareSessionCreation).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: "p", sessionId: create.params.sessionId }),
+      );
+      expect(create.params.sessionId).toBeTypeOf("string");
+      expect(create.params.additionalDirectories).toEqual(["/extra"]);
+      expect(create.params).not.toHaveProperty("projectId");
+      prepareSessionCreation.mockRejectedValueOnce(new Error("storage failed"));
+      await expect(service.createSession({ workspacePath })).rejects.toThrow("storage failed");
+      expect(
+        readFileSync(logPath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+          .filter((entry) => entry.method === "session/create"),
+      ).toHaveLength(1);
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
   it("passes session tool lists through protocol session/create", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "zcode-agent-service-tool-list-"));
     createdDirs.push(workspacePath);
@@ -2012,6 +2050,7 @@ describe("createZCodeAgentService", () => {
             askUserQuestionAutoResolutionEnabled: boolean;
             nativeSearchEnhancementsEnabled: boolean;
             memoryEnabled: boolean;
+            toolSearchMode?: "auto" | "local" | "off";
           }>
         >
       >;
@@ -2020,6 +2059,7 @@ describe("createZCodeAgentService", () => {
         nativeSearchEnhancementsEnabled: boolean;
         subagentRuntimeConfigEnabled: boolean;
         memoryEnabled: boolean;
+        toolSearchMode?: "auto" | "local" | "off";
         modelContextBudgetStrategy: "legacy" | "preflight-v1";
       };
       expectedErrorCode?: number;
@@ -2028,32 +2068,32 @@ describe("createZCodeAgentService", () => {
       {
         name: "current-setting",
         resolver: vi.fn(async () => ({
+          toolSearchMode: "auto",
           askUserQuestionAutoResolutionEnabled: false,
           nativeSearchEnhancementsEnabled: false,
           memoryEnabled: false,
         })),
         expectedResult: {
+          toolSearchMode: "auto",
           askUserQuestionAutoResolutionEnabled: false,
           nativeSearchEnhancementsEnabled: false,
           subagentRuntimeConfigEnabled: false,
           memoryEnabled: false,
           memoryIndexAsContext: false,
           modelContextBudgetStrategy: "preflight-v1" as const,
-          // Upstream 3.16.1: the shared runtime-preference schema defaults toolSearchMode to "off".
-          toolSearchMode: "off" as const,
         },
         expectedResolverCalls: 1,
       },
       {
         name: "missing-resolver",
         expectedResult: {
+          toolSearchMode: "off",
           askUserQuestionAutoResolutionEnabled: true,
           nativeSearchEnhancementsEnabled: true,
           subagentRuntimeConfigEnabled: false,
           memoryEnabled: false,
           memoryIndexAsContext: false,
           modelContextBudgetStrategy: "preflight-v1" as const,
-          toolSearchMode: "off" as const,
         },
         expectedResolverCalls: 0,
       },
@@ -2109,13 +2149,13 @@ describe("createZCodeAgentService", () => {
                   nativeSearchEnhancementsEnabled: boolean;
                   subagentRuntimeConfigEnabled: boolean;
                   memoryEnabled: boolean;
+                  toolSearchMode?: "auto" | "local" | "off";
                   modelContextBudgetStrategy: "legacy" | "preflight-v1";
                 };
               },
           )
           .find((entry) => entry.method === "session/requestRuntimePreferences:response");
 
-        expect(response, testCase.name).toBeDefined();
         if (testCase.expectedResult) {
           expect(response?.result, testCase.name).toEqual(testCase.expectedResult);
           expect(response?.error, testCase.name).toBeUndefined();

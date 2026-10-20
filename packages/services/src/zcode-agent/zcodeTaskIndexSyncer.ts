@@ -174,6 +174,8 @@ export interface ZCodeTaskIndexSyncer {
     workspacePath: string;
     status: "preparing" | "failed";
   }>;
+  /** Observe existing subscriptions only: tasks whose sessions-index phase is not terminal (running in the live set). */
+  activeTaskRefs(): Array<{ workspacePath: string; workspaceIdentity?: string; taskId: string }>;
   /** Release all V4 subscriptions and the workspace emitter; do not close the injected taskIndexRepo. */
   disposeAll(): void;
 }
@@ -1827,6 +1829,14 @@ export function createZCodeTaskIndexSyncer(
     onSessionTerminalEvent: terminalEventEmitter.event,
 
     onSessionReadyEvent: readyEventEmitter.event,
+
+    activeTaskRefs() {
+      return [...workspaceIngests.values()].flatMap((state) =>
+        [...state.summaries.values()]
+          .filter((summary) => !isTerminalPhase(summary.phase))
+          .map((summary) => ({ ...state.target, taskId: summary.sessionId })),
+      );
+    },
 
     disposeAll(): void {
       disposed = true;

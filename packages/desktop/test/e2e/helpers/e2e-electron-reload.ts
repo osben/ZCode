@@ -120,6 +120,7 @@ export async function reloadElectronSessionSafely(
 /** Fully restarts Electron while explicitly reusing the same userData, so an empty profile does not mask recovery behavior. */
 export async function reloadElectronSessionPreservingBrowserProfile(
   browser: WebdriverIO.Browser,
+  options: E2EElectronProcessExitOptions = {},
 ): Promise<string> {
   const userDataDir = (await browser.electron.execute((electron) =>
     electron.app.getPath("userData"),
@@ -135,7 +136,7 @@ export async function reloadElectronSessionPreservingBrowserProfile(
       `--user-data-dir=${userDataDir}`,
     ],
   };
-  await reloadElectronSessionSafely(browser);
+  await reloadElectronSessionSafely(browser, options);
   return (await browser.electron.execute((electron) => electron.app.getPath("userData"))) as string;
 }
 

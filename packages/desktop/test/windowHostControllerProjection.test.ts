@@ -380,7 +380,7 @@ describe("WindowHostControllerProjection", () => {
     ]);
   });
 
-  it("关闭 remote scope 清理其内存投影，Grouped facts 始终只返回 local", () => {
+  it("关闭 remote scope 只清理其内存投影，保留本机行", () => {
     const projection = createWindowHostControllerProjection({ createId: () => "id-1" });
     projection.registerSource({ scope: localScope, mutate: vi.fn() });
     projection.registerSource({ scope: remoteScope, mutate: vi.fn() });
@@ -408,9 +408,6 @@ describe("WindowHostControllerProjection", () => {
       sessionsIndex: [],
     });
 
-    expect(projection.getGroupedTaskFacts().map((task) => task.address.taskId)).toEqual([
-      "local-task",
-    ]);
     projection.removeSource(remoteScope);
     expect(projection.getTasks().map((task) => task.address.taskId)).toEqual(["local-task"]);
   });

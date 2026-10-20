@@ -503,7 +503,7 @@ export interface ModelExecutionContext {
    * rather than failing the whole turn. The caller must declare the trigger conditions: `providerId` restricts matching to the provider selected by this execution,
    * `rules` are checked in declaration order and the first match determines the fallback reason, and an omitted `providerErrorCode` means any failure from that provider.
    * Core does not hard-code provider IDs, model names, or error messages.
-   * Resolve the fallback target from `target` first (the committed selection at draw time, meaning the session's original model), then from the persistent Session Selection;
+   * Resolve the fallback target from `target` first (the committed selection at draw time, meaning the session's original model), then from the persistent Session Selection copied before this execution was admitted;
    * if neither resolves, there is no fallback and the real error is returned.
    */
   selectionFallback?: {

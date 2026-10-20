@@ -24,6 +24,7 @@ export interface MessagePortServiceConnection {
  */
 export function createMessagePortServiceConnection(
   port: MessagePort,
+  options: { sourceServerManagementService?: boolean } = {},
 ): MessagePortServiceConnection {
   logMessagePortDebug("[messageport] creating protocol and client...");
   const protocol = new MessagePortProtocol(port);
@@ -33,7 +34,7 @@ export function createMessagePortServiceConnection(
   });
   logMessagePortDebug("[messageport] client created, waiting for Initialize...");
 
-  const services = new RemoteServiceAccess(client);
+  const services = new RemoteServiceAccess(client, options);
   let disposed = false;
   return {
     services,
@@ -54,6 +55,9 @@ export function createMessagePortServiceConnection(
  * In Desktop mode, utilityProcess (or a remote proxy in the main process) exposes ChannelServer
  * through MessagePort, and the renderer uses this function to establish a ChannelClient connection.
  */
-export function connectViaMessagePort(port: MessagePort): IServiceAccessor {
-  return createMessagePortServiceConnection(port).services;
+export function connectViaMessagePort(
+  port: MessagePort,
+  options: { sourceServerManagementService?: boolean } = {},
+): IServiceAccessor {
+  return createMessagePortServiceConnection(port, options).services;
 }

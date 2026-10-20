@@ -1,7 +1,6 @@
-// Timeline model (docs/dynamic-workflow/presentation.md "The timeline model"): a pure function folds the
-// bounded display and workflowRuns projections into stations / rail segments / arcs. The chat card, the
-// confirmation window, and the sidebar list all start from here, so the derivation rules are pinned here
-// rather than in their respective render tests.
+// 时间线模型（docs/dynamic-workflow/presentation.md「The timeline model」）：一个纯函数把有界
+// display 与 workflowRuns 投影折成站 / 轨道段 / 弧。聊天卡、确认窗与侧栏清单都从这里出发，
+// 所以派生规则钉在这里而不是各自的渲染测试里。
 import { describe, expect, it } from "vitest";
 import type { WorkflowRunState } from "@zcode/shared/zcode-protocol-v4";
 import type { WorkflowCausalityGraphData } from "@/components/workflow-graph/types.js";
@@ -12,7 +11,7 @@ import {
 } from "@/components/workflow-timeline/timeline-model.js";
 import { pillActivity } from "@/components/workflow-timeline/timeline-pill-activity.js";
 
-// plan → draft → verify, verify back to plan (loop), plan jumping straight to verify (skip).
+// plan → draft → verify，verify 回到 plan（循环），plan 直跳 verify（跳段）。
 const STEPS: WorkflowCausalityGraphData["steps"] = [
   { id: "ask#1", kind: "ask", label: "plan", lane: "actor#1", phase: "phase#a" },
   {
@@ -54,7 +53,7 @@ const GRAPH: WorkflowCausalityGraphData = {
     { id: "phase#b", name: "draft" },
     { id: "phase#c", name: "verify" },
   ],
-  // The analyzer marks the re-entering phase("plan") as a forward edge (no back flag): visually it still points left.
+  // 分析器把再入的 phase("plan") 标成前向边（不带 back）：画面上它仍然向左。
   phaseEdges: [
     { from: "phase#a", to: "phase#b" },
     { from: "phase#b", to: "phase#c" },
@@ -122,7 +121,7 @@ describe("buildWorkflowTimeline · 站与边", () => {
       { from: 0, ink: "faint", to: 1 },
       { from: 1, ink: "faint", to: 2 },
     ]);
-    // The two arcs cross in x, so they are assigned different lanes: the one landing first by span hugs the rails; with equal spans the payload order is kept.
+    // 两条弧在 x 上相交，所以分道：按跨度先落的贴近轨道；两条跨度相同时保持载荷序。
     expect(model.arcs).toEqual([
       { air: 0, from: 2, ink: "faint", lane: 0, to: 0 },
       { air: 0, from: 0, ink: "faint", lane: 1, to: 2 },
@@ -130,28 +129,28 @@ describe("buildWorkflowTimeline · 站与边", () => {
   });
 
   it("弧的分道是区间着色：互不相干的同高，嵌套的里矮外高，共用端点的也分开", () => {
-    // Two back edges at opposite ends (3→1, 5→4): non-intersecting, same lane — differing heights would only make people look for a reason that does not exist.
+    // 两条各在一头的回边（3→1、5→4）：不相交，同一道——高度不同只会让人去找并不存在的理由。
     expect(
       assignArcLanes([
         { from: 3, to: 1 },
         { from: 5, to: 4 },
       ]).map((arc) => arc.lane),
     ).toEqual([0, 0]);
-    // Nesting: the short one lands on lane 0 first; the long one wrapping it can only go up.
+    // 嵌套：短的先落在 0 道，长的包在外面只能往上。
     expect(
       assignArcLanes([
         { from: 3, to: 2 },
         { from: 5, to: 0 },
       ]).map((arc) => arc.lane),
     ).toEqual([0, 1]);
-    // Sharing an endpoint (3→1 and 5→3): the two arcs would join into one line at station 3's vertical segment, so they are separated too.
+    // 共用一个端点（3→1 与 5→3）：两条弧在站 3 的竖段会连成一线，也分道。
     expect(
       assignArcLanes([
         { from: 3, to: 1 },
         { from: 5, to: 3 },
       ]).map((arc) => arc.lane),
     ).toEqual([0, 1]);
-    // Three arcs: the two unrelated ones share lane 0; the third rises to lane 1 only because it spans both; the lane count is 2, not 3.
+    // 三条：两条无关的同在 0 道，第三条跨过两者才上 1 道；道数是 2 不是 3。
     const lanes = assignArcLanes([
       { from: 1, to: 0 },
       { from: 4, to: 3 },
@@ -215,7 +214,7 @@ describe("buildWorkflowTimeline · 站与边", () => {
       expect(station.rounds).toBe(0);
       expect(station.fraction).toBeUndefined();
       for (const pill of station.pills) expect(pill.status).toBeUndefined();
-      // No run means no openable workspace: the handle is absent just like the slot.
+      // 没有 run 就没有可开的工作区：抓手与槽位一样缺席。
       for (const pill of station.pills) expect(pill.workspace).toBeUndefined();
     }
   });
@@ -382,22 +381,22 @@ describe("buildWorkflowTimeline · 药丸", () => {
       slot: { siteId: "actor#1", ordinal: 1 },
       stepIds: ["ask#1"],
     });
-    // A synthetic lane has no instance and no slot.
+    // 合成车道没有实例，也没有槽位。
     const workspace = plan!.pills.find((pill) => pill.lane.id === "workspace")!;
     expect(workspace.laneClass).toBe("workspace");
     expect(workspace.instance).toBeUndefined();
     expect(workspace.slot).toBeUndefined();
-    // But it has its own handle (docs/dynamic-workflow/transcript-and-notifications.md): in a live run,
-    // clicking it opens the workspace transcript and jumps to this station.
+    // 但它有自己的抓手（docs/dynamic-workflow/transcript-and-notifications.md）：活的 run 里点它开工作区
+    // transcript、落到这一站。
     expect(workspace.workspace).toEqual({ phaseId: "phase#a" });
     expect(planner.workspace).toBeUndefined();
-    // An instance whose session is not yet persisted: instance is present, sessionId absent; the slot is still the instance's ordinal.
+    // 会话还没落库的实例：instance 在，sessionId 缺席；槽位仍是实例的序号。
     const writer = model.stations[1]!.pills[0]!;
     expect(writer.instance).toEqual({ siteId: "actor#2", ordinal: 1 });
     expect(writer.slot).toEqual({ siteId: "actor#2", ordinal: 1 });
     expect(writer.runtimeName).toBeUndefined();
     expect(writer.status).toBe("pending");
-    // A subagent that has not appeared yet (actor#3 has no instance): the slot is its future ordinal 1.
+    // 还没出现的子代理（actor#3 没有实例）：槽位是它将来的序号 1。
     const verifier = model.stations[2]!.pills.find((pill) => pill.lane.id === "actor#3")!;
     expect(verifier.instance).toBeUndefined();
     expect(verifier.slot).toEqual({ siteId: "actor#3", ordinal: 1 });
@@ -409,7 +408,7 @@ describe("buildWorkflowTimeline · 药丸", () => {
       cold.stations.flatMap((station) => station.pills).every((pill) => pill.slot === undefined),
     ).toBe(true);
 
-    // Member cards expanded from a literal cardinality: the i-th member maps to the i-th instance on that lane, and its ordinal is known before it appears.
+    // 字面量基数展开的成员卡：第 i 个成员对应该车道上的第 i 个实例，出现之前就知道它的序号。
     const members: WorkflowCausalityGraphData = {
       ...GRAPH,
       participants: GRAPH.participants.flatMap((participant) =>
@@ -432,7 +431,7 @@ describe("buildWorkflowTimeline · 药丸", () => {
       { siteId: "actor#2", ordinal: 2 },
       { siteId: "actor#2", ordinal: 3 },
     ]);
-    // The first member is bound to an instance (with a session); the other two have not appeared yet.
+    // 第一个成员已绑定实例（带会话），其余两个还没出现。
     expect(draft.pills[0]!.instance).toEqual({ siteId: "actor#2", ordinal: 1, sessionId: "s-2" });
     expect(draft.pills[1]!.instance).toBeUndefined();
   });
@@ -477,8 +476,8 @@ describe("pillActivity", () => {
   });
 });
 
-// Entry records (docs/dynamic-workflow/presentation.md): a station is associated with run.phases by name,
-// and currentPhase is the station where control flow sits. A zero-member station can only be lit by it.
+// 进入记录（docs/dynamic-workflow/presentation.md）：一站按名字关联
+// run.phases，currentPhase 是控制流所在的站。零成员站只有它能点灯。
 describe("buildWorkflowTimeline · 进入记录", () => {
   const EMPTY_TAIL: WorkflowCausalityGraphData = {
     ...GRAPH,
@@ -506,7 +505,7 @@ describe("buildWorkflowTimeline · 进入记录", () => {
     expect(byName(entered, "wrap up").status).toBe("running");
     expect(byName(entered, "wrap up").visited).toBe(true);
     expect(entered.runningIndex).toBe(3);
-    // The march edge lands on the rail segment entering this station.
+    // 行进边落在进入这一站的轨道段上。
     expect(entered.rails.find((rail) => rail.to === 3)?.ink).toBe("march");
 
     const completed = buildWorkflowTimeline(
@@ -533,11 +532,11 @@ describe("buildWorkflowTimeline · 进入记录", () => {
         currentPhase: "plan",
       }),
     );
-    // plan has members but no node was dispatched: the failure happened in its script logic, so the light is failed.
+    // plan 有成员但一个节点都没派发：失败发生在它的脚本逻辑里，灯给 failed。
     expect(byName(failed, "plan").status).toBe("failed");
     expect(byName(failed, "wrap up").status).toBe("pending");
 
-    // A zero-member head station: control flow has already passed it (a later station is current), so it is done.
+    // 一个零成员的头站：控制流已经越过它（后面的站是 current），它就是 done。
     const passed = buildWorkflowTimeline(
       {
         ...EMPTY_TAIL,
@@ -567,7 +566,7 @@ describe("buildWorkflowTimeline · 进入记录", () => {
     expect(byName(beforeDispatch, "plan").visited).toBe(true);
     expect(byName(beforeDispatch, "draft").status).toBe("pending");
 
-    // All of the current station's nodes are settled and the next marker has not arrived: control flow is still at this station.
+    // 当前站的节点都结算了、下一个标记还没到：控制流仍在这一站。
     const between = buildWorkflowTimeline(
       GRAPH,
       run({
@@ -612,7 +611,7 @@ describe("buildWorkflowTimeline · 进入记录", () => {
     );
     expect(byName(truncated, long).rounds).toBe(2);
     expect(byName(truncated, long).status).toBe("running");
-    // A short untruncated name does not do prefix matching: "plan" does not recognize "plan the fix".
+    // 没被截断的短名不做前缀匹配：「plan」不认「plan the fix」。
     const short = buildWorkflowTimeline(
       GRAPH,
       run({ phases: [{ name: "plan the fix", rounds: 1 }], currentPhase: "plan the fix" }),
@@ -632,7 +631,7 @@ describe("buildWorkflowTimeline · 进入记录", () => {
 });
 
 describe("buildWorkflowTimeline · 分支站（追记「缺席不是状态」）", () => {
-  // One participant, two ask sites: `round === 1 ? poet.ask(…) : poet.ask(…)` takes only one branch per round.
+  // 一个参与者两个站点：`round === 1 ? poet.ask(…) : poet.ask(…)` 每轮只走一支。
   const BRANCH_STEPS: WorkflowCausalityGraphData["steps"] = [
     { id: "ask#1", kind: "ask", label: "poet", lane: "actor#1", phase: "phase#a" },
     { id: "ask#2", kind: "ask", label: "poet", lane: "actor#1", phase: "phase#a" },
@@ -785,7 +784,7 @@ describe("buildWorkflowTimeline · asking", () => {
         ] as WorkflowRunState["nodes"],
         pendingQuestions: [
           { qid: "q-1", actorSiteId: "actor#1", actorOrdinal: 1, question: "Which branch?" },
-          // A question with no asker lands on no pill.
+          // 没有提问者的问题不落在任何药丸上。
           { qid: "q-2", question: "orphan" },
         ],
       }),
@@ -797,10 +796,9 @@ describe("buildWorkflowTimeline · asking", () => {
 });
 
 /**
- * Instances' phase coordinates (docs/dynamic-workflow/presentation.md). The shape of this bug:
- * one `runBatch(p)` called once per each of 5 phases, dispatching 20 subagents in parallel each time — one
- * lane, one ask site; statically 5 copies + 5 `many` cards, at runtime 100 instances. When binding by lane,
- * every station claims all 100.
+ * 实例的阶段坐标（docs/dynamic-workflow/presentation.md）。本 bug 的形状：
+ * 一个 `runBatch(p)` 从 5 个阶段各调一次、每次并行派 20 个子代理——一条车道、一个 ask 站点，
+ * 静态是 5 份拷贝 + 5 张 `many` 卡，运行时是 100 个实例。按车道绑定时每站都认领全部 100 个。
  */
 describe("buildWorkflowTimeline · 实例按出生阶段划分", () => {
   const NAMES = ["调研", "起草", "校对", "复核", "收尾"];
@@ -856,7 +854,7 @@ describe("buildWorkflowTimeline · 实例按出生阶段划分", () => {
     expect(model.stations.map((station) => station.fraction)).toEqual(
       NAMES.map(() => ({ observed: 20, settled: 20 })),
     );
-    // The pills are exactly that phase's 20 instances (station 3 holds 41…60).
+    // 药丸就是该阶段的那 20 个实例（第 3 站是 41…60）。
     expect(model.stations[2]!.pills.map((pill) => pill.instance?.ordinal)).toEqual(
       Array.from({ length: 20 }, (_, k) => 41 + k),
     );
@@ -869,8 +867,8 @@ describe("buildWorkflowTimeline · 实例按出生阶段划分", () => {
     ]);
     expect(model.stations[0]!.fraction).toEqual({ observed: 100, settled: 100 });
   });
-  // ——— Addendum 2026-09-10 "the overlay view also narrows by birth phase": the lights also only trust their own phase's nodes ———
-  /** Phase p (1-based) is running and all earlier phases are settled: nodes, entry records, and currentPhase agree. */
+  // ——— 追记 2026-09-10「叠加视图也按出生阶段收窄」：灯也只信自己阶段的节点 ———
+  /** 第 p 阶段（1 起）在跑、之前的阶段全部结算：节点、进入记录与 currentPhase 一致。 */
   function midRun(p: number, stamped = true): WorkflowRunState {
     const stamp = (name: string) => (stamped ? { phaseName: name } : {});
     return run({
@@ -905,7 +903,7 @@ describe("buildWorkflowTimeline · 实例按出生阶段划分", () => {
       "pending",
     ]);
     expect(second.runningIndex).toBe(1);
-    // Station 2's pills are its own 20 and all running; station 3's pills are unborn, pending.
+    // 第 2 站的药丸是它自己的 20 个，且都在跑；第 3 站的药丸还没出生，pending。
     expect(second.stations[1]!.pills.every((pill) => pill.status === "running")).toBe(true);
     expect(second.stations[2]!.pills.every((pill) => pill.status === "pending")).toBe(true);
   });
@@ -921,9 +919,8 @@ describe("buildWorkflowTimeline · 实例按出生阶段划分", () => {
   });
 });
 
-// Unlisted entries (docs/dynamic-workflow/presentation.md "Past six participants"): subagents dropped by
-// reduction have no pills; their tally is recorded in the `unlistedByPhase` cell of their birth phase, carried
-// by stations to the card and the side pane.
+// 表外条目（docs/dynamic-workflow/presentation.md「Past six participants」）：归约淘汰掉的子代理
+// 没有药丸，它们的账记在 `unlistedByPhase` 的出生阶段那一格上，由站带给卡与侧板。
 describe("buildWorkflowTimeline · 表外条目", () => {
   function truncated(
     unlistedByPhase: NonNullable<WorkflowRunState["unlistedByPhase"]>,
@@ -950,17 +947,16 @@ describe("buildWorkflowTimeline · 表外条目", () => {
       ),
     );
     const [plan, draft, verify] = model.stations;
-    // The subagents' three numbers are kept separate from the nodes' one: `settled` is `actorsSettled`, `nodesSettled` is the nodes'.
+    // 子代理的三个数与节点的那个数分开：`settled` 是 `actorsSettled`，`nodesSettled` 是节点的。
     expect(plan!.unlisted).toEqual({ actors: 300, failed: 2, nodesSettled: 300, settled: 100 });
-    // One settled listed + three hundred unlisted nodes: 301/301, not 1/1.
+    // 表内一个已结算 + 表外三百个节点：301/301，而不是 1/1。
     expect(plan!.fraction).toEqual({ observed: 301, settled: 301 });
-    // A station that only lost subagents, no nodes: the numbers are present, fraction still absent (no node
-    // observed at all).
-    // An absent `actorsSettled` counts as zero — that one has not run yet.
+    // 只少了子代理、没少节点的站：数字在，fraction 仍然缺席（一个节点都没观察到）。
+    // `actorsSettled` 缺席即归零——那一个还没跑。
     expect(draft!.unlisted).toEqual({ actors: 1, failed: 0, nodesSettled: 0, settled: 0 });
     expect(draft!.fraction).toBeUndefined();
     expect(verify!.unlisted).toBeUndefined();
-    // The lights are unaffected: the unlisted are only numbers, not status.
+    // 灯不受影响：表外的只是数字，不是状态。
     expect(model.stations.map((station) => station.status)).toEqual(["done", "pending", "pending"]);
   });
 
@@ -994,11 +990,10 @@ describe("buildWorkflowTimeline · 表外条目", () => {
   });
 });
 
-// Parallel phases (bands from docs/dynamic-workflow/presentation.md "The timeline model"): `alongside` folds
-// several declaration-order-contiguous stations into one band, with tracks inside the band, forking before it
-// and joining after; arcs treat the whole band as a single node.
+// 并行阶段（docs/dynamic-workflow/presentation.md「The timeline model」的带）：`alongside` 把
+// 声明序上连续的几站折成一条带，带内分轨道，带之前分叉、之后汇合；弧把整条带当一个节点。
 describe("buildWorkflowTimeline · 带", () => {
-  /** A skeleton graph with one ask member per station: `near[i]` is station i's `alongside`; edges are given by index. */
+  /** 一站一个 ask 成员的骨架图：`near[i]` 是第 i 站的 `alongside`，边按下标给。 */
   function bandGraph(
     near: (number[] | undefined)[],
     edges: [number, number][],
@@ -1025,8 +1020,8 @@ describe("buildWorkflowTimeline · 带", () => {
     };
   }
 
-  // A ∥ B → C (strand-fanout-two-phases-join). The bounded layer reports the reduced edges: A → B, B → C;
-  // A → C was transitively reduced away.
+  // A ∥ B → C（strand-fanout-two-phases-join）。有界层报的是约简后的边：A → B、B → C，
+  // A → C 被传递约简掉了。
   const TESTFIELD = bandGraph(
     [undefined, [0], undefined],
     [
@@ -1160,7 +1155,7 @@ describe("buildWorkflowTimeline · 带", () => {
   });
 
   it("绕整条带的循环落在带的左端：整条带都上环", () => {
-    // Rule 1a: the back edge C → A is drawn to the fork point, saying "re-enter the whole band once".
+    // 规则 1a：回边 C → A 画到分叉点上，说的是「整条带再入一次」。
     const loop = bandGraph(
       [undefined, [0], undefined],
       [
@@ -1175,7 +1170,7 @@ describe("buildWorkflowTimeline · 带", () => {
   });
 
   it("带内闭合的循环从带的右端出发（没有汇合站的带也有一个汇合点）", () => {
-    // Rule 1b: the back edge B → plan is drawn to the merge point, saying "return to plan after both strands settle".
+    // 规则 1b：回边 B → plan 画到合流点上，说的是「两条 strand 都结算之后回到 plan」。
     const loop = bandGraph(
       [undefined, undefined, [1]],
       [
@@ -1196,7 +1191,7 @@ describe("buildWorkflowTimeline · 带", () => {
   });
 
   it("一条轨道内部的循环用那条轨道自己的空", () => {
-    // Rule 2: review → draft are two stations on the same branch track; the arc is drawn above that track.
+    // 规则 2：评审 → 起草 是同一条分支轨道上的两站，弧画在那条轨道的上方。
     const inside = bandGraph(
       [undefined, undefined, [1], [1], undefined],
       [
@@ -1211,7 +1206,7 @@ describe("buildWorkflowTimeline · 带", () => {
     const model = buildWorkflowTimeline(inside, undefined);
     expect(model.bands[0]!.tracks.map((track) => track.stations)).toEqual([[1], [2, 3]]);
     expect(model.arcs).toEqual([{ air: 1, from: 3, ink: "faint", lane: 0, to: 2 }]);
-    // The same-track-adjacent 2 → 3 is already a rail segment and is not drawn a second time.
+    // 同轨道相邻的 2 → 3 已经是轨道段，不再画一遍。
     expect(model.rails).toEqual([
       { from: 0, ink: "faint", to: 1 },
       { from: 0, ink: "faint", kind: "fork", to: 2 },
@@ -1245,7 +1240,7 @@ describe("buildWorkflowTimeline · 带", () => {
       [1, 3],
       [2, 4],
     ]);
-    // The two arcs cross in x ([1,3] and [2,4]), but they live in different airs, each being the lowest lane in its own.
+    // 两条弧在 x 上相交（[1,3] 与 [2,4]），但它们在不同的空里，各自都是最低的一道。
     expect(model.arcs).toEqual([
       { air: 0, from: 3, ink: "faint", lane: 0, to: 1 },
       { air: 1, from: 4, ink: "faint", lane: 0, to: 2 },

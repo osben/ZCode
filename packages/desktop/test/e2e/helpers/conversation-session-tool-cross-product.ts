@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveE2ERuntimePath } from "./e2e-runtime-paths.js";
-import { switchV4Mode } from "./v4-conversation.js";
+import { getV4ConfigProjection, switchV4Mode } from "./v4-conversation.js";
 
 export const TOOL_CROSS_PRODUCT_ROOT = resolveE2ERuntimePath(
   "conversation-session-tool-cross-product",
@@ -95,14 +95,13 @@ export async function cleanupToolCrossProductFixtures() {
 }
 
 export async function ensureToolCrossProductFullAccessMode() {
-  if (await isFullAccessModeSelected()) {
+  if ((await getV4ConfigProjection()).mode === "yolo") {
     return;
   }
-  // The old aria-label trigger path left the wait's condition body without a single completed
-  // evaluation under WDIO v9 and reported "not-started" for every case. Reuse the canonical
-  // testid-based composer mode switch (same path as switchV4Mode callers) instead.
+  // Bug 根因：模式菜单已迁移为 DropdownMenu，旧 Select option 查询永远找不到 yolo。
+  // 复用当前 V4 控件，并只以当前 composer 的模式投影确认，不读取其他工作区配置。
   await switchV4Mode("yolo");
-  await browser.waitUntil(async () => isFullAccessModeSelected(), {
+  await browser.waitUntil(async () => (await getV4ConfigProjection()).mode === "yolo", {
     timeout: 30000,
     timeoutMsg: "工具叉乘 e2e 没有切换到 Full access/yolo mode",
   });
@@ -172,84 +171,6 @@ export async function respondToToolCrossProductBlockers() {
     await browser.pause(250);
   }
   return result;
-}
-
-async function isFullAccessModeSelected() {
-  const result = (await browser.execute(() => {
-    const normalizeText = (value: string | null | undefined) =>
-      (value ?? "").replace(/\u00a0/g, " ").trim();
-    const store = (
-      window as typeof window & {
-        __zcodeSessionStoreE2E?: {
-          getState?: () => {
-            workspaces?: Record<
-              string,
-              {
-                activeTaskId?: string | null;
-                configOptions?: Array<ConfigOptionLike> | null;
-                taskConfigOptionsByTaskId?: Record<string, Array<ConfigOptionLike>>;
-              }
-            >;
-          };
-        };
-      }
-    ).__zcodeSessionStoreE2E;
-    const workspaceValues: string[] = [];
-    const activeTaskValues: string[] = [];
-    const collect = (options: Array<ConfigOptionLike> | null | undefined, target: string[]) => {
-      for (const option of options ?? []) {
-        if (
-          option.type === "select" &&
-          (option.category === "mode" || option.id === "mode") &&
-          typeof option.currentValue === "string"
-        ) {
-          target.push(option.currentValue);
-        }
-      }
-    };
-    for (const workspace of Object.values(store?.getState?.().workspaces ?? {})) {
-      collect(workspace.configOptions, workspaceValues);
-      const activeTaskId = workspace.activeTaskId;
-      if (activeTaskId) {
-        collect(workspace.taskConfigOptionsByTaskId?.[activeTaskId], activeTaskValues);
-      }
-    }
-
-    const labels = Array.from(
-      document.querySelectorAll<HTMLElement>(
-        'button[aria-label="Switch mode"],button[aria-label="切换模式"]',
-      ),
-    )
-      .filter((element) => element.getClientRects().length > 0)
-      .map((element) => normalizeText(element.textContent));
-    const labelShowsYolo = labels.some((label) =>
-      ["Full access", "完全访问", "Yolo", "全自动模式"].some((expected) =>
-        label.includes(expected),
-      ),
-    );
-
-    return {
-      activeTaskValues,
-      labels,
-      workspaceValues,
-      // Bug root cause: after EnterPlanMode the workspace default is still yolo, but the active task is already plan;
-      // the old logic aggregated the values and misjudged as soon as it saw any yolo. The visible V4 trigger is the authoritative value for the current pane;
-      // only when the DOM is unavailable do we degrade by priority: active task → workspace default.
-      yolo:
-        labels.length > 0
-          ? labelShowsYolo
-          : activeTaskValues.length > 0
-            ? activeTaskValues.includes("yolo")
-            : workspaceValues.includes("yolo"),
-    };
-  })) as {
-    activeTaskValues: string[];
-    labels: string[];
-    workspaceValues: string[];
-    yolo: boolean;
-  };
-
-  return result.yolo;
 }
 
 interface ConfigOptionLike {

@@ -6,6 +6,7 @@
 
 ## Current Execution Entry Points
 
+- [Todo161: Preserve Output Limit on First CLI Migration of Legacy config.json](todo-161-cli-legacy-output-token-migration.md): Independently ported from staging on 2026-10-14. Applies only to the first CLI import; existing config and Desktop are not touched. 61 targeted regression tests pass; request budgets for the three API types and the restart boundary are verified; root and CLI type, lint, architecture, and format checks pass. Detailed evidence is in the Todo.
 - [Todo159: Connectivity Test Output Budget Uniformly Adjusted to 512 Tokens](todo-159-connectivity-512-token-budget.md): Awaiting execution, target value confirmed. Air's OpenCode Go Luna rejects `max_output_tokens=1`; server requires at least 16; only changing to 16's counter-request succeeded. Uniformly adjusting connectivity test budget to 512, superseding Todo144's 1 Token ruling, retaining lowest reasoning level, Prompt, stream-end, and error contracts; this round only records the Todo, 512 and modified App acceptance awaiting execution.
 
 - [Todo158: Permission Dialog Full Access and Queued Mode Permission Sync](todo-158-permission-dialog-full-access-and-queued-mode.md): Implemented; acceptance not fully wrapped up. Only dialog syncs current task, Composer, and fixed queued mode as yolo; respective Plans retained; includes transactions, idempotency, and projection recovery. Baseline failures for necessary verification and cross-platform unverified items per Todo section 9.

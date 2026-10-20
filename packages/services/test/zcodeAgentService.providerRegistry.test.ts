@@ -822,6 +822,9 @@ describe("createZCodeAgentService provider registry", () => {
           providerCount: 1,
         };
       }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+        return { refreshed: true as const };
+      }
       if (method === zcodeProtocolMethods.sessionCreate) {
         return createSessionSnapshot({
           model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
@@ -883,6 +886,8 @@ describe("createZCodeAgentService provider registry", () => {
       model: { providerId: "e2e-primary", modelId: "deepseek-v4-flash" },
     });
 
+    // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork sends no
+    // provider/refreshRegistry barrier before session/create; the worker assembles its own registry.
     expect(calls).toEqual([
       zcodeProtocolMethods.providerUpdateAccountConfig,
       zcodeProtocolMethods.sessionCreate,
@@ -906,11 +911,6 @@ describe("createZCodeAgentService provider registry", () => {
       },
       expect.any(Object),
     );
-    expect(request).not.toHaveBeenCalledWith(
-      "workspace/updateProviderRegistry",
-      expect.anything(),
-      expect.anything(),
-    );
     service.disposeAll();
   });
 
@@ -931,6 +931,9 @@ describe("createZCodeAgentService provider registry", () => {
       if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
         const revision = (params as { revision: string }).revision;
         return { receivedRevision: revision, providerCount: 1, status: "received" as const };
+      }
+      if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+        return { refreshed: true as const };
       }
       if (method === zcodeProtocolMethods.sessionCreate) {
         return createSessionSnapshot({
@@ -1097,6 +1100,104 @@ describe("createZCodeAgentService provider registry", () => {
     );
     service.disposeAll();
   });
+
+  it.each(["refreshed", "failed"] as const)(
+    "switches a model with unchanged account config without a worker registry barrier (refresh outcome: %s)",
+    async (refreshResult) => {
+      const accountSource = createAccountProviderConfigChangeSource({
+        revision: "account-1",
+        basedOnZCodeBuiltinRevision: "zcode-builtin:1",
+        providers: new ProviderConfigMap([]),
+      });
+      let finishRefresh!: () => void;
+      const refreshGate = new Promise<void>((resolve) => {
+        finishRefresh = resolve;
+      });
+      let waitingForRefresh = false;
+      const request = vi.fn(async (method: string, params?: unknown) => {
+        if (method === zcodeProtocolMethods.providerUpdateAccountConfig) {
+          return { receivedRevision: "account-1", status: "received", providerCount: 0 };
+        }
+        if (method === zcodeProtocolMethods.providerRefreshRegistry) {
+          if (waitingForRefresh) {
+            await refreshGate;
+            if (refreshResult === "failed") throw new Error("registry refresh failed");
+          }
+          return { refreshed: true };
+        }
+        if (method === V4_METHODS.command) {
+          return {
+            commandId: (params as { commandId: string }).commandId,
+            status: "accepted" as const,
+            revisionAtDecision: 1,
+          };
+        }
+        throw new Error(`Unexpected method ${method}`);
+      });
+      const client = {
+        request,
+        transportKind: "stdio",
+        onNotification: () => ({ dispose() {} }),
+        onRequest: () => ({ dispose() {} }),
+        onClose: () => ({ dispose() {} }),
+      };
+      vi.resetModules();
+      vi.doMock("#src/zcode-agent/zcodeAgentProcessManager.js", () => ({
+        ZCodeAgentProcessManager: class extends MockProcessManagerBase {
+          async getClient() {
+            return client;
+          }
+          disposeAll() {}
+        },
+      }));
+      const { createZCodeAgentService } = await import("#src/zcode-agent/zcodeAgentService.js");
+      const service = createZCodeAgentService({
+        modelSelectionReadinessSource: createReadyModelSelectionSource(),
+        accountProviderConfigSource: accountSource.source,
+      });
+      const workspace = { workspacePath: "/workspace/app" };
+      try {
+        await service.sendConversationCommandV4({
+          ...workspace,
+          envelope: {
+            commandId: "warmup",
+            clientId: "host-client",
+            sessionId: "sess_1",
+            type: "compact",
+            payload: {},
+            issuedAt: 1,
+          },
+        });
+        request.mockClear();
+        waitingForRefresh = true;
+        const switching = service.sendConversationCommandV4({
+          ...workspace,
+          envelope: {
+            commandId: "switch-model",
+            clientId: "host-client",
+            sessionId: "sess_1",
+            type: "switchModelConfig",
+            payload: { provider: "provisioned-provider", model: "model-a", thought: "" },
+            issuedAt: 2,
+          },
+        });
+        // Fork adaptation (specs/services-upstream-sync-part4.md, 8c): the fork takes no
+        // refreshRegistry barrier before a model switch. The switch command is sent directly over
+        // v4/command, so neither the refresh result nor its gate can delay or fail it.
+        await expect(switching).resolves.toMatchObject({ status: "accepted" });
+        expect(
+          request.mock.calls.map(([method, params]) =>
+            method === V4_METHODS.command
+              ? `${method}:${(params as { type: string }).type}`
+              : method,
+          ),
+        ).toEqual([`${V4_METHODS.command}:switchModelConfig`]);
+      } finally {
+        finishRefresh();
+        service.disposeAll();
+      }
+    },
+  );
 
   it("workspace presentation does not attach Host-derived model facts", async () => {
     const request = vi.fn(async () => ({

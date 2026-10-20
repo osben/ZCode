@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { createElement, useState, type ReactNode } from "react";
-
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

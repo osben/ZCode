@@ -94,7 +94,7 @@ describe("botsService help", () => {
           {
             kind: "remote",
             workspacePath: "/tmp/workspace",
-            workspaceIdentity: "ssh://host/tmp/workspace",
+            workspaceIdentity: "remote:server:test-owner:/tmp/workspace",
           },
         ],
       }),

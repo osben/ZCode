@@ -10,7 +10,7 @@ import {
 } from "@zcode/shared";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
-import { getForkSettingsFile, getSettingsDir, getSettingsFile } from "./settingsPaths.js";
+import { resolveSettingsLocation, type SettingsLocation } from "./settingsPaths.js";
 
 const log = (...args: unknown[]) =>
   console.log(formatLogPrefix("forkSettings", process.pid), ...args);
@@ -37,14 +37,20 @@ async function readJsonFileStrict(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf-8"));
 }
 
+/** Each function defaults to the current environment; service instances pass their pinned location. */
+type LocationArg = SettingsLocation;
+
 /**
  * Read the raw sidecar payload. Missing file and JSON-parse failures yield undefined (callers
  * degrade to defaults). With `throwOnIoError`, other I/O failures (EACCES/EBUSY/EPERM — transient
  * Windows antivirus/indexer locks) propagate instead: a read-merge-write must not treat a
  * temporarily unreadable file as empty, or the write back would delete the stored settings.
  */
-async function readRawForkSettings(options?: { throwOnIoError?: boolean }): Promise<unknown> {
-  const forkSettingsFile = getForkSettingsFile();
+async function readRawForkSettings(
+  options: { throwOnIoError?: boolean } | undefined,
+  location: LocationArg,
+): Promise<unknown> {
+  const forkSettingsFile = location.forkFile;
   try {
     const raw = await readFile(forkSettingsFile, "utf-8");
     try {
@@ -77,8 +83,12 @@ async function readRawForkSettings(options?: { throwOnIoError?: boolean }): Prom
  * only in memory — they are never written back to the file, so a future default change reaches
  * everyone who never explicitly set the setting.
  */
-export async function readForkSettings(): Promise<ForkAppSettings> {
-  const result = forkAppSettingsSchema.safeParse((await readRawForkSettings()) ?? {});
+export async function readForkSettings(
+  location: LocationArg = resolveSettingsLocation(),
+): Promise<ForkAppSettings> {
+  const result = forkAppSettingsSchema.safeParse(
+    (await readRawForkSettings(undefined, location)) ?? {},
+  );
   if (!result.success) {
     log(
       "fork settings read failed schema validation, using defaults. error:",
@@ -91,10 +101,13 @@ export async function readForkSettings(): Promise<ForkAppSettings> {
 }
 
 /** Stored sidecar view: only explicitly set keys, no materialized defaults. Used for write merges. */
-export async function readStoredForkSettings(options?: {
-  throwOnIoError?: boolean;
-}): Promise<ForkAppSettingsStored> {
-  const result = forkAppSettingsStoredSchema.safeParse((await readRawForkSettings(options)) ?? {});
+export async function readStoredForkSettings(
+  options?: { throwOnIoError?: boolean },
+  location: LocationArg = resolveSettingsLocation(),
+): Promise<ForkAppSettingsStored> {
+  const result = forkAppSettingsStoredSchema.safeParse(
+    (await readRawForkSettings(options, location)) ?? {},
+  );
   if (!result.success) {
     log(
       "fork settings read failed schema validation, using defaults. error:",
@@ -108,10 +121,11 @@ export async function readStoredForkSettings(options?: {
 async function writeForkSettings(
   settings: ForkAppSettingsStored,
   options: { useFileLock: boolean; guards?: ForkSettingsWriteGuards },
+  location: LocationArg,
 ): Promise<void> {
-  const forkSettingsFile = getForkSettingsFile();
+  const forkSettingsFile = location.forkFile;
   log("writing fork settings to:", forkSettingsFile, JSON.stringify(settings));
-  await mkdir(getSettingsDir(), { recursive: true });
+  await mkdir(location.dir, { recursive: true });
   if (options.guards && !options.guards.shouldCommit()) {
     // The queue turn expired while this write was pending: skip entirely, the same way
     // writeSettings() skips the main file, so a stale turn cannot overwrite a newer sidecar value.
@@ -136,16 +150,16 @@ async function writeForkSettings(
 export async function updateForkSettings(
   forkPatch: Partial<ForkAppSettingsStored>,
   guards?: ForkSettingsWriteGuards,
+  location: LocationArg = resolveSettingsLocation(),
 ): Promise<void> {
-  const forkSettingsFile = getForkSettingsFile();
-  await withAtomicFileLock(forkSettingsFile, async () => {
+  await withAtomicFileLock(location.forkFile, async () => {
     const merged = forkAppSettingsStoredSchema.parse({
       // A non-ENOENT I/O error must abort the merge instead of rewriting the sidecar from an
       // empty base, which would delete every other stored fork setting.
-      ...(await readStoredForkSettings({ throwOnIoError: true })),
+      ...(await readStoredForkSettings({ throwOnIoError: true }, location)),
       ...forkAppSettingsPatchSchema.parse(forkPatch),
     });
-    await writeForkSettings(merged, { useFileLock: false, guards });
+    await writeForkSettings(merged, { useFileLock: false, guards }, location);
   });
 }
 
@@ -162,14 +176,14 @@ export async function updateForkSettings(
 export async function maybeSeedLegacyForkSettings(
   legacyForkSettings: Partial<ForkAppSettings> | undefined,
   guards?: ForkSettingsWriteGuards,
+  location: LocationArg = resolveSettingsLocation(),
 ): Promise<void> {
   if (!legacyForkSettings) return;
-  const forkSettingsFile = getForkSettingsFile();
-  await withAtomicFileLock(forkSettingsFile, async () => {
+  await withAtomicFileLock(location.forkFile, async () => {
     // Re-read the legacy source under the sidecar lock and let read/parse failures propagate:
     // if seeding cannot confirm the keys, the caller's cleanup write must not run and delete
     // them from their only stored location.
-    const rawMain = await readJsonFileStrict(getSettingsFile());
+    const rawMain = await readJsonFileStrict(location.file);
     const stillPresent =
       rawMain && typeof rawMain === "object" && !Array.isArray(rawMain)
         ? pickForkSettings(rawMain as Record<string, unknown>)
@@ -181,8 +195,8 @@ export async function maybeSeedLegacyForkSettings(
       ...stillPresent,
       // Same data-integrity rule as updateForkSettings: a transiently unreadable sidecar must
       // abort the seeding instead of shrinking it to the legacy keys only.
-      ...(await readStoredForkSettings({ throwOnIoError: true })),
+      ...(await readStoredForkSettings({ throwOnIoError: true }, location)),
     });
-    await writeForkSettings(merged, { useFileLock: false, guards });
+    await writeForkSettings(merged, { useFileLock: false, guards }, location);
   });
 }

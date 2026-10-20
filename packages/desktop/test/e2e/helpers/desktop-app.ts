@@ -1,8 +1,9 @@
-/* eslint-disable max-lines -- test-support code, acceptable to exceed the limit */
+/* eslint-disable max-lines -- 测试相关的代码，忽略 */
 import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  isApiKeyAccess,
   type ModelConfig,
   type ProviderConfig,
   type ProviderConfigLayerSnapshot,
@@ -11,14 +12,12 @@ import {
   NodePersonalProviderConfigRepository,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
 } from "@zcode/provider-node";
+import { ZAI_PROVIDER_ID } from "@zcode/shared";
 import {
   TID_COMPOSER_WORKSPACE_TRIGGER,
   TID_V4_SESSION_PANE,
-  TID_WORKSPACE_ITEM,
   TID_WORKSPACE_PATH,
-  ZAI_PROVIDER_ID,
-  testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import type { AppSettings } from "@zcode/shared";
 import { collectWindowsE2EProcessTreePids } from "./e2e-process-cleanup.js";
 import {
@@ -27,20 +26,18 @@ import {
 } from "./e2e-window-target.js";
 import { dismissOccupationOnboarding } from "./occupation-onboarding.js";
 import { sel } from "./selectors.js";
+import { projectSectionSelector } from "./project-sidebar.js";
 
 const DEFAULT_E2E_HOME_DIR = resolve(process.cwd(), ".e2e-home");
 const E2E_HOME_DIR =
   process.env.ZCODE_E2E_HOME_DIR?.trim() ||
   process.env.ZCODE_DATA_BASE_DIR?.trim() ||
   process.env.ZCODE_DESKTOP_HOME_DIR?.trim() ||
-  // Fix rationale: when the WDIO worker environment is unstable, the helper used to fall back to
-  // the real HOME, making provider diagnostics and cleanup read and write the developer's local
-  // configuration instead of the current e2e sandbox.
+  // 修复原因：WDIO worker 环境不稳定时，helper 曾回落到真实 HOME，
+  // 导致 provider 诊断和清理读写开发者本机配置，而不是当前 e2e sandbox。
   DEFAULT_E2E_HOME_DIR;
-// Bug root cause: the storage profile rollback removed this shared root field, but multiple E2E
-// flows still need to locate the CLI data.
-// Isolation is guaranteed by the test HOME; the directory name keeps the production historical
-// semantics of .zcode.
+// Bug 根因：storage profile 回滚删除了该共享根字段，但多个 E2E 仍需定位 CLI 数据。
+// 隔离由测试 HOME 保证，目录名保持生产历史语义 .zcode。
 const E2E_STORAGE_ROOT = join(E2E_HOME_DIR, ".zcode");
 const E2E_APP_DATA_DIR = join(E2E_STORAGE_ROOT, "v2");
 export const DEFAULT_WORKSPACE = join(E2E_HOME_DIR, "ZCodeProject");
@@ -79,10 +76,9 @@ export interface ElectronRendererContentSizeSnapshot {
 }
 
 /**
- * The assertion snapshot E2E reads from Personal Config.
+ * E2E 从 Personal Config 读取的断言快照。
  *
- * It describes only the fields the tests need to observe; it is not the source of truth for
- * provider configuration and takes no part in runtime assembly.
+ * 它只描述测试需要观察的字段，不是 Provider 配置事实源，也不参与运行时装配。
  */
 export interface E2EModelProviderSnapshot {
   apiFormat: "anthropic-messages" | "openai-chat-completions" | "openai-responses";
@@ -188,10 +184,8 @@ async function ensureAppDataDir() {
 }
 
 export function readExactTestIdAttribute(testId: string, attributeName: string): string | null {
-  // Bug root cause: on Windows the workspacePath contains backslashes, and splicing it directly
-  // into a CSS selector makes them parse as escape characters.
-  // Enumerate the stable data-testid nodes and compare by attribute value, which works for both
-  // Windows and macOS native paths.
+  // Bug 根因：Windows workspacePath 含反斜杠，直接拼入 CSS selector 会被当成转义字符。
+  // 枚举稳定的 data-testid 节点后按属性值比较，同时兼容 Windows 和 macOS 原生路径。
   const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
     (item) => item.dataset.testid === testId,
   );
@@ -199,9 +193,8 @@ export function readExactTestIdAttribute(testId: string, attributeName: string):
 }
 
 export function dispatchMouseDownByExactTestId(testId: string): boolean {
-  // Bug root cause: the Skill option id contains a Windows absolute path, and splicing backslashes
-  // directly into a CSS selector makes them parse as escape characters. Compare by attribute value
-  // and then dispatch mousedown, compatible with every native path format.
+  // Bug 根因：Skill option id 包含 Windows 绝对路径，反斜杠直接拼入 CSS selector
+  // 会被当成转义字符。按属性值比较后派发 mousedown，兼容所有原生路径格式。
   const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
     (item) => item.dataset.testid === testId,
   );
@@ -223,7 +216,7 @@ interface DomTestIdOptions {
 }
 
 interface SetInputValueByTestIdDomOptions extends DomTestIdOptions {
-  /** After the async restore settles, re-establish and verify the Lexical caret at the end of the text. */
+  /** 等待异步恢复收口后，重新建立并验证 Lexical 末尾光标。 */
   stabilizeLexicalCaretAtEnd?: boolean;
 }
 
@@ -241,9 +234,8 @@ export async function clickTestIdByDom(
   testId: string,
   { timeout = 10000, timeoutMsg = `页面没有可点击的 test id: ${testId}` }: DomTestIdOptions = {},
 ) {
-  // Fix rationale: Chromium inside the Electron Linux container places some settings-page elements
-  // at huge coordinates, so the WebDriver clickable check misreports failure. A DOM click still
-  // triggers React onClick, letting tests focus on business logic.
+  // 修复原因：Electron Linux 容器里的 Chromium 会把部分设置页元素排到超大坐标，
+  // WebDriver clickable 会误判失败。DOM click 仍触发 React onClick，可专注验证业务逻辑。
   let latestReason = "not-started";
   try {
     await browser.waitUntil(
@@ -276,52 +268,21 @@ export async function clickTestIdByDom(
       },
     );
   } catch (error) {
-    // Fix rationale: React/Radix controls may remount on the frame right after the wait succeeds.
-    // The wait and the click must complete within the same DOM query, otherwise sporadic "missing"
-    // results pollute e2e authentication.
+    // 修复原因：React/Radix 控件可能在等待命中后的下一帧重挂载。
+    // 等待和点击必须在同一次 DOM 查询内完成，否则偶发 missing 会污染 e2e 认证。
     throw new Error(`${timeoutMsg}: ${latestReason}`, {
       cause: error,
     });
   }
 }
 
-export async function ensureWorkspaceItemExpanded(
-  workspacePath: string,
-  timeout = 30_000,
-): Promise<void> {
-  const workspaceItemTestId = testId(TID_WORKSPACE_ITEM, workspacePath);
-  await waitForTestIdByDom(workspaceItemTestId, {
-    timeout,
-    timeoutMsg: `侧栏没有显示 workspace: ${workspacePath}`,
-  });
-
-  const isExpanded = async () =>
-    (await browser.execute(readExactTestIdAttribute, workspaceItemTestId, "aria-expanded")) ===
-    "true";
-  if (!(await isExpanded())) {
-    await clickTestIdByDom(workspaceItemTestId, {
-      timeout: 15_000,
-      timeoutMsg: `侧栏 workspace 不可展开: ${workspacePath}`,
-    });
-  }
-
-  // Bug root cause: in slow rendering environments a successful DOM click only means the event was
-  // dispatched; the project tree's React expansion commit may still land in a later frame. Wait
-  // uniformly for the aria terminal state so cases do not look for the task too early.
-  await browser.waitUntil(isExpanded, {
-    timeout: 15_000,
-    timeoutMsg: `侧栏 workspace 没有完成展开: ${workspacePath}`,
-  });
-}
-
 export async function clickTestIdByWebDriver(
   testId: string,
   { timeout = 10000, timeoutMsg = `页面没有可点击的 test id: ${testId}` }: DomTestIdOptions = {},
 ) {
-  // Bug root cause: Radix DropdownMenu/Select triggers depend on a pointerdown gesture;
-  // element.click() only dispatches click, so tests would misreport the portal item as missing.
-  // This keeps the real WebDriver pointer chain and is meant only for cases that explicitly use
-  // such triggers.
+  // Bug 根因：Radix DropdownMenu/Select 的 trigger 依赖 pointerdown 手势，
+  // element.click() 只派发 click，测试会误报 portal item 不存在。这里保留真实
+  // WebDriver 指针链，只给明确使用此类 trigger 的 case 调用。
   const element = $(sel(testId));
   await element.waitForClickable({ timeout, timeoutMsg });
   await element.click();
@@ -345,14 +306,11 @@ export async function setInputValueByTestIdDom(
     timeoutMsg = `页面没有可输入的 test id: ${testId}`,
   }: SetInputValueByTestIdDomOptions = {},
 ) {
-  // Fix rationale: the same class of container coordinate anomalies keeps input fields from being
-  // focused via WebDriver. This uses the native value setter and dispatches input/change/blur, so
-  // the page's own save logic still runs.
-  // M5: the v4 composer is back to a Lexical contenteditable — writes go through the
-  // __zcodeLexicalInputE2E bridge mounted by the editor (driving the real editor state, so DOM
-  // writes cannot bypass Lexical).
-  // The bridge is attached by E2ELexicalInputBridgePlugin's short polling and may appear later
-  // than the node, hence the retry.
+  // 修复原因：同一类容器坐标异常会让输入框无法通过 WebDriver 聚焦。
+  // 这里使用原生 value setter 并派发 input/change/blur，继续走页面保存逻辑。
+  // M5：v4 composer 恢复为 Lexical contenteditable——写入改走编辑器挂载的
+  // __zcodeLexicalInputE2E bridge（驱动真实 editor state，避免 DOM 直改绕过 Lexical）。
+  // bridge 由 E2ELexicalInputBridgePlugin 短轮询补挂，可能晚于节点出现，故带重试。
   await waitForTestIdByDom(testId, { timeout, timeoutMsg });
   type SetInputResult = {
     ok: boolean;
@@ -389,10 +347,8 @@ export async function setInputValueByTestIdDom(
               tagName: element.tagName,
             };
           }
-          // Bugfix: Lexical's editor.update commits in a microtask, so getText right after setText
-          // reads the old value.
-          // Read the current value first and succeed on a hit; otherwise write and mark pending,
-          // letting the outer waitUntil poll for confirmation.
+          // Bugfix: Lexical editor.update 在微任务里才 commit，setText 后同步 getText 读到旧值。
+          // 这里先读当前值命中即成功，否则写入并标记 pending，交由外层 waitUntil 轮询确认。
           if (bridge.getText() === nextValue) {
             return { ok: true, value: nextValue };
           }
@@ -449,11 +405,9 @@ export async function setInputValueByTestIdDom(
     .waitUntil(
       async () => {
         const current = await attempt();
-        // Bug root cause: after clicking an inline edit React remounts the user row; between
-        // waitForTestId and execute we may land exactly in a frame where the old node is unmounted
-        // and the new Lexical node is not yet mounted.
-        // "missing" is not a terminal state of "the selector points at a non-input"; it must be
-        // retried together with bridge initialization.
+        // Bug 根因：点击行内编辑后 React 会把 user row 重挂载；waitForTestId 与
+        // execute 之间可能正好处在旧节点卸载、新 Lexical 节点尚未挂载的帧。
+        // missing 不是“选择器指向非输入框”的终态，必须和 bridge 初始化一起重试。
         return (
           current.ok ||
           (current.reason !== "lexical-bridge-not-ready" &&
@@ -470,10 +424,9 @@ export async function setInputValueByTestIdDom(
   }
 
   if (stabilizeLexicalCaretAtEnd) {
-    // Bug cause: on task switch the pane changes sessionId first, while Lexical's draft restore
-    // and auto-focus complete in later RAFs. A plain setText has already written the text, but the
-    // caret may still be moved before the text by a late restore. The option is off by default and
-    // is enabled explicitly only by cases that need the end-of-text caret stable across a restore.
+    // Bug 原因：task 切换时 pane 会先变更 sessionId，Lexical 的草稿恢复和自动
+    // 聚焦则在后续 RAF 完成。普通 setText 虽已写入文本，caret 仍可能被迟到
+    // 的恢复移到文本前。该选项默认关闭，只让需要跨恢复稳定末尾 caret 的 case 显式启用。
     type LexicalCaretResult = {
       ok: boolean;
       reason?: string;
@@ -485,9 +438,8 @@ export async function setInputValueByTestIdDom(
         async () => {
           caretResult = (await browser.executeAsync(
             (currentTestId, nextValue, done) => {
-              // ConversationComposer's draft restore and focusing each take one RAF; after they
-              // settle, replay setText through the same bridge so we do not write early on a
-              // mere sessionId update.
+              // ConversationComposer 的草稿恢复与聚焦各占一层 RAF；等它们收口后
+              // 再用同一 bridge 重放 setText，避免只看到 sessionId 更新就提前写入。
               requestAnimationFrame(() =>
                 requestAnimationFrame(() => {
                   const element = Array.from(
@@ -579,10 +531,9 @@ export function getE2EAppDataPaths() {
 
 export async function clearAppData() {
   if (process.env.ZCODE_E2E_DEFER_APP_DATA_CLEANUP === "1") {
-    // Fix rationale: a normal spec's after hook quitting the app first destroys the browsing
-    // context before ChromeDriver's deleteSession, making every worker pay a disconnection timeout.
-    // WDIO afterSession deletes the app data after the process exits; here we only hand back
-    // ownership of shutting down.
+    // 修复原因：普通 spec 的 after hook 先 app.quit 会抢在 ChromeDriver
+    // deleteSession 前销毁 browsing context，导致每个 worker 都支付断连超时。
+    // WDIO afterSession 会在进程退出后删除 app data，此处只交还关闭所有权。
     return;
   }
   await quitElectronAppGracefully();
@@ -595,19 +546,17 @@ export async function quitElectronAppGracefully() {
       if (electron.app.getName() !== "ZCode E2E") {
         return { quit: false, pid: process.pid };
       }
-      // Fix rationale: clearAppData often runs in the spec after hook; if app.quit is deferred to
-      // the next tick, a long batch may let the old session's quit spill into the next Electron
-      // round.
+      // 修复原因：clearAppData 常在 spec after 中运行；如果把 app.quit 延迟
+      // 投递到下一 tick，长批次下旧 session 的 quit 可能串到下一轮 Electron。
       electron.app.quit();
       return { quit: true, pid: process.pid };
     })) as { quit: boolean; pid: number };
 
     if (result.quit && result.pid) {
-      // Bug root cause: Electron's before-quit can wait up to 9s for Host cleanup, and a 10s outer
-      // wait would return just before Main's final settings write-back. Writing the next E2E
-      // scenario immediately after would let the old process overwrite the new fixture with the
-      // previous scenario. The wait cap must cover Electron's own cleanup window and hand back
-      // ownership of the persistence files only after the process has exited.
+      // Bug 根因：Electron 的 before-quit 最长会等待 9s Host 清理，10s 的
+      // 外层等待会在 Main 最后一次 setting 写回前恰好返回。紧接着写入下一个
+      // E2E 场景时，旧进程会用上一场景覆盖新 fixture。等待上限必须覆盖
+      // Electron 自身的清理窗口，确认进程退出后才交还持久化文件所有权。
       await waitForPidExit(result.pid, 15_000);
     }
   } catch {
@@ -645,19 +594,17 @@ async function removeAppDataWithRetry() {
         ) {
           throw error;
         } else {
-          // Bugfix: the after hook's app data cleanup is only responsible for finishing up; Windows
-          // may briefly retain a tasks-index.sqlite handle, and the next round's beforeSession
-          // kills the process and force-resets .e2e-home first.
+          // Bugfix: after hook 的 app 数据清理只负责收尾；Windows 可能短时间保留
+          // tasks-index.sqlite 句柄，下一轮 beforeSession 会先杀进程再强制重置 .e2e-home。
           process.stderr.write(
             `[desktop-e2e-cleanup] clearAppData skipped locked app data cleanup: ${formatErrorMessage(error)}\n`,
           );
           return;
         }
       }
-      // Fix rationale: on Windows host/service processes may briefly hold the WAL/SHM handles of
-      // tasks-index.sqlite after the Electron main process exits; clean up leftover E2E processes
-      // before deleting, so the after hook does not misreport business cases as failures over a
-      // cleanup error.
+      // 修复原因：Windows 上 host/service 进程可能在 Electron 主进程退出后仍短暂持有
+      // tasks-index.sqlite 的 WAL/SHM 句柄；删除前先清掉遗留 E2E 进程，避免 after hook
+      // 因清理失败把业务 case 误报为失败。
       await cleanupLeftoverE2EProcesses();
       await browser.pause(REMOVE_APP_DATA_RETRY_DELAYS_MS[attempt]);
     }
@@ -692,8 +639,7 @@ async function cleanupLeftoverE2EProcesses() {
         windowsHide: true,
       });
     } catch {
-      // Cleanup is best-effort; removeAppDataWithRetry keeps using the error path to decide
-      // whether to fail.
+      // 清理是尽力兜底；removeAppDataWithRetry 会继续用错误路径决定是否失败。
     }
   }
   await waitForProcessesExit(pids, 3000);
@@ -797,7 +743,8 @@ function convertPersonalProviderConfig(
       },
       apiFormat: provider.api?.type ?? "openai-chat-completions",
       apiKeyRequired: true,
-      apiKey: provider.access?.type === "api-key" ? provider.access.apiKey?.trim() || "" : "",
+      // 套餐手动 Key 同样是 API Key；仅识别普通类型会把已保存凭据误报为空。
+      apiKey: isApiKeyAccess(provider.access) ? provider.access.apiKey?.trim() || "" : "",
       defaultKind: kind,
       models: (provider.personalModelIds ?? []).map((modelId) =>
         convertPersonalModelConfig(
@@ -908,9 +855,8 @@ export async function snapshotCliConfig(): Promise<CliConfigSnapshot> {
 }
 
 export async function restoreCliConfig(snapshot: CliConfigSnapshot): Promise<void> {
-  // Fix rationale: seedCliConfig writes the CLI global config under the isolated HOME; clearing
-  // only ~/.zcode/v2 would leave WebFetch's temporary proxy into later steps of the same E2E
-  // session, so a file-level snapshot must be restored.
+  // 修复原因：seedCliConfig 写的是隔离 HOME 下的 CLI 全局配置；只清 ~/.zcode/v2
+  // 会让 WebFetch 临时代理留到同一 E2E session 后续步骤，必须恢复文件级快照。
   if (snapshot.content === null) {
     await rm(CLI_CONFIG_FILE, { force: true });
     return;
@@ -920,11 +866,20 @@ export async function restoreCliConfig(snapshot: CliConfigSnapshot): Promise<voi
   await writeFile(CLI_CONFIG_FILE, snapshot.content, "utf-8");
 }
 
+/** 仅用于旧 Electron 已退出后的 fixture 注入；删除指定测试凭据，保留登录与其他键。 */
+export async function removeSeededCredentials(keys: string[]): Promise<void> {
+  const credentials = JSON.parse(await readFile(CREDENTIALS_FILE, "utf-8")) as Record<
+    string,
+    string
+  >;
+  for (const key of keys) delete credentials[key];
+  await writeFile(CREDENTIALS_FILE, JSON.stringify(credentials), "utf-8");
+}
+
 export async function seedCredentials(authToken = "mock-token") {
   await ensureAppDataDir();
-  // Bugfix: login restore has migrated to the OAuth namespace; writing only the old auth_token
-  // would leave e2e waiting for a workspace on the welcome page and fail before the provider flow
-  // is recorded.
+  // Bugfix: 登录恢复已经迁移到 OAuth 命名空间；只写旧 auth_token
+  // 会让 e2e 在欢迎页等待 workspace，录制 provider 流之前就失败。
   await writeFile(
     CREDENTIALS_FILE,
     JSON.stringify(
@@ -950,16 +905,13 @@ export interface WorkspaceAppProbeParams {
   expectedPath: string;
 }
 
-// Runs inside the renderer (serialized by browser.execute); cannot reference module-scope variables.
+// 在 renderer 内执行（browser.execute 序列化），不能引用模块作用域变量。
 export function probeWorkspaceAppState(
   params: WorkspaceAppProbeParams,
 ): "ready" | "onboarding" | "pending" {
-  // Fix rationale: the occupation onboarding shows automatically when "there are no answered
-  // records and no Task on this machine", and every E2E worker is a fresh isolated HOME, so it
-  // always matches; before the onboarding check completes, Root does not render the main UI, and
-  // while it shows, it replaces the main UI wholesale — the two are mutually exclusive. So this
-  // reports onboarding honestly and the caller closes it through the real UI before waiting for
-  // the workspace.
+  // 修复原因：职业引导在“无作答记录且本机无 Task”时自动展示，E2E 每个 worker 都是
+  // 全新隔离 HOME，必然命中；引导判定完成前 Root 不渲染主界面、展示时整页替换主界面，
+  // 两者互斥，所以这里如实上报 onboarding，由调用方走真实 UI 关闭后继续等待工作区。
   if (document.querySelector('[data-testid="onboarding-page"]')) {
     return "onboarding";
   }
@@ -967,42 +919,40 @@ export function probeWorkspaceAppState(
   const pathBadge = document.querySelector<HTMLElement>(
     `[data-testid="${params.workspacePathTestId}"]`,
   );
-  if (pathBadge?.getAttribute("title") === params.expectedPath) {
+  if (pathBadge?.dataset.workspaceAbsPath === params.expectedPath) {
     return "ready";
   }
 
-  // Fix rationale: after API Key login, in the empty-task state the main area shows only the new
-  // task draft and does not necessarily render WorkspaceHeader's path badge. Only when the sidebar
-  // workspace item and the session pane both exist has the user entered the actionable target
-  // workspace.
-  // Fix rationale: on Windows the workspacePath ends up in data-testid, and backslashes spliced
-  // directly into a CSS attribute selector parse as escape characters, so elements that exist in
-  // the DOM cannot be found.
-  const workspaceItem = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
-    (element) => element.dataset.testid === params.workspaceItemTestId,
-  );
+  // 修复原因：API Key 登录后进入空任务态时，主区域只展示新任务草稿，
+  // 不一定渲染 WorkspaceHeader 的路径徽标。此时侧栏工作区项和会话 pane
+  // 同时存在，才代表用户已经进入可操作的目标工作区。
+  // 修复原因：Windows workspacePath 会进入 data-testid，反斜杠直接拼到
+  // CSS attribute selector 会被当作转义字符，导致 DOM 里有元素也查不到。
+  const workspaceItem =
+    (
+      window as Window & {
+        __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath?: string | null } };
+      }
+    ).__zcodeTabStoreE2E?.getState().activeWorkspacePath === params.expectedPath;
   const conversationWorkspaceReady =
     params.expectedPath.replace(/\\/g, "/").endsWith("/.zcode/workspace/default") &&
     Boolean(document.querySelector(`[data-testid="${params.composerWorkspaceTriggerTestId}"]`));
-  // After the v4 hard switch the chat area is a v4 session pane (testid carries a paneId suffix;
-  // match by prefix).
+  // v4 硬切后聊天区是 v4 session pane（testid 带 paneId 后缀，用前缀匹配）。
   return (workspaceItem || conversationWorkspaceReady) &&
     document.querySelector(`[data-testid^="${params.sessionPanePrefix}-"]`)
     ? "ready"
     : "pending";
 }
 
-// Bugfix: TID_WORKSPACE_TITLE in WorkspaceHeader now shows activeTaskTitle and no longer stably
-// represents the current workspace name. e2e reads TID_WORKSPACE_PATH's title attribute instead;
-// under a new task draft the header path capsule does not render, so the sidebar workspace item is
-// accepted as well.
-// Only this covers the real product flow of "default workspace opens automatically / multi-tab
-// switching" accurately.
+// Bugfix: WorkspaceHeader 里的 TID_WORKSPACE_TITLE 现在展示的是 activeTaskTitle，
+// 不再稳定代表当前工作区名。路径徽标的上下文改由 tooltip 承载，改读 data-workspace-abs-path。
+// 虚拟项目侧栏不再渲染真实目录节点，新建任务草稿下以 tab store 的导航 owner + 可见
+// session pane 判定，覆盖默认工作区自动打开及多标签切换。
 export async function waitForWorkspaceApp(workspacePath: string, timeout = 10000) {
   const timeoutMsg = `主界面没有切到工作区: ${workspacePath}`;
   const probeParams: WorkspaceAppProbeParams = {
     workspacePathTestId: TID_WORKSPACE_PATH,
-    workspaceItemTestId: testId(TID_WORKSPACE_ITEM, workspacePath),
+    workspaceItemTestId: "virtual-project-row",
     sessionPanePrefix: TID_V4_SESSION_PANE,
     composerWorkspaceTriggerTestId: TID_COMPOSER_WORKSPACE_TRIGGER,
     expectedPath: workspacePath,
@@ -1013,10 +963,8 @@ export async function waitForWorkspaceApp(workspacePath: string, timeout = 10000
       async () => {
         const state = await browser.execute(probeWorkspaceAppState, probeParams);
         if (state === "onboarding") {
-          // Bug root cause: previously only the v4 helper skipped onboarding first, so specs like
-          // conversation-session, automations and smoke that go through this function would be
-          // stuck behind the onboarding page for 30s and fail. After closing, the next polling
-          // round confirms the workspace.
+          // Bug 根因：此前只有 v4 helper 先跳过引导，conversation-session、automations、
+          // smoke 等走本函数的 spec 会被引导页挡满 30s 后失败。关闭后由下一轮轮询确认工作区。
           await dismissOccupationOnboarding();
           return false;
         }
@@ -1028,10 +976,8 @@ export async function waitForWorkspaceApp(workspacePath: string, timeout = 10000
       },
     );
   } catch (error) {
-    // Fix rationale: e2e used to report only a wait timeout, with the real white-screen cause
-    // hidden in the renderer state.
-    // On failure, attach the current DOM, window and storage summaries so a later stuck case can
-    // locate the initialization boundary directly.
+    // 修复原因：e2e 曾经只报等待超时，真实白屏原因藏在 renderer 状态里。
+    // 失败时附带当前 DOM、窗口和存储摘要，后续 case 卡住能直接定位初始化边界。
     throw new Error(`${timeoutMsg}\n${await collectWorkspaceDiagnostics(workspacePath)}`, {
       cause: error,
     });
@@ -1039,39 +985,30 @@ export async function waitForWorkspaceApp(workspacePath: string, timeout = 10000
 }
 
 async function isWorkspaceAppVisible(workspacePath: string) {
-  const workspaceItemTestId = testId(TID_WORKSPACE_ITEM, workspacePath);
   try {
     return await browser.execute(
-      (workspacePathTestId, workspaceItemTestId, sessionPanePrefix, expectedPath) => {
+      (workspacePathTestId, sessionPanePrefix, expectedPath) => {
+        if (
+          (
+            window as Window & {
+              __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath: string | null } };
+            }
+          ).__zcodeTabStoreE2E?.getState().activeWorkspacePath === expectedPath &&
+          document.querySelector(`[data-testid^="${sessionPanePrefix}-"]`)
+        )
+          return true;
         const pathBadge = document.querySelector<HTMLElement>(
           `[data-testid="${workspacePathTestId}"]`,
         );
-        if (pathBadge?.getAttribute("title") === expectedPath) {
-          return true;
-        }
-
-        // Fix rationale: after API Key login, in the empty-task state the main area shows only the
-        // new task draft and does not necessarily render WorkspaceHeader's path badge. Only when
-        // the sidebar workspace item and the v4 session pane both exist has the user entered the
-        // actionable target workspace.
-        // Fix rationale: on Windows the workspacePath ends up in data-testid, and backslashes
-        // spliced directly into a CSS attribute selector parse as escape characters, so elements
-        // that exist in the DOM cannot be found.
-        const workspaceItem = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-testid]"),
-        ).find((element) => element.dataset.testid === workspaceItemTestId);
-        return Boolean(
-          workspaceItem && document.querySelector(`[data-testid^="${sessionPanePrefix}-"]`),
-        );
+        return pathBadge?.dataset.workspaceAbsPath === expectedPath;
       },
       TID_WORKSPACE_PATH,
-      workspaceItemTestId,
       TID_V4_SESSION_PANE,
       workspacePath,
     );
   } catch {
-    // Bugfix: after browser.reloadSession the WebDriver/CDP link is briefly broken; the workspace
-    // wait should treat this kind of "not connected yet" as not-ready instead of failing early.
+    // Bugfix: browser.reloadSession 后 WebDriver/CDP 会短暂断链；workspace
+    // 等待应把这类“还没连上”当作未就绪，而不是提前失败。
     return false;
   }
 }
@@ -1079,12 +1016,12 @@ async function isWorkspaceAppVisible(workspacePath: string) {
 export async function getActiveWorkspacePath() {
   return browser.execute((workspacePathTestId) => {
     const pathBadge = document.querySelector<HTMLElement>(`[data-testid="${workspacePathTestId}"]`);
-    return pathBadge?.getAttribute("title") ?? null;
+    return pathBadge?.dataset.workspaceAbsPath ?? null;
   }, TID_WORKSPACE_PATH);
 }
 
 async function collectWorkspaceDiagnostics(expectedPath: string) {
-  const workspaceItemTestId = testId(TID_WORKSPACE_ITEM, expectedPath);
+  const projectSelector = projectSectionSelector(expectedPath);
   const windows = await getAllWindowInfo().catch((error: unknown) => ({
     error: error instanceof Error ? error.message : String(error),
   }));
@@ -1093,13 +1030,11 @@ async function collectWorkspaceDiagnostics(expectedPath: string) {
   }));
   const dom = await browser
     .execute(
-      (workspacePathTestId, workspaceItemId) => {
+      (workspacePathTestId, projectSectionSelectorValue) => {
         const pathBadge = document.querySelector<HTMLElement>(
           `[data-testid="${workspacePathTestId}"]`,
         );
-        const workspaceItem = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-testid]"),
-        ).find((element) => element.dataset.testid === workspaceItemId);
+        const projectSection = document.querySelector(projectSectionSelectorValue);
         let localStorageKeys: string[] | { error: string };
         try {
           localStorageKeys = Object.keys(window.localStorage).sort();
@@ -1116,13 +1051,13 @@ async function collectWorkspaceDiagnostics(expectedPath: string) {
             .map((element) => element.dataset.testid ?? ""),
           title: document.title,
           url: window.location.href,
-          workspaceItemExists: Boolean(workspaceItem),
-          workspacePathTitle: pathBadge?.getAttribute("title") ?? null,
+          projectRowExists: Boolean(projectSection),
+          workspaceAbsPath: pathBadge?.dataset.workspaceAbsPath ?? null,
           localStorageKeys,
         };
       },
       TID_WORKSPACE_PATH,
-      workspaceItemTestId,
+      projectSelector,
     )
     .catch((error: unknown) => ({
       error: error instanceof Error ? error.message : String(error),
@@ -1148,18 +1083,16 @@ export async function waitForDefaultWorkspaceReady(timeout = 10000) {
   );
 
   if (await isWorkspaceAppVisible(DEFAULT_WORKSPACE)) {
-    // Fix rationale: after browser.reloadSession the renderer is already usable, but the Electron
-    // bridge may sporadically still be in its reconnection window; continuing to rely on the
-    // BrowserWindow list here would misreport "the main window did not appear".
+    // 修复原因：browser.reloadSession 后 renderer 已经可操作，但 Electron bridge
+    // 偶发仍处在重连窗口；此时继续依赖 BrowserWindow 列表会误报“主窗口没有出现”。
     return;
   }
 
   await browser.waitUntil(
     async () => {
-      // Bug root cause: after reloadSession the renderer DOM usually recovers before the Electron
-      // service bridge. The old implementation only polled BrowserWindow once it entered this wait,
-      // so even when the page was already usable it would wait out the full timeout and misreport
-      // "the main window did not appear". The two readiness chains must converge in parallel.
+      // Bug 根因：reloadSession 后 renderer DOM 往往先于 Electron service bridge
+      // 恢复。旧实现进入这一轮等待后只轮询 BrowserWindow，哪怕页面随后已经可操作，
+      // 也会一直等满超时并误报“主窗口没有出现”。两条就绪链路必须并行收敛。
       if (await isWorkspaceAppVisible(DEFAULT_WORKSPACE)) {
         return true;
       }
@@ -1221,9 +1154,8 @@ export async function setCurrentElectronRendererContentSize(
       }
 
       const [originalWidth = 0, originalHeight = 0] = target.getContentSize();
-      // Fix rationale: ChromeDriver's window/rect calls Electron's unimplemented
-      // Browser.getWindowForTarget; E2E must resize the client viewport through Electron's
-      // authoritative window API.
+      // 修复原因：ChromeDriver 的 window/rect 会调用 Electron 未实现的
+      // Browser.getWindowForTarget；E2E 必须通过 Electron 权威窗口 API 调整 client viewport。
       target.setContentSize(nextWidth, nextHeight ?? originalHeight);
       target.focus();
       const [appliedWidth = 0, appliedHeight = 0] = target.getContentSize();
@@ -1318,17 +1250,16 @@ export async function restoreElectronRendererContentSize(
   }
 }
 
-async function switchToWorkspaceRendererWindow(workspacePath: string, timeout = 10000) {
+export async function switchToWorkspaceRendererWindow(workspacePath: string, timeout = 10000) {
   let latestResult: WorkspaceRendererSwitchResult = {
     switched: false,
     reason: "not-started",
   };
 
   try {
-    // Fix rationale: early in Electron startup the BrowserWindow already exists, but the
-    // WebDriver handle / CDP target Chromedriver sees may still be the chrome-error transition
-    // page. Retry the switch against the real BrowserWindow URL so conversation e2e does not look
-    // for the welcome page on the wrong renderer.
+    // 修复原因：Electron 启动初期 BrowserWindow 已创建，但 Chromedriver 看到的
+    // WebDriver handle / CDP target 可能仍是 chrome-error 过渡页。这里按真实
+    // BrowserWindow URL 重试切换，避免 conversation e2e 在错误 renderer 上找欢迎页。
     await browser.waitUntil(
       async () => {
         latestResult = await trySwitchToWorkspaceRendererWindow(workspacePath);
@@ -1482,8 +1413,7 @@ function isExpectedRendererUrl(currentUrl: string, windowUrl: string, workspaceP
 
 function isRendererUrl(url: string) {
   try {
-    // Fix rationale: E2E copies out to runId/app, so renderer identity can no longer be bound to
-    // the shared out path.
+    // 修复原因：E2E 会把 out 复制到 runId/app，renderer 身份不能再绑定共享 out 路径。
     return new URL(url).pathname.endsWith("/renderer/index.html");
   } catch {
     return false;
@@ -1581,15 +1511,13 @@ export async function isPrimaryWindowMinimized(): Promise<boolean> {
 
 export async function getTabLabels(): Promise<string[]> {
   return browser.execute(() => {
-    const workspaceItems = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-testid^='workspace-item-']"),
+    // 虚拟项目侧栏：项目行的 data-project-name 就是旧 workspace 标签名（目录 basename）。
+    const projectSections = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-project-id][data-project-name]"),
     );
-    if (workspaceItems.length > 0) {
-      return workspaceItems
-        .map((node) => {
-          const label = node.querySelector("div > div")?.textContent?.trim();
-          return label ?? "";
-        })
+    if (projectSections.length > 0) {
+      return projectSections
+        .map((node) => node.getAttribute("data-project-name")?.trim() ?? "")
         .filter(Boolean);
     }
 

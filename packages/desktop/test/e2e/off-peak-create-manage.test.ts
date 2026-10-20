@@ -17,8 +17,9 @@ import {
   TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER,
   TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM,
   testId,
-} from "@zcode/shared";
+} from "@zcode/shared/test-ids";
 import {
+  DEFAULT_WORKSPACE,
   clearAppData,
   clickTestIdByDom,
   clickTestIdByWebDriver,
@@ -34,7 +35,8 @@ import {
   selectUpstreamModelById,
   UPSTREAM_SECONDARY_MODEL,
 } from "./helpers/upstream-provider.js";
-import { prepareConversationE2E, startNewTask } from "./helpers/conversation-session.js";
+import { prepareV4ConversationE2E } from "./helpers/v4-conversation.js";
+import { openWorkspaceDraftFromSidebar } from "./helpers/workspace-agent-warmup.js";
 import {
   restartIntoWorkspace,
   seedBigModelConnectionSelection,
@@ -44,14 +46,12 @@ import {
 let rendererSizeSnapshot: ElectronRendererContentSizeSnapshot | undefined;
 
 /**
- * Idle-time task end-to-end: "form creation -> list echo -> Pause -> Continue -> delete".
+ * 闲时任务「表单创建 → 列表回显 → Pause → Continue → 删除」端到端。
  *
- * Driven by an in-process mock gateway (wdio.conf startOffPeakE2EMock sets ZCODE_OFFPEAK_MOCK=1):
- * the host starts the gateway, the rollout flag is forced on, and tickets stay queued within this
- * spec window. The whole flow only touches the UI + local sqlite + the in-process gateway's
- * ticket/status endpoints and dispatches no model requests, so it is deterministic.
- * Full runs (dispatch -> running -> completed), sensitive approvals, and restart resume are
- * covered by OPF/OPA/OPR in the coverage matrix.
+ * 由进程内 mock 网关驱动（wdio.conf startOffPeakE2EMock 设 ZCODE_OFFPEAK_MOCK=1）：
+ * host 起网关、灰度强制开启、票据在本 spec 窗口内保持 queued。全程只碰 UI + 本地 sqlite
+ * + 进程内网关的取号/状态接口，不派发模型请求，因此确定性。
+ * 完整 run（派发→running→completed）、敏感批准、重启续跑见 coverage matrix 的 OPF/OPA/OPR。
  */
 describe("闲时任务表单创建与管理 E2E", () => {
   afterEach(async function () {
@@ -70,32 +70,28 @@ describe("闲时任务表单创建与管理 E2E", () => {
   it("表单创建闲时任务后列表回显，可 Pause / Continue 并删除", async function () {
     this.timeout(150000);
 
-    // Login + workspace ready is enough to enter the Automations main view; the mock gateway removes the need for a real provider.
-    await prepareConversationE2E({ skipProvider: true });
+    // 登录 + workspace 就绪即可进入 Automations 主视图；mock 网关免真实 provider。
+    await prepareV4ConversationE2E({ skipProvider: true });
     await seedCurrentAccount();
-    // Fix reason: Electron 41 does not support WebDriver window/rect; only by fixing a wide
-    // screen via BrowserWindow can we stably verify that a Tooltip preferring the right side
-    // does not flip due to the narrow-window collision strategy.
-    // Fix only the width to hit the right-side Tooltip layout; height is limited by the macOS
-    // work area and cannot be hardcoded to 960px.
+    // 修复原因：Electron 41 不支持 WebDriver window/rect；通过 BrowserWindow 固定宽屏，
+    // 才能稳定验证 Tooltip 首选右侧时不会因窄窗碰撞策略翻转。
+    // 只固定宽度以命中右侧 Tooltip 布局；高度受 macOS work area 限制，不能硬编码 960px。
     rendererSizeSnapshot = await setCurrentElectronRendererContentSize(1440);
 
-    // 1) Open the Automations main view (sidebar entry).
+    // 1) 打开 Automations 主视图（侧栏入口）。
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, {
       timeoutMsg: "侧栏没有出现 Automations 入口",
     });
 
-    // 2) Creation entries are shown per tab; enter idle-time tasks first — the idle-time create
-    // button must not be looked for under the scheduled tab.
-    // An empty list has no tabs and directly shows both kinds of creation entries; tabs only
-    // split the flows once tasks exist.
+    // 2) 创建入口按页签展示；先进入闲时任务，不能在 scheduled 页签找闲时创建按钮。
+    // 空列表没有 tab，直接显示两类创建入口；已有任务时才按页签分流。
     if (await browser.$(`[data-testid="${TID_OFFPEAK_TAB}"]`).isExisting())
       await selectIdleTimeTab();
     await clickTestIdByDom(TID_OFFPEAK_CREATE_BUTTON, {
       timeoutMsg: "闲时任务创建按钮没有出现（灰度未命中？）",
     });
 
-    // 3) The model may be preselected, but the reasoning level must be explicitly chosen; do not rely on the legacy auto-fill-default behavior.
+    // 3) 模型可预选，档位必须显式选择，不能依赖历史自动补默认的行为。
     await selectOffPeakReasoning();
     const title = `E2E_OFFPEAK_${Date.now()}`;
     await setInputValueByTestIdDom(TID_OFFPEAK_FORM_TITLE, title, {
@@ -110,8 +106,8 @@ describe("闲时任务表单创建与管理 E2E", () => {
       timeoutMsg: "闲时任务创建提交按钮不可点击",
     });
 
-    // 4) After a successful creation the list view still defaults to the scheduled tab; idle-time
-    // tasks are never mixed into that tab, so switch to "Idle-time task" before verifying the echo.
+    // 4) 创建成功回列表后默认仍停留在定时任务 tab；闲时任务不会在该 tab 混排，
+    // 必须切换到「闲时任务」再验证回显。
     await selectIdleTimeTab();
     await browser.waitUntil(
       async () => (await offPeakCardTitles()).some((t) => t.includes(title)),
@@ -121,15 +117,14 @@ describe("闲时任务表单创建与管理 E2E", () => {
       },
     );
 
-    // 5) Pause: the new task must be paused first so the scheduler does not dispatch it while the details are being inspected.
+    // 5) Pause：新建任务必须先暂停，避免检查详情期间被 scheduler 派发。
     await openOffPeakCardMenu({
       timeoutMsg: "卡片操作菜单没有出现",
     });
     await assertMenuHintDoesNotSelectAction(TID_OFFPEAK_ACTION_PAUSE, "right");
 
-    // Fix reason: in a narrow window the right hint gets flipped by Radix to left inside the
-    // menu, so after it switches to top we must verify it no longer intersects the menu at all;
-    // this size covers the single-column card layout users get after shrinking the desktop window.
+    // 修复原因：窄窗口里 right 提示会被 Radix 翻到菜单内部的 left，必须验证其改为上方后
+    // 与菜单完全不相交；该尺寸覆盖用户缩小桌面窗口后的单列卡片布局。
     await browser.keys("Escape");
     await setCurrentElectronRendererContentSize(900, 720);
     await openOffPeakCardMenu({
@@ -147,7 +142,7 @@ describe("闲时任务表单创建与管理 E2E", () => {
       timeoutMsg: "Pause 后菜单没有出现 Continue，状态未切 paused",
     });
 
-    // 6) Clicking the card body enters the task details; History is reachable and the empty state keeps no creation CTA.
+    // 6) 卡片主点击进入任务详情，History 可达且空态不保留创建 CTA。
     await browser.execute((cardTid) => {
       const card = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
         (item) => item.dataset.testid === cardTid,
@@ -169,9 +164,8 @@ describe("闲时任务表单创建与管理 E2E", () => {
     if (!historyButton) {
       throw new Error("任务详情里没有 History 入口");
     }
-    // Fix reason: Radix tabs switch the value at the pointer/mouse-down stage, while
-    // HTMLElement.click() only dispatches a click event, so the old E2E found the History
-    // button without ever actually switching the tab.
+    // 修复原因：Radix tab 在 pointer/mouse down 阶段切换值，HTMLElement.click() 只派发
+    // click 事件，旧 E2E 虽找到 History 按钮却没有真正切换 tab。
     await historyButton.click();
     await browser.waitUntil(
       async () =>
@@ -192,9 +186,8 @@ describe("闲时任务表单创建与管理 E2E", () => {
         timeoutMsg: "History 详情态仍显示创建或保存 CTA",
       },
     );
-    // Back navigation from the details page moved to the Settings header breadcrumb. The old
-    // case clicked "the first button" in the edit area, which turned into a non-back action as
-    // the Settings/History control ordering changed, leaving the test stuck on the details page.
+    // 详情页返回已迁到 Settings header breadcrumb。旧 case 点击编辑区的“第一个按钮”，
+    // 会随 Settings/History 控件排序变成非返回动作，导致仍停留在详情页。
     await clickAutomationsBreadcrumbBack();
     await browser.waitUntil(
       async () => (await offPeakCardTitles()).some((t) => t.includes(title)),
@@ -204,7 +197,7 @@ describe("闲时任务表单创建与管理 E2E", () => {
       },
     );
 
-    // 7) Continue: click Continue and the menu shows Pause again (state back to queued).
+    // 7) Continue：点 Continue → 菜单重新出现 Pause（状态回 queued）。
     await openOffPeakCardMenu({
       timeoutMsg: "返回列表后重新打开卡片菜单失败",
     });
@@ -219,7 +212,7 @@ describe("闲时任务表单创建与管理 E2E", () => {
       timeoutMsg: "Continue 后菜单没有回到 Pause，状态未回 queued",
     });
 
-    // 8) Delete: click Delete in the menu -> confirm again -> the card disappears.
+    // 8) 删除：菜单点删除 → 二次确认 → 卡片消失。
     await clickTestIdByDom(TID_OFFPEAK_ACTION_DELETE, {
       timeoutMsg: "卡片菜单没有删除项",
     });
@@ -234,8 +227,9 @@ describe("闲时任务表单创建与管理 E2E", () => {
 
   it("F-OFFPEAK-004：等待运行期间切换普通聊天计划不会重绑已保存闲时任务", async function () {
     this.timeout(150000);
-    await startNewTask();
-    await prepareConversationE2E();
+    // 后续设置与文件夹具绑定默认项目，不能使用分配新虚拟目录的全局新建。
+    await openWorkspaceDraftFromSidebar(DEFAULT_WORKSPACE);
+    await prepareV4ConversationE2E();
     await ensureUpstreamModelForE2E(UPSTREAM_SECONDARY_MODEL);
 
     await clickTestIdByDom(TID_AUTOMATIONS_OPEN, { timeoutMsg: "侧栏没有 Automations 入口" });
@@ -251,7 +245,8 @@ describe("闲时任务表单创建与管理 E2E", () => {
 
     const before = await waitForOffPeakModelSelection(title);
     expect(before.providerId).toContain("offpeak");
-    await startNewTask();
+    // 后续设置与文件夹具绑定默认项目，不能使用分配新虚拟目录的全局新建。
+    await openWorkspaceDraftFromSidebar(DEFAULT_WORKSPACE);
     await selectUpstreamModelById(UPSTREAM_SECONDARY_MODEL);
     const after = await waitForOffPeakModelSelection(title);
     expect(after).toEqual(before);
@@ -259,7 +254,7 @@ describe("闲时任务表单创建与管理 E2E", () => {
   });
 });
 
-/** The product currently shows scheduled and idle-time tasks in separate tabs; select the idle-time tab by its localized label. */
+/** 当前产品把定时与闲时任务分 tab 展示，按本地化标签选中闲时 tab。 */
 async function selectIdleTimeTab(): Promise<void> {
   const tabList = await browser.$(`[data-testid="${TID_OFFPEAK_TAB}"]`);
   const buttons = await tabList.$$("button");
@@ -273,7 +268,7 @@ async function selectIdleTimeTab(): Promise<void> {
 }
 
 async function seedCurrentAccount(): Promise<void> {
-  // The gateway mock only replaces ticket fetching, not the Registry's account model. Use the isolated account control plane.
+  // 网关 mock 只替代取号，不替代 Registry 的账号模型。使用隔离的账号控制面。
   await restartIntoWorkspace({
     afterElectronProcessExit: async () => {
       await seedBigModelConnectionSelection({ kind: "individual-coding-plan" });
@@ -287,7 +282,7 @@ async function selectOffPeakReasoning(): Promise<void> {
   await clickTestIdByWebDriver(testId(TID_CHAT_THOUGHT_LEVEL_SELECT_ITEM, "high"));
 }
 
-/** The Automations breadcrumb in the Settings header is the real entry for going back from edit details to the list. */
+/** Settings header 中的 Automations breadcrumb 是编辑详情返回列表的真实入口。 */
 async function clickAutomationsBreadcrumbBack(): Promise<void> {
   const buttons = await browser.$$("nav[aria-label] button");
   for (const button of buttons) {
@@ -299,7 +294,7 @@ async function clickAutomationsBreadcrumbBack(): Promise<void> {
   throw new Error("闲时任务详情没有返回 Automations 列表的 breadcrumb 入口");
 }
 
-/** Text of all idle-time task cards currently in the list (titles included). */
+/** 当前列表里所有闲时任务卡片文本（含标题）。 */
 async function offPeakCardTitles(): Promise<string[]> {
   return browser.execute((cardTid) => {
     return Array.from(document.querySelectorAll<HTMLElement>("[data-testid]"))
@@ -308,16 +303,14 @@ async function offPeakCardTitles(): Promise<string[]> {
   }, TID_OFFPEAK_CARD);
 }
 
-/** The desktop card menu only shows after hover; the Radix trigger also needs a real pointerdown. */
+/** 桌面端卡片菜单仅在 hover 后显示；Radix trigger 还需要真实 pointerdown。 */
 async function openOffPeakCardMenu({ timeoutMsg }: { timeoutMsg: string }): Promise<void> {
   const card = await browser.$(`[data-testid="${TID_OFFPEAK_CARD}"]`);
   const menu = await browser.$(`[data-testid="${TID_OFFPEAK_CARD_MENU}"]`);
-  // Shrinking the window makes the list container scrollable. Scroll the card back into the
-  // viewport and hover over it for real; the button's visibility is driven by the group-hover
-  // CSS transition. After the window shrinks, ChromeDriver on Electron 41 misjudges buttons
-  // that are already visible, enabled, and inside the viewport as unclickable in
-  // waitForClickable, so issue a real WebDriver click directly once the verified DOM
-  // preconditions for interaction hold.
+  // 缩窗后列表容器会产生滚动。先将卡片滚回视区并在卡片上真实悬停；按钮的显示
+  // 由 group-hover 的 CSS transition 驱动。Electron 41 缩窗后 ChromeDriver 的
+  // waitForClickable 会把已可见、可用且位于 viewport 内的按钮误判为不可点击，
+  // 因此按已核验的 DOM 交互前置条件直接发出真实 WebDriver click。
   await card.scrollIntoView();
   await card.moveTo();
   await browser.waitUntil(
@@ -350,18 +343,16 @@ async function openOffPeakCardMenu({ timeoutMsg }: { timeoutMsg: string }): Prom
       const trigger = document.querySelector<HTMLElement>(`[data-testid="${menuTestId}"]`);
       return trigger?.getAttribute("aria-expanded") === "true";
     }, TID_OFFPEAK_CARD_MENU);
-    // After a resize, Electron 41 + ChromeDriver can produce a false "html intercepted click"
-    // error even though the same native pointer chain already put the Radix trigger into
-    // aria-expanded=true. Continue only when the menu is really open; otherwise keep the
-    // original error so a genuine click failure is not swallowed.
+    // Electron 41 + ChromeDriver 在 resize 后会出现“html 拦截 click”的误报，但同一条
+    // 原生 pointer 链已经让 Radix trigger 进入 aria-expanded=true。只在菜单真实打开时
+    // 继续，未打开仍保留原始异常，避免把真正的点击失败吞掉。
     if (!opened) throw error;
   }
 }
 
 /**
- * The Pause / Continue info icons are embedded inside selectable menu items: the tooltip must
- * avoid the menu, and clicking the icon must only show the description without bubbling up
- * to run the parent action.
+ * Pause / Continue 的信息图标嵌在可选择菜单项内：提示必须避开菜单，
+ * 且点击图标只能查看说明，不能冒泡执行父级动作。
  */
 async function assertMenuHintDoesNotSelectAction(
   actionTestId: string,
@@ -384,8 +375,8 @@ async function assertMenuHintDoesNotSelectAction(
 
   const geometry = await browser.execute(() => {
     const menu = document.querySelector<HTMLElement>('[role="menu"]');
-    // The portal keeps tooltip nodes that are closing; read only the currently open node,
-    // otherwise an empty data-side would falsely report the actual right/top layout as a failure.
+    // Portal 会保留关闭中的 tooltip 节点；只能读取当前 open 节点，否则 data-side
+    // 为空会把实际 right/top 布局误报为失败。
     const tooltip = Array.from(document.querySelectorAll<HTMLElement>('[role="tooltip"]')).find(
       (item) => item.dataset.state !== "closed",
     );
@@ -404,8 +395,8 @@ async function assertMenuHintDoesNotSelectAction(
   });
 
   expect(geometry).not.toBeNull();
-  // Radix's data-side is an internal implementation property, not a promise to the user; the
-  // actual geometry is the behavioral contract for the tooltip avoiding the menu.
+  // Radix 的 data-side 是内部实现属性，并非页面对用户的承诺；实际几何关系才是
+  // tooltip 避让菜单的行为契约。
   if (expectedSide === "right") {
     expect(geometry?.tooltipLeft ?? 0).toBeGreaterThanOrEqual(
       geometry?.menuRight ?? Number.POSITIVE_INFINITY,

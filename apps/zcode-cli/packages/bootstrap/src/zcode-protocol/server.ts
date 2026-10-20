@@ -1006,7 +1006,7 @@ export class ZCodeProtocolAgentServer {
               PROTOCOL_CLIENT_REQUEST_ERROR_CODES.timedOut,
               `Client request timed out: ${method}`,
               {
-              timeoutMs: options.timeoutMs,
+                timeoutMs: options.timeoutMs,
               },
             ),
           );

@@ -1,12 +1,15 @@
 /* eslint-disable max-lines -- Controller source aggregation, routing, subscriptions, and lifecycle form one Host boundary. */
-import { Emitter } from "@zcode/rpc";
+import { Emitter, Event } from "@zcode/rpc";
 import type { ZCodeTaskMeta, ZCodeWorkspaceEvent } from "@zcode/shared";
 import type {
   ControllerSubscribeParams,
   WindowHostControllerTaskRow,
   WindowHostTaskAddress,
 } from "@zcode/shared/zcode-protocol-v4";
-import { matchesTaskListMembershipKind } from "@zcode/shared/zcode-protocol-v4";
+import {
+  matchesTaskListMembershipKind,
+  windowHostTaskAddressSchema,
+} from "@zcode/shared/zcode-protocol-v4";
 import type {
   IWindowControllerService,
   WindowHostControllerFrame,
@@ -40,7 +43,7 @@ export interface ResolvedWindowHostControllerSource {
 }
 
 function sourceKey(scope: WindowHostControllerSourceScope): string {
-  return `${scope.kind}\0${scope.kind === "remote" ? scope.remoteSessionId : "local"}\0${scope.workspaceIdentity?.trim() || scope.workspacePath}`;
+  return `${scope.kind}\0${scope.kind === "remote" ? (scope.sourceServerId ?? scope.remoteSessionId) : "local"}\0${scope.workspaceIdentity?.trim() || scope.workspacePath}`;
 }
 
 function taskKey(task: Pick<ZCodeTaskMeta, "taskId" | "workspacePath" | "workspaceIdentity">) {
@@ -416,6 +419,9 @@ export function createWindowHostControllerRuntime(options: {
     const service = current.taskService;
     const base = mutationParams(address);
     switch (mutation.kind) {
+      case "rename":
+        await service.renameTask({ ...base, title: mutation.title });
+        break;
       case "pin":
         await service.setTaskPinned({ ...base, pinned: mutation.pinned });
         break;
@@ -442,18 +448,24 @@ export function createWindowHostControllerRuntime(options: {
           taskIds: mutation.taskIds,
         });
       case "mark-read":
-        await service.setTaskUnread({
-          ...base,
-          unread: false,
-          ...(mutation.expectedUnreadAt != null
-            ? { expectedUnreadAt: mutation.expectedUnreadAt }
-            : {}),
-        });
-        break;
+        // The write reply is the committed row; callers verify the marker it carries, not a later projection.
+        return normalizeTaskMeta(
+          await service.setTaskUnread({
+            ...base,
+            unread: false,
+            ...(mutation.expectedUnreadAt != null
+              ? { expectedUnreadAt: mutation.expectedUnreadAt }
+              : {}),
+          }),
+          current.scope,
+        );
       case "mark-unread":
         // The write reply carries the marker this command created. A list refresh after the write may already show a
         // newer marker, so the caller's compare-and-clear must use this reply, not the projection.
-        return service.setTaskUnread({ ...base, unread: true });
+        return normalizeTaskMeta(
+          await service.setTaskUnread({ ...base, unread: true }),
+          current.scope,
+        );
       case "open":
       case "resume":
         // The Controller validates the unique source for open/resume; conversation operations still use the scoped facade.
@@ -494,17 +506,30 @@ export function createWindowHostControllerRuntime(options: {
       sourceTaskServices.get(key) !== resolved.taskService
     ) {
       sourceEventSubscriptions.get(key)?.dispose();
-      sourceTaskServices.set(key, resolved.taskService);
+      const taskService = resolved.taskService;
+      // Events from a replaced, offline or disposed source must not produce unread signals or refreshes.
+      const isCurrentSource = () => {
+        const current = resolveCurrentSource(resolved.scope);
+        return (
+          !disposed &&
+          sourceTaskServices.get(key) === taskService &&
+          sourceAvailability.get(key) === "online" &&
+          current?.taskService === taskService &&
+          current?.sourceAvailability === "online"
+        );
+      };
+      sourceTaskServices.set(key, taskService);
       sourceEventSubscriptions.set(
         key,
-        resolved.taskService.onDynamicWorkspaceEvent({
+        taskService.onDynamicWorkspaceEvent({
           workspacePath: resolved.scope.workspacePath,
           ...(resolved.scope.workspaceIdentity
             ? { workspaceIdentity: resolved.scope.workspaceIdentity }
             : {}),
         })((event) => {
-          // Host-confirmed background terminal states are live-only unread signals; they are emitted before the refresh so the
-          // UI can persist the marker by identity, and are never derived from list snapshots or reconciliation refreshes.
+          if (!isCurrentSource()) return;
+          // Host-confirmed background terminal states are live-only unread signals. They fire before the list IO so the
+          // UI can record the marker by identity; they are never derived from list snapshots or reconciliation refreshes.
           const unreadSignal = toBackgroundCompletionSignal(resolved.scope, event);
           if (unreadSignal) unreadSignalEmitter.fire(unreadSignal);
           // A workspace event may arrive while the first list refresh is reading; directly reusing
@@ -512,9 +537,15 @@ export function createWindowHostControllerRuntime(options: {
           const inFlight = sourceRefreshFlights.get(key)?.promise;
           void (async () => {
             await inFlight?.catch(() => {});
-            if (disposed) return;
+            if (!isCurrentSource()) return;
             const current = resolveCurrentSource(resolved.scope);
-            if (current) await refreshSource(current, true);
+            if (current) {
+              // The signal is an accepted fact; a failed projection read must not swallow it. Writes are verified by the
+              // mutation against the real row.
+              await refreshSource(current, true).catch((error) =>
+                options.onSourceError?.(current.scope, "refresh", error),
+              );
+            }
           })().catch((error) => {
             if (!disposed) options.onSourceError?.(resolved.scope, "refresh", error);
           });
@@ -578,6 +609,7 @@ export function createWindowHostControllerRuntime(options: {
   async function refreshSource(
     resolved: ResolvedWindowHostControllerSource,
     force = false,
+    beforeCommit?: () => void,
   ): Promise<void> {
     registerResolvedSource(resolved);
     if (!resolved.taskService || resolved.sourceAvailability !== "online") {
@@ -602,6 +634,7 @@ export function createWindowHostControllerRuntime(options: {
       if (sourceRefreshGenerations.get(key) !== generation) {
         throw new Error("Controller source refresh generation 已失效");
       }
+      beforeCommit?.();
       const previousScope = pendingReplacementByNextSourceKey.get(key);
       projection.replaceSourceSnapshot({
         scope: resolved.scope,
@@ -648,6 +681,12 @@ export function createWindowHostControllerRuntime(options: {
   async function replaceDisconnectedSource(
     previousScope: WindowHostControllerSourceScope,
     resolved: ResolvedWindowHostControllerSource,
+    transaction?: {
+      /** Re-checked right before the snapshot commits; false means a newer reconnect generation owns the source. */
+      canCommit?: () => boolean;
+      /** Drop the provisional replacement generation when the refresh fails. */
+      rollbackOnFailure?: boolean;
+    },
   ): Promise<void> {
     if (!resolved.taskService || resolved.sourceAvailability !== "online") {
       throw new Error("重连 source 尚未 online，不能替换离线投影");
@@ -664,7 +703,25 @@ export function createWindowHostControllerRuntime(options: {
       projection.removeSource(previousScope);
     }
     pendingReplacementByNextSourceKey.set(sourceKey(resolved.scope), retainedPreviousScope);
-    await refreshSource(resolved, true);
+    try {
+      await refreshSource(resolved, true, () => {
+        if (transaction?.canCommit?.() === false) {
+          throw new Error("Controller source replacement generation 已失效");
+        }
+      });
+    } catch (error) {
+      if (transaction?.rollbackOnFailure) {
+        // The Registry rolled back its provisional logical session; keeping the pending source would leak an orphan owner
+        // and retry from the stale session on the next reconnect.
+        const key = sourceKey(resolved.scope);
+        if (pendingReplacementByNextSourceKey.has(key)) {
+          pendingReplacementByNextSourceKey.delete(key);
+          forgetRegisteredSource(resolved.scope);
+          projection.discardSource(resolved.scope);
+        }
+      }
+      throw error;
+    }
   }
 
   function resolveQuerySources(
@@ -764,7 +821,15 @@ export function createWindowHostControllerRuntime(options: {
                 return {
                   ...(projected?.meta ?? normalized),
                   ...(source.scope.kind === "remote"
-                    ? { remoteSessionId: source.scope.remoteSessionId }
+                    ? {
+                        ...(source.scope.sourceServerId
+                          ? { sourceServerId: source.scope.sourceServerId }
+                          : {}),
+                        ...(source.scope.serverDisplayName
+                          ? { serverDisplayName: source.scope.serverDisplayName }
+                          : {}),
+                        remoteSessionId: source.scope.remoteSessionId,
+                      }
                     : {}),
                   sourceAvailability: "online" as const,
                   liveStatus: projected?.liveStatus ?? liveStatusFromMeta(normalized),
@@ -801,39 +866,63 @@ export function createWindowHostControllerRuntime(options: {
       items = projection
         .getTasks()
         .filter((row) => {
-          const scope: WindowHostControllerSourceScope = row.address.remoteSessionId
-            ? {
-                kind: "remote",
-                remoteSessionId: row.address.remoteSessionId,
-                workspacePath: row.address.workspacePath,
-                workspaceIdentity: row.address.workspaceIdentity!,
-              }
-            : {
-                kind: "local",
-                workspacePath: row.address.workspacePath,
-                ...(row.address.workspaceIdentity
-                  ? { workspaceIdentity: row.address.workspaceIdentity }
-                  : {}),
-              };
+          const scope: WindowHostControllerSourceScope =
+            row.address.sourceServerId || row.address.remoteSessionId
+              ? {
+                  kind: "remote",
+                  ...(row.address.sourceServerId
+                    ? { sourceServerId: row.address.sourceServerId }
+                    : {}),
+                  remoteSessionId: row.address.remoteSessionId,
+                  workspacePath: row.address.workspacePath,
+                  workspaceIdentity: row.address.workspaceIdentity!,
+                }
+              : {
+                  kind: "local",
+                  workspacePath: row.address.workspacePath,
+                  ...(row.address.workspaceIdentity
+                    ? { workspaceIdentity: row.address.workspaceIdentity }
+                    : {}),
+                };
           return (
             selectedSources.has(sourceKey(scope)) &&
             matchesTaskListMembershipKind(row.membership, query.kind)
           );
         })
-        .map((row) => ({
-          ...row.meta,
-          ...(row.address.remoteSessionId ? { remoteSessionId: row.address.remoteSessionId } : {}),
-          sourceAvailability: row.sourceAvailability,
-          liveStatus: row.liveStatus,
-          ...(row.executionWorktree ? { executionWorktree: row.executionWorktree } : {}),
-          ...(row.executionWorktreeMissing !== undefined
-            ? { executionWorktreeMissing: row.executionWorktreeMissing }
-            : {}),
-          ...(row.incognito ? { incognito: true } : {}),
-          ...(row.worktreePreparation ? { worktreePreparation: row.worktreePreparation } : {}),
-          ...(row.activity ? { activity: row.activity } : {}),
-          ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),
-        }));
+        .map((row) => {
+          const resolvedSource = resolvedSources.find((source) => {
+            const addressKey = row.address.workspaceIdentity?.trim() || row.address.workspacePath;
+            const scopeKeyValue =
+              source.scope.workspaceIdentity?.trim() || source.scope.workspacePath;
+            return (
+              addressKey === scopeKeyValue &&
+              (source.scope.kind !== "remote" ||
+                (row.address.sourceServerId
+                  ? source.scope.sourceServerId === row.address.sourceServerId
+                  : source.scope.remoteSessionId === row.address.remoteSessionId))
+            );
+          });
+          return {
+            ...row.meta,
+            ...(row.address.sourceServerId ? { sourceServerId: row.address.sourceServerId } : {}),
+            ...(resolvedSource?.scope.kind === "remote" && resolvedSource.scope.serverDisplayName
+              ? { serverDisplayName: resolvedSource.scope.serverDisplayName }
+              : {}),
+            ...(row.address.remoteSessionId
+              ? { remoteSessionId: row.address.remoteSessionId }
+              : {}),
+            sourceAvailability: row.sourceAvailability,
+            liveStatus: row.liveStatus,
+            ...(row.executionWorktree ? { executionWorktree: row.executionWorktree } : {}),
+            ...(row.executionWorktreeMissing !== undefined
+              ? { executionWorktreeMissing: row.executionWorktreeMissing }
+              : {}),
+            ...(row.incognito ? { incognito: true } : {}),
+            ...(row.worktreePreparation ? { worktreePreparation: row.worktreePreparation } : {}),
+            ...(row.activity ? { activity: row.activity } : {}),
+            ...(row.searchSnippets ? { searchSnippets: row.searchSnippets } : {}),
+          };
+        });
     }
     items.sort((left, right) => compareItems(left, right, query.sortBy));
     const total = items.length;
@@ -841,37 +930,72 @@ export function createWindowHostControllerRuntime(options: {
     return { items: visible, total, hasMore: total > visible.length };
   }
 
-  function createAttachmentService(): IWindowControllerService & { dispose(): void } {
+  function createAttachmentService(
+    ownsUnreadSignals = true,
+  ): IWindowControllerService & { dispose(): void } {
     const frameEmitter = new Emitter<WindowHostControllerFrame>();
     const subscriptions = new Map<string, { dispose(): void }>();
+    // The runtime owns the single unread producer. An attachment only forwards it while it is alive; a passive attachment
+    // (a sidebar query that does not own unread writes) receives nothing, so one completion is recorded exactly once.
+    const unreadEmitter = new Emitter<WindowHostTaskUnreadSignal>();
+    const unreadSubscription = ownsUnreadSignals
+      ? unreadSignalEmitter.event((signal) => unreadEmitter.fire(signal))
+      : undefined;
+    let attachmentDisposed = false;
     return {
       listTaskList,
-      async getTaskMeta({ address }) {
+      async getTaskMeta({ address: rawAddress }) {
         // Owner-direct read: unread compare-and-swap must see the owning tasks index, not a list projection that may be
-        // a stale snapshot. An unavailable owner yields null (no CAS basis) rather than a projection fallback.
-        const workspaceIdentity = address.workspaceIdentity
-          ? { workspaceIdentity: address.workspaceIdentity }
-          : {};
-        const current = options.resolveSource({
+        // a stale snapshot. A list read failure would leave the projection unproven, so an unavailable owner rejects
+        // instead of returning a projection fallback or null.
+        const address = windowHostTaskAddressSchema.parse(rawAddress);
+        const resolved = options.resolveSource({
           workspacePath: address.workspacePath,
-          ...workspaceIdentity,
+          ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
         });
-        if (!current?.taskService || current.sourceAvailability !== "online") return null;
-        if (
-          address.remoteSessionId &&
-          current.scope.kind === "remote" &&
-          current.scope.remoteSessionId !== address.remoteSessionId
-        ) {
-          return null;
-        }
-        return current.taskService.getTaskMeta({
+        const taskService = resolved?.taskService;
+        // Re-checked before and after the IO: a replaced owner, a changed attachment or a different source identity
+        // must not answer for the address that was requested.
+        const assertCurrentSource = (current: ResolvedWindowHostControllerSource | null) => {
+          if (
+            disposed ||
+            attachmentDisposed ||
+            !resolved ||
+            !taskService ||
+            !current ||
+            current.sourceAvailability !== "online" ||
+            current.taskService !== taskService ||
+            current.scope.workspacePath !== address.workspacePath ||
+            current.scope.workspaceIdentity !== address.workspaceIdentity ||
+            sourceKey(current.scope) !== sourceKey(resolved.scope) ||
+            (current.scope.kind === "remote" &&
+              resolved.scope.kind === "remote" &&
+              current.scope.remoteSessionId !== resolved.scope.remoteSessionId)
+          ) {
+            throw new Error("任务读取期间 source 已失效");
+          }
+          const mismatched =
+            current.scope.kind === "remote"
+              ? (address.sourceServerId
+                  ? address.sourceServerId !== current.scope.sourceServerId
+                  : address.remoteSessionId !== current.scope.remoteSessionId) ||
+                (address.remoteSessionId != null &&
+                  address.remoteSessionId !== current.scope.remoteSessionId)
+              : address.remoteSessionId != null || address.sourceServerId != null;
+          if (mismatched) throw new Error("任务地址与 source 不匹配");
+        };
+        assertCurrentSource(resolved);
+        const result = await taskService!.getTaskMeta({
           taskId: address.taskId,
           workspacePath: address.workspacePath,
-          ...workspaceIdentity,
+          ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
         });
+        assertCurrentSource(resolveCurrentSource(resolved!.scope));
+        if (result && result.taskId !== address.taskId) throw new Error("任务读取返回地址不匹配");
+        return result ? normalizeTaskMeta(result, resolved!.scope) : null;
       },
       onDynamicTaskUnreadSignal() {
-        return unreadSignalEmitter.event;
+        return ownsUnreadSignals ? unreadEmitter.event : Event.None;
       },
       async deleteArchivedTasks({ address, taskIds }) {
         if (taskIds.length === 0) {
@@ -908,22 +1032,69 @@ export function createWindowHostControllerRuntime(options: {
         return deleted === true;
       },
       async mutateTask({ address, mutation }) {
-        const reply = await projection.mutate(address, mutation as WindowHostControllerMutation);
         const resolved = options.resolveSource({
           workspacePath: address.workspacePath,
           ...(address.workspaceIdentity ? { workspaceIdentity: address.workspaceIdentity } : {}),
         });
-        if (resolved) {
-          await refreshSource(resolved, true);
+        // The project tree also lists tasks that have no open tab; admit the row from its single owner before writing.
+        if (!resolved || resolved.sourceAvailability !== "online") {
+          throw new Error(
+            resolved?.scope.kind === "remote"
+              ? "远程 source 当前离线，禁止列表写操作"
+              : "任务 source 当前不可用",
+          );
         }
-        if (
-          mutation.kind === "mark-unread" &&
-          reply &&
-          typeof reply === "object" &&
-          "taskId" in reply
-        ) {
-          return reply;
+        const taskService = resolved.taskService;
+        const assertCurrentUnreadSource = () => {
+          const current = resolveCurrentSource(resolved.scope);
+          if (
+            current?.taskService !== taskService ||
+            current?.sourceAvailability !== "online" ||
+            sourceAvailability.get(sourceKey(resolved.scope)) !== "online"
+          ) {
+            throw new Error("未读写入期间 source 已失效");
+          }
+        };
+        await refreshSource(resolved);
+        if (mutation.kind === "mark-read" || mutation.kind === "mark-unread") {
+          // A cache hit does not prove an in-flight read has finished; wait for it, then re-read only when the row is
+          // missing. A failed older read does not invalidate a known task, but a missing row needs a successful refresh.
+          await sourceRefreshFlights.get(sourceKey(resolved.scope))?.promise.catch(() => {});
+          assertCurrentUnreadSource();
+          const known = projection
+            .getTasks()
+            .some(
+              (row) =>
+                row.address.taskId === address.taskId &&
+                row.address.workspacePath === address.workspacePath &&
+                row.address.workspaceIdentity === address.workspaceIdentity &&
+                (address.sourceServerId
+                  ? row.address.sourceServerId === address.sourceServerId
+                  : row.address.remoteSessionId === address.remoteSessionId),
+            );
+          if (!known) {
+            await refreshSource(resolved, true);
+            assertCurrentUnreadSource();
+          }
         }
+        const mutationResult = await projection.mutate(
+          address,
+          mutation as WindowHostControllerMutation,
+        );
+        // The unread compare-and-swap uses the marker this write allocated; a later projection may already show a newer completion.
+        if (mutationResult && typeof mutationResult !== "boolean" && "taskId" in mutationResult) {
+          assertCurrentUnreadSource();
+          // The write is committed; a failed projection refresh must not turn it into a retryable failure.
+          // A read that started before the write may show the pre-write row; wait for it to settle, then read again so
+          // the post-write refresh is a new read rather than a join of that older flight (which would report its error twice).
+          await sourceRefreshFlights.get(sourceKey(resolved.scope))?.promise.catch(() => {});
+          await refreshSource(resolved, true).catch((error) =>
+            options.onSourceError?.(resolved.scope, "refresh", error),
+          );
+          assertCurrentUnreadSource();
+          return mutationResult;
+        }
+        await refreshSource(resolved, true);
         return (
           projection
             .getTasks()
@@ -932,7 +1103,9 @@ export function createWindowHostControllerRuntime(options: {
                 row.address.taskId === address.taskId &&
                 row.address.workspacePath === address.workspacePath &&
                 row.address.workspaceIdentity === address.workspaceIdentity &&
-                row.address.remoteSessionId === address.remoteSessionId,
+                (address.sourceServerId
+                  ? row.address.sourceServerId === address.sourceServerId
+                  : row.address.remoteSessionId === address.remoteSessionId),
             )?.meta ?? null
         );
       },
@@ -957,6 +1130,9 @@ export function createWindowHostControllerRuntime(options: {
         return frameEmitter.event;
       },
       dispose() {
+        attachmentDisposed = true;
+        unreadSubscription?.dispose();
+        unreadEmitter.dispose();
         for (const subscription of subscriptions.values()) {
           subscription.dispose();
         }
@@ -992,22 +1168,31 @@ export function createWindowHostControllerRuntime(options: {
         workspacePath: params.workspacePath,
         ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
       });
-      if (
-        remoteAttachmentScope &&
-        (!resolved ||
-          resolved.scope.kind !== "remote" ||
-          resolved.scope.remoteSessionId !== remoteAttachmentScope.remoteSessionId ||
-          resolved.scope.workspacePath !== remoteAttachmentScope.workspacePath ||
-          resolved.scope.workspaceIdentity !== remoteAttachmentScope.workspaceIdentity)
-      ) {
-        throw new Error("列表 mutation 与 remote attachment source 不匹配");
-      }
+      const assertAttachmentSource = (source: ResolvedWindowHostControllerSource | null) => {
+        if (
+          remoteAttachmentScope &&
+          (!source ||
+            source.scope.kind !== "remote" ||
+            source.scope.remoteSessionId !== remoteAttachmentScope.remoteSessionId ||
+            source.scope.workspacePath !== remoteAttachmentScope.workspacePath ||
+            source.scope.workspaceIdentity !== remoteAttachmentScope.workspaceIdentity)
+        ) {
+          throw new Error("列表 mutation 与 remote attachment source 不匹配");
+        }
+      };
+      assertAttachmentSource(resolved);
       if (resolved) {
         // Remote attachment previously returned the address directly and skipped source refresh. A newly bound
         // workspace had no projection row until the Controller list was read, causing the first unread/archive write to fail.
         // Materialize only a source validated with the full remoteSessionId + identity, preserving fail-closed behavior.
         await refreshSource(resolved);
+        // The attachment may have changed while the first snapshot was loading; do not admit the old attachment's rows.
+        assertAttachmentSource(resolveCurrentSource(resolved.scope));
       }
+      // A sidebar query may run by Source before the attachment exists; such rows carry no logical session ID yet.
+      // Match by the stable Source identity when the source has one, and keep the exact session match otherwise.
+      const sourceServerId =
+        resolved?.scope.kind === "remote" ? resolved.scope.sourceServerId : undefined;
       const matches = projection
         .getTasks()
         .filter(
@@ -1016,7 +1201,9 @@ export function createWindowHostControllerRuntime(options: {
             row.address.workspacePath === params.workspacePath &&
             row.address.workspaceIdentity === params.workspaceIdentity &&
             (!remoteAttachmentScope ||
-              row.address.remoteSessionId === remoteAttachmentScope.remoteSessionId),
+              (sourceServerId
+                ? row.address.sourceServerId === sourceServerId
+                : row.address.remoteSessionId === remoteAttachmentScope.remoteSessionId)),
         );
       if (matches.length !== 1) {
         if (matches.length === 0 && params.allowMissingTask && resolved) {
@@ -1028,7 +1215,12 @@ export function createWindowHostControllerRuntime(options: {
               ? { workspaceIdentity: resolved.scope.workspaceIdentity }
               : {}),
             ...(resolved.scope.kind === "remote"
-              ? { remoteSessionId: resolved.scope.remoteSessionId }
+              ? {
+                  ...(resolved.scope.sourceServerId
+                    ? { sourceServerId: resolved.scope.sourceServerId }
+                    : {}),
+                  remoteSessionId: resolved.scope.remoteSessionId,
+                }
               : {}),
           };
         }
@@ -1119,7 +1311,12 @@ function toBackgroundCompletionSignal(
   const workspaceIdentity = scope.workspaceIdentity ?? event.workspaceIdentity;
   return {
     address: {
-      ...(scope.kind === "remote" ? { remoteSessionId: scope.remoteSessionId } : {}),
+      ...(scope.kind === "remote" && scope.sourceServerId
+        ? { sourceServerId: scope.sourceServerId }
+        : {}),
+      ...(scope.kind === "remote" && scope.remoteSessionId
+        ? { remoteSessionId: scope.remoteSessionId }
+        : {}),
       workspacePath: scope.workspacePath,
       ...(workspaceIdentity ? { workspaceIdentity } : {}),
       taskId: event.taskId ?? event.taskMeta.taskId,

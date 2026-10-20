@@ -34,7 +34,10 @@ export {
   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV,
 } from "@zcode/provider-node";
 import { randomUUID } from "node:crypto";
-import { getAppConfigDir as getContentAppConfigDir } from "#src/paths.js";
+import {
+  getAppConfigDir as getContentAppConfigDir,
+  getZCodeDataRootDir as projectDataRoot,
+} from "#src/paths.js";
 import { ICloudContentService } from "#src/cloud-content/cloudContent.js";
 import { createCloudContentService } from "#src/cloud-content/cloudContentService.js";
 import { IMarketingTouchService } from "#src/marketing-touch/marketingTouch.js";
@@ -52,7 +55,10 @@ export {
 export { createTopicResourceRelayChannel } from "./zcode-agent/topicResourceRelayChannel.js";
 
 export { createFileService } from "./file/fileService.js";
-export { createLegacySingleRootProjectService } from "#src/project/index.js";
+export {
+  bindRemoteProjectIdentities,
+  createLegacySingleRootProjectService,
+} from "#src/project/index.js";
 export {
   attributeHostProcessTree,
   createProcessResourceSampler,
@@ -375,6 +381,11 @@ import { IPromptAttachmentTransferService } from "./prompt-attachment-transfer/p
 import { createFileService } from "./file/fileService.js";
 import { createMediaPreviewService } from "./media-preview/mediaPreview.js";
 import type { WorkspaceFileSearchFilter } from "./file/workspaceFileMentionFilter.js";
+import { IProjectService } from "./project/contract.js";
+import { IRemoteProjectService } from "./remote-projects/contract.js";
+import { createProjectService } from "./project/index.js";
+import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
+import { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
 import { GitCommitMessageGenerator } from "./git/gitCommitMessageGenerator.js";
 import { createGitCheckpointService } from "./git/gitCheckpointService.js";
@@ -1194,6 +1205,31 @@ export function createLocalServices(options: {
   feedback?: Partial<
     Omit<CreateFeedbackServiceOptions, "apiClient" | "credentialService" | "oauthService">
   >;
+  /**
+   * COMPILE BRIDGE (fork): upstream project-storage / Source-bot hooks. The fork still runs the legacy
+   * single-root project service and its own bot remote path, so these are accepted for the desktop host
+   * wiring but are not consumed here. Nothing in the fork calls them; see specs/upstream-sync-final-ledger.md.
+   */
+  resolveBotRemoteWorkspace?: (target: {
+    workspacePath: string;
+    workspaceIdentity: string;
+  }) => Promise<{ workspacePath: string; workspaceIdentity: string } | null>;
+  setWorkspaceProjection?: ReturnType<
+    typeof createSettingServiceWithMigrations
+  >["setWorkspaceProjection"];
+  resolveProjectHostService?: (hostId: string) => Promise<IProjectService>;
+  /** Bot reuse of an existing window Source connection (upstream); accepted, unwired in the fork's bot path. */
+  resolveBotProjectConnection?: (hostId: string) => BotProjectConnection | undefined;
+  /** Live UI language for X-Client-Language; the fork's source headers keep their own resolution (accepted, unwired). */
+  resolveClientLanguage?: () => string | undefined;
+  remoteProjectConnection?: Pick<
+    Parameters<typeof createRemoteProjectService>[0],
+    "connectHost" | "readConnectionStates"
+  >;
+  /** Plugin UI telemetry sink supplied by the desktop host; the fork's thin plugin-management service intentionally emits none. */
+  reportPluginTelemetryEvent?: (
+    event: import("@zcode/shared").RendererTelemetryEventPayload,
+  ) => void | Promise<void>;
   processLifecycleReporter?: RuntimeProcessLifecycleReporter;
   taskRuntimeReporter?: RuntimeTaskReporter;
   /** Workspace file search uses the built-in filter by default; Host assembly can inject the final implementation when another rule source is added. */
@@ -1350,7 +1386,7 @@ export function createLocalServices(options: {
   const systemService = createSystemService();
   // Onboarding eligibility and the task list share the same global tasks-index. The repo loads the
   // database lazily, so constructing it early adds no startup I/O; the session syncer reuses this instance.
-  const taskIndexRepo = new TaskIndexRepo();
+  const taskIndexRepo = new TaskIndexRepo(undefined, undefined, options?.projectStorageHostId);
   // Onboarding completion record; fill userId from the login state (null for API-key or logged-out sessions). See docs/onboarding-record-spec.md.
   const onboardingRecordService = createOnboardingRecordService({
     loadUserId: async () => (await oauthCredentialRepo.loadActiveUserProfile())?.id ?? null,
@@ -1668,6 +1704,7 @@ export function createLocalServices(options: {
   });
   invalidatePluginUiAccounts = () => pluginUiAccounts.invalidate();
   const pluginUiBridgeService = createPluginUiBridgeService({
+    reportTelemetryEvent: options?.reportPluginTelemetryEvent,
     openInstance: (params) => pluginUiAccounts.open(params),
     closeInstance: (params) => pluginUiAccounts.close(params),
     validateInstance: (params) => zcodeAgentService.validateMcpUiInstance(params),
@@ -2545,6 +2582,24 @@ export function createLocalServices(options: {
   const marketingAssets = createMarketingAssetRegistry({
     allowLoopback: ZCODE_ENV === "test" || process.env.NODE_ENV === "development",
   });
+  // Project storage services over the tasks-index database (upstream wiring). Task groups stay unwired (fork single writer).
+  const remoteProjectService = createRemoteProjectService({
+    ...options?.remoteProjectConnection,
+    controller: !options?.projectStorageHostId || options.projectStorageHostId === "local",
+    database: () => taskIndexRepo.getOrganizationDatabase(),
+    afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
+  });
+  const projectService = createProjectService({
+    directories: {
+      home: async () => (await systemService.info()).homedir,
+      read: (params) => fileService.readdir(params),
+    },
+    ownerHostId: options?.projectStorageHostId,
+    resolveHost: options?.resolveProjectHostService,
+    repository: () => taskIndexRepo.getProjectRepository(),
+    workspaceDirectory: join(projectDataRoot(), "workspace"),
+    afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
+  });
   const services = new ServiceCollection()
     .register(
       IMarketingTouchService,
@@ -2577,6 +2632,8 @@ export function createLocalServices(options: {
     .register(IZCodeTaskService, zcodeTaskService)
     .register(IZCodeAgentService, zcodeAgentService)
     .register(IZCodeSessionService, zcodeSessionService)
+    .register(IProjectService, projectService)
+    .register(IRemoteProjectService, remoteProjectService)
     .register(ICuaPermissionService, cuaPermissionService)
     .register(ICuaPipSessionService, cuaPipSessionService)
     .register(IConversationShareService, conversationShareService)
@@ -3150,3 +3207,17 @@ export async function createServerHostServices(options: {
   });
   return { services, workspaceIdentityMapper, migrationFailedPathCount };
 }
+
+// Upstream 3.16.1 barrel exports (module contracts are fork-present; these lines only expose them to the hosts).
+export { createRemoteProjectService } from "#src/remote-projects/index.js";
+export {
+  createRemoteProjectConnectionAdmission,
+  remoteProjectHostIdForProfile,
+  remoteProjectHostIdForTarget,
+  prepareRemoteServerConnection,
+} from "#src/remote-projects/index.js";
+export { createProjectWorkspaceNavigation } from "#src/project-workspace-navigation/index.js";
+export { migrateControllerRemoteWorkspaceIdentity } from "./session/controllerRemoteIdentityMigration.js";
+export type { ControllerRemoteIdentityMigrationReport } from "./session/controllerRemoteIdentityMigration.js";
+export type { BotProjectConnection } from "#src/bot-project-runtime/contract.js";
+export { prepareTasksIndexStorage } from "#src/project-storage/startup.js";

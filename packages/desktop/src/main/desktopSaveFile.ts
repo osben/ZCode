@@ -1,5 +1,6 @@
 import { copyFile, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
+import type { LookupAddress } from "node:dns";
 import { BlockList } from "node:net";
 import type { LookupFunction } from "node:net";
 import { tmpdir } from "node:os";
@@ -59,12 +60,14 @@ function parseRemoteImageUrl(value: unknown): URL | null {
   }
 }
 
-async function resolvePublicRemoteUrl(url: URL): Promise<Awaited<ReturnType<typeof lookup>>> {
+async function resolvePublicRemoteUrl(
+  url: URL,
+): Promise<LookupAddress[]> {
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     throw new SaveFileError("remote_address_not_allowed");
   }
-  let addresses: Awaited<ReturnType<typeof lookup>>;
+  let addresses: LookupAddress[];
   try {
     addresses = await lookup(hostname, { all: true, verbatim: true });
   } catch {
@@ -100,9 +103,8 @@ async function fetchPublicRemoteUrl(
       }
       callback(null, address.address, address.family);
     };
-    // Bind DNS validation to the connection phase. The dispatcher prevents the transport from
-    // resolving the hostname again, closing the DNS-rebinding window between checking a public
-    // address and connecting to a private one.
+    // DNS 校验结果必须绑定到连接阶段；dispatcher 禁止底层再次解析域名，
+    // 从而关闭“预检查公网、实际连接私网”的 DNS rebinding 窗口。
     const dispatcher = new Agent({ connect: { lookup: pinnedLookup } });
     let response: Awaited<ReturnType<typeof undiciFetch>>;
     try {
@@ -132,7 +134,10 @@ async function fetchPublicRemoteUrl(
   throw new SaveFileError("download_failed");
 }
 
-async function downloadRemoteFile(sourceUrl: URL, destinationPath: string): Promise<void> {
+async function downloadRemoteFile(
+  sourceUrl: URL,
+  destinationPath: string,
+): Promise<void> {
   const controller = new AbortController();
   const temporaryDirectory = await mkdtemp(join(tmpdir(), "zcode-save-file-"));
   const temporaryPath = join(temporaryDirectory, "download");
@@ -141,8 +146,7 @@ async function downloadRemoteFile(sourceUrl: URL, destinationPath: string): Prom
   let dispatcher: Agent | null = null;
   const timeout = setTimeout(() => controller.abort(), REMOTE_DOWNLOAD_TIMEOUT_MS);
   try {
-    // The renderer's CORS boundary must not expand into main-process access to private networks;
-    // resolve the initial URL and every redirect first, and reject non-public addresses.
+    // renderer 的 CORS 边界不能放大成 main 可访问内网；初始地址和每次重定向都先解析并拒绝非公网地址。
     const remoteResponse = await fetchPublicRemoteUrl(sourceUrl, controller.signal);
     dispatcher = remoteResponse.dispatcher;
     const { response } = remoteResponse;
@@ -162,7 +166,7 @@ async function downloadRemoteFile(sourceUrl: URL, destinationPath: string): Prom
       if (done) break;
       receivedBytes += value.byteLength;
       if (receivedBytes > MAX_SAVE_FILE_BYTES) {
-        // Enforce the size limit while reading; validating only after buffering the whole response cannot protect renderer/main memory.
+        // 容量限制必须在读取过程中执行；完整缓冲后再校验无法保护 renderer/main 内存。
         controller.abort();
         throw new SaveFileError("file_too_large");
       }
@@ -192,13 +196,14 @@ export function registerDesktopSaveFileIpcHandler(logger: { warn: (...args: unkn
       const suggestedName = basename(payload.suggestedName.trim()).slice(0, 120);
       const sourceUrl = parseRemoteImageUrl(payload.sourceUrl);
       const hasData = payload.data instanceof ArrayBuffer;
+      const data = hasData ? payload.data : undefined;
       if (!suggestedName || (sourceUrl === null && !hasData)) {
         return { success: false, error: "invalid_file_payload" };
       }
-      if (hasData && payload.data.byteLength === 0) {
+      if (data && data.byteLength === 0) {
         return { success: false, error: "invalid_file_payload" };
       }
-      if (hasData && payload.data.byteLength > MAX_SAVE_FILE_BYTES) {
+      if (data && data.byteLength > MAX_SAVE_FILE_BYTES) {
         return { success: false, error: "file_too_large" };
       }
 
@@ -214,8 +219,8 @@ export function registerDesktopSaveFileIpcHandler(logger: { warn: (...args: unkn
       try {
         if (sourceUrl) {
           await downloadRemoteFile(sourceUrl, result.filePath);
-        } else if (hasData) {
-          await writeFile(result.filePath, new Uint8Array(payload.data));
+        } else if (data) {
+          await writeFile(result.filePath, new Uint8Array(data));
         }
         return { success: true, path: result.filePath };
       } catch (error) {

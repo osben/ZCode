@@ -59,7 +59,11 @@ describe("settings service workspace projection with fork sidecar", () => {
   it("bumps providerFamilyDomainUpdatedAt on each connection-mapping write and rejects a stale version", async () => {
     const { service } = await createAssembly();
 
-    await service.update({ providerFamilyConnectionSelections: {} });
+    // Connection-mapping writes require a CAS version (upstream rule). An unset version is the 0 baseline.
+    await service.update(
+      { providerFamilyConnectionSelections: {} },
+      { providerFamilyDomainUpdatedAt: 0 },
+    );
     const first = (await service.get()).providerFamilyDomainUpdatedAt ?? 0;
     expect(first).toBeGreaterThan(0);
 

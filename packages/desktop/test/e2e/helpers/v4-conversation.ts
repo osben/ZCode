@@ -67,10 +67,13 @@ import {
 } from "@zcode/shared";
 import {
   clickTestIdByDom,
+  DEFAULT_WORKSPACE,
   dispatchMouseDownByExactTestId,
+  setCurrentElectronRendererContentSize,
   setInputValueByTestIdDom,
   waitForDefaultWorkspaceReady,
 } from "./desktop-app.js";
+import { startDraftFromProject, waitForProjectRow } from "./project-sidebar.js";
 import {
   ensureUpstreamProviderForE2E,
   selectUpstreamModel,
@@ -87,6 +90,8 @@ export const E2E_REPLY_TOKEN = "upstream-e2e-ok";
 interface PrepareV4ConversationE2EOptions {
   resetDraftBeforeProvider?: boolean;
   skipProvider?: boolean;
+  /** Skip the ZCodeProject wait in ensureV4ShellReady; a logged-in cold start lands on the conversation backing workspace and the caller waits for the shell itself. */
+  skipShellReady?: boolean;
 }
 
 /** Fixed paneId for the single-pane vertical slice (V4ChatPane hardcodes workspace-main). */
@@ -132,17 +137,20 @@ export interface V4MessageSnapshot {
 }
 
 export async function prepareV4ConversationE2E(options: PrepareV4ConversationE2EOptions = {}) {
-  await ensureV4ShellReady();
-  if (options.resetDraftBeforeProvider) {
-    // Reason for the fix: if a formal case stays on the old active session, provider
-    // initialization may write the default model back to the old session; switch to a v4 empty
-    // draft first, keeping the old helper's isolation semantics without depending on legacy DOM.
-    await startNewV4Draft();
+  if (!options.skipShellReady) {
+    await ensureV4ShellReady();
+  }
+  if (!options.skipShellReady || options.resetDraftBeforeProvider) {
+    // Provider helper 也校验固定 cwd，必须先返回夹具项目，且不能把模型写入上一条会话。
+    await ensureV4PreparationDraft(options);
   }
   if (!options.skipProvider) {
     await ensureUpstreamProviderForE2E({ skipToolbarSelection: true });
   }
-  await startNewV4Draft();
+  await ensureV4PreparationDraft(options);
+  if (!options.skipShellReady) {
+    await waitForDefaultWorkspaceReady(30000);
+  }
   if (!options.skipProvider) {
     // The new Composer keeps the already-initialized empty selection; writing Recent alone
     // cannot override this draft.
@@ -158,7 +166,7 @@ async function ensureV4ShellReady() {
     // The occupation onboarding of a fresh isolated profile covers the workspace; reuse the real
     // UI to skip it first.
     await skipOccupationOnboardingIfPresent();
-    await waitForDefaultWorkspaceReady(30000);
+    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
     return;
   } catch (error) {
     if (!(await hasApiKeyLoginButton())) {
@@ -166,7 +174,41 @@ async function ensureV4ShellReady() {
     }
     await loginWithApiKey();
     await skipOccupationOnboardingIfPresent();
-    await waitForDefaultWorkspaceReady(30000);
+    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
+  }
+}
+
+async function ensureV4PreparationDraft(options: PrepareV4ConversationE2EOptions) {
+  // Bug 根因：全局新建会创建独立 cwd；反复点击会让固定目录夹具与 Agent 工作区分离。
+  // 只按实际 cwd 复用空草稿；为补项目标签而新建会打断冷启动预热，导致首发失败。
+  // 其他 cwd 或已有内容才走项目级新建；显式全局新建 helper 保持原语义。
+  const ready = await browser.execute(
+    (inputId, paneId, stopId, workspacePath) => {
+      const pane = document.querySelector<HTMLElement>(`[data-testid="${paneId}"]`);
+      const input = pane?.querySelector<HTMLElement>(`[data-testid="${inputId}"]`);
+      const activePath = (
+        window as Window & {
+          __zcodeTabStoreE2E?: { getState(): { activeWorkspacePath?: string | null } };
+        }
+      ).__zcodeTabStoreE2E?.getState().activeWorkspacePath;
+      return Boolean(
+        pane?.dataset.sessionId === "draft" &&
+        input?.getClientRects().length &&
+        !input.textContent?.trim() &&
+        !pane.querySelector(`[data-testid="${stopId}"]`) &&
+        (!workspacePath || activePath === workspacePath),
+      );
+    },
+    TID_V4_COMPOSER_INPUT,
+    testId(TID_V4_SESSION_PANE, V4_MAIN_PANE_ID),
+    TID_V4_STOP,
+    options.skipShellReady ? null : DEFAULT_WORKSPACE,
+  );
+  if (ready) return;
+  if (options.skipShellReady) {
+    await startNewV4Draft();
+  } else {
+    await startDraftFromProject(DEFAULT_WORKSPACE);
   }
 }
 
@@ -964,36 +1006,10 @@ export function getV4ComposerBackgroundWorkCounts(): Promise<{
   }, TID_V4_COMPOSER_BACKGROUND_WORK_TRIGGER);
 }
 
-/** The Electron driver does not implement WebDriver window/rect; the viewport is adjusted via the main process's BrowserWindow. */
 export async function setV4ElectronWindowSize(width: number, height: number) {
-  const resized = await browser.electron.execute(
-    (electron, nextWidth, nextHeight) => {
-      const window = electron.BrowserWindow.getAllWindows().find(
-        (candidate) => !candidate.isDestroyed() && candidate.isVisible(),
-      );
-      if (!window) return false;
-      const bounds = window.getBounds();
-      window.setBounds({ ...bounds, width: nextWidth, height: nextHeight });
-      window.focus();
-      return true;
-    },
-    width,
-    height,
-  );
-  if (!resized) {
-    throw new Error("没有找到可调整尺寸的 Electron 窗口");
-  }
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        (expectedWidth, expectedHeight) =>
-          Math.abs(window.innerWidth - expectedWidth) < 80 &&
-          Math.abs(window.innerHeight - expectedHeight) < 120,
-        width,
-        height,
-      ),
-    { timeout: 10000, timeoutMsg: `Electron 窗口尺寸没有收敛到 ${width}x${height}` },
-  );
+  // Bug 根因：外框和 renderer 内容区的差值随平台及 zoom 改变，固定误差会误报超时。
+  // 复用精确绑定当前窗口的内容区 helper，同时保留尺寸应用失败的断言。
+  await setCurrentElectronRendererContentSize(width, height);
 }
 
 /** Expands the Status panel from the Composer's single entry point and opens every non-empty background-type section. */
@@ -2857,7 +2873,10 @@ export function pasteV4ComposerImageAttachment(
 }
 
 /** Waits for a user row to render its attachment cluster, returning the file pill text and the media thumbnails' accessible filenames. */
-export async function waitForV4RowAttachments(timeout = 60000): Promise<string> {
+export async function waitForV4RowAttachments(
+  timeout = 60000,
+  expectedNames: readonly string[] = [],
+): Promise<string> {
   let text = "";
   await browser.waitUntil(
     async () => {
@@ -2872,7 +2891,8 @@ export async function waitForV4RowAttachments(timeout = 60000): Promise<string> 
           .filter(Boolean);
         return [visibleText, ...mediaFilenames].filter(Boolean).join("\n");
       }, TID_V4_ROW_ATTACHMENTS);
-      return text.trim().length > 0;
+      // Text cards and media thumbnails mount asynchronously; a multi-file case must wait for the whole group.
+      return text.trim().length > 0 && expectedNames.every((name) => text.includes(name));
     },
     { timeout, timeoutMsg: "user 行没有渲染出附件簇（TID_V4_ROW_ATTACHMENTS）" },
   );

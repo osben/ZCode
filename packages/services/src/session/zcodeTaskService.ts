@@ -477,6 +477,8 @@ export interface IZCodeTaskService {
     taskId: string;
     workspacePath: string;
     workspaceIdentity?: string;
+    /** Virtual-project extra roots; forwarded to session/resume so cold recovery keeps the same tool/fs roots. */
+    additionalDirectories?: string[];
     mode?: ZCodeTaskMode;
     model?: string;
     thoughtLevel?: string;
@@ -524,6 +526,15 @@ export interface IZCodeTaskService {
 
   /** Read deleted task IDs in the workspace; used for a persistent negative-membership join in the sessions-index list. */
   listDeletedTaskIds(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+  }): Promise<string[]>;
+
+  /**
+   * Read task IDs in the workspace that are still running, from the live sessions-index activity set.
+   * tasks-index status only mirrors the CLI last_outcome, so it cannot answer this.
+   */
+  listActiveTaskIds(params: {
     workspacePath: string;
     workspaceIdentity?: string;
   }): Promise<string[]>;

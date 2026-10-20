@@ -75,7 +75,10 @@ export async function runSqliteSessionMigrationsAsync(
   let migration: DatabaseMigrationFacts | undefined;
   let migrationId: string | undefined;
   let progressError: unknown;
-  const progress = async (phase: SqliteMigrationPhase, extra: Partial<SqliteMigrationProgress> = {}) => {
+  const progress = async (
+    phase: SqliteMigrationPhase,
+    extra: Partial<SqliteMigrationProgress> = {},
+  ) => {
     try {
       await options.onProgress?.({
         phase,
@@ -147,7 +150,11 @@ export async function runSqliteSessionMigrationsAsync(
       database: "cli",
       transactionOpen: true,
       appliedAtColumn: "time_applied",
-      backupDirectories: [dbPath === ":memory:" ? join(tmpdir(), "zcode-memory-migration-backup") : join(dataRoot, "backup")],
+      backupDirectories: [
+        dbPath === ":memory:"
+          ? join(tmpdir(), "zcode-memory-migration-backup")
+          : join(dataRoot, "backup"),
+      ],
       onBeforeApply: async (id) => {
         migrationId = id;
         if (migration!.kind === "none") migration!.kind = "upgrade";
@@ -198,8 +205,7 @@ export async function runSqliteSessionMigrationsAsync(
     // A notification port error keeps its original object and is not wrapped by the database error.
     throw error === progressError ? error : normalized;
   } finally {
-    if (db.isOpen)
-      db.exec(`pragma busy_timeout = ${DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS}`);
+    if (db.isOpen) db.exec(`pragma busy_timeout = ${DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS}`);
   }
 }
 
@@ -254,7 +260,8 @@ function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigr
   const applied = ids
     .map((id) => ({ id, row: readAppliedMigration(db, id) }))
     .filter((entry): entry is { id: string; row: SchemaMigrationRow } => entry.row !== undefined);
-  for (const entry of applied) ensureMigrationChecksum(entry.id, entry.row.checksum, current, dbPath);
+  for (const entry of applied)
+    ensureMigrationChecksum(entry.id, entry.row.checksum, current, dbPath);
   if (!applied.length) {
     if (migration.apply) migration.apply(db);
     else db.exec(migration.sql);
@@ -287,9 +294,9 @@ function isMemoryJournalMode(dbPath: string, journalMode: string): boolean {
 }
 
 function readJournalMode(db: DatabaseSync, enableWal = false): string {
-  const row = db
-    .prepare(enableWal ? "pragma journal_mode = wal" : "pragma journal_mode")
-    .get() as Record<string, unknown> | undefined;
+  const row = db.prepare(enableWal ? "pragma journal_mode = wal" : "pragma journal_mode").get() as
+    | Record<string, unknown>
+    | undefined;
   const mode = row?.journal_mode;
   return typeof mode === "string" ? mode.toLowerCase() : "unknown";
 }
@@ -347,12 +354,15 @@ function lockTimeoutError(
   dbPath: string,
   migrationId?: string,
 ): SqliteSessionMigrationError {
-  return new SqliteSessionMigrationError(`Timed out waiting for SQLite migration lock at ${dbPath}`, {
-    cause,
-    dbPath,
-    kind: "lock_timeout",
-    migrationId,
-  });
+  return new SqliteSessionMigrationError(
+    `Timed out waiting for SQLite migration lock at ${dbPath}`,
+    {
+      cause,
+      dbPath,
+      kind: "lock_timeout",
+      migrationId,
+    },
+  );
 }
 
 function readAppliedMigration(db: DatabaseSync, id: string): SchemaMigrationRow | undefined {
@@ -365,7 +375,12 @@ function migrationChecksum(sql: string): string {
   return createHash("sha256").update(sql.trim()).digest("hex");
 }
 
-function ensureMigrationChecksum(id: string, applied: string, current: string, dbPath: string): void {
+function ensureMigrationChecksum(
+  id: string,
+  applied: string,
+  current: string,
+  dbPath: string,
+): void {
   if (applied === current) return;
   throw new SqliteSessionMigrationError(
     `SQLite migration checksum mismatch for ${id}. Historical migrations are immutable; add a new migration instead.`,
@@ -385,7 +400,8 @@ function inspectMigrationKind(db: DatabaseSync, dbPath: string): DatabaseMigrati
   let pending = false;
   for (const migration of resolveSessionDatabaseMigrations(db)) {
     const row = hasLedger ? readAppliedMigration(db, migration.id) : undefined;
-    if (row) ensureMigrationChecksum(migration.id, row.checksum, migrationChecksum(migration.sql), dbPath);
+    if (row)
+      ensureMigrationChecksum(migration.id, row.checksum, migrationChecksum(migration.sql), dbPath);
     else pending = true;
   }
   if (!pending) return "none";
