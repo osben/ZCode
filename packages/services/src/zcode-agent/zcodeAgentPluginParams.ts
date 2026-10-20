@@ -51,6 +51,18 @@ export interface ZCodeAgentInstallPluginParams extends ZCodeAgentWorkspaceTarget
   operationId?: string;
   pluginName: string;
   scope?: "user" | "workspace";
+  /** Host-only observation context (see withPluginTelemetry). Never sent to the CLI. */
+  telemetry?: {
+    entry?:
+      | "store_list"
+      | "store_detail"
+      | "side_pane_market"
+      | "recommended_prompt"
+      | "recommended_ui"
+      | "component_settings";
+    client_kind?: "desktop" | "mobile";
+    trigger?: "user" | "automatic" | "dependency" | "restore" | "sync";
+  };
 }
 
 export interface ZCodeAgentCancelPluginOperationParams {

@@ -694,6 +694,13 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlAppErrorPayload
   | WebRemoteControlMobileDiagnosticPayload;
 
+/** Task the mobile client is viewing. Plain shape only; the relay payloads that carry it are not part of this module's transport. */
+export interface WebRemoteControlMobileTaskView {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  taskId: string;
+}
+
 export interface WebRemoteControlWorkspaceTarget {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -825,7 +832,7 @@ export function resolveWebRemoteControlWorkspaceKey(
   return target.workspaceIdentity?.trim() || target.workspacePath;
 }
 
-function isWebRemoteControlBridgeableWorkspaceTarget(
+export function isWebRemoteControlBridgeableWorkspaceTarget(
   workspace: WebRemoteControlWorkspaceTarget,
 ): boolean {
   return (

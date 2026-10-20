@@ -52,6 +52,7 @@ export {
 export { createTopicResourceRelayChannel } from "./zcode-agent/topicResourceRelayChannel.js";
 
 export { createFileService } from "./file/fileService.js";
+export { createLegacySingleRootProjectService } from "#src/project/index.js";
 export {
   attributeHostProcessTree,
   createProcessResourceSampler,

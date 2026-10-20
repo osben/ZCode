@@ -127,6 +127,7 @@ export { IOnboardingRecordService } from "./onboarding/onboardingRecord.js";
 export type {
   CreateOnboardingRecordServiceOptions,
   OnboardingRecordServiceFactory,
+  OnboardingSettingsSyncPatch,
 } from "./onboarding/onboardingRecord.js";
 // Export only the descriptor and types here. The renderer imports the root index as a value into the browser bundle;
 // exporting createOnboardingRecordService would pull fs/atomicFileUtils → @zcode/shared/node →
@@ -177,6 +178,7 @@ export type {
   WindowHostControllerMutation,
   WindowHostControllerTaskListItem,
   WindowHostControllerTaskListResult,
+  WindowHostTaskUnreadSignal,
 } from "./window-controller/windowController.js";
 
 // ZCode agent service — IZCodeAgentService is both a type (interface) and value (descriptor)
@@ -343,7 +345,32 @@ export {
 // Plugins service — IPluginsService is both a type (interface) and value (descriptor)
 export { IPluginsService } from "./plugins/plugins.js";
 // Thin Plugin Management service for Settings (the UI platform surface no longer calls zcodeAgentService directly).
-export { IPluginManagementService } from "./plugins/pluginManagement.js";
+export { IPluginManagementService, withPluginTelemetry } from "./plugins/pluginManagement.js";
+
+// API surface used by packages/ui (upstream 3.16.1). Exports only; no new writers are wired here.
+export {
+  ISourceServerManagementService,
+  type UpdateConnectionProfileInput,
+} from "./source-server-management/sourceServerManagement.js";
+
+export { IProjectService, LEGACY_SINGLE_ROOT_PROJECT_PREFIX } from "#src/project/contract.js";
+export type {
+  ProjectDirectories,
+  ProjectRoot,
+  ProjectTask,
+  ProjectTaskRef,
+  ProjectTree,
+  SaveProjectInput,
+  VirtualProject,
+} from "#src/project/contract.js";
+
+export { IRemoteProjectService } from "#src/remote-projects/contract.js";
+export type {
+  RemoteProjectCache,
+  RemoteProjectDirectory,
+  RemoteProjectEntry,
+  RemoteProjectHost,
+} from "#src/remote-projects/contract.js";
 
 // Subagents service — ISubagentsService is both a type (interface) and value (descriptor)
 export { ISubagentsService } from "./subagents/subagents.js";
