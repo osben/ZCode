@@ -53,7 +53,9 @@ const stableIntl = {
   formatMessage: ({ id }: { id: string }) => id,
 };
 
-function createTask(overrides: Partial<WebRemoteControlTaskTarget> = {}): WebRemoteControlTaskTarget {
+function createTask(
+  overrides: Partial<WebRemoteControlTaskTarget> = {},
+): WebRemoteControlTaskTarget {
   return {
     createdAt: 1,
     taskId: "task-1",
@@ -214,8 +216,7 @@ describe("WebRemoteControlTaskIndexRow hover actions", () => {
   afterEach(() => {
     delete (globalThis as { document?: unknown }).document;
     delete (globalThis as { window?: unknown }).window;
-    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown })
-      .IS_REACT_ACT_ENVIRONMENT;
+    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
   });
 
   it("renders pin and archive actions from row hover state", async () => {
@@ -280,7 +281,7 @@ describe("WebRemoteControlTaskIndexRow hover actions", () => {
     });
   });
 
-  it("renders unarchive and delete actions from archived row hover state", async () => {
+  it("keeps restore available and disables permanent Delete in Web remote control", async () => {
     const { WebRemoteControlTaskIndexRow } = await import("@/WebRemoteControlTaskIndexRow.js");
     const container = installMinimalDom();
     const root: Root = createRoot(container);
@@ -318,7 +319,14 @@ describe("WebRemoteControlTaskIndexRow hover actions", () => {
     });
 
     expect(findByAttributeValue(container, "aria-label", "taskList.unarchive")).not.toBeNull();
-    expect(findByAttributeValue(container, "aria-label", "taskList.delete")).not.toBeNull();
+    expect(findByAttributeValue(container, "aria-label", "taskList.delete")).toBeNull();
+    const blockedDelete = findByAttributeValue(
+      container,
+      "aria-label",
+      "taskDelete.remoteUnavailable",
+    );
+    expect(blockedDelete).not.toBeNull();
+    expect(blockedDelete?.__attrs.has("disabled")).toBe(true);
     expect(findByAttributeValue(container, "aria-label", "taskList.pin")).toBeNull();
     expect(findByAttributeValue(container, "aria-label", "taskList.unpin")).toBeNull();
     expect(findByAttributeValue(container, "aria-label", "taskList.archive")).toBeNull();

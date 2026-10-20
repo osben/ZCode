@@ -1823,6 +1823,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     activeTaskId={activeTaskId}
                     taskSortBy={taskSortBy}
                     mobileActiveTaskKey={mobileActiveTaskKey}
+                    isWebRemoteControl={isWebRemoteControlSidebar}
                     onSelectTask={handleTaskRowSelect}
                   />
                 ) : (
@@ -2068,6 +2069,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                   id: "workspaceSidebar.noConversations",
                                 })}
                                 mobileActiveTaskKey={mobileActiveTaskKey}
+                                isWebRemoteControl={isWebRemoteControlSidebar}
                                 onSelectTask={handleTaskRowSelect}
                               />
                             </WorkspacePurposeSection>

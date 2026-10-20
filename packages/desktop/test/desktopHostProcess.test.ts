@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostMessageTypes, HostResponseTypes } from "@zcode/shared";
+import {
+  HostMessageTypes,
+  HostResponseTypes,
+  hostIncomingMessageSchema,
+  hostResponseMessageSchema,
+} from "@zcode/shared";
 import {
   disposeHostProcess,
   disposeHostProcessAndWait,
@@ -207,6 +212,66 @@ describe("desktopHostProcess local media preview authorization", () => {
         path: "/real/video.mp4",
       });
     });
+  });
+});
+
+describe("desktopHostProcess open workspace inventory", () => {
+  it("accepts only the strict Host request and Main response contracts", () => {
+    expect(
+      hostResponseMessageSchema.safeParse({
+        type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+        requestId: "inventory-1",
+      }).success,
+    ).toBe(true);
+    expect(
+      hostResponseMessageSchema.safeParse({
+        type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+        requestId: "inventory-1",
+        paths: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      hostIncomingMessageSchema.safeParse({
+        type: HostMessageTypes.OpenWorkspaceInventoryResult,
+        requestId: "inventory-1",
+        available: false,
+        paths: [],
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    [{ available: true, paths: ["/repo", "/repo/.worktrees/task"] }],
+    [{ available: false, paths: [] }],
+  ])("returns Main's authoritative inventory unchanged", (inventory) => {
+    const child = new MockUtilityProcess();
+    electronMock.fork.mockReturnValue(child);
+    spawnHostProcess(
+      { id: 7, webContents: { id: 11, postMessage: vi.fn() } } as never,
+      "local-window",
+      { type: HostMessageTypes.InitLocal, workspacePath: "/repo" },
+      {
+        hostProcessLocalEnv: {},
+        logger: { info: vi.fn(), warn: vi.fn() },
+        broadcastHub: { register: vi.fn(), unregister: vi.fn() } as never,
+        windowHostProcessMap: new Map(),
+        hostRunningTaskCountMap: new Map(),
+        getOpenWorkspaceInventory: () => inventory,
+      },
+    );
+    child.emit("message", {
+      type: HostResponseTypes.OpenWorkspaceInventoryRequest,
+      requestId: "inventory-1",
+    });
+    const response = child.postMessage.mock.calls.at(-1)![0];
+    expect(response).toEqual({
+      type: HostMessageTypes.OpenWorkspaceInventoryResult,
+      requestId: "inventory-1",
+      ...inventory,
+    });
+    expect(hostIncomingMessageSchema.safeParse(response).success).toBe(true);
+    child.emit("exit", 0);
   });
 });
 

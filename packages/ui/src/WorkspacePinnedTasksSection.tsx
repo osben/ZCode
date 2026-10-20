@@ -1,4 +1,5 @@
 /* eslint-disable max-lines -- The pinned list currently handles local queries, proactively injected remote results, and task-action dispatch; keep it together for consistent interactions. */
+import { useTaskDeleteDialog } from "@/hooks/useTaskDeleteDialog.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -73,6 +74,7 @@ export function WorkspacePinnedTasksSection({
   }) => void;
 }) {
   const { intl } = useZCodeIntl();
+  const taskDeletion = useTaskDeleteDialog();
   const baseServices = useBaseWorkspaceServices();
   const scopedWorkspaceTabs = useLocalWorkspaceScopes({
     workspaceTabs,
@@ -472,6 +474,7 @@ export function WorkspacePinnedTasksSection({
 
   return (
     <div className="flex flex-col gap-1 px-2 empty:hidden">
+      {taskDeletion.dialog}
       {renamingItemKey !== null ? (
         <TaskRenameDialog
           open
@@ -581,6 +584,7 @@ export function WorkspacePinnedTasksSection({
         </ContextMenuTrigger>
         {contextMenuItem && contextMenuServices ? (
           <TaskListItemContextMenuContent
+            onDeleteTask={() => taskDeletion.open(contextMenuItem, true)}
             workspacePath={contextMenuItem.workspacePath}
             remoteSessionId={
               contextMenuItem.workspaceIdentity

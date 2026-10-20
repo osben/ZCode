@@ -45,6 +45,7 @@ export const TaskList = memo(function TaskList({
   onRenameTask,
   onSetTaskPinned,
   onArchiveTask,
+  onDeleteTask,
   onSetTaskUnread,
   mobileActiveTaskKey,
   readOnlyReason,
@@ -67,6 +68,7 @@ export const TaskList = memo(function TaskList({
   onRenameTask: (taskId: string, title: string) => Promise<ZCodeTaskMeta | null>;
   onSetTaskPinned: (taskId: string, pinned: boolean) => Promise<ZCodeTaskMeta | null>;
   onArchiveTask: (taskId: string) => Promise<ZCodeTaskMeta | null>;
+  onDeleteTask?: (taskId: string) => void;
   onSetTaskUnread: (taskId: string, unread: boolean) => Promise<ZCodeTaskMeta | null>;
   mobileActiveTaskKey?: string | null;
   readOnlyReason?: string;
@@ -375,6 +377,7 @@ export const TaskList = memo(function TaskList({
         onTogglePinTask={handleTogglePinTask}
         onStartRenameTask={handleStartRenameTask}
         onArchiveTask={handleArchiveTask}
+        onDeleteTask={onDeleteTask}
         onMarkTaskAsUnread={handleMarkTaskAsUnread}
         onOpenTaskContextMenu={handleOpenTaskContextMenu}
         actionsDisabled={Boolean(readOnlyReason)}
@@ -464,6 +467,7 @@ export const TaskList = memo(function TaskList({
                   onTogglePinTask={handleTogglePinTask}
                   onStartRenameTask={handleStartRenameTask}
                   onArchiveTask={handleArchiveTask}
+                  onDeleteTask={onDeleteTask ? (taskId) => onDeleteTask(taskId) : undefined}
                   onMarkTaskAsUnread={handleMarkTaskAsUnread}
                   disableTaskActions={Boolean(readOnlyReason)}
                   disabledReason={readOnlyReason}

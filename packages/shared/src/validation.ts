@@ -772,6 +772,15 @@ export const hostFeedbackLogArchiveResultMessageSchema = z.object({
   error: z.string().optional(),
 });
 
+export const hostOpenWorkspaceInventoryResultMessageSchema = z
+  .object({
+    type: z.literal("open-workspace-inventory-result"),
+    requestId: nonEmptyStringSchema,
+    available: z.boolean(),
+    paths: z.array(nonEmptyStringSchema),
+  })
+  .strict();
+
 // main → host: dispatch a scheduled task when it is due. A session-bound cron with targetTaskId sends
 // the prompt directly to the current session; only older unbound tasks fall back to createTask + sendPrompt.
 export const hostCronRunMessageSchema = z.object({
@@ -917,6 +926,7 @@ export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostSessionMessageDeliverMessageSchema,
   hostSessionMessageDeliveryResultMessageSchema,
   hostFeedbackLogArchiveResultMessageSchema,
+  hostOpenWorkspaceInventoryResultMessageSchema,
   hostCronRunMessageSchema,
   hostOffPeakRunMessageSchema,
   hostBrowserExecuteResultMessageSchema,
@@ -1298,6 +1308,13 @@ export const hostFeedbackLogArchiveRequestResponseSchema = z.object({
   sourceDir: nonEmptyStringSchema,
 });
 
+export const hostOpenWorkspaceInventoryRequestResponseSchema = z
+  .object({
+    type: z.literal("open-workspace-inventory-request"),
+    requestId: nonEmptyStringSchema,
+  })
+  .strict();
+
 // host → main: scheduled-task dispatch result. ok means the session was created and the prompt was sent.
 export const hostCronRunResultResponseSchema = z.object({
   type: z.literal("cron-run-result"),
@@ -1515,6 +1532,7 @@ export const hostResponseMessageSchema = z.discriminatedUnion("type", [
   hostSessionRouteAnnounceResponseSchema,
   hostSessionMessageDeliverResultResponseSchema,
   hostFeedbackLogArchiveRequestResponseSchema,
+  hostOpenWorkspaceInventoryRequestResponseSchema,
   hostBrowserExecuteRequestResponseSchema,
   hostLocalMediaPreviewPathAuthorizeRequestResponseSchema,
   hostPluginSandboxRegisterRequestResponseSchema,

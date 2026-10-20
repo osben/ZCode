@@ -6,7 +6,7 @@ import type { ZCodeTaskTreeCounts } from "@zcode/services";
 import { SessionManagerDeleteDialog } from "@/session-manager/SessionManagerDeleteDialog.js";
 import type { SessionManagerRow } from "@/session-manager/sessionManagerModel.js";
 
-// specs/session-deletion-cascade.md §2-§3: child-aware Hide copy and the opt-in erase step.
+// Permanent deletion shares the dialog; pinned inclusion remains explicit.
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
@@ -55,7 +55,8 @@ function mount(options: {
     createElement(SessionManagerDeleteDialog, {
       selectedRows: options.rows ?? [makeRow("a")],
       loadTreeCounts: async () => options.counts,
-      canEraseRow: () => options.canErase ?? true,
+      loadCapability: async () => options.canErase ?? true,
+      loadWorktreePreview: async () => [],
       onCancel: vi.fn(),
       onConfirm,
     }),
@@ -64,64 +65,60 @@ function mount(options: {
 }
 
 describe("SessionManagerDeleteDialog", () => {
-  it("lists the children that are hidden together with the sessions", async () => {
-    mount({ counts: counts({ sideChats: 2, subagents: 3, total: 6 }) });
+  it("shows exact descendants and confirms permanent deletion without an erase checkbox", async () => {
+    const { onConfirm } = mount({ counts: counts({ sideChats: 2, subagents: 3, total: 6 }) });
     expect(
       await screen.findByText(
-        "sessionManager.delete.includes:taskList.childSideChatsCount:2, taskList.childSubagentsCount:3",
+        "taskDelete.includes:taskList.childSideChatsCount:2, taskList.childSubagentsCount:3",
       ),
     ).toBeTruthy();
-    expect(screen.queryByText("sessionManager.delete.includesGeneric")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    const button = screen.getByRole("button", { name: "taskDelete.confirm:1" });
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledWith([expect.objectContaining({ taskKey: "a" })]);
   });
 
-  it("shows no child line for sessions without children", async () => {
+  it("omits zero child categories", async () => {
     mount({ counts: counts() });
-    await screen.findByText("sessionManager.erase.checkbox");
-    expect(screen.queryByText(/sessionManager\.delete\.includes/)).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "taskDelete.confirm:1" }).hasAttribute("disabled"),
+      ).toBe(false),
+    );
+    expect(screen.queryByText(/taskDelete\.includes/)).toBeNull();
   });
 
-  it("falls back to the generic sentence and hides erase when counts are unavailable", async () => {
+  it("shows a generic descendant warning when counts fail", async () => {
     mount({ counts: null });
-    expect(await screen.findByText("sessionManager.delete.includesGeneric")).toBeTruthy();
-    expect(screen.queryByText("sessionManager.erase.checkbox")).toBeNull();
+    expect(await screen.findByText("taskDelete.includesGeneric")).toBeTruthy();
   });
 
-  it("hides erase for workspaces that cannot erase", async () => {
-    mount({ counts: counts({ sideChats: 1 }), canErase: false });
-    await screen.findByText(/sessionManager\.delete\.includes:/);
-    expect(screen.queryByText("sessionManager.erase.checkbox")).toBeNull();
+  it("disables unsupported deletion", async () => {
+    const { onConfirm } = mount({ counts: counts(), canErase: false });
+    expect(await screen.findByText("taskDelete.unsupported")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "taskDelete.confirm:1" }));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("confirms Hide without erase by default", async () => {
-    const { onConfirm } = mount({ counts: counts({ subagents: 1, total: 2 }) });
-    await screen.findByText("sessionManager.erase.checkbox");
-    fireEvent.click(screen.getByRole("button", { name: "sessionManager.delete.confirm:1" }));
-    expect(onConfirm).toHaveBeenCalledWith([expect.objectContaining({ taskKey: "a" })], {
-      erase: false,
-    });
+  it("blocks running trees instead of offering a hide-only action", async () => {
+    const { onConfirm } = mount({ counts: counts({ running: 2 }) });
+    expect(await screen.findByText("taskDelete.running:2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "taskDelete.confirm:1" }));
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("switches the confirm to Erase with the exact total once the checkbox is on", async () => {
-    const { onConfirm } = mount({ counts: counts({ subagents: 1, total: 2 }) });
-    fireEvent.click(await screen.findByRole("checkbox", { name: "sessionManager.erase.checkbox" }));
-    expect(screen.getByText("sessionManager.erase.warning:2")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "sessionManager.erase.confirm:1" }));
-    expect(onConfirm).toHaveBeenCalledWith([expect.objectContaining({ taskKey: "a" })], {
-      erase: true,
-    });
-  });
-
-  it("warns about running sessions and keeps erase unavailable", async () => {
-    const { onConfirm } = mount({ counts: counts({ running: 2, total: 3 }) });
-    expect(await screen.findByText("sessionManager.delete.running:2")).toBeTruthy();
-    const checkbox = screen.getByRole("checkbox", { name: "sessionManager.erase.checkbox" });
-    expect(
-      checkbox.hasAttribute("disabled") || checkbox.getAttribute("data-disabled") !== null,
-    ).toBe(true);
-    expect(screen.getByText("sessionManager.erase.blocked:2")).toBeTruthy();
+  it("keeps pinned sessions excluded until the user opts in", async () => {
+    const pinned = { ...makeRow("pinned"), pinned: true };
+    const { onConfirm } = mount({ counts: counts(), rows: [makeRow("a"), pinned] });
+    const checkbox = await screen.findByRole("checkbox", { name: "taskDelete.includePinned:1" });
     fireEvent.click(checkbox);
-    await waitFor(() => expect(screen.queryByText("sessionManager.erase.warning:3")).toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "sessionManager.delete.confirm:1" }));
-    expect(onConfirm).toHaveBeenCalledWith(expect.anything(), { erase: false });
+    const button = await screen.findByRole("button", { name: "taskDelete.confirm:2" });
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledWith([
+      expect.objectContaining({ taskKey: "a" }),
+      expect.objectContaining({ taskKey: "pinned" }),
+    ]);
   });
 });

@@ -3106,7 +3106,8 @@ async function resetE2EHome(specs: string[] = []) {
   if (
     usesProviderReadinessColdStartFixture(specs) ||
     usesGroupedHeaderPinVisibilityFixture(specs) ||
-    usesGitReviewEntryFixture(specs)
+    usesGitReviewEntryFixture(specs) ||
+    workerSpecsContain(specs, "conversation-session-permanent-delete.test.ts")
   ) {
     // TSL27 / SP13 must seed both a real task row and an openable CLI session before the Host
     // opens tasks-index; injecting temporarily inside the test would bypass the Header and status

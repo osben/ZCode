@@ -1958,6 +1958,17 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           logger,
           broadcastHub,
           taskRealtimeBus,
+          getOpenWorkspaceInventory: () => {
+            const windows = getMainApplicationWindows();
+            // Preparation snapshots are window-Host-owned. Until all Hosts can answer one
+            // preparation inventory, retain worktrees when another Host could be preparing one.
+            const available =
+              windows.length === 1 && windows.every((window) => windowWorkspaceMap.has(window.id));
+            return {
+              available,
+              paths: [...new Set([...windowWorkspaceMap.values()].flatMap((paths) => [...paths]))],
+            };
+          },
           windowHostProcessMap,
           hostRunningTaskCountMap,
           onCuaOperationStateChanged: (source, event) =>

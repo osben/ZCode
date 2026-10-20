@@ -19,6 +19,8 @@ export function TaskListItemContextMenu({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
+  onDeleteTask,
+  deleteDisabledReason,
   onMarkTaskAsUnread,
   onOpenInSplitPane,
   openInSplitPaneDisabled,
@@ -51,6 +53,8 @@ export function TaskListItemContextMenu({
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
   /** “Open in split pane” (provided only by the desktop shell). */
   onOpenInSplitPane?: () => void;
@@ -83,6 +87,8 @@ export function TaskListItemContextMenu({
         onTogglePinTask={onTogglePinTask}
         onStartRenameTask={onStartRenameTask}
         onArchiveTask={onArchiveTask}
+        onDeleteTask={onDeleteTask}
+        deleteDisabledReason={deleteDisabledReason}
         onMarkTaskAsUnread={onMarkTaskAsUnread}
         onOpenInSplitPane={onOpenInSplitPane}
         openInSplitPaneDisabled={openInSplitPaneDisabled}

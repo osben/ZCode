@@ -1,9 +1,14 @@
-import { TID_TASK_VIEW_MODEL_TRAJECTORY, TID_V4_TASK_OPEN_IN_SPLIT } from "@zcode/shared";
+import {
+  TID_TASK_DELETE,
+  TID_TASK_VIEW_MODEL_TRAJECTORY,
+  TID_V4_TASK_OPEN_IN_SPLIT,
+} from "@zcode/shared";
 
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
   "data-testid"?: string;
   disabled?: boolean;
+  variant?: "default" | "destructive";
   onSelect?: () => void;
   title?: string;
 }
@@ -30,6 +35,8 @@ export function TaskActionMenuContent({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
+  onDeleteTask,
+  deleteDisabledReason,
   onMarkTaskAsUnread,
   onOpenInSplitPane,
   openInSplitPaneDisabled = false,
@@ -65,6 +72,8 @@ export function TaskActionMenuContent({
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
   /** “Open in split pane” (provided only by the desktop shell; hidden on mobile remote control). */
   onOpenInSplitPane?: () => void;
@@ -116,6 +125,19 @@ export function TaskActionMenuContent({
       >
         {intl.formatMessage({ id: "taskList.archive" })}
       </Item>
+      {onDeleteTask ? (
+        <Item
+          data-testid={TID_TASK_DELETE}
+          variant="destructive"
+          disabled={taskTargetActionsDisabled || Boolean(deleteDisabledReason)}
+          title={deleteDisabledReason ?? disabledReason}
+          onSelect={() => {
+            if (!taskTargetActionsDisabled && !deleteDisabledReason) onDeleteTask();
+          }}
+        >
+          {intl.formatMessage({ id: "taskList.delete" })}
+        </Item>
+      ) : null}
       <Item
         disabled={taskTargetActionsDisabled}
         title={disabledReason}
