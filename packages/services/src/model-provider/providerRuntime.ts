@@ -25,6 +25,9 @@ import {
   type ProviderSettingsConnectivityTester,
 } from "./providerFacadeServices.js";
 import type { ProviderSettingsAcpAgentsBridge } from "./acpAgentsContract.js";
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
+
+const log = createServiceLogger("provider-runtime");
 
 export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   readonly accountSource?: RefreshableProviderSource<AccountProviderConfigSnapshot>;
@@ -198,15 +201,20 @@ function createSettingsMutationTarget(
       ),
     refresh: (reason) => registryService.refresh(reason),
     refreshSources: async (reason) => {
-      const sourceResults = await Promise.allSettled([
+      const [builtinResult, accountResult] = await Promise.allSettled([
         configRuntime.refreshZCodeBuiltin({ force: true }),
         accountSource.refresh?.(reason) ?? Promise.resolve(),
       ]);
+      // A failed remote Builtin update does not make the local config unusable. Throwing here used to roll back
+      // plan switches and hide real account failures, so only the remote update is downgraded; account errors still propagate.
+      if (builtinResult.status === "rejected") {
+        log.warn(undefined, "Builtin remote update failed; continuing with local config", {
+          reason,
+          error: builtinResult.reason,
+        });
+      }
       const snapshot = await registryService.refresh(reason);
-      const failed = sourceResults.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      if (failed) throw failed.reason;
+      if (accountResult.status === "rejected") throw accountResult.reason;
       return snapshot;
     },
   };
