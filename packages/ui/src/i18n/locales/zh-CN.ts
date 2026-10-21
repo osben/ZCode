@@ -7298,6 +7298,7 @@ const zhCN: Record<string, string> = {
   "chat.contextUsage.tone.warning": "警告：已达到微压缩阈值。",
   "chat.contextUsage.autoCompact": "自动压缩",
   "chat.composer.backgroundWorks.tooltipDream": "查看记忆整理进度",
+  "chat.composer.backgroundWorks.tooltipDreamResult": "查看上次记忆整理结果",
   "settings.instructions.title": "指令",
   "settings.outputStyles.title": "输出风格",
   "settings.systemPrompt.title": "系统提示词",

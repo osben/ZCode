@@ -7681,6 +7681,7 @@ const enUS: Record<string, string> = {
   "chat.contextUsage.tone.warning": "Warning: microcompact threshold reached.",
   "chat.contextUsage.autoCompact": "Auto-compact",
   "chat.composer.backgroundWorks.tooltipDream": "Open memory consolidation",
+  "chat.composer.backgroundWorks.tooltipDreamResult": "View last memory consolidation",
   "settings.instructions.title": "Instructions",
   "settings.outputStyles.title": "Output Styles",
   "settings.systemPrompt.title": "System Prompts",

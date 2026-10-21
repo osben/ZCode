@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act, createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -244,5 +246,15 @@ describe("ConversationQuotaBanner auto-continue timer", () => {
 
     expect(originalCallback).not.toHaveBeenCalled();
     expect(latestCallback).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Coding Plan auto-continue wiring", () => {
+  it("passes the fork default, readiness and resume handler from SessionPane to the banner", () => {
+    const source = readFileSync(join(import.meta.dirname, "../src/v4/SessionPane.tsx"), "utf8");
+    const banner = source.slice(source.indexOf("<ConversationQuotaBanner"));
+    expect(banner).toContain("sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false");
+    expect(banner).toContain("autoContinueReady={sharedSettings !== null}");
+    expect(banner).toContain("quotaBanner.state.providerLimitedResetAt !== null");
   });
 });

@@ -5044,6 +5044,8 @@ const ukUA: Record<string, string> = {
   "chat.summaryPanel.stopRunningBackgroundTask": "Зупинити фонове завдання",
   "chat.summaryPanel.openRunningSubagentSession": "Відкрити сеанс субагента",
   "chat.composer.backgroundWorks.tooltipDream": "Відкрити впорядкування пам'яті",
+  "chat.composer.backgroundWorks.tooltipDreamResult":
+    "Переглянути останній результат впорядкування пам'яті",
   "chat.statusPanel.dream": "Впорядкування пам'яті",
   "chat.statusPanel.dream.running": "Виконується",
   "chat.statusPanel.dream.resultPending": "Завершено",
