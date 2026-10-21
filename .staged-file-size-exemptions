@@ -271,3 +271,10 @@ packages/ui/src/v4/composer/useComposerAttachments.ts
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
+
+# TEMPORARY(claude/ui-tail-shell): fork command center (worktree palette, page stack), settings (sessions, instructions, voice, palette, fonts), root and side-pane wiring keep fork features that specs/composer-worktree-setup-steps.md, specs/manage-sessions-table.md, specs/global-instructions.md, specs/themes.md, specs/voice-dictation.md and specs/sidebar-child-conversation-counts.md require. Remove once these files are split below 20000 bytes.
+packages/ui/src/command-center/CommandCenterDialog.tsx
+packages/ui/src/SettingsPage.tsx
+packages/ui/src/Root.tsx
+packages/ui/src/app-shell/AnimatedSidePanePanel.tsx
+packages/ui/src/ModelConfigSelect.tsx
