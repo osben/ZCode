@@ -17,7 +17,6 @@ import {
   persistV4ComposerDraft,
   subscribeV4ComposerDrafts,
   getV4ComposerDraftVersion,
-  isV4FirstSubmissionActive,
   type V4ComposerDraft,
 } from "./composerDraftStore.js";
 
@@ -78,7 +77,7 @@ export function FirstSubmissionPreview({
                 ? "firstSubmission.unknown"
                 : pending?.status === "sending"
                   ? "firstSubmission.synchronizing"
-                  : "composerRecovery.title",
+                  : "firstSubmission.preparing",
         })}
       </div>
     </div>
@@ -127,11 +126,7 @@ export function ComposerWorktreeRecovery({
     });
   }, [draft, manifest, recoveryScope, workspaceIdentity, workspacePath]);
   if (!draft) return null;
-  if (
-    draft.firstSubmission &&
-    isV4FirstSubmissionActive(workspacePath, workspaceIdentity, draft.firstSubmission.submissionId)
-  )
-    return null;
+  if (draft.firstSubmission) return null;
   const missing = (draft.recoveryAttachments ?? []).filter(
     (file) =>
       ![...attachments, ...(recoveryFiles ?? [])].some(
@@ -155,10 +150,8 @@ export function ComposerWorktreeRecovery({
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
       <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
-      {!draft.firstSubmission ? (
-        <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
-      ) : null}
-      {(!draft.firstSubmission ? (draft.recoveryAttachments ?? []) : []).map((file) => (
+      <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
+      {(draft.recoveryAttachments ?? []).map((file) => (
         <span className="mr-2" key={file.id}>
           {file.filename}
         </span>
@@ -169,12 +162,7 @@ export function ComposerWorktreeRecovery({
         <Button
           size="sm"
           variant="outline"
-          disabled={
-            occupied ||
-            missing.length > 0 ||
-            draft.firstSubmission?.status === "unknown" ||
-            draft.firstSubmission?.status === "sending"
-          }
+          disabled={occupied || missing.length > 0}
           onClick={() => {
             moveComposerAttachmentScopeItems(
               `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
