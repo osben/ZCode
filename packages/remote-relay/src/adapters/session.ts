@@ -8,10 +8,17 @@ import {
   verify,
   type KeyObject,
 } from "node:crypto";
+import {
+  ENROLLMENT_POW_MAX_DIFFICULTY,
+  ENROLLMENT_POW_MIN_DIFFICULTY,
+} from "@zcode/shared/web-remote-relay";
+import { createEnrollmentGate } from "./enrollmentGate.js";
 import type {
   RelayDeviceKeyExchange,
   RelayDeviceKeyResult,
   RelayDeviceKeyStore,
+  RelayJwtClaims,
+  RelayKeyTier,
   RelaySession,
   RelaySessionService,
 } from "../contract.js";
@@ -28,6 +35,9 @@ const DEVICE_KEY_SIGNING_DOMAIN = "zcode-relay-device-session-v1\nzcode-remote-r
 const DEVICE_KEY_WINDOW_SECONDS = 60;
 const REPLAY_RETENTION_MS = 120_000;
 const DEFAULT_MAX_REPLAY_ENTRIES = 100_000;
+const DEFAULT_POW_DIFFICULTY = 22;
+const DEFAULT_MAX_ENROLLED_KEYS = 10_000;
+const DEFAULT_ENROLLMENTS_PER_HOUR = 300;
 const PAIRING_TTL_SECONDS = 300;
 const MAX_PAIRINGS_PER_USER = 8;
 const MAX_PAIRINGS_TOTAL = 10_000;
@@ -48,8 +58,18 @@ export interface IdentityVerifierConfig {
 
 export interface DeviceKeyIdentityConfig {
   mode: "device-key";
-  enrollmentSecret: string;
+  /** Owner enrollment. Required unless `enrollment.mode` is `open`, where it is optional. */
+  enrollmentSecret?: string;
   keys: RelayDeviceKeyStore;
+  enrollment?: {
+    mode: "secret" | "open";
+    /** Leading zero bits of the open-enrollment proof of work. */
+    difficulty?: number;
+    /** Open-tier key cap; reaching it stops new open enrollments (breaker). */
+    maxEnrolledKeys?: number;
+    /** Open enrollments per rolling hour before the breaker opens. */
+    enrollmentsPerHour?: number;
+  };
 }
 
 export interface RelaySessionConfig {
@@ -203,20 +223,40 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
   if (zaiIdentity && identityKeys.length === 0) throw new Error("Identity key set is empty.");
   const identity = zaiIdentity ? { ...zaiIdentity, keyObjects: identityKeys } : undefined;
   const mode = deviceIdentity ? "device-key" : "zai-jwt";
-  if (deviceIdentity && deviceIdentity.enrollmentSecret.length === 0)
+  const openEnrollment = deviceIdentity?.enrollment?.mode === "open";
+  if (deviceIdentity && !deviceIdentity.enrollmentSecret && !openEnrollment)
     throw new Error("Enrollment secret is missing.");
-  const secretDigest = deviceIdentity
+  const secretDigest = deviceIdentity?.enrollmentSecret
     ? createHash("sha256").update(deviceIdentity.enrollmentSecret).digest()
     : undefined;
+  const difficulty = deviceIdentity?.enrollment?.difficulty ?? DEFAULT_POW_DIFFICULTY;
+  if (
+    !Number.isInteger(difficulty) ||
+    difficulty < ENROLLMENT_POW_MIN_DIFFICULTY ||
+    difficulty > ENROLLMENT_POW_MAX_DIFFICULTY
+  ) {
+    throw new Error("Enrollment difficulty is out of range.");
+  }
+  const maxEnrolledKeys = deviceIdentity?.enrollment?.maxEnrolledKeys ?? DEFAULT_MAX_ENROLLED_KEYS;
+  const enrollmentsPerHour =
+    deviceIdentity?.enrollment?.enrollmentsPerHour ?? DEFAULT_ENROLLMENTS_PER_HOUR;
+  const gate = createEnrollmentGate({
+    difficulty,
+    maxEnrolledKeys,
+    enrollmentsPerHour,
+  });
   const maxReplayEntries = config.maxReplayEntries ?? DEFAULT_MAX_REPLAY_ENTRIES;
   // Entries share one retention window, so insertion order is expiry order and pruning pops from the front.
   const seenNonces = new Map<string, number>();
-  const pairings = new Map<string, { userId: string; expiresAt: number }>();
+  const pairings = new Map<string, { userId: string; expiresAt: number; tier: RelayKeyTier }>();
   const active = signing[0];
   const activeSigner = active?.signer;
   if (!active || !activeSigner) throw new Error("Relay signing keys are missing.");
 
-  const issue = (userId: string, viaPairing = false): RelaySession => {
+  const issue = (
+    userId: string,
+    options: { viaPairing?: boolean; tier?: RelayKeyTier } = {},
+  ): RelaySession => {
     const issuedAt = Math.floor(config.now() / 1000);
     const header = { alg: "EdDSA", typ: "JWT", kid: active.kid };
     const claims = {
@@ -226,13 +266,17 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       iat: issuedAt,
       exp: issuedAt + config.ttlSeconds,
       // Marks sessions obtained from a pairing code; /pairing refuses them so they cannot renew themselves.
-      ...(viaPairing ? { amr: ["pairing"] } : {}),
+      ...(options.viaPairing ? { amr: ["pairing"] } : {}),
+      ...(options.tier === undefined ? {} : { tier: options.tier }),
     };
     const signingInput = `${Buffer.from(JSON.stringify(header)).toString("base64url")}.${Buffer.from(
       JSON.stringify(claims),
     ).toString("base64url")}`;
     const signature = sign(null, Buffer.from(signingInput), activeSigner).toString("base64url");
-    return { jwt: `${signingInput}.${signature}`, expiresIn: config.ttlSeconds };
+    return {
+      jwt: `${signingInput}.${signature}`,
+      expiresIn: config.ttlSeconds,
+    };
   };
 
   const secretMatches = (presented: string | undefined): boolean => {
@@ -293,15 +337,39 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
         valid = false;
       }
       if (!valid) return { status: "denied" };
-      let enrolled: boolean;
+      // Stateless proof of work runs before any store call, so anonymous floods never queue store IO.
+      if (request.work !== undefined) {
+        if (
+          !openEnrollment ||
+          !gate.workIsValid(request.publicKey, request.work, Math.floor(nowMs / 1000))
+        ) {
+          return { status: "denied" };
+        }
+      }
+      let lookup;
       try {
-        enrolled = await deviceIdentity.keys.isEnrolled(request.publicKey);
+        lookup = await deviceIdentity.keys.lookup(request.publicKey);
       } catch {
         return { status: "busy" };
       }
-      if (!enrolled) {
-        if (request.enrollmentSecret === undefined) return { status: "not-enrolled" };
-        if (!secretMatches(request.enrollmentSecret)) return { status: "denied" };
+      let enrollAs: RelayKeyTier | undefined;
+      const tier = lookup.tier;
+      if (tier === undefined) {
+        if (request.enrollmentSecret !== undefined) {
+          if (!secretMatches(request.enrollmentSecret)) return { status: "denied" };
+          enrollAs = "owner";
+        } else if (request.work !== undefined) {
+          if (gate.breakerOpen(nowMs, lookup.openKeys)) return { status: "closed" };
+          enrollAs = "open";
+        } else if (openEnrollment) {
+          if (gate.breakerOpen(nowMs, lookup.openKeys)) return { status: "closed" };
+          return {
+            status: "not-enrolled",
+            challenge: gate.issueChallenge(request.publicKey, Math.floor(nowMs / 1000)),
+          };
+        } else {
+          return { status: "not-enrolled" };
+        }
       }
       // Reserve the nonce synchronously after the awaits so concurrent replays cannot both pass.
       pruneSeen(nowMs);
@@ -309,17 +377,28 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       if (seenNonces.has(replayKey)) return { status: "denied" };
       if (seenNonces.size >= maxReplayEntries) return { status: "busy" };
       seenNonces.set(replayKey, nowMs + REPLAY_RETENTION_MS);
-      if (!enrolled) {
+      if (enrollAs !== undefined) {
         try {
-          await deviceIdentity.keys.enroll(request.publicKey, Math.floor(nowMs / 1000));
+          await deviceIdentity.keys.enroll(request.publicKey, Math.floor(nowMs / 1000), enrollAs);
         } catch {
           return { status: "busy" };
         }
+        if (enrollAs === "open") gate.recordEnrollment(nowMs);
+      } else {
+        // Best effort: last-seen only drives idle expiry, so a failed write must not fail a login.
+        void deviceIdentity.keys
+          .touch(request.publicKey, Math.floor(nowMs / 1000))
+          .catch(() => undefined);
       }
       const digest = createHash("sha256")
         .update(Buffer.from(request.publicKey, "base64url"))
         .digest("base64url");
-      return { status: "ok", session: issue(`${DEVICE_KEY_SUBJECT_PREFIX}${digest}`) };
+      return {
+        status: "ok",
+        session: issue(`${DEVICE_KEY_SUBJECT_PREFIX}${digest}`, {
+          tier: enrollAs ?? tier ?? "open",
+        }),
+      };
     },
     exchangePairing(code) {
       if (!deviceIdentity || !PAIRING_CODE_PATTERN.test(code)) return undefined;
@@ -329,9 +408,11 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       const entry = pairings.get(key);
       if (!entry) return undefined;
       pairings.delete(key);
-      return entry.expiresAt > nowMs ? issue(entry.userId, true) : undefined;
+      return entry.expiresAt > nowMs
+        ? issue(entry.userId, { viaPairing: true, tier: entry.tier })
+        : undefined;
     },
-    createPairing(userId) {
+    createPairing(userId, tier) {
       if (!deviceIdentity) return undefined;
       const nowMs = config.now();
       prunePairings(nowMs);
@@ -341,22 +422,20 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       const code = randomBytes(16).toString("base64url");
       pairings.set(createHash("sha256").update(code).digest("base64url"), {
         userId,
+        tier,
         expiresAt: nowMs + PAIRING_TTL_SECONDS * 1000,
       });
       return { code, expiresIn: PAIRING_TTL_SECONDS };
     },
-    pairingOwner(jwt) {
-      const claims = verifyClaims(jwt);
-      if (!claims || (Array.isArray(claims.amr) && claims.amr.includes("pairing")))
-        return undefined;
-      return claims.sub;
+    claims(jwt) {
+      return verifyClaims(jwt);
     },
     verify(jwt) {
-      return verifyClaims(jwt)?.sub;
+      return verifyClaims(jwt)?.userId;
     },
   };
 
-  function verifyClaims(jwt: string): { sub: string; amr?: unknown } | undefined {
+  function verifyClaims(jwt: string): RelayJwtClaims | undefined {
     {
       const parts = splitCompact(jwt);
       if (!parts) return undefined;
@@ -377,7 +456,13 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       // The two modes use disjoint subject namespaces, so a JWT minted under one mode never verifies under the other.
       if (payload.sub.startsWith(DEVICE_KEY_SUBJECT_PREFIX) !== (mode === "device-key"))
         return undefined;
-      return { sub: payload.sub, amr: payload.amr };
+      return {
+        userId: payload.sub,
+        expiresAt: payload.exp,
+        viaPairing: Array.isArray(payload.amr) && payload.amr.includes("pairing"),
+        // Legacy device-key JWTs have no claim and get the smaller quota until they are renewed.
+        ...(mode === "device-key" ? { tier: payload.tier === "owner" ? "owner" : "open" } : {}),
+      } as RelayJwtClaims;
     }
   }
 }

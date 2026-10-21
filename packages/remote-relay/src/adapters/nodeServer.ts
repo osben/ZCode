@@ -10,11 +10,17 @@ import type { RelayServer, RelayServerOptions } from "../contract.js";
 import { createRelayRegistry } from "../app/relay.js";
 import { createRelayHttpApi, RELAY_API_PREFIX, type RelayHttpResponse } from "../app/http.js";
 import { RelayTokenStore, type RelayTokenGrant } from "../domain/tokens.js";
+import { IdentityLimits } from "../domain/identityLimits.js";
+import { limiterKey } from "./ipBucket.js";
 
 /** Largest client frame the relay accepts (V2 contract: 1 MiB text). */
 const MAX_FRAME_BYTES = 1_048_576;
 const MAX_HTTP_BODY_BYTES = 16 * 1024;
 const WS_PATH = WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH;
+/** Close code for a credential that expired while its socket was live (the phone maps 4011 to session-expired). */
+const CLOSE_SESSION_EXPIRED = 4011;
+/** setTimeout stores a 32-bit delay; longer values would fire immediately. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 function positive(value: number | undefined, fallback: number) {
   if (value === undefined) return fallback;
@@ -37,6 +43,7 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
   const pongs = new Map<WebSocket, number>();
   const rateWindows = new Map<string, { count: number; until: number }>();
   const grants = new WeakMap<IncomingMessage, RelayTokenGrant>();
+  const limits = new IdentityLimits(now, options.identityLimits);
   const tokens = new RelayTokenStore({
     now,
     randomToken: () => randomBytes(16).toString("base64url"),
@@ -52,6 +59,7 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
     live: registry,
     tokens,
     session: options.session,
+    limits,
     now,
   });
   const wsServer = new WebSocketServer({
@@ -130,7 +138,10 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
     }
     if (size === 0) return { body: undefined, bodyError: false };
     try {
-      return { body: JSON.parse(Buffer.concat(chunks).toString("utf8")), bodyError: false };
+      return {
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        bodyError: false,
+      };
     } catch {
       return { body: undefined, bodyError: true };
     }
@@ -164,7 +175,7 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
         request.method === "POST" &&
         (path === `${RELAY_API_PREFIX}/session` || path === `${RELAY_API_PREFIX}/device`);
       let result: RelayHttpResponse;
-      if (anonymousWrite && !allowAnonymousWrite(sourceIp(request))) {
+      if (anonymousWrite && !allowAnonymousWrite(limiterKey(sourceIp(request)))) {
         result = { status: 429, body: { code: 4029, msg: "rate limited" } };
       } else {
         result = await httpApi.handle({
@@ -209,8 +220,25 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
       reject(401, "Unauthorized");
       return;
     }
+    // Reserve the per-identity socket slot synchronously at admission; the connection close releases it.
+    if (grant.tier !== undefined) {
+      if (limits.overBudget(grant.userId, grant.tier)) {
+        reject(429, "Too Many Requests");
+        return;
+      }
+      if (!limits.acquireSocket(grant.userId, grant.tier)) {
+        reject(429, "Too Many Requests");
+        return;
+      }
+    }
     grants.set(request, grant);
-    wsServer.handleUpgrade(request, socket, head, (ws) => wsServer.emit("connection", ws, request));
+    let connected = false;
+    wsServer.handleUpgrade(request, socket, head, (ws) => {
+      connected = true;
+      wsServer.emit("connection", ws, request);
+    });
+    // ws aborts malformed handshakes without a callback; the reserved slot must not leak then.
+    if (!connected && grant.tier !== undefined) limits.releaseSocket(grant.userId);
   });
 
   wsServer.on("connection", (socket: WebSocket, request: IncomingMessage) => {
@@ -221,6 +249,22 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
     }
     sockets.add(socket);
     pongs.set(socket, now());
+    let expiry: NodeJS.Timeout | undefined;
+    if (grant.closeAtMs !== undefined) {
+      // A credential minted from a pairing code cannot be renewed, so its socket ends with it.
+      const closeAt = grant.closeAtMs;
+      const arm = () => {
+        const remaining = closeAt - now();
+        if (remaining > 0) {
+          expiry = setTimeout(arm, Math.min(remaining, MAX_TIMER_MS));
+          expiry.unref();
+          return;
+        }
+        if (socket.readyState === WebSocket.OPEN)
+          socket.close(CLOSE_SESSION_EXPIRED, "Session expired.");
+      };
+      arm();
+    }
     let pendingBytes = 0;
     let outboundBytes = 0;
     const pendingWrites = new Set<() => void>();
@@ -277,6 +321,8 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
       socket.terminate();
     });
     socket.on("close", () => {
+      if (expiry) clearTimeout(expiry);
+      if (grant.tier !== undefined) limits.releaseSocket(grant.userId);
       for (const release of pendingWrites) release();
       sockets.delete(socket);
       pongs.delete(socket);
@@ -290,6 +336,14 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
         pendingBytes + bytes.byteLength > maxBuffered
       ) {
         registry.reject(id, "WRONG_PARAM", "Message limit exceeded.");
+        return;
+      }
+      if (
+        grant.tier !== undefined &&
+        !limits.addBytes(grant.userId, grant.tier, bytes.byteLength)
+      ) {
+        options.logger?.warn("identity-byte-budget");
+        socket.close(1013, "Daily byte budget exceeded.");
         return;
       }
       pendingBytes += bytes.byteLength;
@@ -323,6 +377,10 @@ export async function createRelayServer(options: RelayServerOptions): Promise<Re
   const timer = setInterval(
     () => {
       registry.sweep();
+      const usage = limits.drain();
+      if (usage.length > 0 && options.store.recordUsage) {
+        options.store.recordUsage(usage).catch(() => options.logger?.warn("usage-flush-failed"));
+      }
       for (const [address, window] of rateWindows)
         if (window.until <= now()) rateWindows.delete(address);
       for (const socket of sockets) {

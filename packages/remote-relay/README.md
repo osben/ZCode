@@ -46,21 +46,28 @@ Client side (Desktop): set `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE=device-
 Startup fails closed: a missing or malformed required value stops the process, and the
 error names the variable, never its value.
 
-| Variable                                 | Required   | Meaning                                                                                            |
-| ---------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| `ZCODE_RELAY_DB_PATH`                    | yes        | SQLite file for device records. Keep it on a persistent volume, readable only by the relay user.   |
-| `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`    | yes        | JSON array of private Ed25519 JWKs (`kty: OKP`, `crv: Ed25519`, `kid`, `d`, `x`). The first signs. |
-| `ZCODE_REMOTE_RELAY_IDENTITY_MODE`       | see text   | `zai-jwt` or `device-key`. Defaults to `zai-jwt` when ISSUER or JWKS is set; otherwise required.   |
-| `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`   | device-key | At least 32 characters. Admits new device keys. Never put it in a client build or a PR.            |
-| `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER`     | zai-jwt    | Exact `iss` value the account login JWT must carry.                                                |
-| `ZCODE_REMOTE_RELAY_IDENTITY_JWKS`       | zai-jwt    | JWK set (`{"keys": [...]}` or a JSON array) of public keys for EdDSA, ES256 or RS256 login tokens. |
-| `ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE`   | no         | zai-jwt only: `aud` the login JWT must carry, when set.                                            |
-| `ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM` | no         | zai-jwt only: claim holding the user id. Default `sub`.                                            |
-| `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`     | no         | Relay JWT lifetime. Default `3600`, maximum `86400`.                                               |
-| `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`     | no         | Deadline for `auth_init` after connecting. Default `15000`.                                        |
-| `ZCODE_RELAY_HOST`, `ZCODE_RELAY_PORT`   | no         | Bind address (default `127.0.0.1`) and port (default `3031`).                                      |
-| `ZCODE_RELAY_ALLOWED_ORIGINS`            | no         | Exact Web origins, comma-separated. Required when binding to a non-loopback address.               |
-| `ZCODE_RELAY_TRUSTED_PROXIES`            | no         | Exact proxy IP addresses whose `X-Forwarded-For` is honored. Empty by default.                     |
+| Variable                                 | Required   | Meaning                                                                                                                                                                      |
+| ---------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZCODE_RELAY_DB_PATH`                    | yes        | SQLite file for device records. Keep it on a persistent volume, readable only by the relay user.                                                                             |
+| `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`    | yes        | JSON array of private Ed25519 JWKs (`kty: OKP`, `crv: Ed25519`, `kid`, `d`, `x`). The first signs.                                                                           |
+| `ZCODE_REMOTE_RELAY_IDENTITY_MODE`       | see text   | `zai-jwt` or `device-key`. Defaults to `zai-jwt` when ISSUER or JWKS is set; otherwise required.                                                                             |
+| `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`   | device-key | At least 32 characters. Admits new device keys. Never put it in a client build or a PR.                                                                                      |
+| `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE`     | device-key | `secret` (default) or `open`. `open` lets installs enroll by proof of work with no shared secret; the secret becomes optional and keeps granting the owner tier (4x quotas). |
+| `ZCODE_RELAY_ENROLLMENT_DIFFICULTY`      | open       | Leading zero bits of the PoW, 8 to 32 (default 22).                                                                                                                          |
+| `ZCODE_RELAY_MAX_ENROLLED_KEYS`          | open       | Open-tier key cap, default 10000. Reaching it stops new enrollment; existing keys keep working.                                                                              |
+| `ZCODE_RELAY_ENROLLMENTS_PER_HOUR`       | open       | Breaker: open enrollments per rolling hour, default 300.                                                                                                                     |
+| `ZCODE_RELAY_MAX_SOCKETS_PER_IDENTITY`   | device-key | Live WebSockets per identity, default 8 (owner 4x).                                                                                                                          |
+| `ZCODE_RELAY_BYTES_PER_IDENTITY_PER_DAY` | device-key | Inbound bytes per identity per UTC day, default 536870912 (owner 4x).                                                                                                        |
+| `ZCODE_RELAY_KEY_IDLE_EXPIRY_DAYS`       | open       | Open keys idle this long are deleted, default 30.                                                                                                                            |
+| `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER`     | zai-jwt    | Exact `iss` value the account login JWT must carry.                                                                                                                          |
+| `ZCODE_REMOTE_RELAY_IDENTITY_JWKS`       | zai-jwt    | JWK set (`{"keys": [...]}` or a JSON array) of public keys for EdDSA, ES256 or RS256 login tokens.                                                                           |
+| `ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE`   | no         | zai-jwt only: `aud` the login JWT must carry, when set.                                                                                                                      |
+| `ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM` | no         | zai-jwt only: claim holding the user id. Default `sub`.                                                                                                                      |
+| `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`     | no         | Relay JWT lifetime. Default `3600`, maximum `86400`.                                                                                                                         |
+| `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`     | no         | Deadline for `auth_init` after connecting. Default `15000`.                                                                                                                  |
+| `ZCODE_RELAY_HOST`, `ZCODE_RELAY_PORT`   | no         | Bind address (default `127.0.0.1`) and port (default `3031`).                                                                                                                |
+| `ZCODE_RELAY_ALLOWED_ORIGINS`            | no         | Exact Web origins, comma-separated. Required when binding to a non-loopback address.                                                                                         |
+| `ZCODE_RELAY_TRUSTED_PROXIES`            | no         | Exact proxy IP addresses whose `X-Forwarded-For` is honored. Empty by default.                                                                                               |
 
 Limits (defaults): `ZCODE_RELAY_MAX_CONNECTIONS` 2000, `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` 20
 per source address (applies to `/session` and `/device`), `ZCODE_RELAY_MAX_REGISTRATIONS` 100000,

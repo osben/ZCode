@@ -8,7 +8,9 @@ function baseEnv(): Record<string, string> {
     ZCODE_RELAY_DB_PATH: "/var/lib/zcode-relay/relay.sqlite",
     ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS: JSON.stringify([relaySigningKey("relay-1").privateJwk]),
     ZCODE_REMOTE_RELAY_IDENTITY_ISSUER: ISSUER,
-    ZCODE_REMOTE_RELAY_IDENTITY_JWKS: JSON.stringify({ keys: [identity.publicJwk] }),
+    ZCODE_REMOTE_RELAY_IDENTITY_JWKS: JSON.stringify({
+      keys: [identity.publicJwk],
+    }),
   };
 }
 
@@ -58,7 +60,10 @@ describe("relay configuration", () => {
     const env = { ...baseEnv(), ZCODE_RELAY_HOST: "0.0.0.0" };
     expect(() => readRelayConfig(env)).toThrow("explicit Web origins");
     expect(() =>
-      readRelayConfig({ ...env, ZCODE_RELAY_ALLOWED_ORIGINS: "https://zcode.example.invalid" }),
+      readRelayConfig({
+        ...env,
+        ZCODE_RELAY_ALLOWED_ORIGINS: "https://zcode.example.invalid",
+      }),
     ).not.toThrow();
   });
 });
@@ -77,7 +82,9 @@ describe("identity mode selection", () => {
   }
 
   it("defaults to zai-jwt when issuer and JWKS are set and mode is not", () => {
-    expect(readRelayConfig(baseEnv()).session.identity).toMatchObject({ mode: "zai-jwt" });
+    expect(readRelayConfig(baseEnv()).session.identity).toMatchObject({
+      mode: "zai-jwt",
+    });
   });
 
   it("fails closed naming the mode variable when neither mode nor zai variables are set", () => {
@@ -94,15 +101,74 @@ describe("identity mode selection", () => {
 
   it("device-key mode needs no zai variables and carries the secret", () => {
     const config = readRelayConfig(deviceEnv());
-    expect(config.session.identity).toEqual({ mode: "device-key", enrollmentSecret: SECRET });
+    expect(config.session.identity).toEqual({
+      mode: "device-key",
+      enrollmentSecret: SECRET,
+      enrollment: {
+        mode: "secret",
+        difficulty: 22,
+        maxEnrolledKeys: 10_000,
+        enrollmentsPerHour: 300,
+      },
+    });
     expect(config.warnings).toEqual([]);
+  });
+
+  it("starts open enrollment without a secret, validates the new variables, and keeps secret mode the default", () => {
+    const env = deviceEnv({ ZCODE_REMOTE_RELAY_ENROLLMENT_MODE: "open" });
+    delete env.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET;
+    const config = readRelayConfig({
+      ...env,
+      ZCODE_RELAY_ENROLLMENT_DIFFICULTY: "20",
+      ZCODE_RELAY_MAX_ENROLLED_KEYS: "50",
+      ZCODE_RELAY_MAX_SOCKETS_PER_IDENTITY: "3",
+      ZCODE_RELAY_BYTES_PER_IDENTITY_PER_DAY: "1000",
+      ZCODE_RELAY_KEY_IDLE_EXPIRY_DAYS: "7",
+    });
+    expect(config.session.identity).toEqual({
+      mode: "device-key",
+      enrollment: {
+        mode: "open",
+        difficulty: 20,
+        maxEnrolledKeys: 50,
+        enrollmentsPerHour: 300,
+      },
+    });
+    expect(config.server.identityLimits).toEqual({
+      maxSockets: 3,
+      bytesPerDay: 1000,
+    });
+    expect(config.store).toMatchObject({
+      maxEnrolledKeys: 50,
+      keyIdleExpiryDays: 7,
+    });
+
+    const short = deviceEnv({
+      ZCODE_REMOTE_RELAY_ENROLLMENT_MODE: "open",
+      ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET: "too-short",
+    });
+    expect(() => readRelayConfig(short)).toThrow("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
+    expect(() =>
+      readRelayConfig(deviceEnv({ ZCODE_REMOTE_RELAY_ENROLLMENT_MODE: "wide" })),
+    ).toThrow("ZCODE_REMOTE_RELAY_ENROLLMENT_MODE");
+    for (const value of ["7", "33", "x"]) {
+      expect(() =>
+        readRelayConfig(deviceEnv({ ZCODE_RELAY_ENROLLMENT_DIFFICULTY: value })),
+      ).toThrow("ZCODE_RELAY_ENROLLMENT_DIFFICULTY");
+    }
+    // Unset mode keeps today's behavior: the secret stays required.
+    const noSecret = deviceEnv();
+    delete noSecret.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET;
+    expect(() => readRelayConfig(noSecret)).toThrow("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
   });
 
   it("requires a long enough enrollment secret and never echoes it", () => {
     const missing = deviceEnv();
     delete missing.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET;
     expect(() => readRelayConfig(missing)).toThrow("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
-    const short = deviceEnv({ ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET: "too-short-secret" });
+    const short = deviceEnv({
+      ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET: "too-short-secret",
+    });
     expect(() => readRelayConfig(short)).toThrow("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
     expect(() => readRelayConfig(short)).not.toThrow(/too-short-secret/);
   });

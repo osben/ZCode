@@ -42,3 +42,9 @@ Wire protocol and deployment: `docs/web-remote-control/relay-v2-pairing.md` and
 `exchange` (login JWT) serves `zai-jwt` only; `exchangeDeviceKey` and `exchangePairing`/`createPairing`
 serve `device-key` only and return a denial in the other mode. `RelayDeviceKeyStore` (enrolled public keys,
 table `fork_relay_device_keys`) is implemented by the same SQLite store as device records.
+
+Open enrollment (`specs/relay-v2-migration.md` section 15.6): `RelayDeviceKeyStore.lookup/enroll/touch` carry a
+key tier (`owner` or `open`; a key without a usage row is `owner`), table `fork_relay_identity_usage`. Relay
+JWTs carry the `tier` claim; `RelaySessionService.claims` returns `{userId, tier, expiresAt, viaPairing}`.
+`POST /session` also accepts `{device_key, work: {challenge, nonce}}`; a 401 / 4012 may carry
+`data: {challenge, difficulty, expires_in}`; a 503 / 4503 means no new open enrollments right now.

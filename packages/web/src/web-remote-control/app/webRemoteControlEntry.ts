@@ -93,10 +93,14 @@ export class WebRemoteControlEntry {
       });
       return;
     }
-    const pairingCode = url.searchParams.get("pk")?.trim();
-    if (pairingCode !== undefined) {
+    // `pk` travels in the fragment (never sent to the web host); QR codes from older Desktops put it in the query.
+    const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ""));
+    const pairingCode = (fragmentParams.get("pk") ?? url.searchParams.get("pk"))?.trim();
+    if (fragmentParams.has("pk") || url.searchParams.has("pk")) {
       // The pairing code is a credential: take it out of the address bar and history before anything else.
+      fragmentParams.delete("pk");
       url.searchParams.delete("pk");
+      url.hash = fragmentParams.toString();
       this.options.replaceHref(url.href);
     }
     if (!this.options.auth.getZCodeJwtToken() && pairingCode && this.options.pairing) {

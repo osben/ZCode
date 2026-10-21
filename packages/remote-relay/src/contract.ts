@@ -1,4 +1,8 @@
-import type { RelayDeviceKeySessionOperations, RelaySession } from "./deviceKeyContract.js";
+import type {
+  RelayDeviceKeySessionOperations,
+  RelayJwtClaims,
+  RelaySession,
+} from "./deviceKeyContract.js";
 import type {
   WebRemoteControlRelayV2Device,
   WebRemoteControlRelayV2Role,
@@ -13,9 +17,27 @@ export interface RelayDeviceRecord {
   createdAt: number;
 }
 
+export interface RelayUsageRow {
+  identity: string;
+  lastSeen: number;
+  day: number;
+  dayBytes: number;
+}
+
+/** Thrown by stores when a per-identity capacity is reached; the HTTP layer maps it to 429. */
+export class RelayLimitError extends Error {}
+
 /** Owns device records only; online state and meta live in the connection registry. */
 export interface RelayDeviceStore {
-  register(userId: string, deviceMid: string, createdAt: number): Promise<RelayDeviceRecord>;
+  /** Rejects with `RelayLimitError` when `maxForUser` is given and the user already holds that many records. */
+  register(
+    userId: string,
+    deviceMid: string,
+    createdAt: number,
+    maxForUser?: number,
+  ): Promise<RelayDeviceRecord>;
+  /** Persists per-identity usage (last seen, inbound bytes of the UTC day). Best effort. */
+  recordUsage?(rows: readonly RelayUsageRow[]): Promise<void>;
   listForUser(userId: string): Promise<RelayDeviceRecord[]>;
   get(deviceSid: string): Promise<RelayDeviceRecord | undefined>;
   /** Hard-deletes the record so the SID can no longer authenticate. Returns false when absent. */
@@ -32,7 +54,9 @@ export interface RelaySessionService extends RelayDeviceKeySessionOperations {
   readonly mode: "zai-jwt" | "device-key";
   /** Verifies the account identity token and mints a relay JWT, or returns undefined. zai-jwt mode only. */
   exchange(identityToken: string): RelaySession | undefined;
-  /** Returns the relay user id for a valid relay JWT, or undefined. */
+  /** Verified claims of a relay JWT, or undefined. */
+  claims(jwt: string): RelayJwtClaims | undefined;
+  /** Convenience over `claims`: the relay user id for a valid relay JWT, or undefined. */
   verify(jwt: string): string | undefined;
 }
 
@@ -50,6 +74,10 @@ export type {
   RelayDeviceKeyResult,
   RelayDeviceKeySessionOperations,
   RelayDeviceKeyStore,
+  RelayEnrollmentWork,
+  RelayJwtClaims,
+  RelayKeyLookup,
+  RelayKeyTier,
 } from "./deviceKeyContract.js";
 
 export interface RelayServerOptions {
@@ -63,11 +91,20 @@ export interface RelayServerOptions {
   registrationsPerMinute?: number;
   maxBufferedBytes?: number;
   maxTotalBufferedBytes?: number;
+  /** Per-identity limits for device-key sessions (`specs/relay-v2-migration.md` section 15.6). Owner tier gets 4x. */
+  identityLimits?: Partial<RelayIdentityLimits>;
   authTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatTimeoutMs?: number;
   logger?: RelayLogger;
   now?: () => number;
+}
+
+export interface RelayIdentityLimits {
+  maxSockets: number;
+  bytesPerDay: number;
+  tokensPerMinute: number;
+  maxDevices: number;
 }
 
 export interface RelayServer {

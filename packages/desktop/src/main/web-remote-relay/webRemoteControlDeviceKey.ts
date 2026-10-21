@@ -7,7 +7,14 @@ import {
   sign,
   type KeyObject,
 } from "node:crypto";
-import { WebRemoteControlV2ConnectionError } from "@zcode/shared/web-remote-relay";
+import {
+  ENROLLMENT_NOT_ENROLLED_CODE,
+  WebRemoteControlV2ConnectionError,
+} from "@zcode/shared/web-remote-relay";
+import {
+  solveEnrollmentPow,
+  type EnrollmentPowChallengeInfo,
+} from "#src/main/web-remote-relay/webRemoteControlEnrollmentPow.js";
 import type { WebRemoteControlRelayBearer } from "#src/main/web-remote-relay/webRemoteControlRelaySession.js";
 
 /**
@@ -32,13 +39,21 @@ export interface WebRemoteControlDeviceKeyProof {
   ts: number;
   nonce: string;
   signature: string;
+  /** Solved proof of work for open enrollment; absent on the plain and secret paths. */
+  work?: { challenge: string; nonce: string };
 }
 
 export interface WebRemoteControlDeviceKeyIdentity {
   /** Stable relay user id: `dk:` + base64url(sha256(raw public key)). */
   userId(): Promise<string>;
-  /** Fresh signed challenge for `POST /session`. */
-  proveExchange(): Promise<WebRemoteControlDeviceKeyProof>;
+  /**
+   * Fresh signed challenge for `POST /session`. With `pow` it first solves the relay's proof of work (yielding
+   * to the event loop, abortable), then signs, so `ts` is fresh when the request leaves.
+   */
+  proveExchange(options?: {
+    pow?: EnrollmentPowChallengeInfo;
+    signal?: AbortSignal;
+  }): Promise<WebRemoteControlDeviceKeyProof>;
 }
 
 interface LoadedKey {
@@ -47,11 +62,17 @@ interface LoadedKey {
 }
 
 function keyFromStored(raw: string): LoadedKey {
-  const parsed = JSON.parse(raw) as { v?: unknown; jwk?: Record<string, unknown> };
+  const parsed = JSON.parse(raw) as {
+    v?: unknown;
+    jwk?: Record<string, unknown>;
+  };
   if (parsed.v !== 1 || !parsed.jwk || parsed.jwk.crv !== "Ed25519") {
     throw new Error("Stored device key is not usable.");
   }
-  const privateKey = createPrivateKey({ key: parsed.jwk as never, format: "jwk" });
+  const privateKey = createPrivateKey({
+    key: parsed.jwk as never,
+    format: "jwk",
+  });
   const publicKey = createPublicKey(privateKey).export({ format: "jwk" }).x;
   if (typeof publicKey !== "string") throw new Error("Stored device key is not usable.");
   return { privateKey, publicKey };
@@ -94,8 +115,15 @@ export function createWebRemoteControlDeviceKeyIdentity(options: {
       const digest = createHash("sha256").update(Buffer.from(publicKey, "base64url")).digest();
       return `dk:${digest.toString("base64url")}`;
     },
-    async proveExchange() {
+    async proveExchange(proveOptions) {
       const { privateKey, publicKey } = await key();
+      const work = proveOptions?.pow
+        ? await solveEnrollmentPow({
+            publicKey,
+            pow: proveOptions.pow,
+            ...(proveOptions.signal === undefined ? {} : { signal: proveOptions.signal }),
+          })
+        : undefined;
       const ts = Math.floor(now() / 1000);
       const nonce = randomNonce();
       const signed = `${SIGNING_DOMAIN}\n${publicKey}\n${ts}\n${nonce}`;
@@ -104,6 +132,7 @@ export function createWebRemoteControlDeviceKeyIdentity(options: {
         ts,
         nonce,
         signature: sign(null, Buffer.from(signed), privateKey).toString("base64url"),
+        ...(work === undefined ? {} : { work }),
       };
     },
   };
@@ -142,8 +171,12 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
     relayOrigin: string,
     secret: string | undefined,
     signal: AbortSignal,
+    pow?: EnrollmentPowChallengeInfo,
   ): Promise<Response> {
-    const proof = await options.identity.proveExchange();
+    const proof = await options.identity.proveExchange({
+      ...(pow ? { pow } : {}),
+      signal,
+    });
     return fetcher(new URL("/api/v1/remote/session", relayOrigin), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -155,6 +188,7 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
           signature: proof.signature,
         },
         ...(secret === undefined ? {} : { enrollment_secret: secret }),
+        ...(proof.work === undefined ? {} : { work: proof.work }),
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
       redirect: "error",
@@ -163,15 +197,31 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
 
   async function exchange(relayOrigin: string, signal: AbortSignal): Promise<CachedJwt> {
     let response = await post(relayOrigin, undefined, signal);
-    if (response.status === 401) {
-      const body = (await response.json().catch(() => undefined)) as { code?: unknown } | undefined;
-      if (body?.code === 4012) {
-        const secret = await options.loadEnrollmentSecret();
-        if (!secret) throw new WebRemoteControlV2ConnectionError("auth-required");
+    // Not enrolled: the configured secret wins (owner tier, no CPU); otherwise solve the relay's proof of
+    // work. A second round covers a challenge that expired or was minted before a relay restart.
+    for (let round = 0; round < 2 && response.status === 401; round += 1) {
+      const body = (await response.json().catch(() => undefined)) as
+        | {
+            code?: unknown;
+            data?: { challenge?: unknown; difficulty?: unknown };
+          }
+        | undefined;
+      if (body?.code !== ENROLLMENT_NOT_ENROLLED_CODE) break;
+      const secret = await options.loadEnrollmentSecret();
+      if (secret) {
         response = await post(relayOrigin, secret, signal);
-      } else {
+        break;
+      }
+      const { challenge, difficulty } = body.data ?? {};
+      if (typeof challenge !== "string" || typeof difficulty !== "number") {
         throw new WebRemoteControlV2ConnectionError("auth-required");
       }
+      response = await post(relayOrigin, undefined, signal, {
+        challenge,
+        difficulty,
+      });
+      if (response.status === 401 && round === 0)
+        response = await post(relayOrigin, undefined, signal);
     }
     if (response.status === 401 || response.status === 403) {
       throw new WebRemoteControlV2ConnectionError("auth-required");
@@ -193,7 +243,11 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
     ) {
       throw new WebRemoteControlV2ConnectionError("relay-unavailable");
     }
-    return { relayOrigin, jwt: data.jwt, expiresAt: now() + data.expires_in * 1000 };
+    return {
+      relayOrigin,
+      jwt: data.jwt,
+      expiresAt: now() + data.expires_in * 1000,
+    };
   }
 
   async function getJwt(input: { relayOrigin: string; signal: AbortSignal }): Promise<string> {
@@ -229,7 +283,10 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
         const jwt = await getJwt({ relayOrigin, signal });
         const response = await fetcher(new URL("/api/v1/remote/pairing", relayOrigin), {
           method: "POST",
-          headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            "Content-Type": "application/json",
+          },
           body: "{}",
           signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
           redirect: "error",

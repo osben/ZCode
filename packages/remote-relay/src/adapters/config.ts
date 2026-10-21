@@ -4,13 +4,34 @@ type Jwk = Record<string, unknown>;
 
 export interface RelayRuntimeConfig {
   server: Omit<RelayServerOptions, "store" | "session">;
-  store: { path: string; maxRecords: number };
+  store: {
+    path: string;
+    maxRecords: number;
+    maxEnrolledKeys: number;
+    keyIdleExpiryDays: number;
+  };
   session: {
     signingKeys: Jwk[];
     ttlSeconds: number;
     identity:
-      | { mode: "zai-jwt"; issuer: string; audience?: string; userClaim: string; keys: Jwk[] }
-      | { mode: "device-key"; enrollmentSecret: string };
+      | {
+          mode: "zai-jwt";
+          issuer: string;
+          audience?: string;
+          userClaim: string;
+          keys: Jwk[];
+        }
+      | {
+          mode: "device-key";
+          /** Absent only in open enrollment mode. */
+          enrollmentSecret?: string;
+          enrollment: {
+            mode: "secret" | "open";
+            difficulty: number;
+            maxEnrolledKeys: number;
+            enrollmentsPerHour: number;
+          };
+        };
   };
   /** Startup warnings. They name variables only, never values. */
   warnings: string[];
@@ -102,8 +123,23 @@ export function readRelayConfig(env: Record<string, string | undefined>): RelayR
     throw new Error("Missing relay configuration: ZCODE_REMOTE_RELAY_IDENTITY_MODE");
   let identity: RelayRuntimeConfig["session"]["identity"];
   if (mode === "device-key") {
-    const enrollmentSecret = required("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
-    if (enrollmentSecret.length < MIN_ENROLLMENT_SECRET_LENGTH) {
+    // Unset keeps the secret-only behavior; open enrollment must be chosen explicitly (fail closed).
+    const enrollmentModeValue = optional("ZCODE_REMOTE_RELAY_ENROLLMENT_MODE");
+    if (
+      enrollmentModeValue !== undefined &&
+      enrollmentModeValue !== "secret" &&
+      enrollmentModeValue !== "open"
+    ) {
+      throw new Error(
+        "Invalid relay configuration: ZCODE_REMOTE_RELAY_ENROLLMENT_MODE must be secret or open.",
+      );
+    }
+    const enrollmentMode = enrollmentModeValue ?? "secret";
+    const enrollmentSecret =
+      enrollmentMode === "open"
+        ? optional("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET")
+        : required("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
+    if (enrollmentSecret !== undefined && enrollmentSecret.length < MIN_ENROLLMENT_SECRET_LENGTH) {
       throw new Error(
         `Invalid relay configuration: ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET must be at least ${MIN_ENROLLMENT_SECRET_LENGTH} characters.`,
       );
@@ -112,7 +148,19 @@ export function readRelayConfig(env: Record<string, string | undefined>): RelayR
       if (optional(name) !== undefined)
         warnings.push(`${name} is ignored in device-key identity mode.`);
     }
-    identity = { mode: "device-key", enrollmentSecret };
+    const difficulty = integer("ZCODE_RELAY_ENROLLMENT_DIFFICULTY", 22);
+    if (difficulty < 8 || difficulty > 32)
+      throw new Error("Invalid relay configuration: ZCODE_RELAY_ENROLLMENT_DIFFICULTY");
+    identity = {
+      mode: "device-key",
+      ...(enrollmentSecret === undefined ? {} : { enrollmentSecret }),
+      enrollment: {
+        mode: enrollmentMode,
+        difficulty,
+        maxEnrolledKeys: integer("ZCODE_RELAY_MAX_ENROLLED_KEYS", 10_000),
+        enrollmentsPerHour: integer("ZCODE_RELAY_ENROLLMENTS_PER_HOUR", 300),
+      },
+    };
   } else {
     const audience = optional("ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE");
     identity = {
@@ -139,10 +187,16 @@ export function readRelayConfig(env: Record<string, string | undefined>): RelayR
       maxBufferedBytes: integer("ZCODE_RELAY_MAX_BUFFERED_BYTES", 2 * 1024 * 1024),
       maxTotalBufferedBytes: integer("ZCODE_RELAY_MAX_TOTAL_BUFFERED_BYTES", 64 * 1024 * 1024),
       authTimeoutMs: integer("ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS", 15_000),
+      identityLimits: {
+        maxSockets: integer("ZCODE_RELAY_MAX_SOCKETS_PER_IDENTITY", 8),
+        bytesPerDay: integer("ZCODE_RELAY_BYTES_PER_IDENTITY_PER_DAY", 512 * 1024 * 1024),
+      },
     },
     store: {
       path: required("ZCODE_RELAY_DB_PATH"),
       maxRecords: integer("ZCODE_RELAY_MAX_REGISTRATIONS", 100_000),
+      maxEnrolledKeys: integer("ZCODE_RELAY_MAX_ENROLLED_KEYS", 10_000),
+      keyIdleExpiryDays: integer("ZCODE_RELAY_KEY_IDLE_EXPIRY_DAYS", 30),
     },
     session: {
       signingKeys: jwkArray(

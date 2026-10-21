@@ -552,14 +552,17 @@ identity through a short-lived pairing code carried by the QR.
   limiter applies.
 - The phone's relay JWT lasts `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` and cannot be renewed with the spent
   code; after expiry the phone re-scans a QR (the Desktop issues a fresh code each time the QR is shown).
-- A phone that holds a pairing JWT has the same authority as the Desktop identity (list, register,
-  delete devices, request tokens). Treat the QR as a credential while it is valid.
+- A phone that holds a pairing JWT acts for the Desktop identity (list, register, delete devices) with two
+  limits (15.6): `POST /token` refuses role `device` for it (the phone may only take the terminal slot,
+  never the Desktop's), and its live terminal sockets are closed when that JWT expires. Treat the QR as a
+  credential while it is valid.
 
-QR: `buildWebRemoteControlExternalQrUrl` accepts an optional `pairingCode` and writes it as `pk`. Absent
+QR: `buildWebRemoteControlExternalQrUrl` accepts an optional `pairingCode` and writes it as `pk` in the
+URL fragment (`#pk=...`, 15.6), never in the query string, so it does not reach web-host access logs. Absent
 option means a URL byte-identical to today's, so `zai-jwt` QR codes stay compatible with upstream.
 `parseWebRemoteControlExternalQrParams` returns `pairingCode` only when `pk` is non-empty; a QR is
-valid with or without it. The web entry removes `pk` from the address bar (`replaceHref`) as soon as it
-has read it, and never logs it.
+valid with or without it. The web entry reads `pk` from the fragment (and, for QRs made by older Desktops,
+from the query string), removes it from the address bar (`replaceHref`) as soon as it has read it, and never logs it.
 
 ### 15.4 Clients
 
@@ -601,3 +604,123 @@ and short secret); ignored zai variables warn by name only; secrets absent from 
 `zai-jwt` suite unchanged. Bundle smoke covers both modes. Client: bearer unit tests for device-key
 exchange, 4012 retry, single-flight key generation; shared QR builder/parser tests for `pk`; web entry test for
 pairing exchange and address-bar cleanup.
+
+### 15.6 Open enrollment (`ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open`)
+
+Problem: `device-key` mode needs `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, which cannot ship in a public
+release build. Open enrollment lets any install enroll its own key without a shared secret, bounded so one
+caller cannot exhaust the relay. A read-only review confirmed cross-user isolation (the user id is derived
+from the proven key); this section adds the abuse bounds.
+
+Owners: enrollment decision and PoW verification in `adapters/session.ts` (stateless except the replay cache
+and the breaker); per-identity limits in `domain/identityLimits.ts` (in memory, clock injected); persisted key
+tier, last-seen and daily bytes in table `fork_relay_identity_usage` plus idle expiry in
+`adapters/deviceStoreWorker.ts`; socket admission and close in `adapters/nodeServer.ts`; PoW solving in the
+Desktop client (`webRemoteControlDeviceKey.ts`).
+
+**Modes.** `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE` is `secret` (default when unset: exactly 15.1 to 15.2) or
+`open`. In `open` the secret is optional; when set (at least 32 characters) it keeps working as the owner path.
+Without it, enrollment by secret is denied. Unknown value stops startup naming the variable.
+
+**Tiers.** Every enrolled key has a tier: `owner` (enrolled with the secret, and every key enrolled before this
+change, i.e. a missing usage row) or `open` (enrolled by PoW). Owner limits are 4x the open limits. The tier is
+carried in the relay JWT claim `tier` (`owner` or `open`) in `device-key` mode only; a `device-key` JWT without
+the claim (issued before this change, at most one TTL old) is treated as `open`. `zai-jwt` mode has no tier and
+no per-identity limits. A pairing JWT inherits the tier of the JWT that minted its code.
+
+**Body.** `POST /session` accepts exactly one of: `{device_key}`, `{device_key, enrollment_secret}`,
+`{device_key, work}`; secret and work together are a 400. `work` is `{challenge, nonce}` (exact keys): the
+challenge string the relay issued, and the client's counter as a decimal string of at most 16 digits. The
+difficulty is inside the challenge, not a separate client-controlled field.
+
+**Challenge.** `challenge = base64url(issuedAt[8 bytes BE] || difficulty[1] || mac[16])`, with
+`mac = HMAC-SHA256(processKey, "zcode-relay-pow-v1" || publicKey || issuedAt || difficulty)[0..16]`.
+`processKey` is 32 random bytes per process (no env secret; a restart invalidates outstanding challenges and
+the client fetches a new one). The PoW is: `sha256("zcode-relay-pow-v1\n" + publicKey + "\n" + challenge +
+"\n" + nonce)` has at least `difficulty` leading zero bits. The byte layout and the leading-zero-bit check
+live in `packages/shared` without `node:crypto`; hashing is done by each side.
+
+**Event order (open mode, unenrolled key).**
+
+```text
+Desktop                                   Relay (session.ts)                    Store worker
+  | POST /session {device_key}              |                                      |
+  |---------------------------------------->| shape, |now-ts|<=60, signature      |
+  |                                         |------------ lookup(publicKey) ------>|
+  |                                         |<-- tier undefined, openKeys ---------|
+  |                                         | breaker closed and openKeys < max?   |
+  |<-- 401 code 4012 data{challenge,        |   yes: issue challenge               |
+  |        difficulty, expires_in:60} ------|   no:  503 code 4503 (no PoW run)    |
+  | solve PoW (chunked, yields, abortable)  |                                      |
+  | POST /session {device_key (fresh ts),   |                                      |
+  |                work{challenge,nonce}}-->| shape, window, signature,            |
+  |                                         | challenge mac + age<=60 s + zeros    |
+  |                                         | (before any DB call), replay cache   |
+  |                                         |--- enroll(key,"open") (one txn: key  |
+  |                                         |    row + usage row, cap re-checked)->|
+  |<-- 200 {jwt (tier=open)} ---------------|<-------------------------------------|
+```
+
+Order of checks for `work`: shape, window, signature, PoW (stateless, no DB), then the DB lookup. An anonymous
+flood therefore costs the relay one signature verify and one hash per request and never queues store calls
+before the per-IP limiter (15.2) rejects it. A challenge older than 60 seconds or minted by another process is
+401 (the client retries once with a new challenge). Replaying a solved request is stopped by the replay cache;
+a stolen solution is bound to the same public key, so it can only enroll that key.
+
+**Breaker.** New open enrollments stop (503, code 4503, before any challenge is issued) while either: the
+number of `open` keys has reached `ZCODE_RELAY_MAX_ENROLLED_KEYS`; or more than `ZCODE_RELAY_ENROLLMENTS_PER_HOUR`
+open enrollments happened in the last hour (default 300; the breaker then stays open until the count falls
+below the limit). Existing identities, owner enrollment by secret, `/token`, `/device` and `ws2` are not affected.
+
+**Per-identity limits** (open tier; owner is 4x), keyed by the relay `sub`:
+
+| Limit                 | Variable                                 | Default | Effect when exceeded                   |
+| --------------------- | ---------------------------------------- | ------- | -------------------------------------- |
+| Live sockets          | `ZCODE_RELAY_MAX_SOCKETS_PER_IDENTITY`   | 8       | upgrade refused, 429                   |
+| Inbound bytes per day | `ZCODE_RELAY_BYTES_PER_IDENTITY_PER_DAY` | 512 MiB | socket closed 1013, new tokens refused |
+| `POST /token` per min | fixed constant                           | 30      | 429 / 4029                             |
+| Registered devices    | fixed constant                           | 8       | 429 / 4029 at `POST /device`           |
+
+Bytes count client-to-relay frames only, in memory, flushed to `fork_relay_identity_usage` on the sweep timer;
+the day boundary is UTC; a relay restart resets the in-memory counters (accepted: restarts are operator driven).
+
+**Idle expiry.** `open` keys whose `last_seen` is older than `ZCODE_RELAY_KEY_IDLE_EXPIRY_DAYS` (default 30) are
+deleted with their usage row and their `relay_devices` rows in one transaction, hourly. `owner` keys never
+expire. A returning client simply enrolls again.
+
+**Table.** `fork_relay_identity_usage(public_key TEXT PRIMARY KEY, identity TEXT NOT NULL UNIQUE, tier TEXT NOT
+NULL, last_seen INTEGER NOT NULL, day INTEGER NOT NULL, day_bytes INTEGER NOT NULL) STRICT`, created with
+`CREATE TABLE IF NOT EXISTS`. `relay_devices` and `fork_relay_device_keys` are not altered.
+
+**amr and `/token`.** A JWT with `amr` containing `pairing` can only request role `terminal`; role `device`
+is 403 / 1006. A pairing-derived terminal socket is closed with code 4011 when its JWT expires. Desktop (`device`)
+sockets are not closed at JWT expiry: the Desktop refreshes its JWT without reconnecting, and dropping the
+Desktop socket would drop the paired phone (the relay closes the terminal when the device disconnects).
+Consequence: a phone session now lasts at most `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` (default 1 hour, maximum 24).
+
+**IPv6.** The anonymous per-IP limiter (15.2) buckets IPv6 addresses by their /64 prefix, so rotating the low 64
+bits does not bypass it. Trusted-proxy matching still uses the full address.
+
+**QR fragment.** `pk` moves from the query string to the fragment (`#pk=`) so web hosts never log it. The web
+entry reads the fragment first and the query second (QRs from older Desktops), then strips both. Deploy
+order: ship the web host (reads both) before the Desktop release (writes only the fragment).
+
+**Clients.** The Desktop in `device-key` mode with a baked mode and no secret ( `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE=device-key`
+at build time) sends `{device_key}`; on 4012 with a `challenge` it solves the PoW and retries once, and
+with a configured secret it keeps the old path. On 4503 it reports `relay-unavailable`. PoW runs on the main
+process in chunks of 20000 hashes separated by `setImmediate`, abortable by the start signal.
+
+**Release.** `.github/workflows/fork-release.yml` passes the repository variable `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` to both desktop builds (a public input, never a secret); the owner sets it to `device-key` and sets `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open` on the relay.
+
+**Acceptance scenarios** (tests in `packages/remote-relay/test`, `packages/desktop/test`, `packages/shared`):
+valid PoW enrolls an `open` key and a later exchange needs no work; wrong nonce, insufficient zeros, a
+challenge for another key, a tampered challenge, an expired challenge, a challenge from another process;
+secret plus work is a 400; replay of a solved request; work in `secret` mode is denied; no work and no secret
+gives 4012 with a challenge in `open` mode and without one in `secret` mode; breaker open by key cap and by
+hourly rate answers 4503 while existing keys still exchange and the secret path still enrolls an owner key;
+legacy key without usage row is `owner`; idle expiry removes only stale `open` keys; pairing JWT cannot take
+role `device` and inherits the tier; `/token` per-identity rate limit; socket cap per identity, release on
+close, owner 4x; inbound byte budget closes the socket; pairing terminal closes at JWT expiry while a
+device socket does not; `2001:db8::1` and `2001:db8:0:0:ffff::2` share a limiter bucket while an IPv4
+address does not; startup: unknown mode, `open` without secret starts, `secret` without secret fails; Desktop
+PoW yields to timers and aborts; shared QR builder writes the fragment, parser reads it.

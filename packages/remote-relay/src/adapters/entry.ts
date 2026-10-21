@@ -1,12 +1,17 @@
 import { readRelayConfig } from "./config.js";
 import { createRelayDeviceStore } from "./deviceStore.js";
-import { createRelaySessionService } from "./session.js";
+import { createRelaySessionService, type DeviceKeyIdentityConfig } from "./session.js";
 import { createRelayServer } from "./nodeServer.js";
-import type { RelayLogger } from "../contract.js";
+import type { RelayDeviceKeyStore, RelayLogger } from "../contract.js";
 
 const log = (level: string, event: string) => {
   process.stdout.write(
-    JSON.stringify({ scope: "remote-relay", level, event, time: new Date().toISOString() }) + "\n",
+    JSON.stringify({
+      scope: "remote-relay",
+      level,
+      event,
+      time: new Date().toISOString(),
+    }) + "\n",
   );
 };
 const logger: RelayLogger = {
@@ -15,11 +20,19 @@ const logger: RelayLogger = {
   error: (event) => log("error", event),
 };
 
-function identityEnrollmentSecret(
+function deviceKeyIdentity(
   identity: ReturnType<typeof readRelayConfig>["session"]["identity"],
-): string {
-  if (identity.mode !== "device-key") throw new Error("Enrollment secret is not configured.");
-  return identity.enrollmentSecret;
+  keys: RelayDeviceKeyStore,
+): DeviceKeyIdentityConfig {
+  if (identity.mode !== "device-key") throw new Error("Device-key identity is not configured.");
+  return {
+    mode: "device-key",
+    ...(identity.enrollmentSecret === undefined
+      ? {}
+      : { enrollmentSecret: identity.enrollmentSecret }),
+    enrollment: identity.enrollment,
+    keys,
+  };
 }
 
 async function main() {
@@ -43,17 +56,28 @@ async function main() {
     createRelaySessionService({
       signingKeys: config.session.signingKeys,
       ttlSeconds: config.session.ttlSeconds,
-      identity: {
-        mode: "device-key",
-        enrollmentSecret: identityEnrollmentSecret(identity),
-        keys: store,
-      },
+      identity: deviceKeyIdentity(identity, store),
       now: Date.now,
     });
-  const server = await createRelayServer({ ...config.server, store, session, logger });
+  // Idle open-tier keys expire so abandoned installs do not hold enrollment capacity forever.
+  const sweepIdle = () =>
+    store
+      .sweepIdleKeys(Math.floor(Date.now() / 1000) - config.store.keyIdleExpiryDays * 86_400)
+      .then((removed) => removed > 0 && logger.info("idle-keys-expired"))
+      .catch(() => logger.warn("idle-key-sweep-failed"));
+  void sweepIdle();
+  const idleTimer = setInterval(() => void sweepIdle(), 3_600_000);
+  idleTimer.unref();
+  const server = await createRelayServer({
+    ...config.server,
+    store,
+    session,
+    logger,
+  });
   logger.info("started");
   let shutdown: Promise<void> | undefined;
   const stop = () => {
+    clearInterval(idleTimer);
     shutdown ??= server.close();
     shutdown
       .then(() => logger.info("stopped"))

@@ -20,8 +20,13 @@ it("composes an explicitly supplied store and session service without workspace 
     exchangeDeviceKey: async () => ({ status: "denied" as const }),
     exchangePairing: () => undefined,
     createPairing: () => undefined,
-    pairingOwner: () => undefined,
+    claims: () => undefined,
     verify: () => undefined,
   };
-  expect(relayExample(store, session)).toEqual({ store, session, host: "127.0.0.1", port: 0 });
+  expect(relayExample(store, session)).toEqual({
+    store,
+    session,
+    host: "127.0.0.1",
+    port: 0,
+  });
 });

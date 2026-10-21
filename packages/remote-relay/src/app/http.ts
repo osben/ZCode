@@ -2,12 +2,19 @@ import {
   parseWebRemoteControlRelayV2HttpRequest,
   type WebRemoteControlRelayV2Device,
 } from "@zcode/shared/web-remote-relay";
-import type {
-  RelayDeviceKeyExchange,
-  RelayDeviceRecord,
-  RelayDeviceStore,
-  RelaySessionService,
+import {
+  ENROLLMENT_CLOSED_CODE,
+  ENROLLMENT_NOT_ENROLLED_CODE,
+  ENROLLMENT_POW_NONCE_PATTERN,
+} from "@zcode/shared/web-remote-relay";
+import {
+  RelayLimitError,
+  type RelayDeviceKeyExchange,
+  type RelayDeviceRecord,
+  type RelayDeviceStore,
+  type RelaySessionService,
 } from "../contract.js";
+import type { IdentityLimits } from "../domain/identityLimits.js";
 import type { RelayRegistry } from "./relay.js";
 import type { RelayTokenStore } from "../domain/tokens.js";
 
@@ -39,6 +46,8 @@ export interface RelayHttpApiDependencies {
   live: Pick<RelayRegistry, "isOnline" | "metaOf" | "reserveDeletion" | "releaseDeletion">;
   tokens: RelayTokenStore;
   session: RelaySessionService;
+  /** Per-identity quotas; consulted only for device-key JWTs, which carry a tier. */
+  limits: Pick<IdentityLimits, "allowToken" | "overBudget" | "maxDevices">;
   now: () => number;
 }
 
@@ -46,9 +55,9 @@ const ok = (data?: unknown): RelayHttpResponse => ({
   status: 200,
   body: data === undefined ? { code: 0, msg: "ok" } : { code: 0, msg: "ok", data },
 });
-const fail = (status: number, code: number, msg: string): RelayHttpResponse => ({
+const fail = (status: number, code: number, msg: string, data?: unknown): RelayHttpResponse => ({
   status,
-  body: { code, msg },
+  body: data === undefined ? { code, msg } : { code, msg, data },
 });
 
 const ROUTES: Record<string, { method: string }[]> = {
@@ -65,6 +74,8 @@ type ExchangeBody =
   | { kind: "device-key"; request: RelayDeviceKeyExchange };
 
 const DEVICE_KEY_FIELDS = ["public_key", "ts", "nonce", "signature"];
+const WORK_FIELDS = ["challenge", "nonce"];
+const MAX_CHALLENGE_LENGTH = 64;
 const sameKeys = (value: object, expected: readonly string[]) => {
   const keys = Object.keys(value);
   return keys.length === expected.length && expected.every((key) => keys.includes(key));
@@ -86,11 +97,18 @@ function parseExchangeBody(
       ? { kind: "pairing", code }
       : undefined;
   }
+  // Exactly one of three shapes; a secret and work together are ambiguous and rejected.
   const withSecret = sameKeys(body, ["device_key", "enrollment_secret"]);
-  if (!withSecret && !sameKeys(body, ["device_key"])) return undefined;
-  const { device_key: deviceKey, enrollment_secret: secret } = body as {
+  const withWork = sameKeys(body, ["device_key", "work"]);
+  if (!withSecret && !withWork && !sameKeys(body, ["device_key"])) return undefined;
+  const {
+    device_key: deviceKey,
+    enrollment_secret: secret,
+    work,
+  } = body as {
     device_key: unknown;
     enrollment_secret?: unknown;
+    work?: unknown;
   };
   if (typeof deviceKey !== "object" || deviceKey === null || Array.isArray(deviceKey)) {
     return undefined;
@@ -109,6 +127,21 @@ function parseExchangeBody(
     return undefined;
   }
   if (withSecret && (typeof secret !== "string" || secret.length > 1024)) return undefined;
+  let parsedWork: { challenge: string; nonce: string } | undefined;
+  if (withWork) {
+    if (typeof work !== "object" || work === null || Array.isArray(work)) return undefined;
+    if (!sameKeys(work, WORK_FIELDS)) return undefined;
+    const { challenge, nonce: counter } = work as Record<string, unknown>;
+    if (
+      typeof challenge !== "string" ||
+      challenge.length > MAX_CHALLENGE_LENGTH ||
+      typeof counter !== "string" ||
+      !ENROLLMENT_POW_NONCE_PATTERN.test(counter)
+    ) {
+      return undefined;
+    }
+    parsedWork = { challenge, nonce: counter };
+  }
   return {
     kind: "device-key",
     request: {
@@ -117,6 +150,7 @@ function parseExchangeBody(
       nonce,
       signature,
       ...(withSecret ? { enrollmentSecret: secret as string } : {}),
+      ...(parsedWork === undefined ? {} : { work: parsedWork }),
     },
   };
 }
@@ -137,7 +171,7 @@ function exchangeBody(body: unknown): string | undefined {
  * clocks of its own. Device lookups go through the registry so `online` and `meta` describe live state.
  */
 export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): RelayHttpApi {
-  const { devices, live, tokens, session } = dependencies;
+  const { devices, live, tokens, session, limits } = dependencies;
 
   const view = (record: RelayDeviceRecord): WebRemoteControlRelayV2Device => ({
     device_sid: record.deviceSid,
@@ -158,10 +192,24 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
       if (!parsed) return fail(400, 3001, "parameter error");
       if (parsed.kind === "device-key") {
         const outcome = await session.exchangeDeviceKey(parsed.request);
-        if (outcome.status === "not-enrolled") return fail(401, 4012, "not enrolled");
+        if (outcome.status === "not-enrolled") {
+          return outcome.challenge === undefined
+            ? fail(401, ENROLLMENT_NOT_ENROLLED_CODE, "not enrolled")
+            : fail(401, ENROLLMENT_NOT_ENROLLED_CODE, "not enrolled", {
+                challenge: outcome.challenge.challenge,
+                difficulty: outcome.challenge.difficulty,
+                expires_in: outcome.challenge.expiresIn,
+              });
+        }
+        if (outcome.status === "closed") {
+          return fail(503, ENROLLMENT_CLOSED_CODE, "enrollment closed");
+        }
         if (outcome.status === "busy") return fail(503, 503, "unavailable");
         if (outcome.status !== "ok") return fail(401, 401, "unauthorized");
-        return ok({ jwt: outcome.session.jwt, expires_in: outcome.session.expiresIn });
+        return ok({
+          jwt: outcome.session.jwt,
+          expires_in: outcome.session.expiresIn,
+        });
       }
       const issued =
         parsed.kind === "pairing"
@@ -174,8 +222,9 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
       return fail(404, 404, "not found");
     }
 
-    const userId = request.bearer ? session.verify(request.bearer) : undefined;
-    if (!userId) return fail(401, 401, "unauthorized");
+    const claims = request.bearer ? session.claims(request.bearer) : undefined;
+    if (!claims) return fail(401, 401, "unauthorized");
+    const userId = claims.userId;
 
     if (request.path === `${RELAY_API_PREFIX}/device` && request.method === "GET") {
       const records = await devices.listForUser(userId);
@@ -185,9 +234,8 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
 
     if (request.path === `${RELAY_API_PREFIX}/pairing`) {
       // Only the enrolled device identity may mint codes; a pairing-derived JWT cannot renew itself.
-      const owner = request.bearer ? session.pairingOwner(request.bearer) : undefined;
-      if (!owner) return fail(401, 401, "unauthorized");
-      const issued = session.createPairing(owner);
+      if (claims.viaPairing || claims.tier === undefined) return fail(401, 401, "unauthorized");
+      const issued = session.createPairing(userId, claims.tier);
       if (!issued) return fail(429, 4029, "too many outstanding pairing codes");
       return ok({ code: issued.code, expires_in: issued.expiresIn });
     }
@@ -195,12 +243,18 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
     if (request.path === `${RELAY_API_PREFIX}/device`) {
       const parsed = parseWebRemoteControlRelayV2HttpRequest("register", request.body);
       if (!parsed) return fail(400, 3001, "parameter error");
-      const record = await devices.register(
-        userId,
-        parsed.device_mid,
-        Math.floor(dependencies.now() / 1000),
-      );
-      return ok(view(record));
+      try {
+        const record = await devices.register(
+          userId,
+          parsed.device_mid,
+          Math.floor(dependencies.now() / 1000),
+          claims.tier === undefined ? undefined : limits.maxDevices(claims.tier),
+        );
+        return ok(view(record));
+      } catch (error) {
+        if (error instanceof RelayLimitError) return fail(429, 4029, "too many devices");
+        throw error;
+      }
     }
 
     if (request.path === `${RELAY_API_PREFIX}/device/delete`) {
@@ -222,7 +276,18 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
 
     const parsed = parseWebRemoteControlRelayV2HttpRequest("token", request.body);
     if (!parsed) return fail(400, 3001, "parameter error");
-    const issued = tokens.issue(userId, parsed.role);
+    // A phone that scanned a QR holds a pairing JWT; it must never take the Desktop slot.
+    if (claims.viaPairing && parsed.role === "device") {
+      return fail(403, 1006, "no permission");
+    }
+    if (claims.tier !== undefined) {
+      if (!limits.allowToken(userId, claims.tier)) return fail(429, 4029, "rate limited");
+      if (limits.overBudget(userId, claims.tier)) return fail(429, 4029, "daily budget spent");
+    }
+    const issued = tokens.issue(userId, parsed.role, {
+      ...(claims.tier === undefined ? {} : { tier: claims.tier }),
+      ...(claims.viaPairing ? { closeAtMs: claims.expiresAt * 1000 } : {}),
+    });
     if (!issued) return fail(429, 4029, "too many outstanding tokens");
     return ok({ token: issued.token, expires_in: issued.expiresIn });
   }

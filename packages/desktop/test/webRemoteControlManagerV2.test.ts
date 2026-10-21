@@ -442,12 +442,14 @@ describe("V2 manager public API with real relay", () => {
     const issueCode = vi.fn(async () => "pairing-code-0123456789");
     const f = await fixture({}, {}, undefined, { issueCode });
     const result = await f.start();
-    expect(new URL(result.qrUrl).searchParams.get("pk")).toBe("pairing-code-0123456789");
+    const qr = new URL(result.qrUrl);
+    expect(qr.searchParams.has("pk")).toBe(false);
+    expect(new URLSearchParams(qr.hash.slice(1)).get("pk")).toBe("pairing-code-0123456789");
     expect(issueCode).toHaveBeenCalledWith(
       expect.objectContaining({ relayOrigin: f.relay.httpUrl }),
     );
     const plain = await fixture();
-    expect(new URL((await plain.start()).qrUrl).searchParams.has("pk")).toBe(false);
+    expect(new URL((await plain.start()).qrUrl).hash).toBe("");
   });
 
   it("fails the start instead of publishing a QR the phone cannot sign in with", async () => {
