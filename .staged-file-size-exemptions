@@ -254,6 +254,7 @@ packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
 # TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
 # specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
 # Remove once the composer is split into smaller modules.
+packages/ui/src/v4/composer/useDraftSessionPrewarm.ts
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
 

@@ -872,6 +872,56 @@ describe("useDraftSessionPrewarm workspace owner", () => {
     expect(dispatchB.calls).toContainEqual({ type: "deleteSession", sessionId: "draft-b" });
   });
 
+  it("promote 消费 binding：摘除后同草稿的下一次首发预留新会话", async () => {
+    // specs/first-submission-lifecycle.md "Owners and event order": a promoted prewarm is
+    // consumed. Keeping it exposed made the next submission in the same draft pane reserve
+    // the already-used session, which the CLI rejects with executionFailed.
+    let attempt = 0;
+    const { calls, dispatch } = createDispatchRecorder({
+      onCreate: () => {
+        attempt += 1;
+        return acceptedCreateAck(`draft-${attempt}`);
+      },
+    });
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    let owner!: ReturnType<typeof useDraftSessionPrewarm>;
+    const observed: Array<string | null> = [];
+    await act(async () => {
+      root.render(
+        createElement(PrewarmHarness, {
+          workspaceKey: "/workspace",
+          transportIdentity: {},
+          dispatchCommand: dispatch,
+          onRender: (binding) => observed.push(binding?.sessionId ?? null),
+          onOwner: (value) => {
+            owner = value;
+          },
+        }),
+      );
+      await flushMicrotasks();
+    });
+    expect(observed.at(-1)).toBe("draft-1");
+    expect(owner.binding?.sessionId).toBe("draft-1");
+
+    act(() => {
+      owner.binding?.promote();
+    });
+    expect(observed.at(-1)).toBe(null);
+    expect(owner.binding).toBe(null);
+
+    const next = owner.waitForSession().then(
+      (binding) => binding.sessionId,
+      (error) => String(error),
+    );
+    await act(async () => {
+      await flushMicrotasks();
+    });
+    expect(await next).toBe("draft-2");
+    expect(calls.filter((call) => call.type === "createSession")).toHaveLength(2);
+    expect(calls).not.toContainEqual({ type: "deleteSession", sessionId: "draft-1" });
+  });
+
   it("同 owner 同步重挂复用在途 createSession，不产生 create/delete churn", async () => {
     let resolveCreate!: (ack: CommandAck) => void;
     const recorder = createDispatchRecorder({

@@ -169,6 +169,7 @@ export function renderLateAckComposer(
   options: {
     worktree?: boolean;
     onPrepareFirstSubmission?: ConversationComposerProps["onPrepareFirstSubmission"];
+    onFirstSubmissionReserved?: ConversationComposerProps["onFirstSubmissionReserved"];
   } = {},
 ): LateAckHarness {
   const container = installMinimalDom();
@@ -232,6 +233,7 @@ export function renderLateAckComposer(
           onSendText,
           durableFirstSubmission: true,
           onPrepareFirstSubmission: options.onPrepareFirstSubmission,
+          onFirstSubmissionReserved: options.onFirstSubmissionReserved,
           onPrepareWorktreeSession,
           onStop: vi.fn(),
           onSwitchMode: vi.fn(),

@@ -194,7 +194,10 @@ import {
   selectDraftIncognito,
   useDraftIncognitoIntentStore,
 } from "@/v4/composer/draftIncognitoIntent.js";
-import { V4ComposerIncognitoControl } from "@/v4/composer/V4ComposerIncognitoControl.js";
+import {
+  shouldRenderComposerIncognitoControl,
+  V4ComposerIncognitoControl,
+} from "@/v4/composer/V4ComposerIncognitoControl.js";
 import { V4ComposerDictationControl } from "@/v4/composer/V4ComposerDictationControl.js";
 import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissionOwner.js";
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
@@ -638,6 +641,8 @@ export interface ConversationComposerProps {
   voiceDictationEnabled?: boolean;
   /** Host supports durable first-submission reservation (specs/first-submission-lifecycle.md). */
   durableFirstSubmission?: boolean;
+  /** A first submission is frozen or recovering for this composer; start-only controls (the incognito icon) hide. */
+  firstSubmissionActive?: boolean;
   draftGeneration?: number;
 }
 
@@ -717,6 +722,7 @@ function ConversationComposerImpl({
   onResumeError,
   voiceDictationEnabled = false,
   durableFirstSubmission = false,
+  firstSubmissionActive = false,
   draftGeneration = 0,
 }: ConversationComposerProps) {
   const remoteAvailable = useRemoteConversationAvailable();
@@ -2383,24 +2389,6 @@ function ConversationComposerImpl({
                 });
               },
             });
-            if (reservedSubmissionSessionId) {
-              const boundScope = getV4WorktreeRecoveryScope(
-                reservedSubmissionSessionId,
-                submissionId,
-              );
-              if (
-                !moveV4ComposerDraft(
-                  workspacePath,
-                  workspaceIdentity,
-                  pendingRecoveryScope,
-                  boundScope,
-                )
-              )
-                throw new Error("composer.draft-storage-unavailable");
-              submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
-              if (shouldActivatePreparedSession())
-                onFirstSubmissionReserved?.(reservedSubmissionSessionId);
-            }
           }
           const readyAttachmentRefs = await submittedAttachments.prepareForSend(
             queueWorktreeSend ? submittedAttachmentIds : undefined,
@@ -2548,6 +2536,30 @@ function ConversationComposerImpl({
             });
             sendAction.noop();
             return;
+          }
+          if (reservedSubmissionSessionId) {
+            // First-submission promotion runs only after the input was admitted. Promoting
+            // before the send switches the composer owner (scope/epoch) mid-flight and aborts
+            // the send with "Submission owner changed before admission". The frozen draft
+            // stays in the pending scope until here, so a failed send keeps its recoverable
+            // message in place instead of stranding it on an unreachable session scope.
+            const moved = moveV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              pendingRecoveryScope,
+              getV4WorktreeRecoveryScope(reservedSubmissionSessionId, submissionId),
+            );
+            if (moved) {
+              submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
+              if (shouldActivatePreparedSession())
+                onFirstSubmissionReserved?.(reservedSubmissionSessionId);
+            } else {
+              // The input was already admitted; a storage failure must not roll the composer
+              // back into a restore path. Keep the pending scope and let recovery own it.
+              logger.warn(
+                "[v4-composer] first-submission draft move failed; keeping pending recovery scope",
+              );
+            }
           }
           if (incognitoSubmission) {
             // The session now owns the frozen profile; the next draft starts normal again — unless
@@ -3792,10 +3804,16 @@ function ConversationComposerImpl({
   const isBlockedByInteraction = blockingRequestId !== null;
 
   // specs/incognito-session.md "Composer toggle": top row, after the project and branch chips.
-  const incognitoComposerControl =
-    draftMode && sessionId === null && !isWebRemoteControl ? (
-      <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
-    ) : null;
+  // Start-only like choosing Git: a frozen first submission drops the icon even before the
+  // reserved session is bound, so preparation-time drafts cannot arm or change the frozen profile.
+  const incognitoComposerControl = shouldRenderComposerIncognitoControl({
+    draftMode,
+    sessionId,
+    isWebRemoteControl,
+    firstSubmissionActive,
+  }) ? (
+    <V4ComposerIncognitoControl workspaceKey={workspaceKey} disabled={disabled} />
+  ) : null;
 
   // v4 pendingInteractions 是 bottom dock 阻塞态；composer 必须保留挂载，
   // 只在视觉和可访问树中隐藏，避免权限/问答卡片出现时丢失草稿和编辑器内部状态。

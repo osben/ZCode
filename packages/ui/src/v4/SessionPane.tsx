@@ -1947,6 +1947,7 @@ export function SessionPane({
       createSource?: SessionCreateSource,
       messageId?: string,
       taskGroupId?: string | null,
+      options?: { bind?: "immediate" },
     ) => {
       if (messageId) reportDraftCreated(createdSessionId, createSource ?? "session", messageId);
       const commit = () => {
@@ -2017,7 +2018,7 @@ export function SessionPane({
               await attempt();
             }
           : undefined;
-      if (commitCreatedTask) {
+      if (commitCreatedTask && options?.bind !== "immediate") {
         await commitCreatedTask(
           { taskId: createdSessionId, workspacePath, workspaceIdentity },
           commit,
@@ -2025,7 +2026,23 @@ export function SessionPane({
           organize,
         );
       } else {
-        void organize?.();
+        // First-submission reservation binds from the Host identity directly (specs/
+        // first-submission-lifecycle.md "Owners and event order"): draft-workspace rows
+        // may never join the project tree, and staging the bind on tree arrival leaves
+        // the conversation unreachable with an eternal "Preparing conversation" preview.
+        if (organize && commitCreatedTask) {
+          // Group placement still needs the real row: admitting before the index row is
+          // readable fails host-side with task-group.created-task-unavailable. Stage only
+          // the organize step on row arrival; it never gates the bind.
+          void commitCreatedTask(
+            { taskId: createdSessionId, workspacePath, workspaceIdentity },
+            () => {},
+            draftNavigation.controller.signal,
+            organize,
+          );
+        } else {
+          void organize?.();
+        }
         commit();
       }
     },
@@ -3443,6 +3460,7 @@ export function SessionPane({
         creation.draftCreateSource,
         undefined,
         creation.draftTaskGroupId,
+        { bind: "immediate" },
       ).catch((error) =>
         logger.error("[first-submission] Could not bind the reserved session", error),
       );
@@ -6082,6 +6100,7 @@ export function SessionPane({
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
       durableFirstSubmission
+      firstSubmissionActive={hasFirstSubmission}
       draftGeneration={composerDraftGeneration}
       onPrepareFirstSubmission={prepareFirstSubmission}
       onFirstSubmissionReserved={handleFirstSubmissionReserved}

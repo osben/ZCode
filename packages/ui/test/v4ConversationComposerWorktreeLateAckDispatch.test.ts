@@ -589,3 +589,52 @@ it.each([false, true])(
     }
   },
 );
+
+it("binds the reserved session only after the send route resolved (FSL01 owner stability)", async () => {
+  // Promoting before the send switches the composer owner (scope/epoch) mid-flight and the
+  // send aborts with "Submission owner changed before admission"; the promotion must land
+  // after the send resolved, moving the frozen draft into the session scope with it.
+  const onFirstSubmissionReserved = vi.fn();
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async () => "session-reserved-bind",
+    onFirstSubmissionReserved,
+  });
+  let settleSend!: () => void;
+  harness.onSendText.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        settleSend = resolve;
+      }),
+  );
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("Promote after the send resolves");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(onFirstSubmissionReserved).not.toHaveBeenCalled();
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-reserved-bind").filter(
+        (record) => record.draft.firstSubmission,
+      ),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      settleSend();
+      await flushAsyncWork();
+    });
+    expect(onFirstSubmissionReserved).toHaveBeenCalledWith("session-reserved-bind");
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-reserved-bind").filter(
+        (record) => record.draft.firstSubmission,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});

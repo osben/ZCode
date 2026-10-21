@@ -45,6 +45,16 @@ the existing local rehydration path. A saved session and its message text remain
 Renderer owns unaccepted local intent and its preview/recovery; Host/CLI owns real
 session identity and durable preparation; CommandInbox owns accepted input and
 exactly-once admission. Timeline/queue are projections, not another input queue.
+Binding a reserved first submission commits directly from the Host reservation
+identity (scope promotion and view navigation) and never waits for the project
+tree or sidebar projection of the new row: draft-workspace rows may reach that
+projection late or never, and a bind stalled on them leaves the conversation
+unreachable. Group placement of the new row is the exception: it stays staged on the
+row becoming readable, because admitting earlier fails host-side with
+`task-group.created-task-unavailable`. A promoted ordinary prewarm binding is
+consumed: after first use it is detached, so a later submission in the same draft
+pane reserves a fresh session instead of targeting the already-used one the CLI
+must reject.
 Use `workspaceIdentity?.trim() || workspacePath` throughout; preserve remoteSessionId,
 owner/lease and stale-attempt checks. Do not add setting.json keys or change frozen
 upstream migrations. Desktop continuous and mobile replayable keep their delivery
