@@ -27,6 +27,7 @@ async function fixture(
   initialSettings: Partial<AppSettings> = {},
   deviceSaveError?: Error,
   pairing?: { issueCode: (input: { relayOrigin: string }) => Promise<string | undefined> },
+  accountAuthIndependent = false,
 ) {
   const relay = await createFakeRelayV2({
     users: { jwt: "user", other: "other-user" },
@@ -68,6 +69,7 @@ async function fixture(
     }),
     getLogin: readLogin,
     ...(pairing === undefined ? {} : { pairing }),
+    ...(accountAuthIndependent ? { accountAuthIndependent } : {}),
     deviceStorage,
     deviceMid: "desktop-mid",
     deviceName: "Desktop name",
@@ -450,7 +452,20 @@ describe("V2 manager public API with real relay", () => {
 
   it("fails the start instead of publishing a QR the phone cannot sign in with", async () => {
     const f = await fixture({}, {}, undefined, { issueCode: async () => undefined });
-    await expect(f.start()).rejects.toBeDefined();
+    await expect(f.start()).rejects.toMatchObject({ reason: "relay-unavailable" });
+  });
+
+  it("keeps a device-key session running when the z.ai account signs out", async () => {
+    const f = await fixture(
+      {},
+      {},
+      undefined,
+      { issueCode: async () => "pairing-code-0123456789" },
+      true,
+    );
+    await f.start();
+    await f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
+    expect(f.manager.getStatus(1)).toMatchObject({ status: "running" });
   });
 
   it("no JWT fails explicitly without registering or connecting", async () => {

@@ -48,6 +48,7 @@ export async function resolveBuildTimeConfig(
       relayWsUrl: pickValue(env, defaults, "ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL"),
       webUrl: pickValue(env, defaults, "ZCODE_WEB_REMOTE_CONTROL_URL"),
     }),
+    ...identityModeEntry(pickValue(env, defaults, "ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE")),
   };
 }
 
@@ -92,6 +93,24 @@ export function resolveWebRemoteControlReleaseDefaults({ relayWsUrl, webUrl }) {
   return { webRemoteControlRelayWsUrl: relay, webRemoteControlUrl: web };
 }
 
+/**
+ * Fork: baked default for the relay identity mode, so an app launched from Finder/Explorer (no shell env)
+ * still talks to a `device-key` relay. Only the mode is baked; the enrollment secret never is.
+ */
+export function resolveWebRemoteControlIdentityModeDefault(value) {
+  const mode = (value ?? "").trim();
+  if (mode === "" || mode === "zai-jwt" || mode === "device-key") return mode;
+  throw new Error(
+    `Invalid ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: expected zai-jwt or device-key, got: ${mode}`,
+  );
+}
+
+// Present only when configured, so builds that do not use device-key keep their config shape unchanged.
+function identityModeEntry(value) {
+  const mode = resolveWebRemoteControlIdentityModeDefault(value);
+  return mode ? { webRemoteControlIdentityMode: mode } : {};
+}
+
 export function createBuildTimeConfigDefines(config) {
   return {
     __ZCODE_ARMS_RUM_ENDPOINT__: JSON.stringify(config.armsRumEndpoint),
@@ -101,5 +120,8 @@ export function createBuildTimeConfigDefines(config) {
       config.webRemoteControlRelayWsUrl ?? "",
     ),
     __ZCODE_WEB_REMOTE_CONTROL_URL__: JSON.stringify(config.webRemoteControlUrl ?? ""),
+    __ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE__: JSON.stringify(
+      config.webRemoteControlIdentityMode ?? "",
+    ),
   };
 }

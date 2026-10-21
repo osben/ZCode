@@ -216,7 +216,7 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
   const activeSigner = active?.signer;
   if (!active || !activeSigner) throw new Error("Relay signing keys are missing.");
 
-  const issue = (userId: string): RelaySession => {
+  const issue = (userId: string, viaPairing = false): RelaySession => {
     const issuedAt = Math.floor(config.now() / 1000);
     const header = { alg: "EdDSA", typ: "JWT", kid: active.kid };
     const claims = {
@@ -225,6 +225,8 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       sub: userId,
       iat: issuedAt,
       exp: issuedAt + config.ttlSeconds,
+      // Marks sessions obtained from a pairing code; /pairing refuses them so they cannot renew themselves.
+      ...(viaPairing ? { amr: ["pairing"] } : {}),
     };
     const signingInput = `${Buffer.from(JSON.stringify(header)).toString("base64url")}.${Buffer.from(
       JSON.stringify(claims),
@@ -327,7 +329,7 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       const entry = pairings.get(key);
       if (!entry) return undefined;
       pairings.delete(key);
-      return entry.expiresAt > nowMs ? issue(entry.userId) : undefined;
+      return entry.expiresAt > nowMs ? issue(entry.userId, true) : undefined;
     },
     createPairing(userId) {
       if (!deviceIdentity) return undefined;
@@ -343,7 +345,19 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       });
       return { code, expiresIn: PAIRING_TTL_SECONDS };
     },
+    pairingOwner(jwt) {
+      const claims = verifyClaims(jwt);
+      if (!claims || (Array.isArray(claims.amr) && claims.amr.includes("pairing")))
+        return undefined;
+      return claims.sub;
+    },
     verify(jwt) {
+      return verifyClaims(jwt)?.sub;
+    },
+  };
+
+  function verifyClaims(jwt: string): { sub: string; amr?: unknown } | undefined {
+    {
       const parts = splitCompact(jwt);
       if (!parts) return undefined;
       const header = decodeSegment(parts[0]);
@@ -363,7 +377,7 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       // The two modes use disjoint subject namespaces, so a JWT minted under one mode never verifies under the other.
       if (payload.sub.startsWith(DEVICE_KEY_SUBJECT_PREFIX) !== (mode === "device-key"))
         return undefined;
-      return payload.sub;
-    },
-  };
+      return { sub: payload.sub, amr: payload.amr };
+    }
+  }
 }

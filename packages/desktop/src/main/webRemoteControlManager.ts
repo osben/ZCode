@@ -177,6 +177,8 @@ interface WebRemoteControlManagerDependencies {
    * Fork device-key relay mode: mints the single-use pairing code embedded in the phone QR
    * (`pk`). Omitted for zai-jwt relays, which keeps the QR identical to upstream.
    */
+  /** Device-key mode: the relay identity is the device key, so account auth changes are ignored. */
+  accountAuthIndependent?: boolean;
   pairing?: {
     issueCode(input: { relayOrigin: string; signal: AbortSignal }): Promise<string | undefined>;
   };
@@ -719,6 +721,8 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     disposeRuntimeBridgeResources(runtime);
     clearPendingOutboundPayloadTimer(runtime);
     clearMobileDisconnectGraceTimer(runtime);
+    if (runtime.pairingRefreshTimer) clearInterval(runtime.pairingRefreshTimer);
+    runtime.pairingRefreshTimer = undefined;
     runtime.pendingOutboundPayloads.length = 0;
     runtime.transport.dispose();
     runtime.status = "error";
@@ -1954,6 +1958,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       windowId: number,
       change: WebRemoteControlAuthStateChange,
     ): Promise<void> {
+      if (dependencies.accountAuthIndependent) return;
       const revision = ++authNotificationRevision;
       if (change.state === "signed-in") {
         const login = await dependencies.getLogin();

@@ -146,6 +146,24 @@ test("define 以 JSON 字面量注入", () => {
       __ZCODE_AUTO_UPDATE_ENABLED__: "true",
       __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__: '"wss://relay.example.com/ws"',
       __ZCODE_WEB_REMOTE_CONTROL_URL__: '""',
+      __ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE__: '""',
     },
+  );
+});
+
+test("relay identity mode is a baked default that only accepts known modes", async () => {
+  const config = await resolveBuildTimeConfig(
+    { ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: " device-key " },
+    { defaultsPath: join(dir, "missing.json") },
+  );
+  assert.equal(config.webRemoteControlIdentityMode, "device-key");
+  const unset = await resolveBuildTimeConfig({}, { defaultsPath: join(dir, "missing.json") });
+  assert.equal(unset.webRemoteControlIdentityMode, undefined);
+  await assert.rejects(
+    resolveBuildTimeConfig(
+      { ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: "open" },
+      { defaultsPath: join(dir, "missing.json") },
+    ),
+    /ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE/,
   );
 });

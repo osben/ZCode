@@ -576,6 +576,15 @@ Desktop (owner: `packages/desktop/src/main/web-remote-relay`):
   `/pairing` each time it is built and every 240 s while shown; the start result waits for the first one,
   and a relay that refuses to issue it fails the start instead of showing a QR the phone cannot use.
 
+Pairing-derived relay JWTs carry the claim `amr: ["pairing"]`; `POST /pairing` refuses them, so a phone
+cannot mint codes to renew itself or exhaust the Desktop's per-user cap. The claim is the only addition to
+the JWT; `iss`, `aud`, `sub`, `iat`, `exp` and the format are unchanged and clients treat the token as opaque.
+
+Desktop sign-out of a z.ai account does not end a `device-key` session (`accountAuthIndependent`), and the
+mode may be baked at build time (`ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE`, runtime env wins) for apps
+launched without shell env. The enrollment secret is never baked: it reaches the client only through env or
+the `fork_web-remote-control:enrollment-secret` credential entry (no settings UI yet).
+
 Web (owner: `packages/web/src/web-remote-control`): when the URL has `pk` and no z.ai JWT, the entry
 exchanges it at `/session`, keeps the relay JWT in memory (not storage), and uses it for the device list
 and tokens. With a z.ai JWT present, behavior is unchanged.

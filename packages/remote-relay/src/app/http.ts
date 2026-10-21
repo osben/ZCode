@@ -184,7 +184,10 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
     if (request.bodyError) return fail(400, 3001, "parameter error");
 
     if (request.path === `${RELAY_API_PREFIX}/pairing`) {
-      const issued = session.createPairing(userId);
+      // Only the enrolled device identity may mint codes; a pairing-derived JWT cannot renew itself.
+      const owner = request.bearer ? session.pairingOwner(request.bearer) : undefined;
+      if (!owner) return fail(401, 401, "unauthorized");
+      const issued = session.createPairing(owner);
       if (!issued) return fail(429, 4029, "too many outstanding pairing codes");
       return ok({ code: issued.code, expires_in: issued.expiresIn });
     }

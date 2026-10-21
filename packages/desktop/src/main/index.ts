@@ -76,6 +76,7 @@ import {
   DEFAULT_LOCALE,
   TEST_ZCODE_ENDPOINT_ORIGIN,
   ZCODE_VERSION,
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT,
   ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
   ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT,
   buildZCodeEndpointUrls,
@@ -872,7 +873,9 @@ const loadRemoteControlAuthorization = createTelemetryAuthorizationLoader(
 // Fork: a self-hosted relay in `device-key` identity mode authenticates this install with its own key
 // instead of the account login (specs/relay-v2-migration.md section 15). Never inferred from login state.
 const webRemoteControlIdentityMode = resolveWebRemoteControlRelayIdentityMode(
-  process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE"],
+  // Runtime env wins over the value baked at build time, like the relay URL defaults.
+  process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE"] ??
+    ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT,
 );
 if (webRemoteControlIdentityMode.invalid) {
   console.error(
@@ -1031,7 +1034,11 @@ const webRemoteControlManager = createWebRemoteControlManager({
   },
   relayBearer: webRemoteControlRelayBearer,
   ...(webRemoteControlDeviceKeyBearer
-    ? { pairing: { issueCode: webRemoteControlDeviceKeyBearer.issuePairingCode } }
+    ? {
+        pairing: { issueCode: webRemoteControlDeviceKeyBearer.issuePairingCode },
+        // The device identity does not depend on the z.ai account, so account sign-out must not end it.
+        accountAuthIndependent: true,
+      }
     : {}),
   deviceStorage: createWebRemoteControlDeviceStorage({
     deleteLegacyCredential: async () => {

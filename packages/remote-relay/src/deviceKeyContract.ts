@@ -29,6 +29,11 @@ export interface RelayDeviceKeySessionOperations {
   exchangeDeviceKey(request: RelayDeviceKeyExchange): Promise<RelayDeviceKeyResult>;
   /** Device-key mode only: consumes a single-use pairing code and mints a JWT for its owner. */
   exchangePairing(code: string): RelaySession | undefined;
+  /**
+   * Device-key mode only: the user id of a relay JWT that may mint pairing codes. JWTs derived from a
+   * pairing code (claim `amr: ["pairing"]`) return undefined, so a phone cannot renew itself.
+   */
+  pairingOwner(jwt: string): string | undefined;
   /** Device-key mode only: mints a pairing code for the user, or undefined at the per-user cap. */
   createPairing(userId: string): { code: string; expiresIn: number } | undefined;
 }

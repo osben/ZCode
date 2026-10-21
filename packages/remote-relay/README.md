@@ -31,7 +31,7 @@ session (replays and clocks off by more than 60 s are rejected). The relay user 
 password and rotate it by changing the variable (already enrolled keys keep working). To let a phone join
 without any account, the Desktop shows a QR that carries a single-use pairing code (`pk`, 128 bits, valid
 5 minutes, held in relay memory as a hash only). The phone exchanges it at `/session` and gets a relay JWT
-for the Desktop's `dk:` identity, valid `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`; after that it scans a new QR.
+for the Desktop's `dk:` identity (marked `amr: ["pairing"]`, so it cannot mint new codes), valid `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`; after that it scans a new QR.
 The QR is a credential while it is on screen. A relay restart forgets unused pairing codes and the nonce cache.
 
 Switching modes on a running relay invalidates every relay JWT issued in the other mode.

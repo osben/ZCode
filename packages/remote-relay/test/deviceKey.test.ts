@@ -309,6 +309,30 @@ describe("pairing codes for the phone", () => {
     ).toBe(400);
   });
 
+  it("refuses to mint pairing codes from a pairing-derived JWT so a phone cannot renew itself", async () => {
+    const harness = await deviceRelay();
+    const { jwt, code } = await paired(harness);
+    const phoneJwt = (
+      (await harness.api("POST", SESSION, { body: { pairing_code: code } })).body.data as {
+        jwt: string;
+      }
+    ).jwt;
+    const claims = JSON.parse(Buffer.from(phoneJwt.split(".")[1]!, "base64url").toString("utf8"));
+    expect(claims.amr).toEqual(["pairing"]);
+    const denied = await harness.api("POST", "/api/v1/remote/pairing", {
+      bearer: phoneJwt,
+      body: {},
+    });
+    expect(denied.status).toBe(401);
+    // The Desktop's own device-key JWT still can, and the phone JWT keeps working elsewhere.
+    expect(
+      (await harness.api("POST", "/api/v1/remote/pairing", { bearer: jwt, body: {} })).status,
+    ).toBe(200);
+    expect((await harness.api("GET", "/api/v1/remote/device", { bearer: phoneJwt })).status).toBe(
+      200,
+    );
+  });
+
   it("caps outstanding codes per user", async () => {
     const harness = await deviceRelay();
     const { jwt } = await paired(harness);
