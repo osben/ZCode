@@ -4516,3 +4516,11 @@ SPR01 是连接隔离 Electron 的独立 `node:test` / CDP E2E，保持 pending�
 - Desktop：`packages/desktop/test/e2e/ui-shell/manual-review/pending/sidebar-tooltips.test.ts`，完整应用的项目行、分区、搜索/筛选、底部及文件树入口。
 
 验证（2026-10-16）：浏览器 Tooltip 12 项及 SPT03 性能回归 4 项通过，包含桌面/手机布局、中英文、深浅主题、触屏点击和键盘 focus；新增分组操作断言复测通过。macOS 完整桌面 E2E 通过，12 个入口实测 304–309ms，覆盖相邻提示切换、提前移出、文件树菜单和清空搜索。受影响单测 285 文件 / 3671 项、typecheck、E2E typecheck、lint、架构及改动代码格式检查通过。候选保持 pending；未覆盖 Windows/Linux 整机或真实手机远控传输。
+
+## Incognito attachment first send
+
+INCOGNITO-03 (accepted): enable incognito in a new draft, paste a pathless PNG,
+send a prompt, and observe the user row with that attachment and the sidebar
+incognito marker. The first-send path creates the profile-bound session before
+uploading; no normal prewarm is promoted. Attachment-only input and upload failure
+are also covered by renderer regression tests (specs/ui-draft-send-path.md).

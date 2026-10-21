@@ -1,3 +1,5 @@
+import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
+import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 // Mounted regression for the late worktree reservation ACK: dispatch of the queued send, failed
 // dispatch, and Retry of the frozen submission (specs/composer-worktree-setup-steps.md, acceptance 15
 // and the retry scenarios). Split from v4ConversationComposerWorktreeLateAck.test.ts for file size.
@@ -24,6 +26,14 @@ const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => (
   attachmentState: {
     adoptSentAttachments: vi.fn(async () => {}),
     hasUnreadyAttachments: false,
+    attachments: [] as Array<{
+      id: string;
+      uploadStatus: string;
+      filename: string;
+      mimeType: string;
+      sizeBytes: number;
+    }>,
+    reuploadForSession: vi.fn(async () => []),
     prepareForSend: vi.fn(async () => []),
   },
   chatPromptEditorProps: [] as Array<Record<string, unknown>>,
@@ -118,7 +128,7 @@ vi.mock("@/v4/composer/useComposerAttachments.js", () => ({
     attachmentError: null,
     adoptSentAttachments: attachmentState.adoptSentAttachments,
     attachmentInputRef: { current: null },
-    attachments: [] as unknown[],
+    attachments: attachmentState.attachments,
     clearAttachments: vi.fn(),
     handleAttachmentInputChange: vi.fn(),
     handleDragLeaveComposer: vi.fn(),
@@ -126,11 +136,12 @@ vi.mock("@/v4/composer/useComposerAttachments.js", () => ({
     handleDropComposer: vi.fn(),
     handlePaste: vi.fn(),
     handleWhiteboardMentionSelected: vi.fn(),
-    hasAttachments: false,
+    hasAttachments: attachmentState.attachments.length > 0,
     hasUnreadyAttachments: attachmentState.hasUnreadyAttachments,
     isDraggingOverComposer: false,
     openAttachmentPicker: vi.fn(),
     prepareForSend: attachmentState.prepareForSend,
+    reuploadForSession: attachmentState.reuploadForSession,
     removeAttachment: vi.fn(),
     retryAttachment: vi.fn(),
     setAttachmentError: vi.fn(),
@@ -148,6 +159,9 @@ vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
 afterEach(() => {
   chatPromptEditorProps.length = 0;
   attachmentState.prepareForSend.mockClear();
+  attachmentState.attachments = [];
+  attachmentState.hasUnreadyAttachments = false;
+  attachmentState.reuploadForSession.mockClear();
   editorApi.clear.mockClear();
   editorApi.setText.mockClear();
   editorApi.setEditorStateJson.mockClear();
@@ -391,4 +405,77 @@ describe("late worktree reservation ACK: dispatch and retry", () => {
     // The accepted dispatch consumes the recovery record, so Retry cannot leave a duplicate draft.
     expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual([]);
   });
+});
+
+it.each(["waitingSession", "uploading", "committing", "failed"])(
+  "incognito first send admits only waiting-session attachments: %s",
+  async (uploadStatus) => {
+    attachmentState.attachments = [
+      {
+        id: "frozen-image",
+        uploadStatus,
+        filename: "image.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+      },
+    ];
+    attachmentState.hasUnreadyAttachments = true;
+    useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
+    const harness = renderLateAckComposer({ worktree: false });
+    try {
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!("image question");
+        await flushAsyncWork();
+      });
+      if (uploadStatus === "waitingSession") {
+        expect(harness.onSendText).toHaveBeenCalledOnce();
+        const options = (harness.onSendText.mock.calls as unknown[][])[0]?.[1] as unknown as {
+          incognito: unknown;
+          reuploadAttachmentsForSession: (id: string) => Promise<unknown>;
+        };
+        expect(options.incognito).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+        expect(attachmentState.prepareForSend).toHaveBeenCalledWith(undefined, {
+          allowWaitingSession: true,
+        });
+        await options.reuploadAttachmentsForSession("created-incognito");
+        expect(attachmentState.reuploadForSession).toHaveBeenCalledWith("created-incognito", [
+          "frozen-image",
+        ]);
+      } else expect(harness.onSendText).not.toHaveBeenCalled();
+    } finally {
+      useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+      await act(async () => harness.root.unmount());
+    }
+  },
+);
+
+it("keeps the draft, files and incognito intent after deferred upload rejection", async () => {
+  attachmentState.attachments = [
+    {
+      id: "failed-image",
+      uploadStatus: "waitingSession",
+      filename: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 10,
+    },
+  ];
+  attachmentState.hasUnreadyAttachments = true;
+  useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.onSendText.mockRejectedValueOnce(new Error("attachment upload failed"));
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("keep this question");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(attachmentState.attachments).toHaveLength(1);
+    expect(editorApi.clear).not.toHaveBeenCalled();
+    expect(
+      useDraftIncognitoIntentStore.getState().captureForSubmission("/workspace")?.profile,
+    ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+  } finally {
+    useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+    await act(async () => harness.root.unmount());
+  }
 });

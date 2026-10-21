@@ -164,7 +164,7 @@ export interface LateAckHarness {
 
 export const replaceComposerDraftSpy = vi.fn();
 
-export function renderLateAckComposer(): LateAckHarness {
+export function renderLateAckComposer(options: { worktree?: boolean } = {}): LateAckHarness {
   const container = installMinimalDom();
   const root: Root = createRoot(container);
   const sessionActivated = vi.fn();
@@ -194,7 +194,7 @@ export function renderLateAckComposer(): LateAckHarness {
       return controls.beginOutcome;
     }) as ComposerDraftWorktreeIntent["beginCreation"],
   } as ComposerDraftWorktreeIntent;
-  const slot = { current: intent };
+  const slot = { current: options.worktree === false ? null : intent };
   const controls = {
     beginOutcome: { ok: true, sessionId: "prepared-session-a" } as
       | {

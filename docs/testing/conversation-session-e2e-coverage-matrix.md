@@ -3748,6 +3748,11 @@ Accepted by the implementation request; evidence remains pending manual review.
 
 ## Incognito session draft coverage
 
+INCOGNITO-03: incognito draft + pasted pathless PNG + first send; asserts user-row
+attachment and sidebar marker. Candidate is in the same pending spec. Renderer
+regressions cover attachment-only input, slash-looking text, upload failure, frozen
+attachment IDs and remote staging. Desktop execution evidence is reported in the PR.
+
 specs/incognito-session.md scenarios 13 and 17: INCOGNITO-01/02 use pending
 `conversation-session-incognito-draft.test.ts` (composer toggle, per-session checklist, prompt-shell
 tint + chip, no upstream request before send; first send produces the sidebar incognito marker).

@@ -3771,8 +3771,11 @@ export function SessionPane({
       const readyAttachments = options?.attachments ?? [];
       const sharedContextRefs = options?.sharedContextRefs;
       const contextAttachmentCount = options?.contextAttachmentCount ?? 0;
+      const deferredIncognitoAttachments = Boolean(
+        options?.incognito && options.reuploadAttachmentsForSession,
+      );
       const slashCommand = parseV4VisibleSlashCommand(text, readyAttachments, {
-        contextAttachmentCount,
+        contextAttachmentCount: contextAttachmentCount + (deferredIncognitoAttachments ? 1 : 0),
       });
 
       if (!(await ensureDraftModelReadyForSend())) {
@@ -3938,17 +3941,32 @@ export function SessionPane({
             return;
           }
         }
-        // Execution-worktree attachments belong to the worktree session; the Composer's
-        // pre-upload is bound to the parent workspace and cannot be reused there.
-        const sessionAttachments = executionWorktree
-          ? readyAttachments.length > 0
-            ? await options?.reuploadAttachmentsForSession?.(createdSessionId)
-            : []
-          : readyAttachments;
-        if (executionWorktree && readyAttachments.length > 0 && !sessionAttachments) {
-          throw new Error(
-            "Execution-worktree attachments could not be transferred to the new session",
-          );
+        // Incognito has no prewarm upload target; worktree refs must belong to the execution session.
+        const needsAttachmentUpload =
+          deferredIncognitoAttachments || Boolean(executionWorktree && readyAttachments.length > 0);
+        let sessionAttachments = readyAttachments;
+        if (needsAttachmentUpload) {
+          try {
+            const uploaded = await options?.reuploadAttachmentsForSession?.(createdSessionId);
+            if (!uploaded)
+              throw new Error("Draft attachments could not be transferred to the new session");
+            sessionAttachments = uploaded;
+          } catch (error) {
+            // No prompt has been admitted. Retire only the empty incognito runtime created by this submission.
+            if (incognito && !preparedSessionId) {
+              try {
+                const cleanup = await dispatchCommand("deleteSession", {}, createdSessionId);
+                if (cleanup.status !== "accepted" && cleanup.status !== "noop") {
+                  logger.warn("[v4-pane] Empty incognito session cleanup rejected", {
+                    reasonCode: cleanup.reasonCode,
+                  });
+                }
+              } catch (cleanupError) {
+                logger.warn("[v4-pane] Empty incognito session cleanup failed", cleanupError);
+              }
+            }
+            throw error;
+          }
         }
         const highspeed = await prepareHighspeedSendContext(
           createdSessionId,

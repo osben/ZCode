@@ -48,7 +48,7 @@ flowchart TD
   B -- no --> C{sessionId === null<br/>or preparedSessionId set?}
   C -- "sessionId set, no preparedSessionId" --> E[Existing session: sendText to sessionId]
   C -- "draft or prepared" --> R[Create route<br/>createSession payload:<br/>draft config, executionWorktree, incognito,<br/>preparedSessionId + expectedAttemptId]
-  R --> R1{executionWorktree<br/>and attachments?}
+  R --> R1{worktree attachments<br/>or incognito upload callback?}
   R1 -- yes --> R2[reuploadAttachmentsForSession newSessionId, fail if missing]
   R1 -- no --> R3[use ready attachments]
   R2 --> R4[sendText or slash on newSessionId]
@@ -146,3 +146,43 @@ sequenceDiagram
   it. The fork slash-command tests stay skipped with `TEMPORARY(UI-2)`.
 - Recovering a prewarm session after a runtime rebuild (`useDraftRuntimeRebuildGate`)
   is unchanged.
+
+## Incognito attachment admission
+
+An incognito draft does not prewarm. Its captured attachment submission may admit
+`waitingSession` items at submit time; uploading, committing and failed items still
+block submission. The frozen profile and attachment IDs belong to that submission.
+`SessionPane` creates the incognito session through the existing capability-gated
+create route, invokes `reuploadAttachmentsForSession` for that session, and only
+then dispatches `sendText`. Attachment-only input and slash-looking text use the
+same attachment path; they must not become native slash commands.
+
+The captured attachment owner uploads pathless content through `attachmentPut`;
+remote local paths go through the transfer service and must return `staged: true`.
+No local path may be forwarded to a remote runtime. An upload failure retires the
+new empty incognito runtime (never a prepared worktree session), sends no
+prompt, preserves the draft/profile/files, and uses the existing send error path.
+Accepted input retains the existing continuous/replayable delivery semantics and
+command ledger; unknown command outcomes are not retried automatically.
+
+```mermaid
+sequenceDiagram
+  participant C as Composer / captured attachment owner
+  participant P as SessionPane
+  participant A as Host / CLI
+  C->>P: submit frozen profile, attachment callback
+  P->>A: createSession(incognito)
+  A-->>P: accepted(sessionId)
+  P->>C: upload frozen attachments(sessionId)
+  C->>A: attachmentPut / remote stage
+  A-->>C: attachment refs
+  C-->>P: refs
+  P->>A: sendText(sessionId, refs)
+  A-->>P: accepted(commandId)
+  P-->>C: sent; settle captured content
+```
+
+Acceptance: incognito screenshot/attachment-only first send works without prewarm;
+upload failure retains the draft and sends no text; failed/in-flight attachments
+remain blocked; ordinary drafts retain their pre-upload gate. See restored create
+route tests, captured attachment tests, and INCOGNITO-03 E2E candidate.

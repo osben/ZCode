@@ -3,6 +3,8 @@ import { clearAppData } from "../../../helpers/desktop-app.js";
 import { getUpstreamRequestRecordCount } from "../../../helpers/conversation-session-network.js";
 import {
   prepareV4ConversationE2E,
+  pasteV4ComposerImageAttachment,
+  waitForV4RowAttachments,
   sendV4Prompt,
   waitForV4UserMessageContaining,
 } from "../../../helpers/v4-conversation.js";
@@ -88,5 +90,17 @@ describe("Incognito session draft", () => {
     await $('[data-incognito-task-icon="true"]').waitForDisplayed({
       timeoutMsg: "incognito sidebar marker not shown",
     });
+  });
+  it("INCOGNITO-03: a pasted image starts an incognito session without a prewarm upload target", async () => {
+    await prepareV4ConversationE2E();
+    await $(TRIGGER).click();
+    await waitForIncognitoOn();
+    const filename = await pasteV4ComposerImageAttachment("E2E_INCOGNITO_FIRST_IMAGE.png");
+    const prompt = "E2E_INCOGNITO_FIRST_IMAGE describe the attached image";
+    await sendV4Prompt(prompt);
+    await waitForV4UserMessageContaining(prompt);
+    expect(await waitForV4RowAttachments(30_000, [filename])).toContain(filename);
+    await $('[data-incognito-task-icon="true"]').waitForDisplayed();
+    await $(MARKER).waitForExist({ reverse: true });
   });
 });
