@@ -1,4 +1,4 @@
-import type { ZCodeTaskGroupColor } from "@zcode/services";
+import type { TaskGroupColor as ZCodeTaskGroupColor } from "@/project-sidebar/contract.js";
 import { Label } from "@/components/ui/label.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
