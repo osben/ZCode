@@ -14,8 +14,10 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
 1. After synchronous eligibility checks pass, capture the text, attachment IDs,
    context, model/mode, incognito profile and workspace identity as one submission.
    Show the conversation with the complete user message before awaiting Host,
-   branch/worktree, upload, configuration or runtime work. Preparation appears
-   below the message. Do not clamp the submitted text.
+   branch/worktree, upload, configuration or runtime work. Preparation failures
+   and unresolved outcomes appear below the message; ordinary in-progress
+   preparation shows no extra label (the message itself is the feedback; worktree
+   setup keeps its step rows). Do not clamp the submitted text.
 2. Before Host identity exists this is a recoverable local intent, not an accepted
    prompt or an invented sidebar row. The sidebar continues to use real Host rows.
    Binding the Host session must preserve the same visible message and composer.
@@ -120,7 +122,7 @@ before Host has confirmed it.
 
 | ID    | Setup/action                                             | Required assertion                                                                           | Evidence                                        |
 | ----- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| FSL01 | Hold first-create/prewarm/config ACK; send ordinary text | Full message visible before releasing any held IO; preparation below                         | Mounted UI + pending Desktop scenario           |
+| FSL01 | Hold first-create/prewarm/config ACK; send ordinary text | Full message visible before releasing any held IO; no progress label                         | Mounted UI + pending Desktop scenario           |
 | FSL02 | Delay worktree reservation/Git                           | Full message precedes setup rows; no clamping; same identity after binding                   | Mounted UI + pending Desktop scenario           |
 | FSL03 | Incognito attachment upload fails after session creation | Same session remains; original files/profile retained; no sendText or deleteSession          | SessionPane regression                          |
 | FSL04 | Runtime/Git preparation fails                            | Durable session and pending message survive reopening/restart; explicit Retry reuses session | CLI persistence + UI + pending restart scenario |

@@ -15,8 +15,8 @@ After the user passes synchronous eligibility checks and clicks Send, they must
 **immediately** feel they are **in the conversation** with their **full message
 visible as sent**, while the composer stays **free for the next draft**; everything
 before the model (session reservation, worktree, uploads, runtime, admission) runs
-**in the background** with clear status under the message, without holding the Send
-button hostage for the whole pipeline.
+**in the background** without holding the Send button hostage for the whole
+pipeline; only failures and unresolved outcomes surface under the message.
 
 ## Three clocks (do not conflate them)
 
@@ -24,7 +24,7 @@ button hostage for the whole pipeline.
 | ----------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **P1 — Perceive** | “Did my message go in?”       | **&lt; 1 frame after click** (same React commit): full text (+ attachments/context chips) appears as the **primary user turn** in the conversation column, not a secondary preview strip.                                                                                       |
 | **P2 — Navigate** | “Am I in this task/chat?”     | **Immediately after P1** (first async beat — see _P2 bind moment_ below): pane binds to a **stable session identity** (real `sessionId`), normal chat chrome (header, timeline, composer dock), sidebar may lag but **must not gate** opening the conversation (FSL bind rule). |
-| **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. Show preparation under the message; never block P1/P2 on LLM or runtime ready.                                                                                                         |
+| **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. No progress label under the message; never block P1/P2 on LLM or runtime ready.                                                                                                        |
 
 **P2 bind moment (single write point, decided 2026-10-21).** The pane binds when
 the Host reservation identity — `{sessionId, commandId}` — is durably recorded:
@@ -129,7 +129,7 @@ these; unit tests alone are insufficient for P1/P2.
 | IUX02 | Double-click Send                     | One session, one user turn, one admission attempt                                                                                                                                                                                                                               |
 | IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal                                                                                                                                                                                                                       |
 | IUX04 | Navigate away before background ACK   | Focus unchanged; return shows same session + message; no duplicate send                                                                                                                                                                                                         |
-| IUX05 | Slow Host (held reservation)          | User still in chat with message; status “preparing” under message, not blank draft screen                                                                                                                                                                                       |
+| IUX05 | Slow Host (held reservation)          | User still in chat with message, not blank draft screen; no progress label under the message                                                                                                                                                                                    |
 | IUX06 | Admission ACK before projection       | At most one user turn; brief “syncing” ok; no second bubble                                                                                                                                                                                                                     |
 | IUX07 | Preparation failure                   | Same session, message remains, Retry works; composer not globally locked                                                                                                                                                                                                        |
 | IUX08 | Sidebar slow                          | Conversation usable before sidebar row appears                                                                                                                                                                                                                                  |
@@ -148,7 +148,8 @@ Order matters; later steps assume earlier ones.
    only the frozen snapshot, module draft stores, and the reserved session id —
    never the composer's live owner/scope.
 2. **Unify P1+P2 across plain and worktree** — Same navigation moment; background
-   pipeline injects only timeline status rows.
+   pipeline injects only failure / unresolved-outcome rows (worktree setup steps
+   keep their own rows).
 3. **Authoritative projection as reconcile, not gate** — Hide the optimistic row
    only when a real `realUser` row is visible in the window: strict
    `sourceCommandId` match first, with the fresh-session fallback (any `realUser`
@@ -177,6 +178,18 @@ Order matters; later steps assume earlier ones.
 | optimistic user row                     | P1 commit       | reconcile predicate above                               |
 | first-submission `submissionReady` lock | —               | removed; ordinary session readiness gates the next Send |
 | retry arm (`retryFirstSubmissionRef`)   | Retry / Restore | the retry freeze, or a scope/owner change               |
+
+## Status under the message (decided 2026-10-21)
+
+No progress label: while a first submission is active the optimistic turn itself is
+the feedback, so «Preparing conversation…» and its spinner are gone (they also could
+not tell reservation, runtime start and admission apart). `FirstSubmissionStatus`
+renders only what the user must act on or wait out knowingly — `failed` (send
+failed), `unknown` (outcome being checked), and an inactive `sending` record
+(recovered after restart, waiting for the conversation) — plus the frozen-context
+chip. An inactive `preparing` record (restart mid-preparation) shows no label; the
+composer card says the message is unsent and offers Retry. With nothing to show the
+component renders nothing.
 
 ## Retry surface for a failed first submission (decided 2026-10-21)
 
