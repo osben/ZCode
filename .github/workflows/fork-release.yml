@@ -71,6 +71,7 @@ jobs:
       # build by design (scripts/build-time-config.mjs).
       ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL }}
       ZCODE_WEB_REMOTE_CONTROL_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_URL }}
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE }}
     steps:
       - uses: actions/checkout@v5
 
@@ -126,6 +127,7 @@ jobs:
       # Same self-hosted remote-control defaults as build-macos-arm64; see the comment there.
       ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL }}
       ZCODE_WEB_REMOTE_CONTROL_URL: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_URL }}
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: ${{ vars.ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE }}
     steps:
       - uses: actions/checkout@v5
 
