@@ -32,3 +32,25 @@ Both used to carry the same accessible name and tooltip ("New task"). Screen rea
 
 - With each locale's real message table, the mounted sidebar's conversation button has an accessible name that differs from that locale's `taskList.newThread` and `sidebar.newTask`.
 - Clicking the button still calls the conversation-task handler.
+
+## Project menu: Open on GitHub and Manage sessions (restored after the project-tree sync)
+
+Both entries extend the upstream project menu in `ProjectNodeContent` (context and "more" menus share one
+action list). Wiring lives in `ProjectSidebarNode`, next to the existing device-settings action.
+
+- **Open on GitHub** (`workspaceSidebar.openOnGitHub`, `virtual-project-open-on-github` test id): shown only for
+  local projects whose primary root has a GitHub remote. The remote is read lazily when a project menu opens
+  (never on mount: a sidebar can hold dozens of projects) through the workspace `gitService.getRepositoryRemotes`
+  resolved by `useWorkspaceServices`, converted with `gitRemoteUrlToWebUrl`, and accepted only when it starts
+  with `https://github.com/`. A failed lookup hides the item. The URL opens through `IPlatformService.openExternal`.
+  Remote-host projects do not show it (no local git service for their primary root).
+- **Manage sessions** (label `quickPick.command.manageSessions`, test id `virtual-project-manage-sessions`): sets the settings
+  intent `setPendingSettingsSectionIntent("sessions", { sessionsScope })` and opens the settings tab, per
+  `manage-sessions-table.md`. The scope is the project's primary root (`workspacePath`) plus, for remote-host
+  projects, the remote workspace identity built from host id and root. Projects without roots hide the item.
+
+Status dots use design tokens: the draft task row dot is `bg-success`, the unread dot in grouped task rows is
+`bg-icon-blue` (no raw palette colors).
+
+Acceptance: the menu lists both items only under the conditions above; Manage sessions passes the project scope;
+Open on GitHub calls `openExternal` with the converted URL; no lookup happens before a menu opens.

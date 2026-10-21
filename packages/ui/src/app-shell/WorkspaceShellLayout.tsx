@@ -75,6 +75,7 @@ import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { TaskFindDialog } from "@/quickpick/TaskFindDialog.js";
 import { WebRemoteControlMobileShell } from "@/WebRemoteControlMobileShell.js";
 import { WorkspaceHeader } from "@/WorkspaceHeader.js";
+import { PullRequestStatusProbes } from "@/PullRequestStatusProbes.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
 import { AnimatedSidePanePanel } from "@/app-shell/AnimatedSidePanePanel.js";
 import {
@@ -2897,6 +2898,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           isWindowsDesktop={isWindowsDesktop}
           headerTestId={TID_APP_HEADER}
         >
+          {/* Mounted once at shell level so desktop, collapsed-sidebar and web-remote mobile
+              all feed the same PR status store (specs/sidebar-pr-status.md). */}
+          <PullRequestStatusProbes workspaceTabs={workspaceTabs} sortBy="updated" />
           {isWebRemoteControlShell ? renderRemoteShell(wideContent) : wideContent}
         </DesktopWindowFrame>
         {branchGuardShell.dialog}

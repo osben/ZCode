@@ -1,7 +1,7 @@
 import type { IServiceAccessor } from "@zcode/services";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 
-interface WorkspaceServiceTarget {
+export interface WorkspaceServiceTarget {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;

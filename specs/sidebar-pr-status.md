@@ -8,6 +8,12 @@ Status: implemented (2026-10-18). Supersedes the "Merged" badge idea in
 A worktree session usually ends in a pull request, but nothing in the app shows whether that PR is
 open, merged, closed, or blocked by failing checks.
 
+## Mount owner
+
+`PullRequestStatusProbes` is mounted exactly once, in `WorkspaceShellLayout` beside the sidebar
+(not inside the project sidebar, which can be collapsed or replaced by the web-remote mobile shell).
+It is the single writer of the PR status store; row markers, the header chip and Git tools only read.
+
 ## Scope rules
 
 1. **Task-level only.** PR status belongs to a session that owns its checkout: a session with

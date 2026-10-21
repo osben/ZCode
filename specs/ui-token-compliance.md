@@ -22,7 +22,7 @@ Source of truth: `DESIGN.md` ("Highest-priority UI constraint", "Color Usage Rul
 - Unused vendored ai-elements kit (`commit`, `package-info`, `schema-display`, `test-results`, `file-tree`, `web-preview`, `speech-input`, `terminal`, `audio-player`): no product importers; migrate when adopted. Used ones (`tool`, `queue`) are migrated.
 - Fluid onboarding hero title (`text-[clamp(...)]`) and its `dark:text-slate-200` override on hero-palette text.
 - Brand/third-party surfaces: ChatGPT sign-in button, plugin detail prompt over art, Coding Plan discount card on a brand fill, hero art hex colors, mermaid/terminal rendering content, workflow avatar palette.
-- `WorkspaceCustomizeDialog` color swatches: user-selectable data palette, not UI chrome.
+- `ProjectColorField` color swatches: user-selectable data palette, not UI chrome.
 
 ## Acceptance
 

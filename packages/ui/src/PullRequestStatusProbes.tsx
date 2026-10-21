@@ -1,7 +1,9 @@
 import { useMemo } from "react";
-import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
+import {
+  buildWorkspaceServiceLookup,
+  type WorkspaceServiceTarget,
+} from "@/lib/workspaceServiceResolver.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { usePullRequestStatuses } from "@/hooks/usePullRequestStatuses.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
@@ -20,7 +22,7 @@ export function PullRequestStatusProbes({
   workspaceTabs,
   sortBy,
 }: {
-  workspaceTabs: WorkspaceTabState[];
+  workspaceTabs: WorkspaceServiceTarget[];
   sortBy: "created" | "updated";
 }) {
   const baseServices = useBaseWorkspaceServices();

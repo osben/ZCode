@@ -182,7 +182,7 @@ export function createWorkspaceDisplayStore(
 /** App-wide singleton backed by browser localStorage (no-op storage outside the renderer). */
 export const useWorkspaceDisplayStore = createWorkspaceDisplayStore();
 
-if (typeof window !== "undefined") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("storage", (event) => {
     if (event.key !== null && event.key !== WORKSPACE_DISPLAY_STORAGE_KEY) return;
     const storage = getBrowserStorage();
@@ -200,4 +200,9 @@ export function selectWorkspaceDisplayEntry(
   workspaceIdentity?: string,
 ): WorkspaceDisplayEntry | undefined {
   return state.entries[buildTaskWorkspaceKey(workspacePath, workspaceIdentity)];
+}
+
+/** Key of the fork-only local display preference (color) for a project row. */
+export function buildProjectDisplayKey(project: { id: string; hostId: string }): string {
+  return `project:${project.hostId}:${project.id}`;
 }

@@ -5,7 +5,9 @@ import { memo } from "react";
 import type { useSortable } from "@dnd-kit/sortable";
 import {
   Ellipsis,
+  ExternalLink,
   FolderMinus,
+  MessagesSquare,
   ListTree,
   Pin,
   PinOff,
@@ -14,6 +16,8 @@ import {
   Trash2,
   MessageCirclePlus,
 } from "lucide-react";
+import { buildProjectDisplayKey, useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
+import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
 import { ProjectFolderIcon } from "@/project-sidebar/ProjectFolderIcon.js";
 import { sourceServerConnectionStateSchema } from "@zcode/shared";
 import type {
@@ -71,6 +75,11 @@ export type ProjectNodeProps = {
   onRemoveEntry?(): void;
   /** 仅桌面端远程项目提供：从菜单或待处理详情跳到“设置 › 远程设备”。 */
   onOpenDeviceSettings?(): void;
+  /** Lazy per-menu data (GitHub remote) is requested when a project menu opens, never on mount. */
+  onMenuOpen?(): void;
+  /** Set only when the project's primary root has a GitHub remote. */
+  onOpenGitHub?(): void;
+  onManageSessions?(): void;
 };
 
 // 原因：useSortable 的激活/测量/落点更新曾让 41 个项目的菜单和 Tooltip 连续重渲染。
@@ -92,6 +101,9 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   availability = DEFAULT_AVAILABILITY,
   onRemoveEntry,
   onOpenDeviceSettings,
+  onMenuOpen,
+  onOpenGitHub,
+  onManageSessions,
   additionalActions = EMPTY_ADDITIONAL_ACTIONS,
   editable,
   isOpen,
@@ -108,6 +120,10 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   }) {
   const { intl } = useZCodeIntl();
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
+  // Fork-only local preference (specs/workspace-sidebar-customization.md): the color is stored
+  // under the project id, never in the project database or setting.json.
+  const displayKey = buildProjectDisplayKey(project);
+  const displayEntry = useWorkspaceDisplayStore((state) => state.entries[displayKey]);
   // 修复原因：新项目行曾无条件显示本地文件夹；远程图标只读 Host 现有投影，复用统一五态。
   const remotePresentation = remoteHost
     ? resolveRemoteConnectionPresentation({
@@ -137,6 +153,26 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
             label: msg("deviceSettings"),
             icon: Settings,
             run: onOpenDeviceSettings,
+          },
+        ]
+      : []),
+    ...(onOpenGitHub
+      ? [
+          {
+            id: "open-on-github",
+            label: intl.formatMessage({ id: "workspaceSidebar.openOnGitHub" }),
+            icon: ExternalLink,
+            run: onOpenGitHub,
+          },
+        ]
+      : []),
+    ...(onManageSessions
+      ? [
+          {
+            id: "manage-sessions",
+            label: intl.formatMessage({ id: "quickPick.command.manageSessions" }),
+            icon: MessagesSquare,
+            run: onManageSessions,
           },
         ]
       : []),
@@ -181,7 +217,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   ];
   return (
     <>
-      <ContextMenu modal={false}>
+      <ContextMenu modal={false} onOpenChange={(open) => open && onMenuOpen?.()}>
         {/* 标题区域不含行尾按钮，作为锚点时浮层会遮住操作；以整行边界定位，保留更多/新建入口可点击。 */}
         <RemoteIdentityHoverCard
           host={remoteHost}
@@ -245,7 +281,12 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                           <ProjectFolderIcon
                             rootCount={project.roots.length}
                             open={isOpen}
-                            className="size-4 shrink-0 text-foreground-subtle"
+                            className={cn(
+                              "size-4 shrink-0",
+                              displayEntry?.color
+                                ? WORKSPACE_ICON_COLOR_CLASS[displayEntry.color]
+                                : "text-foreground-subtle",
+                            )}
                           />
                         )}
                       </span>
@@ -312,7 +353,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                 data-testid="virtual-project-actions"
                 className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/project-row:opacity-100 group-focus-within/project-row:opacity-100 [&:has([data-state=open])]:opacity-100 [@media(hover:none)]:opacity-100"
               >
-                <DropdownMenu modal={false}>
+                <DropdownMenu modal={false} onOpenChange={(open) => open && onMenuOpen?.()}>
                   <ControlHintTooltip title={more}>
                     <DropdownMenuTrigger asChild>
                       <Button
