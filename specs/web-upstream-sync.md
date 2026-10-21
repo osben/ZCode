@@ -106,9 +106,11 @@ bootstrap. They stay on the fork's relay code until the relay unit is decided.
 Count: 86 paths in the upstream diff. The merged files `main.tsx`, `web/vite.config.ts` and
 `webAuthLocale.ts` also carry deferred hunks, listed above.
 
-## Skipped tests (TEMPORARY, relay-deferred)
+## Previously skipped tests (resolved)
 
-`packages/web/test/webAuthService.test.ts` (12 cases skipped with `it.skip`, each tagged in source):
+The 12 cases below were skipped with `it.skip` during the 3.16.1 sync. They are enabled now; `packages/web/test/webAuthService.test.ts` has no skip left.
+
+`packages/web/test/webAuthService.test.ts` (12 cases):
 
 - uses `VITE_ZAI_OAUTH_ORIGIN` for the test authorize URL.
 - starts ZAI login with nonce, dev return_to, and original app_return_to.
@@ -119,8 +121,8 @@ Count: 86 paths in the upstream diff. The merged files `main.tsx`, `web/vite.con
 - ignores an abandoned new redirect when an older page starts another login.
 - exchanges token, persists complete session, and returns sanitized app_return_to.
 
-Reason: upstream `packages/shared` sets `webRemoteCallbackUrl` to `/remote/v4`. The fork keeps
-`/web-remote/callback`. The redirect path is the relay protocol decision.
+Historical reason for the skip: upstream `packages/shared` sets `webRemoteCallbackUrl` to `/remote/v4`,
+while the fork kept `/web-remote/callback`. The relay V2 decision is recorded in `specs/relay-v2-migration.md`.
 
 ## Acceptance
 
@@ -135,4 +137,4 @@ Reason: upstream `packages/shared` sets `webRemoteCallbackUrl` to `/remote/v4`. 
   `conversationShareLandingPage` and `ConversationShareLandingPage.tsx` upstream comments). Test copy is
   checked by `check-test-copy.mjs`, which does not check comments.
 - The `WebAuthPageCopy` waiting keys are a temporary compatibility shim; they go away with the relay unit.
-- The 12 skipped webAuthService cases must be re-enabled once the relay redirect path is decided.
+- Resolved: the 12 webAuthService cases listed above are re-enabled.
