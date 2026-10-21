@@ -60,6 +60,8 @@ export function encodeEnrollmentPowChallenge(challenge: EnrollmentPowChallenge):
 export function parseEnrollmentPowChallenge(value: string): EnrollmentPowChallenge | undefined {
   const bytes = fromBase64Url(value);
   if (!bytes || bytes.length !== ENROLLMENT_POW_CHALLENGE_BYTES) return undefined;
+  // Reject non-canonical encodings (spare bits in the last character) so one challenge has one spelling.
+  if (toBase64Url(bytes) !== value) return undefined;
   const issuedAt = Number(new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(0));
   const difficulty = bytes[8]!;
   if (!Number.isSafeInteger(issuedAt)) return undefined;

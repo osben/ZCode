@@ -19,7 +19,10 @@ afterEach(async () => {
 });
 
 async function deviceRelay(overrides: Parameters<typeof startRelay>[0] = {}) {
-  const harness = await startRelay({ identityMode: "device-key", ...overrides });
+  const harness = await startRelay({
+    identityMode: "device-key",
+    ...overrides,
+  });
   cleanup.push(harness);
   return harness;
 }
@@ -39,10 +42,15 @@ describe("device-key enrollment and exchange", () => {
     const first = await harness.api("POST", SESSION, {
       body: deviceKeyBody(pair, { secret: ENROLLMENT_SECRET }),
     });
-    expect(first).toMatchObject({ status: 200, body: { code: 0, data: { expires_in: 3600 } } });
+    expect(first).toMatchObject({
+      status: 200,
+      body: { code: 0, data: { expires_in: 3600 } },
+    });
     const jwt = (first.body.data as { jwt: string }).jwt;
     expect(subjectOf(jwt)).toBe(derivedId(pair.publicKey));
-    const second = await harness.api("POST", SESSION, { body: deviceKeyBody(pair) });
+    const second = await harness.api("POST", SESSION, {
+      body: deviceKeyBody(pair),
+    });
     expect(second.status).toBe(200);
     // The issued relay JWT works on the unchanged device routes.
     const registered = await harness.api("POST", "/api/v1/remote/device", {
@@ -55,7 +63,9 @@ describe("device-key enrollment and exchange", () => {
   it("answers 4012 for an unknown key without a secret and enrolls nothing", async () => {
     const harness = await deviceRelay();
     const pair = deviceKeyPair();
-    const result = await harness.api("POST", SESSION, { body: deviceKeyBody(pair) });
+    const result = await harness.api("POST", SESSION, {
+      body: deviceKeyBody(pair),
+    });
     expect(result).toMatchObject({ status: 401, body: { code: 4012 } });
     const retry = await harness.api("POST", SESSION, {
       body: deviceKeyBody(pair, { secret: ENROLLMENT_SECRET }),
@@ -70,7 +80,10 @@ describe("device-key enrollment and exchange", () => {
       const result = await harness.api("POST", SESSION, {
         body: deviceKeyBody(deviceKeyPair(), { secret }),
       });
-      expect(result).toMatchObject({ status: 401, body: { code: 401, msg: "unauthorized" } });
+      expect(result).toMatchObject({
+        status: 401,
+        body: { code: 401, msg: "unauthorized" },
+      });
       expect(JSON.stringify(result.body)).not.toContain(secret || "\u0000");
     }
   });
@@ -156,7 +169,9 @@ describe("device-key enrollment and exchange", () => {
 
   it("rejects well-typed but malformed key, nonce or signature fields with the generic 401", async () => {
     const harness = await deviceRelay();
-    const good = deviceKeyBody(deviceKeyPair(), { secret: ENROLLMENT_SECRET }) as {
+    const good = deviceKeyBody(deviceKeyPair(), {
+      secret: ENROLLMENT_SECRET,
+    }) as {
       device_key: Record<string, unknown>;
     };
     for (const field of [{ public_key: "short" }, { nonce: "tiny" }, { signature: "sig" }]) {
@@ -170,7 +185,11 @@ describe("device-key enrollment and exchange", () => {
     const statuses: number[] = [];
     for (let i = 0; i < 3; i += 1) {
       statuses.push(
-        (await harness.api("POST", SESSION, { body: deviceKeyBody(deviceKeyPair()) })).status,
+        (
+          await harness.api("POST", SESSION, {
+            body: deviceKeyBody(deviceKeyPair()),
+          })
+        ).status,
       );
     }
     expect(statuses).toEqual([401, 401, 429]);
@@ -188,10 +207,14 @@ describe("secret hygiene", () => {
     const harness = await deviceRelay({ logger });
     const results = [
       await harness.api("POST", SESSION, {
-        body: deviceKeyBody(deviceKeyPair(), { secret: ENROLLMENT_SECRET + "x" }),
+        body: deviceKeyBody(deviceKeyPair(), {
+          secret: ENROLLMENT_SECRET + "x",
+        }),
       }),
       await harness.api("POST", SESSION, { rawBody: ENROLLMENT_SECRET }),
-      await harness.api("POST", SESSION, { body: { pairing_code: "B".repeat(22) } }),
+      await harness.api("POST", SESSION, {
+        body: { pairing_code: "B".repeat(22) },
+      }),
     ];
     const everything = JSON.stringify([events, results.map((result) => result.body)]);
     expect(everything).not.toContain(ENROLLMENT_SECRET);
@@ -255,8 +278,12 @@ describe("pairing codes for the phone", () => {
       ).body.data as { jwt: string }
     ).jwt;
     const code = (
-      (await harness.api("POST", "/api/v1/remote/pairing", { bearer: jwt, body: {} })).body
-        .data as { code: string }
+      (
+        await harness.api("POST", "/api/v1/remote/pairing", {
+          bearer: jwt,
+          body: {},
+        })
+      ).body.data as { code: string }
     ).code;
     return { pair, jwt, code };
   }
@@ -265,7 +292,9 @@ describe("pairing codes for the phone", () => {
     const harness = await deviceRelay();
     const { pair, jwt, code } = await paired(harness);
     expect(code).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    const phone = await harness.api("POST", SESSION, { body: { pairing_code: code } });
+    const phone = await harness.api("POST", SESSION, {
+      body: { pairing_code: code },
+    });
     expect(phone.status).toBe(200);
     const phoneJwt = (phone.body.data as { jwt: string }).jwt;
     expect(subjectOf(phoneJwt)).toBe(derivedId(pair.publicKey));
@@ -274,7 +303,9 @@ describe("pairing codes for the phone", () => {
       bearer: jwt,
       body: { device_mid: "mid-1" },
     });
-    const listed = await harness.api("GET", "/api/v1/remote/device", { bearer: phoneJwt });
+    const listed = await harness.api("GET", "/api/v1/remote/device", {
+      bearer: phoneJwt,
+    });
     expect(listed.body.data).toEqual([
       expect.objectContaining({
         device_sid: (registered.body.data as { device_sid: string }).device_sid,
@@ -288,10 +319,18 @@ describe("pairing codes for the phone", () => {
     expect((await harness.api("POST", SESSION, { body: { pairing_code: code } })).status).toBe(200);
     expect((await harness.api("POST", SESSION, { body: { pairing_code: code } })).status).toBe(401);
     expect(
-      (await harness.api("POST", SESSION, { body: { pairing_code: "A".repeat(22) } })).status,
+      (
+        await harness.api("POST", SESSION, {
+          body: { pairing_code: "A".repeat(22) },
+        })
+      ).status,
     ).toBe(401);
     expect(
-      (await harness.api("POST", SESSION, { body: { pairing_code: code, extra: 1 } })).status,
+      (
+        await harness.api("POST", SESSION, {
+          body: { pairing_code: code, extra: 1 },
+        })
+      ).status,
     ).toBe(400);
   });
 
@@ -305,7 +344,11 @@ describe("pairing codes for the phone", () => {
       status: 404,
     });
     expect(
-      (await zai.api("POST", SESSION, { body: { pairing_code: "A".repeat(22) } })).status,
+      (
+        await zai.api("POST", SESSION, {
+          body: { pairing_code: "A".repeat(22) },
+        })
+      ).status,
     ).toBe(400);
   });
 
@@ -326,7 +369,12 @@ describe("pairing codes for the phone", () => {
     expect(denied.status).toBe(401);
     // The Desktop's own device-key JWT still can, and the phone JWT keeps working elsewhere.
     expect(
-      (await harness.api("POST", "/api/v1/remote/pairing", { bearer: jwt, body: {} })).status,
+      (
+        await harness.api("POST", "/api/v1/remote/pairing", {
+          bearer: jwt,
+          body: {},
+        })
+      ).status,
     ).toBe(200);
     expect((await harness.api("GET", "/api/v1/remote/device", { bearer: phoneJwt })).status).toBe(
       200,
@@ -339,7 +387,12 @@ describe("pairing codes for the phone", () => {
     const statuses: number[] = [];
     for (let i = 0; i < 9; i += 1) {
       statuses.push(
-        (await harness.api("POST", "/api/v1/remote/pairing", { bearer: jwt, body: {} })).status,
+        (
+          await harness.api("POST", "/api/v1/remote/pairing", {
+            bearer: jwt,
+            body: {},
+          })
+        ).status,
       );
     }
     expect(statuses.slice(-1)).toEqual([429]);
@@ -360,14 +413,27 @@ describe("service-level clock and capacity rules", () => {
     return createRelaySessionService({
       signingKeys: [relaySigningKey("relay-1").privateJwk],
       ttlSeconds: 3600,
-      identity: { mode: "device-key", enrollmentSecret: ENROLLMENT_SECRET, keys: keyStore() },
+      identity: {
+        mode: "device-key",
+        enrollmentSecret: ENROLLMENT_SECRET,
+        keys: keyStore(),
+      },
       now: () => clock.ms,
       ...extra,
     });
   }
   const request = (pair: ReturnType<typeof deviceKeyPair>, ts: number, nonce: string) => {
-    const body = deviceKeyBody(pair, { ts, nonce, secret: ENROLLMENT_SECRET }) as {
-      device_key: { public_key: string; ts: number; nonce: string; signature: string };
+    const body = deviceKeyBody(pair, {
+      ts,
+      nonce,
+      secret: ENROLLMENT_SECRET,
+    }) as {
+      device_key: {
+        public_key: string;
+        ts: number;
+        nonce: string;
+        signature: string;
+      };
     };
     return {
       publicKey: body.device_key.public_key,

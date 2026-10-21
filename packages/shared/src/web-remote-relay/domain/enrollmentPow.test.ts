@@ -21,6 +21,9 @@ describe("enrollment proof of work layout", () => {
     expect(parseEnrollmentPowChallenge("short")).toBeUndefined();
     expect(parseEnrollmentPowChallenge(`${encoded}A`)).toBeUndefined();
     expect(parseEnrollmentPowChallenge("!".repeat(34))).toBeUndefined();
+    // Spare bits of the last character must be zero: one challenge, one spelling.
+    const last = encoded.at(-1) === "A" ? "B" : "A";
+    expect(parseEnrollmentPowChallenge(`${encoded.slice(0, -1)}${last}`)).toBeUndefined();
   });
 
   it("counts leading zero bits across byte boundaries", () => {

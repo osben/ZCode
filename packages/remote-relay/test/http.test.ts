@@ -20,16 +20,24 @@ describe("session exchange", () => {
     });
     expect(result.status).toBe(200);
     expect(result.headers.get("cache-control")).toBe("no-store");
-    expect(result.body).toMatchObject({ code: 0, msg: "ok", data: { expires_in: 3600 } });
+    expect(result.body).toMatchObject({
+      code: 0,
+      msg: "ok",
+      data: { expires_in: 3600 },
+    });
   });
 
   it("answers 400 with code 3001 for a missing, extra-keyed or non-string body", async () => {
     const harness = await relay();
     for (const body of [undefined, {}, { identity_token: "x", extra: 1 }, { identity_token: 7 }]) {
-      const result = await harness.api("POST", "/api/v1/remote/session", { body });
+      const result = await harness.api("POST", "/api/v1/remote/session", {
+        body,
+      });
       expect(result).toMatchObject({ status: 400, body: { code: 3001 } });
     }
-    const malformed = await harness.api("POST", "/api/v1/remote/session", { rawBody: "{not json" });
+    const malformed = await harness.api("POST", "/api/v1/remote/session", {
+      rawBody: "{not json",
+    });
     expect(malformed).toMatchObject({ status: 400, body: { code: 3001 } });
   });
 
@@ -54,7 +62,9 @@ describe("authentication of the relay API", () => {
 
   it("returns the 404 envelope for unknown routes and 405 for the wrong method", async () => {
     const harness = await relay();
-    expect(await harness.api("GET", "/api/v1/remote/nothing")).toMatchObject({ status: 404 });
+    expect(await harness.api("GET", "/api/v1/remote/nothing")).toMatchObject({
+      status: 404,
+    });
     expect((await harness.api("GET", "/api/v1/remote/session")).status).toBe(405);
     expect((await harness.api("GET", "/api/v1/remote/token")).status).toBe(405);
   });
@@ -82,7 +92,9 @@ describe("device records", () => {
       (first.body.data as { device_sid: string }).device_sid,
     );
 
-    const listed = await harness.api("GET", "/api/v1/remote/device", { bearer });
+    const listed = await harness.api("GET", "/api/v1/remote/device", {
+      bearer,
+    });
     expect((listed.body.data as unknown[]).length).toBe(2);
     const other = await harness.api("GET", "/api/v1/remote/device", {
       bearer: await harness.relayJwt("user-2"),
@@ -109,7 +121,9 @@ describe("device records", () => {
         body: { device_sid: sid },
       }),
     ).toMatchObject({ status: 200, body: { code: 0 } });
-    const listed = await harness.api("GET", "/api/v1/remote/device", { bearer });
+    const listed = await harness.api("GET", "/api/v1/remote/device", {
+      bearer,
+    });
     expect(listed.body.data).toEqual([]);
     expect(
       await harness.api("POST", "/api/v1/remote/device/delete", {
@@ -134,7 +148,9 @@ describe("device records", () => {
       body: { device_sid: sid },
     });
     expect(intruder).toMatchObject({ status: 200, body: { code: 1006 } });
-    const listed = await harness.api("GET", "/api/v1/remote/device", { bearer: owner });
+    const listed = await harness.api("GET", "/api/v1/remote/device", {
+      bearer: owner,
+    });
     expect(listed.body.data).toHaveLength(1);
   });
 
@@ -182,7 +198,10 @@ describe("one-time token endpoint", () => {
       expect(issued.status).toBe(200);
     }
     expect(
-      await harness.api("POST", "/api/v1/remote/token", { bearer, body: { role: "device" } }),
+      await harness.api("POST", "/api/v1/remote/token", {
+        bearer,
+        body: { role: "device" },
+      }),
     ).toMatchObject({ status: 429, body: { code: 4029 } });
     expect(
       (
@@ -218,7 +237,9 @@ describe("rate limits and origins", () => {
   });
 
   it("echoes only allow-listed Web origins on CORS responses", async () => {
-    const harness = await relay({ allowedOrigins: ["https://zcode.example.invalid"] });
+    const harness = await relay({
+      allowedOrigins: ["https://zcode.example.invalid"],
+    });
     const allowed = await harness.api("OPTIONS", "/api/v1/remote/session", {
       origin: "https://zcode.example.invalid",
     });
@@ -237,6 +258,8 @@ describe("rate limits and origins", () => {
     const harness = await relay();
     expect(await harness.api("GET", "/healthz")).toMatchObject({ status: 200 });
     expect(await harness.api("GET", "/readyz")).toMatchObject({ status: 200 });
-    expect(await harness.api("GET", "/elsewhere")).toMatchObject({ status: 404 });
+    expect(await harness.api("GET", "/elsewhere")).toMatchObject({
+      status: 404,
+    });
   });
 });

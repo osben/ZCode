@@ -11,7 +11,9 @@ export const NOW_SECONDS = 1_800_000_000;
 /** Ed25519 pair for relay JWT signing: the private JWK goes to the relay config, never to clients. */
 export function relaySigningKey(kid: string) {
   const { privateKey } = generateKeyPairSync("ed25519");
-  return { privateJwk: { ...privateKey.export({ format: "jwk" }), kid } as Jwk };
+  return {
+    privateJwk: { ...privateKey.export({ format: "jwk" }), kid } as Jwk,
+  };
 }
 
 /** A login-identity key pair of the given algorithm family. The public JWK is what the relay trusts. */
@@ -102,7 +104,12 @@ export function deviceKeyBody(
     "base64url",
   );
   return {
-    device_key: { public_key: options.publicKey ?? pair.publicKey, ts, nonce, signature },
+    device_key: {
+      public_key: options.publicKey ?? pair.publicKey,
+      ts,
+      nonce,
+      signature,
+    },
     ...(options.secret === undefined ? {} : { enrollment_secret: options.secret }),
     ...(options.work === undefined ? {} : { work: options.work }),
   };

@@ -29,7 +29,10 @@ const env = {
   ZCODE_RELAY_PORT: String(port),
   ZCODE_RELAY_DB_PATH: join(directory, "relay.sqlite"),
   ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS: JSON.stringify([
-    { ...relaySigning.privateKey.export({ format: "jwk" }), kid: "smoke-relay-1" },
+    {
+      ...relaySigning.privateKey.export({ format: "jwk" }),
+      kid: "smoke-relay-1",
+    },
   ]),
   ZCODE_REMOTE_RELAY_IDENTITY_ISSUER: issuer,
   ZCODE_REMOTE_RELAY_IDENTITY_JWKS: JSON.stringify({
@@ -87,8 +90,13 @@ async function api(method, path, { bearer, body } = {}) {
 }
 
 async function socket(bearer, role, deviceSid) {
-  const issued = await api("POST", "/api/v1/remote/token", { bearer, body: { role } });
-  const ws = new WebSocket(`${wsUrl}?token=${issued.token}`, { origin: "https://smoke.invalid" });
+  const issued = await api("POST", "/api/v1/remote/token", {
+    bearer,
+    body: { role },
+  });
+  const ws = new WebSocket(`${wsUrl}?token=${issued.token}`, {
+    origin: "https://smoke.invalid",
+  });
   sockets.push(ws);
   const queue = [];
   ws.on("message", (data) => queue.push(JSON.parse(data.toString())));
@@ -112,7 +120,9 @@ async function socket(bearer, role, deviceSid) {
 try {
   await start();
   const jwt = (
-    await api("POST", "/api/v1/remote/session", { body: { identity_token: loginToken() } })
+    await api("POST", "/api/v1/remote/session", {
+      body: { identity_token: loginToken() },
+    })
   ).jwt;
   const device = await api("POST", "/api/v1/remote/device", {
     bearer: jwt,
@@ -125,15 +135,21 @@ try {
   const terminalSocket = await socket(jwt, "terminal", sid);
   assert.equal((await terminalSocket.take("auth_ack")).pair_status, "matched");
   terminalSocket.ws.send(JSON.stringify({ type: "data", payload: { fixture: "opaque-frame" } }));
-  assert.deepEqual((await deviceSocket.take("data")).payload, { fixture: "opaque-frame" });
+  assert.deepEqual((await deviceSocket.take("data")).payload, {
+    fixture: "opaque-frame",
+  });
 
   sockets.splice(0).forEach((item) => item.terminate());
   await stop();
   await start();
   const restartedJwt = (
-    await api("POST", "/api/v1/remote/session", { body: { identity_token: loginToken() } })
+    await api("POST", "/api/v1/remote/session", {
+      body: { identity_token: loginToken() },
+    })
   ).jwt;
-  const listed = await api("GET", "/api/v1/remote/device", { bearer: restartedJwt });
+  const listed = await api("GET", "/api/v1/remote/device", {
+    bearer: restartedJwt,
+  });
   assert.equal(listed[0].device_sid, sid);
   const restored = await socket(restartedJwt, "device", sid);
   assert.equal((await restored.take("auth_ack")).pair_status, "waiting");
@@ -161,9 +177,14 @@ try {
   const enrolled = await api("POST", "/api/v1/remote/session", {
     body: exchangeBody(env.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET),
   });
-  const again = await api("POST", "/api/v1/remote/session", { body: exchangeBody() });
+  const again = await api("POST", "/api/v1/remote/session", {
+    body: exchangeBody(),
+  });
   assert.ok(again.jwt);
-  const pairing = await api("POST", "/api/v1/remote/pairing", { bearer: enrolled.jwt, body: {} });
+  const pairing = await api("POST", "/api/v1/remote/pairing", {
+    bearer: enrolled.jwt,
+    body: {},
+  });
   const phone = await api("POST", "/api/v1/remote/session", {
     body: { pairing_code: pairing.code },
   });
@@ -171,7 +192,9 @@ try {
     bearer: enrolled.jwt,
     body: { device_mid: "smoke-device-key" },
   });
-  const phoneList = await api("GET", "/api/v1/remote/device", { bearer: phone.jwt });
+  const phoneList = await api("GET", "/api/v1/remote/device", {
+    bearer: phone.jwt,
+  });
   assert.equal(phoneList[0].device_sid, deviceKeyDevice.device_sid);
   const oldModeJwt = await fetch(`${base}/api/v1/remote/device`, {
     headers: { Authorization: `Bearer ${restartedJwt}` },

@@ -23,6 +23,8 @@ export interface HttpResult {
 export interface RelayHarness {
   server: RelayServer;
   store: Awaited<ReturnType<typeof createRelayDeviceStore>>;
+  /** SQLite file, so tests can write rows the way an older relay build would have. */
+  dbPath: string;
   /** Origin-only HTTP base, e.g. http://127.0.0.1:41234. */
   http: string;
   /** Issues an account login JWT for a user, as the desktop or terminal login would hold. */
@@ -32,7 +34,12 @@ export interface RelayHarness {
   api(
     method: string,
     path: string,
-    options?: { bearer?: string; body?: unknown; rawBody?: string; origin?: string },
+    options?: {
+      bearer?: string;
+      body?: unknown;
+      rawBody?: string;
+      origin?: string;
+    },
   ): Promise<HttpResult>;
   /** Requests a one-time token for the role and opens a WebSocket with it. */
   connect(bearer: string, role: "device" | "terminal"): Promise<TestSocket>;
@@ -90,7 +97,14 @@ export async function startRelay(
             mode: "device-key",
             ...(enrollment?.secret === false ? {} : { enrollmentSecret: ENROLLMENT_SECRET }),
             keys: store,
-            ...(enrollment === undefined ? {} : { enrollment }),
+            ...(enrollment === undefined
+              ? {}
+              : {
+                  enrollment: {
+                    ...enrollment,
+                    ...(maxEnrolledKeys === undefined ? {} : { maxEnrolledKeys }),
+                  },
+                }),
           }
         : { issuer: ISSUER, userClaim: "sub", keys: [identity.publicJwk] },
     now: () => Date.now(),
@@ -108,6 +122,7 @@ export async function startRelay(
   const harness: RelayHarness = {
     server,
     store,
+    dbPath: join(directory, "relay.sqlite"),
     http,
     login(userId = "user-1") {
       return loginJwt(identity, "EdDSA", { sub: userId }, Math.floor(Date.now() / 1000));
