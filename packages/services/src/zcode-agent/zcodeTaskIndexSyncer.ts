@@ -691,8 +691,21 @@ export function createZCodeTaskIndexSyncer(
         const meta = buildBaselineMetaFromSummary(state.target, next);
         void taskIndexRepo
           .seedTaskMetaIfMissing(meta)
-          .then(() => {
-            emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_meta_changed");
+          .then(() =>
+            // Sidebar reads only list rows admitted with CLI facts (cli_created_at IS NOT NULL
+            // in project storage); seeding alone leaves the reserved row invisible until an
+            // unrelated admission happens to run. The first fact fills the display baseline.
+            taskIndexRepo.applyCliFacts({
+              meta,
+              titleSource: next.titleSource,
+            }),
+          )
+          .then((admitted) => {
+            emitWorkspaceTaskListChanged(
+              broadcastTargetFrom(target),
+              admitted ?? meta,
+              "task_meta_changed",
+            );
           })
           .catch((error) =>
             logger.warn(undefined, "Could not index prepared worktree session", error),

@@ -2043,6 +2043,10 @@ export function SessionPane({
         } else {
           void organize?.();
         }
+        // The immediate bind no longer rides the project-tree staging refresh, so make the
+        // grouped sidebar tree re-read on its own subscription instead of waiting for an
+        // unrelated taskListVersion bump.
+        useZCodeSessionStore.getState().bumpTaskListVersion(workspacePath, workspaceIdentity);
         commit();
       }
     },

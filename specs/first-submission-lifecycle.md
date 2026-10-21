@@ -51,7 +51,12 @@ tree or sidebar projection of the new row: draft-workspace rows may reach that
 projection late or never, and a bind stalled on them leaves the conversation
 unreachable. Group placement of the new row is the exception: it stays staged on the
 row becoming readable, because admitting earlier fails host-side with
-`task-group.created-task-unavailable`. A promoted ordinary prewarm binding is
+`task-group.created-task-unavailable`. The reserved session's task-index row is
+admitted with CLI facts at reservation (sidebar reads list only cli-admitted rows),
+and the immediate bind bumps the workspace task-list version so the grouped sidebar
+tree re-reads on its own subscription. The reserved session persists with the
+«New session» placeholder title; the first real input replaces it with the
+first_input title instead of leaving «Untitled session» forever. A promoted ordinary prewarm binding is
 consumed: after first use it is detached, so a later submission in the same draft
 pane reserves a fresh session instead of targeting the already-used one the CLI
 must reject.

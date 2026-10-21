@@ -782,6 +782,9 @@ describe("createZCodeTaskIndexSyncer", () => {
           summaryOf("ordinary-draft", "draft"),
         ],
       });
+      // A seeded reserved row must also be admitted with CLI facts: sidebar reads list only
+      // cli-admitted rows (cli_created_at IS NOT NULL), so seeding alone leaves it invisible.
+      const applyCliFactsSpy = vi.spyOn(env.repo, "applyCliFacts");
       const syncer = createZCodeTaskIndexSyncer({
         agentService: env.agent,
         taskIndexRepo: env.repo,
@@ -808,6 +811,15 @@ describe("createZCodeTaskIndexSyncer", () => {
         expect(
           await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "prepared-live" }),
         ).not.toBeNull(),
+      );
+      // A live reserved row must also be admitted with CLI facts: sidebar reads list only
+      // cli-admitted rows (cli_created_at IS NOT NULL), so seeding alone leaves it invisible.
+      await vi.waitFor(() =>
+        expect(applyCliFactsSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            meta: expect.objectContaining({ taskId: "prepared-live" }),
+          }),
+        ),
       );
       syncer.disposeAll();
     },

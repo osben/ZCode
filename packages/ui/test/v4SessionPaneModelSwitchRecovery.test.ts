@@ -4095,6 +4095,11 @@ describe("SessionPane incognito attachment admission", () => {
       // The staged commit is a no-op for the bind: the conversation already opened above.
       (neverCommittingStaging.mock.calls[0]![1] as () => void)();
       expect(onSessionCreated).toHaveBeenCalledTimes(1);
+      // The immediate bind must re-read the grouped sidebar tree on its own subscription.
+      expect(
+        useZCodeSessionStore.getState().getWorkspaceState("/workspace", undefined)
+          ?.taskListVersion ?? 0,
+      ).toBeGreaterThan(0);
       // The organize closure was captured for row arrival, not invoked during the bind.
       expect(stagedOrganizes).toHaveLength(1);
       expect(typeof stagedOrganizes[0]).toBe("function");
