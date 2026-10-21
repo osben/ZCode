@@ -174,8 +174,11 @@ export type BuildWebRemoteControlExternalQrUrlOptions = WebRemoteControlV2QrPara
   baseUrl: string;
 };
 
-function readNonEmptySearchParam(params: URLSearchParams, name: string): string | undefined {
-  const value = params.get(name)?.trim();
+function readNonEmptySearchParam(
+  params: URLSearchParams | undefined,
+  name: string,
+): string | undefined {
+  const value = params?.get(name)?.trim();
   return value ? value : undefined;
 }
 
@@ -237,8 +240,13 @@ export function buildWebRemoteControlExternalQrUrl({
   if (appVersion?.trim()) {
     url.searchParams.set("app_version", appVersion);
   }
+  // The pairing code is a credential: it travels in the fragment, which browsers never send to the web host,
+  // so it cannot reach access logs. A `pk` already in the base URL's query is dropped for the same reason.
+  url.searchParams.delete("pk");
   if (pairingCode?.trim()) {
-    url.searchParams.set("pk", pairingCode.trim());
+    const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
+    fragment.set("pk", pairingCode.trim());
+    url.hash = fragment.toString();
   }
   return url.toString();
 }
@@ -246,6 +254,8 @@ export function buildWebRemoteControlExternalQrUrl({
 /** Parses V2 routing hints only. Links carrying the V1 `hash` or `t` credential are rejected. */
 export function parseWebRemoteControlExternalQrParams(
   params: URLSearchParams,
+  /** Parsed URL fragment. `pk` is read from here first and from the query second (QRs from older Desktops). */
+  fragmentParams?: URLSearchParams,
 ): WebRemoteControlV2QrParams | null {
   if (params.has("hash") || params.has("t")) return null;
   const result: WebRemoteControlV2QrParams = {};
@@ -256,7 +266,9 @@ export function parseWebRemoteControlExternalQrParams(
     ["appVersion", "app_version"],
     ["pairingCode", "pk"],
   ] as const) {
-    const value = readNonEmptySearchParam(params, param);
+    const value =
+      (key === "pairingCode" ? readNonEmptySearchParam(fragmentParams, param) : undefined) ??
+      readNonEmptySearchParam(params, param);
     if (value) result[key] = value;
   }
   return result;

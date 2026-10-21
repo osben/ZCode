@@ -91,15 +91,43 @@ describe("external relay QR helpers", () => {
     ).toBe("https://zcode.z.ai/remote?sid=sid-1&mid=mid-1&name=MacBook&app_version=1.5.0");
   });
 
-  it("appends the optional pairing code as pk and stays byte-identical without it", () => {
+  it("writes the optional pairing code as pk in the fragment and stays byte-identical without it", () => {
     const base = { baseUrl: "https://zcode.z.ai/remote", deviceSid: "sid-1" };
     expect(buildWebRemoteControlExternalQrUrl(base)).toBe("https://zcode.z.ai/remote?sid=sid-1");
     expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "  " })).toBe(
       "https://zcode.z.ai/remote?sid=sid-1",
     );
     expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "abc_DEF-123" })).toBe(
-      "https://zcode.z.ai/remote?sid=sid-1&pk=abc_DEF-123",
+      "https://zcode.z.ai/remote?sid=sid-1#pk=abc_DEF-123",
     );
+  });
+
+  it("never leaves pk in the query, even when the base URL carries one or a fragment", () => {
+    const url = new URL(
+      buildWebRemoteControlExternalQrUrl({
+        baseUrl: "https://zcode.z.ai/remote?pk=stale#view=a",
+        deviceSid: "sid-1",
+        pairingCode: "fresh-code",
+      }),
+    );
+    expect(url.searchParams.has("pk")).toBe(false);
+    expect(new URLSearchParams(url.hash.slice(1)).get("pk")).toBe("fresh-code");
+    expect(new URLSearchParams(url.hash.slice(1)).get("view")).toBe("a");
+  });
+
+  it("reads pk from the fragment first and from the query for older QR codes", () => {
+    expect(
+      parseWebRemoteControlExternalQrParams(
+        new URLSearchParams("sid=s&pk=old"),
+        new URLSearchParams("pk=new"),
+      ),
+    ).toEqual({ deviceSid: "s", pairingCode: "new" });
+    expect(
+      parseWebRemoteControlExternalQrParams(
+        new URLSearchParams("sid=s&pk=old"),
+        new URLSearchParams(""),
+      ),
+    ).toEqual({ deviceSid: "s", pairingCode: "old" });
   });
 
   it("parses pk as the pairing code only when it is non-empty", () => {

@@ -38,13 +38,16 @@ function setup(options: {
   return { entry, token, devices, connect, onView, exchange, href: () => href };
 }
 
-const QR = "https://relay.example.com/remote/v4?sid=device-1&mid=mid-1&pk=pairing-code-0123456789";
+const QR = "https://relay.example.com/remote/v4?sid=device-1&mid=mid-1#pk=pairing-code-0123456789";
+const LEGACY_QR =
+  "https://relay.example.com/remote/v4?sid=device-1&mid=mid-1&pk=pairing-code-0123456789";
 
 describe("device-key pairing entry", () => {
   it("exchanges pk without a z.ai login, removes it from the address bar and keeps the JWT in memory", async () => {
     const s = setup({ href: QR });
     await s.entry.start();
     expect(s.exchange).toHaveBeenCalledWith("pairing-code-0123456789", expect.any(AbortSignal));
+    expect(new URL(s.href()).hash).toBe("");
     expect(new URL(s.href()).searchParams.has("pk")).toBe(false);
     expect(new URL(s.href()).searchParams.get("sid")).toBe("device-1");
     expect(s.onView).not.toHaveBeenCalledWith({ kind: "login" });
@@ -73,6 +76,20 @@ describe("device-key pairing entry", () => {
     });
     expect(s.connect).not.toHaveBeenCalled();
     expect(new URL(s.href()).searchParams.has("pk")).toBe(false);
+  });
+
+  it("still accepts pk in the query for QR codes from older Desktops and strips it", async () => {
+    const s = setup({ href: LEGACY_QR });
+    await s.entry.start();
+    expect(s.exchange).toHaveBeenCalledWith("pairing-code-0123456789", expect.any(AbortSignal));
+    expect(new URL(s.href()).searchParams.has("pk")).toBe(false);
+    expect(new URL(s.href()).searchParams.get("sid")).toBe("device-1");
+  });
+
+  it("keeps other fragment parameters when it removes pk", async () => {
+    const s = setup({ href: `${QR}&view=a` });
+    await s.entry.start();
+    expect(new URLSearchParams(new URL(s.href()).hash.slice(1)).toString()).toBe("view=a");
   });
 
   it("keeps the z.ai login path unchanged and drops a stray pk without exchanging it", async () => {
