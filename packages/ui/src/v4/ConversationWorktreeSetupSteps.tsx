@@ -113,7 +113,14 @@ export function ConversationWorktreeSetupSteps({
 
   // Reasoning-style collapsible (specs/composer-worktree-setup-steps.md): open while creating,
   // auto-open on failure and auto-collapse when the worktree turns ready; a manual toggle wins.
-  const [setupOpen, setSetupOpen] = useState(() => entry?.status !== "ready");
+  // Only a live creation (this renderer's Git runner in flight) opens while creating: a `creating`
+  // entry restored from the Host seed used to paint open for a frame before its reconcile settled
+  // it to ready, so restored preparations start and stay collapsed.
+  const [setupOpen, setSetupOpen] = useState(
+    () =>
+      entry?.status === "failed" ||
+      (entry?.status === "creating" && isComposerWorktreePipelineInFlight(workspaceKey, sessionId)),
+  );
   const setupUserToggledRef = useRef(false);
   const setupStatusRef = useRef(entry?.status);
   useEffect(() => {
@@ -122,7 +129,13 @@ export function ConversationWorktreeSetupSteps({
     if (previous === entry?.status || setupUserToggledRef.current) return;
     if (entry?.status === "ready") setSetupOpen(false);
     if (entry?.status === "failed") setSetupOpen(true);
-  }, [entry?.status]);
+    if (
+      entry?.status === "creating" &&
+      isComposerWorktreePipelineInFlight(workspaceKey, sessionId)
+    ) {
+      setSetupOpen(true);
+    }
+  }, [entry?.status, sessionId, workspaceKey]);
 
   const settleStaleCreating = useCallback(() => {
     if (!resolution.rpcReady || !entry || entry.status !== "creating" || !entry.params) return;

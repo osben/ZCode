@@ -3,7 +3,7 @@
 // seed only feeds the first paint without an entry, settled entries are never resurrected, and
 // an authoritative Host cancellation discards a live entry.
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -13,6 +13,13 @@ import {
   selectComposerWorktreePipeline,
   useComposerWorktreePipelineStore,
 } from "@/store/composerWorktreePipelineStore.js";
+
+// Whether a Git runner for the session is in flight in this renderer (a live creation).
+const pipelineRunner = vi.hoisted(() => ({ inFlight: false }));
+vi.mock("@/v4/composer/composerWorktreePipeline.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/composerWorktreePipeline.js")>()),
+  isComposerWorktreePipelineInFlight: () => pipelineRunner.inFlight,
+}));
 
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServicesResolution: () => ({
@@ -61,6 +68,7 @@ function renderSteps(
 
 beforeEach(() => {
   useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
+  pipelineRunner.inFlight = false;
 });
 
 afterEach(() => {
@@ -256,7 +264,42 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
     );
   });
 
+  it("keeps a restored preparation collapsed from the first frame through ready", () => {
+    // Opening a session whose preparation was never activated: empty renderer store, Host seed
+    // `preparing`, no local Git runner. The reconcile later settles the restored entry to ready.
+    const openStates: boolean[] = [];
+    const recordOpen = () =>
+      openStates.push(
+        document.querySelector("[data-worktree-setup-collapsible] [data-state='open']") !== null,
+      );
+    const unsubscribe = useComposerWorktreePipelineStore.subscribe(recordOpen);
+
+    renderSteps({ status: "preparing", attemptId: "attempt-restored" });
+    recordOpen();
+    expect(document.querySelector("[data-worktree-setup-step='creating']")).not.toBeNull();
+
+    act(() => {
+      useComposerWorktreePipelineStore
+        .getState()
+        .markReady(
+          WORKSPACE_KEY,
+          PARAMS.targetPath,
+          true,
+          "session-prepared-1",
+          "attempt-restored",
+        );
+    });
+    recordOpen();
+    unsubscribe();
+
+    expect(document.querySelector("[data-worktree-setup-step='ready']")).not.toBeNull();
+    expect(openStates.length).toBeGreaterThan(1);
+    expect(openStates.every((open) => !open)).toBe(true);
+  });
+
   it("auto-opens the details while creating and after a failure", () => {
+    // A live creation: this renderer's Git runner is in flight for the session.
+    pipelineRunner.inFlight = true;
     useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
       status: "creating",
       sessionId: "session-prepared-1",
