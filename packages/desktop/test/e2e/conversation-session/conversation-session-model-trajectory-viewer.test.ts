@@ -64,7 +64,7 @@ describe("模型调用轨迹查看器 E2E", () => {
     await openTrajectoryThroughTaskMenu(taskId);
     await waitForTrajectory();
 
-    // TRJ10: the trajectory tab must stay reachable after being closed. The "+" launcher offers it
+    // TRJ10: the trajectory tab must stay reachable after being closed. The "+" launcher page offers it
     // again for the active task, both while other tabs keep the pane open and after the pane fell
     // back to the collapsed empty state.
     await closeTrajectoryTab(taskId);
@@ -74,11 +74,10 @@ describe("模型调用轨迹查看器 E2E", () => {
     );
     if (await $("[data-side-pane-add-tab-trigger]").isExisting()) {
       await $("[data-side-pane-add-tab-trigger]").click();
-      await $('[data-side-pane-add-item="model-trajectory"]').click();
     } else {
       await clickTestIdByDom(TID_SIDE_PANE_TOGGLE);
-      await $('[data-side-pane-open-tab-item="model-trajectory"]').click();
     }
+    await $('[data-side-pane-open-tab-item="model-trajectory"]').click();
     await waitForTrajectory();
 
     const initial = await trajectorySnapshot();

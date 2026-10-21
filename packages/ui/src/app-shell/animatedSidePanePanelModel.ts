@@ -6,15 +6,19 @@ export type OpenTabLauncherItemId =
   | "review"
   | "terminal"
   | "browser"
+  | "model-trajectory"
   | "developer-tools";
 
 export function resolveOpenTabLauncherItemIds({
   developerToolsEnabled,
+  hasActiveTask,
   hasReviewTab,
   canOpenSelectionSideConversation = false,
   supportsEmbeddedBrowser = true,
 }: {
   developerToolsEnabled: boolean;
+  /** Model trajectory is bound to the active task's side pane tab and has no draft fallback. */
+  hasActiveTask: boolean;
   hasReviewTab: boolean;
   canOpenSelectionSideConversation?: boolean;
   supportsEmbeddedBrowser?: boolean;
@@ -33,6 +37,10 @@ export function resolveOpenTabLauncherItemIds({
 
   if (canOpenSelectionSideConversation) {
     itemIds.push("selection-side-conversation");
+  }
+
+  if (hasActiveTask) {
+    itemIds.push("model-trajectory");
   }
 
   if (developerToolsEnabled) {

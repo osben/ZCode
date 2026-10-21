@@ -24,6 +24,7 @@
 - 最近关闭只显示当前 scope 可恢复的 tab；重新打开也校验同一 scope，保持原归属。工作区公共 tab 可在该工作区的不同对话恢复。
 - Browser 仍先由 main 确认关闭，再删除 UI 壳。异步关闭仅处理点击时选中的 tab id；等待期间新开的 tab 不在关闭范围。完成时更新原工作区，当前对话的激活/折叠态按完成时的 scope 解析，不能被旧操作覆盖。
 - 不增加 tab 状态源、权限队列、超时、持久化格式或跨进程协议；桌面/手机共用 UI 归属逻辑，Browser main authority 和 continuous/replayable 消息边界不变。
+- The `Open tab` launcher page (opened by `+` or the empty state) also offers a Model trajectory entry for the active task (`model-trajectory` in `OpenTabLauncherItemId`). The entry is hidden (not disabled) while no active task exists, matching the selection-side-conversation gating. Opening always targets the active task and reuses the existing per-task tab identity `model-trajectory:<taskId>`: an already-open tab for that task is re-activated instead of duplicated, and the title falls back to `modelTrajectory.title` when no task title is available.
 
 ```mermaid
 flowchart LR
