@@ -579,7 +579,16 @@ export async function ensureSessionPersisted(
   input: string,
   traceContext: TraceContext,
 ): Promise<void> {
-  if (!this.sessionStore || this.sessionPersisted) return;
+  if (!this.sessionStore) return;
+  if (this.sessionPersisted) {
+    // A reserved session persists early with an empty input ("New session"/default). The
+    // first real input must still set the first_input title: the normal path derives it
+    // only from the creating input, so without this the placeholder stays forever.
+    if (!input.trim() || firstInputTitleChecked.has(this)) return;
+    firstInputTitleChecked.add(this);
+    await applyFirstInputTitleForPersistedSession.call(this, input, traceContext);
+    return;
+  }
   const pending = pendingSessionPersistence.get(this);
   if (pending) return pending;
   // App sampling can run concurrently with the first task; merge creation for the same task to avoid duplicate insertion and model-configuration overwrites.
@@ -588,6 +597,40 @@ export async function ensureSessionPersisted(
     .finally(() => pendingSessionPersistence.delete(this));
   pendingSessionPersistence.set(this, created);
   return created;
+}
+
+const firstInputTitleChecked = new WeakSet<AgentRuntimeInternal>();
+
+async function applyFirstInputTitleForPersistedSession(
+  this: AgentRuntimeInternal,
+  input: string,
+  traceContext: TraceContext,
+): Promise<void> {
+  const session = await this.sessionStore!.getSession(this.sessionId);
+  if (!session) return;
+  if (session.titleSource === "custom" || session.titleSource === "generated") return;
+  if (session.title !== "New session" && session.title !== "Untitled session") return;
+  const title = titleFromInput(input);
+  if (title === session.title) return;
+  const updated = await this.sessionStore!.updateSession({
+    id: this.sessionId,
+    expectedTitleSources: ["default", "first_input"],
+    title,
+    titleSource: "first_input",
+  });
+  if (!updated) return;
+  await this.appendEvent(
+    this.createEvent(
+      SessionEventType.SessionTitleUpdated,
+      {
+        previousTitle: session.title,
+        source: "first_input",
+        title,
+      },
+      traceContext,
+    ),
+    traceContext,
+  );
 }
 
 async function persistSession(
@@ -617,7 +660,11 @@ async function persistSession(
     // directory/path/projectID keep the workspace representation so listing filters stay correct,
     // and the worktree is restored on resume through the dedicated columns.
     const executionWorktreePath = this.config.executionWorktree?.path;
-    const title = titleFromInput(input);
+    // An empty input is the reserved-session early persistence: keep the "New session"
+    // default placeholder instead of stamping first_input "Untitled session", which the
+    // first real input is then not allowed to replace.
+    const hasInput = input.trim().length > 0;
+    const title = hasInput ? titleFromInput(input) : "New session";
     const workspaceIdentity = this.config.memory?.workspaceIdentity?.trim();
     await this.sessionStore.createSession({
       id: this.sessionId,
@@ -635,7 +682,7 @@ async function persistSession(
       executionBranch: this.config.executionWorktree?.branchName,
       incognito: this.config.incognito,
       title,
-      titleSource: "first_input",
+      titleSource: hasInput ? "first_input" : "default",
       version: this.appVersion,
       permission: {
         mode: this.config.mode ?? "build",
