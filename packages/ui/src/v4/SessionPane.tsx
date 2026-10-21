@@ -6001,6 +6001,11 @@ export function SessionPane({
               : undefined
           }
           onDismiss={quotaBanner.dismiss}
+          autoContinueDefault={sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false}
+          autoContinueReady={sharedSettings !== null}
+          onAutoContinue={
+            quotaBanner.state.providerLimitedResetAt !== null ? handleResumeError : undefined
+          }
         />
       ) : null}
       {recoverableCommand ? (
