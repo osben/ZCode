@@ -479,3 +479,47 @@ it("keeps the draft, files and incognito intent after deferred upload rejection"
     await act(async () => harness.root.unmount());
   }
 });
+
+it.each([false, true])(
+  "freezes a recoverable first submission before awaiting the send route, incognito=%s (FSL01)",
+  async (incognito) => {
+    if (incognito) {
+      useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
+    }
+    const harness = renderLateAckComposer({ worktree: false });
+    let settleSend!: () => void;
+    harness.onSendText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settleSend = resolve;
+        }),
+    );
+    const text = "First line\nSecond line\nThird line\nFourth line\nFifth line";
+    try {
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(text);
+        await flushAsyncWork();
+      });
+      expect(harness.onSendText).toHaveBeenCalledOnce();
+      const pending = readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__").find(
+        (record) => record.draft.firstSubmission,
+      );
+      expect(pending?.draft).toMatchObject({
+        text,
+        firstSubmission: {
+          submissionId: expect.any(String),
+          ownerKey: expect.any(String),
+          status: "preparing",
+          ...(incognito ? { incognito: INCOGNITO_LOCKDOWN_PROFILE } : {}),
+        },
+      });
+    } finally {
+      settleSend?.();
+      await act(async () => {
+        await flushAsyncWork();
+        harness.root.unmount();
+      });
+      useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+    }
+  },
+);

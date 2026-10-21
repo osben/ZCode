@@ -3758,6 +3758,24 @@ specs/incognito-session.md scenarios 13 and 17: INCOGNITO-01/02 use pending
 tint + chip, no upstream request before send; first send produces the sidebar incognito marker).
 Not run yet: written without a built desktop app or CLI in the authoring environment.
 
+## Immediate first submission (2026-10-20)
+
+| Case  | Focused regression                                                                                  | Desktop evidence                                              |
+| ----- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| FSL01 | First-submission pending display before held IO                                                     | pending; no measured first-frame claim                        |
+| FSL02 | `conversationWorktreeSetupStepsBehavior.test.ts`: message order and un-clamped content              | pending; existing worktree candidate needs updated assertions |
+| FSL03 | `v4SessionPaneModelSwitchRecovery.test.ts`: upload failure preserves incognito session              | pending                                                       |
+| FSL04 | `composerWorktreeFailureExits.test.ts`: failure retains session/recovery; CLI reservation lifecycle | pending restart scenario                                      |
+| FSL05 | Pending/authoritative identity reconciliation                                                       | pending                                                       |
+| FSL06 | Existing late-ACK composer ownership and next-draft regressions                                     | pending full lifecycle replay                                 |
+| FSL07 | Existing command receipts/recovery; generic reservation guard                                       | pending fault injection                                       |
+| FSL08 | Existing workspace identity/attachment regressions                                                  | real remote execution pending                                 |
+| FSL09 | Persisted first-submission recovery without automatic dispatch                                      | pending restart scenario                                      |
+
+Contract: `specs/first-submission-lifecycle.md`. Accepted cases are listed in the
+catalog. Test references identify intended verification, not passing evidence.
+No new case is promoted or admitted to Docker by this table.
+
 ## Permanent task deletion (2026-10-19)
 
 Contract: `specs/session-deletion-cascade.md`. The following cases are accepted; desktop evidence is pending until explicitly recorded. No formal promotion or Docker admission is implied.

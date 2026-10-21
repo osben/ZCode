@@ -3952,19 +3952,7 @@ export function SessionPane({
               throw new Error("Draft attachments could not be transferred to the new session");
             sessionAttachments = uploaded;
           } catch (error) {
-            // No prompt has been admitted. Retire only the empty incognito runtime created by this submission.
-            if (incognito && !preparedSessionId) {
-              try {
-                const cleanup = await dispatchCommand("deleteSession", {}, createdSessionId);
-                if (cleanup.status !== "accepted" && cleanup.status !== "noop") {
-                  logger.warn("[v4-pane] Empty incognito session cleanup rejected", {
-                    reasonCode: cleanup.reasonCode,
-                  });
-                }
-              } catch (cleanupError) {
-                logger.warn("[v4-pane] Empty incognito session cleanup failed", cleanupError);
-              }
-            }
+            // specs/first-submission-lifecycle.md FSL03: keep the reserved session; no sendText or deleteSession.
             throw error;
           }
         }
@@ -5897,6 +5885,7 @@ export function SessionPane({
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      durableFirstSubmission
       onPrepareWorktreeSession={prepareWorktreeSession}
       onSyncWorktreePreparation={syncWorktreePreparation}
       onWorktreePreparationFailed={handleWorktreePreparationFailed}

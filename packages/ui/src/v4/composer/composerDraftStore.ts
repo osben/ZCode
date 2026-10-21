@@ -11,6 +11,8 @@
 import { logger } from "@/logger.js";
 import {
   modelSelectionSchema,
+  incognitoProfileSchema,
+  type IncognitoProfile,
   remoteHostIdFromWorkspaceIdentity,
   type ModelSelection,
 } from "@zcode/shared";
@@ -54,6 +56,14 @@ export interface V4ComposerDraft {
   recoveryAttachments?: V4ComposerRecoveryAttachment[];
   recoveryContexts?: V4ComposerRecoveryContexts;
   worktreeIntent?: V4ComposerWorktreeIntent;
+  /** Unaccepted first input; authoritative conversation rows remain owned by the CLI. */
+  firstSubmission?: {
+    submissionId: string;
+    ownerKey: string;
+    status: "preparing" | "sending" | "failed" | "unknown";
+    commandId?: string;
+    incognito?: IncognitoProfile;
+  };
   updatedAt: number;
 }
 
@@ -243,8 +253,48 @@ export function readV4WorktreeRecoveryDrafts(
     .map(([scope, draft]) => ({ scope, draft }));
 }
 
+export function updateV4FirstSubmission(
+  path: string,
+  identity: string | undefined,
+  submissionId: string,
+  update: Partial<NonNullable<V4ComposerDraft["firstSubmission"]>>,
+): void {
+  const key = getV4ComposerDraftStorageKey(path, identity);
+  const file = readDraftFile(key);
+  let changed = false;
+  for (const draft of Object.values(file.scopes)) {
+    if (draft.firstSubmission?.submissionId !== submissionId) continue;
+    draft.firstSubmission = { ...draft.firstSubmission, ...update };
+    changed = true;
+  }
+  if (changed && !writeDraftFile(key, file)) throw new Error("composer.draft-storage-unavailable");
+}
+
 const warnedStorageKeys = new Set<string>();
 const DRAFT_CHANGE_EVENT = "zcode:v4-composer-draft-change";
+const activeFirstSubmissions = new Set<string>();
+let firstSubmissionRevision = 0;
+
+export function setV4FirstSubmissionActive(
+  path: string,
+  identity: string | undefined,
+  id: string,
+  active: boolean,
+) {
+  const key = `${identity?.trim() || path}\0${id}`;
+  if (active) activeFirstSubmissions.add(key);
+  else activeFirstSubmissions.delete(key);
+  firstSubmissionRevision++;
+  window.dispatchEvent(new Event(DRAFT_CHANGE_EVENT));
+}
+
+export function isV4FirstSubmissionActive(path: string, identity: string | undefined, id: string) {
+  return activeFirstSubmissions.has(`${identity?.trim() || path}\0${id}`);
+}
+
+export function getV4FirstSubmissionVersion(path: string, identity?: string) {
+  return `${getV4ComposerDraftVersion(path, identity) ?? ""}:${firstSubmissionRevision}`;
+}
 
 export function subscribeV4ComposerDrafts(listener: () => void) {
   window.addEventListener(DRAFT_CHANGE_EVENT, listener);
@@ -350,6 +400,21 @@ function readDraft(value: unknown): V4ComposerDraft | null {
       ? identity.data
       : undefined;
   const mention = value.mention;
+  const pending = value.firstSubmission;
+  const incognito = incognitoProfileSchema.safeParse(isRecord(pending) ? pending.incognito : null);
+  const firstSubmission: V4ComposerDraft["firstSubmission"] =
+    isRecord(pending) &&
+    typeof pending.submissionId === "string" &&
+    typeof pending.ownerKey === "string" &&
+    ["preparing", "sending", "failed", "unknown"].includes(String(pending.status))
+      ? {
+          submissionId: pending.submissionId,
+          ownerKey: pending.ownerKey,
+          status: pending.status as NonNullable<V4ComposerDraft["firstSubmission"]>["status"],
+          ...(typeof pending.commandId === "string" ? { commandId: pending.commandId } : {}),
+          ...(incognito.success ? { incognito: incognito.data } : {}),
+        }
+      : undefined;
   const hasMention =
     isRecord(mention) &&
     ["id", "category", "label", "value", "markdown"].every(
@@ -360,6 +425,7 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     );
   return {
     text: value.text,
+    ...(firstSubmission ? { firstSubmission } : {}),
     ...(recoveryContexts ? { recoveryContexts } : {}),
     ...(worktreeIntent ? { worktreeIntent } : {}),
     ...(recoveryAttachments ? { recoveryAttachments } : {}),
@@ -516,7 +582,9 @@ export function persistV4ComposerDraft(
   // 空白页配置只留在 Composer 内存；不存在记录时也不执行无意义写盘。
   // worktree 恢复附件/上下文即使没有正文也必须保留，否则失败返回后的素材会丢失。
   const hasRecoveryPayload =
-    Boolean(next.recoveryAttachments?.length) || hasRecoveryContexts(next.recoveryContexts);
+    Boolean(next.recoveryAttachments?.length) ||
+    hasRecoveryContexts(next.recoveryContexts) ||
+    Boolean(next.firstSubmission);
   if (!next.text.trim() && !hasRecoveryPayload) {
     delete file.scopes[scopeId];
   } else {

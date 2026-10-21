@@ -219,6 +219,20 @@ export function ConversationWorktreeSetupSteps({
 
   return (
     <div data-worktree-setup-steps="true" className={setupCardClassName}>
+      {entry.queuedPromptPreview ? (
+        <div
+          data-worktree-setup-queued-message="true"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2"
+        >
+          <div className="flex items-center gap-1.5 pb-1 text-ui-xs text-foreground-subtle">
+            <GitBranch className="size-3 shrink-0" aria-hidden="true" />
+            {intl.formatMessage({ id: "worktreeSetup.queuedMessageLabel" })}
+          </div>
+          <p className="whitespace-pre-wrap break-words text-foreground">
+            {entry.queuedPromptPreview}
+          </p>
+        </div>
+      ) : null}
       {!resolution.rpcReady ? (
         <p role="status">{intl.formatMessage({ id: "worktreeSetup.connectionUnavailable" })}</p>
       ) : null}
@@ -366,20 +380,6 @@ export function ConversationWorktreeSetupSteps({
         <span className="pl-5 text-ui-xs text-foreground-subtle">
           {intl.formatMessage({ id: "worktreeSetup.stepCreating.baseHead" })}
         </span>
-      ) : null}
-      {entry.queuedPromptPreview ? (
-        <div
-          data-worktree-setup-queued-message="true"
-          className="w-full rounded-lg border border-border bg-surface px-3 py-2"
-        >
-          <div className="flex items-center gap-1.5 pb-1 text-ui-xs text-foreground-subtle">
-            <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-            {intl.formatMessage({ id: "worktreeSetup.queuedMessageLabel" })}
-          </div>
-          <p className="line-clamp-4 whitespace-pre-wrap break-words text-foreground">
-            {entry.queuedPromptPreview}
-          </p>
-        </div>
       ) : null}
       {entry.orphaned ? (
         <span className="pl-5 text-ui-xs text-foreground-subtle">

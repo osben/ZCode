@@ -32,7 +32,6 @@ import {
   selectComposerWorktreePipeline,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
-import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
@@ -263,17 +262,7 @@ export function startComposerWorktreePipeline({
           issueCode: failure.issueCode ?? null,
           rawDetail: failure.rawDetail ?? null,
         });
-      if (sessionId) {
-        initiateComposerWorktreeFailureReturn({
-          workspaceKey,
-          sessionId,
-          attemptId,
-          params,
-          failureMessage: failure.message,
-          issueCode: failure.issueCode ?? null,
-          rawDetail: failure.rawDetail ?? null,
-        });
-      }
+      // A submitted session remains visible after preparation fails; Retry owns the next attempt.
       return "failed";
     };
     try {

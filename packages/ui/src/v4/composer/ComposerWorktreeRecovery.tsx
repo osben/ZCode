@@ -6,6 +6,7 @@ import {
 } from "@/store/composerAttachmentUploadStore.js";
 import { useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button.js";
+import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -18,6 +19,53 @@ import {
   getV4ComposerDraftVersion,
   type V4ComposerDraft,
 } from "./composerDraftStore.js";
+
+export function FirstSubmissionPreview({
+  draft,
+  active,
+}: {
+  draft: V4ComposerDraft;
+  active: boolean;
+}) {
+  const { intl } = useZCodeIntl();
+  const pending = draft.firstSubmission;
+  return (
+    <div
+      data-first-submission={pending?.submissionId}
+      className="mx-4 my-3 flex flex-col gap-3 text-ui-base"
+    >
+      <div data-first-submission-message="true" className="flex flex-col items-end gap-2">
+        {draft.recoveryAttachments?.length ? (
+          <div className="flex max-w-full flex-wrap justify-end gap-2">
+            {draft.recoveryAttachments.map((file) => (
+              <span
+                key={file.id}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm"
+              >
+                {file.filename}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {draft.text ? (
+          <div className="max-w-full whitespace-pre-wrap break-words rounded-xl bg-surface px-4 py-3">
+            {draft.text}
+          </div>
+        ) : null}
+      </div>
+      <div
+        role="status"
+        data-first-submission-status="true"
+        className="flex items-center gap-2 text-ui-sm text-foreground-subtle"
+      >
+        {active ? <Spinner className="size-3.5" /> : null}
+        {intl.formatMessage({
+          id: active ? "firstSubmission.preparing" : "composerRecovery.title",
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function ComposerWorktreeRecovery({
   workspacePath,
@@ -84,8 +132,10 @@ export function ComposerWorktreeRecovery({
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
       <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
-      <p className="line-clamp-3 whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
-      {(draft.recoveryAttachments ?? []).map((file) => (
+      {!draft.firstSubmission ? (
+        <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
+      ) : null}
+      {(!draft.firstSubmission ? (draft.recoveryAttachments ?? []) : []).map((file) => (
         <span className="mr-2" key={file.id}>
           {file.filename}
         </span>

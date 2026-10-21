@@ -224,6 +224,7 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
           onSelectModel: vi.fn(),
           onSelectThought: vi.fn(),
           onSendText,
+          durableFirstSubmission: true,
           onPrepareWorktreeSession,
           onStop: vi.fn(),
           onSwitchMode: vi.fn(),

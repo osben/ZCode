@@ -461,6 +461,13 @@ Six decisions closed by the worktree lifecycle review:
 
 ## Return to draft on failure (2026-10-19)
 
+> Superseded for automatic preparation failures by
+> [first-submission-lifecycle.md](./first-submission-lifecycle.md), 2026-10-20:
+> keep the submitted session, message and recovery record; show failure with
+> explicit Retry in that same session. Do not automatically cancel, tombstone,
+> transfer into a new draft, or navigate away. The historical explicit hand-off
+> helper and its unit tests do not authorize automatic use from preparation exits.
+
 Closed decisions (confirmed by the product owner):
 
 1. A failed preparation owned by the live renderer is removed by the existing Hide path — the

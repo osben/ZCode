@@ -7264,6 +7264,7 @@ const zhCN: Record<string, string> = {
   "worktreeFailure.changeDestination": "更改分支/文件夹",
   "worktreeFailure.toastTitle": "无法创建 worktree",
   "worktreeFailure.toastOpen": "打开",
+  "firstSubmission.preparing": "正在准备会话…",
   "composerRecovery.title": "未发送的消息已保存",
   "composerRecovery.storageUnavailable":
     "无法保存恢复状态。消息尚未发送；请释放浏览器存储空间后重试。",

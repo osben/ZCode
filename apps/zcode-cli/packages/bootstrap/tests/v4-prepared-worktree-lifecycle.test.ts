@@ -213,6 +213,98 @@ afterEach(() => {
 });
 
 describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", () => {
+  it("reserves an ordinary submitted session before runtime creation and restores without auto-running", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const dbPath = join(dbDir, "sessions.sqlite");
+    const target = await makeHarness(dbPath);
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-1",
+      submissionPreparation: { submissionId: "submission-1" },
+    }, "cmd-reserve-submission"));
+    expect(reserve.status).toBe("accepted");
+    expect(reserve.result).toMatchObject({ sessionId: "durable-submission-1" });
+    expect(target.materializations).toEqual([]);
+    expect(await target.store.getSession("durable-submission-1" as never)).toBeTruthy();
+    await target.store.close?.();
+    target.gateway.dispose();
+
+    const cold = await makeHarness(dbPath);
+    harness = { ...cold, dbDir };
+    await cold.gateway.subscribe({
+      topic: "conversation/durable-submission-1",
+      connectionId: "submission-restart",
+      clientMode: "desktop-continuous",
+    });
+    expect(cold.context.sessions.size).toBe(0);
+    expect(cold.materializations).toEqual([]);
+    expect(cold.sentInputs).toEqual([]);
+  });
+
+  it("keeps a reserved incognito row through bootstrap failure and reuses it on explicit retry", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-2",
+      submissionPreparation: { submissionId: "submission-2" },
+      incognito: INCOGNITO_LOCKDOWN_PROFILE,
+    }, "cmd-reserve-incognito"));
+    expect(reserve.status).toBe("accepted");
+    expect((await target.store.getSession("durable-submission-2" as never))?.incognito)
+      .toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    const payload = {
+      workspaceId: WORKSPACE,
+      preparedSessionId: "durable-submission-2",
+      expectedSubmissionId: "submission-2",
+      incognito: INCOGNITO_LOCKDOWN_PROFILE,
+      firstInput: { text: "durable frozen input" },
+    };
+    vi.mocked(createSessionRecordForV4).mockRejectedValueOnce(new Error("bootstrap failed"));
+    const failed = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-fail"));
+    expect(failed.status).toBe("failed");
+    expect(await target.store.getSession("durable-submission-2" as never)).toBeTruthy();
+    const retried = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-retry"));
+    expect(retried.status).toBe("accepted");
+    expect(retried.result).toMatchObject({ sessionId: "durable-submission-2" });
+    expect(target.sentInputs).toEqual(["durable frozen input"]);
+    const repeated = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-repeat"));
+    expect(repeated.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["durable frozen input"]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("rejects a stale submission identity or profile before materialization", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-3",
+      submissionPreparation: { submissionId: "submission-3" },
+    }, "cmd-reserve-stale"));
+    expect(reserve.status).toBe("accepted");
+    for (const overrides of [
+      { expectedSubmissionId: "other-submission" },
+      { incognito: INCOGNITO_LOCKDOWN_PROFILE },
+      { workspaceId: "/other-workspace" },
+      { executionWorktree: { path: TARGET_PATH, branchName: BRANCH } },
+    ]) {
+      const ack = await target.gateway.handleCommand(command("createSession", {
+        workspaceId: WORKSPACE,
+        preparedSessionId: "durable-submission-3",
+        expectedSubmissionId: "submission-3",
+        firstInput: { text: "frozen input" },
+        ...overrides,
+      }, `cmd-stale-${JSON.stringify(overrides)}`));
+      expect(ack.status).toBe("failed");
+    }
+    expect(target.materializations).toEqual([]);
+    expect(target.sentInputs).toEqual([]);
+  });
+
   it("completes preparation at the first input's admission boundary, before the response finishes", async () => {
     const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
     const target = await makeHarness(join(dbDir, "sessions.sqlite"));

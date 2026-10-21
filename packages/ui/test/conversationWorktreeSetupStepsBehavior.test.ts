@@ -68,6 +68,36 @@ afterEach(() => {
 });
 
 describe("ConversationWorktreeSetupSteps rendering", () => {
+  it.each(["creating", "failed"] as const)(
+    "keeps the complete submitted message above %s preparation feedback (FSL02)",
+    (status) => {
+      const submittedText = Array.from(
+        { length: 12 },
+        (_, index) => `Message line ${index + 1}`,
+      ).join("\n");
+      useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+        status,
+        sessionId: "session-prepared-1",
+        params: { ...PARAMS, attemptId: "attempt-message-order" },
+        queuedPromptPreview: submittedText,
+        ...(status === "failed" ? { failureMessage: "git interrupted" } : {}),
+        createdAt: 1,
+      });
+      renderSteps({
+        status: status === "failed" ? "failed" : "preparing",
+        attemptId: "attempt-message-order",
+      });
+
+      const message = document.querySelector("[data-worktree-setup-queued-message]");
+      const feedback = document.querySelector(`[data-worktree-setup-step='${status}']`);
+      expect(message?.textContent).toContain(submittedText);
+      expect(message?.querySelector("[class*='line-clamp']")).toBeNull();
+      expect(message).not.toBeNull();
+      expect(feedback).not.toBeNull();
+      expect(message!.compareDocumentPosition(feedback!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    },
+  );
+
   it("shows the current Git branch in the created notice and falls back while Git loads", () => {
     const renderNotice = (currentBranchName?: string | null) =>
       render(

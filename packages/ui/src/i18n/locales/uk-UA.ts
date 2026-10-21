@@ -68,6 +68,7 @@ const ukUA: Record<string, string> = {
   "sessionManager.openUnavailable":
     "Робочий простір сесії недоступний. Відновіть з'єднання або відкрийте проєкт і повторіть спробу.",
   "sessionManager.pinnedArchived": "Закріплення не фільтрує архівні сесії.",
+  "firstSubmission.preparing": "Підготовка розмови…",
   "composerRecovery.title": "Ненадіслане повідомлення збережено",
   "composerRecovery.storageUnavailable":
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",

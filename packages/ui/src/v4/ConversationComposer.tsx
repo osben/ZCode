@@ -153,6 +153,8 @@ import {
   moveV4ComposerDraft,
   persistV4ComposerDraft,
   readV4ComposerDraft,
+  updateV4FirstSubmission,
+  setV4FirstSubmissionActive,
   V4_DRAFT_SCOPE_ROOT,
   type V4ComposerDraft,
   type V4ComposerRecoveryContexts,
@@ -256,10 +258,13 @@ import {
   trackUnsettledComposerSubmission,
 } from "@/v4/composer/composerSubmissionSettlement.js";
 import { resolveAttachableShareContext } from "@/lib/conversationShareContext.js";
+import { parseV4VisibleSlashCommand } from "@/v4/slashCommands.js";
 
 const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
 
 export interface ConversationComposerSendOptions {
+  firstSubmissionId?: string;
+  reservedSubmissionSessionId?: string;
   /** 原始正文供接纳恢复对账；协议正文可能已经附加文件或页面上下文。 */
   submittedDraftText?: string;
   /** 点击发送时复制的配置；null 表示未完成选择，Host 不得从 Session 补齐。 */
@@ -544,6 +549,11 @@ export interface ConversationComposerProps {
     text: string,
     options?: ConversationComposerSendOptions,
   ) => Promise<ConversationComposerSendResult | void>;
+  onPrepareFirstSubmission?: (params: {
+    submissionId: string;
+    incognito?: IncognitoProfile;
+  }) => Promise<string | undefined>;
+  onFirstSubmissionReserved?: (sessionId: string) => void;
   /** Reserve/open the Host-owned session before the worktree Git operation begins. */
   onPrepareWorktreeSession?: (
     params: ComposerWorktreePreparationParams,
@@ -624,6 +634,8 @@ export interface ConversationComposerProps {
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
   /** Voice input entry: desktop transcribes in the Desktop Host; web remote control transcribes in the browser (Web Speech API, hidden when unsupported). */
   voiceDictationEnabled?: boolean;
+  /** Host supports durable first-submission reservation (specs/first-submission-lifecycle.md). */
+  durableFirstSubmission?: boolean;
 }
 
 function formatAttachmentLineCount(attachment: ChatComposerAttachment, locale: string): string {
@@ -695,10 +707,13 @@ function ConversationComposerImpl({
   appSlashCommands,
   onDropTargetControllerChange,
   onPrepareWorktreeSession,
+  onPrepareFirstSubmission,
+  onFirstSubmissionReserved,
   onSyncWorktreePreparation,
   onWorktreePreparationFailed,
   onResumeError,
   voiceDictationEnabled = false,
+  durableFirstSubmission = false,
 }: ConversationComposerProps) {
   const remoteAvailable = useRemoteConversationAvailable();
   const remoteController = useOptionalRemoteWorkspaceController();
@@ -729,6 +744,7 @@ function ConversationComposerImpl({
     sessionId ??
     (rootDraftScopeKey ? `${V4_DRAFT_SCOPE_ROOT}:${rootDraftScopeKey}` : V4_DRAFT_SCOPE_ROOT);
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
+  const retryFirstSubmissionRef = useRef<V4ComposerDraft["firstSubmission"]>(undefined);
   const renderedOwnerRef = useRef({ workspaceKey, scopeId: draftScopeId, epoch: 0 });
   useLayoutEffect(() => {
     const currentOwner = renderedOwnerRef.current;
@@ -1802,7 +1818,13 @@ function ConversationComposerImpl({
                 : {}),
             }
           : undefined;
-      const submissionId = crypto.randomUUID();
+      const retryFirstSubmission = retryFirstSubmissionRef.current;
+      const submissionId = retryFirstSubmission?.submissionId ?? crypto.randomUUID();
+      let frozenFirstSubmission: V4ComposerDraft["firstSubmission"];
+      let reservedSubmissionSessionId: string | undefined;
+      let incognitoSubmission: ReturnType<
+        ReturnType<typeof useDraftIncognitoIntentStore.getState>["captureForSubmission"]
+      >;
       const pendingRecoveryScope = getV4WorktreeRecoveryScope(draftScopeId, submissionId);
       const submittedOwner = {
         epoch: renderedOwnerRef.current.epoch,
@@ -1873,6 +1895,18 @@ function ConversationComposerImpl({
         const restoredDraft: Omit<V4ComposerDraft, "updatedAt"> = {
           ...composerDraft,
           ...submittedDraft,
+          ...(frozenFirstSubmission
+            ? {
+                firstSubmission: {
+                  ...frozenFirstSubmission,
+                  commandId: submittedCommandId ?? undefined,
+                  status:
+                    submittedCommandId && !submittedCommandResolved
+                      ? ("unknown" as const)
+                      : ("failed" as const),
+                },
+              }
+            : {}),
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
           ...(preparationParams
             ? { worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams) }
@@ -1882,9 +1916,15 @@ function ConversationComposerImpl({
             { persistPathMetadata },
           ),
         };
-        // Recovery belongs to the frozen submission, even after this component displays another chat.
-        if (preparedSessionIdForSend || queueWorktreeSend) {
-          const recoveryOwner = preparedSessionIdForSend ?? submittedOwner.scopeId;
+        // Recovery belongs to the frozen submission once a Host session exists; pre-reservation
+        // failures keep the ordinary draft scope so blocked sends stay editable inline.
+        const persistFrozenRecovery =
+          preparedSessionIdForSend ||
+          queueWorktreeSend ||
+          (frozenFirstSubmission && reservedSubmissionSessionId);
+        if (persistFrozenRecovery) {
+          const recoveryOwner =
+            reservedSubmissionSessionId ?? preparedSessionIdForSend ?? submittedOwner.scopeId;
           const recovered = persistV4ComposerDraft(
             workspacePath,
             workspaceIdentity,
@@ -1901,7 +1941,15 @@ function ConversationComposerImpl({
           )
             clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
         } else if (isCurrentOwner()) {
-          updateComposerContentRef.current(submittedDraft);
+          if (frozenFirstSubmission && !reservedSubmissionSessionId) {
+            clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
+          }
+          updateComposerContentRef.current({
+            ...submittedDraft,
+            ...(frozenFirstSubmission && !reservedSubmissionSessionId
+              ? { firstSubmission: undefined }
+              : {}),
+          });
           if (editorClearedOptimistically) {
             if (submittedDraft.editorStateJson)
               inputApiRef.current?.setEditorStateJson(submittedDraft.editorStateJson);
@@ -1978,16 +2026,19 @@ function ConversationComposerImpl({
       let submittedCommandId: string | null = null;
       let submittedCommandResolved = false;
       let submittedContentSettled = false;
+      let sendPreparedSessionId: string | undefined;
       const settleSubmittedContent = async () => {
         if (submittedContentSettled) return;
         submittedContentSettled = true;
         // Transfer staged content to the task only after the send is accepted; on failure the draft keeps ownership.
         await submittedAttachments.adoptSentAttachments(submittedAttachmentIds);
-        if (preparedSessionIdForSend) {
+        const recoverySessionId =
+          reservedSubmissionSessionId ?? sendPreparedSessionId ?? preparedSessionIdForSend;
+        if (recoverySessionId) {
           clearV4ComposerDraft(
             workspacePath,
             workspaceIdentity,
-            getV4WorktreeRecoveryScope(preparedSessionIdForSend, submissionId),
+            getV4WorktreeRecoveryScope(recoverySessionId, submissionId),
           );
         }
         clearV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope);
@@ -2021,6 +2072,11 @@ function ConversationComposerImpl({
         let active = true;
         let cleanup = () => undefined;
         submittedCommandId = commandId;
+        if (frozenFirstSubmission)
+          updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+            commandId,
+            status: "sending",
+          });
         const unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
           if (!active) return;
           submittedCommandResolved = true;
@@ -2063,6 +2119,48 @@ function ConversationComposerImpl({
         !attachmentsReady
       ) {
         return;
+      }
+      const localCommand = parseV4VisibleSlashCommand(trimmed, attachmentsApi.attachments, {
+        contextAttachmentCount: Number(Boolean(submittedRecoveryContexts)),
+      });
+      if (
+        durableFirstSubmission &&
+        (draftMode || retryFirstSubmission) &&
+        (!localCommand || localCommand.kind === "sendGoalCommand")
+      ) {
+        incognitoSubmission =
+          draftMode && sessionId === null
+            ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
+            : undefined;
+        frozenFirstSubmission = {
+          submissionId,
+          ownerKey: retryFirstSubmission?.ownerKey ?? draftScopeId,
+          status: "preparing",
+          ...(retryFirstSubmission?.incognito || incognitoSubmission?.profile
+            ? { incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile }
+            : {}),
+        };
+        const saved = persistV4ComposerDraft(
+          workspacePath,
+          workspaceIdentity,
+          pendingRecoveryScope,
+          {
+            ...composerDraft,
+            ...submittedDraft,
+            firstSubmission: frozenFirstSubmission,
+            recoveryContexts: submittedRecoveryContexts,
+            recoveryAttachments: buildV4RecoveryAttachmentsManifest(attachmentsApi.attachments, {
+              persistPathMetadata: !workspaceIdentity?.trim(),
+            }),
+          },
+        );
+        if (!saved) {
+          toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
+          return;
+        }
+        setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, true);
+        // Persist the frozen submission only; claim/clear happens on the worktree queue path or in runSend (FSL03).
+        retryFirstSubmissionRef.current = undefined;
       }
       // Worktree setup pipeline (specs/composer-worktree-setup-steps.md): the first send with an
       // active "New worktree" intent starts creation WITHOUT blocking or disabling the composer.
@@ -2132,6 +2230,10 @@ function ConversationComposerImpl({
             branchName: draftBranchIntent,
           });
           if (resolution.outcome === "aborted") {
+            if (frozenFirstSubmission) {
+              restoreSubmittedDraft();
+              setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, false);
+            }
             if (resolution.reason === "switch-failed") {
               toast(
                 resolution.message ??
@@ -2160,6 +2262,7 @@ function ConversationComposerImpl({
         preparedSessionId?: string,
         preparedAttemptId?: string,
       ): Promise<void> => {
+        sendPreparedSessionId = preparedSessionId ?? preparedSessionIdForSend;
         const sendAction = startUserAction({
           featureId: "conversation.composer.message",
           action: "send",
@@ -2230,16 +2333,42 @@ function ConversationComposerImpl({
         };
         try {
           // Freeze the profile before attachment preparation; later draft edits belong to another submission.
-          const incognitoSubmission =
-            draftMode && sessionId === null
-              ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
-              : undefined;
-          const incognito = incognitoSubmission?.profile;
+          const incognito = frozenFirstSubmission?.incognito ?? incognitoSubmission?.profile;
+          if (
+            frozenFirstSubmission &&
+            !executionWorktree &&
+            !preparedSessionId &&
+            onPrepareFirstSubmission
+          ) {
+            reservedSubmissionSessionId = await onPrepareFirstSubmission({
+              submissionId,
+              ...(incognito ? { incognito } : {}),
+            });
+            if (reservedSubmissionSessionId) {
+              const boundScope = getV4WorktreeRecoveryScope(
+                reservedSubmissionSessionId,
+                submissionId,
+              );
+              if (
+                !moveV4ComposerDraft(
+                  workspacePath,
+                  workspaceIdentity,
+                  pendingRecoveryScope,
+                  boundScope,
+                )
+              )
+                throw new Error("composer.draft-storage-unavailable");
+              submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
+              if (shouldActivatePreparedSession())
+                onFirstSubmissionReserved?.(reservedSubmissionSessionId);
+            }
+          }
           const readyAttachmentRefs = await submittedAttachments.prepareForSend(
             queueWorktreeSend ? submittedAttachmentIds : undefined,
             { allowWaitingSession: incognito !== undefined },
           );
           if (readyAttachmentRefs === null) {
+            if (frozenFirstSubmission) restoreSubmittedDraft();
             if (telemetrySeed.localTtft)
               getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "rejected");
             // send_click has already been reported; failing to finalize here leaves an unmatched sample and skews the success-rate denominator.
@@ -2299,6 +2428,8 @@ function ConversationComposerImpl({
             editorClearedOptimistically = true;
           }
           const sendResult = await onSendText(promptText, {
+            ...(frozenFirstSubmission ? { firstSubmissionId: submissionId } : {}),
+            ...(reservedSubmissionSessionId ? { reservedSubmissionSessionId } : {}),
             submittedDraftText: submittedDraft.text,
             submission,
             onCommandCreated: subscribeToCommandResolution,
@@ -2417,6 +2548,8 @@ function ConversationComposerImpl({
           });
           sendAction.fail({ failureStage: "composer_send" });
         } finally {
+          if (frozenFirstSubmission)
+            setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, false);
           pendingRef.current = false;
           setPending(false);
         }
@@ -2425,6 +2558,7 @@ function ConversationComposerImpl({
         const recoveryDraft: Omit<V4ComposerDraft, "updatedAt"> = {
           ...composerDraft,
           ...submittedDraft,
+          ...(frozenFirstSubmission ? { firstSubmission: frozenFirstSubmission } : {}),
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
           recoveryAttachments: buildV4RecoveryAttachmentsManifest(attachmentsApi.attachments, {
             persistPathMetadata: !workspaceIdentity?.trim(),
@@ -2618,6 +2752,8 @@ function ConversationComposerImpl({
       onPrepareWorktreeSession,
       onSyncWorktreePreparation,
       onSendText,
+      onPrepareFirstSubmission,
+      onFirstSubmissionReserved,
       activeShareContextId,
       provider,
       readPlanIdentitySnapshot,
@@ -2646,6 +2782,7 @@ function ConversationComposerImpl({
   // contexts (replaced, never merged), and the worktree intent that re-arms Retry/Change.
   const applyWorktreeRecoveryDraft = useCallback(
     (draft: V4ComposerDraft) => {
+      retryFirstSubmissionRef.current = draft.firstSubmission;
       // The frozen plan state and mode are part of the submission (spec scenario 22), so they
       // replace the live values; updateComposerContent would keep the current plan/mode.
       replaceComposerDraft({

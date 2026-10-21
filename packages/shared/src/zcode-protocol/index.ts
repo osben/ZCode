@@ -140,6 +140,7 @@ export const ZCODE_PROTOCOL_VERSION = 1 as const;
 // V4 wire and the legacy main protocol coexist; do not change the legacy version for V4 physical framing.
 export const ZCODE_PROTOCOL_V4_WIRE_VERSION = 3 as const;
 export const zcodeRuntimeCapabilitiesSchema = z.object({
+  durableFirstSubmission: z.boolean().optional(),
   historyFirst: z.boolean().optional(),
   independentPlanState: z.boolean().optional(),
   // This CLI persists and enforces createSession `incognito`; the Host must not forward it otherwise.
