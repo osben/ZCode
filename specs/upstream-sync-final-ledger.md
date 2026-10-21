@@ -687,3 +687,32 @@ Scope: 19 files of `parts/uisrc1.txt` (shell, sidebar task rows, settings, local
 | `i18n/locales/en-US.ts`, `zh-CN.ts`           | upstream values; fork-only keys appended (upstream key set plus fork keys)                                                                                                                             | keys used by the kept fork files                                                                                                         |
 
 Verification (src1 branch): `pnpm typecheck` exit 0; `pnpm lint` 0 errors (93 pre-existing warnings); `pnpm architecture:check --changed` exit 0; `node scripts/check-test-copy.mjs` exit 0; `pnpm fmt:check` exit 0; `packages/ui/test` full run: 1 failure before the phone-marker fix (`taskListItemHoverActions`), now fixed (8/8 pass).
+
+## sync cleanup
+
+Branch `claude/sync-cleanup-temporary` (fix: keep drafts across project switch; remove temporary sync workarounds).
+
+Drafts (`packages/ui/src/v4/composer/composerDraftStore.ts`):
+
+- Upstream `readDraft` rejects every whitespace-only text draft. The fork guard (`!text.trim() && !hasRecovery`, read and write paths) is the superset that keeps drafts carrying `recoveryAttachments` or `recoveryContexts` (composer worktree failure recovery, `composer-worktree-setup-steps.md`). Kept as is; no source change needed.
+- Tests added to `packages/ui/test/composerDraftStore.test.ts`: whitespace-only text without payload is rejected; whitespace-only text with a recovery attachment or recovery context is kept; typed text survives a project switch and a new task write.
+- `SessionPane.tsx` prewarm gate (`sessionId === null && draftAgentStartupAllowed && !recoveringDraft && !incognitoDraftActive`) includes the incognito condition (`specs/incognito-session.md`).
+
+Architecture:
+
+- `architecture-policy.yaml` exception `fork-sync-final-new-files` (4 files) removed. Proof: `architecture-check.mjs check --full` and `--changed` both report 0 violations with the exception gone. The 4 files already exist in `origin/integration`, so they are not "added" against the base. The `unmanaged-new-file` rule is live: an untracked probe file under `packages/desktop/src/host/` produced a violation (probe deleted).
+- The 4 files stay in the legacy unmanaged roots `desktop` (`packages/desktop/src`) and `shared` (`packages/shared/src`), like their siblings. Registering them in a managed module needs a `pnpm architecture:adopt` on a directory, which would pull in the whole host or protocol directory: separate architecture decision, not done here.
+
+Staged file size exemptions (`.staged-file-size-exemptions`):
+
+- Removed: entries for files that no longer exist (`ChatEmptyState.tsx`, `WebRemoteControlTaskIndex.tsx`, `WorkspacePinnedTasksSection.tsx`, `WorkspaceSidebarItem.tsx`, `WorkspaceTimelineTasksSection.tsx`), entries under 20000 bytes (`zcodeSessionStoreTypes.ts` 18979, `WorkspaceSidebar.tsx` 252, `oauthCredentialRepo.ts` 15526, `windowController.ts` 3592, `runtimeCapabilitySupport.ts` 2726, `builtinSkillI18n.ts` 18649), and kind-exempt test fixtures (`apps/zcode-cli/packages/adapters/tests/fixtures/session-db/*.sqlite`, exempt as test directory files).
+- Kept and now ledgered as "needs splitting": every remaining entry, all over 20000 bytes as measured with `wc -c`. The TEMPORARY block comments were rewritten to "Needs splitting". Markdown and test entries were already absent.
+
+Compat shims (`apps/zcode-cli/packages/adapters/src/storage/session-store/`): none removed, each still has an importer.
+
+- `runSqliteSessionMigrationsSync`: imported by `sqlite-session-store.ts` and many adapter tests.
+- `openSyncCompat`: used by `sqlite-session-store.ts` (`createSqliteSessionStore`, `openStartupSqliteSessionStore` wrappers) and `scripts/verify-project-upgrade.mts`.
+- `createSqliteSessionStore`: re-exported by `session-store.ts`, used by `scripts/shadow-replay.mjs` and `adapters/tests/session-tree.test.ts`.
+- `openStartupSqliteSessionStore`: used by `bootstrap/src/sessions.ts`, `cli/src/run.ts`, and tests.
+- `ensureDefaultProject`: a real `SettingService` method (`packages/services/src/setting/settingService.ts`), not a shim. Test mocks in `packages/desktop/test/e2e/bots` and `packages/web/src/main.tsx` keep it.
+- "relay placeholders": no matching code found (`git grep -i placeholder` in relay and web-remote-relay packages has no shim). Nothing to remove.

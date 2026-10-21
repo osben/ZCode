@@ -372,6 +372,57 @@ describe("Composer Draft 持久选择", () => {
     expect(read("scope-500")?.mode).toBe("build");
   });
 
+  it("纯空白文字且无附件或恢复载荷的草稿读取时被拒绝", () => {
+    const key = getV4ComposerDraftStorageKey(workspace);
+    storage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        scopes: {
+          "session-a": { text: "   \n\t", mode: "build", updatedAt: 1 },
+        },
+      }),
+    );
+    expect(read()).toBeNull();
+  });
+
+  it("纯空白文字但带附件恢复记录的草稿保留附件", () => {
+    persistV4ComposerDraft(workspace, undefined, "session-a", {
+      text: "  ",
+      mode: "build",
+      recoveryAttachments: [{ id: "att-1", filename: "notes.txt" }],
+    });
+    expect(read()?.recoveryAttachments?.map((item) => item.id)).toEqual(["att-1"]);
+  });
+
+  it("纯空白文字但带上下文恢复记录的草稿保留上下文", () => {
+    persistV4ComposerDraft(workspace, undefined, "session-a", {
+      text: "",
+      mode: "build",
+      recoveryContexts: {
+        sharedContextRefs: [{ kind: "shared_context_import", context_id: "ctx-1" }],
+      },
+    });
+    expect(read()?.recoveryContexts?.sharedContextRefs).toEqual([
+      { kind: "shared_context_import", context_id: "ctx-1" },
+    ]);
+  });
+
+  it("切换项目与新建任务不会丢失已输入的文字草稿", () => {
+    persistV4ComposerDraft(workspace, undefined, V4_DRAFT_SCOPE_ROOT, {
+      text: "typed before switching",
+      projectId: "p1",
+    });
+    persistV4ComposerDraft(workspace, undefined, "new-task", { text: "other", mode: "build" });
+    persistV4ComposerDraft(workspace, undefined, V4_DRAFT_SCOPE_ROOT, {
+      text: "typed before switching",
+      projectId: "p2",
+    });
+    expect(read(V4_DRAFT_SCOPE_ROOT)?.text).toBe("typed before switching");
+    expect(read(V4_DRAFT_SCOPE_ROOT)?.projectId).toBe("p2");
+    expect(read("new-task")?.text).toBe("other");
+  });
+
   it("存储不可读不能让 Composer 崩溃", () => {
     vi.spyOn(storage, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");
