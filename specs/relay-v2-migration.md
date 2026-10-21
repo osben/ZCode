@@ -206,8 +206,21 @@ Compatibility: the desktop and web clients must remain compatible with upstream'
   `.github/workflows/fork-release.yml` (`vars.*`, build time), read at runtime by
   `packages/shared/src/env.ts` (`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT`) and
   `packages/desktop/src/main/index.ts`, and for web as `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL`.
-- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`; a path is stripped).
-  A legacy `wss://host/ws` value is normalized to its origin with a logged warning. Release notes must say so.
+- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`) or an explicit V2 WS URL.
+  A bare origin (`wss://host`, `wss://host/`) and the legacy V1 endpoint (`wss://host/ws`) are normalized to
+  `wss://host/api/v1/remote/ws2`; `https:`/`http:` become `wss:`/`ws:`. Any other path is an explicit WS URL and
+  is kept verbatim (upstream override semantics). Release notes must say so.
+- Owner: `normalizeConfiguredWebRemoteControlRelayWsUrl` in `packages/shared/src/zcodeEndpoint.ts` (pure), called
+  once by Desktop main when it reads the runtime env override and the baked release default. When a value is
+  rewritten, Main logs one warning naming only the old and new path (never the host). The build script and
+  `resolveWebRemoteControlRelayWsUrl` do not normalize, so there is a single rewrite point.
+- Why: release builds baked `wss://host/ws` (the V1 path) while the V2 relay accepts only
+  `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` and answers any other WS path with 400, so pairing could not connect.
+  HTTP calls were unaffected because `relayHttpOriginFromWsUrl` keeps only the origin.
+- Acceptance: (1) `wss://host/ws`, `wss://host/ws/`, `wss://host`, `https://host` resolve to
+  `wss://host/api/v1/remote/ws2`; (2) `wss://host/api/v1/remote/ws2` and `ws://localhost:8787/custom` are unchanged;
+  (3) empty input yields no configured value (endpoint-derived fallback applies); (4) the V2 path constant in
+  `zcodeEndpoint.ts` equals `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH`.
 - Derived from the origin, never separately configured:
   HTTP `${origin}/api/v1/remote/{device,device/delete,token}`,
   WS `${wsOrigin}/api/v1/remote/ws2?token=…`,

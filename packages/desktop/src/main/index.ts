@@ -79,7 +79,9 @@ import {
   ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT,
   ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
   ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT,
+  WEB_REMOTE_CONTROL_RELAY_WS_PATH,
   buildZCodeEndpointUrls,
+  normalizeConfiguredWebRemoteControlRelayWsUrl,
   resolveWebRemoteControlRelayWsUrl,
   resolveZCodeEndpointOrigin,
   shouldEnableE2ETestBridge,
@@ -954,13 +956,28 @@ const webRemoteControlAppVersion = ZCODE_VERSION || app.getVersion();
 const defaultZCodeEndpointUrls = buildZCodeEndpointUrls(DEFAULT_ZCODE_ENDPOINT_ORIGIN, {
   appVersion: webRemoteControlAppVersion,
 });
-const webRemoteControlRelayWsEnvOverride =
-  process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL"]?.trim();
+// Single rewrite point for configured relay values (specs/relay-v2-migration.md §11.1).
+function readConfiguredRelayWsUrl(value: string | undefined, source: string): string | null {
+  const normalized = normalizeConfiguredWebRemoteControlRelayWsUrl(value);
+  if (normalized && normalized !== value?.trim()) {
+    logger.warn(
+      `[web-remote-control] relay URL from ${source} has a legacy path; using ${WEB_REMOTE_CONTROL_RELAY_WS_PATH}`,
+    );
+  }
+  return normalized;
+}
+const webRemoteControlRelayWsEnvOverride = readConfiguredRelayWsUrl(
+  process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL"],
+  "ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL",
+);
 const webRemoteControlUrlEnvOverride = process.env["ZCODE_WEB_REMOTE_CONTROL_URL"]?.trim();
 // Fork release builds bake public self-hosted defaults at build time so an app launched from
 // Finder/Explorer reaches its own relay without shell env; an explicit runtime env still wins,
 // keeping local repointing of a release build possible.
-const webRemoteControlReleaseRelayWsUrl = ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT || null;
+const webRemoteControlReleaseRelayWsUrl = readConfiguredRelayWsUrl(
+  ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
+  "the release build default",
+);
 const webRemoteControlReleaseWebUrl = ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT || null;
 
 function isTaskNewDeepLinkUrl(url: string): boolean {
