@@ -132,6 +132,8 @@ interface WindowControlRuntime {
   deviceMid: string;
   connectUrl: string;
   qrUrl: string;
+  /** Re-issues the pairing code before the relay's 300 second lifetime ends (device-key mode only). */
+  pairingRefreshTimer?: ReturnType<typeof setInterval>;
   transport: WebRemoteControlDeviceTransportLike;
   mobileConnected: boolean;
   hasEverPaired: boolean;
@@ -171,6 +173,13 @@ interface WebRemoteControlManagerDependencies {
   // Exchanges the account identity for the relay-signed JWT that every relay HTTP and WS call uses.
   // When omitted, the identity JWT is used directly (upstream behavior).
   relayBearer?: WebRemoteControlRelayBearer;
+  /**
+   * Fork device-key relay mode: mints the single-use pairing code embedded in the phone QR
+   * (`pk`). Omitted for zai-jwt relays, which keeps the QR identical to upstream.
+   */
+  pairing?: {
+    issueCode(input: { relayOrigin: string; signal: AbortSignal }): Promise<string | undefined>;
+  };
   deviceStorage: WebRemoteControlDeviceStorage;
   startupRestoreStorageProvider: {
     load(): Promise<WebRemoteControlStartupRestoreContext | undefined>;
@@ -736,6 +745,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
       reason: "desktop-disconnected",
       error: "Desktop disconnected this Web remote control session.",
     });
+    if (runtime.pairingRefreshTimer) clearInterval(runtime.pairingRefreshTimer);
     runtimes.delete(windowId);
     pushedWorkspaceListSignaturesByWindowId.delete(windowId);
     cancelBridgeOpen(runtime);
@@ -1541,14 +1551,43 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
     }
   }
 
-  function createQrUrl(deviceSid: string, mobileRemoteControlUrl: string): string {
+  function createQrUrl(
+    deviceSid: string,
+    mobileRemoteControlUrl: string,
+    pairingCode?: string,
+  ): string {
     return buildWebRemoteControlExternalQrUrl({
       baseUrl: mobileRemoteControlUrl,
       deviceSid,
       deviceMid: dependencies.deviceMid,
       deviceName: dependencies.deviceName,
       appVersion: dependencies.appVersion,
+      ...(pairingCode === undefined ? {} : { pairingCode }),
     });
+  }
+
+  // Pairing codes live 300 s on the relay; refresh well before so a QR left on screen stays scannable.
+  const PAIRING_REFRESH_MS = 240_000;
+
+  /** Device-key mode: the QR is published only once a pairing code exists, so a visible QR is always scannable. */
+  async function publishPairingQr(
+    runtime: WindowControlRuntime,
+    deviceSid: string,
+    baseUrl: string,
+    relayOrigin: string,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const issue = dependencies.pairing?.issueCode;
+    if (!issue) return true;
+    const code = await issue({ relayOrigin, signal });
+    if (signal.aborted || runtimes.get(runtime.windowId) !== runtime) return false;
+    if (code === undefined) {
+      dependencies.logger.warn("[web-remote-control] pairing code unavailable");
+      return false;
+    }
+    runtime.qrUrl = runtime.connectUrl = createQrUrl(deviceSid, baseUrl, code);
+    emitRuntimeStatus(runtime);
+    return true;
   }
 
   return {
@@ -1691,6 +1730,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         let runtime: WindowControlRuntime;
         let readySettled = false;
         let persistEnabled: Promise<void> | undefined;
+        let pairingReady: Promise<boolean> = Promise.resolve(true);
         const readyPromise = new Promise<void>((resolve, reject) => {
           const finish = (error?: Error) => {
             if (readySettled) return;
@@ -1732,6 +1772,9 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
               if (runtimes.get(windowId) === runtime) {
                 runtime.deviceSid = deviceSid;
                 runtime.qrUrl = runtime.connectUrl = "";
+                // A new SID needs a QR for that SID; restart the pairing refresh on the next ready state.
+                if (runtime.pairingRefreshTimer) clearInterval(runtime.pairingRefreshTimer);
+                runtime.pairingRefreshTimer = undefined;
               }
               return deviceSid;
             },
@@ -1739,16 +1782,46 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
             onStateChange: (state) => {
               if (runtimes.get(windowId) !== runtime) return;
               if (state === "waiting_terminal" || state === "paired") {
-                runtime.qrUrl = runtime.connectUrl = createQrUrl(deviceSid, mobileRemoteControlUrl);
+                if (dependencies.pairing) {
+                  if (!runtime.pairingRefreshTimer) {
+                    const publish = () =>
+                      publishPairingQr(
+                        runtime,
+                        deviceSid,
+                        mobileRemoteControlUrl,
+                        relayOrigin,
+                        signal,
+                      );
+                    // The start result carries the QR, so the first publish gates readiness.
+                    pairingReady = publish();
+                    runtime.pairingRefreshTimer = setInterval(
+                      () => void publish(),
+                      PAIRING_REFRESH_MS,
+                    );
+                    runtime.pairingRefreshTimer.unref?.();
+                  }
+                } else {
+                  runtime.qrUrl = runtime.connectUrl = createQrUrl(
+                    deviceSid,
+                    mobileRemoteControlUrl,
+                  );
+                }
               }
               mapTransportState(runtime, state);
               if (state === "waiting_terminal" || state === "paired") {
                 // A timeout on the first call does not cancel background recovery; the enable intent must still be saved when it truly becomes ready for the first time.
-                persistEnabled ??= dependencies.startupRestoreStorageProvider.save({
-                  workspacePath: context.workspacePath,
-                  workspaceIdentity: context.workspaceIdentity,
-                  initialTaskId: context.initialTaskId,
-                });
+                persistEnabled ??= pairingReady
+                  .then((published) => {
+                    if (!published)
+                      throw new WebRemoteControlV2ConnectionError("relay-unavailable");
+                  })
+                  .then(() =>
+                    dependencies.startupRestoreStorageProvider.save({
+                      workspacePath: context.workspacePath,
+                      workspaceIdentity: context.workspaceIdentity,
+                      initialTaskId: context.initialTaskId,
+                    }),
+                  );
                 void persistEnabled.then(
                   () => finish(),
                   (error: unknown) => {
@@ -2114,8 +2187,19 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         }
         const endpointUrls = await dependencies.getEndpointUrls?.();
         const baseUrl = endpointUrls?.remoteUrl ?? dependencies.mobileRemoteControlUrl;
+        let pairingCode: string | undefined;
+        if (dependencies.pairing) {
+          pairingCode = await dependencies.pairing.issueCode({
+            relayOrigin: relayHttpOriginFromWsUrl(
+              endpointUrls?.relayWsUrl ?? dependencies.relayWsUrl,
+            ),
+            signal: AbortSignal.timeout(15_000),
+          });
+          // Without a code the phone cannot sign in, so the Bot must not receive a link that looks valid.
+          if (pairingCode === undefined) continue;
+        }
         return {
-          url: createQrUrl(runtime.deviceSid, baseUrl),
+          url: createQrUrl(runtime.deviceSid, baseUrl, pairingCode),
           sessionId: runtime.deviceSid,
         };
       }

@@ -131,7 +131,12 @@ import {
 import { createWebRemoteControlManager } from "./webRemoteControlManager.js";
 import {
   createWebRemoteControlDeviceStorage,
+  createWebRemoteControlDeviceKeyBearer,
+  createWebRemoteControlDeviceKeyIdentity,
   createWebRemoteControlRelayBearer,
+  resolveWebRemoteControlRelayIdentityMode,
+  WEB_REMOTE_CONTROL_DEVICE_KEY_PLACEHOLDER_JWT,
+  WEB_REMOTE_CONTROL_ENROLLMENT_SECRET_CREDENTIAL,
 } from "./web-remote-relay/index.js";
 import { createWebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate.js";
 import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControlRendererReconnect.js";
@@ -864,7 +869,35 @@ const loadRemoteControlAuthorization = createTelemetryAuthorizationLoader(
   webRemoteControlCredentialService,
 );
 // Exchanges the account identity for the relay-signed JWT used by every relay HTTP and WS call.
-const webRemoteControlRelayBearer = createWebRemoteControlRelayBearer();
+// Fork: a self-hosted relay in `device-key` identity mode authenticates this install with its own key
+// instead of the account login (specs/relay-v2-migration.md section 15). Never inferred from login state.
+const webRemoteControlIdentityMode = resolveWebRemoteControlRelayIdentityMode(
+  process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE"],
+);
+if (webRemoteControlIdentityMode.invalid) {
+  console.error(
+    "[web-remote-control] ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE is invalid; using zai-jwt",
+  );
+}
+const webRemoteControlDeviceKeyIdentity =
+  webRemoteControlIdentityMode.mode === "device-key"
+    ? createWebRemoteControlDeviceKeyIdentity({
+        credentials: webRemoteControlCredentialService,
+      })
+    : undefined;
+const webRemoteControlDeviceKeyBearer = webRemoteControlDeviceKeyIdentity
+  ? createWebRemoteControlDeviceKeyBearer({
+      identity: webRemoteControlDeviceKeyIdentity,
+      loadEnrollmentSecret: async () =>
+        process.env["ZCODE_WEB_REMOTE_CONTROL_RELAY_ENROLLMENT_SECRET"]?.trim() ||
+        (await webRemoteControlCredentialService.load(
+          WEB_REMOTE_CONTROL_ENROLLMENT_SECRET_CREDENTIAL,
+        )) ||
+        undefined,
+    })
+  : undefined;
+const webRemoteControlRelayBearer =
+  webRemoteControlDeviceKeyBearer ?? createWebRemoteControlRelayBearer();
 const webRemoteControlSharedHostAttachments = createWebRemoteControlSharedHostAttachments({
   windowHostProcessMap,
   attachRemoteWorkspaceSessionHost: remoteSessionManager.attachRemoteWorkspaceSessionHost,
@@ -986,11 +1019,20 @@ const webRemoteControlManager = createWebRemoteControlManager({
   deviceName: hostname(),
   appVersion: webRemoteControlAppVersion,
   getLogin: async () => {
+    if (webRemoteControlDeviceKeyIdentity) {
+      return {
+        userId: await webRemoteControlDeviceKeyIdentity.userId(),
+        jwt: WEB_REMOTE_CONTROL_DEVICE_KEY_PLACEHOLDER_JWT,
+      };
+    }
     const userId = await loadRemoteControlUserId();
     const authorization = await loadRemoteControlAuthorization(userId);
     return authorization ? { userId, jwt: authorization.slice("Bearer ".length) } : undefined;
   },
   relayBearer: webRemoteControlRelayBearer,
+  ...(webRemoteControlDeviceKeyBearer
+    ? { pairing: { issueCode: webRemoteControlDeviceKeyBearer.issuePairingCode } }
+    : {}),
   deviceStorage: createWebRemoteControlDeviceStorage({
     deleteLegacyCredential: async () => {
       const key = "web-remote-control:external-relay:pass_hash";

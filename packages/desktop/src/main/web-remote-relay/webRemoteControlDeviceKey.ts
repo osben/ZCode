@@ -245,3 +245,25 @@ export function createWebRemoteControlDeviceKeyBearer(options: {
     },
   };
 }
+
+export type WebRemoteControlRelayIdentityMode = "zai-jwt" | "device-key";
+
+/** Credential-store entry for the enrollment secret when it is not supplied through the environment. */
+export const WEB_REMOTE_CONTROL_ENROLLMENT_SECRET_CREDENTIAL =
+  "fork_web-remote-control:enrollment-secret";
+
+/**
+ * Mirrors the relay mode from `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE`. Only an explicit
+ * `device-key` selects the device identity; an unknown value keeps `zai-jwt` and is reported so it is not silent.
+ */
+export function resolveWebRemoteControlRelayIdentityMode(raw: string | undefined): {
+  mode: WebRemoteControlRelayIdentityMode;
+  invalid: boolean;
+} {
+  const value = raw?.trim();
+  if (value === "device-key") return { mode: "device-key", invalid: false };
+  if (value === undefined || value === "" || value === "zai-jwt") {
+    return { mode: "zai-jwt", invalid: false };
+  }
+  return { mode: "zai-jwt", invalid: true };
+}

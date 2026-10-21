@@ -4,6 +4,7 @@ import {
   createWebRemoteControlDeviceKeyBearer,
   createWebRemoteControlDeviceKeyIdentity,
   WEB_REMOTE_CONTROL_DEVICE_KEY_CREDENTIAL,
+  resolveWebRemoteControlRelayIdentityMode,
 } from "#src/main/web-remote-relay/index.js";
 
 const SECRET = "enrollment-secret-fixture-0123456789abcdef";
@@ -153,5 +154,23 @@ describe("device-key relay bearer", () => {
         signal: new AbortController().signal,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("relay identity mode selection", () => {
+  it("selects device-key only when asked explicitly and never infers it", () => {
+    expect(resolveWebRemoteControlRelayIdentityMode(undefined)).toEqual({
+      mode: "zai-jwt",
+      invalid: false,
+    });
+    expect(resolveWebRemoteControlRelayIdentityMode(" device-key ")).toEqual({
+      mode: "device-key",
+      invalid: false,
+    });
+    expect(resolveWebRemoteControlRelayIdentityMode("zai-jwt").mode).toBe("zai-jwt");
+    expect(resolveWebRemoteControlRelayIdentityMode("devicekey")).toEqual({
+      mode: "zai-jwt",
+      invalid: true,
+    });
   });
 });

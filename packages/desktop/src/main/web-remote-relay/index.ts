@@ -11,6 +11,9 @@ export {
   createWebRemoteControlDeviceKeyIdentity,
   WEB_REMOTE_CONTROL_DEVICE_KEY_CREDENTIAL,
   WEB_REMOTE_CONTROL_DEVICE_KEY_PLACEHOLDER_JWT,
+  WEB_REMOTE_CONTROL_ENROLLMENT_SECRET_CREDENTIAL,
+  resolveWebRemoteControlRelayIdentityMode,
+  type WebRemoteControlRelayIdentityMode,
   type WebRemoteControlDeviceKeyBearer,
   type WebRemoteControlDeviceKeyIdentity,
 } from "#src/main/web-remote-relay/webRemoteControlDeviceKey.js";
