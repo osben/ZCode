@@ -111,8 +111,11 @@ export const WebRemoteControlDialog = memo(function WebRemoteControlDialogCompon
     [intl.formatMessage, status],
   );
   const failureDescription = useMemo(
-    () => getFailureDescription(status.failure, intl.formatMessage),
-    [intl.formatMessage, status.failure],
+    () =>
+      status.repairRequired
+        ? intl.formatMessage({ id: "webRemoteControl.failure.repairRequired" })
+        : getFailureDescription(status.failure, intl.formatMessage),
+    [intl.formatMessage, status.failure, status.repairRequired],
   );
   const statusTagLabel = useMemo(
     () => getWebRemoteControlStatusTagLabel(status, intl.formatMessage),

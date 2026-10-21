@@ -261,6 +261,9 @@ architecture-policy.yaml
 # TEMPORARY (final fork restore desktop): restored fork createRemoteWorkspaceServiceCollection (~33 KB). Remove after the desktop host split.
 packages/desktop/src/host/remoteWorkspaceServiceCollection.ts
 
+# TEMPORARY (relay v2 desktop client, specs/relay-v2-migration.md section 12): webRemoteControlManager.ts carries the upstream V2 manager plus fork hunks (~87 KB); split it into relay start/transport, bridge, and status modules, then remove this block. WebRemoteControlDialog.tsx grew past 20 KB with the repair notice; split the failure/notice presentation out, then remove this block.
+packages/desktop/src/main/webRemoteControlManager.ts
+packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
 # TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
 # specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
 # Remove once the composer is split into smaller modules.
@@ -271,3 +274,5 @@ packages/ui/src/v4/composer/useComposerAttachments.ts
 packages/ui/src/v4/composer/useDraftConfigControl.ts
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
+# TEMPORARY (relay v2 web client): upstream webRemoteControlTransport (~27 KB) taken as-is. Split it below 20000 bytes (WebSocket framing vs heartbeat/token recovery), then remove this block.
+packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts

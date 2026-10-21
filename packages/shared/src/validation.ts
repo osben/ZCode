@@ -231,7 +231,7 @@ export const webRemoteControlWindowBootstrapResultSchema = z.object({
   workspaces: webRemoteControlWorkspaceTargetsSchema,
   initialViewState: webRemoteControlMobileViewStateSchema.optional(),
   mobileViewState: webRemoteControlMobileViewStateSchema.optional(),
-  tasks: webRemoteControlTaskTargetsSchema,
+  tasks: webRemoteControlTaskTargetsSchema.optional(),
   mobileTaskViewEpoch: webRemoteControlTransportIdSchema.optional(),
 });
 
