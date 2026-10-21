@@ -1768,7 +1768,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
         ) : null}
         {rows.map((task) => {
           const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
-          // Bugfix：cmdk 按 value 判断选中；标题可重复，必须用工作区身份和任务 ID 隔离重名行。
+          // Bugfix: cmdk selects by value; titles can repeat, so the workspace identity and task ID isolate duplicate rows.
           return (
             <CommandItem
               key={`${task.workspaceIdentity?.trim() || task.workspacePath}:${task.taskId}`}
@@ -1856,7 +1856,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           return (
             <CommandItem
               key={row.key}
-              // 搜索结果沿用含工作区身份、任务 ID 和片段序号的行 key，避免同文案一起选中。
+              // Search results keep the row key that includes workspace identity, task ID and snippet index, so identical text is not selected together.
               value={`task-result:${row.key}`}
               className={quickPickItemClassName}
               onSelect={() => selectTask(row)}

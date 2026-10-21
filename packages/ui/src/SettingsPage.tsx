@@ -29,7 +29,7 @@ import type {
   UserInfo,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
-import { BUILTIN_MODEL_PROVIDER_IDS, DesktopCommandIds, isLocale } from "@zcode/shared";
+import { BUILTIN_MODEL_PROVIDER_IDS, DesktopCommandIds, type Locale } from "@zcode/shared";
 import {
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
@@ -892,8 +892,6 @@ export function SettingsPage({
   const nativeSearchEnhancementsEnabled = sharedSettings?.nativeSearchEnhancementsEnabled !== false;
   const askUserQuestionAutoResolutionEnabled =
     sharedSettings?.askUserQuestionAutoResolutionEnabled !== false;
-  const codingPlanLimitAutoContinueDefaultEnabled =
-    sharedSettings?.codingPlanLimitAutoContinueDefaultEnabled !== false;
   const modelIoFullRetentionEnabled = sharedSettings?.modelIoFullRetentionEnabled === true;
   const [dataBaseDir, setDataBaseDir] = useState("");
   const [terminalInheritSystemProfile, setTerminalInheritSystemProfile] = useState(true);
@@ -1171,22 +1169,6 @@ export function SettingsPage({
         action: "toggle_model_io_retention",
         trigger: "switch",
         operation: () => updateSharedSettings({ modelIoFullRetentionEnabled: enabled }),
-        completed: {
-          resultSource: "shared_settings",
-          stateAfter: enabled ? "enabled" : "disabled",
-        },
-      });
-    },
-    [updateSharedSettings],
-  );
-  const handleCodingPlanLimitAutoContinueDefaultEnabledChange = useCallback(
-    async (enabled: boolean) => {
-      await runSettingsActionAsync({
-        featureId: "settings.conversation",
-        action: "toggle_coding_plan_limit_auto_continue_default",
-        trigger: "switch",
-        operation: () =>
-          updateSharedSettings({ codingPlanLimitAutoContinueDefaultEnabled: enabled }),
         completed: {
           resultSource: "shared_settings",
           stateAfter: enabled ? "enabled" : "disabled",
@@ -1585,10 +1567,10 @@ export function SettingsPage({
         });
         return;
       }
-      if (isLocale(value)) {
+      if (value === "zh-CN" || value === "en-US") {
         runUserAction({
           input: { featureId: "settings.locale", action: "change_locale", trigger: "select" },
-          operation: () => setLocalePreference(value),
+          operation: () => setLocalePreference(value as Locale),
           completed: { resultSource: "local_commit", valueAfter: value },
           failureStage: "local_commit",
         });
@@ -2081,9 +2063,6 @@ export function SettingsPage({
                               askUserQuestionAutoResolutionEnabled={
                                 askUserQuestionAutoResolutionEnabled
                               }
-                              codingPlanLimitAutoContinueDefaultEnabled={
-                                codingPlanLimitAutoContinueDefaultEnabled
-                              }
                               modelIoFullRetentionEnabled={modelIoFullRetentionEnabled}
                               onDataBaseDirChange={handleDataBaseDirChange}
                               onSelectDataBaseDir={selectDirectory}
@@ -2146,9 +2125,6 @@ export function SettingsPage({
                               }
                               onAskUserQuestionAutoResolutionEnabledChange={
                                 handleAskUserQuestionAutoResolutionEnabledChange
-                              }
-                              onCodingPlanLimitAutoContinueDefaultEnabledChange={
-                                handleCodingPlanLimitAutoContinueDefaultEnabledChange
                               }
                               onOpenOnboardingDialog={() =>
                                 runUserAction({
