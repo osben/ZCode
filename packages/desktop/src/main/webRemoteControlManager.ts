@@ -1814,18 +1814,21 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
               mapTransportState(runtime, state);
               if (state === "waiting_terminal" || state === "paired") {
                 // A timeout on the first call does not cancel background recovery; the enable intent must still be saved when it truly becomes ready for the first time.
-                persistEnabled ??= pairingReady
-                  .then((published) => {
-                    if (!published)
-                      throw new WebRemoteControlV2ConnectionError("relay-unavailable");
-                  })
-                  .then(() =>
-                    dependencies.startupRestoreStorageProvider.save({
-                      workspacePath: context.workspacePath,
-                      workspaceIdentity: context.workspaceIdentity,
-                      initialTaskId: context.initialTaskId,
-                    }),
-                  );
+                const saveEnabled = () =>
+                  dependencies.startupRestoreStorageProvider.save({
+                    workspacePath: context.workspacePath,
+                    workspaceIdentity: context.workspaceIdentity,
+                    initialTaskId: context.initialTaskId,
+                  });
+                // Without a pairing source the save runs exactly as upstream, with no extra async hop.
+                persistEnabled ??= dependencies.pairing
+                  ? pairingReady
+                      .then((published) => {
+                        if (!published)
+                          throw new WebRemoteControlV2ConnectionError("relay-unavailable");
+                      })
+                      .then(saveEnabled)
+                  : saveEnabled();
                 void persistEnabled.then(
                   () => finish(),
                   (error: unknown) => {
