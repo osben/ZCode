@@ -624,8 +624,9 @@ Without it, enrollment by secret is denied. Unknown value stops startup naming t
 
 **Tiers.** Every enrolled key has a tier: `owner` (enrolled with the secret, and every key enrolled before this
 change, i.e. a missing usage row) or `open` (enrolled by PoW). Owner limits are 4x the open limits. The tier is
-carried in the relay JWT claim `tier` (`owner` or `open`; absent means `owner` is never assumed: a JWT without
-the claim is `open`). A pairing JWT inherits the tier of the JWT that minted its code.
+carried in the relay JWT claim `tier` (`owner` or `open`) in `device-key` mode only; a `device-key` JWT without
+the claim (issued before this change, at most one TTL old) is treated as `open`. `zai-jwt` mode has no tier and
+no per-identity limits. A pairing JWT inherits the tier of the JWT that minted its code.
 
 **Body.** `POST /session` accepts exactly one of: `{device_key}`, `{device_key, enrollment_secret}`,
 `{device_key, work}`; secret and work together are a 400. `work` is `{challenge, nonce}` (exact keys): the

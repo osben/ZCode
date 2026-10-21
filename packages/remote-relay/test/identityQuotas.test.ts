@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { IdentityLimits } from "../src/domain/identityLimits.js";
-import { limiterKey } from "../src/domain/ipBucket.js";
+import { limiterKey } from "../src/adapters/ipBucket.js";
 import {
   deviceKeyBody,
   deviceKeyPair,

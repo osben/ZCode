@@ -11,7 +11,7 @@ import { createRelayRegistry } from "../app/relay.js";
 import { createRelayHttpApi, RELAY_API_PREFIX, type RelayHttpResponse } from "../app/http.js";
 import { RelayTokenStore, type RelayTokenGrant } from "../domain/tokens.js";
 import { IdentityLimits } from "../domain/identityLimits.js";
-import { limiterKey } from "../domain/ipBucket.js";
+import { limiterKey } from "./ipBucket.js";
 
 /** Largest client frame the relay accepts (V2 contract: 1 MiB text). */
 const MAX_FRAME_BYTES = 1_048_576;
