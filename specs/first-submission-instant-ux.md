@@ -55,8 +55,9 @@ submission, command-id reconciliation, no duplicate dispatch).
    for the same submission is not. Reconcile by `submissionId` / `commandId` (FSL
    rule 6), not by text match.
 4. **Forks are honest** — Worktree, incognito, attachments, branch checkout, and
-   queue choice are **visible preparation**, not silent blocking. Errors sit **under
-   the frozen message** with Retry on the **same** session (FSL rule 4).
+   queue choice are **visible preparation**, not silent blocking. The error status
+   sits **under the frozen message**; Retry on the **same** session (FSL rule 4)
+   lives in the composer's recovery card of that session (see _Retry surface_).
 5. **Sidebar is async** — Task list rows remain Host-owned; a missing sidebar line
    must not mean “still on draft screen.” Conversation bind uses Host reservation
    identity directly (FSL owners section).
@@ -168,13 +169,51 @@ Order matters; later steps assume earlier ones.
 
 ## Flag lifetimes (decided 2026-10-21)
 
-| Flag                                    | Set       | Cleared                                                 |
-| --------------------------------------- | --------- | ------------------------------------------------------- |
-| `pending` (UI)                          | freeze    | background chain fired (same tick)                      |
-| repeat-submit idempotency ref           | freeze    | bind/remount, restore, or chain end                     |
-| `activeFirstSubmissions` entry          | freeze    | real-row projection accept or failure restore           |
-| optimistic user row                     | P1 commit | reconcile predicate above                               |
-| first-submission `submissionReady` lock | —         | removed; ordinary session readiness gates the next Send |
+| Flag                                    | Set             | Cleared                                                 |
+| --------------------------------------- | --------------- | ------------------------------------------------------- |
+| `pending` (UI)                          | freeze          | background chain fired (same tick)                      |
+| repeat-submit idempotency ref           | freeze          | bind/remount, restore, or chain end                     |
+| `activeFirstSubmissions` entry          | freeze          | real-row projection accept or failure restore           |
+| optimistic user row                     | P1 commit       | reconcile predicate above                               |
+| first-submission `submissionReady` lock | —               | removed; ordinary session readiness gates the next Send |
+| retry arm (`retryFirstSubmissionRef`)   | Retry / Restore | the retry freeze, or a scope/owner change               |
+
+## Retry surface for a failed first submission (decided 2026-10-21)
+
+The composer owns submit, so Retry is a composer surface that drives the one
+existing send path; the pane never calls into the composer.
+
+- **Where.** The composer's recovery card (`ComposerWorktreeRecovery`) shows a
+  settled first-submission record of its scope — the bound session, or the draft for
+  a record that never got a Host identity. It stays hidden while the submission is
+  active (`activeFirstSubmissions`), so it never flashes during the in-flight window.
+  The status line under the optimistic turn keeps naming the failure; the card does
+  not repeat the message text (the turn already shows it).
+- **Retry = restore + the ordinary submit.** Retry restores the frozen record into
+  the composer through `applyWorktreeRecoveryDraft` (arms `retryFirstSubmissionRef`)
+  and then runs the ordinary `submit()` — the same pattern as the worktree
+  failure-return modal's Retry. The send reuses the frozen `submissionId` and
+  reservation: a bound session short-circuits `prepareFirstSubmission` on its
+  matching `submissionPreparation` and activates with `expectedSubmissionId`.
+  Activation is idempotent on the Host (`already-active` / `input-admitted`
+  receipts under the per-session preparation lock); input is admitted only by the
+  tracked `sendText`.
+- **One record, no blink.** Retry does not clear the record: it is moved, if needed,
+  to the composer's own recovery scope for that `submissionId`, which the retry
+  freeze overwrites in place (status `failed` → `preparing`), so the optimistic turn
+  stays on screen and exactly one record per `submissionId` exists.
+- **When Retry is offered.** Status `failed`, or `preparing` on an inactive record
+  (restart mid-preparation, before any `sendText` command existed — IUX09's explicit
+  continue). Status `sending` / `unknown` means a `sendText` command exists with an
+  unresolved outcome: no Retry (FSL rule 4 — reconcile the original command id,
+  never resend under a new one); the card stays hidden and the status line reports it.
+- **Guards.** Retry is disabled while the editor holds another draft (the restore
+  would overwrite it; the card says so) or while frozen attachments are missing
+  (existing reattach / remove-missing actions). A double click dispatches once (the
+  button disables on click; the submit idempotency guards stay in force).
+- **Dismiss** is offered only for an unbound record (no reservation, draft scope).
+  Dismissing a reserved record would strand its session: the prepared session admits
+  no other input until the frozen submission activates it.
 
 ## Verification
 
@@ -182,6 +221,29 @@ Order matters; later steps assume earlier ones.
 - Focused tests: `firstSubmissionPreview`, `firstSubmissionProjection`, late ACK /
   worktree dispatch harnesses, SessionPane bind tests — updated for IUX01–IUX09.
 - Report any E2E not run.
+
+### Telemetry audit (step 6, 2026-10-21)
+
+No attribution shifted relative to the pre-change base (`388a7944`): every telemetry
+call site in `ConversationComposer.runSend` (`recordSendClick` / `sendTime`,
+`localTtft.start`, `settleSendResult`, `sendAction.*`) and SessionPane's
+`reportDraftCreated` is unchanged. Moving `pending` and the bind earlier touches no
+telemetry: the early bind calls `handleDraftSessionCreated` without a `messageId`,
+so it reports nothing, and `session_create` still reports at `sendText` accept.
+Local TTFT keeps its renderer click clock plus the `dispatch` checkpoint, so setup
+(click → dispatch) stays separable from admission → first output. Pre-existing, not
+introduced here: `send_result`'s cost spans click → accepted and includes reservation
+and upload wait on both base and head; separating it needs new instrumentation,
+which this change does not add.
+
+### Desktop E2E status (2026-10-21)
+
+Not run. The wdio suite needs a built renderer (`packages/desktop/out`), the CLI
+bundle (`apps/zcode-cli/packages/cli/dist/zcode.cjs`) and a packaged app binary;
+none exist in the working checkout and the local E2E environment is known broken.
+No IUX-specific Desktop scenario has been authored yet; IUX01–IUX09 are covered by
+mounted composer/pane tests and component tests only, which do not prove Desktop
+rendering latency or restart behavior (FSL acceptance note).
 
 ## Related documents
 
