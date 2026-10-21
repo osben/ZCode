@@ -35,3 +35,10 @@ Unauthenticated sockets are closed after `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`.
 
 Wire protocol and deployment: `docs/web-remote-control/relay-v2-pairing.md` and
 `specs/relay-v2-migration.md` (section 12).
+
+## Identity modes
+
+`RelaySessionService.mode` is `zai-jwt` or `device-key` (`specs/relay-v2-migration.md` section 15).
+`exchange` (login JWT) serves `zai-jwt` only; `exchangeDeviceKey` and `exchangePairing`/`createPairing`
+serve `device-key` only and return a denial in the other mode. `RelayDeviceKeyStore` (enrolled public keys,
+table `fork_relay_device_keys`) is implemented by the same SQLite store as device records.

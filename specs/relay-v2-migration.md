@@ -573,7 +573,8 @@ Desktop (owner: `packages/desktop/src/main/web-remote-relay`):
 - In `device-key` mode the login gate is replaced by the device identity (user id = derived `dk:` id), so an
   API-key-only user can start remote control. On 4012 the bearer retries once with the secret.
 - The relay JWT cache is keyed by `(relayOrigin, user id)`. The QR gets a fresh pairing code from
-  `/pairing` each time it is built.
+  `/pairing` each time it is built and every 240 s while shown; the start result waits for the first one,
+  and a relay that refuses to issue it fails the start instead of showing a QR the phone cannot use.
 
 Web (owner: `packages/web/src/web-remote-control`): when the URL has `pk` and no z.ai JWT, the entry
 exchanges it at `/session`, keeps the relay JWT in memory (not storage), and uses it for the device list
