@@ -6720,6 +6720,7 @@ export function SessionPane({
                               path={bridgedExecutionWorktree!.path}
                               workspaceIdentity={workspaceIdentity}
                               remoteSessionId={remoteSessionId}
+                              homePath={workspaceHomePath}
                               onOpenWorktree={onCreateTaskInWorkspace}
                             />
                           )

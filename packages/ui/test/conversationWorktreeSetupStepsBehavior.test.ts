@@ -151,8 +151,9 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
 
     // Collapsed by default: one compact trigger line, details hidden.
     expect(document.querySelector("[data-worktree-created] [data-state='open']")).toBeNull();
-    expect(document.querySelector("[data-worktree-created-summary]")?.textContent).toContain(
-      "created · zcode/quantum-wizard",
+    // `Worktree · <branch>`: the summary is the branch alone, without a "created" word.
+    expect(document.querySelector("[data-worktree-created-summary]")?.textContent).toBe(
+      "zcode/quantum-wizard",
     );
 
     fireEvent.click(document.querySelector("[data-worktree-created] button")!);

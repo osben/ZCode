@@ -7,6 +7,7 @@ import en from "@/i18n/locales/en-US.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { toast } from "@/components/ui/toast.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
+import { PlatformProvider } from "@/hooks/usePlatform.js";
 import {
   bindRemoteWorkspaceIdentity,
   registerRemoteWorkspaceSession,
@@ -14,6 +15,7 @@ import {
   useRemoteWorkspaceSessionStore,
 } from "@/store/remoteWorkspaceSessionStore.js";
 import type { IServiceAccessor } from "@zcode/services";
+import type { EditorInfo, IPlatformService } from "@zcode/shared";
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
 
@@ -25,24 +27,59 @@ vi.mock("@/components/ui/tooltip.js", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
-const OPEN_LABEL = en["commandCenter.worktree.openExisting"];
+const ACTIONS_LABEL = en["worktreeSetup.actions"];
+const NEW_TASK_LABEL = en["worktreeSetup.newTaskInWorktree"];
 
-function renderNotice(props: {
-  path: string;
-  workspaceIdentity?: string;
-  remoteSessionId?: string | null;
-  onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
-}) {
+function renderNotice(
+  props: {
+    path: string;
+    branchName?: string;
+    currentBranchName?: string | null;
+    workspaceIdentity?: string;
+    remoteSessionId?: string | null;
+    homePath?: string;
+    onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
+  },
+  platform?: IPlatformService,
+) {
+  const notice = createElement(ConversationWorktreeCreatedNotice, {
+    branchName: "feature-a",
+    ...props,
+  });
   return render(
     createElement(
       ZCodeIntlProvider,
       { initialLocale: "en-US" },
-      createElement(ConversationWorktreeCreatedNotice, {
-        branchName: "feature-a",
-        ...props,
-      }),
+      platform ? createElement(PlatformProvider, { platform }, notice) : notice,
     ),
   );
+}
+
+function openActionsMenu() {
+  fireEvent.pointerDown(screen.getByRole("button", { name: ACTIONS_LABEL }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
+function chooseNewTask() {
+  openActionsMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: NEW_TASK_LABEL }));
+}
+
+const VSCODE: EditorInfo = { id: "vscode", name: "VS Code", iconDataUrl: "data:," };
+const FINDER: EditorInfo = { id: "finder", name: "Finder", iconDataUrl: "data:," };
+
+function createDesktopPlatform(editors: EditorInfo[] = [FINDER, VSCODE]) {
+  return {
+    canOpenLocalFiles: true,
+    getInstalledEditors: vi.fn().mockResolvedValue(editors),
+    openInFileManager: vi.fn().mockResolvedValue({ success: true }),
+    openInEditor: vi.fn().mockResolvedValue({ success: true }),
+  } as unknown as IPlatformService & {
+    openInFileManager: ReturnType<typeof vi.fn>;
+    openInEditor: ReturnType<typeof vi.fn>;
+  };
 }
 
 const REMOTE_PARENT_IDENTITY = "remote:ssh:devbox:22:dev:/home/dev/repo";
@@ -72,7 +109,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
     const onOpenWorktree = vi.fn();
     renderNotice({ path: "/Users/dev/repo/.worktrees/feature-a", onOpenWorktree });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).toHaveBeenCalledWith("/Users/dev/repo/.worktrees/feature-a", undefined);
@@ -89,7 +126,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).toHaveBeenCalledWith(REMOTE_WORKTREE_PATH, REMOTE_WORKTREE_IDENTITY);
@@ -113,7 +150,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).not.toHaveBeenCalled();
@@ -137,7 +174,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).toHaveBeenCalledWith(REMOTE_WORKTREE_PATH, REMOTE_WORKTREE_IDENTITY);
@@ -160,7 +197,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(onOpenWorktree).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).toHaveBeenCalledWith(REMOTE_WORKTREE_PATH, REMOTE_WORKTREE_IDENTITY);
@@ -177,7 +214,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).not.toHaveBeenCalled();
@@ -199,7 +236,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(
@@ -219,7 +256,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).toHaveBeenCalledTimes(1);
@@ -239,7 +276,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
       onOpenWorktree,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).not.toHaveBeenCalled();
@@ -251,7 +288,7 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
     const onOpenWorktree = vi.fn();
     renderNotice({ path, workspaceIdentity: "remote:ssh:devbox:22:dev", onOpenWorktree });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(onOpenWorktree).not.toHaveBeenCalled();
@@ -263,15 +300,146 @@ describe("ConversationWorktreeCreatedNotice open action", () => {
     const onOpenWorktree = vi.fn().mockRejectedValue(new Error("workspace unavailable"));
     renderNotice({ path, onOpenWorktree });
 
-    fireEvent.click(screen.getByRole("button", { name: OPEN_LABEL }));
+    chooseNewTask();
 
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
     expect(String(vi.mocked(toast).mock.calls[0]?.[0])).toContain(path);
   });
 
-  it("renders no open action when no open callback is provided", () => {
+  it("renders no new-task item when no open callback is provided", () => {
     renderNotice({ path: "/Users/dev/repo/.worktrees/feature-a" });
 
-    expect(screen.queryByRole("button", { name: OPEN_LABEL })).toBeNull();
+    openActionsMenu();
+    expect(screen.queryByRole("menuitem", { name: NEW_TASK_LABEL })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: en["appHeader.copyPath"] })).toBeTruthy();
+  });
+});
+
+describe("ConversationWorktreeCreatedNotice presentation", () => {
+  it("titles the row 'Worktree · <branch>' without the created word", () => {
+    renderNotice({ path: "/Users/dev/repo/.worktrees/feature-a" });
+
+    const summary = document.querySelector("[data-worktree-created-summary]");
+    expect(summary?.textContent).toBe("feature-a");
+    expect(screen.getByText(en["worktreeSetup.collapsibleLabel"])).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/created/i);
+  });
+
+  it("follows the current branch and keeps the detached HEAD text", () => {
+    renderNotice({ path: "/Users/dev/wt", currentBranchName: "Detached HEAD" });
+
+    expect(document.querySelector("[data-worktree-created-summary]")?.textContent).toBe(
+      "Detached HEAD",
+    );
+  });
+
+  it("shortens the path against the Host home and keeps the full path in the tooltip", () => {
+    const path = "/Users/dev/repo-worktrees/feature-a";
+    renderNotice({ path, homePath: "/Users/dev" });
+
+    fireEvent.click(screen.getByText(en["worktreeSetup.collapsibleLabel"]));
+
+    const pathText = document.querySelector("[data-worktree-created-path]");
+    expect(pathText?.textContent).toBe("~/repo-worktrees/feature-a");
+    expect(screen.getAllByTestId("tooltip-content").some((node) => node.textContent === path)).toBe(
+      true,
+    );
+  });
+
+  it("keeps the details inside the column: indented with ml-2 and never also w-full", () => {
+    renderNotice({ path: "/Users/dev/wt" });
+
+    fireEvent.click(screen.getByText(en["worktreeSetup.collapsibleLabel"]));
+
+    const details = document.querySelector<HTMLElement>("[data-worktree-created-details]");
+    expect(details?.className.split(/\s+/)).toContain("ml-2");
+    expect(details?.className.split(/\s+/)).not.toContain("w-full");
+    expect(
+      document.querySelector("[data-worktree-created-command]")?.className.split(/\s+/),
+    ).not.toContain("w-full");
+  });
+
+  it("copies the git command from the details", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    renderNotice({ path: "/Users/dev/wt" });
+
+    fireEvent.click(screen.getByText(en["worktreeSetup.collapsibleLabel"]));
+    fireEvent.click(screen.getByRole("button", { name: en["worktreeSetup.copyCommand"] }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("git worktree add -b feature-a -- /Users/dev/wt"),
+    );
+    expect(toast).toHaveBeenCalledWith(en["worktreeSetup.commandCopied"]);
+  });
+});
+
+describe("ConversationWorktreeCreatedNotice actions menu", () => {
+  const PATH = "/Users/dev/repo-worktrees/feature-a";
+
+  it("reveals the worktree directory itself in the file manager on desktop", async () => {
+    const platform = createDesktopPlatform();
+    renderNotice({ path: PATH }, platform);
+
+    openActionsMenu();
+    const reveal = screen
+      .getAllByRole("menuitem")
+      .find((item) => /Open in (Finder|File Explorer|File Manager)/.test(item.textContent ?? ""));
+    expect(reveal).toBeTruthy();
+    fireEvent.click(reveal!);
+
+    await waitFor(() => expect(platform.openInFileManager).toHaveBeenCalledWith(PATH));
+  });
+
+  it("opens the worktree in the last selected code editor, never a file manager", async () => {
+    const platform = createDesktopPlatform();
+    renderNotice({ path: PATH }, platform);
+
+    openActionsMenu();
+    const item = await screen.findByRole("menuitem", { name: "Open in VS Code" });
+    expect(screen.queryByRole("menuitem", { name: "Open in Finder" })).toBeNull();
+    fireEvent.click(item);
+
+    await waitFor(() =>
+      expect(platform.openInEditor).toHaveBeenCalledWith("vscode", PATH, {
+        pathKind: "directory",
+      }),
+    );
+  });
+
+  it("copies the absolute path even when the label is shortened", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    renderNotice({ path: PATH, homePath: "/Users/dev" });
+
+    openActionsMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: en["appHeader.copyPath"] }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(PATH));
+    expect(toast).toHaveBeenCalledWith(en["worktreeSetup.pathCopied"]);
+  });
+
+  it("hides reveal and editor items where the platform cannot open local files (Web)", () => {
+    renderNotice({ path: PATH, onOpenWorktree: vi.fn() });
+
+    openActionsMenu();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      en["appHeader.copyPath"],
+      NEW_TASK_LABEL,
+    ]);
+  });
+
+  it("hides reveal and editor items for a remote parent workspace even on desktop", async () => {
+    const platform = createDesktopPlatform();
+    renderNotice(
+      { path: REMOTE_WORKTREE_PATH, workspaceIdentity: REMOTE_PARENT_IDENTITY },
+      platform,
+    );
+
+    openActionsMenu();
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      en["appHeader.copyPath"],
+    ]);
+    expect(platform.getInstalledEditors).not.toHaveBeenCalled();
   });
 });
