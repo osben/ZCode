@@ -1,41 +1,8 @@
-import type {
-  WebRemoteControlRelayDeviceMeta,
-  WebRemoteControlRelayPairStatus,
-  WebRemoteControlRelayDeviceRegisterInit,
-  WebRemoteControlRelayDeviceRegisterAck,
-  WebRemoteControlRelayAuthInit,
-  WebRemoteControlRelayAuthChallenge,
-  WebRemoteControlRelayAuthResponse,
-  WebRemoteControlRelayAuthAck,
-  WebRemoteControlRelayPairStatusQuery,
-  WebRemoteControlRelayPairStatusAck,
-  WebRemoteControlRelayDataMessage,
-  WebRemoteControlRelayError,
-} from "./web-remote-relay/index.js";
-export type {
-  WebRemoteControlRelayDeviceMeta,
-  WebRemoteControlRelayRole,
-  WebRemoteControlRelayPairStatus,
-  WebRemoteControlRelayErrorCode,
-  WebRemoteControlRelayOutgoingBase,
-  WebRemoteControlRelayIncomingBase,
-  WebRemoteControlRelayDeviceRegisterInit,
-  WebRemoteControlRelayDeviceRegisterAck,
-  WebRemoteControlRelayAuthInit,
-  WebRemoteControlRelayAuthChallenge,
-  WebRemoteControlRelayAuthResponse,
-  WebRemoteControlRelayAuthAck,
-  WebRemoteControlRelayPairStatusQuery,
-  WebRemoteControlRelayPairStatusAck,
-  WebRemoteControlRelayDataMessage,
-  WebRemoteControlRelayError,
-  WebRemoteControlRelayAuthProofVector,
-} from "./web-remote-relay/index.js";
-export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
 import { z } from "zod";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
 import type { MobilePluginDiscoveryTelemetry } from "./telemetry.js";
-/* eslint-disable max-lines -- the web remote-control shared protocol keeps both the legacy /web-remote types and the new external relay types; split by transport/app payload when it is broken up later. */
+/* eslint-disable max-lines -- the web remote-control shared protocol holds the app payload and workspace bridge contracts; split by transport when it is broken up later. */
+import type { WebRemoteControlRelayV2PairStatus } from "./web-remote-relay/index.js";
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
 import type {
   CreateTempTextAttachmentRequest,
@@ -77,16 +44,17 @@ export const webRemoteControlAuthStateChangeSchema = z
 export type WebRemoteControlAuthStateChange = z.infer<typeof webRemoteControlAuthStateChangeSchema>;
 
 export type WebRemoteControlStatusKind =
+  | "auth-required"
   | "idle"
   | "starting"
   | "running"
   | "connecting"
   | "active"
-  | "error"
-  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
-  | "auth-required";
+  | "error";
 
 export type WebRemoteControlFailureReason =
+  | "device-not-owned"
+  | "auth-required"
   | "session-not-found"
   | "session-expired"
   | "session-conflict"
@@ -97,9 +65,6 @@ export type WebRemoteControlFailureReason =
   | "connection-recovery-timeout"
   | "relay-unavailable"
   | "unsupported-action"
-  // TEMPORARY relay-decision placeholder (upstream relay v2 member; remove with the relay decision).
-  | "device-not-owned"
-  | "auth-required"
   | "unexpected-error";
 
 export interface WebRemoteControlFailure {
@@ -117,6 +82,12 @@ export function createWebRemoteControlConnectionRecoveryTimeoutFailure(
     reason: "connection-recovery-timeout",
     message,
   };
+}
+
+export interface WebRemoteControlRelayDeviceMeta {
+  platform: string;
+  version: string;
+  name: string;
 }
 
 export interface WebRemoteControlMobileViewportInfo {
@@ -141,21 +112,6 @@ export interface WebRemoteControlMobileDeviceInfo extends WebRemoteControlRelayD
   online?: boolean;
   updatedAt: number;
 }
-
-export type WebRemoteControlRelayOutgoingMessage =
-  | WebRemoteControlRelayDeviceRegisterInit
-  | WebRemoteControlRelayAuthInit
-  | WebRemoteControlRelayAuthResponse
-  | WebRemoteControlRelayPairStatusQuery
-  | WebRemoteControlRelayDataMessage<WebRemoteControlAppPayload>;
-
-export type WebRemoteControlRelayIncomingMessage =
-  | WebRemoteControlRelayDeviceRegisterAck
-  | WebRemoteControlRelayAuthChallenge
-  | WebRemoteControlRelayAuthAck
-  | WebRemoteControlRelayPairStatusAck
-  | WebRemoteControlRelayDataMessage<WebRemoteControlAppPayload>
-  | WebRemoteControlRelayError;
 
 /** Relay V2 QR routing hints. They never carry a credential; `hash` and `t` are rejected on parse. */
 export interface WebRemoteControlV2QrParams {
@@ -341,8 +297,8 @@ export interface WebRemoteControlStatus {
   expiresAt?: number;
   mobileConnected?: boolean;
   mobileViewState?: WebRemoteControlMobileViewState;
-  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional and unused by the fork v1 path.
-  mobileTaskView?: WebRemoteControlMobileTaskView;
+  /** Transient visible task validated by Main; remoteSessionId is injected only by the owning bridge, never self-reported by the Web client. */
+  mobileTaskView?: WebRemoteControlMobileTaskView | null;
   mobileDeviceInfo?: WebRemoteControlMobileDeviceInfo;
   qrUrl?: string;
   connectUrl?: string;
@@ -690,7 +646,7 @@ export interface WebRemoteControlMobileDiagnosticPayload {
   timestamp: number;
   state?: string;
   previousState?: string;
-  pairStatus?: WebRemoteControlRelayPairStatus;
+  pairStatus?: WebRemoteControlRelayV2PairStatus;
   closeCode?: number;
   closeReason?: string;
   wasClean?: boolean;
@@ -734,7 +690,7 @@ export interface WebRemoteControlMobileTaskView {
   workspacePath: string;
   workspaceIdentity?: string;
   taskId: string;
-  // TEMPORARY relay-decision placeholder: the UI reads it on the view; the bridge injects it (never the Web client).
+  /** Set only by the owning bridge; the Web client never supplies it. */
   remoteSessionId?: string;
 }
 
@@ -771,12 +727,11 @@ export type WebRemoteControlTaskDisplayStatus = "idle" | "running" | "completed"
 
 export interface WebRemoteControlTaskTarget {
   taskId: string;
+  hostId?: string;
   title: string;
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
-  // TEMPORARY relay-decision placeholder (relay v1 fork vs v2 upstream is pending). Optional; the fork v1 path never sets it.
-  hostId?: string;
   workspaceLabel: string;
   workspaceKind: "local" | "remote";
   createdAt: number;
@@ -808,14 +763,15 @@ export interface WebRemoteControlWorkspaceListResult {
 export type WebRemoteControlMobileNavigationIntent = "chat";
 
 export interface WebRemoteControlWorkspaceSwitchOptions {
+  /** Web page navigation only; not sent to the Host. Opens the file panel on the target root. */
+  openFileManager?: boolean;
   taskId?: string;
+  taskHostId?: string;
+  /** Resolves the task directory for the file tree only; it neither selects a task nor marks it read. */
+  fileTreeTaskId?: string;
   mobileNavigationIntent?: WebRemoteControlMobileNavigationIntent;
   /** Used only by the phone's task home; after the target bridge is established, only the unread matching this snapshot is cleared. */
   markTaskReadExpectedUnreadAt?: number;
-  // TEMPORARY relay-decision placeholders (upstream relay v2 members; remove with the relay decision).
-  openFileManager?: boolean;
-  taskHostId?: string;
-  fileTreeTaskId?: string;
 }
 
 export interface WebRemoteControlWorkspaceSwitchResult extends WebRemoteControlSessionCreateResponse {}

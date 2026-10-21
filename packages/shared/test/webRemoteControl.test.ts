@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HostMessageTypes } from "../src/channels.js";
 import {
-  WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS,
   WebRemoteControlCloseCodes,
   buildWebRemoteControlExternalQrUrl,
   matchesWebRemoteControlRoutePath,
@@ -870,30 +869,5 @@ describe("hostIncomingMessageSchema", () => {
       type: HostMessageTypes.DetachServicePort,
       attachmentId: "attachment-1",
     });
-  });
-});
-
-describe("WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS", () => {
-  it("documents the shared external relay HMAC vectors", () => {
-    const passHash = "dGVzdF9oYXNo";
-    const nonce = "nonce-1";
-    const deviceSid = "device-1";
-
-    expect(WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS).toEqual([
-      {
-        passHash,
-        nonce,
-        role: "device",
-        deviceSid,
-        proof: "XK0m7u-26VS88uk7ISAX5Z_9pjzq8jqyP77N-HkCsPE",
-      },
-      {
-        passHash,
-        nonce,
-        role: "terminal",
-        deviceSid,
-        proof: "YkqkJy-p-iZK1g1AcoGd0Q83REOggX1EygWkcxW4oLU",
-      },
-    ]);
   });
 });

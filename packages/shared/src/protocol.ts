@@ -475,13 +475,13 @@ export interface AppSettings {
   skippedElectronUpdateVersions?: Partial<Record<ElectronReleaseChannel, string>>;
   /** Whether the first-launch settings-sync prompt has been dismissed; means only that the prompt will not reappear, not that import succeeded. */
   settingsSyncFirstRunPromptHandled?: boolean;
-  /** 外部 Web 远控 relay 的非敏感设备身份；passHash 必须存 credentialService。 */
-  /** V2 非敏感注册身份；JWT 和一次性 token 不持久化于 AppSettings。 */
+  /** V2 non-sensitive registration identity; JWTs and one-time tokens are never persisted in AppSettings. */
   webRemoteControlRelayV2Device?: {
     deviceSid: string;
     userId: string;
     endpointOrigin: string;
   };
+  /** Legacy V1 device identity (no credential). Read only to detect a pre-V2 pairing; the desktop clears it after detection. */
   webRemoteControlExternalRelayDevice?: {
     deviceSid: string;
   };

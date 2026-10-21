@@ -2642,8 +2642,9 @@ function exposeServicesOnMessagePort(
     ? createZCodeAgentConnectionScope(agentService, connectionContext)
     : undefined;
   services.register(IWindowControllerService, windowHostControllerRuntime.service);
-  // Fork keeps unread signals on for every attachment: web-remote-replayable has no separate mobile-task-view
-  // channel (relay v1), so the mobile sidebar still depends on this stream. Upstream's base-renderer-only gate is not ported.
+  // Fork: every attachment owns unread signals (ownsUnreadSignals defaults to true), so the
+  // web-remote-replayable attachment forwards them to the phone sidebar as well. Upstream gates this
+  // to the local desktop-continuous attachment; that gate is not ported.
   const controllerAttachment = windowHostControllerRuntime.createAttachmentService();
   const overrides = new Map<string, unknown>([
     [IWindowControllerService.channelName, controllerAttachment],
