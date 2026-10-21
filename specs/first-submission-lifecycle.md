@@ -5,6 +5,10 @@ incognito, execution-worktree and combined first sends on Desktop and shared Web
 UI. This supersedes the visibility timing in `docs/task-first-submit-visibility.md`
 and the failed-empty-incognito cleanup rule in `specs/ui-draft-send-path.md`.
 
+**UX target (instant chat, non-blocking composer):**
+[`first-submission-instant-ux.md`](./first-submission-instant-ux.md) — perceived
+speed and P1/P2/P3 clocks; does not relax the durability rules below.
+
 ## Product rules
 
 1. After synchronous eligibility checks pass, capture the text, attachment IDs,
@@ -51,7 +55,17 @@ tree or sidebar projection of the new row: draft-workspace rows may reach that
 projection late or never, and a bind stalled on them leaves the conversation
 unreachable. Group placement of the new row is the exception: it stays staged on the
 row becoming readable, because admitting earlier fails host-side with
-`task-group.created-task-unavailable`. The reserved session's task-index row is
+`task-group.created-task-unavailable`. The bind happens when the reservation
+identity is recorded — plain paths at the `createSession` dispatch envelope (the
+session id is client-proposed and stable across the ACK), worktree paths at the
+reservation ACK — as the single bind write point, gated by navigation ownership
+(rule 7); a skipped bind is reconciled from the persisted first-submission record
+when the pane returns. The submitted draft is claimed synchronously at freeze
+(editor cleared, persist echo suppressed); between freeze and admission the send
+closure may read only the frozen snapshot, the module draft stores, and the
+reserved session id — never the composer's live owner/scope. The
+active-first-submission flag clears on accepted real-row projection or failure
+restore, not at send-chain completion. The reserved session's task-index row is
 admitted with CLI facts at reservation (sidebar reads list only cli-admitted rows),
 and the immediate bind bumps the workspace task-list version so the grouped sidebar
 tree re-reads on its own subscription. The reserved session persists with the
