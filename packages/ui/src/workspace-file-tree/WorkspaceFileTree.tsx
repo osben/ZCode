@@ -92,7 +92,6 @@ export function WorkspaceFileTree({
   workspaceRemoteSessionId,
   revealPath,
   temporaryExternalDirectory = false,
-  executionWorktreePath,
   canOpenLocalFileManager = false,
   activePreviewPath,
   onClose,
@@ -227,7 +226,7 @@ export function WorkspaceFileTree({
       return;
     }
     lastNonBlockingRootErrorRef.current = errorMessage;
-    // Bugfix: If the root directory is cached, a refresh failure must remain a non-blocking notice; a blocking error page would hide the retained file tree.
+    // Bugfix: 根目录已有缓存时，刷新失败只能作为非阻塞提示；阻塞错误页会把保留的旧文件树隐藏掉。
     toast(`${intl.formatMessage({ id: "workspaceFileTree.readFailed" })}: ${errorMessage}`);
   }, [intl, rootError, rootLoaded]);
   const gitStatusLabelByStatus = useMemo<Record<WorkspaceFileGitStatus, string>>(
@@ -363,8 +362,8 @@ export function WorkspaceFileTree({
     }
     const contentNode = scrollNode.firstElementChild;
     const updateScrollMask = () => {
-      // The virtualizer's scrollOffset requires a React rerender, so the mask lags one frame while dragging the scrollbar.
-      // Update the CSS variable directly in the native scroll callback to render in sync with browser scrolling.
+      // virtualizer 的 scrollOffset 需要经过 React 重渲染，拖拽滚动条时
+      // mask 会落后一帧。原生 scroll 回调直接更新 CSS 变量，与浏览器滚动同步绘制。
       listRef.current?.style.setProperty(
         WORKSPACE_FILE_TREE_MASK_OFFSET_PROPERTY,
         `${scrollNode.scrollTop}px`,
@@ -419,25 +418,22 @@ export function WorkspaceFileTree({
     if (!canOpenInFileManager) {
       return;
     }
-    // A worktree session's meaningful directory is the linked worktree, not the workspace checkout.
-    const openTargetPath = executionWorktreePath ?? workspacePath;
     const result = wslFileManagerEditor
-      ? await platform.openInEditor(wslFileManagerEditor.id, openTargetPath, {
+      ? await platform.openInEditor(wslFileManagerEditor.id, workspacePath, {
           pathKind: "directory",
           remoteTarget,
           workspaceIdentity,
         })
-      : await platform.openInFileManager(openTargetPath);
+      : await platform.openInFileManager(workspacePath);
     if (!result.success) {
-      logger.warn("[WorkspaceFileTree] open workspace path failed", {
-        path: openTargetPath,
+      logger.warn("[WorkspaceFileTree] 打开 workspace 路径失败", {
+        path: workspacePath,
         error: result.error ?? "unknown-error",
       });
       toast(intl.formatMessage({ id: "appHeader.openInFileManagerFailed" }));
     }
   }, [
     canOpenInFileManager,
-    executionWorktreePath,
     intl,
     platform,
     remoteTarget,
@@ -447,27 +443,25 @@ export function WorkspaceFileTree({
   ]);
 
   const handleCopyPath = useCallback(async () => {
-    // Mirror the open action: the copied root is the worktree for worktree sessions.
-    const copyTargetPath = executionWorktreePath ?? workspacePath;
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      logger.warn("[WorkspaceFileTree] copy workspace path failed", {
-        path: copyTargetPath,
+      logger.warn("[WorkspaceFileTree] 复制 workspace 路径失败", {
+        path: workspacePath,
         error: "clipboard-unavailable",
       });
       return;
     }
     try {
-      await navigator.clipboard.writeText(copyTargetPath);
-      logger.info("[WorkspaceFileTree] workspace path copied", {
-        path: copyTargetPath,
+      await navigator.clipboard.writeText(workspacePath);
+      logger.info("[WorkspaceFileTree] workspace 路径已复制", {
+        path: workspacePath,
       });
     } catch (error) {
-      logger.warn("[WorkspaceFileTree] copy workspace path failed", {
-        path: copyTargetPath,
+      logger.warn("[WorkspaceFileTree] 复制 workspace 路径失败", {
+        path: workspacePath,
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }, [executionWorktreePath, workspacePath]);
+  }, [workspacePath]);
 
   const handleToggleDirectory = useCallback(
     (row: WorkspaceFileTreeRow) => {
@@ -486,8 +480,8 @@ export function WorkspaceFileTree({
         return next;
       });
       if (!row.expanded) {
-        // row.depth in compact folders is a compressed visual depth and must not be used for newly loaded nodes.
-        // Use physical path depth and subtract the compact offset during flattening so child content does not align with its parent directory.
+        // compact folders 的 row.depth 是压缩后的视觉深度，不能用于写入新加载节点。
+        // 使用物理路径深度后，flatten 阶段再扣除 compact offset，子内容才不会与父目录同级。
         void treeData.loadDirectory(
           row.path,
           getWorkspaceFileTreeDirectoryLoadDepth(workspacePath, row.path),
@@ -517,8 +511,8 @@ export function WorkspaceFileTree({
         }
         return next;
       });
-      // Search results are a flat index from listWorkspaceFiles and are not driven by expandedPaths.
-      // A directory click must return to tree mode and load ancestor directories one level at a time so the target is visible and stays expanded in the lazy tree.
+      // 搜索结果是 listWorkspaceFiles 的平铺索引，不受 expandedPaths 驱动。
+      // 目录点击必须先回到树态，再逐级加载祖先目录，目标目录才会在懒加载树中可见并保持展开。
       setFileSearchQuery("");
       void (async () => {
         for (const directoryPath of directoryPathsToExpand) {
@@ -553,8 +547,8 @@ export function WorkspaceFileTree({
           getWorkspaceFileGitStatus(treeData.gitStatusByPath, row.path),
         )
       ) {
-        // Fix: deleted file rows come from Git status enrichment and do not correspond to existing files.
-        // Keep this parent-level guard even if another entry point calls preview directly in the future.
+        // 修复：deleted 文件行来自 Git 状态补全，不对应现存文件。
+        // 即使未来有其它入口直接调用预览，也要在父级兜底阻止打开。
         return;
       }
       onOpenPreview?.(createCodeViewerSourceForWorkspaceFile(row.path));

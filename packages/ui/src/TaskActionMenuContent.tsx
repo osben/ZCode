@@ -1,16 +1,12 @@
-import {
-  TID_TASK_DELETE,
-  TID_TASK_VIEW_MODEL_TRAJECTORY,
-  TID_V4_TASK_OPEN_IN_SPLIT,
-} from "@zcode/shared/test-ids";
+import { TID_TASK_DELETE, TID_V4_TASK_OPEN_IN_SPLIT } from "@zcode/shared/test-ids";
 
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
   "data-testid"?: string;
   disabled?: boolean;
-  variant?: "default" | "destructive";
   onSelect?: () => void;
   title?: string;
+  variant?: "default" | "destructive";
 }
 
 interface TaskActionMenuSeparatorProps {
@@ -36,8 +32,6 @@ export function TaskActionMenuContent({
   onTogglePinTask,
   onStartRenameTask,
   onArchiveTask,
-  onDeleteTask,
-  deleteDisabledReason,
   onMarkTaskAsUnread,
   onOpenInSplitPane,
   openInSplitPaneDisabled = false,
@@ -49,6 +43,8 @@ export function TaskActionMenuContent({
   onCopySessionId,
   onViewModelTrajectory,
   onOpenProviderConfig,
+  onDeleteTask,
+  deleteDisabledReason,
 }: {
   intl: {
     formatMessage: (desc: { id: string }, values?: Record<string, string>) => string;
@@ -74,8 +70,6 @@ export function TaskActionMenuContent({
   onTogglePinTask: () => void;
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
-  onDeleteTask?: () => void;
-  deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
   /** 「在分屏打开」（仅桌面 shell 传入；手机远控不显示该入口）。 */
   onOpenInSplitPane?: () => void;
@@ -89,6 +83,9 @@ export function TaskActionMenuContent({
   onCopySessionId?: () => void;
   onViewModelTrajectory?: () => void;
   onOpenProviderConfig: () => void;
+  /** Sidebar Delete (session-deletion-cascade): confirmation is owned by the caller. */
+  onDeleteTask?: () => void;
+  deleteDisabledReason?: string;
 }) {
   const taskTargetActionsDisabled = disableTaskActions || disableTaskTargetActions;
 
@@ -233,7 +230,6 @@ export function TaskActionMenuContent({
           {/* 调用轨迹查看：从 ~/.zcode/cli 的 model-io 还原该 task 的模型请求/响应/工具调用，
               在右侧边栏可视化。只依赖 taskId（即 sessionId），不依赖快照文件是否落盘。 */}
           <Item
-            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY}
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
             onSelect={onViewModelTrajectory}

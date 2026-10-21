@@ -565,6 +565,42 @@ Status: PARTIAL. Only the `/plan` slice was done in this pass; the file hand-mer
 - Not yet run: `pnpm typecheck`, `pnpm lint`, full `packages/ui/test` run.
 - Not done: task B (19-file hand-merge, `parts/uisrc3.txt`); task C (`workspace-grouped-tasks/` retirement).
 
+## ui parity sessionpane
+
+Scope: `packages/ui/src/v4/SessionPane.tsx` (pass 3a). `V4ChatPane.tsx` and `V4WorkspaceChatArea.tsx` were compared with upstream and kept as the fork version (see below).
+
+Method: start from upstream 3.16.1 `SessionPane.tsx`, then re-apply only the fork hunks that a spec documents. Non-spec fork hunks were dropped.
+
+Kept (fork, spec-documented):
+
+- Draft create route in `dispatchSendTextAfterConfig` (`executionWorktree`, `incognito`, `preparedSessionId`, `reuploadAttachmentsForSession`), prewarm disabled for incognito drafts, incognito toast. Specs: `ui-draft-send-path.md`, `incognito-session.md`.
+- `tracksOnPaneStore` in `dispatchCommand` (commands aimed at a worktree-prepared session are not tracked in this pane). Spec: `ui-draft-send-path.md`.
+- Worktree preparation pipeline (`prepareWorktreeSession`, `syncWorktreePreparation`, retry/cancel/failed handlers) and the header `ConversationWorktreeSetupSteps` / `ConversationWorktreeCreatedNotice`. Spec: `composer-worktree-setup-steps.md`.
+- Execution worktree git state in the status panel (`sessionIndexScopes`, `useGitRepository`, `ExecutionWorktreeGitAutoRefresh`, `onOpenGitReview` with execution path). Spec: `execution-worktree-*.md`.
+- Resume after error (`resumableComposerError`, `handleResumeError`, `onResumeError`). Spec: `chat-error-resume.md`.
+- Voice dictation prop `voiceDictationEnabled`. Spec: `voice-dictation.md`.
+- Message pins (`ConversationPinnedBar`, `handleRowPin`, `onPinChange`, `scrollToRowActionRef`). Spec: `turn-navigator-pin-highlight.md`.
+- `onCreateTaskInWorkspace` prop. Spec: `ui-upstream-sync-integration.md`.
+- `zcodeAgentService` in `useServices` (used by the execution worktree session index lookup).
+
+Dropped (upstream behavior taken, no spec):
+
+- `useStructurallySharedMemo` for workflow graph memos. Upstream `useMemo` is used.
+- Dream work count in the background-works indicator (`latestDreamWork`, `canOpenBackgroundWorks`). Upstream count is used.
+- Quota banner auto-continue props (`autoContinueDefault`, `autoContinueReady`, `onAutoContinue`) and the banner `key`. No spec documents them.
+
+Not changed: `V4ChatPane.tsx` and `V4WorkspaceChatArea.tsx` keep the fork version. Their remaining differences from upstream are the selection side chat wiring (`selectionSideChat`, `readOnlySessionId`, `selectionSideChatSessionId`, `remoteSessionId`), which the side chat specs document.
+
+Verification (this branch):
+
+- `pnpm typecheck`: exit 0, 0 errors (run after the filter packages were built).
+- `pnpm lint`: 0 errors, 94 warnings, none in the owned files.
+- `node scripts/architecture/architecture-check.mjs check --full`: 0 violations.
+- `node scripts/check-test-copy.mjs`: passed.
+- `pnpm fmt:check`: passed.
+- `v4SessionPaneModelSwitchRecovery.test.ts` and `v4ConversationStatusPanel.test.ts`: 157/157 pass.
+- `node scripts/run-vitest.mjs run packages/ui/test`: see the PR report.
+
 ## ui parity composer
 
 Status: DONE for the six owned files. Working diff = upstream 0a1fc56d, with fork hunks kept only where a spec covers them.
@@ -608,3 +644,46 @@ Result: no source hunk was changed. Every fork-only hunk in these files is docum
 | `settingsPageHelpers.tsx`                                    | fork kept                             | Terminal WebGL (`themes.md`), resource telemetry (`resource-telemetry-toggle.md`), coding-plan auto-continue (`ui-upstream-sync-ledger-b8.md`, `forkAppSettings.ts`), uk-UA locale option (`ukrainian-locale.md`).                                                                                                                                          |
 
 Tests: the 19 test files that cover these sources pass on this branch (`node scripts/run-vitest.mjs run` over `settingsPageConfig`, `taskListItemHoverActions`, `memorySettingsSection`, `workspaceSidePane`, `conversationShareError`, `modelSelectionGroups`, `settingsNavigation`, `taskFileTreeTarget`, `taskListMetaSync`, `pluginUiBackground`, `groupedTaskRowArchiveConfirm`, `chatPromptEditorActionOrder`, `mcpSettings`, `skillsSection`, `providerTemplatePicker`, `automationWorkspaceOptions`, `automationsSectionOffPeakTelemetry`, `worktreeTaskRowMarker`, `taskRowActionButton`: 19 files, 277 tests). No test was skipped or deleted.
+
+## ui parity rest
+
+Status: DONE for the nine owned files, with the decisions below. Method: fork hunks compared against base (`aac47556`) and upstream (`0a1fc56d`); functional fork changes kept only when a spec documents them.
+
+- `packages/ui/src/styles.css`: upstream 3.16.1 comments and layout kept. Kept fork additions: fontsource Inter and JetBrains Mono imports and `--font-sans` / `--font-mono` defaults (`specs/ui-font-family-preferences.md`); `--color-worktree-task`, `--color-pr-*`, `--color-incognito`, `--color-pinned-turn` in all four theme blocks (`specs/worktree-icon-visibility.md`, `specs/sidebar-pr-status.md`, `specs/incognito-session.md`, `specs/turn-navigator-pin-highlight.md`); the accent palette blocks `.palette-*` (`specs/themes.md`). Dropped: a global `button`/`a`/`[role=...]` pointer-cursor rule (no spec). Restored upstream `.wf-line*` rules that the fork had deleted (no source uses `wf-line-open`). Success, warning, destructive and remote surface tokens are already in upstream and are used by `RemoteConnection*`.
+- `packages/ui/src/v4/ConversationTurnGroup.tsx`: kept fork throughput display and output-token label (`specs/session-token-throughput.md`, `specs/subagent-inline-token-usage.md`) with the `useSessionThroughput` / `useStreamingThroughput` wiring, and the pinned-row props (`onPinChange`, `pinnedAt`) (`specs/turn-navigator-pin-highlight.md`). Dropped: `"dream"` added to the background-result title whitelist (no spec), and the fork's `bg-surface` class on the expand control, which reverted to upstream `bg-black/5`.
+- `packages/ui/src/v4/ConversationShareContent.tsx`, `conversationShareItems.ts`: kept fork. It passes `intl` to `workflowCardDetail` (the current signature; upstream passes `format`, which does not typecheck), and sets `isPinned` on share items for the turn navigator. Spec: `specs/self-hosted-conversation-share.md`.
+- `packages/ui/src/v4/conversationProjectionStore.ts`: kept as is. The `sessionGone` stop-reconnect path and the `onSessionGone` constructor argument are used by `sessionDataLayer.ts` (draft prewarm deletion, `specs/ui-draft-send-path.md`). Upstream's `requiresAcceptedInputProjection` and `retryInitialization` are present.
+- `packages/ui/src/workspace-file-tree/WorkspaceFileTree.tsx`: reverted to upstream. Dropped: open and copy path for worktree sessions (`executionWorktreePath`, no spec), optional `onClose` back button, and `SidebarNativeTooltip` wrappers (upstream keeps `ControlHintTooltip`; see the b5 ledger).
+- `packages/ui/src/workspace-config-catalog/useConfigWorkspaceServices.ts`: kept fork. The upstream file calls `sourceServices.sourceServerWorkspaceService.resolveWorkspace` without a guard, which fails typecheck because the member is optional in this repo.
+- `packages/ui/src/v4/buildTaskListResultFromSessions.ts`: upstream deleted it, but kept for now. Its only importers are `packages/ui/src/lib/buildGroupedTaskViewFromSessions.ts` and its test (fork-only, no live importer). Delete the module, lib file, and both tests together in a follow-up.
+- `packages/ui/src/workspace-grouped-tasks/task-context-menu-content.tsx`: kept (upstream moved the menu to `project-sidebar/grouped/`). Its only importer is `workspace-grouped-tasks/task-row.tsx`, which is part of the fork-only tree.
+- `packages/ui/src/workspace-grouped-tasks/` retirement: NOT done. Upstream still imports `task-row-action-button.tsx` from this directory (`TaskListItem`, `ProjectNodeContent`, `project-sidebar/grouped/*`, tests). Other fork files in the directory (`group-item`, `task-row`, `draft-task-row`, `types`, `group-title`, and others) are imported by live fork code (`TaskSidebarHoverCard`, `WorkspaceCustomizeDialog`, `workspaceDisplayStore`). Retire it when those importers move to `project-sidebar/grouped/`.
+- Tests: `v4ConversationTurnGroup`, `conversationShareItems`, `buildTaskListResultFromSessions`, `workspaceFileTree`, `workspaceFileTreeData`, `themeContrast`, `semanticSurfaceContrast`, `remoteUiDesignTokenConformance`, `assistantMarkdownTypeScale`, `v4ConversationRuntimeRecycleSelfHeal`, `v4SessionDataLayer`, `workspace-config-catalog/hook/contract.test.ts`, `themeMigration`: all pass. The fork's `v4ConversationTurnGroup.test.ts` is kept (it is the upstream test with `expectedCopy` helpers and the throughput mock). Full `packages/ui/test`: 1189 files passed, 3 skipped (pre-existing), 10982 tests passed.
+
+## ui parity src1
+
+Scope: 19 files of `parts/uisrc1.txt` (shell, sidebar task rows, settings, locales). Base: `claude/ui-parity-pins` (d1a6b13b). Upstream: `0a1fc56d`. Method: start from upstream, keep only fork hunks that a spec documents.
+
+| File                                          | Decision                                                                                                                                                                                               | Spec                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `TaskActionMenuContent.tsx`                   | upstream + sidebar Delete item (`onDeleteTask`, `deleteDisabledReason`, `TID_TASK_DELETE`); trajectory test id dropped                                                                                 | `session-deletion-cascade.md`                                                                                                            |
+| `TaskList.tsx`                                | upstream + `onDeleteTask` wiring into the row context menu; span→button show-more is upstream                                                                                                          | `session-deletion-cascade.md`                                                                                                            |
+| `TaskListItem.tsx`                            | upstream + Incognito, Worktree and PR markers, `TaskSidebarHoverCard` tooltip wrapper, context menu delete/copy props; phone-marker slot restored while hover actions suppress it                      | `incognito-session.md`, `sidebar-pr-status.md`, `task-hover-card-layout.md` (#9), `worktree-icon-visibility.md`                          |
+| `ConfirmDialog.tsx`                           | upstream + Enter routing for every interactive control (`CONFIRM_DIALOG_OWN_ENTER_SELECTOR`)                                                                                                           | `ui-accidental-action-guards.md` #1                                                                                                      |
+| `lib/builtinSkillI18n.ts`                     | upstream + 24 real uk-UA entries, type `Partial<Record<Locale,…>>`                                                                                                                                     | `ukrainian-locale.md`                                                                                                                    |
+| `hooks/useWorkspaceActiveTaskState.ts`        | upstream + equality on `executionWorktree`, `executionWorktreeMissing`, `incognito`                                                                                                                    | `execution-worktree-missing-handling.md`, `incognito-session.md`                                                                         |
+| `app-shell/animatedSidePanePanelModel.ts`     | upstream                                                                                                                                                                                               | -                                                                                                                                        |
+| `app-shell/AnimatedSidePanePanel.tsx`         | fork: subagent directory/sync tabs, plan detail, git repository path; model-trajectory launcher entry dropped (upstream opens trajectory from the task menu)                                           | `sidebar-child-conversation-counts.md`, `terminal-worktree-working-directory.md`                                                         |
+| `app-shell/types.ts`                          | `handleOpenModelTrajectory` prop removed with the launcher                                                                                                                                             | -                                                                                                                                        |
+| `App.tsx`                                     | fork kept (themes, session manager, worktree git review, PR/merge refresh, create-task-in-workspace); model-trajectory prop dropped; temporary `?? null` owner comment dropped                         | `themes.md`, `manage-sessions-table.md`, `sidebar-pr-status.md`                                                                          |
+| `app-shell/WorkspaceShellLayout.tsx`          | fork kept (draft branch intent, destination control, branch guard, child-session capability, git review state); model-trajectory launcher dropped                                                      | `composer-branch-switcher-semantics.md`, `composer-destination-control.md`, `sidebar-child-conversation-counts.md`                       |
+| `WorkspaceHeaderSections.tsx`                 | fork kept: PR chip, execution worktree branch and path                                                                                                                                                 | `sidebar-pr-status.md`, `composer-branch-switcher-semantics.md`                                                                          |
+| `ModelConfigSelect.tsx`                       | fork kept: picker focus restore                                                                                                                                                                        | `composer-picker-focus-restore.md`                                                                                                       |
+| `Root.tsx`                                    | fork kept: `useOpenExistingSession` for session manager                                                                                                                                                | `manage-sessions-table.md`                                                                                                               |
+| `SettingsPage.tsx`                            | fork kept: sessions, instructions, output styles, system prompt, voice, fonts, palette                                                                                                                 | `manage-sessions-table.md`, `global-instructions.md`, `system-prompt-settings.md`, `voice-dictation.md`, `ui-font-family-preferences.md` |
+| `hooks/useWorkspaceServices.tsx`              | fork kept: additive `useOptionalWorkspaceServicesResolution` used by the composer; required hook keeps upstream semantics                                                                              | `composer-destination-control.md`                                                                                                        |
+| `command-center/CommandCenterDialog.tsx`      | fork kept as a whole (not split). Upstream changed this file by 30 lines, so the fork rewrite is largely unspecified (scope tabs, search history). Follow-up: split unspecified hunks back to upstream | `composer-worktree-setup-steps.md` (worktree actions)                                                                                    |
+| `hooks/workspaceTaskListRefreshSignatures.ts` | deleted: no importer in `packages/ui/src` (only `dist`)                                                                                                                                                | -                                                                                                                                        |
+| `i18n/locales/en-US.ts`, `zh-CN.ts`           | upstream values; fork-only keys appended (upstream key set plus fork keys)                                                                                                                             | keys used by the kept fork files                                                                                                         |
+
+Verification (src1 branch): `pnpm typecheck` exit 0; `pnpm lint` 0 errors (93 pre-existing warnings); `pnpm architecture:check --changed` exit 0; `node scripts/check-test-copy.mjs` exit 0; `pnpm fmt:check` exit 0; `packages/ui/test` full run: 1 failure before the phone-marker fix (`taskListItemHoverActions`), now fixed (8/8 pass).

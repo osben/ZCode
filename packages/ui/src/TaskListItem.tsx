@@ -14,12 +14,7 @@ import {
 import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import { Badge } from "@/components/ui/badge.js";
-import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
-import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
-import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 import { Button } from "@/components/ui/button.js";
-import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
-import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { getPathLeaf } from "@/lib/path.js";
@@ -58,6 +53,11 @@ import {
   TaskWorkflowRunLines,
   type TaskWorkflowRunLinesIntl,
 } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
+import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
+import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
+import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 
 type TaskListItemIntl = TaskWorkflowRunLinesIntl;
 
@@ -78,7 +78,6 @@ interface TaskListItemProps {
   onTogglePinTask: (taskId: string, pinned: boolean) => void;
   onStartRenameTask: (taskId: string, currentTitle: string) => void;
   onArchiveTask: (taskId: string) => void;
-  onDeleteTask?: (taskId: string) => void;
   onMarkTaskAsUnread: (taskId: string) => void;
   onOpenTaskContextMenu?: (taskId: string) => void;
   onOpenFileTree?: () => void | Promise<void>;
@@ -121,8 +120,6 @@ function areTaskListItemTaskFieldsEqual(left: ZCodeTaskMeta, right: ZCodeTaskMet
     left.unreadAt === right.unreadAt &&
     getTaskAutomationIdentity(left) === getTaskAutomationIdentity(right) &&
     left.status === right.status &&
-    areJsonFieldsEqual(left.executionWorktree, right.executionWorktree) &&
-    left.executionWorktreeMissing === right.executionWorktreeMissing &&
     resolveTaskSourceLabel(left) === resolveTaskSourceLabel(right) &&
     areJsonFieldsEqual(left.pendingInteraction, right.pendingInteraction) &&
     areJsonFieldsEqual(getTaskListRowActivity(left), getTaskListRowActivity(right)) &&
@@ -153,7 +150,6 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.onTogglePinTask === right.onTogglePinTask &&
     left.onStartRenameTask === right.onStartRenameTask &&
     left.onArchiveTask === right.onArchiveTask &&
-    left.onDeleteTask === right.onDeleteTask &&
     left.onMarkTaskAsUnread === right.onMarkTaskAsUnread &&
     left.onOpenTaskContextMenu === right.onOpenTaskContextMenu &&
     left.onOpenFileTree === right.onOpenFileTree
@@ -175,7 +171,6 @@ export const MemoTaskItem = memo(function TaskListItem({
   onCancelArchiveConfirm,
   isArchiveConfirming,
   onTogglePinTask,
-  onDeleteTask,
   onOpenTaskContextMenu,
   onOpenFileTree,
   variant = "default",
@@ -517,6 +512,13 @@ export const MemoTaskItem = memo(function TaskListItem({
         <ListTree className="size-3.5" />
       </TaskRowActionButton>
     ) : null;
+  const taskActionGroupNode =
+    fileTreeActionNode || archiveActionNode ? (
+      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
+        {fileTreeActionNode}
+        {archiveActionNode}
+      </span>
+    ) : null;
   const pinActionButton = (
     <Button
       type="button"
@@ -538,20 +540,8 @@ export const MemoTaskItem = memo(function TaskListItem({
   );
   // hover:none 只让右侧 task actions 常驻；如果也用它接管 leading 槽，
   // 触屏端的错误、未读和 loading 状态会被 Pin 永久替换。
-  const hasLeadingStatus = leadingIndicator !== "none";
-  const shouldRenderPinActionOnLeft =
-    showPinAction &&
-    (showPinnedState || (shouldSuppressWorkspaceTaskMetadata && !hasLeadingStatus));
-  const shouldRenderPinActionOnRight =
-    showPinAction && shouldSuppressWorkspaceTaskMetadata && hasLeadingStatus;
-  const taskActionGroupNode =
-    fileTreeActionNode || archiveActionNode || shouldRenderPinActionOnRight ? (
-      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
-        {fileTreeActionNode}
-        {archiveActionNode}
-        {shouldRenderPinActionOnRight ? pinActionButton : null}
-      </span>
-    ) : null;
+  const shouldRenderPinAction =
+    showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
   return (
     <Tooltip open={hoverEnabled ? undefined : false}>
       <TooltipTrigger asChild>
@@ -612,7 +602,8 @@ export const MemoTaskItem = memo(function TaskListItem({
                 "flex size-4 items-center justify-center transition-opacity",
                 // SVG 自身旋转会逐帧重算样式；让现有 HTML 槽位合成旋转，保留图标与状态语义。
                 leadingIndicator === "loading" && "animate-spin",
-                shouldRenderPinActionOnLeft && "hidden",
+                shouldRenderPinAction && "hidden",
+                // Phone marker owns the slot only while no hover/focus actions suppress it (task-hover-card-layout #9).
                 isMobileActive && !shouldSuppressWorkspaceTaskMetadata && "invisible",
               )}
             >
@@ -631,7 +622,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <LoaderIcon className="size-4 text-foreground-subtle" />
               ) : null}
             </span>
-            {shouldRenderPinActionOnLeft ? (
+            {shouldRenderPinAction ? (
               <ControlHintTooltip
                 title={
                   workspaceActionsDisabledReason ??
@@ -889,7 +880,8 @@ export function TaskListItemContextMenuContent({
   onTogglePinTask: (taskId: string, pinned: boolean) => void;
   onStartRenameTask: (taskId: string, currentTitle: string) => void;
   onArchiveTask: (taskId: string) => void;
-  onDeleteTask?: (taskId: string) => void;
+  /** Sidebar Delete; the caller owns the confirmation dialog (session-deletion-cascade). */
+  onDeleteTask?: () => void;
   onMarkTaskAsUnread: (taskId: string) => void;
   disableTaskActions?: boolean;
   disabledReason?: string;
@@ -983,8 +975,16 @@ export function TaskListItemContextMenuContent({
     <TaskListItemContextMenu
       organizationActions={organizationActions}
       intl={intl}
+      task={task}
       isPinned={isPinned}
       isArchived={isArchived}
+      onCopyText={handleCopyText}
+      onDeleteTask={onDeleteTask}
+      deleteDisabledReason={
+        task.workspaceIdentity?.trim()
+          ? intl.formatMessage({ id: "taskDelete.remoteUnavailable" })
+          : undefined
+      }
       fileManagerLabel={fileManagerLabel}
       taskSessionFile={taskSessionFile}
       activeSessionId={task.taskId}
@@ -1001,12 +1001,6 @@ export function TaskListItemContextMenuContent({
       onArchiveTask={() => {
         onArchiveTask(task.taskId);
       }}
-      onDeleteTask={onDeleteTask ? () => onDeleteTask(task.taskId) : undefined}
-      deleteDisabledReason={
-        task.workspaceIdentity?.trim()
-          ? intl.formatMessage({ id: "taskDelete.remoteUnavailable" })
-          : undefined
-      }
       onMarkTaskAsUnread={() => {
         onMarkTaskAsUnread(task.taskId);
       }}
@@ -1026,8 +1020,6 @@ export function TaskListItemContextMenuContent({
       onOpenTaskPathInFileManager={() => {
         void handleOpenTaskPathInFileManager();
       }}
-      onCopyText={handleCopyText}
-      task={task}
       onCopyWorkspacePath={() => {
         void handleCopyText(intl.formatMessage({ id: "appHeader.copyPath" }), workspacePath);
       }}

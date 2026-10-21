@@ -106,7 +106,6 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
-  ChartLineIcon,
   ChevronRightIcon,
   FileDiffIcon,
   FolderOpenIcon,
@@ -341,7 +340,6 @@ export function AnimatedSidePanePanel({
   onCreateTask,
   onOpenTerminalTab,
   onOpenReviewTab,
-  onOpenModelTrajectory,
   onOpenSelectionSideConversation,
   onOpenPlanDetail,
   onRevealGitFileInTree,
@@ -421,7 +419,6 @@ export function AnimatedSidePanePanel({
   onCreateTask?: (request?: CreateTaskRequest) => void;
   onOpenTerminalTab: () => void;
   onOpenReviewTab: () => void;
-  onOpenModelTrajectory: () => void;
   onOpenSelectionSideConversation: () => void;
   onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
@@ -796,13 +793,6 @@ export function AnimatedSidePanePanel({
       icon: GlobeIcon,
       onOpen: onOpenBrowserTab,
     },
-    "model-trajectory": {
-      id: "model-trajectory",
-      label: intl.formatMessage({ id: "modelTrajectory.title" }),
-      description: intl.formatMessage({ id: "sidePane.launcher.model-trajectory" }),
-      icon: ChartLineIcon,
-      onOpen: onOpenModelTrajectory,
-    },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
@@ -814,7 +804,6 @@ export function AnimatedSidePanePanel({
   const openTabLauncherItems: OpenTabLauncherItem[] = resolveOpenTabLauncherItemIds({
     canOpenSelectionSideConversation,
     developerToolsEnabled,
-    hasActiveTask: activeTaskId !== null,
     hasReviewTab,
     supportsEmbeddedBrowser,
   })

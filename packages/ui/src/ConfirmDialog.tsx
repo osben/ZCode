@@ -80,7 +80,7 @@ export function ConfirmDialogHost() {
       }
 
       // Keep the keyboard semantics of focused controls inside the dialog, so Enter on a checkbox,
-      // button, or text field does not confirm the dialog.
+      // button, or text field does not confirm the dialog (ui-accidental-action-guards #1).
       if (
         event.target instanceof HTMLElement &&
         event.target.closest(CONFIRM_DIALOG_OWN_ENTER_SELECTOR)
