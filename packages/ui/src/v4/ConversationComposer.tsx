@@ -269,7 +269,7 @@ export interface ConversationComposerSendOptions {
   expectedHeldQueueItemIds?: readonly string[];
   /** 附件命令面：已序列化附件（宿主转 AttachmentRef 后随 v4 sendText/createSession 发送）。 */
   attachments?: AttachmentRef[];
-  /** 草稿附件在目标 session 内重新上传；worktree 创建后的首条消息必须用新 session 的引用。 */
+  /** Upload frozen draft attachments into the newly created worktree or incognito session. */
   reuploadAttachmentsForSession?: (sessionId: string) => Promise<AttachmentRef[]>;
   /** Prompt 文本内携带的上下文附件数量；用于阻止 /goal 等本地命令误消费。 */
   contextAttachmentCount?: number;
@@ -1499,7 +1499,14 @@ function ConversationComposerImpl({
   // V4 重构时把 guide 当成“不可提交”状态，导致按钮和 Enter 同时失效；
   // guide 是 CLI 已授权的 busy 输入路由，是否最终 steer 或回退 queue 由命令层裁决。
   const routingAllowsSend = draftMode || (snapshot !== null && mode !== "reject");
-  const attachmentsReady = !attachmentsApi.hasUnreadyAttachments;
+  // Incognito has no prewarm session: waiting files are uploaded only after its profile-bound create.
+  const deferAttachmentUpload = draftMode && sessionId === null && incognitoDraftActive;
+  const attachmentsReady =
+    !attachmentsApi.hasUnreadyAttachments ||
+    (deferAttachmentUpload &&
+      attachmentsApi.attachments.every(
+        (item) => item.uploadStatus === "ready" || item.uploadStatus === "waitingSession",
+      ));
   const canSend =
     !disabled &&
     !pending &&
@@ -2053,7 +2060,7 @@ function ConversationComposerImpl({
         pendingWorktreeSendRef.current !== null ||
         !submissionReady ||
         (createSubmissionFromComposer !== undefined && submission === null) ||
-        attachmentsApi.hasUnreadyAttachments
+        !attachmentsReady
       ) {
         return;
       }
@@ -2222,9 +2229,15 @@ function ConversationComposerImpl({
           setPromptHistory(currentPromptHistory);
         };
         try {
-          // Second gate: consume only refs whose pre-upload is complete; do not fall back to uploading on send click.
+          // Freeze the profile before attachment preparation; later draft edits belong to another submission.
+          const incognitoSubmission =
+            draftMode && sessionId === null
+              ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
+              : undefined;
+          const incognito = incognitoSubmission?.profile;
           const readyAttachmentRefs = await submittedAttachments.prepareForSend(
             queueWorktreeSend ? submittedAttachmentIds : undefined,
+            { allowWaitingSession: incognito !== undefined },
           );
           if (readyAttachmentRefs === null) {
             if (telemetrySeed.localTtft)
@@ -2285,14 +2298,6 @@ function ConversationComposerImpl({
             cleanupRevision = contentRevisionRef.current;
             editorClearedOptimistically = true;
           }
-          // The incognito intent only applies to the draft's first createSession. Capture freezes
-          // the profile and its intent generation, so the post-send cleanup cannot clear the
-          // intent of a newer draft and a pending defaults read cannot arm this consumed draft.
-          const incognitoSubmission =
-            draftMode && sessionId === null
-              ? useDraftIncognitoIntentStore.getState().captureForSubmission(workspaceKey)
-              : undefined;
-          const incognito = incognitoSubmission?.profile;
           const sendResult = await onSendText(promptText, {
             submittedDraftText: submittedDraft.text,
             submission,
@@ -2319,7 +2324,7 @@ function ConversationComposerImpl({
             ...(heldQueueDisposition ? { heldQueueDisposition } : {}),
             ...(expectedHeldQueueItemIds ? { expectedHeldQueueItemIds } : {}),
             ...(readyAttachmentRefs.length > 0 ? { attachments: readyAttachmentRefs } : {}),
-            ...(executionWorktree && submittedAttachmentIds.length > 0
+            ...((executionWorktree || incognito) && submittedAttachmentIds.length > 0
               ? {
                   reuploadAttachmentsForSession: (targetSessionId: string) =>
                     submittedAttachments.reuploadForSession(
@@ -2595,6 +2600,7 @@ function ConversationComposerImpl({
     },
     [
       attachmentsApi,
+      attachmentsReady,
       baseWorkspaceServices,
       branchSwitchGuard,
       conversationSelectionReferences,

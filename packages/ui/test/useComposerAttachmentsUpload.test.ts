@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   },
   service: null as IPromptAttachmentTransferService | null,
   toast: vi.fn(),
+  attachmentPut: vi.fn(),
 }));
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: mocks.toast }));
@@ -166,7 +167,7 @@ function Probe(options: ProbeOptions) {
       ? undefined
       : (options.remoteSessionId ?? "remote-session-1");
   latestApi = useComposerAttachments({
-    attachmentPut: vi.fn(),
+    attachmentPut: mocks.attachmentPut,
     attachmentSessionId: options.attachmentSessionId,
     onRuntimeRestart: options.onRuntimeRestart,
     onRuntimeLifecycle: options.onRuntimeLifecycle,
@@ -208,6 +209,7 @@ function resultFor(operationId: string) {
 
 beforeEach(() => {
   latestApi = null;
+  mocks.attachmentPut.mockReset();
   mocks.platform.createTempTextAttachment.mockReset();
   mocks.platform.getPathForFile.mockReset();
   mocks.platform.selectFiles.mockReset();
@@ -1121,5 +1123,76 @@ describe("useComposerAttachments eager upload", () => {
     expect(latestApi?.attachments[0]?.runtimeRebuildRetryCount).toBe(1);
     expect(restart).toBeNull();
     act(() => root.unmount());
+  });
+});
+
+describe("captured incognito attachments before session creation", () => {
+  it("uploads only the frozen pathless file into the new session", async () => {
+    mocks.service = createTransferService().service;
+    mocks.attachmentPut.mockResolvedValue({ ref: "zcode-artifact://frozen" });
+    const { root } = renderProbe({
+      attachmentSessionId: null,
+      localDesktop: true,
+      scopeId: "incognito",
+    });
+    try {
+      act(() => {
+        latestApi?.addAttachmentFiles([
+          new File(["frozen content"], "first.txt", { type: "text/plain" }),
+        ]);
+      });
+      const id = latestApi!.attachments[0]!.id;
+      const captured = latestApi!.captureSubmission([id]);
+      expect(await captured.prepareForSend()).toBeNull();
+      expect(await captured.prepareForSend(undefined, { allowWaitingSession: true })).toEqual([]);
+      act(() => {
+        latestApi?.addAttachmentFiles([
+          new File(["new draft"], "later.txt", { type: "text/plain" }),
+        ]);
+      });
+      const refs = await captured.reuploadForSession("new-incognito");
+      expect(refs).toMatchObject([{ fileName: "first.txt", ref: "zcode-artifact://frozen" }]);
+      expect(mocks.attachmentPut).toHaveBeenCalledOnce();
+      expect(mocks.attachmentPut.mock.calls[0]?.[0]).toMatchObject({
+        sessionId: "new-incognito",
+        fileName: "first.txt",
+      });
+      act(() => captured.clearAttachments());
+      expect(latestApi!.attachments.map((a) => a.filename)).toEqual(["later.txt"]);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+  it.each([true, false])("remote local paths require a staged receipt: %s", async (staged) => {
+    const transfer = createTransferService();
+    mocks.service = transfer.service;
+    transfer.stage.mockResolvedValue({ ...resultFor("remote-incognito"), staged });
+    const { root } = renderProbe({ attachmentSessionId: null, scopeId: "remote-incognito" });
+    try {
+      await addPaths(["/tmp/a.png"]);
+      const id = latestApi!.attachments[0]!.id;
+      const captured = latestApi!.captureSubmission([id]);
+      expect(transfer.stage).not.toHaveBeenCalled();
+      if (staged) {
+        expect(await captured.reuploadForSession("new-remote")).toMatchObject([
+          { ref: resultFor("remote-incognito").ref },
+        ]);
+        await captured.adoptSentAttachments();
+        expect(transfer.service.adopt).toHaveBeenCalledExactlyOnceWith(
+          expect.stringContaining("new-remote"),
+        );
+      } else
+        await expect(captured.reuploadForSession("new-remote")).rejects.toThrow("not materialized");
+      expect(transfer.stage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionId: "new-remote",
+          localPath: "/tmp/a.png",
+          remoteSessionId: "remote-session-1",
+        }),
+      );
+      expect(mocks.attachmentPut).not.toHaveBeenCalled();
+    } finally {
+      act(() => root.unmount());
+    }
   });
 });
