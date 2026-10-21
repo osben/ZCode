@@ -1,10 +1,11 @@
 import { SidebarNativeTooltip, ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { RemoteIdentityHoverCard } from "@/project-sidebar/RemoteIdentityHoverCard.js";
 import { remoteHostLabel } from "@/project-sidebar/RemoteHostSection.js";
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { useSortable } from "@dnd-kit/sortable";
 import {
   Ellipsis,
+  Palette,
   FolderMinus,
   ListTree,
   Pin,
@@ -14,6 +15,10 @@ import {
   Trash2,
   MessageCirclePlus,
 } from "lucide-react";
+import { WorkspaceCustomizeDialog } from "@/WorkspaceCustomizeDialog.js";
+import { useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
+import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
+import { buildProjectDisplayKey } from "@/project-sidebar/projectDisplayKey.js";
 import { ProjectFolderIcon } from "@/project-sidebar/ProjectFolderIcon.js";
 import { sourceServerConnectionStateSchema } from "@zcode/shared";
 import type {
@@ -108,6 +113,12 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   }) {
   const { intl } = useZCodeIntl();
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
+  // Fork-only local preference (specs/workspace-sidebar-customization.md): color and display name
+  // are stored under the project id, never in the project database or setting.json.
+  const displayKey = buildProjectDisplayKey(project);
+  const displayEntry = useWorkspaceDisplayStore((state) => state.entries[displayKey]);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const rowName = displayEntry?.displayName?.trim() || project.name;
   // 修复原因：新项目行曾无条件显示本地文件夹；远程图标只读 Host 现有投影，复用统一五态。
   const remotePresentation = remoteHost
     ? resolveRemoteConnectionPresentation({
@@ -140,6 +151,12 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
           },
         ]
       : []),
+    {
+      id: "customize",
+      label: intl.formatMessage({ id: "workspaceSidebar.customize" }),
+      icon: Palette,
+      run: () => setCustomizeOpen(true),
+    },
     ...(editable
       ? [
           { id: "edit", label: msg("edit"), icon: Pencil, run: onEdit },
@@ -245,7 +262,12 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                           <ProjectFolderIcon
                             rootCount={project.roots.length}
                             open={isOpen}
-                            className="size-4 shrink-0 text-foreground-subtle"
+                            className={cn(
+                              "size-4 shrink-0",
+                              displayEntry?.color
+                                ? WORKSPACE_ICON_COLOR_CLASS[displayEntry.color]
+                                : "text-foreground-subtle",
+                            )}
                           />
                         )}
                       </span>
@@ -256,7 +278,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
                     {/* 不同字号按框居中会让设备名基线上浮；文字单独对齐基线，外层图标仍居中。 */}
                     <span className="flex min-w-0 items-baseline gap-2">
                       <span className="truncate text-ui-base text-foreground-subtle">
-                        {project.name}
+                        {rowName}
                       </span>
                       {remoteHost ? (
                         <span
@@ -389,6 +411,13 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
           <ProjectMenuItems actions={contextActions} context />
         </ContextMenuContent>
       </ContextMenu>
+      <WorkspaceCustomizeDialog
+        open={customizeOpen}
+        onOpenChange={setCustomizeOpen}
+        workspaceKey={displayKey}
+        defaultName={project.name}
+        entry={displayEntry}
+      />
       {/* 直接条件卸载曾跳过收起动画；复用旧侧栏的受控高度/透明度生命周期。 */}
       <CollapsibleContent data-testid="virtual-project-tasks">
         {/* 原因：旧任务文字的 34px 缩进外只需 8px 留白，空态与项目名称保持对齐。 */}

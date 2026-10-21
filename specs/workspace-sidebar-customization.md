@@ -11,3 +11,17 @@ Saving the prefilled folder label without an existing custom name keeps the disp
 Changes to saved preferences from another window do not reset unsaved name or color drafts while the customization dialog remains open. Drafts are seeded when the dialog opens or switches to another workspace.
 
 Pressing Enter saves the customization dialog only when the input method is not composing a candidate. E2E scenarios that require the two-workspace startup fixture must be registered in both the full warmup fixture list and the small two-workspace list.
+
+## Project rows after the project-tree sidebar (3.16.1 sync)
+
+The sidebar is organized by projects (`VirtualProject`), not workspace tabs. The display-preference record
+`zcode-workspace-display` is reused unchanged, but project rows key their entry as
+`project:<hostId>:<projectId>` (`buildProjectDisplayKey`) because a project can own several roots and has
+no single workspace key. The preference stays a fork-local browser preference: it is never written to
+`setting.json`, the project database, or upstream migrations (see AGENTS.md "Shared Databases and Fork
+Divergence"), so it is per-browser/profile and not synced across devices.
+
+The project row menu has a "Customize…" item (all projects, editable or not) that opens
+`WorkspaceCustomizeDialog`. The chosen color tints the project folder icon and the display name overrides
+the row label only; the upstream project name edited through `ProjectEditor` and the project rename flow
+are unchanged and remain the source of truth for the real name.
