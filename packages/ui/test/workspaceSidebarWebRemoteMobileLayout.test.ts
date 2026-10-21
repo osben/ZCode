@@ -64,7 +64,13 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => {
     zcodeTaskService: { onDynamicWorkspaceEvent: () => () => ({ dispose: vi.fn() }) },
     broadcastService: { onMessage: () => ({ dispose: vi.fn() }) },
   };
-  return { useBaseWorkspaceServices: () => base };
+  return {
+    useBaseWorkspaceServices: () => base,
+    useWorkspaceServices: () => ({
+      ...base,
+      gitService: { getRepositoryRemotes: async () => ({ remotes: [] }) },
+    }),
+  };
 });
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (selector: (state: typeof fixture.state) => unknown) => selector(fixture.state),
