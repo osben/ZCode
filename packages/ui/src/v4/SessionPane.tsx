@@ -263,6 +263,7 @@ import {
   buildWorkflowGraphByToolCallId,
 } from "@/v4/workflowRunCardJoin.js";
 import { buildWorkflowDraftByToolCallId } from "@/v4/workflowDraftJoin.js";
+import { useStructurallySharedMemo } from "@/v4/useStructurallySharedMemo.js";
 import {
   WORKFLOW_RUN_DIRECTORY_LIMIT,
   countEndedWorkflowRuns,
@@ -2771,27 +2772,27 @@ export function SessionPane({
   );
   // 发起 toolCallId → 静态图：图是 run 的属性，
   // 三种来源的轮尾 run 卡都到这一张表取图。行窗口一遍建成，随窗口重建。
-  const workflowGraphByToolCallId = useMemo(
-    () => buildWorkflowGraphByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowGraphByToolCallId = useStructurallySharedMemo(
+    buildWorkflowGraphByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 最新补全的有效脚本图（docs/dynamic-workflow/presentation.md「Holes on the timeline」）：补全之后
   // run 卡与侧板取它。行窗口一遍建成，随窗口重建。
-  const workflowFillGraphByRunId = useMemo(
-    () => buildWorkflowFillGraphByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowFillGraphByRunId = useStructurallySharedMemo(
+    buildWorkflowFillGraphByRunId,
+    snapshot?.rows.window,
   );
   // 工作流工具行 → 草稿位置：稿号与
   // 「后面还有更新的一稿」都只能从行序读出，行窗口一遍建成，随窗口重建。
-  const workflowDraftByToolCallId = useMemo(
-    () => buildWorkflowDraftByToolCallId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowDraftByToolCallId = useStructurallySharedMemo(
+    buildWorkflowDraftByToolCallId,
+    snapshot?.rows.window,
   );
   // runId → 转写里认领过它的 SaveWorkflow 候选（docs/dynamic-workflow/transcript-and-notifications.md
   // 「Which workflow a run is saved as」规则 1）。行窗口一遍建成，随窗口重建。
-  const workflowSaveCandidatesByRunId = useMemo(
-    () => buildWorkflowSaveCandidatesByRunId(snapshot?.rows.window),
-    [snapshot?.rows.window],
+  const workflowSaveCandidatesByRunId = useStructurallySharedMemo(
+    buildWorkflowSaveCandidatesByRunId,
+    snapshot?.rows.window,
   );
   // Workflow 通知 manifest 的升级条目 Waiting→Answered 联查表（runId → 停驻 qid 集合）。
   const workflowRunPendingQuestionsByRunId = useMemo(
