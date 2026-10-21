@@ -28,7 +28,7 @@ import {
   isChildSessionsExpanded,
   persistChildSessionsExpanded,
 } from "@/lib/childSessionExpansionPreference.js";
-import { TaskChildSessionRows } from "@/workspace-grouped-tasks/task-child-sessions.js";
+import { TaskChildSessionRows } from "@/project-sidebar/grouped/task-child-sessions.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.js";

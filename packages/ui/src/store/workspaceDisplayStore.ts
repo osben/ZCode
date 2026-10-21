@@ -1,7 +1,7 @@
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import type { ZCodeTaskGroupColor } from "@zcode/services";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
-import { TASK_GROUP_COLORS } from "@/workspace-grouped-tasks/types.js";
+import { TASK_GROUP_COLORS } from "@/project-sidebar/grouped/types.js";
 
 const WORKSPACE_DISPLAY_STORAGE_KEY = "zcode-workspace-display";
 

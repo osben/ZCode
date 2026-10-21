@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input.js";
 import { Label } from "@/components/ui/label.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { cn } from "@/components/lib/utils.js";
-import { TASK_GROUP_COLORS } from "@/workspace-grouped-tasks/types.js";
+import { TASK_GROUP_COLORS } from "@/project-sidebar/grouped/types.js";
 import { isImeComposingKeyEvent } from "@/lib/imeComposition.js";
 import {
   useWorkspaceDisplayStore,

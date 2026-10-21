@@ -5,7 +5,7 @@ import { CRON_DEFAULT_GROUP_ID } from "@zcode/shared";
 import { describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { expectedCopy } from "./helpers/uiCopy.js";
-import { GroupDragOverlay } from "@/workspace-grouped-tasks/group-drag-overlay.js";
+import { GroupDragOverlay } from "@/project-sidebar/grouped/group-drag-overlay.js";
 
 type GroupNode = Extract<ZCodeGroupedTaskViewNode, { type: "group" }>;
 

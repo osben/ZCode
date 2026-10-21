@@ -20,7 +20,7 @@ import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
 import { providerBrandIconSrc } from "@/lib/oauthProviderIcon.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
-import { formatGroupedTaskHoverChangeParts } from "@/workspace-grouped-tasks/task-row-tooltip.js";
+import { formatGroupedTaskHoverChangeParts } from "@/project-sidebar/grouped/task-row-tooltip.js";
 import type { TaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
 /**
