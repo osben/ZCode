@@ -129,8 +129,10 @@ import {
   resolveExplicitStartupWorkspaceBootstrap,
 } from "./startupWorkspaceDeepLinkGate.js";
 import { createWebRemoteControlManager } from "./webRemoteControlManager.js";
-import { createNodeWebRemoteControlRelayAuthProvider } from "./webRemoteControlRelayAuthProvider.js";
-import { createWebRemoteControlRelayAuthStorageProvider } from "./webRemoteControlRelayAuthStorageProvider.js";
+import {
+  createWebRemoteControlDeviceStorage,
+  createWebRemoteControlRelayBearer,
+} from "./web-remote-relay/index.js";
 import { createWebRemoteControlFeatureGate } from "./webRemoteControlFeatureGate.js";
 import { reconnectWebRemoteControlWorkspaceInRenderer } from "./webRemoteControlRendererReconnect.js";
 import { openWebRemoteControlWorkspaceInWindow } from "./webRemoteControlWorkspaceOpen.js";
@@ -856,7 +858,13 @@ const remoteSessionManager = createRemoteWorkspaceSessionManager({
   webRemoteControlManagerRef,
 });
 
-const webRemoteControlAuthProvider = createNodeWebRemoteControlRelayAuthProvider();
+// Account identity for the web remote relay, read from the same credential store the telemetry path uses.
+const loadRemoteControlUserId = createTelemetryUserIdLoader(webRemoteControlCredentialService);
+const loadRemoteControlAuthorization = createTelemetryAuthorizationLoader(
+  webRemoteControlCredentialService,
+);
+// Exchanges the account identity for the relay-signed JWT used by every relay HTTP and WS call.
+const webRemoteControlRelayBearer = createWebRemoteControlRelayBearer();
 const webRemoteControlSharedHostAttachments = createWebRemoteControlSharedHostAttachments({
   windowHostProcessMap,
   attachRemoteWorkspaceSessionHost: remoteSessionManager.attachRemoteWorkspaceSessionHost,
@@ -977,12 +985,21 @@ const webRemoteControlManager = createWebRemoteControlManager({
   deviceMid,
   deviceName: hostname(),
   appVersion: webRemoteControlAppVersion,
-  authProvider: webRemoteControlAuthProvider,
-  authStorageProvider: createWebRemoteControlRelayAuthStorageProvider({
-    credentialService: webRemoteControlCredentialService,
+  getLogin: async () => {
+    const userId = await loadRemoteControlUserId();
+    const authorization = await loadRemoteControlAuthorization(userId);
+    return authorization ? { userId, jwt: authorization.slice("Bearer ".length) } : undefined;
+  },
+  relayBearer: webRemoteControlRelayBearer,
+  deviceStorage: createWebRemoteControlDeviceStorage({
+    deleteLegacyCredential: async () => {
+      const key = "web-remote-control:external-relay:pass_hash";
+      const hadCredential = (await webRemoteControlCredentialService.load(key)) !== undefined;
+      await webRemoteControlCredentialService.delete(key);
+      return hadCredential;
+    },
     loadSettings: () => mainSettingService.get(),
     patchSettings: (patch) => mainSettingService.update(patch),
-    logger,
   }),
   startupRestoreStorageProvider: {
     load: async () => (await mainSettingService.get()).webRemoteControlLastEnabledContext,
@@ -2630,8 +2647,6 @@ app.whenReady().then(async () => {
       webRemoteControlManager.syncAvailableWorkspaces(windowId, workspaces);
       void webRemoteControlManager.restorePreviouslyEnabled(windowId, workspaces);
     },
-    syncWebRemoteControlTasks: (windowId, tasks) =>
-      webRemoteControlManager.syncAvailableTasks(windowId, tasks),
     syncAppSettings: syncImmediateAppSettings,
     // Settings disabled-state query: the monitor uses a stale cache, so reopening settings after installing the AppIndicator extension refreshes it.
     // First ensure the tray instance is ready (the first query after extension installation creates it), then return final capability including

@@ -219,7 +219,7 @@ packages/server/src/http.ts
 
 packages/ui/src/project-sidebar/grouped/task-row.tsx
 
-# Needs splitting: these source files exceed 20000 bytes; split each one below the limit.
+# TEMPORARY (upstream 3.16.1 final sync WIP): split these files below 20000 bytes, then remove this block.
 packages/desktop/src/host/sourceServerConnectionManager.ts
 packages/desktop/src/host/sourceServerDirectory.ts
 packages/desktop/src/host/windowRemoteConnectionRegistry.ts
@@ -244,16 +244,21 @@ packages/services/src/zcode-session/zcodeSessionService.ts
 scripts/architecture/upstream-snapshot.json
 architecture-policy.yaml
 
-# Needs splitting: restored fork createRemoteWorkspaceServiceCollection (~33 KB) belongs to the desktop host split.
+# TEMPORARY (final fork restore desktop): restored fork createRemoteWorkspaceServiceCollection (~33 KB). Remove after the desktop host split.
 packages/desktop/src/host/remoteWorkspaceServiceCollection.ts
 
-# Needs splitting: composer files keep fork features that specs/composer-worktree-setup-steps.md,
+# TEMPORARY (relay v2 desktop client, specs/relay-v2-migration.md section 12): webRemoteControlManager.ts carries the upstream V2 manager plus fork hunks (~87 KB); split it into relay start/transport, bridge, and status modules, then remove this block. WebRemoteControlDialog.tsx grew past 20 KB with the repair notice; split the failure/notice presentation out, then remove this block.
+packages/desktop/src/main/webRemoteControlManager.ts
+packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
+# TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
 # specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
-# Split these composer files into smaller modules.
+# Remove once the composer is split into smaller modules.
 packages/ui/src/v4/ConversationComposer.tsx
 packages/ui/src/v4/composer/composerDraftStore.ts
 packages/ui/src/v4/composer/V4ComposerToolbar.tsx
 packages/ui/src/v4/composer/useComposerAttachments.ts
 packages/ui/src/v4/composer/useDraftConfigControl.ts
-# Needs splitting: npm-overrides.json is a generated-style license data table.
+# TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
+# TEMPORARY (relay v2 web client): upstream webRemoteControlTransport (~27 KB) taken as-is. Split it below 20000 bytes (WebSocket framing vs heartbeat/token recovery), then remove this block.
+packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts

@@ -66,14 +66,9 @@ async function bootstrap(path: string, query: string) {
 }
 
 describe("Web OAuth callback entry", () => {
-  for (const path of [
-    "/share/callback",
-    "/cn/share/callback",
-    "/web-remote/callback",
-    "/web-remote/callback/",
-  ]) {
+  for (const path of ["/share/callback", "/cn/share/callback", "/remote/v4", "/remote/v4/"]) {
     it.each(["authCode=bigmodel-code", "code=zai-code", "error=access_denied"])(
-      `${path} with %s renders the callback page and hands off to the auth service`,
+      `${path} for %s renders the callback page and hands off to the auth service`,
       async (result) => {
         const handleCallback = await bootstrap(path, `state=entry-state&${result}`);
         expect(document.body.textContent).toContain("Finishing Sign-In");
@@ -84,7 +79,7 @@ describe("Web OAuth callback entry", () => {
 
   for (const path of ["/share/callback", "/cn/share/callback"]) {
     it.each(["authCode=code", "code=code", "error=access_denied", "state=entry-state"])(
-      `${path} without state or a result parameter does not enter the callback page: %s`,
+      `${path} without state or result parameters does not enter the callback page: %s`,
       async (query) => {
         const handleCallback = await bootstrap(path, query);
         expect(handleCallback).not.toHaveBeenCalled();
@@ -93,7 +88,7 @@ describe("Web OAuth callback entry", () => {
     );
   }
 
-  it("keeps a regular share path on the preview route even with OAuth parameters", async () => {
+  it("a normal share path keeps the preview route even when it carries OAuth parameters", async () => {
     const handleCallback = await bootstrap("/share/example", "state=entry-state&authCode=code");
     expect(handleCallback).not.toHaveBeenCalled();
     expect(document.body.textContent).toBe("share-preview");

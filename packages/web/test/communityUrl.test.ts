@@ -9,7 +9,7 @@ const LOCAL_CONFIG = {
 };
 
 describe("resolveWebCommunityUrl", () => {
-  it.each([404])("HTTP %i 时回退内置同语言入口", async (status) => {
+  it.each([404])("falls back to the built-in same-language entry on HTTP %i", async (status) => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue({
       ok: false,
       status,
@@ -23,7 +23,7 @@ describe("resolveWebCommunityUrl", () => {
     ).resolves.toBe("https://local.example.com/discord");
   });
 
-  it("远端缺少当前语言时回退内置同语言入口", async () => {
+  it("falls back to the built-in same-language entry when the remote lacks the current language", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -44,7 +44,7 @@ describe("resolveWebCommunityUrl", () => {
   });
 });
 
-it("使用部署 endpoint 的新接口并提取反馈地址", async () => {
+it("uses the new endpoint of the deployment and extracts the feedback address", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () =>
     Response.json({
       code: 0,

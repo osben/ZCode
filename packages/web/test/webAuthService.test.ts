@@ -86,7 +86,7 @@ describe("WebAuthService", () => {
     vi.unstubAllGlobals();
   });
 
-  it("设备页账号行读取当前平台与显示名；显示名缺失时回退用户名", () => {
+  it("the device page account row reads the current platform and display name; falls back to the username when the display name is missing", () => {
     const { service, localStorage } = createService();
     expect(service.getActiveAccount()).toBeNull();
     localStorage.setItem("oauth:active_provider", "zai");
@@ -101,10 +101,7 @@ describe("WebAuthService", () => {
     });
   });
 
-  // TEMPORARY (relay-deferred, upstream 3.16.1 web sync): upstream expects the OAuth redirect URI
-  // /remote/v4 (protocol v2); the fork keeps /web-remote/callback (protocol v1). The redirect path
-  // is a product decision owned by the web remote relay unit. Remove these skips with that unit.
-  it.skip("uses VITE_ZAI_OAUTH_ORIGIN and VITE_ZAI_OAUTH_CLIENT_ID to build test environment authorize URL", async () => {
+  it("uses VITE_ZAI_OAUTH_ORIGIN and VITE_ZAI_OAUTH_CLIENT_ID to build test environment authorize URL", async () => {
     const testConfig = createWebZaiOAuthConfig({
       VITE_ZCODE_BASE_URL: "https://zcode.z.ai",
       VITE_ZAI_OAUTH_CLIENT_ID: "client_P8X5CMWmlaRO9gyO-KSqtg",
@@ -136,8 +133,7 @@ describe("WebAuthService", () => {
     expect(authorizeUrl.searchParams.get("client_id")).toBe("client_P8X5CMWmlaRO9gyO-KSqtg");
   });
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip("starts ZAI login with nonce, dev return_to, and original app_return_to", () => {
+  it("starts ZAI login with nonce, dev return_to, and original app_return_to", () => {
     const { assigned, service, sessionStorage } = createService();
 
     service.startLogin({
@@ -175,8 +171,7 @@ describe("WebAuthService", () => {
     );
   });
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip.each(
+  it.each(
     (["zai", "bigmodel"] as const).flatMap((provider) =>
       ["/remote/v4/", "/remote/__test__", "/remote/__test__/"].map((path) => ({
         provider,
@@ -213,7 +208,7 @@ describe("WebAuthService", () => {
         }),
       }));
       vi.stubGlobal("fetch", fetchMock);
-      // 必须跨实例读取 pending 地址，不能靠发起登录页的内存保留地址。
+      // Must read the pending address across instances; it must not rely on the in-memory address kept by the login-initiating page.
       const result = await h.reloadService().handleCallback(callback.toString());
       expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
         provider,
@@ -227,8 +222,7 @@ describe("WebAuthService", () => {
     },
   );
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip("keeps the public authorization redirect through a private development callback", async () => {
+  it("keeps the public authorization redirect through a private development callback", async () => {
     const devOrigin = "http://192.168.1.8:5173";
     const query = "app_version=3.14.0&sid=device-1&mid=mid-1&name=Desktop";
     const h = createService({
@@ -270,8 +264,7 @@ describe("WebAuthService", () => {
     );
   });
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip("does not exchange or consume the pending redirect before nonce validation", async () => {
+  it("does not exchange or consume the pending redirect before nonce validation", async () => {
     const h = createService();
     h.service.startLogin({ provider: "bigmodel" });
     const pendingRedirect = h.sessionStorage.getItem("oauth_pending_redirect_uri");
@@ -286,11 +279,10 @@ describe("WebAuthService", () => {
     expect(h.sessionStorage.getItem("oauth_pending_redirect_uri")).toBe(pendingRedirect);
   });
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip("ignores an abandoned new redirect when an older page starts another login", async () => {
+  it("ignores an abandoned new redirect when an older page starts another login", async () => {
     const h = createService();
     h.service.startLogin();
-    // 历史页面只覆盖 nonce/provider，不知道新增的 pending 地址键。
+    // The legacy page only covers nonce/provider and does not know about the newly added pending address key.
     h.sessionStorage.setItem("oauth_pending_nonce", "legacy-nonce");
     const state = buildOAuthState({ nonce: "legacy-nonce" });
     const fetchMock = vi.fn(async () => ({
@@ -351,8 +343,7 @@ describe("WebAuthService", () => {
     expect(redirectUrl.searchParams.get("state")).toBe(state);
   });
 
-  // TEMPORARY (relay-deferred): see the redirect-path note above.
-  it.skip("exchanges token, persists complete session, and returns sanitized app_return_to", async () => {
+  it("exchanges token, persists complete session, and returns sanitized app_return_to", async () => {
     const { localStorage, service, sessionStorage } = createService();
     sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
     const state = buildOAuthState({
@@ -426,18 +417,18 @@ describe("WebAuthService", () => {
 });
 
 /**
- * BigModel 登录。
+ * BigModel login.
  *
- * 起因：private 分享的 owner 判定用的是 provider 自己的 user id（BigModel 是
- * CustomerNumber 数字串，Z.ai 是 sub UUID），所以桌面端用 BigModel 发布的私享分享，
- * 在只能 z.ai 登录的分享页上永远匹配不到 owner，服务端按存在性隐匿返回 404/3211。
+ * Cause: the owner check for private shares uses the provider's own user id (BigModel uses a
+ * CustomerNumber numeric string, Z.ai uses a sub UUID), so a private share published by the desktop with BigModel
+ * can never match the owner on a share page that only allows z.ai login, and the server hides it by existence, returning 404/3211.
  */
 describe("WebAuthService BigModel provider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("授权 URL 用 BigModel 的参数名（redirect/appId），不是 ZAI 的那套", () => {
+  it("the authorization URL uses BigModel's parameter names (redirect/appId), not the ZAI set", () => {
     const { assigned, service, sessionStorage } = createService();
 
     service.startLogin({
@@ -449,15 +440,15 @@ describe("WebAuthService BigModel provider", () => {
     expect(url.pathname).toBe("/login");
     expect(url.searchParams.get("redirect")).toBe("https://zcode.z.ai/cn/share/callback");
     expect(url.searchParams.get("appId")).toBe("zcode");
-    // ZAI 专用参数不能出现，否则 BigModel 侧会忽略 redirect 直接回默认地址
+    // ZAI-specific parameters must not appear, otherwise the BigModel side ignores redirect and returns to the default address directly
     expect(url.searchParams.get("redirect_uri")).toBeNull();
     expect(url.searchParams.get("client_id")).toBeNull();
     expect(url.searchParams.get("response_type")).toBeNull();
-    // 回调页要靠它知道用哪个 provider 换 token
+    // The callback page relies on this to know which provider to use to exchange the token
     expect(sessionStorage.getItem("oauth_pending_provider")).toBe("bigmodel");
   });
 
-  it("换 token 时带 provider，并从 data.bigmodel.access_token 取值", async () => {
+  it("when exchanging the token, carries the provider and reads the value from data.bigmodel.access_token", async () => {
     const { localStorage, service, sessionStorage } = createService();
     sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
     sessionStorage.setItem("oauth_pending_provider", "bigmodel");
@@ -484,11 +475,11 @@ describe("WebAuthService BigModel provider", () => {
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
     expect(localStorage.getItem("zcodejwttoken")).toBe("jwt-token");
-    // pending provider 用完即清，避免污染下一次登录
+    // The pending provider is cleared right after use, to avoid polluting the next login
     expect(sessionStorage.getItem("oauth_pending_provider")).toBeNull();
   });
 
-  it("缺少 pending provider 时按 zai 兜底，保持旧回调链接可用", async () => {
+  it("falls back to zai when the pending provider is missing, keeping old callback links usable", async () => {
     const { localStorage, service, sessionStorage } = createService();
     sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
     const state = buildOAuthState({ nonce: "nonce-1" });
@@ -511,7 +502,7 @@ describe("WebAuthService BigModel provider", () => {
     expect(localStorage.getItem("oauth:active_provider")).toBe("zai");
   });
 
-  it("BigModel 响应缺 access_token 时不落半个登录态", async () => {
+  it("does not leave a half-finished login state when the BigModel response lacks access_token", async () => {
     const { localStorage, service, sessionStorage } = createService();
     sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
     sessionStorage.setItem("oauth_pending_provider", "bigmodel");
