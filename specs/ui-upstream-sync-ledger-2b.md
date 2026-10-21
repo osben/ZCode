@@ -51,3 +51,28 @@ Each row names the reason. Rows marked "design owner" need a decision before cod
 
 - Tooling-level checks not yet run in this PR: `pnpm lint`, `pnpm architecture:check`, `pnpm fmt:check`, `pnpm test:pre-push`, `pnpm test`, `scripts/fork-format-pending.mjs`, `scripts/check-test-copy.mjs`, and the staged-file tests. Results will be recorded here before handoff.
 - The grouped row is now larger than before this PR; `.staged-file-size-exemptions` handling is pending (block `# TEMPORARY upstream 3.16.1 sync (ui 2b)`).
+
+## Restoration audit (fork sidebar restore PR)
+
+Restored: row PR markers (probes mounted in `WorkspaceShellLayout`), project Customize (color, display
+name; Palette icon) in the project menu, see `workspace-sidebar-customization.md`.
+
+Checked against the current UI:
+
+- Item 2 (drag overlay colour): no surface. Project rows drag in place (`SortableProjects` has no
+  `DragOverlay`), so the row's tinted icon moves with it; `WorkspaceDragOverlay.tsx` has no mount and
+  grouped `group-drag-overlay.tsx` renders task groups, not projects. Nothing to port.
+- Item 3 (session-manager entry): still reachable unscoped from quick-pick (`openSessionManager`);
+  the per-project scoped menu entry (`sessionManager.openFromProjectMenu`, 0 usages) is lost. Owner
+  decision on scope semantics.
+- Item 4 (merged-session highlight): superseded by task PR status (`sidebar-pr-status.md`); branch
+  merge probes remain unmounted by design.
+- Item 5 (turn-navigator pin): `onPinChange` is wired in `v4/SessionPane.tsx`; not exercised manually.
+- Item 7 (review directory grouping): `GitPane/directoryRowModel.ts` present; not exercised manually.
+- Item 10 (worktree notice): `ConversationWorktreeCreatedNotice` mounted in `SessionPane`; the
+  sidebar-row open-worktree button is lost.
+- Project menu "Open on GitHub" (`workspaceSidebar.openOnGitHub`, 0 usages): lost; needs a git service
+  for the project's primary root on its host (`getRepositoryRemotes`). Owner decision.
+- `workspaceSidebar.newTaskOutsideProject` (0 usages): the conversation-section "+" button no longer
+  exists in the project sidebar (`onCreateConversationTask` is not consumed by `project-sidebar`), so
+  the distinct name has no surface.
