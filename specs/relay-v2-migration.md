@@ -710,6 +710,8 @@ at build time) sends `{device_key}`; on 4012 with a `challenge` it solves the Po
 with a configured secret it keeps the old path. On 4503 it reports `relay-unavailable`. PoW runs on the main
 process in chunks of 20000 hashes separated by `setImmediate`, abortable by the start signal.
 
+**Release.** `.github/workflows/fork-release.yml` passes the repository variable `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` to both desktop builds (a public input, never a secret); the owner sets it to `device-key` and sets `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open` on the relay.
+
 **Acceptance scenarios** (tests in `packages/remote-relay/test`, `packages/desktop/test`, `packages/shared`):
 valid PoW enrolls an `open` key and a later exchange needs no work; wrong nonce, insufficient zeros, a
 challenge for another key, a tampered challenge, an expired challenge, a challenge from another process;
