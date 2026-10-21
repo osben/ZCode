@@ -1012,7 +1012,9 @@ function RootInner({
     startDraftInWorkspace,
     startNewTaskFromActiveWorkspace,
     openWorkspace: handleOpenWorkspace,
-    openWorkspacePath: (path) => handleSelectProject(path),
+    openWorkspacePath: (path) => {
+      void handleSelectProject(path);
+    },
     setWorkspaceActionError,
     allowOpenWorkspace,
     isDesktop,

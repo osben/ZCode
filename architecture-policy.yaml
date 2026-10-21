@@ -871,11 +871,3 @@ exceptions:
     rule: max-file-lines
     paths: [packages/ui/src/plugin-ui/adapters/pluginUiManagedPage.ts]
     reason: Upstream 3.16.1 file carried into the UI-1 sync; splitting belongs to the UI-2 plugin UI work.
-  - id: fork-sync-final-new-files
-    rule: unmanaged-new-file
-    paths:
-      - packages/desktop/src/host/sourceServerManagementService.ts
-      - packages/desktop/src/host/sourceServerMigrationCounts.ts
-      - packages/desktop/src/host/windowTopicResourceRelay.ts
-      - packages/shared/src/zcode-protocol-v4/execution-worktree.ts
-    reason: 同步 3.16.1 最终合并中新增的 fork 文件；desktop 与 shared 目前为未受管模块，登记为 managed 模块需单独的架构决策，本例外是临时的。

@@ -5,7 +5,6 @@ third-party/inventory.json
 scripts/prepare-prebuilds.mjs
 packages/services/src/highspeed/highspeedCardService.ts
 
-packages/ui/src/ChatEmptyState.tsx
 packages/ui/src/i18n/locales/en-US.ts
 packages/ui/src/i18n/locales/uk-UA.ts
 packages/ui/src/i18n/locales/zh-CN.ts
@@ -52,9 +51,7 @@ packages/shared/src/channels.ts
 packages/shared/src/platform.ts
 packages/ui/src/Root.tsx
 packages/ui/src/root/useRootPlatformEffects.ts
-packages/ui/src/store/zcodeSessionStoreTypes.ts
 packages/ui/src/store/zcodeSessionStoreWorkspaceSlice.ts
-packages/ui/src/WorkspaceSidebar.tsx
 
 packages/shared/src/bots.ts
 packages/shared/src/conversation-share.ts
@@ -71,11 +68,8 @@ packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts
 packages/services/src/node.ts
 packages/services/src/setting/settingService.ts
 packages/services/src/oauth/oauthService.ts
-packages/services/src/oauth/repo/oauthCredentialRepo.ts
 packages/services/src/window-controller/windowHostControllerService.ts
-packages/services/src/window-controller/windowController.ts
 packages/services/src/zcode-agent/zcodeAgent.ts
-packages/services/src/zcode-agent/runtimeCapabilitySupport.ts
 packages/services/src/zcode-agent/zcodeAgentService.ts
 
 .agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml
@@ -91,15 +85,8 @@ packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts
 packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts
 packages/shared/src/validation.ts
 packages/ui/src/TaskListItem.tsx
-packages/ui/src/WebRemoteControlTaskIndex.tsx
-packages/ui/src/WorkspacePinnedTasksSection.tsx
-packages/ui/src/WorkspaceSidebarItem.tsx
-packages/ui/src/WorkspaceTimelineTasksSection.tsx
 
 apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.ts
-apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-head-execution-worktree.sqlite
-apps/zcode-cli/packages/adapters/tests/fixtures/session-db/fork-translated-0020.sqlite
-apps/zcode-cli/packages/adapters/tests/fixtures/session-db/upstream-3.16.1.sqlite
 
 apps/zcode-cli/packages/adapters/src/config/schema.ts
 apps/zcode-cli/packages/adapters/src/mcp/index.ts
@@ -218,7 +205,6 @@ packages/ui/src/SettingsPage.tsx
 packages/ui/src/PermissionDialog.tsx
 packages/ui/src/ModelConfigSelect.tsx
 packages/ui/src/v4/ConversationTurnGroup.tsx
-packages/ui/src/lib/builtinSkillI18n.ts
 packages/ui/src/lib/remoteWorkspaceHistory.ts
 packages/ui/src/lib/settingsNavigation.ts
 packages/ui/src/lib/workspaceSidePane.ts
@@ -267,12 +253,9 @@ packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
 # TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
 # specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
 # Remove once the composer is split into smaller modules.
-packages/ui/src/v4/ConversationComposer.tsx
-packages/ui/src/v4/composer/composerDraftStore.ts
-packages/ui/src/v4/composer/V4ComposerToolbar.tsx
-packages/ui/src/v4/composer/useComposerAttachments.ts
-packages/ui/src/v4/composer/useDraftConfigControl.ts
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
+
+# TEMPORARY(claude/ui-tail-shell): fork command center (worktree palette, page stack), settings (sessions, instructions, voice, palette, fonts), root and side-pane wiring keep fork features that specs/composer-worktree-setup-steps.md, specs/manage-sessions-table.md, specs/global-instructions.md, specs/themes.md, specs/voice-dictation.md and specs/sidebar-child-conversation-counts.md require. Remove once these files are split below 20000 bytes.
 # TEMPORARY (relay v2 web client): upstream webRemoteControlTransport (~27 KB) taken as-is. Split it below 20000 bytes (WebSocket framing vs heartbeat/token recovery), then remove this block.
 packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
