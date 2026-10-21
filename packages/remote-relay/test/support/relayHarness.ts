@@ -22,6 +22,7 @@ export interface HttpResult {
 
 export interface RelayHarness {
   server: RelayServer;
+  store: Awaited<ReturnType<typeof createRelayDeviceStore>>;
   /** Origin-only HTTP base, e.g. http://127.0.0.1:41234. */
   http: string;
   /** Issues an account login JWT for a user, as the desktop or terminal login would hold. */
@@ -52,20 +53,45 @@ export async function startRelay(
   overrides: Partial<RelayServerOptions> & {
     allowedOrigins?: readonly string[];
     identityMode?: "zai-jwt" | "device-key";
+    /** Device-key mode only. `open` starts without a secret requirement for PoW enrollment. */
+    enrollment?: {
+      mode: "secret" | "open";
+      difficulty?: number;
+      maxEnrolledKeys?: number;
+      enrollmentsPerHour?: number;
+      secret?: boolean;
+    };
+    ttlSeconds?: number;
+    maxEnrolledKeys?: number;
     /** Shared relay signing key so two harnesses can prove cross-mode JWT rejection. */
     signingKey?: Record<string, unknown>;
   } = {},
 ): Promise<RelayHarness> {
-  const { identityMode = "zai-jwt", signingKey, ...serverOverrides } = overrides;
+  const {
+    identityMode = "zai-jwt",
+    signingKey,
+    enrollment,
+    ttlSeconds = 3600,
+    maxEnrolledKeys,
+    ...serverOverrides
+  } = overrides;
   const directory = await mkdtemp(join(tmpdir(), "relay-harness-"));
   const identity = identityKey("EdDSA", "login-1");
-  const store = await createRelayDeviceStore({ path: join(directory, "relay.sqlite") });
+  const store = await createRelayDeviceStore({
+    path: join(directory, "relay.sqlite"),
+    ...(maxEnrolledKeys === undefined ? {} : { maxEnrolledKeys }),
+  });
   const session = createRelaySessionService({
     signingKeys: [signingKey ?? relaySigningKey("relay-1").privateJwk],
-    ttlSeconds: 3600,
+    ttlSeconds,
     identity:
       identityMode === "device-key"
-        ? { mode: "device-key", enrollmentSecret: ENROLLMENT_SECRET, keys: store }
+        ? {
+            mode: "device-key",
+            ...(enrollment?.secret === false ? {} : { enrollmentSecret: ENROLLMENT_SECRET }),
+            keys: store,
+            ...(enrollment === undefined ? {} : { enrollment }),
+          }
         : { issuer: ISSUER, userClaim: "sub", keys: [identity.publicJwk] },
     now: () => Date.now(),
   });
@@ -81,6 +107,7 @@ export async function startRelay(
 
   const harness: RelayHarness = {
     server,
+    store,
     http,
     login(userId = "user-1") {
       return loginJwt(identity, "EdDSA", { sub: userId }, Math.floor(Date.now() / 1000));
@@ -134,7 +161,7 @@ export async function startRelay(
       await rm(directory, { recursive: true, force: true });
     },
   };
-  return harness;
+  return Object.assign(harness, { store });
 }
 
 /** WebSocket client that parses every relay frame with the shared V2 schema and fails on drift. */

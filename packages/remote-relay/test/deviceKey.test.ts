@@ -348,10 +348,12 @@ describe("pairing codes for the phone", () => {
 
 describe("service-level clock and capacity rules", () => {
   function keyStore() {
-    const keys = new Set<string>();
+    const keys = new Map<string, "owner" | "open">();
     return {
-      isEnrolled: async (key: string) => keys.has(key),
-      enroll: async (key: string) => void keys.add(key),
+      lookup: async (key: string) => ({ tier: keys.get(key), openKeys: 0 }),
+      enroll: async (key: string, _createdAt: number, tier: "owner" | "open") =>
+        void keys.set(key, tier),
+      touch: async () => undefined,
     };
   }
   function build(clock: { ms: number }, extra: { maxReplayEntries?: number } = {}) {
@@ -379,11 +381,11 @@ describe("service-level clock and capacity rules", () => {
   it("expires pairing codes after 300 seconds", () => {
     const clock = { ms: NOW_SECONDS * 1000 };
     const service = build(clock);
-    const issued = service.createPairing("dk:user")!;
+    const issued = service.createPairing("dk:user", "open")!;
     expect(issued.expiresIn).toBe(300);
     clock.ms += 299_000;
     expect(service.exchangePairing(issued.code)).toBeDefined();
-    const second = service.createPairing("dk:user")!;
+    const second = service.createPairing("dk:user", "open")!;
     clock.ms += 301_000;
     expect(service.exchangePairing(second.code)).toBeUndefined();
   });

@@ -1,4 +1,5 @@
-import { generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
+import { enrollmentPowHashInput, hasLeadingZeroBits } from "@zcode/shared/web-remote-relay";
 
 type Jwk = Record<string, unknown>;
 
@@ -91,6 +92,7 @@ export function deviceKeyBody(
     secret?: string;
     signWith?: KeyObject;
     publicKey?: string;
+    work?: { challenge: string; nonce: string };
   } = {},
 ): Record<string, unknown> {
   const ts = options.ts ?? Math.floor(Date.now() / 1000);
@@ -102,5 +104,17 @@ export function deviceKeyBody(
   return {
     device_key: { public_key: options.publicKey ?? pair.publicKey, ts, nonce, signature },
     ...(options.secret === undefined ? {} : { enrollment_secret: options.secret }),
+    ...(options.work === undefined ? {} : { work: options.work }),
   };
+}
+
+/** Brute-forces a valid PoW counter. Tests run at low difficulty, so this takes milliseconds. */
+export function solveWork(publicKey: string, challenge: string, difficulty: number) {
+  for (let counter = 0; ; counter += 1) {
+    const nonce = String(counter);
+    const hash = createHash("sha256")
+      .update(enrollmentPowHashInput(publicKey, challenge, nonce))
+      .digest();
+    if (hasLeadingZeroBits(hash, difficulty)) return { challenge, nonce };
+  }
 }

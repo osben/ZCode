@@ -1,9 +1,19 @@
 import type { WebRemoteControlRelayV2Role } from "@zcode/shared/web-remote-relay";
+import type { RelayKeyTier } from "../deviceKeyContract.js";
 
 export interface RelayTokenGrant {
   userId: string;
   role: WebRemoteControlRelayV2Role;
   expiresAt: number;
+  /** Device-key mode only: selects the per-identity quota tier. Absent means no per-identity limits. */
+  tier?: RelayKeyTier;
+  /** Close the socket opened with this grant at this instant (ms); set for pairing-derived credentials. */
+  closeAtMs?: number;
+}
+
+export interface RelayTokenMeta {
+  tier?: RelayKeyTier;
+  closeAtMs?: number;
 }
 
 export interface RelayTokenStoreOptions {
@@ -32,6 +42,7 @@ export class RelayTokenStore {
   issue(
     userId: string,
     role: WebRemoteControlRelayV2Role,
+    meta: RelayTokenMeta = {},
   ): { token: string; expiresIn: number } | undefined {
     this.prune();
     let outstanding = 0;
@@ -42,6 +53,8 @@ export class RelayTokenStore {
       userId,
       role,
       expiresAt: this.options.now() + this.ttlMs,
+      ...(meta.tier === undefined ? {} : { tier: meta.tier }),
+      ...(meta.closeAtMs === undefined ? {} : { closeAtMs: meta.closeAtMs }),
     });
     return { token, expiresIn: Math.floor(this.ttlMs / 1000) };
   }

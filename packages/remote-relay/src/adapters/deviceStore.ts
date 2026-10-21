@@ -1,13 +1,25 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
-import type { RelayDeviceKeyStore, RelayDeviceRecord, RelayDeviceStore } from "../contract.js";
+import {
+  RelayLimitError,
+  type RelayDeviceKeyStore,
+  type RelayDeviceRecord,
+  type RelayDeviceStore,
+  type RelayKeyLookup,
+  type RelayUsageRow,
+} from "../contract.js";
 
 interface WorkerReply {
   type?: string;
   id?: number;
   result?: unknown;
   error?: string;
+}
+
+export interface RelayIdleSweeper {
+  /** Deletes `open`-tier keys idle since before `cutoff` (Unix seconds) with their devices. Returns the count. */
+  sweepIdleKeys(cutoff: number): Promise<number>;
 }
 
 /**
@@ -17,16 +29,21 @@ interface WorkerReply {
 export async function createRelayDeviceStore(options: {
   path: string;
   maxRecords?: number;
-}): Promise<RelayDeviceStore & RelayDeviceKeyStore> {
+  /** Cap on `open`-tier enrolled keys; owner keys are bounded by `maxRecords` only. */
+  maxEnrolledKeys?: number;
+}): Promise<RelayDeviceStore & RelayDeviceKeyStore & RelayIdleSweeper> {
   const maxRecords = options.maxRecords ?? 100_000;
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1)
     throw new Error("Device record limit must be positive.");
+  const maxEnrolledKeys = options.maxEnrolledKeys ?? 10_000;
+  if (!Number.isSafeInteger(maxEnrolledKeys) || maxEnrolledKeys < 1)
+    throw new Error("Enrolled key limit must be positive.");
   const path = resolve(options.path);
   await mkdir(dirname(path), { recursive: true });
   // Source tests use Node's TypeScript support; bundles load the adjacent JavaScript worker.
   const extension = import.meta.url.endsWith(".ts") ? "ts" : "js";
   const worker = new Worker(new URL(`./deviceStoreWorker.${extension}`, import.meta.url), {
-    workerData: { path, maxRecords },
+    workerData: { path, maxRecords, maxEnrolledKeys },
   });
   let nextId = 0;
   let closing = false;
@@ -91,31 +108,53 @@ export async function createRelayDeviceStore(options: {
   }
 
   return {
-    async register(userId, deviceMid, createdAt) {
+    async register(userId, deviceMid, createdAt, maxForUser) {
       const record = (await call({
         method: "register",
         userId,
         deviceMid,
         createdAt,
-      })) as RelayDeviceRecord | null;
-      if (!record) throw new Error("Device store returned no record.");
+        ...(maxForUser === undefined ? {} : { maxForUser }),
+      })) as (RelayDeviceRecord & { limit?: undefined }) | { limit: true } | null;
+      if (record && "limit" in record && record.limit) {
+        throw new RelayLimitError("Device limit reached.");
+      }
+      if (!record || "limit" in record) throw new Error("Device store returned no record.");
       return record;
     },
-    async isEnrolled(publicKey) {
-      const reply = (await call({ method: "keyExists", publicKey })) as { exists: boolean };
-      return reply.exists;
+    async lookup(publicKey) {
+      return (await call({ method: "keyExists", publicKey })) as RelayKeyLookup;
     },
-    async enroll(publicKey, createdAt) {
-      await call({ method: "enrollKey", publicKey, createdAt });
+    async enroll(publicKey, createdAt, tier) {
+      await call({ method: "enrollKey", publicKey, createdAt, tier });
+    },
+    async touch(publicKey, seenAt) {
+      await call({ method: "touchKey", publicKey, seenAt });
+    },
+    async recordUsage(rows: readonly RelayUsageRow[]) {
+      await call({ method: "recordUsage", rows });
+    },
+    async sweepIdleKeys(cutoff) {
+      const reply = (await call({ method: "sweepIdle", cutoff })) as {
+        removed: number;
+      };
+      return reply.removed;
     },
     async listForUser(userId) {
       return (await call({ method: "list", userId })) as RelayDeviceRecord[];
     },
     async get(deviceSid) {
-      return ((await call({ method: "get", deviceSid })) as RelayDeviceRecord | null) ?? undefined;
+      return (
+        ((await call({
+          method: "get",
+          deviceSid,
+        })) as RelayDeviceRecord | null) ?? undefined
+      );
     },
     async remove(deviceSid) {
-      const reply = (await call({ method: "remove", deviceSid })) as { removed: boolean };
+      const reply = (await call({ method: "remove", deviceSid })) as {
+        removed: boolean;
+      };
       return reply.removed;
     },
     close() {

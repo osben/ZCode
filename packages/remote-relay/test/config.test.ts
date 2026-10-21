@@ -94,7 +94,16 @@ describe("identity mode selection", () => {
 
   it("device-key mode needs no zai variables and carries the secret", () => {
     const config = readRelayConfig(deviceEnv());
-    expect(config.session.identity).toEqual({ mode: "device-key", enrollmentSecret: SECRET });
+    expect(config.session.identity).toEqual({
+      mode: "device-key",
+      enrollmentSecret: SECRET,
+      enrollment: {
+        mode: "secret",
+        difficulty: 22,
+        maxEnrolledKeys: 10_000,
+        enrollmentsPerHour: 300,
+      },
+    });
     expect(config.warnings).toEqual([]);
   });
 

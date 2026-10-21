@@ -231,7 +231,11 @@ export function createRelayRegistry(options: RelayRegistryOptions): RelayRegistr
         return;
       }
       // Forward only the declared fields: the relay never copies client timestamps or extra keys.
-      send(other, { type: "data", payload: frame.payload, server_ts: nowSeconds() });
+      send(other, {
+        type: "data",
+        payload: frame.payload,
+        server_ts: nowSeconds(),
+      });
     },
     reject(id, code, message) {
       const connection = connections.get(id);
