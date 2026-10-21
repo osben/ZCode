@@ -163,6 +163,11 @@ export interface WebRemoteControlV2QrParams {
   deviceMid?: string;
   deviceName?: string;
   appVersion?: string;
+  /**
+   * Fork device-key relay mode only: single-use pairing code (`pk`) the phone exchanges for a relay
+   * session. Absent in zai-jwt mode, which keeps the QR byte-identical to upstream.
+   */
+  pairingCode?: string;
 }
 
 export type BuildWebRemoteControlExternalQrUrlOptions = WebRemoteControlV2QrParams & {
@@ -215,6 +220,7 @@ export function buildWebRemoteControlExternalQrUrl({
   deviceMid,
   deviceName,
   appVersion,
+  pairingCode,
 }: BuildWebRemoteControlExternalQrUrlOptions): string {
   const url = new URL(baseUrl);
   if (deviceSid !== undefined) url.searchParams.set("sid", deviceSid);
@@ -231,6 +237,9 @@ export function buildWebRemoteControlExternalQrUrl({
   if (appVersion?.trim()) {
     url.searchParams.set("app_version", appVersion);
   }
+  if (pairingCode?.trim()) {
+    url.searchParams.set("pk", pairingCode.trim());
+  }
   return url.toString();
 }
 
@@ -245,6 +254,7 @@ export function parseWebRemoteControlExternalQrParams(
     ["deviceMid", "mid"],
     ["deviceName", "name"],
     ["appVersion", "app_version"],
+    ["pairingCode", "pk"],
   ] as const) {
     const value = readNonEmptySearchParam(params, param);
     if (value) result[key] = value;
