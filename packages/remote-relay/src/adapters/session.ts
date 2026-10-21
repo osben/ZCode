@@ -341,7 +341,7 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       if (request.work !== undefined) {
         if (
           !openEnrollment ||
-          !workIsValid(request.publicKey, request.work, Math.floor(nowMs / 1000))
+          !gate.workIsValid(request.publicKey, request.work, Math.floor(nowMs / 1000))
         ) {
           return { status: "denied" };
         }
@@ -365,7 +365,7 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
           if (gate.breakerOpen(nowMs, lookup.openKeys)) return { status: "closed" };
           return {
             status: "not-enrolled",
-            challenge: issueChallenge(request.publicKey, Math.floor(nowMs / 1000)),
+            challenge: gate.issueChallenge(request.publicKey, Math.floor(nowMs / 1000)),
           };
         } else {
           return { status: "not-enrolled" };
