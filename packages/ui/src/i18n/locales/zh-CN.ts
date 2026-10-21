@@ -2153,6 +2153,8 @@ const zhCN: Record<string, string> = {
   "webRemoteControl.failure.connectionRecoveryTimeout":
     "手机端连接恢复超时，当前 Web 远程控制暂时无法继续同步。",
   "webRemoteControl.failure.relayUnavailable": "外部 relay 连接不可用，请确认桌面端在线后重试。",
+  "webRemoteControl.failure.repairRequired":
+    "远程控制已升级到新 relay，之前手机的配对已失效：请用手机扫描新的二维码重新配对。",
   "webRemoteControl.failure.unsupportedAction":
     "当前是 Web 远程控制模式，只支持访问桌面端当前窗口已经打开的工作区。",
   "webRemoteControl.failure.unexpectedError": "无法启动移动端远程控制，请回到桌面端重试。",
@@ -8369,11 +8371,25 @@ const zhCN: Record<string, string> = {
   "webRemoteControl.mobileHome.reconnecting": "连接中",
   "webRemoteControl.mobileHome.workspaceEmpty": "这个工作区暂无任务",
   "sessionManager.back": "返回工作区",
+  "sessionManager.delete.title.one": "删除 {count} 个会话？",
+  "sessionManager.delete.title.other": "删除 {count} 个会话？",
   "sessionManager.delete.body": "会话将从此列表中隐藏，在你彻底清除之前，会话文件仍保留在磁盘上。",
   "sessionManager.delete.tagArchived": "已归档",
+  "sessionManager.delete.more.one": "还有 {count} 个",
+  "sessionManager.delete.more.other": "还有 {count} 个",
+  "sessionManager.delete.includePinned.one": "包含 {count} 个已置顶会话",
+  "sessionManager.delete.includePinned.other": "包含 {count} 个已置顶会话",
   "sessionManager.delete.confirm": "删除 {count} 个",
   "sessionManager.erase.checkbox": "同时永久清除已存储的对话",
   "sessionManager.erase.confirm": "清除 {count} 个",
+  "sessionManager.delete.running.one": "{count} 个会话仍在运行，隐藏后会继续运行。",
+  "sessionManager.delete.running.other": "{count} 个会话仍在运行，隐藏后会继续运行。",
+  "sessionManager.erase.warning.one":
+    "将永久清除共 {count} 个会话，此操作无法撤销。工具输出和缓存文件可能仍保留在磁盘上。",
+  "sessionManager.erase.warning.other":
+    "将永久清除共 {count} 个会话，此操作无法撤销。工具输出和缓存文件可能仍保留在磁盘上。",
+  "sessionManager.erase.blocked.one": "清除前请先停止 {count} 个正在运行的会话。",
+  "sessionManager.erase.blocked.other": "清除前请先停止 {count} 个正在运行的会话。",
 };
 
 export default zhCN;

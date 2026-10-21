@@ -7734,6 +7734,8 @@ const ukUA: Record<string, string> = {
     "Мобільне з'єднання не відновилося вчасно, тому веб-керування поки не може синхронізуватися.",
   "webRemoteControl.failure.relayUnavailable":
     "З'єднання із зовнішнім реле недоступне. Переконайтеся, що настільний застосунок онлайн, і спробуйте ще раз.",
+  "webRemoteControl.failure.repairRequired":
+    "Віддалене керування оновлено до нового реле. Попереднє з'єднання телефона більше не працює: відскануйте новий QR-код телефоном, щоб підключити його знову.",
   "webRemoteControl.failure.unsupportedAction":
     "Режим веб-керування може відкривати лише робочі простори, уже відкриті в поточному вікні настільного застосунку.",
   "webRemoteControl.failure.unexpectedError":
@@ -8081,12 +8083,21 @@ const ukUA: Record<string, string> = {
   "sessionManager.archive": "Архівувати",
   "sessionManager.restore": "Відновити",
   "sessionManager.delete": "Видалити",
+  "sessionManager.delete.title.one": "Видалити {count} сесію?",
+  "sessionManager.delete.title.few": "Видалити {count} сесії?",
   "sessionManager.delete.title.many": "Видалити {count} сесій?",
+  "sessionManager.delete.title.other": "Видалити {count} сесії?",
   "sessionManager.delete.body":
     "Сесії буде приховано з цього списку. Їхні файли залишаться на диску, доки ви їх не видалите остаточно.",
   "sessionManager.delete.tagArchived": "архівована",
+  "sessionManager.delete.more.one": "ще {count}",
+  "sessionManager.delete.more.few": "ще {count}",
   "sessionManager.delete.more.many": "ще {count}",
+  "sessionManager.delete.more.other": "ще {count}",
+  "sessionManager.delete.includePinned.one": "Включити {count} закріплену сесію",
+  "sessionManager.delete.includePinned.few": "Включити {count} закріплені сесії",
   "sessionManager.delete.includePinned.many": "Включити {count} закріплених сесій",
+  "sessionManager.delete.includePinned.other": "Включити {count} закріпленої сесії",
   "sessionManager.delete.confirm": "Видалити {count}",
   "sessionManager.delete.includes": "Містить: {items}.",
   "sessionManager.delete.includesGeneric":
@@ -8104,11 +8115,26 @@ const ukUA: Record<string, string> = {
   "sessionManager.delete.workflowSessions.few": "{count} сесії робочого процесу",
   "sessionManager.delete.workflowSessions.many": "{count} сесій робочого процесу",
   "sessionManager.delete.workflowSessions.other": "{count} сесії робочого процесу",
+  "sessionManager.delete.running.one":
+    "{count} сесія досі працює. Вона продовжить працювати після приховування.",
+  "sessionManager.delete.running.few":
+    "{count} сесії досі працюють. Вони продовжать працювати після приховування.",
   "sessionManager.delete.running.many":
     "{count} сесій досі працюють. Вони продовжать працювати після приховування.",
+  "sessionManager.delete.running.other":
+    "{count} сесії досі працюють. Вони продовжать працювати після приховування.",
+  "sessionManager.erase.warning.one":
+    "Буде остаточно стерто {count} сесію загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.warning.few":
+    "Буде остаточно стерто {count} сесії загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
   "sessionManager.erase.warning.many":
     "Буде остаточно стерто {count} сесій загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.warning.other":
+    "Буде остаточно стерто {count} сесії загалом. Це не можна скасувати. Вивід інструментів і файли кешу можуть залишитися на диску.",
+  "sessionManager.erase.blocked.one": "Зупиніть {count} запущену сесію перед стиранням.",
+  "sessionManager.erase.blocked.few": "Зупиніть {count} запущені сесії перед стиранням.",
   "sessionManager.erase.blocked.many": "Зупиніть {count} запущених сесій перед стиранням.",
+  "sessionManager.erase.blocked.other": "Зупиніть {count} запущеної сесії перед стиранням.",
   "sessionManager.hidden.count.one": "{count} прихована сесія досі зберігається на диску.",
   "sessionManager.hidden.count.few": "{count} приховані сесії досі зберігаються на диску.",
   "sessionManager.hidden.count.many": "{count} прихованих сесій досі зберігаються на диску.",

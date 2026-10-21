@@ -2313,6 +2313,8 @@ const enUS: Record<string, string> = {
     "The mobile connection did not recover in time, so Web remote control cannot keep syncing yet.",
   "webRemoteControl.failure.relayUnavailable":
     "The external relay connection is unavailable. Make sure desktop is online, then try again.",
+  "webRemoteControl.failure.repairRequired":
+    "Remote control was upgraded to the new relay. Your previous phone pairing no longer works: scan the new QR code with your phone to pair again.",
   "webRemoteControl.failure.unsupportedAction":
     "Web remote control mode can only open workspaces that are already open in the current desktop window.",
   "webRemoteControl.failure.unexpectedError":
@@ -8832,12 +8834,28 @@ const enUS: Record<string, string> = {
   "webRemoteControl.mobileHome.reconnecting": "Reconnecting",
   "webRemoteControl.mobileHome.workspaceEmpty": "No tasks in this workspace",
   "sessionManager.back": "Back to workspace",
+  "sessionManager.delete.title.one": "Delete {count} session?",
+  "sessionManager.delete.title.other": "Delete {count} sessions?",
   "sessionManager.delete.body":
     "Sessions are hidden from this list. Their files stay on disk until you erase them.",
   "sessionManager.delete.tagArchived": "archived",
+  "sessionManager.delete.more.one": "+{count} more",
+  "sessionManager.delete.more.other": "+{count} more",
+  "sessionManager.delete.includePinned.one": "Include {count} pinned session",
+  "sessionManager.delete.includePinned.other": "Include {count} pinned sessions",
   "sessionManager.delete.confirm": "Delete {count}",
   "sessionManager.erase.checkbox": "Also erase the stored conversations permanently",
   "sessionManager.erase.confirm": "Erase {count}",
+  "sessionManager.delete.running.one":
+    "{count} session is still running. It keeps running after it is hidden.",
+  "sessionManager.delete.running.other":
+    "{count} sessions are still running. They keep running after they are hidden.",
+  "sessionManager.erase.warning.one":
+    "This permanently erases {count} session in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.warning.other":
+    "This permanently erases {count} sessions in total and can't be undone. Tool output and cache files may remain on disk.",
+  "sessionManager.erase.blocked.one": "Stop {count} running session before erasing.",
+  "sessionManager.erase.blocked.other": "Stop {count} running sessions before erasing.",
 };
 
 export default enUS;
