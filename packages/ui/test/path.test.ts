@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getContainingDirectoryPath, toFileUrl } from "@/lib/path.js";
+import { formatHomeRelativePath, getContainingDirectoryPath, toFileUrl } from "@/lib/path.js";
 import { getModelTrajectorySourceDirectory } from "@/ModelTrajectoryPane.js";
 
 describe("path helpers", () => {
@@ -56,5 +56,15 @@ describe("path helpers", () => {
     it("纯 ASCII POSIX 路径保持既有输出不变", () => {
       expect(toFileUrl("/tmp/plain.html")).toBe("file:///tmp/plain.html");
     });
+  });
+
+  it("shortens paths under the Host home to ~ for display only", () => {
+    expect(formatHomeRelativePath("/Users/dev/wt/a", "/Users/dev")).toBe("~/wt/a");
+    expect(formatHomeRelativePath("/Users/dev", "/Users/dev/")).toBe("~");
+    expect(formatHomeRelativePath("C:\\Users\\dev\\wt", "C:\\Users\\dev")).toBe("~\\wt");
+    // A sibling that only shares the prefix, a path elsewhere, or an unknown home stays absolute.
+    expect(formatHomeRelativePath("/Users/developer/wt", "/Users/dev")).toBe("/Users/developer/wt");
+    expect(formatHomeRelativePath("/opt/wt", "/Users/dev")).toBe("/opt/wt");
+    expect(formatHomeRelativePath("/Users/dev/wt", undefined)).toBe("/Users/dev/wt");
   });
 });
