@@ -212,9 +212,7 @@ export function App({
     workspaceIdentity,
   );
   const activeTaskId = workspaceShellZCodeState.activeTaskId;
-  // TEMPORARY upstream 3.16.1 sync (ui): upstream protocol-v4 drafts have no legacy draftSessionId,
-  // so a draft has no right-sidebar owner. Fork draft-scoped owner is ledgered in specs/ui-upstream-sync-integration.md.
-  const sidePaneOwnerId = activeTaskId ?? null;
+  const sidePaneOwnerId = activeTaskId;
   const [summaryPanelVariantOverride, setSummaryPanelVariantOverride] =
     useState<ChatViewSummaryPanelVariant | null>(null);
   const draftFocusVersion = workspaceShellZCodeState.draftFocusVersion;
@@ -242,7 +240,6 @@ export function App({
     handleNavigateFileManager,
     handleOpenPluginMarket,
     handleOpenTerminalTab,
-    handleOpenModelTrajectory,
     handleOpenSubagentSession,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
@@ -1361,7 +1358,6 @@ export function App({
           gitReviewState={gitPaneState}
           handleRefreshGitReview={handleRefreshGitReview}
           gitRepositoryWorkspacePath={gitRepositoryWorkspacePath}
-          handleOpenModelTrajectory={handleOpenModelTrajectory}
           onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
           browserNavigationRequest={browserNavigationRequest}
           browserRestoreUrls={browserRestoreUrls}

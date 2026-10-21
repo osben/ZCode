@@ -47,13 +47,13 @@ export const TaskList = memo(function TaskList({
   onRenameTask,
   onSetTaskPinned,
   onArchiveTask,
-  onDeleteTask,
   isArchived = false,
   onSetTaskUnread,
   mobileActiveTaskKey,
   readOnlyReason,
   onOpenFileTree,
   organizationActions,
+  onDeleteTask,
 }: {
   organizationActions?: React.ReactNode;
   workspacePath: string;
@@ -76,12 +76,13 @@ export const TaskList = memo(function TaskList({
   onRenameTask: (taskId: string, title: string) => Promise<ZCodeTaskMeta | null>;
   onSetTaskPinned: (taskId: string, pinned: boolean) => Promise<ZCodeTaskMeta | null>;
   onArchiveTask: (taskId: string) => Promise<ZCodeTaskMeta | null>;
-  onDeleteTask?: (taskId: string) => void;
   isArchived?: boolean;
   onSetTaskUnread: (taskId: string, unread: boolean) => Promise<ZCodeTaskMeta | null>;
   mobileActiveTaskKey?: string | null;
   readOnlyReason?: string;
   onOpenFileTree?: () => void | Promise<void>;
+  /** Sidebar Delete; the caller owns the confirmation dialog. */
+  onDeleteTask?: (taskId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const pinnedTaskIdSet = useMemo(
@@ -390,7 +391,6 @@ export const TaskList = memo(function TaskList({
         onTogglePinTask={handleTogglePinTask}
         onStartRenameTask={handleStartRenameTask}
         onArchiveTask={handleArchiveTask}
-        onDeleteTask={onDeleteTask}
         onMarkTaskAsUnread={handleMarkTaskAsUnread}
         onOpenTaskContextMenu={handleOpenTaskContextMenu}
         onOpenFileTree={onOpenFileTree}
@@ -483,12 +483,12 @@ export const TaskList = memo(function TaskList({
                   onTogglePinTask={handleTogglePinTask}
                   onStartRenameTask={handleStartRenameTask}
                   onArchiveTask={handleArchiveTask}
-                  onDeleteTask={
-                    onDeleteTask ? () => onDeleteTask(contextMenuTask.taskId) : undefined
-                  }
                   onMarkTaskAsUnread={handleMarkTaskAsUnread}
                   disableTaskActions={Boolean(readOnlyReason)}
                   disabledReason={readOnlyReason}
+                  onDeleteTask={
+                    onDeleteTask ? () => onDeleteTask(contextMenuTask.taskId) : undefined
+                  }
                 />
               ) : null}
             </ContextMenu>
