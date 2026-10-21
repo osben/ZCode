@@ -59,12 +59,13 @@ export function withOptimisticFirstInputRow(
   row: UserInputRow | null,
 ): ConversationTurnRenderUnit[] {
   if (!row) return units;
+  const isLastTurn = units.length === 0;
   const workSegments = buildConversationTurnWorkSegments({
     key: "optimistic-first-input",
     orderedRows: [row],
     assistantTailRows: [],
     isRunning: false,
-    isLastTurn: units.length === 0,
+    isLastTurn,
     isInterrupted: false,
     forceOpenHistory: false,
     timelineOnly: true,
@@ -85,7 +86,7 @@ export function withOptimisticFirstInputRow(
       flowItems: workSegments.flatMap((segment) => segment.flowItems),
       workSegments,
       renderRows: [row],
-      isLastTurn: units.length === 0,
+      isLastTurn,
       isRunning: false,
       assistantHistoryDefaultOpen: false,
       timelineOnly: true,

@@ -1612,10 +1612,7 @@ export function SessionPane({
       if (!claimHighspeedCardAutoShare(candidate.cardId, autoShareNow)) continue;
       // 分享卡片改为客户端生成，不再请求后端 share 接口；到期后直接把本地统计发布到左下角。
       browserGlobalNoticeStore?.publish(
-        buildHighspeedShareNotice({
-          cardId: candidate.cardId,
-          metrics: candidate.metrics,
-        }),
+        buildHighspeedShareNotice({ cardId: candidate.cardId, metrics: candidate.metrics }),
       );
       markHighspeedCardAutoShared(candidate.cardId);
     }
@@ -2013,9 +2010,7 @@ export function SessionPane({
                   logger.error("[task-groups] 新任务归属提交失败", cause);
                   toast(intl.formatMessage({ id: "taskGroup.failed" }), {
                     durationMs: 0,
-                    actionLabel: intl.formatMessage({
-                      id: "taskGroup.retryPlacement",
-                    }),
+                    actionLabel: intl.formatMessage({ id: "taskGroup.retryPlacement" }),
                     onAction: () => void attempt(),
                     dedupeKey: `task-group:${createdSessionId}`,
                   });
@@ -2212,10 +2207,7 @@ export function SessionPane({
             }
           : recentReceipt
             ? {
-                workspace: {
-                  workspacePath,
-                  ...(workspaceIdentity ? { workspaceIdentity } : {}),
-                },
+                workspace: { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) },
                 ...(sessionId === null
                   ? {
                       projectId: recentScope.projectId,
@@ -3040,12 +3032,7 @@ export function SessionPane({
       const childSessionId = await createSelectionSideChat(pendingKey, async () => {
         const ack = await dispatchCommand(
           "createSelectionSideSession",
-          {
-            firstInput: {
-              text,
-              ...(modelSelection ? { modelSelection } : {}),
-            },
-          },
+          { firstInput: { text, ...(modelSelection ? { modelSelection } : {}) } },
           sessionId,
           undefined,
           undefined,
@@ -3135,9 +3122,7 @@ export function SessionPane({
     const planAction: AppSlashCommand = {
       value: "plan",
       label: intl.formatMessage({ id: "chat.slash.app.plan.label" }),
-      description: intl.formatMessage({
-        id: "chat.slash.app.plan.description",
-      }),
+      description: intl.formatMessage({ id: "chat.slash.app.plan.description" }),
       keywords: ["plan", "计划", "计划模式"],
       run: () => handleDraftSwitchMode("plan"),
     };
@@ -3159,24 +3144,12 @@ export function SessionPane({
     // 关键词固定同时包含中英文别名，任一 locale 下输入 side / btw / 辅助 都能搜到。
     // `/btw` 是 `/side` 的等价别名，适配不同用户输入习惯，面板中各自独立展示。
     const sharedKeywords = ["side", "btw", "side chat", "auxiliary", "辅助对话", "辅助", "侧边"];
-    const description = intl.formatMessage({
-      id: "chat.slash.app.side.description",
-    });
+    const description = intl.formatMessage({ id: "chat.slash.app.side.description" });
     return [
       planAction,
       ...[
-        {
-          value: "side",
-          description,
-          keywords: sharedKeywords,
-          run: openNewSelectionSideChat,
-        },
-        {
-          value: "btw",
-          description,
-          keywords: sharedKeywords,
-          run: openNewSelectionSideChat,
-        },
+        { value: "side", description, keywords: sharedKeywords, run: openNewSelectionSideChat },
+        { value: "btw", description, keywords: sharedKeywords, run: openNewSelectionSideChat },
       ].filter((command) => !cliSlashCommandNames.has(command.value)),
     ];
   }, [
@@ -3480,10 +3453,7 @@ export function SessionPane({
         undefined,
         undefined,
         (envelope) =>
-          onReservationCreated?.({
-            sessionId: targetSessionId,
-            commandId: envelope.commandId,
-          }),
+          onReservationCreated?.({ sessionId: targetSessionId, commandId: envelope.commandId }),
       );
       if (
         (ack.status !== "accepted" && ack.status !== "duplicate") ||
@@ -4425,9 +4395,7 @@ export function SessionPane({
         const detail = error instanceof Error ? error.message : String(error);
         const incognitoMessageId = incognitoUnsupportedMessageId(detail);
         if (incognitoMessageId) {
-          toast(intl.formatMessage({ id: incognitoMessageId }), {
-            variant: "warning",
-          });
+          toast(intl.formatMessage({ id: incognitoMessageId }), { variant: "warning" });
           return "blocked";
         }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
@@ -5332,9 +5300,9 @@ export function SessionPane({
   const optimisticFirstInputRow = useMemo(() => {
     const pending = firstSubmission?.draft.firstSubmission;
     if (!pending) return null;
-    let rowIdHash = 0;
-    for (let index = 0; index < pending.submissionId.length; index += 1)
-      rowIdHash = (rowIdHash * 31 + pending.submissionId.charCodeAt(index)) | 0;
+    // Stable negative rowId derived from the submission id (UUID): never collides with
+    // projected rowIds and keeps the virtual-list height cache keyed consistently.
+    const rowId = -(1 + (Number.parseInt(pending.submissionId.slice(0, 8), 16) % 1_000_000_000));
     const attachments = (firstSubmission.draft.recoveryAttachments ?? []).map((file) => ({
       ref: file.id,
       fileName: file.filename,
@@ -5342,7 +5310,7 @@ export function SessionPane({
       bytes: file.sizeBytes ?? 0,
     }));
     return {
-      rowId: -(1 + (Math.abs(rowIdHash) % 1_000_000_000)),
+      rowId,
       turnId: `first-submission:${pending.submissionId}`,
       productTurnId: `first-submission:${pending.submissionId}`,
       entityId: pending.submissionId,

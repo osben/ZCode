@@ -263,9 +263,7 @@ import {
 import { resolveAttachableShareContext } from "@/lib/conversationShareContext.js";
 import { parseV4VisibleSlashCommand } from "@/v4/slashCommands.js";
 
-const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = {
-  status: "loading",
-};
+const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
 
 export interface ConversationComposerSendOptions {
   firstSubmissionId?: string;
@@ -297,10 +295,7 @@ export interface ConversationComposerSendOptions {
   requestedDelivery?: "startNow" | "queue" | "guide";
   /** 提交命令创建后由 Composer 订阅权威 projection，覆盖 ACK 丢失后的收口。 */
   onCommandCreated?: (commandId: string) => void;
-  sharedContextRefs?: Array<{
-    kind: "shared_context_import";
-    context_id: string;
-  }>;
+  sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
   /** 插件 UI 代发：随 sendText 持久化，用户消息卡片显示"来自插件 X"。 */
   source?: import("@zcode/shared/zcode-protocol-v4").ConversationInputSource;
 }
@@ -1340,10 +1335,7 @@ function ConversationComposerImpl({
         });
       if (shouldTransferDraft) {
         // 项目解绑只改变草稿的 cwd；输入正文、mention editor state 和组件内附件继续保留。
-        replaceComposerDraft({
-          ...ownerDraftRef.current.draft,
-          ...previousDraft,
-        });
+        replaceComposerDraft({ ...ownerDraftRef.current.draft, ...previousDraft });
         transferredDraft = previousDraft;
       }
     }
@@ -1901,10 +1893,7 @@ function ConversationComposerImpl({
         // acceptance: the debounced persist may have already stored it, and the first-send promotion
         // re-applies that draft into the promoted session, so the input never clears. Failure
         // recovery does not read this store — restoreSubmittedDraft uses the frozen snapshot.
-        updateComposerContentRef.current({
-          text: "",
-          firstSubmission: undefined,
-        });
+        updateComposerContentRef.current({ text: "", firstSubmission: undefined });
         if (clearEditor) {
           inputApiRef.current?.clear();
           updateText("");
@@ -1944,9 +1933,7 @@ function ConversationComposerImpl({
             : {}),
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
           ...(preparationParams
-            ? {
-                worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams),
-              }
+            ? { worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams) }
             : {}),
           recoveryAttachments: buildV4RecoveryAttachmentsManifest(
             attachmentsApi.attachments.filter((item) => submittedAttachmentIds.includes(item.id)),
@@ -2073,7 +2060,6 @@ function ConversationComposerImpl({
         if (reservationRecordBound || !reservedSubmissionSessionId) return;
         const targetScope = getV4WorktreeRecoveryScope(reservedSubmissionSessionId, submissionId);
         if (
-          pendingRecoveryScope !== targetScope &&
           !moveV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope, targetScope)
         ) {
           logger.warn(
@@ -2204,9 +2190,7 @@ function ConversationComposerImpl({
           generation: draftGeneration,
           status: "preparing",
           ...(retryFirstSubmission?.incognito || incognitoSubmission?.profile
-            ? {
-                incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile,
-              }
+            ? { incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile }
             : {}),
           ...(retryFirstSubmission?.reservation
             ? { reservation: retryFirstSubmission.reservation }
@@ -2314,9 +2298,7 @@ function ConversationComposerImpl({
             if (resolution.reason === "switch-failed") {
               toast(
                 resolution.message ??
-                  intl.formatMessage({
-                    id: "git.branchSwitcher.error.unknown",
-                  }),
+                  intl.formatMessage({ id: "git.branchSwitcher.error.unknown" }),
               );
             } else if (resolution.reason === "switch-error") {
               toast(
@@ -2574,10 +2556,7 @@ function ConversationComposerImpl({
               status: "fail",
               reasonCode: "blocked",
             });
-            sendAction.reject({
-              resultSource: "authority_ack",
-              admissionResult: "rejected",
-            });
+            sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
             return;
           }
           if (sendResult === "confirmationRequired") {
@@ -2625,10 +2604,7 @@ function ConversationComposerImpl({
           setHeldQueueConfirmation(null);
           // Settle the captured content (idempotent with the command-resolution subscription).
           await settleSubmittedContent();
-          sendAction.complete({
-            resultSource: "authority_ack",
-            admissionResult: "accepted",
-          });
+          sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
         } catch (error) {
           rollbackPromptHistory();
           // ACK-side failures may settle first; a settled submission must not restore its text again.
@@ -2684,9 +2660,7 @@ function ConversationComposerImpl({
           return;
         }
         const prepareOwnedSession = (params: ComposerWorktreePreparationParams) =>
-          onPrepareWorktreeSession(params, {
-            shouldActivate: shouldActivatePreparedSession,
-          });
+          onPrepareWorktreeSession(params, { shouldActivate: shouldActivatePreparedSession });
         queuedSubmissionIdRef.current = submissionId;
         setWorktreeQueued(true);
         const currentPipeline = selectComposerWorktreePipeline(
@@ -2703,20 +2677,14 @@ function ConversationComposerImpl({
           clearQueuedSubmissionState();
           pendingWorktreeSendRef.current = null;
           await runSend(
-            {
-              path: currentPipeline.worktreePath,
-              branchName: currentPipeline.params.branchName,
-            },
+            { path: currentPipeline.worktreePath, branchName: currentPipeline.params.branchName },
             preparedSessionIdForSend,
             currentPipeline.params.attemptId,
           );
           return;
         }
         if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
-          const reservation = {
-            epoch: renderedOwnerRef.current.epoch,
-            id: submissionId,
-          };
+          const reservation = { epoch: renderedOwnerRef.current.epoch, id: submissionId };
           reservingWorktreeRef.current = reservation;
           let begin;
           try {
@@ -2810,10 +2778,7 @@ function ConversationComposerImpl({
           clearQueuedSubmissionState();
           pendingWorktreeSendRef.current = null;
           await runSend(
-            {
-              path: joinedPipeline.worktreePath,
-              branchName: joinedPipeline.params.branchName,
-            },
+            { path: joinedPipeline.worktreePath, branchName: joinedPipeline.params.branchName },
             preparedSessionIdForSend,
             joinedPipeline.params.attemptId,
           );
@@ -3168,11 +3133,7 @@ function ConversationComposerImpl({
 
   const handleStopClick = useCallback(() => {
     runUserAction({
-      input: {
-        featureId: "conversation.composer.message",
-        action: "stop",
-        trigger: "button",
-      },
+      input: { featureId: "conversation.composer.message", action: "stop", trigger: "button" },
       operation: onStop,
       completed: { resultSource: "optimistic_projection" },
       failureStage: "stop_generation",
@@ -3438,9 +3399,7 @@ function ConversationComposerImpl({
                       : canPreviewImageAttachment
                         ? attachmentPreviewTitle
                         : canPreviewPdfAttachment
-                          ? intl.formatMessage({
-                              id: "chat.attachments.preview.openPdf",
-                            })
+                          ? intl.formatMessage({ id: "chat.attachments.preview.openPdf" })
                           : undefined
                   }
                 >
@@ -3933,10 +3892,7 @@ function ConversationComposerImpl({
                 ? () => {
                     const request = reconnectProject
                       ? reconnectProject(workspaceKey)
-                      : remoteController?.dispatch({
-                          type: "reconnect-workspace",
-                          workspaceKey,
-                        });
+                      : remoteController?.dispatch({ type: "reconnect-workspace", workspaceKey });
                     void request?.catch((error: unknown) =>
                       logger.warn("[v4-composer] 项目重连失败", { error }),
                     );
@@ -4025,9 +3981,7 @@ function ConversationComposerImpl({
           placeholder={
             remoteAvailable
               ? normalPlaceholder
-              : intl.formatMessage({
-                  id: "remote.conversation.sendUnavailable",
-                })
+              : intl.formatMessage({ id: "remote.conversation.sendUnavailable" })
           }
           disabled={disabled || mode === "reject"}
           submitting={pending}
