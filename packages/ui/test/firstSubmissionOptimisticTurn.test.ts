@@ -89,7 +89,8 @@ describe("optimistic first-input turn composition (IUX01/IUX03/IUX06)", () => {
     expect(units).toHaveLength(1);
     const [unit] = units;
     expect(unit.key).toBe("optimistic-first-input");
-    expect(unit.timelineOnly).toBe(true);
+    // An ordinary user turn: timeline-only units render no user inputs (the hidden-bubble bug).
+    expect(unit.timelineOnly).toBe(false);
     expect(unit.visibleUserInputs.map((row) => row.text)).toEqual(["Instant first message"]);
     // The worktree context row renders right after the optimistic bubble (order stability
     // with the post-projection layout, commit 388a7944).

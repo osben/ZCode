@@ -46,13 +46,15 @@ export function withAfterFirstUserInputSlot(
 }
 
 /**
- * Prepend the optimistic first-submission user turn as its own timeline-only unit
+ * Prepend the optimistic first-submission user turn as its own unit
  * (specs/first-submission-instant-ux.md, P1): a pixel-real user bubble rendered in the
  * same commit as the Send click, before any Host round-trip. The unit stays first while
  * the authoritative projection has not produced the real row; the caller hides the row
  * (reconcile, not gate) when a real realUser row reaches the window. Work segments are
  * derived through the normal builder so the turn group renders the bubble exactly like
- * a projected user row.
+ * a projected user row. It is an ordinary user turn, not a timeline-only one: timeline-only
+ * units are marker-only maintenance turns, and the turn flow renders no user inputs for them,
+ * which hid the bubble (and left only the worktree slot visible) until the projection landed.
  */
 export function withOptimisticFirstInputRow(
   units: ConversationTurnRenderUnit[],
@@ -68,7 +70,7 @@ export function withOptimisticFirstInputRow(
     isLastTurn,
     isInterrupted: false,
     forceOpenHistory: false,
-    timelineOnly: true,
+    timelineOnly: false,
   });
   return [
     {
@@ -89,7 +91,7 @@ export function withOptimisticFirstInputRow(
       isLastTurn,
       isRunning: false,
       assistantHistoryDefaultOpen: false,
-      timelineOnly: true,
+      timelineOnly: false,
     },
     ...units,
   ];

@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { createElement, type ContextType } from "react";
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
+import {
+  withAfterFirstUserInputSlot,
+  withOptimisticFirstInputRow,
+} from "@/v4/conversationTurnUnitSlots.js";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
@@ -2995,5 +2999,31 @@ describe("topic preparation flow membership", () => {
       expect(html).toContain('data-v4-user-input-collapsible-content="true"');
       expect(html).toContain(`aria-label="${expectedCopy("chat.topicPreparation.preparing")}"`);
     }
+  });
+});
+
+// specs/first-submission-instant-ux.md P1 + specs/composer-worktree-setup-steps.md: the
+// optimistic first-input turn is a timeline-only unit, yet its user bubble must render — and
+// render above the worktree setup slot attached to it while the Host prepares the session.
+describe("optimistic first-submission turn", () => {
+  const optimisticRow = userInputRow(-42, {
+    turnId: "first-submission:sub-1",
+    text: "Frozen first message",
+  });
+
+  it("renders the frozen message bubble before any transcript row exists", () => {
+    const [unit] = withOptimisticFirstInputRow([], optimisticRow);
+    expect(renderUnit(unit!)).toContain("Frozen first message");
+  });
+
+  it("keeps the message above the worktree setup slot attached to the same unit (FSL02)", () => {
+    const [unit] = withAfterFirstUserInputSlot(
+      withOptimisticFirstInputRow([], optimisticRow),
+      createElement("div", null, "Worktree setup steps"),
+    );
+    const html = renderUnit(unit!);
+    expect(html).toContain("Frozen first message");
+    expect(html).toContain("Worktree setup steps");
+    expect(html.indexOf("Frozen first message")).toBeLessThan(html.indexOf("Worktree setup steps"));
   });
 });
