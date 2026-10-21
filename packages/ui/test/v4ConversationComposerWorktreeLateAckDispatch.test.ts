@@ -274,6 +274,61 @@ describe("late worktree reservation ACK: dispatch and retry", () => {
     ).toBe("consumed");
   });
 
+  it("keeps the queued worktree submission armed through the editor's clear echo (revision noise)", async () => {
+    const harness = renderLateAckComposer();
+    // Emulate a slow Host preparation ACK: the queued draft is claimed, then the editor's
+    // asynchronous clear echo (or next-draft typing) lands while creation is still pending.
+    let releaseBegin!: () => void;
+    const beginGate = new Promise<void>((resolve) => {
+      releaseBegin = resolve;
+    });
+    harness.controls.beginGate = { promise: beginGate, resolve: releaseBegin };
+    try {
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!("queued echo text");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        (chatPromptEditorProps.at(-1)!.onChange as (text: string) => void)("");
+        await flushAsyncWork();
+      });
+      await act(async () => {
+        releaseBegin();
+        await flushAsyncWork();
+      });
+      expect(harness.onSendText).not.toHaveBeenCalled();
+
+      useComposerWorktreePipelineStore.getState().startPipeline("/workspace", {
+        status: "creating",
+        sessionId: "prepared-session-a",
+        params: {
+          workspacePath: "/workspace",
+          branchName: "feature-a",
+          targetPath: "/worktrees/feature-a",
+          attemptId: "attempt-1",
+          baseFromHeadDefault: true,
+        },
+        queuedPromptPreview: "queued echo text",
+        createdAt: Date.now(),
+      });
+      useComposerWorktreePipelineStore
+        .getState()
+        .markReady("/workspace", "/worktrees/feature-a", false, "prepared-session-a", "attempt-1");
+      await act(async () => {
+        await flushAsyncWork();
+        await flushAsyncWork();
+      });
+
+      // The clear echo is revision noise on an already-claimed draft, not an ownership change
+      // (specs/first-submission-lifecycle.md rule 7): the submission stays armed and dispatches
+      // on ready instead of becoming a "Failed to send" recovery record.
+      expect(harness.onSendText).toHaveBeenCalledTimes(1);
+      expect(harness.onSendText.mock.calls[0]![0]).toBe("queued echo text");
+    } finally {
+      await act(async () => harness.root.unmount());
+    }
+  });
+
   it("keeps the pipeline entry ready when the queued dispatch fails, with the submission recoverable", async () => {
     const harness = renderLateAckComposer();
     harness.controls.rejectSend = true;

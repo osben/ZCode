@@ -154,6 +154,8 @@ export interface LateAckHarness {
   controls: {
     beginOutcome: { ok: true; sessionId: string } | { ok: false };
     rejectSend: boolean;
+    /** While set, worktree beginCreation stays pending until resolve() — emulates a slow Host ACK. */
+    beginGate: { promise: Promise<void>; resolve: () => void } | null;
   };
   onPrepareWorktreeSession: ReturnType<typeof vi.fn>;
   sessionActivated: ReturnType<typeof vi.fn>;
@@ -198,6 +200,7 @@ export function renderLateAckComposer(
     workspaceKey: "/workspace",
     beginCreation: (async (_preview, prepareSession) => {
       captured.prepareSession = prepareSession;
+      if (controls.beginGate) await controls.beginGate.promise;
       return controls.beginOutcome;
     }) as ComposerDraftWorktreeIntent["beginCreation"],
   } as ComposerDraftWorktreeIntent;
@@ -210,6 +213,7 @@ export function renderLateAckComposer(
         }
       | { ok: false },
     rejectSend: false,
+    beginGate: null as { promise: Promise<void>; resolve: () => void } | null,
   };
   const onSendText = vi.fn(async () => {
     if (controls.rejectSend) throw new Error("send dispatch failed");

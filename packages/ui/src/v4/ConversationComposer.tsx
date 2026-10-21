@@ -2718,8 +2718,16 @@ function ConversationComposerImpl({
             return;
           }
         }
+        // The queued draft is already claimed (editor cleared), so later content revisions are the
+        // editor's own clear echo or the user's next draft — neither changes submission ownership
+        // (specs/first-submission-lifecycle.md rule 7: composing the next draft while preparation
+        // proceeds must not withdraw the queued submission). Only owner identity decides.
+        const queueOwnerCurrent = isComposerSubmissionOwnerCurrent(
+          { ...submittedOwner, revision: 0 },
+          { ...renderedOwnerRef.current, revision: 0 },
+        );
         if (
-          !isCurrentOwner() &&
+          !queueOwnerCurrent &&
           !(
             renderedOwnerRef.current.workspaceKey === workspaceKey &&
             renderedOwnerRef.current.scopeId === preparedSessionIdForSend
