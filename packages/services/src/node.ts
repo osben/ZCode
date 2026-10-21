@@ -385,6 +385,8 @@ import type { WorkspaceFileSearchFilter } from "./file/workspaceFileMentionFilte
 import { IProjectService } from "./project/contract.js";
 import { IRemoteProjectService } from "./remote-projects/contract.js";
 import { createProjectService } from "./project/index.js";
+import { createTaskGroupService, groupTaskKey } from "#src/task-groups/index.js";
+import { ITaskGroupService } from "./task-groups/contract.js";
 import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
 import { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
@@ -2183,7 +2185,23 @@ export function createLocalServices(options: {
           resolveOffPeakClientConfig: () => codingPlanSubscriptionService.getOffPeakClientConfig(),
           resolveOffPeakTaskService: () => offPeakTaskServiceForAgent,
         };
+  // projectService is created later in this function; these closures only run on demand, after wiring.
+  const prepareProjectExecution = async (projectId: string) => ({
+    ...(await projectService.prepareSession({ projectId })),
+    hostId: options?.projectStorageHostId ?? "local",
+    workspaceIdentity: undefined,
+  });
   const zcodeAgentService = createZCodeAgentService({
+    prepareProjectExecution,
+    prepareSessionCreation: async (target) =>
+      (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
+        task: { ...target, taskId: target.sessionId },
+        projectId: target.projectId,
+        additionalDirectories: target.additionalDirectories,
+      }).additionalDirectories,
+    resolveSessionDirectories: async (target) =>
+      (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
+        .additionalDirectories,
     ...(agentAccountProviderConfigSource
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),
@@ -2583,7 +2601,7 @@ export function createLocalServices(options: {
   const marketingAssets = createMarketingAssetRegistry({
     allowLoopback: ZCODE_ENV === "test" || process.env.NODE_ENV === "development",
   });
-  // Project storage services over the tasks-index database (upstream wiring). Task groups stay unwired (fork single writer).
+  // Project storage services over the tasks-index database (upstream wiring).
   const remoteProjectService = createRemoteProjectService({
     ...options?.remoteProjectConnection,
     controller: !options?.projectStorageHostId || options.projectStorageHostId === "local",
@@ -2600,6 +2618,34 @@ export function createLocalServices(options: {
     repository: () => taskIndexRepo.getProjectRepository(),
     workspaceDirectory: join(projectDataRoot(), "workspace"),
     afterChange: () => broadcastService.send({ channel: "state:projects", payload: {} }),
+  });
+  const taskGroupService = createTaskGroupService({
+    database: () => taskIndexRepo.getOrganizationDatabase(),
+    resolveTasks: async (refs) => {
+      // Read only the owning Host's authoritative tree; grouping never opens connections or starts an Agent.
+      const hostIds = [...new Set(refs.map((task) => task.hostId))];
+      const results = await Promise.all(
+        hostIds.map(async (hostId) => {
+          const tree = await projectService.readTree({ hostId, includeDeletedTasks: true });
+          const facts = new Map(
+            [
+              ...tree.tasks,
+              ...(tree.deletedTasks ?? []).map((task) => ({ ...task, deleted: true })),
+            ].map((task) => [groupTaskKey(task), task]),
+          );
+          return refs
+            .filter((ref) => ref.hostId === hostId)
+            .flatMap((ref) => {
+              const fact = facts.get(groupTaskKey(ref));
+              return fact && fact.hostId === ref.hostId && fact.workspacePath === ref.workspacePath
+                ? [{ ...fact, ...ref }]
+                : [];
+            });
+        }),
+      );
+      return results.flat();
+    },
+    afterChange: () => broadcastService.send({ channel: "state:task-groups", payload: {} }),
   });
   // One-time import of fork sidebar pins into upstream project pins (specs/ui-pins-upstream-migration.md).
   // Startup must not wait on or fail because of it: a failed run is retried on the next start.
@@ -2646,6 +2692,7 @@ export function createLocalServices(options: {
     .register(IZCodeAgentService, zcodeAgentService)
     .register(IZCodeSessionService, zcodeSessionService)
     .register(IProjectService, projectService)
+    .register(ITaskGroupService, taskGroupService)
     .register(IRemoteProjectService, remoteProjectService)
     .register(ICuaPermissionService, cuaPermissionService)
     .register(ICuaPipSessionService, cuaPipSessionService)
