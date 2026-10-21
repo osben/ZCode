@@ -281,6 +281,8 @@ Both the setup card and the created line show the Git command that creates the w
 the collapsible details, derived from the frozen parameters; the created line keeps showing it
 after activation so "expand → see which commands ran" always works. On the created line the command
 is secondary: a muted code box under a small "Command" label with a copy button, below the path.
+Known gap: the created line rebuilds the command from the execution-worktree fact, which has no
+base branch and no "existing branch" flag, so it always shows the `-b` form without a base.
 The details block is indented with a left rule (`ml-2 border-l pl-3.5`) and must not also be
 `w-full`: a full-width box plus the left margin overflows the message column and clips the right
 border of the command box. The same rule applies to the setup card's details.
@@ -301,7 +303,7 @@ needs a Host fact and is out of scope here.
 The trigger line ends with an icon-only "Worktree actions" menu button (tooltip and accessible name)
 instead of a lone open icon. Its items, in order, each hidden when the platform cannot perform it:
 
-- **Reveal in Finder / File Explorer / File Manager** — `IPlatformService.openInFileManager` via the
+- **Open in Finder / File Explorer / File Manager** (per OS, the existing `appHeader.openIn*` labels) — `IPlatformService.openInFileManager` via the
   shared file-context actions, with the directory itself as the target. Shown only when the platform
   can open local files (`canOpenLocalFiles`) and the parent workspace is local; Web, mobile remote
   control and remote workspaces hide it.
