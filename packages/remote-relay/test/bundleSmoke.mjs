@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -137,8 +137,48 @@ try {
   assert.equal(listed[0].device_sid, sid);
   const restored = await socket(restartedJwt, "device", sid);
   assert.equal((await restored.take("auth_ack")).pair_status, "waiting");
+  sockets.splice(0).forEach((item) => item.terminate());
+  await stop();
+
+  // Second leg: the same bundle in device-key mode, with the account variables removed.
+  delete env.ZCODE_REMOTE_RELAY_IDENTITY_ISSUER;
+  delete env.ZCODE_REMOTE_RELAY_IDENTITY_JWKS;
+  env.ZCODE_REMOTE_RELAY_IDENTITY_MODE = "device-key";
+  env.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET = "smoke-enrollment-secret-0123456789abcdef";
+  await start();
+  const deviceKey = generateKeyPairSync("ed25519");
+  const publicKey = deviceKey.publicKey.export({ format: "jwk" }).x;
+  const exchangeBody = (secret) => {
+    const ts = Math.floor(Date.now() / 1000);
+    const nonce = randomBytes(16).toString("base64url");
+    const signed = `zcode-relay-device-session-v1\nzcode-remote-relay\n${publicKey}\n${ts}\n${nonce}`;
+    const signature = sign(null, Buffer.from(signed), deviceKey.privateKey).toString("base64url");
+    return {
+      device_key: { public_key: publicKey, ts, nonce, signature },
+      ...(secret ? { enrollment_secret: secret } : {}),
+    };
+  };
+  const enrolled = await api("POST", "/api/v1/remote/session", {
+    body: exchangeBody(env.ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET),
+  });
+  const again = await api("POST", "/api/v1/remote/session", { body: exchangeBody() });
+  assert.ok(again.jwt);
+  const pairing = await api("POST", "/api/v1/remote/pairing", { bearer: enrolled.jwt, body: {} });
+  const phone = await api("POST", "/api/v1/remote/session", {
+    body: { pairing_code: pairing.code },
+  });
+  const deviceKeyDevice = await api("POST", "/api/v1/remote/device", {
+    bearer: enrolled.jwt,
+    body: { device_mid: "smoke-device-key" },
+  });
+  const phoneList = await api("GET", "/api/v1/remote/device", { bearer: phone.jwt });
+  assert.equal(phoneList[0].device_sid, deviceKeyDevice.device_sid);
+  const oldModeJwt = await fetch(`${base}/api/v1/remote/device`, {
+    headers: { Authorization: `Bearer ${restartedJwt}` },
+  });
+  assert.equal(oldModeJwt.status, 401);
   console.log(
-    "Bundle smoke PASS: readiness, login exchange, device registration, V2 pairing, opaque forwarding, restart persistence",
+    "Bundle smoke PASS: readiness, login exchange, device registration, V2 pairing, opaque forwarding, restart persistence, device-key enrollment and pairing code",
   );
 } finally {
   sockets.forEach((item) => item.terminate());

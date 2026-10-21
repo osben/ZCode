@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
-import type { RelayDeviceRecord, RelayDeviceStore } from "../contract.js";
+import type { RelayDeviceKeyStore, RelayDeviceRecord, RelayDeviceStore } from "../contract.js";
 
 interface WorkerReply {
   type?: string;
@@ -17,7 +17,7 @@ interface WorkerReply {
 export async function createRelayDeviceStore(options: {
   path: string;
   maxRecords?: number;
-}): Promise<RelayDeviceStore> {
+}): Promise<RelayDeviceStore & RelayDeviceKeyStore> {
   const maxRecords = options.maxRecords ?? 100_000;
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1)
     throw new Error("Device record limit must be positive.");
@@ -100,6 +100,13 @@ export async function createRelayDeviceStore(options: {
       })) as RelayDeviceRecord | null;
       if (!record) throw new Error("Device store returned no record.");
       return record;
+    },
+    async isEnrolled(publicKey) {
+      const reply = (await call({ method: "keyExists", publicKey })) as { exists: boolean };
+      return reply.exists;
+    },
+    async enroll(publicKey, createdAt) {
+      await call({ method: "enrollKey", publicKey, createdAt });
     },
     async listForUser(userId) {
       return (await call({ method: "list", userId })) as RelayDeviceRecord[];

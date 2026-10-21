@@ -2,7 +2,12 @@ import {
   parseWebRemoteControlRelayV2HttpRequest,
   type WebRemoteControlRelayV2Device,
 } from "@zcode/shared/web-remote-relay";
-import type { RelayDeviceRecord, RelayDeviceStore, RelaySessionService } from "../contract.js";
+import type {
+  RelayDeviceKeyExchange,
+  RelayDeviceRecord,
+  RelayDeviceStore,
+  RelaySessionService,
+} from "../contract.js";
 import type { RelayRegistry } from "./relay.js";
 import type { RelayTokenStore } from "../domain/tokens.js";
 
@@ -51,7 +56,70 @@ const ROUTES: Record<string, { method: string }[]> = {
   [`${RELAY_API_PREFIX}/device`]: [{ method: "POST" }, { method: "GET" }],
   [`${RELAY_API_PREFIX}/device/delete`]: [{ method: "POST" }],
   [`${RELAY_API_PREFIX}/token`]: [{ method: "POST" }],
+  [`${RELAY_API_PREFIX}/pairing`]: [{ method: "POST" }],
 };
+
+type ExchangeBody =
+  | { kind: "identity-token"; identityToken: string }
+  | { kind: "pairing"; code: string }
+  | { kind: "device-key"; request: RelayDeviceKeyExchange };
+
+const DEVICE_KEY_FIELDS = ["public_key", "ts", "nonce", "signature"];
+const sameKeys = (value: object, expected: readonly string[]) => {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => keys.includes(key));
+};
+
+/** Strict per-mode body parser: a body of the other mode's shape is a parameter error. */
+function parseExchangeBody(
+  body: unknown,
+  mode: RelaySessionService["mode"],
+): ExchangeBody | undefined {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  if (mode === "zai-jwt") {
+    const token = exchangeBody(body);
+    return token === undefined ? undefined : { kind: "identity-token", identityToken: token };
+  }
+  if (sameKeys(body, ["pairing_code"])) {
+    const code = (body as { pairing_code: unknown }).pairing_code;
+    return typeof code === "string" && code.length > 0 && code.length <= 64
+      ? { kind: "pairing", code }
+      : undefined;
+  }
+  const withSecret = sameKeys(body, ["device_key", "enrollment_secret"]);
+  if (!withSecret && !sameKeys(body, ["device_key"])) return undefined;
+  const { device_key: deviceKey, enrollment_secret: secret } = body as {
+    device_key: unknown;
+    enrollment_secret?: unknown;
+  };
+  if (typeof deviceKey !== "object" || deviceKey === null || Array.isArray(deviceKey)) {
+    return undefined;
+  }
+  if (!sameKeys(deviceKey, DEVICE_KEY_FIELDS)) return undefined;
+  const { public_key: publicKey, ts, nonce, signature } = deviceKey as Record<string, unknown>;
+  if (
+    typeof publicKey !== "string" ||
+    typeof nonce !== "string" ||
+    typeof signature !== "string" ||
+    typeof ts !== "number" ||
+    publicKey.length > 64 ||
+    nonce.length > 128 ||
+    signature.length > 128
+  ) {
+    return undefined;
+  }
+  if (withSecret && (typeof secret !== "string" || secret.length > 1024)) return undefined;
+  return {
+    kind: "device-key",
+    request: {
+      publicKey,
+      ts,
+      nonce,
+      signature,
+      ...(withSecret ? { enrollmentSecret: secret as string } : {}),
+    },
+  };
+}
 
 function exchangeBody(body: unknown): string | undefined {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
@@ -86,12 +154,24 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
       return fail(405, 405, "method not allowed");
     }
     if (request.path === `${RELAY_API_PREFIX}/session`) {
-      const identityToken = exchangeBody(request.body);
-      if (request.bodyError || identityToken === undefined)
-        return fail(400, 3001, "parameter error");
-      const issued = session.exchange(identityToken);
+      const parsed = request.bodyError ? undefined : parseExchangeBody(request.body, session.mode);
+      if (!parsed) return fail(400, 3001, "parameter error");
+      if (parsed.kind === "device-key") {
+        const outcome = await session.exchangeDeviceKey(parsed.request);
+        if (outcome.status === "not-enrolled") return fail(401, 4012, "not enrolled");
+        if (outcome.status === "busy") return fail(503, 503, "unavailable");
+        if (outcome.status !== "ok") return fail(401, 401, "unauthorized");
+        return ok({ jwt: outcome.session.jwt, expires_in: outcome.session.expiresIn });
+      }
+      const issued =
+        parsed.kind === "pairing"
+          ? session.exchangePairing(parsed.code)
+          : session.exchange(parsed.identityToken);
       if (!issued) return fail(401, 401, "unauthorized");
       return ok({ jwt: issued.jwt, expires_in: issued.expiresIn });
+    }
+    if (request.path === `${RELAY_API_PREFIX}/pairing` && session.mode !== "device-key") {
+      return fail(404, 404, "not found");
     }
 
     const userId = request.bearer ? session.verify(request.bearer) : undefined;
@@ -102,6 +182,15 @@ export function createRelayHttpApi(dependencies: RelayHttpApiDependencies): Rela
       return ok(records.map(view));
     }
     if (request.bodyError) return fail(400, 3001, "parameter error");
+
+    if (request.path === `${RELAY_API_PREFIX}/pairing`) {
+      // Only the enrolled device identity may mint codes; a pairing-derived JWT cannot renew itself.
+      const owner = request.bearer ? session.pairingOwner(request.bearer) : undefined;
+      if (!owner) return fail(401, 401, "unauthorized");
+      const issued = session.createPairing(owner);
+      if (!issued) return fail(429, 4029, "too many outstanding pairing codes");
+      return ok({ code: issued.code, expires_in: issued.expiresIn });
+    }
 
     if (request.path === `${RELAY_API_PREFIX}/device`) {
       const parsed = parseWebRemoteControlRelayV2HttpRequest("register", request.body);

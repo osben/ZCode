@@ -8,7 +8,9 @@ COPY packages/shared ./packages/shared
 COPY packages/model-option-map ./packages/model-option-map
 RUN pnpm install --frozen-lockfile --filter @zcode/remote-relay... --ignore-scripts
 RUN pnpm --filter @zcode/remote-relay build
-RUN mkdir -p /out/node_modules && cp -Lr packages/remote-relay/node_modules/ws /out/node_modules/ws
+RUN mkdir -p /out/node_modules
+# Resolve ws the way Node does instead of assuming a symlink path: pnpm may hoist or link it differently.
+RUN cd packages/remote-relay && node -e "const {dirname}=require('node:path');const fs=require('node:fs');const src=dirname(require.resolve('ws/package.json'));fs.cpSync(fs.realpathSync(src),'/out/node_modules/ws',{recursive:true,dereference:true});"
 
 FROM node:26.11.1-bookworm-slim
 WORKDIR /app

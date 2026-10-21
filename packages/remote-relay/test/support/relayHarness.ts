@@ -12,7 +12,7 @@ import { createRelayServer } from "../../src/adapters/nodeServer.js";
 import { createRelayDeviceStore } from "../../src/adapters/deviceStore.js";
 import { createRelaySessionService } from "../../src/adapters/session.js";
 import type { RelayServerOptions, RelayServer } from "../../src/contract.js";
-import { identityKey, ISSUER, loginJwt, relaySigningKey } from "./keys.js";
+import { ENROLLMENT_SECRET, identityKey, ISSUER, loginJwt, relaySigningKey } from "./keys.js";
 
 export interface HttpResult {
   status: number;
@@ -49,24 +49,33 @@ export const DEFAULT_TEST_LIMITS = {
 
 /** Starts a real relay on loopback with a temporary SQLite file and a fixture login issuer. */
 export async function startRelay(
-  overrides: Partial<RelayServerOptions> & { allowedOrigins?: readonly string[] } = {},
+  overrides: Partial<RelayServerOptions> & {
+    allowedOrigins?: readonly string[];
+    identityMode?: "zai-jwt" | "device-key";
+    /** Shared relay signing key so two harnesses can prove cross-mode JWT rejection. */
+    signingKey?: Record<string, unknown>;
+  } = {},
 ): Promise<RelayHarness> {
+  const { identityMode = "zai-jwt", signingKey, ...serverOverrides } = overrides;
   const directory = await mkdtemp(join(tmpdir(), "relay-harness-"));
   const identity = identityKey("EdDSA", "login-1");
+  const store = await createRelayDeviceStore({ path: join(directory, "relay.sqlite") });
   const session = createRelaySessionService({
-    signingKeys: [relaySigningKey("relay-1").privateJwk],
+    signingKeys: [signingKey ?? relaySigningKey("relay-1").privateJwk],
     ttlSeconds: 3600,
-    identity: { issuer: ISSUER, userClaim: "sub", keys: [identity.publicJwk] },
+    identity:
+      identityMode === "device-key"
+        ? { mode: "device-key", enrollmentSecret: ENROLLMENT_SECRET, keys: store }
+        : { issuer: ISSUER, userClaim: "sub", keys: [identity.publicJwk] },
     now: () => Date.now(),
   });
-  const store = await createRelayDeviceStore({ path: join(directory, "relay.sqlite") });
   const server = await createRelayServer({
     ...DEFAULT_TEST_LIMITS,
     port: 0,
     host: "127.0.0.1",
     store,
     session,
-    ...overrides,
+    ...serverOverrides,
   });
   const http = server.url.replace(/^ws:/, "http:").replace(/\/api\/v1\/remote\/ws2$/, "");
 

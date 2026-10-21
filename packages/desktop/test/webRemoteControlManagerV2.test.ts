@@ -26,6 +26,8 @@ async function fixture(
   options: Partial<FakeRelayV2Options> = {},
   initialSettings: Partial<AppSettings> = {},
   deviceSaveError?: Error,
+  pairing?: { issueCode: (input: { relayOrigin: string }) => Promise<string | undefined> },
+  accountAuthIndependent = false,
 ) {
   const relay = await createFakeRelayV2({
     users: { jwt: "user", other: "other-user" },
@@ -66,6 +68,8 @@ async function fixture(
       relayWsUrl: endpoint.replace("http", "ws") + "/api/v1/remote/ws2",
     }),
     getLogin: readLogin,
+    ...(pairing === undefined ? {} : { pairing }),
+    ...(accountAuthIndependent ? { accountAuthIndependent } : {}),
     deviceStorage,
     deviceMid: "desktop-mid",
     deviceName: "Desktop name",
@@ -434,6 +438,36 @@ describe("V2 manager public API with real relay", () => {
       1,
     );
   });
+  it("adds the pk pairing code to the QR only when a device-key pairing source is configured", async () => {
+    const issueCode = vi.fn(async () => "pairing-code-0123456789");
+    const f = await fixture({}, {}, undefined, { issueCode });
+    const result = await f.start();
+    expect(new URL(result.qrUrl).searchParams.get("pk")).toBe("pairing-code-0123456789");
+    expect(issueCode).toHaveBeenCalledWith(
+      expect.objectContaining({ relayOrigin: f.relay.httpUrl }),
+    );
+    const plain = await fixture();
+    expect(new URL((await plain.start()).qrUrl).searchParams.has("pk")).toBe(false);
+  });
+
+  it("fails the start instead of publishing a QR the phone cannot sign in with", async () => {
+    const f = await fixture({}, {}, undefined, { issueCode: async () => undefined });
+    await expect(f.start()).rejects.toMatchObject({ reason: "relay-unavailable" });
+  });
+
+  it("keeps a device-key session running when the z.ai account signs out", async () => {
+    const f = await fixture(
+      {},
+      {},
+      undefined,
+      { issueCode: async () => "pairing-code-0123456789" },
+      true,
+    );
+    await f.start();
+    await f.manager.notifyAuthStateChanged(1, { state: "signed-out" });
+    expect(f.manager.getStatus(1)).toMatchObject({ status: "running" });
+  });
+
   it("no JWT fails explicitly without registering or connecting", async () => {
     const f = await fixture();
     f.setLogin(undefined);

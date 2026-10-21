@@ -470,3 +470,134 @@ register and list, cross-account delete rejection, online delete rejection, toke
 orders, replacement with KICKED and a late close that must not drop the new owner, DEVICE_OFFLINE, waiting,
 invalid frames, and the auth deadline (short value in tests). Every server frame is parsed with the shared
 V2 schemas in the tests.
+
+## 15. Identity modes (`ZCODE_REMOTE_RELAY_IDENTITY_MODE`)
+
+Problem: section 12.1 makes the relay depend on a z.ai login JWT and its JWKS. The fork owner does not
+operate z.ai, and fork users may have no z.ai login (API-key only). The relay therefore supports two
+identity modes, chosen by environment, with identical relay JWT format, routes, `ws2` protocol and device
+lifecycle. Only the way a client proves who it is at `POST /api/v1/remote/session` differs.
+
+### 15.1 Modes and selection
+
+| Mode         | Caller proves identity with                                  | Relay user id (`sub`)                     |
+| ------------ | ------------------------------------------------------------ | ----------------------------------------- |
+| `zai-jwt`    | z.ai login JWT in `{identity_token}` (sections 12.1 to 12.3) | the configured user claim, unchanged      |
+| `device-key` | Ed25519 device key plus enrollment secret (15.2)             | `dk:` + base64url(sha256(raw public key)) |
+
+- `ZCODE_REMOTE_RELAY_IDENTITY_MODE` is `zai-jwt` or `device-key`. Unknown values stop startup, naming the variable.
+- Unset: `zai-jwt` when `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER` or `_JWKS` is present (the existing per-variable
+  errors keep applying); otherwise startup fails closed naming `ZCODE_REMOTE_RELAY_IDENTITY_MODE`. There is
+  no silent fallback to an open relay.
+- `ISSUER`, `JWKS`, `AUDIENCE`, `USER_CLAIM` are required (ISSUER, JWKS) only in `zai-jwt` mode. In
+  `device-key` mode they are ignored and the relay logs one warning that names the variables, never values.
+- `device-key` requires `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, at least 32 characters. Missing or short stops
+  startup, naming the variable only.
+- `zai-jwt` behavior is unchanged. The `dk:` prefix is reserved: `zai-jwt` mode rejects login subjects that
+  start with `dk:` and rejects relay JWTs whose `sub` starts with `dk:`; `device-key` mode rejects relay JWTs
+  whose `sub` lacks it. Switching modes on one relay (same signing keys) therefore invalidates every
+  previously issued relay JWT of the other mode.
+
+### 15.2 `device-key` exchange
+
+Owner of the key pair: the client install. Owner of enrolled public keys: the relay SQLite file, table
+`fork_relay_device_keys(public_key TEXT PRIMARY KEY, created_at INTEGER NOT NULL) STRICT`, created additively
+(`CREATE TABLE IF NOT EXISTS`); the existing `relay_devices` table is untouched. Enrolled keys count against
+`ZCODE_RELAY_MAX_REGISTRATIONS` separately from devices.
+
+`POST /api/v1/remote/session` body (exact keys, no others):
+
+```json
+{
+  "device_key": { "public_key": "...", "ts": 1800000000, "nonce": "...", "signature": "..." },
+  "enrollment_secret": "..."
+}
+```
+
+- `public_key`: raw Ed25519 key, base64url, exactly 43 characters. `ts`: integer Unix seconds. `nonce`:
+  base64url, 16 to 64 characters. `signature`: Ed25519 over the UTF-8 bytes of
+  `zcode-relay-device-session-v1\nzcode-remote-relay\n<public_key>\n<ts>\n<nonce>` (base64url, 86 characters).
+  Binding the public key into the signed bytes rejects key substitution.
+- `enrollment_secret` is optional and only used for a key the relay has not enrolled.
+
+Relay steps, in order; every failure before the last step changes no state:
+
+1. Strict body parse (a login-JWT body is a 400 in this mode, a device-key body is a 400 in `zai-jwt` mode).
+2. `|now - ts| <= 60` seconds, which rejects stale and future requests.
+3. Verify the signature (proof of possession).
+4. Unknown key: no secret gives 401 / envelope code 4012 ("not enrolled"); a secret is compared in constant
+   time (both sides sha256-hashed, then `timingSafeEqual`, so length never short-circuits); a mismatch is the
+   same 401/401 as a bad signature.
+5. Replay cache `(public_key, nonce)`, kept 120 s. A seen pair is 401. The cache is capped; when full the
+   request fails with 503 and nothing is evicted (eviction would let an attacker flush it). It is in memory,
+   so a relay restart clears it: a captured request can be replayed within 60 s of its `ts` after a restart.
+   Accepted, because the replayed result is a relay JWT for the same key that the attacker could not renew.
+6. Enroll the key if unknown (secret already verified), then issue the relay JWT with the derived `sub`.
+
+The shared per-IP limiter (`ZCODE_RELAY_REGISTRATIONS_PER_MINUTE`) already covers `/session`, so enrollment
+and secret guessing are rate limited. The secret and signatures never appear in logs, errors or responses.
+
+### 15.3 Pairing the phone without a z.ai login
+
+The phone (`packages/web`) has no key and no z.ai login in `device-key` mode. It joins the Desktop's `dk:`
+identity through a short-lived pairing code carried by the QR.
+
+- `POST /api/v1/remote/pairing` (relay JWT, `device-key` mode only; 404 in `zai-jwt` mode) returns
+  `{code, expires_in: 300}`. `code` is 16 random bytes, base64url (22 characters, 128 bits).
+- The relay keeps only `sha256(code) -> {userId, expiresAt}` in memory, at most 8 unexpired codes per user
+  and 10000 overall (429 / 4029 beyond the per-user cap). A restart drops them, which only forces a re-scan.
+- `POST /session` accepts `{"pairing_code": "<code>"}` (exact key) in `device-key` mode. A valid unexpired
+  code is consumed atomically and yields a relay JWT for the same `dk:` user id, so `device`, `token`
+  and `ws2` behave exactly as for the Desktop. Reuse, expiry or an unknown code is 401 / 401. The same per-IP
+  limiter applies.
+- The phone's relay JWT lasts `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` and cannot be renewed with the spent
+  code; after expiry the phone re-scans a QR (the Desktop issues a fresh code each time the QR is shown).
+- A phone that holds a pairing JWT has the same authority as the Desktop identity (list, register,
+  delete devices, request tokens). Treat the QR as a credential while it is valid.
+
+QR: `buildWebRemoteControlExternalQrUrl` accepts an optional `pairingCode` and writes it as `pk`. Absent
+option means a URL byte-identical to today's, so `zai-jwt` QR codes stay compatible with upstream.
+`parseWebRemoteControlExternalQrParams` returns `pairingCode` only when `pk` is non-empty; a QR is
+valid with or without it. The web entry removes `pk` from the address bar (`replaceHref`) as soon as it
+has read it, and never logs it.
+
+### 15.4 Clients
+
+Desktop (owner: `packages/desktop/src/main/web-remote-relay`):
+
+- Mode: `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` (`zai-jwt` default, or `device-key`). Never inferred.
+  `device-key` also needs `ZCODE_WEB_REMOTE_CONTROL_RELAY_ENROLLMENT_SECRET` (read from env, or from the
+  `fork_`-prefixed credential entry when set there); missing secret is reported as `auth-required`.
+- Key pair: generated once per install, single-flight, stored through the existing web remote credential
+  service under the key `fork_web-remote-control:device-key` (never `setting.json`).
+- In `device-key` mode the login gate is replaced by the device identity (user id = derived `dk:` id), so an
+  API-key-only user can start remote control. On 4012 the bearer retries once with the secret.
+- The relay JWT cache is keyed by `(relayOrigin, user id)`. The QR gets a fresh pairing code from
+  `/pairing` each time it is built and every 240 s while shown; the start result waits for the first one,
+  and a relay that refuses to issue it fails the start instead of showing a QR the phone cannot use.
+
+Pairing-derived relay JWTs carry the claim `amr: ["pairing"]`; `POST /pairing` refuses them, so a phone
+cannot mint codes to renew itself or exhaust the Desktop's per-user cap. The claim is the only addition to
+the JWT; `iss`, `aud`, `sub`, `iat`, `exp` and the format are unchanged and clients treat the token as opaque.
+
+Desktop sign-out of a z.ai account does not end a `device-key` session (`accountAuthIndependent`), and the
+mode may be baked at build time (`ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE`, runtime env wins) for apps
+launched without shell env. The enrollment secret is never baked: it reaches the client only through env or
+the `fork_web-remote-control:enrollment-secret` credential entry (no settings UI yet).
+
+Web (owner: `packages/web/src/web-remote-control`): when the URL has `pk` and no z.ai JWT, the entry
+exchanges it at `/session`, keeps the relay JWT in memory (not storage), and uses it for the device list
+and tokens. With a z.ai JWT present, behavior is unchanged.
+
+### 15.5 Acceptance scenarios
+
+Relay (tests in `packages/remote-relay/test`): valid enrollment then re-login without secret; replayed
+nonce; expired and future `ts`; wrong secret with equal and unequal length; unenrolled key without secret
+(4012); signature by key B under key A's public key; modified `ts`/`nonce` after signing; login-JWT body
+in `device-key` mode and device-key body in `zai-jwt` mode; relay JWT crossing modes in both directions with
+the same signing key; replay-cache full; pairing code reuse, expiry, unknown code, per-user cap, `/pairing`
+without bearer and in `zai-jwt` mode; startup failures (no mode and no zai variables, unknown mode, missing
+and short secret); ignored zai variables warn by name only; secrets absent from responses and logs;
+`zai-jwt` suite unchanged. Bundle smoke covers both modes. Client: bearer unit tests for device-key
+exchange, 4012 retry, single-flight key generation; shared QR builder/parser tests for `pk`; web entry test for
+pairing exchange and address-bar cleanup.

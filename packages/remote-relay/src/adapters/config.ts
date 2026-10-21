@@ -8,9 +8,21 @@ export interface RelayRuntimeConfig {
   session: {
     signingKeys: Jwk[];
     ttlSeconds: number;
-    identity: { issuer: string; audience?: string; userClaim: string; keys: Jwk[] };
+    identity:
+      | { mode: "zai-jwt"; issuer: string; audience?: string; userClaim: string; keys: Jwk[] }
+      | { mode: "device-key"; enrollmentSecret: string };
   };
+  /** Startup warnings. They name variables only, never values. */
+  warnings: string[];
 }
+
+const MIN_ENROLLMENT_SECRET_LENGTH = 32;
+const ZAI_IDENTITY_VARIABLES = [
+  "ZCODE_REMOTE_RELAY_IDENTITY_ISSUER",
+  "ZCODE_REMOTE_RELAY_IDENTITY_JWKS",
+  "ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE",
+  "ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM",
+] as const;
 
 /**
  * Parses a JSON array of JWK objects, or a JWK set (`{"keys": [...]}`) when `allowSet` is true.
@@ -74,8 +86,49 @@ export function readRelayConfig(env: Record<string, string | undefined>): RelayR
   const ttlSeconds = integer("ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS", 3600);
   if (ttlSeconds > 86_400)
     throw new Error("Invalid relay configuration: ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS");
-  const audience = optional("ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE");
+  const warnings: string[] = [];
+  const modeValue = optional("ZCODE_REMOTE_RELAY_IDENTITY_MODE");
+  if (modeValue !== undefined && modeValue !== "zai-jwt" && modeValue !== "device-key") {
+    throw new Error(
+      "Invalid relay configuration: ZCODE_REMOTE_RELAY_IDENTITY_MODE must be zai-jwt or device-key.",
+    );
+  }
+  const mode =
+    modeValue ??
+    (optional("ZCODE_REMOTE_RELAY_IDENTITY_ISSUER") || optional("ZCODE_REMOTE_RELAY_IDENTITY_JWKS")
+      ? "zai-jwt"
+      : undefined);
+  if (mode === undefined)
+    throw new Error("Missing relay configuration: ZCODE_REMOTE_RELAY_IDENTITY_MODE");
+  let identity: RelayRuntimeConfig["session"]["identity"];
+  if (mode === "device-key") {
+    const enrollmentSecret = required("ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET");
+    if (enrollmentSecret.length < MIN_ENROLLMENT_SECRET_LENGTH) {
+      throw new Error(
+        `Invalid relay configuration: ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET must be at least ${MIN_ENROLLMENT_SECRET_LENGTH} characters.`,
+      );
+    }
+    for (const name of ZAI_IDENTITY_VARIABLES) {
+      if (optional(name) !== undefined)
+        warnings.push(`${name} is ignored in device-key identity mode.`);
+    }
+    identity = { mode: "device-key", enrollmentSecret };
+  } else {
+    const audience = optional("ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE");
+    identity = {
+      mode: "zai-jwt",
+      issuer: required("ZCODE_REMOTE_RELAY_IDENTITY_ISSUER"),
+      ...(audience === undefined ? {} : { audience }),
+      userClaim: optional("ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM") ?? "sub",
+      keys: jwkArray(
+        "ZCODE_REMOTE_RELAY_IDENTITY_JWKS",
+        required("ZCODE_REMOTE_RELAY_IDENTITY_JWKS"),
+        true,
+      ),
+    };
+  }
   return {
+    warnings,
     server: {
       host,
       port,
@@ -97,16 +150,7 @@ export function readRelayConfig(env: Record<string, string | undefined>): RelayR
         required("ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS"),
       ),
       ttlSeconds,
-      identity: {
-        issuer: required("ZCODE_REMOTE_RELAY_IDENTITY_ISSUER"),
-        ...(audience === undefined ? {} : { audience }),
-        userClaim: optional("ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM") ?? "sub",
-        keys: jwkArray(
-          "ZCODE_REMOTE_RELAY_IDENTITY_JWKS",
-          required("ZCODE_REMOTE_RELAY_IDENTITY_JWKS"),
-          true,
-        ),
-      },
+      identity,
     },
   };
 }

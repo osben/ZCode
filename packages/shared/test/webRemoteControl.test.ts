@@ -91,6 +91,27 @@ describe("external relay QR helpers", () => {
     ).toBe("https://zcode.z.ai/remote?sid=sid-1&mid=mid-1&name=MacBook&app_version=1.5.0");
   });
 
+  it("appends the optional pairing code as pk and stays byte-identical without it", () => {
+    const base = { baseUrl: "https://zcode.z.ai/remote", deviceSid: "sid-1" };
+    expect(buildWebRemoteControlExternalQrUrl(base)).toBe("https://zcode.z.ai/remote?sid=sid-1");
+    expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "  " })).toBe(
+      "https://zcode.z.ai/remote?sid=sid-1",
+    );
+    expect(buildWebRemoteControlExternalQrUrl({ ...base, pairingCode: "abc_DEF-123" })).toBe(
+      "https://zcode.z.ai/remote?sid=sid-1&pk=abc_DEF-123",
+    );
+  });
+
+  it("parses pk as the pairing code only when it is non-empty", () => {
+    expect(parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=s&pk=abc"))).toEqual({
+      deviceSid: "s",
+      pairingCode: "abc",
+    });
+    expect(parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=s&pk="))).toEqual({
+      deviceSid: "s",
+    });
+  });
+
   it("parses V2 routing hints without carrying theme state", () => {
     expect(
       parseWebRemoteControlExternalQrParams(new URLSearchParams("sid=sid-1&mid=mid-1&theme=light")),

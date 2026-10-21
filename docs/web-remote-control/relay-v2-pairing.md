@@ -64,6 +64,12 @@ sequenceDiagram
 
 Relay 不保有 task、workspace、stream 或已提交输入；桌面 `desktop-continuous` 与手机 `web-remote-replayable` 的 owner、snapshot/gap 恢复边界不变。
 
+## 自建 relay 的身份模式与二维码 `pk`（fork）
+
+自建 relay 用 `ZCODE_REMOTE_RELAY_IDENTITY_MODE` 选择 `zai-jwt`（z.ai 登录 JWT，默认）或 `device-key`（每台安装自生成 Ed25519 密钥，无需 z.ai 登录）。JWT、路由、`ws2` 与配对流程不变，详见 `specs/relay-v2-migration.md` 第 15 节与 `packages/remote-relay/README.md`。
+
+`device-key` 模式下手机没有密钥也没有 z.ai 登录，二维码额外携带可选参数 `pk`：桌面向 `POST /api/v1/remote/pairing`（relay JWT）申请的一次性配对码，128 位随机、5 分钟有效、relay 只保存哈希。手机用 `POST /api/v1/remote/session {"pairing_code": "..."}` 换取同一 `dk:` 用户的 relay JWT，之后 `device`、`token`、`ws2` 与桌面完全一致。`pk` 是凭据：入口读取后立即用 `replaceHref` 从地址栏移除，不写日志、不进存储；桌面每 4 分钟刷新二维码内的配对码。`zai-jwt` 模式不带 `pk`，二维码与上游逐字节一致，没有 `pk` 的二维码照常解析。配对 JWT 过期后（默认 1 小时）无法用已消费的码续期，手机需重新扫码并显示"会话已过期"。
+
 ## 二维码最终契约
 
 `buildWebRemoteControlExternalQrUrl` 仅接受 V2 的 `sid`、`mid`、`name`、`app_version` 路由提示，均可选；输出清除 base URL 中残留的 `hash`/`t`。

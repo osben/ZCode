@@ -59,6 +59,11 @@ export interface WebRemoteControlEntryOptions {
   // Localized re-pair notice for QR links carrying the V1 `hash`/`t` credential; defaults to the locale-based copy.
   repairNotice?: string;
   token(jwt: string, signal: AbortSignal): Promise<string>;
+  /**
+   * Fork device-key relay mode: exchanges the QR `pk` pairing code for a relay JWT, so a phone with
+   * no z.ai login can reach the Desktop's devices. Omitted when the build does not support it.
+   */
+  pairing?: { exchange(code: string, signal: AbortSignal): Promise<string> };
   connect(connection: WebRemoteControlEntryConnection): void;
   onView(view: WebRemoteControlEntryView): void;
 }

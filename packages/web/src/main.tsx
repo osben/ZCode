@@ -78,6 +78,7 @@ import {
   WebRemoteControlEntry,
   isWebRemoteControlOAuthCallback,
   type WebRemoteControlEntryConnection,
+  createWebRemoteControlV2PairingClient,
   createWebRemoteControlV2TokenClient,
   readKnownDevices,
   createWebRemoteControlDeviceClient,
@@ -400,6 +401,7 @@ const remoteEntry = new WebRemoteControlEntry({
   },
   loginOptions: { devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG) },
   token: createWebRemoteControlV2TokenClient(window.location.origin),
+  pairing: createWebRemoteControlV2PairingClient(window.location.origin),
   connect: (connection) => {
     void bootstrapExternalRelayWebRemoteControl(connection);
   },

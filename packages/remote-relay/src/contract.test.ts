@@ -15,7 +15,12 @@ it("composes an explicitly supplied store and session service without workspace 
     close: async () => {},
   };
   const session = {
+    mode: "zai-jwt" as const,
     exchange: () => undefined,
+    exchangeDeviceKey: async () => ({ status: "denied" as const }),
+    exchangePairing: () => undefined,
+    createPairing: () => undefined,
+    pairingOwner: () => undefined,
     verify: () => undefined,
   };
   expect(relayExample(store, session)).toEqual({ store, session, host: "127.0.0.1", port: 0 });

@@ -13,6 +13,7 @@ declare const __ZCODE_TELEMETRY_REPORT_ENDPOINT__: string;
 declare const __ZCODE_AUTO_UPDATE_ENABLED__: boolean;
 declare const __ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL__: string;
 declare const __ZCODE_WEB_REMOTE_CONTROL_URL__: string;
+declare const __ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE__: string;
 
 export function normalizeZCodeEnv(value: string | undefined): ZCodeEnv {
   return value?.trim().toLowerCase() === "production" ? "production" : "test";
@@ -73,6 +74,12 @@ export const ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT: string =
 /** Baked default `/remote/v4/` page URL encoded into the QR; the runtime `ZCODE_WEB_REMOTE_CONTROL_URL` env overrides it. */
 export const ZCODE_WEB_REMOTE_CONTROL_URL_DEFAULT: string =
   typeof __ZCODE_WEB_REMOTE_CONTROL_URL__ !== "undefined" ? __ZCODE_WEB_REMOTE_CONTROL_URL__ : "";
+
+/** Baked relay identity mode (`zai-jwt` or `device-key`); the runtime `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` env overrides it. */
+export const ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT: string =
+  typeof __ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE__ !== "undefined"
+    ? __ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE__
+    : "";
 
 /** Maps local runtime state and compile-time ZCODE_ENV to an environment label recognized by the ARMS console. */
 export function mapZCodeEnvToArmsRumEnv(runtimeEnv: ZCodeRuntimeEnv): ArmsRumEnv {

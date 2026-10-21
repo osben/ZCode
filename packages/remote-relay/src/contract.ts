@@ -1,3 +1,4 @@
+import type { RelayDeviceKeySessionOperations, RelaySession } from "./deviceKeyContract.js";
 import type {
   WebRemoteControlRelayV2Device,
   WebRemoteControlRelayV2Role,
@@ -22,17 +23,14 @@ export interface RelayDeviceStore {
   close(): Promise<void>;
 }
 
-export interface RelaySession {
-  jwt: string;
-  expiresIn: number;
-}
-
 /**
  * Relay-issued JWTs and the one-time exchange of the account login JWT.
  * Implemented in adapters/session.ts; the app layer depends only on this interface.
  */
-export interface RelaySessionService {
-  /** Verifies the account identity token and mints a relay JWT, or returns undefined. */
+export interface RelaySessionService extends RelayDeviceKeySessionOperations {
+  /** Identity mode this service was built for; the HTTP layer accepts only that mode's body. */
+  readonly mode: "zai-jwt" | "device-key";
+  /** Verifies the account identity token and mints a relay JWT, or returns undefined. zai-jwt mode only. */
   exchange(identityToken: string): RelaySession | undefined;
   /** Returns the relay user id for a valid relay JWT, or undefined. */
   verify(jwt: string): string | undefined;
@@ -46,6 +44,13 @@ export interface RelayPeer {
 import type { RelayLogger } from "./domain/logger.js";
 
 export type { RelayLogger } from "./domain/logger.js";
+export type {
+  RelaySession,
+  RelayDeviceKeyExchange,
+  RelayDeviceKeyResult,
+  RelayDeviceKeySessionOperations,
+  RelayDeviceKeyStore,
+} from "./deviceKeyContract.js";
 
 export interface RelayServerOptions {
   store: RelayDeviceStore;

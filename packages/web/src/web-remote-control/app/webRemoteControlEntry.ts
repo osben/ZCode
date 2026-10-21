@@ -51,6 +51,8 @@ function resolveAutoConnectSid(
 /** Only handles admission before connecting; workspace/recovery after pairing still belongs to the existing bootstrap. */
 export class WebRemoteControlEntry {
   private scope = new AbortController();
+  /** Relay JWT from a device-key pairing code. Memory only: a reload requires a fresh QR. */
+  private pairedJwt: string | undefined;
   private list:
     | {
         view: WebRemoteControlDeviceListView;
@@ -91,7 +93,24 @@ export class WebRemoteControlEntry {
       });
       return;
     }
-    if (!this.options.auth.getZCodeJwtToken()) {
+    const pairingCode = url.searchParams.get("pk")?.trim();
+    if (pairingCode !== undefined) {
+      // The pairing code is a credential: take it out of the address bar and history before anything else.
+      url.searchParams.delete("pk");
+      this.options.replaceHref(url.href);
+    }
+    if (!this.options.auth.getZCodeJwtToken() && pairingCode && this.options.pairing) {
+      try {
+        this.pairedJwt = await this.options.pairing.exchange(pairingCode, this.scope.signal);
+      } catch {
+        if (this.scope.signal.aborted) return;
+        // A spent or expired code cannot be retried; the phone has to scan a fresh QR.
+        this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+        return;
+      }
+      if (this.scope.signal.aborted) return;
+    }
+    if (!this.bearer()) {
       this.options.onView({ kind: "login" });
       return;
     }
@@ -105,6 +124,11 @@ export class WebRemoteControlEntry {
       return;
     }
     this.connect({ ...params, deviceSid: params.deviceSid });
+  }
+
+  /** The z.ai login JWT when present, otherwise the relay JWT obtained from a pairing code. */
+  private bearer(): string | null {
+    return this.options.auth.getZCodeJwtToken() ?? this.pairedJwt ?? null;
   }
 
   private async openDevices(autoConnect: boolean): Promise<void> {
@@ -141,7 +165,7 @@ export class WebRemoteControlEntry {
     const list = this.list;
     if (!list) return;
     if (list.request) return list.request;
-    const jwt = this.options.auth.getZCodeJwtToken();
+    const jwt = this.bearer();
     if (!jwt) return this.switchAccount();
     if (list.acceptedJwt && list.acceptedJwt !== jwt) return this.start();
     const { signal } = this.scope;
@@ -152,7 +176,7 @@ export class WebRemoteControlEntry {
         const devices = await this.options.devices(jwt, signal);
         if (signal.aborted) return;
         // Responses received after an account change must not provide device or auto-connect basis for the new account.
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+        if (this.bearer() !== jwt) return this.start();
         list.acceptedJwt = jwt;
         // First read the cache to fill in names/platforms for offline records, then write back this online record; they are display preferences only and do not enter admission.
         const knownDevices = readKnownDevices(this.options.storage);
@@ -167,7 +191,7 @@ export class WebRemoteControlEntry {
         else this.options.onView(list.view);
       } catch (error) {
         if (signal.aborted) return;
-        if (this.options.auth.getZCodeJwtToken() !== jwt) return this.start();
+        if (this.bearer() !== jwt) return this.start();
         if (
           error instanceof WebRemoteControlV2ConnectionError &&
           error.reason === "auth-required"
@@ -186,7 +210,7 @@ export class WebRemoteControlEntry {
 
   selectDevice(sid: string): void {
     if (!this.list || this.list.view.loading || this.list.view.error) return;
-    if (this.list.acceptedJwt !== this.options.auth.getZCodeJwtToken()) {
+    if (this.list.acceptedJwt !== this.bearer()) {
       void this.start();
       return;
     }
@@ -234,7 +258,7 @@ export class WebRemoteControlEntry {
       params,
       signal,
       getToken: (tokenSignal) => {
-        const jwt = this.options.auth.getZCodeJwtToken();
+        const jwt = this.bearer();
         if (!jwt) return Promise.reject(new WebRemoteControlV2ConnectionError("auth-required"));
         return this.options.token(jwt, tokenSignal);
       },
@@ -243,7 +267,15 @@ export class WebRemoteControlEntry {
       },
       onFailure: (failure) => {
         if (signal.aborted) return;
-        if (failure.reason === "auth-required") void this.switchAccount();
+        if (
+          failure.reason === "auth-required" &&
+          this.pairedJwt &&
+          !this.options.auth.getZCodeJwtToken()
+        ) {
+          // A paired relay JWT cannot be renewed with the spent code; ask for a new QR instead of the login page.
+          this.pairedJwt = undefined;
+          this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+        } else if (failure.reason === "auth-required") void this.switchAccount();
         else this.options.onView({ kind: "failure", failure });
       },
     });
@@ -260,6 +292,11 @@ export class WebRemoteControlEntry {
   async switchAccount(): Promise<void> {
     this.reset();
     const { signal } = this.scope;
+    if (this.pairedJwt && !this.options.auth.getZCodeJwtToken()) {
+      this.pairedJwt = undefined;
+      this.options.onView({ kind: "failure", failure: { reason: "session-expired" } });
+      return;
+    }
     await this.options.auth.logout();
     if (!signal.aborted) this.options.onView({ kind: "login" });
   }
