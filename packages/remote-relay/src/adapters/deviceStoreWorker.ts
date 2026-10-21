@@ -18,6 +18,8 @@ type Request =
   | { id: number; method: "list"; userId: string }
   | { id: number; method: "get"; deviceSid: string }
   | { id: number; method: "remove"; deviceSid: string }
+  | { id: number; method: "keyExists"; publicKey: string }
+  | { id: number; method: "enrollKey"; publicKey: string; createdAt: number }
   | { id: number; method: "close" };
 
 function toRecord(row: DeviceRow) {
@@ -40,6 +42,10 @@ try {
       created_at INTEGER NOT NULL
     ) STRICT;
     CREATE INDEX IF NOT EXISTS relay_devices_user ON relay_devices(user_id);
+    CREATE TABLE IF NOT EXISTS fork_relay_device_keys (
+      public_key TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    ) STRICT;
   `);
   port.postMessage({ type: "ready" });
 } catch {
@@ -53,6 +59,29 @@ port.on("message", (request: Request) => {
       database.close();
       port.postMessage({ id: request.id, result: null });
       port.close();
+      return;
+    }
+    if (request.method === "keyExists") {
+      const row = database
+        .prepare("SELECT 1 AS present FROM fork_relay_device_keys WHERE public_key = ?")
+        .get(request.publicKey);
+      port.postMessage({ id: request.id, result: { exists: row !== undefined } });
+      return;
+    }
+    if (request.method === "enrollKey") {
+      const known = database
+        .prepare("SELECT 1 AS present FROM fork_relay_device_keys WHERE public_key = ?")
+        .get(request.publicKey);
+      if (known === undefined) {
+        const count = database
+          .prepare("SELECT count(*) AS count FROM fork_relay_device_keys")
+          .get()!.count as number;
+        if (count >= workerData.maxRecords) throw new Error("Device key capacity exceeded.");
+        database
+          .prepare("INSERT INTO fork_relay_device_keys (public_key, created_at) VALUES (?, ?)")
+          .run(request.publicKey, request.createdAt);
+      }
+      port.postMessage({ id: request.id, result: null });
       return;
     }
     if (request.method === "list") {

@@ -1,5 +1,20 @@
-import { createPublicKey, createPrivateKey, sign, verify, type KeyObject } from "node:crypto";
-import type { RelaySession, RelaySessionService } from "../contract.js";
+import {
+  createHash,
+  createPublicKey,
+  createPrivateKey,
+  randomBytes,
+  sign,
+  timingSafeEqual,
+  verify,
+  type KeyObject,
+} from "node:crypto";
+import type {
+  RelayDeviceKeyExchange,
+  RelayDeviceKeyResult,
+  RelayDeviceKeyStore,
+  RelaySession,
+  RelaySessionService,
+} from "../contract.js";
 
 /** Relay JWTs are issued and verified only by this process; the identity provider never signs them. */
 export const RELAY_JWT_ISSUER = "zcode-remote-relay";
@@ -7,6 +22,19 @@ export const RELAY_JWT_AUDIENCE = "zcode-remote-relay";
 const CLOCK_SKEW_SECONDS = 30;
 const MAX_TTL_SECONDS = 86_400;
 const MAX_SUBJECT_LENGTH = 256;
+/** Reserved for device-key identities; zai-jwt mode refuses it so the namespaces never overlap. */
+export const DEVICE_KEY_SUBJECT_PREFIX = "dk:";
+const DEVICE_KEY_SIGNING_DOMAIN = "zcode-relay-device-session-v1\nzcode-remote-relay";
+const DEVICE_KEY_WINDOW_SECONDS = 60;
+const REPLAY_RETENTION_MS = 120_000;
+const DEFAULT_MAX_REPLAY_ENTRIES = 100_000;
+const PAIRING_TTL_SECONDS = 300;
+const MAX_PAIRINGS_PER_USER = 8;
+const MAX_PAIRINGS_TOTAL = 10_000;
+const PUBLIC_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
+const SIGNATURE_PATTERN = /^[A-Za-z0-9_-]{86}$/;
+const PAIRING_CODE_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 
 type Jwk = Record<string, unknown>;
 
@@ -18,12 +46,20 @@ export interface IdentityVerifierConfig {
   keys: readonly Jwk[];
 }
 
+export interface DeviceKeyIdentityConfig {
+  mode: "device-key";
+  enrollmentSecret: string;
+  keys: RelayDeviceKeyStore;
+}
+
 export interface RelaySessionConfig {
   /** Private Ed25519 JWKs. The first entry signs; every entry verifies. */
   signingKeys: readonly Jwk[];
   ttlSeconds: number;
-  identity: IdentityVerifierConfig;
+  identity: (IdentityVerifierConfig & { mode?: "zai-jwt" }) | DeviceKeyIdentityConfig;
   now: () => number;
+  /** Device-key mode replay cache capacity; full means fail closed. */
+  maxReplayEntries?: number;
 }
 
 interface VerifiedKey {
@@ -144,6 +180,7 @@ function verifyIdentityToken(
   const subject = payload[config.userClaim];
   if (typeof subject !== "string" || subject.trim().length === 0) return undefined;
   if (subject.length > MAX_SUBJECT_LENGTH) return undefined;
+  if (subject.startsWith(DEVICE_KEY_SUBJECT_PREFIX)) return undefined;
   return subject;
 }
 
@@ -160,9 +197,21 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
   const signing = config.signingKeys.map(signingKeyFromJwk);
   const kidSet = new Set(signing.map((key) => key.kid));
   if (kidSet.size !== signing.length) throw new Error("Relay signing key ids must be unique.");
-  const identityKeys = config.identity.keys.map(publicKeyFromJwk);
-  if (identityKeys.length === 0) throw new Error("Identity key set is empty.");
-  const identity = { ...config.identity, keyObjects: identityKeys };
+  const deviceIdentity = config.identity.mode === "device-key" ? config.identity : undefined;
+  const zaiIdentity = config.identity.mode === "device-key" ? undefined : config.identity;
+  const identityKeys = zaiIdentity ? zaiIdentity.keys.map(publicKeyFromJwk) : [];
+  if (zaiIdentity && identityKeys.length === 0) throw new Error("Identity key set is empty.");
+  const identity = zaiIdentity ? { ...zaiIdentity, keyObjects: identityKeys } : undefined;
+  const mode = deviceIdentity ? "device-key" : "zai-jwt";
+  if (deviceIdentity && deviceIdentity.enrollmentSecret.length === 0)
+    throw new Error("Enrollment secret is missing.");
+  const secretDigest = deviceIdentity
+    ? createHash("sha256").update(deviceIdentity.enrollmentSecret).digest()
+    : undefined;
+  const maxReplayEntries = config.maxReplayEntries ?? DEFAULT_MAX_REPLAY_ENTRIES;
+  // Entries share one retention window, so insertion order is expiry order and pruning pops from the front.
+  const seenNonces = new Map<string, number>();
+  const pairings = new Map<string, { userId: string; expiresAt: number }>();
   const active = signing[0];
   const activeSigner = active?.signer;
   if (!active || !activeSigner) throw new Error("Relay signing keys are missing.");
@@ -184,10 +233,115 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
     return { jwt: `${signingInput}.${signature}`, expiresIn: config.ttlSeconds };
   };
 
+  const secretMatches = (presented: string | undefined): boolean => {
+    if (!secretDigest) return false;
+    // Hash both sides first: timingSafeEqual needs equal lengths, and a length check would leak the length.
+    const presentedDigest = createHash("sha256")
+      .update(presented ?? "")
+      .digest();
+    return timingSafeEqual(presentedDigest, secretDigest);
+  };
+
+  const pruneSeen = (nowMs: number) => {
+    for (const [key, expiresAt] of seenNonces) {
+      if (expiresAt > nowMs) break;
+      seenNonces.delete(key);
+    }
+  };
+  const prunePairings = (nowMs: number) => {
+    for (const [key, entry] of pairings) {
+      if (entry.expiresAt > nowMs) break;
+      pairings.delete(key);
+    }
+  };
+
   return {
+    mode,
     exchange(identityToken) {
+      if (!identity) return undefined;
       const userId = verifyIdentityToken(identityToken, identity, Math.floor(config.now() / 1000));
       return userId === undefined ? undefined : issue(userId);
+    },
+    async exchangeDeviceKey(request: RelayDeviceKeyExchange): Promise<RelayDeviceKeyResult> {
+      if (!deviceIdentity) return { status: "denied" };
+      const nowMs = config.now();
+      if (
+        !PUBLIC_KEY_PATTERN.test(request.publicKey) ||
+        !NONCE_PATTERN.test(request.nonce) ||
+        !SIGNATURE_PATTERN.test(request.signature) ||
+        !Number.isSafeInteger(request.ts) ||
+        Math.abs(Math.floor(nowMs / 1000) - request.ts) > DEVICE_KEY_WINDOW_SECONDS
+      ) {
+        return { status: "denied" };
+      }
+      let valid = false;
+      try {
+        const publicKey = createPublicKey({
+          key: { kty: "OKP", crv: "Ed25519", x: request.publicKey },
+          format: "jwk",
+        });
+        const signed = `${DEVICE_KEY_SIGNING_DOMAIN}\n${request.publicKey}\n${request.ts}\n${request.nonce}`;
+        valid = verify(
+          null,
+          Buffer.from(signed),
+          publicKey,
+          Buffer.from(request.signature, "base64url"),
+        );
+      } catch {
+        valid = false;
+      }
+      if (!valid) return { status: "denied" };
+      let enrolled: boolean;
+      try {
+        enrolled = await deviceIdentity.keys.isEnrolled(request.publicKey);
+      } catch {
+        return { status: "busy" };
+      }
+      if (!enrolled) {
+        if (request.enrollmentSecret === undefined) return { status: "not-enrolled" };
+        if (!secretMatches(request.enrollmentSecret)) return { status: "denied" };
+      }
+      // Reserve the nonce synchronously after the awaits so concurrent replays cannot both pass.
+      pruneSeen(nowMs);
+      const replayKey = `${request.publicKey}.${request.nonce}`;
+      if (seenNonces.has(replayKey)) return { status: "denied" };
+      if (seenNonces.size >= maxReplayEntries) return { status: "busy" };
+      seenNonces.set(replayKey, nowMs + REPLAY_RETENTION_MS);
+      if (!enrolled) {
+        try {
+          await deviceIdentity.keys.enroll(request.publicKey, Math.floor(nowMs / 1000));
+        } catch {
+          return { status: "busy" };
+        }
+      }
+      const digest = createHash("sha256")
+        .update(Buffer.from(request.publicKey, "base64url"))
+        .digest("base64url");
+      return { status: "ok", session: issue(`${DEVICE_KEY_SUBJECT_PREFIX}${digest}`) };
+    },
+    exchangePairing(code) {
+      if (!deviceIdentity || !PAIRING_CODE_PATTERN.test(code)) return undefined;
+      const nowMs = config.now();
+      prunePairings(nowMs);
+      const key = createHash("sha256").update(code).digest("base64url");
+      const entry = pairings.get(key);
+      if (!entry) return undefined;
+      pairings.delete(key);
+      return entry.expiresAt > nowMs ? issue(entry.userId) : undefined;
+    },
+    createPairing(userId) {
+      if (!deviceIdentity) return undefined;
+      const nowMs = config.now();
+      prunePairings(nowMs);
+      let owned = 0;
+      for (const entry of pairings.values()) if (entry.userId === userId) owned += 1;
+      if (owned >= MAX_PAIRINGS_PER_USER || pairings.size >= MAX_PAIRINGS_TOTAL) return undefined;
+      const code = randomBytes(16).toString("base64url");
+      pairings.set(createHash("sha256").update(code).digest("base64url"), {
+        userId,
+        expiresAt: nowMs + PAIRING_TTL_SECONDS * 1000,
+      });
+      return { code, expiresIn: PAIRING_TTL_SECONDS };
     },
     verify(jwt) {
       const parts = splitCompact(jwt);
@@ -206,6 +360,9 @@ export function createRelaySessionService(config: RelaySessionConfig): RelaySess
       if (typeof payload.iat !== "number" || payload.iat > now + CLOCK_SKEW_SECONDS)
         return undefined;
       if (typeof payload.sub !== "string" || payload.sub.length === 0) return undefined;
+      // The two modes use disjoint subject namespaces, so a JWT minted under one mode never verifies under the other.
+      if (payload.sub.startsWith(DEVICE_KEY_SUBJECT_PREFIX) !== (mode === "device-key"))
+        return undefined;
       return payload.sub;
     },
   };

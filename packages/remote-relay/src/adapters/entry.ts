@@ -15,16 +15,41 @@ const logger: RelayLogger = {
   error: (event) => log("error", event),
 };
 
+function identityEnrollmentSecret(
+  identity: ReturnType<typeof readRelayConfig>["session"]["identity"],
+): string {
+  if (identity.mode !== "device-key") throw new Error("Enrollment secret is not configured.");
+  return identity.enrollmentSecret;
+}
+
 async function main() {
   const config = readRelayConfig(process.env);
+  for (const warning of config.warnings) logger.warn(warning);
+  const identity = config.session.identity;
   // Key material is validated before the database opens, so a bad key set never starts a half-up relay.
-  const session = createRelaySessionService({
-    signingKeys: config.session.signingKeys,
-    ttlSeconds: config.session.ttlSeconds,
-    identity: config.session.identity,
-    now: Date.now,
-  });
+  // Device-key mode needs the store, so its service is built right after the (already validated) config.
+  const zaiSession =
+    identity.mode === "zai-jwt"
+      ? createRelaySessionService({
+          signingKeys: config.session.signingKeys,
+          ttlSeconds: config.session.ttlSeconds,
+          identity,
+          now: Date.now,
+        })
+      : undefined;
   const store = await createRelayDeviceStore(config.store);
+  const session =
+    zaiSession ??
+    createRelaySessionService({
+      signingKeys: config.session.signingKeys,
+      ttlSeconds: config.session.ttlSeconds,
+      identity: {
+        mode: "device-key",
+        enrollmentSecret: identityEnrollmentSecret(identity),
+        keys: store,
+      },
+      now: Date.now,
+    });
   const server = await createRelayServer({ ...config.server, store, session, logger });
   logger.info("started");
   let shutdown: Promise<void> | undefined;

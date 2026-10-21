@@ -22,6 +22,13 @@ export interface RelayDeviceStore {
   close(): Promise<void>;
 }
 
+/** Enrolled device public keys (device-key identity mode). Separate from device records. */
+export interface RelayDeviceKeyStore {
+  isEnrolled(publicKey: string): Promise<boolean>;
+  /** Idempotent. Rejects when the enrolled-key capacity is exhausted. */
+  enroll(publicKey: string, createdAt: number): Promise<void>;
+}
+
 export interface RelaySession {
   jwt: string;
   expiresIn: number;
@@ -31,9 +38,30 @@ export interface RelaySession {
  * Relay-issued JWTs and the one-time exchange of the account login JWT.
  * Implemented in adapters/session.ts; the app layer depends only on this interface.
  */
+export interface RelayDeviceKeyExchange {
+  publicKey: string;
+  ts: number;
+  nonce: string;
+  signature: string;
+  enrollmentSecret?: string;
+}
+
+/** `denied` is deliberately uniform (bad signature, stale, replay, wrong secret). */
+export type RelayDeviceKeyResult =
+  | { status: "ok"; session: RelaySession }
+  | { status: "denied" | "not-enrolled" | "busy" };
+
 export interface RelaySessionService {
-  /** Verifies the account identity token and mints a relay JWT, or returns undefined. */
+  /** Identity mode this service was built for; the HTTP layer accepts only that mode's body. */
+  readonly mode: "zai-jwt" | "device-key";
+  /** Verifies the account identity token and mints a relay JWT, or returns undefined. zai-jwt mode only. */
   exchange(identityToken: string): RelaySession | undefined;
+  /** Device-key mode only: proof of possession, enrollment, replay protection. */
+  exchangeDeviceKey(request: RelayDeviceKeyExchange): Promise<RelayDeviceKeyResult>;
+  /** Device-key mode only: consumes a single-use pairing code and mints a JWT for its owner. */
+  exchangePairing(code: string): RelaySession | undefined;
+  /** Device-key mode only: mints a pairing code for the user, or undefined at the per-user cap. */
+  createPairing(userId: string): { code: string; expiresIn: number } | undefined;
   /** Returns the relay user id for a valid relay JWT, or undefined. */
   verify(jwt: string): string | undefined;
 }

@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
 
 type Jwk = Record<string, unknown>;
 
@@ -64,4 +64,43 @@ export function loginJwt(
     key.privateKey,
     alg,
   );
+}
+
+export const ENROLLMENT_SECRET = "enrollment-secret-fixture-0123456789abcdef";
+
+export interface DeviceKeyPair {
+  privateKey: KeyObject;
+  /** Raw 32-byte Ed25519 key, base64url (43 characters), as sent on the wire. */
+  publicKey: string;
+}
+
+export function deviceKeyPair(): DeviceKeyPair {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const publicKeyRaw = publicKey.export({ format: "jwk" }).x as string;
+  return { privateKey, publicKey: publicKeyRaw };
+}
+
+export const DEVICE_KEY_DOMAIN = "zcode-relay-device-session-v1\nzcode-remote-relay";
+
+/** Builds a `POST /session` body for device-key mode; fields can be overridden to forge requests. */
+export function deviceKeyBody(
+  pair: DeviceKeyPair,
+  options: {
+    ts?: number;
+    nonce?: string;
+    secret?: string;
+    signWith?: KeyObject;
+    publicKey?: string;
+  } = {},
+): Record<string, unknown> {
+  const ts = options.ts ?? Math.floor(Date.now() / 1000);
+  const nonce = options.nonce ?? randomBytes(16).toString("base64url");
+  const signed = `${DEVICE_KEY_DOMAIN}\n${pair.publicKey}\n${ts}\n${nonce}`;
+  const signature = sign(null, Buffer.from(signed), options.signWith ?? pair.privateKey).toString(
+    "base64url",
+  );
+  return {
+    device_key: { public_key: options.publicKey ?? pair.publicKey, ts, nonce, signature },
+    ...(options.secret === undefined ? {} : { enrollment_secret: options.secret }),
+  };
 }
