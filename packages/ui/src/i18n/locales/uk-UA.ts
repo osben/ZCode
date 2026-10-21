@@ -71,7 +71,6 @@ const ukUA: Record<string, string> = {
   "firstSubmission.unknown": "Перевіряємо, чи повідомлення було прийнято…",
   "firstSubmission.synchronizing": "Очікуємо оновлення розмови…",
   "firstSubmission.contexts": "Посилання на контекст: {count}",
-  "firstSubmission.preparing": "Підготовка розмови…",
   "composerRecovery.title": "Ненадіслане повідомлення збережено",
   "composerRecovery.storageUnavailable":
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",

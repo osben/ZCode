@@ -7267,7 +7267,6 @@ const zhCN: Record<string, string> = {
   "firstSubmission.unknown": "正在确认消息是否已接收…",
   "firstSubmission.synchronizing": "正在等待会话更新…",
   "firstSubmission.contexts": "上下文引用：{count}",
-  "firstSubmission.preparing": "正在准备会话…",
   "composerRecovery.title": "未发送的消息已保存",
   "composerRecovery.storageUnavailable":
     "无法保存恢复状态。消息尚未发送；请释放浏览器存储空间后重试。",

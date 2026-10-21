@@ -7649,7 +7649,6 @@ const enUS: Record<string, string> = {
   "firstSubmission.unknown": "Checking whether the message was accepted…",
   "firstSubmission.synchronizing": "Waiting for the conversation to update…",
   "firstSubmission.contexts": "Context references: {count}",
-  "firstSubmission.preparing": "Preparing conversation…",
   "composerRecovery.title": "Unsent message saved",
   "composerRecovery.storageUnavailable":
     "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",

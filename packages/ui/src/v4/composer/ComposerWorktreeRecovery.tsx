@@ -6,7 +6,6 @@ import {
 } from "@/store/composerAttachmentUploadStore.js";
 import { useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button.js";
-import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -22,8 +21,20 @@ import {
 } from "./composerDraftStore.js";
 
 // The user bubble itself is the timeline's optimistic first-input row
-// (specs/first-submission-instant-ux.md P1); this is only the preparation status that
-// renders beneath it via the afterFirstUserInputSlot, before the worktree context row.
+// (specs/first-submission-instant-ux.md P1). Beneath it, via the afterFirstUserInputSlot and
+// before the worktree context row, only states the user must act on or wait out knowingly
+// render — never an in-progress label (spec: Status under the message).
+function firstSubmissionStatusMessageId(
+  status: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] | undefined,
+  active: boolean,
+): string | null {
+  if (status === "failed") return "chat.error.sendFailed";
+  if (status === "unknown") return "firstSubmission.unknown";
+  // An active submission is still moving; the optimistic turn is the feedback.
+  if (status === "sending" && !active) return "firstSubmission.synchronizing";
+  return null;
+}
+
 export function FirstSubmissionStatus({
   draft,
   active,
@@ -37,6 +48,8 @@ export function FirstSubmissionStatus({
     (count, items) => count + (items?.length ?? 0),
     0,
   );
+  const messageId = firstSubmissionStatusMessageId(pending?.status, active);
+  if (contextCount === 0 && !messageId) return null;
   return (
     <div
       data-first-submission={pending?.submissionId}
@@ -47,24 +60,15 @@ export function FirstSubmissionStatus({
           {intl.formatMessage({ id: "firstSubmission.contexts" }, { count: contextCount })}
         </span>
       ) : null}
-      <div
-        role="status"
-        data-first-submission-status="true"
-        className="flex items-center gap-2 text-ui-sm text-foreground-subtle"
-      >
-        {active ? <Spinner className="size-3.5" aria-hidden="true" role="presentation" /> : null}
-        {intl.formatMessage({
-          id: active
-            ? "firstSubmission.preparing"
-            : pending?.status === "failed"
-              ? "chat.error.sendFailed"
-              : pending?.status === "unknown"
-                ? "firstSubmission.unknown"
-                : pending?.status === "sending"
-                  ? "firstSubmission.synchronizing"
-                  : "firstSubmission.preparing",
-        })}
-      </div>
+      {messageId ? (
+        <div
+          role="status"
+          data-first-submission-status="true"
+          className="flex items-center gap-2 text-ui-sm text-foreground-subtle"
+        >
+          {intl.formatMessage({ id: messageId })}
+        </div>
+      ) : null}
     </div>
   );
 }

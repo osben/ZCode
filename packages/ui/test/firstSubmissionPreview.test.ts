@@ -8,8 +8,9 @@ import type { V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
 
 afterEach(cleanup);
 
-// The user bubble itself is the timeline's optimistic first-input row; this component is the
-// preparation status rendered beneath it (specs/first-submission-instant-ux.md P1/P3).
+// The user bubble itself is the timeline's optimistic first-input row; this component renders
+// beneath it only what the user must act on or wait out knowingly — never a progress label
+// (specs/first-submission-instant-ux.md, Status under the message).
 function status(
   active: boolean,
   statusValue: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] = "preparing",
@@ -33,7 +34,7 @@ function status(
 }
 
 describe("first-submission status line under the optimistic turn (FSL01/FSL04/FSL09)", () => {
-  it("shows the context chip alongside the status when contexts are frozen", () => {
+  it("shows the frozen-context chip without a progress label while active", () => {
     status(true, "preparing", {
       text: "",
       recoveryContexts: {
@@ -41,18 +42,25 @@ describe("first-submission status line under the optimistic turn (FSL01/FSL04/FS
       },
     });
     expect(screen.getByText("Context references: 1")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toContain("Preparing conversation");
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("reports preparation while the submission is active (IUX05)", () => {
-    status(true);
-    expect(screen.getByRole("status").textContent).toContain("Preparing conversation");
+  it.each(["preparing", "sending"] as const)(
+    "renders nothing for an active %s submission (IUX05: the turn itself is the feedback)",
+    (statusValue) => {
+      const { container } = status(true, statusValue);
+      expect(container.textContent).toBe("");
+      expect(screen.queryByRole("status")).toBeNull();
+    },
+  );
+
+  it("renders nothing for an inactive preparing record (the composer card offers Retry)", () => {
+    const { container } = status(false, "preparing");
+    expect(container.textContent).toBe("");
   });
 
-  it("reports synchronization after the command was created (IUX06)", () => {
-    // The active flag outranks the recorded status while the chain is live; the
-    // synchronizing label surfaces for an inactive record with a created command
-    // (e.g. recovered after a restart mid-send).
+  it("reports synchronization for an inactive record with a created command (IUX06/IUX09)", () => {
+    // Recovered after a restart mid-send: the command exists, the projection has not arrived.
     status(false, "sending");
     expect(screen.getByRole("status").textContent).toContain(
       "Waiting for the conversation to update",
