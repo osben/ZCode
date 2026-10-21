@@ -58,7 +58,7 @@ function stepGlyphClassName(entry: ComposerWorktreePipelineEntry): string {
 const setupCardClassName = "flex w-full flex-col items-start gap-2 text-ui-sm text-foreground";
 
 const setupDetailsClassName =
-  "w-full space-y-2 pt-3 ml-2 border-border border-l pl-3.5 text-ui-sm text-foreground-subtlest";
+  "min-w-0 space-y-2 pt-3 ml-2 border-border border-l pl-3.5 text-ui-sm text-foreground-subtlest";
 
 export function ConversationWorktreeSetupSteps({
   workspacePath,
