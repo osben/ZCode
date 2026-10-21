@@ -279,15 +279,44 @@ manual toggle.
 Both the setup card and the created line show the Git command that creates the worktree
 (`git worktree add -b <branch> -- <target> [<base>|HEAD]`, or the plain existing-branch form) in
 the collapsible details, derived from the frozen parameters; the created line keeps showing it
-after activation so "expand → see which commands ran" always works. The created line is a single
-compact trigger with the same "Worktree" label and a `created · <branch>` summary, followed by an
-icon-only open action with a tooltip and accessible name on the trigger line. Its branch detail
-follows the current Git status of that execution worktree, so a later branch switch does not leave
-the notice showing the creation-time branch as if it were still current; until the first Git status
-is available, use the persisted creation-time branch, and show `Detached HEAD` when the current
-status is detached. The action opens the exact worktree path through the existing
-path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
-picker. For a remote parent workspace the action also passes the worktree's own remote identity
+after activation so "expand → see which commands ran" always works. On the created line the command
+is secondary: a muted code box under a small "Command" label with a copy button, below the path.
+The details block is indented with a left rule (`ml-2 border-l pl-3.5`) and must not also be
+`w-full`: a full-width box plus the left margin overflows the message column and clips the right
+border of the command box. The same rule applies to the setup card's details.
+
+The created line is a single compact trigger with the same "Worktree" label and the branch as the
+summary (`Worktree · <branch>`; no "created" word — the row's position and check mark already say
+it). Its branch detail follows the current Git status of that execution worktree, so a later branch
+switch does not leave the notice showing the creation-time branch as if it were still current; until
+the first Git status is available, use the persisted creation-time branch, and show `Detached HEAD`
+when the current status is detached. The details show the worktree path with a success check,
+shortened against the Host home directory reported for the parent workspace (`~/…`); the full
+absolute path stays available on hover and is what Copy path copies. A path outside that home, or an
+unknown home, is shown in full. The base branch is not shown on the created line: the
+execution-worktree fact (`path`, `branchName`) does not carry it, and the renderer pipeline entry
+that knows it does not survive a reload, so showing it only sometimes would be misleading. Adding it
+needs a Host fact and is out of scope here.
+
+The trigger line ends with an icon-only "Worktree actions" menu button (tooltip and accessible name)
+instead of a lone open icon. Its items, in order, each hidden when the platform cannot perform it:
+
+- **Reveal in Finder / File Explorer / File Manager** — `IPlatformService.openInFileManager` via the
+  shared file-context actions, with the directory itself as the target. Shown only when the platform
+  can open local files (`canOpenLocalFiles`) and the parent workspace is local; Web, mobile remote
+  control and remote workspaces hide it.
+- **Open in <editor>** — the existing `getInstalledEditors` / `openInEditor` capability, using the
+  user's last selected editor when it is a code editor, else the first installed one; file managers
+  are excluded because Reveal covers them. Same local-only gating as Reveal; hidden when no editor is
+  installed.
+- **Copy path** — copies the absolute worktree path and confirms with a toast. Always shown.
+- **New task in this worktree** — the former open action, honestly named. It opens the worktree
+  directory as its own project tab (added to the top of the project list) and starts an empty draft
+  there, leaving the current conversation. It does not open a folder in the OS.
+
+The New task item opens the exact worktree path through the existing path-aware workspace-open
+contract; it must not simulate a click on the generic Open workspace picker. For a remote parent
+workspace it also passes the worktree's own remote identity
 (the parent identity re-pointed at the worktree path), because remote identities embed the path. The
 notice binds the worktree identity to the parent's bound remote session before it calls the open path,
 because the identity alone does not route the new tab. A parent identity that
