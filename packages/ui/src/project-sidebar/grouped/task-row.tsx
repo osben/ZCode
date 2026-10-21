@@ -159,7 +159,7 @@ function GroupedTaskRowComponent({
       ? "bg-destructive"
       : leadingIndicator === "unread"
         ? // Bugfix: grouped task 未读点需要和普通 task list 共用 sky 色，避免 brand 色在不同主题下表达漂移。
-          "bg-sky-500 dark:bg-sky-400"
+          "bg-icon-blue"
         : null;
   const canShowHoverActions = !dragOverlay;
   // 工作流运行行：分组行同样长在标题下；
