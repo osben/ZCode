@@ -40,8 +40,7 @@ import { useProjectDirectoryServices } from "@/project-sidebar/useProjectDirecto
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { ProjectColorField } from "@/project-sidebar/ProjectColorField.js";
-import { buildProjectDisplayKey } from "@/project-sidebar/projectDisplayKey.js";
-import { useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
+import { buildProjectDisplayKey, useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
 import type { TaskGroupColor as ZCodeTaskGroupColor } from "@/project-sidebar/contract.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getPathLeaf } from "@/lib/path.js";

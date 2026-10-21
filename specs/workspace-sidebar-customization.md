@@ -16,7 +16,7 @@ Pressing Enter saves the customization dialog only when the input method is not 
 
 The sidebar is organized by projects (`VirtualProject`), not workspace tabs. The display-preference record
 `zcode-workspace-display` is reused unchanged, but project rows key their entry as
-`project:<hostId>:<projectId>` (`buildProjectDisplayKey`) because a project can own several roots and has
+`project:<hostId>:<projectId>` (`buildProjectDisplayKey` in `workspaceDisplayStore.ts`) because a project can own several roots and has
 no single workspace key. The preference stays a fork-local browser preference: it is never written to
 `setting.json`, the project database, or upstream migrations (see AGENTS.md "Shared Databases and Fork
 Divergence"), so it is per-browser/profile and not synced across devices.

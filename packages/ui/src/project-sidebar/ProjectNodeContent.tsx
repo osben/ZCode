@@ -14,9 +14,8 @@ import {
   Trash2,
   MessageCirclePlus,
 } from "lucide-react";
-import { useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
+import { buildProjectDisplayKey, useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
 import { WORKSPACE_ICON_COLOR_CLASS } from "@/lib/workspaceDisplayColors.js";
-import { buildProjectDisplayKey } from "@/project-sidebar/projectDisplayKey.js";
 import { ProjectFolderIcon } from "@/project-sidebar/ProjectFolderIcon.js";
 import { sourceServerConnectionStateSchema } from "@zcode/shared";
 import type {

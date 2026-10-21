@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectDisplayKey } from "../src/project-sidebar/projectDisplayKey.js";
+import { buildProjectDisplayKey } from "@/store/workspaceDisplayStore.js";
 
 describe("buildProjectDisplayKey", () => {
   it("scopes the key by host and project id", () => {
