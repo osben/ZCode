@@ -29,7 +29,12 @@ import type {
   UserInfo,
   ZCodeInteractionBehavior,
 } from "@zcode/shared";
-import { BUILTIN_MODEL_PROVIDER_IDS, DesktopCommandIds, type Locale } from "@zcode/shared";
+import {
+  BUILTIN_MODEL_PROVIDER_IDS,
+  DesktopCommandIds,
+  isLocale,
+  type Locale,
+} from "@zcode/shared";
 import {
   TID_SETTINGS_BACK_BUTTON,
   TID_SETTINGS_PAGE,
@@ -1567,10 +1572,10 @@ export function SettingsPage({
         });
         return;
       }
-      if (value === "zh-CN" || value === "en-US") {
+      if (isLocale(value)) {
         runUserAction({
           input: { featureId: "settings.locale", action: "change_locale", trigger: "select" },
-          operation: () => setLocalePreference(value as Locale),
+          operation: () => setLocalePreference(value),
           completed: { resultSource: "local_commit", valueAfter: value },
           failureStage: "local_commit",
         });
