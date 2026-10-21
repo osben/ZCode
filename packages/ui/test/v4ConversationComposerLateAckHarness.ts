@@ -7,6 +7,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   ConversationComposer,
   type ConversationComposerSendResult,
+  type ConversationComposerProps,
 } from "@/v4/ConversationComposer.js";
 import {
   persistV4ComposerDraft,
@@ -164,7 +165,12 @@ export interface LateAckHarness {
 
 export const replaceComposerDraftSpy = vi.fn();
 
-export function renderLateAckComposer(options: { worktree?: boolean } = {}): LateAckHarness {
+export function renderLateAckComposer(
+  options: {
+    worktree?: boolean;
+    onPrepareFirstSubmission?: ConversationComposerProps["onPrepareFirstSubmission"];
+  } = {},
+): LateAckHarness {
   const container = installMinimalDom();
   const root: Root = createRoot(container);
   const sessionActivated = vi.fn();
@@ -224,6 +230,8 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
           onSelectModel: vi.fn(),
           onSelectThought: vi.fn(),
           onSendText,
+          durableFirstSubmission: true,
+          onPrepareFirstSubmission: options.onPrepareFirstSubmission,
           onPrepareWorktreeSession,
           onStop: vi.fn(),
           onSwitchMode: vi.fn(),

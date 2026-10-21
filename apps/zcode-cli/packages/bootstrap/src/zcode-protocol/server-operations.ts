@@ -1304,7 +1304,8 @@ async function createSessionWithProjection<T>(
     throw new ProtocolRequestError(-32602, "sessionId already exists");
   claims.add(sessionId);
   try {
-    if (await context.deps.sessionStore?.getSession(sessionId))
+    // A prepared id is validated by the V4 bridge and already has its durable session row.
+    if (!preparedSessionId && await context.deps.sessionStore?.getSession(sessionId))
       throw new ProtocolRequestError(-32602, "sessionId already exists");
     return await materializeCreatedSession(context, { ...params, sessionId }, trace, project);
   } finally {

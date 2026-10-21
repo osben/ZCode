@@ -3992,7 +3992,7 @@ describe("SessionPane incognito attachment admission", () => {
       }
     },
   );
-  it("does not send text or consume the incognito intent when upload fails", async () => {
+  it("retains the created incognito session without sending text when upload fails (FSL03)", async () => {
     prewarmHookMock.binding = null;
     useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
     projectionState.current = {
@@ -4027,7 +4027,6 @@ describe("SessionPane incognito attachment admission", () => {
       });
       expect(mocks.sendCommand.mock.calls.slice(before).map(([e]) => e.type)).toEqual([
         "createSession",
-        "deleteSession",
       ]);
       expect(onSessionCreated).not.toHaveBeenCalled();
       expect(

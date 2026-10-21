@@ -751,6 +751,18 @@ export class ProductProjection {
     };
   }
 
+  /** Durable submission setup is metadata; it never invents an accepted user row. */
+  seedSubmissionPreparation(
+    preparation: ConversationSnapshot["meta"]["submissionPreparation"] | null | undefined,
+  ): void {
+    if (!preparation) {
+      const { submissionPreparation: _cleared, ...meta } = this.snapshot.meta;
+      this.snapshot = { ...this.snapshot, meta };
+      return;
+    }
+    this.snapshot = { ...this.snapshot, meta: { ...this.snapshot.meta, submissionPreparation: { ...preparation } } };
+  }
+
   seedUsage(seed: SessionUsageSeed): void {
     const current = this.snapshot.usage;
     const currentContextWindow = current.contextWindow;

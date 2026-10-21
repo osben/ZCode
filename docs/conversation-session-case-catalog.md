@@ -4524,3 +4524,26 @@ send a prompt, and observe the user row with that attachment and the sidebar
 incognito marker. The first-send path creates the profile-bound session before
 uploading; no normal prewarm is promoted. Attachment-only input and upload failure
 are also covered by renderer regression tests (specs/ui-draft-send-path.md).
+
+## Immediate first submission (2026-10-20)
+
+Contract: [first-submission-lifecycle.md](../specs/first-submission-lifecycle.md).
+These cases are accepted. E2E execution is pending; existing historical first-send
+runs do not establish the new timing or failure-preservation behavior.
+
+| ID    | Setup and action                                                                | Required outcome                                                           | Decision |
+| ----- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------- |
+| FSL01 | Cold ordinary first send with creation/config held                              | Complete user message appears before IO completes, preparation below       | accepted |
+| FSL02 | Worktree send with reservation/Git held, then Git failure                       | Complete un-clamped message above preparation/error; same session retained | accepted |
+| FSL03 | Incognito attachment send, upload rejected                                      | Frozen profile/files preserved, no prompt dispatch or session deletion     | accepted |
+| FSL04 | Host has reserved session, preparation/runtime fails, reopen/restart then Retry | Saved session remains, explicit recovery targets same session              | accepted |
+| FSL05 | Input projection before/after acceptance ACK                                    | One visible user message by input/command identity                         | accepted |
+| FSL06 | Double submit; navigate/type next draft before late ACK                         | One reservation, no focus theft or next-draft loss                         | accepted |
+| FSL07 | Unknown transport outcome                                                       | Reconcile original command, no automatic new send/session                  | accepted |
+| FSL08 | Same filesystem path with different remote identities                           | Recovery and retry stay with exact attachment                              | accepted |
+| FSL09 | Restart with pending local intent/reservation                                   | Recoverable display and zero automatic prompt dispatch                     | accepted |
+
+Ordinary/incognito/worktree paths are representatives; combine incognito + worktree
+for the frozen-profile/cwd boundary. Theme, language and platform are shared UI
+equivalences, not a full Cartesian expansion. Real remote transport and restart
+must be reported separately from mounted component tests.

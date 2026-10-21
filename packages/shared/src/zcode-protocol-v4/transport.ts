@@ -25,6 +25,7 @@ import { createTopicWireFrameSchema, topicWireFrameCandidateSchema } from "./wir
 
 // ── Connection and handshake ──
 export const hostCapabilitiesSchema = z.object({
+  durableFirstSubmission: z.boolean().optional(),
   nativeDialogs: z.boolean(),
   localTerminal: z.boolean(),
   // WebSocket binary (used to probe the relay link).

@@ -682,12 +682,12 @@ export function createZCodeTaskIndexSyncer(
   ): void {
     state.summaries.set(next.sessionId, next);
     // Drafts are in-memory only: do not persist them or add them to task-index SQLite.
-    if (next.phase === "draft" && !next.worktreePreparation) {
+    if (next.phase === "draft" && !next.worktreePreparation && !next.submissionPreparation) {
       return;
     }
     const target = sessionTargetFrom(state.target, next.sessionId);
-    if (next.worktreePreparation) {
-      if (!previous?.worktreePreparation) {
+    if (next.worktreePreparation || next.submissionPreparation) {
+      if (!previous?.worktreePreparation && !previous?.submissionPreparation) {
         const meta = buildBaselineMetaFromSummary(state.target, next);
         void taskIndexRepo
           .seedTaskMetaIfMissing(meta)
@@ -732,7 +732,10 @@ export function createZCodeTaskIndexSyncer(
     summaries: Iterable<SessionSummary>,
   ): Promise<void> {
     const candidates = [...summaries].filter(
-      (summary) => summary.phase !== "draft" || summary.worktreePreparation !== undefined,
+      (summary) =>
+        summary.phase !== "draft" ||
+        summary.worktreePreparation !== undefined ||
+        summary.submissionPreparation !== undefined,
     );
     if (candidates.length === 0) return;
     // The pure V4 UI does not pass through zcodeSessionService.initializeWorkspace. If the first frame is silently treated as an existing SQLite baseline,

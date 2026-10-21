@@ -6,6 +6,7 @@ import {
 } from "@/store/composerAttachmentUploadStore.js";
 import { useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button.js";
+import { Spinner } from "@/components/ui/spinner.js";
 import { toast } from "@/components/ui/toast.js";
 import { getErrorMessage } from "@/lib/errorMessage.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -16,8 +17,73 @@ import {
   persistV4ComposerDraft,
   subscribeV4ComposerDrafts,
   getV4ComposerDraftVersion,
+  isV4FirstSubmissionActive,
   type V4ComposerDraft,
 } from "./composerDraftStore.js";
+
+export function FirstSubmissionPreview({
+  draft,
+  active,
+}: {
+  draft: V4ComposerDraft;
+  active: boolean;
+}) {
+  const { intl } = useZCodeIntl();
+  const pending = draft.firstSubmission;
+  const contextCount = Object.values(draft.recoveryContexts ?? {}).reduce(
+    (count, items) => count + (items?.length ?? 0),
+    0,
+  );
+  return (
+    <div
+      data-first-submission={pending?.submissionId}
+      className="mx-4 my-3 flex flex-col gap-3 text-ui-base"
+    >
+      <div data-first-submission-message="true" className="flex flex-col items-end gap-2">
+        {contextCount > 0 ? (
+          <span className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm">
+            {intl.formatMessage({ id: "firstSubmission.contexts" }, { count: contextCount })}
+          </span>
+        ) : null}
+        {draft.recoveryAttachments?.length ? (
+          <div className="flex max-w-full flex-wrap justify-end gap-2">
+            {draft.recoveryAttachments.map((file) => (
+              <span
+                key={file.id}
+                className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm"
+              >
+                {file.filename}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {draft.text ? (
+          <div className="max-w-full whitespace-pre-wrap break-words rounded-xl bg-surface px-4 py-3">
+            {draft.text}
+          </div>
+        ) : null}
+      </div>
+      <div
+        role="status"
+        data-first-submission-status="true"
+        className="flex items-center gap-2 text-ui-sm text-foreground-subtle"
+      >
+        {active ? <Spinner className="size-3.5" aria-hidden="true" role="presentation" /> : null}
+        {intl.formatMessage({
+          id: active
+            ? "firstSubmission.preparing"
+            : pending?.status === "failed"
+              ? "chat.error.sendFailed"
+              : pending?.status === "unknown"
+                ? "firstSubmission.unknown"
+                : pending?.status === "sending"
+                  ? "firstSubmission.synchronizing"
+                  : "composerRecovery.title",
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function ComposerWorktreeRecovery({
   workspacePath,
@@ -61,6 +127,11 @@ export function ComposerWorktreeRecovery({
     });
   }, [draft, manifest, recoveryScope, workspaceIdentity, workspacePath]);
   if (!draft) return null;
+  if (
+    draft.firstSubmission &&
+    isV4FirstSubmissionActive(workspacePath, workspaceIdentity, draft.firstSubmission.submissionId)
+  )
+    return null;
   const missing = (draft.recoveryAttachments ?? []).filter(
     (file) =>
       ![...attachments, ...(recoveryFiles ?? [])].some(
@@ -84,8 +155,10 @@ export function ComposerWorktreeRecovery({
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
       <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
-      <p className="line-clamp-3 whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
-      {(draft.recoveryAttachments ?? []).map((file) => (
+      {!draft.firstSubmission ? (
+        <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
+      ) : null}
+      {(!draft.firstSubmission ? (draft.recoveryAttachments ?? []) : []).map((file) => (
         <span className="mr-2" key={file.id}>
           {file.filename}
         </span>
@@ -96,7 +169,12 @@ export function ComposerWorktreeRecovery({
         <Button
           size="sm"
           variant="outline"
-          disabled={occupied || missing.length > 0}
+          disabled={
+            occupied ||
+            missing.length > 0 ||
+            draft.firstSubmission?.status === "unknown" ||
+            draft.firstSubmission?.status === "sending"
+          }
           onClick={() => {
             moveComposerAttachmentScopeItems(
               `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,

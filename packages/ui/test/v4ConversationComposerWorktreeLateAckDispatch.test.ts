@@ -376,6 +376,11 @@ describe("late worktree reservation ACK: dispatch and retry", () => {
     ).toBe(true);
 
     // Retry restarts the same prepared session under a new attempt id and settles ready.
+    harness.onSendText.mockImplementationOnce(async (_text, options) => {
+      (options as { onCommandCreated?: (id: string) => void })?.onCommandCreated?.(
+        "accepted-retry-input",
+      );
+    });
     useComposerWorktreePipelineStore.getState().startPipeline("/workspace", {
       status: "creating",
       sessionId: "prepared-session-a",
@@ -402,8 +407,18 @@ describe("late worktree reservation ACK: dispatch and retry", () => {
       preparedSessionId: "prepared-session-a",
       preparedAttemptId: "attempt-2",
     });
-    // The accepted dispatch consumes the recovery record, so Retry cannot leave a duplicate draft.
-    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual([]);
+    // ACK alone cannot remove the preview before the authoritative user/queue projection arrives.
+    expect(readV4WorktreeRecoveryDrafts("/workspace", undefined, "prepared-session-a")).toEqual([
+      expect.objectContaining({
+        draft: expect.objectContaining({
+          text: "frozen retry text",
+          firstSubmission: expect.objectContaining({
+            commandId: "accepted-retry-input",
+            status: "sending",
+          }),
+        }),
+      }),
+    ]);
   });
 });
 
@@ -479,3 +494,98 @@ it("keeps the draft, files and incognito intent after deferred upload rejection"
     await act(async () => harness.root.unmount());
   }
 });
+
+it("keeps one frozen first input while the real reservation is pending and binds it before dispatch", async () => {
+  let resolve!: (id: string) => void;
+  const prepare = vi.fn<
+    NonNullable<
+      import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+    >
+  >(async (params) => {
+    params.onReservationCreated?.({
+      sessionId: "generic-reserved",
+      commandId: "original-reservation",
+    });
+    return new Promise<string>((done) => {
+      resolve = done;
+    });
+  });
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("Original message");
+      await flushAsyncWork();
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    const pending = readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__")[0]!;
+    expect(pending.draft.text).toBe("Original message");
+    expect(pending.draft.firstSubmission?.reservation).toEqual({
+      sessionId: "generic-reserved",
+      commandId: "original-reservation",
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("Original message");
+      await flushAsyncWork();
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    await act(async () => {
+      resolve("generic-reserved");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      reservedSubmissionSessionId: "generic-reserved",
+      firstSubmissionId: pending.draft.firstSubmission!.submissionId,
+    });
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "generic-reserved")[0]?.draft.text,
+    ).toBe("Original message");
+  } finally {
+    await act(async () => harness.root.unmount());
+  }
+});
+
+it.each([false, true])(
+  "freezes a recoverable first submission before awaiting the send route, incognito=%s (FSL01)",
+  async (incognito) => {
+    if (incognito) {
+      useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
+    }
+    const harness = renderLateAckComposer({ worktree: false });
+    let settleSend!: () => void;
+    harness.onSendText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settleSend = resolve;
+        }),
+    );
+    const text = "First line\nSecond line\nThird line\nFourth line\nFifth line";
+    try {
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(text);
+        await flushAsyncWork();
+      });
+      expect(harness.onSendText).toHaveBeenCalledOnce();
+      const pending = readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__").find(
+        (record) => record.draft.firstSubmission,
+      );
+      expect(pending?.draft).toMatchObject({
+        text,
+        firstSubmission: {
+          submissionId: expect.any(String),
+          ownerKey: expect.any(String),
+          status: "preparing",
+          ...(incognito ? { incognito: INCOGNITO_LOCKDOWN_PROFILE } : {}),
+        },
+      });
+    } finally {
+      settleSend?.();
+      await act(async () => {
+        await flushAsyncWork();
+        harness.root.unmount();
+      });
+      useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+    }
+  },
+);

@@ -19,6 +19,8 @@ import type {
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
+import { FirstSubmissionPreview } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
 import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
 import { useRemoteConversationAvailable } from "@/v4/RemoteConversationAvailability.js";
@@ -170,6 +172,13 @@ import {
   readPendingTaskDraft,
   resolveComposerScope,
   composerScopeKey,
+  readV4WorktreeRecoveryDrafts,
+  getV4FirstSubmissionVersion,
+  subscribeV4ComposerDrafts,
+  isV4FirstSubmissionActive,
+  clearV4ComposerDraft,
+  moveV4ComposerDraft,
+  getV4WorktreeRecoveryScope,
 } from "@/v4/composer/composerDraftStore.js";
 import { resolveProviderLabel } from "@/lib/registryProviderView.js";
 import { resolveEntitledAccountProviderAccess } from "@/lib/accountProviderAccess.js";
@@ -271,6 +280,7 @@ import {
 } from "@/v4/workflowRunDirectoryModel.js";
 import {
   hasOlderRows,
+  hasAcceptedInputProjection,
   requiresAcceptedInputProjection,
   shouldAutoLoadIncompleteLeadingTurn,
 } from "@/v4/conversationProjectionStore.js";
@@ -1940,6 +1950,27 @@ export function SessionPane({
     ) => {
       if (messageId) reportDraftCreated(createdSessionId, createSource ?? "session", messageId);
       const commit = () => {
+        if (messageId) {
+          const pending = readV4WorktreeRecoveryDrafts(
+            workspacePath,
+            workspaceIdentity,
+            `__draft__:${composerScopeKey(newTaskComposerScope)}`,
+          ).find(({ draft }) => draft.firstSubmission?.commandId === messageId);
+          if (
+            pending?.draft.firstSubmission &&
+            !moveV4ComposerDraft(
+              workspacePath,
+              workspaceIdentity,
+              pending.scope,
+              getV4WorktreeRecoveryScope(
+                createdSessionId,
+                pending.draft.firstSubmission.submissionId,
+              ),
+            )
+          ) {
+            logger.error("[first-submission] Could not bind the saved input to its session");
+          }
+        }
         // Bug 根因：Session 打开埋点只衡量已有 Session，但草稿首发过去会把新建/预热提升的
         // sessionId 直接交给同一 hook。预热 lease 还保留草稿期的 startedAt 与空 snapshot timing，
         // 因而把数小时闲置时间误记为 total/react。创建边界先标记本 pane 的首次绑定；离开后
@@ -2000,6 +2031,7 @@ export function SessionPane({
     },
     [
       commitCreatedTask,
+      newTaskComposerScope,
       baseWorkspaceServices.taskGroupService,
       refreshTaskGroups,
       intl,
@@ -2428,6 +2460,32 @@ export function SessionPane({
         throw new Error(ack.reasonCode ?? "Worktree session preparation was rejected");
       }
       const createdSessionId = ack.result.sessionId;
+      const first = readV4WorktreeRecoveryDrafts(
+        workspacePath,
+        workspaceIdentity,
+        `__draft__:${composerScopeKey(newTaskComposerScope)}`,
+      ).find(
+        ({ draft }) =>
+          draft.firstSubmission &&
+          draft.firstSubmission.generation === composerDraftGeneration &&
+          isV4FirstSubmissionActive(
+            workspacePath,
+            workspaceIdentity,
+            draft.firstSubmission.submissionId,
+          ),
+      );
+      if (first?.draft.firstSubmission) {
+        if (
+          !moveV4ComposerDraft(
+            workspacePath,
+            workspaceIdentity,
+            first.scope,
+            getV4WorktreeRecoveryScope(createdSessionId, first.draft.firstSubmission.submissionId),
+          )
+        ) {
+          throw new Error("composer.draft-storage-unavailable");
+        }
+      }
       if (!options || options.shouldActivate()) {
         void handleDraftSessionCreated(createdSessionId, createSource, undefined, draftTaskGroupId);
       }
@@ -2440,6 +2498,8 @@ export function SessionPane({
       workspaceIdentity,
       workspaceKey,
       workspacePath,
+      newTaskComposerScope,
+      composerDraftGeneration,
     ],
   );
   const syncWorktreePreparation = useCallback(
@@ -3308,6 +3368,87 @@ export function SessionPane({
   const prewarmBindingRef = useRef(prewarmBinding);
   prewarmBindingRef.current = prewarmBinding;
   const prewarmSessionId = prewarmBinding?.sessionId ?? null;
+  const prepareFirstSubmission = useCallback(
+    async ({
+      submissionId,
+      incognito,
+      reservation,
+      onReservationCreated,
+    }: Parameters<
+      NonNullable<
+        import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+      >
+    >[0]) => {
+      if (!zcodeAgentService) return undefined;
+      const hello = await ensureAgentV4ConnectionHandshake(zcodeAgentService);
+      if (hello.capabilities.durableFirstSubmission !== true) return undefined;
+      if (
+        sessionId &&
+        snapshotRef.current?.meta.submissionPreparation?.submissionId === submissionId
+      )
+        return sessionId;
+      if (reservation) {
+        const queried = await layer.queryCommands({
+          commands: [{ sessionId: null, commandId: reservation.commandId }],
+        });
+        const result = queried.results[0]?.result;
+        if (result === "unknown" || !result)
+          throw new Error("Session reservation outcome is still unknown");
+        if (
+          (result.status === "accepted" || result.status === "duplicate") &&
+          result.result?.type === "createSession"
+        )
+          return result.result.sessionId;
+        if (result.status !== "failed" && result.status !== "rejected" && result.status !== "noop")
+          throw new Error("Session reservation is still pending");
+      }
+      const binding = !incognito ? prewarmBindingRef.current : null;
+      if (binding && !binding.beginPromotion())
+        throw new Error("Draft session changed before reservation");
+      const targetSessionId = reservation?.sessionId ?? binding?.sessionId ?? submissionId;
+      const ack = await dispatchCommand(
+        "createSession",
+        {
+          workspaceId: workspaceKey,
+          submissionPreparation: { submissionId },
+          sessionId: targetSessionId,
+          ...(incognito ? { incognito } : {}),
+        },
+        null,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (envelope) =>
+          onReservationCreated?.({ sessionId: targetSessionId, commandId: envelope.commandId }),
+      );
+      if (
+        (ack.status !== "accepted" && ack.status !== "duplicate") ||
+        ack.result?.type !== "createSession"
+      )
+        throw new Error(ack.reasonCode ?? "Session reservation failed");
+      binding?.promote();
+      return ack.result.sessionId;
+    },
+    [dispatchCommand, layer, sessionId, workspaceKey, zcodeAgentService],
+  );
+  const handleFirstSubmissionReserved = useCallback(
+    (createdSessionId: string) => {
+      if (sessionId === createdSessionId) return;
+      const creation = useZCodeSessionStore
+        .getState()
+        .getWorkspaceState(workspacePath, workspaceIdentity);
+      void handleDraftSessionCreated(
+        createdSessionId,
+        creation.draftCreateSource,
+        undefined,
+        creation.draftTaskGroupId,
+      ).catch((error) =>
+        logger.error("[first-submission] Could not bind the reserved session", error),
+      );
+    },
+    [handleDraftSessionCreated, sessionId, workspaceIdentity, workspacePath],
+  );
   // runtime 换代（CUA Helper 就绪、liveness 恢复等触发 workspace-dispose）会冲掉草稿态尚未
   // 持久化的预热会话。重建期间禁止发送，否则附件会挂在已消失的会话上（sessionNotFound）。
   const { rebuilding: draftRuntimeRebuilding } = useDraftRuntimeRebuildGate({
@@ -3839,12 +3980,15 @@ export function SessionPane({
       // creation, and a prepared send must adopt the session reserved by the worktree pipeline.
       const executionWorktree = options?.executionWorktree;
       const incognito = options?.incognito;
-      const preparedSessionId = options?.preparedSessionId;
+      const reservedSubmissionSessionId = options?.reservedSubmissionSessionId;
+      const preparedSessionId = options?.preparedSessionId ?? reservedSubmissionSessionId;
       const createRoute =
         preparedSessionId !== undefined ||
         (sessionId === null && (executionWorktree !== undefined || incognito !== undefined));
       const prewarmTargetBeforeSend =
-        sessionId === null && !incognito ? prewarmBindingRef.current?.sessionId : null;
+        sessionId === null && !incognito && !reservedSubmissionSessionId
+          ? prewarmBindingRef.current?.sessionId
+          : null;
       if (prewarmTargetBeforeSend) {
         // 屏障只保证已经入队的命令完成；若点击配置时预热 session/snapshot 尚未
         // 就绪，命令可能当时没有目标。首发绑定确定的预热 session 前再同步一次
@@ -3899,13 +4043,18 @@ export function SessionPane({
           {
             workspaceId: workspaceKey,
             ...buildDraftCreateConfigPayload(
-              { ...draftConfigRef.current, modelSelection: submission.modelSelection },
+              { ...draftConfigRef.current, ...submission },
               appFollowupMode,
             ),
             ...(executionWorktree ? { executionWorktree } : {}),
             ...(incognito ? { incognito } : {}),
             ...(preparedSessionId
-              ? { preparedSessionId, expectedAttemptId: options?.preparedAttemptId }
+              ? {
+                  preparedSessionId,
+                  ...(reservedSubmissionSessionId
+                    ? { expectedSubmissionId: options?.firstSubmissionId }
+                    : { expectedAttemptId: options?.preparedAttemptId }),
+                }
               : {}),
           },
           null,
@@ -3946,27 +4095,10 @@ export function SessionPane({
           deferredIncognitoAttachments || Boolean(executionWorktree && readyAttachments.length > 0);
         let sessionAttachments = readyAttachments;
         if (needsAttachmentUpload) {
-          try {
-            const uploaded = await options?.reuploadAttachmentsForSession?.(createdSessionId);
-            if (!uploaded)
-              throw new Error("Draft attachments could not be transferred to the new session");
-            sessionAttachments = uploaded;
-          } catch (error) {
-            // No prompt has been admitted. Retire only the empty incognito runtime created by this submission.
-            if (incognito && !preparedSessionId) {
-              try {
-                const cleanup = await dispatchCommand("deleteSession", {}, createdSessionId);
-                if (cleanup.status !== "accepted" && cleanup.status !== "noop") {
-                  logger.warn("[v4-pane] Empty incognito session cleanup rejected", {
-                    reasonCode: cleanup.reasonCode,
-                  });
-                }
-              } catch (cleanupError) {
-                logger.warn("[v4-pane] Empty incognito session cleanup failed", cleanupError);
-              }
-            }
-            throw error;
-          }
+          const uploaded = await options?.reuploadAttachmentsForSession?.(createdSessionId);
+          if (!uploaded)
+            throw new Error("Draft attachments could not be transferred to the new session");
+          sessionAttachments = uploaded;
         }
         const highspeed = await prepareHighspeedSendContext(
           createdSessionId,
@@ -5078,6 +5210,46 @@ export function SessionPane({
   // 提交时先 stop barrier 再 rewind/rerun；UI 不应再用 completed gate 把入口整轮隐藏。
   const editActionsEnabled = runtimeReady && !readOnly && !selectionSideChat && Boolean(sessionId);
   const isDraft = sessionId === null;
+  const firstSubmissionVersion = useSyncExternalStore(
+    subscribeV4ComposerDrafts,
+    () => getV4FirstSubmissionVersion(workspacePath, workspaceIdentity),
+    () => "",
+  );
+  const firstSubmissionScope = sessionId ?? `__draft__:${composerScopeKey(newTaskComposerScope)}`;
+  const firstSubmissionRecord = useMemo(
+    () =>
+      readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, firstSubmissionScope).find(
+        ({ draft }) =>
+          draft.firstSubmission &&
+          (sessionId !== null ||
+            !isV4FirstSubmissionActive(
+              workspacePath,
+              workspaceIdentity,
+              draft.firstSubmission.submissionId,
+            ) ||
+            draft.firstSubmission.generation === composerDraftGeneration),
+      ),
+    [
+      firstSubmissionVersion,
+      firstSubmissionScope,
+      workspacePath,
+      workspaceIdentity,
+      sessionId,
+      composerDraftGeneration,
+    ],
+  );
+  const firstCommandId = firstSubmissionRecord?.draft.firstSubmission?.commandId;
+  const firstSubmissionProjected = Boolean(
+    firstCommandId &&
+    snapshot?.sessionId === sessionId &&
+    hasAcceptedInputProjection(snapshot, firstCommandId),
+  );
+  const firstSubmission = firstSubmissionProjected ? undefined : firstSubmissionRecord;
+  const hasFirstSubmission = Boolean(firstSubmission);
+  useEffect(() => {
+    if (firstSubmissionProjected && firstSubmissionRecord)
+      clearV4ComposerDraft(workspacePath, workspaceIdentity, firstSubmissionRecord.scope);
+  }, [firstSubmissionProjected, firstSubmissionRecord?.scope, workspacePath, workspaceIdentity]);
   const sessionIndexScopes = useMemo(
     () =>
       remoteSessionId && !zcodeAgentService
@@ -5861,12 +6033,24 @@ export function SessionPane({
       composerDraft={composerDraft}
       rootDraftScopeKey={composerScopeKey(newTaskComposerScope)}
       replaceComposerDraft={replaceComposerDraft}
-      submissionReady={composerSubmissionReady && runtimeReady && !recoveringDraft}
+      submissionReady={
+        composerSubmissionReady &&
+        runtimeReady &&
+        !recoveringDraft &&
+        !(
+          firstSubmission?.draft.firstSubmission &&
+          isV4FirstSubmissionActive(
+            workspacePath,
+            workspaceIdentity,
+            firstSubmission.draft.firstSubmission.submissionId,
+          )
+        )
+      }
       updateComposerContent={updateComposerContent}
       createSubmissionFromComposer={createSubmissionFromComposer}
       telemetryDraftConfig={telemetryDraftConfig}
-      contextHeader={isDraft ? draftComposerHeader : undefined}
-      centered={isDraft}
+      contextHeader={isDraft && !hasFirstSubmission ? draftComposerHeader : undefined}
+      centered={isDraft && !hasFirstSubmission}
       blockingRequestId={blockingInteractionId}
       listenAddToChatEvents={focused}
       externalTextInsertRequest={focused && sessionId === null ? composerTextInsertRequest : null}
@@ -5897,6 +6081,10 @@ export function SessionPane({
       telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
       readPlanIdentitySnapshot={readPlanIdentitySnapshot}
       onSendText={handleSendText}
+      durableFirstSubmission
+      draftGeneration={composerDraftGeneration}
+      onPrepareFirstSubmission={prepareFirstSubmission}
+      onFirstSubmissionReserved={handleFirstSubmissionReserved}
       onPrepareWorktreeSession={prepareWorktreeSession}
       onSyncWorktreePreparation={syncWorktreePreparation}
       onWorktreePreparationFailed={handleWorktreePreparationFailed}
@@ -6077,7 +6265,9 @@ export function SessionPane({
       ) : null}
       {composerNode}
       {/* 办公模式显示主动任务推荐；编程模式保留原有小型场景入口。 */}
-      {isDraft && (!isOfficeMode || sharedSettings?.proactiveSuggestionsEnabled === true) ? (
+      {isDraft &&
+      !hasFirstSubmission &&
+      (!isOfficeMode || sharedSettings?.proactiveSuggestionsEnabled === true) ? (
         <ConversationDraftSuggestedPromptsContainer
           className={isOfficeMode ? "mt-4" : "mt-6"}
           proactive={isOfficeMode}
@@ -6373,6 +6563,7 @@ export function SessionPane({
                   hideTurnNavigator={shareSelectionPanelVisible && !compactForRemoteControl}
                   backgroundScrollLocked={false}
                   headerSlot={
+                    firstSubmission ||
                     (!isDraft &&
                       (snapshot?.meta.worktreePreparation || sessionExecutionWorktree)) ||
                     // unsupportedRowCount 也要开这个门：整份副本的行都被本 build 跳过时
@@ -6380,11 +6571,22 @@ export function SessionPane({
                     (importedShare &&
                       (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0)) ? (
                       <>
+                        {firstSubmission ? (
+                          <FirstSubmissionPreview
+                            draft={firstSubmission.draft}
+                            active={isV4FirstSubmissionActive(
+                              workspacePath,
+                              workspaceIdentity,
+                              firstSubmission.draft.firstSubmission!.submissionId,
+                            )}
+                          />
+                        ) : null}
                         {!isDraft && snapshot?.meta.worktreePreparation ? (
                           <ConversationWorktreeSetupSteps
                             workspacePath={workspacePath}
                             {...(workspaceIdentity ? { workspaceIdentity } : {})}
                             sessionId={sessionId!}
+                            hideQueuedMessage={hasFirstSubmission}
                             preparation={snapshot.meta.worktreePreparation}
                             remoteSessionId={remoteSessionId ?? undefined}
                             onRetryPreparation={handleWorktreePreparationRetry}
@@ -6441,7 +6643,7 @@ export function SessionPane({
                       <div className="p-6 text-center text-ui-base text-foreground-subtle">
                         {intl.formatMessage({ id: "remote.conversation.placeholder" })}
                       </div>
-                    ) : isDraft ? (
+                    ) : isDraft && !hasFirstSubmission ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">
                         <ConversationDraftEmptyState
                           compactForRemoteControl={compactForRemoteControl}
@@ -6449,7 +6651,7 @@ export function SessionPane({
                       </div>
                     ) : null
                   }
-                  centerEmptyStateWithDock={isDraft}
+                  centerEmptyStateWithDock={isDraft && !hasFirstSubmission}
                   compactEmptyStateWithDock={compactForRemoteControl}
                   summaryPanelLayout={statusPanelLayout}
                   conversationFindQuery={!isDraft && focused ? conversationFindQuery : ""}

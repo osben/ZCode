@@ -340,6 +340,14 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
+  seedSubmissionPreparation(
+    preparation: ConversationSnapshot["meta"]["submissionPreparation"] | null | undefined,
+  ): void {
+    if (preparation) this.worktreePreparationWasSeeded = true;
+    this.projection.seedSubmissionPreparation(preparation);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
   /** Invalidate each subscriber's pending frame and make its next flush carry the current snapshot. */
   requestSnapshotForSubscribers(): void {
     for (const subscription of this.subscriptions.values()) {

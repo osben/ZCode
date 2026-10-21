@@ -61,7 +61,7 @@ function isRuntimeRecycleError(error: unknown): boolean {
   );
 }
 
-function hasAcceptedInputProjection(
+export function hasAcceptedInputProjection(
   snapshot: ConversationSnapshot | null,
   commandId: string,
 ): boolean {
