@@ -274,7 +274,11 @@ hover. The trigger always carries the `data-worktree-setup-step` status marker. 
 (base-branch note, orphaned note, ready/existing path line, the full
 failure reason with Retry/Discard) live in the collapsible content: open while creating,
 auto-opens on failure, auto-collapses when the worktree turns ready, and never overrides a
-manual toggle.
+manual toggle. "Open while creating" means a live creation in this renderer — a Git runner for
+that session is in flight. A `creating` entry restored from the Host seed (opening a session whose
+preparation was never activated, after a reload, or in another window) starts collapsed and stays
+collapsed through the reconcile that settles it to `ready`; it must never paint open for a frame
+and then collapse. A failure still auto-opens, and a Retry from the open failed card keeps it open.
 
 Both the setup card and the created line show the Git command that creates the worktree
 (`git worktree add -b <branch> -- <target> [<base>|HEAD]`, or the plain existing-branch form) in
