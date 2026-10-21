@@ -21,7 +21,11 @@ no single workspace key. The preference stays a fork-local browser preference: i
 `setting.json`, the project database, or upstream migrations (see AGENTS.md "Shared Databases and Fork
 Divergence"), so it is per-browser/profile and not synced across devices.
 
-The project row menu has a "Customize…" item (all projects, editable or not) that opens
-`WorkspaceCustomizeDialog`. The chosen color tints the project folder icon and the display name overrides
-the row label only; the upstream project name edited through `ProjectEditor` and the project rename flow
-are unchanged and remain the source of truth for the real name.
+The color is edited inside the upstream `ProjectEditor` (the "Edit project" dialog) through
+`ProjectColorField`, next to the project name, and is saved together with the name: a successful
+`saveProject` writes the draft color under the saved project's key (an untouched color field writes
+nothing). There is no separate Customize menu item or dialog, and no display-name override: the project
+name edited there is the only name. The row tints the project folder icon with the chosen color (same
+`WORKSPACE_ICON_COLOR_CLASS` palette as before the sync). Projects that cannot be edited (offline or
+legacy single-root entries) have no edit entry and therefore no color editing. The display-name field of
+the store is kept for the older per-workspace record but is not used by project rows.

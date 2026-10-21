@@ -39,6 +39,10 @@ import { useRemoteBoundaryAcknowledgement } from "@/RemoteConnectionDialogConten
 import { useProjectDirectoryServices } from "@/project-sidebar/useProjectDirectoryServices.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
+import { ProjectColorField } from "@/project-sidebar/ProjectColorField.js";
+import { buildProjectDisplayKey } from "@/project-sidebar/projectDisplayKey.js";
+import { useWorkspaceDisplayStore } from "@/store/workspaceDisplayStore.js";
+import type { ZCodeTaskGroupColor } from "@zcode/services";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getPathLeaf } from "@/lib/path.js";
 import { RemoteProjectList } from "@/project-sidebar/RemoteProjectList.js";
@@ -145,6 +149,13 @@ export function ProjectEditor({
     project?.name ?? (fixedFolder ? getPathLeaf(fixedFolder.path) : ""),
   );
   const [nameEdited, setNameEdited] = useState(false);
+  // Fork-local color preference (specs/workspace-sidebar-customization.md): saved with the project.
+  const setWorkspaceColor = useWorkspaceDisplayStore((state) => state.setWorkspaceColor);
+  const savedColor = useWorkspaceDisplayStore((state) =>
+    project ? (state.entries[buildProjectDisplayKey(project)]?.color ?? null) : null,
+  );
+  const [colorDraft, setColorDraft] = useState<ZCodeTaskGroupColor | null | undefined>(undefined);
+  const effectiveColor = colorDraft === undefined ? savedColor : colorDraft;
   const [roots, setRoots] = useState(
     project?.roots.map((root) => root.rootPath) ??
       (fixedFolder ? [fixedFolder.path] : initialRoots),
@@ -351,6 +362,9 @@ export function ProjectEditor({
         ...(primary ? { primaryRoot: primary } : {}),
       });
       if (!alive.current) return;
+      if (colorDraft !== undefined) {
+        setWorkspaceColor(buildProjectDisplayKey(saved), colorDraft);
+      }
       // 远端创建与本机入口登记分两步；登记失败重试必须复用已创建的项目，不能再生成一个 ID。
       if (!project) setCreated(saved);
       // 外层聊天可能已换代；保留已保存结果，但不继续登记、导航或关闭新流程。
@@ -480,6 +494,11 @@ export function ProjectEditor({
                       {fixedFolder.deviceLabel}
                     </p>
                   ) : null}
+                  <ProjectColorField
+                    value={effectiveColor}
+                    onChange={setColorDraft}
+                    disabled={busy || Boolean(created)}
+                  />
                 </div>
                 {devices ? (
                   <div className="grid min-w-0 gap-1.5">

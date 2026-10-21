@@ -217,6 +217,9 @@ packages/server/src/http.ts
 
 packages/ui/src/project-sidebar/grouped/task-row.tsx
 
+# Upstream-identical file (30400 bytes before the color field); keep it diffable against upstream.
+packages/ui/src/project-sidebar/ProjectEditor.tsx
+
 # TEMPORARY (upstream 3.16.1 final sync WIP): split these files below 20000 bytes, then remove this block.
 packages/desktop/src/host/sourceServerConnectionManager.ts
 packages/desktop/src/host/sourceServerDirectory.ts

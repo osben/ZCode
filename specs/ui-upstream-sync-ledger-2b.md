@@ -54,8 +54,7 @@ Each row names the reason. Rows marked "design owner" need a decision before cod
 
 ## Restoration audit (fork sidebar restore PR)
 
-Restored: row PR markers (probes mounted in `WorkspaceShellLayout`), project Customize (color, display
-name; Palette icon) in the project menu, see `workspace-sidebar-customization.md`.
+Restored: row PR markers (probes mounted in `WorkspaceShellLayout`), project color in the project editor (`ProjectColorField`), see `workspace-sidebar-customization.md`.
 
 Checked against the current UI:
 
