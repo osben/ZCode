@@ -20,11 +20,11 @@ button hostage for the whole pipeline.
 
 ## Three clocks (do not conflate them)
 
-| Clock | User question | Target |
-| ----- | ------------- | ------ |
-| **P1 — Perceive** | “Did my message go in?” | **&lt; 1 frame after click** (same React commit): full text (+ attachments/context chips) appears as the **primary user turn** in the conversation column, not a secondary preview strip. |
-| **P2 — Navigate** | “Am I in this task/chat?” | **Immediately after P1** (first async beat — see *P2 bind moment* below): pane binds to a **stable session identity** (real `sessionId`), normal chat chrome (header, timeline, composer dock), sidebar may lag but **must not gate** opening the conversation (FSL bind rule). |
-| **P3 — Model** | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. Show preparation under the message; never block P1/P2 on LLM or runtime ready. |
+| Clock             | User question                 | Target                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P1 — Perceive** | “Did my message go in?”       | **&lt; 1 frame after click** (same React commit): full text (+ attachments/context chips) appears as the **primary user turn** in the conversation column, not a secondary preview strip.                                                                                       |
+| **P2 — Navigate** | “Am I in this task/chat?”     | **Immediately after P1** (first async beat — see _P2 bind moment_ below): pane binds to a **stable session identity** (real `sessionId`), normal chat chrome (header, timeline, composer dock), sidebar may lag but **must not gate** opening the conversation (FSL bind rule). |
+| **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. Show preparation under the message; never block P1/P2 on LLM or runtime ready.                                                                                                         |
 
 **P2 bind moment (single write point, decided 2026-10-21).** The pane binds when
 the Host reservation identity — `{sessionId, commandId}` — is durably recorded:
@@ -84,13 +84,13 @@ must catch up**, not worktree regressing to slower plain behavior.
 
 ## Comparison anchor (Harness / Craft / PI — patterns only)
 
-| Pattern | Adopt for ZCode | Do not copy blindly |
-| ------- | ----------------- | ------------------- |
-| Empty or immediate `sessionId` before first text | Yes — user always “in a chat” after Send | Our prewarm/incognito/worktree markers differ; use `ui-draft-send-path` routes |
-| Optimistic user row in timeline | Yes — satisfies P1 | Must reconcile with V4 projection + `commandId`; no second queue in UI |
-| `optimisticMessageId`-style correlation | Yes — conceptually `submissionId` + `commandId` | Protocol already has command ledger; do not bypass CommandInbox |
-| Clear composer before network returns | Yes — for **submitted** slice only | FSL: next draft must not be wiped; functional updates / separate scope |
-| `await sendMessage` for whole UI | **No** — that is the anti-pattern to remove | Keep await only inside background worker, not on submit button |
+| Pattern                                          | Adopt for ZCode                                 | Do not copy blindly                                                            |
+| ------------------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------ |
+| Empty or immediate `sessionId` before first text | Yes — user always “in a chat” after Send        | Our prewarm/incognito/worktree markers differ; use `ui-draft-send-path` routes |
+| Optimistic user row in timeline                  | Yes — satisfies P1                              | Must reconcile with V4 projection + `commandId`; no second queue in UI         |
+| `optimisticMessageId`-style correlation          | Yes — conceptually `submissionId` + `commandId` | Protocol already has command ledger; do not bypass CommandInbox                |
+| Clear composer before network returns            | Yes — for **submitted** slice only              | FSL: next draft must not be wiped; functional updates / separate scope         |
+| `await sendMessage` for whole UI                 | **No** — that is the anti-pattern to remove     | Keep await only inside background worker, not on submit button                 |
 
 ## Anti-patterns (current gaps agents should fix)
 
@@ -122,17 +122,17 @@ Carry forward from FSL and related specs without reinterpretation:
 Agents should add or extend **mounted UI tests** and desktop E2E candidates for
 these; unit tests alone are insufficient for P1/P2.
 
-| ID | Action | Must observe |
-| -- | ------ | ------------ |
-| IUX01 | Plain text, first Send on draft | Same frame: user turn visible + chat chrome without the centered draft (`sessionId` binds at the P2 moment, first async beat); typing the next draft is never blocked; a second Send follows ordinary session readiness (`runtimeReady`), never an active-first-submission lock |
-| IUX02 | Double-click Send | One session, one user turn, one admission attempt |
-| IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal |
-| IUX04 | Navigate away before background ACK | Focus unchanged; return shows same session + message; no duplicate send |
-| IUX05 | Slow Host (held reservation) | User still in chat with message; status “preparing” under message, not blank draft screen |
-| IUX06 | Admission ACK before projection | At most one user turn; brief “syncing” ok; no second bubble |
-| IUX07 | Preparation failure | Same session, message remains, Retry works; composer not globally locked |
-| IUX08 | Sidebar slow | Conversation usable before sidebar row appears |
-| IUX09 | Restart mid-preparation | Recovery without auto-dispatch; explicit continue |
+| ID    | Action                                | Must observe                                                                                                                                                                                                                                                                    |
+| ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IUX01 | Plain text, first Send on draft       | Same frame: user turn visible + chat chrome without the centered draft (`sessionId` binds at the P2 moment, first async beat); typing the next draft is never blocked; a second Send follows ordinary session readiness (`runtimeReady`), never an active-first-submission lock |
+| IUX02 | Double-click Send                     | One session, one user turn, one admission attempt                                                                                                                                                                                                                               |
+| IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal                                                                                                                                                                                                                       |
+| IUX04 | Navigate away before background ACK   | Focus unchanged; return shows same session + message; no duplicate send                                                                                                                                                                                                         |
+| IUX05 | Slow Host (held reservation)          | User still in chat with message; status “preparing” under message, not blank draft screen                                                                                                                                                                                       |
+| IUX06 | Admission ACK before projection       | At most one user turn; brief “syncing” ok; no second bubble                                                                                                                                                                                                                     |
+| IUX07 | Preparation failure                   | Same session, message remains, Retry works; composer not globally locked                                                                                                                                                                                                        |
+| IUX08 | Sidebar slow                          | Conversation usable before sidebar row appears                                                                                                                                                                                                                                  |
+| IUX09 | Restart mid-preparation               | Recovery without auto-dispatch; explicit continue                                                                                                                                                                                                                               |
 
 ## Suggested architecture direction (for implementers)
 
@@ -168,13 +168,13 @@ Order matters; later steps assume earlier ones.
 
 ## Flag lifetimes (decided 2026-10-21)
 
-| Flag | Set | Cleared |
-| ---- | --- | ------- |
-| `pending` (UI) | freeze | background chain fired (same tick) |
-| repeat-submit idempotency ref | freeze | bind/remount, restore, or chain end |
-| `activeFirstSubmissions` entry | freeze | real-row projection accept or failure restore |
-| optimistic user row | P1 commit | reconcile predicate above |
-| first-submission `submissionReady` lock | — | removed; ordinary session readiness gates the next Send |
+| Flag                                    | Set       | Cleared                                                 |
+| --------------------------------------- | --------- | ------------------------------------------------------- |
+| `pending` (UI)                          | freeze    | background chain fired (same tick)                      |
+| repeat-submit idempotency ref           | freeze    | bind/remount, restore, or chain end                     |
+| `activeFirstSubmissions` entry          | freeze    | real-row projection accept or failure restore           |
+| optimistic user row                     | P1 commit | reconcile predicate above                               |
+| first-submission `submissionReady` lock | —         | removed; ordinary session readiness gates the next Send |
 
 ## Verification
 

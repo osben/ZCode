@@ -540,7 +540,9 @@ it("keeps the draft, files and incognito intent after deferred upload rejection"
     });
     expect(harness.onSendText).toHaveBeenCalledOnce();
     expect(attachmentState.attachments).toHaveLength(1);
-    expect(editorApi.clear).not.toHaveBeenCalled();
+    // Claim-at-freeze (IUX01): the editor clears in the submit commit itself; the rejection
+    // below must still keep the frozen draft, files and intent recoverable.
+    expect(editorApi.clear).toHaveBeenCalled();
     expect(
       useDraftIncognitoIntentStore.getState().captureForSubmission("/workspace")?.profile,
     ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
@@ -573,7 +575,9 @@ it("keeps one frozen first input while the real reservation is pending and binds
     });
     expect(prepare).toHaveBeenCalledOnce();
     expect(harness.onSendText).not.toHaveBeenCalled();
-    const pending = readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__")[0]!;
+    // The envelope moment moves the frozen record into the reserved session scope (P2 bind):
+    // the draft scope no longer holds it while the Host reservation is still pending.
+    const pending = readV4WorktreeRecoveryDrafts("/workspace", undefined, "generic-reserved")[0]!;
     expect(pending.draft.text).toBe("Original message");
     expect(pending.draft.firstSubmission?.reservation).toEqual({
       sessionId: "generic-reserved",
@@ -645,10 +649,67 @@ it.each([false, true])(
   },
 );
 
-it("binds the reserved session only after the send route resolved (FSL01 owner stability)", async () => {
-  // Promoting before the send switches the composer owner (scope/epoch) mid-flight and the
-  // send aborts with "Submission owner changed before admission"; the promotion must land
-  // after the send resolved, moving the frozen draft into the session scope with it.
+it("binds the reserved session at the reservation identity, before the send resolves (FSL01 owner stability)", async () => {
+  // The draft is claimed at freeze, so promoting when the reservation identity arrives can no
+  // longer abort the send through the "Submission owner changed" guard. The bind happens at
+  // the createSession envelope moment (single P2 write point, specs/first-submission-instant-
+  // ux.md), moves the frozen record into the session scope, and is not repeated after the send.
+  const onFirstSubmissionReserved = vi.fn();
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-reserved-bind", commandId: "envelope-command" });
+      return "session-reserved-bind";
+    },
+    onFirstSubmissionReserved,
+  });
+  let settleSend!: () => void;
+  harness.onSendText.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        settleSend = resolve;
+      }),
+  );
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("Promote at the reservation identity");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(onFirstSubmissionReserved).toHaveBeenCalledWith("session-reserved-bind");
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-reserved-bind").filter(
+        (record) => record.draft.firstSubmission,
+      ),
+    ).toHaveLength(1);
+
+    // The pane promoting to the bound session must not abort the in-flight send: the draft
+    // was claimed at freeze, before any owner/scope switch.
+    harness.rerender("session-reserved-bind");
+    await act(async () => {
+      settleSend();
+      await flushAsyncWork();
+    });
+    expect(onFirstSubmissionReserved).toHaveBeenCalledTimes(1);
+    const record = readV4WorktreeRecoveryDrafts(
+      "/workspace",
+      undefined,
+      "session-reserved-bind",
+    ).find((entry) => entry.draft.firstSubmission);
+    expect(record?.draft.firstSubmission).toMatchObject({ status: expect.any(String) });
+    expect(record?.draft.firstSubmission?.status).not.toBe("failed");
+  } finally {
+    settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("falls back to binding after the send resolves when no reservation identity callback fired", async () => {
+  // Pane-level prepare implementations that never call onReservationCreated keep the old
+  // contract: the returned session id binds after admission, exactly once.
   const onFirstSubmissionReserved = vi.fn();
   const harness = renderLateAckComposer({
     worktree: false,
@@ -664,17 +725,11 @@ it("binds the reserved session only after the send route resolved (FSL01 owner s
   );
   try {
     await act(async () => {
-      chatPromptEditorProps.at(-1)!.onSubmit!("Promote after the send resolves");
+      chatPromptEditorProps.at(-1)!.onSubmit!("Fallback bind after admission");
       await flushAsyncWork();
     });
     expect(harness.onSendText).toHaveBeenCalledOnce();
     expect(onFirstSubmissionReserved).not.toHaveBeenCalled();
-    expect(
-      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-reserved-bind").filter(
-        (record) => record.draft.firstSubmission,
-      ),
-    ).toHaveLength(0);
-
     await act(async () => {
       settleSend();
       await flushAsyncWork();

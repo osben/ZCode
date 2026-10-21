@@ -20,7 +20,10 @@ import {
   type V4ComposerDraft,
 } from "./composerDraftStore.js";
 
-export function FirstSubmissionPreview({
+// The user bubble itself is the timeline's optimistic first-input row
+// (specs/first-submission-instant-ux.md P1); this is only the preparation status that
+// renders beneath it via the afterFirstUserInputSlot, before the worktree context row.
+export function FirstSubmissionStatus({
   draft,
   active,
 }: {
@@ -36,32 +39,13 @@ export function FirstSubmissionPreview({
   return (
     <div
       data-first-submission={pending?.submissionId}
-      className="mx-4 my-3 flex flex-col gap-3 text-ui-base"
+      className="flex flex-col items-end gap-2 px-4 pt-2 text-ui-base"
     >
-      <div data-first-submission-message="true" className="flex flex-col items-end gap-2">
-        {contextCount > 0 ? (
-          <span className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm">
-            {intl.formatMessage({ id: "firstSubmission.contexts" }, { count: contextCount })}
-          </span>
-        ) : null}
-        {draft.recoveryAttachments?.length ? (
-          <div className="flex max-w-full flex-wrap justify-end gap-2">
-            {draft.recoveryAttachments.map((file) => (
-              <span
-                key={file.id}
-                className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm"
-              >
-                {file.filename}
-              </span>
-            ))}
-          </div>
-        ) : null}
-        {draft.text ? (
-          <div className="max-w-full whitespace-pre-wrap break-words rounded-xl bg-surface px-4 py-3">
-            {draft.text}
-          </div>
-        ) : null}
-      </div>
+      {contextCount > 0 ? (
+        <span className="rounded-lg border border-border bg-surface px-3 py-2 text-ui-sm">
+          {intl.formatMessage({ id: "firstSubmission.contexts" }, { count: contextCount })}
+        </span>
+      ) : null}
       <div
         role="status"
         data-first-submission-status="true"

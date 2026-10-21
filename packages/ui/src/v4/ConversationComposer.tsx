@@ -263,7 +263,9 @@ import {
 import { resolveAttachableShareContext } from "@/lib/conversationShareContext.js";
 import { parseV4VisibleSlashCommand } from "@/v4/slashCommands.js";
 
-const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = { status: "loading" };
+const MODEL_SELECTION_LOADING_STATE: ModelSelectionState = {
+  status: "loading",
+};
 
 export interface ConversationComposerSendOptions {
   firstSubmissionId?: string;
@@ -295,7 +297,10 @@ export interface ConversationComposerSendOptions {
   requestedDelivery?: "startNow" | "queue" | "guide";
   /** 提交命令创建后由 Composer 订阅权威 projection，覆盖 ACK 丢失后的收口。 */
   onCommandCreated?: (commandId: string) => void;
-  sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
+  sharedContextRefs?: Array<{
+    kind: "shared_context_import";
+    context_id: string;
+  }>;
   /** 插件 UI 代发：随 sendText 持久化，用户消息卡片显示"来自插件 X"。 */
   source?: import("@zcode/shared/zcode-protocol-v4").ConversationInputSource;
 }
@@ -1335,7 +1340,10 @@ function ConversationComposerImpl({
         });
       if (shouldTransferDraft) {
         // 项目解绑只改变草稿的 cwd；输入正文、mention editor state 和组件内附件继续保留。
-        replaceComposerDraft({ ...ownerDraftRef.current.draft, ...previousDraft });
+        replaceComposerDraft({
+          ...ownerDraftRef.current.draft,
+          ...previousDraft,
+        });
         transferredDraft = previousDraft;
       }
     }
@@ -1893,7 +1901,10 @@ function ConversationComposerImpl({
         // acceptance: the debounced persist may have already stored it, and the first-send promotion
         // re-applies that draft into the promoted session, so the input never clears. Failure
         // recovery does not read this store — restoreSubmittedDraft uses the frozen snapshot.
-        updateComposerContentRef.current({ text: "", firstSubmission: undefined });
+        updateComposerContentRef.current({
+          text: "",
+          firstSubmission: undefined,
+        });
         if (clearEditor) {
           inputApiRef.current?.clear();
           updateText("");
@@ -1933,7 +1944,9 @@ function ConversationComposerImpl({
             : {}),
           ...(submittedRecoveryContexts ? { recoveryContexts: submittedRecoveryContexts } : {}),
           ...(preparationParams
-            ? { worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams) }
+            ? {
+                worktreeIntent: buildV4WorktreeIntentFromParams(preparationParams),
+              }
             : {}),
           recoveryAttachments: buildV4RecoveryAttachmentsManifest(
             attachmentsApi.attachments.filter((item) => submittedAttachmentIds.includes(item.id)),
@@ -2050,6 +2063,29 @@ function ConversationComposerImpl({
       const submittedScopeKey = `${workspaceKey}\0${draftScopeRef.current}`;
       let submittedCommandId: string | null = null;
       let submittedCommandResolved = false;
+      // Single logical bind writer for a reserved first submission (specs/first-submission-
+      // instant-ux.md, P2 bind moment): move the frozen record into the session scope, hand
+      // the attachments over, and promote the pane — gated by navigation ownership (FSL rule 7).
+      // Called at the reservation identity (plain: createSession envelope) and retried after
+      // admission only when it could not run earlier (storage failure or the navigation gate).
+      let reservationRecordBound = false;
+      const bindReservedSessionRecord = () => {
+        if (reservationRecordBound || !reservedSubmissionSessionId) return;
+        const targetScope = getV4WorktreeRecoveryScope(reservedSubmissionSessionId, submissionId);
+        if (
+          pendingRecoveryScope !== targetScope &&
+          !moveV4ComposerDraft(workspacePath, workspaceIdentity, pendingRecoveryScope, targetScope)
+        ) {
+          logger.warn(
+            "[v4-composer] first-submission draft move failed; keeping pending recovery scope",
+          );
+          return;
+        }
+        reservationRecordBound = true;
+        submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
+        if (shouldActivatePreparedSession())
+          onFirstSubmissionReserved?.(reservedSubmissionSessionId);
+      };
       let submittedContentSettled = false;
       let sendPreparedSessionId: string | undefined;
       const settleSubmittedContent = async () => {
@@ -2168,7 +2204,9 @@ function ConversationComposerImpl({
           generation: draftGeneration,
           status: "preparing",
           ...(retryFirstSubmission?.incognito || incognitoSubmission?.profile
-            ? { incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile }
+            ? {
+                incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile,
+              }
             : {}),
           ...(retryFirstSubmission?.reservation
             ? { reservation: retryFirstSubmission.reservation }
@@ -2193,7 +2231,12 @@ function ConversationComposerImpl({
           return;
         }
         setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, true);
-        // Persist the frozen submission only; claim/clear happens on the worktree queue path or in runSend (FSL03).
+        // Claim at freeze (FSL owners: past this point the send closure reads only the frozen
+        // snapshot, module draft stores and the reserved session id): the editor frees for the
+        // next draft in the same commit as the optimistic turn, and the reservation-time bind
+        // can no longer abort the send through the "Submission owner changed" guard. The
+        // claim's suppress flags neutralize the editor-clear echo (357f25ca).
+        claimSubmittedDraft();
         retryFirstSubmissionRef.current = undefined;
       }
       // Worktree setup pipeline (specs/composer-worktree-setup-steps.md): the first send with an
@@ -2271,7 +2314,9 @@ function ConversationComposerImpl({
             if (resolution.reason === "switch-failed") {
               toast(
                 resolution.message ??
-                  intl.formatMessage({ id: "git.branchSwitcher.error.unknown" }),
+                  intl.formatMessage({
+                    id: "git.branchSwitcher.error.unknown",
+                  }),
               );
             } else if (resolution.reason === "switch-error") {
               toast(
@@ -2366,6 +2411,10 @@ function ConversationComposerImpl({
           setPromptHistory(currentPromptHistory);
         };
         try {
+          // First submissions free the submit control at the fire moment (IUX "no dead Send"):
+          // the background chain owns everything from here; the repeat-submit ref stays armed
+          // until bind/remount or restore as the double-submit idempotency guard.
+          if (frozenFirstSubmission) setPending(false);
           // Freeze the profile before attachment preparation; later draft edits belong to another submission.
           if (!frozenFirstSubmission && draftMode && sessionId === null)
             incognitoSubmission = useDraftIncognitoIntentStore
@@ -2383,10 +2432,19 @@ function ConversationComposerImpl({
               ...(incognito ? { incognito } : {}),
               reservation: frozenFirstSubmission.reservation,
               onReservationCreated: (reservation) => {
-                frozenFirstSubmission = { ...frozenFirstSubmission!, reservation };
+                frozenFirstSubmission = {
+                  ...frozenFirstSubmission!,
+                  reservation,
+                };
                 updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
                   reservation,
                 });
+                // P2 bind moment: the reservation identity is known (client-proposed,
+                // ACK-stable session id + command id), so hand the record to the session
+                // scope and bind the pane now — never after sendText. Gated by navigation
+                // ownership (FSL rule 7); a skipped bind reconciles from the record.
+                reservedSubmissionSessionId = reservation.sessionId;
+                bindReservedSessionRecord();
               },
             });
           }
@@ -2516,7 +2574,10 @@ function ConversationComposerImpl({
               status: "fail",
               reasonCode: "blocked",
             });
-            sendAction.reject({ resultSource: "authority_ack", admissionResult: "rejected" });
+            sendAction.reject({
+              resultSource: "authority_ack",
+              admissionResult: "rejected",
+            });
             return;
           }
           if (sendResult === "confirmationRequired") {
@@ -2538,28 +2599,11 @@ function ConversationComposerImpl({
             return;
           }
           if (reservedSubmissionSessionId) {
-            // First-submission promotion runs only after the input was admitted. Promoting
-            // before the send switches the composer owner (scope/epoch) mid-flight and aborts
-            // the send with "Submission owner changed before admission". The frozen draft
-            // stays in the pending scope until here, so a failed send keeps its recoverable
-            // message in place instead of stranding it on an unreachable session scope.
-            const moved = moveV4ComposerDraft(
-              workspacePath,
-              workspaceIdentity,
-              pendingRecoveryScope,
-              getV4WorktreeRecoveryScope(reservedSubmissionSessionId, submissionId),
-            );
-            if (moved) {
-              submittedAttachments.moveToScope?.(`${workspaceKey}\0${reservedSubmissionSessionId}`);
-              if (shouldActivatePreparedSession())
-                onFirstSubmissionReserved?.(reservedSubmissionSessionId);
-            } else {
-              // The input was already admitted; a storage failure must not roll the composer
-              // back into a restore path. Keep the pending scope and let recovery own it.
-              logger.warn(
-                "[v4-composer] first-submission draft move failed; keeping pending recovery scope",
-              );
-            }
+            // Fallback for a bind that could not run at the reservation moment (draft-storage
+            // failure, or the navigation gate while the user was away): retry after admission,
+            // when the pane may have returned to this draft. The owner race that used to forbid
+            // promoting before admission is gone — the draft was claimed at freeze.
+            bindReservedSessionRecord();
           }
           if (incognitoSubmission) {
             // The session now owns the frozen profile; the next draft starts normal again — unless
@@ -2581,7 +2625,10 @@ function ConversationComposerImpl({
           setHeldQueueConfirmation(null);
           // Settle the captured content (idempotent with the command-resolution subscription).
           await settleSubmittedContent();
-          sendAction.complete({ resultSource: "authority_ack", admissionResult: "accepted" });
+          sendAction.complete({
+            resultSource: "authority_ack",
+            admissionResult: "accepted",
+          });
         } catch (error) {
           rollbackPromptHistory();
           // ACK-side failures may settle first; a settled submission must not restore its text again.
@@ -2599,8 +2646,10 @@ function ConversationComposerImpl({
           });
           sendAction.fail({ failureStage: "composer_send" });
         } finally {
-          if (frozenFirstSubmission)
-            setV4FirstSubmissionActive(workspacePath, workspaceIdentity, submissionId, false);
+          // The active-first-submission flag is NOT cleared here (flag lifetime table in the
+          // instant-UX spec): SessionPane clears it when the real user row is projected, and
+          // restore paths clear it on failure — a chain that ends between the two would flash
+          // the composer back into the locked-looking state.
           pendingRef.current = false;
           setPending(false);
         }
@@ -2635,7 +2684,9 @@ function ConversationComposerImpl({
           return;
         }
         const prepareOwnedSession = (params: ComposerWorktreePreparationParams) =>
-          onPrepareWorktreeSession(params, { shouldActivate: shouldActivatePreparedSession });
+          onPrepareWorktreeSession(params, {
+            shouldActivate: shouldActivatePreparedSession,
+          });
         queuedSubmissionIdRef.current = submissionId;
         setWorktreeQueued(true);
         const currentPipeline = selectComposerWorktreePipeline(
@@ -2652,14 +2703,20 @@ function ConversationComposerImpl({
           clearQueuedSubmissionState();
           pendingWorktreeSendRef.current = null;
           await runSend(
-            { path: currentPipeline.worktreePath, branchName: currentPipeline.params.branchName },
+            {
+              path: currentPipeline.worktreePath,
+              branchName: currentPipeline.params.branchName,
+            },
             preparedSessionIdForSend,
             currentPipeline.params.attemptId,
           );
           return;
         }
         if (!preparedSessionIdForSend || currentPipeline?.status !== "creating") {
-          const reservation = { epoch: renderedOwnerRef.current.epoch, id: submissionId };
+          const reservation = {
+            epoch: renderedOwnerRef.current.epoch,
+            id: submissionId,
+          };
           reservingWorktreeRef.current = reservation;
           let begin;
           try {
@@ -2753,7 +2810,10 @@ function ConversationComposerImpl({
           clearQueuedSubmissionState();
           pendingWorktreeSendRef.current = null;
           await runSend(
-            { path: joinedPipeline.worktreePath, branchName: joinedPipeline.params.branchName },
+            {
+              path: joinedPipeline.worktreePath,
+              branchName: joinedPipeline.params.branchName,
+            },
             preparedSessionIdForSend,
             joinedPipeline.params.attemptId,
           );
@@ -3108,7 +3168,11 @@ function ConversationComposerImpl({
 
   const handleStopClick = useCallback(() => {
     runUserAction({
-      input: { featureId: "conversation.composer.message", action: "stop", trigger: "button" },
+      input: {
+        featureId: "conversation.composer.message",
+        action: "stop",
+        trigger: "button",
+      },
       operation: onStop,
       completed: { resultSource: "optimistic_projection" },
       failureStage: "stop_generation",
@@ -3374,7 +3438,9 @@ function ConversationComposerImpl({
                       : canPreviewImageAttachment
                         ? attachmentPreviewTitle
                         : canPreviewPdfAttachment
-                          ? intl.formatMessage({ id: "chat.attachments.preview.openPdf" })
+                          ? intl.formatMessage({
+                              id: "chat.attachments.preview.openPdf",
+                            })
                           : undefined
                   }
                 >
@@ -3867,7 +3933,10 @@ function ConversationComposerImpl({
                 ? () => {
                     const request = reconnectProject
                       ? reconnectProject(workspaceKey)
-                      : remoteController?.dispatch({ type: "reconnect-workspace", workspaceKey });
+                      : remoteController?.dispatch({
+                          type: "reconnect-workspace",
+                          workspaceKey,
+                        });
                     void request?.catch((error: unknown) =>
                       logger.warn("[v4-composer] 项目重连失败", { error }),
                     );
@@ -3956,7 +4025,9 @@ function ConversationComposerImpl({
           placeholder={
             remoteAvailable
               ? normalPlaceholder
-              : intl.formatMessage({ id: "remote.conversation.sendUnavailable" })
+              : intl.formatMessage({
+                  id: "remote.conversation.sendUnavailable",
+                })
           }
           disabled={disabled || mode === "reject"}
           submitting={pending}

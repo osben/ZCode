@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import type { UserInputRow } from "@zcode/shared/zcode-protocol-v4";
 import type { ConversationTurnRenderUnit } from "@/v4/conversationTurnRenderUnitTypes.js";
+import { buildConversationTurnWorkSegments } from "@/v4/conversationTurnWorkSegments.js";
 
 /**
  * Attach a session-level context row (worktree setup/created) as the second timeline item:
@@ -41,4 +43,53 @@ export function withAfterFirstUserInputSlot(
   const [first, ...rest] = units;
   if (!first) return units;
   return [{ ...first, afterFirstUserInputSlot: slot }, ...rest];
+}
+
+/**
+ * Prepend the optimistic first-submission user turn as its own timeline-only unit
+ * (specs/first-submission-instant-ux.md, P1): a pixel-real user bubble rendered in the
+ * same commit as the Send click, before any Host round-trip. The unit stays first while
+ * the authoritative projection has not produced the real row; the caller hides the row
+ * (reconcile, not gate) when a real realUser row reaches the window. Work segments are
+ * derived through the normal builder so the turn group renders the bubble exactly like
+ * a projected user row.
+ */
+export function withOptimisticFirstInputRow(
+  units: ConversationTurnRenderUnit[],
+  row: UserInputRow | null,
+): ConversationTurnRenderUnit[] {
+  if (!row) return units;
+  const workSegments = buildConversationTurnWorkSegments({
+    key: "optimistic-first-input",
+    orderedRows: [row],
+    assistantTailRows: [],
+    isRunning: false,
+    isLastTurn: units.length === 0,
+    isInterrupted: false,
+    forceOpenHistory: false,
+    timelineOnly: true,
+  });
+  return [
+    {
+      key: "optimistic-first-input",
+      turnId: row.turnId,
+      visibleUserInputs: [row],
+      assistantWorkRows: [],
+      assistantHistoryRows: [],
+      assistantFollowingRows: [],
+      assistantTailRows: [],
+      browserTurnEndRows: [],
+      hookInvocations: [],
+      assistantTextRows: [],
+      leadingBoundaryRows: [],
+      flowItems: workSegments.flatMap((segment) => segment.flowItems),
+      workSegments,
+      renderRows: [row],
+      isLastTurn: units.length === 0,
+      isRunning: false,
+      assistantHistoryDefaultOpen: false,
+      timelineOnly: true,
+    },
+    ...units,
+  ];
 }

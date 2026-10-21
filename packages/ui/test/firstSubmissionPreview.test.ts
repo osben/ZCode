@@ -3,83 +3,69 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { FirstSubmissionPreview } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import { FirstSubmissionStatus } from "@/v4/composer/ComposerWorktreeRecovery.js";
 import type { V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
 
 afterEach(cleanup);
 
-function preview(
-  text: string,
+// The user bubble itself is the timeline's optimistic first-input row; this component is the
+// preparation status rendered beneath it (specs/first-submission-instant-ux.md P1/P3).
+function status(
   active: boolean,
-  status: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] = "preparing",
+  statusValue: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] = "preparing",
+  draft: Partial<V4ComposerDraft> = {},
 ) {
   return render(
     createElement(
       ZCodeIntlProvider,
       { initialLocale: "en-US" },
-      createElement(FirstSubmissionPreview, {
+      createElement(FirstSubmissionStatus, {
         active,
         draft: {
-          text,
-          recoveryAttachments: [{ id: "image", filename: "frozen-image.png" }],
-          firstSubmission: { submissionId: "frozen", ownerKey: "pane", status },
+          text: "Frozen message",
+          firstSubmission: { submissionId: "frozen", ownerKey: "pane", status: statusValue },
           updatedAt: 0,
+          ...draft,
         },
       }),
     ),
   );
 }
 
-describe("first-submission message-first presentation (FSL01/FSL04/FSL09)", () => {
-  it("shows structured context when there is no text or file", () => {
-    render(
-      createElement(
-        ZCodeIntlProvider,
-        { initialLocale: "en-US" },
-        createElement(FirstSubmissionPreview, {
-          active: true,
-          draft: {
-            text: "",
-            updatedAt: 0,
-            recoveryContexts: {
-              sharedContextRefs: [
-                { kind: "shared_context_import", context_id: "selected-context" },
-              ],
-            },
-          },
-        }),
-      ),
-    );
+describe("first-submission status line under the optimistic turn (FSL01/FSL04/FSL09)", () => {
+  it("shows the context chip alongside the status when contexts are frozen", () => {
+    status(true, "preparing", {
+      text: "",
+      recoveryContexts: {
+        sharedContextRefs: [{ kind: "shared_context_import", context_id: "selected-context" }],
+      },
+    });
     expect(screen.getByText("Context references: 1")).toBeTruthy();
-  });
-  it("shows complete multiline text and files above preparation", () => {
-    const text = Array.from({ length: 12 }, (_, index) => `Line ${index}`).join("\n");
-    const { container } = preview(text, true);
-    const message = container.querySelector("[data-first-submission-message]")!;
-    const status = screen.getByRole("status");
-    expect(message.textContent).toContain(text);
-    expect(message.textContent).toContain("frozen-image.png");
-    expect(container.querySelector("[class*='line-clamp']")).toBeNull();
-    expect(message.compareDocumentPosition(status)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(status.textContent).toContain("Preparing conversation");
+    expect(screen.getByRole("status").textContent).toContain("Preparing conversation");
   });
 
-  it("keeps attachment-only submissions visible", () => {
-    preview("", true);
-    expect(screen.getByText("frozen-image.png")).toBeTruthy();
-    expect(screen.getByRole("status")).toBeTruthy();
+  it("reports preparation while the submission is active (IUX05)", () => {
+    status(true);
+    expect(screen.getByRole("status").textContent).toContain("Preparing conversation");
   });
 
-  it("restores saved intent without suggesting execution resumed", () => {
-    preview("Saved before restart", false);
-    expect(screen.getByText("Saved before restart")).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Unsent message saved");
-    expect(screen.queryByText("Preparing conversation…")).toBeNull();
+  it("reports synchronization after the command was created (IUX06)", () => {
+    // The active flag outranks the recorded status while the chain is live; the
+    // synchronizing label surfaces for an inactive record with a created command
+    // (e.g. recovered after a restart mid-send).
+    status(false, "sending");
+    expect(screen.getByRole("status").textContent).toContain(
+      "Waiting for the conversation to update",
+    );
+  });
+
+  it("keeps the failure state visible under the message (IUX07)", () => {
+    status(false, "failed");
+    expect(screen.getByRole("status").textContent).toContain("Failed to send");
   });
 
   it("distinguishes an unknown command outcome from a new unsent draft", () => {
-    preview("Keep original command", false, "unknown");
+    status(false, "unknown");
     expect(screen.getByRole("status").textContent).toContain("Checking whether");
-    expect(screen.getByText("Keep original command")).toBeTruthy();
   });
 });

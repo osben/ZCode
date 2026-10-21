@@ -19,7 +19,7 @@ import type {
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
-import { FirstSubmissionPreview } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import { FirstSubmissionStatus } from "@/v4/composer/ComposerWorktreeRecovery.js";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
 import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
@@ -176,6 +176,7 @@ import {
   getV4FirstSubmissionVersion,
   subscribeV4ComposerDrafts,
   isV4FirstSubmissionActive,
+  setV4FirstSubmissionActive,
   clearV4ComposerDraft,
   moveV4ComposerDraft,
   getV4WorktreeRecoveryScope,
@@ -280,7 +281,6 @@ import {
 } from "@/v4/workflowRunDirectoryModel.js";
 import {
   hasOlderRows,
-  hasAcceptedInputProjection,
   requiresAcceptedInputProjection,
   shouldAutoLoadIncompleteLeadingTurn,
 } from "@/v4/conversationProjectionStore.js";
@@ -1611,7 +1611,10 @@ export function SessionPane({
       if (!claimHighspeedCardAutoShare(candidate.cardId, autoShareNow)) continue;
       // 分享卡片改为客户端生成，不再请求后端 share 接口；到期后直接把本地统计发布到左下角。
       browserGlobalNoticeStore?.publish(
-        buildHighspeedShareNotice({ cardId: candidate.cardId, metrics: candidate.metrics }),
+        buildHighspeedShareNotice({
+          cardId: candidate.cardId,
+          metrics: candidate.metrics,
+        }),
       );
       markHighspeedCardAutoShared(candidate.cardId);
     }
@@ -2009,7 +2012,9 @@ export function SessionPane({
                   logger.error("[task-groups] 新任务归属提交失败", cause);
                   toast(intl.formatMessage({ id: "taskGroup.failed" }), {
                     durationMs: 0,
-                    actionLabel: intl.formatMessage({ id: "taskGroup.retryPlacement" }),
+                    actionLabel: intl.formatMessage({
+                      id: "taskGroup.retryPlacement",
+                    }),
                     onAction: () => void attempt(),
                     dedupeKey: `task-group:${createdSessionId}`,
                   });
@@ -2206,7 +2211,10 @@ export function SessionPane({
             }
           : recentReceipt
             ? {
-                workspace: { workspacePath, ...(workspaceIdentity ? { workspaceIdentity } : {}) },
+                workspace: {
+                  workspacePath,
+                  ...(workspaceIdentity ? { workspaceIdentity } : {}),
+                },
                 ...(sessionId === null
                   ? {
                       projectId: recentScope.projectId,
@@ -2508,7 +2516,18 @@ export function SessionPane({
         }
       }
       if (!options || options.shouldActivate()) {
-        void handleDraftSessionCreated(createdSessionId, createSource, undefined, draftTaskGroupId);
+        // Worktree binds at the reservation ACK with the same immediacy as the plain path
+        // (specs/first-submission-instant-ux.md P2): only the group placement stays staged
+        // on the project-tree row, and the sidebar re-reads via the task-list version bump.
+        void handleDraftSessionCreated(
+          createdSessionId,
+          createSource,
+          undefined,
+          draftTaskGroupId,
+          {
+            bind: "immediate",
+          },
+        );
       }
       return createdSessionId;
     },
@@ -3020,7 +3039,12 @@ export function SessionPane({
       const childSessionId = await createSelectionSideChat(pendingKey, async () => {
         const ack = await dispatchCommand(
           "createSelectionSideSession",
-          { firstInput: { text, ...(modelSelection ? { modelSelection } : {}) } },
+          {
+            firstInput: {
+              text,
+              ...(modelSelection ? { modelSelection } : {}),
+            },
+          },
           sessionId,
           undefined,
           undefined,
@@ -3110,7 +3134,9 @@ export function SessionPane({
     const planAction: AppSlashCommand = {
       value: "plan",
       label: intl.formatMessage({ id: "chat.slash.app.plan.label" }),
-      description: intl.formatMessage({ id: "chat.slash.app.plan.description" }),
+      description: intl.formatMessage({
+        id: "chat.slash.app.plan.description",
+      }),
       keywords: ["plan", "计划", "计划模式"],
       run: () => handleDraftSwitchMode("plan"),
     };
@@ -3132,12 +3158,24 @@ export function SessionPane({
     // 关键词固定同时包含中英文别名，任一 locale 下输入 side / btw / 辅助 都能搜到。
     // `/btw` 是 `/side` 的等价别名，适配不同用户输入习惯，面板中各自独立展示。
     const sharedKeywords = ["side", "btw", "side chat", "auxiliary", "辅助对话", "辅助", "侧边"];
-    const description = intl.formatMessage({ id: "chat.slash.app.side.description" });
+    const description = intl.formatMessage({
+      id: "chat.slash.app.side.description",
+    });
     return [
       planAction,
       ...[
-        { value: "side", description, keywords: sharedKeywords, run: openNewSelectionSideChat },
-        { value: "btw", description, keywords: sharedKeywords, run: openNewSelectionSideChat },
+        {
+          value: "side",
+          description,
+          keywords: sharedKeywords,
+          run: openNewSelectionSideChat,
+        },
+        {
+          value: "btw",
+          description,
+          keywords: sharedKeywords,
+          run: openNewSelectionSideChat,
+        },
       ].filter((command) => !cliSlashCommandNames.has(command.value)),
     ];
   }, [
@@ -3441,7 +3479,10 @@ export function SessionPane({
         undefined,
         undefined,
         (envelope) =>
-          onReservationCreated?.({ sessionId: targetSessionId, commandId: envelope.commandId }),
+          onReservationCreated?.({
+            sessionId: targetSessionId,
+            commandId: envelope.commandId,
+          }),
       );
       if (
         (ack.status !== "accepted" && ack.status !== "duplicate") ||
@@ -4383,7 +4424,9 @@ export function SessionPane({
         const detail = error instanceof Error ? error.message : String(error);
         const incognitoMessageId = incognitoUnsupportedMessageId(detail);
         if (incognitoMessageId) {
-          toast(intl.formatMessage({ id: incognitoMessageId }), { variant: "warning" });
+          toast(intl.formatMessage({ id: incognitoMessageId }), {
+            variant: "warning",
+          });
           return "blocked";
         }
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
@@ -5261,17 +5304,70 @@ export function SessionPane({
     ],
   );
   const firstCommandId = firstSubmissionRecord?.draft.firstSubmission?.commandId;
-  const firstSubmissionProjected = Boolean(
-    firstCommandId &&
-    snapshot?.sessionId === sessionId &&
-    hasAcceptedInputProjection(snapshot, firstCommandId),
-  );
-  const firstSubmission = firstSubmissionProjected ? undefined : firstSubmissionRecord;
+  // Reconcile, not gate (specs/first-submission-instant-ux.md P1): the optimistic row hides
+  // only when a real realUser row is visible in this session's window — never on the
+  // queue-item projection, which was the header-preview blink. The fresh-session fallback
+  // accepts any realUser row because the first submission is definitionally the first user
+  // row of its session, so an omitted optional sourceCommandId cannot strand a duplicate.
+  const visibleRealUserRows: UserInputRow[] =
+    snapshot?.sessionId === sessionId
+      ? snapshot.rows.window.filter(
+          (row): row is UserInputRow => row.kind === "userInput" && row.origin === "realUser",
+        )
+      : [];
+  const firstSubmissionRowProjected =
+    Boolean(firstSubmissionRecord) &&
+    visibleRealUserRows.some(
+      (row) =>
+        firstCommandId === undefined ||
+        row.sourceCommandId === firstCommandId ||
+        // Fresh-session fallback: first user row of a fresh session is ours.
+        visibleRealUserRows[0] === row,
+    );
+  const firstSubmission = firstSubmissionRowProjected ? undefined : firstSubmissionRecord;
   const hasFirstSubmission = Boolean(firstSubmission);
   useEffect(() => {
-    if (firstSubmissionProjected && firstSubmissionRecord)
-      clearV4ComposerDraft(workspacePath, workspaceIdentity, firstSubmissionRecord.scope);
-  }, [firstSubmissionProjected, firstSubmissionRecord?.scope, workspacePath, workspaceIdentity]);
+    if (!firstSubmissionRowProjected || !firstSubmissionRecord) return;
+    const projectedSubmissionId = firstSubmissionRecord.draft.firstSubmission?.submissionId;
+    clearV4ComposerDraft(workspacePath, workspaceIdentity, firstSubmissionRecord.scope);
+    // The active flag dies with the accepted row (flag lifetime table in the instant-UX
+    // spec): it is not cleared at send-chain completion.
+    if (
+      projectedSubmissionId &&
+      isV4FirstSubmissionActive(workspacePath, workspaceIdentity, projectedSubmissionId)
+    )
+      setV4FirstSubmissionActive(workspacePath, workspaceIdentity, projectedSubmissionId, false);
+  }, [firstSubmissionRowProjected, firstSubmissionRecord?.scope, workspacePath, workspaceIdentity]);
+  // The optimistic first-input row: a pixel-real user bubble from the frozen record, rendered
+  // in the Send commit itself (P1). sourceCommandId rides along once the command exists so the
+  // reconcile predicate and any future dedup can match; attachments map through the mime
+  // fallback because uploads are still in flight at this point.
+  const optimisticFirstInputRow = useMemo(() => {
+    const pending = firstSubmission?.draft.firstSubmission;
+    if (!pending) return null;
+    let rowIdHash = 0;
+    for (let index = 0; index < pending.submissionId.length; index += 1)
+      rowIdHash = (rowIdHash * 31 + pending.submissionId.charCodeAt(index)) | 0;
+    const attachments = (firstSubmission.draft.recoveryAttachments ?? []).map((file) => ({
+      ref: file.id,
+      fileName: file.filename,
+      mime: file.mimeType ?? "application/octet-stream",
+      bytes: file.sizeBytes ?? 0,
+    }));
+    return {
+      rowId: -(1 + (Math.abs(rowIdHash) % 1_000_000_000)),
+      turnId: `first-submission:${pending.submissionId}`,
+      productTurnId: `first-submission:${pending.submissionId}`,
+      entityId: pending.submissionId,
+      kind: "userInput" as const,
+      text: firstSubmission.draft.text,
+      origin: "realUser" as const,
+      ...(pending.commandId ? { sourceCommandId: pending.commandId } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      createdAt: firstSubmission.draft.updatedAt,
+      createdAtSeq: 0,
+    };
+  }, [firstSubmission]);
   const sessionIndexScopes = useMemo(
     () =>
       remoteSessionId && !zcodeAgentService
@@ -6080,17 +6176,9 @@ export function SessionPane({
       rootDraftScopeKey={composerScopeKey(newTaskComposerScope)}
       replaceComposerDraft={replaceComposerDraft}
       submissionReady={
-        composerSubmissionReady &&
-        runtimeReady &&
-        !recoveringDraft &&
-        !(
-          firstSubmission?.draft.firstSubmission &&
-          isV4FirstSubmissionActive(
-            workspacePath,
-            workspaceIdentity,
-            firstSubmission.draft.firstSubmission.submissionId,
-          )
-        )
+        // An active first submission no longer locks the composer (IUX01/IUX03, FSL rule 7):
+        // typing is always free and the next Send follows ordinary session readiness only.
+        composerSubmissionReady && runtimeReady && !recoveringDraft
       }
       updateComposerContent={updateComposerContent}
       createSubmissionFromComposer={createSubmissionFromComposer}
@@ -6610,14 +6698,36 @@ export function SessionPane({
                   hideTurnNavigator={shareSelectionPanelVisible && !compactForRemoteControl}
                   backgroundScrollLocked={false}
                   headerSlot={
-                    firstSubmission ||
                     // unsupportedRowCount 也要开这个门：整份副本的行都被本 build 跳过时
                     // rows 为空，但只读块必须留下来显示「需要更新 ZCode」，不能整块消失。
-                    (importedShare &&
-                      (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0)) ? (
+                    importedShare &&
+                    (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
+                      <ConversationShareImportNotice
+                        rows={importedShare.rows}
+                        contentBlocks={importedShare.contentBlocks}
+                        unsupportedRowCount={importedShare.unsupportedRowCount}
+                        artifactNames={importedShareArtifactNames}
+                        artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
+                        workspacePath={workspacePath}
+                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                        {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
+                        locale={locale}
+                        theme={theme}
+                        codePreviewSettings={codePreviewSettings}
+                        onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
+                        onOpenFileLink={onOpenFileLink}
+                        onOpenCodeViewer={onOpenCodeViewer}
+                      />
+                    ) : null
+                  }
+                  optimisticFirstInputRow={optimisticFirstInputRow}
+                  afterFirstUserInputSlot={
+                    firstSubmission ||
+                    (!isDraft &&
+                      (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree)) ? (
                       <>
                         {firstSubmission ? (
-                          <FirstSubmissionPreview
+                          <FirstSubmissionStatus
                             draft={firstSubmission.draft}
                             active={isV4FirstSubmissionActive(
                               workspacePath,
@@ -6626,70 +6736,48 @@ export function SessionPane({
                             )}
                           />
                         ) : null}
-                        {importedShare &&
-                        (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
-                          <ConversationShareImportNotice
-                            rows={importedShare.rows}
-                            contentBlocks={importedShare.contentBlocks}
-                            unsupportedRowCount={importedShare.unsupportedRowCount}
-                            artifactNames={importedShareArtifactNames}
-                            artifactWorkspaceRelativePaths={
-                              importedShareArtifactWorkspaceRelativePaths
-                            }
-                            workspacePath={workspacePath}
-                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                            {...(remoteSessionId
-                              ? { workspaceRemoteSessionId: remoteSessionId }
-                              : {})}
-                            locale={locale}
-                            theme={theme}
-                            codePreviewSettings={codePreviewSettings}
-                            onOpenShareUrl={
-                              onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined
-                            }
-                            onOpenFileLink={onOpenFileLink}
-                            onOpenCodeViewer={onOpenCodeViewer}
-                          />
+                        {!isDraft &&
+                        (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree) ? (
+                          snapshot?.meta.worktreePreparation ? (
+                            <ConversationWorktreeSetupSteps
+                              workspacePath={workspacePath}
+                              {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                              sessionId={sessionId!}
+                              preparation={snapshot.meta.worktreePreparation}
+                              remoteSessionId={remoteSessionId ?? undefined}
+                              onRetryPreparation={handleWorktreePreparationRetry}
+                              onCancelPreparation={handleWorktreePreparationCancel}
+                              onPreparationFailed={handleWorktreePreparationFailed}
+                              onSyncPreparation={syncWorktreePreparation}
+                            />
+                          ) : (
+                            <ConversationWorktreeCreatedNotice
+                              branchName={bridgedExecutionWorktree!.branchName}
+                              currentBranchName={
+                                sessionExecutionWorktree && worktreeGitState.summary.isRepository
+                                  ? worktreeGitState.summary.headRefType === "branch"
+                                    ? worktreeGitState.summary.branchName
+                                    : intl.formatMessage({
+                                        id: "git.head.detached",
+                                      })
+                                  : undefined
+                              }
+                              path={bridgedExecutionWorktree!.path}
+                              workspaceIdentity={workspaceIdentity}
+                              remoteSessionId={remoteSessionId}
+                              onOpenWorktree={onCreateTaskInWorkspace}
+                            />
+                          )
                         ) : null}
                       </>
-                    ) : null
-                  }
-                  afterFirstUserInputSlot={
-                    !isDraft && (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree) ? (
-                      snapshot?.meta.worktreePreparation ? (
-                        <ConversationWorktreeSetupSteps
-                          workspacePath={workspacePath}
-                          {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                          sessionId={sessionId!}
-                          preparation={snapshot.meta.worktreePreparation}
-                          remoteSessionId={remoteSessionId ?? undefined}
-                          onRetryPreparation={handleWorktreePreparationRetry}
-                          onCancelPreparation={handleWorktreePreparationCancel}
-                          onPreparationFailed={handleWorktreePreparationFailed}
-                          onSyncPreparation={syncWorktreePreparation}
-                        />
-                      ) : (
-                        <ConversationWorktreeCreatedNotice
-                          branchName={bridgedExecutionWorktree!.branchName}
-                          currentBranchName={
-                            sessionExecutionWorktree && worktreeGitState.summary.isRepository
-                              ? worktreeGitState.summary.headRefType === "branch"
-                                ? worktreeGitState.summary.branchName
-                                : intl.formatMessage({ id: "git.head.detached" })
-                              : undefined
-                          }
-                          path={bridgedExecutionWorktree!.path}
-                          workspaceIdentity={workspaceIdentity}
-                          remoteSessionId={remoteSessionId}
-                          onOpenWorktree={onCreateTaskInWorkspace}
-                        />
-                      )
                     ) : null
                   }
                   emptyState={
                     !remoteAvailable ? (
                       <div className="p-6 text-center text-ui-base text-foreground-subtle">
-                        {intl.formatMessage({ id: "remote.conversation.placeholder" })}
+                        {intl.formatMessage({
+                          id: "remote.conversation.placeholder",
+                        })}
                       </div>
                     ) : isDraft && !hasFirstSubmission ? (
                       <div data-testid={TID_CHAT_EMPTY} className="w-full">

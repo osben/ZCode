@@ -1,6 +1,9 @@
 import { useBotTopicPreparations } from "@/v4/BotTopicPreparation.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
-import { withAfterFirstUserInputSlot } from "@/v4/conversationTurnUnitSlots.js";
+import {
+  withAfterFirstUserInputSlot,
+  withOptimisticFirstInputRow,
+} from "@/v4/conversationTurnUnitSlots.js";
 /* oxlint-disable eslint(max-lines) -- ConversationTimeline 集中承载虚拟滚动、滚动锚定、loadOlder 与 find 高亮协调；拆散会让同一滚动状态跨文件传递。 */
 import {
   Component,
@@ -30,6 +33,7 @@ import type {
   ConversationRowTarget,
   QueueItem,
   SessionPhase,
+  UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
 import { cn } from "@/components/lib/utils.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
@@ -329,6 +333,12 @@ export interface ConversationTimelineProps {
    * 位于第一条用户消息下方；rows 为空时自成 timeline-only 单元，保持在冻结预览之下。
    */
   afterFirstUserInputSlot?: ReactNode;
+  /**
+   * 乐观首发用户行（specs/first-submission-instant-ux.md P1）：Send 点击的同一提交里作为
+   * 独立 timeline-only 单元渲染在时间线首位；真实 realUser 行进入窗口后由宿主撤下
+   * （reconcile，而非 gate）。为 null 时行为不变。
+   */
+  optimisticFirstInputRow?: UserInputRow | null;
   /** 草稿态让 emptyState 与同一个 bottomDock 作为整体居中，不重挂 composer。 */
   centerEmptyStateWithDock?: boolean;
   /** 窄屏/粗指针视口保留紧凑居中布局，不复用桌面草稿安全间距。 */
@@ -393,6 +403,7 @@ function ConversationTimelineImpl({
   emptyState,
   headerSlot,
   afterFirstUserInputSlot,
+  optimisticFirstInputRow = null,
   centerEmptyStateWithDock = false,
   compactEmptyStateWithDock = false,
   summaryPanelLayout = "none",
@@ -458,14 +469,17 @@ function ConversationTimelineImpl({
   const renderUnits = useMemo(
     () =>
       withAfterFirstUserInputSlot(
-        withTopicPreparationMessages(
-          buildConversationTurnRenderUnits(rows, {
-            nowMs: liveNowMs,
-            sessionPhase,
-            pluginUiPinResolver,
-          }),
-          rows,
-          topicPreparations,
+        withOptimisticFirstInputRow(
+          withTopicPreparationMessages(
+            buildConversationTurnRenderUnits(rows, {
+              nowMs: liveNowMs,
+              sessionPhase,
+              pluginUiPinResolver,
+            }),
+            rows,
+            topicPreparations,
+          ),
+          optimisticFirstInputRow,
         ),
         afterFirstUserInputSlot,
       ),
@@ -476,6 +490,7 @@ function ConversationTimelineImpl({
       sessionPhase,
       topicPreparations,
       afterFirstUserInputSlot,
+      optimisticFirstInputRow,
     ],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
