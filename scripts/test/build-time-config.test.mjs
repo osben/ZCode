@@ -167,3 +167,19 @@ test("relay identity mode is a baked default that only accepts known modes", asy
     /ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE/,
   );
 });
+
+test("a public release bakes the device-key mode and never an enrollment secret", async () => {
+  const secret = "enrollment-secret-fixture-0123456789abcdef";
+  const config = await resolveBuildTimeConfig(
+    {
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE: "device-key",
+      ZCODE_WEB_REMOTE_CONTROL_RELAY_ENROLLMENT_SECRET: secret,
+      ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET: secret,
+    },
+    { defaultsPath: join(dir, "missing.json") },
+  );
+  assert.equal(config.webRemoteControlIdentityMode, "device-key");
+  const serialized = JSON.stringify([config, createBuildTimeConfigDefines(config)]);
+  assert.equal(serialized.includes(secret), false);
+  assert.equal(/enrollment/i.test(serialized), false);
+});

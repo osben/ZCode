@@ -17,11 +17,7 @@ describe("relay public boundary", () => {
       }),
     ).toBeNull();
     expect(
-      parseWebRemoteControlRelayV2HttpResponse("delete", {
-        code: 0,
-        msg: "ok",
-        future: true,
-      }),
+      parseWebRemoteControlRelayV2HttpResponse("delete", { code: 0, msg: "ok", future: true }),
     ).toEqual({ code: 0, msg: "ok" });
   });
   it("keeps replacement history after handshake acknowledgement", () => {

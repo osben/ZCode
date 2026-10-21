@@ -12,11 +12,7 @@ export class WebRemoteControlV2Heartbeat {
   constructor(
     private readonly query: () => void,
     private readonly expired: () => void,
-    private readonly timing: {
-      intervalMs?: number;
-      jitterMs?: number;
-      ackTimeoutMs?: number;
-    } = {},
+    private readonly timing: { intervalMs?: number; jitterMs?: number; ackTimeoutMs?: number } = {},
   ) {}
   acknowledged(): void {
     if (this.watchdog) clearTimeout(this.watchdog);

@@ -84,10 +84,7 @@ describe("identity exchange", () => {
 
   it("rejects a foreign issuer, a wrong audience, and a missing or empty user claim", () => {
     const key = identityKey("EdDSA", "login-1");
-    const relay = service({
-      identityKeys: [key.publicJwk],
-      audience: "fixture-audience",
-    });
+    const relay = service({ identityKeys: [key.publicJwk], audience: "fixture-audience" });
     const now = START_MS / 1000;
     expect(
       relay.exchange(
@@ -158,11 +155,7 @@ describe("relay JWT", () => {
   it("rejects a relay JWT after its expiry", () => {
     const clock = { ms: START_MS };
     const key = identityKey("EdDSA", "login-1");
-    const relay = service({
-      clock,
-      identityKeys: [key.publicJwk],
-      ttlSeconds: 60,
-    });
+    const relay = service({ clock, identityKeys: [key.publicJwk], ttlSeconds: 60 });
     const issued = relay.exchange(loginJwt(key, "EdDSA", {}, START_MS / 1000));
     expect(relay.verify(issued!.jwt)).toBe("user-1");
     clock.ms += 61_000;
@@ -195,16 +188,10 @@ describe("relay JWT", () => {
     const key = identityKey("EdDSA", "login-1");
     const oldKey = relaySigningKey("relay-old").privateJwk;
     const newKey = relaySigningKey("relay-new").privateJwk;
-    const before = service({
-      signing: [oldKey],
-      identityKeys: [key.publicJwk],
-    });
+    const before = service({ signing: [oldKey], identityKeys: [key.publicJwk] });
     const oldToken = before.exchange(loginJwt(key, "EdDSA"))!.jwt;
 
-    const during = service({
-      signing: [newKey, oldKey],
-      identityKeys: [key.publicJwk],
-    });
+    const during = service({ signing: [newKey, oldKey], identityKeys: [key.publicJwk] });
     const newToken = during.exchange(loginJwt(key, "EdDSA"))!.jwt;
     expect(relayJwtParts(newToken).header.kid).toBe("relay-new");
     expect(during.verify(oldToken)).toBe("user-1");
@@ -220,10 +207,7 @@ describe("relay JWT", () => {
     const dup = relaySigningKey("same").privateJwk;
     expect(() => service({ signing: [dup, dup], identityKeys: [key.publicJwk] })).toThrow(/unique/);
     expect(() =>
-      service({
-        signing: [{ kty: "EC", crv: "P-256", kid: "x" }],
-        identityKeys: [key.publicJwk],
-      }),
+      service({ signing: [{ kty: "EC", crv: "P-256", kid: "x" }], identityKeys: [key.publicJwk] }),
     ).toThrow();
     expect(() => service({ identityKeys: [key.publicJwk], ttlSeconds: 86_401 })).toThrow(/TTL/);
     expect(() => service({ identityKeys: [key.publicJwk], ttlSeconds: 0 })).toThrow(/TTL/);

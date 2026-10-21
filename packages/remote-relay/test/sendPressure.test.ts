@@ -45,10 +45,7 @@ const frame = { type: "data", payload: "x".repeat(3000) };
 
 it("bounds all pending relay writes and releases closed sockets without double-releasing late callbacks", async () => {
   // Budgets: one relayed frame is about 3 KB on the wire, so two pending frames fit and a third does not.
-  const harness = await startRelay({
-    maxBufferedBytes: 8000,
-    maxTotalBufferedBytes: 7000,
-  });
+  const harness = await startRelay({ maxBufferedBytes: 8000, maxTotalBufferedBytes: 7000 });
   cleanup.push(harness);
   const bearer = await harness.relayJwt();
   const a = await paired(harness, bearer);
@@ -72,9 +69,7 @@ it("bounds all pending relay writes and releases closed sockets without double-r
   const aClosed = a.dev.closedWith();
   a.dev.terminate();
   await aClosed;
-  expect(await a.term.next("pair_status_ack")).toMatchObject({
-    pair_status: "waiting",
-  });
+  expect(await a.term.next("pair_status_ack")).toMatchObject({ pair_status: "waiting" });
 
   d.term.send(frame);
   expect(await d.dev.next("data")).toMatchObject({ payload: frame.payload });
@@ -98,10 +93,7 @@ it("bounds all pending relay writes and releases closed sockets without double-r
 });
 
 it("enforces the per-socket budget independently of the aggregate budget", async () => {
-  const harness = await startRelay({
-    maxBufferedBytes: 4000,
-    maxTotalBufferedBytes: 12000,
-  });
+  const harness = await startRelay({ maxBufferedBytes: 4000, maxTotalBufferedBytes: 12000 });
   cleanup.push(harness);
   const bearer = await harness.relayJwt();
   const a = await paired(harness, bearer);

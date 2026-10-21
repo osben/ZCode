@@ -48,18 +48,12 @@ describe("pairing and forwarding", () => {
     const term = await terminal(harness, bearer, sid);
     expect(term.ack).toMatchObject({ device_sid: sid, pair_status: "matched" });
     expect(term.ack.terminal_sid).not.toBe("");
-    expect(await dev.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "matched",
-    });
+    expect(await dev.socket.next("pair_status_ack")).toMatchObject({ pair_status: "matched" });
 
     term.socket.send({ type: "data", payload: { step: 1 } });
-    expect(await dev.socket.next("data")).toMatchObject({
-      payload: { step: 1 },
-    });
+    expect(await dev.socket.next("data")).toMatchObject({ payload: { step: 1 } });
     dev.socket.send({ type: "data", payload: { step: 2 } });
-    expect(await term.socket.next("data")).toMatchObject({
-      payload: { step: 2 },
-    });
+    expect(await term.socket.next("data")).toMatchObject({ payload: { step: 2 } });
 
     dev.socket.send({ type: "pair_status_query", client_ts: 1 });
     expect(await dev.socket.next("pair_status_ack")).toMatchObject({
@@ -67,9 +61,7 @@ describe("pairing and forwarding", () => {
       terminal_sid: term.ack.terminal_sid,
     });
     term.socket.send({ type: "pair_status_query" });
-    expect(await term.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "matched",
-    });
+    expect(await term.socket.next("pair_status_ack")).toMatchObject({ pair_status: "matched" });
 
     dev.socket.terminate();
     term.socket.terminate();
@@ -83,9 +75,7 @@ describe("pairing and forwarding", () => {
     expect(term.ack.pair_status).toBe("waiting");
     const dev = await device(harness, bearer, sid);
     expect(dev.ack.pair_status).toBe("matched");
-    expect(await term.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "matched",
-    });
+    expect(await term.socket.next("pair_status_ack")).toMatchObject({ pair_status: "matched" });
     dev.socket.terminate();
     term.socket.terminate();
   });
@@ -99,12 +89,8 @@ describe("pairing and forwarding", () => {
     await dev.socket.next("pair_status_ack");
 
     dev.socket.terminate();
-    expect(await term.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "waiting",
-    });
-    expect(await term.socket.next("error")).toMatchObject({
-      code: "DEVICE_OFFLINE",
-    });
+    expect(await term.socket.next("pair_status_ack")).toMatchObject({ pair_status: "waiting" });
+    expect(await term.socket.next("error")).toMatchObject({ code: "DEVICE_OFFLINE" });
     expect(await term.socket.closedWith()).toBeTypeOf("number");
 
     const again = await device(harness, bearer, sid);
@@ -123,13 +109,9 @@ describe("pairing and forwarding", () => {
     const term = await terminal(harness, bearer, sid);
     await dev.socket.next("pair_status_ack");
     term.socket.terminate();
-    expect(await dev.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "waiting",
-    });
+    expect(await dev.socket.next("pair_status_ack")).toMatchObject({ pair_status: "waiting" });
     dev.socket.send({ type: "pair_status_query" });
-    expect(await dev.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "waiting",
-    });
+    expect(await dev.socket.next("pair_status_ack")).toMatchObject({ pair_status: "waiting" });
     dev.socket.terminate();
   });
 
@@ -144,19 +126,13 @@ describe("pairing and forwarding", () => {
     const second = await device(harness, bearer, sid);
     expect(await first.socket.next("error")).toMatchObject({ code: "KICKED" });
     expect(await first.socket.closedWith()).toBeTypeOf("number");
-    expect(await term.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "matched",
-    });
+    expect(await term.socket.next("pair_status_ack")).toMatchObject({ pair_status: "matched" });
 
     // The old socket's close has already been processed by now; the new owner must still receive traffic.
     term.socket.send({ type: "data", payload: "still-routed" });
-    expect(await second.socket.next("data")).toMatchObject({
-      payload: "still-routed",
-    });
+    expect(await second.socket.next("data")).toMatchObject({ payload: "still-routed" });
     second.socket.send({ type: "pair_status_query" });
-    expect(await second.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "matched",
-    });
+    expect(await second.socket.next("pair_status_ack")).toMatchObject({ pair_status: "matched" });
     second.socket.terminate();
     term.socket.terminate();
   });
@@ -216,9 +192,7 @@ describe("pairing and forwarding", () => {
     const bearer = await harness.relayJwt();
     const { device_sid: sid } = await harness.register(bearer);
     const dev = await device(harness, bearer, sid);
-    const listed = await harness.api("GET", "/api/v1/remote/device", {
-      bearer,
-    });
+    const listed = await harness.api("GET", "/api/v1/remote/device", { bearer });
     expect(listed.body.data).toEqual([
       expect.objectContaining({
         device_sid: sid,
@@ -237,9 +211,7 @@ describe("pairing and forwarding", () => {
     dev.socket.send({ type: "data", payload: "nobody-listening" });
     expect(await dev.socket.next("error")).toMatchObject({ code: "INTERNAL" });
     dev.socket.send({ type: "pair_status_query" });
-    expect(await dev.socket.next("pair_status_ack")).toMatchObject({
-      pair_status: "waiting",
-    });
+    expect(await dev.socket.next("pair_status_ack")).toMatchObject({ pair_status: "waiting" });
     dev.socket.terminate();
   });
 });
@@ -269,9 +241,7 @@ describe("tokens and the upgrade", () => {
   });
 
   it("refuses a wrong path with 400 and a foreign Web origin with 403", async () => {
-    const harness = await relay({
-      allowedOrigins: ["https://zcode.example.invalid"],
-    });
+    const harness = await relay({ allowedOrigins: ["https://zcode.example.invalid"] });
     const wrongPath = harness.server.url.replace("/api/v1/remote/ws2", "/ws");
     expect(await upgradeStatus(`${wrongPath}?token=x`)).toBe(400);
     const bearer = await harness.relayJwt();
@@ -308,9 +278,7 @@ describe("frame validation and the auth deadline", () => {
 
     const second = await device(harness, bearer, sid);
     second.socket.send({ type: "auth_init", device_sid: sid });
-    expect(await second.socket.next("error")).toMatchObject({
-      code: "WRONG_PARAM",
-    });
+    expect(await second.socket.next("error")).toMatchObject({ code: "WRONG_PARAM" });
     second.socket.terminate();
 
     const binary = await harness.connect(bearer, "terminal");
@@ -319,22 +287,15 @@ describe("frame validation and the auth deadline", () => {
 
     const invalidJson = await harness.connect(bearer, "terminal");
     invalidJson.sendRaw("{not json");
-    expect(await invalidJson.next("error")).toMatchObject({
-      code: "WRONG_PARAM",
-    });
+    expect(await invalidJson.next("error")).toMatchObject({ code: "WRONG_PARAM" });
 
     const extraField = await harness.connect(bearer, "device");
     extraField.send({ type: "auth_init", device_sid: sid, role: "terminal" });
-    expect(await extraField.next("error")).toMatchObject({
-      code: "WRONG_PARAM",
-    });
+    expect(await extraField.next("error")).toMatchObject({ code: "WRONG_PARAM" });
   });
 
   it("closes an unauthenticated socket when the auth deadline passes", async () => {
-    const harness = await relay({
-      authTimeoutMs: 150,
-      heartbeatIntervalMs: 50,
-    });
+    const harness = await relay({ authTimeoutMs: 150, heartbeatIntervalMs: 50 });
     const socket = await harness.connect(await harness.relayJwt(), "device");
     expect(await socket.next("error")).toMatchObject({ code: "AUTH_FAILED" });
     expect(await socket.closedWith()).toBeTypeOf("number");
