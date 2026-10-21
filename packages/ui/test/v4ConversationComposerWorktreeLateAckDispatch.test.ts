@@ -748,3 +748,91 @@ it("falls back to binding after the send resolves when no reservation identity c
     });
   }
 });
+
+it("keeps the composer free and the frozen record stable while the send chain is in flight (IUX01/IUX03)", async () => {
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-in-flight", commandId: "cmd-in-flight" });
+      return "session-in-flight";
+    },
+  });
+  let settleSend!: () => void;
+  harness.onSendText.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        settleSend = resolve;
+      }),
+  );
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("first frozen message");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    // Claim-at-freeze: the editable draft is empty in the submit commit itself, so the
+    // composer is free for the next draft while reservation/uploads/send are in flight.
+    expect(readV4ComposerDraft("/workspace", undefined, "__draft__")?.text ?? "").toBe("");
+    const record = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-in-flight")[0];
+    expect(record?.draft.text).toBe("first frozen message");
+    expect(record?.draft.firstSubmission?.status).not.toBe("failed");
+
+    await act(async () => {
+      settleSend();
+      await flushAsyncWork();
+    });
+    // Settlement cannot erase or restore over the frozen submission (FSL rule 7): the
+    // record stays admitted-side and the editable draft stays free.
+    expect(readV4ComposerDraft("/workspace", undefined, "__draft__")?.text ?? "").toBe("");
+    const settled = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-in-flight")[0];
+    expect(settled?.draft.text).toBe("first frozen message");
+    expect(settled?.draft.firstSubmission?.status).not.toBe("failed");
+  } finally {
+    settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a second click during the in-flight first submission dispatches nothing new (IUX02)", async () => {
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-double-click", commandId: "cmd-double" });
+      return "session-double-click";
+    },
+  });
+  let settleSend!: () => void;
+  harness.onSendText.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        settleSend = resolve;
+      }),
+  );
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("double click me");
+      await flushAsyncWork();
+    });
+    // The repeat click with new text lands while the first chain is still in flight: the
+    // armed idempotency ref must swallow it — one dispatch, one frozen submission.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("double click me");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-double-click").filter(
+        (entry) => entry.draft.firstSubmission,
+      ),
+    ).toHaveLength(1);
+  } finally {
+    settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});

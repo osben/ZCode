@@ -73,6 +73,18 @@ export function hasAcceptedInputProjection(
   );
 }
 
+/**
+ * Reconcile predicate for the optimistic first-input row (specs/first-submission-instant-ux.md
+ * P1): only a visible real realUser row hides it — never the queue-item projection, which was
+ * the header-preview blink. The first submission is definitionally its session's first user
+ * row, so any visible realUser row hides the optimistic bubble; this also covers projections
+ * that omit the optional sourceCommandId (a strict id-only match could strand a permanent
+ * duplicate bubble instead).
+ */
+export function hasVisibleRealUserFirstInputRow(rows: readonly ConversationRow[]): boolean {
+  return rows.some((row) => row.kind === "userInput" && row.origin === "realUser");
+}
+
 export type ConversationStoreStatus =
   // subscribe in flight (initial connection or resubscription after a gap).
   | "connecting"

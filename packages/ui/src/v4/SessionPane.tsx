@@ -281,6 +281,7 @@ import {
 } from "@/v4/workflowRunDirectoryModel.js";
 import {
   hasOlderRows,
+  hasVisibleRealUserFirstInputRow,
   requiresAcceptedInputProjection,
   shouldAutoLoadIncompleteLeadingTurn,
 } from "@/v4/conversationProjectionStore.js";
@@ -5303,27 +5304,13 @@ export function SessionPane({
       composerDraftGeneration,
     ],
   );
-  const firstCommandId = firstSubmissionRecord?.draft.firstSubmission?.commandId;
   // Reconcile, not gate (specs/first-submission-instant-ux.md P1): the optimistic row hides
   // only when a real realUser row is visible in this session's window — never on the
-  // queue-item projection, which was the header-preview blink. The fresh-session fallback
-  // accepts any realUser row because the first submission is definitionally the first user
-  // row of its session, so an omitted optional sourceCommandId cannot strand a duplicate.
-  const visibleRealUserRows: UserInputRow[] =
-    snapshot?.sessionId === sessionId
-      ? snapshot.rows.window.filter(
-          (row): row is UserInputRow => row.kind === "userInput" && row.origin === "realUser",
-        )
-      : [];
+  // queue-item projection, which was the header-preview blink.
   const firstSubmissionRowProjected =
     Boolean(firstSubmissionRecord) &&
-    visibleRealUserRows.some(
-      (row) =>
-        firstCommandId === undefined ||
-        row.sourceCommandId === firstCommandId ||
-        // Fresh-session fallback: first user row of a fresh session is ours.
-        visibleRealUserRows[0] === row,
-    );
+    snapshot?.sessionId === sessionId &&
+    hasVisibleRealUserFirstInputRow(snapshot.rows.window);
   const firstSubmission = firstSubmissionRowProjected ? undefined : firstSubmissionRecord;
   const hasFirstSubmission = Boolean(firstSubmission);
   useEffect(() => {
