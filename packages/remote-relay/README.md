@@ -1,103 +1,78 @@
-# Self-hosted remote relay
+# Self-hosted remote relay (V2)
 
-This executable pairs the existing Desktop and Web remote-control transports.
-It exposes `/ws`, `/healthz` and `/readyz`; it does not serve the Web frontend or
-run an Agent. Desktop must remain running to execute commands.
+This executable pairs the Desktop and Web remote-control clients over the V2 protocol
+(`/api/v1/remote/*` HTTP and `/api/v1/remote/ws2` WebSocket). It issues its own relay
+JWTs from the account login JWT, so it needs no account service. It does not serve the
+Web frontend or run an Agent: Desktop must stay running to execute commands.
 
-The server supports separate registration SIDs and authenticated browser
-replacement. Desktop still uses application-wide credentials: independent
-window registration and public URL defaults in Desktop releases remain pending.
-See [the design and acceptance catalog](../../docs/web-remote-control/self-hosted-remote-relay.md).
+Protocol and client behavior: `docs/web-remote-control/relay-v2-pairing.md`.
+Design, owner decisions and the test plan: `specs/relay-v2-migration.md` (sections 10 to 12).
+Deployment notes in `self-hosted-remote-relay.md` describe the V1 design and are being
+replaced by this README.
+
+## Configuration
+
+Startup fails closed: a missing or malformed required value stops the process, and the
+error names the variable, never its value.
+
+| Variable                                 | Required | Meaning                                                                                            |
+| ---------------------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `ZCODE_RELAY_DB_PATH`                    | yes      | SQLite file for device records. Keep it on a persistent volume, readable only by the relay user.   |
+| `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`    | yes      | JSON array of private Ed25519 JWKs (`kty: OKP`, `crv: Ed25519`, `kid`, `d`, `x`). The first signs. |
+| `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER`     | yes      | Exact `iss` value the account login JWT must carry.                                                |
+| `ZCODE_REMOTE_RELAY_IDENTITY_JWKS`       | yes      | JWK set (`{"keys": [...]}` or a JSON array) of public keys for EdDSA, ES256 or RS256 login tokens. |
+| `ZCODE_REMOTE_RELAY_IDENTITY_AUDIENCE`   | no       | `aud` the login JWT must carry, when set.                                                          |
+| `ZCODE_REMOTE_RELAY_IDENTITY_USER_CLAIM` | no       | Claim holding the user id. Default `sub`.                                                          |
+| `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS`     | no       | Relay JWT lifetime. Default `3600`, maximum `86400`.                                               |
+| `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`     | no       | Deadline for `auth_init` after connecting. Default `15000`.                                        |
+| `ZCODE_RELAY_HOST`, `ZCODE_RELAY_PORT`   | no       | Bind address (default `127.0.0.1`) and port (default `3031`).                                      |
+| `ZCODE_RELAY_ALLOWED_ORIGINS`            | no       | Exact Web origins, comma-separated. Required when binding to a non-loopback address.               |
+| `ZCODE_RELAY_TRUSTED_PROXIES`            | no       | Exact proxy IP addresses whose `X-Forwarded-For` is honored. Empty by default.                     |
+
+Limits (defaults): `ZCODE_RELAY_MAX_CONNECTIONS` 2000, `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` 20
+per source address (applies to `/session` and `/device`), `ZCODE_RELAY_MAX_REGISTRATIONS` 100000,
+`ZCODE_RELAY_MAX_BUFFERED_BYTES` 2097152, `ZCODE_RELAY_MAX_TOTAL_BUFFERED_BYTES` 67108864.
+
+`ZCODE_RELAY_STORAGE_KEY` from V1 is removed: device records hold no secret.
+
+## Keys and rotation
+
+Generate a relay signing key as an Ed25519 private JWK, give it a `kid`, and put it first
+in `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`. To rotate, prepend the new key and restart. Keep
+the old key until at least one TTL has passed, then remove it. Keys live in memory only.
+This version is single-replica: every replica needs the same key array.
+
+The login identity keys are public only. The relay never fetches them from the network.
+
+## Routes
+
+| Route                               | Auth              | Purpose                                          |
+| ----------------------------------- | ----------------- | ------------------------------------------------ |
+| POST `/api/v1/remote/session`       | login JWT in body | Exchange for a relay JWT                         |
+| POST / GET `/api/v1/remote/device`  | relay JWT         | Register a device (new SID each call) / list own |
+| POST `/api/v1/remote/device/delete` | relay JWT         | Delete an offline own device                     |
+| POST `/api/v1/remote/token`         | relay JWT         | One-time 60 second WebSocket token               |
+| WS `/api/v1/remote/ws2?token=`      | one-time token    | Pairing and forwarding                           |
+| GET `/healthz`, `/readyz`           | none              | Liveness and readiness                           |
 
 ## Railway
 
-1. Create a service from the repository, with Root Directory `/`. Set
-   `RAILWAY_DOCKERFILE_PATH=packages/remote-relay/Dockerfile`. Leave build/start
-   overrides empty so Railway uses the Dockerfile.
-2. Attach a persistent Volume at `/data`. Use one replica: live socket pairs are
-   process-local, and SQLite registrations belong to this volume.
-3. Set the following service variables, replacing the key and Web origin:
+1. Create a service from the repository. Set `RAILWAY_DOCKERFILE_PATH=packages/remote-relay/Dockerfile`
+   and leave build and start overrides empty.
+2. Attach a persistent volume at `/data`. Use one replica.
+3. Set the variables above, using `ZCODE_RELAY_DB_PATH=/data/relay.sqlite`,
+   `ZCODE_RELAY_HOST=0.0.0.0`, `ZCODE_RELAY_PORT=3031`, and your Web origin in
+   `ZCODE_RELAY_ALLOWED_ORIGINS`. Set `RAILWAY_RUN_UID=0` because the volume is root-owned.
+4. Generate a public domain on port `3031`, with health check path `/readyz`. Clients use
+   `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL=wss://<relay-domain>` (origin only; the path
+   `/api/v1/remote/ws2` is derived).
 
-   ```dotenv
-   RAILWAY_DOCKERFILE_PATH=packages/remote-relay/Dockerfile
-   RAILWAY_RUN_UID=0
-   PORT=3031
-   ZCODE_RELAY_HOST=0.0.0.0
-   ZCODE_RELAY_PORT=3031
-   ZCODE_RELAY_DB_PATH=/data/relay.sqlite
-   ZCODE_RELAY_STORAGE_KEY=<base64-encoded-32-byte-key>
-   ZCODE_RELAY_ALLOWED_ORIGINS=https://<web-domain>
-   ```
+Origins are exact HTTP(S) origins without paths or trailing slashes. Never put signing keys,
+identity keys or the database file in a client build, a `VITE_` variable, a source file or a PR.
 
-4. Generate a public domain with target port `3031`. Set the healthcheck path
-   to `/readyz`. After deployment, `https://<relay-domain>/readyz` should return
-   HTTP 200; connect clients to `wss://<relay-domain>/ws`.
+## Verification
 
-The Dockerfile builds from a restricted context containing only the relay's
-dependency closure and root build inputs. It defaults to the `node` user;
-Railway's root-owned volume requires `RAILWAY_RUN_UID=0` with this image.
-`PORT=3031` selects Railway's healthcheck port; the executable itself reads
-`ZCODE_RELAY_PORT`.
-
-Generate the storage key locally with `openssl rand -base64 32`, store it in
-Railway Variables, and retain it with your backups. It must remain unchanged
-when reopening the existing database. Never put it in a `VITE_` variable, client
-build, source file or PR.
-
-Origins are exact HTTP(S) origins without paths or trailing slashes. Multiple
-origins are comma-separated. Connections without an Origin header are permitted
-for Desktop, but still require authentication. Leave trusted proxies unset until
-the actual proxy peer addresses are verified; forwarding headers are not trusted
-by default, so registration quotas behind a proxy may be shared across users.
-
-Railway references: [Dockerfiles](https://docs.railway.com/builds/dockerfiles),
-[Volumes](https://docs.railway.com/volumes),
-[Domains](https://docs.railway.com/networking/domains/working-with-domains),
-[Healthchecks](https://docs.railway.com/deployments/healthchecks).
-
-## Client configuration
-
-Build Web with the relay's public address in its build environment:
-
-```dotenv
-VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL=wss://<relay-domain>/ws
-```
-
-From the repository root, run `pnpm build:web-remote-control:v4`. Serve
-`packages/web/dist` under `https://<web-domain>/remote/v4/` on a separate static
-host. A Web Railway container is not included in this package.
-
-Set these variables in the environment of the Desktop process:
-
-```dotenv
-ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL=wss://<relay-domain>/ws
-ZCODE_WEB_REMOTE_CONTROL_URL=https://<web-domain>/remote/v4/
-```
-
-Variables set on the Railway relay service do not configure local Desktop.
-Fork release builds can bake both values as defaults: set
-`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` and `ZCODE_WEB_REMOTE_CONTROL_URL` in the
-release build environment (GitHub repository variables feed `fork-release.yml`).
-They are public deployment inputs, not secrets; both must be set together and a
-one-sided or malformed pair fails the build. Runtime environment variables still
-override the baked defaults. Do not change `ZCODE_BASE_URL` to select the relay.
-
-## Limits and verification
-
-| Relay variable                         | Default                        |
-| -------------------------------------- | ------------------------------ |
-| `ZCODE_RELAY_MAX_CONNECTIONS`          | `2000`                         |
-| `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` | `20` per source IP             |
-| `ZCODE_RELAY_MAX_REGISTRATIONS`        | `100000`                       |
-| `ZCODE_RELAY_MAX_BUFFERED_BYTES`       | `2097152`                      |
-| `ZCODE_RELAY_MAX_TOTAL_BUFFERED_BYTES` | `67108864`                     |
-| `ZCODE_RELAY_TRUSTED_PROXIES`          | Empty, exact IP addresses only |
-
-These are admission limits, not measured capacity. Registrations persist;
-connections and pairs do not. The relay can read forwarded payloads: WSS is
-transport encryption, not end-to-end encryption.
-
-Use the repository-pinned Node/pnpm versions. From the repository root:
+From the repository root:
 
 ```bash
 pnpm test:relay
@@ -105,3 +80,6 @@ pnpm build:relay
 pnpm --filter @zcode/remote-relay test:bundle
 docker build -f packages/remote-relay/Dockerfile -t zcode-remote-relay:local .
 ```
+
+`test:bundle` runs the built `dist/entry.js` end to end: readiness, login exchange, device
+registration, pairing, forwarding and restart persistence.

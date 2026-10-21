@@ -16,7 +16,7 @@ describe("conversation share route", () => {
     expect(isConversationSharePath("/sharegate/x")).toBe(false);
   });
 
-  it("英文站的裸 /share/ 不再被拒绝，两种前缀都能解析出 code", () => {
+  it("the bare /share/ of the English site is no longer rejected, and both prefixes resolve the code", () => {
     // Previously /share/<code> went through isRejectedConversationSharePath and
     // rendered not_found directly, meaning the English share page did not exist
     // at all.
@@ -26,12 +26,12 @@ describe("conversation share route", () => {
     expect(resolveConversationShareCodeFromPath("/share/")).toBeNull();
   });
 
-  it("页面语言由路径前缀决定", () => {
+  it("the page language is determined by the path prefix", () => {
     expect(resolveConversationShareRouteLocale("/cn/share/share-1")).toBe("zh-CN");
     expect(resolveConversationShareRouteLocale("/share/share-1")).toBe("en-US");
   });
 
-  it("dev server base 不能写死 /cn/share/，否则英文路由本地不可达", () => {
+  it("the dev server base must not hard-code /cn/share/, otherwise English routes are unreachable locally", () => {
     // Bug root cause: the dev script hardcoded --base=/cn/share/, so Vite only
     // served that prefix and requests to /share/<code> were rejected outright
     // by the dev server ("server is configured with a public base URL of

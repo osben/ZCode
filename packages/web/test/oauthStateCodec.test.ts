@@ -74,7 +74,7 @@ describe("oauthStateCodec", () => {
   });
 
   it.each(["/remote/__test__", "/remote/__test__/"])(
-    "测试入口 %s 保留安全返回参数，但不成为 OAuth callback",
+    "test entry %s keeps safe return parameters but does not become an OAuth callback",
     (path) => {
       const origin = "https://zcode.z.ai";
       const query = "app_version=3.14.0&sid=device-1&mid=mid-1&name=Desk";
@@ -96,7 +96,7 @@ describe("oauthStateCodec", () => {
     "https://evil.example/remote/__test__?sid=device-1",
     "https://zcode.z.ai/unknown?sid=device-1",
     "https://zcode.z.ai/remote/__test__/unknown?sid=device-1",
-  ])("拒绝不受信任的测试来源 %s", (href) => {
+  ])("rejects untrusted test origin %s", (href) => {
     const origin = "https://zcode.z.ai";
     expect(resolveSafeAppReturnTo(href, { currentOrigin: origin })).toBeNull();
     expect(buildWebRemoteOAuthRedirectUri(`${origin}/remote/v4`, href)).toBe(`${origin}/remote/v4`);

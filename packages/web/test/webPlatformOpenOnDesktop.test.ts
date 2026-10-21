@@ -25,7 +25,12 @@ async function importCreateWebPlatform() {
   vi.stubGlobal("window", {
     addEventListener: vi.fn(),
     matchMedia: () => ({ matches: false }),
-    location: { search: "", pathname: "/" },
+    location: {
+      search: "",
+      pathname: "/",
+      href: "https://zcode.z.ai/",
+      origin: "https://zcode.z.ai",
+    },
   });
   vi.stubGlobal("navigator", { language: "en-US" });
 
@@ -33,80 +38,45 @@ async function importCreateWebPlatform() {
   return createWebPlatform;
 }
 
-function jsonResponse(payload: unknown, ok = true) {
-  return { ok, json: async () => payload };
+// Relay V2: open and editor methods are forwarded through the desktop platform proxy
+// (`requestPlatformMethod` over the paired relay). The former V1 HTTP `/api/remote-control/platform`
+// endpoint is gone with the V1 transport.
+function createPlatformProxy() {
+  const requestPlatformMethod = vi.fn(async (method: string, _args?: unknown) => {
+    if (method === "getInstalledEditors") {
+      return [{ id: "vscode", name: "VS Code", iconDataUrl: "data:" }];
+    }
+    return { success: true };
+  });
+  return { requestPlatformMethod, reportTelemetryEvent: vi.fn() };
 }
 
-const webRemoteControlProxy = {
-  token: "token-1",
-  relayOrigin: "https://relay.example/",
-  windowControlSessionId: "wcs-1",
-  mobileConnectionId: "mc-1",
-};
-
 describe("createWebPlatform open-on-desktop proxy", () => {
-  it("proxies open methods and installed editors to the desktop relay endpoint", async () => {
+  it("proxies open methods and installed editors to the desktop through the relay", async () => {
     const createWebPlatform = await importCreateWebPlatform();
-    const fetchMock = vi.fn(async () => jsonResponse({ result: { success: true } }));
-    vi.stubGlobal("fetch", fetchMock);
-    const platform = createWebPlatform({ webRemoteControlProxy });
+    const proxy = createPlatformProxy();
+    const platform = createWebPlatform({ externalWebRemoteControlProxy: proxy });
 
     await platform.openInFileManager("/workspace/demo");
     await platform.openInEditor("vscode", "/workspace/demo/README.md", { pathKind: "file" });
     await platform.openExternalFile?.("/workspace/demo/report.pdf");
-    fetchMock.mockImplementation(async () =>
-      jsonResponse({ result: [{ id: "vscode", name: "VS Code", iconDataUrl: "data:" }] }),
-    );
     await expect(platform.getInstalledEditors()).resolves.toEqual([
       { id: "vscode", name: "VS Code", iconDataUrl: "data:" },
     ]);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "https://relay.example/api/remote-control/platform/token-1",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method: "openInFileManager", args: "/workspace/demo" }),
-      },
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      "https://relay.example/api/remote-control/platform/token-1",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method: "openInEditor",
-          args: {
-            editorId: "vscode",
-            path: "/workspace/demo/README.md",
-            options: { pathKind: "file" },
-          },
-        }),
-      },
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
-      "https://relay.example/api/remote-control/platform/token-1",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          method: "openExternalFile",
-          args: "/workspace/demo/report.pdf",
-        }),
-      },
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      4,
-      "https://relay.example/api/remote-control/platform/token-1",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ method: "getInstalledEditors", args: undefined }),
-      },
-    );
+    expect(proxy.requestPlatformMethod.mock.calls).toEqual([
+      ["openInFileManager", "/workspace/demo"],
+      [
+        "openInEditor",
+        {
+          editorId: "vscode",
+          path: "/workspace/demo/README.md",
+          options: { pathKind: "file" },
+        },
+      ],
+      ["openExternalFile", "/workspace/demo/report.pdf"],
+      ["getInstalledEditors"],
+    ]);
   });
 
   it("keeps the plain-web fallbacks when no proxy is configured", async () => {
@@ -130,9 +100,9 @@ describe("createWebPlatform open-on-desktop proxy", () => {
 
   it("rejects with the relay error message when the desktop handler fails", async () => {
     const createWebPlatform = await importCreateWebPlatform();
-    const fetchMock = vi.fn(async () => jsonResponse({ error: "path not found" }, false));
-    vi.stubGlobal("fetch", fetchMock);
-    const platform = createWebPlatform({ webRemoteControlProxy });
+    const proxy = createPlatformProxy();
+    proxy.requestPlatformMethod.mockRejectedValueOnce(new Error("path not found"));
+    const platform = createWebPlatform({ externalWebRemoteControlProxy: proxy });
 
     await expect(platform.openInFileManager("/workspace/missing")).rejects.toThrow(
       "path not found",
