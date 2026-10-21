@@ -7740,7 +7740,12 @@ const enUS: Record<string, string> = {
   "sessionManager.pinnedArchived": "Pinned does not filter archived sessions.",
   "worktreeSetup.connectionUnavailable":
     "Reconnect to this workspace's Host to continue worktree setup.",
-  "worktreeSetup.created": "Worktree created",
+  "worktreeSetup.collapsibleLabel": "Worktree",
+  "worktreeSetup.summaryReady": "ready · {branch}",
+  "worktreeSetup.summaryExisting": "existing · {branch}",
+  "worktreeSetup.summaryCreated": "created · {branch}",
+  "worktreeSetup.summaryFailed": "failed",
+  "worktreeSetup.commandLabel": "Command",
   "worktreeSetup.stepCreating": "Preparing worktree {branch}…",
   "worktreeSetup.stepCreating.baseHead": "Using HEAD as the base branch",
   "worktreeSetup.stepReady": "Worktree ready: {path}",
@@ -7748,7 +7753,6 @@ const enUS: Record<string, string> = {
   "worktreeSetup.stepFailed": "Worktree setup failed: {reason}",
   "worktreeSetup.retry": "Retry",
   "worktreeSetup.discard": "Discard",
-  "worktreeSetup.queuedMessageLabel": "Queued message",
   "worktreeSetup.orphanedNote":
     "This setup no longer belongs to an active session and can be discarded.",
   "conversationShare.partial.selectionStageHint":

@@ -11,6 +11,7 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import { ChevronRightIcon, EyeIcon } from "lucide-react";
 import { type HighspeedMessageMeta, type ZCodeApiRetryStatus } from "@zcode/shared";
@@ -789,6 +790,7 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant,
   highspeed,
   highspeedMeta,
+  afterUserInputs,
 }: {
   segment: ConversationTurnWorkSegment;
   sourceCommandIds: readonly string[];
@@ -807,6 +809,8 @@ function ConversationWorkSegmentFlow({
   canRetryLatestAssistant: boolean;
   highspeed: boolean;
   highspeedMeta?: HighspeedMessageMeta;
+  /** Session-level context row (worktree) after the segment's user inputs; first segment only. */
+  afterUserInputs?: ReactNode;
 }) {
   const [historyOpen, setHistoryOpen] = useState(segment.assistantHistoryDefaultOpen);
   useEffect(() => {
@@ -817,6 +821,14 @@ function ConversationWorkSegmentFlow({
   const firstAssistantFlowItemIndex = segment.flowItems.findIndex(
     (item) => item.kind !== "userInput",
   );
+  // Worktree context row: after the segment's last user input, before any assistant content,
+  // so the first message stays above it (specs/composer-worktree-setup-steps.md).
+  const afterUserInputsIndex = afterUserInputs
+    ? segment.flowItems.reduce(
+        (last, item, index) => (item.kind === "userInput" ? index : last),
+        -1,
+      )
+    : -2;
   let historyChunkIndex = 0;
   const open = segment.assistantHistoryDefaultOpen ? true : historyOpen;
 
@@ -924,6 +936,7 @@ function ConversationWorkSegmentFlow({
               />
             ) : null}
             {content}
+            {index === afterUserInputsIndex ? afterUserInputs : null}
           </Fragment>
         );
       })}
@@ -998,6 +1011,8 @@ function ConversationTurnFlow({
   if (unit.timelineOnly) {
     return (
       <div className="flex flex-col gap-2">
+        {/* 会话级上下文行（worktree）：没有 transcript 行时自成单元，仍在冻结预览之下。 */}
+        {unit.afterFirstUserInputSlot}
         <ConversationAssistantWorkItems
           rows={unit.assistantWorkRows}
           context={context}
@@ -1078,6 +1093,7 @@ function ConversationTurnFlow({
           canRetryLatestAssistant={canRetryLatestAssistant}
           highspeed={highspeed}
           highspeedMeta={highspeedMeta}
+          afterUserInputs={segment === workSegments[0] ? unit.afterFirstUserInputSlot : undefined}
         />
       ))}
       <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
@@ -1556,6 +1572,7 @@ function ConversationTurnGroupImpl({
                   editWorkspaceRewindAvailability={editWorkspaceRewindAvailability}
                 />
               ))}
+              {unit.afterFirstUserInputSlot}
               <ConversationBackgroundResultWork
                 unit={unit}
                 apiRetry={apiRetry}

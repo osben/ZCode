@@ -77,7 +77,12 @@ const ukUA: Record<string, string> = {
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",
   "worktreeSetup.connectionUnavailable":
     "Відновіть з'єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
-  "worktreeSetup.created": "Worktree створено",
+  "worktreeSetup.collapsibleLabel": "Worktree",
+  "worktreeSetup.summaryReady": "готово · {branch}",
+  "worktreeSetup.summaryExisting": "існуючий · {branch}",
+  "worktreeSetup.summaryCreated": "створено · {branch}",
+  "worktreeSetup.summaryFailed": "помилка",
+  "worktreeSetup.commandLabel": "Команда",
   "worktreeSetup.stepCreating": "Готуємо worktree {branch}…",
   "worktreeSetup.stepCreating.baseHead": "Базова гілка — HEAD",
   "worktreeSetup.stepReady": "Worktree готово: {path}",
@@ -85,7 +90,6 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.stepFailed": "Не вдалося підготувати worktree: {reason}",
   "worktreeSetup.retry": "Повторити",
   "worktreeSetup.discard": "Відхилити",
-  "worktreeSetup.queuedMessageLabel": "Повідомлення в черзі",
   "worktreeSetup.orphanedNote":
     "Це приготування вже не належить активній сесії, його можна відхилити.",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",

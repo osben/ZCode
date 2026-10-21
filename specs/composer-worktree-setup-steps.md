@@ -250,17 +250,42 @@ missing in-memory `File` sources.
 
 ### Timeline presentation
 
-Worktree preparation is timeline context, not an empty-state greeting: render it in the timeline's
-persistent header slot above the message history so the creation status remains at the top after the
-first user or assistant row appears. Once Host activation clears the preparation marker, keep a
-compact created-worktree row in that same position from the live session-index execution-worktree
-fact. Its branch detail follows the current Git status of that execution worktree, so a later branch switch
-does not leave the notice showing the creation-time branch as if it were still current. Until the first Git
-status is available, use the persisted creation-time branch; show `Detached HEAD` when the current status is
-detached. Present these rows as restrained tool activity with a clear status icon, branch/path detail, and
-consistent message-column alignment. The created row is a single compact line: use the existing
-muted Git worktree marker, the created label and branch, followed by an icon-only open action with a
-tooltip and accessible name. The action opens the exact worktree path through the existing
+The user's first message is always the first timeline item, and the worktree line is always the
+second: preparation is timeline context rendered immediately after the first user input — never in
+the header slot above it and never re-ordered when the frozen preview is replaced by the
+authoritative user row. The timeline receives the worktree row as a slot attached to the first
+render unit (after that unit's user inputs); while no transcript row exists yet (session reserved,
+message still frozen), the slot renders as its own timeline-only unit below the frozen-submission
+preview, so the visual order "message, then worktree line" never flips during admission. The card
+must not duplicate the frozen message: the preview (and later the authoritative row) owns the
+message content.
+
+One persistent line covers the whole lifecycle: creating → ready/existing → failed while the Host
+preparation marker is live, and a created line from the live session-index execution-worktree fact
+once activation clears the marker — same position, same collapsible presentation, so activation
+never swaps the row's style or place. Activation clears the marker before the sessions-index
+refresh lands, so the renderer bridges that gap from its settled pipeline entry (`ready` with the
+resolved path, or `consumed`) for the timeline slot only; the index fact stays authoritative for
+Git panels and the header, and the bridge never applies while the preparation marker is live. The preparing/failed setup card uses the same collapsible
+presentation as the reasoning ("Thought") row: a compact trigger line with the worktree icon,
+a "Worktree" label, a dot separator and a status summary (shimmer while creating; the
+branch on ready/existing; a destructive "failed" summary), with a chevron that appears on
+hover. The trigger always carries the `data-worktree-setup-step` status marker. The details
+(base-branch note, orphaned note, ready/existing path line, the full
+failure reason with Retry/Discard) live in the collapsible content: open while creating,
+auto-opens on failure, auto-collapses when the worktree turns ready, and never overrides a
+manual toggle.
+
+Both the setup card and the created line show the Git command that creates the worktree
+(`git worktree add -b <branch> -- <target> [<base>|HEAD]`, or the plain existing-branch form) in
+the collapsible details, derived from the frozen parameters; the created line keeps showing it
+after activation so "expand → see which commands ran" always works. The created line is a single
+compact trigger with the same "Worktree" label and a `created · <branch>` summary, followed by an
+icon-only open action with a tooltip and accessible name on the trigger line. Its branch detail
+follows the current Git status of that execution worktree, so a later branch switch does not leave
+the notice showing the creation-time branch as if it were still current; until the first Git status
+is available, use the persisted creation-time branch, and show `Detached HEAD` when the current
+status is detached. The action opens the exact worktree path through the existing
 path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
 picker. For a remote parent workspace the action also passes the worktree's own remote identity
 (the parent identity re-pointed at the worktree path), because remote identities embed the path. The

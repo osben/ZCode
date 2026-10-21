@@ -1,5 +1,6 @@
 import { useBotTopicPreparations } from "@/v4/BotTopicPreparation.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
+import { withAfterFirstUserInputSlot } from "@/v4/conversationTurnUnitSlots.js";
 /* oxlint-disable eslint(max-lines) -- ConversationTimeline 集中承载虚拟滚动、滚动锚定、loadOlder 与 find 高亮协调；拆散会让同一滚动状态跨文件传递。 */
 import {
   Component,
@@ -323,6 +324,11 @@ export interface ConversationTimelineProps {
    * 所以它落在 emptyState 分支之外。
    */
   headerSlot?: ReactNode;
+  /**
+   * 会话级上下文行（worktree 准备/已创建）：挂在首个渲染单元的用户输入之后——时间线第二项，
+   * 位于第一条用户消息下方；rows 为空时自成 timeline-only 单元，保持在冻结预览之下。
+   */
+  afterFirstUserInputSlot?: ReactNode;
   /** 草稿态让 emptyState 与同一个 bottomDock 作为整体居中，不重挂 composer。 */
   centerEmptyStateWithDock?: boolean;
   /** 窄屏/粗指针视口保留紧凑居中布局，不复用桌面草稿安全间距。 */
@@ -386,6 +392,7 @@ function ConversationTimelineImpl({
   backgroundScrollLocked = false,
   emptyState,
   headerSlot,
+  afterFirstUserInputSlot,
   centerEmptyStateWithDock = false,
   compactEmptyStateWithDock = false,
   summaryPanelLayout = "none",
@@ -450,16 +457,26 @@ function ConversationTimelineImpl({
   const topicPreparations = useBotTopicPreparations();
   const renderUnits = useMemo(
     () =>
-      withTopicPreparationMessages(
-        buildConversationTurnRenderUnits(rows, {
-          nowMs: liveNowMs,
-          sessionPhase,
-          pluginUiPinResolver,
-        }),
-        rows,
-        topicPreparations,
+      withAfterFirstUserInputSlot(
+        withTopicPreparationMessages(
+          buildConversationTurnRenderUnits(rows, {
+            nowMs: liveNowMs,
+            sessionPhase,
+            pluginUiPinResolver,
+          }),
+          rows,
+          topicPreparations,
+        ),
+        afterFirstUserInputSlot,
       ),
-    [liveNowMs, pluginUiPinResolver, rows, sessionPhase, topicPreparations],
+    [
+      liveNowMs,
+      pluginUiPinResolver,
+      rows,
+      sessionPhase,
+      topicPreparations,
+      afterFirstUserInputSlot,
+    ],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
     () => splitConversationTimelineLiveTail(renderUnits),

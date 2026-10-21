@@ -39,7 +39,7 @@ describe("ConversationWorktreeSetupSteps i18n coverage", () => {
     // Anchors the extraction: if this breaks, the coverage assertion below
     // would pass vacuously with an empty id list.
     expect(usedIds.length).toBeGreaterThan(0);
-    expect(usedIds).toContain("worktreeSetup.created");
+    expect(usedIds).toContain("worktreeSetup.summaryCreated");
   });
 
   // BUG-GWT-004 regression guard: a missing id renders as a raw key in the UI, so every id the

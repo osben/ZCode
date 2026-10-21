@@ -255,6 +255,9 @@ packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
 # specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
 # Remove once the composer is split into smaller modules.
 packages/ui/src/v4/composer/useDraftSessionPrewarm.ts
+# TEMPORARY(ui-parity-composer): the worktree setup card (same spec owner as above) crossed 20 KB with the
+# reasoning-style collapsible and the creation-command details; split the reconcile/action logic out, then remove.
+packages/ui/src/v4/ConversationWorktreeSetupSteps.tsx
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
 

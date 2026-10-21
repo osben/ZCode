@@ -3,7 +3,7 @@
 // seed only feeds the first paint without an entry, settled entries are never resurrected, and
 // an authoritative Host cancellation discards a live entry.
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
@@ -69,7 +69,7 @@ afterEach(() => {
 
 describe("ConversationWorktreeSetupSteps rendering", () => {
   it.each(["creating", "failed"] as const)(
-    "keeps the complete submitted message above %s preparation feedback (FSL02)",
+    "does not duplicate the queued submission inside the %s card (the timeline slot owns message order)",
     (status) => {
       const submittedText = Array.from(
         { length: 12 },
@@ -88,13 +88,10 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
         attemptId: "attempt-message-order",
       });
 
-      const message = document.querySelector("[data-worktree-setup-queued-message]");
-      const feedback = document.querySelector(`[data-worktree-setup-step='${status}']`);
-      expect(message?.textContent).toContain(submittedText);
-      expect(message?.querySelector("[class*='line-clamp']")).toBeNull();
-      expect(message).not.toBeNull();
-      expect(feedback).not.toBeNull();
-      expect(message!.compareDocumentPosition(feedback!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      // The card renders only the worktree line; the frozen preview and the authoritative user
+      // row above it own the message content (specs/composer-worktree-setup-steps.md).
+      expect(document.querySelector("[data-worktree-setup-queued-message]")).toBeNull();
+      expect(document.querySelector(`[data-worktree-setup-step='${status}']`)).not.toBeNull();
     },
   );
 
@@ -113,12 +110,13 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
       );
 
     const view = renderNotice("feat/session-pr-status");
-    expect(screen.getByRole("status").textContent).toContain("feat/session-pr-status");
-    expect(screen.getByRole("status").textContent).not.toContain("zcode/quantum-wizard");
+    const summaryOf = () => document.querySelector("[data-worktree-created-summary]");
+    expect(summaryOf()?.textContent).toContain("feat/session-pr-status");
+    expect(summaryOf()?.textContent).not.toContain("zcode/quantum-wizard");
     view.unmount();
 
     renderNotice();
-    expect(screen.getByRole("status").textContent).toContain("zcode/quantum-wizard");
+    expect(summaryOf()?.textContent).toContain("zcode/quantum-wizard");
   });
 
   it("shows Detached HEAD instead of the creation-time branch when the worktree is detached", () => {
@@ -134,8 +132,33 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
       ),
     );
 
-    expect(screen.getByRole("status").textContent).toContain("Detached HEAD");
-    expect(screen.getByRole("status").textContent).not.toContain("zcode/quantum-wizard");
+    const summary = document.querySelector("[data-worktree-created-summary]");
+    expect(summary?.textContent).toContain("Detached HEAD");
+    expect(summary?.textContent).not.toContain("zcode/quantum-wizard");
+  });
+
+  it("expands the created notice to the worktree path and the executed command", () => {
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(ConversationWorktreeCreatedNotice, {
+          branchName: "zcode/quantum-wizard",
+          path: "/repo/worktrees/zcode-quantum-wizard",
+        }),
+      ),
+    );
+
+    // Collapsed by default: one compact trigger line, details hidden.
+    expect(document.querySelector("[data-worktree-created] [data-state='open']")).toBeNull();
+    expect(document.querySelector("[data-worktree-created-summary]")?.textContent).toContain(
+      "created · zcode/quantum-wizard",
+    );
+
+    fireEvent.click(document.querySelector("[data-worktree-created] button")!);
+    expect(document.querySelector("[data-worktree-created-command]")?.textContent).toBe(
+      "git worktree add -b zcode/quantum-wizard -- /repo/worktrees/zcode-quantum-wizard",
+    );
   });
 
   it("shows the creating row from the Host seed on first paint and materializes the entry", () => {
@@ -161,8 +184,102 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
     });
     renderSteps({ status: "failed", attemptId: "attempt-1", failureMessage: "git interrupted" });
     expect(document.querySelector("[data-worktree-setup-step='failed']")).not.toBeNull();
-    // Retry and Discard actions are both offered for a retryable entry.
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    // Retry and Discard actions are both offered for a retryable entry (the collapsible
+    // summary trigger is an additional button).
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeTruthy();
+  });
+
+  it("collapses ready details behind the summary line and expands on click (reasoning-style)", () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "ready",
+      sessionId: "session-prepared-1",
+      worktreePath: "/dev/setup-worktrees/zcode-sleepy-capybara",
+      params: { ...PARAMS, attemptId: "attempt-1" },
+      createdAt: 1,
+    });
+    renderSteps({ status: "preparing", attemptId: "attempt-1" });
+
+    // The ready summary names the branch while the path detail and command stay hidden until
+    // expanded.
+    const summary = document.querySelector("[data-worktree-setup-step='ready']");
+    expect(summary?.textContent).toContain("zcode/sleepy-capybara");
+    expect(
+      document.querySelector("[data-worktree-setup-collapsible] [data-state='open']"),
+    ).toBeNull();
+
+    fireEvent.click(document.querySelector("[data-worktree-setup-collapsible] button")!);
+    expect(
+      screen.getByText("Worktree ready: /dev/setup-worktrees/zcode-sleepy-capybara"),
+    ).toBeTruthy();
+    expect(document.querySelector("[data-worktree-setup-command]")?.textContent).toBe(
+      "git worktree add -b zcode/sleepy-capybara -- /dev/setup-worktrees/zcode-sleepy-capybara main",
+    );
+  });
+
+  it("shows the base branch in the creation command and the HEAD default as literal HEAD", () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "ready",
+      sessionId: "session-prepared-1",
+      worktreePath: "/dev/setup-worktrees/zcode-sleepy-capybara",
+      params: {
+        ...PARAMS,
+        attemptId: "attempt-1",
+        baseBranch: "release/1.2",
+      },
+      createdAt: 1,
+    });
+    const withBase = renderSteps({ status: "preparing", attemptId: "attempt-1" });
+    fireEvent.click(document.querySelector("[data-worktree-setup-collapsible] button")!);
+    expect(document.querySelector("[data-worktree-setup-command]")?.textContent).toBe(
+      "git worktree add -b zcode/sleepy-capybara -- /dev/setup-worktrees/zcode-sleepy-capybara release/1.2",
+    );
+    withBase.unmount();
+
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "ready",
+      sessionId: "session-prepared-1",
+      worktreePath: "/dev/setup-worktrees/zcode-sleepy-capybara",
+      params: {
+        ...PARAMS,
+        attemptId: "attempt-2",
+        baseBranch: undefined,
+        baseFromHeadDefault: true,
+      },
+      createdAt: 1,
+    });
+    renderSteps({ status: "preparing", attemptId: "attempt-2" });
+    fireEvent.click(document.querySelector("[data-worktree-setup-collapsible] button")!);
+    expect(document.querySelector("[data-worktree-setup-command]")?.textContent).toBe(
+      "git worktree add -b zcode/sleepy-capybara -- /dev/setup-worktrees/zcode-sleepy-capybara HEAD",
+    );
+  });
+
+  it("auto-opens the details while creating and after a failure", () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "creating",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, attemptId: "attempt-1" },
+      createdAt: 1,
+    });
+    const creating = renderSteps({ status: "preparing", attemptId: "attempt-1" });
+    expect(
+      document.querySelector("[data-worktree-setup-collapsible] [data-state='open']"),
+    ).not.toBeNull();
+    creating.unmount();
+
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "failed",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, attemptId: "attempt-1" },
+      failureMessage: "git interrupted",
+      createdAt: 1,
+    });
+    renderSteps({ status: "failed", attemptId: "attempt-1", failureMessage: "git interrupted" });
+    expect(
+      document.querySelector("[data-worktree-setup-collapsible] [data-state='open']"),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   it("never resurrects setup rows after the pipeline settled, even from a stale preparing seed", () => {

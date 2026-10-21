@@ -5290,6 +5290,30 @@ export function SessionPane({
   const sessionExecutionWorktree = isDraft
     ? undefined
     : sessionIndexItems.find((task) => task.taskId === sessionId)?.executionWorktree;
+  // Activation clears the Host preparation marker immediately, while the sessions-index refresh
+  // carrying executionWorktree lands a few hundred milliseconds later. The settled renderer
+  // pipeline entry (ready with its resolved path, or consumed) bridges exactly that gap for the
+  // timeline slot, so the worktree line never blinks out at the creating→created handoff. The
+  // index fact stays authoritative everywhere else (git panels, header).
+  const settledWorktreePipelineEntry = useComposerWorktreePipelineStore((state) =>
+    sessionId ? selectComposerWorktreePipeline(state, workspaceKey, sessionId) : null,
+  );
+  const bridgedExecutionWorktree =
+    sessionExecutionWorktree ??
+    (!isDraft &&
+    settledWorktreePipelineEntry?.sessionId === sessionId &&
+    (settledWorktreePipelineEntry.status === "consumed" ||
+      settledWorktreePipelineEntry.status === "ready")
+      ? {
+          path:
+            settledWorktreePipelineEntry.worktreePath ??
+            settledWorktreePipelineEntry.params?.targetPath ??
+            "",
+          ...(settledWorktreePipelineEntry.params?.branchName
+            ? { branchName: settledWorktreePipelineEntry.params.branchName }
+            : {}),
+        }
+      : undefined);
   const executionGitPath = sessionExecutionWorktree?.path ?? workspacePath;
   const [worktreeGitRefreshVersion, setWorktreeGitRefreshVersion] = useState(0);
   const worktreeGitState = useGitRepository({
@@ -6587,8 +6611,6 @@ export function SessionPane({
                   backgroundScrollLocked={false}
                   headerSlot={
                     firstSubmission ||
-                    (!isDraft &&
-                      (snapshot?.meta.worktreePreparation || sessionExecutionWorktree)) ||
                     // unsupportedRowCount 也要开这个门：整份副本的行都被本 build 跳过时
                     // rows 为空，但只读块必须留下来显示「需要更新 ZCode」，不能整块消失。
                     (importedShare &&
@@ -6602,35 +6624,6 @@ export function SessionPane({
                               workspaceIdentity,
                               firstSubmission.draft.firstSubmission!.submissionId,
                             )}
-                          />
-                        ) : null}
-                        {!isDraft && snapshot?.meta.worktreePreparation ? (
-                          <ConversationWorktreeSetupSteps
-                            workspacePath={workspacePath}
-                            {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                            sessionId={sessionId!}
-                            hideQueuedMessage={hasFirstSubmission}
-                            preparation={snapshot.meta.worktreePreparation}
-                            remoteSessionId={remoteSessionId ?? undefined}
-                            onRetryPreparation={handleWorktreePreparationRetry}
-                            onCancelPreparation={handleWorktreePreparationCancel}
-                            onPreparationFailed={handleWorktreePreparationFailed}
-                            onSyncPreparation={syncWorktreePreparation}
-                          />
-                        ) : !isDraft && sessionExecutionWorktree ? (
-                          <ConversationWorktreeCreatedNotice
-                            branchName={sessionExecutionWorktree.branchName}
-                            currentBranchName={
-                              worktreeGitState.summary.isRepository
-                                ? worktreeGitState.summary.headRefType === "branch"
-                                  ? worktreeGitState.summary.branchName
-                                  : intl.formatMessage({ id: "git.head.detached" })
-                                : undefined
-                            }
-                            path={sessionExecutionWorktree.path}
-                            workspaceIdentity={workspaceIdentity}
-                            remoteSessionId={remoteSessionId}
-                            onOpenWorktree={onCreateTaskInWorkspace}
                           />
                         ) : null}
                         {importedShare &&
@@ -6659,6 +6652,38 @@ export function SessionPane({
                           />
                         ) : null}
                       </>
+                    ) : null
+                  }
+                  afterFirstUserInputSlot={
+                    !isDraft && (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree) ? (
+                      snapshot?.meta.worktreePreparation ? (
+                        <ConversationWorktreeSetupSteps
+                          workspacePath={workspacePath}
+                          {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                          sessionId={sessionId!}
+                          preparation={snapshot.meta.worktreePreparation}
+                          remoteSessionId={remoteSessionId ?? undefined}
+                          onRetryPreparation={handleWorktreePreparationRetry}
+                          onCancelPreparation={handleWorktreePreparationCancel}
+                          onPreparationFailed={handleWorktreePreparationFailed}
+                          onSyncPreparation={syncWorktreePreparation}
+                        />
+                      ) : (
+                        <ConversationWorktreeCreatedNotice
+                          branchName={bridgedExecutionWorktree!.branchName}
+                          currentBranchName={
+                            sessionExecutionWorktree && worktreeGitState.summary.isRepository
+                              ? worktreeGitState.summary.headRefType === "branch"
+                                ? worktreeGitState.summary.branchName
+                                : intl.formatMessage({ id: "git.head.detached" })
+                              : undefined
+                          }
+                          path={bridgedExecutionWorktree!.path}
+                          workspaceIdentity={workspaceIdentity}
+                          remoteSessionId={remoteSessionId}
+                          onOpenWorktree={onCreateTaskInWorkspace}
+                        />
+                      )
                     ) : null
                   }
                   emptyState={
