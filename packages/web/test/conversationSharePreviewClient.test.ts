@@ -18,7 +18,7 @@ const preview = {
   integrity: { projection_sha256: "a".repeat(64), artifact_set_sha256: "b".repeat(64) },
 };
 
-// 客户端在 wire 形状之外附带逐行降级的结果：认不出的行数交给 UI 出软提示。
+// Besides the wire shape, the client carries a per-line degraded result: the count of unrecognized lines is handed to the UI to show a soft hint.
 const decodedPreview = { ...preview, unsupportedRowCount: 0 };
 
 describe("conversation share preview client", () => {
@@ -189,8 +189,8 @@ describe("conversation share preview client", () => {
     });
   });
 
-  // 落地页镜像独立部署、独立回滚，所以随时可能比发布分享的客户端旧。
-  it("载荷版本比本 build 新时报 unsupported_schema_version，不报「格式无效」", async () => {
+  // The landing-page mirror is deployed and rolled back independently, so it may at any time be older than the client that published the share.
+  it("reports unsupported_schema_version (not 'invalid format') when the payload version is newer than this build", async () => {
     const client = new ConversationSharePreviewClient({
       baseUrl: "https://zcode.z.ai/api/v1",
       fetchImpl: vi.fn(
@@ -206,7 +206,7 @@ describe("conversation share preview client", () => {
     });
   });
 
-  it("认不出的行只被跳过并计数，整页照常渲染", async () => {
+  it("skips and counts unrecognized lines only, and still renders the whole page", async () => {
     const knownRow = {
       rowId: 1,
       turnId: "turn-1",

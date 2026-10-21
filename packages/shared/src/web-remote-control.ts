@@ -34,6 +34,7 @@ export type {
 export { WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS } from "./web-remote-relay/index.js";
 import { z } from "zod";
 import type { MobileSessionCreateTelemetry } from "./sessionCreateTelemetry.js";
+import type { MobilePluginDiscoveryTelemetry } from "./telemetry.js";
 /* eslint-disable max-lines -- the web remote-control shared protocol keeps both the legacy /web-remote types and the new external relay types; split by transport/app payload when it is broken up later. */
 import type { DockerContainerInfo, SSHConfigAliasOption, WSLDistro } from "./platform.js";
 import type {
@@ -156,19 +157,17 @@ export type WebRemoteControlRelayIncomingMessage =
   | WebRemoteControlRelayDataMessage<WebRemoteControlAppPayload>
   | WebRemoteControlRelayError;
 
-export interface WebRemoteControlExternalQrParams {
-  deviceSid: string;
-  passHash: string;
-  timestamp: number;
+/** Relay V2 QR routing hints. They never carry a credential; `hash` and `t` are rejected on parse. */
+export interface WebRemoteControlV2QrParams {
+  deviceSid?: string;
   deviceMid?: string;
   deviceName?: string;
   appVersion?: string;
-  theme?: WebRemoteControlThemeSeed;
 }
 
-export interface BuildWebRemoteControlExternalQrUrlOptions extends WebRemoteControlExternalQrParams {
+export type BuildWebRemoteControlExternalQrUrlOptions = WebRemoteControlV2QrParams & {
   baseUrl: string;
-}
+};
 
 function readNonEmptySearchParam(params: URLSearchParams, name: string): string | undefined {
   const value = params.get(name)?.trim();
@@ -213,17 +212,15 @@ export function matchesWebRemoteControlRoutePath(pathname: string, routePath: st
 export function buildWebRemoteControlExternalQrUrl({
   baseUrl,
   deviceSid,
-  passHash,
-  timestamp,
   deviceMid,
   deviceName,
   appVersion,
-  theme,
 }: BuildWebRemoteControlExternalQrUrlOptions): string {
   const url = new URL(baseUrl);
-  url.searchParams.set("sid", deviceSid);
-  url.searchParams.set("hash", passHash);
-  url.searchParams.set("t", String(timestamp));
+  if (deviceSid !== undefined) url.searchParams.set("sid", deviceSid);
+  // Legacy credentials may only be removed; they must never be carried into a new QR code from the base URL.
+  url.searchParams.delete("hash");
+  url.searchParams.delete("t");
 
   if (deviceMid?.trim()) {
     url.searchParams.set("mid", deviceMid);
@@ -234,45 +231,25 @@ export function buildWebRemoteControlExternalQrUrl({
   if (appVersion?.trim()) {
     url.searchParams.set("app_version", appVersion);
   }
-  void theme;
-  // Bugfix: the phone theme is now always the local default dark; theme is no longer passed
-  // through the QR URL.
-  // Previously the theme parameter coupled the desktop theme to the phone's first-entry behavior,
-  // complicating later maintenance and debugging.
-  // The parameter is kept only for backward compatibility, to avoid a sweeping change of old call
-  // sites.
-
   return url.toString();
 }
 
+/** Parses V2 routing hints only. Links carrying the V1 `hash` or `t` credential are rejected. */
 export function parseWebRemoteControlExternalQrParams(
   params: URLSearchParams,
-): WebRemoteControlExternalQrParams | null {
-  const deviceSid = readNonEmptySearchParam(params, "sid");
-  const passHash = readNonEmptySearchParam(params, "hash");
-  const rawTimestamp = readNonEmptySearchParam(params, "t");
-  const timestamp = rawTimestamp ? Number(rawTimestamp) : Number.NaN;
-  const theme = readNonEmptySearchParam(params, "theme");
-
-  if (!deviceSid || !passHash || !Number.isFinite(timestamp)) {
-    return null;
+): WebRemoteControlV2QrParams | null {
+  if (params.has("hash") || params.has("t")) return null;
+  const result: WebRemoteControlV2QrParams = {};
+  for (const [key, param] of [
+    ["deviceSid", "sid"],
+    ["deviceMid", "mid"],
+    ["deviceName", "name"],
+    ["appVersion", "app_version"],
+  ] as const) {
+    const value = readNonEmptySearchParam(params, param);
+    if (value) result[key] = value;
   }
-
-  return {
-    deviceSid,
-    passHash,
-    timestamp,
-    ...(readNonEmptySearchParam(params, "mid")
-      ? { deviceMid: readNonEmptySearchParam(params, "mid") }
-      : {}),
-    ...(readNonEmptySearchParam(params, "name")
-      ? { deviceName: readNonEmptySearchParam(params, "name") }
-      : {}),
-    ...(readNonEmptySearchParam(params, "app_version")
-      ? { appVersion: readNonEmptySearchParam(params, "app_version") }
-      : {}),
-    ...(isWebRemoteControlThemeSeed(theme) ? { theme } : {}),
-  };
+  return result;
 }
 
 export type WebRemoteControlTokenKind = "window-pairing";
@@ -353,6 +330,8 @@ export interface WebRemoteControlStatus {
   initialTaskId?: string;
   error?: string;
   failure?: WebRemoteControlFailure;
+  /** Pre-V2 pairing was discarded for this run; every phone must scan the new QR code to pair again. */
+  repairRequired?: boolean;
 }
 
 export interface WebRemoteControlSessionCreateRequest {
@@ -480,6 +459,8 @@ export interface WebRemoteControlExternalRemoteWorkspaceBridge {
   workspaceIdentity: string;
   remoteSessionId: string;
   initialTaskId?: string;
+  /** Older desktops do not declare this; the client must not infer capabilities from a lazy RPC proxy. */
+  capabilities?: { windowProjectDirectory?: true };
 }
 
 export type WebRemoteControlExternalWorkspaceBridge =
@@ -523,6 +504,10 @@ export interface WebRemoteControlWorkspaceBridgeOpenPayload {
   recoveryId?: string;
   workspaceKey: string;
   taskId?: string;
+  project?: { projectId: string | null; hostId?: string; draftId?: string; reuseDraft?: boolean };
+  taskHostId?: string;
+  /** Resolves the task directory for the file tree only; it neither selects a task nor marks it read. */
+  fileTreeTaskId?: string;
 }
 
 export interface WebRemoteControlWorkspaceBridgeReadyPayload {
@@ -594,6 +579,22 @@ export interface WebRemoteControlMobileViewStatePayload {
   zcode_type: "mobile-view-state-update";
   viewState: WebRemoteControlMobileViewState;
   deviceInfo?: WebRemoteControlMobileDeviceInfo;
+}
+
+/** Desktop-to-phone task view snapshot; `epoch` scopes it to one phone view, `seq` orders updates within it. */
+export interface WebRemoteControlMobileTaskViewUpdatePayload {
+  zcode_type: "mobile-task-view-update";
+  epoch: string;
+  seq: number;
+  bridgeSessionId: string;
+  bridgeGeneration?: number;
+  view: WebRemoteControlMobileTaskView | null;
+}
+
+/** Phone-to-desktop request for the current task view of one epoch. */
+export interface WebRemoteControlMobileTaskViewRequestPayload {
+  zcode_type: "mobile-task-view-request";
+  epoch: string;
 }
 
 export type WebRemoteControlPlatformRequestPayload = {
@@ -680,7 +681,10 @@ export interface WebRemoteControlMobileDiagnosticPayload {
 }
 
 export type WebRemoteControlAppPayload =
-  | { zcode_type: "telemetry-report"; event: MobileSessionCreateTelemetry }
+  | {
+      zcode_type: "telemetry-report";
+      event: MobileSessionCreateTelemetry | MobilePluginDiscoveryTelemetry;
+    }
   | WebRemoteControlBootstrapRequestPayload
   | WebRemoteControlBootstrapResponsePayload
   | WebRemoteControlWorkspaceListRequestPayload
@@ -694,6 +698,8 @@ export type WebRemoteControlAppPayload =
   | WebRemoteControlWorkspaceOpenRequestPayload
   | WebRemoteControlWorkspaceOpenResponsePayload
   | WebRemoteControlMobileViewStatePayload
+  | WebRemoteControlMobileTaskViewUpdatePayload
+  | WebRemoteControlMobileTaskViewRequestPayload
   | WebRemoteControlPlatformRequestPayload
   | WebRemoteControlPlatformResponsePayload
   | WebRemoteControlRpcTransportPayload
@@ -829,9 +835,12 @@ export interface WebRemoteControlWindowBootstrapResult {
   /** The desktop's actual current version; when an older desktop omits it, the phone keeps the original URL. */
   desktopAppVersion?: string;
   workspaces: WebRemoteControlWorkspaceTarget[];
-  tasks: WebRemoteControlTaskTarget[];
+  /** V1 desktops only; V2 bootstrap responses omit it. */
+  tasks?: WebRemoteControlTaskTarget[];
   initialViewState?: WebRemoteControlMobileViewState;
   mobileViewState?: WebRemoteControlMobileViewState;
+  /** Only newer desktops provide it; the bootstrap uses it to re-request the task view after pairing. */
+  mobileTaskViewEpoch?: string;
 }
 
 export interface WebRemoteControlWindowControlReadyEvent {

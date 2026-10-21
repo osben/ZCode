@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BIGMODEL_API_ORIGIN,
-  DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL,
   DEFAULT_ZAI_BUSINESS_BASE_URL,
   DEFAULT_ZAI_OAUTH_CLIENT_ID,
   DEFAULT_ZAI_OAUTH_ORIGIN,
@@ -85,9 +84,9 @@ describe("zcodeEndpoint", () => {
       origin: "http://localhost:3030",
       apiBaseUrl: "http://localhost:3030/api/v1",
       remoteUrl: "http://localhost:3030/remote/v3",
-      webRemoteCallbackUrl: "http://localhost:3030/web-remote/callback",
+      webRemoteCallbackUrl: "http://localhost:3030/remote/v4",
       webShareCallbackUrl: "http://localhost:3030/cn/share/callback",
-      relayWsUrl: "ws://localhost:3030/ws",
+      relayWsUrl: "ws://localhost:3030/api/v1/remote/ws2",
       zcodePlanOpenAiBaseUrl: "http://localhost:3030/api/v1/zcode-plan",
       zcodePlanAnthropicBaseUrl: "http://localhost:3030/api/v1/zcode-plan/anthropic",
       zcodePlanBillingCurrentUrl: "http://localhost:3030/api/v1/zcode-plan/billing/current",
@@ -149,22 +148,22 @@ describe("zcodeEndpoint", () => {
     ).toBe("https://zcode.z.ai/api/v1/zcode-plan/anthropic");
   });
 
-  it("uses the test relay only for the standard test endpoint", () => {
+  it("derives the V2 relay from each endpoint origin without a hardcoded relay host", () => {
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
       }),
-    ).toBe("wss://zcode.z.ai/ws");
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: DEFAULT_ZCODE_ENDPOINT_ORIGIN,
       }),
-    ).toBe(DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL);
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
     expect(
       resolveWebRemoteControlRelayWsUrl({
         endpointOrigin: "http://localhost:3030",
       }),
-    ).toBe(DEFAULT_WEB_REMOTE_CONTROL_RELAY_WS_URL);
+    ).toBe("ws://localhost:3030/api/v1/remote/ws2");
   });
 
   it("allows an explicit web remote control relay url override", () => {
@@ -204,7 +203,7 @@ describe("zcodeEndpoint", () => {
         endpointOrigin: TEST_ZCODE_ENDPOINT_ORIGIN,
         defaultUrl: "  ",
       }),
-    ).toBe("wss://zcode.z.ai/ws");
+    ).toBe("wss://zcode.z.ai/api/v1/remote/ws2");
   });
 
   it("derives BigModel API origin from ZCODE_ENV", () => {

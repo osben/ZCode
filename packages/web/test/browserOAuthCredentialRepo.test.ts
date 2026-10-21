@@ -83,8 +83,8 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(localStorage.getItem("oauth:zai:user_info")).toBeNull();
   });
 
-  // private 分享的 owner 身份是 provider 特定的（bigmodel 是数字 ID，z.ai 是 UUID），
-  // 所以 BigModel 登录必须能独立存取，不能被 zai 的 key 段和判定挡掉。
+  // The owner identity of a private share is provider-specific (bigmodel uses a numeric ID, z.ai uses a UUID),
+  // so BigModel login must be independently accessible and must not be blocked by zai's key segment and checks.
   it("saves and restores a complete BigModel web session", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
@@ -101,11 +101,11 @@ describe("BrowserOAuthCredentialRepo", () => {
     });
     expect(repo.loadZCodeJwtToken()).toBe("jwt-token");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
-    // 不能污染 zai 的 key 段
+    // Must not pollute zai's key segment
     expect(localStorage.getItem("oauth:zai:access_token")).toBeNull();
   });
 
-  it("切换 provider 时清掉上一个身份的残片", () => {
+  it("clears the leftover state of the previous identity when switching providers", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage, sessionStorage });
@@ -124,7 +124,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.loadCachedSession()?.id).toBe("53291785835589288");
   });
 
-  it("只读返回当前 provider 的账号展示资料，缺 JWT 或资料损坏也不清理存储", () => {
+  it("read-only returns the current provider's account display profile; a missing JWT or corrupted profile does not clean up storage", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage, sessionStorage });
@@ -147,12 +147,12 @@ describe("BrowserOAuthCredentialRepo", () => {
 
     localStorage.setItem("oauth:bigmodel:user_info", "{not json");
     expect(repo.loadActiveAccount()).toBeNull();
-    // 展示读取不是登录门禁：不能像 loadCachedSessionState 那样顺手清理残缺凭据。
+    // Display reads are not the login gate: they must not clean up incomplete credentials in passing, the way loadCachedSessionState does.
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:user_info")).toBe("{not json");
   });
 
-  it("记住并归还本次跳出去登录用的 provider", () => {
+  it("remembers and returns the provider used for the login redirect", () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     const repo = new BrowserOAuthCredentialRepo({ localStorage, sessionStorage });
@@ -160,7 +160,7 @@ describe("BrowserOAuthCredentialRepo", () => {
     expect(repo.loadPendingProvider()).toBeNull();
     repo.savePendingProvider("bigmodel");
     expect(repo.loadPendingProvider()).toBe("bigmodel");
-    // 只进 sessionStorage，不落 localStorage
+    // Only goes into sessionStorage, not localStorage
     expect(localStorage.getItem("oauth_pending_provider")).toBeNull();
     repo.clearPendingProvider();
     expect(repo.loadPendingProvider()).toBeNull();

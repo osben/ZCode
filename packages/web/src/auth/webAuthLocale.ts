@@ -20,12 +20,6 @@ interface WebAuthPageCopy {
   callbackErrorTitle: string;
   callbackErrorDescription: string;
   retryAction: string;
-  // TEMPORARY (relay-deferred, upstream 3.16.1 web sync): WebLoggedInWaitingPage still renders
-  // from main.tsx's relay auth gate. Remove these four keys together with that page.
-  waitingTitle: string;
-  waitingDescription: string;
-  signedInAs: string;
-  logoutAction: string;
 }
 
 const WEB_AUTH_COPY = {
@@ -40,10 +34,6 @@ const WEB_AUTH_COPY = {
     callbackErrorTitle: "登录失败",
     callbackErrorDescription: "授权流程未完成，请重新登录。",
     retryAction: "重新登录",
-    waitingTitle: "已登录",
-    waitingDescription: "设备列表能力即将接入，当前账号暂未选择远控目标。",
-    signedInAs: "当前账号",
-    logoutAction: "断开连接",
   },
   "en-US": {
     brand: "ZCode",
@@ -56,11 +46,6 @@ const WEB_AUTH_COPY = {
     callbackErrorTitle: "Sign-In Failed",
     callbackErrorDescription: "The authorization flow did not complete. Sign in again.",
     retryAction: "Sign In Again",
-    waitingTitle: "Signed In",
-    waitingDescription:
-      "Device selection is coming next. No remote target is selected for this account yet.",
-    signedInAs: "Signed in as",
-    logoutAction: "Disconnect",
   },
 } satisfies Record<WebAuthLocale, WebAuthPageCopy>;
 
