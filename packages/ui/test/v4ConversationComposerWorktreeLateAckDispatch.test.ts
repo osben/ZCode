@@ -6,6 +6,8 @@ import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { act, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  getV4ComposerDraftStorageKey,
+  getV4WorktreeRecoveryScope,
   persistV4ComposerDraft,
   readV4ComposerDraft,
   readV4WorktreeRecoveryDrafts,
@@ -17,6 +19,7 @@ import {
 } from "@/store/composerWorktreePipelineStore.js";
 import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
 import {
+  findReactPropsByTestId,
   flushAsyncWork,
   replaceComposerDraftSpy,
   renderLateAckComposer,
@@ -830,6 +833,130 @@ it("a second click during the in-flight first submission dispatches nothing new 
     ).toHaveLength(1);
   } finally {
     settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Retry on a failed bound first submission reuses the same submission and reservation, once (IUX07)", async () => {
+  // specs/first-submission-instant-ux.md, Retry surface: the recovery card restores the frozen
+  // record and runs the ordinary submit — no second send path, no new reservation.
+  const prepare = vi.fn<
+    NonNullable<
+      import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+    >
+  >(async ({ reservation, onReservationCreated }) => {
+    if (!reservation)
+      onReservationCreated?.({ sessionId: "session-retry", commandId: "reserve-cmd" });
+    return "session-retry";
+  });
+  const onFirstSubmissionReserved = vi.fn();
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: prepare,
+    onFirstSubmissionReserved,
+  });
+  const recordsFor = (submissionId: string) => {
+    const raw = window.localStorage.getItem(getV4ComposerDraftStorageKey("/workspace", undefined));
+    const scopes = (raw ? JSON.parse(raw).scopes : {}) as Record<
+      string,
+      { firstSubmission?: { submissionId: string; status: string } }
+    >;
+    return Object.values(scopes).filter(
+      (draft) => draft.firstSubmission?.submissionId === submissionId,
+    );
+  };
+  try {
+    harness.controls.rejectSend = true;
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("Retry me");
+      await flushAsyncWork();
+    });
+    expect(onFirstSubmissionReserved).toHaveBeenCalledWith("session-retry");
+    const failed = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-retry").find(
+      (entry) => entry.draft.firstSubmission,
+    )!;
+    expect(failed.draft.firstSubmission?.status).toBe("failed");
+    const submissionId = failed.draft.firstSubmission!.submissionId;
+
+    // The pane bound to the reserved session; the composer there offers Retry.
+    harness.controls.rejectSend = false;
+    harness.rerender("session-retry");
+    const retry = findReactPropsByTestId(harness.container, "composer-first-submission-retry");
+    expect(retry?.disabled).toBe(false);
+    await act(async () => {
+      // Two clicks before React re-renders: the request counter collapses them into one submit.
+      (retry!.onClick as () => void)();
+      (retry!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(prepare.mock.calls[1]?.[0]).toMatchObject({
+      submissionId,
+      reservation: { sessionId: "session-retry", commandId: "reserve-cmd" },
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+    expect(harness.onSendText.mock.calls[1]?.[0]).toBe("Retry me");
+    expect(harness.onSendText.mock.calls[1]?.[1]).toMatchObject({
+      reservedSubmissionSessionId: "session-retry",
+      firstSubmissionId: submissionId,
+    });
+    // One record per submission, overwritten in place (never failed again, never duplicated).
+    const records = recordsFor(submissionId);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.firstSubmission?.status).not.toBe("failed");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Retry moves a record found under another scope into its own, leaving one record (IUX07)", async () => {
+  // A record can reach the session's card through its reservation while still stored under the
+  // draft owner (e.g. the bind could not move it). The retry freeze writes the composer's own
+  // scope, so Retry must move the record first or two records would exist for one submission.
+  const prepare = vi.fn<
+    NonNullable<
+      import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+    >
+  >(async () => "session-foreign");
+  // Seed after mounting: the harness installs a fresh window.localStorage.
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  const foreignScope = getV4WorktreeRecoveryScope("__draft__", "sub-foreign");
+  persistV4ComposerDraft("/workspace", undefined, foreignScope, {
+    text: "Stored under the draft owner",
+    firstSubmission: {
+      submissionId: "sub-foreign",
+      ownerKey: "__draft__",
+      status: "failed",
+      reservation: { sessionId: "session-foreign", commandId: "reserve-foreign" },
+    },
+  });
+  try {
+    harness.rerender("session-foreign");
+    const retry = findReactPropsByTestId(harness.container, "composer-first-submission-retry");
+    await act(async () => {
+      (retry!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare.mock.calls[0]?.[0]).toMatchObject({
+      submissionId: "sub-foreign",
+      reservation: { sessionId: "session-foreign", commandId: "reserve-foreign" },
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(readV4ComposerDraft("/workspace", undefined, foreignScope)).toBeNull();
+    const records = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-foreign").filter(
+      (entry) => entry.draft.firstSubmission?.submissionId === "sub-foreign",
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.scope).toBe(getV4WorktreeRecoveryScope("session-foreign", "sub-foreign"));
+  } finally {
     await act(async () => {
       await flushAsyncWork();
       harness.root.unmount();

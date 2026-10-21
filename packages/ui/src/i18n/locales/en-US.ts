@@ -7654,6 +7654,7 @@ const enUS: Record<string, string> = {
   "composerRecovery.storageUnavailable":
     "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",
   "composerRecovery.editorOccupied": "Send or clear the current draft before restoring.",
+  "composerRecovery.retryOccupied": "Send or clear the current draft before retrying.",
   "composerRecovery.reattach": "Reattach the listed missing files, or explicitly remove them.",
   "composerRecovery.restore": "Restore",
   "composerRecovery.removeMissing": "Remove missing files",

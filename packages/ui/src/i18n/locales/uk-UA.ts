@@ -93,6 +93,8 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.orphanedNote":
     "Це приготування вже не належить активній сесії, його можна відхилити.",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
+  "composerRecovery.retryOccupied":
+    "Надішліть або очистьте поточну чернетку перед повторною спробою.",
   "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",
   "composerRecovery.restore": "Відновити",
   "composerRecovery.removeMissing": "Видалити відсутні файли",

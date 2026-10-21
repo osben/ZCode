@@ -3035,6 +3035,36 @@ function ConversationComposerImpl({
     workspacePath,
   ]);
 
+  // Retry from the recovery card for a failed first submission (specs/first-submission-instant-ux.md,
+  // Retry surface): restore the frozen record, then run the ordinary submit over it on the next
+  // render, when the restored text/attachments are committed. The record moves to this composer's
+  // own recovery scope for that submissionId so the retry freeze overwrites it in place: one record
+  // per submission, and the optimistic turn never blinks.
+  const [recoveryRetryRequest, setRecoveryRetryRequest] = useState(0);
+  const appliedRecoveryRetryRef = useRef(0);
+  const retryWorktreeRecoveryDraft = useCallback(
+    (draft: V4ComposerDraft, recoveryScope: string) => {
+      const submissionId = draft.firstSubmission?.submissionId;
+      if (!submissionId) return;
+      const ownScope = getV4WorktreeRecoveryScope(draftScopeId, submissionId);
+      if (
+        recoveryScope !== ownScope &&
+        !moveV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope, ownScope)
+      ) {
+        toast(intl.formatMessage({ id: "composerRecovery.storageUnavailable" }));
+        return;
+      }
+      applyWorktreeRecoveryDraft(draft);
+      setRecoveryRetryRequest((request) => request + 1);
+    },
+    [applyWorktreeRecoveryDraft, draftScopeId, intl, workspaceIdentity, workspacePath],
+  );
+  useEffect(() => {
+    if (recoveryRetryRequest <= appliedRecoveryRetryRef.current) return;
+    appliedRecoveryRetryRef.current = recoveryRetryRequest;
+    void submit();
+  }, [recoveryRetryRequest, submit]);
+
   // "Retry" from the failure modal: run the ordinary submit over the restored submission — no
   // second dispatch path. The submit waits for any pending restore request to land first, so the
   // idempotency guard and the double-action protections of submit() apply unchanged.
@@ -4044,12 +4074,14 @@ function ConversationComposerImpl({
           scopeId={draftScopeId}
           editorEmpty={!hasDraftToSubmit && !pending && !worktreeQueued}
           attachments={attachmentsApi.attachments}
+          sessionBound={sessionId !== null}
           onDiscardAttachments={async (ids, recoveryScope) => {
             await attachmentsApi
               .captureSubmission?.(ids, `${workspaceKey}\0${recoveryScope}`)
               .discardAttachments();
           }}
           onRestore={applyWorktreeRecoveryDraft}
+          onRetry={retryWorktreeRecoveryDraft}
         />
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { logger } from "@/logger.js";
 import {
   moveComposerAttachmentScopeItems,
@@ -16,7 +16,8 @@ import {
   readV4WorktreeRecoveryDrafts,
   persistV4ComposerDraft,
   subscribeV4ComposerDrafts,
-  getV4ComposerDraftVersion,
+  getV4FirstSubmissionVersion,
+  isV4FirstSubmissionActive,
   type V4ComposerDraft,
 } from "./composerDraftStore.js";
 
@@ -74,7 +75,9 @@ export function ComposerWorktreeRecovery({
   scopeId,
   editorEmpty,
   attachments,
+  sessionBound,
   onRestore,
+  onRetry,
   onDiscardAttachments,
 }: {
   workspacePath: string;
@@ -82,18 +85,24 @@ export function ComposerWorktreeRecovery({
   scopeId: string;
   editorEmpty: boolean;
   attachments: readonly { id: string; filename: string }[];
+  /** The composer is on a Host session (not the draft), so its first-submission records are bound. */
+  sessionBound: boolean;
   onRestore: (draft: V4ComposerDraft) => void;
+  /** Restore-then-submit over the frozen first submission (specs/first-submission-instant-ux.md, Retry surface). */
+  onRetry: (draft: V4ComposerDraft, recoveryScope: string) => void;
   onDiscardAttachments: (ids: string[], scope: string) => Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   useSyncExternalStore(
     subscribeV4ComposerDrafts,
-    () => getV4ComposerDraftVersion(workspacePath, workspaceIdentity),
+    // The first-submission version also bumps on active-flag changes, which gate the card.
+    () => getV4FirstSubmissionVersion(workspacePath, workspaceIdentity),
     () => null,
   );
   const saved = readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, scopeId)[0];
   const recoveryScope = saved?.scope ?? "";
   const draft = saved?.draft;
+  const [retriedRecordAt, setRetriedRecordAt] = useState<number | null>(null);
   const recoveryFiles = useComposerAttachmentUploadStore(
     (state) => state.scopes[`${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`],
   );
@@ -110,7 +119,16 @@ export function ComposerWorktreeRecovery({
     });
   }, [draft, manifest, recoveryScope, workspaceIdentity, workspacePath]);
   if (!draft) return null;
-  if (draft.firstSubmission) return null;
+  const firstSubmission = draft.firstSubmission;
+  // A live submission owns its record; sending/unknown has an unresolved sendText command that must
+  // be reconciled by its original id, never resent under a new one (FSL rule 4).
+  if (
+    firstSubmission &&
+    (isV4FirstSubmissionActive(workspacePath, workspaceIdentity, firstSubmission.submissionId) ||
+      firstSubmission.status === "sending" ||
+      firstSubmission.status === "unknown")
+  )
+    return null;
   const missing = (draft.recoveryAttachments ?? []).filter(
     (file) =>
       ![...attachments, ...(recoveryFiles ?? [])].some(
@@ -134,31 +152,65 @@ export function ComposerWorktreeRecovery({
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
       <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
-      <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
-      {(draft.recoveryAttachments ?? []).map((file) => (
-        <span className="mr-2" key={file.id}>
-          {file.filename}
-        </span>
-      ))}
-      {occupied ? <p>{intl.formatMessage({ id: "composerRecovery.editorOccupied" })}</p> : null}
+      {/* A first submission's message is already the optimistic turn above; do not repeat it. */}
+      {!firstSubmission ? (
+        <>
+          <p className="whitespace-pre-wrap text-foreground-subtle">{draft.text}</p>
+          {(draft.recoveryAttachments ?? []).map((file) => (
+            <span className="mr-2" key={file.id}>
+              {file.filename}
+            </span>
+          ))}
+        </>
+      ) : null}
+      {occupied ? (
+        <p>
+          {intl.formatMessage({
+            id: firstSubmission
+              ? "composerRecovery.retryOccupied"
+              : "composerRecovery.editorOccupied",
+          })}
+        </p>
+      ) : null}
       {missing.length ? <p>{intl.formatMessage({ id: "composerRecovery.reattach" })}</p> : null}
       <div className="mt-2 flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={occupied || missing.length > 0}
-          onClick={() => {
-            moveComposerAttachmentScopeItems(
-              `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
-              `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
-              (recoveryFiles ?? []).map((item) => item.id),
-            );
-            onRestore(draft);
-            clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope);
-          }}
-        >
-          {intl.formatMessage({ id: "composerRecovery.restore" })}
-        </Button>
+        {firstSubmission ? (
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="composer-first-submission-retry"
+            disabled={occupied || missing.length > 0 || retriedRecordAt === draft.updatedAt}
+            onClick={() => {
+              // The record stays: the retry freeze overwrites it in place so the turn never blinks.
+              setRetriedRecordAt(draft.updatedAt);
+              moveComposerAttachmentScopeItems(
+                `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
+                `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
+                (recoveryFiles ?? []).map((item) => item.id),
+              );
+              onRetry(draft, recoveryScope);
+            }}
+          >
+            {intl.formatMessage({ id: "common.retry" })}
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={occupied || missing.length > 0}
+            onClick={() => {
+              moveComposerAttachmentScopeItems(
+                `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
+                `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
+                (recoveryFiles ?? []).map((item) => item.id),
+              );
+              onRestore(draft);
+              clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope);
+            }}
+          >
+            {intl.formatMessage({ id: "composerRecovery.restore" })}
+          </Button>
+        )}
         {missing.length ? (
           <Button
             size="sm"
@@ -175,23 +227,26 @@ export function ComposerWorktreeRecovery({
             {intl.formatMessage({ id: "composerRecovery.removeMissing" })}
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            void onDiscardAttachments(
-              (draft.recoveryAttachments ?? []).map((item) => item.id),
-              recoveryScope,
-            )
-              .then(() => clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope))
-              .catch((error: unknown) => {
-                logger.warn("[composer-recovery] Could not discard attachments", error);
-                toast(getErrorMessage(error));
-              });
-          }}
-        >
-          {intl.formatMessage({ id: "composerRecovery.dismiss" })}
-        </Button>
+        {/* Dismissing a reserved record would strand its prepared session (it admits no other input). */}
+        {firstSubmission && (firstSubmission.reservation || sessionBound) ? null : (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              void onDiscardAttachments(
+                (draft.recoveryAttachments ?? []).map((item) => item.id),
+                recoveryScope,
+              )
+                .then(() => clearV4ComposerDraft(workspacePath, workspaceIdentity, recoveryScope))
+                .catch((error: unknown) => {
+                  logger.warn("[composer-recovery] Could not discard attachments", error);
+                  toast(getErrorMessage(error));
+                });
+            }}
+          >
+            {intl.formatMessage({ id: "composerRecovery.dismiss" })}
+          </Button>
+        )}
       </div>
     </div>
   );

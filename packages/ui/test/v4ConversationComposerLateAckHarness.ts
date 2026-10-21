@@ -163,6 +163,7 @@ export interface LateAckHarness {
   rerender: (sessionId: string | null, draftText?: string) => void;
   resolveReservation: (sessionId: string) => void;
   root: Root;
+  container: Element;
 }
 
 export const replaceComposerDraftSpy = vi.fn();
@@ -286,5 +287,31 @@ export function renderLateAckComposer(
     },
     resolveReservation,
     root,
+    container,
   };
+}
+
+type MinimalNode = {
+  attributes?: Map<string, string>;
+  childNodes?: MinimalNode[];
+  [key: string]: unknown;
+};
+
+/** React props of the first rendered element carrying `data-testid` (the minimal DOM has no queries). */
+export function findReactPropsByTestId(
+  container: Element,
+  testId: string,
+): Record<string, unknown> | null {
+  const visit = (node: MinimalNode): Record<string, unknown> | null => {
+    if (node.attributes?.get("data-testid") === testId) {
+      const key = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+      return key ? (node[key] as Record<string, unknown>) : null;
+    }
+    for (const child of node.childNodes ?? []) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  return visit(container as unknown as MinimalNode);
 }

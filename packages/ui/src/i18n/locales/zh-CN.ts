@@ -7272,6 +7272,7 @@ const zhCN: Record<string, string> = {
   "composerRecovery.storageUnavailable":
     "无法保存恢复状态。消息尚未发送；请释放浏览器存储空间后重试。",
   "composerRecovery.editorOccupied": "请先发送或清空当前草稿再恢复。",
+  "composerRecovery.retryOccupied": "请先发送或清空当前草稿再重试。",
   "composerRecovery.reattach": "请重新附加缺失文件，或明确移除它们。",
   "composerRecovery.restore": "恢复",
   "composerRecovery.removeMissing": "移除缺失文件",

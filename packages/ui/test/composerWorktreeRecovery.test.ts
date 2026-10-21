@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
@@ -9,6 +9,8 @@ import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
   readV4WorktreeRecoveryDrafts,
+  setV4FirstSubmissionActive,
+  type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
 
 afterEach(() => {
@@ -34,7 +36,9 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
+          sessionBound: false,
           onRestore: restore,
+          onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
         }),
       ),
@@ -59,7 +63,9 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty,
           attachments: [],
+          sessionBound: false,
           onRestore,
+          onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
         }),
       );
@@ -93,7 +99,9 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
+          sessionBound: false,
           onRestore: restore,
+          onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
         }),
       ),
@@ -133,7 +141,9 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
+          sessionBound: false,
           onRestore: restore,
+          onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
         }),
       ),
@@ -158,5 +168,123 @@ describe("explicit worktree recovery", () => {
         ],
       }),
     );
+  });
+});
+
+// specs/first-submission-instant-ux.md, Retry surface (IUX07/IUX09).
+describe("failed first-submission retry card", () => {
+  const scope = getV4WorktreeRecoveryScope("reserved-1", "sub-1");
+  function seed(firstSubmission: Partial<NonNullable<V4ComposerDraft["firstSubmission"]>> = {}) {
+    persistV4ComposerDraft("/repo", undefined, scope, {
+      text: "frozen first message",
+      firstSubmission: {
+        submissionId: "sub-1",
+        ownerKey: "__draft__",
+        status: "failed",
+        reservation: { sessionId: "reserved-1", commandId: "reserve-cmd" },
+        ...firstSubmission,
+      },
+    });
+  }
+  function card(props: { editorEmpty?: boolean; sessionBound?: boolean; scopeId?: string } = {}) {
+    const onRetry = vi.fn();
+    const onRestore = vi.fn();
+    const element = () =>
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(ComposerWorktreeRecovery, {
+          workspacePath: "/repo",
+          scopeId: props.scopeId ?? "reserved-1",
+          editorEmpty: props.editorEmpty ?? true,
+          attachments: [],
+          sessionBound: props.sessionBound ?? true,
+          onRestore,
+          onRetry,
+          onDiscardAttachments: async () => {},
+        }),
+      );
+    const view = render(element());
+    return { onRetry, onRestore, rerender: () => view.rerender(element()) };
+  }
+  const retryButton = () => screen.queryByRole("button", { name: "Retry", exact: true });
+
+  afterEach(() => setV4FirstSubmissionActive("/repo", undefined, "sub-1", false));
+
+  it("offers Retry for a settled failed record without repeating the message text", () => {
+    seed();
+    card();
+    expect(retryButton()).not.toBeNull();
+    expect(screen.queryByText("frozen first message")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Restore", exact: true })).toBeNull();
+  });
+
+  it("stays hidden while the submission is active and appears once it settles", () => {
+    seed();
+    setV4FirstSubmissionActive("/repo", undefined, "sub-1", true);
+    card();
+    expect(screen.queryByTestId("composer-worktree-recovery")).toBeNull();
+    act(() => setV4FirstSubmissionActive("/repo", undefined, "sub-1", false));
+    expect(retryButton()).not.toBeNull();
+  });
+
+  it.each(["sending", "unknown"] as const)(
+    "never offers a resend for a %s record (unresolved sendText command, FSL rule 4)",
+    (status) => {
+      seed({ status, commandId: "send-cmd" });
+      card();
+      expect(screen.queryByTestId("composer-worktree-recovery")).toBeNull();
+    },
+  );
+
+  it("offers explicit continue for an inactive preparing record after restart (IUX09)", () => {
+    seed({ status: "preparing" });
+    card();
+    expect(retryButton()).not.toBeNull();
+  });
+
+  it("hands the record and its scope to the composer once, keeping the record in place", () => {
+    seed();
+    const { onRetry } = card();
+    fireEvent.click(retryButton()!);
+    fireEvent.click(retryButton()!);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "frozen first message",
+        firstSubmission: expect.objectContaining({ submissionId: "sub-1" }),
+      }),
+      scope,
+    );
+    expect(readV4ComposerDraft("/repo", undefined, scope)?.firstSubmission?.submissionId).toBe(
+      "sub-1",
+    );
+    expect((retryButton() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables Retry and says why while another draft occupies the editor", () => {
+    seed();
+    const { onRetry } = card({ editorEmpty: false });
+    expect((retryButton() as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Send or clear the current draft before retrying.")).toBeTruthy();
+    fireEvent.click(retryButton()!);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Dismiss for a reserved record (it would strand the prepared session)", () => {
+    seed();
+    card();
+    expect(screen.queryByRole("button", { name: "Dismiss saved message" })).toBeNull();
+  });
+
+  it("keeps Dismiss for an unbound draft record", () => {
+    const draftScope = getV4WorktreeRecoveryScope("__draft__", "sub-1");
+    persistV4ComposerDraft("/repo", undefined, draftScope, {
+      text: "never reserved",
+      firstSubmission: { submissionId: "sub-1", ownerKey: "__draft__", status: "failed" },
+    });
+    card({ scopeId: "__draft__", sessionBound: false });
+    expect(screen.getByRole("button", { name: "Dismiss saved message" })).toBeTruthy();
+    expect(retryButton()).not.toBeNull();
   });
 });
