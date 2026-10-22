@@ -142,9 +142,10 @@ export function createExternalAgentModel(input: ExternalAgentModelInput): Model 
       return Promise.reject(unsupported());
     },
     streamText() {
-      return (async function* () {
-        throw unsupported();
-      })();
+      // Fails on the first pull, like a stream that cannot start.
+      return {
+        [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(unsupported()) }),
+      };
     },
   };
   Object.defineProperty(model, EXTERNAL_AGENT_TURN_DRIVER, {

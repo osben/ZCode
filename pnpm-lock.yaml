@@ -456,6 +456,9 @@ importers:
 
   apps/zcode-cli/packages/bootstrap:
     dependencies:
+      '@zcode/acp-agent-runtime':
+        specifier: workspace:*
+        version: link:../../../../packages/acp-agent-runtime
       '@zcode/adapters':
         specifier: workspace:*
         version: link:../adapters

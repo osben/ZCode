@@ -1,5 +1,9 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
-import type { Model } from "@zcode/contracts";
+import {
+  createExternalAgentModel,
+  type ExternalAgentTurnDriver,
+  type Model,
+} from "@zcode/contracts";
 import type { AgentRuntimeDeps } from "@zcode/core";
 import {
   type ModelSelection,
@@ -22,9 +26,15 @@ export interface ProviderRegistryModelSource {
 
 type ApiProviderModelAdapter = Pick<AiSdkModelAdapter, "createModel">;
 
+/** Turn drivers of `acp-agent` providers, bound by the composition root (specs/acp-agent-runtime.md). */
+export interface ExternalAgentDriverSource {
+  driverFor(agentId: string): ExternalAgentTurnDriver;
+}
+
 interface ApiProviderModelRuntimeOptions {
   readonly registry: ProviderRegistryModelSource;
   readonly modelAdapter: ApiProviderModelAdapter;
+  readonly externalAgents?: ExternalAgentDriverSource;
 }
 
 /**
@@ -33,11 +43,13 @@ interface ApiProviderModelRuntimeOptions {
 export class ApiProviderModelRuntime {
   readonly #registry: ProviderRegistryModelSource;
   readonly #modelAdapter: ApiProviderModelAdapter;
+  readonly #externalAgents: ExternalAgentDriverSource | undefined;
   #started = false;
 
   constructor(options: ApiProviderModelRuntimeOptions) {
     this.#registry = options.registry;
     this.#modelAdapter = options.modelAdapter;
+    this.#externalAgents = options.externalAgents;
   }
 
   readonly modelFactory: RuntimeModelFactory = (target): Model => {
@@ -68,6 +80,23 @@ export class ApiProviderModelRuntime {
     target: Parameters<RuntimeModelFactory>[0],
   ): Model {
     const config = registryModel.config;
+    // ACP agents are external processes, not model APIs: the marker Model carries the turn driver and
+    // never reaches the AI SDK adapter (specs/acp-agent-runtime.md "Chat delegation (phase 4)").
+    // The registry access union does not name `acp-agent`, so the check is structural on the stored shape.
+    const access = provider.config.access as { readonly type?: unknown; readonly agentId?: unknown };
+    if (access.type === "acp-agent" && typeof access.agentId === "string") {
+      const driver = this.#externalAgents?.driverFor(access.agentId);
+      if (!driver) throw new Error("ACP agent runtime is not available in this process");
+      const reasoningLevel = target.selection.options?.reasoningLevel;
+      return createExternalAgentModel({
+        driver,
+        providerId: provider.providerId,
+        modelId: registryModel.modelId,
+        properties: config.properties,
+        optionSpecs: config.optionSpecs,
+        options: reasoningLevel === undefined ? {} : { reasoningLevel },
+      });
+    }
     // Output budget belongs to an individual request and must be explicitly determined by the Agent
     // execution chain, not silently bound in ModelFactory. Selection was validated at the Registry
     // boundary above, so Factory must not repair missing defaults.

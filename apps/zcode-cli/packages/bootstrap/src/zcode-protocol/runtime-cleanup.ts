@@ -22,6 +22,8 @@ export async function cleanupProtocolRuntime(options: {
   languageServerPort?: Pick<LanguageServerPort, "stopAll">;
   sessionStore?: SqliteSessionStore;
   providerRegistryRuntime?: { dispose(): unknown };
+  /** Resident ACP agent processes of this worker (specs/acp-agent-runtime.md). */
+  acpSessionPool?: { stopAll(): Promise<void> };
 }): Promise<void> {
   const deadline = options.deadlineAt ?? Date.now() + DEFAULT_CLEANUP_BUDGET_MS;
   const step = async (resource: string, cleanup: () => unknown | Promise<unknown>) => {
@@ -65,6 +67,7 @@ export async function cleanupProtocolRuntime(options: {
     step("session_store", () => {
       if (options.sessionStore) closeSessionStore(options.sessionStore);
     }),
+    step("acp_sessions", () => options.acpSessionPool?.stopAll()),
     step("provider_registry", () => options.providerRegistryRuntime?.dispose()),
     step("telemetry", () => shutdownPreparedModelTelemetry()),
   ]);

@@ -35,6 +35,8 @@ import {
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
+import { AcpSessionPool, acpRuntimeLoggerFrom } from "./acp-agent/acp-session-pool.js";
+import { createAcpExternalAgentHost } from "./acp-agent/acp-external-agent-host.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { resolveProcessProviderEndpointRoutingPort } from "./provider-endpoint-routing.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
@@ -142,6 +144,7 @@ export async function runZCodeProtocolAgent(
   let providerRegistryRuntime:
     | Awaited<ReturnType<typeof startProcessProviderRegistryRuntime>>
     | undefined;
+  let acpSessionPool: AcpSessionPool | undefined;
   try {
     // Prepare the database before accounts, Registry, and telemetry; do not mix waiting for remote materials into the migration gate.
     const configResult = createConfig({ env: options.env });
@@ -291,6 +294,12 @@ export async function runZCodeProtocolAgent(
     });
     const activeLspRuntimeHub = lspRuntimeHub;
     const activeProviderRegistryRuntime = providerRegistryRuntime;
+    // One resident ACP agent process per ZCode session; the sidecar store is read per turn.
+    acpSessionPool = new AcpSessionPool({ logger: acpRuntimeLoggerFrom(logger) });
+    const externalAgents = createAcpExternalAgentHost({
+      records: activeProviderRegistryRuntime.acpAgentStore,
+      pool: acpSessionPool,
+    });
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,
     );
@@ -303,6 +312,7 @@ export async function runZCodeProtocolAgent(
             activeProviderRegistryRuntime.runtime.registryService,
             activeProviderRegistryRuntime.configuredDefaultModelSelection,
           ),
+          externalAgents,
           // Read only the applied snapshot in this process; do not issue another Host RPC for a child task or switch models inside ModelFactory.
           resolveEffectiveModelSelection: (selection) => {
             const view = modelSelectionFacade.getView(undefined, undefined, { selection });
@@ -421,6 +431,7 @@ export async function runZCodeProtocolAgent(
       languageServerPort: lspRuntimeHub?.port,
       sessionStore,
       providerRegistryRuntime,
+      acpSessionPool,
     });
     logger.info("ZCode Protocol agent shutdown completed", {
       ...traceContextToLogContext(traceContext),

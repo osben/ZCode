@@ -1,4 +1,5 @@
 import type { AiSdkModelAdapter } from "@zcode/adapters/model";
+import type { ExternalAgentTurnHost } from "../acp-agent/acp-external-agent-host.js";
 import type {
   AgentTelemetryRuntimeOwner,
   AutomationPort,
@@ -137,6 +138,11 @@ export type RevokeWorkspaceHookTrustInput =
 export type ZCodeAppRuntimeConfigInput = AgentRuntimeConfig;
 
 export interface ZCodeAppOptions {
+  /**
+   * Turn drivers of ACP agent providers and the release of their resident processes on session close
+   * (specs/acp-agent-runtime.md "Chat delegation (phase 4)"). Absent outside the protocol worker.
+   */
+  externalAgents?: ExternalAgentTurnHost;
   /** 独立 CLI 的配置菜单编辑输入默认值；其他装配保留显式 Session 配置语义。 */
   modelSelectionMode?: "cli-default";
   /** Host 在运行实例创建时传入，运行中不刷新。 */

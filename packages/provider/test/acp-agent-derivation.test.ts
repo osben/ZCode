@@ -5,6 +5,7 @@ import {
   ProviderConfigResolver,
   ProviderTemplateMap,
   buildAcpPseudoModelConfig,
+  serializeRegistryProviderConfig,
   createDerivedAcpAgentConfigSource,
   deriveAcpAgentConfigSnapshot,
   describeForkAcpAgentLaunchProblem,
@@ -105,6 +106,23 @@ describe("ACP agents derived from the fork sidecar", () => {
     expect(modelStates()).toEqual([["opencode", false, false]]);
     expect(modelStates(false)).toEqual([["opencode", false, false]]);
     expect(modelStates(true)).toEqual([["opencode", true, true]]);
+
+    // Only the gate admits the provider to the execution Registry; its projection drops env.
+    const registryIds = (acpExecutable: boolean) =>
+      resolve(derived, acpExecutable)
+        .registryProviders.find((item) => item.providerId === "acp:opencode")
+        ?.models.map((model) => model.modelId);
+    expect(registryIds(false)).toBeUndefined();
+    expect(registryIds(true)).toEqual(["opencode"]);
+    const admitted = resolve(derived, true).registryProviders.find(
+      (item) => item.providerId === "acp:opencode",
+    )!;
+    expect(serializeRegistryProviderConfig(admitted.config).access).toEqual({
+      type: "acp-agent",
+      agentId: "opencode",
+      command: "/usr/local/bin/opencode",
+      args: ["acp"],
+    });
     // The gate never changes an ordinary API provider's executability.
     const registry = resolve(baseSnapshot(), true);
     expect(registry.resolvedProviders.every((item) => item.providerId !== "acp:opencode")).toBe(
