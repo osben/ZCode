@@ -270,12 +270,19 @@ survive a CLI restart and a query `unknown` therefore does not prove non-admissi
 | Facts (bound session's live snapshot, then `commands/query`)                     | Record becomes                                     |
 | -------------------------------------------------------------------------------- | -------------------------------------------------- |
 | a real user row is projected                                                     | cleared by the reconcile predicate (already owned) |
-| `submissionPreparation` absent (the Host marked the frozen input admitted)       | `sending` — synchronizing, no Retry                |
+| reserved record and `submissionPreparation` absent (input admitted)              | `sending` — synchronizing, no Retry                |
 | query `accepted` / `duplicate`                                                   | `sending` — synchronizing until the row projects   |
 | still `preparing` and query `rejected` / `failed` / `stale` / `noop` / `unknown` | `failed` — Retry and Remove                        |
 | query throws or reports `fault.command.queryUnavailable`                         | unchanged — re-checked on the next input change    |
 
 The query uses the command's own bucket: the reserved session id for `sendText`.
+Only a reserved (plain) record may treat a missing `submissionPreparation` as proof of
+admission — that marker flips when its `sendText` executes. A worktree record never has
+that marker (its `worktreePreparation` completes at activation, before any input), so it
+always goes to the command query. Residual risk, not closed here: after a CLI restart the
+command ledger may answer `unknown` for an input that was admitted but not yet projected;
+Retry then reactivates (`already-active`/`input-admitted` is not surfaced to the UI) and
+sends again. Surfacing that activation receipt is a CLI/protocol follow-up.
 
 ```mermaid
 sequenceDiagram

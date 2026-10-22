@@ -859,7 +859,7 @@ function ConversationWorkSegmentFlow({
           // (specs/first-submission-instant-ux.md, Status under the message).
           const optimistic = item.row.rowId < 0;
           const userRow = optimistic ? (
-            <div data-optimistic-first-input="true" inert>
+            <div data-optimistic-first-input="true" className="contents" inert>
               <ConversationTurnRow
                 row={item.row}
                 context={{

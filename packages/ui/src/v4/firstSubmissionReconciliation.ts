@@ -54,6 +54,9 @@ export function useFirstSubmissionReconciliation({
   const submissionId = firstSubmission?.submissionId;
   const commandId = firstSubmission?.commandId;
   const status = firstSubmission?.status;
+  // Only a reserved (plain) submission's marker flips at its sendText; a worktree marker completes
+  // at activation, before any input, so its absence proves nothing about admission.
+  const markerProvesAdmission = Boolean(firstSubmission?.reservation);
   useEffect(() => {
     if (!enabled || !sessionId || !submissionId || !commandId) return;
     if (active || realRowProjected || !snapshotLive) return;
@@ -66,8 +69,8 @@ export function useFirstSubmissionReconciliation({
         logger.warn("[first-submission] could not persist the reconciled outcome", error);
       }
     };
-    // The Host marks the frozen input admitted durably when its sendText executes.
-    if (!hostPreparing) {
+    // The Host marks a reserved submission's input admitted durably when its sendText executes.
+    if (markerProvesAdmission && !hostPreparing) {
       apply("sending");
       return;
     }
@@ -92,6 +95,7 @@ export function useFirstSubmissionReconciliation({
     commandId,
     enabled,
     hostPreparing,
+    markerProvesAdmission,
     realRowProjected,
     sessionId,
     snapshotLive,

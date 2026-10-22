@@ -1442,6 +1442,7 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       commandId?: string;
       status?: "preparing" | "sending" | "failed" | "unknown";
       text?: string;
+      reservation?: { sessionId: string; commandId: string };
     },
   ): void {
     persistV4ComposerDraft(
@@ -1456,6 +1457,7 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
           generation: paneDraftGeneration(),
           status: overrides?.status ?? "preparing",
           ...(overrides?.commandId ? { commandId: overrides.commandId } : {}),
+          ...(overrides?.reservation ? { reservation: overrides.reservation } : {}),
         },
       },
     );
@@ -1735,13 +1737,17 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
   async function mountBoundRecord(
     sessionId: string,
     submissionId: string,
-    options: { preparing: boolean; status?: "sending" | "unknown" },
+    options: { preparing: boolean; status?: "sending" | "unknown"; worktree?: boolean },
   ) {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
     seedFirstSubmissionRecord(sessionId, submissionId, {
       commandId: `cmd-${submissionId}`,
       status: options.status ?? "unknown",
+      // Plain first submissions carry their Host reservation; worktree ones never do.
+      ...(options.worktree
+        ? {}
+        : { reservation: { sessionId, commandId: `reserve-${submissionId}` } }),
     });
     // The chain ended (lost ACK) or the app restarted: nothing in this renderer owns it.
     setV4FirstSubmissionActive(WORKSPACE, undefined, submissionId, false);
@@ -1794,6 +1800,17 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     // would resend the same input under a new command id).
     expect(recordStatus("reserved-f3")).toBe("sending");
     expect(conversationMock.layer.queryCommands).not.toHaveBeenCalled();
+  });
+
+  it("F: a worktree record never trusts a missing marker (it completes at activation) and queries", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "worktree-f5", commandId: "cmd-f5" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("worktree-f5", "f5", { preparing: false, worktree: true });
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "worktree-f5", commandId: "cmd-f5" }],
+    });
+    expect(recordStatus("worktree-f5")).toBe("failed");
   });
 
   it("F: an unavailable command query leaves the record unchanged", async () => {
