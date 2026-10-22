@@ -251,6 +251,11 @@ const CLI_FACT_TITLE_SQL =
 
 // Reservation placeholder (signature defined with its only writer in project-repository.ts): every read hides it until applyCliFacts
 // writes facts, so an abandoned create never shows up as an empty, zero-time task.
+function isReservationPlaceholderRow(
+  row: Pick<TaskIndexRow, "created_at" | "cli_created_at" | "meta_json">,
+): boolean {
+  return row.cli_created_at == null && row.created_at === 0 && row.meta_json === "{}";
+}
 
 function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
   if (row.cli_created_at == null) return meta;
@@ -294,9 +299,7 @@ function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
       };
     }
     // A reservation placeholder (created_at 0, no CLI facts, default meta_json '{}') is expected until CLI facts arrive; it is not corruption, so it stays silent.
-    const isReservationPlaceholder =
-      row.meta_json === "{}" && row.created_at === 0 && row.cli_created_at == null;
-    if (!isReservationPlaceholder) {
+    if (!isReservationPlaceholderRow(row)) {
       logger.warn(
         undefined,
         `读取 task index meta_json 非法 taskId=${row.task_id}`,
@@ -2579,7 +2582,8 @@ export class TaskIndexRepo {
   /**
    * Shared meta_json convergence protocol for the sessions-index overlay writers (worktree facts, incognito markers).
    * Each update targets one task row: `converged` reports that the stored meta already carries the fact, `patch`
-   * builds the replacement meta. Only meta_json changes; absent, deleted and non-object meta_json rows are skipped.
+   * builds the replacement meta. Only meta_json changes; absent, deleted, reservation-placeholder and non-object meta_json
+   * rows are skipped, so they are not confirmed and the next publish retries them.
    * A read-only pass runs first so repeated publishes never take the write lock. The write pass re-reads after
    * BEGIN IMMEDIATE: enqueueWrite only serializes writers inside this process, and another Host sharing the database
    * can update the row between the read and the UPDATE. Returns the task ids whose row carries the fact afterwards.
@@ -2592,7 +2596,11 @@ export class TaskIndexRepo {
     const confirmed = new Set<string>();
     const readMeta = (taskId: string): Record<string, unknown> | null => {
       const row = this.getTaskRow({ ...scope, taskId });
-      if (!row || row.deleted === 1) return null;
+      // Cause: a placeholder is not an admitted task yet. A fact written into its '{}' meta_json breaks the placeholder
+      // signature (the row becomes a zero-time phantom that reads and discardCreatedTaskReservation no longer hide or
+      // remove), and the admission write (applyCliFacts) then replaces the whole meta_json, erasing the fact while the
+      // Host's acknowledgement set still reports it persisted.
+      if (!row || row.deleted === 1 || isReservationPlaceholderRow(row)) return null;
       try {
         const parsed: unknown = JSON.parse(row.meta_json);
         return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)

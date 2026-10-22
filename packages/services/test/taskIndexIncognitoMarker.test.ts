@@ -12,6 +12,7 @@
 // only channel that carries it to the Host), the cold phase reopens the same tasks-index through a
 // fresh controller runtime with no agent service for that workspace (closed workspace, no live host).
 import { mkdtempSync, rmSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -255,5 +256,141 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
     ).toEqual([TASK_ID]);
     const [archived] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: true });
     expect(archived!.incognito).toBe(true);
+  });
+});
+
+// A sessions-index stream that stays open after the snapshot, so a test can publish a later frame the way a
+// CLI event does. The snapshot is staged before the subscribe ACK, as in makeLiveAgentService.
+function makeStreamingAgentService(): {
+  agentService: IZCodeAgentService;
+  publishDelta: (lastActivityAt: number) => void;
+} {
+  const frames = new Emitter<SessionsIndexTopicWireCandidate>();
+  const topic = `sessions-index/${WORKSPACE}`;
+  const subscriptionId = "sessions-sub-stream";
+  const summary = (lastActivityAt: number) => ({
+    sessionId: TASK_ID,
+    workspaceId: WORKSPACE,
+    title: "Incognito feature",
+    titleSource: "default" as const,
+    phase: "completedSuccess" as const,
+    sessionEnded: true,
+    hasBackgroundWork: false,
+    incognito: true,
+    lastActivityAt,
+    createdAt: 10,
+  });
+  const wire = (
+    deliveryKind: "initial" | "online",
+    fromSeq: number,
+    toSeq: number,
+    payload: Record<string, unknown>,
+  ): SessionsIndexTopicWireCandidate =>
+    ({
+      wireVersion: V4_WIRE_PROTOCOL_VERSION,
+      kind: "complete",
+      deliveryKind,
+      logicalFrameId: `${deliveryKind}-${toSeq}`,
+      logicalFrameOrdinal: toSeq,
+      topic,
+      subscriptionId,
+      frame: { topic, subscriptionId, fromSeq, toSeq, sentAt: toSeq, payload },
+    }) as unknown as SessionsIndexTopicWireCandidate;
+  const agentService = {
+    onDynamicSessionsIndexFrame: () => frames.event,
+    onAgentRuntimeRestarted: () => ({ dispose: () => {} }),
+    subscribeSessionsIndexV4: async () => {
+      frames.fire(
+        wire("initial", 0, 1, {
+          kind: "snapshot",
+          snapshot: {
+            protocolVersion: 1,
+            workspaceId: WORKSPACE,
+            logEpoch: "sessions-epoch-stream",
+            sessions: [summary(20)],
+          },
+        }),
+      );
+      return {
+        ack: { subscriptionId, mode: "snapshot" as const, logEpoch: "sessions-epoch-stream" },
+      };
+    },
+    resyncSessionsIndexV4: async () => undefined,
+    unsubscribeSessionsIndexV4: async () => undefined,
+  };
+  return {
+    agentService: agentService as unknown as IZCodeAgentService,
+    publishDelta: (lastActivityAt) =>
+      frames.fire(
+        wire("online", 1, 2, {
+          kind: "deltas",
+          deltas: [{ op: "session.upserted", session: summary(lastActivityAt) }],
+        }),
+      ),
+  };
+}
+
+describe("reservation placeholder and incognito convergence (specs/incognito-session.md, Sidebar marker durability)", () => {
+  it("never writes the marker into a reservation placeholder, and the admitted row gets it on the next publish", async () => {
+    // Same row prepareSessionCreation leaves before the CLI admits the prepared session:
+    // created_at 0, no CLI facts, meta_json '{}' (RESERVATION_PLACEHOLDER_SQL).
+    const projects = await repo.getProjectRepository();
+    projects.reserveCreatedTask({
+      task: { workspacePath: WORKSPACE, taskId: TASK_ID },
+      projectId: null,
+    });
+    const database = (repo as unknown as { getDatabase(): DatabaseSync }).getDatabase();
+    const readMetaJson = () =>
+      (
+        database.prepare("SELECT meta_json FROM tasks WHERE task_id = ?").get(TASK_ID) as
+          | { meta_json: string }
+          | undefined
+      )?.meta_json;
+
+    // One task-service instance, as in production: the convergence ack is bound to it.
+    const taskService = makeTaskService(repo);
+    const stream = makeStreamingAgentService();
+    const runtime = createWindowHostControllerRuntime({
+      createId: () => "placeholder-live-id",
+      resolveSource: (scope) => ({
+        scope: { kind: "local" as const, ...scope },
+        taskService,
+        agentService: stream.agentService,
+        sourceAvailability: "online" as const,
+      }),
+    });
+    await runtime.service.listTaskList({
+      kind: "active",
+      workspaceScopes: [{ workspacePath: WORKSPACE }],
+      sortBy: "updated",
+    });
+    // Convergence runs fire-and-forget after the overlay publish; give it a few turns to settle.
+    for (let turn = 0; turn < 10; turn += 1)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(readMetaJson()).toBe("{}");
+
+    // The syncer admits the prepared session with the CLI baseline meta, which carries no incognito key.
+    await repo.applyCliFacts({
+      meta: {
+        taskId: TASK_ID,
+        traceId: `trace-${TASK_ID}`,
+        title: "Incognito feature",
+        workspacePath: WORKSPACE,
+        createdAt: 10,
+        updatedAt: 20,
+        mode: "default",
+        provider: "glm",
+      } satisfies ZCodeTaskMeta,
+      titleSource: "default",
+    });
+
+    // The next sessions-index publish still reports the incognito summary and must persist the marker.
+    stream.publishDelta(31);
+    const [persisted] = await waitFor(
+      () => repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false }),
+      (tasks) => tasks[0]?.incognito === true,
+    );
+    runtime.dispose();
+    expect(persisted!.incognito).toBe(true);
   });
 });
