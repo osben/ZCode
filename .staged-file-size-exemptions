@@ -21,6 +21,7 @@ packages/ui/src/v4/ConversationStatusPanel.tsx
 packages/web/src/main.tsx
 packages/ui/src/App.tsx
 packages/ui/src/WorkspaceSidebarFooter.tsx
+packages/ui/src/app-shell/SidePaneTabTrigger.tsx
 packages/ui/src/app-shell/WorkspaceShellLayout.tsx
 packages/ui/src/settings/AutomationsSection.tsx
 packages/ui/src/settings/model-provider-section/StatusCards.tsx

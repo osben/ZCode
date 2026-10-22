@@ -9,7 +9,7 @@ import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
  */
 export function useModelTrajectoryOpenBridge(
   ownWorkspaceKey: string,
-  onOpen: (params: { taskId: string; title?: string | null }) => void,
+  onOpen: (params: { taskId: string; title?: string | null; kind?: "v1" | "v2" }) => void,
 ): void {
   useEffect(() => {
     const handlePending = (
@@ -18,7 +18,11 @@ export function useModelTrajectoryOpenBridge(
       if (!pendingRequest || pendingRequest.workspaceKey !== ownWorkspaceKey) {
         return;
       }
-      onOpen({ taskId: pendingRequest.taskId, title: pendingRequest.title });
+      onOpen({
+        taskId: pendingRequest.taskId,
+        title: pendingRequest.title,
+        kind: pendingRequest.kind,
+      });
       useModelTrajectoryStore.getState().consumeRequest(pendingRequest.requestId);
     };
 

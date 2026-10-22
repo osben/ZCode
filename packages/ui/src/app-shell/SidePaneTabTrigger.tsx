@@ -8,6 +8,7 @@ import {
   BotIcon,
   BotMessageSquareIcon,
   BugIcon,
+  ChartNoAxesGanttIcon,
   FileIcon,
   FileCode2Icon,
   FileDiffIcon,
@@ -337,6 +338,10 @@ export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
     return <WaypointsIcon className="size-3.5" />;
   }
 
+  if (tab.type === "model-trajectory-v2") {
+    return <ChartNoAxesGanttIcon className="size-3.5" />;
+  }
+
   if (tab.type === "new-tab") return <FileIcon className="size-3.5" />;
   if (tab.type === "plugin-market") return <PuzzleIcon className="size-3.5" />;
 
@@ -550,6 +555,10 @@ export function getSidePaneTabTitle(
 
   if (tab.type === "model-trajectory") {
     return tab.title?.trim() || formatMessage({ id: "modelTrajectory.title" });
+  }
+
+  if (tab.type === "model-trajectory-v2") {
+    return tab.title?.trim() || formatMessage({ id: "modelTrajectoryV2.title" });
   }
 
   if (tab.type === "new-tab") return formatMessage({ id: "sidePane.newTab" });

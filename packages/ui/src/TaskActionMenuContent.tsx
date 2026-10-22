@@ -1,6 +1,7 @@
 import {
   TID_TASK_DELETE,
   TID_TASK_VIEW_MODEL_TRAJECTORY,
+  TID_TASK_VIEW_MODEL_TRAJECTORY_V2,
   TID_V4_TASK_OPEN_IN_SPLIT,
 } from "@zcode/shared/test-ids";
 
@@ -46,6 +47,7 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath,
   onCopySessionId,
   onViewModelTrajectory,
+  onViewModelTrajectoryV2,
   onOpenProviderConfig,
   onDeleteTask,
   deleteDisabledReason,
@@ -86,6 +88,7 @@ export function TaskActionMenuContent({
   onCopyTaskLogPath: () => void;
   onCopySessionId?: () => void;
   onViewModelTrajectory?: () => void;
+  onViewModelTrajectoryV2?: () => void;
   onOpenProviderConfig: () => void;
   /** Sidebar Delete (session-deletion-cascade): confirmation is owned by the caller. */
   onDeleteTask?: () => void;
@@ -240,6 +243,20 @@ export function TaskActionMenuContent({
             onSelect={onViewModelTrajectory}
           >
             {intl.formatMessage({ id: "taskList.viewModelTrajectory" })}
+          </Item>
+        </>
+      ) : null}
+      {onViewModelTrajectoryV2 ? (
+        <>
+          {onViewModelTrajectory ? null : <Separator />}
+          {/* Trajectory v2: event ledger, timing and request details; coexists with the v1 tab. */}
+          <Item
+            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY_V2}
+            disabled={taskTargetActionsDisabled || !activeSessionId}
+            title={taskTargetActionsDisabled ? disabledReason : undefined}
+            onSelect={onViewModelTrajectoryV2}
+          >
+            {intl.formatMessage({ id: "taskList.viewModelTrajectoryV2" })}
           </Item>
         </>
       ) : null}

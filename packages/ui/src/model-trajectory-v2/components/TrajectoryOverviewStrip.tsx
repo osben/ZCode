@@ -36,12 +36,15 @@ interface Lanes {
   tools: ReturnType<typeof packLane>;
 }
 
-function buildLanes(model: TrajectoryV2Model): Lanes {
+function buildLanes(
+  rows: TrajectoryV2Model["rows"],
+  records: TrajectoryV2Model["trajectory"]["records"],
+): Lanes {
   const modelSpans: LaneSpan[] = [];
   const toolSpans: LaneSpan[] = [];
-  for (const row of model.rows) {
+  for (const row of rows) {
     if (row.kind === "request") {
-      const record = model.trajectory.records[row.recordIndex];
+      const record = records[row.recordIndex];
       const ttft = record?.timing?.timeToFirstContentMs;
       modelSpans.push({
         key: row.key,
@@ -71,7 +74,10 @@ export function TrajectoryOverviewStrip({
 }) {
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const width = Math.max(0, useElementWidth(host) - LANE_LABEL_WIDTH);
-  const lanes = useMemo(() => buildLanes(model), [model]);
+  const lanes = useMemo(
+    () => buildLanes(model.rows, model.trajectory.records),
+    [model.rows, model.trajectory.records],
+  );
   const bounds = model.extent;
   const [view, setView] = useState<TimeDomain | null>(null);
   const [drag, setDrag] = useState<{ startX: number; currentX: number } | null>(null);
