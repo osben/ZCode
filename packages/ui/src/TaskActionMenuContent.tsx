@@ -182,13 +182,18 @@ export function TaskActionMenuContent({
       >
         {intl.formatMessage({ id: "appHeader.copyPath" })}
       </Item>
-      <Item
-        disabled={taskTargetActionsDisabled || taskSessionFile.loading || !taskSessionFile.path}
-        title={taskTargetActionsDisabled ? disabledReason : undefined}
-        onSelect={onCopyTaskPath}
-      >
-        {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
-      </Item>
+      {/* Host computes the snapshot path even when no file exists (exists:false); copying it would
+          give a path that does not exist, so the item is hidden until the file is confirmed. This
+          diverges from upstream 0a1fc56d, which always shows it. */}
+      {taskSessionFile.exists ? (
+        <Item
+          disabled={taskTargetActionsDisabled || taskSessionFile.loading || !taskSessionFile.path}
+          title={taskTargetActionsDisabled ? disabledReason : undefined}
+          onSelect={onCopyTaskPath}
+        >
+          {intl.formatMessage({ id: "appHeader.copyTaskPath" })}
+        </Item>
+      ) : null}
       <Item
         disabled={
           taskTargetActionsDisabled ||
