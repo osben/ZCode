@@ -389,7 +389,7 @@ Decision (owner): delete the fork "local-global" web-remote service collection a
 ### Kept
 
 - `createServerRemoteWorkspaceServiceCollection` and its cases: RPC channel coverage, the Source onboarding record RPC, server-authoritative forwarding (settings, OAuth, credentials, broadcast, bots, usage stats, sub-agents, settings sync, skill sync, prompt attachment transfer), and the global-instructions registration from #266 (`IUserInstructionsService`, which is kept on this collection).
-- The `remoteConnectionServiceCollection` skill-sync case, which does not use the removed factory.
+- The `remoteConnectionServiceCollection` skill-sync case, which does not use the removed factory. Later removed with the file itself; see "post-sync leftover cleanup".
 
 ### Bots
 
@@ -840,3 +840,30 @@ Scope: the src1 leftovers `command-center/CommandCenterDialog.tsx`, `SettingsPag
 Tests: no test was edited, skipped or deleted. The fork tests for the kept worktree and page-stack flows (`commandCenterWorktree*`, `commandCenterPageStack*`) stay. `.staged-file-size-exemptions` gained a TEMPORARY block for the five kept files above 20000 bytes.
 
 Verification (`claude/ui-tail-shell`): `pnpm typecheck` exit 0; `pnpm lint` 0 errors (93 warnings); `pnpm architecture:check --full` exit 0; `node scripts/check-test-copy.mjs` exit 0; `pnpm fmt:check` exit 0; `NODE_OPTIONS=--no-experimental-webstorage node scripts/run-vitest.mjs run packages/ui/test`: 1189 files passed, 3 skipped, 10954 tests passed, 16 skipped (no test in this change was edited, skipped or deleted).
+
+## post-sync leftover cleanup
+
+Branch `claude/post-sync-leftover-cleanup`, after the debt PRs #260–#265. It removes only fork-owned symbols those PRs left without production callers. Each one was checked with `git grep` and knip.
+
+Rule: an upstream-owned file or export (present in the pinned upstream commit, listed in `scripts/architecture/upstream-snapshot.json`) that becomes dead in the fork is kept, not deleted. Deleting it makes the next upstream sync hit a modify/delete conflict for no gain.
+
+### Removed
+
+- `packages/desktop/src/host/remoteConnectionServiceCollection.ts` and its skill-sync case. It came from upstream 3.15.1; upstream 3.16.1 (`0a1fc56d`) deleted it, so it is not upstream-owned at the pinned commit, and the fork host never called it.
+
+### Changed
+
+- `WebRemoteControlRelayPayloadSerializer.prepare` already defaults `client_ts` to Unix seconds since #262, as upstream 3.16.1 does. This pass restores the upstream test for that default, which round-trips the frame through the relay parser. The relay contract (`unixSeconds`) rejects milliseconds (`packages/remote-relay/src/adapters/nodeServer.ts` answers `WRONG_PARAM`), and both production transports already pass seconds explicitly, so nothing reads milliseconds.
+- uk-UA `project.createTask` is translated ("Нове завдання").
+
+### Kept (upstream-owned, dead in the fork)
+
+- `packages/ui/src/lib/archivedTaskDeletion.ts` (`collectArchivedTaskDeletion`, `deleteArchivedTaskSelection`), `packages/ui/test/archivedTaskDeletion.test.ts` and the UI-batch case in `packages/desktop/test/windowHostArchivedTaskDeletion.test.ts`. Their only production caller, `DeleteAllArchivedTasksButton.tsx`, was removed in #265.
+- Locale keys `archives.delete`, `archives.deleteTitle`, `archives.deleteDescription`. They are upstream-owned (en-US and zh-CN at `0a1fc56d`, read by upstream `useArchiveManagement.ts`). The fork stopped reading them in #265. uk-UA keeps them for catalog parity.
+- Fifteen `packages/services/src/node.ts` re-exports that knip reports as unused, all present in upstream `0a1fc56d`:
+  - eight that were already unused: `OAuthCredentialRepo`, `resolveCurrentAccountAccess`, `createAccountRequestAuthService`, `resolveAccountTeamPlanRuntimeMaterial`, `createAccountProjectTokenClient`, `createUsageStatsService`, `createSubagentsService`, `createMemoryService`;
+  - seven whose only consumer was `remoteConnectionServiceCollection.ts`: `createAccountProviderCredentialStore`, `createBroadcastService`, `createClientScenesService`, `createCodingPlanSubscriptionService`, `createMediaPreviewService`, `createOAuthProviderLogoutHandler`, `createSettingsSyncService`.
+
+### Deliberate divergence: `DeleteAllArchivedTasksButton.tsx`
+
+#265 deleted the upstream-owned `packages/ui/src/DeleteAllArchivedTasksButton.tsx`. It is the one upstream-owned deletion in this cleanup round, and it is deliberate: the fork's Settings → Archives page deletes through `useTaskDeleteDialog` (`specs/session-deletion-cascade.md`). Sync rule: on a modify/delete conflict for this file, resolve as deleted. `upstream-snapshot.json` is not edited by hand.
