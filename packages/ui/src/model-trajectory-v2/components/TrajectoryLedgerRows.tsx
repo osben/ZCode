@@ -127,9 +127,11 @@ function rowBody(row: LedgerRow, model: TrajectoryV2Model, intl: TrajectoryIntl)
         >
           {row.error ??
             (textPreview(row.text) ||
-              (row.reasoning
-                ? tr(intl, "modelTrajectoryV2.assistant.reasoningOnly")
-                : tr(intl, "modelTrajectoryV2.assistant.toolCallsOnly")))}
+              (row.toolCallCount > 0
+                ? tr(intl, "modelTrajectoryV2.assistant.toolCallsOnly")
+                : row.reasoning
+                  ? tr(intl, "modelTrajectoryV2.assistant.reasoningOnly")
+                  : "—"))}
         </span>
       );
     case "tool":

@@ -29,6 +29,7 @@ export type LedgerRow =
       recordIndex: number;
       text?: string;
       reasoning?: string;
+      toolCallCount: number;
       finishReason?: string;
       error?: string;
     })
@@ -204,6 +205,8 @@ export function buildLedgerRows(
         t0,
         t1,
         ...(response?.text ? { text: response.text } : {}),
+        toolCallCount: (response?.toolCalls ?? []).filter((part) => part.kind === "tool-call")
+          .length,
         ...(response?.reasoningText ? { reasoning: response.reasoningText } : {}),
         ...(response?.finishReason ? { finishReason: response.finishReason } : {}),
         ...(record.error ? { error: record.error.message || record.error.name } : {}),

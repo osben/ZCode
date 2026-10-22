@@ -9,7 +9,7 @@ const PAD_TOP = 6;
 const PAD_BOTTOM = 14;
 
 /**
- * Block F: context fill per main call. With every point's window known the axis is percent (dashed 100% line);
+ * Block F: context fill per main call. With every point's window known the axis is percent (dashed 100% line when in range);
  * otherwise it is tokens and percent is hidden. Compaction and context rewrites mark their point.
  */
 export function TrajectoryContextChart({
@@ -24,7 +24,8 @@ export function TrajectoryContextChart({
   const points = model.context;
   const percentMode = points.length > 0 && points.every((point) => point.ratio !== undefined);
   const values = points.map((point) => (percentMode ? (point.ratio ?? 0) : point.inputTokens));
-  const maxValue = percentMode ? Math.max(1, ...values) : Math.max(1, ...values);
+  // Scale to the data with headroom; a fixed 100% axis flattens typical single-digit fills into the baseline.
+  const maxValue = percentMode ? Math.max(0.05, ...values) * 1.2 : Math.max(1, ...values) * 1.1;
   const plotHeight = HEIGHT - PAD_TOP - PAD_BOTTOM;
   const x = (index: number) =>
     points.length <= 1 ? width / 2 : (index / (points.length - 1)) * (width - 8) + 4;
@@ -58,7 +59,7 @@ export function TrajectoryContextChart({
           role="img"
           aria-label={tr(intl, "modelTrajectoryV2.context.label")}
         >
-          {percentMode ? (
+          {percentMode && maxValue >= 1 ? (
             <line
               x1={0}
               x2={width}

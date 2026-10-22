@@ -91,6 +91,8 @@ it("derives turn, request, user, assistant and tool rows with the joined tool re
     "request",
     "assistant",
   ]);
+  const assistants = rows.filter((row) => row.kind === "assistant");
+  expect(assistants.map((row) => row.kind === "assistant" && row.toolCallCount)).toEqual([1, 0]);
   const tool = rows.find((row) => row.kind === "tool");
   expect(tool).toMatchObject({
     toolName: "Bash",
