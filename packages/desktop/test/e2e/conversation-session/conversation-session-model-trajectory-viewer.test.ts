@@ -10,6 +10,7 @@ import {
   clickTestIdByDom,
   getE2EAppDataPaths,
   setCurrentElectronRendererContentSize,
+  restoreElectronRendererContentSize,
 } from "../helpers/desktop-app.js";
 import {
   getV4PaneSnapshot,
@@ -232,11 +233,13 @@ describe("模型调用轨迹查看器 E2E", () => {
     );
 
     // TRJ08：窄视口中共享操作列不横跳，完整 tool name 仍存在于 DOM。
-    await setCurrentElectronRendererContentSize(760, 720);
+    const sizeBeforeNarrow = await setCurrentElectronRendererContentSize(760, 720);
     const narrow = await trajectorySnapshot();
     expect(narrow.text).toContain("mcp__computer-use__open_application_with_full_name");
     expect(narrow.pageHorizontalOverflow).toBe(false);
     expect(narrow.chevronRightEdgeDelta).toBeLessThanOrEqual(2);
+    // Restore the viewport: later cases in this file (TRJ11) type into the pane search input, which is not interactable in the narrow layout.
+    await restoreElectronRendererContentSize(sizeBeforeNarrow);
 
     // TRJ09：稀疏扩展到 33 MiB 后只读取尾部完整记录，并显式呈现 truncated。
     await seedOversizedTrajectoryTail(actualTrajectoryFile.filePath, taskId);
@@ -345,7 +348,10 @@ function createWindowRecord(taskId: string) {
 
 async function windowCardSnapshot() {
   return browser.execute(() => {
-    const card = document.querySelector<HTMLElement>('[data-trajectory-call=""]');
+    const timelines = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+    const timeline =
+      timelines.find((element) => element.offsetParent !== null) ?? timelines[0] ?? document;
+    const card = timeline.querySelector<HTMLElement>('[data-trajectory-call=""]');
     const input = card?.querySelector<HTMLElement>('[data-trajectory-section=""]');
     const rows = input
       ? Array.from(input.querySelectorAll<HTMLElement>('[data-trajectory-message-collapsible=""]'))
@@ -730,15 +736,51 @@ async function waitForToggleAllAction(labels: string[]) {
 }
 
 async function searchAndNavigate(query: string) {
+  // A second trajectory pane (TRJ11) keeps the earlier pane's inactive tab in the DOM, so only a displayed
+  // search bar counts and only a displayed trigger is clicked.
   const hasSearchBar = await browser.execute(() =>
-    Boolean(document.querySelector('[data-trajectory-search-bar=""]')),
+    [...document.querySelectorAll<HTMLElement>('[data-trajectory-search-bar=""]')].some(
+      (element) => element.offsetParent !== null,
+    ),
   );
-  if (!hasSearchBar) await clickFirst('[data-trajectory-search-trigger=""]');
+  if (!hasSearchBar) await clickFirstDisplayed('[data-trajectory-search-trigger=""]');
   await setSearchValue(query);
-  await browser.waitUntil(async () => (await trajectorySnapshot()).text.includes(query), {
-    timeout: 15_000,
-    timeoutMsg: `搜索命中没有被虚拟列表挂载并 reveal: ${query}`,
-  });
+  try {
+    await browser.waitUntil(async () => (await trajectorySnapshot()).text.includes(query), {
+      timeout: 15_000,
+      timeoutMsg: `搜索命中没有被虚拟列表挂载并 reveal: ${query}`,
+    });
+  } catch (error) {
+    const diagnostics = await browser.execute((marker) => {
+      const panes = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+      return JSON.stringify({
+        panes: panes.map((pane) => ({
+          displayed: pane.offsetParent !== null,
+          calls: pane.querySelectorAll('[data-trajectory-call=""]').length,
+          rows: pane.querySelectorAll('[data-trajectory-message-collapsible=""]').length,
+          openRows: pane.querySelectorAll(
+            '[data-trajectory-message-collapsible=""][data-state="open"]',
+          ).length,
+          hiddenGaps: [...pane.querySelectorAll<HTMLElement>("[data-trajectory-rows-hidden]")].map(
+            (gap) => gap.textContent?.trim(),
+          ),
+          more: [...pane.querySelectorAll<HTMLElement>("[data-trajectory-rows-more]")].map((btn) =>
+            btn.textContent?.trim(),
+          ),
+          markerInText: (pane.innerText || "").includes(marker),
+          markerInContent: (pane.textContent || "").includes(marker),
+        })),
+        searchBars: [
+          ...document.querySelectorAll<HTMLElement>('[data-trajectory-search-bar=""]'),
+        ].map((bar) => ({
+          displayed: bar.offsetParent !== null,
+          value: bar.querySelector("input")?.value,
+          counter: bar.textContent?.trim().slice(0, 40),
+        })),
+      });
+    }, query);
+    throw new Error(`${(error as Error).message} diagnostics=${diagnostics}`);
+  }
 }
 
 async function setSearchValue(query: string) {
@@ -749,8 +791,29 @@ async function setSearchValue(query: string) {
       ),
     { timeout: 10_000, timeoutMsg: "调用轨迹搜索框没有出现" },
   );
-  const input = $('[data-trajectory-search-bar=""] input');
+  const inputs = await browser.$$('[data-trajectory-search-bar=""] input');
+  const count = await inputs.length;
+  let input = count > 0 ? inputs[0] : undefined;
+  for (let index = 0; index < count; index += 1) {
+    const candidate = inputs[index];
+    if (candidate && (await candidate.isDisplayed())) input = candidate;
+  }
+  if (!input) throw new Error("调用轨迹搜索框没有出现");
   await input.setValue(query);
+}
+
+async function clickFirstDisplayed(selector: string) {
+  await browser.waitUntil(
+    () =>
+      browser.execute((value) => {
+        const element = [...document.querySelectorAll<HTMLElement>(value)].find(
+          (candidate) => candidate.offsetParent !== null,
+        );
+        element?.click();
+        return Boolean(element);
+      }, selector),
+    { timeout: 10_000, timeoutMsg: `没有找到可点击的可见元素: ${selector}` },
+  );
 }
 
 async function waitForSearchHighlights(expectedNormal: number, expectedActive: number) {
@@ -818,7 +881,9 @@ async function seedOversizedTrajectoryTail(filePath: string, taskId: string) {
 
 async function trajectorySnapshot() {
   return browser.execute(() => {
-    const root = document.querySelector<HTMLElement>('[data-trajectory-timeline=""]');
+    // Prefer the displayed pane: an earlier case's trajectory tab may still be in the DOM, hidden.
+    const timelines = [...document.querySelectorAll<HTMLElement>('[data-trajectory-timeline=""]')];
+    const root = timelines.find((element) => element.offsetParent !== null) ?? timelines[0] ?? null;
     const expanded = Array.from(
       document.querySelectorAll<HTMLElement>(
         '[data-trajectory-message-expanded=""][data-state="open"]',

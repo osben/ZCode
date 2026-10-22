@@ -30,14 +30,14 @@
     },
     {
       "id": "model-trajectory-viewer-task-seed",
-      "description": "建立真实 task/session，并用带 thinking 的真实 provider stream 验证 CLI model-io 落盘。",
+      "description": "建立真实 task/session，并用带 thinking 的真实 provider stream 验证 CLI model-io 落盘。 (TRJ01 and TRJ11 each seed one task)",
       "metadata": {
         "kind": "main",
         "timingPolicy": "fast-text",
         "source": "synthetic",
         "syntheticReason": "固定 thinking/text stream 使 CLI model-io 的 reasoningText 与正文落盘可被稳定断言；其余 UI 状态由 case-local 记录驱动。"
       },
-      "maxMatches": 1,
+      "maxMatches": 2,
       "match": {
         "method": "POST",
         "pathIncludes": "/messages",
