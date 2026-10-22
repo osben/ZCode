@@ -849,9 +849,11 @@ export function SessionPane({
       new Set([...pendingShareRowIds].map((id) => shareDraft?.productTurnIdByRowId[id] ?? id)).size,
     [pendingShareRowIds, shareDraft],
   );
+  // Share items are only read while the share draft is open; building them on every window change
+  // was a second, uncached full render-unit pass over the conversation (570 ms on a 1052-message session).
   const shareRenderUnits = useMemo(
-    () => buildConversationTurnRenderUnits(snapshot?.rows.window ?? []),
-    [snapshot?.rows.window],
+    () => (shareActive ? buildConversationTurnRenderUnits(snapshot?.rows.window ?? []) : []),
+    [shareActive, snapshot?.rows.window],
   );
   const shareItems = useMemo(
     () =>

@@ -1843,7 +1843,8 @@ describe("ConversationProjectionStore.loadOlder", () => {
     expect(hasOlderRows(state.snapshot)).toBe(false);
   });
 
-  it("TN07：完整目录按协议上限分页，全部成功后只提交一次 projection", async () => {
+  /** Two-page branch: page 1 (adjacent to the 41..100 window) and page 2 (oldest). Both pass validation (two real-user queries). */
+  function installTwoPageBranch(): void {
     transport.rowsRangeImpl = (params) => {
       if (params.beforeRowId === 41) {
         return {
@@ -1863,28 +1864,181 @@ describe("ConversationProjectionStore.loadOlder", () => {
         hasMore: false,
       };
     };
-    const snapshotChanges: ConversationSnapshot[] = [];
-    let previousSnapshot = store.getState().snapshot;
-    const unsubscribe = store.subscribe(() => {
-      const nextSnapshot = store.getState().snapshot;
-      if (nextSnapshot && nextSnapshot !== previousSnapshot) {
-        snapshotChanges.push(nextSnapshot);
-        previousSnapshot = nextSnapshot;
-      }
-    });
+  }
 
-    const result = await store.loadAllOlder();
-    unsubscribe();
+  /** Drain pending promise continuations without advancing fake timers, so a yield between chunks stays pending until the test releases it. */
+  async function flushMicrotasks(): Promise<void> {
+    for (let index = 0; index < 50; index += 1) await Promise.resolve();
+  }
 
-    expect(transport.rowsRangeCalls).toEqual([
-      { sessionId: "s1", beforeRowId: 41, limit: 200 },
-      { sessionId: "s1", beforeRowId: 21, limit: 200 },
-    ]);
-    expect(snapshotChanges).toHaveLength(1);
-    expect(store.getState().snapshot!.rows.window).toHaveLength(100);
-    expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(1);
-    expect(hasOlderRows(store.getState().snapshot)).toBe(false);
-    expect(result.status).toBe("hydrated");
+  it("TN07：完整目录先全部校验，再按页分块提交，loadingOlder 保持到最后一块", async () => {
+    vi.useFakeTimers();
+    try {
+      installTwoPageBranch();
+      const notifications: Array<{ head?: number; length?: number; loadingOlder: boolean }> = [];
+      const unsubscribe = store.subscribe(() => {
+        const state = store.getState();
+        notifications.push({
+          head: state.snapshot?.rows.window[0]?.rowId,
+          length: state.snapshot?.rows.window.length,
+          loadingOlder: state.loadingOlder,
+        });
+      });
+      let notificationsBeforeSecondFetch = -1;
+      const firstFetch = transport.rowsRangeImpl;
+      transport.rowsRangeImpl = (params) => {
+        if (params.beforeRowId === 21) notificationsBeforeSecondFetch = notifications.length;
+        return firstFetch(params);
+      };
+
+      const pending = store.loadAllOlder();
+      await flushMicrotasks();
+
+      // (a) Page 2 was fetched before any page was committed; only the loadingOlder flag had been set.
+      expect(notificationsBeforeSecondFetch).toBe(1);
+      // (b) Page 1 is committed as its own chunk while loadingOlder is still true.
+      expect(notifications).toEqual([
+        { head: 41, length: 60, loadingOlder: true },
+        { head: 21, length: 80, loadingOlder: true },
+      ]);
+      // The chunk boundary is a macrotask, so the second chunk is still pending.
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+      // (c) No terminal result before the last chunk: a concurrent call is single-flight stale.
+      expect((await store.loadAllOlder()).status).toBe("stale");
+
+      await vi.runOnlyPendingTimersAsync();
+      await flushMicrotasks();
+      const result = await pending;
+      unsubscribe();
+
+      expect(transport.rowsRangeCalls).toEqual([
+        { sessionId: "s1", beforeRowId: 41, limit: 200 },
+        { sessionId: "s1", beforeRowId: 21, limit: 200 },
+      ]);
+      expect(notifications.slice(2)).toEqual([{ head: 1, length: 100, loadingOlder: false }]);
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(1);
+      expect(hasOlderRows(store.getState().snapshot)).toBe(false);
+      expect(result.status).toBe("hydrated");
+
+      // (c) The terminal result is set only after the last chunk, so a repeat is served without another rows/range call.
+      expect((await store.loadAllOlder()).status).toBe("hydrated");
+      expect(transport.rowsRangeCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("TN07：分块提交期间 logEpoch 变化时停止后续块，返回 stale 且不复活旧 rows", async () => {
+    vi.useFakeTimers();
+    try {
+      installTwoPageBranch();
+      const pending = store.loadAllOlder();
+      await flushMicrotasks();
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(21);
+
+      // A new log generation replaces the snapshot between chunks.
+      const tail = store.getState().snapshot!;
+      store.handleFrame(
+        makeFrame("sub-1", 5, 6, {
+          kind: "snapshot",
+          snapshot: {
+            ...tail,
+            logEpoch: "epoch-2",
+            seq: 6,
+            rows: { ...tail.rows, window: olderRows(81, 100), firstRowId: 1 },
+          },
+        }),
+      );
+      await vi.runOnlyPendingTimersAsync();
+      await flushMicrotasks();
+      const result = await pending;
+
+      expect(result.status).toBe("stale");
+      expect(store.getState().loadingOlder).toBe(false);
+      // Page 2 was never committed, and page 1 rows belong to the replaced generation: only the new snapshot remains.
+      expect(store.getState().snapshot!.rows.window.map((row) => row.rowId)).toEqual(
+        Array.from({ length: 20 }, (_, index) => 81 + index),
+      );
+      // Both pages were fetched and validated before the first chunk; the epoch change only stopped the commits.
+      expect(transport.rowsRangeCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("TN07：分块提交期间窗口首行被 snapshot 改写时停止，不设终态且不复活旧 rows", async () => {
+    vi.useFakeTimers();
+    try {
+      installTwoPageBranch();
+      const pending = store.loadAllOlder();
+      await flushMicrotasks();
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(21);
+
+      // Same epoch, but a forced resync moves the window head to 60, so chunk 2 (which extends from 21) no longer matches.
+      const tail = store.getState().snapshot!;
+      store.handleFrame(
+        makeFrame("sub-1", 5, 6, {
+          kind: "snapshot",
+          snapshot: {
+            ...tail,
+            seq: 6,
+            rows: { ...tail.rows, window: olderRows(60, 100), firstRowId: 1 },
+          },
+        }),
+      );
+      await vi.runOnlyPendingTimersAsync();
+      await flushMicrotasks();
+      const result = await pending;
+
+      expect(result.status).toBe("stale");
+      expect(store.getState().loadingOlder).toBe(false);
+      expect(store.getState().snapshot!.rows.window.map((row) => row.rowId)).toEqual(
+        Array.from({ length: 41 }, (_, index) => 60 + index),
+      );
+      // No terminal result was recorded, so the next navigator probe fetches again instead of replaying a cache.
+      transport.rowsRangeImpl = () => ({
+        rows: [],
+        atSeq: 6,
+        atLogEpoch: "epoch-1",
+        hasMore: false,
+      });
+      await store.loadAllOlder();
+      expect(transport.rowsRangeCalls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("TN07：分块提交期间到达的 delta 继续生效，不影响后续块与终态", async () => {
+    vi.useFakeTimers();
+    try {
+      installTwoPageBranch();
+      const pending = store.loadAllOlder();
+      await flushMicrotasks();
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(21);
+
+      // A streaming append lands between chunks: it touches rowIds after the window and keeps the seq alignment.
+      transport.emit(
+        makeFrame("sub-1", 5, 6, {
+          kind: "deltas",
+          deltas: [{ op: "row.appended", row: assistantRow(101, "流式 assistant") }],
+        }),
+      );
+      expect(store.getState().snapshot!.seq).toBe(6);
+
+      await vi.runOnlyPendingTimersAsync();
+      await flushMicrotasks();
+      const result = await pending;
+
+      expect(result.status).toBe("hydrated");
+      expect(store.getState().loadingOlder).toBe(false);
+      const ids = store.getState().snapshot!.rows.window.map((row) => row.rowId);
+      expect(ids[0]).toBe(1);
+      expect(ids[ids.length - 1]).toBe(101);
+      expect(ids).toEqual([...ids].sort((a, b) => a - b));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("TN07：完整目录后续页失败时整批丢弃，不暴露半份目录", async () => {

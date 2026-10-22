@@ -293,4 +293,103 @@ describe("conversation turn navigator helpers", () => {
       }),
     ).toBe(12);
   });
+
+  describe("assistant preview normalisation (golden, bounded scan)", () => {
+    const EMPTY = "EMPTY";
+
+    function previewFor(texts: readonly string[]): string {
+      const rows: ConversationRow[] = [turnHeader(1, "turn-1"), userInput(2, "turn-1", "Q")];
+      texts.forEach((text, index) => rows.push(assistantText(3 + index, "turn-1", text)));
+      const items = buildConversationTurnNavigatorItems(units(rows), {
+        assistantEmptyPreview: EMPTY,
+        assistantRunningPreview: "RUNNING",
+        maxPreviewChars: 220,
+        maxPreviewParagraphs: 2,
+        userFallbackPreview: "USER",
+      });
+      return items[0]!.assistantPreview;
+    }
+
+    /** Reference copy of the pre-bounded algorithm: normalise the whole joined text, then take the first paragraphs and truncate. */
+    function legacyPreview(texts: readonly string[]): string {
+      const paragraphs = texts
+        .join("\n\n")
+        .trim()
+        .split(/\n\s*\n/u)
+        .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
+        .filter(Boolean)
+        .slice(0, 2);
+      if (paragraphs.length === 0) return EMPTY;
+      const text = paragraphs.join("\n");
+      if (text.length <= 220) return text;
+      return `${text.slice(0, 217).trimEnd()}...`;
+    }
+
+    it("golden：长多段 assistant 文本只取前两段，输出与全量归一化逐字节一致", () => {
+      const long = Array.from(
+        { length: 400 },
+        (_, index) => `Paragraph ${index} with some words, that keep going for a while.`,
+      ).join("\n\n");
+      expect(long.length).toBeGreaterThan(4_096);
+      expect(previewFor([long])).toBe(
+        "Paragraph 0 with some words, that keep going for a while.\nParagraph 1 with some words, that keep going for a while.",
+      );
+      expect(previewFor([long])).toBe(legacyPreview([long]));
+    });
+
+    it("golden：超长首段截断为 217 字符加省略号，与全量归一化一致", () => {
+      const longFirst = `${"L".repeat(300)} tail words here.\n\nSecond paragraph that is long too.\n\n${"z".repeat(5_000)}`;
+      expect(previewFor([longFirst])).toBe(`${"L".repeat(217)}...`);
+      expect(previewFor([longFirst])).toBe(legacyPreview([longFirst]));
+    });
+
+    it("golden：短文本保持原输出", () => {
+      const short = "好的，我来看一下。\n\n这是**结果**。";
+      expect(previewFor([short])).toBe("好的，我来看一下。\n这是**结果**。");
+      expect(previewFor([short])).toBe(legacyPreview([short]));
+    });
+
+    it("golden：前导空白很长时回退全量归一化，结果与原实现一致", () => {
+      const padded = `${" ".repeat(5_000)}hello\n\nworld`;
+      expect(previewFor([padded])).toBe("hello\nworld");
+      expect(previewFor([padded])).toBe(legacyPreview([padded]));
+    });
+
+    it("golden：多条 assistant text 按行拼接后与原实现一致，并在分隔符跨过扫描边界时保持等价", () => {
+      let seed = 20_261_022;
+      const next = () => (seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff) / 0x7fffffff;
+      const alphabet = [
+        "a",
+        "word",
+        " ",
+        "  ",
+        "\t",
+        "\n",
+        "\n\n",
+        "\n  \n",
+        "中文",
+        "**",
+        "\r\n",
+        "x".repeat(50),
+        " ".repeat(300),
+      ];
+      for (let caseIndex = 0; caseIndex < 120; caseIndex += 1) {
+        const rowCount = 1 + Math.floor(next() * 3);
+        const texts = Array.from({ length: rowCount }, () => {
+          const pieces = Math.floor(next() * (caseIndex % 3 === 0 ? 2_000 : 300));
+          let text = "";
+          for (let index = 0; index < pieces; index += 1) {
+            text += alphabet[Math.floor(next() * alphabet.length)];
+          }
+          return text;
+        });
+        expect(previewFor(texts), `case ${caseIndex}`).toBe(legacyPreview(texts));
+      }
+      // A separator straddling the 4096-character scan boundary.
+      for (const cut of [4_094, 4_095, 4_096]) {
+        const straddle = [`${"a".repeat(cut - 1)}\n\n${"b".repeat(9_000)}`];
+        expect(previewFor(straddle)).toBe(legacyPreview(straddle));
+      }
+    });
+  });
 });
