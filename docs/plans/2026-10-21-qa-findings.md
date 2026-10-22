@@ -59,12 +59,15 @@ ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coinci
 
 ## Real-scale pass (copy of the real index: 1949 tasks, 13 projects, restart at 00:58)
 
-| Action                           | Long tasks | Worst block |
-| -------------------------------- | ---------- | ----------- |
-| Switch sidebar to grouped view   | 1          | 173 ms      |
-| Scroll the sidebar (4 × 1500 px) | 0          | —           |
-| Switch to "Recently updated"     | 1          | 65 ms       |
-| Search dialog typing             | 0          | —           |
+| Action                                                   | Long tasks | Worst block     |
+| -------------------------------------------------------- | ---------- | --------------- |
+| Switch sidebar to grouped view                           | 1          | 173 ms          |
+| Scroll the sidebar (4 × 1500 px)                         | 0          | —               |
+| Switch to "Recently updated"                             | 1          | 65 ms           |
+| Search dialog typing                                     | 0          | —               |
+| Expand a 23-project sidebar, open a 57-row session       | 2          | 132 ms          |
+| Manage sessions open (1949 rows) / search / sort by name | 2 / 2 / 0  | 130 / 60 / — ms |
+| Archive management open                                  | 1          | 56 ms           |
 
 | ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
 | ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
