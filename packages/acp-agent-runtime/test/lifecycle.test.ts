@@ -3,6 +3,7 @@
  * failed cleanup, one terminal event per prompt, pending asks are cancelled on
  * every teardown, and any inbound frame resets the stall timer.
  */
+import { MessageTooLargeError } from "@agentclientprotocol/sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AcpSessionRuntime, type AcpRuntimeLogger } from "../src/index.js";
 import {
@@ -16,6 +17,7 @@ import {
 
 interface RuntimeInternals {
   process: unknown;
+  normalizePromptError: (error: unknown) => Promise<unknown>;
   pendingAsks: Map<string, unknown>;
   terminateOwnedProcess: (reason: Error) => Promise<void>;
   terminateProcess: (reason: Error) => Promise<void>;
@@ -129,6 +131,29 @@ describe("runtime lifecycle", () => {
     } finally {
       await ok.stop();
       await died.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+
+  it("keeps the transport error when the teardown after it fails to clean up", async () => {
+    const cwd = await createTempDir();
+    const runtime = await startMockRuntime(cwd, "silent");
+    const internals = internalsOf(runtime);
+    const original = internals.terminateOwnedProcess.bind(runtime);
+    try {
+      const events = collectEvents(runtime);
+      const inFlight = runtime.prompt("silent");
+      inFlight.catch(() => {});
+      await waitFor(() => runtime.state === "prompting", 3_000);
+      internals.terminateOwnedProcess = async () => {
+        throw new Error("ACP process cleanup incomplete: 4242");
+      };
+      const framing = new MessageTooLargeError(1024);
+      await expect(internals.normalizePromptError(framing)).resolves.toBe(framing);
+      expect(events).toContainEqual(expect.objectContaining({ type: "process_cleanup_failed" }));
+    } finally {
+      internals.terminateOwnedProcess = original;
+      await runtime.stop();
       await cleanupTempDir(cwd);
     }
   });

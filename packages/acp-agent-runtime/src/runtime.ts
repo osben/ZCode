@@ -157,7 +157,6 @@ export class AcpSessionRuntime extends EventEmitter {
     } catch (error) {
       const normalized = await this.normalizePromptError(error);
       this.settlePromptState(active);
-      // Spec: one terminal event per prompt.
       this.emitEvent({ type: "prompt_failed", message: errorMessage(normalized) });
       throw normalized;
     }
@@ -208,7 +207,7 @@ export class AcpSessionRuntime extends EventEmitter {
 
   /** Gracefully stops the runtime; safe to call multiple times. */
   async stop(): Promise<void> {
-    // Stopped but still owning a process (failed cleanup): retry; else join the teardown.
+    // Still owning a process after a failed cleanup: retry.
     if (this.currentState === "stopped" && !this.process) return this.termination;
     this.stopRequested = true;
     this.currentState = "stopped";
@@ -404,7 +403,7 @@ export class AcpSessionRuntime extends EventEmitter {
       // restarts instead of reusing the dead connection.
       await this.terminateProcess(
         error instanceof Error ? error : new Error(`ACP transport failure: ${String(error)}`),
-      );
+      ).catch((cleanupError: unknown) => this.reportCleanupFailure(cleanupError));
     }
     return error;
   }
