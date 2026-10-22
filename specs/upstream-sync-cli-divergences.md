@@ -23,8 +23,12 @@ is adopted or the final sync PR retires the compatibility member.
 
 ## Temporary compatibility members (remove in the final sync PR)
 
-- `UpdateSessionInput.timeArchived`, `ListSessionsInput.includeArchived`, session `time.archived` (fork archive column).
-- `SchemaMigrationRow` re-export in `adapters/src/storage/session-store/rows.ts`; `ensureParentDir` in `paths.ts`.
+- `ListSessionsInput.includeArchived` (fork archive filter; still temporary until the wire protocol `includeArchived` /
+  `archivedAt` decision is made).
+- Removed: `UpdateSessionInput.timeArchived` and session `time.archived` (fork archive column, no longer read or written
+  by the port), the `SchemaMigrationRow` re-export in `adapters/src/storage/session-store/rows.ts`, `ensureParentDir` in
+  `paths.ts`, and the synchronous session-store factories (`createSqliteSessionStore` and `openStartupSqliteSessionStore`
+  are async again, as in upstream).
 - `trimTruncatedUtf8Tail` in `adapters/src/fs/text-metadata.ts` (fork tail trim; upstream uses `getUtf8CompletionBytes`).
 - `buildEnvInfoSection` argument order: fork's `executionWorktree` third, upstream's `additionalDirectories` fourth.
 - `ChildSessionFactsResolver.loadStoredFacts` / `ChildSessionRecordView`: fork-only bridge helpers (store reads and a structural record view, so `zcode-protocol-v4/` does not import the legacy directory).
