@@ -72,6 +72,17 @@ ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coinci
 | ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
 | ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
 
+## E2E run (round 2, Phase E, 01:50)
+
+Harness works on this Mac (Electron 41, chromedriver 146 from cache, `wdio run wdio.conf.ts --spec <file>` after `build:no-runtime-assets`, ~99 s per spec including rebuild).
+
+| Subset                                                                                    | Result                                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PRT-023 `process-resource-telemetry-roles.test.ts`                                        | PASS (1 passing, 1m 1.6s)                                                                                                                                                                                  |
+| Incognito 13/17/31 (`manual-review/pending/conversation-session-incognito-draft.test.ts`) | BLOCKED: manual-review paths force `E2E_PROVIDER_HTTP_MODE=capture`, which needs `E2E_PROVIDER_BASE_URL` + key or a replay fixture (`E2E_PROVIDER_REPLAY_FIXTURE_PATH`). Harness/environment, not product. |
+| IUX / FSL                                                                                 | No Desktop E2E exists (spec line ~378-383 says so).                                                                                                                                                        |
+| `windows-agent-metric-probe-absence.test.ts` (matched by name, Windows-only)              | ISSUE-021 (S3, harness): skipped on macOS but the root hook still requires an initialized CLI DB and fails before-all.                                                                                     |
+
 ## Live re-verification on the full stack (restart at 00:52)
 
 - Outside-project new task: Send accepted immediately, reply in ~20 s, row in the Tasks region (ISSUE-011 closed).
