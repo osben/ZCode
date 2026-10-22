@@ -152,39 +152,84 @@ What the numbers show:
 - The first readPresentation of a fresh process is unchanged. It fills the memo, so the
   `runtime/capabilities` request queued behind it still waits about 115 ms.
 
-**Worth it?** Yes. The change is about 30 lines in one file, has no invalidation surface and
-removes 50–55 ms from every discovery call after the first.
+**Worth it?** Yes. The change is about 30 lines of fork code plus a ~10-line hook-in, has no
+invalidation surface and removes 50–55 ms from every discovery call after the first.
 
-It does not fix the fresh-client wait. These are the two ways to do that:
-
-- **Ordering fix (recommended).** Change the Host ordering on a fresh client.
-- **Tier 1b (not proposed).** Persist the stat→hash memo across processes in a `fork_`-prefixed
-  sidecar next to the plugin storage, so the first call of a new process can also skip hashing.
-  It is not proposed yet because it adds a cross-process file format.
+It does not fix the fresh-client wait, because the first discovery call of a process still pays
+the cold hash. The ordering fix covers that case (measured below). Tier 1b is the alternative, not
+proposed: persist the stat→hash memo across processes in a `fork_`-prefixed sidecar next to the
+plugin storage, so a new process can skip the cold hash. It is held back because it adds a
+cross-process file format.
 
 ## Alternatives considered
 
-1. **Ordering fix.** On a fresh client, defer the first `workspace/readPresentation` until after
-   the first subscribe, keeping it after the workflow-policy sync. This removes the head-of-line
-   wait for the first subscribe on a fresh CLI. It does not shorten:
-   - warm workspace switches, where readPresentation is already queued;
-   - session runtime `resolve_plugins`;
-   - skills discovery.
+### 1. Ordering fix: defer readPresentation behind the first subscribe (measured)
 
-   It complements Tier 1 rather than replacing it.
+On a fresh client, send the first `v4/conversation/subscribe` (`historyFirst`) before the first
+`workspace/readPresentation`, still after the workflow-policy sync. The CLI is unchanged; this is
+a Host ordering change.
 
-2. **Do nothing.** Every readPresentation and every runtime creation keeps paying 47–117 ms of
-   hashing in production.
+```text
+current (fresh CLI, serial queue)                 reordered
+Host        CLI queue                             Host        CLI queue
+policy ───▶ policy sync                           policy ───▶ policy sync
+readPres ─▶ readPresentation [cold hash here]     subscribe ▶ subscribe ack (history)
+caps ─────▶   ...waits                            caps ─────▶ capabilities (9 ms)
+subscribe ▶   ...waits → ack                                  runtime creation [cold hash here]
+              runtime creation (warm memo)        readPres ─▶   ...waits → readPresentation (warm)
+```
+
+Stdio A/B, fresh CLI, one session, 6 runs per cell. All times are medians in ms, counted from the
+end of the policy sync:
+
+| Build       | Order     | capabilities | subscribe ack | runtime ready (mode switch) | slash commands ready |
+| ----------- | --------- | -----------: | ------------: | --------------------------: | -------------------: |
+| baseline    | current   |           95 |           104 |                         172 |                   95 |
+| baseline    | reordered |            9 |             9 |                          91 |                  186 |
+| Tier 1 memo | current   |          101 |           111 |                         139 |                  101 |
+| Tier 1 memo | reordered |            9 |             9 |                          92 |                  141 |
+
+What the table shows:
+
+- Reordering moves the cold hash onto runtime creation (`resolve_plugins` 68 ms) and still has
+  the runtime ready about 47 ms sooner than the current order with the memo.
+- Capabilities and the history ack become immediate.
+- Slash commands arrive later, because readPresentation now queues behind the synchronous runtime
+  creation. The memo keeps that cost at 141 ms instead of 186 ms.
+- Neither change regresses anything that is visible before history.
+
+**Recommendation:** do both.
+
+- The ordering fix is the bigger win for opening a fresh client.
+- Tier 1 is the win for warm workspace switches, every later session runtime creation, and the
+  readPresentation that follows the reordered subscribe.
+
+### 2. Do nothing
+
+Every readPresentation and every runtime creation keeps paying 47–117 ms of hashing in production
+(warm vs cold page cache), and on a fresh client the mode switch stays about 80 ms later than it
+needs to be.
 
 ## Acceptance scenarios (Tier 1)
 
+Memo invalidation (`bootstrap/tests/bundled-plugins-hash-memo.test.ts`):
+
 - With unchanged source files, a second `resolveOfficialPluginRoots` call reads none of the seed
-  source files; every included file is still `stat`ed.
+  source files except `plugin.json`, which the marketplace description and runtime manifest
+  re-read on purpose. Every included file is still `stat`ed.
 - When a source file's content changes (new size or mtime), the next call re-hashes it. The seed
   marker no longer matches, and the cache is re-seeded with the new bytes.
-- A content change that keeps size and restores mtime is still detected (ctime).
+- A content change that keeps the size and restores the original mtime is still detected
+  (ctime).
 - A file added under an included top-level path is picked up on the next call. A removed file
-  drops out of the seed file list and out of the memo.
-- `missingSeedPaths` is computed from the walked file list and follows additions and removals.
-- Results are byte-for-byte identical to the un-memoized path: same file list, same hashes, same
-  seed hash.
+  drops out of the seed file list and out of the reseeded cache.
+- Existing seed resilience behaviour is unchanged (`bundled-plugins-resilience.test.ts`,
+  `official-plugin-runtime.test.ts`, `official-plugin-seed-lock.test.ts`).
+
+Nothing else is cached (`bootstrap/tests/plugin-discovery-liveness.test.ts`). Within one process,
+the next call sees:
+
+- a workspace `.zcode/commands` file added or removed outside the CLI;
+- a `commands/` directory added to an inline plugin outside the CLI;
+- a CLI disable op (`setZCodePluginEnabled`) and a direct edit of the config file that re-enables
+  the plugin.
