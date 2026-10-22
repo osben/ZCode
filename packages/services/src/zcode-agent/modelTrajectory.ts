@@ -373,17 +373,20 @@ function mapMessages(value: unknown): ZCodeModelTrajectoryMessage[] {
   return value.map((entry) => {
     const message = asObject(entry) ?? {};
     const role = asString(message.role) ?? "unknown";
-    return {
-      role,
-      parts: mapContent(message.content, role, {
-        toolCallId:
-          asString(message.toolCallId) ??
-          asString(message.tool_call_id) ??
-          asString(message.tool_use_id),
-        toolName: asString(message.toolName) ?? asString(message.name),
-        isError: message.isError === true || message.is_error === true,
-      }),
-    };
+    const parts = mapContent(message.content, role, {
+      toolCallId:
+        asString(message.toolCallId) ??
+        asString(message.tool_call_id) ??
+        asString(message.tool_use_id),
+      toolName: asString(message.toolName) ?? asString(message.name),
+      isError: message.isError === true || message.is_error === true,
+    });
+    // Normalized model-io keeps assistant tool calls in a top-level `toolCalls` array, not in content;
+    // mapping content alone dropped every historical call and left its tool results orphaned.
+    if (role === "assistant" && Array.isArray(message.toolCalls)) {
+      parts.push(...message.toolCalls.map((toolCall) => mapResponseToolCall(toolCall)));
+    }
+    return { role, parts };
   });
 }
 
