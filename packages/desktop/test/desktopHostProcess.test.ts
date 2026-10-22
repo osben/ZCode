@@ -606,28 +606,29 @@ describe("desktopHostProcess local startup gate", () => {
     second.emit("exit", 0);
   });
 
-  it("releases the held InitLocal when the claimed Host's spawn throws after the claim and the process exits", async () => {
+  it("leaves the gate unclaimed when a spawn throws before posting InitLocal, so the next Host sweeps at once", async () => {
     const gate = createLocalHostStartupGate();
     const first = new MockUtilityProcess();
     const second = new MockUtilityProcess();
     electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
-    const failing = gateDependencies(gate);
-    failing.broadcastHub = {
-      register: vi.fn(() => {
-        throw new Error("register failed");
-      }),
-      unregister: vi.fn(),
-    } as never;
+    const on = first.on.bind(first);
+    vi.spyOn(first, "on").mockImplementation((event: string | symbol, listener) => {
+      if (event === "message") throw new Error("listener wiring failed");
+      return on(event, listener);
+    });
     expect(() =>
-      spawnHostProcess(windowFor(13) as never, "gate-window-13", initLocal, failing),
-    ).toThrow("register failed");
+      spawnHostProcess(windowFor(13) as never, "gate-window-13", initLocal, gateDependencies(gate)),
+    ).toThrow("listener wiring failed");
+    expect(first.postMessage).not.toHaveBeenCalled();
+
     spawnHostProcess(windowFor(14) as never, "gate-window-14", initLocal, gateDependencies(gate));
     await flush();
-    expect(second.postMessage).not.toHaveBeenCalled();
-
-    first.emit("exit", 1);
-    await flush();
     expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0]).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: true,
+    });
+    first.emit("exit", 1);
     second.emit("exit", 0);
   });
 

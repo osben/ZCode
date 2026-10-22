@@ -317,14 +317,20 @@ async function stop(
   if (heldByThisStop) {
     await holdFollowingQueue(host, record);
   }
-  // The hold write yields, so the turn seen above may have ended (or been replaced) meanwhile.
-  // Pin the stop to the execution observed before the hold; without a payload id this is the same
-  // synchronous target the stop had before the hold existed.
+  // The hold write yields, so the target seen above may have ended or been replaced meanwhile. A compat target
+  // changed if its controller was replaced or a runtime execution started; a runtime target is pinned below.
+  const targetChanged =
+    heldByThisStop &&
+    activeExecutionId === undefined &&
+    (record.activeAbortController !== legacyController ||
+      record.app.runtime?.getActiveForegroundExecutionId?.() !== undefined);
   const stopTargetId = payload.expectedForegroundExecutionId ?? activeExecutionId;
-  const runtimeStop = record.app.runtime?.stopActiveForegroundExecution?.({
-    expectedForegroundExecutionId: stopTargetId,
-    reason: "v4 session stopped",
-  });
+  const runtimeStop = targetChanged
+    ? undefined
+    : record.app.runtime?.stopActiveForegroundExecution?.({
+        expectedForegroundExecutionId: stopTargetId,
+        reason: "v4 session stopped",
+      });
   host.logger?.info?.("v4 stop foreground execution inspected", {
     activeForegroundExecutionId:
       runtimeStop?.kind === "mismatch"
@@ -338,14 +344,10 @@ async function stop(
     runtimeStopKind: runtimeStop?.kind ?? "unsupported",
     sessionId: record.app.sessionId,
   });
-  const legacyTargetChanged =
-    heldByThisStop &&
-    activeExecutionId === undefined &&
-    record.activeAbortController !== legacyController;
   if (
+    targetChanged ||
     (stopTargetId !== undefined &&
-      (runtimeStop?.kind === "idle" || runtimeStop?.kind === "mismatch")) ||
-    legacyTargetChanged
+      (runtimeStop?.kind === "idle" || runtimeStop?.kind === "mismatch"))
   ) {
     if (heldByThisStop) {
       await releaseFollowingQueue(host, record);

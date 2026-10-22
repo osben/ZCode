@@ -2219,6 +2219,32 @@ describe("v4 原生 stop", () => {
     expect(second.signal.aborted).toBe(false);
     expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
   });
+
+  it("ISSUE-010: a compat stop does not stop a runtime execution that started during the hold write", async () => {
+    const execution: { id: string | undefined } = { id: undefined };
+    const stopActiveForegroundExecution = vi.fn();
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) execution.id = "foreground-new";
+    });
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => execution.id,
+      },
+      setQueueAutoDrain,
+    });
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
+      reasonCode: "guard.stopTargetChanged",
+    });
+    expect(stopActiveForegroundExecution).not.toHaveBeenCalled();
+    expect(controller.signal.aborted).toBe(false);
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+  });
 });
 
 describe("supports 分流", () => {

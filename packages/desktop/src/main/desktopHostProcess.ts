@@ -50,7 +50,10 @@ import {
   resolveBundledGlmBinaryPath,
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
-import type { LocalHostStartupGate } from "./storage-sweep-gate/contract.js";
+import type {
+  LocalHostStartupGate,
+  LocalHostStartupTicket,
+} from "./storage-sweep-gate/contract.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
 import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
@@ -347,9 +350,9 @@ export function spawnHostProcess(
   });
 
   // spawnHostProcess only starts local Hosts, and each one begins with InitLocal, so every claim here is for InitLocal.
-  const startupTicket = dependencies.localHostStartupGate?.claim();
-  // Settle on exit before anything else can throw: an unsettled first ticket would hold every later window.
-  if (startupTicket) child.once("exit", () => startupTicket.settle());
+  // Claimed right before the InitLocal post (postInit): a throw earlier in this function leaves the gate unclaimed,
+  // so the next local Host carries the sweep instead of every later window waiting on a Host that never got InitLocal.
+  let startupTicket: LocalHostStartupTicket | undefined;
   const databaseStartupRelay = bindDatabaseStartupRelay(win, child, hostId);
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
@@ -854,16 +857,28 @@ export function spawnHostProcess(
 
   // Only the InitLocal post waits for the gate; the port is still created and handed to the renderer at once.
   const postInit = (transfer?: MessagePortMain[]) => {
-    const message: HostInitMessage = startupTicket
-      ? { ...hostInitMessage, sweepAbandonedReservations: startupTicket.sweepAbandonedReservations }
+    startupTicket = dependencies.localHostStartupGate?.claim();
+    const ticket = startupTicket;
+    // An unsettled first ticket would hold every later local window, so exit and a failed post both settle it.
+    if (ticket) child.once("exit", () => ticket.settle());
+    const message: HostInitMessage = ticket
+      ? { ...hostInitMessage, sweepAbandonedReservations: ticket.sweepAbandonedReservations }
       : hostInitMessage;
     const send = () => {
       if (exitedHostProcesses.has(child)) return;
       if (transfer) child.postMessage(message, transfer);
       else child.postMessage(message);
     };
-    if (startupTicket) void startupTicket.open.then(send);
-    else send();
+    if (!ticket) {
+      send();
+      return;
+    }
+    void ticket.open.then(send).catch((error: unknown) => {
+      ticket.settle();
+      dependencies.logger.warn(
+        `[spawnHostProcess] InitLocal post failed for (${label}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
   };
 
   if (options?.attachInitialServicePort === false) {

@@ -167,8 +167,10 @@ fix stay hidden from reads but keep growing counts and backups.
   not time-based.
 - Gate (Main): `sweepAbandonedReservations: true` is sent in the `InitLocal` of the
   first local Host that Main spawns in an app process, and in no other message.
-  Main claims this ticket inside `spawnHostProcess` for `InitLocal` only and
-  registers the exit settle right after the claim. Every later local `InitLocal`
+  Main claims this ticket inside `spawnHostProcess` for `InitLocal` only, right
+  before posting it, and registers the exit settle with the claim; a failed post
+  settles it too. A spawn that throws before the post leaves the gate unclaimed,
+  so the next local Host carries the sweep. Every later local `InitLocal`
   is held by Main and posted only after the claimed first Host reports a
   `DatabaseStartupState` phase past `preparing_host_storage`
   (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or its
@@ -178,7 +180,10 @@ fix stay hidden from reads but keep growing counts and backups.
   bound exists after the first startup frame: a first Host that stays alive but
   silent (for example waiting up to the 60 min migration lock) keeps later local
   windows waiting until it reports or exits. Bounding that wait is an open
-  follow-up that needs a product decision. Only the `InitLocal` post is deferred: the port is
+  follow-up that needs a product decision. A held window still shows the
+  renderer's synthetic 30 s `startup_status_timeout` failure when the first
+  window's tasks index takes longer than that; it recovers when the real state
+  arrives, but its Retry is ignored (open follow-up). Only the `InitLocal` post is deferred: the port is
   created and handed to the renderer as before. A respawned Host, a later window,
   a server entry or a remote source never gets the flag. When no gate is passed,
   Main neither sends the flag nor holds anything.
