@@ -8357,7 +8357,7 @@ const ukUA: Record<string, string> = {
   "project.collapseAll": "Collapse all projects",
   "project.new": "New project",
   "project.tasks": "Tasks",
-  "project.createTask": "New task",
+  "project.createTask": "Нове завдання",
   "project.showMore": "Show more",
   "project.restore": "Restore project",
   "project.edit": "Edit project",
