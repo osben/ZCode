@@ -47,6 +47,7 @@ function memoryConfig(initial: {
 interface FakeRuntime extends AcpPoolRuntime {
   readonly calls: string[];
   emit(event: AcpRuntimeEvent): void;
+  fail(): void;
 }
 
 function fakeRuntime(options: { mode: string; failSet?: Error; onPrompt?: () => Promise<void> }) {
@@ -69,7 +70,15 @@ function fakeRuntime(options: { mode: string; failSet?: Error; onPrompt?: () => 
       return configOptions;
     }),
     acpSessionId: "acp-1",
-    restart: vi.fn(async () => undefined),
+    // A restarted agent comes back with its own defaults, not with the values set earlier.
+    restart: vi.fn(async () => {
+      calls.push("restart");
+      state = "ready";
+      configOptions = [modeOption(options.mode)];
+    }),
+    fail: () => {
+      state = "failed";
+    },
     stop: vi.fn(async () => {
       state = "stopped";
     }),
@@ -150,6 +159,18 @@ describe("ACP config reconcile", () => {
     expect(config.offeredWrites).toHaveLength(1);
     expect(config.offeredWrites[0]?.[0]?.currentValue).toBe("plan");
     expect(seen).toEqual([{ type: "config_options", options: config.offeredWrites[0] }]);
+  });
+
+  it("re-applies a stored choice after the runtime restarts", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const config = memoryConfig({ offered: OFFERED_BUILD, choices: { mode: "plan" } });
+    const host = hostWith(runtime, config);
+
+    await host.driverFor("opencode").runTurn(turnRequest([]));
+    runtime.fail();
+    await host.driverFor("opencode").runTurn(turnRequest([]));
+
+    expect(runtime.calls).toEqual(["set:mode=plan", "prompt", "restart", "set:mode=plan", "prompt"]);
   });
 
   it("drops a choice the agent does not offer without a request", async () => {

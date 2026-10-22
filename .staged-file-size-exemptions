@@ -127,6 +127,7 @@ apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-mapper.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts
 
 apps/zcode-cli/packages/cli/src/prompt-command.ts

@@ -286,6 +286,13 @@ describe("legacy v3 剥离 dwf run 进度事件", () => {
     expect(shouldExposeSessionEventToProtocol(runProgressEvent())).toBe(false);
   });
 
+  // specs/acp-agent-runtime.md "S6": ACP agent selects and stalls are v4-only state.
+  it("does not expose ACP agent config or status events to v3", () => {
+    for (const type of [SessionEventType.ExternalAgentConfigUpdated, SessionEventType.ExternalAgentStatus]) {
+      expect(shouldExposeSessionEventToProtocol({ ...runProgressEvent(), type })).toBe(false);
+    }
+  });
+
   it("与 StreamingToolLedgerUpdated 同一个判定，且不影响其它事件", () => {
     expect(
       shouldExposeSessionEventToProtocol({
