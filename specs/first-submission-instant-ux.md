@@ -126,7 +126,7 @@ these; unit tests alone are insufficient for P1/P2.
 | ID    | Action                                | Must observe                                                                                                                                                                                                                                                                    |
 | ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | IUX01 | Plain text, first Send on draft       | Same frame: user turn visible + chat chrome without the centered draft (`sessionId` binds at the P2 moment, first async beat); typing the next draft is never blocked; a second Send follows ordinary session readiness (`runtimeReady`), never an active-first-submission lock |
-| IUX02 | Double-click Send                     | One session, one user turn, one admission attempt                                                                                                                                                                                                                               |
+| IUX02 | Double-click Send; then a new draft   | A repeat of the same submission (no editor change since the claim) dispatches nothing: one session, one user turn, one admission attempt. A genuinely new draft typed after the bind dispatches through the ordinary send path once the frozen input is admitted                |
 | IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal                                                                                                                                                                                                                       |
 | IUX04 | Navigate away before background ACK   | Focus unchanged; return shows same session + message; no duplicate send                                                                                                                                                                                                         |
 | IUX05 | Slow Host (held reservation)          | User still in chat with message, not blank draft screen; no progress label under the message                                                                                                                                                                                    |
@@ -173,11 +173,26 @@ Order matters; later steps assume earlier ones.
 | Flag                                    | Set             | Cleared                                                 |
 | --------------------------------------- | --------------- | ------------------------------------------------------- |
 | `pending` (UI)                          | freeze          | background chain fired (same tick)                      |
-| repeat-submit idempotency ref           | freeze          | bind/remount, restore, or chain end                     |
+| repeat-submit ref (owner token)         | freeze          | the P2 bind, restore, or chain end — by its owner only  |
+| repeat-click guard                      | draft claim     | any editor change after the claim, restore, or Retry    |
 | `activeFirstSubmissions` entry          | freeze          | real-row projection accept or failure restore           |
 | optimistic user row                     | P1 commit       | reconcile predicate above                               |
 | first-submission `submissionReady` lock | —               | removed; ordinary session readiness gates the next Send |
 | retry arm (`retryFirstSubmissionRef`)   | Retry / Restore | the retry freeze, or a scope/owner change               |
+
+**Second Send after bind (decided 2026-10-21).** The repeat-submit ref is an owner
+token (the `submissionId`), not a shared boolean: the bind releases it, and a chain's
+`finally` releases it only while that chain still owns it, so a later send's guard is
+never cleared by an earlier chain. A double click is recognized by the content
+revision, not by blocking the composer: the claim records `{submissionId, revision}`
+and a submit at that same revision is the same submission (nothing new dispatches);
+any editor change after the claim makes the next Send a new draft. That new draft
+takes the ordinary send path, and the CLI `CommandInbox` serializes its admission.
+One ordering barrier stays: while the bound session's snapshot still reports
+`submissionPreparation` (the frozen `sendText` has not executed yet), Send is disabled
+with a visible reason instead of silently dropping the click — a foreign input
+admitted first would make activation report `input-admitted` for the frozen
+submission.
 
 ## Status under the message (decided 2026-10-21)
 
@@ -190,6 +205,10 @@ failed), `unknown` (outcome being checked), and an inactive `sending` record
 chip. An inactive `preparing` record (restart mid-preparation) shows no label; the
 composer card says the message is unsent and offers Retry. With nothing to show the
 component renders nothing.
+The `failed` line uses the destructive tokens (`text-destructive`, DESIGN.md status
+colors); `unknown` and `sending` keep the subtle foreground. The optimistic row is
+non-interactive: it carries no row actions (pin, fork, edit, attachment open/preview)
+because its negative `rowId` names no Host row.
 
 ## Retry surface for a failed first submission (decided 2026-10-21)
 
@@ -218,15 +237,68 @@ existing send path; the pane never calls into the composer.
 - **When Retry is offered.** Status `failed`, or `preparing` on an inactive record
   (restart mid-preparation, before any `sendText` command existed — IUX09's explicit
   continue). Status `sending` / `unknown` means a `sendText` command exists with an
-  unresolved outcome: no Retry (FSL rule 4 — reconcile the original command id,
-  never resend under a new one); the card stays hidden and the status line reports it.
-- **Guards.** Retry is disabled while the editor holds another draft (the restore
-  would overwrite it; the card says so) or while frozen attachments are missing
-  (existing reattach / remove-missing actions). A double click dispatches once (the
-  button disables on click; the submit idempotency guards stay in force).
-- **Dismiss** is offered only for an unbound record (no reservation, draft scope).
-  Dismissing a reserved record would strand its session: the prepared session admits
-  no other input until the frozen submission activates it.
+  unresolved outcome: no Retry until reconciliation (below) decides it (FSL rule 4 —
+  reconcile the original command id, never resend under a new one); the status line
+  reports it and the card offers only Remove.
+- **Guards.** Retry and the ordinary submit share one predicate (`getSubmitBlockReason`).
+  When it blocks (runtime not ready, remote unavailable, another send in progress,
+  attachments not ready) Retry is disabled and the concrete reason is shown under it,
+  tied to the button with `aria-describedby`; the check runs before the restore, so a
+  blocked Retry never moves the text into the editor. Retry is also disabled while the
+  editor holds another draft (the card says so) or while frozen attachments are
+  missing (existing reattach / remove-missing actions). There is no "already clicked"
+  lock: the retry freeze marks the submission active, which hides the card, so a
+  no-op can never lock Retry. Rapid clicks collapse in the request counter.
+- **Remove** (replaces Dismiss for first-submission records) returns the frozen text,
+  contexts and attachments to the editor and deletes the record. It never calls the
+  Host: no cancel, no delete, so an already-admitted command is never withdrawn. For a
+  reserved record the restored composer draft keeps `firstSubmission` (submission id
+  and reservation), so the next Send still activates the prepared session with
+  `expectedSubmissionId` instead of stranding it. When the record carries an
+  unresolved command id, the text is registered in the unsettled-submission ledger so
+  an authoritative acceptance clears the unedited editor (no duplicate resend).
+  Remove is disabled while the submission is active or the editor holds another draft.
+
+## Reconciliation of unresolved outcomes (decided 2026-10-21)
+
+A persisted first submission in `sending` / `unknown` that is not active in this
+renderer (chain ended with a lost ACK, or the app restarted) is reconciled by the pane
+that holds the record, on mount and whenever its inputs change — never by a timer.
+Durable Host facts decide before the command query, because an `accepted` ACK does not
+survive a CLI restart and a query `unknown` therefore does not prove non-admission:
+
+| Facts (bound session's live snapshot, then `commands/query`)                     | Record becomes                                     |
+| -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| a real user row is projected                                                     | cleared by the reconcile predicate (already owned) |
+| `submissionPreparation` absent (the Host marked the frozen input admitted)       | `sending` — synchronizing, no Retry                |
+| query `accepted` / `duplicate`                                                   | `sending` — synchronizing until the row projects   |
+| still `preparing` and query `rejected` / `failed` / `stale` / `noop` / `unknown` | `failed` — Retry and Remove                        |
+| query throws or reports `fault.command.queryUnavailable`                         | unchanged — re-checked on the next input change    |
+
+The query uses the command's own bucket: the reserved session id for `sendText`.
+
+```mermaid
+sequenceDiagram
+    participant P as SessionPane (record holder)
+    participant S as Host snapshot
+    participant Q as commands/query
+    P->>P: record inactive, status sending/unknown, commandId
+    P->>S: wait for live snapshot of the bound session
+    alt real user row projected
+        P->>P: clear record (reconcile predicate)
+    else submissionPreparation absent
+        P->>P: status sending (admitted)
+    else still preparing
+        P->>Q: query {sessionId, commandId}
+        alt accepted / duplicate
+            Q-->>P: status sending
+        else not accepted / not found
+            Q-->>P: status failed → Retry + Remove
+        else unavailable
+            Q-->>P: unchanged
+        end
+    end
+```
 
 ## Verification
 

@@ -76,6 +76,16 @@ first_input title instead of leaving «Untitled session» forever. A promoted or
 consumed: after first use it is detached, so a later submission in the same draft
 pane reserves a fresh session instead of targeting the already-used one the CLI
 must reject.
+A failure or unknown outcome is persisted in the scope the user is viewing: the
+reserved session scope only once the bind moved the record there, otherwise the draft
+scope with the `reservation` kept inside the record, so Retry still reuses it. Every
+unknown command outcome is registered in the unsettled-submission ledger and is
+reconciled by its original command id (instant-UX spec, Reconciliation). A send that
+ends before any Host reservation exists (cancelled checkout guard, failed preflight,
+storage failure) withdraws the frozen submission at every return site: the record is
+deleted, the active flag cleared, and the text returns to an empty editor; when the
+editor already holds a newer draft the text is kept as a plain recovery card without
+`firstSubmission`, never as a second optimistic turn.
 Use `workspaceIdentity?.trim() || workspacePath` throughout; preserve remoteSessionId,
 owner/lease and stale-attempt checks. Do not add setting.json keys or change frozen
 upstream migrations. Desktop continuous and mobile replayable keep their delivery
