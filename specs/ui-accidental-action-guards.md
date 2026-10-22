@@ -34,3 +34,36 @@ An interface review found four places where one stray keystroke or click runs an
 - `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`.
 
 These are jsdom interaction tests with real DOM events. No new Electron E2E scenario was added, because these paths need a live permission prompt or a seeded grouped sidebar fixture.
+
+## Project deletion confirmation (ISSUE-028, 2026-10-22)
+
+### Problem
+
+"Delete project" ran `deleteProject` at once on both entries: the project row menu (`virtual-project-delete`) and the project editor button (`virtual-project-editor-delete`). One click removed the project from the sidebar with no way back from the UI.
+
+### Decisions
+
+1. **Both entries confirm before the soft delete.** The row menu and the editor button open the shared confirm dialog (`useConfirmDialog`, the same store as the other project confirmations). Confirm runs `deleteProject` once with the project's original `hostId`; Cancel, Escape, or an overlay click runs nothing.
+2. **Copy says what is kept.** Title "Delete project {name}?", description "Its tasks stay in Tasks.", destructive confirm button "Delete", cancel "Cancel". Tasks are not deleted, so the dialog does not warn about task loss.
+3. **One request builder.** `projectDeleteConfirmRequest` (`packages/ui/src/project-sidebar/view.ts`) builds the request for both entries, so the copy and the destructive variant cannot drift apart.
+
+### Owners and event order
+
+- `ProjectSidebarNode` (row menu): `onDelete` awaits the confirm, then calls `service.deleteProject` and `refresh`. The confirm happens inside `runProjectAction`, as the existing add-folder confirm does, so a failure still reaches the toast.
+- `ProjectEditor` (editor): `remove()` awaits the confirm before `setBusy(true)`. Cancel returns with the form, the draft, and the busy state unchanged. Confirm then runs the existing soft-delete flow (refresh, then close; failures keep the editor open).
+- `confirmDialogStore` stays the single owner of the pending request; a second request while one is open is rejected by the store and does not delete.
+
+### Acceptance scenarios
+
+| ID     | Entry  | Action                               | Must observe                                                                         |
+| ------ | ------ | ------------------------------------ | ------------------------------------------------------------------------------------ |
+| PDEL-1 | Menu   | Choose "Delete project", then Delete | One `deleteProject(id, hostId)` call, then one `refresh`                             |
+| PDEL-2 | Menu   | Choose "Delete project", then Cancel | No `deleteProject` and no `refresh`; the project stays in the sidebar                |
+| PDEL-3 | Editor | Click "Delete project", then Delete  | One `deleteProject(id, hostId)` call; the editor closes after the refresh            |
+| PDEL-4 | Editor | Click "Delete project", then Cancel  | No `deleteProject`; the editor stays open with the draft and the Save button enabled |
+
+### Validation
+
+- `packages/ui/test/projectSidebarNode.test.ts`: PDEL-1 and PDEL-2 (the confirm request is destructive with the project's copy, and the call happens after the confirm).
+- `packages/ui/test/projectEditorRoots.test.ts`: PDEL-3 (existing delete tests now confirm first), PDEL-4 (cancel leaves the form and the project untouched).
+- Desktop E2E specs that click `virtual-project-delete` or `virtual-project-editor-delete` (for example under `packages/desktop/test/e2e/conversation-session/`) were not updated in this change. They click the entry without confirming, so they need a confirm step before they can pass; this was not run.

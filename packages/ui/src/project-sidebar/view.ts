@@ -12,6 +12,7 @@ import type {
   WindowHostTaskAddress,
   WindowHostControllerTaskActivity,
 } from "@/project-sidebar/contract.js";
+import type { ConfirmDialogRequest } from "@/store/confirmDialogStore.js";
 import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { compareTaskListItemsByTime, compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
@@ -268,4 +269,23 @@ export function formatProjectError(
   if (code === "project.connection-unavailable")
     return formatMessage({ id: "project.connectionUnavailable" });
   return String(cause);
+}
+
+/**
+ * Confirmation for deleting a project. Both delete entries (row menu and editor) use this one
+ * request so the copy and the destructive variant cannot drift. Deleting a project keeps its
+ * tasks, so the description says so instead of warning about task loss.
+ */
+export function projectDeleteConfirmRequest(
+  formatMessage: (descriptor: { id: string }, values?: Record<string, string>) => string,
+  projectName: string,
+): ConfirmDialogRequest {
+  return {
+    title: formatMessage({ id: "project.deleteConfirmTitle" }, { name: projectName }),
+    description: formatMessage({ id: "project.deleteConfirmDescription" }),
+    confirmLabel: formatMessage({ id: "project.deleteConfirmAction" }),
+    cancelLabel: formatMessage({ id: "project.cancel" }),
+    confirmVariant: "destructive",
+    testId: "project-delete-confirm",
+  };
 }

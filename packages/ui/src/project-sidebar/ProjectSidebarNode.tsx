@@ -11,7 +11,7 @@ import type {
 import { buildRemoteHostWorkspaceIdentity } from "@/project-sidebar/contract.js";
 import { ProjectNode } from "@/project-sidebar/ProjectNode.js";
 import type { ProjectNodeProps } from "@/project-sidebar/ProjectNodeContent.js";
-import { projectSourceServerId } from "@/project-sidebar/view.js";
+import { projectDeleteConfirmRequest, projectSourceServerId } from "@/project-sidebar/view.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -192,6 +192,9 @@ export const ProjectSidebarNode = memo(
         onViewFiles={(rootPath) => runProjectAction(() => onViewFiles(project, rootPath))}
         onDelete={() =>
           runProjectAction(async () => {
+            // Deleting a project is one click away from the menu; confirm before the soft delete.
+            if (!(await confirm(projectDeleteConfirmRequest(intl.formatMessage, project.name))))
+              return;
             await service!.deleteProject(project.id, project.hostId);
             await refresh();
           })
