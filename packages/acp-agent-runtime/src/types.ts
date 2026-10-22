@@ -21,6 +21,23 @@ export interface AcpLaunchOptions {
   readonly cwd: string;
 }
 
+/** Options of `AcpSessionRuntime.start`: one launch plus runtime tuning. */
+export interface AcpSessionRuntimeOptions extends AcpLaunchOptions {
+  readonly timeouts?: AcpTimeouts;
+  readonly maxFrameBytes?: number;
+  /**
+   * Raw NDJSON wire observer: called once per line, per direction, in wire
+   * order. Lines over 16 KiB are truncated with a marker and observer
+   * exceptions are swallowed (see `AcpRawFrame`).
+   */
+  readonly onFrame?: AcpFrameObserver;
+  /**
+   * Lifecycle logger (spawn, exit, handshake, cleanup failures). Receives
+   * only agent ids, exit codes/signals and error messages.
+   */
+  readonly logger?: AcpRuntimeLogger;
+}
+
 /** Deadline overrides (tests, embedding hosts). */
 export interface AcpTimeouts {
   readonly initializeMs?: number;
@@ -33,6 +50,17 @@ export interface AcpTimeouts {
 }
 
 export type AcpRuntimeState = "starting" | "ready" | "prompting" | "stopped" | "failed";
+
+/**
+ * Structural logger the host injects (the services layer adapts
+ * `createServiceLogger`). Fields carry only agent ids, exit codes/signals,
+ * states and error messages: never env, args, frames or stderr.
+ */
+export interface AcpRuntimeLogger {
+  info(message: string, fields?: Readonly<Record<string, unknown>>): void;
+  warn(message: string, fields?: Readonly<Record<string, unknown>>): void;
+  error(message: string, fields?: Readonly<Record<string, unknown>>): void;
+}
 
 export interface AcpAuthMethod {
   readonly id: string;
@@ -72,6 +100,8 @@ export type AcpRuntimeEvent =
   | { readonly type: "available_commands"; readonly commands: readonly unknown[] }
   | { readonly type: "auth_required"; readonly methods: readonly AcpAuthMethod[] }
   | { readonly type: "stopped"; readonly reason: StopReason; readonly usage?: unknown }
+  /** Terminal event of a prompt that rejected instead of stopping (exactly one per prompt). */
+  | { readonly type: "prompt_failed"; readonly message: string }
   | { readonly type: "stalled"; readonly silentMs: number }
   | { readonly type: "process_cleanup_failed"; readonly message: string }
   | {

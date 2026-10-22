@@ -1,6 +1,7 @@
 export * from "./account-provider-resolution.js";
 export * from "./account-provider-service.js";
 export * from "./account-provider-state.js";
+export * from "./acp-agent-derivation.js";
 export * from "./chatgpt-plan-account-derivation.js";
 export * from "./config-overlay.js";
 export * from "./config-service.js";

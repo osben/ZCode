@@ -1,9 +1,10 @@
 /**
- * Pure helpers for the ACP agents settings panel: form ⇄ config translation
- * and the synthetic model configuration stored for an ACP provider.
+ * Pure helpers for the ACP agents section of Model Settings: form ⇄ save
+ * request translation and the navigation group that lists detected agents.
  */
-import type { AcpAgentSummary } from "@zcode/services";
-import type { ModelConfigObject, ProviderConfigObject } from "@zcode/provider";
+import type { AcpAgentSaveInput, AcpAgentSummary } from "@zcode/services";
+import type { ModelProviderNavGroup } from "./constants.js";
+import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 
 export const ACP_PROVIDER_ID_PREFIX = "acp:";
 
@@ -143,62 +144,188 @@ export function formatAcpEnvLines(env: Readonly<Record<string, string>>): string
     .join("\n");
 }
 
-export type AcpAgentAccessConfigObject = NonNullable<ProviderConfigObject["access"]>;
-
-/** Builds the access config saved on the `acp:<agentId>` personal provider. */
-export function buildAcpAgentAccess(
+/**
+ * Save request for one agent. The record goes to the fork-owned sidecar store through
+ * `saveAcpAgent`, never into the shared `provider_config.json` (specs/acp-agent-runtime.md
+ * "Storage and upstream compatibility").
+ */
+export function buildAcpAgentSaveInput(
   agent: AcpAgentSummary,
   form: AcpAgentFormValues,
-): AcpAgentAccessConfigObject {
+  options: { readonly enabled: boolean; readonly providerName?: string | null },
+): AcpAgentSaveInput {
   const command = form.command.trim().length > 0 ? form.command.trim() : (agent.commandPath ?? "");
-  // Always send the env map, including an empty one: overlay merging treats a
-  // missing field as "unchanged", so clearing every row must be explicit.
   return {
-    type: "acp-agent",
     agentId: agent.agentId,
+    providerName: options.providerName?.trim() || `${agent.displayName} (ACP)`,
     command,
     args: [...form.args],
+    // The record is replaced as a whole, so an empty map clears every env row.
     env: Object.fromEntries(Object.entries(form.env)),
+    enabled: options.enabled,
   };
 }
 
-/**
- * Context windows: opencode reports 262144 via `usage_update`; cursor uses a
- * placeholder until real numbers are observed.
- */
-const ACP_CONTEXT_WINDOW_BY_AGENT: Record<string, number> = {
-  opencode: 262144,
-  cursor: 200000,
-};
-const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
+/** Selection key prefix of an ACP agent navigation row. */
+export const ACP_AGENT_NODE_KEY_PREFIX = "acp-agent:";
+export const ACP_DETECT_NODE_KEY = "acp-detect";
+export const ACP_LOADING_NODE_KEY = "acp-loading";
+
+export function acpAgentNodeKey(agentId: string): string {
+  return `${ACP_AGENT_NODE_KEY_PREFIX}${agentId}`;
+}
+
+export function isAcpNodeKey(key: string | null): boolean {
+  return (
+    key !== null &&
+    (key.startsWith(ACP_AGENT_NODE_KEY_PREFIX) ||
+      key === ACP_DETECT_NODE_KEY ||
+      key === ACP_LOADING_NODE_KEY)
+  );
+}
 
 /**
- * Complete synthetic model config for the ACP pseudo-model, mirroring the
- * shape the provider resolver expects (every system leaf present, a singular
- * "auto" reasoning level and a no-op option map).
+ * Static facts the UI adds to a known agent. The detection contract only
+ * reports a binary path once the agent is installed, so the probed binary
+ * name and the documentation page live here. `binary` must match
+ * `ACP_AGENT_DEFINITIONS` in `@zcode/acp-agent-runtime`.
  */
-export function buildAcpPseudoModelConfig(agentId: string): ModelConfigObject {
+export interface AcpAgentCatalogEntry {
+  readonly binary: string;
+  readonly docsUrl: string;
+  /** The vendor's documented install command; it provides `binary` on PATH. */
+  readonly installCommand: string;
+}
+
+export const ACP_AGENT_CATALOG: Readonly<Record<string, AcpAgentCatalogEntry>> = {
+  opencode: {
+    binary: "opencode",
+    docsUrl: "https://opencode.ai/docs/",
+    installCommand: "curl -fsSL https://opencode.ai/install | bash",
+  },
+  // The Cursor installer links both `agent` and `cursor-agent`; detection probes only
+  // `cursor-agent` because a bare `agent` collides with other CLIs on PATH.
+  cursor: {
+    binary: "cursor-agent",
+    docsUrl: "https://cursor.com/docs/cli/overview",
+    installCommand: "curl https://cursor.com/install -fsS | bash",
+  },
+};
+
+/** Detection state as the settings page consumes it (one owner: the detection hook). */
+export interface AcpDetectionState {
+  readonly status: "loading" | "ready" | "error";
+  /** Every known agent, installed or not; empty when the scan failed without a previous result. */
+  readonly agents: readonly AcpAgentSummary[];
+  /** False when this environment cannot run ACP agents at all. */
+  readonly supported: boolean;
+  /** A rescan is in flight; the previous agents stay visible. */
+  readonly refreshing: boolean;
+  readonly error?: string;
+}
+
+export interface AcpNavigationGroupInput {
+  /** Dev-only gate (`isLocalDevelopmentRuntime`); false means no group at all. */
+  readonly enabled: boolean;
+  readonly title: string;
+  readonly detectLabel: string;
+  readonly detectingLabel: string;
+  readonly detection: AcpDetectionState;
+  /** Provider ids (`acp:<agentId>`) that are ACP-managed and enabled. */
+  readonly enabledProviderIds: ReadonlySet<string>;
+  /** Agent ids that have an ACP-managed provider, enabled or not. Kept listed even when uninstalled so they can be disabled. */
+  readonly managedAgentIds: ReadonlySet<string>;
+  /** Agent ids whose `acp:<agentId>` id is taken by a non-ACP provider. */
+  readonly conflictAgentIds: ReadonlySet<string>;
+}
+
+/**
+ * Builds the "ACP agents" navigation group placed after the custom group.
+ * Installed agents are one row each; otherwise a single loading row (first
+ * scan in flight) or a "detect agents" row (empty or failed) opens the catalog.
+ */
+export function buildAcpNavigationGroup(
+  input: AcpNavigationGroupInput,
+): ModelProviderNavGroup | null {
+  if (!input.enabled) return null;
+  // Installed agents are listed; an uninstalled agent stays listed only while it has an ACP-managed provider.
+  const listed = input.detection.agents.filter(
+    (agent) => agent.installed || input.managedAgentIds.has(agent.agentId),
+  );
+  if (listed.length > 0) {
+    return {
+      id: "acp",
+      title: input.title,
+      items: listed.map((agent) => {
+        const enabled = input.enabledProviderIds.has(acpProviderId(agent.agentId));
+        const conflict = input.conflictAgentIds.has(agent.agentId);
+        return {
+          key: acpAgentNodeKey(agent.agentId),
+          type: "acpAgent" as const,
+          label: agent.displayName,
+          agentId: agent.agentId,
+          agent,
+          installed: agent.installed,
+          enabled,
+          conflict,
+          statusActive:
+            resolveAcpAgentStatusKind({ enabled, installed: agent.installed, conflict }) ===
+            "ready",
+        };
+      }),
+    };
+  }
+  if (input.detection.status === "loading") {
+    return {
+      id: "acp",
+      title: input.title,
+      items: [{ key: ACP_LOADING_NODE_KEY, type: "acpLoading", label: input.detectingLabel }],
+    };
+  }
   return {
-    enabled: true,
-    properties: {
-      requiresMfjsToolSchema: false,
-      contextWindow: ACP_CONTEXT_WINDOW_BY_AGENT[agentId] ?? DEFAULT_ACP_CONTEXT_WINDOW,
-      inputFormat: {
-        supportsText: true,
-        supportsImage: false,
-        supportsVideo: false,
-        supportsAudio: false,
-        supportsPdf: false,
+    id: "acp",
+    title: input.title,
+    items: [
+      {
+        key: ACP_DETECT_NODE_KEY,
+        type: "acpDetect",
+        label: input.detectLabel,
+        detection: input.detection.status === "error" ? "error" : "empty",
       },
-      outputFormat: { supportsText: true },
-      supportsToolCall: true,
-      supportsJsonSchemaOutput: false,
-      supportsNativeWebSearch: false,
-      supportsMidConversationSystem: false,
-    },
-    optionSpecs: {
-      reasoningLevel: { values: ["auto"], default: "auto", map: "{}" },
-      maxOutputTokens: { max: 32000, map: "{}" },
-    },
+    ],
   };
+}
+
+/** Status dot of an ACP agent row; shared by the navigation row and the detail header. */
+export type AcpAgentStatusKind = "disabled" | "unavailable" | "ready";
+
+/**
+ * One rule for both navigation and detail: ready when enabled, installed and
+ * not in conflict; unavailable when enabled but the CLI is missing; otherwise
+ * disabled.
+ */
+export function resolveAcpAgentStatusKind(input: {
+  readonly enabled: boolean;
+  readonly installed: boolean;
+  readonly conflict: boolean;
+}): AcpAgentStatusKind {
+  if (input.enabled && input.installed && !input.conflict) return "ready";
+  if (input.enabled && !input.installed) return "unavailable";
+  return "disabled";
+}
+
+/**
+ * True for a personal provider this section manages: the `acp:` id together
+ * with the `acp-agent` access type. A same-id provider with another access
+ * type is a conflict, not an ACP provider.
+ */
+export function isAcpManagedProvider(provider: ProviderSettingsFormProvider): boolean {
+  return isAcpProviderId(provider.providerId) && provider.config.access?.type === "acp-agent";
+}
+
+/** Providers without ACP-managed entries; used for display order so `acp:` ids never reach the shared order. */
+export function withoutAcpManagedProviders(
+  providers: readonly ProviderSettingsFormProvider[],
+): ProviderSettingsFormProvider[] {
+  return providers.filter((provider) => !isAcpManagedProvider(provider));
 }

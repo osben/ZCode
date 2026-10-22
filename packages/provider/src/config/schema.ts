@@ -6,6 +6,7 @@ import {
   chatgptAccountAccessDataSchema,
 } from "./provider-data-schema.js";
 import { ModelConfig, ModelConfigRules } from "./model-config.js";
+import { omitCatalogOwnedOptionFields } from "./manual-model-config.js";
 import {
   ApiKeyAccessConfig,
   AcpAgentAccessConfig,
@@ -119,7 +120,7 @@ export function parseZCodeBuiltinModelConfigRules(input: unknown): ModelConfigRu
 }
 
 export function parsePersonalModelConfigRules(input: unknown): ModelConfigRules {
-  const parsed = personalModelConfigRulesSchema.parse(input);
+  const parsed = personalModelConfigRulesSchema.parse(omitCatalogOwnedOptionFields(input));
   return new ModelConfigRules([
     ...parsed.providerModelRules.map((rule) => ({
       ...rule,

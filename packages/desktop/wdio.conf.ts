@@ -4680,6 +4680,10 @@ export const config: WebdriverIO.Config = {
     ...(process.platform !== "win32"
       ? { ZCODE_GH_BINARY: resolve(E2E_HOME_DIR, "fake-bin", "gh") }
       : {}),
+    // ACP detection seam (specs/acp-agent-runtime.md): every spec probes only this run-scoped
+    // directory, so a real opencode/cursor-agent on the machine is never detected or spawned. The
+    // ACP settings spec writes its mock agent here; for other specs the directory stays absent.
+    ZCODE_E2E_ACP_AGENT_PATH: resolve(E2E_HOME_DIR, "acp-agent-bin"),
     VITE_ZCODE_E2E_STORE_BRIDGE: "1",
     ZCODE_AGENT_SERVER_ARGS_JSON: "",
     ZCODE_AGENT_SERVER_COMMAND: "",

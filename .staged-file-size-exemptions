@@ -229,6 +229,7 @@ packages/desktop/src/main/browserView/browserPlaywrightLocatorExecutor.ts
 packages/desktop/src/main/desktopMainIpcRemote.ts
 packages/desktop/src/main/desktopRemoteSessions.ts
 packages/desktop/src/main/desktopRuntimeEnv.ts
+packages/desktop/src/main/desktopWindowChrome.ts
 packages/desktop/src/main/editors.ts
 packages/desktop/src/main/taskRealtimeBus.ts
 packages/server/src/remote/remoteAssetCache.ts
@@ -269,3 +270,4 @@ packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
 # file below 20000 bytes, or when apps/zcode-cli becomes a managed architecture module and the memo
 # can move into its own sibling file.
 apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
+packages/provider/src/config/model-config.ts

@@ -2,9 +2,9 @@
  * Internal helpers shared by the runtime: timeout defaults, deferred
  * promises, bounded timers and auth-method normalization.
  */
-import type { InitializeResponse } from "@agentclientprotocol/sdk";
+import { MessageTooLargeError, type InitializeResponse } from "@agentclientprotocol/sdk";
 import { AcpTimeoutError } from "./errors.js";
-import type { AcpAuthMethod, AcpPermissionAnswer, AcpTimeouts } from "./types.js";
+import type { AcpAuthMethod, AcpPermissionAnswer, AcpRuntimeLogger, AcpTimeouts } from "./types.js";
 
 export const DEFAULT_TIMEOUTS: Required<AcpTimeouts> = {
   initializeMs: 30_000,
@@ -16,6 +16,17 @@ export const DEFAULT_TIMEOUTS: Required<AcpTimeouts> = {
 };
 
 export const CANCELLED_ANSWER: AcpPermissionAnswer = { outcome: "cancelled" };
+
+/** How long a closed stream/connection waits for the child's exit event
+ * before the failure is classified as a dead connection with a live child. */
+export const DEATH_GRACE_MS = 1_000;
+
+/** Runtime-owned state of the one active prompt. */
+export interface ActivePromptState {
+  readonly generation: number;
+  stallEmitted: boolean;
+  reject?: (reason?: unknown) => void;
+}
 
 export interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -61,6 +72,86 @@ export function raceTimeout(operation: Promise<unknown>, ms: number): Promise<bo
   });
 }
 
+/** Resolves `true` when the operation fulfills before `ms`; `false` on rejection or timeout. */
+export function fulfillsWithin(operation: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    timer.unref?.();
+    operation.then(
+      () => {
+        clearTimeout(timer);
+        resolve(true);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(false);
+      },
+    );
+  });
+}
+
+/** Polls `condition` until it holds or `ms` elapses; resolves whether it held. */
+export async function waitUntil(
+  condition: () => boolean,
+  ms: number,
+  stepMs = 10,
+): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await sleep(Math.min(stepMs, Math.max(1, deadline - Date.now())));
+  }
+  return condition();
+}
+
+/**
+ * One stall warning per prompt: `arm` (re)starts the silence window on every
+ * inbound activity; the warning fires once when the window elapses while the
+ * prompt is still current.
+ */
+export class StallWatch {
+  private timer: NodeJS.Timeout | undefined;
+
+  constructor(
+    private readonly silentMs: number,
+    private readonly onStall: (silentMs: number) => void,
+  ) {}
+
+  arm(prompt: { stallEmitted: boolean } | undefined, isCurrent: () => boolean): void {
+    this.clear();
+    if (!prompt || prompt.stallEmitted || this.silentMs <= 0) return;
+    this.timer = setTimeout(() => {
+      if (!isCurrent() || prompt.stallEmitted) return;
+      prompt.stallEmitted = true;
+      this.onStall(this.silentMs);
+    }, this.silentMs);
+    this.timer.unref?.();
+  }
+
+  clear(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+}
+
+/** Logger call that tags every entry with the agent id and swallows logger exceptions. */
+export function createRuntimeLog(logger: AcpRuntimeLogger | undefined, agentId: string) {
+  return (
+    level: "info" | "warn" | "error",
+    message: string,
+    fields: Readonly<Record<string, unknown>> = {},
+  ): void => {
+    try {
+      logger?.[level](message, { agentId, ...fields });
+    } catch {
+      // A faulty logger must never affect the lifecycle.
+    }
+  };
+}
+
+export const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -89,4 +180,11 @@ export function normalizeAuthMethods(init: InitializeResponse): readonly AcpAuth
  */
 export function isConnectionClosedError(error: Error): boolean {
   return /connection closed/i.test(error.message) || error.name === "ConnectionClosedError";
+}
+
+/** Fatal transport failures of a prompt: an oversized frame or a closed connection. */
+export function classifyTransportFailure(error: unknown): "framing" | "closed" | null {
+  if (error instanceof MessageTooLargeError) return "framing";
+  if (error instanceof Error && isConnectionClosedError(error)) return "closed";
+  return null;
 }

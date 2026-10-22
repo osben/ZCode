@@ -36,8 +36,11 @@ const PSEUDO_MODEL_CONFIG = {
   },
 };
 
-describe("provider config file codec with acp-agent providers", () => {
-  it("round-trips an acp provider and its pseudo-model canonically", () => {
+// The fork no longer writes acp-agent providers to provider_config.json (upstream rejects them;
+// see acp-upstream-compat.test.ts). The fork codec must still decode files written by earlier
+// fork builds so migrateInlineAcpProviders can move them into the fork sidecar.
+describe("provider config file codec with legacy inline acp-agent providers", () => {
+  it("still decodes an inline acp provider and its pseudo-model canonically", () => {
     const providers = parsePersonalProviderConfigMap({
       providerRules: [
         {
@@ -68,9 +71,14 @@ describe("provider config file codec with acp-agent providers", () => {
 
     const decoded = decodeProviderConfigFile(encoded);
     expect(decoded.providers.get("acp:opencode")?.toJSON().access).toEqual(ACCESS);
-    expect(decoded.models.getExact("acp:opencode", "opencode")?.toJSON()).toEqual(
-      PSEUDO_MODEL_CONFIG,
-    );
+    // reasoningLevel.default is catalog-owned and never persisted (specs/fork-provider-config-upstream-compat.md).
+    expect(decoded.models.getExact("acp:opencode", "opencode")?.toJSON()).toEqual({
+      ...PSEUDO_MODEL_CONFIG,
+      optionSpecs: {
+        ...PSEUDO_MODEL_CONFIG.optionSpecs,
+        reasoningLevel: { values: ["auto"], map: "{}" },
+      },
+    });
     expect(decoded.providerOrder).toEqual(["acp:opencode"]);
     // Canonical stability: re-encoding the decoded update reproduces the document.
     expect(encodeProviderConfigFile(decoded)).toEqual(encoded);

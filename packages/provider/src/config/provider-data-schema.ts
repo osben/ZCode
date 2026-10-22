@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  ACP_ENV_KEY_PATTERN,
+  describeAcpArgsProblem,
+  describeAcpCommandProblem,
+  describeAcpEnvProblem,
+} from "@zcode/shared/acp-launch-rules";
 import { sparseShape } from "@zcode/shared/config-schema";
 
 export const providerApiTypeDataSchema = z.enum([
@@ -78,20 +84,40 @@ export const chatgptAccountAccessDataSchema = z
  * cursor-agent, …) driven over JSON-RPC stdio instead of an HTTP endpoint.
  * Providers with this access do not require an `api` section.
  */
-const acpAgentEnvKeySchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const acpAgentEnvKeySchema = z.string().regex(ACP_ENV_KEY_PATTERN);
+/** Structural shape shared by the stored (sparse) and complete schemas. */
+const acpAgentAccessStructuralShape = {
+  type: z.literal("acp-agent"),
+  agentId: z.string().min(1),
+  command: nonBlankRequiredString,
+  args: z.array(z.string()).readonly(),
+  env: z.record(acpAgentEnvKeySchema, z.string()).readonly().nullable().optional(),
+};
+/** Adds a shared launch-rule refinement (`@zcode/shared/acp-launch-rules`) to a field schema. */
+function withAcpLaunchRule<T extends z.ZodType>(
+  schema: T,
+  describe: (value: z.output<T>) => string | null,
+) {
+  return schema.superRefine((value, ctx) => {
+    const problem = describe(value);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  });
+}
+// The complete shape enforces the launch rules per field (so every consumer of the field
+// schema inherits them); the stored sparse shape stays structural so one invalid entry is
+// reported by complete validation instead of failing the whole personal provider file.
 export const completeAcpAgentAccessDataSchema = z
   .object({
-    type: z.literal("acp-agent"),
-    agentId: z.string().min(1),
-    command: nonBlankRequiredString,
-    args: z.array(z.string()).readonly(),
-    env: z.record(acpAgentEnvKeySchema, z.string()).readonly().nullable().optional(),
+    ...acpAgentAccessStructuralShape,
+    command: withAcpLaunchRule(acpAgentAccessStructuralShape.command, describeAcpCommandProblem),
+    args: withAcpLaunchRule(acpAgentAccessStructuralShape.args, describeAcpArgsProblem),
+    env: withAcpLaunchRule(acpAgentAccessStructuralShape.env, describeAcpEnvProblem),
   })
   .strict();
 export const acpAgentAccessDataSchema = z
   .object({
-    ...sparseShape(completeAcpAgentAccessDataSchema.shape),
-    type: completeAcpAgentAccessDataSchema.shape.type,
+    ...sparseShape(acpAgentAccessStructuralShape),
+    type: acpAgentAccessStructuralShape.type,
   })
   .strict();
 export const providerAccessDataSchema = z.discriminatedUnion("type", [

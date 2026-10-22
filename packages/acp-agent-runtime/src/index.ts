@@ -6,7 +6,6 @@
  * stream, permission and fs bridges, bounded frames and process-tree teardown.
  */
 export { AcpSessionRuntime } from "./runtime.js";
-export type { AcpSessionRuntimeOptions } from "./runtime.js";
 export { buildChildEnv, validateLaunchOptions } from "./launch.js";
 export { mapSessionUpdate } from "./updates.js";
 export {

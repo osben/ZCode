@@ -137,6 +137,19 @@ const app = agent({ name: `mock-agent (${scenario})` })
         });
         return stop(cancelled ? "cancelled" : "end_turn");
       }
+      case "ask-heartbeat": {
+        // Inbound frames that are not session/update: five permission requests
+        // 100ms apart, then a plain stop. Exercises stall detection on any frame.
+        for (let index = 0; index < 5; index += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          await ctx.client.request(methods.client.session.requestPermission, {
+            sessionId: sid,
+            toolCall: { toolCallId: `hb-${index}`, title: "Heartbeat", kind: "execute" },
+            options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+          });
+        }
+        return stop("end_turn");
+      }
       case "die": {
         await notify(msgChunk("alive"));
         setTimeout(() => process.exit(7), 150);
