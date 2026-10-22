@@ -48,7 +48,87 @@ import {
   persistV4ComposerDraft,
   readV4ComposerDraft,
   V4_DRAFT_SCOPE_ROOT,
+  type ComposerScope,
 } from "@/v4/composer/composerDraftStore.js";
+
+/** 目录快照只取恢复判定需要的字段，避免 Root 依赖完整侧栏投影。 */
+export interface ProjectDirectorySnapshot {
+  loading: boolean;
+  error: string | null;
+  projects: readonly { id: string }[];
+}
+
+/**
+ * 返回一个等待目录首次落定的 awaitable。
+ * 目录已加载时立即 resolve；否则等待 loading 变为 false 的那次提交，不设超时。
+ */
+export function useSettledProjectDirectory(
+  directory: ProjectDirectorySnapshot | null,
+): () => Promise<ProjectDirectorySnapshot | null> {
+  const latestRef = useRef(directory);
+  const waitersRef = useRef(new Set<(snapshot: ProjectDirectorySnapshot | null) => void>());
+  useLayoutEffect(() => {
+    latestRef.current = directory;
+    if (!directory || directory.loading) return;
+    const waiters = [...waitersRef.current];
+    waitersRef.current.clear();
+    for (const resolve of waiters) resolve(directory);
+  }, [directory]);
+  return useCallback(
+    () =>
+      new Promise<ProjectDirectorySnapshot | null>((resolve) => {
+        const current = latestRef.current;
+        if (!current || !current.loading) {
+          resolve(current);
+          return;
+        }
+        waitersRef.current.add(resolve);
+      }),
+    [],
+  );
+}
+
+/**
+ * 持久化草稿的项目意图必须对照当前目录确认。
+ * 项目已删除或不在目录中时，回退到 null scope，并把未提交正文搬到 null scope，避免正文随旧 scope 消失。
+ * 只有 null scope 尚无草稿时才搬运，已有的全局草稿不被覆盖。
+ */
+export function restoreDraftProjectScope(input: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+  clientNamespace: string;
+  scope: ComposerScope;
+  projectIds: ReadonlySet<string>;
+}): ComposerScope {
+  const { workspacePath, workspaceIdentity, clientNamespace, scope, projectIds } = input;
+  if (scope.projectId === null || projectIds.has(scope.projectId)) return scope;
+  const globalScope = resolveComposerScope(null, workspaceIdentity, clientNamespace);
+  const staleDraft = readV4ComposerDraft(
+    workspacePath,
+    workspaceIdentity,
+    V4_DRAFT_SCOPE_ROOT,
+    scope,
+  );
+  if (
+    staleDraft &&
+    !readV4ComposerDraft(workspacePath, workspaceIdentity, V4_DRAFT_SCOPE_ROOT, globalScope)
+  ) {
+    persistV4ComposerDraft(
+      workspacePath,
+      workspaceIdentity,
+      V4_DRAFT_SCOPE_ROOT,
+      { ...staleDraft, projectId: null },
+      globalScope,
+    );
+  }
+  rememberComposerWorkspaceScope(workspacePath, workspaceIdentity, globalScope);
+  logger.info("[Root] 恢复草稿的项目已不在目录中，回退到未归类范围", {
+    workspacePath,
+    workspaceIdentity,
+    projectId: scope.projectId,
+  });
+  return globalScope;
+}
 
 /** 新任务落点：identity 缺省一律归一化为 null，供只读校验、focus/addTab 统一消费。 */
 export interface NewTaskTargetResolution {

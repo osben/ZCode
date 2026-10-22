@@ -55,6 +55,13 @@ Rules:
    that is not selectable in the current Host view (the view's `effectiveSelection` is null) is
    replaced by the view's `preferredSelection` when the draft initializes. Recent itself is not
    rewritten; the next accepted submission of the same scope replaces it (rule 4).
+6. **A restored draft whose project no longer exists falls back to the null scope; the text is
+   kept.** On restore, a persisted draft `projectId` is checked against the settled project
+   directory before it reaches `startDraft`. A project that is not in the directory (deleted, or
+   moved out of the list) restores the draft with `projectId = null`, so no prewarm `createSession`
+   is sent with the missing id. The unsent text moves to the null scope when that scope has no draft
+   yet. A pending directory read is waited for, never guessed; a failed directory read keeps the
+   persisted intent unchanged.
 
 Acceptance scenarios:
 
@@ -64,3 +71,5 @@ Acceptance scenarios:
   attempt and on each retry, even after the store's `draftProjectId` has changed to a project id.
 - Switching the pane to a project scope retires the global generation; the new generation's
   `createSession` carries the project id.
+- A restored draft whose persisted project is absent from the directory starts with
+  `projectId = null`, and its text is still in the composer.

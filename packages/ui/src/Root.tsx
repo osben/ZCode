@@ -1,5 +1,8 @@
 import { useOpenExistingSession } from "@/hooks/useOpenExistingSession.js";
-import { ProjectDirectoryProvider } from "@/project-sidebar/ProjectDirectoryProvider.js";
+import {
+  ProjectDirectoryProvider,
+  useOptionalProjectDirectory,
+} from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { RemoteProjectPicker } from "@/project-sidebar/RemoteProjectPicker.js";
 import {
   buildRemoteWorkspaceIdentity,
@@ -82,7 +85,11 @@ import { useRootOAuthEffects } from "@/root/useRootOAuthEffects.js";
 import { consumeZcodeJwtInvalidRestartMarker } from "@/root/zcodeJwtInvalidRestartMarker.js";
 import { useDesktopNativeThemeSync } from "@/root/useDesktopNativeThemeSync.js";
 import { useRootPlatformEffects } from "@/root/useRootPlatformEffects.js";
-import { useRootWorkspaceActions } from "@/root/useRootWorkspaceActions.js";
+import {
+  restoreDraftProjectScope,
+  useRootWorkspaceActions,
+  useSettledProjectDirectory,
+} from "@/root/useRootWorkspaceActions.js";
 import { useBotBroadcastEffects } from "@/root/useBotBroadcastEffects.js";
 import { registerBaseWorkspaceServices } from "@/store/remoteWorkspaceSessionStore.js";
 import type { RootProps } from "@/root/types.js";
@@ -870,24 +877,53 @@ function RootInner({
   }, [activeWorkspacePath, setWorkspaceActionError]);
 
   const composerClientNamespace = useComposerClientNamespace();
+  const projectDirectory = useOptionalProjectDirectory();
+  const waitForProjectDirectory = useSettledProjectDirectory(projectDirectory);
   const restorePersistedSession = useCallback(
     async (...args: Parameters<typeof restoreWorkspaceTabs>) => {
       const restored = await restoreWorkspaceTabs(...args);
-      const restoreDraftIntents = () => {
+      const restoreDraftIntents = async () => {
         // 桌面刷新通过历史 tab 恢复，不经过 initialWorkspace 入口。先恢复项目意图，
         // 再打开首屏门禁，避免 Composer 按未归类范围读取并预热同目录的项目草稿。
+        // 持久化的 projectId 只能对照已落定的项目目录后再写入 startDraft；目录未加载时等待。
+        const hasPersistedProject = tabStoreApi
+          .getState()
+          .tabs.some(
+            (tab) =>
+              isWorkspaceTab(tab) &&
+              readComposerWorkspaceScope(
+                tab.workspacePath,
+                tab.workspaceIdentity,
+                composerClientNamespace,
+              )?.projectId != null,
+          );
+        const directory = hasPersistedProject ? await waitForProjectDirectory() : null;
+        // 目录读取失败时无法判定项目是否存在，保留持久化意图并记录，不能把全部项目当作已删除。
+        const projectIds =
+          directory && !directory.error
+            ? new Set(directory.projects.map((project) => project.id))
+            : null;
         for (const tab of tabStoreApi.getState().tabs) {
           if (!isWorkspaceTab(tab)) continue;
           const workspace = useZCodeSessionStore
             .getState()
             .getWorkspaceState(tab.workspacePath, tab.workspaceIdentity);
           if (workspace.activeTaskId || workspace.draftProjectId !== undefined) continue;
-          const scope = readComposerWorkspaceScope(
+          const persistedScope = readComposerWorkspaceScope(
             tab.workspacePath,
             tab.workspaceIdentity,
             composerClientNamespace,
           );
-          if (!scope) continue;
+          if (!persistedScope) continue;
+          const scope = projectIds
+            ? restoreDraftProjectScope({
+                workspacePath: tab.workspacePath,
+                workspaceIdentity: tab.workspaceIdentity,
+                clientNamespace: composerClientNamespace,
+                scope: persistedScope,
+                projectIds,
+              })
+            : persistedScope;
           const draft = readV4ComposerDraft(
             tab.workspacePath,
             tab.workspaceIdentity,
@@ -907,20 +943,22 @@ function RootInner({
           });
         }
       };
-      restoreDraftIntents();
+      await restoreDraftIntents();
       return {
         ...restored,
         ...(restored.deferredRestore
           ? {
               deferredRestore: () => {
                 restored.deferredRestore!();
-                restoreDraftIntents();
+                void restoreDraftIntents().catch((error: unknown) =>
+                  logger.error("[Root] 补齐新建草稿归属失败", error),
+                );
               },
             }
           : {}),
       };
     },
-    [restoreWorkspaceTabs, composerClientNamespace, tabStoreApi],
+    [restoreWorkspaceTabs, composerClientNamespace, tabStoreApi, waitForProjectDirectory],
   );
 
   const { isRestoring, hasCompletedInitialRestore, hasCompletedFullRestore } = useTabPersistence({
