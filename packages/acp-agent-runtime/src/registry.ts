@@ -8,9 +8,11 @@
  * only ever use the fixed, whitelisted argument sets declared in
  * `ACP_AGENT_DEFINITIONS`.
  */
-import { spawnSync } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { buildChildEnv } from "./launch.js";
 
 export interface AcpAgentDefinition {
   readonly agentId: string;
@@ -64,11 +66,16 @@ export interface AcpVersionProbeResult {
   readonly stderr: string;
 }
 
+/**
+ * Runs one version probe. `env` is the scrubbed child environment built by
+ * the shared `buildChildEnv` from the detection env.
+ */
 export type AcpVersionProbeRunner = (
   commandPath: string,
   args: readonly string[],
   timeoutMs: number,
-) => AcpVersionProbeResult;
+  env: Readonly<Record<string, string>>,
+) => AcpVersionProbeResult | Promise<AcpVersionProbeResult>;
 
 export interface DetectAcpAgentsOptions {
   /** Environment whose PATH is searched; defaults to `process.env`. */
@@ -97,6 +104,10 @@ interface DetectionCacheEntry {
 /** Bounded cache: unrelated detection inputs must never share cached entries. */
 const DETECTION_CACHE_MAX_KEYS = 16;
 let detectionCache = new Map<string, DetectionCacheEntry>();
+/** Bumped by `refreshAcpAgentCache`: a run started before a refresh never writes the cache. */
+let detectionEpoch = 0;
+/** One in-flight detection per cache key; concurrent callers share it. */
+let inflightDetections = new Map<string, Promise<readonly AcpAgentDetection[]>>();
 let nextProbeIdentity = 1;
 const probeIdentities = new WeakMap<AcpVersionProbeRunner, number>();
 
@@ -129,46 +140,63 @@ export function isSafeVersionProbeArgs(args: readonly string[]): boolean {
   return args.length > 0 && args.every((arg) => SAFE_VERSION_PROBE_ARG.test(arg));
 }
 
-/** Detects all known agents; results are cached per effective input set for `cacheTtlMs`. */
+/**
+ * Detects all known agents with asynchronous IO; results are cached per
+ * effective input set for `cacheTtlMs`, and concurrent calls with the same
+ * inputs share one in-flight run.
+ */
 export function detectAcpAgents(
   options: DetectAcpAgentsOptions = {},
-): readonly AcpAgentDetection[] {
+): Promise<readonly AcpAgentDetection[]> {
   const ttl = options.cacheTtlMs ?? DEFAULT_ACP_DETECTION_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
   const cacheKey = detectionCacheKey(options);
   if (ttl > 0) {
     const cached = detectionCache.get(cacheKey);
-    if (cached && now() - cached.cachedAt < ttl) return cached.entries;
+    if (cached && now() - cached.cachedAt < ttl) return Promise.resolve(cached.entries);
   }
-  const entries: AcpAgentDetection[] = ACP_AGENT_DEFINITIONS.map((definition) =>
-    detectAgent(definition, options),
-  );
-  const frozen = Object.freeze(entries);
-  if (ttl > 0) {
-    if (detectionCache.size >= DETECTION_CACHE_MAX_KEYS && !detectionCache.has(cacheKey)) {
-      const oldest = detectionCache.keys().next().value;
-      if (oldest !== undefined) detectionCache.delete(oldest);
+  const inflight = inflightDetections.get(cacheKey);
+  if (inflight) return inflight;
+  const epoch = detectionEpoch;
+  const inflightMap = inflightDetections;
+  const run = (async () => {
+    const entries = await Promise.all(
+      ACP_AGENT_DEFINITIONS.map((definition) => detectAgent(definition, options)),
+    );
+    const frozen = Object.freeze(entries);
+    if (ttl > 0 && epoch === detectionEpoch) {
+      if (detectionCache.size >= DETECTION_CACHE_MAX_KEYS && !detectionCache.has(cacheKey)) {
+        const oldest = detectionCache.keys().next().value;
+        if (oldest !== undefined) detectionCache.delete(oldest);
+      }
+      detectionCache.set(cacheKey, Object.freeze({ cachedAt: now(), entries: frozen }));
     }
-    detectionCache.set(cacheKey, Object.freeze({ cachedAt: now(), entries: frozen }));
-  }
-  return frozen;
+    return frozen;
+  })().finally(() => {
+    if (inflightMap.get(cacheKey) === run) inflightMap.delete(cacheKey);
+  });
+  inflightMap.set(cacheKey, run);
+  return run;
 }
 
+/** Drops cached and in-flight results; a run already in flight finishes but is not cached. */
 export function refreshAcpAgentCache(): void {
+  detectionEpoch += 1;
   detectionCache = new Map();
+  inflightDetections = new Map();
 }
 
-function detectAgent(
+async function detectAgent(
   definition: AcpAgentDefinition,
   options: DetectAcpAgentsOptions,
-): AcpAgentDetection {
-  const commandPath = resolveCommandOnPath(definition.binaries, options);
+): Promise<AcpAgentDetection> {
+  const commandPath = await resolveCommandOnPath(definition.binaries, options);
   return {
     agentId: definition.agentId,
     displayName: definition.displayName,
     installed: commandPath !== null,
     commandPath,
-    version: commandPath === null ? null : probeVersion(definition, commandPath, options),
+    version: commandPath === null ? null : await probeVersion(definition, commandPath, options),
   };
 }
 
@@ -200,10 +228,10 @@ export function buildBinaryCandidateNames(
     .map((extension) => `${binary}${extension}`);
 }
 
-function resolveCommandOnPath(
+async function resolveCommandOnPath(
   binaries: readonly string[],
   options: DetectAcpAgentsOptions,
-): string | null {
+): Promise<string | null> {
   const env = options.env ?? process.env;
   const entries = [
     ...(options.extraPathEntries ?? []),
@@ -215,35 +243,37 @@ function resolveCommandOnPath(
     for (const entry of unique) {
       for (const name of buildBinaryCandidateNames(binary, env.PATHEXT)) {
         const candidate = join(entry, name);
-        if (isExecutableFile(candidate)) return candidate;
+        if (await isExecutableFile(candidate)) return candidate;
       }
     }
   }
   return null;
 }
 
-function isExecutableFile(path: string): boolean {
+async function isExecutableFile(path: string): Promise<boolean> {
   try {
-    if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
+    if (!(await stat(path)).isFile()) return false;
+    await access(path, constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-function probeVersion(
+async function probeVersion(
   definition: AcpAgentDefinition,
   commandPath: string,
   options: DetectAcpAgentsOptions,
-): string | null {
+): Promise<string | null> {
   if (!isSafeVersionProbeArgs(definition.versionArgs)) return null;
   const runProbe = options.runProbe ?? defaultRunProbe;
   try {
-    const result = runProbe(
+    const result = await runProbe(
       commandPath,
       definition.versionArgs,
       options.probeTimeoutMs ?? DEFAULT_ACP_PROBE_TIMEOUT_MS,
+      // The probe is a child like any other: same scrubbed environment.
+      buildChildEnv(options.env ?? process.env),
     );
     return firstNonEmptyLine(`${result.stdout}\n${result.stderr}`);
   } catch {
@@ -263,17 +293,25 @@ function defaultRunProbe(
   commandPath: string,
   args: readonly string[],
   timeoutMs: number,
-): AcpVersionProbeResult {
-  const result = spawnSync(commandPath, [...args], {
-    encoding: "utf8",
-    timeout: timeoutMs,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+  env: Readonly<Record<string, string>>,
+): Promise<AcpVersionProbeResult> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      commandPath,
+      [...args],
+      { encoding: "utf8", timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024, env },
+      (error, stdout, stderr) => {
+        // A non-zero exit still carries the output: some CLIs print their
+        // version to stderr and exit 1.
+        const code = (error as { code?: unknown } | null)?.code;
+        resolve({
+          status: error ? (typeof code === "number" ? code : null) : 0,
+          stdout: stdout ?? "",
+          stderr: stderr ?? "",
+        });
+      },
+    );
+    // Version probes never read input; close stdin so a CLI cannot block on it.
+    child.stdin?.end();
   });
-  return {
-    status: result.status,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
 }

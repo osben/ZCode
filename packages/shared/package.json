@@ -9,6 +9,7 @@
     "./web-remote-relay": "./src/web-remote-relay/index.ts",
     ".": "./src/index.ts",
     "./runtime-env": "./src/runtimeEnv.ts",
+    "./acp-launch-rules": "./src/acp-launch-rules/index.ts",
     "./test-ids": "./src/test-ids.ts",
     "./mcp": "./src/mcp.ts",
     "./runtime-tool-runtime": "./src/runtime-tool-runtime.ts",
