@@ -961,7 +961,7 @@ function readConfiguredRelayWsUrl(value: string | undefined, source: string): st
   const normalized = normalizeConfiguredWebRemoteControlRelayWsUrl(value);
   if (normalized && normalized !== value?.trim()) {
     logger.warn(
-      `[web-remote-control] relay URL from ${source} has a legacy path; using ${WEB_REMOTE_CONTROL_RELAY_WS_PATH}`,
+      `[web-remote-control] relay URL from ${source} is an origin or the legacy V1 path; normalized to ${WEB_REMOTE_CONTROL_RELAY_WS_PATH}`,
     );
   }
   return normalized;

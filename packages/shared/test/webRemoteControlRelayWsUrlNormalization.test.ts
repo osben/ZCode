@@ -32,6 +32,10 @@ describe("normalizeConfiguredWebRemoteControlRelayWsUrl", () => {
     expect(normalizeConfiguredWebRemoteControlRelayWsUrl("ws://localhost:8787/custom")).toBe(
       "ws://localhost:8787/custom",
     );
+    // The scheme is mapped only for origin-only values; an explicit URL keeps its scheme.
+    expect(normalizeConfiguredWebRemoteControlRelayWsUrl("https://relay.example.com/custom")).toBe(
+      "https://relay.example.com/custom",
+    );
   });
 
   it("returns null when nothing is configured", () => {
