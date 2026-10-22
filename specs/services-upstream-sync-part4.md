@@ -39,7 +39,7 @@ Tests: `serverInfoHttp.test.ts` (upstream payload expectations, plus `keeps the 
 The coordinator decision was to adopt upstream's project binding additively, through optional deps. It is not done here, and the reason is below, so the decision needs to be made again.
 
 - Upstream binds each bot context to a project from the project catalog (`readContext` → `bindProject`, `workspaceRefsFromCatalog`, `context.projectId`). The fork binds a context to a workspace (`workspaceId`, `resolveCanonicalContextWorkspace`, settings-derived `listWorkspaceRefs`).
-- No host in this repo passes `projectService` into `createBotsService`. Desktop-3 (`remoteWorkspaceServiceCollection.ts`) and the services `node.ts` both omit it. An additive port would therefore be inert everywhere today, and it would still add a second context-write path next to the fork's (AGENTS.md single-owner rule).
+- No host in this repo passes `projectService` into `createBotsService`. The desktop local-global collection (`remoteWorkspaceServiceCollection.ts`, since removed) and the services `node.ts` both omitted it. An additive port would therefore be inert everywhere today, and it would still add a second context-write path next to the fork's (AGENTS.md single-owner rule).
 - Making `projectService` required, as upstream does, would break the unsynced desktop consumer.
 - Not applied: `BotsRepo.updateContext`, the project deps on `BotsServiceDeps`, `bindProject`. `/remote` and `botRemote*` are unchanged.
 

@@ -107,7 +107,7 @@ sequenceDiagram
 - The only source of truth is the file on the target host's disk. The UI holds only `loaded` (the last read or saved content, revision, eol, and hasBom) and `draft`.
   Do not add caching, settings, or broadcast synchronization.
 - Register the service in each host process (`packages/services/src/node.ts`), shared by the Desktop local Host and remote server.
-  In the combined service collection Desktop builds for remote workspaces (`packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`),
+  In the remote workspace service collection Desktop builds (`createServerRemoteWorkspaceServiceCollection` in `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`),
   the service **must proxy to the remote connection** (`packages/client/src/remoteServiceAccess.ts`). It must not fall back to the local instance, which would silently edit a local file.
 - The UI selects the target host through `useWorkspaceServicesResolution(workspacePath, remoteSessionId, workspaceIdentity)`. Without a workspace, use the local service.
 - Invariant: the server must resolve the file path exactly like the CLI adapter (`HOME` → `USERPROFILE` → `os.homedir()` + `.zcode/AGENTS.md`).
