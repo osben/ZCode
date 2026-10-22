@@ -72,6 +72,7 @@ ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coinci
 | ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
 | ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
 | ISSUE-022 | S2 | incognito | Fresh incognito session (prepared-submission path, 4POLL, 01:40) replies fine and the CLI `session` row carries `fork_incognito`, but the index `meta_json` never gets `"incognito":true` and the sidebar row renders no `[data-incognito-task-icon]`. The round-1 incognito session (sandbox repo) did converge. Chain read: CLI `getSessionIndexMeta` → summary `incognito` → Host overlay → `persistIncognitoMarkers`; break point not yet located. | fixed (a810494d): the Host converged the marker into the reservation placeholder row, the CLI-fact admission then replaced the whole meta_json, and the ack set blocked the retry; placeholders are now absent for convergence and the next publish after admission persists it. Live: fresh incognito session shows the marker; a row healed after restart needs a list broadcast (follow-up in flight) |
+| ISSUE-023 | S1 | trajectory | "View model trajectory" on the 1052-message session blocks the renderer for 5.8 s in one task (11 long tasks, heap 350 MB, 20 542 DOM nodes, 399 `<pre>`, 1 813 collapsibles). Host read is 57 ms; the model-io file is 22.6 MB in 5 records, so one call card carries the whole conversation as input, every message row starts expanded (spec rule), and the 22 MB payload is JSON-parsed on the renderer main thread. This is the slow "trajectory" the user reported. | fixed: Host bounds each content segment to 16 KiB (12 KiB head + 4 KiB tail, `truncated` marker with original/omitted bytes) and a call card above 40 input rows starts collapsed with a 40-row window and a "show next" control; search reveal raises the window. Live after restart: open 2 long tasks, worst 171 ms (was 5 773 ms); 1 566 DOM nodes (was 20 542); show-next 141 ms; search 1/2302 matches with worst 86 ms. Not bounded: each record still repeats the whole restored context (5 × 1.16 MB here); a delta contract is a follow-up |
 
 ## E2E run (round 2, Phase E, 01:50)
 
@@ -124,3 +125,11 @@ Renderer heap after opening the long session: 288 MB used. Whole conversation is
 | Open session from the sidebar (directory hydration chunked)                | 9          | 188 ms (was 570 ms)                                                                                                 |
 | Turn-navigator jumps 10 → 20 → 1 (cold), A/B on the same machine, load ≈ 4 | 3 / 3      | pack 2: 254 / 62 / 246 ms; base 1c668f7e: 258 / 68 / 219 ms → no regression; the round-1 178 ms was a different run |
 | Open session from the sidebar, A/B (same conditions)                       | 7 vs 3     | pack 2: 150 ms; base: 316 ms                                                                                        |
+
+## Model trajectory viewer after the ISSUE-023 fix (dev build, same 1052-message session)
+
+| Action                            | Long tasks | Worst block           |
+| --------------------------------- | ---------- | --------------------- |
+| Open "View model trajectory"      | 2 (was 11) | 171 ms (was 5 773 ms) |
+| Show next 40 rows                 | 2          | 141 ms                |
+| Search "worktree" (2 302 matches) | 5          | 86 ms                 |

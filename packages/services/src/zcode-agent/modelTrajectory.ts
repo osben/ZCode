@@ -10,9 +10,12 @@ import type {
 } from "#src/session/zcodeTaskService.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
+  boundPayload,
+  boundText,
   readTrajectoryFileTail,
   resolveModelIODirs,
   sanitizeSessionSegment,
+  withTruncation,
 } from "#src/zcode-agent/modelTrajectoryFileTail.js";
 import type { TrajectoryFileTail } from "#src/zcode-agent/modelTrajectoryFileTail.js";
 
@@ -158,11 +161,24 @@ function mapRecord(record: Record<string, unknown>): ZCodeModelTrajectoryRecord 
 
   if (response) {
     const responseToolCalls = Array.isArray(response.toolCalls) ? response.toolCalls : [];
+    const responseText = asString(response.text);
+    const responseReasoning = asString(response.reasoningText);
+    const text = responseText === undefined ? undefined : boundText(responseText);
+    const reasoningText =
+      responseReasoning === undefined ? undefined : boundText(responseReasoning);
+    const responseTruncated =
+      text?.truncated || reasoningText?.truncated
+        ? {
+            ...(text?.truncated ? { text: text.truncated } : {}),
+            ...(reasoningText?.truncated ? { reasoningText: reasoningText.truncated } : {}),
+          }
+        : undefined;
     mapped.response = {
       finishReason: asString(response.finishReason),
-      text: asString(response.text),
-      reasoningText: asString(response.reasoningText),
+      text: text?.text,
+      reasoningText: reasoningText?.text,
       toolCalls: responseToolCalls.map((toolCall) => mapResponseToolCall(toolCall)),
+      ...(responseTruncated ? { truncated: responseTruncated } : {}),
       usage: mapUsage(response.usage),
       responseId: asString(response.responseId),
       modelId: asString(response.modelId),
@@ -336,20 +352,30 @@ function mapContent(
     if (content.length === 0) return [];
     // String content with the tool role is tool output; mark it separately as tool-result so the UI can distinguish it.
     if (role === "tool") {
+      const bounded = boundText(content);
       // The actual model-io stores association fields at the message top level and keeps only the string result in content;
       // dropping the top-level fields would prevent the UI from associating TOOL output with the corresponding tool call.
       return [
-        {
-          kind: "tool-result",
-          toolCallId: messageTool?.toolCallId,
-          toolName: messageTool?.toolName,
-          // Normalized model-io flattens error-text into content + isError; restore the type here,
-          // or the UI will see only an error string and cannot show the error state.
-          output: tryParseJson(content, messageTool?.isError),
-        },
+        withTruncation(
+          {
+            kind: "tool-result",
+            toolCallId: messageTool?.toolCallId,
+            toolName: messageTool?.toolName,
+            // Normalized model-io flattens error-text into content + isError; restore the type here,
+            // or the UI will see only an error string and cannot show the error state.
+            // A cut string is not parsed as JSON: the cut would make the parse fail and the structure is no longer complete anyway.
+            output: bounded.truncated
+              ? messageTool?.isError
+                ? { type: "error-text", value: bounded.text }
+                : bounded.text
+              : tryParseJson(content, messageTool?.isError),
+          },
+          bounded.truncated,
+        ),
       ];
     }
-    return [{ kind: "text", text: content }];
+    const bounded = boundText(content);
+    return [withTruncation({ kind: "text", text: bounded.text }, bounded.truncated)];
   }
 
   if (!Array.isArray(content)) {
@@ -365,48 +391,71 @@ function mapPart(
 ): ZCodeModelTrajectoryContentPart {
   const part = asObject(rawPart);
   if (!part) {
-    return { kind: "unknown", raw: rawPart };
+    return mapUnknownPart(rawPart);
   }
 
   switch (part.type) {
-    case "text":
-      return { kind: "text", text: asString(part.text) ?? "" };
-    case "reasoning":
-      return { kind: "reasoning", text: asString(part.text) ?? "" };
-    case "tool-call":
-      return {
-        kind: "tool-call",
-        toolCallId: asString(part.toolCallId),
-        toolName: asString(part.toolName) ?? "tool",
-        input: part.input ?? part.args,
-      };
-    case "tool-result":
-      return {
-        kind: "tool-result",
-        toolCallId: asString(part.toolCallId) ?? messageTool?.toolCallId,
-        toolName: asString(part.toolName) ?? messageTool?.toolName,
-        output: part.output ?? part.result,
-      };
+    case "text": {
+      const bounded = boundText(asString(part.text) ?? "");
+      return withTruncation({ kind: "text", text: bounded.text }, bounded.truncated);
+    }
+    case "reasoning": {
+      const bounded = boundText(asString(part.text) ?? "");
+      return withTruncation({ kind: "reasoning", text: bounded.text }, bounded.truncated);
+    }
+    case "tool-call": {
+      const input = boundPayload(part.input ?? part.args);
+      return withTruncation(
+        {
+          kind: "tool-call",
+          toolCallId: asString(part.toolCallId),
+          toolName: asString(part.toolName) ?? "tool",
+          input: input.value,
+        },
+        input.truncated,
+      );
+    }
+    case "tool-result": {
+      const output = boundPayload(part.output ?? part.result);
+      return withTruncation(
+        {
+          kind: "tool-result",
+          toolCallId: asString(part.toolCallId) ?? messageTool?.toolCallId,
+          toolName: asString(part.toolName) ?? messageTool?.toolName,
+          output: output.value,
+        },
+        output.truncated,
+      );
+    }
     case "image":
     case "file":
       return { kind: "image", mediaType: asString(part.mediaType) };
     default:
-      return { kind: "unknown", raw: rawPart };
+      return mapUnknownPart(rawPart);
   }
+}
+
+function mapUnknownPart(raw: unknown): ZCodeModelTrajectoryContentPart {
+  const bounded = boundPayload(raw);
+  return withTruncation({ kind: "unknown", raw: bounded.value }, bounded.truncated);
 }
 
 function mapResponseToolCall(rawToolCall: unknown): ZCodeModelTrajectoryContentPart {
   const toolCall = asObject(rawToolCall);
   if (!toolCall) {
-    return { kind: "unknown", raw: rawToolCall };
+    return mapUnknownPart(rawToolCall);
   }
-  return {
-    kind: "tool-call",
-    // Normalized response.toolCalls have the shape {id, name, input}.
-    toolCallId: asString(toolCall.id) ?? asString(toolCall.toolCallId),
-    toolName: asString(toolCall.name) ?? asString(toolCall.toolName) ?? "tool",
-    input: toolCall.input ?? toolCall.args,
-  };
+  const input = boundPayload(toolCall.input ?? toolCall.args);
+  return withTruncation(
+    {
+      kind: "tool-call",
+      // Normalized response.toolCalls have the shape {id, name, input}.
+      toolCallId: asString(toolCall.id) ?? asString(toolCall.toolCallId),
+      toolName: asString(toolCall.name) ?? asString(toolCall.toolName) ?? "tool",
+      input: input.value,
+    },
+    input.truncated,
+  );
 }
 
 function mapUsage(value: unknown): ZCodeModelTrajectoryUsage | undefined {

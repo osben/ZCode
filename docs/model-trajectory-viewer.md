@@ -32,6 +32,18 @@
 - ZCode Agent 把 `taskId` 当作 `sessionId`（见 `zcodeTaskServiceAdapter` 里多处 `sessionId: params.taskId`），
   所以轨迹只读取 `model-io-<sanitizedTaskId>.jsonl`，并按 `record.sessionId === taskId` 精确匹配。
   仅 ZCode Agent（glm）会落盘 model-io。
+- 投影链路的单段文本必须有界：`packages/services/src/zcode-agent/modelTrajectory.ts` 对每个投影出的
+  内容段（text / reasoning / tool-call input / tool-result output / unknown raw）、`response.text`、
+  `response.reasoningText` 做按字节的预算裁剪。预算为 **16 KiB**（头部 12 KiB + 尾部 4 KiB，中间以固定
+  分隔符 `\n…\n` 连接）。裁剪按 UTF-8 字符边界切分，不切断多字节字符或代理对。超出预算的段携带
+  `truncated: { originalBytes, omittedBytes }` 标记，`originalBytes` 为裁剪前的 UTF-8 字节数。
+  - 字符串 TOOL 输出超预算时不再 `JSON.parse`，保留为字符串并标记；`error-text` 输出只裁剪 `value`，保持错误类型。
+  - 对象形式的 tool input / output 与 unknown raw 超预算时序列化为 JSON 字符串后裁剪，输出类型变为字符串。
+  - 响应级裁剪通过 `response.truncated: { text?, reasoningText? }` 标记表达。
+  - 裁剪只影响展示与复制（复制得到的是裁剪后的文本）；搜索索引基于裁剪后的投影，中间被省略的部分不可被搜索命中。
+  - `error.stack` 不做预算裁剪；单条错误的 stack 体量远小于预算，且错误块本身已不做折叠。
+  - 预算只约束单段大小，不约束 `records` 数量与每条记录的 `request.messages` 数量。当前 model-io 每条记录都保存
+    还原后的完整上下文，因此一次投影的总字节约为“记录数 × 上下文长度”。这一点由下文“已知边界”单独记录。
 - 读取链路同样必须有界且异步：Host 从文件尾部按块读取，最多扫描 32 MiB，并只保留最近 `limit`
   条记录；不得使用 `readFileSync + split` 同步加载整个 JSONL。若扫描起点落在一条记录中间，丢弃该残行；
   文件不可读时降级为空结果。开发日志记录扫描字节数与耗时，便于定位异常大文件，同时避免高频诊断信息进入生产日志。
@@ -45,6 +57,7 @@
 - `packages/services/src/zcode-agent/modelTrajectory.ts`：异步、有界地读取 session 单文件尾部，还原 delta messages、
   归一化 messages / parts / toolCalls / usage，按 `startedAt` 排序，超出 `limit`（默认 200）保留最近 N 条。
 - `packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts`：实现 `getModelTrajectory`。
+- `packages/services/src/zcode-agent/modelTrajectoryBounds.ts`：段级字节预算（16 KiB，头 12 KiB + 尾 4 KiB）、UTF-8 边界裁剪、`truncated` 标记与 tool payload 有界化；由 `modelTrajectory.ts` 读取链路调用。
 
 UI 层：
 
@@ -68,7 +81,8 @@ UI 层：
 每条 model-io 记录是「一次模型调用」。视图按时间顺序把轨迹组织成
 **输入（user / tool 结果）→ 输出（assistant 文本 / reasoning / 工具调用）** 的链路：
 
-- 首条调用展示完整起始上下文（system + 初始 user）。
+- 首条调用展示完整起始上下文（system + 初始 user + 历史 assistant）。起始上下文中的 assistant 消息与 system / user / tool 一样
+  以共享消息行渲染，不再以不可折叠的整段正文直接展开。
 - 后续主会话调用只展示相对上一条新增的非 assistant 消息（assistant 由上一条的 Output 呈现），避免重复刷历史。
 - 标题生成、compact、prompt enhance 等 sidecar 请求展示自己的完整 prompt，不套用主会话 delta。
 - 头部汇总调用次数、总 token、用到的模型；每张调用卡片的单行 Header 展示来源、finishReason、in/out token、耗时与时间。
@@ -92,7 +106,9 @@ UI 层：
 - 序号使用 `size-5` 行盒水平、垂直居中，与标题和 pill 对齐，不跟随两行摘要整体居中。
 - 每次调用的摘要行在轨迹内容滚动时吸附于顶部，使用半透明 `surface` 背景、轻量背景模糊与 `border-border/50` 底边线，确保下方载荷滚过时标题仍清晰可辨。
 - 每次调用的 IN / OUT 大层级始终展开，不提供整次调用的收起交互；仅具体消息与载荷保留二级折叠。
-- 面板 Header action 区在“打开源目录”左侧提供单个“全部展开 / 全部收起”切换按钮，仅在存在轨迹记录时显示。图标复用 Task List 的 `Maximize2 / Minimize2`，使用 `size-3.5 text-foreground`。所有消息行初始化默认展开，因此初始动作是全部收起，触发后按钮动作切换为全部展开；每次批量动作通过递增 command version 同步覆盖当前所有消息行。单行仍可独立切换，不反向改写批量按钮的下一动作。默认状态直接由共享 command 与行内 lazy state 初始化，不通过逐行 `useEffect` 触发二次更新。
+- 大输入卡片的行策略见下文“超大输入卡片的行窗口”：输入消息数超过 `TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS`（40）时，
+  该卡片的消息行初始为收起态，并且只挂载前 `TRAJECTORY_ROW_PAGE_SIZE`（40）行。
+- 面板 Header action 区在“打开源目录”左侧提供单个“全部展开 / 全部收起”切换按钮，仅在存在轨迹记录时显示。图标复用 Task List 的 `Maximize2 / Minimize2`，使用 `size-3.5 text-foreground`。消息行的默认状态由所属卡片决定：输入消息不超过 40 条的卡片，所有消息行初始化默认展开；超过 40 条的卡片，消息行初始化为收起（见“超大输入卡片的行窗口”）。批量按钮初始动作仍为全部收起，触发后按钮动作切换为全部展开；每次批量动作通过递增 command version 同步覆盖当前已挂载的消息行，未挂载的行在挂载时按同一 command 派生状态。单行仍可独立切换，不反向改写批量按钮的下一动作。默认状态直接由共享 command 与行内 lazy state 初始化，不通过逐行 `useEffect` 触发二次更新。
 - “全部展开 / 全部收起”左侧提供自定义展开菜单。菜单按 System、User、Reasoning、Assistant、Tool Call、Tool Result 顺序列出六类内容，右侧使用 `sm` Switch 表达该类型的目标展开状态；点击整行或 Switch 均只更新该类型，菜单保持打开以便连续配置。全部展开/收起会同步更新六个开关。类型命令和全局命令共用单调递增 version，后发命令覆盖对应类型的旧单行 override；未被本次类型命令命中的类型保持原状态。菜单和所有文案必须国际化。
 
 ```text
@@ -106,7 +122,7 @@ next header command(version+1) -> supersedes every older local override
 
 批量命令不得由每行 `useEffect` 再同步到本地 `open` state，否则 N 条消息会在 Context 更新后追加 N 次状态写入和第二轮提交。每行应在 render 阶段比较批量 command version 与本地 override version，直接派生本次 `open`；单行操作记录当前 command version，下一次更高版本的批量命令自然覆盖它。
 
-- 展开内容按 `IN` / `OUT` 分区。system、用户、tool、assistant、reasoning 与 tool call/result 消息默认全部展开，与 Header 初始动作“全部收起”保持一致；点击单行后可在同一层收起为单行预览，再次展开直接展示全文、思考过程、工具输入或工具结果，展开内容内部不再嵌套第二层折叠。
+- 展开内容按 `IN` / `OUT` 分区。输入消息不超过 40 条的卡片中，system、用户、tool、assistant、reasoning 与 tool call/result 消息默认全部展开；超过 40 条的卡片中这些消息行默认收起，仅挂载单行摘要。点击单行后可在同一层收起为单行预览，再次展开直接展示全文、思考过程、工具输入或工具结果，展开内容内部不再嵌套第二层折叠。收起的消息行不挂载展开正文，因此不产生 `<pre>` 或正文 DOM。
 - 调用内容区外层使用 `p-2 gap-y-2`，统一提供四边 8px 内边距和相邻大组之间的 8px 间距；INPUT / OUTPUT 各自作为独立大组卡片，使用 `overflow-hidden rounded-lg border border-card-border`，自身不设置 margin 或背景色。消息行在卡片内连续排列，由各分区与消息行自身控制布局。
 - `INPUT / OUTPUT` 分区各显示独立标题行，使用 `h-8 px-3 bg-surface text-ui-sm font-mono uppercase text-foreground`，与消息斑马纹的 `bg-surface/30` 拉开层级。标题不显示左侧色线或装饰图标，不设置 `mt-*`、`mb-*`；两组使用相同中性样式，只负责表达请求与产出分组，不参与消息行斑马纹。
 - 相邻消息行之间不设置 gap；INPUT / OUTPUT 标题与第一条消息之间、相邻消息之间插入独立的 `col-span-full h-px bg-border/50` 分隔元素，不使用消息行自身的 border。
@@ -118,6 +134,9 @@ next header command(version+1) -> supersedes every older local override
 - Tool name pill 不设置最大宽度且不截断，必须完整显示；Tool call ID 在界面展示时移除开头的 `call_` 前缀，底层消息数据保持原始 ID。空间不足时优先压缩 summary，Tool call ID pill 仍允许截断以保护窄侧栏和手机 Web 布局。
 - Tool Result 与 Tool Call 的收起行在 summary 前显式显示内容自适应宽度的数据方向标签：Tool Result 使用 `OUTPUT`（中文“输出”），Tool Call 使用 `INPUT`（中文“输入”）。方向标签使用 `text-ui-sm` 与主要文字颜色并按实际文字宽度收缩，随后以标准紧凑间距显示第三等文字颜色的向右箭头图标，再进入次要层级的 summary；不得用固定宽度在短中文标签与箭头之间制造空槽。展开后 summary 与向右箭头同步隐藏，方向标签保留且不在展开正文中重复。
 - 内容区的分区标题、角色标签、消息预览、正文、思考与工具内容统一使用 `text-ui-sm`；调用摘要 Header 的序号、pill 与元数据继续使用 `text-ui-xs`。
+- 被预算裁剪的内容段（带 `truncated` 标记）在其正文末尾显示一行次要文字“源数据已截断，原始 N 字节”（`modelTrajectory.truncatedAtSource`，
+  N 为 `originalBytes`），并带 `data-trajectory-truncated` 属性。该提示不替代“显示全部”，裁剪是 Host 投影阶段完成的，
+  展开也无法恢复中间省略的部分。
 - Tool Result 的 output 若为 `{ type: "error-text", value: string }`，收起摘要和展开正文必须直接使用 `value`，不得把错误包装对象序列化成 JSON。收起摘要继续折叠连续空白，展开正文保留错误文本的原始换行。
 - Tool Result 的 output 或 Tool Call 的 input 为 `error-text` 时，收起行在 INPUT / OUTPUT 前显示 `CircleAlertIcon`，图标与方向标签使用 destructive 错误色，普通工具 payload 不显示该状态。展开后的错误 payload 使用 `rounded-lg bg-destructive/10` 无边框错误容器与 destructive 文字色包裹；工具名、调用 ID、复制和溢出展开行为保持不变。标准化 model-io 中字符串 TOOL 消息的顶层 `isError` / `is_error` 必须还原为 `{ type: "error-text", value: content }`，不得在服务层映射时丢失错误状态。
 - system、user 与 tool 复用同一套撑满可用宽度的透明消息布局。system 收起摘要取第一条非空行；user、assistant 普通消息与思考过程的收起摘要读取完整文本，并将换行等连续空白折叠为单个空格；tool 收起摘要取 `tool-result.output` 的完整内容并以同样方式压成单行，不使用工具名代替摘要。各摘要均在单行内截断，最右侧显示 Chevron；tool 摘要右侧另依次使用两个独立 outline pill 展示 `toolName` 和 `toolCallId`，单个字段缺失时只隐藏对应 pill。展开时头部隐藏摘要、方向右箭头、`toolName` 和 `toolCallId` pill，保留方向标签并展示“本次调用耗时 · 完整日期时间”；工具名与 ID pill 移到展开内容顶部的第一行，payload 从下一行开始。完整 ISO datetime 通过悬停提示保留。这里展示的是 model-io 调用级 `durationMs` / `startedAt`，不是单条消息自身的耗时或时间。Chevron 按钮容器使用 `size-5`，图标使用 `size-3`。展开行在 Chevron 左侧显示 `icon-sm ghost` 复制按钮，收起时隐藏；复制操作使用原始完整数据。展开正文中 system / user 展示完整消息，tool 展示完整 payload，不重复“工具结果/工具调用”标题。正文作为容器内部普通内容展示，不使用卡片背景、圆角或外边距；默认使用 `max-h-64 overflow-hidden`，不允许内部滚动。内容超过 256px 时底部增加 72px CSS mask 渐隐，并在 `bottom-3 left-1/2` 水平居中悬浮 `sm outline`“展开”胶囊；该 pill 使用 `bg-surface/90` 作为无 backdrop-filter 时的回退，支持时切换为 `bg-surface/70 backdrop-blur-md` 高斯玻璃背景。溢出正文使用 `pb-14` 预留空间，让正文末行与悬浮按钮保持标准间距；无溢出操作时仅使用 `pb-2`。展开后移除最大高度与 mask，居中按钮切换为“收起”；展开只影响当前消息，消息行收起时恢复限高状态。
@@ -144,7 +163,7 @@ next header command(version+1) -> supersedes every older local override
 - 普通已挂载命中使用 `--color-find-highlight`，当前命中使用 `--color-find-highlight-active`。当前命中若位于折叠消息或正文限高区域，搜索 reveal 状态必须临时强制展开消息与完整正文；该状态不得写入用户 expansion override，切换结果、清空或关闭搜索后恢复搜索前状态，用户原本手动展开的内容保持不变。
 - 虚拟列表定位分两阶段：先按 `callIndex` 调用 virtualizer 定位并挂载 Call，再在搜索 reveal 展开并重新测高后的下一帧定位具体文本 Range。定位请求使用稳定 match key 去重，避免 ResizeObserver 或虚拟行重挂重复滚动。上一条/下一条首尾循环；被截断的轨迹只搜索当前已加载记录，并继续显示现有截断提示。
 
-- 轨迹按 Call Card（一次模型调用）做动态高度虚拟化，不拆分卡片内部的 INPUT / OUTPUT 与消息行。滚动容器仍是面板现有的原生 `overflow-y-auto` 容器。
+- 轨迹按 Call Card（一次模型调用）做动态高度虚拟化。卡片内部的 INPUT / OUTPUT 分区不单独虚拟化，但输入消息行受下文“超大输入卡片的行窗口”约束：超出窗口的行不挂载。滚动容器仍是面板现有的原生 `overflow-y-auto` 容器。
 - 虚拟项使用实际 DOM 高度测量，展开、收起或“显示全部”造成高度变化后必须重新计量；上下各保留少量 overscan，避免快速滚动时闪白。
 - 外层虚拟画布继续提供共享的三列 Grid。不可见的零高度角色标签测量行参与第一列 `max-content` 宽度计算，确保虚拟项挂载数量变化时，SYSTEM / USER / ASSISTANT / TOOL 的内容列不会横向跳动。
 - 单条消息的展开状态必须由稳定消息 key 保存于 Call Card 之外；虚拟项离开视口被卸载再挂载后，仍恢复离开前状态。批量展开命令仍通过共享 command version 覆盖旧的单行状态，不允许每行用 effect 二次同步。
@@ -161,6 +180,40 @@ Call Card virtualizer ── overscan ──> visible Call Cards only
 row toggle ──> keyed expansion state ──> survives Call Card unmount/remount
 bulk toggle ─> command(version + 1) ────> supersedes older keyed state
 ```
+
+## 超大输入卡片的行窗口
+
+首条调用的输入可能包含上千条消息（完整起始上下文）。若全部挂载，一张卡片可达两万级 DOM 节点，
+主线程会在一个任务内阻塞数秒；批量“全部展开”同样会重新触发这一成本。因此输入消息行按卡片做窗口化：
+
+- 阈值 `TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS = 40`：输入消息数 `<= 40` 的卡片，消息行默认展开，行为与上文一致；
+  `> 40` 的卡片，消息行默认收起。阈值只决定默认值，不改变批量命令和单行覆盖的语义。
+- 页大小 `TRAJECTORY_ROW_PAGE_SIZE = 40`：卡片只挂载输入消息的前 `limit` 行。`limit` 初始为 40，不足页的卡片不显示窗口控件。
+- 窗口控件：在输入消息末尾显示一行按钮“显示接下来 N 条（共 M 条）”（`data-trajectory-rows-more`），点击后 `limit` 增加一页。
+  窗口控件本身不展开任何行。
+- `limit` 的状态 owner 是 `TrajectoryExpansionRegistry.rowLimits`（按 Call Card 的稳定 key 保存），与单行展开状态同属
+  Call Card 之外的状态，虚拟项卸载再挂载后保持不变。registry 缺失（独立渲染的测试场景）时退化为卡片本地状态。
+- 折叠行的摘要只读取每个段的前 1024 个字符（`PREVIEW_SOURCE_CHARS`），避免每次渲染规范化整段文本。搜索命中若位于这一前缀之后，
+  在折叠摘要中不会高亮；命中行被 reveal 展开后，正文中的命中照常高亮。复制内容在点击时才计算，不在渲染时计算。
+- 搜索 reveal 与窗口的关系：当 `searchRevealKey` 指向本卡片第 `i` 条输入消息（`<callKey>:input:<i>`）时，渲染的有效 `limit`
+  为 `max(limit, i + 1)`。该有效值只在渲染中派生，不写入 registry，搜索结束后窗口恢复为用户保存的 `limit`。
+- 批量命令不挂载窗口外的行：窗口外的行在挂载时由当前 command version 派生展开状态，因此“全部展开”只会挂载第一页。
+
+```text
+Call Card (input count N)
+   ├─ N <= 40: all rows mounted, default expanded (batch command as before)
+   └─ N > 40 : rows[0 .. limit) mounted, default collapsed
+                │
+                ├─ registry.rowLimits[cardKey]  (owner, survives virtualizer unmount)
+                ├─ "show next" -> rowLimits[cardKey] += 40
+                └─ search reveal row i -> effective limit = max(limit, i + 1), render-only
+```
+
+## 已知边界（待用户决策）
+
+- 每条 model-io 记录的 `request.messages` 在投影时都是完整上下文（还原后的增量拼接）。对同一会话，N 条记录的投影体积约为
+  N × 上下文长度。段级预算与窗口只约束单段与单卡片的挂载，不约束 `records` 之间的重复。将重复去除需要改变
+  记录契约（例如只下发增量与偏移量，由 UI 还原），属于跨层契约变更，本次未实施。
 
 ## 多端
 

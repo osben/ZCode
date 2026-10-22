@@ -3,12 +3,18 @@ import type {
   ZCodeModelTrajectoryRecord,
   ZCodeModelTrajectoryUsage,
 } from "@zcode/services";
-import { Fragment } from "react";
+import { Fragment, useContext, useState } from "react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
+import { Button } from "@/components/ui/button.js";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { ContentPartView, EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
 import { ExpandableTrajectoryMessage } from "@/ModelTrajectoryExpandableMessage.js";
+import {
+  TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS,
+  TRAJECTORY_ROW_PAGE_SIZE,
+  TrajectoryExpansionRegistryContext,
+} from "@/ModelTrajectoryExpansion.js";
 import { ModelTrajectoryErrorBlock } from "@/ModelTrajectoryErrorBlock.js";
 import {
   formatTrajectoryClockTime,
@@ -16,6 +22,7 @@ import {
   formatTrajectoryDuration,
 } from "@/ModelTrajectoryFormat.js";
 import { trajectoryRoleTextClass } from "@/ModelTrajectoryRoleStyles.js";
+import { TrajectorySearchRevealContext } from "@/ModelTrajectorySearch.js";
 import { TrajectorySectionTitle } from "@/ModelTrajectorySectionTitle.js";
 
 export { EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
@@ -38,6 +45,28 @@ export function CallCard({
   const response = record.response;
   const usage = response?.usage;
   const hasInput = inputMessages.length > 0;
+  const registry = useContext(TrajectoryExpansionRegistryContext);
+  const searchRevealKey = useContext(TrajectorySearchRevealContext);
+  const [localRowLimit, setLocalRowLimit] = useState(TRAJECTORY_ROW_PAGE_SIZE);
+  const storedRowLimit =
+    expansionKeyPrefix && registry ? registry.rowLimits.get(expansionKeyPrefix) : undefined;
+  const pageRowLimit = storedRowLimit ?? localRowLimit;
+  // A search reveal of row i mounts it even when it is past the page; the effective limit is derived in render only.
+  const revealedRowIndex = expansionKeyPrefix
+    ? inputRevealIndex(searchRevealKey, expansionKeyPrefix)
+    : undefined;
+  const rowLimit =
+    revealedRowIndex === undefined ? pageRowLimit : Math.max(pageRowLimit, revealedRowIndex + 1);
+  const rowsDefaultOpen = inputMessages.length <= TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS;
+  const hiddenRowCount = Math.max(0, inputMessages.length - rowLimit);
+  const showNextRows = () => {
+    const nextLimit = pageRowLimit + TRAJECTORY_ROW_PAGE_SIZE;
+    if (expansionKeyPrefix && registry) {
+      registry.setRowLimit(expansionKeyPrefix, nextLimit);
+    } else {
+      setLocalRowLimit(nextLimit);
+    }
+  };
 
   return (
     <article data-trajectory-call="" className="col-span-full grid grid-cols-subgrid">
@@ -77,7 +106,7 @@ export function CallCard({
               kind="input"
               label={intl.formatMessage({ id: "modelTrajectory.inputSection" })}
             />
-            {inputMessages.map((message, messageIndex) => (
+            {inputMessages.slice(0, rowLimit).map((message, messageIndex) => (
               <Fragment key={`${index}:${messageIndex}`}>
                 <TrajectoryRowDivider />
                 <MessageBlock
@@ -85,6 +114,7 @@ export function CallCard({
                   callStartedAt={record.startedAt}
                   callDurationMs={record.durationMs}
                   isAlt={messageIndex % 2 === 1}
+                  defaultOpen={rowsDefaultOpen}
                   expansionKey={
                     expansionKeyPrefix ? `${expansionKeyPrefix}:input:${messageIndex}` : undefined
                   }
@@ -92,6 +122,24 @@ export function CallCard({
                 />
               </Fragment>
             ))}
+            {hiddenRowCount > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-trajectory-rows-more=""
+                onClick={showNextRows}
+                className="col-span-full h-8 justify-start rounded-none px-3 font-mono text-ui-xs text-foreground-subtle"
+              >
+                {intl.formatMessage(
+                  { id: "modelTrajectory.showMoreRows" },
+                  {
+                    count: Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRowCount),
+                    total: inputMessages.length,
+                  },
+                )}
+              </Button>
+            ) : null}
           </section>
         ) : null}
 
@@ -170,6 +218,7 @@ function MessageBlock({
   callStartedAt,
   callDurationMs,
   isAlt,
+  defaultOpen,
   expansionKey,
   intl,
 }: {
@@ -177,6 +226,7 @@ function MessageBlock({
   callStartedAt: string;
   callDurationMs?: number;
   isAlt: boolean;
+  defaultOpen: boolean;
   expansionKey?: string;
   intl: IntlShape;
 }) {
@@ -186,14 +236,13 @@ function MessageBlock({
     ? intl.formatMessage({ id: `modelTrajectory.role.${message.role}` })
     : message.role;
 
-  if (
-    (message.role === "system" || message.role === "user" || message.role === "tool") &&
-    message.parts.length > 0
-  ) {
+  // Every known-role message with content goes through the collapsible row, so a large input never mounts
+  // full segment bodies outside the row state (collapsed rows mount no body).
+  if (knownRole && message.parts.length > 0) {
     return (
       <ExpandableTrajectoryMessage
         message={message}
-        role={message.role}
+        role={message.role as "system" | "user" | "assistant" | "tool"}
         roleLabel={roleLabel}
         callDurationLabel={
           typeof callDurationMs === "number" ? formatTrajectoryDuration(callDurationMs) : "—"
@@ -201,6 +250,7 @@ function MessageBlock({
         callDatetimeLabel={formatTrajectoryDateTime(callStartedAt)}
         callDatetimeTitle={callStartedAt}
         isAlt={isAlt}
+        defaultOpen={defaultOpen}
         expansionKey={expansionKey}
         intl={intl}
       />
@@ -248,6 +298,16 @@ function MessageBlock({
   );
 }
 
+function inputRevealIndex(
+  revealKey: string | null,
+  expansionKeyPrefix: string,
+): number | undefined {
+  const marker = `${expansionKeyPrefix}:input:`;
+  if (!revealKey?.startsWith(marker)) return undefined;
+  const index = Number(revealKey.slice(marker.length));
+  return Number.isSafeInteger(index) && index >= 0 ? index : undefined;
+}
+
 function ResponseBlock({
   response,
   callStartedAt,
@@ -279,7 +339,18 @@ function ResponseBlock({
   if (response.reasoningText) {
     rows.push({
       key: "reasoning",
-      message: { role: "assistant", parts: [{ kind: "text", text: response.reasoningText }] },
+      message: {
+        role: "assistant",
+        parts: [
+          {
+            kind: "text",
+            text: response.reasoningText,
+            ...(response.truncated?.reasoningText
+              ? { truncated: response.truncated.reasoningText }
+              : {}),
+          },
+        ],
+      },
       roleLabel: intl.formatMessage({ id: "modelTrajectory.reasoning" }),
       visualRole: "reasoning",
     });
@@ -287,7 +358,16 @@ function ResponseBlock({
   if (response.text) {
     rows.push({
       key: "message",
-      message: { role: "assistant", parts: [{ kind: "text", text: response.text }] },
+      message: {
+        role: "assistant",
+        parts: [
+          {
+            kind: "text",
+            text: response.text,
+            ...(response.truncated?.text ? { truncated: response.truncated.text } : {}),
+          },
+        ],
+      },
       roleLabel: intl.formatMessage({ id: "modelTrajectory.role.assistant" }),
     });
   }

@@ -69,3 +69,12 @@ When Phase C items 1–6 are merged or explicitly deferred and Phase D is exerci
 - Fix pack 2 now holds five commits (50809fe3 preparedActivation, 74f5978b affected runner, 6e2da170 chunked hydration, a810494d + 4f9c41ad incognito marker). Live after restart: session open 570 → 188 ms worst block; fresh incognito session shows its marker.
 - Push failures explained: git opens the SSH connection before the ~6 min pre-push verify, GitHub closes it idle, git dies of SIGPIPE (exit 141) with no output. Pushing over HTTPS keeps the hook and avoids the idle connection.
 - Grouped sidebar design note: it renders persisted tasks-index facts plus the activity sidecar only; live sessions-index overlay fields (incognito, worktree) reach only the flat list. Durable markers are therefore required, which the placeholder fix and the broadcast provide.
+
+## Phase D results (2026-10-22 03:20, dev build on pack 2)
+
+- Split view: "Open in split view" from a task's context menu opens a second session pane (2 pane roots). No errors.
+- Help menu: all nine entries present. "Check for updates" on an unpackaged build returns `dev-skipped` silently (no toast, no log line); the flow needs `--zcode-auto-update-dev` or a packaged build to exercise.
+- Multi-window and quit confirmation are app-menu actions (no in-app control), not drivable over CDP; left for a manual pass.
+- Remote connection: entry is Settings → Remote devices → "New connection" (not the Projects header). The dialog opens with Host, Port 22, Username and Password fields and closes cleanly on Cancel; no errors logged.
+- New S1 found: ISSUE-023 model trajectory viewer freeze (5.8 s task on the 1052-message session; 22.6 MB payload in 5 records; all rows default-expanded). Fix delegated: bounded per-part projection on the Host + collapsed-by-default rows above a threshold, spec first.
+- ISSUE-023 fixed and verified live (open 5.8 s → 171 ms worst block). Open follow-up: the model-io file repeats the full restored context per record (5 × ~1.16 MB projected here); a delta contract between Host and viewer would bound the payload across records.

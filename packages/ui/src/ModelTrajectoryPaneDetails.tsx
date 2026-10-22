@@ -21,6 +21,49 @@ export function ContentPartView({
   sectionLabel?: string;
   showToolHeader?: boolean;
 }) {
+  const body = (
+    <ContentPartBody
+      part={part}
+      intl={intl}
+      sectionLabel={sectionLabel}
+      showToolHeader={showToolHeader}
+    />
+  );
+  if (!part.truncated) return body;
+  return (
+    <>
+      {body}
+      <TruncatedNotice originalBytes={part.truncated.originalBytes} intl={intl} />
+    </>
+  );
+}
+
+/** Explicit notice for a segment cut by the host budget; expanding the row cannot restore the elided middle. */
+export function TruncatedNotice({
+  originalBytes,
+  intl,
+}: {
+  originalBytes: number;
+  intl: IntlShape;
+}) {
+  return (
+    <p data-trajectory-truncated="" className="text-ui-xs text-foreground-subtlest">
+      {intl.formatMessage({ id: "modelTrajectory.truncatedAtSource" }, { bytes: originalBytes })}
+    </p>
+  );
+}
+
+function ContentPartBody({
+  part,
+  intl,
+  sectionLabel,
+  showToolHeader = true,
+}: {
+  part: ZCodeModelTrajectoryContentPart;
+  intl: IntlShape;
+  sectionLabel?: string;
+  showToolHeader?: boolean;
+}) {
   if (part.kind === "text") {
     if (!part.text) {
       return null;

@@ -134,6 +134,15 @@ export function ModelTrajectoryPane({
     setSearchActiveIndex(0);
     clearTrajectorySearchHighlights();
   }, []);
+  const [rowLimits, setRowLimits] = useState(() => new Map<string, number>());
+  const setRowLimit = useCallback((key: string, limit: number) => {
+    setRowLimits((previous) => {
+      if (previous.get(key) === limit) return previous;
+      const next = new Map(previous);
+      next.set(key, limit);
+      return next;
+    });
+  }, []);
   const setExpansionOverride = useCallback((key: string, override: TrajectoryExpansionOverride) => {
     setExpansionOverrides((previous) => {
       const next = new Map(previous);
@@ -142,8 +151,13 @@ export function ModelTrajectoryPane({
     });
   }, []);
   const expansionRegistry = useMemo(
-    () => ({ overrides: expansionOverrides, setOverride: setExpansionOverride }),
-    [expansionOverrides, setExpansionOverride],
+    () => ({
+      overrides: expansionOverrides,
+      setOverride: setExpansionOverride,
+      rowLimits,
+      setRowLimit,
+    }),
+    [expansionOverrides, setExpansionOverride, rowLimits, setRowLimit],
   );
   const handleOpenSourceDirectory = useCallback(async () => {
     if (!sourceDirectory) {

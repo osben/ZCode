@@ -110,14 +110,24 @@ export interface ZCodeTaskWorktreeCleanupResult {
   failedCount: number;
 }
 
+/**
+ * Marks a payload whose content was cut by the host's per-segment byte budget.
+ * originalBytes is the UTF-8 size before cutting; omittedBytes is the size of the elided middle.
+ */
+export interface ZCodeModelTrajectoryTruncation {
+  originalBytes: number;
+  omittedBytes: number;
+}
+
 /** A message content part from one model request (text / tool call / tool result / other raw structure). */
-export type ZCodeModelTrajectoryContentPart =
+export type ZCodeModelTrajectoryContentPart = (
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
   | { kind: "tool-call"; toolCallId?: string; toolName: string; input?: unknown }
   | { kind: "tool-result"; toolCallId?: string; toolName?: string; output?: unknown }
   | { kind: "image"; mediaType?: string }
-  | { kind: "unknown"; raw: unknown };
+  | { kind: "unknown"; raw: unknown }
+) & { truncated?: ZCodeModelTrajectoryTruncation };
 
 /** One conversation message (system / user / assistant / tool). */
 export interface ZCodeModelTrajectoryMessage {
@@ -175,6 +185,11 @@ export interface ZCodeModelTrajectoryRecord {
     text?: string;
     reasoningText?: string;
     toolCalls: ZCodeModelTrajectoryContentPart[];
+    /** Set when response.text or response.reasoningText was cut by the per-segment byte budget. */
+    truncated?: {
+      text?: ZCodeModelTrajectoryTruncation;
+      reasoningText?: ZCodeModelTrajectoryTruncation;
+    };
     usage?: ZCodeModelTrajectoryUsage;
     responseId?: string;
     modelId?: string;
