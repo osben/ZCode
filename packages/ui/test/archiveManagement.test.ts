@@ -377,14 +377,12 @@ it("joins remote project names in the notice with the active locale's list forma
   });
   expect(result.current.deletionResult).toContain('"projects":"api, web, and cli"');
 
-  mocks.locale = "zh-CN";
-  const { result: zh } = renderHook(() => useArchiveManagement({ allowPermanentDelete: true }));
+  mocks.locale = "uk-UA";
+  const { result: uk } = renderHook(() => useArchiveManagement({ allowPermanentDelete: true }));
   await act(async () => {
-    await zh.current.run(rows, "delete");
+    await uk.current.run(rows, "delete");
   });
-  expect(zh.current.deletionResult).toContain(
-    `"projects":"${new Intl.ListFormat("zh-CN", { type: "conjunction" }).format(["api", "web", "cli"])}"`,
-  );
+  expect(uk.current.deletionResult).toContain('"projects":"api, web і cli"');
 });
 it("an archived row with unknown worktree status is not erased until the loss is acknowledged", async () => {
   const withWorktree = task("wt", {
