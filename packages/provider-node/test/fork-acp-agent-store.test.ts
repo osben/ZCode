@@ -149,7 +149,7 @@ describe("migrateInlineAcpProviders", () => {
     expect(() => decodeWithUpstreamSchemas(legacy)).toThrow();
 
     const result = await migrateInlineAcpProviders(repository(), store());
-    expect(result).toEqual({ copied: ["opencode"], stripped: true });
+    expect(result).toEqual({ copied: ["opencode"], stripped: true, kept: [] });
 
     const mainText = await readFile(personalFilePath, "utf8");
     expect(mainText).not.toContain("acp:");
@@ -174,6 +174,7 @@ describe("migrateInlineAcpProviders", () => {
     expect(await migrateInlineAcpProviders(repository(), store())).toEqual({
       copied: [],
       stripped: false,
+      kept: [],
     });
     expect(await readFile(personalFilePath, "utf8")).toBe(mainBefore);
     expect(await readFile(sidecarFilePath, "utf8")).toBe(sidecarBefore);
@@ -185,7 +186,7 @@ describe("migrateInlineAcpProviders", () => {
     await store().update(() => [OPENCODE]);
 
     const result = await migrateInlineAcpProviders(repository(), store());
-    expect(result).toEqual({ copied: [], stripped: true });
+    expect(result).toEqual({ copied: [], stripped: true, kept: [] });
     expect((await store().read()).agents).toEqual([OPENCODE]);
     expect(await readFile(personalFilePath, "utf8")).not.toContain("acp:");
   });
@@ -194,6 +195,50 @@ describe("migrateInlineAcpProviders", () => {
     expect(await migrateInlineAcpProviders(repository(), store())).toEqual({
       copied: [],
       stripped: false,
+      kept: [],
     });
+  });
+
+  it("never strips an acp-agent rule it could not copy", async () => {
+    const access = (command: string) => ({
+      type: "acp-agent",
+      agentId: "x",
+      command,
+      args: [],
+    });
+    await writeFile(
+      personalFilePath,
+      JSON.stringify(
+        encodeProviderConfigFile({
+          providers: parsePersonalProviderConfigMap({
+            providerRules: [
+              // Not an acp:<agentId> id, so it has no sidecar record shape.
+              {
+                providerId: "custom-acp",
+                config: { group: "standard-personal", access: access("custom") },
+              },
+              // An acp: id that is not a valid agent id (whitespace) fails record parsing.
+              {
+                providerId: "acp:bad id",
+                config: { group: "standard-personal", access: access("bad") },
+              },
+            ],
+          }),
+          models: parsePersonalModelConfigRules({
+            providerModelRules: [],
+            manualProviderModelRules: [],
+          }),
+          providerOrder: [],
+        }),
+      ),
+    );
+    const before = await readFile(personalFilePath, "utf8");
+    expect(await migrateInlineAcpProviders(repository(), store())).toEqual({
+      copied: [],
+      stripped: false,
+      kept: ["custom-acp", "acp:bad id"],
+    });
+    expect(await readFile(personalFilePath, "utf8")).toBe(before);
+    expect((await store().read()).agents).toEqual([]);
   });
 });

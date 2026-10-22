@@ -259,16 +259,23 @@ export function hasInlineAcpProviders(update: Pick<ProviderConfigLayerUpdate, "p
 }
 
 /**
- * Removes every `acp-agent` provider rule, its exact model rules and its `providerOrder` entry,
- * so the remaining document is decodable by upstream builds.
+ * Removes the inline `acp:<agentId>` providers whose agent the sidecar already holds, with their
+ * exact model rules and `providerOrder` entries. Any other `acp-agent` rule is kept: stripping a
+ * rule that was never copied would lose it.
  */
 export function stripInlineAcpProviders(
   update: ProviderConfigLayerUpdate,
+  sidecarAgentIds: ReadonlySet<string>,
 ): ProviderConfigLayerUpdate {
   const removed = new Set(
     update.providers
       .rules()
-      .filter((rule) => isAcpAgentAccess(rule.config.access))
+      .filter(
+        (rule) =>
+          isAcpAgentAccess(rule.config.access) &&
+          rule.providerId.startsWith(ACP_PROVIDER_ID_PREFIX) &&
+          sidecarAgentIds.has(rule.providerId.slice(ACP_PROVIDER_ID_PREFIX.length)),
+      )
       .map((rule) => rule.providerId),
   );
   if (removed.size === 0) return update;

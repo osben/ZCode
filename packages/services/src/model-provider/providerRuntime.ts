@@ -181,6 +181,12 @@ export class ProviderRuntime {
           copied: result.copied.length,
         });
       }
+      if (result.kept.length > 0) {
+        // These rules still make provider_config.json unreadable for upstream builds.
+        log.warn(undefined, "inline ACP providers left in provider_config.json", {
+          count: result.kept.length,
+        });
+      }
     } catch (error) {
       // Migration is retried on the next start; it must never block the provider runtime.
       log.warn(undefined, "inline ACP provider migration failed", { error });

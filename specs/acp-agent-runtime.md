@@ -189,9 +189,12 @@ Design (fix):
   If it is an inline `acp-agent` rule (legacy data), the sidecar record replaces it.
 - Migration (one-shot, idempotent, at provider runtime start, before the registry starts):
   inline `acp-agent` rules found in `provider_config.json` are copied into the sidecar (an existing
-  sidecar record wins), then one `update()` strips those rules, their model rules and their
-  `providerOrder` entries. A crash between the two writes leaves both copies; the next start
-  repeats the strip. Migration failure is logged and never blocks startup.
+  sidecar record wins), then one `update()` strips the `acp:<agentId>` rules whose agent the
+  sidecar now holds, with their model rules and `providerOrder` entries. An `acp-agent` rule the
+  sidecar does not hold (non-`acp:` id, unparsable record, or added by another writer between the
+  two writes) is never stripped; it is kept and reported with a warning. A crash between the two
+  writes leaves both copies; the next start repeats the strip. Without anything to strip the file
+  is not rewritten. Migration failure is logged and never blocks startup.
 - Provisioning stays main-file only: ACP launch config is per host (command paths are host-local)
   and is not synced to remote environments.
 - Wiring: the desktop/web host provider runtime. Process registries in CLI workers do not see ACP

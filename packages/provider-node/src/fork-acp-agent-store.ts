@@ -9,6 +9,7 @@ import {
   stripInlineAcpProviders,
   type ForkAcpAgentRecord,
   type PersonalProviderConfigRepository,
+  type ProviderConfigLayerUpdate,
   type ForkAcpAgentSnapshot,
   type ForkAcpAgentStore,
 } from "@zcode/provider";
@@ -181,8 +182,10 @@ function isFileNotFound(error: unknown): boolean {
 export interface InlineAcpMigrationResult {
   /** Agent ids copied into the sidecar (existing sidecar records are kept and not counted). */
   readonly copied: readonly string[];
-  /** Whether `provider_config.json` was rewritten without its inline `acp-agent` rules. */
+  /** Whether `provider_config.json` was rewritten without its migrated inline rules. */
   readonly stripped: boolean;
+  /** Provider ids of `acp-agent` rules left in place because the sidecar holds no record for them. */
+  readonly kept: readonly string[];
 }
 
 /**
@@ -195,22 +198,37 @@ export async function migrateInlineAcpProviders(
   store: ForkAcpAgentStore,
 ): Promise<InlineAcpMigrationResult> {
   const personal = await personalRepository.read();
-  if (!hasInlineAcpProviders(personal)) return { copied: [], stripped: false };
+  if (!hasInlineAcpProviders(personal)) return { copied: [], stripped: false, kept: [] };
   const inline = extractInlineAcpAgentRecords(personal);
   let copied: string[] = [];
-  if (inline.length > 0) {
-    await store.update((current) => {
-      const known = new Set(current.map((agent) => agent.agentId));
-      const added = inline.filter((agent) => !known.has(agent.agentId));
-      copied = added.map((agent) => agent.agentId);
-      return [...current, ...added];
-    });
+  const sidecar =
+    inline.length > 0
+      ? await store.update((current) => {
+          const known = new Set(current.map((agent) => agent.agentId));
+          const added = inline.filter((agent) => !known.has(agent.agentId));
+          copied = added.map((agent) => agent.agentId);
+          return [...current, ...added];
+        })
+      : await store.read();
+  // The strip reruns under the personal file lock; only rules the sidecar now holds may go, so
+  // a rule another writer added in between (or one that could not become a record) survives.
+  const sidecarAgentIds = new Set(sidecar.agents.map((agent) => agent.agentId));
+  const keptIn = (update: Pick<ProviderConfigLayerUpdate, "providers">) =>
+    update.providers
+      .rules()
+      .filter((rule) => rule.config.access?.type === "acp-agent")
+      .map((rule) => rule.providerId);
+  if (stripInlineAcpProviders(personal, sidecarAgentIds) === personal) {
+    // Nothing migratable: do not rewrite the shared file on every start.
+    return { copied, stripped: false, kept: keptIn(personal) };
   }
   let stripped = false;
+  let kept: string[] = [];
   await personalRepository.update((current) => {
-    const next = stripInlineAcpProviders(current);
+    const next = stripInlineAcpProviders(current, sidecarAgentIds);
     stripped = next !== current;
+    kept = keptIn(next);
     return next;
   });
-  return { copied, stripped };
+  return { copied, stripped, kept };
 }

@@ -238,10 +238,16 @@ describe("legacy inline acp-agent providers (migration helpers)", () => {
   });
 
   it("strips the rules, their model rules and their order entries", () => {
-    const stripped = stripInlineAcpProviders(inline);
+    const ids = new Set(["opencode"]);
+    const stripped = stripInlineAcpProviders(inline, ids);
     expect(stripped.providers.keys()).toEqual(["custom-1"]);
     expect(stripped.models.rules()).toHaveLength(0);
     expect(stripped.providerOrder).toEqual(["custom-1"]);
-    expect(stripInlineAcpProviders(stripped)).toBe(stripped);
+    expect(stripInlineAcpProviders(stripped, ids)).toBe(stripped);
+  });
+
+  it("keeps acp-agent rules the sidecar does not hold", () => {
+    expect(stripInlineAcpProviders(inline, new Set())).toBe(inline);
+    expect(stripInlineAcpProviders(inline, new Set(["cursor"]))).toBe(inline);
   });
 });
