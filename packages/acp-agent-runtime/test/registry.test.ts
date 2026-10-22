@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ACP_AGENT_DEFINITIONS,
+  acpAgentPlatformSupported,
   detectAcpAgents,
   isSafeVersionProbeArgs,
   refreshAcpAgentCache,
@@ -288,5 +289,13 @@ describe("agent definitions", () => {
     expect(ACP_AGENT_DEFINITIONS.find((item) => item.agentId === "cursor")?.statusArgs).toEqual([
       "status",
     ]);
+  });
+});
+
+describe("ACP agent platform scope", () => {
+  it("supports macOS only until Windows and Linux are verified", () => {
+    expect(acpAgentPlatformSupported("darwin")).toBe(true);
+    expect(acpAgentPlatformSupported("linux")).toBe(false);
+    expect(acpAgentPlatformSupported("win32")).toBe(false);
   });
 });

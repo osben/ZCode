@@ -51,7 +51,7 @@ describe("externalAgentConfig helpers", () => {
     expect(selected.effort?.id).toBe("effort");
   });
 
-  it("enables the options only for the session's own agent with a projection", () => {
+  it("shows the projection for the draft's agent and enables it only for the session's own agent", () => {
     const projection = { agentId: "mock", options: [option("mode", "mode", ["a"])] };
     const base = {
       draftProviderId: "acp:mock",
@@ -60,15 +60,32 @@ describe("externalAgentConfig helpers", () => {
       projection,
     };
     expect(resolveExternalAgentComposerState({ ...base, draftProviderId: "glm" })).toBeNull();
+    expect(resolveExternalAgentComposerState(base)).toMatchObject({ enabled: true });
     expect(resolveExternalAgentComposerState(base)?.options?.mode?.id).toBe("mode");
+    // No projection at all (no catalog and no snapshot): the placeholder state.
     expect(resolveExternalAgentComposerState({ ...base, projection: undefined })).toEqual({
       agentId: "mock",
       options: null,
+      draft: false,
+      enabled: true,
     });
-    expect(resolveExternalAgentComposerState({ ...base, sessionId: null })?.options).toBeNull();
-    expect(
-      resolveExternalAgentComposerState({ ...base, sessionProviderId: "glm" })?.options,
-    ).toBeNull();
+    // A draft shows the live projection or the catalog, and its choices are local (enabled while options exist).
+    const beforeMessage = resolveExternalAgentComposerState({ ...base, sessionId: null });
+    expect(beforeMessage?.options?.mode?.id).toBe("mode");
+    expect(beforeMessage).toMatchObject({ draft: true, enabled: true });
+    const fromCatalog = resolveExternalAgentComposerState({
+      ...base,
+      sessionId: null,
+      projection: undefined,
+      catalog: projection.options,
+      draftChoices: { mode: "a" },
+    });
+    expect(fromCatalog?.options?.mode?.currentValue).toBe("a");
+    expect(fromCatalog).toMatchObject({ draft: true, enabled: true });
+    const otherModel = resolveExternalAgentComposerState({ ...base, sessionProviderId: "glm" });
+    expect(otherModel?.options?.mode?.id).toBe("mode");
+    expect(otherModel?.enabled).toBe(false);
+    // A projection of another agent is not shown for this draft.
     expect(
       resolveExternalAgentComposerState({ ...base, draftProviderId: "acp:other" })?.options,
     ).toBeNull();

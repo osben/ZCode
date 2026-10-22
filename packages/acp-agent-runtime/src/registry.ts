@@ -89,6 +89,15 @@ export interface DetectAcpAgentsOptions {
   readonly runProbe?: AcpVersionProbeRunner;
 }
 
+/**
+ * ACP agents are supported on macOS only until Windows and Linux are verified (specs/acp-agent-runtime.md,
+ * "S6 readiness"). This is the single predicate: detection, the worker and host gates and the settings bridge
+ * all ask it, so no platform answers "supported" through a second check.
+ */
+export function acpAgentPlatformSupported(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "darwin";
+}
+
 export const DEFAULT_ACP_PROBE_TIMEOUT_MS = 5_000;
 export const DEFAULT_ACP_DETECTION_CACHE_TTL_MS = 60_000;
 

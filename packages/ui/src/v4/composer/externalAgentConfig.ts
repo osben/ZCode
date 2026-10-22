@@ -77,31 +77,67 @@ export function selectExternalAgentComposerOptions(
 
 export interface ExternalAgentComposerState {
   agentId: string;
-  /** Null while the controls are disabled ("available after the first message"). */
+  /**
+   * Null only when neither a live projection nor a catalog exists for the agent: the placeholder "available after
+   * the first message" renders. The live projection wins once it belongs to this agent; the catalog stands in before.
+   */
   options: ExternalAgentComposerOptions | null;
+  /**
+   * Draft (no session yet): a choice updates the draft's state and is sent with the first submission (S6 readiness).
+   * Session: a choice is dispatched as setExternalAgentConfigOption and is enabled only for this agent's session.
+   */
+  draft: boolean;
+  enabled: boolean;
 }
 
+/** Choices made in the draft before its first submission, by config id (UI-local, never persisted). */
+export type ExternalAgentDraftChoices = Readonly<Record<string, string>>;
+
 /**
- * Composer state for the draft's model. Null when the model is not an ACP agent (the ZCode mode switch
- * renders). The options are enabled only when the server would accept a choice: the session exists,
- * the projection belongs to this agent and the session's own model is this agent.
+ * Composer state for the draft's model. Null when the model is not an ACP agent (the ZCode mode switch renders).
+ * `catalog` is the agent's last offered options (undefined while loading). The draft's choices overlay the options
+ * of a draft, so the selects show what the first submission will send.
  */
 export function resolveExternalAgentComposerState(params: {
   draftProviderId: string | null | undefined;
   sessionId: string | null | undefined;
   sessionProviderId: string | null | undefined;
   projection: ExternalAgentConfigState | null | undefined;
+  catalog?: readonly ExternalAgentConfigOption[] | null;
+  draftChoices?: ExternalAgentDraftChoices;
 }): ExternalAgentComposerState | null {
   const agentId = resolveExternalAgentId(params.draftProviderId);
   if (!agentId) return null;
-  const enabled =
-    Boolean(params.sessionId) &&
-    params.projection?.agentId === agentId &&
-    resolveExternalAgentId(params.sessionProviderId) === agentId;
+  const draft = !params.sessionId;
+  const live = params.projection?.agentId === agentId ? params.projection.options : null;
+  const offered = live ?? params.catalog ?? null;
+  const overlaid = offered
+    ? draft && params.draftChoices
+      ? overlayDraftChoices(offered, params.draftChoices)
+      : offered
+    : null;
   return {
     agentId,
-    options: enabled ? selectExternalAgentComposerOptions(params.projection!.options) : null,
+    options: overlaid ? selectExternalAgentComposerOptions(overlaid) : null,
+    draft,
+    enabled: draft
+      ? overlaid !== null
+      : resolveExternalAgentId(params.sessionProviderId) === agentId,
   };
+}
+
+/** The offered options with a draft's choices as their current values (only values the option offers). */
+export function overlayDraftChoices(
+  options: readonly ExternalAgentConfigOption[],
+  choices: ExternalAgentDraftChoices,
+): ExternalAgentConfigOption[] {
+  return options.map((option) => {
+    const chosen = choices[option.id];
+    if (chosen === undefined || !option.options.some((value) => value.value === chosen)) {
+      return option;
+    }
+    return { ...option, currentValue: chosen };
+  });
 }
 
 /** The value after the current one, wrapping; the first value when the current one is unknown. */

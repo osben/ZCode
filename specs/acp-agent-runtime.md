@@ -19,6 +19,8 @@ the mock-agent tests encode the contract below.
   model stays out of the chat registry (`executable = false`). The provider is derived from the
   fork-owned sidecar store, never written to `provider_config.json` (see "Storage and upstream
   compatibility").
+- Platform: macOS only until Windows and Linux are verified (the login helper is macOS-only and the E2E
+  specs skip win32). Other platforms report detection `supported: false` and offer nothing.
 - Permissions are answered by `kind` (`allow_once` / `allow_always` / `reject_once` /
   `reject_always`); an unavailable kind resolves to `cancelled`. Agents never see host-specific
   option ids.
@@ -617,11 +619,16 @@ Sources of the options:
 Chosen values are cleared with the binding: an agent switch, a cwd change or a launch-config change
 clears them, because the values belong to one agent process configuration.
 
-Decision: the controls are disabled with "available after the first message" until the session has an
-offered snapshot. The alternative (the worker spawns the agent when the agent is selected) was rejected:
-a composer selection would start an agent process outside CommandInbox admission and outside the owner
-and lease of a turn, and a draft may have no session yet. After the first turn, the snapshot is
-persisted and projected, so the controls are available again after an app relaunch without a spawn.
+Decision (readiness revision, see "S6 readiness" below): the selects are offered before the first turn
+from a per-agent catalog, the last offered snapshot of that agent. The placeholder "available after the first
+message" is shown only when no catalog exists for the agent (it has never been run or tested). The alternative
+(the worker spawns the agent when the agent is selected) stays rejected: a composer selection would start an
+agent process outside CommandInbox admission and outside the owner and lease of a turn.
+
+Reason for the revision: with the real `opencode` CLI the default model (`opencode/flint-40b-free`) was down
+upstream. `opencode acp` has no flag for the model, so the only fix is `session/set_config_option`, which the
+reconcile already applies before every prompt. But the selects were locked until a runtime had started, so the
+first turn retried for about two minutes and failed before the user could pick a working model.
 
 Runtime (`packages/acp-agent-runtime`):
 
@@ -679,8 +686,10 @@ and is then resolved cancelled, because the client may already show the dialog.
 
 Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, owner: session):
 
-- Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
-  after the first message"), and with `config.invalid` when the id or value is not offered.
+- A session with no `config_options` snapshot (no first turn yet, typically the draft's prewarm session) is
+  accepted when the agent's catalog offers the option and value; the choice is then stored as a pending
+  choice (see "S6 readiness"). Refused with `config.notAvailable` only when the agent has no catalog and no
+  snapshot, and with `config.invalid` when the id or value is not offered.
 - A same value that is already the chosen value and the shown value is a no-op (`config.unchanged`).
   Choosing the shown value when it is not the stored choice (an agent-initiated value) stores it, so
   the next reconcile does not revert it.
@@ -723,10 +732,10 @@ UI (as shipped, `packages/ui`):
 - Controls: Mode (`category: "mode"` or id `mode`), Model (`category: "model"` or id `model`) and Effort
   (`category: "thought_level"` or id `effort`, only when offered). Other options are not shown. Labels,
   value names and descriptions come from the agent and are not translated.
-- Enabled only when the session exists, the projection is present, its `agentId` equals the draft's
-  agent, and the session's own model (`config.modelSelection.providerId`) is that `acp:` id. Otherwise
-  Mode and Model render disabled (`aria-disabled`, the menu still opens) with
-  `chat.toolbar.externalAgent.availableAfterFirstMessage` ("Available after the first message").
+- Selects follow "S6 readiness" (Composer): the live projection when it belongs to the draft's agent, else the
+  catalog with the draft's choices. Enabled before a session exists (draft choices are local) and, once a session
+  exists, only while its own model (`config.modelSelection.providerId`) is that `acp:` id. The placeholder
+  `chat.toolbar.externalAgent.availableAfterFirstMessage` renders only when neither a projection nor a catalog exists.
 - Every agent menu shows the hint `chat.toolbar.externalAgent.hint` (the agent applies its own edits;
   shell commands outside its allowlist ask for permission).
 - Search: a select with more than 8 values gets a filter input
@@ -766,6 +775,100 @@ Acceptance (S6):
 - E2E (`conversation-session-acp-agent-config.test.ts`): select the agent mode "plan" after a first
   turn, send, and the mock records `session/set_config_option` (mode=plan) before `session/prompt`; the
   value survives an app restart.
+
+### S6 readiness: catalog, pre-turn choices and platform scope
+
+Reason: with the real `opencode` CLI the default model (`opencode/flint-40b-free`) was down upstream. `opencode acp`
+has no flag for the model, so the only fix is `session/set_config_option`. The selects were locked until a runtime
+had started, so the first turn retried for about two minutes before the user could pick a working model.
+
+Owners (one per fact):
+
+| Fact                                                      | Owner                                                                          | Stored in                                                                    | Read by                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Last offered options per agent (catalog)                  | `NodeForkAcpAgentCatalogStore` (host and worker share the file under its lock) | `fork_acp_agent_catalog.json`                                                | composer, via `getAcpAgentCatalog` (host RPC); worker validation of a choice |
+| Choice before the first turn                              | composer draft (renderer, uncommitted)                                         | nowhere durable                                                              | sent once by the first submission                                            |
+| Choice before the first turn, after it reaches the worker | worker pending row                                                             | `fork_acp_session_choice` (migration `9005_fork_session_acp_pending_choice`) | binding write, then reconcile                                                |
+| Offered snapshot and chosen values of a bound session     | `AcpSessionRuntime` snapshot and the worker binding                            | `fork_acp_session_binding` (`config_options`, `config_choices`)              | projection seed on subscribe                                                 |
+| Projected selects of a session                            | session projection (`config.externalAgentConfig`)                              | `external_agent_config_updated` event                                        | composer, once a session exists (wins over catalog and draft)                |
+
+Why `fork_acp_session_choice` is kept: the first submission dispatches `setExternalAgentConfigOption` after the
+session exists and before `sendText`, so the worker must hold the choice before any binding exists. The binding
+row cannot hold it: `acp_session_id` is NOT NULL and only exists after the first `session/new`. A sentinel value
+would make the resume path call `session/load`. The pending row has one writer (the command handler) and is
+moved into `config_choices` by the binding write in one transaction; `clear()` drops it too.
+
+Catalog (`fork_acp_agent_catalog.json`, next to `provider_config.json`):
+
+- A separate file, not a field of the agent record. The record schema is `.strict()` in fork builds, so an extra
+  field would make an older fork build reject the whole agents file. The catalog is read only by fork builds and
+  its reads are tolerant anyway. Shape: `{ schemaVersion: 1, agents: [{ agentId, capturedAt, options }] }`. An
+  invalid file reads as empty (reported once); an invalid entry is dropped alone.
+- Writers: the worker turn reconcile (before each prompt) and the Settings Test roundtrip (after `session/new`). Both
+  take the file lock; a write whose options equal the stored ones is skipped. Only the offered snapshot is stored.
+- The catalog file is code in `packages/provider/src/acp-agent-derivation.ts` and
+  `packages/provider-node/src/fork-acp-agent-store.ts`, existing unmanaged exceptions in
+  `architecture-policy.yaml`. The composer hook `packages/ui/src/hooks/useAcpAgentCatalog.ts` is added to the ACP composer
+  exception (`acp-agent-config-composer-unmanaged-files`), the same unmanaged `packages/ui` tree as its neighbours.
+
+Platform scope: ACP is macOS only until Windows and Linux are verified. `acpAgentPlatformSupported(platform)` in
+`@zcode/acp-agent-runtime` is the one predicate. The settings bridge is wired only for a development host on macOS;
+its `detect` and `catalog` report `supported: false` otherwise, and the worker and host ACP gates use the same
+predicate, so no `acp:` provider is derived and nothing is offered in the composer.
+
+Composer (`V4ComposerModeArea`):
+
+- Catalog read: `useAcpAgentCatalog(agentId)` (`packages/ui/src/hooks/`) calls `providerSettingsService.getAcpAgentCatalog`.
+  The host reads the catalog file; the session projection is not involved.
+- Before a session exists (draft): the selects show the catalog options, overlaid with the draft's choices. A
+  selection updates the draft state only. Nothing is dispatched. Enabled when the catalog has options. The draft
+  state of an agent is cleared once every choice has been accepted by the session: the session holds the choices
+  then, and its projection shows them.
+- Once a session exists: the live projection (`config.externalAgentConfig`) wins when it belongs to this agent. Otherwise the
+  catalog shows. Enabled only when the session's model is this agent. A selection dispatches
+  `setExternalAgentConfigOption`.
+- The placeholder "Available after the first message" renders only when neither a projection nor a catalog exists for the agent.
+
+Event order of a first submission with draft choices (the draft's prewarm session is the target):
+
+```text
+composer (renderer, owns the draft choices)
+  │ select "plan" while draft ──▶ draft state { mode: plan }   (no command)
+  │ send
+  ▼
+SessionPane.ensureDraftPrewarmConfigBeforeSend(prewarm)  ─ model/mode CAS as before, all accepted
+  ▼
+dispatch setExternalAgentConfigOption { configId: mode, value: plan } for each draft choice
+  │   CommandInbox admits serially; handler: session model is this agent ─▶ catalog offers it ─▶
+  │   writes fork_acp_session_choice, appends external_agent_config_updated (projection shows plan)
+  │   any refusal or failed ACK ─▶ error toast, the draft is kept, sendText is NOT sent
+  ▼
+dispatch sendText (first submission reuses the prewarm session)
+  ▼
+worker turn: pool.acquire ─▶ session/new ─▶ binding write (moves the pending choice into config_choices)
+  ▼
+reconcile: set_config_option mode=plan ─▶ session/prompt
+```
+
+- A failed choice dispatch throws before `sendText`, so the prompt is never sent with the wrong mode. The
+  composer keeps the draft text and shows the failure through the existing send-error path.
+- `setExternalAgentConfigOption` is refused with `config.notAvailable` only when the agent has neither a catalog
+  nor an offered snapshot, and with `config.invalid` for an option or value the catalog or snapshot does not offer.
+
+Acceptance (S6 readiness):
+
+- Catalog: a handshake writes the catalog; an equal snapshot is not rewritten; a missing, invalid file and an invalid
+  entry read tolerantly (empty, empty, that entry dropped).
+- Pending choice: stored when no binding exists; moved into `config_choices` by the binding write in one
+  transaction; dropped for another agent; read by `readConfig`. Tested against the real SQLite binding store.
+- Worker: a pending choice is applied before the first `session/prompt` (real binding store, fake runtime).
+- Command: accepted with a catalog and no snapshot; `config.notAvailable` without either; `config.invalid` for
+  an unoffered value.
+- Host: `getAcpAgentCatalog` returns the stored options on macOS and `supported: false` elsewhere.
+- UI: the draft shows the catalog and a choice updates draft state only; a session shows the projection when it
+  exists; the placeholder only when neither exists.
+- E2E (`conversation-session-acp-agent-preturn.test.ts`): a seeded catalog, choose mode "plan" before the first
+  message, send. The mock records `session/set_config_option mode=plan` before its first `session/prompt`.
 
 ### Reservation ordering (first message)
 

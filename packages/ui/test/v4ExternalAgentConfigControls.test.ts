@@ -10,6 +10,12 @@ const captured = vi.hoisted(() => ({
   radioGroups: [] as Array<Record<string, unknown>>,
   modeSwitchProps: null as Record<string, unknown> | null,
   shortcutParams: null as Record<string, unknown> | null,
+  catalogOptions: null as unknown,
+}));
+
+// The host catalog read (S6 readiness) is stubbed; the composer shows it when no live projection exists.
+vi.mock("@/hooks/useAcpAgentCatalog.js", () => ({
+  useAcpAgentCatalog: () => ({ options: captured.catalogOptions }),
 }));
 
 vi.mock("@/ControlHintTooltip.js", () => ({
@@ -102,9 +108,13 @@ function render(
     sessionId?: string | null;
     sessionProviderId?: string | null;
     externalAgentConfig?: ExternalAgentConfigState;
+    catalog?: ExternalAgentConfigOption[] | null;
+    draftExternalAgentChoices?: Record<string, Record<string, string>>;
+    onSetDraftExternalAgentChoice?: (agentId: string, configId: string, value: string) => void;
     onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
   } = {},
 ) {
+  captured.catalogOptions = "catalog" in overrides ? overrides.catalog : null;
   const props = {
     workspacePath: "/workspace",
     provider: "glm" as const,
@@ -124,6 +134,8 @@ function render(
       "onSetExternalAgentConfigOption" in overrides
         ? overrides.onSetExternalAgentConfigOption
         : vi.fn(),
+    draftExternalAgentChoices: overrides.draftExternalAgentChoices,
+    onSetDraftExternalAgentChoice: overrides.onSetDraftExternalAgentChoice,
   };
   const html = renderToStaticMarkup(
     createElement(V4ComposerModeArea, props as Parameters<typeof V4ComposerModeArea>[0]),
@@ -135,6 +147,7 @@ beforeEach(() => {
   captured.radioGroups = [];
   captured.modeSwitchProps = null;
   captured.shortcutParams = null;
+  captured.catalogOptions = null;
 });
 
 describe("V4ComposerModeArea (S6 agent configuration options)", () => {
@@ -184,16 +197,8 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
     });
   });
 
-  it.each([
-    ["before the first message (no projection)", { externalAgentConfig: undefined }],
-    ["for a draft without a session", { sessionId: null }],
-    [
-      "when the projection belongs to another agent",
-      { externalAgentConfig: { ...projection, agentId: "other" } },
-    ],
-    ["when the session model is not this agent yet", { sessionProviderId: "glm" }],
-  ])("disables the agent controls %s", (_name, overrides) => {
-    const { html } = render(overrides);
+  it("shows the placeholder only when no projection exists for the agent", () => {
+    const { html } = render({ externalAgentConfig: undefined });
 
     expect(html).toContain('data-testid="external-agent-config-trigger-mode"');
     expect(html).toContain('data-testid="external-agent-config-trigger-model"');
@@ -205,6 +210,70 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
     expect(captured.radioGroups).toHaveLength(0);
     expect(captured.shortcutParams).toMatchObject({ hasAnyOption: false });
   });
+
+  it("shows the catalog selects with a session of this agent, enabled", () => {
+    const { html } = render({
+      externalAgentConfig: undefined,
+      catalog: projection.options,
+      sessionId: "prewarm-1",
+    });
+
+    expect(html).not.toContain("chat.toolbar.externalAgent.availableAfterFirstMessage");
+    expect(html).toContain("Agent mode");
+    expect(html.match(/data-external-agent-config-available="true"/g)).toHaveLength(2);
+    expect(html).not.toContain('aria-disabled="true"');
+    expect(captured.shortcutParams).toMatchObject({ hasAnyOption: true });
+  });
+
+  it("in a draft, shows the catalog and a choice only updates the draft state", () => {
+    const onDraft = vi.fn();
+    const onSession = vi.fn();
+    render({
+      externalAgentConfig: undefined,
+      catalog: projection.options,
+      sessionId: null,
+      onSetDraftExternalAgentChoice: onDraft,
+      onSetExternalAgentConfigOption: onSession,
+    });
+
+    const modeGroup = captured.radioGroups.find((group) => group.value === "default")!;
+    (modeGroup.onValueChange as (value: string) => void)("plan");
+    expect(onDraft).toHaveBeenCalledWith("mock", "mode", "plan");
+    expect(onSession).not.toHaveBeenCalled();
+  });
+
+  it("shows the draft's choices as the current values of the catalog", () => {
+    const { html } = render({
+      externalAgentConfig: undefined,
+      catalog: projection.options,
+      sessionId: null,
+      draftExternalAgentChoices: { mock: { mode: "plan" } },
+      onSetDraftExternalAgentChoice: vi.fn(),
+    });
+
+    expect(html).toContain("Agent mode: plan (agent)");
+  });
+
+  it.each([["when the session model is not this agent yet", { sessionProviderId: "glm" }]])(
+    "shows the catalog selects disabled %s",
+    (_name, overrides) => {
+      const onSet = vi.fn();
+      const { html } = render({
+        ...overrides,
+        externalAgentConfig: undefined,
+        catalog: projection.options,
+        onSetExternalAgentConfigOption: onSet,
+      });
+
+      expect(html.match(/aria-disabled="true"/g)).toHaveLength(2);
+      expect(html.match(/data-external-agent-config-available="false"/g)).toHaveLength(2);
+      expect(html).not.toContain("chat.toolbar.externalAgent.availableAfterFirstMessage");
+      expect(captured.shortcutParams).toMatchObject({ hasAnyOption: false });
+      const modeGroup = captured.radioGroups.find((group) => group.value === "default")!;
+      (modeGroup.onValueChange as (value: string) => void)("plan");
+      expect(onSet).not.toHaveBeenCalled();
+    },
+  );
 
   it("choosing a value sends the option id and value", () => {
     const onSet = vi.fn();

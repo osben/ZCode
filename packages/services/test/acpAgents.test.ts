@@ -193,6 +193,112 @@ describe("ACP agents bridge", () => {
   });
 });
 
+// S6 readiness: ACP agents are macOS only, and a Test roundtrip records the offered options (the catalog).
+describe("ACP agents bridge platform scope and catalog", () => {
+  it("reports unsupported and spawns nothing outside macOS", async () => {
+    const detectAgents = vi.fn(async () => [mockSummary()]);
+    const bridge = createAcpAgentsBridge({ detectAgents, platform: "linux" });
+
+    const result = await bridge.detect();
+
+    expect(result).toMatchObject({ supported: false, agents: [] });
+    expect(detectAgents).not.toHaveBeenCalled();
+    const roundtrip = await bridge.test({ command: process.execPath, args: [MOCK_AGENT_PATH] });
+    expect(roundtrip.ok).toBe(false);
+    expect(roundtrip.error?.message).toContain("macOS");
+    expect(roundtrip.frames).toEqual([]);
+  });
+
+  it("is not wired on non-macOS development hosts", () => {
+    const env = { ZCODE_RUNTIME_ENV: "development" };
+    expect(createHostAcpAgentsBridge(env, { platform: "linux" })).toBeUndefined();
+    expect(createHostAcpAgentsBridge(env, { platform: "win32" })).toBeUndefined();
+    expect(createHostAcpAgentsBridge(env, { platform: "darwin" })).toBeDefined();
+  });
+
+  it("records the options a handshake offered for a known agent", async () => {
+    const recordCatalog = vi.fn(async () => true);
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      recordCatalog,
+    });
+
+    const result = await bridge.test({
+      agentId: "opencode",
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recordCatalog).toHaveBeenCalledTimes(1);
+    const [agentId, options] = recordCatalog.mock.calls[0] as unknown as [
+      string,
+      Array<{ id: string }>,
+    ];
+    expect(agentId).toBe("opencode");
+    expect(options.map((option) => option.id)).toEqual(["mode", "model"]);
+  });
+
+  it("reads the stored catalog on macOS and reports unsupported elsewhere", async () => {
+    const options = [
+      {
+        id: "mode",
+        name: "Mode",
+        description: null,
+        category: "mode",
+        currentValue: "agent",
+        options: [{ value: "plan", name: "Plan", description: null, group: null }],
+      },
+    ];
+    const readCatalog = vi.fn(async (agentId: string) =>
+      agentId === "opencode" ? options : undefined,
+    );
+    const mac = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      readCatalog,
+    });
+
+    expect(await mac.catalog({ agentId: "opencode" })).toEqual({ supported: true, options });
+    expect(await mac.catalog({ agentId: "cursor" })).toEqual({ supported: true });
+
+    const linux = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "linux",
+      readCatalog,
+    });
+    expect(await linux.catalog({ agentId: "opencode" })).toEqual({ supported: false });
+    expect(readCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not record a catalog for a custom command, and a failing store never fails the test", async () => {
+    const recordCatalog = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      recordCatalog,
+    });
+
+    const custom = await bridge.test({
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+    expect(custom.ok).toBe(true);
+    expect(recordCatalog).not.toHaveBeenCalled();
+
+    const known = await bridge.test({
+      agentId: "opencode",
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+    expect(known.ok).toBe(true);
+    expect(recordCatalog).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ACP agents bridge hardening", () => {
   it("rejects a crafted login command before any terminal opens", async () => {
     const openTerminal = vi.fn(async () => ({ opened: true }));

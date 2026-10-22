@@ -116,15 +116,15 @@ describe("fork ACP session binding storage", () => {
     const store = createForkAcpSessionBindingStore(await openSessionDatabase());
     expect(await store.readConfig("zcode-1")).toEqual({ agentId: undefined, offered: undefined, choices: {} });
 
-    // Without a binding row the config writes have nothing to update.
+    // Without a binding row the offered copy has nothing to update; the choice is pending (see below).
     await store.writeOffered("zcode-1", [MODE_OPTION]);
-    await store.writeChoice("zcode-1", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
     expect((await store.readConfig("zcode-1")).offered).toBeUndefined();
 
     await store.write("zcode-1", BINDING);
     await store.writeOffered("zcode-1", [MODE_OPTION]);
-    await store.writeChoice("zcode-1", "mode", "plan");
-    await store.writeChoice("zcode-1", "model", "fast");
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "model", "fast");
     expect(await store.readConfig("zcode-1")).toEqual({
       agentId: "opencode",
       offered: [MODE_OPTION],
@@ -136,7 +136,7 @@ describe("fork ACP session binding storage", () => {
     const store = createForkAcpSessionBindingStore(await openSessionDatabase());
     await store.write("zcode-1", BINDING);
     await store.writeOffered("zcode-1", [MODE_OPTION]);
-    await store.writeChoice("zcode-1", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
 
     await store.write("zcode-1", { ...BINDING, acpSessionId: "acp-session-2" });
 
@@ -150,7 +150,7 @@ describe("fork ACP session binding storage", () => {
     const store = createForkAcpSessionBindingStore(await openSessionDatabase());
     await store.write("zcode-1", BINDING);
     await store.writeOffered("zcode-1", [MODE_OPTION]);
-    await store.writeChoice("zcode-1", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
 
     await store.clear("zcode-1");
     await store.write("zcode-1", BINDING);
@@ -172,7 +172,7 @@ describe("fork ACP session binding storage", () => {
     }
 
     expect(await store.readConfig("zcode-1")).toEqual({ agentId: "opencode", offered: undefined, choices: {} });
-    await store.writeChoice("zcode-1", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
     expect((await store.readConfig("zcode-1")).choices).toEqual({ mode: "plan" });
   });
 
@@ -203,11 +203,108 @@ describe("fork ACP session binding storage", () => {
     await store.writeOffered("zc-write", [MODE_OPTION]);
     expect((await store.readConfig("zc-write")).choices).toEqual({});
 
-    await store.writeChoice("zc-write", "mode", "plan");
+    await store.writeChoice("zc-write", "opencode", "mode", "plan");
     expect((await store.readConfig("zc-write")).choices).toEqual({ mode: "plan" });
 
     await store.clear("zc-write");
     expect(await store.readConfig("zc-write")).toMatchObject({
+      agentId: undefined,
+      offered: undefined,
+      choices: {},
+    });
+  });
+
+  // S6 readiness: a choice made before the first turn is pending until the binding exists.
+  it("creates the pending choice table through migration 9005", async () => {
+    const dbPath = await openSessionDatabase();
+    const db = new DatabaseSync(dbPath);
+    try {
+      const columns = db
+        .prepare("pragma table_info(fork_acp_session_choice)")
+        .all()
+        .map((row) => row.name);
+      expect(columns).toEqual(
+        expect.arrayContaining(["session_id", "agent_id", "config_choices", "updated_at"]),
+      );
+      expect(
+        db.prepare("select id from schema_migration where id = ?").get("9005_fork_session_acp_pending_choice"),
+      ).toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps a choice made before the first turn pending and reads it as the session config", async () => {
+    const store = createForkAcpSessionBindingStore(await openSessionDatabase());
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
+
+    expect(await store.readConfig("zcode-1")).toEqual({
+      agentId: "opencode",
+      offered: undefined,
+      choices: { mode: "plan" },
+    });
+  });
+
+  it("moves pending choices into the binding in the binding write and drops the pending row", async () => {
+    const dbPath = await openSessionDatabase();
+    const store = createForkAcpSessionBindingStore(dbPath);
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "model", "fast");
+
+    await store.write("zcode-1", BINDING);
+
+    expect(await store.readConfig("zcode-1")).toEqual({
+      agentId: "opencode",
+      offered: undefined,
+      choices: { mode: "plan", model: "fast" },
+    });
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(db.prepare("select count(*) as count from fork_acp_session_choice").get()).toEqual({
+        count: 0,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("drops a pending choice of another agent at the binding write", async () => {
+    const store = createForkAcpSessionBindingStore(await openSessionDatabase());
+    await store.writeChoice("zcode-1", "cursor", "mode", "plan");
+
+    await store.write("zcode-1", BINDING);
+
+    expect((await store.readConfig("zcode-1")).choices).toEqual({});
+  });
+
+  it("replaces the pending choices when another agent is chosen before the first turn", async () => {
+    const store = createForkAcpSessionBindingStore(await openSessionDatabase());
+    await store.writeChoice("zcode-1", "cursor", "mode", "plan");
+    await store.writeChoice("zcode-1", "opencode", "model", "fast");
+
+    expect(await store.readConfig("zcode-1")).toEqual({
+      agentId: "opencode",
+      offered: undefined,
+      choices: { model: "fast" },
+    });
+  });
+
+  it("refuses a choice for a binding of another agent", async () => {
+    const store = createForkAcpSessionBindingStore(await openSessionDatabase());
+    await store.write("zcode-1", BINDING);
+
+    await expect(store.writeChoice("zcode-1", "cursor", "mode", "plan")).rejects.toThrow(
+      "another agent",
+    );
+  });
+
+  it("clears pending choices with the binding", async () => {
+    const store = createForkAcpSessionBindingStore(await openSessionDatabase());
+    await store.writeChoice("zcode-1", "opencode", "mode", "plan");
+
+    await store.clear("zcode-1");
+
+    expect(await store.readConfig("zcode-1")).toEqual({
       agentId: undefined,
       offered: undefined,
       choices: {},

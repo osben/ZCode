@@ -63,13 +63,22 @@ async function setExternalAgentConfigOption(
   const agentId = providerId.slice(ACP_PROVIDER_ID_PREFIX.length);
   const config = await store.readConfig(payload.sessionId);
   // Stored options of another agent describe a process configuration that no longer applies.
-  if (config.offered === undefined || config.agentId !== agentId) {
+  if (config.agentId !== undefined && config.agentId !== agentId) {
     throw new V4ExternalAgentConfigError(
       "config.notAvailable",
       "Agent options are available after the first message.",
     );
   }
-  const option = config.offered.find((item) => item.id === payload.configId);
+  // The live snapshot of the session wins. Before the first turn the agent's catalog (S6 readiness) offers the
+  // options, and the choice is kept as a pending choice that the first turn applies.
+  const offered = config.offered ?? (await store.readCatalog(agentId));
+  if (offered === undefined) {
+    throw new V4ExternalAgentConfigError(
+      "config.notAvailable",
+      "Agent options are available after the first message.",
+    );
+  }
+  const option = offered.find((item) => item.id === payload.configId);
   if (option === undefined || !externalAgentConfigOffers(option, payload.value)) {
     throw new V4ExternalAgentConfigError(
       "config.invalid",
@@ -82,10 +91,11 @@ async function setExternalAgentConfigOption(
     throw new V4CommandNoopError("config.unchanged");
   }
 
-  await store.writeChoice(payload.sessionId, payload.configId, payload.value);
-  const options = config.offered.map((item) =>
+  await store.writeChoice(payload.sessionId, agentId, payload.configId, payload.value);
+  const options = offered.map((item) =>
     item.id === payload.configId ? { ...item, currentValue: payload.value } : item,
   );
+  // Only a binding has a stored copy; a pending session has none until its first turn writes one.
   await store.writeOffered(payload.sessionId, options);
   const event: ExternalAgentConfigUpdatedPayload = { agentId, options };
   await record.app.runtime.appendEvent(

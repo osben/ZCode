@@ -18,6 +18,7 @@ export { readTextFileViaBridge, writeTextFileViaBridge } from "./fs.js";
 export {
   ACP_AGENT_DEFINITIONS,
   DEFAULT_ACP_DETECTION_CACHE_TTL_MS,
+  acpAgentPlatformSupported,
   DEFAULT_ACP_PROBE_TIMEOUT_MS,
   detectAcpAgents,
   isSafeVersionProbeArgs,

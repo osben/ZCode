@@ -293,3 +293,108 @@ export function stripInlineAcpProviders(
       : { providerOrder: update.providerOrder.filter((id) => !removed.has(id)) }),
   });
 }
+
+// Per-agent catalog of the last offered options (specs/acp-agent-runtime.md "S6 readiness"). It shares this
+// module because the catalog is the fork sidecar's companion record; reads are tolerant (see parseForkAcpAgentCatalogFile).
+export const ACP_AGENT_CATALOG_SCHEMA_VERSION = 1;
+
+const catalogValueSchema = z.object({
+  value: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  group: z.string().nullable(),
+});
+
+/** Same shape as the turn contract's `ExternalAgentConfigOption` (select options only). */
+export const forkAcpAgentCatalogOptionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  description: z.string().nullable(),
+  category: z.string().nullable(),
+  currentValue: z.string(),
+  options: z.array(catalogValueSchema),
+});
+
+export type ForkAcpAgentCatalogOption = z.infer<typeof forkAcpAgentCatalogOptionSchema>;
+
+export const forkAcpAgentCatalogEntrySchema = z.object({
+  agentId: z.string().regex(/^\S+$/),
+  capturedAt: z.number().int().nonnegative(),
+  options: z.array(forkAcpAgentCatalogOptionSchema),
+});
+
+export type ForkAcpAgentCatalogEntry = z.infer<typeof forkAcpAgentCatalogEntrySchema>;
+
+export interface ForkAcpAgentCatalogSnapshot {
+  readonly agents: readonly ForkAcpAgentCatalogEntry[];
+}
+
+/**
+ * Parses the catalog file. Throws only when the file itself is not a catalog document (wrong JSON shape or
+ * schema version); an entry that does not validate is dropped, and so is a later duplicate of an agent id.
+ */
+export function parseForkAcpAgentCatalogFile(value: unknown): ForkAcpAgentCatalogSnapshot {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    (value as { schemaVersion?: unknown }).schemaVersion !== ACP_AGENT_CATALOG_SCHEMA_VERSION ||
+    !Array.isArray((value as { agents?: unknown }).agents)
+  ) {
+    throw new Error("ACP agent catalog file is not a version 1 catalog");
+  }
+  const seen = new Set<string>();
+  const agents: ForkAcpAgentCatalogEntry[] = [];
+  for (const raw of (value as { agents: unknown[] }).agents) {
+    const parsed = forkAcpAgentCatalogEntrySchema.safeParse(raw);
+    if (!parsed.success || seen.has(parsed.data.agentId)) continue;
+    seen.add(parsed.data.agentId);
+    agents.push(parsed.data);
+  }
+  return Object.freeze({ agents: Object.freeze(agents) });
+}
+
+export function encodeForkAcpAgentCatalogFile(agents: readonly ForkAcpAgentCatalogEntry[]): {
+  schemaVersion: typeof ACP_AGENT_CATALOG_SCHEMA_VERSION;
+  agents: ForkAcpAgentCatalogEntry[];
+} {
+  return {
+    schemaVersion: ACP_AGENT_CATALOG_SCHEMA_VERSION,
+    agents: agents.map((agent) => forkAcpAgentCatalogEntrySchema.parse(agent)),
+  };
+}
+
+/** Structural input of a catalog option (the runtime and turn snapshots are readonly). */
+export interface ForkAcpAgentCatalogOptionInput {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly category: string | null;
+  readonly currentValue: string;
+  readonly options: readonly {
+    readonly value: string;
+    readonly name: string;
+    readonly description: string | null;
+    readonly group: string | null;
+  }[];
+}
+
+/** A fresh, validated copy of the options: only the catalog fields, in the schema's shape. */
+export function normalizeForkAcpAgentCatalogOptions(
+  options: readonly ForkAcpAgentCatalogOptionInput[],
+): ForkAcpAgentCatalogOption[] {
+  return options.map((option) =>
+    forkAcpAgentCatalogOptionSchema.parse({
+      id: option.id,
+      name: option.name,
+      description: option.description ?? null,
+      category: option.category ?? null,
+      currentValue: option.currentValue,
+      options: option.options.map((value) => ({
+        value: value.value,
+        name: value.name,
+        description: value.description ?? null,
+        group: value.group ?? null,
+      })),
+    }),
+  );
+}

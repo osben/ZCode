@@ -13,10 +13,13 @@ import {
   ZCODE_VERSION,
 } from "@zcode/shared";
 import { dirname, join } from "node:path";
+import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import {
+  NodeForkAcpAgentCatalogStore,
   NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   NodeProviderRegistryRuntime,
+  resolveForkAcpAgentCatalogFilePath,
   resolveForkAcpAgentsFilePath,
   resolveNodeProviderRuntimePaths,
   downloadZCodeBuiltinRelease,
@@ -86,9 +89,15 @@ export async function startProcessProviderRegistryRuntime(
   const acpAgentStore = new NodeForkAcpAgentStore({
     filePath: resolveForkAcpAgentsFilePath(paths.personalFilePath),
   });
+  // The worker writes the catalog (last offered options) from its turns; the file lock serializes it with the host.
+  const acpAgentCatalog = new NodeForkAcpAgentCatalogStore({
+    filePath: resolveForkAcpAgentCatalogFilePath(paths.personalFilePath),
+  });
   // Same development-runtime signal as the host ACP gate (specs/acp-agent-runtime.md "Dev-only visibility"):
-  // a packaged worker does not derive `acp:` providers from the sidecar.
-  const acpDevelopmentRuntime = resolveZCodeRuntimeEnv(env) === "development";
+  // a packaged worker does not derive `acp:` providers from the sidecar. The platform gate is the same
+  // predicate the bridge uses ("S6 readiness": macOS only).
+  const acpDevelopmentRuntime =
+    resolveZCodeRuntimeEnv(env) === "development" && acpAgentPlatformSupported();
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
     wrapConfigSource: (source) =>
@@ -221,6 +230,7 @@ export async function startProcessProviderRegistryRuntime(
         runtime,
         /** Read-only view of the ACP sidecar for turn-time launch config (no migration here). */
         acpAgentStore,
+        acpAgentCatalog,
         snapshot,
         modelSelectionConfigRepository,
         configuredDefaultModelSelection,

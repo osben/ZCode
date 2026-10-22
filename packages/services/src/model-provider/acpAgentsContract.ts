@@ -67,9 +67,37 @@ export interface AcpAgentLoginResult {
   readonly error?: string;
 }
 
+/** One select of an agent's catalog: the options it offered in its last handshake (S6 readiness). */
+export interface AcpAgentCatalogOption {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly category: string | null;
+  readonly currentValue: string;
+  readonly options: ReadonlyArray<{
+    readonly value: string;
+    readonly name: string;
+    readonly description: string | null;
+    readonly group: string | null;
+  }>;
+}
+
+export interface AcpAgentCatalogInput {
+  readonly agentId: string;
+}
+
+export interface AcpAgentCatalogResult {
+  /** False when this environment does not offer ACP agents (non-macOS or not a development host). */
+  readonly supported: boolean;
+  /** Undefined when the agent was never run or tested. */
+  readonly options?: readonly AcpAgentCatalogOption[];
+}
+
 /** Settings-facing surface, threaded through the provider settings service. */
 export interface ProviderSettingsAcpAgentsBridge {
   detect(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
+  /** The last options the agent offered, for the composer before a session exists (S6 readiness). */
+  catalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult>;
   test(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
   status(input: AcpAgentStatusInput): Promise<AcpAgentStatusReport>;
   startLogin(input: AcpAgentLoginInput): Promise<AcpAgentLoginResult>;
