@@ -88,7 +88,7 @@ Response shape (summary; the module contract is authoritative):
 ### Tool timing
 
 7. Tool timing is read from the CLI session database resolved by `resolveAgentSessionDbPath()`, opened read-only with a 250 ms busy timeout. The Host never writes it.
-8. Rows come from `tool_usage` by `(session_id, tool_call_id)` for the tool call ids present in the window, queried in chunks of 500. `scheduledAt` is `started_at` (includes permission wait). Execution end is `completed_at`; execution start is `completed_at - duration_ms`. When `duration_ms` is null, only `json_extract` of `part.data` `$.state.time.start` and `$.state.time.end` is read for that call; `part.data` is never selected whole.
+8. Rows come from `tool_usage` by `(session_id, tool_call_id)` for the tool call ids present in the window, queried in chunks of 500. `scheduledAt` is `started_at` (includes permission wait). Execution end is `completed_at`; execution start is `completed_at - duration_ms`. `duration_ms` is recorded for completed and failed calls (verified on 92k local rows); when it is null (a call still running) execution times are absent. The `part` table is not read.
 9. Any failure (path unknown, file missing, read error) returns `source: "unavailable"` with the reason. The trajectory still loads; tool lanes, the Timing tab and block G show that timing is unavailable.
 10. Rows pruned by CLI retention simply have no timing. Tool rows without timing fall back to the parent call's `completedAt` as their start, with no duration.
 
