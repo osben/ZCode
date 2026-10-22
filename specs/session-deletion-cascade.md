@@ -119,7 +119,7 @@ sequenceDiagram
     Owner->>Exec: permanentlyDeleteTasks(candidates)
 ```
 
-Not covered by this guarantee (no dialog today): Settings → Sessions historical maintenance retries of pending worktree cleanup, which act on already-tombstoned tasks through the services erase path.
+Not covered by this guarantee (no dialog in front of them): `deleteArchivedTaskSelection` (`packages/ui/src/lib/archivedTaskDeletion.ts`, calls the executor) and `eraseHiddenRows` (`packages/ui/src/session-manager/sessionManagerErase.ts`, calls `eraseTasks` directly). Neither has a production caller today; any new caller must go through the dialog or add its own worktree confirmation.
 
 ## Content, results and recovery
 
