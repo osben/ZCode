@@ -56,6 +56,11 @@ export interface V4ComposerDraft {
    * This marker alone keeps an empty-text record; it is cleared when the picked model is accepted.
    */
   modelSelectionPicked?: true;
+  /**
+   * The Session model the pick was made against. If the Session model later moves away from it
+   * (another window, a Host fallback, the CLI), the pick is stale and its marker is dropped.
+   */
+  modelSelectionPickedFrom?: ModelSelection;
   /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
   initializeFromNewTask?: true;
   recoveryAttachments?: V4ComposerRecoveryAttachment[];
@@ -412,6 +417,7 @@ function readDraft(value: unknown, scopeId: string): V4ComposerDraft | null {
     modelSelection: value.modelSelection,
     modelSelectionPicked: value.modelSelectionPicked,
   });
+  const pickedFrom = modelSelectionSchema.safeParse(value.modelSelectionPickedFrom);
   if (!value.text.trim() && !hasRecovery && !keepsModelPick) return null;
   const mode = submissionModeSchema.safeParse(value.mode);
   const selection = modelSelectionSchema.safeParse(value.modelSelection);
@@ -491,6 +497,7 @@ function readDraft(value: unknown, scopeId: string): V4ComposerDraft | null {
         : {}),
     ...(modelSelection ? { modelSelection } : {}),
     ...(keepsModelPick ? { modelSelectionPicked: true as const } : {}),
+    ...(keepsModelPick && pickedFrom.success ? { modelSelectionPickedFrom: pickedFrom.data } : {}),
     updatedAt:
       typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : 0,
   };
