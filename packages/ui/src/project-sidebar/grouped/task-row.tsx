@@ -180,7 +180,8 @@ function GroupedTaskDragOverlayRow({
     activeTaskId,
   });
 
-  // 工作流运行行与 hover action 不在 overlay 中渲染：overlay 只是纯展示，不挂确认副作用与点击入口。
+  // The overlay is presentation only: no workflow run lines or hover actions, so it mounts no
+  // confirmation side effects or click targets.
   return (
     <div
       className={cn(
@@ -304,7 +305,7 @@ function GroupedTaskInteractiveRow({
   const canOpenFileTree =
     Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
   const isMobileActive = mobileActiveTaskKey === `${workspaceKey}:${task.taskId}`;
-  // 工作流运行行：分组行同样长在标题下。
+  // Workflow run lines sit under the title, as in the flat task list.
   const workflowRunLinesNode = taskActivity?.workflowActivity ? (
     <TaskWorkflowRunLines
       activity={taskActivity.workflowActivity}
