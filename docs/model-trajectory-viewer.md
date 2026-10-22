@@ -43,8 +43,42 @@
   - 响应级裁剪通过 `response.truncated: { text?, reasoningText? }` 标记表达。
   - 裁剪只影响投影后的数据：展示、搜索索引与复制都基于裁剪后的投影，复制得到的是裁剪后的文本，中间被省略的部分不可被搜索命中，也无法通过展开恢复。
   - `error.stack` 不做预算裁剪；单条错误的 stack 体量远小于预算，且错误块本身已不做折叠。
-  - 预算只约束单段大小，不约束 `records` 数量与每条记录的 `request.messages` 数量。当前 model-io 每条记录都保存
-    还原后的完整上下文，因此一次投影的总字节约为“记录数 × 上下文长度”。这一点由下文“已知边界”单独记录。
+  - 预算只约束单段大小，不约束 `records` 数量与每条记录的 `request.messages` 数量。输入上下文的跨记录重复由下方
+    “输入增量”契约处理，因此主会话投影的总字节不再是“记录数 × 上下文长度”。
+- 投影链路的输入增量（`inputDeltaOf`）：model-io 磁盘格式不变（读取端照常读取写入端输出的完整上下文或 writer 增量），Host 在投影后、RPC 返回前，
+  对 `limit` 窗口内每条记录的**已投影完整输入**做判定，决定是否改为增量下发。
+  - 资格：只有 `callSource.kind === "main"` 的记录可以是增量。sidecar（标题生成、prompt enhance）、compact、subagent 记录
+    始终下发完整输入。
+  - 基准（base）：窗口内位于它之前的**最近一条 main 记录**（不是相邻记录）。标题生成、compact 等 sidecar 穿插在主会话之间时，
+    后一条主调用仍可对前一条主调用做增量。基准的 `requestId` 为空字符串时不作为基准。
+  - 判定：基准的完整已投影输入必须是当前记录完整已投影输入的**精确前缀**。逐条比较 `role` 与 `parts` 的内容标识（序列化结果逐字相等），
+    任一位置不同即为完整记录。比较对象是段预算裁剪之后的投影：两条记录只在被裁剪掉的中段不同，判定为相同，此时还原结果与逐条完整投影完全一致。
+    不得用计数、长度或对象引用代替内容比较。
+  - 命中时：`request.messages` 只保存 `full.slice(sharedPrefixCount)`，并携带可选字段
+    `inputDeltaOf = { previousRequestId, sharedPrefixCount }`，其中 `sharedPrefixCount` 等于基准完整输入的长度。
+    未命中、字段缺失、或旧 Host 返回的记录都视为完整记录（字段不存在即完整）。
+  - 窗口首条 main 记录在窗口内没有基准，因此永远完整；窗口外的前序记录不被引用。`limit` 的语义与段预算不变。
+  - 实现位于 `zcode-agent/modelTrajectory.ts` 的 `projectInputDeltas`，类型为 `ZCodeModelTrajectoryInputDelta`（`zcodeTaskService.ts`）。
+
+  owner 与事件顺序：
+
+  ```text
+  model-io 文件（磁盘仍为完整或 writer 增量）
+     │  readModelTrajectory：尾部 32 MiB 读取 → 按时间排序后展开 writer 增量（全部原始记录，保持顺序）
+     ▼
+  keep tail（limit 语义不变）
+     │  mapRecord：段预算裁剪后的完整已投影输入（owner: Host projection）
+     ▼
+  projectInputDeltas：基准 = 窗口内最近的 main 记录；精确前缀 → 增量，否则完整（owner: Host，同一同步段内完成）
+     │  RPC：records[]，request.messages 可能只含增量，inputDeltaOf 可选
+     ▼
+  resolveTrajectoryTimelineItems（owner: 视图，纯函数，useMemo 派生，不跨渲染保存状态）
+     │  nearest preceding record.requestId === previousRequestId → full = [...base.slice(0, n), ...delta]
+     │  缺失 / n !== base.length → base-missing（展示 delta 行并提示）
+     ▼
+  展示规则（计数规则不变）→ 行窗口 / 搜索索引 / 预览 / 复制
+  ```
+
 - 读取链路同样必须有界且异步：Host 从文件尾部按块读取，最多扫描 32 MiB，并只保留最近 `limit`
   条记录；不得使用 `readFileSync + split` 同步加载整个 JSONL。若扫描起点落在一条记录中间，丢弃该残行；
   文件不可读时降级为空结果。开发日志记录扫描字节数与耗时，便于定位异常大文件，同时避免高频诊断信息进入生产日志。
@@ -56,7 +90,8 @@
 - `packages/services/src/session/zcodeTaskService.ts`：新增 `ZCodeModelTrajectory*` 类型与
   `IZCodeTaskService.getModelTrajectory({ taskId, limit })`。
 - `packages/services/src/zcode-agent/modelTrajectory.ts`：异步、有界地读取 session 单文件尾部，还原 delta messages、
-  归一化 messages / parts / toolCalls / usage，按 `startedAt` 排序，超出 `limit`（默认 200）保留最近 N 条。
+  归一化 messages / parts / toolCalls / usage，按 `startedAt` 排序，超出 `limit`（默认 200）保留最近 N 条；
+  `projectInputDeltas` 在窗口内对主会话记录做输入增量判定（见“数据来源”）。
 - `packages/services/src/zcode-agent/zcodeTaskServiceAdapter.ts`：实现 `getModelTrajectory`。
 - `packages/services/src/zcode-agent/modelTrajectoryFileTail.ts`：除尾部读取外，还承载段级字节预算裁剪（`boundText`、`boundPayload`、`withTruncation`；16 KiB 输出上限，含分隔符）、UTF-8 边界切分、`truncated` 标记与 `{content}` 包装的有界化。该文件与 `modelTrajectory.ts` 同目录，供读取链路调用。同目录为未受管模块，因此本次没有新增文件。
 
@@ -73,6 +108,8 @@ UI 层：
   `app-shell/AnimatedSidePanePanel.tsx` 渲染 `ModelTrajectoryPane`；
   `app-shell/SidePaneTabTrigger.tsx` / `SidePaneTabOverview.tsx` 补图标与标题。
 - 视图：`ModelTrajectoryPane.tsx` + `ModelTrajectoryPaneParts.tsx`，数据走 `hooks/useModelTrajectory.ts`。
+- 输入还原：`ModelTrajectoryTimeline.tsx` 的 `reconstructTrajectoryRecords`（纯函数）由 `resolveTrajectoryTimelineItems` 调用，
+  在展示规则、行窗口、搜索索引之前完成；`TrajectoryInputContext` 类型位于 `ModelTrajectorySearch.ts`。
   轨迹内容区使用原生纵向滚动容器，不使用 Radix `ScrollArea`；避免其内部自动插入
   `min-width: 100%; display: table` 的内容包装层，导致长轨迹内容参与异常宽度计算。
 - Side Pane 的 `ResizablePanel` 壳必须使用 `!overflow-hidden` 覆盖 `react-resizable-panels` 注入的内联 `overflow:auto`，不得让面板壳与 tab 内容同时形成纵向滚动；各 tab 自行持有内容滚动区，调用轨迹仅由 `ModelTrajectoryPane` 的原生 `overflow-y-auto` 容器滚动。
@@ -86,6 +123,13 @@ UI 层：
   以共享消息行渲染，不再以不可折叠的整段正文直接展开。
 - 后续主会话调用只展示相对上一条新增的非 assistant 消息（assistant 由上一条的 Output 呈现），避免重复刷历史。
 - 标题生成、compact、prompt enhance 等 sidecar 请求展示自己的完整 prompt，不套用主会话 delta。
+- 输入还原先于上述展示规则执行：带 `inputDeltaOf` 的记录，在时间顺序上取 `requestId === previousRequestId` 的**最近前序记录**，
+  取其已还原的完整输入 `base`，还原为 `[...base.slice(0, sharedPrefixCount), ...request.messages]`。还原数组只复用基准的消息对象引用，
+  不复制消息内容。不带该字段的记录即完整输入，行为与此前相同。
+- 基准缺失（找不到前序记录、前序记录自身也是缺失状态、或 `base.length !== sharedPrefixCount`）时，该记录按其携带的增量行展示，
+  **不做 assistant 过滤**（基准的输出可能是这些 assistant 行的唯一副本），并在卡片输入区显示提示“前文缺失”
+  （`data-trajectory-input-context="base-missing"`）。不抛错，也不隐藏该记录；后续记录的计数基准沿用 `sharedPrefixCount + 增量条数`。
+- 还原后的完整输入是后续展示规则（“后续主会话调用只展示…”）、行窗口、搜索索引与预览的唯一输入来源，这些模块不感知增量。
 - 头部汇总调用次数、总 token、用到的模型；每张调用卡片的单行 Header 展示来源、finishReason、in/out token、耗时与时间。
 - 每张调用卡片头部显示来源 badge（如“主会话”“标题生成”“上下文压缩”“子代理”）。
 - 来源标题和 finish reason pill 除本地化展示文案外，还必须分别暴露稳定的
@@ -216,9 +260,15 @@ Call Card (input count M)
 
 ## 已知边界（待用户决策）
 
-- 每条 model-io 记录的 `request.messages` 在投影时都是完整上下文（还原后的增量拼接）。对同一会话，N 条记录的投影体积约为
-  N × 上下文长度。段级预算与窗口只约束单段与单卡片的挂载，不约束 `records` 之间的重复。将重复去除需要改变
-  记录契约（例如只下发增量与偏移量，由 UI 还原），属于跨层契约变更，本次未实施。
+- 输入增量只对理解 `inputDeltaOf` 的视图有效。旧视图对增量记录仍按 `request.messages` 渲染，因此只显示新增消息，缺少前文：
+  不崩溃，但不完整。Host 与视图随同一应用版本发布；远控手机页面连接旧 Host 时拿到的是完整记录，不受影响。
+- 磁盘 model-io 格式未改变：读取端沿用写入端的格式（完整上下文或 writer 增量）。测量文件 `sess_1293b371`（22.6 MB）的 5 条记录
+  均为完整上下文，本次收益来自投影层（RPC 体积）；磁盘体积与写入链路不在本次范围内。只含 writer 增量的文件需另行测量。
+  测量（2026-10-22，真实文件 `sess_1293b371`，5 条主调用，默认 limit）：投影 JSON 由 5 502 243 字节降至 1 122 454 字节（-79.6%）。
+  首条记录完整 1 097 942 字节，其余四条增量分别为 9 695 / 4 351 / 4 720 / 5 535 字节；读取耗时约 64 ms。
+- 增量只向窗口内最近的 main 记录取基准。`limit` 很小（如 1 或 2）或窗口切在两条主调用之间时，窗口首条主调用必然完整，收益下降。
+- subagent 记录当前按完整记录下发（不具备增量资格）：其前序 main 基准通常不前缀匹配。如需对 subagent 增量，需要单独定义 subagent 基准。
+- 增量判定的 CPU 成本：每条主调用的已投影消息逐条序列化一次，与完整投影同阶，不增加磁盘读取。
 - 搜索窗口之后的间隙没有“显示接下来”控件。提供控件需要第二个状态（窗口锚点），或者把前缀扩到窗口末尾（即一次命中挂载近千行的
   问题）。为保持 `limit` 作为单一 owner，本次只显示行数；若需要在窗口之后继续浏览，需要用户决定引入哪种状态。
 - 段级预算不约束 `error.stack`；单条错误的 stack 体量远小于预算。

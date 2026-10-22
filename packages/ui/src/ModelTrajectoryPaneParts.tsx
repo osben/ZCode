@@ -23,7 +23,10 @@ import {
   formatTrajectoryDuration,
 } from "@/ModelTrajectoryFormat.js";
 import { trajectoryRoleTextClass } from "@/ModelTrajectoryRoleStyles.js";
-import { TrajectorySearchRevealContext } from "@/ModelTrajectorySearch.js";
+import {
+  type TrajectoryInputContext,
+  TrajectorySearchRevealContext,
+} from "@/ModelTrajectorySearch.js";
 import { TrajectorySectionTitle } from "@/ModelTrajectorySectionTitle.js";
 
 export { EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
@@ -34,12 +37,14 @@ export function CallCard({
   record,
   index,
   inputMessages,
+  inputContext = "full",
   expansionKeyPrefix,
   intl,
 }: {
   record: ZCodeModelTrajectoryRecord;
   index: number;
   inputMessages: ZCodeModelTrajectoryMessage[];
+  inputContext?: TrajectoryInputContext;
   expansionKeyPrefix?: string;
   intl: IntlShape;
 }) {
@@ -150,6 +155,14 @@ export function CallCard({
               kind="input"
               label={intl.formatMessage({ id: "modelTrajectory.inputSection" })}
             />
+            {inputContext === "base-missing" ? (
+              <p
+                data-trajectory-input-context="base-missing"
+                className="col-span-full px-3 py-1 font-mono text-ui-xs text-foreground-subtlest"
+              >
+                {intl.formatMessage({ id: "modelTrajectory.inputBaseMissing" })}
+              </p>
+            ) : null}
             {renderInputRows(0, rowWindow.pageEnd)}
             {rowWindow.hiddenBefore > 0 ? showMoreControl(rowWindow.hiddenBefore) : null}
             {renderInputRows(rowWindow.revealStart, rowWindow.revealEnd)}

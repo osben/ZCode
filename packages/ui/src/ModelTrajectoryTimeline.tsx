@@ -1,7 +1,8 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, type RefObject } from "react";
-import type { ZCodeModelTrajectoryRecord } from "@zcode/services";
+import type { ZCodeModelTrajectoryMessage, ZCodeModelTrajectoryRecord } from "@zcode/services";
 import {
+  type TrajectoryInputContext,
   type TrajectorySearchMatch,
   type TrajectorySearchTimelineItem,
 } from "@/ModelTrajectorySearch.js";
@@ -128,6 +129,7 @@ export function ModelTrajectoryTimeline({
               record={item.record}
               index={virtualItem.index}
               inputMessages={item.inputMessages}
+              inputContext={item.inputContext}
               expansionKeyPrefix={item.key}
               intl={intl}
             />
@@ -141,10 +143,65 @@ export function ModelTrajectoryTimeline({
   );
 }
 
+interface ReconstructedTrajectoryRecord {
+  /** For "reconstructed", request.messages is the full input; otherwise it is the record as received. */
+  record: ZCodeModelTrajectoryRecord;
+  inputContext: TrajectoryInputContext;
+}
+
+/**
+ * Chain input deltas in time order. A delta's base is the nearest preceding record with the same requestId,
+ * and its full input must have exactly sharedPrefixCount messages. Reconstructed arrays reuse the base's message
+ * objects; no message is copied.
+ */
+export function reconstructTrajectoryRecords(
+  records: readonly ZCodeModelTrajectoryRecord[],
+): ReconstructedTrajectoryRecord[] {
+  // Full input per requestId seen so far. Entries are set after each record, so a lookup finds the nearest preceding one.
+  // null marks a record whose full input is unknown; it shadows older records that share the requestId.
+  const fullInputs = new Map<string, readonly ZCodeModelTrajectoryMessage[] | null>();
+
+  return records.map((record) => {
+    const delta = record.inputDeltaOf;
+    if (!delta) {
+      fullInputs.set(record.requestId, record.request.messages);
+      return { record, inputContext: "full" };
+    }
+
+    const base = fullInputs.get(delta.previousRequestId);
+    if (!base || base.length !== delta.sharedPrefixCount) {
+      fullInputs.set(record.requestId, null);
+      return { record, inputContext: "base-missing" };
+    }
+
+    const messages = [...base, ...record.request.messages];
+    fullInputs.set(record.requestId, messages);
+    return {
+      record: { ...record, request: { ...record.request, messages } },
+      inputContext: "reconstructed",
+    };
+  });
+}
+
 export function resolveTrajectoryTimelineItems(records: ZCodeModelTrajectoryRecord[]) {
   let previousConversationMessageCount = 0;
 
-  return records.map((record, index) => {
+  return reconstructTrajectoryRecords(records).map(({ record, inputContext }, index) => {
+    if (inputContext === "base-missing") {
+      // The record holds only the messages after its base, and the base's output may be the only copy of its assistant rows,
+      // so every delta row is shown without the assistant filter. The count still advances by the base length the host
+      // reported, so later main-session items keep counting correctly.
+      const deltaMessages = record.request.messages;
+      previousConversationMessageCount =
+        (record.inputDeltaOf?.sharedPrefixCount ?? 0) + deltaMessages.length;
+      return {
+        key: `${record.requestId}:${index}`,
+        record,
+        inputMessages: deltaMessages,
+        inputContext,
+      };
+    }
+
     const resolvedInput = resolveTrajectoryInputMessages({
       index,
       previousConversationMessageCount,
@@ -156,6 +213,7 @@ export function resolveTrajectoryTimelineItems(records: ZCodeModelTrajectoryReco
       key: `${record.requestId}:${index}`,
       record,
       inputMessages: resolvedInput.inputMessages,
+      inputContext,
     };
   });
 }

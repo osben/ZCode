@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { setDataBaseDir } from "../src/paths.js";
 import { readModelTrajectory } from "../src/zcode-agent/modelTrajectory.js";
+import { expandTrajectoryInputs } from "./helpers/modelTrajectoryInputs.js";
 
 // Mirrors the host budget in modelTrajectoryFileTail.ts: 16 KiB of output in total, separator included.
 const SEPARATOR = "\n…\n";
@@ -220,8 +221,13 @@ describe("readModelTrajectory per-segment byte budget", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.records.map((record) => record.requestId)).toEqual(["req_2", "req_3"]);
-    for (const record of result.records) {
-      const part = record.request.messages[0]?.parts[0];
+    // req_3 repeats req_2's input exactly, so it is sent as an empty delta; check the reconstructed input of each record.
+    expect(result.records[1]?.inputDeltaOf).toEqual({
+      previousRequestId: "req_2",
+      sharedPrefixCount: 1,
+    });
+    for (const input of expandTrajectoryInputs(result.records)) {
+      const part = input[0]?.parts[0];
       expect(part).toHaveProperty("truncated.originalBytes", 40_000);
       if (part?.kind !== "text") throw new Error("expected a text part");
       expect(Buffer.byteLength(part.text, "utf8")).toBe(KEPT_BYTES + Buffer.byteLength(SEPARATOR));

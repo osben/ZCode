@@ -1176,6 +1176,8 @@ const ukUA: Record<string, string> = {
   "modelTrajectory.truncatedAtSource": "Обрізано в джерелі, {bytes} байт",
   "modelTrajectory.showMoreRows": "Показати наступні {count} з {total} повідомлень",
   "modelTrajectory.rowsHidden": "Приховано рядків: {count}",
+  "modelTrajectory.inputBaseMissing":
+    "Попередній вхід недоступний, показано лише нові повідомлення",
   "modelTrajectory.collapseContent": "Згорнути",
   "modelTrajectory.toolCall": "Виклик інструмента",
   "modelTrajectory.toolId": "ID",

@@ -113,7 +113,8 @@ export async function readModelTrajectory(
   const expanded = expandModelIODeltaRecords(rawRecords);
   const truncated = inputTruncated || expanded.length > safeLimit;
   const kept = truncated ? expanded.slice(expanded.length - safeLimit) : expanded;
-  const trimmedRecords = kept.map((record) => mapRecord(record));
+  // Input deltas are decided on the projected window only, so the first main record in the window is always full.
+  const trimmedRecords = projectInputDeltas(kept.map((record) => mapRecord(record)));
 
   return {
     taskId,
@@ -122,6 +123,47 @@ export async function readModelTrajectory(
     sourceFiles,
     truncated,
   };
+}
+
+interface InputDeltaBase {
+  requestId: string;
+  length: number;
+  identities: string[];
+}
+
+/**
+ * Replace a main-session record's full input with the messages after the nearest preceding main record's input when
+ * that whole input is an exact prefix (message by message, role and parts, serialized after bounding).
+ * Sidecar, compact and subagent records are always full and never serve as a base; the first main record has no base.
+ */
+function projectInputDeltas(records: ZCodeModelTrajectoryRecord[]): ZCodeModelTrajectoryRecord[] {
+  let base: InputDeltaBase | undefined;
+  return records.map((record) => {
+    if (record.callSource?.kind !== "main") {
+      return record;
+    }
+    const messages = record.request.messages;
+    const identities = messages.map((message) => JSON.stringify(message));
+    const previous = base;
+    base = record.requestId
+      ? { requestId: record.requestId, length: messages.length, identities }
+      : undefined;
+    if (!previous || !isExactPrefix(previous.identities, identities)) {
+      return record;
+    }
+    return {
+      ...record,
+      inputDeltaOf: { previousRequestId: previous.requestId, sharedPrefixCount: previous.length },
+      request: { ...record.request, messages: messages.slice(previous.length) },
+    };
+  });
+}
+
+function isExactPrefix(prefix: readonly string[], values: readonly string[]): boolean {
+  if (prefix.length > values.length) {
+    return false;
+  }
+  return prefix.every((identity, index) => identity === values[index]);
 }
 
 function toTime(value?: string): number {

@@ -157,8 +157,20 @@ export interface ZCodeModelTrajectoryCallSource {
 }
 
 /**
+ * Input-delta reference on a main-session record. When present, request.messages holds only the messages
+ * after the first sharedPrefixCount messages of the base record's full input. The host only picks main records as
+ * bases; a viewer resolves previousRequestId to the nearest preceding record with that requestId in the same result.
+ * sharedPrefixCount equals the base's full input length. A record without this field carries its full input.
+ */
+export interface ZCodeModelTrajectoryInputDelta {
+  previousRequestId: string;
+  sharedPrefixCount: number;
+}
+
+/**
  * One model call (one model_io record). A trajectory consists of multiple calls in chronological order.
- * request.messages is the full context sent to the model for that request (and grows across turns);
+ * request.messages is the full context sent to the model for that request (and grows across turns),
+ * unless inputDeltaOf is set: then it holds only the messages added after the base record's input.
  * response is the new content produced by this model call.
  */
 export interface ZCodeModelTrajectoryRecord {
@@ -176,6 +188,8 @@ export interface ZCodeModelTrajectoryRecord {
     role?: string;
     source?: string;
   };
+  /** Set when request.messages is a delta over a base record's input (see ZCodeModelTrajectoryInputDelta). */
+  inputDeltaOf?: ZCodeModelTrajectoryInputDelta;
   request: {
     messages: ZCodeModelTrajectoryMessage[];
     toolNames: string[];
