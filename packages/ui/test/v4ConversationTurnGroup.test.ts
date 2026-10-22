@@ -2430,6 +2430,15 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
     expect(cleared).toContain('data-testid="chat-loading"');
   });
 
+  it("S6: the stall status follows the interaction gate like the loading indicator", () => {
+    const html = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      chatLoadingBlockedByInteraction: true,
+      externalAgentStall: { agentId: "mock", since: 1_700_000_001_000, silentMs: 30_000 },
+    });
+    expect(html).not.toContain('data-external-agent-stall="true"');
+    expect(html).not.toContain(expectedCopy("chat.externalAgent.stalled"));
+  });
+
   it("retry 清除后恢复当前 running turn 的通用 loading", () => {
     const html = renderUnit(
       baseUnit({

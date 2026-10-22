@@ -703,8 +703,10 @@ UI (as shipped, `packages/ui`):
   `cycleThoughtLevel` is not bound to the agent's Effort (the ZCode toolbar keeps that binding).
 - Stall: `control.externalAgentStall` renders in the running turn's loading slot (`TurnChatLoadingSlot`,
   the slot that shows the apiRetry "Reconnecting…" status) as `chat.externalAgent.stalled` ("The agent is
-  not responding…"). Precedence: stall, then apiRetry, then the loading indicator. Only the live turn
-  receives it; history turns get `null`. The composer Stop control is unchanged.
+  not responding…"). Precedence: stall, then apiRetry, then the loading indicator. It follows the same
+  gate as the loading indicator: hidden while an interaction (for example a permission card) owns the
+  turn's progress. Only the live turn receives it; history turns get `null`. The composer Stop control
+  is unchanged.
 
 Migration `9004_fork_session_acp_config` (additive, `fork_` prefix) adds nullable `config_options` and
 `config_choices` (text) to `fork_acp_session_binding`. Upstream migrations are unchanged.

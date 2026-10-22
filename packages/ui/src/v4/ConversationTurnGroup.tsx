@@ -253,8 +253,9 @@ function TurnChatLoadingSlot({
   // 而不是回退到 ChatLoading。
   const visibleRetryStatus =
     retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
-  // The stall is projected only for the running turn, so it shows even when an interaction hides loading.
-  if (externalAgentStall) {
+  // Same gate as loading: while an interaction (for example a permission card) owns the turn's
+  // progress, the agent is waiting on the user and a stall status would be misleading.
+  if (externalAgentStall && eligible) {
     return (
       <div data-zcode-chat-loading-slot="true" className="min-h-5">
         <ExternalAgentStallStatus />
