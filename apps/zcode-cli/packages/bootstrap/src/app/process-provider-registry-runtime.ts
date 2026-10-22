@@ -1,6 +1,7 @@
 import {
   AccountProviderService,
   MutableAccountProviderConfigSource,
+  createDerivedAcpAgentConfigSource,
   parseAccountProviderConfigMap,
   type AccountProviderConfigSnapshot,
   type AccountProviderStates,
@@ -8,12 +9,15 @@ import {
 import {
   isBuiltinModelProviderId,
   resolveRuntimeZCodeEndpointOrigin,
+  resolveZCodeRuntimeEnv,
   ZCODE_VERSION,
 } from "@zcode/shared";
 import { dirname, join } from "node:path";
 import {
+  NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   NodeProviderRegistryRuntime,
+  resolveForkAcpAgentsFilePath,
   resolveNodeProviderRuntimePaths,
   downloadZCodeBuiltinRelease,
   resolveZCodeBuiltinClientPlatform,
@@ -75,9 +79,19 @@ export async function startProcessProviderRegistryRuntime(
   const bundledFile = options.standalone
     ? env[ZCODE_BUILTIN_PROVIDER_BUNDLED_CONFIG_FILE_ENV]?.trim()
     : undefined;
+  // ACP agent records (fork sidecar) are derived into this worker's Registry in the same order as
+  // the host: the ChatGPT plan wrapper is inner, the ACP derivation outer. The worker only reads the
+  // sidecar; the host owns the one-shot inline migration and every write.
+  const chatGptPlanConfigWrapper = createStandaloneChatGptPlanConfigSourceWrapper(chatGptPlanConfigStore);
+  const acpAgentStore = new NodeForkAcpAgentStore({
+    filePath: resolveForkAcpAgentsFilePath(paths.personalFilePath),
+  });
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
-    wrapConfigSource: createStandaloneChatGptPlanConfigSourceWrapper(chatGptPlanConfigStore),
+    wrapConfigSource: (source) =>
+      createDerivedAcpAgentConfigSource(chatGptPlanConfigWrapper(source), acpAgentStore),
+    // Same development-runtime signal as the host ACP gate (specs/acp-agent-runtime.md).
+    acpExecutable: resolveZCodeRuntimeEnv(env) === "development",
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,
@@ -192,6 +206,7 @@ export async function startProcessProviderRegistryRuntime(
           disposeRecovery?.();
           standaloneAccount?.dispose();
           modelSelectionConfigRepository.dispose();
+          acpAgentStore.dispose();
           runtime.dispose();
         },
         ...(credentialStore
@@ -200,6 +215,8 @@ export async function startProcessProviderRegistryRuntime(
             }
           : {}),
         runtime,
+        /** Read-only view of the ACP sidecar for turn-time launch config (no migration here). */
+        acpAgentStore,
         snapshot,
         modelSelectionConfigRepository,
         configuredDefaultModelSelection,
@@ -207,12 +224,14 @@ export async function startProcessProviderRegistryRuntime(
     } catch (error) {
       disposeCredentialSubscription?.();
       modelSelectionConfigRepository.dispose();
+      acpAgentStore.dispose();
       throw error;
     }
   } catch (error) {
     disposeCredentialSubscription?.();
     disposeRecovery?.();
     standaloneAccount?.dispose();
+    acpAgentStore.dispose();
     runtime.dispose();
     throw error;
   }

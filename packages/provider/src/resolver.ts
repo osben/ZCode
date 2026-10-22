@@ -156,6 +156,11 @@ export interface ProviderConfigResolverInput {
   readonly accountProviders: ProviderConfigMap;
   readonly accountStates?: AccountProviderStates;
   readonly personalProviderOrder?: readonly ProviderId[];
+  /**
+   * Development-only gate for ACP agent models (specs/acp-agent-runtime.md "Chat delegation").
+   * False keeps `acp:<agentId>` models non-executable: they never reach the chat registry.
+   */
+  readonly acpExecutable?: boolean;
 }
 
 export interface ResolvedProviderModelCandidate {
@@ -318,10 +323,13 @@ export class ProviderConfigResolver {
         const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        // ACP models stay non-executable until the chat execution path exists;
-        // Settings must not advertise a selectable model that cannot run yet.
+        // ACP models stay non-executable outside the development gate (acpExecutable); Settings must not
+        // advertise a selectable model that cannot run in a packaged build.
         const executable =
-          providerExecutable && modelEnabled && modelIssues.length === 0 && acpAccess === null;
+          providerExecutable &&
+          modelEnabled &&
+          modelIssues.length === 0 &&
+          (acpAccess === null || input.acpExecutable === true);
         const selectable = executable && config.visibility !== "hidden";
         return Object.freeze({
           kind: "candidate",

@@ -472,6 +472,7 @@ import { createProviderProvisioningTarget } from "./model-provider/providerProvi
 import { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 import { buildOffPeakModelSelectionView } from "./model-provider/offPeakModelSelectionView.js";
 import { resolveClientConfigPlatform } from "./runtime-tools/clientPlatform.js";
+import { isEffectiveDevelopmentNodeEnv } from "./runtime-tools/nodeEnv.js";
 import {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
@@ -1667,6 +1668,8 @@ export function createLocalServices(options: {
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     acpAgentStore,
+    // Same dev-runtime signal as the host ACP bridge (specs/acp-agent-runtime.md "Dev-only visibility").
+    acpExecutable: isEffectiveDevelopmentNodeEnv(),
     wrapConfigSource: chatGptPlanConfigSourceWrapper,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,

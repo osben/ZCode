@@ -48,13 +48,14 @@ const acp = (agents: readonly ForkAcpAgentRecord[]): ForkAcpAgentSnapshot => ({
   agents,
 });
 
-function resolve(snapshot: ProviderConfigSnapshot) {
+function resolve(snapshot: ProviderConfigSnapshot, acpExecutable?: boolean) {
   return new ProviderConfigResolver().resolve({
     zcodeBuiltinProviders: snapshot.zcodeBuiltinProviders,
     personalProviders: snapshot.personalProviders,
     zcodeBuiltinModelRules: snapshot.zcodeBuiltinModelRules,
     personalModels: snapshot.personalModels,
     accountProviders: ProviderConfigMap.empty(),
+    acpExecutable,
   });
 }
 
@@ -92,6 +93,23 @@ describe("ACP agents derived from the fork sidecar", () => {
     expect(
       provider?.models.map((model) => [model.modelId, model.enabled, model.executable]),
     ).toEqual([["opencode", true, false]]);
+  });
+
+  it("makes the ACP model executable only behind the development gate", () => {
+    const derived = deriveAcpAgentConfigSnapshot(baseSnapshot(), acp([OPENCODE]));
+    const modelStates = (acpExecutable?: boolean) =>
+      resolve(derived, acpExecutable)
+        .resolvedProviders.find((item) => item.providerId === "acp:opencode")
+        ?.models.map((model) => [model.modelId, model.executable, model.selectable]);
+
+    expect(modelStates()).toEqual([["opencode", false, false]]);
+    expect(modelStates(false)).toEqual([["opencode", false, false]]);
+    expect(modelStates(true)).toEqual([["opencode", true, true]]);
+    // The gate never changes an ordinary API provider's executability.
+    const registry = resolve(baseSnapshot(), true);
+    expect(registry.resolvedProviders.every((item) => item.providerId !== "acp:opencode")).toBe(
+      true,
+    );
   });
 
   it("keeps the record's enabled flag on the provider rule", () => {

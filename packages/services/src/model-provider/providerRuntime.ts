@@ -41,6 +41,7 @@ export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
   readonly acpAgents?: ProviderSettingsAcpAgentsBridge;
   readonly acpAgentStore?: ProviderRuntimeDependencies["acpAgentStore"];
+  readonly acpExecutable?: boolean;
 }
 
 export interface ProviderRuntimeDependencies {
@@ -62,6 +63,8 @@ export interface ProviderRuntimeDependencies {
    * migrated out of `provider_config.json` at start, and Settings can save agents.
    */
   readonly acpAgentStore?: ForkAcpAgentStore & { dispose?(): void };
+  /** Development-only gate: ACP models are executable only when true (specs/acp-agent-runtime.md). */
+  readonly acpExecutable?: boolean;
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
   readonly disposeModelSelectionConfiguredDefaultSource?: () => void;
 }
@@ -130,6 +133,7 @@ export class ProviderRuntime {
     this.registryService = new ProviderRegistryService({
       configSource: this.registryConfigSource,
       accountSource,
+      acpExecutable: dependencies.acpExecutable === true,
     });
     const mutations = createSettingsMutationTarget(
       this.#configRuntime,
@@ -274,6 +278,7 @@ export function createProviderRuntime(options: ProviderRuntimeOptions): Provider
     wrapConfigSource,
     acpAgents,
     acpAgentStore,
+    acpExecutable,
     ...configRuntimeOptions
   } = options;
   const configRuntime = createProviderConfigRuntime(configRuntimeOptions);
@@ -287,6 +292,7 @@ export function createProviderRuntime(options: ProviderRuntimeOptions): Provider
     ...(wrapConfigSource ? { wrapConfigSource } : {}),
     ...(acpAgents ? { acpAgents } : {}),
     ...(acpAgentStore ? { acpAgentStore } : {}),
+    ...(acpExecutable === undefined ? {} : { acpExecutable }),
     modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),

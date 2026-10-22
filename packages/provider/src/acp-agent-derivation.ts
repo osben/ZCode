@@ -123,7 +123,8 @@ export function buildAcpPseudoModelConfig(agentId: string): ModelConfigObject {
       contextWindow: ACP_CONTEXT_WINDOW_BY_AGENT[agentId] ?? DEFAULT_ACP_CONTEXT_WINDOW,
       inputFormat: {
         supportsText: true,
-        supportsImage: false,
+        // Both agents advertise promptCapabilities.image; v1 sends current-turn images as ACP blocks.
+        supportsImage: true,
         supportsVideo: false,
         supportsAudio: false,
         supportsPdf: false,
