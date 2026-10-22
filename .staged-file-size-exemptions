@@ -263,3 +263,9 @@ third-party/npm-overrides.json
 
 # TEMPORARY (relay v2 web client): upstream webRemoteControlTransport (~27 KB) taken as-is. Split it below 20000 bytes (WebSocket framing vs heartbeat/token recovery), then remove this block.
 packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
+
+# TEMPORARY (PR #273, specs/plugin-discovery-process-cache.md): bundled-plugins.ts is upstream-synced
+# (3.16.1) and was ~26 KB before the fork seed-hash memo. Remove this entry when upstream splits the
+# file below 20000 bytes, or when apps/zcode-cli becomes a managed architecture module and the memo
+# can move into its own sibling file.
+apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
