@@ -4,7 +4,9 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ModelNetworkStatusEvent } from "@zcode/contracts";
 import { recordGenerateTextDebug, recordStreamTextDebug } from "../src/model/runner-debug.js";
+import type { AiSdkModelRuntime } from "../src/model/runner.js";
 import type {
   AiSdkGenerateTextOptions,
   AiSdkModelTextRequest,
@@ -12,6 +14,8 @@ import type {
   AiSdkStreamTextResult,
   ResolvedAiSdkModel,
 } from "../src/model/runner-runtime.js";
+import { executeAdapterStreamText } from "./test-adapter-model.js";
+import { TestAiSdkModelAdapter, TestProviderConfigFixture } from "./test-provider-config.js";
 
 interface RecordedTiming {
   stream: boolean;
@@ -185,5 +189,57 @@ describe("model-io record stream timing", () => {
       timeToFirstProviderEventMs: 50,
       timeToFirstContentMs: 90,
     });
+  });
+});
+
+describe("first provider event milestone", () => {
+  it("ignores the AI SDK's locally synthesized start event", async () => {
+    const providerDelayMs = 80;
+    const runtime: AiSdkModelRuntime = {
+      async generateText() {
+        throw new Error("not used");
+      },
+      streamText() {
+        return {
+          fullStream: (async function* () {
+            yield { type: "start" };
+            await new Promise((resolve) => setTimeout(resolve, providerDelayMs));
+            yield { type: "start-step", request: {}, warnings: [] };
+            yield { type: "text-delta", id: "text", text: "hi" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          })(),
+        } as never;
+      },
+    };
+    const adapter = new TestAiSdkModelAdapter({
+      registry: new TestProviderConfigFixture({
+        providers: {
+          test: { kind: "custom", createLanguageModel: (modelId) => ({ modelId }) as never },
+        },
+      }),
+      runtime,
+      retry: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, jitter: false },
+    });
+    const status: ModelNetworkStatusEvent[] = [];
+    for await (const _event of executeAdapterStreamText(adapter, {
+      providerId: "test",
+      modelId: "model-a",
+      messages: [{ role: "user" as const, content: "hello" }],
+      statusSink: { publish: (event: ModelNetworkStatusEvent) => void status.push(event) },
+    })) {
+      // Drain the stream.
+    }
+
+    const completed = status.find((event) => event.type === "model_request_completed");
+    // This value feeds model-io `timing`; without the guard it lands at ~0 ms. 15 ms covers timer jitter.
+    expect(
+      completed && "timeToFirstProviderEventMs" in completed
+        ? (completed.timeToFirstProviderEventMs ?? 0)
+        : 0,
+    ).toBeGreaterThanOrEqual(providerDelayMs - 15);
   });
 });

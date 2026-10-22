@@ -352,7 +352,9 @@ export async function* runStreamText(input: {
           streamReachedNaturalEnd = true;
           break;
         }
-        if (timeToFirstProviderEventMs === undefined) {
+        // AI SDK synthesizes `start` locally before the HTTP response resolves; timing it would
+        // report local setup as provider latency. `start-step` follows the first provider chunk.
+        if (timeToFirstProviderEventMs === undefined && next.value.type !== "start") {
           timeToFirstProviderEventMs = Date.now() - startedAt;
           await publishModelTelemetryMilestone(
             {

@@ -30,6 +30,7 @@ Every model-io record written by this build carries a top-level `timing` object.
 5. A non-streaming call writes `{ "stream": false }`. It has no TTFT.
 6. The field is additive. Production trimming, compaction and redaction keep it. Records written before this change have no `timing`; readers show TTFT as unknown.
 7. Field names match the existing `model_request_completed` status so the two never drift.
+8. `timeToFirstProviderEventMs` starts at the first stream part that follows provider data. The AI SDK enqueues `start` locally before the HTTP response resolves, so it never counts; `start-step` does count, because the SDK emits it on the first provider chunk. The `model_first_provider_event` milestone and `model_request_completed` share this value.
 
 ## Acceptance scenarios
 
@@ -40,3 +41,4 @@ Unit tests: `apps/zcode-cli/packages/adapters/tests/runner-debug-stream-timing.t
 3. A stream that fails before any event records `{ stream: true }`.
 4. A generate call records `{ stream: false }`.
 5. A production (non-development) record keeps `timing` after trimming.
+6. A stream whose local `start` arrives long before the first provider chunk reports `timeToFirstProviderEventMs` at the provider chunk, not at `start`.
