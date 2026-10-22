@@ -37,9 +37,13 @@ export interface AcpMockState {
 /**
  * Shim for the `opencode` binary: version and auth probes exit before logging; every ACP launch
  * appends its pid (exec keeps the pid) before handing over to the mock agent, which keeps its memory
- * and method log in the state file across processes. `resetState` starts a clean state.
+ * and method log in the state file across processes. `resetState` starts a clean state. `config`
+ * passes the mock's `--config` mode (S6 session configuration; unset offers no options).
  */
-export async function writeAcpLoggingShim(options: { resetState: boolean }) {
+export async function writeAcpLoggingShim(options: {
+  resetState: boolean;
+  config?: "options" | "legacy";
+}) {
   assert.ok(
     existsSync(ACP_MOCK_AGENT_FIXTURE),
     `missing mock agent fixture: ${ACP_MOCK_AGENT_FIXTURE}`,
@@ -50,6 +54,7 @@ export async function writeAcpLoggingShim(options: { resetState: boolean }) {
     await rm(MOCK_STATE_FILE, { force: true });
   }
   const node = JSON.stringify(process.execPath);
+  const configArgs = options.config ? ` --config ${options.config}` : "";
   await writeFile(
     OPENCODE_SHIM,
     [
@@ -59,7 +64,7 @@ export async function writeAcpLoggingShim(options: { resetState: boolean }) {
       '  auth) echo "e2e mock agent: logged in"; exit 0 ;;',
       "esac",
       `echo "$$" >> ${JSON.stringify(SPAWN_LOG)}`,
-      `exec ${node} ${JSON.stringify(ACP_MOCK_AGENT_FIXTURE)} --state ${JSON.stringify(MOCK_STATE_FILE)} "$@"`,
+      `exec ${node} ${JSON.stringify(ACP_MOCK_AGENT_FIXTURE)} --state ${JSON.stringify(MOCK_STATE_FILE)}${configArgs} "$@"`,
       "",
     ].join("\n"),
     "utf8",
