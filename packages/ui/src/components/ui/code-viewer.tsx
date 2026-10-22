@@ -572,22 +572,32 @@ export function CodeViewer({
     }
 
     const root = viewerRef.current;
-    const observers: MutationObserver[] = [];
-    const observedRoots = new WeakSet<Node>();
+    const observers = new Map<ParentNode, MutationObserver>();
     let animationFrame = 0;
 
     const observeRoot = (target: ParentNode) => {
-      if (observedRoots.has(target)) {
+      if (observers.has(target)) {
         return;
       }
 
-      observedRoots.add(target);
       const observer = new MutationObserver(schedulePatch);
       observer.observe(target, { childList: true, subtree: true });
-      observers.push(observer);
+      observers.set(target, observer);
+    };
+
+    // Each file switch remounts <File> with a new shadow root; observers for replaced roots were never
+    // disconnected and accumulated for the viewer's lifetime.
+    const releaseDetachedRoots = () => {
+      for (const [target, observer] of observers) {
+        if (target instanceof ShadowRoot && !target.host.isConnected) {
+          observer.disconnect();
+          observers.delete(target);
+        }
+      }
     };
 
     const patch = () => {
+      releaseDetachedRoots();
       patchCodeCommentUtilityButtons(root, labels.addCommentTooltip);
       walkShadowRoots(root, (shadowRoot) => {
         observeRoot(shadowRoot);
@@ -616,7 +626,7 @@ export function CodeViewer({
       if (animationFrame) {
         window.cancelAnimationFrame(animationFrame);
       }
-      for (const observer of observers) {
+      for (const observer of observers.values()) {
         observer.disconnect();
       }
     };
