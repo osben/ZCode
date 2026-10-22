@@ -118,6 +118,15 @@ function renderGroupedTaskRow(
   );
 }
 
+describe("GroupedTaskRow running spinner", () => {
+  it("rotates an HTML wrapper instead of the SVG so running rows avoid per-frame SVG style recalcs", () => {
+    const html = renderGroupedTaskRow({ phase: "running", permissionCount: 0 });
+
+    expect(html).toMatch(/<span[^>]*animate-spin[^>]*>\s*<svg/);
+    expect(html).not.toMatch(/<svg[^>]*animate-spin/);
+  });
+});
+
 describe("GroupedTaskRow pending interaction tag", () => {
   it("把权限等待渲染为 pill badge", () => {
     const html = renderGroupedTaskRow({

@@ -33,6 +33,21 @@ function taskWith(overrides: Partial<ZCodeTaskMeta>): ZCodeTaskMeta {
 
 afterEach(cleanup);
 
+describe("ChildSessionCountsMarker running spinner", () => {
+  it("rotates an HTML wrapper instead of the SVG", () => {
+    const { container } = render(
+      createElement(ChildSessionCountsMarker, {
+        task: taskWith({ subagentCount: 2, runningSubagentCount: 1 }),
+        expanded: false,
+      }),
+    );
+    const spinner = container.querySelector(".motion-safe\\:animate-spin");
+    expect(spinner?.tagName).toBe("SPAN");
+    expect(spinner?.querySelector("svg")).not.toBeNull();
+    expect(container.querySelector("svg.motion-safe\\:animate-spin")).toBeNull();
+  });
+});
+
 describe("ChildSessionCountsMarker render behavior", () => {
   it("renders nothing for a task without children", () => {
     const { container } = render(
