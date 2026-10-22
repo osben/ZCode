@@ -57,6 +57,18 @@ ISSUE-015 fixed in 00cb654f (fork child claimed for the parent's project after t
 
 ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coincide with Vite HMR updates reaching `main.tsx` ("createRoot() on a container that has already been passed to createRoot()"); e4523618 reuses the root across re-evaluations.
 
+## Real-scale pass (copy of the real index: 1949 tasks, 13 projects, restart at 00:58)
+
+| Action                           | Long tasks | Worst block |
+| -------------------------------- | ---------- | ----------- |
+| Switch sidebar to grouped view   | 1          | 173 ms      |
+| Scroll the sidebar (4 × 1500 px) | 0          | —           |
+| Switch to "Recently updated"     | 1          | 65 ms       |
+| Search dialog typing             | 0          | —           |
+
+| ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
+| ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
+
 ## Live re-verification on the full stack (restart at 00:52)
 
 - Outside-project new task: Send accepted immediately, reply in ~20 s, row in the Tasks region (ISSUE-011 closed).
