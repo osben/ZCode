@@ -316,29 +316,15 @@ instead of a lone open icon. Its items, in order, each hidden when the platform 
   are excluded because Reveal covers them. Same local-only gating as Reveal; hidden when no editor is
   installed.
 - **Copy path** — copies the absolute worktree path and confirms with a toast. Always shown.
-- **New task in this worktree** — the former open action, honestly named. It opens the worktree
-  directory as its own project tab (added to the top of the project list) and starts an empty draft
-  there, leaving the current conversation. It does not open a folder in the OS.
 
-The New task item opens the exact worktree path through the existing path-aware workspace-open
-contract; it must not simulate a click on the generic Open workspace picker. For a remote parent
-workspace it also passes the worktree's own remote identity
-(the parent identity re-pointed at the worktree path), because remote identities embed the path. The
-notice binds the worktree identity to the parent's bound remote session before it calls the open path,
-because the identity alone does not route the new tab. A parent identity that
-claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
-action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
-The parent's session is resolved with the same order the pane uses for its own routing: the pane's remote
-session id when present, then the parent identity's binding. Restored and split remote panes omit the id and
-resolve through the binding. Only a session currently attached to the session registry counts, so the action
-fails closed, with the same toast and without binding or calling the open path, when neither source yields an
-attached session (for example during a remote disconnect). If the open callback rejects after the action bound
-the worktree identity, the action restores the identity's prior binding, or removes the binding if none existed,
-before showing the toast.
-On the Web remote-control path, the desktop open handler fails closed for any remote worktree identity (including an
-unparseable `remote:` form): it rejects the workspace-open request before the path-only local open runs, so the
-action shows the open-failed toast. Routing a remote worktree on desktop needs the identity-to-session binding in the
-desktop renderer and is not part of this contract.
+There is no "open the worktree" / "new task in this worktree" item. The former icon-only open action
+called the path-only workspace-open + empty-draft flow, which carries no `projectId`: projects are
+Host `projectService` records and the composer must not derive a project from a tab or cwd
+(`packages/ui/src/project-sidebar/CONTRACT.md`), so the draft showed "Select project" and the
+worktree never appeared in the project list, on Desktop and Web alike. Continuing work in the
+worktree happens in the session itself; starting another task in an existing worktree from the
+parent project is a separate feature.
+
 Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
 duration is not worktree timing.
 
