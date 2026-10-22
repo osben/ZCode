@@ -366,7 +366,7 @@ export async function stop(
         payload.expectedForegroundExecutionId === activeExecutionId
       : hadActivePrompt && payload.expectedForegroundExecutionId === undefined;
   const legacyController = record.activeAbortController;
-  // A controller already aborted before this stop means a cancel (e.g. a Steer) is in flight, not yet torn down.
+  // A controller already aborted before this stop means any cancel (a Steer, a goal pause, ...) is in flight, not torn down.
   const legacyAbortedBefore = legacyController?.signal.aborted === true;
   const held = await holdFollowingQueue(host, record, willCancel);
   // The hold write yields, so the target seen above may have ended or been replaced meanwhile. A compat
@@ -403,7 +403,10 @@ export async function stop(
   const cancelInFlight = isStopCancelInFlight({
     held,
     runtimeIdle: runtimeStop?.kind === "idle",
-    runtimeIdRegistered: record.app.runtime?.getActiveForegroundExecutionId?.() !== undefined,
+    // Only the pinned target counts: core returns idle for an aborted active execution before the expected-id check.
+    runtimeIdRegistered:
+      stopTargetId !== undefined &&
+      record.app.runtime?.getActiveForegroundExecutionId?.() === stopTargetId,
     compatAbortedBefore: activeExecutionId === undefined && legacyAbortedBefore && !compatReplaced && !compatEnded,
   });
   // A stop that cancels nothing undoes its own hold: the turn-end drain check already saw autoDrain=false.

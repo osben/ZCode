@@ -246,8 +246,8 @@ export async function releaseFollowingQueue(
 }
 
 /**
- * ISSUE-039 D1. A cancel already in flight: the target was aborted by a Steer and has not torn down yet. A stop
- * that wrote its own hold keeps it (Stop always wins over an in-flight Steer). The inputs are observed by the
+ * ISSUE-039 D1. Any cancel already in flight (a Steer, a goal pause, a projection-fault termination): the target was
+ * aborted and has not torn down yet. A stop that wrote its own hold keeps it (a user Stop always holds). The inputs are observed by the
  * caller: runtimeIdle (stopActiveForegroundExecution returned idle), runtimeIdRegistered (the execution is still
  * registered, so idle means aborted, not torn down), compatAbortedBefore (no runtime token, the controller was
  * aborted before the stop began).

@@ -6871,8 +6871,10 @@ describe("fork / modelChange marker", () => {
     });
   });
 
-  // ISSUE-039 D1: the Stop's hold is written before the Steer's cancelled TurnComplete (which carries the
-  // preserve intent). The projection must keep the hold; the steer cancel must not clear it.
+  // ISSUE-039 D1 (characterization guard, not a red-first test: the projection already kept this hold). The Stop's
+  // hold is written before the Steer's cancelled TurnComplete (which carries the preserve intent). The projection
+  // keeps the hold. QueueAutoDrainChanged(false) projects pauseReason "manual", which the UI shows as the generic copy
+  // (ConversationQueuePanel: only "stopped" and "error" get their own copy).
   it("ISSUE-039 D1：steer 的 cancelled TurnComplete 不清除先写入的用户 Stop hold", () => {
     const log = new EventLog();
     log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
@@ -6918,6 +6920,7 @@ describe("fork / modelChange marker", () => {
     const snapshot = runAll(log.events).projection.getSnapshot();
     expect(snapshot.queue.autoDrain).toBe(false);
     expect(snapshot.queue.items).toHaveLength(2);
+    expect(snapshot.queue.pauseReason).toBe("manual");
   });
 
   // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──

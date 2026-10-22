@@ -1025,6 +1025,82 @@ describe("v4 原生 sendQueuedNow", () => {
     expect(calls).toEqual(["autoDrain:false"]);
   });
 
+  // Core runtime semantics (runtime-command-queue.ts stopActiveForegroundExecution): an aborted active execution
+  // returns idle before the expected-id check, so idle does not prove the expected target is the aborted one.
+  function coreLikeRuntime(initial: { id: string; aborted: boolean } | undefined) {
+    let active = initial;
+    const runtime = {
+      getActiveForegroundExecutionId: vi.fn(() => active?.id),
+      stopActiveForegroundExecution: vi.fn((options: { expectedForegroundExecutionId?: string }) => {
+        if (!active || active.aborted) return { kind: "idle" as const };
+        if (
+          options.expectedForegroundExecutionId !== undefined &&
+          options.expectedForegroundExecutionId !== active.id
+        ) {
+          return { kind: "mismatch" as const, activeForegroundExecutionId: active.id };
+        }
+        active.aborted = true;
+        return { kind: "stopped" as const, foregroundExecutionId: active.id };
+      }),
+    };
+    return {
+      runtime,
+      clear: () => {
+        active = undefined;
+      },
+      swap: (next: { id: string; aborted: boolean }) => {
+        active = next;
+      },
+    };
+  }
+
+  it("ISSUE-039 D1：stale expected id 不因另一个已 abort 的执行而保留 hold（rule 2：noop、不写 hold）", async () => {
+    const calls: string[] = [];
+    const core = coreLikeRuntime({ id: "foreground-1", aborted: false });
+    const app = makeApp({ runtime: core.runtime });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+      // While the hold is written, the expected execution is replaced by another, already-aborted one.
+      core.swap({ id: "foreground-2", aborted: true });
+    }) as typeof app.setQueueAutoDrain;
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(calls).toEqual(["autoDrain:false", "autoDrain:true"]);
+  });
+
+  it("ISSUE-039 D1：steer 已 abort 的执行在 hold 写入期间收口后，Stop 释放自己的 hold（rule 14）", async () => {
+    const calls: string[] = [];
+    const core = coreLikeRuntime({ id: "foreground-1", aborted: true });
+    const app = makeApp({ runtime: core.runtime });
+    app.setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      calls.push(`autoDrain:${String(autoDrain)}`);
+      // The steered turn tears down while the Stop's hold is being written.
+      core.clear();
+    }) as typeof app.setQueueAutoDrain;
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, {
+      getQueueAutoDrain: vi.fn().mockReturnValue(true),
+      getQueueLength: vi.fn().mockReturnValue(2),
+    });
+
+    // Without an expected id the stop is pinned to the execution it saw before the hold write; that execution has
+    // torn down, so the stop cancels nothing, releases its hold, and returns the stale-target noop (rule 4).
+    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
+      reasonCode: "guard.stopTargetChanged",
+    });
+
+    expect(calls).toEqual(["autoDrain:false", "autoDrain:true"]);
+  });
+
   it("BG42：notification 只占用 Core foreground 时仍先 stop 再提升 queue item", async () => {
     const calls: string[] = [];
     let activeForegroundExecutionId: string | undefined = "notification-foreground-1";
