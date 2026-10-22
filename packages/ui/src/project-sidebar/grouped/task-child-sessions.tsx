@@ -72,7 +72,7 @@ export function TaskChildSessionRows({
           <span className="min-w-0 truncate">{child.title}</span>
           <span className="ml-auto flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtlest">
             {child.running ? (
-              // Rotate the HTML wrapper, not the SVG, to avoid per-frame SVG style recalcs.
+              // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
               <span
                 role="img"
                 aria-label={intl.formatMessage({ id: "taskList.childRunningLabel" })}

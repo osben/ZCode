@@ -58,13 +58,21 @@ const highlighterCache = new Map<
   Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
 >();
 // Each entry keeps a full ThemedToken grid; without a bound, every diff ever rendered stayed alive for the
-// renderer's lifetime. Map insertion order doubles as LRU order (hits are re-inserted).
+// renderer's lifetime. Map insertion order doubles as LRU order (hits are re-inserted). Bounded by entry count
+// and by total source characters, since a single input may be up to ~120k chars (spec: renderer-cache-bounds).
 export const SHIKI_TOKENS_CACHE_MAX_ENTRIES = 200;
-const tokensCache = new Map<string, TokenizedCode>();
+export const SHIKI_TOKENS_CACHE_MAX_CODE_CHARS = 2_000_000;
+// One retry per highlighter key per app session: a persistent WASM/grammar failure must not re-init on every mount.
+export const SHIKI_HIGHLIGHTER_MAX_ATTEMPTS = 2;
+const tokensCache = new Map<string, { tokenized: TokenizedCode; codeChars: number }>();
+let tokensCacheCodeChars = 0;
+const highlighterFailures = new Map<string, number>();
+const loggedHighlightErrors = new WeakSet<object>();
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
 // In-memory diagnostic counter for the token cache and highlighter instances.
 uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   tokensCache: tokensCache.size,
+  tokensCacheCodeChars,
   highlighters: highlighterCache.size,
 }));
 
@@ -85,12 +93,26 @@ const getResolvedCodeTheme = (theme?: BundledTheme): BundledTheme => {
 const getCodeTokensCacheKey = (code: string, language: BundledLanguage, theme: BundledTheme) =>
   `${theme}:${language}:${code}`;
 
-const rememberTokens = (key: string, tokenized: TokenizedCode) => {
+const forgetTokens = (key: string) => {
+  const entry = tokensCache.get(key);
+  if (!entry) return;
   tokensCache.delete(key);
-  tokensCache.set(key, tokenized);
-  if (tokensCache.size > SHIKI_TOKENS_CACHE_MAX_ENTRIES) {
+  tokensCacheCodeChars -= entry.codeChars;
+};
+
+const rememberTokens = (key: string, tokenized: TokenizedCode, codeChars: number) => {
+  forgetTokens(key);
+  tokensCache.set(key, { tokenized, codeChars });
+  tokensCacheCodeChars += codeChars;
+  // Always keep the newest entry, even if it alone exceeds the character budget.
+  while (
+    tokensCache.size > 1 &&
+    (tokensCache.size > SHIKI_TOKENS_CACHE_MAX_ENTRIES ||
+      tokensCacheCodeChars > SHIKI_TOKENS_CACHE_MAX_CODE_CHARS)
+  ) {
     const oldestKey = tokensCache.keys().next().value;
-    if (oldestKey !== undefined) tokensCache.delete(oldestKey);
+    if (oldestKey === undefined) break;
+    forgetTokens(oldestKey);
   }
 };
 const getHighlighter = (
@@ -109,10 +131,18 @@ const getHighlighter = (
   });
 
   highlighterCache.set(cacheKey, highlighterPromise);
-  // A cached rejection would disable highlighting for this language/theme until reload; drop it so the next call retries.
+  // Allow one retry after a transient failure; once attempts are exhausted the rejection stays cached so
+  // later mounts fall back to plain text without re-initializing Shiki.
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
   highlighterPromise.catch(() => {
-    if (highlighterCache.get(cacheKey) === highlighterPromise) highlighterCache.delete(cacheKey);
+    const failures = (highlighterFailures.get(cacheKey) ?? 0) + 1;
+    highlighterFailures.set(cacheKey, failures);
+    if (
+      failures < SHIKI_HIGHLIGHTER_MAX_ATTEMPTS &&
+      highlighterCache.get(cacheKey) === highlighterPromise
+    ) {
+      highlighterCache.delete(cacheKey);
+    }
   });
   return highlighterPromise;
 };
@@ -151,9 +181,10 @@ export const highlightCode = (
   const resolvedLanguage = normalizeCodeLanguage(language);
   const tokensCacheKey = getCodeTokensCacheKey(code, resolvedLanguage, resolvedTheme);
 
-  const cached = tokensCache.get(tokensCacheKey);
-  if (cached) {
-    rememberTokens(tokensCacheKey, cached);
+  const cachedEntry = tokensCache.get(tokensCacheKey);
+  if (cachedEntry) {
+    const cached = cachedEntry.tokenized;
+    rememberTokens(tokensCacheKey, cached, cachedEntry.codeChars);
     // Notify the effect on a cache hit too, but do not trigger setState synchronously.
     // Many code blocks mount in the same commit when restoring history; a synchronous callback turns a cache hit into a nested update,
     // which can trigger React #185 when combined with Streamdown rerenders. Defer to a microtask, then use the idempotent setter.
@@ -189,7 +220,7 @@ export const highlightCode = (
         tokens: result.tokens,
       };
 
-      rememberTokens(tokensCacheKey, tokenized);
+      rememberTokens(tokensCacheKey, tokenized, code.length);
 
       const subs = subscribers.get(tokensCacheKey);
       if (subs) {
@@ -202,11 +233,16 @@ export const highlightCode = (
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
     .catch((error) => {
       // If Shiki loading or tokenization fails, the component stays in the unhighlighted rawTokens state.
+      subscribers.delete(tokensCacheKey);
+      // A cached (exhausted) highlighter rejection reaches every later call; log each distinct error once.
+      if (typeof error === "object" && error !== null) {
+        if (loggedHighlightErrors.has(error)) return;
+        loggedHighlightErrors.add(error);
+      }
       logger.error(
         `[ShikiHighlighter] 代码高亮失败: language=${resolvedLanguage}, theme=${resolvedTheme}`,
         error,
       );
-      subscribers.delete(tokensCacheKey);
     });
 
   return null;

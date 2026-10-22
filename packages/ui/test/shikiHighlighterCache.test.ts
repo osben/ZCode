@@ -1,5 +1,5 @@
 import type { TokenizedCode } from "@/lib/shikiHighlighter.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const createHighlighter = vi.fn();
 
@@ -21,18 +21,31 @@ function createFakeHighlighter() {
 
 async function loadHighlighter() {
   vi.resetModules();
-  return import("@/lib/shikiHighlighter.js");
+  const { logger } = await import("@/logger.js");
+  const loggerError = vi.spyOn(logger, "error").mockImplementation(() => {});
+  return { ...(await import("@/lib/shikiHighlighter.js")), loggerError };
 }
 
-function highlightAsync(
-  highlightCode: Awaited<ReturnType<typeof loadHighlighter>>["highlightCode"],
-  code: string,
-): Promise<TokenizedCode> {
+type HighlightCode = Awaited<ReturnType<typeof loadHighlighter>>["highlightCode"];
+
+function highlightAsync(highlightCode: HighlightCode, code: string): Promise<TokenizedCode> {
   return new Promise((resolve, reject) => {
-    const cached = highlightCode(code, "typescript", "github-light", resolve);
-    if (cached) resolve(cached);
-    setTimeout(() => reject(new Error("highlight timed out")), 1000);
+    const timeout = setTimeout(() => reject(new Error("highlight timed out")), 1000);
+    const settle = (result: TokenizedCode) => {
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const cached = highlightCode(code, "typescript", "github-light", settle);
+    if (cached) settle(cached);
   });
+}
+
+/** Mounts a highlight request and lets the async highlighter settle without waiting for a result. */
+async function requestAndSettle(highlightCode: HighlightCode, code: string) {
+  const callback = vi.fn();
+  highlightCode(code, "typescript", "github-light", callback);
+  await vi.runAllTimersAsync();
+  return callback;
 }
 
 function flatContent(result: TokenizedCode): string {
@@ -41,7 +54,13 @@ function flatContent(result: TokenizedCode): string {
 
 describe("shikiHighlighter token cache", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     createHighlighter.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("does not return another block's tokens when only the middle of the code differs", async () => {
@@ -57,20 +76,32 @@ describe("shikiHighlighter token cache", () => {
     expect(flatContent(await highlightAsync(highlightCode, second))).toBe(second);
   });
 
-  it("retries highlighter creation after a failed load instead of caching the rejection", async () => {
+  it("retries highlighter creation once after a failed load", async () => {
     const fake = createFakeHighlighter();
     createHighlighter
       .mockRejectedValueOnce(new Error("wasm load failed"))
       .mockResolvedValue(fake.highlighter);
     const { highlightCode } = await loadHighlighter();
 
-    await expect(highlightAsync(highlightCode, "const failed = true;")).rejects.toThrow(
-      "highlight timed out",
-    );
+    const failed = await requestAndSettle(highlightCode, "const failed = true;");
     const result = await highlightAsync(highlightCode, "const retried = true;");
 
+    expect(failed).not.toHaveBeenCalled();
     expect(flatContent(result)).toBe("const retried = true;");
     expect(createHighlighter).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops re-initializing a highlighter that keeps failing and logs each failure once", async () => {
+    createHighlighter.mockImplementation(() => Promise.reject(new Error("wasm load failed")));
+    const { highlightCode, loggerError, SHIKI_HIGHLIGHTER_MAX_ATTEMPTS } = await loadHighlighter();
+
+    for (let mount = 0; mount < 6; mount += 1) {
+      const callback = await requestAndSettle(highlightCode, `const attempt${mount} = ${mount};`);
+      expect(callback).not.toHaveBeenCalled();
+    }
+
+    expect(createHighlighter).toHaveBeenCalledTimes(SHIKI_HIGHLIGHTER_MAX_ATTEMPTS);
+    expect(loggerError).toHaveBeenCalledTimes(SHIKI_HIGHLIGHTER_MAX_ATTEMPTS);
   });
 
   it("evicts the least recently used tokens once the cache is full", async () => {
@@ -89,5 +120,19 @@ describe("shikiHighlighter token cache", () => {
 
     expect(highlightCode("const kept = 0;", "typescript", "github-light")).not.toBeNull();
     expect(highlightCode("const evicted = 0;", "typescript", "github-light")).toBeNull();
+  });
+
+  it("evicts old entries once the cached source exceeds the character budget", async () => {
+    const fake = createFakeHighlighter();
+    createHighlighter.mockResolvedValue(fake.highlighter);
+    const { highlightCode, SHIKI_TOKENS_CACHE_MAX_CODE_CHARS } = await loadHighlighter();
+    const large = (label: string) =>
+      `// ${label}\n${"x".repeat(SHIKI_TOKENS_CACHE_MAX_CODE_CHARS / 2)}`;
+
+    await highlightAsync(highlightCode, large("first"));
+    await highlightAsync(highlightCode, large("second"));
+
+    expect(highlightCode(large("second"), "typescript", "github-light")).not.toBeNull();
+    expect(highlightCode(large("first"), "typescript", "github-light")).toBeNull();
   });
 });

@@ -51,7 +51,7 @@ export function ChildSessionCountsMarker({
       {subagentTotal > 0 ? (
         <span className={segmentClass}>
           {running > 0 ? (
-            // Rotate the HTML wrapper, not the SVG, to avoid per-frame SVG style recalcs.
+            // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
             <span
               aria-hidden="true"
               className="flex size-3.5 shrink-0 items-center justify-center motion-safe:animate-spin"

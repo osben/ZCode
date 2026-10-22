@@ -226,7 +226,8 @@ function GroupedTaskRowComponent({
             )}
           >
             {leadingIndicator === "loading" ? (
-              // Rotate the HTML wrapper, not the SVG: SVG transforms recalc style every frame (same as TaskListItem).
+              // Rotate the HTML wrapper, not the SVG, matching TaskListItem: SVG rotation is assumed to cost a style
+              // recalc per frame (hypothesis from the TaskListItem precedent, not profiled here).
               <span
                 aria-hidden="true"
                 className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
