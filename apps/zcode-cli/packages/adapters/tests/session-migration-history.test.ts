@@ -1,9 +1,12 @@
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { storageMigrationReportSchema } from "@zcode/shared/sqlite-migrations";
 import { afterEach, describe, expect, it } from "vitest";
+import { openStartupSqliteSessionStore } from "../src/storage/index.js";
 import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
 import {
   runSqliteSessionMigrationsAsync,
@@ -203,5 +206,29 @@ describe("session database history: rollback to the pre-PR fork build (scenario 
     for (const id of preIds) expect(after.get(id)?.checksum).toBe(preRow.get(id)?.checksum);
     // The columns the pre-PR build reads and writes are still present.
     expect(sessionColumns(db)).toEqual(expect.arrayContaining(["execution_directory", "execution_branch", "fork_incognito"]));
+  });
+});
+
+// Regression: the fork's synchronous startup open ran pending migrations with no table backup and reported
+// `backupSkipped: true`. The startup entry point must take the backup for a pending upgrade and report it.
+describe("session database startup open takes the backup for a pending upgrade", () => {
+  it("reports a backup directory with the table snapshot and the storage-migrated report shape", async () => {
+    const path = await copyFixture("upstream-3.16.1.sqlite");
+    const root = join(path, "..", "..", "..");
+    const store = await openStartupSqliteSessionStore({ dbPath: path });
+    try {
+      const result = store.migrationResult;
+      expect(result.applied).toContain(NEW_EXECUTION_ID);
+      expect(result.backupSkipped).toBe(false);
+      expect(result.backupPath).toBeDefined();
+      expect(result.backupPath?.startsWith(join(root, "backup"))).toBe(true);
+      expect(existsSync(join(result.backupPath!, "tables.sqlite"))).toBe(true);
+      expect(existsSync(join(result.backupPath!, "backup.json"))).toBe(true);
+      expect(
+        storageMigrationReportSchema.parse({ version: 1, kind: "storage-migrated", ...result }),
+      ).toEqual({ version: 1, kind: "storage-migrated", ...result });
+    } finally {
+      store.close();
+    }
   });
 });
