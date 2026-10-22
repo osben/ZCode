@@ -1091,14 +1091,16 @@ test("warmUp is a no-op while a dictation stream is active", async () => {
   });
 });
 
-test("warmUp rejects for a model that is not downloaded and leaves nothing loaded", async () => {
+test("warmUp resolves without loading for a model that is not downloaded", async () => {
   await withTempDir(async (dir) => {
     const descriptor = makeDescriptor();
     const { service, counts } = makeWarmUpService(dir, descriptor);
 
-    await assert.rejects(service.warmUp({ modelId: descriptor.id }));
+    // Idle users without a downloaded model must not produce a warm-up failure on the Host.
+    await service.warmUp({ modelId: descriptor.id });
     assert.equal(counts.loads, 0);
     assert.equal((await service.getRuntimeState()).loadedModelId, null);
+    assert.equal((await service.getRuntimeState()).activePhase, null);
   });
 });
 

@@ -8,22 +8,31 @@ const EMPTY_RUNTIME_STATE: VoiceDictationRuntimeState = {
   activeModelId: null,
   activePhase: null,
 };
-const REFRESH_INTERVAL_MS = 1000;
+/** Poll cadence while the Host is busy (loading, transcribing, streaming) or this window retains activity. */
+const ACTIVE_REFRESH_INTERVAL_MS = 1000;
+/**
+ * Poll cadence while the Host is idle. The voice service exposes no push event for runtime state, so
+ * an idle view notices a warm-up or an idle unload within this delay.
+ */
+const IDLE_REFRESH_INTERVAL_MS = 10_000;
 
 type RuntimeStateListener = (state: VoiceDictationRuntimeState) => void;
 
 /**
  * One poller per renderer window, shared by every mounted composer and settings view: N views cost
  * one Host call per interval instead of N timers. It runs only while at least one view subscribes,
- * and it notifies listeners only when the snapshot fields change.
+ * polls at the active or idle cadence (see nextRefreshDelayMs), and it notifies listeners only when
+ * the snapshot fields change.
  */
 const sharedPoller = {
   listeners: new Set<RuntimeStateListener>(),
   service: null as IVoiceDictationService | null,
   latest: EMPTY_RUNTIME_STATE,
   timer: undefined as number | undefined,
-  /** Bumped on every start and stop; a poll started under an older generation never reschedules. */
+  /** Bumped on every start, stop and immediate poll; a poll started under an older generation never reschedules. */
   generation: 0,
+  /** Window-local operations (for example a warm-up request in flight) that want the active cadence. */
+  retainedActivity: 0,
 };
 
 function sameRuntimeState(a: VoiceDictationRuntimeState, b: VoiceDictationRuntimeState): boolean {
@@ -32,6 +41,11 @@ function sameRuntimeState(a: VoiceDictationRuntimeState, b: VoiceDictationRuntim
     a.activeModelId === b.activeModelId &&
     a.activePhase === b.activePhase
   );
+}
+
+function nextRefreshDelayMs(): number {
+  const busy = sharedPoller.retainedActivity > 0 || sharedPoller.latest.activePhase !== null;
+  return busy ? ACTIVE_REFRESH_INTERVAL_MS : IDLE_REFRESH_INTERVAL_MS;
 }
 
 async function pollOnce(generation: number): Promise<void> {
@@ -56,7 +70,33 @@ async function pollOnce(generation: number): Promise<void> {
   sharedPoller.timer = window.setTimeout(() => {
     sharedPoller.timer = undefined;
     void pollOnce(generation);
-  }, REFRESH_INTERVAL_MS);
+  }, nextRefreshDelayMs());
+}
+
+/** Polls now and drops any scheduled poll, so the new cadence applies from this call. */
+function pollNow(): void {
+  if (sharedPoller.listeners.size === 0) return;
+  if (sharedPoller.timer !== undefined) window.clearTimeout(sharedPoller.timer);
+  sharedPoller.timer = undefined;
+  sharedPoller.generation += 1;
+  void pollOnce(sharedPoller.generation);
+}
+
+/**
+ * Marks a window-local operation (such as a warm-up request) as active: the poll switches to the
+ * active cadence and refreshes at once, so the status dot shows the load without waiting for the idle
+ * interval. The Host snapshot stays the only source of what is loaded. Call the returned function
+ * when the operation settles; it is safe to call twice.
+ */
+export function retainVoiceDictationRuntimeActivity(): () => void {
+  sharedPoller.retainedActivity += 1;
+  pollNow();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    sharedPoller.retainedActivity -= 1;
+  };
 }
 
 function subscribeRuntimeState(
@@ -68,10 +108,7 @@ function subscribeRuntimeState(
   // A view that re-subscribes missed the changes made while it was off, and later polls equal the
   // shared snapshot, so it would never be notified. Replay the snapshot the poller holds now.
   listener(sharedPoller.latest);
-  if (sharedPoller.listeners.size === 1) {
-    sharedPoller.generation += 1;
-    void pollOnce(sharedPoller.generation);
-  }
+  if (sharedPoller.listeners.size === 1) pollNow();
   return () => {
     sharedPoller.listeners.delete(listener);
     if (sharedPoller.listeners.size > 0) return;
