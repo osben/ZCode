@@ -1291,6 +1291,7 @@ const ukUA: Record<string, string> = {
   "git.actionMenu.trigger": "Коміт або push",
   "git.actionMenu.trigger.ariaLabel": "Коміт або push",
   "git.actionMenu.push": "Виконати push",
+  "git.actionMenu.commitDialog.title": "Коміт змін",
   "git.actionMenu.commitDialog.description":
     "Створити коміт із поточних змін робочого простору, які ще не потрапили в коміт.",
   "git.actionMenu.commitDialog.changesValue": "Файлів: {count}",
@@ -1352,6 +1353,10 @@ const ukUA: Record<string, string> = {
   "git.branchSwitcher.currentDirty.few": "Зміни без коміту: {count} файли",
   "git.branchSwitcher.currentDirty.many": "Зміни без коміту: {count} файлів",
   "git.branchSwitcher.currentDirty.other": "Зміни без коміту: {count} файлу",
+  "git.actionMenu.commitDialog.changesValue.one": "Файл: {count}",
+  "git.actionMenu.commitDialog.changesValue.few": "Файли: {count}",
+  "git.actionMenu.commitDialog.changesValue.many": "Файлів: {count}",
+  "git.actionMenu.commitDialog.changesValue.other": "Файлу: {count}",
   "git.branchSwitcher.checkedOutIn": "Checkout у {directory}",
   "git.branchSwitcher.createAction": "Створити нову гілку й перейти на неї...",
   "git.branchSwitcher.createDialog.title": "Створити нову гілку й перейти на неї",

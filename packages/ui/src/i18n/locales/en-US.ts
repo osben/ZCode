@@ -1625,6 +1625,7 @@ const enUS: Record<string, string> = {
   "git.actionMenu.trigger": "Commit or push",
   "git.actionMenu.trigger.ariaLabel": "Commit or push",
   "git.actionMenu.push": "Push",
+  "git.actionMenu.commitDialog.title": "Commit changes",
   "git.actionMenu.commitDialog.description":
     "Save the current uncommitted workspace changes as a commit.",
   "git.actionMenu.commitDialog.changesValue": "{count} files",
@@ -8637,6 +8638,8 @@ const enUS: Record<string, string> = {
   "taskDelete.worktreeMore.other": "{count} more files",
   "git.branchSwitcher.currentDirty.one": "Uncommitted changes: {count} file",
   "git.branchSwitcher.currentDirty.other": "Uncommitted changes: {count} files",
+  "git.actionMenu.commitDialog.changesValue.one": "{count} file",
+  "git.actionMenu.commitDialog.changesValue.other": "{count} files",
   "chat.codeComments.other": "{count} comments",
   "chat.pptxElements.other": "{count} slide elements",
   "chat.webElements.other": "{count} web elements",
