@@ -1997,6 +1997,14 @@ export class TaskIndexRepo {
         // fork's organization writer (syncTaskMeta) deliberately does not, so project membership is set only by CLI facts.
         projectStorage.admitTaskIdentity(db, params.meta, this.storageHostId);
         const source = params.titleSource ?? "default";
+        // Title recency lives in meta_json (no column). Only a non-negative integer from CLI facts is written, and applyCliFacts is the sole writer of this key on admitted rows.
+        const titleUpdatedAt = params.meta.titleUpdatedAt;
+        const persistedTitleUpdatedAt =
+          titleUpdatedAt !== undefined &&
+          Number.isSafeInteger(titleUpdatedAt) &&
+          titleUpdatedAt >= 0
+            ? titleUpdatedAt
+            : null;
         db.prepare(`UPDATE tasks SET
           cli_title=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
           cli_title_source=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title_source ELSE ? END,
@@ -2005,7 +2013,8 @@ export class TaskIndexRepo {
           title=CASE WHEN (handoff_pending & 2)<>0 THEN title WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
           title_overridden=CASE WHEN (handoff_pending & 2)<>0 THEN title_overridden WHEN ?='custom' OR cli_title_source='custom' THEN 1 ELSE 0 END,
           updated_at=?,created_at=?,task_status=coalesce(?,task_status),deleted=max(deleted,?),
-          handoff_pending=(handoff_pending & ~4) & CASE WHEN ?=1 THEN ~1 ELSE -1 END & CASE WHEN ?=title AND ?='custom' THEN ~2 ELSE -1 END
+          handoff_pending=(handoff_pending & ~4) & CASE WHEN ?=1 THEN ~1 ELSE -1 END & CASE WHEN ?=title AND ?='custom' THEN ~2 ELSE -1 END,
+          meta_json=CASE WHEN ? AND json_valid(meta_json) THEN json_set(meta_json,'$.titleUpdatedAt',?) ELSE meta_json END
           WHERE workspace_key=? AND task_id=?`).run(
           source,
           params.meta.title,
@@ -2025,6 +2034,8 @@ export class TaskIndexRepo {
           params.deleted ? 1 : 0,
           params.meta.title,
           source,
+          persistedTitleUpdatedAt === null ? 0 : 1,
+          persistedTitleUpdatedAt,
           workspaceKey(params.meta),
           params.meta.taskId,
         );

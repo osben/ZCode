@@ -46,10 +46,11 @@ export function mapSessionSummaryToTaskMeta(
   // If the old task-index already has a manual title with titleOverridden=true,
   // the sessions-index cold-start summary may still contain the first_input/generated title. Treat summary.title as the new manual-title authority only when the v4 session
   // store explicitly marks it custom.
-  const title =
-    previous?.titleOverridden === true && !summaryTitleIsCustom
-      ? previous.title
-      : summary.title || previous?.title || "";
+  // The title and its titleUpdatedAt come from the same candidate (docs/ui/task-title-authority.md "Title recency").
+  const titleFromSummary =
+    !(previous?.titleOverridden === true && !summaryTitleIsCustom) && summary.title.length > 0;
+  const title = titleFromSummary ? summary.title : (previous?.title ?? "");
+  const titleUpdatedAt = titleFromSummary ? summary.titleUpdatedAt : previous?.titleUpdatedAt;
   const titleOverridden =
     summaryTitleIsCustom || previous?.titleOverridden === true ? true : undefined;
   return attachTaskListRowActivity(
@@ -57,6 +58,7 @@ export function mapSessionSummaryToTaskMeta(
       taskId: summary.sessionId,
       traceId: (previous?.traceId ?? `session-${summary.sessionId}`) as TraceId,
       title,
+      ...(titleUpdatedAt !== undefined ? { titleUpdatedAt } : {}),
       ...(titleOverridden ? { titleOverridden } : {}),
       workspacePath: options.workspacePath,
       ...(options.workspaceIdentity ? { workspaceIdentity: options.workspaceIdentity } : {}),

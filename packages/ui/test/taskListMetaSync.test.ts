@@ -189,3 +189,38 @@ describe("manual rename of a running task", () => {
     ]);
   });
 });
+
+describe("manual title recency", () => {
+  it("second manual rename to a shorter title wins when its titleUpdatedAt is newer", () => {
+    const longRename = createTaskMeta({
+      title: "A much longer manual title from the first rename",
+      titleOverridden: true,
+      titleUpdatedAt: 200,
+      updatedAt: 100,
+    });
+    const shortRename = createTaskMeta({
+      title: "短名",
+      titleOverridden: true,
+      titleUpdatedAt: 300,
+      updatedAt: 100,
+    });
+    const store = useZCodeSessionStore.getState();
+    store.setTaskListCache(WORKSPACE_PATH, [longRename]);
+    store.upsertOptimisticTaskListItem(WORKSPACE_PATH, shortRename);
+    upsertTaskQueryCacheTaskMeta(shortRename);
+
+    // The Host echo still carries the first rename (older titleUpdatedAt) at the same updatedAt.
+    syncTaskMetaToTaskCaches({
+      workspacePath: WORKSPACE_PATH,
+      task: longRename,
+      membership: { pinned: false, archived: false },
+    });
+
+    const workspaceState = useZCodeSessionStore.getState().getWorkspaceState(WORKSPACE_PATH);
+    expect(getTaskMeta(workspaceState, TASK_ID)).toMatchObject({
+      title: "短名",
+      titleUpdatedAt: 300,
+      updatedAt: 100,
+    });
+  });
+});

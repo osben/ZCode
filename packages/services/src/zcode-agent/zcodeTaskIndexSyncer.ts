@@ -230,6 +230,7 @@ function buildBaselineMetaFromSummary(
     traceId: generateTraceId(summary.sessionId),
     title: summary.title,
     ...(summary.titleSource === "custom" ? { titleOverridden: true } : {}),
+    ...(summary.titleUpdatedAt !== undefined ? { titleUpdatedAt: summary.titleUpdatedAt } : {}),
     workspacePath: target.workspacePath,
     workspaceIdentity: target.workspaceIdentity,
     createdAt: summary.createdAt,
@@ -643,7 +644,11 @@ export function createZCodeTaskIndexSyncer(
    * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
    * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
    */
-  function applyTitleChange(target: ZCodeAgentSessionTarget, title: string): void {
+  function applyTitleChange(
+    target: ZCodeAgentSessionTarget,
+    title: string,
+    summary: SessionSummary,
+  ): void {
     void taskIndexRepo
       .applyAgentPatch({
         workspacePath: target.workspacePath,
@@ -651,11 +656,35 @@ export function createZCodeTaskIndexSyncer(
         taskId: target.sessionId,
         patch: { title },
       })
-      .then((meta) => {
+      .then(async (meta) => {
         if (meta) {
+          // Title recency is a CLI fact; applyCliFacts is its only writer on admitted rows (docs/ui/task-title-authority.md).
+          // applyAgentPatch above keeps its own write for the title text, so the recency is persisted through the CLI-facts path.
+          const persisted =
+            summary.titleUpdatedAt === undefined
+              ? meta
+              : await taskIndexRepo.applyCliFacts({
+                  meta: {
+                    taskId: summary.sessionId,
+                    traceId: generateTraceId(summary.sessionId),
+                    title,
+                    workspacePath: target.workspacePath,
+                    workspaceIdentity: target.workspaceIdentity,
+                    createdAt: summary.createdAt,
+                    updatedAt: summary.lastActivityAt,
+                    mode: "default",
+                    provider: ZCODE_AGENT_PROVIDER,
+                    titleUpdatedAt: summary.titleUpdatedAt,
+                  },
+                  titleSource: summary.titleSource,
+                });
           // Title changes (first message/automatic title generation) are unrelated to ownership and occur for every task.
           // Use a dedicated reason to avoid reloading global membership whenever the initial or terminal title is persisted.
-          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_title_changed");
+          emitWorkspaceTaskListChanged(
+            broadcastTargetFrom(target),
+            persisted,
+            "task_title_changed",
+          );
         } else {
           // Draft sessions do not pre-write placeholder rows. If the first title (legacy first_input) arrives before any
           // snapshot upsert, fetch a full snapshot rather than relying on an empty session placeholder.
@@ -739,7 +768,7 @@ export function createZCodeTaskIndexSyncer(
     }
     const title = next.title.trim();
     if (title && (previous === undefined || previous.title !== next.title)) {
-      applyTitleChange(target, title);
+      applyTitleChange(target, title, next);
     }
   }
 

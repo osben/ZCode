@@ -76,6 +76,7 @@ export {
   WorkspaceHeaderActionSection,
   type WorkspaceHeaderActionSectionProps,
 } from "@/WorkspaceHeaderSections/WorkspaceHeaderActionSection.js";
+import { withOptimisticTitleRecency } from "@/lib/zcodeTaskMetaMerge.js";
 
 export function shouldShowRemoteSkillSyncAction(params: {
   remoteSessionId?: string | null;
@@ -375,12 +376,14 @@ export function WorkspaceHeaderTitleSection({
         title: normalizedTitle,
         ...(workspaceIdentity ? { workspaceIdentity } : {}),
       });
-      upsertOptimisticTaskListItem(workspaceAbsPath, renamedTask, workspaceIdentity);
+      // Overlay-only renderer clock; the RPC above sent just {taskId, title}.
+      const optimisticTask = withOptimisticTitleRecency(renamedTask);
+      upsertOptimisticTaskListItem(workspaceAbsPath, optimisticTask, workspaceIdentity);
       applyTaskQueryCacheMutation({
         previousTask: buildHeaderTaskSnapshot(renamedTask, {
           title: currentTitle,
         }),
-        nextTask: renamedTask,
+        nextTask: optimisticTask,
         previousState: { pinned: isPinned, archived: false },
         nextState: { pinned: isPinned, archived: false },
       });

@@ -647,6 +647,38 @@ describe("createZCodeTaskIndexSyncer", () => {
     env.configEmitter.dispose();
   });
 
+  it("mirrors summary titleUpdatedAt into task meta when a title change lands on an admitted row", async () => {
+    const env = setupEnv({
+      initialSessions: [summaryOf(seedTarget.sessionId, "running")],
+    });
+    await seedRunningTask(env.repo);
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    syncer.ensureSessionSubscription(seedTarget);
+    await subscribed(env);
+
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf(seedTarget.sessionId, "running", { title: "renamed", titleUpdatedAt: 555 }),
+      ),
+    );
+
+    await vi.waitFor(async () => {
+      const meta = await env.repo.getTaskMeta({
+        workspacePath: seedTarget.workspacePath,
+        taskId: seedTarget.sessionId,
+      });
+      expect(meta?.title).toBe("renamed");
+      expect(meta?.titleUpdatedAt).toBe(555);
+    });
+
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
   it("falls back to a full snapshot when title arrives before task index row exists", async () => {
     const env = setupEnv();
     const target: ZCodeAgentSessionTarget = {
