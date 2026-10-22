@@ -80,9 +80,9 @@ ZCode never runs an install command. The catalog shows the vendor's command as s
 
 Brand marks (`packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx`, `acpAgentLogo.ts`): every
 agent row in Settings (navigation, detail header and catalog rows) shows its mark, with a light and a dark
-variant that follows the app theme. Opencode uses its bundled mark, Codex the OpenAI mark and Claude Code the
-Anthropic mark. Cursor has a bundled mark that is a hand-drawn cube approximation, not the vendor artwork.
-Qwen and Gemini have no bundled mark and keep the letter mark, the fallback for any unknown agent. The
+variant that follows the app theme. Opencode uses its official mark and Codex the OpenAI mark. Cursor, Qwen,
+Gemini and Claude Code use the Simple Icons (CC0) marks, recorded with their source in
+`model-provider-logo-sources.json`. The letter mark is the fallback for any unknown agent. The
 composer model picker keeps no agent logo: derived `acp:` providers carry no `logo`.
 
 ## State owner and lifecycle

@@ -19,14 +19,15 @@ describe("ACP agent logos", () => {
     );
   });
 
-  it("reuses the OpenAI mark for Codex and the Anthropic mark for Claude Code", () => {
+  it("has marks for Codex, Claude Code, Qwen and Gemini", () => {
     expect(resolveAcpAgentLogoAsset("codex", "light")).not.toBeNull();
-    expect(resolveAcpAgentLogoAsset("claude", "dark")).not.toBeNull();
+    for (const id of ["claude", "qwen", "gemini"]) {
+      expect(resolveAcpAgentLogoAsset(id, "light")).not.toBeNull();
+      expect(resolveAcpAgentLogoAsset(id, "dark")).not.toBe(resolveAcpAgentLogoAsset(id, "light"));
+    }
   });
 
-  it("keeps the letter fallback for agents without a mark", () => {
-    expect(resolveAcpAgentLogoAsset("qwen", "light")).toBeNull();
-    expect(resolveAcpAgentLogoAsset("gemini", "dark")).toBeNull();
+  it("keeps the letter fallback for unknown agents", () => {
     expect(resolveAcpAgentLogoAsset("unknown-agent", "light")).toBeNull();
   });
 
@@ -36,9 +37,9 @@ describe("ACP agent logos", () => {
     );
     expect(branded).toContain("<img");
     const plain = renderToStaticMarkup(
-      createElement(AcpAgentMark, { agentId: "qwen", name: "Qwen Code" }),
+      createElement(AcpAgentMark, { agentId: "unknown-agent", name: "Unknown Agent" }),
     );
     expect(plain).not.toContain("<img");
-    expect(plain).toContain(">Q<");
+    expect(plain).toContain(">U<");
   });
 });

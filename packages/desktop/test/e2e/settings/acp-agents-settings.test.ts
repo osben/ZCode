@@ -239,15 +239,15 @@ describe("ACP agents settings", () => {
     await expect(catalogRow).toHaveText(expect.stringContaining("Not installed"));
     assert.equal(await isNavPresent(NAV_OPENCODE), false);
 
-    // The catalog lists every supported agent. Agents with a bundled brand mark render an image;
-    // Qwen and Gemini keep the letter mark (specs/acp-agent-runtime.md "Agent registry").
+    // The catalog lists every supported agent, each with its bundled brand mark
+    // (specs/acp-agent-runtime.md "Settings UI placement").
     const logoByAgent: Record<string, boolean> = {
       opencode: true,
       cursor: true,
       codex: true,
       claude: true,
-      qwen: false,
-      gemini: false,
+      qwen: true,
+      gemini: true,
     };
     for (const [agentId, hasLogo] of Object.entries(logoByAgent)) {
       const row = await $(`[data-acp-catalog-agent="${agentId}"]`);
