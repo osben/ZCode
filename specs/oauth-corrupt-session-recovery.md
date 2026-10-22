@@ -59,10 +59,9 @@ sequenceDiagram
   Svc->>Accounts: refresh("oauth-callback") runs without waiting for recovery
 ```
 
-Open item: `packages/services/src/node.ts` builds a second `OAuthCredentialRepo` whose
-`onCorruptOAuthSessionCleared` calls `handleOAuthProviderLogout` (`createOAuthProviderLogoutHandler`),
-which enqueues `accountProviderConfigSource.refresh`. Until that callback is removed too, a corrupt
-read on that repo can still queue a refresh ahead of a login. This is the same change applied there.
+Resolved: both `OAuthCredentialRepo` constructions in `packages/services/src/node.ts` pass no
+`onCorruptOAuthSessionCleared`, so a corrupt read there cannot enqueue an account refresh. The only
+callback is the sign-out-only one in `OAuthService`.
 
 ## Acceptance scenarios
 

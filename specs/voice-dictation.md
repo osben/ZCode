@@ -374,7 +374,7 @@ Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on 
 - `voiceDictation.warmUpOnFocus` controls it. **Default on**: absent means on; only an explicit `false` disables it. The setting row explains that a loaded model holds memory until the idle-unload delay passes.
 - Warm-up also counts as use: warming an already-loaded model restarts its idle-unload countdown, so a model stays resident while the user keeps coming back to the composer.
 - Warm-up is best-effort. A failure (missing model file, older Host without the method, load error) is logged at warn level and never shown to the user; the next recording loads the model on demand exactly as before.
-- **Not-ready rule:** a selected model that is not ready (not downloaded, or still downloading) is skipped by the Host. `warmUp` resolves without loading, starting a timer, or logging an error, so an idle user with no model produces no warm-up failure. Only a real load failure of a ready model rejects. Recording still reports a missing model when it needs one.
+- **Not-ready rule:** a selected model that is not ready (not downloaded, or still downloading) is skipped by the Host. `warmUp` resolves without loading, starting a timer, or logging an error, so an idle user with no model produces no warm-up failure. Only a real load failure of a ready model rejects. A stream that starts while the model state is read also makes `warmUp` resolve without loading, because the stream owns the model and a load under a live stream is refused. Recording still reports a missing model when it needs one.
 - Warm-up is Desktop-local only: Web remote control and hosts without the voice service do nothing.
 
 ### Ownership and interfaces

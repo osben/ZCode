@@ -77,6 +77,9 @@ export class VoiceDictationService implements IVoiceDictationService {
     // reports the missing model when it needs it.
     const state = await this.store.getState(request.modelId);
     if (state.status !== "ready") return;
+    // A stream may have started while the state was read; the transcriber rejects loads under a live stream,
+    // so the warm-up yields without an error.
+    if (this.activeStreamId) return;
     // The countdown is only touched once the load succeeded, so a failed warm-up cannot strand an
     // already loaded model without its idle timer.
     await this.transcriber.load(request.modelId);
