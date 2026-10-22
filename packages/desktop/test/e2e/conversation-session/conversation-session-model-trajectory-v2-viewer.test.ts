@@ -159,7 +159,7 @@ describe("模型调用轨迹 v2 查看器 E2E", () => {
     expect((await v2LedgerSnapshot()).kinds).toContain("tool");
   });
 
-  it("TRV02-TRV05+TRV07: 请求差异、载荷、范围过滤、虚拟列表、刷新与窄布局", async function () {
+  it("TRV02-TRV05+TRV07+TRV08: 请求差异、载荷、范围过滤、虚拟列表、刷新、窄布局与技能/记忆/MCP 分类", async function () {
     this.timeout(300_000);
     await prepareV4ConversationE2E();
     await setRendererLocale("en-US");
@@ -362,6 +362,55 @@ describe("模型调用轨迹 v2 查看器 E2E", () => {
     expect(refreshEvidence.transitions).toContain("refreshing");
     expect(refreshEvidence.paneStillMounted).toBe(true);
     expect(await v2SelectedKey()).toBe(selectedKey);
+
+    // TRV08: skills, memory and MCP are categorized from seeded records (specs/model-trajectory-v2.md, rules 34-46).
+    await appendFile(
+      live.filePath,
+      `${buildCategoryRecords(taskId, Date.now() + 60_000)
+        .map((record) => JSON.stringify(record))
+        .join("\n")}\n`,
+      "utf8",
+    );
+    await clickV2Refresh();
+    await waitForV2State("ready", "TRV08 刷新后没有回到 ready");
+    // The category records are the newest, at the end of a virtualized ledger of 300+ rows.
+    await scrollLedgerTo(1);
+    await browser.pause(300);
+    await browser.waitUntil(async () => (await v2CategoryRowKeys("skill")).length > 0, {
+      timeout: 10_000,
+      timeoutMsg: "TRV08 ledger has no skill row",
+    });
+    expect(await v2CategoryRowText("skill")).toContain("code-review");
+    expect((await v2CategoryRowKeys("mcp")).length).toBe(2);
+    expect((await v2CategoryRowKeys("memory")).length).toBeGreaterThanOrEqual(4);
+    expect(await v2RowKinds()).toContain("context");
+    expect(await v2MarkerTexts()).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Memory consolidation (dream): 1 writes"),
+        expect.stringContaining("Memory recall"),
+      ]),
+    );
+    const chipCounts = await v2ChipCounts();
+    expect(chipCounts.skill).toBe("1");
+    expect(chipCounts.mcp).toBe("2");
+    expect(await v2HasMemoryLane()).toBe(true);
+    const categorySummary = await v2CategorySummaryText();
+    expect(categorySummary).toContain("code-review");
+    expect(categorySummary).toContain("github");
+    // Writes: the main-turn Write and the dream Edit.
+    expect(categorySummary).toContain("2 written");
+    await clickFirstDisplayed('[data-trajectory-v2-chip="mcp"]');
+    await browser.waitUntil(async () => ((await v2RowCount()) ?? 0) <= 3, {
+      timeout: 10_000,
+      timeoutMsg: "MCP chip did not filter the ledger",
+    });
+    expect(await v2RowKinds()).toEqual(expect.arrayContaining(["tool"]));
+    expect((await v2RowKinds()).every((kind) => kind === "tool" || kind === "turn")).toBe(true);
+    await clickFirstDisplayed('[data-trajectory-v2-chip="all"]');
+    await browser.waitUntil(async () => ((await v2RowCount()) ?? 0) > 3, {
+      timeout: 10_000,
+      timeoutMsg: "clearing the chip did not restore the ledger",
+    });
 
     // TRV07: a narrow pane switches to the single-column drill-in layout without page scroll. The window stays at or
     // above 768px: below that the app is in the mobile compact viewport and the inspector becomes a bottom sheet.
@@ -1167,4 +1216,147 @@ async function setRendererLocale(locale: "en-US") {
       }, locale),
     { timeout: 15_000, timeoutMsg: `renderer locale 没有切换到 ${locale}` },
   );
+}
+
+const CATEGORY_MEMORY_ROOT = "/e2e/.zcode/cli/memories/projects/trv-1a2b/memory";
+
+/** TRV08 records: a skill load, two MCP servers, memory index/recall/read/write, and both memory sidecars. */
+function buildCategoryRecords(taskId: string, startMs: number) {
+  const indexText = `<system-reminder>\nContents of ${CATEGORY_MEMORY_ROOT}/MEMORY.md (user's auto-memory, persists across conversations):\n- [Style](feedback_style.md)\n</system-reminder>`;
+  const recallText = `<system-reminder>\nRetrieved for possible relevance — use only if it actually applies to what the user asked.\n\nMemory: ${CATEGORY_MEMORY_ROOT}/feedback_style.md:\n\nbody\n</system-reminder>`;
+  const base = (requestId: string, offset: number, querySource: string) => ({
+    type: "model_io",
+    sessionId: taskId,
+    requestId,
+    querySource,
+    turnId: "turn-e2e-trv08",
+    startedAt: iso(startMs + offset),
+    completedAt: iso(startMs + offset + 400),
+    durationMs: 400,
+    model: LEGACY_MODEL,
+  });
+  return [
+    {
+      ...base("e2e-trv08-c1", 0, "main_turn"),
+      request: {
+        messages: [
+          { role: "user", content: indexText },
+          { role: "user", content: "/code-review E2E_TRV08_PROMPT" },
+        ],
+        toolNames: [],
+      },
+      response: {
+        finishReason: "tool-calls",
+        toolCalls: [
+          { id: "trv08-skill", name: "Skill", input: { skill: "code-review" } },
+          { id: "trv08-mcp-1", name: "mcp__github__get_pull_request", input: { pr: 283 } },
+          { id: "trv08-mcp-2", name: "mcp__linear__save_comment", input: { body: "x" } },
+          {
+            id: "trv08-mem-w",
+            name: "Write",
+            input: { file_path: `${CATEGORY_MEMORY_ROOT}/feedback_style.md`, content: "x" },
+          },
+        ],
+        usage: { inputTokens: 100, outputTokens: 10 },
+      },
+    },
+    {
+      ...base("e2e-trv08-recall", 500, "project_memory_recall"),
+      request: { messages: [], toolNames: [] },
+    },
+    {
+      ...base("e2e-trv08-c2", 1000, "main_turn"),
+      request: {
+        messages: [
+          { role: "user", content: "/code-review E2E_TRV08_PROMPT" },
+          { role: "assistant", content: "loading" },
+          { role: "user", content: recallText },
+        ],
+        toolNames: [],
+      },
+      response: {
+        finishReason: "tool-calls",
+        toolCalls: [
+          {
+            id: "trv08-mem-r",
+            name: "Read",
+            input: { file_path: `${CATEGORY_MEMORY_ROOT}/feedback_style.md` },
+          },
+        ],
+        usage: { inputTokens: 120, outputTokens: 10 },
+      },
+    },
+    {
+      ...base("e2e-trv08-dream", 2000, "dream"),
+      request: { messages: [], toolNames: [] },
+      response: {
+        finishReason: "tool-calls",
+        toolCalls: [
+          {
+            id: "trv08-dream-w",
+            name: "Edit",
+            input: { file_path: `${CATEGORY_MEMORY_ROOT}/project_notes.md` },
+          },
+        ],
+      },
+    },
+  ];
+}
+
+async function v2CategoryRowKeys(category: string) {
+  return browser.execute((name) => {
+    const panes = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-state]")];
+    const pane = panes.find((element) => element.offsetParent !== null) ?? panes[0] ?? null;
+    return [
+      ...(pane?.querySelectorAll<HTMLElement>(`[data-trajectory-v2-category="${name}"]`) ?? []),
+    ].map((row) => row.getAttribute("data-trajectory-v2-row-key") ?? "");
+  }, category);
+}
+
+async function v2CategoryRowText(category: string) {
+  return browser.execute((name) => {
+    const panes = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-state]")];
+    const pane = panes.find((element) => element.offsetParent !== null) ?? panes[0] ?? null;
+    return (
+      pane?.querySelector<HTMLElement>(`[data-trajectory-v2-category="${name}"]`)?.textContent ?? ""
+    );
+  }, category);
+}
+
+async function v2RowKinds() {
+  return browser.execute(() => {
+    const panes = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-state]")];
+    const pane = panes.find((element) => element.offsetParent !== null) ?? panes[0] ?? null;
+    return [...(pane?.querySelectorAll<HTMLElement>("[data-trajectory-v2-row-kind]") ?? [])].map(
+      (row) => row.getAttribute("data-trajectory-v2-row-kind") ?? "",
+    );
+  });
+}
+
+async function v2ChipCounts() {
+  return browser.execute(() => {
+    const panes = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-state]")];
+    const pane = panes.find((element) => element.offsetParent !== null) ?? panes[0] ?? null;
+    const counts: Record<string, string> = {};
+    for (const chip of pane?.querySelectorAll<HTMLElement>("[data-trajectory-v2-chip-count]") ??
+      []) {
+      counts[chip.getAttribute("data-trajectory-v2-chip") ?? ""] =
+        chip.getAttribute("data-trajectory-v2-chip-count") ?? "";
+    }
+    return counts;
+  });
+}
+
+async function v2HasMemoryLane() {
+  return browser.execute(() => Boolean(document.querySelector("[data-trajectory-v2-memory-lane]")));
+}
+
+async function v2CategorySummaryText() {
+  return browser.execute(() => {
+    const panes = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-state]")];
+    const pane = panes.find((element) => element.offsetParent !== null) ?? panes[0] ?? null;
+    return (
+      pane?.querySelector<HTMLElement>("[data-trajectory-v2-category-summary]")?.textContent ?? ""
+    );
+  });
 }
