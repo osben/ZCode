@@ -1712,7 +1712,8 @@ describe("ConversationRowView user query editing", () => {
       );
     });
 
-    expect(hoverCardContentProps).toHaveLength(4);
+    // One render per card: the row must not re-render on mount to reset edit state it is not showing.
+    expect(hoverCardContentProps).toHaveLength(2);
     expect(hoverCardContentProps.every((props) => props.align === "end")).toBe(true);
 
     await act(async () => {

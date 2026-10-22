@@ -70,12 +70,16 @@ const pendingToastUpdates = new Map<number, ToastUpdate>();
 const dismissedBeforeMountToastIds = new Set<number>();
 const DEFAULT_TOAST_DURATION_MS = 3000;
 const TOAST_TRANSITION_DURATION_MS = 200;
+// addToast is only assigned once the container's effect runs, so toasts fired before that commit
+// each created another host and React root that were never unmounted.
+let hostMountPending = false;
 
 function ensureHost() {
-  if (addToast) {
+  if (addToast || hostMountPending) {
     return;
   }
 
+  hostMountPending = true;
   const host = document.createElement("div");
   host.id = "zcode-toast-host";
   document.body.appendChild(host);
@@ -87,6 +91,7 @@ function ToastContainer() {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   useEffect(() => {
+    hostMountPending = false;
     addToast = (item: ToastItem) => {
       pendingToastIds.delete(item.id);
       const pendingUpdate = pendingToastUpdates.get(item.id);
