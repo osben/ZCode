@@ -2511,6 +2511,40 @@ describe("oauthService", () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  it("restores signed-out without waiting for a hung derived provider cleanup", async () => {
+    // Regression: the derived-provider cleanup used to be awaited inside credential recovery, so a
+    // never-settling cleanup kept restoreCachedSessionState pending and the splash screen up forever.
+    const deletedKeys: string[] = [];
+    let deletedKeysAtLogout: string[] | null = null;
+    const onProviderLogout = vi.fn(() => {
+      deletedKeysAtLogout ??= [...deletedKeys];
+      return new Promise<void>(() => {});
+    });
+    const brokenCredentialService: ICredentialService = {
+      load: async (key: string) => {
+        if (key === "oauth:active_provider") {
+          throw createMockCredentialDecryptError();
+        }
+        return `${key}-value`;
+      },
+      save: async () => {},
+      delete: async (key: string) => {
+        deletedKeys.push(key);
+      },
+    };
+    const service = new OAuthService(brokenCredentialService, {
+      adapters: [],
+      onProviderLogout,
+    });
+
+    await expect(service.restoreCachedSessionState()).resolves.toEqual({ status: "signed-out" });
+
+    expectDeletedOAuthSessionCredentials(deletedKeys);
+    // Credentials are cleared before derived cleanup starts.
+    expect(deletedKeysAtLogout).toContain("oauth:active_provider");
+    expectProviderLogoutNotifications(onProviderLogout, [BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID]);
+  });
+
   it("clears OAuth login credentials when cached user info cannot be decrypted", async () => {
     const onProviderLogout = vi.fn(async () => {});
     const deletedKeys: string[] = [];
