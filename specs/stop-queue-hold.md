@@ -4,75 +4,79 @@
 
 The queue hold is a user-initiated Stop effect only. Interrupting the running turn for a queued item
 (Steer: `sendQueuedNow`, and `sendText` with `requestedDelivery: startNow` while busy) is not a Stop:
-it never writes `autoDrain=false`, never projects `pauseReason: "stopped"`, and the remaining queue keeps
-draining in FIFO order after the steered turn. A user Stop issued after a Steer holds again as before.
-This reopens the ISSUE-010 wording: the earlier rule "every cancelling interruption holds" is replaced
-by the rules below.
+it does not write `autoDrain=false`, does not project `pauseReason: "stopped"`, and the remaining queue keeps
+draining in FIFO order after the steered turn. A user Stop issued after a Steer holds again, as before.
+
+ISSUE-010 wrote the hold for a stop that will cancel a turn while the queue is not empty. The queue doc
+(`docs/ui/chat-message-queue.md`) also described Steer as going through the stop barrier. This spec separates
+the two: only the `stop` command holds.
+
+Repro record (ledger ISSUE-039, `docs/qa/issue-ledger.md` on `claude/qa-run-20261022`, build 54254f51): a long
+real-model run ("Count from 1 to 800 ... Do not use tools"), queue A and B, press Steer on A. Observed: the
+banner `v4-queue-paused-banner` present right after Steer while A runs; queue `[B]` still present 8 s later.
+Status on this branch (base f2e0adf1): the synthetic-fixture E2E Steer cases do not reproduce it, and the
+steer/stop/projection source files are byte-identical between 54254f51 and f2e0adf1. The cause is unconfirmed.
 
 ## Owners (the hold decision and where it is made)
 
 - Renderer (`packages/ui/src/v4/SessionPane.tsx`): sends `sendQueuedNow { queueItemId }` (Steer button) or
   `sendText { requestedDelivery: "startNow" }`. It keeps only the uncommitted draft and the pending optimistic
   overlay. It never sends `stop` as part of Steer.
-- Host routing (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts`): one owner per session
-  (window-scoped Local Host for desktop-continuous; the same Host attachment for web-remote-replayable). It
-  forwards the command unchanged; it adds no hold.
-- CLI `CommandInbox` / `V4CommandExecutor`: admits the command. The queue handler
-  (`commands/handlers/queue.ts` `sendQueuedNow`) and the stop handler (`commands/handlers/session-flow.ts`
-  `stop`) are the two decision points.
-- Hold decision (`commands/input-admission.ts` `holdFollowingQueue`): called ONLY by the `stop` handler. Steer
-  paths never call it.
-- Preemption intent: `preemptActiveTurnAndWait` (`session-flow.ts`) calls
-  `runtime.stopActiveForegroundExecution({ preserveQueueAutoDrainOnCancel: true })`. The runtime stores the
-  intent on the active foreground execution (`core/src/runtime/methods/runtime-command-queue.ts`), the turn
-  catch copies it to `TurnComplete.preserveQueueAutoDrainOnCancel` (`core/src/runtime/methods/turn.ts`), and
-  the projection skips the held derivation when it is set (`bootstrap/.../product-projection.ts`
-  TurnComplete handling, and `onTargetVerification` for the goal verifier path).
+- Host (`packages/services/src/zcode-agent/zcodeAgentService.ts`): one owner per workspace runtime. The window-scoped
+  Local Host (desktop-continuous) and the existing Host attachment (web-remote-replayable) both forward the command
+  over stdio to the workspace CLI unchanged. Host adds no hold.
+- CLI admission (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts` `admitCommandInput`, then
+  `zcode-protocol-v4/commands/executor.ts` and `CommandInbox`): admits the command and owns auto drain
+  (`autoDrainV4QueueIfReady`).
+- Decision points (CLI handlers): `commands/handlers/queue.ts` `sendQueuedNow` (Steer) and
+  `commands/handlers/session-flow.ts` `stop` (Stop). Only `stop` calls `holdFollowingQueue`
+  (`commands/input-admission.ts`, called at `session-flow.ts:310`).
+- Preemption intent: `preemptActiveTurnAndWait` (`session-flow.ts`, called by `sendQueuedNow` and by `sendText`
+  startNow) calls `runtime.stopActiveForegroundExecution({ preserveQueueAutoDrainOnCancel: true })`. The runtime
+  stores the intent on the active foreground execution (`core/src/runtime/methods/runtime-command-queue.ts`), the
+  turn catch copies it to `TurnComplete.preserveQueueAutoDrainOnCancel` (`core/src/runtime/methods/turn.ts`), and
+  the projection skips the held derivation when it is set (`bootstrap/.../product-projection.ts` TurnComplete
+  handling, and `onTargetVerification` for the goal verifier path).
 - Queue projection owner: `ProductProjection.queue` (`autoDrain`, `pauseReason`). Only `QueueAutoDrainChanged`
-  and the cancelled-without-preserve `TurnComplete` change the hold.
-- Auto drain (`v4-bridge.ts` `autoDrainV4QueueIfReady`, run after projection updates and on the drain retry): it
-  promotes the queue head through `sendQueuedNow { autoDrainPromotion: true }` when `autoDrain=true`, the head is
-  `queued`, and the session is idle.
+  and a cancelled `TurnComplete` without the preserve intent change the hold.
 
 ## Event order (ISSUE-039: Steer vs Stop)
 
-Desktop-continuous (the Desktop real-time link) and web-remote-replayable (the mobile/web recovery link) use the
-same CLI path; only the transport differs. Both must show the same queue after a reconnect, because the hold
-and the drain are projection facts, not transport state.
+Desktop-continuous (the Desktop real-time link) and web-remote-replayable (the mobile/web recovery link) share the
+same CLI path; only the transport differs. Both must show the same queue after a reconnect, because the hold and
+the drain are projection facts, not transport state.
 
 ```text
-Steer (sendQueuedNow queueItemId=Q1)                      owner
-  Renderer optimistic overlay (Q1 row pending)            Renderer  (no stop, no hold)
-  -> Host routing (no hold; desktop-continuous: local Host; web-remote: same attachment)   Host
-  -> CommandInbox -> sendQueuedNow handler
-       reserve(Q1) -> acquire lease(after-current)        CLI queue handler
-       preemptActiveTurnAndWait
-         runtime.stopActiveForegroundExecution({preserve:true})   Core runtime
-           abort T0 -> turn catch -> TurnComplete(cancelled, preserve=true)
-           projection: queue.autoDrain stays true, no pauseReason  ProductProjection
-         waitForSessionIdle (T0 lock released)
-       markPromoting(Q1) -> startPromptTurn(Q1, user_steer)
-       SessionInputPromoted(Q1) -> remove Q1 (commit)
-  -> T1 (Q1) runs; at TurnComplete(T1) the bridge sees Q2 head, autoDrain=true
-       -> sendQueuedNow { autoDrainPromotion: true } (Q2 FIFO)   Host auto drain
+Steer (sendQueuedNow queueItemId=Q1)
+  Renderer        optimistic overlay on Q1; no stop, no hold
+  Host            services zcodeAgentService: forwards over stdio (no hold)
+  CLI admission   v4-bridge admitCommandInput -> executor -> CommandInbox
+  queue handler   reserve(Q1) -> acquire lease(after-current)
+                  preemptActiveTurnAndWait
+  Core runtime    stopActiveForegroundExecution({preserve:true})
+                  abort T0 -> turn catch -> TurnComplete(cancelled, preserve=true)
+  projection      queue.autoDrain stays true, no pauseReason
+  queue handler   waitForSessionIdle -> markPromoting(Q1) -> startPromptTurn(Q1, user_steer)
+                  SessionInputPromoted(Q1) -> remove Q1 (commit)
+  Core runtime    T1 (Q1) runs
+  bridge          at T1 end, head Q2 with autoDrain=true
+                  -> sendQueuedNow { autoDrainPromotion: true } (Q2, FIFO)
 
 User Stop after Steer (during T1)
-  stop(expectedForegroundExecutionId=T1)                  CLI stop handler
-    holdFollowingQueue: setQueueAutoDrain(false)          written and projected first
-    runtime.stopActiveForegroundExecution (no preserve)   Core runtime
-    TurnComplete(cancelled, no preserve) -> pauseReason=stopped (held)
-    bridge: head Q2 autoDrain=false -> no drain           Host auto drain
+  CLI handler     stop(expectedForegroundExecutionId=T1)
+                  holdFollowingQueue: setQueueAutoDrain(false)  (written and projected before abort)
+  Core runtime    stopActiveForegroundExecution (no preserve) -> abort T1
+  projection      TurnComplete(cancelled, no preserve) -> autoDrain=false, pauseReason=stopped
+  bridge          head Q2 held -> no drain
 ```
 
 Invariants:
 
-- The only writer of `autoDrain=false` from a user action is the `stop` handler's hold. A Steer writes nothing
-  to `autoDrain`; a Steer that runs `preemptActiveTurnAndWait` relies on `preserve=true` for the projection.
-- A Stop that arrives while a Steer is between `reserve` and `startPromptTurn` sees the old foreground id and is
-  rejected by the stale guard (`guard.stopTargetChanged`) or is pinned to the steered turn; it holds only if it
-  cancels a turn (see rule 4 below).
+- Only the `stop` handler writes `autoDrain=false` from a user action. A Steer writes nothing to `autoDrain`; its
+  interruption relies on `preserve=true` for the projection.
 - Stale-run protection and owner/lease checks are unchanged: `expectedForegroundExecutionId`, the promotion lease
-  and the reservation still guard every step.
+  and the reservation still guard every step (existing tests, ISSUE-010 cases).
+- Not covered by tests: a Stop that arrives while a Steer sits between `reserve` and `startPromptTurn`.
 
 ## Problem
 
@@ -117,15 +121,14 @@ stop(expectedForegroundExecutionId?)
 9. Steer (`sendQueuedNow`, and `sendText` with `requestedDelivery: startNow` while busy) preempts the running
    turn with `preserveQueueAutoDrainOnCancel=true`. Its cancelled `TurnComplete` carries the intent and must not
    project a hold; the queue head starts, and the remaining queue drains FIFO through the auto-drain path.
-10. A Steer never calls `holdFollowingQueue` and never calls `setQueueAutoDrain(false)`. Its `stop`-free path
-    keeps the preemption intent on the runtime foreground execution; a Steer that finds no runtime foreground
-    token keeps the earlier unpinned behavior (no hold written).
+10. A Steer never calls `holdFollowingQueue` or `setQueueAutoDrain(false)`. Its interruption carries the preserve
+    intent through the runtime foreground execution (rule 9).
 11. A user Stop after a Steer holds the queue again (rule 1). The hold belongs to the Stop, not to the earlier
     Steer, so a Steer does not suppress a later Stop.
-12. Residual risk for Steer: if the preemption intent is lost (no runtime token and an already-aborted controller),
-    the cancel reads as a user Stop and holds. Not reproduced: the Steer E2E cases pass on the current head, and the
-    only path that aborts the bootstrap controller without the intent is the one where the foreground is already
-    gone, which is also the window a user Stop would hold anyway.
+12. Untested candidate (code reading only, not reproduced): when a Steer finds no runtime foreground token,
+    `preemptActiveTurnAndWait` aborts the bootstrap controller without the preserve intent. The turn catch then
+    reads preserve=false and the cancelled `TurnComplete` projects `pauseReason: "stopped"`. This is the one path
+    where a Steer could project a Stop-like hold. Test or close it before relying on rule 10 for that window.
 
 ## Acceptance scenarios
 
