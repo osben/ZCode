@@ -674,6 +674,7 @@ export async function* runStreamText(input: {
           resolved,
           result: streamResult,
           startedAt,
+          timing: { timeToFirstProviderEventMs, timeToFirstContentMs, timeToFirstTextMs },
         });
       }
       return;
@@ -694,6 +695,7 @@ export async function* runStreamText(input: {
           resolved,
           result,
           startedAt,
+          timing: { timeToFirstProviderEventMs, timeToFirstContentMs, timeToFirstTextMs },
         });
       }
       if (error instanceof TerminalStreamChunkError) {

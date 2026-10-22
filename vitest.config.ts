@@ -164,6 +164,8 @@ export default defineConfig({
             "packages/services/src/gen-ui/**/*.test.ts",
             // CI runs only the root suite; pin upstream checksums of the shared CLI session DB here.
             "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",
+            // CI runs only the root suite; the model-io timing contract test must run there too.
+            "apps/zcode-cli/packages/adapters/tests/runner-debug-stream-timing.test.ts",
             "scripts/assert-safe-cua-helper-zip.test.mjs",
             "scripts/ci/ci-telemetry-keyword-guard.test.mjs",
           ],

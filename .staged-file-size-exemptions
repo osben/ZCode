@@ -91,6 +91,7 @@ apps/zcode-cli/packages/adapters/src/storage/session-store/sqlite-session-store.
 apps/zcode-cli/packages/adapters/src/config/schema.ts
 apps/zcode-cli/packages/adapters/src/mcp/index.ts
 apps/zcode-cli/packages/adapters/src/mcp/pool.ts
+apps/zcode-cli/packages/adapters/src/model/runner-debug.ts
 apps/zcode-cli/packages/adapters/src/model/runner-generate.ts
 apps/zcode-cli/packages/adapters/src/model/runner-stream.ts
 apps/zcode-cli/packages/adapters/src/plugins/marketplace.ts
