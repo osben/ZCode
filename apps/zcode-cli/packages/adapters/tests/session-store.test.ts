@@ -3363,7 +3363,28 @@ describe("session input ledger (0016)", () => {
 });
 
 describe("sidebar child session facts", () => {
-  async function seedFamily(store: Awaited<ReturnType<typeof createSqliteSessionStore>>) {
+  // A file database is needed because the archive state has no port writer: the test archives a row through a
+  // second connection, and a ":memory:" store cannot be reached from another connection.
+  async function openFamilyStore() {
+    const root = await mkdtemp(join(tmpdir(), "zcode-child-facts-"));
+    const dbPath = join(root, "session.sqlite");
+    const store = await createSqliteSessionStore({ dbPath });
+    const raw = new DatabaseSync(dbPath);
+    return {
+      store,
+      raw,
+      async close() {
+        raw.close();
+        store.close();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  async function seedFamily(
+    store: Awaited<ReturnType<typeof createSqliteSessionStore>>,
+    raw: DatabaseSync,
+  ) {
     const parentID = createSessionId("child-facts-parent");
     await store.createSession({
       id: parentID,
@@ -3398,6 +3419,12 @@ describe("sidebar child session facts", () => {
     await seed("child-chat", "selection_side_chat", "side chat", 40);
     await seed("child-sub-old", "subagent_child", "oldest subagent", 30);
     await seed("child-workflow", "workflow_child", "workflow child", 60);
+    // A row with a time_archived value is a live child, as in upstream: the column has no reader. The newest
+    // timestamp makes the list cap expose a reintroduced `time_archived is null` filter.
+    await seed("child-sub-archived", "subagent_child", "archived subagent", 80);
+    raw
+      .prepare("update session set time_archived = ? where id = ?")
+      .run(100, String(createSessionId("child-sub-archived")));
     // A second parent with a single side chat, plus a fork that must not count as a child.
     const otherParent = createSessionId("child-facts-other");
     await store.createSession({
@@ -3415,31 +3442,31 @@ describe("sidebar child session facts", () => {
   }
 
   it("counts side chats and subagents per parent, excluding workflow children and forks", async () => {
-    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
+    const { store, raw, close } = await openFamilyStore();
     try {
-      const { parentID, otherParent } = await seedFamily(store);
+      const { parentID, otherParent } = await seedFamily(store, raw);
       const counts = await store.countChildSessions({ parentIds: [parentID, otherParent] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
       expect(counts.get(String(otherParent))).toEqual({ sideChats: 1, subagents: 0 });
       await expect(store.countChildSessions({ parentIds: [] })).resolves.toBeInstanceOf(Map);
     } finally {
-      store.close();
+      await close();
     }
   });
 
   it("lists newest-first children capped per parent while counts stay true totals", async () => {
-    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
+    const { store, raw, close } = await openFamilyStore();
     try {
-      const { parentID } = await seedFamily(store);
+      const { parentID } = await seedFamily(store, raw);
       const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 2 });
       const children = listed.get(String(parentID));
-      expect(children.map((child) => child.title)).toEqual(["newest subagent", "side chat"]);
-      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 50 });
+      expect(children.map((child) => child.title)).toEqual(["archived subagent", "newest subagent"]);
+      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 80 });
       // The cap truncates the list, but the grouped counts still report all live children.
       const counts = await store.countChildSessions({ parentIds: [parentID] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
     } finally {
-      store.close();
+      await close();
     }
   });
 });

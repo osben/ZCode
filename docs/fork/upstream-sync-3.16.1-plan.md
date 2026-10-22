@@ -80,7 +80,7 @@ Notes:
 - Locales: pruning of unused locale keys is not done.
 - `workspace-grouped-tasks` retirement is not done. The grouped task view is replaced by `task-groups` and `project-sidebar` in a later PR.
 - `buildTaskListResultFromSessions` and `taskFileTreeTarget` deletion is not done.
-- `web-remote` local-global mode is inactive.
+- `web-remote` local-global mode was removed by decision (follow upstream). `createRemoteWorkspaceServiceCollection` and its tests are deleted; see `specs/upstream-sync-final-ledger.md` section `local-global collection removal`.
 - Compile bridges: temporary bridges added during the sync to keep compilation green. Remove each once its target is wired.
 - Temporary size exemptions in `.staged-file-size-exemptions` (each must be split below 20000 bytes, then its block removed):
   - Sync WIP block (`upstream 3.16.1 final sync WIP`):
@@ -107,8 +107,6 @@ Notes:
     - `packages/services/src/zcode-session/zcodeSessionService.ts`
     - `scripts/architecture/upstream-snapshot.json`
     - `architecture-policy.yaml`
-  - Final fork restore block (`final fork restore desktop`):
-    - `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts` (restored, about 33 KB; remove after the desktop host split)
   - Composer block (`ui-parity-composer`): the composer keeps fork features required by `specs/composer-worktree-setup-steps.md`, `specs/incognito-session.md`, `specs/voice-dictation.md` and `specs/composer-branch-switcher-semantics.md`. Remove after the composer is split:
     - `packages/ui/src/v4/ConversationComposer.tsx`
     - `packages/ui/src/v4/composer/composerDraftStore.ts`

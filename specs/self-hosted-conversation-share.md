@@ -34,9 +34,8 @@ They are now specified explicitly.
      (conversationShareService.ts:713).
 - Auth wiring: every publish route uses `auth: "required"` and `requestData` attaches
   `Authorization: Bearer <tokenProvider()>`, where both construction sites
-  (`packages/services/src/node.ts:2500-2507`,
-  `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:246-247`) wire the **Z.ai
-  OAuth store**. A user not logged into Z.ai cannot publish at all, and a logged-in user would
+  (`packages/services/src/node.ts:2500-2507`; the desktop local-global collection that was the second
+  site was removed) wire the **Z.ai OAuth store**. A user not logged into Z.ai cannot publish at all, and a logged-in user would
   leak the vendor JWT to whatever origin the base URL points at.
 - Access picker: `packages/ui/src/ConversationSharePermissionPicker.tsx` (presentational,
   hard-coded options) + `conversationShareSelectionStore.ts` (default `public_importable`,

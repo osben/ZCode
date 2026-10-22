@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 import { join, basename } from "node:path";
+import { TID_TASK_DELETE_CONFIRM, TID_TASK_DELETE_DIALOG } from "@zcode/shared";
 import { waitForWorkspaceApp, DEFAULT_WORKSPACE } from "../../../helpers/desktop-app.js";
 
 const row = (id: string) => $(`[data-testid="archive-task"][data-task-id="${id}"]`);
@@ -138,9 +139,9 @@ describe("归档管理", () => {
     );
     await clearSearch();
     await $('[data-testid="archive-delete-all"]').click();
-    const confirmation = $('[data-confirm-intent="archive-management-delete"]');
-    await expect(confirmation).toHaveText(expect.stringContaining("删除这 5 个归档会话？"));
-    expect(await confirmation.getText()).toContain("只删除当前确认范围内的会话。");
+    const confirmation = $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`);
+    await expect(confirmation).toHaveText(expect.stringContaining("删除 5 个会话？"));
+    expect(await confirmation.getText()).toContain("永久删除这些对话");
     await browser.keys("Escape");
   });
   it("ARM07：自动归档设置仅在归档管理展示，修改落盘且刷新保留", async () => {
@@ -273,7 +274,7 @@ describe("归档管理", () => {
     await browser.keys("Escape");
     expect(readRow("arm-beta").cli_deleted).toBe(0);
     await row("arm-beta").$('[data-testid="archive-delete"]').click();
-    await $('[data-testid="confirm-dialog-confirm"]').click();
+    await $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`).click();
     await row("arm-beta").waitForExist({ reverse: true });
     expect(readRow("arm-beta").cli_deleted).toBe(1);
     const cli = new DatabaseSync(join(home, ".zcode/cli/db/db.sqlite"), { readOnly: true });
@@ -303,8 +304,8 @@ describe("归档管理", () => {
   it("ARM03：全部删除仅作用于当前筛选，分组更多取消归档", async () => {
     await $('[data-testid="archive-search"]').setValue("Unclassified");
     await $('[data-testid="archive-delete-all"]').click();
-    expect(await $('[data-confirm-intent="archive-management-delete"]').getText()).toContain("1");
-    await $('[data-testid="confirm-dialog-confirm"]').click();
+    expect(await $(`[data-testid="${TID_TASK_DELETE_DIALOG}"]`).getText()).toContain("1");
+    await $(`[data-testid="${TID_TASK_DELETE_CONFIRM}"]`).click();
     // 折叠组没有行 DOM，等整个分组消失并核对落库，避免把未渲染误当成已删除。
     await $('[data-testid="archive-group"][data-project-id=""]').waitForExist({ reverse: true });
     expect(readRow("arm-loose").cli_deleted).toBe(1);

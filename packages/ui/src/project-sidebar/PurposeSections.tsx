@@ -79,6 +79,9 @@ export function PurposeSections({
         <div className="grid grid-cols-1 gap-3" data-purpose-section-list="true">
           {preferences.sectionOrder.map((id) => {
             const isProject = id === "projects";
+            const addLabel = isProject
+              ? msg("new")
+              : intl.formatMessage({ id: "workspaceSidebar.newTaskOutsideProject" });
             const title = msg(isProject ? "projects" : "tasks");
             const section = (
               <WorkspacePurposeSection
@@ -119,13 +122,15 @@ export function PurposeSections({
                         </Button>
                       </ControlHintTooltip>
                     )}
-                    <ControlHintTooltip title={msg(isProject ? "new" : "createTask")}>
+                    {/* Cause: the conversation "+" creates a task outside any project, while the top
+                        "New task" inherits the active project, so the two names must differ. */}
+                    <ControlHintTooltip title={addLabel}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         className="text-foreground-subtle hover:text-foreground"
                         data-testid={isProject ? "virtual-project-add" : "virtual-project-new-task"}
-                        aria-label={msg(isProject ? "new" : "createTask")}
+                        aria-label={addLabel}
                         onClick={isProject ? onAdd : onCreate}
                       >
                         {isProject ? (

@@ -124,7 +124,8 @@ Owner of the runtime and URL minting: desktop main. The bot only requests and fo
 8. `/remote` from a private chat with the migrated context dispatches the bridge request with the derived
    `workspaceIdentity`, and fails with the existing localized error when the workspace is not authorized.
 9. Production wiring: `node.ts` passes `projectService`, `remoteProjectService`, and `ownerHostId` to
-   `createBotsService`; `remoteWorkspaceServiceCollection.ts` passes the remote Host's `hostId`.
+   `createBotsService`. Remote Hosts supply `botsService` through the Source connection; the desktop
+   `remoteWorkspaceServiceCollection.ts` no longer builds it (see section 9, Wiring).
 
 ## 9. Change ledger
 
@@ -139,10 +140,11 @@ Owner of the runtime and URL minting: desktop main. The bot only requests and fo
 - Migration: `BotsRepo.backupBeforeProjectIdentityMigration` (new), `config.ts` backup file names (new),
   `botsService.ensureBotStorageMigrated` now also runs `ensureProjectIdentityMigrated`.
 - Wiring: `node.ts` passes `projectService`, `remoteProjectService`, `ownerHostId: projectStorageHostId`.
-  `remoteWorkspaceServiceCollection.ts` passes the Host's project channel when present; a Host without it
-  (the legacy remote RPC contract has no project channel) gets an empty catalog, and `prepareSession` throws
-  `Remote Bot project binding unavailable`. Throwing at construction broke `hostRemoteWorkspaceServices.test.ts`
-  (13 tests), so that was rejected.
+  Superseded: the desktop local-global collection that passed the Host's project channel to bots (with an
+  empty catalog and `prepareSession` throwing `Remote Bot project binding unavailable` for a Host without
+  it) was removed. See `specs/upstream-sync-final-ledger.md`, section `local-global collection removal`.
+  The server remote path does not build the bots service in `remoteWorkspaceServiceCollection.ts`, so this
+  file no longer carries a bots project-channel fallback. Server remote Bot project binding is unchanged.
 - Tests changed: none of the four upstream test files (`botProjectBinding`, `permissionsWorkspace`,
   `messageFlow`, `groups`) and no assertion was edited. `botsService.fixtures.ts` gained a no-op
   `backupBeforeProjectIdentityMigration` on the in-memory repo; that is test infrastructure, not an expectation.

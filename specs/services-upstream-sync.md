@@ -72,7 +72,7 @@ Each file below keeps its fork HEAD version. A fork-wins three-way merge was tri
 - `zcode-agent/zcodeTaskServiceAdapter.ts`, `zcode-agent/zcodeTaskIndexSyncer.ts`: coupled to the zcodeAgentService changes and to `moveGroupedTaskToTop`.
 - `window-controller/windowController.ts`: upstream adds a method that `windowHostControllerService.ts` (fork incognito) does not implement yet.
 - `oauth/oauthService.ts`: needs `repo.loadCachedSessionTokens`, `runSessionMutation`, and `onDidChangeSession`. Hand-resolved hunks exist but were not applied.
-- `bots/botsService.ts`: upstream changes `BotsServiceDeps`, which the unsynced desktop `remoteWorkspaceServiceCollection.ts` consumes. Fork `/remote` is kept. The `botRemote*` deletions are not applied.
+- `bots/botsService.ts`: upstream changes `BotsServiceDeps`, which the desktop local-global collection consumed (removed; see `specs/upstream-sync-final-ledger.md`). Fork `/remote` is kept. The `botRemote*` deletions are not applied.
 - `packages/server/src/http.ts`: fork-wins merge produced a syntax error. Left at HEAD.
 - Upstream deletions not applied: `bots/botRemoteRuntimeServices.ts`, `bots/botRemoteWorkspaceBridge.ts`, `storage-startup.ts`, `tasksDatabase/startup.ts`, `zcode-agent/repairSubagentTaskIndex.ts` (fork owner kept).
 - Test files deferred from 8a: `botsProjectBinding`, `credentialCacheRecovery`, `oauthSessionEvents`, `providerBuiltinRefreshFailure`, `serviceCollectionExposure`, `projectWorkspaceNavigation`, `conversationShareToolSnapshot`, `conversationShareWorkflowSnapshot`, `sourceServerWorkspaceAliasRepo` (three files: `no such table: tasks` against the DB test helper), `server/test/staticRoutePathContainment`.

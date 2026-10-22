@@ -44,10 +44,9 @@ describe("grouped UI 收敛接线（源码断言）", () => {
     expect(source).toContain("isSystemGroup ? null : (");
   });
 
-  // TEMPORARY(UI-2): reads packages/ui/src/WorkspaceGroupedTasksSection.tsx, a fork-only grouped-tasks sidebar file that upstream 3.16.1 removed. Ledger: ui-fix-g3.
-  it.skip("Section 把闲时组头「+」路由到 Automations，且投影去重已退役", () => {
-    const source = readSource("packages/ui/src/WorkspaceGroupedTasksSection.tsx");
-    expect(source).toContain("node.group.id === OFF_PEAK_DEFAULT_GROUP_ID");
+  it("Section 把闲时组头「+」路由到 Automations，且投影去重已退役", () => {
+    const source = readSource("packages/ui/src/project-sidebar/TaskGroupedView.tsx");
+    expect(source).toContain("groupId === OFF_PEAK_DEFAULT_GROUP_ID");
     expect(source).toContain("onOpenAutomations?.()");
     expect(source).not.toContain("filterGroupedTaskViewForOffPeakSessions");
     expect(source).not.toContain("useOffPeakTaskStore");

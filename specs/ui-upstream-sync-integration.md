@@ -50,8 +50,8 @@ Assertion-level failures (fork expectations vs upstream structure), grouped by f
 Ledgered UI-2 rows (skip or removal is tagged `TEMPORARY(UI-2)` in the file):
 
 - UI2-MODULE-ABSENT: test files deleted because their feature modules are absent in the upstream-structured tree; restore from `9c2434f7` with the UI-2 port: `webRemoteControlTaskIndexLayout`, `workspaceSidebarItemRenderStability`, `workspaceSidebarRemoteNotice`, `workspaceSidebarTaskViewSwitcher`, `workspacePinnedTasksSection`, `webRemoteControlMobileTaskHome`, `useGroupedTaskView`, `taskTimelineGroups`, `composerPlanTransition`, `chatEmptyWorktreeTaskToggle`, `automationTypographyTokens`.
-- UI2-SIDEBAR-PINS: `workspaceSidebarProjectPins.test.ts` `describe.skip` (old sidebar project pins).
-- UI2-SIDEBAR-NEWTASK: `workspaceSidebarNewTaskEntryNames.test.ts` `describe.skip` (old sidebar entry names).
+- UI2-SIDEBAR-PINS: resolved. `workspaceSidebarProjectPins.test.ts` is deleted; the fork pin mechanism is retired (`specs/ui-pins-upstream-migration.md`, Retired surface), so there is no behavior left to test.
+- UI2-SIDEBAR-NEWTASK: resolved. `workspaceSidebarNewTaskEntryNames.test.ts` runs against the project sidebar (en-US, uk-UA, zh-CN); the conversation "+" uses `workspaceSidebar.newTaskOutsideProject` (`specs/sidebar-new-task-outside-project.md`).
 - UI2-PLAN-SHORTCUT: two `/plan` shortcut cases in `v4SlashCommands.test.ts` `it.skip` (shortcut decision).
 
 Decision rows (not UI-2 work; need an owner decision):

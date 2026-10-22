@@ -21,6 +21,11 @@ is adopted or the final sync PR retires the compatibility member.
 | Protocol stdin type (CLI)       | `const source = options.input ?? process.stdin` (inferred union)                                   | Annotated as `NodeJS.ReadableStream`. The inferred union of overloaded `on` signatures fails typecheck (TS2349) with `@types/node` 26; runtime unchanged                                              | `cli/src/protocol-lifecycle.ts`                                                                                             |
 | Dependency pins (CLI / TUI)     | `dotenv` 17.4.2, `react` 19.2.5, `@types/react` 19.2.0, `shiki` ^4.1.0, `ws` 8.18.0, `tsx` ^4.20.0 | Fork chore bumps kept: `dotenv` ^18.0.7 (`459cc1bc`), `react` 19.3.0 / `@types/react` 19.3.0 (`e476849c`), `shiki` ^4.5.0, `ws` ^8.22.0, `tsx` ^4.23.15 (`c642c2ef`, `05763290`)                      | `cli/package.json`, `tui/package.json`; lockfile (owned by the lockfile slice)                                              |
 
+- `scripts/verify-project-upgrade.mts` (root script, tracked in the upstream snapshot): upstream opens the old-_ phases with
+  `new SqliteSessionStore({ dbPath })`; the fork uses `await SqliteSessionStore.open({ dbPath })` for every phase because the
+  constructor is private and takes the migration result. Consequence: the old-_ phases no longer exercise a separate
+  non-backup open path; they run the same production open (with backup) as the upgrade phase.
+
 ## Temporary compatibility members (remove in the final sync PR)
 
 - Removed: `UpdateSessionInput.timeArchived` and session `time.archived` (fork archive column, no longer read or written
