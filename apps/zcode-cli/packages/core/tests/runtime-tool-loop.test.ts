@@ -55,7 +55,7 @@ import { MessageHistoryImpl } from "../src/agent/message-history.js";
 import { hydrateMessageHistoryFromSession } from "../src/agent/session-history-hydrator.js";
 import { DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES } from "../src/runtime/helpers/media-budget.js";
 import { MAX_TURN_STEER_INPUT_BYTES } from "../src/runtime/helpers/steering.js";
-import { createPreserveQueueAutoDrainCancelReason } from "../src/runtime/helpers/turn-errors.js";
+import { createTurnCancelReason } from "../src/runtime/helpers/turn-errors.js";
 import { projectIdFromDirectory } from "../src/runtime/helpers/project.js";
 import { InMemoryRuntimeTaskRegistry } from "../src/runtime-task/registry.js";
 import { createToolRegistry } from "../src/tool/registry.js";
@@ -8828,7 +8828,7 @@ describe("AgentRuntime tool loop", () => {
     expect(queued.kind).toBe("queued");
 
     controller.abort(
-      createPreserveQueueAutoDrainCancelReason("v4 sendQueuedNow preempts active turn"),
+      createTurnCancelReason("v4 sendQueuedNow preempts active turn", true),
     );
     await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
 

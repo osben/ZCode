@@ -6,6 +6,7 @@ import type {
   CommandPayloadMap,
   CommandResult,
 } from "@zcode/shared/zcode-protocol-v4";
+import { createTurnCancelReason } from "@zcode/core";
 import { isHighspeedProviderId } from "@zcode/shared";
 import { createModelExecutionContext } from "../../../session-execution/index.js";
 import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
@@ -444,7 +445,9 @@ export async function preemptActiveTurnAndWait(
   if (bootstrapAbortController || runtimeStop?.kind === "stopped") {
     const pausedGoal = await pauseActiveGoal(host, record);
     if (runtimeStop?.kind !== "stopped") {
-      bootstrapAbortController?.abort(new Error(options.abortMessage));
+      bootstrapAbortController?.abort(
+        createTurnCancelReason(options.abortMessage, options.preserveQueueAutoDrainOnCancel === true),
+      );
     }
     if (pausedGoal) {
       await host.afterLegacyStateMutation?.(record, options.goalPausedMutationReason);

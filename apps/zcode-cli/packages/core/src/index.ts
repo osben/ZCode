@@ -156,7 +156,7 @@ export type { PermissionConfig } from "./permission/index.js";
 export { AgentRuntime } from "./runtime.js";
 export {
   createExternalTurnFaultError,
-  createPreserveQueueAutoDrainCancelReason,
+  createTurnCancelReason,
   hasPreserveQueueAutoDrainCancelIntent,
 } from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";

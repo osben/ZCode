@@ -6766,7 +6766,8 @@ describe("fork / modelChange marker", () => {
 
   // ISSUE-039 / specs/stop-queue-hold.md: steer keeps the remaining queue draining in order; only a
   // user Stop (a cancelled TurnComplete without the preserve intent) holds it.
-  it("ISSUE-039：steer 抢占后剩余 queue 按序续跑；随后的用户 Stop 才 hold", () => {
+  // Projection scope only: the FIFO drain itself is performed by the CLI bridge auto-drain (E2E STEER cases cover it).
+  it("ISSUE-039：steer 的 cancelled TurnComplete 不 hold 投影（剩余项保留）；随后的用户 Stop 才 hold", () => {
     const intent = (queueItemId: string, sourceCommandId: string, admissionSeq: number) => ({
       sourceCommandId,
       queueItemId,

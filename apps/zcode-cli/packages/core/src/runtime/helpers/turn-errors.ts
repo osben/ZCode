@@ -25,16 +25,10 @@ interface TurnAbortScope {
 const EXTERNAL_TURN_FAULT_MARKER = "zcode.externalTurnFault";
 const PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER = "zcode.preserveQueueAutoDrainOnCancel";
 
-/**
- * Abort reason for a caller-controller cancel that must not hold the following queue (Steer / sendQueuedNow).
- * The runtime foreground token carries the same intent through stopActiveForegroundExecution; this reason
- * carries it when the caller's controller is aborted directly (no runtime token yet). A plain Stop reason never
- * carries the marker, so a user Stop still holds.
- */
-export function createPreserveQueueAutoDrainCancelReason(message: string): Error {
-  return Object.assign(new Error(message), {
-    zcodeCancelIntent: PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER,
-  });
+/** Abort reason for a caller-controller cancel. preserve=true (Steer) carries the no-hold intent; a Stop never does. */
+export function createTurnCancelReason(message: string, preserve: boolean): Error {
+  const error = new Error(message);
+  return preserve ? Object.assign(error, { zcodeCancelIntent: PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER }) : error;
 }
 
 /** Walks the cause chain like findExternalTurnFault; true when the abort reason carries the steer intent. */
