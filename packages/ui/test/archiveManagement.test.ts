@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { createElement, Fragment } from "react";
 import { afterEach, expect, it, vi } from "vitest";
+import { TID_TASK_DELETE_CONFIRM } from "@zcode/shared";
 import type { ProjectTask, ProjectTree } from "@/project-sidebar/contract.js";
 import { buildArchiveGroups, archiveTaskKey } from "@/project-sidebar/archive-view.js";
 import { mutateProjectTask } from "@/project-sidebar/task-mutation.js";
@@ -141,9 +151,9 @@ it("routes archived actions with full remote identity and uses the existing loca
     taskId: "local",
   });
 });
-function setup(options: { allowPermanentDelete?: boolean } = {}) {
+function prepare(options: { tree?: ProjectTree } = {}) {
   mocks.directory = {
-    tree: tree(),
+    tree: options.tree ?? tree(),
     directory: { hosts: [], entries: [] },
     availability: new Map(),
     refresh: vi.fn(async () => {}),
@@ -153,11 +163,44 @@ function setup(options: { allowPermanentDelete?: boolean } = {}) {
   mocks.mutateTask.mockResolvedValue(null);
   mocks.service = {
     getDeletionCapability: vi.fn(async () => ({ supported: true })),
-    countTaskTrees: vi.fn(),
-    deleteArchivedTasks: vi.fn(),
-    eraseTasks: vi.fn(),
+    countTaskTrees: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
+      total: taskIds.length,
+      sideChats: 0,
+      subagents: 0,
+      workflowSessions: 0,
+      workflowRuns: 0,
+      running: 0,
+    })),
+    deleteArchivedTasks: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
+      deletedTaskIds: taskIds,
+      skippedTaskIds: [],
+      failedTaskIds: [],
+    })),
+    eraseTasks: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
+      erasedTaskIds: taskIds,
+      skippedTaskIds: [],
+      blockedRunningTaskIds: [],
+      failedTaskIds: [],
+      fileFailureCount: 0,
+      filesRetainedCount: 0,
+      worktreeCleanup: { removed: [], retained: [], failed: [] },
+    })),
   };
-  return renderHook(() => useArchiveManagement(options));
+}
+function setup(options: { allowPermanentDelete?: boolean; tree?: ProjectTree } = {}) {
+  prepare(options);
+  return renderHook(() =>
+    useArchiveManagement({ allowPermanentDelete: options.allowPermanentDelete ?? true }),
+  );
+}
+/** Mounts the dialog the hook hands to the page, so tests drive the real confirmation controls. */
+function renderDeletionDialog(result: { current: { deletionDialog: unknown } }) {
+  return render(createElement(Fragment, null, result.current.deletionDialog as never));
+}
+async function confirmOpenDialog() {
+  const confirm = (await screen.findByTestId(TID_TASK_DELETE_CONFIRM)) as HTMLButtonElement;
+  await waitFor(() => expect(confirm.disabled).toBe(false));
+  fireEvent.click(confirm);
 }
 it("opening the permanent delete dialog writes nothing; cancel releases the page without mutation", async () => {
   const { result } = setup();
@@ -221,4 +264,96 @@ it("one in-flight unarchive batch rejects duplicate clicks and preserves failure
   expect(result.current.result).toEqual({ succeeded: 1, failed: 1, skipped: 0 });
   expect(mocks.directory.refresh).toHaveBeenCalledOnce();
   expect(result.current.busy).toBe(false);
+});
+it("defaults to fail-closed: without an explicit opt-in no permanent delete dialog opens", async () => {
+  prepare();
+  const { result } = renderHook(() => useArchiveManagement());
+  await act(async () => {
+    await result.current.run([tree().tasks[0]!], "delete");
+  });
+  expect(result.current.pending).toBe(false);
+  expect(mocks.service.getDeletionCapability).not.toHaveBeenCalled();
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+});
+it("rows archived after the dialog opens are not added to the confirmed batch", async () => {
+  const { result, rerender } = setup();
+  act(() => {
+    void result.current.run([tree().tasks[0]!], "delete");
+  });
+  expect(result.current.pending).toBe(true);
+  mocks.directory = {
+    ...mocks.directory,
+    tree: { ...tree(), tasks: [...tree().tasks, task("fresh")] },
+  };
+  rerender();
+  renderDeletionDialog(result);
+  await confirmOpenDialog();
+  await waitFor(() => expect(mocks.service.eraseTasks).toHaveBeenCalledTimes(1));
+  expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["alpha"],
+  });
+  expect(mocks.service.eraseTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["alpha"],
+  });
+});
+it("a pinned archived row is excluded from a batch unless the user opts in", async () => {
+  const pinned = task("pinned-one", { pinned: true });
+  const plain = task("plain-two");
+  const { result } = setup({ tree: { ...tree(), tasks: [pinned, plain] } });
+  act(() => {
+    void result.current.run([pinned, plain], "delete");
+  });
+  renderDeletionDialog(result);
+  const checkbox = await screen.findByRole("checkbox", { name: "taskDelete.includePinned:1" });
+  expect(checkbox.getAttribute("aria-checked")).toBe("false");
+  await confirmOpenDialog();
+  await waitFor(() => expect(mocks.service.eraseTasks).toHaveBeenCalledTimes(1));
+  expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["plain-two"],
+  });
+  expect(mocks.service.eraseTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["plain-two"],
+  });
+});
+it("a pinned archived row is erased only after the user opts in", async () => {
+  const pinned = task("pinned-one", { pinned: true });
+  const plain = task("plain-two");
+  const { result } = setup({ tree: { ...tree(), tasks: [pinned, plain] } });
+  act(() => {
+    void result.current.run([pinned, plain], "delete");
+  });
+  renderDeletionDialog(result);
+  const checkbox = await screen.findByRole("checkbox", { name: "taskDelete.includePinned:1" });
+  fireEvent.click(checkbox);
+  await waitFor(() => expect(checkbox.getAttribute("aria-checked")).toBe("true"));
+  await confirmOpenDialog();
+  await waitFor(() => expect(mocks.service.eraseTasks).toHaveBeenCalledTimes(1));
+  expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["pinned-one", "plain-two"],
+  });
+});
+it("a lone pinned archived row is not erased until the user opts in", async () => {
+  const pinned = task("pinned-only", { pinned: true });
+  const { result } = setup({ tree: { ...tree(), tasks: [pinned] } });
+  act(() => {
+    void result.current.run([pinned], "delete");
+  });
+  renderDeletionDialog(result);
+  const confirm = (await screen.findByTestId(TID_TASK_DELETE_CONFIRM)) as HTMLButtonElement;
+  const checkbox = await screen.findByRole("checkbox", { name: "taskDelete.includePinned:1" });
+  await waitFor(() => expect(checkbox.getAttribute("aria-checked")).toBe("false"));
+  expect(confirm.disabled).toBe(true);
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+  fireEvent.click(checkbox);
+  await confirmOpenDialog();
+  await waitFor(() => expect(mocks.service.eraseTasks).toHaveBeenCalledTimes(1));
+  expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["pinned-only"],
+  });
 });

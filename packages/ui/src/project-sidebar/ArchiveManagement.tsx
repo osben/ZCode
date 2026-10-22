@@ -22,7 +22,7 @@ import { ArchiveGroupCard } from "@/project-sidebar/ArchiveGroupCard.js";
 import { ProjectDirectoryProvider } from "@/project-sidebar/ProjectDirectoryProvider.js";
 
 export function ArchiveManagement({
-  allowPermanentDelete = true,
+  allowPermanentDelete = false,
 }: {
   allowPermanentDelete?: boolean;
 }) {
@@ -169,7 +169,7 @@ function ArchiveManagementContent({ allowPermanentDelete }: { allowPermanentDele
       ) : null}
       {state.deletionResult ? (
         <p
-          role="status"
+          role={state.deletionFailed ? "alert" : "status"}
           className="whitespace-pre-line break-words text-ui-sm text-foreground-subtle"
         >
           {state.deletionResult}

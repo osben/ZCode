@@ -143,13 +143,15 @@ Settings → Archives (`ArchiveManagement`) is an archived-session Delete surfac
 Owners (one write path for Delete on this page):
 
 - `useArchiveManagement` owns the selection freeze (rows visible under the current search and project filter at the time of the action), the unarchive lock, remote-row exclusion and the Web-remote gate. It never calls `mutateProjectTask` with `kind: "delete"` for this surface.
-- `useTaskDeleteDialog` owns the permanent-Delete dialog state (frozen rows, in-flight guard, result text). It renders `TaskDeleteConfirmationDialog` and invokes the executor.
+- `useTaskDeleteDialog` owns the permanent-Delete dialog state (frozen rows, in-flight guard, result text and failure flag). It renders `TaskDeleteConfirmationDialog` and invokes the executor. It is the single owner for the Settings → Archives page only; other Delete surfaces keep their own owners.
 - `permanentlyDeleteTasks` (`packages/ui/src/task-deletion/taskDeletion.ts`) is the only executor. Base local services resolve through `useBaseWorkspaceServices`.
 
 Rules:
 
-- Local archived rows are mapped with `archived: true` and `pinned: false`. The archived batch path (`deleteArchivedTasks`) is still-archived guarded, so a row restored elsewhere before confirm is reported as skipped.
-- Remote rows (`workspaceIdentity` set) are never sent to the executor. They are excluded from batches and per-row and per-group entries are disabled with reason `taskDelete.remoteUnavailable`. A batch that contains them shows `taskList.deleteAllArchivedUnavailable` naming the affected projects. If no local rows remain, no dialog opens.
+- Local archived rows are mapped with `archived: true` and their real `pinned` state. Archiving does not clear pinned, so pinned archived rows are excluded from a batch until the user checks the include-pinned opt-in. The dialog runs with `requirePinnedOptIn`, so this also applies to a lone pinned row. The archived batch path (`deleteArchivedTasks`) is still-archived guarded, so a row restored elsewhere before confirm is reported as skipped.
+- The confirmed batch is the frozen row set captured when the dialog opened. Rows archived or restored after that do not join or leave it; only the still-archived guard can skip a confirmed row.
+- Remote rows (`workspaceIdentity` set) are never sent to the executor. A per-row entry for a remote row is disabled with reason `taskDelete.remoteUnavailable`. A group entry is disabled only when the group has no local rows left or Web remote is on. A mixed group keeps its entry enabled and excludes only its remote rows, which the notice names by project (`taskList.deleteAllArchivedUnavailable`). If no local rows remain in a selection, no dialog opens.
+- Results: the erase outcome decides the status role. Failed, session-file or worktree-cleanup failures are announced with `role="alert"`; success is `role="status"`. A rejected refresh after the erase is logged and never replaces the erase outcome.
 - Web remote control (`isWebRemoteControl`, passed as `allowPermanentDelete={!isWebRemoteControl}`) disables every permanent-Delete entry on this page with reason `taskDelete.remoteUnavailable`. The hook also returns before opening the dialog, and never consults `getDeletionCapability`, even when the base Host advertises local deletion support.
 - Capability is explicit: `getDeletionCapability` through `taskDeletionSupported`. Unsupported capability keeps confirm disabled and never falls back to hide-only success.
 - Single-row delete uses the same flow as batch delete (the fork's archived single delete also opened the permanent dialog).
@@ -187,7 +189,9 @@ Acceptance scenarios:
 
 1. Header Delete with no archived rows is disabled; with rows it opens the confirmation dialog.
 2. Cancel: no `deleteArchivedTasks` or `eraseTasks` call, and the entry is enabled again.
-3. Confirm: one `deleteArchivedTasks` then one `eraseTasks` with the confirmed IDs. The entry is disabled while the erase runs and the result text is shown after it.
+3. Confirm: per workspace group, one `deleteArchivedTasks` then one `eraseTasks` with that group's confirmed IDs. The entry is disabled while the erase runs and the result text is shown after it.
+   3a. Pinned archived rows in a batch are not erased until the include-pinned opt-in is checked; a lone pinned row behaves the same way.
+   3b. Rows archived after the dialog opens are not added to the confirmed batch.
 4. Search or project filter: only the visible rows reach the dialog. Rows hidden by the filter are not deleted.
 5. A remote row mixed into a batch is excluded and named in the notice. Local rows still delete. A remote-only batch opens no dialog.
 6. Web remote: header, group and row Delete are disabled with the reason. Clicking does nothing, and `getDeletionCapability` is never called even if the service reports supported.

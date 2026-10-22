@@ -14,9 +14,15 @@ import {
 } from "@/task-deletion/taskDeletion.js";
 import type { TaskDeleteDialogRow } from "@/task-deletion/taskDeletionTypes.js";
 
+interface TaskDeleteResult {
+  text: string;
+  failed: boolean;
+}
+
 /**
- * Single owner of the permanent-delete dialog and of the executor call. Callers decide which rows
- * are offered (and must exclude rows that cannot be deleted here); this hook never widens a batch.
+ * Single owner of the permanent-delete dialog and of the executor call, for the Settings → Archives
+ * page only. Callers decide which rows are offered (and must exclude rows that cannot be deleted
+ * here); this hook never widens a batch. Pinned rows always require an explicit opt-in.
  */
 export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
   const services = useBaseWorkspaceServices();
@@ -25,7 +31,7 @@ export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState<readonly TaskDeleteTarget[]>([]);
   const [notice, setNotice] = useState<string | undefined>(undefined);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<TaskDeleteResult | null>(null);
   const inFlight = useRef(false);
   const resolveServices = useCallback(
     (row: TaskDeleteTarget) =>
@@ -73,18 +79,31 @@ export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
       setNotice(undefined);
       setBusy(true);
       try {
-        const outcome = await permanentlyDeleteTasks(
-          items as readonly TaskDeleteTarget[],
-          resolveServices,
-          (row) => removeTaskState(row.workspacePath, row.taskId, row.workspaceIdentity),
-        );
-        setResult(
-          formatTaskDeletionResult(outcome, (id, values) => intl.formatMessage({ id }, values)),
-        );
-        await onRefresh?.();
-      } catch (error) {
-        logger.error("[TaskDeletion] permanent delete failed", { error });
-        setResult(intl.formatMessage({ id: "taskDelete.error" }));
+        try {
+          const outcome = await permanentlyDeleteTasks(
+            items as readonly TaskDeleteTarget[],
+            resolveServices,
+            (row) => removeTaskState(row.workspacePath, row.taskId, row.workspaceIdentity),
+          );
+          setResult({
+            text: formatTaskDeletionResult(outcome, (id, values) =>
+              intl.formatMessage({ id }, values),
+            ),
+            failed:
+              outcome.failed > 0 ||
+              outcome.sessionFileFailures > 0 ||
+              outcome.worktreeCleanup.failed.length > 0,
+          });
+        } catch (error) {
+          logger.error("[TaskDeletion] permanent delete failed", { error });
+          setResult({ text: intl.formatMessage({ id: "taskDelete.error" }), failed: true });
+        }
+        // A refresh failure must not replace the erase outcome above; it is only logged.
+        try {
+          await onRefresh?.();
+        } catch (error) {
+          logger.error("[TaskDeletion] refresh after permanent delete failed", { error });
+        }
       } finally {
         inFlight.current = false;
         setBusy(false);
@@ -97,13 +116,16 @@ export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
     cancel,
     busy,
     pending: rows.length > 0,
-    result,
-    reportResult: setResult,
+    result: result?.text ?? null,
+    resultFailed: result?.failed ?? false,
+    reportResult: (text: string | null) =>
+      setResult(text === null ? null : { text, failed: false }),
     dialog:
       rows.length > 0 ? (
         <TaskDeleteConfirmationDialog
           rows={rows}
           notice={notice}
+          requirePinnedOptIn
           loadCapability={loadCapability}
           loadTreeCounts={loadCounts}
           loadWorktreePreview={loadPreview}

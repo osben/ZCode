@@ -21,7 +21,7 @@ export type ArchiveOperation = "unarchive" | "delete";
  * after the Web-remote gate and the remote-row exclusion; it never uses the soft delete mutation.
  */
 export function useArchiveManagement({
-  allowPermanentDelete = true,
+  allowPermanentDelete = false,
 }: { allowPermanentDelete?: boolean } = {}) {
   const directory = useProjectDirectory();
   const { zcodeTaskService: service, windowControllerService: controller } =
@@ -42,7 +42,7 @@ export function useArchiveManagement({
   const requestPermanentDelete = (tasks: ProjectTask[]) => {
     if (!allowPermanentDelete || locked.current || permanentDelete.busy || permanentDelete.pending)
       return;
-    // 固定确认时的身份集合；搜索变化、新归档和重复点击不能扩充已经确认的批次。
+    // Freeze the confirmed identity set: search changes, new archives and repeated clicks must not expand a confirmed batch.
     const candidates = archivedCandidates(tasks);
     if (!candidates.length) return;
     const local = candidates.filter((task) => !isRemoteArchiveTask(task));
@@ -52,7 +52,7 @@ export function useArchiveManagement({
           { id: "taskList.deleteAllArchivedUnavailable" },
           {
             projects: [...new Set(remote.map((task) => getPathLeaf(task.workspacePath)))].join(
-              "、",
+              ", ",
             ),
           },
         )
@@ -122,6 +122,7 @@ export function useArchiveManagement({
     pending: permanentDelete.pending,
     result,
     deletionResult: permanentDelete.result,
+    deletionFailed: permanentDelete.resultFailed,
     deletionDialog: permanentDelete.dialog,
     run,
     cancelDelete: permanentDelete.cancel,
@@ -143,8 +144,8 @@ function toPermanentDeleteTarget(task: ProjectTask): TaskDeleteTarget {
     title: task.title,
     workspacePath: task.workspacePath,
     archived: true,
-    // Archived rows are unpinned; pinned=false keeps the batch from being silently narrowed by pin opt-in.
-    pinned: false,
+    // Archiving does not clear pinned, so the real state is passed; the dialog excludes pinned rows until the user opts in.
+    pinned: task.pinned,
     ...(task.executionWorktree ? { executionWorktree: task.executionWorktree } : {}),
   };
 }

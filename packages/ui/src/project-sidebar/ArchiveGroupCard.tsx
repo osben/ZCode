@@ -30,7 +30,7 @@ export function ArchiveGroupCard({
   name,
   sort,
   disabled,
-  allowPermanentDelete = true,
+  allowPermanentDelete = false,
   onAction,
 }: {
   group: ArchiveGroup;

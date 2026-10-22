@@ -42,7 +42,7 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 
 `ProjectDirectoryProvider` 是 shell 内项目树读取和排序偏好的唯一 UI owner；`ProjectSidebar` 与公开 `ProjectComposerMenu` 共用该投影。菜单不得从 tabs/cwd 生成项目或推断归属。候选为未删除项目（包括离线入口），按侧栏顺序，搜索名称和 roots；离线不可选。选中来自草稿 projectId + Host 身份，命令复用 onCreateTask -> prepareSession，目录绑定与桌面/手机导航仍由 Root/Host 承担。零 roots 不被过滤。旧 ChatEmptyState 的 tab 菜单退场。
 
-归档管理经 index 公开，属于 project-sidebar/ui。RootWorkspaceContent 提供单一项目目录 owner，嵌套 Provider 复用；设置、侧栏、composer 共用树。归档按 Host+projectId 分组，删除容器和未归类不按目录重绑；恢复复用模块内 mutation adapter 与现有 Controller/TaskService；永久删除经 `useTaskDeleteDialog` → `permanentlyDeleteTasks`（见 `specs/session-deletion-cascade.md` Settings → Archives），远程行与 Web 远程控制不可永久删除。页面只保存筛选/分页/确认候选和在途状态，批量部分失败不伪造全部成功。见 `docs/superpowers/specs/2026-09-11-archive-management.md`。
+归档管理经 index 公开，属于 project-sidebar/ui。RootWorkspaceContent 提供单一项目目录 owner，嵌套 Provider 复用；设置、侧栏、composer 共用树。归档按 Host+projectId 分组，删除容器和未归类不按目录重绑；恢复复用模块内 mutation adapter 与现有 Controller/TaskService；永久删除的单一 owner 仅限归档管理页：`useTaskDeleteDialog` → `permanentlyDeleteTasks`（见 `specs/session-deletion-cascade.md` Settings → Archives）；其他删除入口不受此约定约束。远程行与 Web 远程控制不可永久删除，待确认范围内的置顶会话需显式勾选后才会删除。页面只保存筛选/分页/确认候选和在途状态，批量部分失败不伪造全部成功。见 `docs/superpowers/specs/2026-09-11-archive-management.md`。
 
 侧栏分区标题与置顶行保留旧字号/缩进，空态由 ProjectTaskRows 统一展示。SortableProjects 持有 dnd-kit 暂态位移，排序只在同 Host/置顶分区内经原 reorderProjects 提交，任务原生拖入仍发 moveTask。
 

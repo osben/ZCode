@@ -122,7 +122,11 @@ function createServices(overrides: { supported?: boolean; skippedTaskIds?: strin
 
 function mount(
   tasks: ProjectTask[],
-  options: { allowPermanentDelete?: boolean; services?: ReturnType<typeof createServices> } = {},
+  options: {
+    allowPermanentDelete?: boolean;
+    services?: ReturnType<typeof createServices>;
+    refresh?: () => Promise<void>;
+  } = {},
 ) {
   const services = options.services ?? createServices();
   mocks.services = services;
@@ -133,7 +137,7 @@ function mount(
     } as unknown as ProjectTree,
     directory: { hosts: [], entries: [] },
     availability: new Map(),
-    refresh: vi.fn(async () => {}),
+    refresh: vi.fn(options.refresh ?? (async () => {})),
     error: null,
     loading: false,
   };
@@ -294,5 +298,32 @@ describe("Settings archives permanent delete", () => {
     );
     expect(mocks.removeTaskState).toHaveBeenCalledTimes(1);
     expect(mocks.removeTaskState.mock.calls[0]?.[1]).toBe("one");
+  });
+
+  it("a rejected refresh after erase keeps the erase summary and is not reported as a deletion failure", async () => {
+    const { services } = mount([archivedTask("one")], {
+      refresh: async () => {
+        throw new Error("refresh failed");
+      },
+    });
+    const dialog = await openDeleteAll();
+    fireEvent.click(await within(dialog).findByTestId(TID_TASK_DELETE_CONFIRM));
+    await waitFor(() => expect(services.zcodeTaskService.eraseTasks).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("taskDelete.result"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(deleteAllButton().disabled).toBe(false);
+  });
+
+  it("a failed erase is announced as an alert, not a status", async () => {
+    const { services } = mount([archivedTask("one"), archivedTask("two")]);
+    services.zcodeTaskService.eraseTasks.mockImplementationOnce(async ({ taskIds }) => ({
+      ...eraseResult(taskIds),
+      erasedTaskIds: ["one"],
+      failedTaskIds: ["two"],
+    }));
+    const dialog = await openDeleteAll();
+    fireEvent.click(await within(dialog).findByTestId(TID_TASK_DELETE_CONFIRM));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("taskDelete.result"));
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
