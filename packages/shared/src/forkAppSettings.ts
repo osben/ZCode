@@ -3,7 +3,8 @@ import {
   incognitoDefaultsPatchSchema,
   incognitoDefaultsStoredSchema,
 } from "./incognito-profile.js";
-import type { AppSettings } from "./protocol.js";
+import { isLocale, isLocalePreference } from "./locale.js";
+import type { AppSettings, Locale, LocalePreference } from "./protocol.js";
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
@@ -25,6 +26,8 @@ export const FORK_SETTING_KEYS = [
   "memoryIndexAsContext",
   "incognitoDefaults",
   "resourceTelemetryEnabled",
+  "localePreferenceOverride",
+  "localeOverride",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -83,6 +86,9 @@ export const forkAppSettingsStoredSchema = z.object({
   memoryIndexAsContext: z.boolean().optional().catch(undefined),
   incognitoDefaults: incognitoDefaultsStoredSchema.optional().catch(undefined),
   resourceTelemetryEnabled: z.boolean().optional().catch(undefined),
+  // Only uk-UA is ever stored here; any other value is dropped on read (specs/fork-locale-storage.md).
+  localePreferenceOverride: z.literal("uk-UA").optional().catch(undefined),
+  localeOverride: z.literal("uk-UA").optional().catch(undefined),
 });
 
 export type ForkAppSettingsStored = z.infer<typeof forkAppSettingsStoredSchema>;
@@ -105,11 +111,15 @@ export const forkAppSettingsPatchSchema = z.object({
   memoryIndexAsContext: z.boolean().optional(),
   incognitoDefaults: incognitoDefaultsPatchSchema.optional(),
   resourceTelemetryEnabled: z.boolean().optional(),
+  localePreferenceOverride: z.literal("uk-UA").optional(),
+  localeOverride: z.literal("uk-UA").optional(),
 });
 
 /**
  * Split a normalized settings patch into the fork-owned part (routed to the sidecar file) and the
  * rest (persisted to `setting.json` exactly like the upstream-compatible schema expects).
+ * The locale pair is split by splitLocaleSettings: uk-UA becomes fork overrides, and the shared
+ * keys always receive upstream-valid values (specs/fork-locale-storage.md).
  */
 export function splitForkSettingsPatch(patch: Partial<AppSettings>): {
   forkPatch: Partial<ForkAppSettings>;
@@ -123,6 +133,16 @@ export function splitForkSettingsPatch(patch: Partial<AppSettings>): {
     } else {
       basePatch[key] = value;
     }
+  }
+  if (patch.locale !== undefined || patch.localePreference !== undefined) {
+    const localeSplit = splitLocaleSettings({
+      locale: patch.locale,
+      localePreference: patch.localePreference,
+    });
+    Object.assign(forkPatch, localeSplit.forkPatch);
+    delete basePatch.locale;
+    delete basePatch.localePreference;
+    Object.assign(basePatch, localeSplit.sharedPatch);
   }
   return {
     forkPatch: forkPatch as Partial<ForkAppSettings>,
@@ -152,4 +172,120 @@ export function extractLegacyForkSettings(rawValue: unknown): Partial<ForkAppSet
   }
   const legacy = pickForkSettings(rawValue as Record<string, unknown>);
   return Object.keys(legacy).length > 0 ? legacy : undefined;
+}
+
+/**
+ * Pure rules for storing the fork's Ukrainian choice (ISSUE-045, specs/fork-locale-storage.md).
+ * The shared `setting.json` keys stay within what the upstream app can read; uk-UA lives only in
+ * the fork sidecar as one of two override keys. settingService is the only caller.
+ */
+
+/** Values the upstream app accepts for the shared `locale` key. */
+export type SharedLocale = "zh-CN" | "en-US";
+
+/** Values the upstream app accepts for the shared `localePreference` key. */
+export type SharedLocalePreference = "system" | SharedLocale;
+
+/** The only Ukrainian marker the fork stores in fork-settings.json. */
+const FORK_UK_LOCALE = "uk-UA" as const;
+
+/**
+ * Upstream-valid stand-in written to the shared keys while Ukrainian is active. Matches uk-UA's
+ * serviceLocale (packages/shared/src/locale.ts), so bots and services see the same fallback.
+ */
+const SHARED_FALLBACK_LOCALE: SharedLocale = "en-US";
+
+export interface LocaleOverrides {
+  /** The user's preference is Українська. */
+  localePreferenceOverride?: "uk-UA";
+  /** The resolved language is Українська (set by the preference, or by system resolution). */
+  localeOverride?: "uk-UA";
+}
+
+export interface LocaleSplit {
+  forkPatch: LocaleOverrides;
+  sharedPatch: { locale?: SharedLocale; localePreference?: SharedLocalePreference };
+}
+
+export interface LegacyLocaleMigrationPlan extends LocaleSplit {
+  forkPatch: LocaleOverrides;
+  sharedPatch: { locale: SharedLocale; localePreference: SharedLocalePreference };
+}
+
+function toSharedLocale(locale: Locale): SharedLocale {
+  return locale === FORK_UK_LOCALE ? SHARED_FALLBACK_LOCALE : locale;
+}
+
+/**
+ * Split a normalized locale patch into the fork overrides and the upstream-valid shared values.
+ * An absent `locale` leaves the shared locale untouched; a fixed or system preference clears the
+ * preference override and keeps only a locale override when the resolved language is Ukrainian.
+ */
+export function splitLocaleSettings(input: {
+  locale?: Locale;
+  localePreference?: LocalePreference;
+}): LocaleSplit {
+  // Mirrors normalizeSettingsPatch: a locale-only patch is an explicit fixed-language choice.
+  const preference = input.localePreference ?? input.locale;
+  if (preference === undefined) {
+    return { forkPatch: {}, sharedPatch: {} };
+  }
+
+  if (preference === FORK_UK_LOCALE) {
+    // Shared keys become upstream-valid; the fork carries the actual choice.
+    return {
+      forkPatch: { localePreferenceOverride: FORK_UK_LOCALE, localeOverride: FORK_UK_LOCALE },
+      sharedPatch: { locale: SHARED_FALLBACK_LOCALE, localePreference: "system" },
+    };
+  }
+
+  // Explicit keys with undefined values clear the override in the sidecar (JSON drops them).
+  return {
+    forkPatch: {
+      localePreferenceOverride: undefined,
+      localeOverride: input.locale === FORK_UK_LOCALE ? FORK_UK_LOCALE : undefined,
+    },
+    sharedPatch: {
+      localePreference: preference,
+      ...(input.locale !== undefined ? { locale: toSharedLocale(input.locale) } : {}),
+    },
+  };
+}
+
+/**
+ * Effective view: override first, then shared. Owner of the resolution rule; the settings service
+ * applies it once in get(), and no other code path computes the effective locale.
+ */
+export function resolveEffectiveLocale(
+  shared: { locale: Locale; localePreference?: LocalePreference },
+  overrides: LocaleOverrides,
+): { locale: Locale; localePreference: LocalePreference } {
+  return {
+    // An absent shared preference means the schema default, "system".
+    localePreference: overrides.localePreferenceOverride ?? shared.localePreference ?? "system",
+    locale: overrides.localeOverride ?? overrides.localePreferenceOverride ?? shared.locale,
+  };
+}
+
+/**
+ * One-time migration plan for a raw setting.json written by the earlier fork build. Returns
+ * undefined unless a locale key holds uk-UA. The raw `localePreference` falls back to `locale`
+ * when absent, the same rule as migrateLegacyLocalePreference, so a locale-only file migrates too.
+ */
+export function planLegacyLocaleMigration(raw: unknown): LegacyLocaleMigrationPlan | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const rawLocale = record.locale;
+  const rawPreference = "localePreference" in record ? record.localePreference : record.locale;
+  if (rawLocale !== FORK_UK_LOCALE && rawPreference !== FORK_UK_LOCALE) {
+    return undefined;
+  }
+  const split = splitLocaleSettings({
+    locale: isLocale(rawLocale) ? rawLocale : undefined,
+    localePreference: isLocalePreference(rawPreference) ? rawPreference : undefined,
+  });
+  // splitLocaleSettings always writes both shared keys for a uk-UA input, so the plan is complete.
+  return split as LegacyLocaleMigrationPlan;
 }

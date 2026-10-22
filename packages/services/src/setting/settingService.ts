@@ -12,9 +12,11 @@ import {
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
   formatZodError,
+  planLegacyLocaleMigration,
+  resolveEffectiveLocale,
   splitForkSettingsPatch,
 } from "@zcode/shared";
-import type { ForkAppSettings } from "@zcode/shared";
+import type { ForkAppSettings, LegacyLocaleMigrationPlan } from "@zcode/shared";
 import type { ISettingService, WorkspaceSettingsProjection } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
@@ -104,6 +106,8 @@ interface ReadSettingsResult {
   transientReadFailure?: boolean;
   /** Fork-owned keys found in the raw setting.json before the schema stripped them; set only when the one-time sidecar migration still has something to move. */
   legacyForkSettings?: Partial<ForkAppSettings>;
+  /** Set when setting.json still holds uk-UA in a locale key; the one-time targeted rewrite moves it to fork overrides. */
+  legacyLocaleMigration?: LegacyLocaleMigrationPlan;
 }
 async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSettingsResult> {
   const settingsFile = location.file;
@@ -153,6 +157,7 @@ async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSet
       settings: result.data,
       needsMigrationPersist: shouldPersistSettingsMigrations(rawValue),
       legacyForkSettings: extractLegacyForkSettings(rawValue),
+      legacyLocaleMigration: planLegacyLocaleMigration(rawValue),
     };
   } catch (err) {
     if (
@@ -266,6 +271,14 @@ async function writeSettings(
   debugLog("write done");
 }
 
+/**
+ * Effective view for consumers: shared values plus fork values, with the locale pair resolved here
+ * and nowhere else (specs/fork-locale-storage.md, owner rule 3).
+ */
+function withEffectiveLocale(settings: AppSettings, fork: ForkAppSettings): AppSettings {
+  return { ...settings, ...fork, ...resolveEffectiveLocale(settings, fork) };
+}
+
 export function createSettingService(): ISettingService {
   return createSettingServiceWithMigrations().service;
 }
@@ -318,17 +331,70 @@ export function createSettingServiceWithMigrations(): {
       ? appSettingsSchema.parse({ ...settings, ...(await workspaceProjection(settings)) })
       : settings;
 
+  // Caller holds the main-file lock. The fork override is written first: a crash between the two
+  // writes leaves the choice in the fork, and the next read finishes the shared rewrite (idempotent).
+  // The shared file is rewritten with a targeted raw edit, so unrelated and unknown keys are kept.
+  const migrateLegacyLocaleLocked = async (
+    shouldCommit: () => boolean,
+    enterCommitPhase: () => void,
+  ): Promise<void> => {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readFile(location.file, "utf-8"));
+    } catch (error) {
+      log("legacy locale migration skipped, setting.json unreadable. error:", error);
+      return;
+    }
+    const plan = planLegacyLocaleMigration(raw);
+    if (!plan || !shouldCommit()) return;
+    await updateForkSettings(plan.forkPatch, { shouldCommit }, location);
+    if (!shouldCommit()) return;
+    await atomicWriteText(
+      location.file,
+      JSON.stringify({ ...(raw as object), ...plan.sharedPatch }, null, 2),
+      {
+        useFileLock: false,
+        beforeRename: () => {
+          if (!shouldCommit()) {
+            throw new Error("stale settings write skipped before atomic rename");
+          }
+          enterCommitPhase();
+        },
+        runRename: (renameFile) =>
+          runSettingsCommit(async () => {
+            if (!shouldCommit())
+              throw new Error("stale settings write skipped before atomic rename");
+            await renameFile();
+          }),
+      },
+    );
+    log("legacy uk-UA locale moved to fork overrides, shared locale keys rewritten");
+  };
+
   const service: ISettingService = {
     async get(): Promise<AppSettings> {
       // A Session may be created or cold-restored immediately after settings change; if this read overtakes an enqueued write,
       // runtime will retain the old switch value. Wait for queued writes first so startup preferences use the committed choice.
       await waitForQueuedWrites();
-      const loaded = await loadSettingsSnapshot();
+      let loaded = await loadSettingsSnapshot();
+      if (loaded.base.legacyLocaleMigration) {
+        await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
+          await mkdir(location.dir, { recursive: true });
+          await withAtomicFileLock(location.file, async () => {
+            const latest = await readSettingsWithMeta(location);
+            if (latest.legacyLocaleMigration) {
+              await migrateLegacyLocaleLocked(shouldCommit, enterCommitPhase);
+            }
+          });
+          await loadSettingsSnapshot();
+        });
+        loaded = await loadSettingsSnapshot();
+      }
       const projected = await projectSettings(loaded.base.settings);
       const migrationPending =
         loaded.base.needsMigrationPersist || loaded.base.legacyForkSettings !== undefined;
       if (!migrationPending && JSON.stringify(projected) === JSON.stringify(loaded.base.settings)) {
-        return structuredClone({ ...projected, ...loaded.fork });
+        return structuredClone(withEffectiveLocale(projected, loaded.fork));
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
@@ -338,6 +404,8 @@ export function createSettingServiceWithMigrations(): {
         await mkdir(location.dir, { recursive: true });
         await withAtomicFileLock(location.file, async () => {
           const latest = await readSettingsWithMeta(location);
+          // A stale migration turn must not write the shared keys without the fork override; the next read retries it.
+          if (latest.legacyLocaleMigration) return;
           await maybeSeedLegacyForkSettings(latest.legacyForkSettings, { shouldCommit }, location);
           const latestProjected = await projectSettings(latest.settings);
           const latestPending =
@@ -365,10 +433,9 @@ export function createSettingServiceWithMigrations(): {
       });
 
       const migrated = await loadSettingsSnapshot();
-      return structuredClone({
-        ...(await projectSettings(migrated.base.settings)),
-        ...migrated.fork,
-      });
+      return structuredClone(
+        withEffectiveLocale(await projectSettings(migrated.base.settings), migrated.fork),
+      );
     },
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
@@ -395,7 +462,12 @@ export function createSettingServiceWithMigrations(): {
         // writing back its older snapshot (the migration rewrite included).
         await mkdir(location.dir, { recursive: true });
         await withAtomicFileLock(location.file, async () => {
-          const read = await readSettingsWithMeta(location);
+          let read = await readSettingsWithMeta(location);
+          if (read.legacyLocaleMigration) {
+            // Migrate before merging: an unrelated patch must never rewrite the uk-UA value into the shared keys.
+            await migrateLegacyLocaleLocked(shouldCommit, enterCommitPhase);
+            read = await readSettingsWithMeta(location);
+          }
           if (expectedAccountSettings) {
             // The user may switch accounts during the query. Validate inside the same write queue; a caller-side read-then-write is insufficient.
             const expected = appSettingsPatchSchema.parse(expectedAccountSettings);

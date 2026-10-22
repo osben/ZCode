@@ -304,6 +304,10 @@ export interface AppSettings {
   voiceDictation?: VoiceDictationSettings;
   /** UI language preference; locale stores the resolved language for non-browser contexts such as main/menu/remote control. */
   localePreference?: LocalePreference;
+  /** Fork-only (fork-settings.json): the user chose Українська as the language preference. See specs/fork-locale-storage.md. */
+  localePreferenceOverride?: "uk-UA";
+  /** Fork-only (fork-settings.json): the resolved language is Українська. Never stored in setting.json. */
+  localeOverride?: "uk-UA";
   /** Whether to inherit the system terminal profile, shell environment, and font where possible. */
   terminalInheritSystemProfile?: boolean;
   /** User-overridden terminal font; automatically detected from system terminal config when empty. */

@@ -1,7 +1,7 @@
 # Fork Locale Storage (ISSUE-045)
 
 Owner: `packages/services/src/setting/settingService.ts` (the only reader that produces the effective
-locale and the only writer of both stores). Pure rules: `packages/shared/src/forkLocaleSettings.ts`.
+locale and the only writer of both stores). Pure rules: `packages/shared/src/forkAppSettings.ts` (the locale section; the architecture policy keeps `shared` unmanaged, so no new file).
 Stores: `~/.zcode/v2/setting.json` (shared with the installed upstream app) and
 `~/.zcode/v2/fork-settings.json` (fork sidecar, see `specs/settings-read-snapshot.md`).
 
@@ -49,10 +49,11 @@ validation, returned defaults, and wrote them back, wiping about 20 unrelated ke
    `IntlProvider`, which already suppresses its own echo through `ignoredLocalLocaleBroadcastPayloadRef`.
    This feature adds no broadcast and changes no receiver. Receivers take the resolved value from the
    payload, not from a settings re-read, so a window cannot downgrade `system` to a fixed language.
-7. **Desktop, Web, remote.** Desktop and Web both call the same `settingService` through RPC. Desktop
-   main process has no settings-based locale source: native menus receive the renderer's effective
-   locale through `platform.setApplicationLocale`. The `settingsFile` read in
-   `packages/desktop/src/main/index.ts` is not used for locale.
+7. **Desktop, Web, remote.** Every host reads the locale through `settingService.get()`: the Desktop
+   main bootstrap (`packages/desktop/src/main/index.ts`, `mainSettingService.get()` sets
+   `currentApplicationLocale`), the Web server and the window Host. The renderer then pushes its
+   effective locale with `platform.setApplicationLocale`, so the native menu follows the same value.
+   The raw `settingsFile` path in that file is used only for zoom and window size, never for locale.
 8. **Never in `setting.json` as a fork key.** Fork state uses the sidecar only (AGENTS.md, "Shared
    Databases and Fork Divergence").
 

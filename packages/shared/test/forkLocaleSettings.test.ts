@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { forkAppSettingsStoredSchema } from "../src/forkAppSettings.js";
-import type { Locale, LocalePreference } from "../src/protocol.js";
 import {
+  forkAppSettingsStoredSchema,
   planLegacyLocaleMigration,
   resolveEffectiveLocale,
   splitLocaleSettings,
-} from "../src/forkLocaleSettings.js";
+} from "../src/forkAppSettings.js";
+import type { Locale, LocalePreference } from "../src/protocol.js";
 import { appSettingsPatchSchema, appSettingsSchema } from "../src/validationAppSettings.js";
 
 // Literal copies of the upstream app's enums. Deliberately NOT imported from the fork's schema,

@@ -131,7 +131,11 @@ describe("fork locale storage (ISSUE-045)", () => {
   it("migrates a legacy uk-UA file once and leaves unrelated keys untouched", async () => {
     const home = makeTempHome();
     const seeded = await createServiceInHome(home);
-    await seeded.update({ locale: "zh-CN", localePreference: "zh-CN", terminalFontFamily: "Menlo" });
+    await seeded.update({
+      locale: "zh-CN",
+      localePreference: "zh-CN",
+      terminalFontFamily: "Menlo",
+    });
     const base = readJson(settingsFile(home));
     // Simulate the file the upstream build left behind: the two locale keys are uk-UA and every
     // other key stays exactly as it was.
