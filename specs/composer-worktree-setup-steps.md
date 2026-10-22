@@ -250,35 +250,81 @@ missing in-memory `File` sources.
 
 ### Timeline presentation
 
-Worktree preparation is timeline context, not an empty-state greeting: render it in the timeline's
-persistent header slot above the message history so the creation status remains at the top after the
-first user or assistant row appears. Once Host activation clears the preparation marker, keep a
-compact created-worktree row in that same position from the live session-index execution-worktree
-fact. Its branch detail follows the current Git status of that execution worktree, so a later branch switch
-does not leave the notice showing the creation-time branch as if it were still current. Until the first Git
-status is available, use the persisted creation-time branch; show `Detached HEAD` when the current status is
-detached. Present these rows as restrained tool activity with a clear status icon, branch/path detail, and
-consistent message-column alignment. The created row is a single compact line: use the existing
-muted Git worktree marker, the created label and branch, followed by an icon-only open action with a
-tooltip and accessible name. The action opens the exact worktree path through the existing
-path-aware workspace-open contract; it must not simulate a click on the generic Open workspace
-picker. For a remote parent workspace the action also passes the worktree's own remote identity
-(the parent identity re-pointed at the worktree path), because remote identities embed the path. The
-notice binds the worktree identity to the parent's bound remote session before it calls the open path,
-because the identity alone does not route the new tab. A parent identity that
-claims the remote form but does not parse, or a remote parent with no bound session, fails closed: the
-action shows the open-failed toast and never falls back to opening the remote path as a local workspace.
-The parent's session is resolved with the same order the pane uses for its own routing: the pane's remote
-session id when present, then the parent identity's binding. Restored and split remote panes omit the id and
-resolve through the binding. Only a session currently attached to the session registry counts, so the action
-fails closed, with the same toast and without binding or calling the open path, when neither source yields an
-attached session (for example during a remote disconnect). If the open callback rejects after the action bound
-the worktree identity, the action restores the identity's prior binding, or removes the binding if none existed,
-before showing the toast.
-On the Web remote-control path, the desktop open handler fails closed for any remote worktree identity (including an
-unparseable `remote:` form): it rejects the workspace-open request before the path-only local open runs, so the
-action shows the open-failed toast. Routing a remote worktree on desktop needs the identity-to-session binding in the
-desktop renderer and is not part of this contract.
+The user's first message is always the first timeline item, and the worktree line is always the
+second: preparation is timeline context rendered immediately after the first user input — never in
+the header slot above it and never re-ordered when the frozen preview is replaced by the
+authoritative user row. The timeline receives the worktree row as a slot attached to the first
+render unit (after that unit's user inputs); while no transcript row exists yet (session reserved,
+message still frozen), the slot renders as its own timeline-only unit below the frozen-submission
+preview, so the visual order "message, then worktree line" never flips during admission. The card
+must not duplicate the frozen message: the preview (and later the authoritative row) owns the
+message content.
+
+One persistent line covers the whole lifecycle: creating → ready/existing → failed while the Host
+preparation marker is live, and a created line from the live session-index execution-worktree fact
+once activation clears the marker — same position, same collapsible presentation, so activation
+never swaps the row's style or place. Activation clears the marker before the sessions-index
+refresh lands, so the renderer bridges that gap from its settled pipeline entry (`ready` with the
+resolved path, or `consumed`) for the timeline slot only; the index fact stays authoritative for
+Git panels and the header, and the bridge never applies while the preparation marker is live. The preparing/failed setup card uses the same collapsible
+presentation as the reasoning ("Thought") row: a compact trigger line with the worktree icon,
+a "Worktree" label, a dot separator and a status summary (shimmer while creating; the
+branch on ready/existing; a destructive "failed" summary), with a chevron that appears on
+hover. The trigger always carries the `data-worktree-setup-step` status marker. The details
+(base-branch note, orphaned note, ready/existing path line, the full
+failure reason with Retry/Discard) live in the collapsible content: open while creating,
+auto-opens on failure, auto-collapses when the worktree turns ready, and never overrides a
+manual toggle. "Open while creating" means a live creation in this renderer — a Git runner for
+that session is in flight. A `creating` entry restored from the Host seed (opening a session whose
+preparation was never activated, after a reload, or in another window) starts collapsed and stays
+collapsed through the reconcile that settles it to `ready`; it must never paint open for a frame
+and then collapse. A failure still auto-opens, and a Retry from the open failed card keeps it open.
+
+Both the setup card and the created line show the Git command that creates the worktree
+(`git worktree add -b <branch> -- <target> [<base>|HEAD]`, or the plain existing-branch form) in
+the collapsible details, derived from the frozen parameters; the created line keeps showing it
+after activation so "expand → see which commands ran" always works. On the created line the command
+is secondary: a muted code box under a small "Command" label with a copy button, below the path.
+Known gap: the created line rebuilds the command from the execution-worktree fact, which has no
+base branch and no "existing branch" flag, so it always shows the `-b` form without a base.
+The details block is indented with a left rule (`ml-2 border-l pl-3.5`) and must not also be
+`w-full`: a full-width box plus the left margin overflows the message column and clips the right
+border of the command box. The same rule applies to the setup card's details.
+
+The created line is a single compact trigger with the same "Worktree" label and the branch as the
+summary (`Worktree · <branch>`; no "created" word — the row's position and check mark already say
+it). Its branch detail follows the current Git status of that execution worktree, so a later branch
+switch does not leave the notice showing the creation-time branch as if it were still current; until
+the first Git status is available, use the persisted creation-time branch, and show `Detached HEAD`
+when the current status is detached. The details show the worktree path with a success check,
+shortened against the Host home directory reported for the parent workspace (`~/…`); the full
+absolute path stays available on hover and is what Copy path copies. A path outside that home, or an
+unknown home, is shown in full. The base branch is not shown on the created line: the
+execution-worktree fact (`path`, `branchName`) does not carry it, and the renderer pipeline entry
+that knows it does not survive a reload, so showing it only sometimes would be misleading. Adding it
+needs a Host fact and is out of scope here.
+
+The trigger line ends with an icon-only "Worktree actions" menu button (tooltip and accessible name)
+instead of a lone open icon. Its items, in order, each hidden when the platform cannot perform it:
+
+- **Open in Finder / File Explorer / File Manager** (per OS, the existing `appHeader.openIn*` labels) — `IPlatformService.openInFileManager` via the
+  shared file-context actions, with the directory itself as the target. Shown only when the platform
+  can open local files (`canOpenLocalFiles`) and the parent workspace is local; Web, mobile remote
+  control and remote workspaces hide it.
+- **Open in <editor>** — the existing `getInstalledEditors` / `openInEditor` capability, using the
+  user's last selected editor when it is a code editor, else the first installed one; file managers
+  are excluded because Reveal covers them. Same local-only gating as Reveal; hidden when no editor is
+  installed.
+- **Copy path** — copies the absolute worktree path and confirms with a toast. Always shown.
+
+There is no "open the worktree" / "new task in this worktree" item. The former icon-only open action
+called the path-only workspace-open + empty-draft flow, which carries no `projectId`: projects are
+Host `projectService` records and the composer must not derive a project from a tab or cwd
+(`packages/ui/src/project-sidebar/CONTRACT.md`), so the draft showed "Select project" and the
+worktree never appeared in the project list, on Desktop and Web alike. Continuing work in the
+worktree happens in the session itself; starting another task in an existing worktree from the
+parent project is a separate feature.
+
 Do not show a worktree duration unless the execution-worktree fact provides one; assistant Thought
 duration is not worktree timing.
 
@@ -460,6 +506,13 @@ Six decisions closed by the worktree lifecycle review:
    registrations fail recoverably without pruning.
 
 ## Return to draft on failure (2026-10-19)
+
+> Superseded for automatic preparation failures by
+> [first-submission-lifecycle.md](./first-submission-lifecycle.md), 2026-10-20:
+> keep the submitted session, message and recovery record; show failure with
+> explicit Retry in that same session. Do not automatically cancel, tombstone,
+> transfer into a new draft, or navigate away. The historical explicit hand-off
+> helper and its unit tests do not authorize automatic use from preparation exits.
 
 Closed decisions (confirmed by the product owner):
 

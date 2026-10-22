@@ -3760,6 +3760,44 @@ specs/incognito-session.md scenarios 13 and 17: INCOGNITO-01/02 use pending
 tint + chip, no upstream request before send; first send produces the sidebar incognito marker).
 Not run yet: written without a built desktop app or CLI in the authoring environment.
 
+## Immediate first submission (2026-10-20)
+
+| Case  | Focused regression                                                                                  | Desktop evidence                                              |
+| ----- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| FSL01 | First-submission pending display before held IO                                                     | pending; no measured first-frame claim                        |
+| FSL02 | `conversationWorktreeSetupStepsBehavior.test.ts`: message order and un-clamped content              | pending; existing worktree candidate needs updated assertions |
+| FSL03 | `v4SessionPaneModelSwitchRecovery.test.ts`: upload failure preserves incognito session              | pending                                                       |
+| FSL04 | `composerWorktreeFailureExits.test.ts`: failure retains session/recovery; CLI reservation lifecycle | pending restart scenario                                      |
+| FSL05 | Pending/authoritative identity reconciliation                                                       | pending                                                       |
+| FSL06 | Existing late-ACK composer ownership and next-draft regressions                                     | pending full lifecycle replay                                 |
+| FSL07 | Existing command receipts/recovery; generic reservation guard                                       | pending fault injection                                       |
+| FSL08 | Existing workspace identity/attachment regressions                                                  | real remote execution pending                                 |
+| FSL09 | Persisted first-submission recovery without automatic dispatch                                      | pending restart scenario                                      |
+
+Contract: `specs/first-submission-lifecycle.md`. Accepted cases are listed in the
+catalog. Test references identify intended verification, not passing evidence.
+No new case is promoted or admitted to Docker by this table.
+
+### First-submission review fixes (2026-10-21)
+
+Contract: `specs/first-submission-instant-ux.md` (flag lifetimes, Retry surface,
+Reconciliation). Mounted UI regressions run in Vitest; every Desktop scenario is pending.
+
+| Case        | Focused regression                                                                                                                  | Desktop evidence                                       |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| IUX02       | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: double click dispatches once; a new draft after the bind sends ordinarily  | pending: double click, then type and Send while bound  |
+| IUX02-B     | Same file: Send disabled with a visible reason while the bound session still reports `submissionPreparation`                        | pending: hold the frozen `sendText`, type a second one |
+| IUX07-E     | Same file + `composerWorktreeRecovery.test.ts`: blocked Retry names its reason (`aria-describedby`), restores nothing, never locks  | pending: Retry with the runtime not ready              |
+| IUX07-R     | Same files: Remove returns the text locally; an unresolved copy stays unsendable until the registry decides                         | pending: Remove on unknown, then late ACK              |
+| A-ledger    | Same file: unknown outcome is in the unsettled ledger; an unmoved record stays in the draft view with its reservation               | pending fault injection (lost ACK, storage quota)      |
+| C-withdraw  | Same file: cancelled checkout guard and pre-reservation worktree failure withdraw the record after the editor clear echo            | pending: cancel the checkout guard dialog              |
+| F-reconcile | `v4SessionPaneComposerContinuity.test.ts`: inactive sending/unknown reconciles from Host facts, then the original command id        | pending restart with an unresolved record              |
+| B-bind      | Same file: worktree reservation binds at the ACK without waiting on project-tree staging                                            | pending                                                |
+| IUX01-inert | `v4ConversationTurnGroup.test.ts`: the optimistic row renders inert, without pin/edit/attachment actions                            | pending                                                |
+| IUX07-U     | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: Unlock on a held copy needs confirmation and never sends by itself         | pending: Remove on unknown, Send anyway, confirm       |
+| A-reconnect | Same file + `composerSubmissionSettlement.test.ts`: an unknown reconnect query keeps the ledger; a later acceptance clears the copy | pending: reconnect during an unresolved send           |
+| F-flight    | `v4SessionPaneComposerContinuity.test.ts`: Host revisions during one query give one call plus at most one follow-up                 | pending: stream while a held copy reconciles           |
+
 ## Permanent task deletion (2026-10-19)
 
 Contract: `specs/session-deletion-cascade.md`. The following cases are accepted; desktop evidence is pending until explicitly recorded. No formal promotion or Docker admission is implied.

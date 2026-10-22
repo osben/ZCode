@@ -13,6 +13,7 @@ packages/ui/src/v4/composer/ComposerDestinationControl.tsx
 packages/ui/src/v4/composer/composerDraftStore.ts
 packages/ui/src/v4/composer/composerWorktreePipeline.ts
 packages/ui/src/v4/SessionPane.tsx
+packages/ui/src/v4/pendingCommandRegistry.ts
 
 packages/ui/src/WorkspaceHeaderSections.tsx
 packages/ui/src/styles.css
@@ -250,6 +251,13 @@ architecture-policy.yaml
 # TEMPORARY (relay v2 desktop client, specs/relay-v2-migration.md section 12): webRemoteControlManager.ts carries the upstream V2 manager plus fork hunks (~87 KB); split it into relay start/transport, bridge, and status modules, then remove this block. WebRemoteControlDialog.tsx grew past 20 KB with the repair notice; split the failure/notice presentation out, then remove this block.
 packages/desktop/src/main/webRemoteControlManager.ts
 packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
+# TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
+# specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
+# Remove once the composer is split into smaller modules.
+packages/ui/src/v4/composer/useDraftSessionPrewarm.ts
+# TEMPORARY(ui-parity-composer): the worktree setup card (same spec owner as above) crossed 20 KB with the
+# reasoning-style collapsible and the creation-command details; split the reconcile/action logic out, then remove.
+packages/ui/src/v4/ConversationWorktreeSetupSteps.tsx
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
 

@@ -13,6 +13,7 @@ import {
   TID_V4_COMPOSER_INCOGNITO_MARKER,
   TID_V4_COMPOSER_INCOGNITO_OFF,
   TID_V4_COMPOSER_INCOGNITO_TRIGGER,
+  shouldRenderComposerIncognitoControl,
   V4ComposerIncognitoControl,
 } from "@/v4/composer/V4ComposerIncognitoControl.js";
 import {
@@ -226,6 +227,34 @@ it("discards the activation when the intent was deactivated before the read reso
     resolveDefaultsRead?.(resolveIncognitoDefaults({ mcp: true }));
   });
   expect(selectDraftIncognito(useDraftIncognitoIntentStore.getState(), "/ws")).toBeNull();
+});
+
+// specs/incognito-session.md "Composer toggle": the icon is start-only like the Git destination
+// control — a frozen first submission drops it even before the reserved session is bound.
+it("renders the control only before the first submission is sent", () => {
+  const draftStart = { draftMode: true, sessionId: null, isWebRemoteControl: false };
+  expect(
+    shouldRenderComposerIncognitoControl({ ...draftStart, firstSubmissionActive: false }),
+  ).toBe(true);
+  // Worktree/ordinary preparation window: session not bound yet, submission already frozen.
+  expect(shouldRenderComposerIncognitoControl({ ...draftStart, firstSubmissionActive: true })).toBe(
+    false,
+  );
+  expect(
+    shouldRenderComposerIncognitoControl({
+      draftMode: false,
+      sessionId: "session-a",
+      isWebRemoteControl: false,
+      firstSubmissionActive: true,
+    }),
+  ).toBe(false);
+  expect(
+    shouldRenderComposerIncognitoControl({
+      ...draftStart,
+      isWebRemoteControl: true,
+      firstSubmissionActive: false,
+    }),
+  ).toBe(false);
 });
 
 it("arms the intent from the defaults when nothing intervened", async () => {

@@ -49,10 +49,26 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     const prompt = `${marker}: Reply with exactly "${E2E_REPLY_TOKEN}" and no other text.`;
     await sendPrompt(prompt);
 
+    const pendingMessage = await $('[data-first-submission-message="true"]');
+    await pendingMessage.waitForDisplayed({ timeout: 10000 });
+    expect(await pendingMessage.getText()).toContain(prompt);
+    expect(await pendingMessage.$('[class*="line-clamp"]').isExisting()).toBe(false);
+
     const setupStage = await $('[data-worktree-setup-steps="true"]');
     await setupStage.waitForDisplayed({ timeout: 10000 });
     const creatingStep = $('[data-worktree-setup-step="creating"]');
     await creatingStep.waitForDisplayed({ timeout: 10000 });
+    expect(
+      await browser.execute(() => {
+        const message = document.querySelector('[data-first-submission-message="true"]');
+        const preparation = document.querySelector('[data-worktree-setup-step="creating"]');
+        return Boolean(
+          message &&
+          preparation &&
+          message.compareDocumentPosition(preparation) & Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      }),
+    ).toBe(true);
     expect(await $('button[aria-label="Choose workspace"]').isExisting()).toBe(false);
     expect(await $('button[aria-label="Choose where this task runs"]').isExisting()).toBe(false);
     const header = await $('[data-testid="workspace-header"]');
@@ -138,7 +154,7 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
     const recovery = await $('[data-testid="composer-worktree-recovery"]');
     await recovery.waitForDisplayed({ timeout: 15000 });
-    expect(await recovery.getText()).toContain(submitted);
+    expect(await $('[data-first-submission-message="true"]').getText()).toContain(submitted);
     expect((await getV4ComposerDraftScopeSnapshot(DEFAULT_WORKSPACE, null)).text).toBe(next);
     expect((await getV4Messages("user")).some((message) => message.text.includes(submitted))).toBe(
       false,
@@ -191,8 +207,8 @@ describe("会话区 Worktree 首发真实会话 E2E", () => {
     const recovery = await $('[data-testid="composer-worktree-recovery"]');
     await recovery.waitForDisplayed({ timeout: 15000 });
     await $('[data-worktree-setup-step="ready"]').waitForDisplayed({ timeout: 30000 });
-    expect(await recovery.getText()).toContain(first);
-    expect(await recovery.getText()).not.toContain(second);
+    expect(await $('[data-first-submission-message="true"]').getText()).toContain(first);
+    expect(await $('[data-first-submission-message="true"]').getText()).not.toContain(second);
     expect((await getV4Messages("user")).some((message) => message.text.includes(second))).toBe(
       false,
     );

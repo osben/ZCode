@@ -16,6 +16,10 @@ export const createSessionPayloadSchema = z
     sessionId: z.string().min(1).optional(),
     additionalDirectories: z.array(z.string().min(1)).max(256).optional(),
     workspaceId: z.string(),
+    /** Reserve a submitted conversation before runtime startup or attachment upload. */
+    submissionPreparation: z.object({ submissionId: z.string().min(1) }).optional(),
+    /** Frozen submission identity required when materializing a generic reservation. */
+    expectedSubmissionId: z.string().min(1).optional(),
     ...worktreePreparationCommand.worktreePreparationCreateSessionFields,
     permissionScope: z.literal("session").optional(),
     firstInput: z
@@ -47,6 +51,32 @@ export const createSessionPayloadSchema = z
     incognito: incognitoProfileSchema.optional(),
   })
   .superRefine((payload, context) => {
+    if (
+      payload.submissionPreparation &&
+      (payload.worktreePreparation ||
+        payload.preparedSessionId ||
+        payload.expectedSubmissionId ||
+        payload.firstInput ||
+        payload.config ||
+        payload.executionWorktree ||
+        payload.permissionScope)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "submission reservation cannot include runtime or input settings",
+        path: ["submissionPreparation"],
+      });
+    }
+    if (
+      payload.expectedSubmissionId &&
+      (!payload.preparedSessionId || payload.expectedAttemptId || payload.worktreePreparation)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "submission activation requires only a prepared session and submission identity",
+        path: ["expectedSubmissionId"],
+      });
+    }
     // The prepare step reserves the session row before any profile exists, and that reservation
     // write carries no profile — accepting both would silently persist a normal session that the
     // caller believes is incognito. The profile must arrive on the activation create instead

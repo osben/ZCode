@@ -7,6 +7,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import {
   ConversationComposer,
   type ConversationComposerSendResult,
+  type ConversationComposerProps,
 } from "@/v4/ConversationComposer.js";
 import {
   persistV4ComposerDraft,
@@ -30,6 +31,9 @@ export function createMinimalElement(ownerDocument: Document, tagName = "div") {
     },
     attributes: new Map<string, string>(),
     childNodes: [] as Node[],
+    focus: () => {
+      (ownerDocument as { activeElement?: unknown }).activeElement = element;
+    },
     getAttribute: (name: string) => element.attributes.get(name) ?? null,
     insertBefore: (child: Node, beforeChild?: Node | null) => {
       Object.assign(child, { parentNode: element });
@@ -147,12 +151,20 @@ export function flushAsyncWork() {
 }
 
 export interface LateAckHarness {
+  /** Re-render the current view after mutating `controls`. */
+  refresh: () => void;
   capturedPrepareSession: () =>
     | ((params: ComposerWorktreePreparationParams) => Promise<string>)
     | null;
   controls: {
     beginOutcome: { ok: true; sessionId: string } | { ok: false };
     rejectSend: boolean;
+    /** While set, worktree beginCreation stays pending until resolve() — emulates a slow Host ACK. */
+    beginGate: { promise: Promise<void>; resolve: () => void } | null;
+    /** Snapshot handed to the composer on the next render (bound-session states). */
+    snapshot: ConversationComposerProps["snapshot"];
+    /** Ordinary session readiness handed to the composer on the next render. */
+    submissionReady: boolean;
   };
   onPrepareWorktreeSession: ReturnType<typeof vi.fn>;
   sessionActivated: ReturnType<typeof vi.fn>;
@@ -160,11 +172,18 @@ export interface LateAckHarness {
   rerender: (sessionId: string | null, draftText?: string) => void;
   resolveReservation: (sessionId: string) => void;
   root: Root;
+  container: Element;
 }
 
 export const replaceComposerDraftSpy = vi.fn();
 
-export function renderLateAckComposer(options: { worktree?: boolean } = {}): LateAckHarness {
+export function renderLateAckComposer(
+  options: {
+    worktree?: boolean;
+    onPrepareFirstSubmission?: ConversationComposerProps["onPrepareFirstSubmission"];
+    onFirstSubmissionReserved?: ConversationComposerProps["onFirstSubmissionReserved"];
+  } = {},
+): LateAckHarness {
   const container = installMinimalDom();
   const root: Root = createRoot(container);
   const sessionActivated = vi.fn();
@@ -191,6 +210,7 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
     workspaceKey: "/workspace",
     beginCreation: (async (_preview, prepareSession) => {
       captured.prepareSession = prepareSession;
+      if (controls.beginGate) await controls.beginGate.promise;
       return controls.beginOutcome;
     }) as ComposerDraftWorktreeIntent["beginCreation"],
   } as ComposerDraftWorktreeIntent;
@@ -203,6 +223,9 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
         }
       | { ok: false },
     rejectSend: false,
+    beginGate: null as { promise: Promise<void>; resolve: () => void } | null,
+    snapshot: null as ConversationComposerProps["snapshot"],
+    submissionReady: true,
   };
   const onSendText = vi.fn(async () => {
     if (controls.rejectSend) throw new Error("send dispatch failed");
@@ -224,12 +247,15 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
           onSelectModel: vi.fn(),
           onSelectThought: vi.fn(),
           onSendText,
+          durableFirstSubmission: true,
+          onPrepareFirstSubmission: options.onPrepareFirstSubmission,
+          onFirstSubmissionReserved: options.onFirstSubmissionReserved,
           onPrepareWorktreeSession,
           onStop: vi.fn(),
           onSwitchMode: vi.fn(),
           provider: undefined,
           sessionId,
-          snapshot: null,
+          snapshot: controls.snapshot,
           composerDraft,
           updateComposerContent: (content: { text: string }) => {
             persistV4ComposerDraft("/workspace", undefined, scopeId, {
@@ -244,16 +270,22 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
               updatedAt: Date.now(),
             });
           },
-          submissionReady: true,
+          submissionReady: controls.submissionReady,
           workspacePath: "/workspace",
         }),
       ),
     );
   };
+  let currentSessionId: string | null = null;
   act(() => {
     root.render(render(null));
   });
   return {
+    refresh: () => {
+      act(() => {
+        root.render(render(currentSessionId));
+      });
+    },
     capturedPrepareSession: () => captured.prepareSession,
     controls,
     onPrepareWorktreeSession,
@@ -266,11 +298,38 @@ export function renderLateAckComposer(options: { worktree?: boolean } = {}): Lat
           text: draftText,
         });
       }
+      currentSessionId = sessionId;
       act(() => {
         root.render(render(sessionId, draftText));
       });
     },
     resolveReservation,
     root,
+    container,
   };
+}
+
+type MinimalNode = {
+  attributes?: Map<string, string>;
+  childNodes?: MinimalNode[];
+  [key: string]: unknown;
+};
+
+/** React props of the first rendered element carrying `data-testid` (the minimal DOM has no queries). */
+export function findReactPropsByTestId(
+  container: Element,
+  testId: string,
+): Record<string, unknown> | null {
+  const visit = (node: MinimalNode): Record<string, unknown> | null => {
+    if (node.attributes?.get("data-testid") === testId) {
+      const key = Object.keys(node).find((name) => name.startsWith("__reactProps$"));
+      return key ? (node[key] as Record<string, unknown>) : null;
+    }
+    for (const child of node.childNodes ?? []) {
+      const found = visit(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  return visit(container as unknown as MinimalNode);
 }

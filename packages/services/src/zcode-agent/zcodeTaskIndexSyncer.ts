@@ -682,17 +682,30 @@ export function createZCodeTaskIndexSyncer(
   ): void {
     state.summaries.set(next.sessionId, next);
     // Drafts are in-memory only: do not persist them or add them to task-index SQLite.
-    if (next.phase === "draft" && !next.worktreePreparation) {
+    if (next.phase === "draft" && !next.worktreePreparation && !next.submissionPreparation) {
       return;
     }
     const target = sessionTargetFrom(state.target, next.sessionId);
-    if (next.worktreePreparation) {
-      if (!previous?.worktreePreparation) {
+    if (next.worktreePreparation || next.submissionPreparation) {
+      if (!previous?.worktreePreparation && !previous?.submissionPreparation) {
         const meta = buildBaselineMetaFromSummary(state.target, next);
         void taskIndexRepo
           .seedTaskMetaIfMissing(meta)
-          .then(() => {
-            emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_meta_changed");
+          .then(() =>
+            // Sidebar reads only list rows admitted with CLI facts (cli_created_at IS NOT NULL
+            // in project storage); seeding alone leaves the reserved row invisible until an
+            // unrelated admission happens to run. The first fact fills the display baseline.
+            taskIndexRepo.applyCliFacts({
+              meta,
+              titleSource: next.titleSource,
+            }),
+          )
+          .then((admitted) => {
+            emitWorkspaceTaskListChanged(
+              broadcastTargetFrom(target),
+              admitted ?? meta,
+              "task_meta_changed",
+            );
           })
           .catch((error) =>
             logger.warn(undefined, "Could not index prepared worktree session", error),
@@ -732,7 +745,10 @@ export function createZCodeTaskIndexSyncer(
     summaries: Iterable<SessionSummary>,
   ): Promise<void> {
     const candidates = [...summaries].filter(
-      (summary) => summary.phase !== "draft" || summary.worktreePreparation !== undefined,
+      (summary) =>
+        summary.phase !== "draft" ||
+        summary.worktreePreparation !== undefined ||
+        summary.submissionPreparation !== undefined,
     );
     if (candidates.length === 0) return;
     // The pure V4 UI does not pass through zcodeSessionService.initializeWorkspace. If the first frame is silently treated as an existing SQLite baseline,

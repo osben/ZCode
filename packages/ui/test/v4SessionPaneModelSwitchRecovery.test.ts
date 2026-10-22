@@ -1,4 +1,5 @@
 import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 import { act, createElement, type ComponentProps, Suspense, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -119,6 +120,14 @@ const draftConfigMock = vi.hoisted(() => ({
 
 const composerRecentMocks = vi.hoisted(() => ({
   acceptSubmission: vi.fn(),
+}));
+
+// Undefined by default: without a value the pane behaves exactly as before this mock
+// (no ProjectDirectoryProvider mounted → no commitCreatedTask staging).
+const projectDirectoryMock = vi.hoisted(() => ({
+  directory: undefined as
+    | { commitCreatedTask: unknown; groups: { refresh: () => void } }
+    | undefined,
 }));
 
 const prewarmHookMock = vi.hoisted(() => ({
@@ -338,6 +347,15 @@ vi.mock("@/v4/V4ConversationContext.js", () => ({
 vi.mock("@/store/StoreProvider.js", () => ({
   useZCodeStoreWithDefault: (_selector: unknown, fallback: unknown) => fallback,
 }));
+
+vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/project-sidebar/ProjectDirectoryProvider.js")>();
+  return {
+    ...actual,
+    useOptionalProjectDirectory: () => projectDirectoryMock.directory,
+  };
+});
 
 vi.mock("@/v4/composer/useDraftConfigControl.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/v4/composer/useDraftConfigControl.js")>();
@@ -3992,7 +4010,7 @@ describe("SessionPane incognito attachment admission", () => {
       }
     },
   );
-  it("does not send text or consume the incognito intent when upload fails", async () => {
+  it("retains the created incognito session without sending text when upload fails (FSL03)", async () => {
     prewarmHookMock.binding = null;
     useDraftIncognitoIntentStore.getState().activate("/workspace", INCOGNITO_LOCKDOWN_PROFILE);
     projectionState.current = {
@@ -4027,7 +4045,6 @@ describe("SessionPane incognito attachment admission", () => {
       });
       expect(mocks.sendCommand.mock.calls.slice(before).map(([e]) => e.type)).toEqual([
         "createSession",
-        "deleteSession",
       ]);
       expect(onSessionCreated).not.toHaveBeenCalled();
       expect(
@@ -4035,6 +4052,60 @@ describe("SessionPane incognito attachment admission", () => {
       ).toEqual(INCOGNITO_LOCKDOWN_PROFILE);
     } finally {
       useDraftIncognitoIntentStore.getState().deactivate("/workspace");
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("binds the reserved first-submission session without waiting for the project tree", async () => {
+    // specs/first-submission-lifecycle.md "Owners and event order": the bind commits from the
+    // Host reservation identity. Draft-workspace rows may never join the project tree, so a
+    // commit staged on tree arrival would leave the conversation unreachable behind an eternal
+    // "Preparing conversation" preview. Only the group placement stays staged on row arrival:
+    // admitting earlier fails host-side with task-group.created-task-unavailable.
+    prewarmHookMock.binding = null;
+    useZCodeSessionStore.getState().startDraft("/workspace", undefined, undefined, {
+      taskGroupId: "group-1",
+    });
+    projectionState.current = {
+      status: "live",
+      snapshot: null,
+      subscriptionId: "first-submission-bind",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const stagedOrganizes: Array<unknown> = [];
+    const neverCommittingStaging = vi.fn((...args: unknown[]) => {
+      stagedOrganizes.push(args[3]);
+      return new Promise<void>(() => {});
+    });
+    projectDirectoryMock.directory = {
+      commitCreatedTask: neverCommittingStaging,
+      groups: { refresh: () => {} },
+    };
+    const onSessionCreated = vi.fn();
+    const root = await renderPane({ sessionId: null, onSessionCreated });
+    try {
+      await act(async () => {
+        captured.composerProps?.onFirstSubmissionReserved?.("session-reserved-1");
+        await flushMicrotasks();
+      });
+      expect(onSessionCreated).toHaveBeenCalledWith("session-reserved-1");
+      expect(neverCommittingStaging).toHaveBeenCalledTimes(1);
+      // The staged commit is a no-op for the bind: the conversation already opened above.
+      (neverCommittingStaging.mock.calls[0]![1] as () => void)();
+      expect(onSessionCreated).toHaveBeenCalledTimes(1);
+      // The immediate bind must re-read the grouped sidebar tree on its own subscription.
+      expect(
+        useZCodeSessionStore.getState().getWorkspaceState("/workspace", undefined)
+          ?.taskListVersion ?? 0,
+      ).toBeGreaterThan(0);
+      // The organize closure was captured for row arrival, not invoked during the bind.
+      expect(stagedOrganizes).toHaveLength(1);
+      expect(typeof stagedOrganizes[0]).toBe("function");
+    } finally {
+      projectDirectoryMock.directory = undefined;
+      useZCodeSessionStore.getState().clearDraftTaskGroup("/workspace");
       await act(async () => root.unmount());
     }
   });

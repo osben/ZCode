@@ -821,6 +821,7 @@ export class ZCodeProtocolAgentServer {
         return {
           independentPlanState: true,
           historyFirst: true,
+          durableFirstSubmission: true,
           incognitoSession: true,
           incognitoPromptToggles: true,
         };

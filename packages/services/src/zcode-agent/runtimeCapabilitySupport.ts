@@ -75,3 +75,12 @@ export async function ensureIncognitoSupport(client: CapabilityClient): Promise<
   const gateError = incognitoCapabilityGateError(capabilities);
   if (gateError) throw new Error(gateError);
 }
+
+/** Older CLIs strip unknown createSession fields; never let a reservation start a runtime. */
+export function ensureDurableFirstSubmissionSupport(client: CapabilityClient): Promise<void> {
+  return ensureRuntimeCapability(
+    client,
+    "durableFirstSubmission",
+    "proto.durableFirstSubmissionUnsupported",
+  );
+}

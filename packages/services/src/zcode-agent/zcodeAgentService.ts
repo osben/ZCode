@@ -36,6 +36,7 @@ import {
 /* oxlint-disable eslint(max-lines) -- ZCode Protocol transport, notification wiring, and app-facing session methods must share the same client/emitter context. */
 import {
   ensureIncognitoSupport,
+  ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
   supportsHistoryFirst,
 } from "./runtimeCapabilitySupport.js";
@@ -3819,7 +3820,9 @@ export function createZCodeAgentService(
         await resolveDynamicWorkflowSessionFlags();
       const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
       const sessionId =
-        params.projectId !== undefined || options?.prepareSessionCreation
+        payload.preparedSessionId ??
+        (payload.submissionPreparation ? payload.sessionId : undefined) ??
+        (params.projectId !== undefined || options?.prepareSessionCreation
           ? `session_${createHash("sha256")
               .update(
                 JSON.stringify([
@@ -3830,7 +3833,7 @@ export function createZCodeAgentService(
               )
               .digest("hex")
               .slice(0, 32)}`
-          : payload.sessionId;
+          : payload.sessionId);
       const additionalDirectories =
         params.projectId !== undefined || options?.prepareSessionCreation
           ? await options?.prepareSessionCreation?.({
@@ -6073,6 +6076,7 @@ export function createZCodeAgentService(
           compression: "none" as const,
           workspaceHookReview: true,
           independentPlanState: true,
+          durableFirstSubmission: true,
           incognitoSession: true,
           incognitoPromptToggles: true,
           // Use the same capability set as the connection-scope hello so internal consumers that call the base service directly
@@ -6267,13 +6271,28 @@ export function createZCodeAgentService(
       ) {
         await ensureIncognitoSupport(client);
       }
+      if (params.envelope.type === "createSession") {
+        const payload = params.envelope.payload as {
+          submissionPreparation?: unknown;
+          expectedSubmissionId?: unknown;
+        };
+        if (
+          payload.submissionPreparation !== undefined ||
+          payload.expectedSubmissionId !== undefined
+        ) {
+          await ensureDurableFirstSubmissionSupport(client);
+        }
+      }
       // The RPC facade removes the caller-forgeable top-level clientMode and injects the Host's
       // trusted value via the trusted carrier; direct calls from internal Host adapters still support explicit clientMode.
       const commandClientMode =
         readTrustedZCodeAgentV4Connection(params)?.clientMode ??
         params.clientMode ??
         "desktop-continuous";
-      if (params.envelope.type === "createSession") {
+      if (
+        params.envelope.type === "createSession" &&
+        !(params.envelope.payload as { submissionPreparation?: unknown }).submissionPreparation
+      ) {
         // V4 draft warmup forwards commands directly; before creating a new session, wait only for Account Config,
         // since the Worker process assembles ZCode Built-in / Personal in its own Registry.
         await ensureAccountProviderConfigSynced({
