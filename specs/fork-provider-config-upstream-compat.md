@@ -56,6 +56,10 @@
 
 - Manual save of a built-in `gpt-5.6` model writes a file with no `default` key, and
   `decodeWithUpstreamSchemas` accepts the whole file.
+- The Settings Model editor (`resolveProviderModelDraftCommit`, manual mode) still emits the
+  inherited `default` in `personalConfig`; the personal rules it becomes pass upstream's
+  `personalModelConfigRulesSchema` only because `toPersonalJSON` drops the key. The UI does not
+  need its own strip.
 - The same manual save still resolves to `default: "high"` through the built-in rule.
 - A manual rule whose `values` exclude the inherited default resolves with no default.
 - `ModelConfigRules.toPersonalJSON()` and `parsePersonalModelConfigRules()` never emit or accept
@@ -75,3 +79,5 @@
   file-level migration, decoded by the verbatim upstream schema copies in
   `test/fixtures/upstream-3.16.1/`.
 - `packages/provider-node/test/acp-upstream-compat.test.ts`: the ACP pseudo-model guard.
+- `packages/ui/test/modelEditorUpstreamCompat.test.ts`: real Model editor output (manual and
+  smart) through `ModelConfigRules.toPersonalJSON`, parsed by the upstream rule schema copy.
