@@ -28,6 +28,7 @@ import type {
   AttachmentRef,
   CommandAck,
   ConversationRowTarget,
+  ExternalAgentStallState,
 } from "@zcode/shared/zcode-protocol-v4";
 import { ChatLoading } from "@/components/ai-elements/chat-loading.js";
 import { ChatApiRetryStatus } from "@/chat-input-toolbar/display.js";
@@ -125,6 +126,8 @@ interface ConversationTurnGroupProps {
   nowMs?: number;
   /** 仅由 Timeline 注入给当前 live turn；历史 turn 永远不携带运行时 retry。 */
   apiRetry?: ApiRetryState | null;
+  /** S6: injected only into the live turn like apiRetry; history turns never carry a stall. */
+  externalAgentStall?: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -217,11 +220,30 @@ function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
   };
 }
 
+function ExternalAgentStallStatus() {
+  const { intl } = useZCodeIntl();
+  const label = intl.formatMessage({ id: "chat.externalAgent.stalled" });
+  return (
+    <span
+      data-external-agent-stall="true"
+      role="status"
+      className="inline-flex h-7 items-center whitespace-nowrap px-1 text-ui-base"
+      title={label}
+    >
+      <span className="animated-gradient-text animated-gradient-text-subtle font-medium">
+        {label}
+      </span>
+    </span>
+  );
+}
+
 function TurnChatLoadingSlot({
   apiRetry,
+  externalAgentStall,
   eligible,
 }: {
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   eligible: boolean;
 }) {
   const { intl, locale } = useZCodeIntl();
@@ -231,6 +253,14 @@ function TurnChatLoadingSlot({
   // 而不是回退到 ChatLoading。
   const visibleRetryStatus =
     retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
+  // The stall is projected only for the running turn, so it shows even when an interaction hides loading.
+  if (externalAgentStall) {
+    return (
+      <div data-zcode-chat-loading-slot="true" className="min-h-5">
+        <ExternalAgentStallStatus />
+      </div>
+    );
+  }
   if (!visibleRetryStatus && !eligible) return null;
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
@@ -973,6 +1003,7 @@ function ConversationWorkSegmentFlow({
 function ConversationTurnFlow({
   unit,
   apiRetry,
+  externalAgentStall,
   context,
   onFork,
   onRetry,
@@ -988,6 +1019,7 @@ function ConversationTurnFlow({
 }: {
   unit: ConversationTurnRenderUnit;
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -1035,7 +1067,11 @@ function ConversationTurnFlow({
           stageTailIsRunning={unit.isRunning}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
-        <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+        <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          externalAgentStall={externalAgentStall}
+          eligible={showLoading}
+        />
       </div>
     );
   }
@@ -1112,7 +1148,11 @@ function ConversationTurnFlow({
           afterUserInputs={segment === workSegments[0] ? unit.afterFirstUserInputSlot : undefined}
         />
       ))}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        externalAgentStall={externalAgentStall}
+        eligible={showLoading}
+      />
     </div>
   );
 }
@@ -1163,6 +1203,7 @@ function resolveWorkflowNotification(
 function ConversationBackgroundResultWork({
   unit,
   apiRetry,
+  externalAgentStall,
   context,
   onFork,
   onRetry,
@@ -1174,6 +1215,7 @@ function ConversationBackgroundResultWork({
 }: {
   unit: ConversationTurnRenderUnit;
   apiRetry: ApiRetryState | null;
+  externalAgentStall: ExternalAgentStallState | null;
   context: ConversationRowRenderContext;
   onFork?: (target: ConversationRowTarget) => void;
   onRetry?: (target: ConversationRowTarget) => void;
@@ -1319,7 +1361,11 @@ function ConversationBackgroundResultWork({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
       ) : null}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+        apiRetry={apiRetry}
+        externalAgentStall={externalAgentStall}
+        eligible={showLoading}
+      />
     </div>
   );
 }
@@ -1328,6 +1374,7 @@ function ConversationTurnGroupImpl({
   unit,
   nowMs = Date.now(),
   apiRetry = null,
+  externalAgentStall = null,
   context,
   onFork,
   onRetry,
@@ -1592,6 +1639,7 @@ function ConversationTurnGroupImpl({
               <ConversationBackgroundResultWork
                 unit={unit}
                 apiRetry={apiRetry}
+                externalAgentStall={externalAgentStall}
                 context={assistantRowContext}
                 onFork={canForkLatestAssistant ? onFork : undefined}
                 onRetry={onRetry}
@@ -1610,6 +1658,7 @@ function ConversationTurnGroupImpl({
             <ConversationTurnFlow
               unit={unit}
               apiRetry={apiRetry}
+              externalAgentStall={externalAgentStall}
               context={assistantRowContext}
               onFork={canForkLatestAssistant ? onFork : undefined}
               onRetry={onRetry}
@@ -1739,6 +1788,7 @@ function ConversationTurnGroupImpl({
         <ConversationTurnFlow
           unit={unit}
           apiRetry={apiRetry}
+          externalAgentStall={externalAgentStall}
           context={assistantRowContext}
           onEdit={onEdit}
           onPinChange={onPinChange}

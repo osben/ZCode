@@ -5255,6 +5255,20 @@ const zhCN: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "压缩完成后，当前会话已使用的上下文仍大于目标模型预留最大输出后的可用上下文，模型切换已取消。",
   "chat.toolbar.mode.label": "切换模式",
+  // S6: ACP agent selects in the composer (labels from the agent are not translated)
+  "chat.toolbar.externalAgent.mode": "模式",
+  "chat.toolbar.externalAgent.model": "模型",
+  "chat.toolbar.externalAgent.effort": "推理强度",
+  "chat.toolbar.externalAgent.availableAfterFirstMessage": "发送第一条消息后可用",
+  "chat.toolbar.externalAgent.hint": "代理会自行应用编辑；其允许列表之外的 Shell 命令会请求权限。",
+  "chat.toolbar.externalAgent.searchPlaceholder": "搜索",
+  "chat.toolbar.externalAgent.noMatches": "无匹配项",
+  "chat.toolbar.externalAgent.error.notAvailable": "代理选项在发送第一条消息后可用。",
+  "chat.toolbar.externalAgent.error.invalid": "代理不提供此选项。",
+  "chat.toolbar.externalAgent.error.notExternalAgent":
+    "代理选项将在使用该代理发送下一条消息后生效。",
+  "chat.toolbar.externalAgent.error.failed": "无法更改代理选项。",
+  "chat.externalAgent.stalled": "代理没有响应…",
   // CUA 输入框常驻入口按钮
   "chat.toolbar.computerUse.label": "电脑操作",
   "chat.toolbar.computerUse.tooltip.idle": "电脑操作空闲——首次使用时自动启动",

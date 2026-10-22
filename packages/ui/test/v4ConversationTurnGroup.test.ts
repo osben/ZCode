@@ -14,6 +14,7 @@ import type {
   ApiRetryState,
   AssistantTextRow,
   ConversationRowTarget,
+  ExternalAgentStallState,
   HookInvocationRow,
   ReasoningRow,
   SubagentRow,
@@ -320,6 +321,7 @@ function renderUnit(
     messageStreamShowReasoning?: boolean;
     messageStreamShowTodos?: boolean;
     apiRetry?: ApiRetryState | null;
+    externalAgentStall?: ExternalAgentStallState | null;
     nowMs?: number;
     onFork?: (rowId: number) => void;
     onRetry?: (target: ConversationRowTarget) => void;
@@ -347,6 +349,7 @@ function renderUnit(
               unit,
               nowMs: options.nowMs,
               apiRetry: options.apiRetry,
+              externalAgentStall: options.externalAgentStall,
               context: {
                 ...rowContext,
                 chatLoadingBlockedByActiveWork: options.chatLoadingBlockedByActiveWork,
@@ -2394,6 +2397,37 @@ describe("ConversationTurnGroup ChatLoading lifecycle", () => {
       expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
     );
     expect(html).not.toContain('data-testid="chat-loading"');
+  });
+
+  it("S6: an external agent stall replaces the running turn's loading and clears when null", () => {
+    const stall: ExternalAgentStallState = {
+      agentId: "mock",
+      since: 1_700_000_001_000,
+      silentMs: 30_000,
+    };
+    const stalled = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      externalAgentStall: stall,
+      apiRetry: {
+        attempt: 3,
+        maxAttempts: 11,
+        nextRetryAt: 1_700_000_001_000,
+        reasonCode: "fault.provider.rateLimited",
+      },
+    });
+    expect(stalled).toContain('data-external-agent-stall="true"');
+    expect(stalled).toContain(expectedCopy("chat.externalAgent.stalled"));
+    // Precedence: stall over the apiRetry status and the generic loading indicator.
+    expect(stalled).not.toContain('data-testid="chat-loading"');
+    expect(stalled).not.toContain(
+      expectedCopy("chat.apiRetryStatus", { attempt: 3, maxRetries: 10 }).replace(" 3/10", ""),
+    );
+
+    const cleared = renderUnit(baseUnit({ isRunning: true, assistantHistoryDefaultOpen: true }), {
+      externalAgentStall: null,
+    });
+    expect(cleared).not.toContain('data-external-agent-stall="true"');
+    expect(cleared).not.toContain(expectedCopy("chat.externalAgent.stalled"));
+    expect(cleared).toContain('data-testid="chat-loading"');
   });
 
   it("retry 清除后恢复当前 running turn 的通用 loading", () => {

@@ -675,6 +675,37 @@ running turn and sets it to `null` on `resumed`, `TurnStarted`, `TurnComplete` a
 existing `control.apiRetry` is not reused: it carries attempt counts and renders as "Reconnecting…".
 Cold replay drops the status of a settled turn.
 
+UI (as shipped, `packages/ui`):
+
+- Owner: the projection (`config.externalAgentConfig`) is the only source of the shown values. The
+  renderer keeps no optimistic copy; a choice is shown after `external_agent_config_updated` arrives.
+- The composer shows the agent controls instead of `V4ComposerModeSwitch` when the draft's
+  `modelSelection.providerId` is `acp:<agentId>` (`V4ExternalAgentConfigControls.tsx`, branch in
+  `V4ComposerModeArea`). The ZCode model picker stays. Non-ACP models render the ZCode mode switch
+  unchanged.
+- Controls: Mode (`category: "mode"` or id `mode`), Model (`category: "model"` or id `model`) and Effort
+  (`category: "thought_level"` or id `effort`, only when offered). Other options are not shown. Labels,
+  value names and descriptions come from the agent and are not translated.
+- Enabled only when the session exists, the projection is present, its `agentId` equals the draft's
+  agent, and the session's own model (`config.modelSelection.providerId`) is that `acp:` id. Otherwise
+  Mode and Model render disabled (`aria-disabled`, the menu still opens) with
+  `chat.toolbar.externalAgent.availableAfterFirstMessage` ("Available after the first message").
+- Every agent menu shows the hint `chat.toolbar.externalAgent.hint` (the agent applies its own edits;
+  shell commands outside its allowlist ask for permission).
+- Search: a select with more than 8 values gets a filter input
+  (`chat.toolbar.externalAgent.searchPlaceholder`); matching is case-insensitive on the value name.
+- Selecting a value sends `setExternalAgentConfigOption` through the session pane's `dispatchCommand`
+  (`sendExternalAgentConfigOption`). `noop` is silent; a failed ACK shows a toast mapped from the reason
+  code (`chat.toolbar.externalAgent.error.notAvailable|invalid|notExternalAgent|failed`); a transport
+  error shows the generic failure toast.
+- Shortcut decision: `cycleSessionMode` (Ctrl+Shift+M) cycles the agent's mode option in its value order
+  and sends the next value while the controls are enabled; it does nothing while they are disabled.
+  `cycleThoughtLevel` is not bound to the agent's Effort (the ZCode toolbar keeps that binding).
+- Stall: `control.externalAgentStall` renders in the running turn's loading slot (`TurnChatLoadingSlot`,
+  the slot that shows the apiRetry "Reconnecting…" status) as `chat.externalAgent.stalled` ("The agent is
+  not responding…"). Precedence: stall, then apiRetry, then the loading indicator. Only the live turn
+  receives it; history turns get `null`. The composer Stop control is unchanged.
+
 Migration `9004_fork_session_acp_config` (additive, `fork_` prefix) adds nullable `config_options` and
 `config_choices` (text) to `fork_acp_session_binding`. Upstream migrations are unchanged.
 

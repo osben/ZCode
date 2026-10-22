@@ -96,6 +96,7 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import { sendExternalAgentConfigOption } from "@/v4/composer/externalAgentConfig.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -5075,6 +5076,20 @@ export function SessionPane({
     [handleDraftSwitchMode],
   );
 
+  // S6: one select of the session's ACP agent. The projection (config.externalAgentConfig) shows the
+  // result, so the pane keeps no optimistic value; a refusal is reported with a toast.
+  const handleSetExternalAgentConfigOption = useCallback(
+    (configId: string, value: string) => {
+      if (!sessionId) return;
+      void sendExternalAgentConfigOption(dispatchCommand, sessionId, configId, value, (detail) => {
+        logger.warn("[v4-pane] setExternalAgentConfigOption refused", { configId, ...detail });
+      }).then((messageId) => {
+        if (messageId) toast(intl.formatMessage({ id: messageId }));
+      });
+    },
+    [dispatchCommand, intl, sessionId],
+  );
+
   // context usage 面板的压缩入口（命令文本 = "/compact"，复用 slash 解析路径）。
   const handleSendCompressionCommand = useCallback(
     (command: string) => {
@@ -6217,6 +6232,7 @@ export function SessionPane({
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
+      onSetExternalAgentConfigOption={handleSetExternalAgentConfigOption}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
       }
@@ -6658,6 +6674,7 @@ export function SessionPane({
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
+                  externalAgentStall={timelineSnapshot?.control.externalAgentStall ?? null}
                   totalCount={timelineSnapshot?.rows.totalCount ?? 0}
                   sessionKey={sessionId ?? "draft"}
                   scrollMemoryKey={timelineScrollMemoryKey}

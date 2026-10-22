@@ -5155,6 +5155,22 @@ const ukUA: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "Після стиснення контекст цієї розмови все одно перевищує доступний контекст цільової моделі після резервування максимального виводу. Зміну моделі скасовано.",
   "chat.toolbar.mode.label": "Змінити режим",
+  // S6: ACP agent selects in the composer (labels from the agent are not translated)
+  "chat.toolbar.externalAgent.mode": "Режим",
+  "chat.toolbar.externalAgent.model": "Модель",
+  "chat.toolbar.externalAgent.effort": "Зусилля",
+  "chat.toolbar.externalAgent.availableAfterFirstMessage": "Доступно після першого повідомлення",
+  "chat.toolbar.externalAgent.hint":
+    "Агент сам застосовує свої зміни. Команди оболонки поза його списком дозволених запитують дозвіл.",
+  "chat.toolbar.externalAgent.searchPlaceholder": "Пошук",
+  "chat.toolbar.externalAgent.noMatches": "Немає збігів",
+  "chat.toolbar.externalAgent.error.notAvailable":
+    "Параметри агента доступні після першого повідомлення.",
+  "chat.toolbar.externalAgent.error.invalid": "Агент не пропонує цей параметр.",
+  "chat.toolbar.externalAgent.error.notExternalAgent":
+    "Параметри агента застосуються після наступного повідомлення з цим агентом.",
+  "chat.toolbar.externalAgent.error.failed": "Не вдалося змінити параметр агента.",
+  "chat.externalAgent.stalled": "Агент не відповідає…",
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":
     "Computer Use не активне — запуститься автоматично під час першого використання",
