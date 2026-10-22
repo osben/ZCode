@@ -274,3 +274,6 @@ apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
 packages/provider/src/config/model-config.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts
 packages/services/src/conversation-share/conversationSharePublicProjection.ts
+
+# ISSUE-042: pre-existing 23 KB upstream file; the empty-untracked fix touches it and a new sibling file is blocked by unmanaged-new-file.
+packages/services/src/git/repo/gitCliHelpers.ts

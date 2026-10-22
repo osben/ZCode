@@ -62,7 +62,12 @@ describe("未跟踪文件统计读取预算", () => {
       dir,
       cases.map(([path]) => entry(path)),
     );
-    for (const [path, , added] of cases) expect(stats.get(path)).toEqual({ added, removed: 0 });
+    for (const [path, , added] of cases) {
+      expect(stats.get(path)).toEqual(
+        // ISSUE-042: only a zero-byte regular file is flagged as a reviewable empty file.
+        path === "empty" ? { added, removed: 0, isEmptyFile: true } : { added, removed: 0 },
+      );
+    }
   });
 
   it("跳过超限文本、二进制、目录和已删除文件，同时保留条目", async () => {

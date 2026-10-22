@@ -574,6 +574,13 @@ async function countUntrackedFileLines(absolutePath: string, buffer: Buffer): Pr
   }
 }
 
+// A zero-byte regular file has no line count but is a genuine added file; the Review list must keep it
+// instead of treating +0/-0 as "nothing reviewable" (ISSUE-042). Binary, oversized and unreadable files stay excluded.
+async function isEmptyRegularFile(absolutePath: string): Promise<boolean> {
+  const info = await stat(absolutePath);
+  return info.isFile() && info.size === 0;
+}
+
 export async function buildUntrackedStats(
   repoRoot: string,
   entries: GitStatusEntry[],
@@ -589,10 +596,13 @@ export async function buildUntrackedStats(
       const entry = untrackedEntries[nextIndex++]!;
       const absolutePath = resolve(repoRoot, ...entry.path.split("/"));
       try {
-        stats.set(entry.path, {
-          added: await countUntrackedFileLines(absolutePath, buffer),
-          removed: 0,
-        });
+        const added = await countUntrackedFileLines(absolutePath, buffer);
+        stats.set(
+          entry.path,
+          added === 0 && (await isEmptyRegularFile(absolutePath))
+            ? { added, removed: 0, isEmptyFile: true }
+            : { added, removed: 0 },
+        );
       } catch {
         stats.set(entry.path, { added: 0, removed: 0 });
       }
