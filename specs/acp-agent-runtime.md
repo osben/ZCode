@@ -407,6 +407,34 @@ agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, 
   └ live ─▶ driver permission handler: log "permission cancelled (S2)" ─▶ cancelled
 ```
 
+### Implementation notes (S2 as shipped)
+
+- Registry admission: an executable ACP provider enters the execution Registry only behind the
+  development gate (`acpExecutable`). Its registry config is validated by the ACP schema (not the
+  API-key union). The model-selection projection drops `env` (it may carry credentials).
+- Composer: an agent provider has no `api` section, so the composer's registry grouping
+  (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The development
+  gate in the Registry still decides whether the group exists at all.
+- Dependency: `@agentclientprotocol/sdk` resolves its `zod` peer from `acp-agent-runtime`, which pins
+  `zod` 4.6.5 like `services`; without the pin the desktop build's zod dedupe check fails.
+- Side callers: title, memory recall/extraction and the MCP-prefetch are skipped for external turns.
+  Every other direct `generateText`/`streamText` call site fails closed through
+  `assertNotExternalAgentModel(model, caller)`, which names the caller in the error. Wrappers forward
+  to the guarded marker.
+- Refusals (automation, off-peak, bot, background results, runtime continuations, `/compact`,
+  `/dream`) are recorded as the existing model-creation failure, so the accepted input persists and
+  the user gets a TurnError with the refusal message. Subagents are refused in the child model
+  factory, because an inherited selection can carry the parent's ACP model.
+- Usage: an external turn has no `ModelComplete` events. Its usage is reported on `TurnComplete` with
+  `usage.source = "external-agent"`; the assistant step is attributed to the `acp:<agentId>` provider.
+- Turn driver: the composition root (bootstrap) owns `AcpSessionPool` (one runtime per session,
+  restart on failure, replacement on a launch change, stop on app close and worker shutdown) and the
+  per-turn driver, which re-reads the sidecar record on every turn.
+- Architecture: the `apps/zcode-cli` tree has no managed module yet. The new ACP files are listed under
+  `exceptions` in `architecture-policy.yaml` with the same reasoning as the ACP sidecar exception.
+- Not covered in S2: `available_commands` and `stalled` events are ignored (not logged); the subagent
+  refusal has no dedicated unit test; S3–S5 are unchanged.
+
 ### Acceptance scenarios
 
 - Marker model: `generateText`/`streamText` throw `external_agent_unsupported`; the factory returns
