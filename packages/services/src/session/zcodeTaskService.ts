@@ -110,14 +110,24 @@ export interface ZCodeTaskWorktreeCleanupResult {
   failedCount: number;
 }
 
+/**
+ * Marks a payload whose content was cut by the host's per-segment byte budget.
+ * originalBytes is the UTF-8 size before cutting; omittedBytes is the size of the elided middle.
+ */
+export interface ZCodeModelTrajectoryTruncation {
+  originalBytes: number;
+  omittedBytes: number;
+}
+
 /** A message content part from one model request (text / tool call / tool result / other raw structure). */
-export type ZCodeModelTrajectoryContentPart =
+export type ZCodeModelTrajectoryContentPart = (
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
   | { kind: "tool-call"; toolCallId?: string; toolName: string; input?: unknown }
   | { kind: "tool-result"; toolCallId?: string; toolName?: string; output?: unknown }
   | { kind: "image"; mediaType?: string }
-  | { kind: "unknown"; raw: unknown };
+  | { kind: "unknown"; raw: unknown }
+) & { truncated?: ZCodeModelTrajectoryTruncation };
 
 /** One conversation message (system / user / assistant / tool). */
 export interface ZCodeModelTrajectoryMessage {
@@ -175,6 +185,11 @@ export interface ZCodeModelTrajectoryRecord {
     text?: string;
     reasoningText?: string;
     toolCalls: ZCodeModelTrajectoryContentPart[];
+    /** Set when response.text or response.reasoningText was cut by the per-segment byte budget. */
+    truncated?: {
+      text?: ZCodeModelTrajectoryTruncation;
+      reasoningText?: ZCodeModelTrajectoryTruncation;
+    };
     usage?: ZCodeModelTrajectoryUsage;
     responseId?: string;
     modelId?: string;
@@ -506,14 +521,15 @@ export interface IZCodeTaskService {
 
   /**
    * Persist `incognito: true` into the tasks-index meta of the given tasks (specs/incognito-session.md "Sidebar
-   * marker durability"). Covers active, pinned and archived rows; never clears a marker. Resolves the ids whose
-   * row carries the marker after the call, so callers acknowledge from the result rather than re-reading lists.
+   * marker durability"). Covers active, pinned and archived rows; never clears a marker. Resolves `confirmed` (the ids
+   * whose row carries the marker after the call, so callers acknowledge from the result rather than re-reading lists)
+   * and `written` (the subset this call changed; a non-empty `written` makes the adapter broadcast a list change).
    */
   persistIncognitoMarkers(params: {
     workspacePath: string;
     workspaceIdentity?: string;
     taskIds: ReadonlyArray<string>;
-  }): Promise<string[]>;
+  }): Promise<{ confirmed: string[]; written: string[] }>;
 
   /** Read the global pinned task ID list; tasks-index.sqlite is the source of truth. */
   listPinnedTaskIds(): Promise<string[]>;

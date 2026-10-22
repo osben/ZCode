@@ -12,7 +12,7 @@ import {
   DEFAULT_WORKSPACE,
   waitForDefaultWorkspaceReady,
 } from "#e2e/helpers/desktop-app";
-import { startDraftFromProject, waitForProjectRow } from "#e2e/helpers/project-sidebar";
+import { ensureLocalProjectRow, startDraftFromProject } from "#e2e/helpers/project-sidebar";
 import { ensureUpstreamProviderForE2E, selectUpstreamModel } from "#e2e/helpers/upstream-provider";
 import { prepareV4ConversationE2E, startNewV4Draft } from "#e2e/helpers/v4-conversation";
 
@@ -25,6 +25,7 @@ vi.mock("./e2e/helpers/project-sidebar.js", () => ({
   projectNameForWorkspace: () => "ZCodeProject",
   startDraftFromProject: vi.fn(),
   waitForProjectRow: vi.fn(),
+  ensureLocalProjectRow: vi.fn(),
 }));
 vi.mock("./e2e/helpers/upstream-provider.js", () => ({
   ensureUpstreamProviderForE2E: vi.fn(),
@@ -85,7 +86,7 @@ describe("V4 conversation E2E preparation", () => {
   ])("returns to the fixture project before checking its cwd: %j", async (state) => {
     renderDraft(state);
     await prepareV4ConversationE2E();
-    expect(waitForProjectRow).toHaveBeenCalledWith(DEFAULT_WORKSPACE, expect.anything());
+    expect(ensureLocalProjectRow).toHaveBeenCalledWith(DEFAULT_WORKSPACE);
     expect(startDraftFromProject).toHaveBeenCalledExactlyOnceWith(DEFAULT_WORKSPACE);
     expect(vi.mocked(startDraftFromProject).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(waitForDefaultWorkspaceReady).mock.invocationCallOrder[0]!,
@@ -110,7 +111,7 @@ describe("V4 conversation E2E preparation", () => {
     renderDraft({ path: "/remote/workspace", project: "Remote project" });
     await prepareV4ConversationE2E({ skipShellReady: true });
     expect(startDraftFromProject).not.toHaveBeenCalled();
-    expect(waitForProjectRow).not.toHaveBeenCalled();
+    expect(ensureLocalProjectRow).not.toHaveBeenCalled();
     expect(waitForDefaultWorkspaceReady).not.toHaveBeenCalled();
     expect(clickTestIdByDom).not.toHaveBeenCalled();
   });

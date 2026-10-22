@@ -1057,6 +1057,142 @@ it("Retry on a failed bound first submission reuses the same submission and rese
   }
 });
 
+it("Retry after input-admitted issues no sendText, record becomes sending with the original command id, one record", async () => {
+  // specs/first-submission-lifecycle.md rule 4: the Host already admitted the frozen input under
+  // its original command id. The pane answers "alreadyAdmitted" instead of resending; the composer
+  // records the outstanding original command and settles the copy without a new command id.
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-admitted");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-admitted", "sub-admitted", {
+    status: "failed",
+    commandId: "cmd-orig-admitted",
+  });
+  harness.onSendText.mockImplementationOnce(async (...args: unknown[]) => {
+    expect(args[1]).toMatchObject({ reservedSubmissionSessionId: "session-admitted" });
+    return "alreadyAdmitted" as const;
+  });
+  try {
+    harness.rerender("session-admitted");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-retry")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    const records = readV4WorktreeRecoveryDrafts(
+      "/workspace",
+      undefined,
+      "session-admitted",
+    ).filter((entry) => entry.draft.firstSubmission?.submissionId === "sub-admitted");
+    expect(records).toHaveLength(1);
+    expect(records[0]?.draft.firstSubmission).toMatchObject({
+      status: "sending",
+      commandId: "cmd-orig-admitted",
+    });
+    // The original command was never re-tracked as a new unknown outcome by this retry.
+    expect(ledger.tracked.filter((entry) => entry.commandId === "cmd-orig-admitted")).toHaveLength(
+      0,
+    );
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Retry hands the pane its original command id so the activation can be checked by that identity", async () => {
+  // The pane sends it as expectedFirstInputCommandId; an already-active answer is not an admission, so the
+  // pane dispatches the frozen sendText and the composer takes its ordinary result ("sent").
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-active-retry");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-active-retry", "sub-active-retry", {
+    status: "failed",
+    commandId: "cmd-orig-active-retry",
+  });
+  harness.onSendText.mockImplementationOnce(async () => "sent" as const);
+  try {
+    harness.rerender("session-active-retry");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-retry")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      reservedSubmissionSessionId: "session-active-retry",
+      originalCommandId: "cmd-orig-active-retry",
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a retry that fails before its own command keeps the original command id for the next Retry", async () => {
+  // Freezing a retry overwrites the stored record; a failure before any new sendText must not drop the
+  // id of the earlier sendText, or a later admitted activation could only be settled without it.
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-kept");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-kept", "sub-kept", {
+    status: "failed",
+    commandId: "cmd-orig-kept",
+  });
+  harness.onSendText.mockImplementationOnce(async () => {
+    throw new Error("create failed before the activation");
+  });
+  harness.onSendText.mockImplementationOnce(async (...args: unknown[]) => {
+    expect(args[1]).toMatchObject({ originalCommandId: "cmd-orig-kept" });
+    return "alreadyAdmitted" as const;
+  });
+  try {
+    harness.rerender("session-kept");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-retry")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    expect(
+      readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-kept").find(
+        (entry) => entry.draft.firstSubmission?.submissionId === "sub-kept",
+      )?.draft.firstSubmission,
+    ).toMatchObject({ status: "failed", commandId: "cmd-orig-kept" });
+
+    harness.rerender("session-kept");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-retry")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+    const records = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-kept").filter(
+      (entry) => entry.draft.firstSubmission?.submissionId === "sub-kept",
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.draft.firstSubmission).toMatchObject({
+      status: "sending",
+      commandId: "cmd-orig-kept",
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
 it("Retry moves a record found under another scope into its own, leaving one record (IUX07)", async () => {
   // A record can reach the session's card through its reservation while still stored under the
   // draft owner (e.g. the bind could not move it). The retry freeze writes the composer's own

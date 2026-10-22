@@ -236,6 +236,11 @@ export function mergeOlderRows(
   return [...older, ...window];
 }
 
+/** Yield one macrotask. Microtasks would not release the renderer main thread, so chunked prepends use this between commits. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Merge rows/range results into the local window: key by rowId, accept only rows before the first row in the window, deduplicate, then prepend; sort by rowId ascending (total order). Return null when there are no rows to merge (the window is unchanged, so callers keep the same reference). */
 /** External store (useSyncExternalStore compatible: subscribe + getState return stable references). SessionDataLayer owns its lifecycle (reference counting + keep-warm); components do not instantiate it directly. */
 // Memory diagnostics counters: track the number of live stores and total rows in their rows.window collections to observe window-data growth. Add on construction and remove on close().
@@ -1091,8 +1096,10 @@ export class ConversationProjectionStore {
    * Full question directory: use the existing rows/range cursor to fetch the entire currently valid branch.
    *
    * Question navigation used to scan the renderer's tail window directly, so a 1000-turn session showed only the few dozen loaded turns.
-   * Page up to the protocol limit here, but replace the snapshot only once after all pages succeed, avoiding rebuilding timeline render units
-   * and two virtualizers every 200 rows.
+   * Page up to the protocol limit here. Validation is all-or-nothing: no page is committed until every page has been fetched and checked.
+   * The validated pages are then prepended one page per chunk, yielding to the event loop between chunks. Render units are cached per turnId,
+   * so each chunk costs O(new turns) and one ~570 ms commit of the whole branch would block the renderer main thread.
+   * `loadingOlder` stays true until the last chunk, which keeps scroll-triggered loadOlder and find auto-load suspended.
    */
   async loadAllOlder(): Promise<ConversationTurnNavigatorHydrationResult> {
     const stale = (logEpoch = this.state.snapshot?.logEpoch ?? "unknown") => ({
@@ -1183,16 +1190,16 @@ export class ConversationProjectionStore {
       );
       if (realUserQueryCount < 2) {
         if (preserveIncompleteLeadingTurn) {
-          const window = mergeOlderRows(current.rows.window, this.shareRows(olderRows));
-          if (window === null) return stale(initialLogEpoch);
+          const outcome = await this.prependOlderPagesInChunks(
+            pages,
+            initialLogEpoch,
+            initialBeforeRowId,
+          );
+          if (outcome === "stale") return stale(initialLogEpoch);
           committed = true;
-          this.setState({
-            loadingOlder: false,
-            snapshot: { ...current, rows: { ...current.rows, window } },
-          });
           // The navigator already has the authoritative rows needed to complete the first turn; commit them before hiding the rail.
           logger.debug("[v4-store] 完整问题目录不足两条 query，保留首轮补齐 rows", {
-            loadedRows: window.length,
+            loadedRows: this.state.snapshot?.rows.window.length ?? 0,
             pages: pages.length,
             sessionId,
           });
@@ -1214,15 +1221,15 @@ export class ConversationProjectionStore {
         this.turnNavigatorHydrationTerminal = result;
         return result;
       }
-      const window = mergeOlderRows(current.rows.window, this.shareRows(olderRows));
-      if (window === null) return stale(initialLogEpoch);
+      const outcome = await this.prependOlderPagesInChunks(
+        pages,
+        initialLogEpoch,
+        initialBeforeRowId,
+      );
+      if (outcome === "stale") return stale(initialLogEpoch);
       committed = true;
-      this.setState({
-        loadingOlder: false,
-        snapshot: { ...current, rows: { ...current.rows, window } },
-      });
       logger.debug("[v4-store] 完整问题目录历史 rows 补拉完成", {
-        loadedRows: window.length,
+        loadedRows: this.state.snapshot?.rows.window.length ?? 0,
         pages: pages.length,
         sessionId,
       });
@@ -1241,6 +1248,52 @@ export class ConversationProjectionStore {
     } finally {
       if (!this.closed && !committed) this.setState({ loadingOlder: false });
     }
+  }
+
+  /**
+   * Prepend validated history pages one page per chunk, starting with the page adjacent to the window so the window grows top-ward.
+   * Before every chunk the snapshot must still be on the same logEpoch and its first rowId must equal the cursor this chunk extends.
+   * If either changed (forced snapshot, head-moving row.removed, epoch change, or close), stop without committing the remaining chunks.
+   * The caller then returns stale without setting the terminal result. Chunks already committed remain valid rows of that epoch.
+   * Only the last chunk clears loadingOlder, so the flag stays true for the whole prepend.
+   */
+  private async prependOlderPagesInChunks(
+    pages: readonly ConversationRow[][],
+    logEpoch: string,
+    initialBeforeRowId: number,
+  ): Promise<"committed" | "stale"> {
+    if (pages.length === 0) return "stale";
+    let expectedHeadRowId = initialBeforeRowId;
+    for (const [index, page] of pages.entries()) {
+      // Yield between chunks so input, paint and Timeline effects run before the next chunk commits.
+      if (index > 0) await yieldToEventLoop();
+      const current = this.state.snapshot;
+      if (
+        this.closed ||
+        !current ||
+        current.logEpoch !== logEpoch ||
+        current.rows.window[0]?.rowId !== expectedHeadRowId
+      ) {
+        logger.warn("[v4-store] 完整问题目录分块提交期间投影游标失效，停止后续分块", {
+          chunk: index + 1,
+          chunks: pages.length,
+          currentBeforeRowId: current?.rows.window[0]?.rowId,
+          expectedBeforeRowId: expectedHeadRowId,
+          topic: this.topic,
+        });
+        return "stale";
+      }
+      const window = mergeOlderRows(current.rows.window, this.shareRows(page));
+      const nextHeadRowId = window?.[0]?.rowId;
+      if (window === null || nextHeadRowId === undefined) return "stale";
+      expectedHeadRowId = nextHeadRowId;
+      const isLastChunk = index === pages.length - 1;
+      this.setState({
+        ...(isLastChunk ? { loadingOlder: false } : {}),
+        snapshot: { ...current, rows: { ...current.rows, window } },
+      });
+    }
+    return "committed";
   }
 
   /**

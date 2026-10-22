@@ -11,8 +11,8 @@ CLI full projection
   -> bounded v4 snapshot.rows tail
   -> navigator-visible renderer
        -> rows/range(200 rows/page) until firstRowId
-       -> epoch/cursor validation
-       -> one projection merge
+       -> epoch/cursor validation (all pages, before any commit)
+       -> chunked projection prepend (one page per chunk, yield between chunks)
   -> buildConversationTurnRenderUnits(full rows)
   -> ConversationTimeline virtualizer
        |-> message column
@@ -24,16 +24,16 @@ CLI full projection
 
 ## 变更边界与确认记录
 
-| 决策 | 产品语义 |
-| --- | --- |
-| 导航粒度 | 每条 timeline 可见的 `UserInputRow(origin=realUser)` 独立建项；普通 query 与 accepted steer/guide 等价 |
-| 同一 product turn | 初始 query、guide 1、guide 2 可以共享 `turnId` / `unitIndex`，但必须拥有不同 `rowId`、导航项和落点 |
-| Tooltip | 第一段显示该条 user query；第二段沿用所属 product turn 的 assistant text 摘要或运行中/空结果 fallback；不拼接 tool、reasoning、subagent 或 marker 正文 |
-| Queue 边界 | 仍在 pending queue 的输入没有 timeline row/anchor，不进入导航；消费并投影为可见 real user row 后才进入 |
-| 完整目录 | 2026-07-24 用户确认：目录不能只覆盖当前 tail window；必须补齐当前有效分支的全部 rows，直到 `window[0].rowId === firstRowId` |
-| 虚拟化 | 完整目录只挂载 rail viewport 与 overscan 内的按钮；`data-item-count` 表示全量 query 数，DOM button 数不再等于目录总数 |
-| 多端边界 | desktop continuous 与 web remote replayable 共用既有 `rows/range` 只读 query；不增加跨端 FIFO、snapshot 字段或恢复状态；`conversation < 864px` 时不发请求，宽屏 tail 不足两个 query 时向前探测 |
-| Composer 命中 | rail 位于 sticky composer 的左侧透明留白时仍必须 hover/click；composer dock 透明外壳不得截获事件，实际 composer 内容保持可交互 |
+| 决策              | 产品语义                                                                                                                                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 导航粒度          | 每条 timeline 可见的 `UserInputRow(origin=realUser)` 独立建项；普通 query 与 accepted steer/guide 等价                                                                                         |
+| 同一 product turn | 初始 query、guide 1、guide 2 可以共享 `turnId` / `unitIndex`，但必须拥有不同 `rowId`、导航项和落点                                                                                             |
+| Tooltip           | 第一段显示该条 user query；第二段沿用所属 product turn 的 assistant text 摘要或运行中/空结果 fallback；不拼接 tool、reasoning、subagent 或 marker 正文                                         |
+| Queue 边界        | 仍在 pending queue 的输入没有 timeline row/anchor，不进入导航；消费并投影为可见 real user row 后才进入                                                                                         |
+| 完整目录          | 2026-07-24 用户确认：目录不能只覆盖当前 tail window；必须补齐当前有效分支的全部 rows，直到 `window[0].rowId === firstRowId`                                                                    |
+| 虚拟化            | 完整目录只挂载 rail viewport 与 overscan 内的按钮；`data-item-count` 表示全量 query 数，DOM button 数不再等于目录总数                                                                          |
+| 多端边界          | desktop continuous 与 web remote replayable 共用既有 `rows/range` 只读 query；不增加跨端 FIFO、snapshot 字段或恢复状态；`conversation < 864px` 时不发请求，宽屏 tail 不足两个 query 时向前探测 |
+| Composer 命中     | rail 位于 sticky composer 的左侧透明留白时仍必须 hover/click；composer dock 透明外壳不得截获事件，实际 composer 内容保持可交互                                                                 |
 
 ## Scope
 
@@ -45,7 +45,7 @@ CLI full projection
   `ConversationTurnRenderUnit` 内的多个 steer/guide query 分别建项。
 - marker-only 的 `timelineOnly` unit v1 不进入 minimap，避免 compact/fork/goal boundary
   被误读成用户和助手的一轮对话。
-- navigator 达到 `864px` 且 snapshot 仍有更早 rows 时，在后台探测完整有效分支；完整历史达到 2 条可导航 query 才一次性合并并显示目录，只有一条时扫描到起点但不常驻探测 rows。补齐期间目录标记
+- navigator 达到 `864px` 且 snapshot 仍有更早 rows 时，在后台探测完整有效分支；完整历史达到 2 条可导航 query 才分块前插并显示目录，只有一条时扫描到起点但不常驻探测 rows。补齐期间目录标记
   `aria-busy=true`；成功后必须显示全量 query，失败时保留当前窗口并等待新的 cursor/显式重试机会，
   不进入 conversation error 状态。
 
@@ -57,12 +57,22 @@ Navigator 仍只消费 `buildConversationTurnRenderUnits(rows)`，但目录会�
 - `visibleUserInputs` 中 `origin=realUser` 的每一行提供一个导航项和问题摘要。
 - `assistantTextRows` 沿用旧逻辑提供所属 product turn 的助手回复摘要；同一 turn
   内的多个 query item 可以共享这段 assistant 摘要。
+- 摘要只归一化所属 turn 文本的前 4096 个原始字符（`PREVIEW_SCAN_CHARS`），不再对整段长回复做 `split` 与 `replace`。
+  前缀结果只在能证明与全量归一化逐字节一致时采用（已由分隔符闭合的段落足够，或前缀归一化结果长度超过摘要上限）；否则回退全量归一化。
 - `rowId` 是 query 的精确 DOM 锚点；`unitIndex` 只负责先挂载所属虚拟 turn。
 - `isRunning` 只强调 running unit 的最后一条 real user query。
 - tool、reasoning、subagent、compact marker 的正文不进入 hover 摘要。
-- 全量补拉使用 `rowsRangeMaxLimit` 分页，在全部请求成功后一次性前插，避免每页触发一次
-  `buildConversationTurnRenderUnits` 和 virtualizer 重建。
-- 补拉期间若 `logEpoch` 变化、首行 cursor 被 snapshot/resync 改写，整批结果丢弃，禁止复活旧分支 rows。
+- 全量补拉使用 `rowsRangeMaxLimit` 分页。所有页先全部拉取并通过校验（epoch、游标连续、realUser query 计数、`hasMore` 终止），校验失败时整批丢弃，不提交任何 rows。
+- 校验通过后按页分块前插：先提交与当前窗口相邻的最近一页，再依次提交更早的页，块与块之间让出一次事件循环（`setTimeout(0)`）。
+  旧实现在 1052 条消息的会话上一次性提交约 1480 行，用户实测阻塞渲染主线程约 570ms。现在
+  `buildConversationTurnRenderUnits` 按 turnId 复用缓存，单块成本只与该块新增的 turn 数相关，所以分块不改变最终状态，也不会产生长任务。
+- `loadingOlder` 从第一次 rows/range 请求开始保持为 `true`，直到最后一块提交时才清除。滚动触发的 `loadOlder`
+  与对话内查找因此在整个分块期间仍被挂起；终态（`hydrated` / `not-enough-queries`）只在最后一块之后写入。
+- 每块提交前复核快照：`logEpoch` 必须仍是开始时的值，且窗口首行 `rowId` 必须等于本块要接续的游标。任一不成立
+  （forced snapshot 改写窗口、截断移除首行、epoch 变化或 store 已关闭）即停止后续块并返回 `stale`，不写入终态；已提交的块仍是同一 epoch 的有效 rows，
+  Timeline 在新的目录 revision 下重新触发补拉。分块之间到达的 delta 继续生效：追加只触及窗口之后的 rowId，前插不改变 `seq` 对齐，
+  前插的阅读位置锚定按每次 commit 计算，因此分块不需要额外的锚定逻辑。
+- 拉取与校验阶段若 `logEpoch` 变化、首行 cursor 被 snapshot/resync 改写，整批结果丢弃，禁止复活旧分支 rows；提交阶段的中止规则见上文分块说明。
 - 完整目录探测返回 `hydrated / not-enough-queries / retryable-failure / stale` 判别结果；
   `hydrated` 与 `not-enough-queries` 按 `sessionId + logEpoch` 记为终态，普通 `loadOlder`
   改变 renderer 首行不得触发重复扫描。暂时失败最多按 `250ms / 1000ms` 退避重试两次；
@@ -121,21 +131,21 @@ web-remote-replayable restore
 
 覆盖项登记在 `docs/conversation-session-case-catalog.md` 的 `TN` 分组和
 `docs/testing/conversation-session-e2e-coverage-matrix.md`。单测覆盖逐 query item 派生、同 turn
-多 query 的 active row 推导、全量分页单次合并和 hover-only 山峰视觉等级；E2E 覆盖宽 pane
+多 query 的 active row 推导、全量分页先校验后分块前插（含中途 epoch 或游标变化的中止、分块间 delta 生效）、assistant preview 有界归一化与全量归一化的 golden 等价，以及 hover-only 山峰视觉等级；E2E 覆盖宽 pane
 显示、窗口收窄后的窄 pane 隐藏与恢复、紧凑左贴连续 hit area、composer 纵向覆盖区命中、
 query + assistant tooltip、目录虚拟化和点击精确跳转。
 
 ## Impact Brief 与剪枝
 
-| 字段 | 结论 |
-| --- | --- |
-| 改动层级 | `presentation + recovery(read-only pagination)` |
-| UI surface | `ConversationTimeline -> ConversationTurnNavigator` |
-| 展示 owner | renderer `ConversationProjectionStore` 与 React virtualizer |
-| 权威 owner | CLI `ProductProjection`；目录不成为新事实源 |
-| commit/effect | 无写 command；只调用现有 `v4/conversation/rowsRange` |
-| 必查下游 | scroll prepend 锚定、conversation find、active query、sticky composer 命中、宽窄 pane gate |
-| 隔离不变量 | 不扩大 wire snapshot；不修改 queue/owner/lease；不混淆 continuous/replayable；窄 pane 零请求；tail 的局部 query 数不作为完整分支计数 |
+| 字段          | 结论                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 改动层级      | `presentation + recovery(read-only pagination)`                                                                                      |
+| UI surface    | `ConversationTimeline -> ConversationTurnNavigator`                                                                                  |
+| 展示 owner    | renderer `ConversationProjectionStore` 与 React virtualizer                                                                          |
+| 权威 owner    | CLI `ProductProjection`；目录不成为新事实源                                                                                          |
+| commit/effect | 无写 command；只调用现有 `v4/conversation/rowsRange`                                                                                 |
+| 必查下游      | scroll prepend 锚定、conversation find、active query、sticky composer 命中、宽窄 pane gate                                           |
+| 隔离不变量    | 不扩大 wire snapshot；不修改 queue/owner/lease；不混淆 continuous/replayable；窄 pane 零请求；tail 的局部 query 数不作为完整分支计数 |
 
 剪枝结论：completed 大会话作为全量与虚拟化代表；running 只增加 epoch/cursor 并发 guard，不与
 model/provider、queue、goal、compact、theme、locale 做笛卡尔积。desktop wide 代表 pointer hit-test；

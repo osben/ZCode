@@ -195,6 +195,18 @@ async function readPreparationStatus(
   return data?.status ?? null;
 }
 
+async function readSubmissionPreparationStatus(
+  target: Harness,
+  sessionId: string,
+): Promise<string | null> {
+  const entries = await target.store.sessionEntries!({
+    sessionID: sessionId as never,
+    type: "v4/fork_submission_preparation",
+  });
+  const data = entries.at(-1)?.data as { status?: string } | undefined;
+  return data?.status ?? null;
+}
+
 async function admittedInputCount(target: Harness, sessionId: string): Promise<number> {
   const inputs = await target.store.listSessionInputs!({ sessionID: sessionId as never });
   return inputs.filter((input) => input.status === "admitted" || input.status === "promoted")
@@ -278,13 +290,158 @@ describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", (
     const retry = await cold.gateway.handleCommand(command("createSession", activation, "retry-initialize-two-step"));
     expect(retry.status).toBe("accepted");
     expect(cold.materializations).toEqual([sessionId]);
-    const sent = await cold.gateway.handleCommand(command("sendText", { text: "one frozen input" }, "send-two-step", sessionId));
+    const sent = await cold.gateway.handleCommand(command("sendText", { text: "one frozen input", firstSubmissionId: "two-step" }, "send-two-step", sessionId));
     expect(sent.status).toBe("accepted");
     expect(cold.sentInputs).toEqual(["one frozen input"]);
     const active = await cold.store.sessionEntries!({ sessionID: sessionId as never, type: "v4/fork_submission_preparation" });
     expect(active.at(-1)?.data).toMatchObject({ status: "active" });
     cold.heldCompletions.forEach((held) => held.resolve());
   });
+  it("admits a reserved activation by the frozen input's own command id, never by a foreign input", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "identity-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "identity" },
+    }, "reserve-identity"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "identity" };
+    const materialized = await target.gateway.handleCommand(command("createSession", activation, "materialize-identity"));
+    expect(materialized.status).toBe("accepted");
+    // A foreign input (another window or mobile remote control) executes, but it names another
+    // submission, so it must leave the reserved preparation preparing.
+    const foreign = await target.gateway.handleCommand(command("sendText", { text: "foreign input", firstSubmissionId: "foreign-submission" }, "cmd-foreign", sessionId));
+    expect(foreign.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    expect(target.sentInputs).toEqual(["foreign input"]);
+
+    // "cmd-frozen" was never admitted and the preparation is still preparing: the retry sees a runtime
+    // and answers input-pending, so the sender admits the frozen input once.
+    const notAdmitted = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen" }, "retry-frozen-not-admitted"));
+    expect(notAdmitted.status).toBe("accepted");
+    expect(notAdmitted.result).toMatchObject({ sessionId, preparedActivation: "input-pending" });
+
+    // The frozen sendText names its submission: it completes the preparation and is admitted under its own id.
+    const frozen = await target.gateway.handleCommand(command("sendText", { text: "frozen input", firstSubmissionId: "identity" }, "cmd-frozen", sessionId));
+    expect(frozen.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("active");
+    expect(target.sentInputs).toEqual(["foreign input", "frozen input"]);
+
+    // Once the frozen input is admitted under its own id, the same retry reports input-admitted and is not sent again.
+    const admittedRetry = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen" }, "retry-frozen-admitted"));
+    expect(admittedRetry.status).toBe("accepted");
+    expect(admittedRetry.result).toMatchObject({ sessionId, preparedActivation: "input-admitted" });
+    expect(target.sentInputs).toEqual(["foreign input", "frozen input"]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("a sendText naming another submission leaves the preparation preparing, and a cold process reads the persisted entry", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-cold-owner-"));
+    const dbPath = join(dbDir, "sessions.sqlite");
+    const target = await makeHarness(dbPath);
+    harness = { ...target, dbDir };
+    const sessionId = "cold-owner-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "cold-owner" },
+    }, "reserve-cold-owner"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "cold-owner" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-cold-owner"))).status).toBe("accepted");
+    const otherSubmission = await target.gateway.handleCommand(command("sendText", { text: "other submission", firstSubmissionId: "someone-else" }, "cmd-other-submission", sessionId));
+    expect(otherSubmission.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    target.gateway.dispose();
+    await target.store.close?.();
+
+    // The cold process has no resident preparation: it must read the persisted entry's submissionId.
+    const cold = await makeHarness(dbPath);
+    harness = { ...cold, dbDir };
+    // A real retry carries its original command id; no admitted row for it exists, so the runtime is materialized.
+    const retry = await cold.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-cold-frozen" }, "retry-cold-owner"));
+    expect(retry.status).toBe("accepted");
+    expect(cold.materializations).toEqual([sessionId]);
+    const wrong = await cold.gateway.handleCommand(command("sendText", { text: "wrong id", firstSubmissionId: "someone-else" }, "cmd-cold-wrong", sessionId));
+    expect(wrong.status).toBe("accepted");
+    cold.heldCompletions.forEach((held) => held.resolve());
+    expect(await readSubmissionPreparationStatus(cold, sessionId)).toBe("preparing");
+    const own = await cold.gateway.handleCommand(command("sendText", { text: "own frozen", firstSubmissionId: "cold-owner" }, "cmd-cold-own", sessionId));
+    expect(own.status).toBe("accepted");
+    cold.heldCompletions.forEach((held) => held.resolve());
+    expect(await readSubmissionPreparationStatus(cold, sessionId)).toBe("active");
+  });
+
+  it("a sendText with no field completes a still-preparing reserved submission (renderer that predates the field)", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-legacy-renderer-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "legacy-renderer-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "legacy" },
+    }, "reserve-legacy"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "legacy" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-legacy"))).status).toBe("accepted");
+    // The reserved activation alone does not settle a plain submission; the first sendText does.
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    // An old renderer's frozen sendText carries no firstSubmissionId: the legacy rule completes the preparation.
+    const legacy = await target.gateway.handleCommand(command("sendText", { text: "legacy frozen input" }, "cmd-legacy", sessionId));
+    expect(legacy.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["legacy frozen input"]);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("active");
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("a sendText with a mismatched field leaves the preparation preparing, and the matching field completes it", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-named-field-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "named-field-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "named" },
+    }, "reserve-named-field"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "named" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-named-field"))).status).toBe("accepted");
+    const mismatched = await target.gateway.handleCommand(command("sendText", { text: "mismatched", firstSubmissionId: "someone-else" }, "cmd-named-mismatch", sessionId));
+    expect(mismatched.status).toBe("accepted");
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    const matched = await target.gateway.handleCommand(command("sendText", { text: "matched", firstSubmissionId: "named" }, "cmd-named-match", sessionId));
+    expect(matched.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["mismatched", "matched"]);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("active");
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("a foreign admitted row does not count as the frozen input's admission while the preparation stays preparing", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "foreign-row-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "foreign-row" },
+    }, "reserve-foreign-row"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "foreign-row" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-foreign-row"))).status).toBe("accepted");
+    // An admitted row for another command lands without the bridge's marker flip (the marker write
+    // failed, or the row came from a path that does not mark the preparation), so it stays preparing.
+    await target.store.saveSessionInput!({
+      id: "queue_cmd-foreign-row",
+      sessionID: sessionId as never,
+      kind: "sendText",
+      delivery: "startNow",
+      payload: { text: "foreign input", intent: { sourceCommandId: "cmd-foreign-row" } },
+    } as never);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+
+    // Identity decides: "cmd-frozen-row" has no row, so the foreign row is not its admission.
+    // The runtime exists, so the answer is input-pending and the sender admits the frozen input once.
+    const retry = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen-row" }, "retry-foreign-row"));
+    expect(retry.status).toBe("accepted");
+    expect(retry.result).toMatchObject({ sessionId, preparedActivation: "input-pending" });
+    expect(target.sentInputs).toEqual([]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
   it("reserves an ordinary submitted session before runtime creation and restores without auto-running", async () => {
     const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
     const dbPath = join(dbDir, "sessions.sqlite");

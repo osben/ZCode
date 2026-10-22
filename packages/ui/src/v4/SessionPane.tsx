@@ -849,9 +849,11 @@ export function SessionPane({
       new Set([...pendingShareRowIds].map((id) => shareDraft?.productTurnIdByRowId[id] ?? id)).size,
     [pendingShareRowIds, shareDraft],
   );
+  // Share items are only read while the share draft is open; building them on every window change
+  // was a second, uncached full render-unit pass over the conversation (570 ms on a 1052-message session).
   const shareRenderUnits = useMemo(
-    () => buildConversationTurnRenderUnits(snapshot?.rows.window ?? []),
-    [snapshot?.rows.window],
+    () => (shareActive ? buildConversationTurnRenderUnits(snapshot?.rows.window ?? []) : []),
+    [shareActive, snapshot?.rows.window],
   );
   const shareItems = useMemo(
     () =>
@@ -949,7 +951,10 @@ export function SessionPane({
       workspacePath,
     ],
   );
+  // Only the open share dock reads these ids (its popover is gated by shareActive, like shareRenderUnits);
+  // building the row map on every window change while no share is open was wasted work.
   const eligibleShareProductTurnIds = useMemo(() => {
+    if (!shareActive) return [];
     const rowsById = new Map((snapshot?.rows.window ?? []).map((row) => [row.rowId, row]));
     const seen = new Set<string>();
     return eligibleShareItems.flatMap((item) => {
@@ -958,7 +963,7 @@ export function SessionPane({
       seen.add(productTurnId);
       return [productTurnId];
     });
-  }, [eligibleShareItems, snapshot?.rows.window]);
+  }, [eligibleShareItems, shareActive, snapshot?.rows.window]);
   const sharePreflightCacheRef = useRef(new Map<string, ConversationShareTurnPreflightResult>());
   // 传输类失败会被按 turn 缓存成阻断项，仅靠选择变化无法再次触发 RPC；
   // 重试 token 变化时清缓存并重新发起，避免一次网络抖动把用户卡死在选择阶段。
@@ -4109,7 +4114,14 @@ export function SessionPane({
               ? {
                   preparedSessionId,
                   ...(reservedSubmissionSessionId
-                    ? { expectedSubmissionId: options?.firstSubmissionId }
+                    ? {
+                        expectedSubmissionId: options?.firstSubmissionId,
+                        // The frozen first sendText an earlier attempt already created: the CLI checks
+                        // admission by this command id. A first attempt has none and sends no id.
+                        ...(options?.originalCommandId !== undefined
+                          ? { expectedFirstInputCommandId: options.originalCommandId }
+                          : {}),
+                      }
                     : { expectedAttemptId: options?.preparedAttemptId }),
                 }
               : {}),
@@ -4147,6 +4159,19 @@ export function SessionPane({
             return;
           }
         }
+        // input-admitted means the CLI found the admitted row of the frozen sendText's original command id,
+        // so resending it under a new command id would admit it twice: the composer settles it under that id
+        // (lifecycle rule 4). already-active does not prove that: another input may have set the marker, so
+        // the frozen sendText is sent below. Worktree activations never reach this guard with an original id
+        // (ConversationComposer sets reservedSubmissionSessionId only without an execution worktree or a
+        // prepared session).
+        if (
+          reservedSubmissionSessionId !== undefined &&
+          options?.originalCommandId !== undefined &&
+          createAck.result.preparedActivation === "input-admitted"
+        ) {
+          return "alreadyAdmitted" as const;
+        }
         // Incognito has no prewarm upload target; worktree refs must belong to the execution session.
         const needsAttachmentUpload =
           deferredIncognitoAttachments || Boolean(executionWorktree && readyAttachments.length > 0);
@@ -4173,6 +4198,12 @@ export function SessionPane({
             ...(options?.source ? { source: options.source } : {}),
             ...highspeed.override,
             conversationQuotes: options?.conversationQuotes,
+            // The frozen first sendText of a reserved plain submission names its submission, so only this
+            // sendText may complete the durable preparation (the bridge matches it; see first-submission spec).
+            ...(reservedSubmissionSessionId !== undefined &&
+            options?.firstSubmissionId !== undefined
+              ? { firstSubmissionId: options.firstSubmissionId }
+              : {}),
           },
           createdSessionId,
           undefined,
@@ -4413,7 +4444,7 @@ export function SessionPane({
         if (shouldFocusLatest) {
           focusTimelineToLatest();
         }
-        return "sent";
+        return sendResult === "alreadyAdmitted" ? "alreadyAdmitted" : "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const incognitoMessageId = incognitoUnsupportedMessageId(detail);

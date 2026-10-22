@@ -1837,6 +1837,37 @@ describe("ZCode legacy task compat task index", () => {
     ]);
   });
 
+  it("broadcasts one workspace task_meta_changed only when an incognito marker is written", async () => {
+    const { service } = createService();
+    const task = await service.createTask({ workspacePath: "/repo", provider: "glm" });
+    const events: Array<{ reason?: string; taskId?: string }> = [];
+    const disposable = service.onDynamicWorkspaceEvent({ workspacePath: "/repo" })((event) => {
+      if (event.type === "workspace_task_list_changed") {
+        events.push({ reason: event.reason, taskId: event.taskId });
+      }
+    });
+
+    const written = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: [task.taskId],
+    });
+    const confirmedOnly = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: [task.taskId],
+    });
+    const absent = await service.persistIncognitoMarkers({
+      workspacePath: "/repo",
+      taskIds: ["missing-task"],
+    });
+    disposable.dispose();
+
+    expect(written).toEqual({ confirmed: [task.taskId], written: [task.taskId] });
+    expect(confirmedOnly).toEqual({ confirmed: [task.taskId], written: [] });
+    expect(absent).toEqual({ confirmed: [], written: [] });
+    // One broadcast for the single write; the repeat confirm and the absent row broadcast nothing.
+    expect(events).toEqual([{ reason: "task_meta_changed", taskId: undefined }]);
+  });
+
   it("does not clear a newer unread marker when the system clock does not advance", async () => {
     vi.useFakeTimers();
     const { service, taskIndexRepo } = createService();

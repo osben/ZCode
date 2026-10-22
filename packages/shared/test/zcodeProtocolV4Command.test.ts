@@ -127,6 +127,21 @@ describe("zcode-protocol-v4 command", () => {
     ).toEqual({ text: "opposite follow-up", requestedDelivery: "queue" });
   });
 
+  it("round-trips the frozen first sendText's submission id and rejects an empty or non-string one", () => {
+    expect(
+      commandPayloadSchemas.sendText.parse({ text: "frozen", firstSubmissionId: "submission-1" }),
+    ).toMatchObject({ text: "frozen", firstSubmissionId: "submission-1" });
+    expect(commandPayloadSchemas.sendText.parse({ text: "plain" })).not.toHaveProperty(
+      "firstSubmissionId",
+    );
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: "" }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: 7 }).success,
+    ).toBe(false);
+  });
+
   it("validates bot delivery target on sendText", () => {
     const payload = commandPayloadSchemas.sendText.parse({
       text: "创建一个定时任务",
@@ -586,6 +601,108 @@ describe("zcode-protocol-v4 command", () => {
         },
       }).result,
     ).toEqual({ type: "createSelectionSideSession", sessionId: "child-1" });
+  });
+
+  it("carries createSession preparedActivation on the ACK result as a closed enum", () => {
+    for (const preparedActivation of [
+      "materialized",
+      "input-pending",
+      "input-admitted",
+      "already-active",
+    ] as const) {
+      const ack = commandAckSchema.parse({
+        commandId: "cmd-prepared-activation",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation },
+      });
+      expect(ack.result).toEqual({
+        type: "createSession",
+        sessionId: "prepared-1",
+        preparedActivation,
+      });
+    }
+    // Absent from older Core builds: still a valid ACK result.
+    expect(
+      commandAckSchema.parse({
+        commandId: "cmd-prepared-absent",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1" },
+      }).result,
+    ).toEqual({ type: "createSession", sessionId: "prepared-1" });
+    // An unknown outcome is rejected, not silently stripped, so the UI never reads a guess.
+    expect(
+      commandAckSchema.safeParse({
+        commandId: "cmd-prepared-unknown",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation: "resent" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("round-trips expectedFirstInputCommandId only on a reserved submission activation", () => {
+    const reserved = {
+      workspaceId: "ws-1",
+      preparedSessionId: "prepared-1",
+      expectedSubmissionId: "sub-1",
+    };
+    expect(
+      commandPayloadSchemas.createSession.parse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }),
+    ).toMatchObject({ expectedFirstInputCommandId: "cmd-frozen-1" });
+    const parsed = parseCommandEnvelope({
+      commandId: "cmd-activate-1",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: { ...reserved, expectedFirstInputCommandId: "cmd-frozen-1" },
+      issuedAt: 1000,
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.envelope.payload).toMatchObject({
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      });
+    }
+    // Wrong type or empty id is rejected, not stripped.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({ ...reserved, expectedFirstInputCommandId: 7 })
+        .success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "",
+      }).success,
+    ).toBe(false);
+    // Only a reserved submission activation may carry it: not a worktree activation, not a generic
+    // reservation without expectedSubmissionId, not with an input of its own.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedAttemptId: "attempt-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+        firstInput: { text: "second" },
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps omitted createSession.config.mode absent so workspace default mode can win", () => {

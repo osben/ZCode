@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { ContentPartView } from "@/ModelTrajectoryPaneDetails.js";
+import { ContentPartView, TruncatedNotice } from "@/ModelTrajectoryPaneDetails.js";
 import {
   trajectoryToolCallInputs,
   trajectoryToolHasError,
@@ -33,9 +33,16 @@ export function TrajectoryExpandedContent({
   const [showAll, setShowAll] = useState(false);
   const metadata = trajectoryToolMetadata(message);
   const toolPayloadHasError = trajectoryToolHasError(message);
-  const toolPayloads = message.parts.some((part) => part.kind === "tool-result")
-    ? trajectoryToolOutputs(message)
-    : trajectoryToolCallInputs(message);
+  // Only messages made entirely of tool payloads use the payload path; a mixed message (text + tool call)
+  // must render every part, otherwise its text would be hidden.
+  const usesPayloadPath =
+    message.parts.length > 0 &&
+    message.parts.every((part) => part.kind === "tool-result" || part.kind === "tool-call");
+  const toolPayloads = !usesPayloadPath
+    ? []
+    : message.parts.some((part) => part.kind === "tool-result")
+      ? trajectoryToolOutputs(message)
+      : trajectoryToolCallInputs(message);
 
   const measureOverflow = useCallback(() => {
     const element = contentRef.current;
@@ -139,6 +146,17 @@ export function TrajectoryExpandedContent({
                 />
               </div>
             ))}
+        {usesPayloadPath
+          ? message.parts
+              .flatMap((part) => (part.truncated ? [part.truncated] : []))
+              .map((truncated, truncatedIndex) => (
+                <TruncatedNotice
+                  key={`truncated-${truncatedIndex}`}
+                  originalBytes={truncated.originalBytes}
+                  intl={intl}
+                />
+              ))
+          : null}
       </div>
       {isOverflowing && !searchRevealed ? (
         <div className="absolute bottom-3 left-1/2 -translate-x-1/2">

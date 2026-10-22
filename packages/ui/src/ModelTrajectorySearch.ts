@@ -101,13 +101,14 @@ function messageTargets(
   message: ZCodeModelTrajectoryMessage,
 ): SearchTarget[] {
   const metadata = trajectoryToolMetadata(message);
-  const content = message.parts.some((part) => part.kind === "tool-result")
-    ? trajectoryToolOutputs(message).join("\n\n")
-    : message.parts.some((part) => part.kind === "tool-call")
-      ? trajectoryToolCallInputs(message).join("\n\n")
-      : message.parts
-          .flatMap((part) => ("text" in part && typeof part.text === "string" ? [part.text] : []))
-          .join("\n\n");
+  // Index every part in its rendered order (text, tool output, tool input), so a mixed message is searchable in all of them.
+  const content = message.parts
+    .flatMap((part) => {
+      if (part.kind === "tool-result") return trajectoryToolOutputs({ ...message, parts: [part] });
+      if (part.kind === "tool-call") return trajectoryToolCallInputs({ ...message, parts: [part] });
+      return "text" in part && typeof part.text === "string" ? [part.text] : [];
+    })
+    .join("\n\n");
   return [
     ...(content ? [contentTarget(callKey, callIndex, expansionKey, content)] : []),
     ...(metadata.names

@@ -1617,6 +1617,180 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     expect(sessionsIndexItems.current).toHaveLength(0);
   });
 
+  it("prepared send whose createSession ACK reports input-admitted dispatches no sendText and returns alreadyAdmitted", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null);
+    const before = conversationMock.sendCommand.mock.calls.length;
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: {
+        type: "createSession",
+        sessionId: "session-admitted",
+        preparedActivation: "input-admitted",
+      },
+    }));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await scrollFocus.composerProps?.onSendText("frozen text", {
+        preparedSessionId: "session-admitted",
+        reservedSubmissionSessionId: "session-admitted",
+        firstSubmissionId: "sub-admitted",
+        originalCommandId: "cmd-orig-admitted",
+      });
+    });
+    // The frozen input already reached Core under its original command id: only the
+    // activation createSession is dispatched; a new sendText would admit it twice.
+    const calls = conversationMock.sendCommand.mock.calls.slice(before);
+    expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession"]);
+    expect(calls[0]![0]).toMatchObject({
+      type: "createSession",
+      payload: {
+        preparedSessionId: "session-admitted",
+        expectedSubmissionId: "sub-admitted",
+        // The CLI checks admission by this identity, not by any admitted input.
+        expectedFirstInputCommandId: "cmd-orig-admitted",
+      },
+    });
+    expect(outcome).toBe("alreadyAdmitted");
+  });
+
+  it("prepared send whose createSession ACK reports already-active still dispatches the frozen sendText", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null);
+    const before = conversationMock.sendCommand.mock.calls.length;
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: {
+        type: "createSession",
+        sessionId: "session-active",
+        preparedActivation: "already-active",
+      },
+    }));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await scrollFocus.composerProps?.onSendText("frozen text", {
+        preparedSessionId: "session-active",
+        reservedSubmissionSessionId: "session-active",
+        firstSubmissionId: "sub-active",
+        originalCommandId: "cmd-orig-active",
+      });
+    });
+    // The active marker can come from another window's input, so it does not prove this frozen input was
+    // admitted: the identity check (expectedFirstInputCommandId) said it was not, and the send goes out.
+    const calls = conversationMock.sendCommand.mock.calls.slice(before);
+    expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
+    expect(calls[0]![0]).toMatchObject({
+      type: "createSession",
+      payload: { expectedFirstInputCommandId: "cmd-orig-active" },
+    });
+    // The retried frozen sendText names its submission: only it may complete the preparation.
+    expect(calls[1]![0]).toMatchObject({
+      type: "sendText",
+      payload: { firstSubmissionId: "sub-active" },
+    });
+    expect(outcome).toBe("sent");
+  });
+
+  it("a worktree activation reporting already-active still dispatches its sendText (no reserved submission)", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null);
+    const before = conversationMock.sendCommand.mock.calls.length;
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: {
+        type: "createSession",
+        sessionId: "session-worktree",
+        preparedActivation: "already-active",
+      },
+    }));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await scrollFocus.composerProps?.onSendText("frozen text", {
+        preparedSessionId: "session-worktree",
+        preparedAttemptId: "attempt-1",
+        originalCommandId: "cmd-orig-worktree",
+      });
+    });
+    // Worktree activation completes before any input is sent, so already-active proves nothing about
+    // the frozen input: the sendText must still go out.
+    const calls = conversationMock.sendCommand.mock.calls.slice(before);
+    expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
+    expect(calls[1]![0].payload).not.toHaveProperty("firstSubmissionId");
+    expect(outcome).toBe("sent");
+  });
+
+  it("a reserved send without an earlier command id dispatches its sendText even when already-active", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null);
+    const before = conversationMock.sendCommand.mock.calls.length;
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: {
+        type: "createSession",
+        sessionId: "session-no-id",
+        preparedActivation: "already-active",
+      },
+    }));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await scrollFocus.composerProps?.onSendText("frozen text", {
+        preparedSessionId: "session-no-id",
+        reservedSubmissionSessionId: "session-no-id",
+        firstSubmissionId: "sub-no-id",
+      });
+    });
+    // Without a recorded sendText command there is nothing to reconcile by id; the frozen input keeps
+    // its ordinary send path (an active marker may come from another window's input).
+    const calls = conversationMock.sendCommand.mock.calls.slice(before);
+    expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
+    expect(calls[0]![0].payload).not.toHaveProperty("expectedFirstInputCommandId");
+    expect(calls[1]![0]).toMatchObject({
+      type: "sendText",
+      payload: { firstSubmissionId: "sub-no-id" },
+    });
+    expect(outcome).toBe("sent");
+  });
+
+  it("prepared send whose createSession ACK is materialized still dispatches the frozen sendText once", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null);
+    const before = conversationMock.sendCommand.mock.calls.length;
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: {
+        type: "createSession",
+        sessionId: "session-materialized",
+        preparedActivation: "materialized",
+      },
+    }));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await scrollFocus.composerProps?.onSendText("frozen text", {
+        preparedSessionId: "session-materialized",
+        reservedSubmissionSessionId: "session-materialized",
+        firstSubmissionId: "sub-materialized",
+      });
+    });
+    const calls = conversationMock.sendCommand.mock.calls.slice(before);
+    expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
+    expect(outcome).toBe("sent");
+  });
+
   it("IUX06: an admitted queue item keeps exactly one optimistic user turn until the real projection lands", () => {
     const root = createRoot(installMinimalDom());
     mountedRoots.push(root);
@@ -1800,10 +1974,12 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       results: [{ key: { sessionId: "reserved-f3", commandId: "cmd-f3" }, result: "unknown" }],
     }));
     await mountBoundRecord("reserved-f3", "f3", { preparing: false });
-    // No submissionPreparation: the Host marked the frozen input admitted, so no Retry (it
-    // would resend the same input under a new command id).
+    // No submissionPreparation: the ledger is asked for the record's own id first; its unknown
+    // answer lets the marker decide, so no Retry (it would resend the same input under a new id).
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "reserved-f3", commandId: "cmd-f3" }],
+    });
     expect(recordStatus("reserved-f3")).toBe("sending");
-    expect(conversationMock.layer.queryCommands).not.toHaveBeenCalled();
   });
 
   it("F: a worktree record never trusts a missing marker (it completes at activation) and queries", async () => {

@@ -193,17 +193,115 @@ One ordering barrier stays: while the bound session's snapshot still reports
 with a visible reason instead of silently dropping the click. Without it a foreign
 input admitted first would reorder the frozen message behind it (SessionPane still
 sends the frozen `sendText` after activation, which acknowledges `input-admitted`
-without a receipt), and the bridge's `executeCommand` hook marks the preparation
+without a receipt), and the bridge's `executeCommand` hook marked the preparation
 `active` on _any_ `sendText` to a preparing session, so reconciliation's "marker absent
-⇒ admitted" shortcut would mark a never-run frozen record `sending`. When the record is
+⇒ admitted" shortcut would mark a never-run frozen record `sending`. The hook now flips it
+only for a `sendText` that names its submission, and for a legacy `sendText` with no field from a
+renderer that predates the field (see _Owner of the frozen input_ below). When the record is
 settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
 or Remove, never as "still being delivered".
 
-**Known limitation (CLI follow-up, not fixed here).** The barrier lives in this
-composer only: mobile remote control and other windows can still send into a
-preparing session. The CLI should flip the preparation marker only for the frozen
-submission's own `sendText`, and return `preparedActivation` so the UI skips the
-frozen `sendText` on `input-admitted`.
+**Implemented: prepared activation outcome.** The createSession ACK of a prepared
+submission carries `preparedActivation` (`materialized`, `input-pending`,
+`input-admitted`, `already-active`; closed enum in `commandResultSchema`). A reserved
+plain submission whose frozen `sendText` already exists under command id X
+(`originalCommandId`, carried through every freeze and restore) sends X as
+`expectedFirstInputCommandId` on the activation createSession (shared
+`createSessionPayloadSchema`, valid only with `expectedSubmissionId`). Worktree
+activations and first attempts (no X yet) never send it. The CLI decides admission by
+that identity and never by "any admitted input row": a `session_input` row whose intent
+`sourceCommandId` is X and whose status is `admitted` or `promoted` is the only evidence
+that the frozen input reached Core. The bridge decides in this order:
+
+1. X identity-admitted → `input-admitted` (the handler completes the activation receipt
+   and admits nothing);
+2. preparation `active` → `already-active`. An active marker alone is not admission: the
+   frozen `sendText` of a retry carries a fresh command id, so the marker can be active while X
+   is not admitted;
+3. otherwise the existing outcomes (`input-pending` when the runtime exists, else
+   `materialized`).
+
+Without an id (first attempts, and clients that send none) the CLI keeps today's order:
+step 2 first, then the any-row check (`sessionHasAdmittedInput` with no command id)
+returns `input-admitted` when any admitted row exists.
+
+The renderer skips the frozen `sendText` only on `input-admitted`, and only for a
+reserved plain submission that holds an original id. The send then resolves to
+`alreadyAdmitted` and the composer sets the record to `sending` under X (no new command
+id). On `already-active` X is not admitted, so the frozen `sendText` is dispatched on the
+ordinary path, as for `input-pending` and `materialized`. The reserved-only condition is
+enforced where `reservedSubmissionSessionId` is set (ConversationComposer: only when there
+is no execution worktree and no prepared session). Worktree activations complete before
+any input, so they never send an id and their `already-active` never skips.
+
+**Reconciliation asks the ledger first (implemented).** The reconciliation hook does not let
+the reservation marker decide a record that holds an original command id. It queries that id
+first (table below). The marker decides only when the ledger answers `unknown`, or when the
+record holds no id at all. An active marker therefore never settles a record `sending` whose
+own id the ledger rejects.
+
+**Owner of the frozen input in the bridge (implemented).** A `sendText` that names its submission is
+the frozen input of that submission, and only it completes the submission's preparation by id.
+Identity is the submission id, not the command id: a retried frozen input is a new `sendText` with a
+freshly minted uuidv7 (`commandFactory.ts`), and a first attempt has no command id before its
+`sendText`. The submission id is stable across attempts and is already the durable key of the
+preparation entry. A `sendText` that names no submission is the legacy case in the hook routing bullet below.
+
+- The renderer sets `firstSubmissionId` on the frozen `sendText` of a reserved plain submission
+  (`SessionPane` sendText route, when `reservedSubmissionSessionId` is set): the first attempt
+  and every retry. The shared `sendText` payload declares it as an optional non-empty string
+  (`packages/shared/src/zcode-protocol-v4/command.ts`).
+- The bridge's `executeCommand` hook routes each `sendText` into a session by its `firstSubmissionId`:
+  - Field present: it calls `completePreparedWorktreeActivation(sessionId, firstSubmissionId)`. That
+    runs under the preparation's serializer and flips the persisted entry to `active` only when the
+    entry's `submissionId` equals the field and its status is `preparing`. Another id leaves the
+    preparation `preparing`.
+  - Field absent (a renderer that predates the field): the legacy rule applies. When the persisted
+    entry is `preparing`, the hook calls `completePreparedWorktreeActivation(sessionId)` without an
+    id, which completes the preparation as it did before 4f01049b. Otherwise the `sendText` executes
+    unchanged.
+- A cold process reads the same entry (`loadPreparedSubmission`), so it agrees with no extra
+  state.
+- Worktree activations never carry the field. They complete at their activation through
+  `completePreparedWorktreeActivation` (the handler's `completePreparedActivation` when
+  `preparedSessionId` is set without `expectedSubmissionId`), and their `sendText` never reaches
+  the submission path. They are unaffected.
+
+**Mixed versions (both directions).**
+
+- New renderer + old CLI: the renderer's `firstSubmissionId` is not declared by the old shared schema,
+  so it is dropped and the old bridge sees a plain `sendText`. The old bridge (before 4f01049b) completes
+  a preparation on any `sendText` into a preparing session, so the frozen input completes it as before.
+  The old CLI does not enforce the identity rule; nothing else changes.
+- Old renderer + new CLI: the old renderer sends no field, so the new bridge applies the legacy rule and
+  its first `sendText` into a preparing reserved submission completes the preparation. The snapshot
+  therefore stops reporting `submissionPreparation` once the frozen input is sent. The activation itself
+  still does not settle a reserved plain submission: `completePreparedActivation` in
+  `session-mgmt.ts` runs only for a non-reserved activation or one that carries `firstInput`, so the
+  first `sendText` (or a repeat activation with `input-admitted`) is what completes it.
+- Known trade-off: a `sendText` with no field cannot be told apart by the bridge. A foreign window or a
+  remote-control client that sends no field into a preparing reserved submission completes that
+  preparation again, which is the hazard 4f01049b removed for those clients. Narrowing the fallback needs
+  a protocol capability marker from the renderer; that is not implemented.
+
+```mermaid
+sequenceDiagram
+    participant R as Record holder (SessionPane)
+    participant B as CLI bridge (executeCommand)
+    participant L as Command ledger
+    R->>B: createSession (expectedSubmissionId S, expectedFirstInputCommandId X)
+    B-->>R: input-pending or materialized (X not admitted)
+    R->>B: sendText, fresh id Y, firstSubmissionId S (frozen input)
+    B->>B: admit Y; flip preparation to active only if entry.submissionId == S
+    B-->>R: ack
+    R->>B: foreign sendText naming another id
+    B->>B: execute; preparation stays preparing
+    R->>B: sendText with no field (renderer that predates the field)
+    B->>B: execute; legacy rule completes a preparing entry
+    R->>L: query Y (the record holds Y)
+    L-->>R: accepted, rejected, or unknown
+    R->>R: accepted gives sending, rejected gives failed, unknown lets the marker decide
+```
 
 ## Status under the message (decided 2026-10-21)
 
@@ -305,16 +403,18 @@ on every pass, so it still accepts a copy after an undecided query.
 Durable Host facts decide before the command query, because an `accepted` ACK does not
 survive a CLI restart and a query `unknown` therefore does not prove non-admission:
 
-| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                   |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| a real user row carries this command id                                          | accepted (reported to the registry)                       |
-| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned) |
-| reserved record and `submissionPreparation` absent                               | record `sending`, not reported; never decides a held copy |
-| query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                           |
-| query `rejected` / `failed` / `stale` / `noop`                                   | `failed` (reported) — Retry and Remove                    |
-| query `unknown`: reserved and still preparing, or a worktree record              | `failed` (reported) — Retry and Remove                    |
-| query `unknown`: held copy of a reserved submission whose marker already flipped | unchanged — the copy stays held                           |
-| query throws or reports `fault.command.queryUnavailable`                         | unchanged — one re-check once the revision has advanced   |
+| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                     |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| a real user row carries this command id                                          | accepted (reported to the registry)                         |
+| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned)   |
+| record holds no command id, reserved, `submissionPreparation` absent             | record `sending`, not reported; a held copy stays unchanged |
+| record holds no command id otherwise                                             | unchanged (nothing names the input to query)                |
+| query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                             |
+| query `rejected` / `failed` / `stale` / `noop`, whatever the marker says         | `failed` (reported) — Retry and Remove                      |
+| query `unknown`: reserved, `submissionPreparation` absent, not held              | record `sending`, not reported (the marker decides)         |
+| query `unknown`: held copy of a reserved submission whose marker already flipped | unchanged — the copy stays held                             |
+| query `unknown`: reserved and still preparing, or a worktree record              | `failed` (reported) — Retry and Remove                      |
+| query throws or reports `fault.command.queryUnavailable`                         | unchanged — one re-check once the revision has advanced     |
 
 The query uses the command's own bucket: the reserved session id for `sendText`.
 Only identity-backed decisions reach the command registry: this command's query result
@@ -328,8 +428,9 @@ admission — that marker flips when its `sendText` executes. A worktree record 
 that marker (its `worktreePreparation` completes at activation, before any input), so it
 always goes to the command query. Residual risk, not closed here: after a CLI restart the
 command ledger may answer `unknown` for an input that was admitted but not yet projected;
-Retry then reactivates (`already-active`/`input-admitted` is not surfaced to the UI) and
-sends again. Surfacing that activation receipt is a CLI/protocol follow-up.
+Retry then reactivates. When the record still holds the original sendText command id, the
+admitted receipt is surfaced (`preparedActivation`, see Implemented above) and the input is
+not resent; without that id the send repeats. Closing the id-less case is a CLI follow-up.
 
 ```mermaid
 sequenceDiagram

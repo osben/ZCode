@@ -97,6 +97,9 @@ async function createSession(
       ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
       ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
       ...(payload.expectedSubmissionId ? { expectedSubmissionId: payload.expectedSubmissionId } : {}),
+      ...(payload.expectedFirstInputCommandId
+        ? { expectedFirstInputCommandId: payload.expectedFirstInputCommandId }
+        : {}),
       ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
       mcpServers: payload.mcpServers,
       ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
@@ -108,12 +111,12 @@ async function createSession(
     if (preparedActivation === "already-active") {
       // A completed activation's durable receipt: the same session is returned without re-applying
       // startup configuration or admitting the frozen first input a second time.
-      return { type: "createSession", sessionId };
+      return { type: "createSession", sessionId, preparedActivation };
     }
     if (preparedActivation === "input-admitted") {
       // The frozen input already reached Core durably; only the completion receipt may be missing.
       await completePreparedActivation(host, sessionId);
-      return { type: "createSession", sessionId };
+      return { type: "createSession", sessionId, preparedActivation };
     }
     // createSession.config 消费——草稿态 UI 的先行选择（模型/思考深度/
     // 模式）在首发之前应用并补发事件，首条 turn 即用所选配置。必须在 firstInput 之前。
@@ -204,7 +207,12 @@ async function createSession(
     if (payload.preparedSessionId && (!payload.expectedSubmissionId || firstInput)) {
       await completePreparedActivation(host, sessionId);
     }
-    return { type: "createSession", sessionId, ...(firstInput ? { input: firstInput } : {}) };
+    return {
+      type: "createSession",
+      sessionId,
+      ...(preparedActivation ? { preparedActivation } : {}),
+      ...(firstInput ? { input: firstInput } : {}),
+    };
   };
   if (payload.preparedSessionId && host.withPreparedWorktreeActivation) {
     // Hold the per-session preparation lock across materialization, config, first-input admission,

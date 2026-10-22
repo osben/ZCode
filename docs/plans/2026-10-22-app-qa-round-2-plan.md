@@ -56,3 +56,25 @@ Follows `docs/plans/2026-10-21-app-qa-orchestration-plan.md` (round 1, closed wi
 ## Re-plan trigger
 
 When Phase C items 1–6 are merged or explicitly deferred and Phase D is exercised, write round 3 (perf windowing, remaining spec gaps, upstream sync of 3.16.x if it lands).
+
+## Progress (2026-10-22 02:05)
+
+- Phase C 4 shipped as fix pack 2 on `claude/qa-fix-pack-2` (50809fe3): the CLI now returns `preparedActivation` on the `createSession` ACK and the renderer skips the frozen `sendText` for an already-admitted reserved submission. Gates green (typecheck, lint 0 errors, fmt, architecture 0, 155 targeted tests); live plain first send re-verified. Push blocked until the worktree is clean (pre-push `test:unit:affected` refuses a dirty tree while sub-agents edit).
+- Phase C 7 measured and designed (read-only agent pass, claims spot-checked): the subscribe snapshot is already a 60-row tail; the 570 ms block is `loadAllOlder()` committing ~1480 older rows in one `setState` for the turn-navigator directory (wide layout ≥ 864 px), plus an uncached share-mode `buildConversationTurnRenderUnits` in `SessionPane` that runs on every window change regardless of `shareActive`, plus O(all assistant chars) preview normalisation in `buildPreviewText`. Option A (renderer-only: chunked per-page commit with `loadingOlder` held, share build gated on `shareActive`, bounded preview slice) is in implementation; Option B (protocol-level turn directory) deferred as a second source of navigator truth.
+- Phase C 8 (ISSUE-017) in implementation (runner isolation, scripts only).
+- New: ISSUE-022 incognito sidebar marker missing on a fresh incognito session (CLI row has the profile, index meta and live overlay lack `incognito`); investigation delegated.
+
+## Progress (2026-10-22 02:45)
+
+- Fix pack 2 now holds five commits (50809fe3 preparedActivation, 74f5978b affected runner, 6e2da170 chunked hydration, a810494d + 4f9c41ad incognito marker). Live after restart: session open 570 → 188 ms worst block; fresh incognito session shows its marker.
+- Push failures explained: git opens the SSH connection before the ~6 min pre-push verify, GitHub closes it idle, git dies of SIGPIPE (exit 141) with no output. Pushing over HTTPS keeps the hook and avoids the idle connection.
+- Grouped sidebar design note: it renders persisted tasks-index facts plus the activity sidecar only; live sessions-index overlay fields (incognito, worktree) reach only the flat list. Durable markers are therefore required, which the placeholder fix and the broadcast provide.
+
+## Phase D results (2026-10-22 03:20, dev build on pack 2)
+
+- Split view: "Open in split view" from a task's context menu opens a second session pane (2 pane roots). No errors.
+- Help menu: all nine entries present. "Check for updates" on an unpackaged build returns `dev-skipped` silently (no toast, no log line); the flow needs `--zcode-auto-update-dev` or a packaged build to exercise.
+- Multi-window and quit confirmation are app-menu actions (no in-app control), not drivable over CDP; left for a manual pass.
+- Remote connection: entry is Settings → Remote devices → "New connection" (not the Projects header). The dialog opens with Host, Port 22, Username and Password fields and closes cleanly on Cancel; no errors logged.
+- New S1 found: ISSUE-023 model trajectory viewer freeze (5.8 s task on the 1052-message session; 22.6 MB payload in 5 records; all rows default-expanded). Fix delegated: bounded per-part projection on the Host + collapsed-by-default rows above a threshold, spec first.
+- ISSUE-023 fixed and verified live (open 5.8 s → 171 ms worst block). Open follow-up: the model-io file repeats the full restored context per record (5 × ~1.16 MB projected here); a delta contract between Host and viewer would bound the payload across records.

@@ -251,6 +251,11 @@ const CLI_FACT_TITLE_SQL =
 
 // Reservation placeholder (signature defined with its only writer in project-repository.ts): every read hides it until applyCliFacts
 // writes facts, so an abandoned create never shows up as an empty, zero-time task.
+function isReservationPlaceholderRow(
+  row: Pick<TaskIndexRow, "created_at" | "cli_created_at" | "meta_json">,
+): boolean {
+  return row.cli_created_at == null && row.created_at === 0 && row.meta_json === "{}";
+}
 
 function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
   if (row.cli_created_at == null) return meta;
@@ -294,9 +299,7 @@ function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
       };
     }
     // A reservation placeholder (created_at 0, no CLI facts, default meta_json '{}') is expected until CLI facts arrive; it is not corruption, so it stays silent.
-    const isReservationPlaceholder =
-      row.meta_json === "{}" && row.created_at === 0 && row.cli_created_at == null;
-    if (!isReservationPlaceholder) {
+    if (!isReservationPlaceholderRow(row)) {
       logger.warn(
         undefined,
         `读取 task index meta_json 非法 taskId=${row.task_id}`,
@@ -2545,16 +2548,17 @@ export class TaskIndexRepo {
 
   /**
    * Persist incognito markers into meta_json (specs/incognito-session.md "Sidebar marker durability"). The profile
-   * is frozen per session, so a stored `true` never goes stale: the write only ever adds the marker. Returns the ids
-   * whose row carries the marker after the call. Absent, deleted and unreadable rows are not confirmed; pinned and
-   * archived rows are included, because this method has no membership filter.
+   * is frozen per session, so a stored `true` never goes stale: the write only ever adds the marker. `confirmed` holds
+   * the ids whose row carries the marker after the call; `written` holds only the ids this call changed, so callers can
+   * tell a real write (which must notify list readers) from a repeat confirmation. Absent, deleted and unreadable rows
+   * are in neither; pinned and archived rows are included, because this method has no membership filter.
    */
   async persistIncognitoMarkers(params: {
     workspacePath: string;
     workspaceIdentity?: string;
     taskIds: ReadonlyArray<string>;
-  }): Promise<string[]> {
-    if (params.taskIds.length === 0) return [];
+  }): Promise<{ confirmed: string[]; written: string[] }> {
+    if (params.taskIds.length === 0) return { confirmed: [], written: [] };
     await this.ensureReady();
     const scope = {
       workspacePath: params.workspacePath,
@@ -2566,7 +2570,7 @@ export class TaskIndexRepo {
       params.taskIds.map((taskId) => this.writeChains.get(this.writeKey({ ...scope, taskId }))),
     );
     // The convergence below is synchronous on the single node:sqlite connection, so one transaction covers every id.
-    const confirmed = this.convergeTaskMetas(
+    const { confirmed, written } = this.convergeTaskMetas(
       scope,
       params.taskIds.map((taskId) => ({
         taskId,
@@ -2574,26 +2578,33 @@ export class TaskIndexRepo {
         patch: (meta) => ({ ...meta, incognito: true }),
       })),
     );
-    return Array.from(confirmed);
+    return { confirmed: Array.from(confirmed), written: Array.from(written) };
   }
 
   /**
    * Shared meta_json convergence protocol for the sessions-index overlay writers (worktree facts, incognito markers).
    * Each update targets one task row: `converged` reports that the stored meta already carries the fact, `patch`
-   * builds the replacement meta. Only meta_json changes; absent, deleted and non-object meta_json rows are skipped.
+   * builds the replacement meta. Only meta_json changes; absent, deleted, reservation-placeholder and non-object meta_json
+   * rows are skipped, so they are not confirmed and the next publish retries them.
    * A read-only pass runs first so repeated publishes never take the write lock. The write pass re-reads after
    * BEGIN IMMEDIATE: enqueueWrite only serializes writers inside this process, and another Host sharing the database
-   * can update the row between the read and the UPDATE. Returns the task ids whose row carries the fact afterwards.
+   * can update the row between the read and the UPDATE. `confirmed` holds the task ids whose row carries the fact afterwards;
+   * `written` is the subset this call's UPDATE changed (a row another Host already converged is confirmed but not written).
    */
   private convergeTaskMetas(
     scope: { workspacePath: string; workspaceIdentity?: string },
     updates: ReadonlyArray<TaskMetaConvergence>,
-  ): Set<string> {
+  ): { confirmed: Set<string>; written: Set<string> } {
     const database = this.getDatabase();
     const confirmed = new Set<string>();
+    const written = new Set<string>();
     const readMeta = (taskId: string): Record<string, unknown> | null => {
       const row = this.getTaskRow({ ...scope, taskId });
-      if (!row || row.deleted === 1) return null;
+      // Cause: a placeholder is not an admitted task yet. A fact written into its '{}' meta_json breaks the placeholder
+      // signature (the row becomes a zero-time phantom that reads and discardCreatedTaskReservation no longer hide or
+      // remove), and the admission write (applyCliFacts) then replaces the whole meta_json, erasing the fact while the
+      // Host's acknowledgement set still reports it persisted.
+      if (!row || row.deleted === 1 || isReservationPlaceholderRow(row)) return null;
       try {
         const parsed: unknown = JSON.parse(row.meta_json);
         return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
@@ -2612,7 +2623,7 @@ export class TaskIndexRepo {
       }
       return true;
     });
-    if (stale.length === 0) return confirmed;
+    if (stale.length === 0) return { confirmed, written };
 
     const write = database.prepare(
       "UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?",
@@ -2625,6 +2636,7 @@ export class TaskIndexRepo {
         if (!meta) continue;
         if (!update.converged(meta)) {
           write.run(JSON.stringify(update.patch(meta)), key, update.taskId);
+          written.add(update.taskId);
         }
         confirmed.add(update.taskId);
       }
@@ -2633,7 +2645,7 @@ export class TaskIndexRepo {
       database.exec("ROLLBACK");
       throw error;
     }
-    return confirmed;
+    return { confirmed, written };
   }
 
   /**

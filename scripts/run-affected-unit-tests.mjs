@@ -1,10 +1,20 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createVitest } from "vitest/node";
 import { git, cleanGitEnv } from "./affected-unit-tests/process.mjs";
 import { resolveScope } from "./affected-unit-tests/scope.mjs";
+
+// Node 26 enables Web Storage by default, and without --localstorage-file the global
+// `localStorage` is undefined in test workers. jsdom suites that call localStorage.clear()
+// in beforeEach then fail. scripts/run-vitest.mjs passes this flag through NODE_OPTIONS for
+// `pnpm test:unit`; this runner runs Vitest in-process, so a direct start must set it too.
+// It has to be in NODE_OPTIONS: a CLI-only flag does not reach Vitest's worker threads.
+const WEBSTORAGE_FLAG = "--no-experimental-webstorage";
+const hasWebstorageFlag = () =>
+  (process.env.NODE_OPTIONS ?? "").split(/\s+/u).includes(WEBSTORAGE_FLAG);
 
 export async function parseArgs(argv) {
   const options = {};
@@ -132,5 +142,28 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
-  process.exitCode = await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  if (hasWebstorageFlag()) process.exitCode = await main();
+  else {
+    // Re-execute with the flag so direct `node scripts/run-affected-unit-tests.mjs` matches the
+    // `pnpm test:unit` path. Exit status mirrors scripts/run-vitest.mjs: a signal counts as failure.
+    const child = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: [process.env.NODE_OPTIONS, WEBSTORAGE_FLAG].filter(Boolean).join(" "),
+        },
+      },
+    );
+    if (child.error) {
+      console.error(`[affected] 无法启动子进程：${child.error.message}`);
+      process.exitCode = 2;
+    } else if (child.signal) {
+      console.error(`[affected] 子进程被信号 ${child.signal} 终止`);
+      process.exitCode = 1;
+    } else process.exitCode = child.status ?? 1;
+  }
+}

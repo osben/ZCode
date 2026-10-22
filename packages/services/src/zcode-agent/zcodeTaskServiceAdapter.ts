@@ -2793,12 +2793,22 @@ export function createZCodeTaskServiceAdapter(
       return tasks.map(rememberIndexedTaskMeta);
     },
 
-    async persistIncognitoMarkers(params): Promise<string[]> {
-      return taskIndexRepo.persistIncognitoMarkers({
+    async persistIncognitoMarkers(params): Promise<{ confirmed: string[]; written: string[] }> {
+      const result = await taskIndexRepo.persistIncognitoMarkers({
         workspacePath: params.workspacePath,
         workspaceIdentity: params.workspaceIdentity,
         taskIds: params.taskIds,
       });
+      // The sidebar groups from persisted tasks-index facts, so a written marker must reach open lists even when no
+      // other event fires. One broadcast per call, and none for a confirm-only call: the repo writes each row once.
+      if (result.written.length > 0) {
+        emitWorkspaceTaskListChanged(
+          { workspacePath: params.workspacePath, workspaceIdentity: params.workspaceIdentity },
+          undefined,
+          "task_meta_changed",
+        );
+      }
+      return result;
     },
 
     async listPinnedTaskIds(): Promise<string[]> {

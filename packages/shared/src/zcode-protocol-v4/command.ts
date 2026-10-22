@@ -104,6 +104,10 @@ export const commandPayloadSchemas = {
       // Later user inputs in a scheduled-task session must also retain turn-scoped tool-surface isolation; do not reuse
       // automationId, which would incorrectly mark ordinary user input as an automation dispatch.
       toolDisallowlist: z.array(z.string().min(1)).optional(),
+      // Submission id of the frozen first sendText of a reserved plain submission (set by the renderer on
+      // the first attempt and every retry). Only this sendText may complete its durable preparation; a
+      // sendText without it, or with another id, never does (specs/first-submission-instant-ux.md).
+      firstSubmissionId: z.string().min(1).optional(),
     })
     .superRefine((payload, context) => {
       if (payload.automationId && payload.offPeakTaskId) {
@@ -368,6 +372,16 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.enum(["createSession", "createSelectionSideSession", "forkAssistant"]),
     sessionId: z.string(),
+    // Prepared-worktree activation outcome (createSession with preparedSessionId only). Closed
+    // enum: an unknown value fails the ACK parse instead of being stripped into a guess.
+    //  - materialized / input-pending: the frozen input is not admitted yet; the sender dispatches it.
+    //  - input-admitted: the frozen input is durably admitted under the command id the sender named
+    //    (expectedFirstInputCommandId); the sender must not resend it.
+    //  - already-active: the preparation is active, which another input can cause. It does not prove the
+    //    frozen input was admitted; the sender dispatches it unless input-admitted was returned.
+    preparedActivation: z
+      .enum(["materialized", "input-pending", "input-admitted", "already-active"])
+      .optional(),
     input: z
       .object({
         delivery: z.enum(["startNow", "queue", "guide"]),

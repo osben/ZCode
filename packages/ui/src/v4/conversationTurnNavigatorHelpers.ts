@@ -117,6 +117,59 @@ function truncatePreview(text: string, maxChars: number): string {
   return `${text.slice(0, normalizedMaxChars - 3).trimEnd()}...`;
 }
 
+/**
+ * Raw characters of the joined assistant text that a preview may scan. The preview shows at most `maxPreviewChars`
+ * normalized characters, and every rebuild of the navigator reruns this, so a long session must not normalize all of its text each time.
+ */
+const PREVIEW_SCAN_CHARS = 4_096;
+const PARAGRAPH_SEPARATOR = /\n\s*\n/u;
+
+function normalizePreviewParagraph(paragraph: string): string {
+  return paragraph.replace(/\s+/gu, " ").trim();
+}
+
+/** The first `limit` code units of `texts.join("\n\n")`, built without joining the rest. `whole` means the join fit entirely. */
+function takeJoinedPreviewPrefix(
+  texts: readonly string[],
+  limit: number,
+): { text: string; whole: boolean } {
+  let prefix = "";
+  for (const [index, text] of texts.entries()) {
+    if (index > 0) {
+      if (prefix.length + 2 > limit) return { text: prefix, whole: false };
+      prefix += "\n\n";
+    }
+    const room = limit - prefix.length;
+    if (text.length > room) return { text: prefix + text.slice(0, room), whole: false };
+    prefix += text;
+  }
+  return { text: prefix, whole: true };
+}
+
+/**
+ * Preview from a non-final prefix of the joined text, or null when the prefix cannot prove the result.
+ *
+ * Every piece except the last is terminated by a separator inside the prefix, so the separator matches are the same as in the full text.
+ * If `limit` such pieces normalize to non-empty text, the output is exactly those paragraphs.
+ * Otherwise the last piece may still grow, but its normalized text is a prefix of the full paragraph.
+ * It can then be used only when that prefix alone exceeds `maxChars`: the full output starts with it, so the truncation is unchanged.
+ */
+function buildBoundedPreviewText(
+  prefixText: string,
+  limit: number,
+  maxChars: number,
+): string | null {
+  const pieces = prefixText.split(PARAGRAPH_SEPARATOR);
+  const terminated = pieces.slice(0, -1).map(normalizePreviewParagraph).filter(Boolean);
+  if (terminated.length >= limit) {
+    return truncatePreview(terminated.slice(0, limit).join("\n"), maxChars);
+  }
+  const unterminated = normalizePreviewParagraph(pieces[pieces.length - 1] ?? "");
+  const paragraphs = unterminated ? [...terminated, unterminated] : terminated;
+  const joined = paragraphs.slice(0, limit).join("\n");
+  return joined.length > maxChars ? truncatePreview(joined, maxChars) : null;
+}
+
 function buildPreviewText({
   texts,
   fallback,
@@ -128,7 +181,22 @@ function buildPreviewText({
   maxPreviewChars: number;
   maxPreviewParagraphs: number;
 }): string {
-  const paragraphs = normalizePreviewParagraphs(texts.join("\n\n"), maxPreviewParagraphs);
+  const prefix = takeJoinedPreviewPrefix(texts, PREVIEW_SCAN_CHARS);
+  if (!prefix.whole) {
+    const bounded = buildBoundedPreviewText(
+      prefix.text,
+      Math.max(1, maxPreviewParagraphs),
+      Math.max(8, maxPreviewChars),
+    );
+    if (bounded !== null) {
+      return bounded;
+    }
+  }
+  // Short or pathological inputs (for example, a long whitespace run before the first paragraph) use the full normalization.
+  const paragraphs = normalizePreviewParagraphs(
+    prefix.whole ? prefix.text : texts.join("\n\n"),
+    maxPreviewParagraphs,
+  );
   if (paragraphs.length === 0) {
     return fallback;
   }

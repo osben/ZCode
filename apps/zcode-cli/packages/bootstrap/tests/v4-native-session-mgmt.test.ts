@@ -438,6 +438,7 @@ describe("v4 原生 createSession", () => {
     expect(result).toEqual({
       type: "createSession",
       sessionId: "s1",
+      preparedActivation: "materialized",
       input: { delivery: "startNow", inputId: "cmd-1" },
     });
     expect(withPreparedWorktreeActivation).toHaveBeenCalledWith("s1", expect.any(Function));
@@ -480,7 +481,11 @@ describe("v4 原生 createSession", () => {
         "s1",
       ),
     );
-    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "already-active",
+    });
     expect(getSessionModelSelection).not.toHaveBeenCalled();
     expect(app.sendInput).not.toHaveBeenCalled();
     expect(completePreparedWorktreeActivation).not.toHaveBeenCalled();
@@ -515,7 +520,52 @@ describe("v4 原生 createSession", () => {
         "s1",
       ),
     );
-    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
+    expect(app.sendInput).not.toHaveBeenCalled();
+    expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
+  });
+
+  it("reserved activation forwards expectedFirstInputCommandId to the Host and never re-sends on input-admitted", async () => {
+    const app = makeApp({ sendInput: vi.fn(), runtime: { getSessionModelSelection: vi.fn(() => null) } });
+    const record = makeRecord({ app });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
+    const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
+    const host = makeHost(record, {
+      createSessionRecord,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedSubmissionId: "sub-1",
+          expectedFirstInputCommandId: "cmd-frozen",
+        },
+        "s1",
+      ),
+    );
+    expect(createSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preparedSessionId: "s1",
+        expectedSubmissionId: "sub-1",
+        expectedFirstInputCommandId: "cmd-frozen",
+      }),
+    );
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
     expect(app.sendInput).not.toHaveBeenCalled();
     expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
   });
@@ -548,6 +598,7 @@ describe("v4 原生 createSession", () => {
     expect(result).toEqual({
       type: "createSession",
       sessionId: "s1",
+      preparedActivation: "input-pending",
       input: { delivery: "startNow", inputId: "cmd-1" },
     });
     expect(app.sendInput).toHaveBeenCalledTimes(1);

@@ -48,9 +48,11 @@ export type V4TurnExecution = NonNullable<CommandPayloadMap["sendText"]["modelEx
  *   the frozen first input.
  * - "input-pending": the runtime already exists and no durable admitted input receipt exists (the
  *   earlier attempt failed before admission), so the handler may admit the input exactly once.
- * - "input-admitted": the runtime and a durable admitted input receipt both exist; the handler
- *   must not re-send the input under a new command id and only completes the activation receipt.
- * - "already-active": the durable active receipt exists; nothing is applied or admitted again.
+ * - "input-admitted": the frozen input's own durable admitted receipt exists (for a reserved
+ *   submission: the row of expectedFirstInputCommandId); the handler must not re-send the input under
+ *   a new command id and only completes the activation receipt.
+ * - "already-active": the durable active receipt exists; nothing is applied or admitted by the
+ *   handler. It does not prove the frozen input was admitted; the sender decides from its own id.
  */
 export type PreparedWorktreeActivationOutcome =
   | "materialized"
@@ -306,6 +308,8 @@ export interface V4CommandCoreHost {
     preparedSessionId?: string;
     expectedAttemptId?: string;
     expectedSubmissionId?: string;
+    /** Command id of the frozen first input of a reserved submission; admission is checked by this id. */
+    expectedFirstInputCommandId?: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /**
@@ -364,8 +368,11 @@ export interface V4CommandCoreHost {
    * Complete a prepared-session activation at the first input's admission boundary: persist the
    * durable `active` receipt, evict the in-memory preparation, and republish the conversation
    * snapshot and sessions-index. Idempotent: a missing entry or a non-preparing status is a no-op.
+   * With frozenSubmissionId only that submission's own preparation completes (a sendText naming it).
+   * Without one (a sendText from a renderer that predates the field) the legacy rule completes the
+   * preparation the session is holding.
    */
-  completePreparedWorktreeActivation?(sessionId: string): Promise<void>;
+  completePreparedWorktreeActivation?(sessionId: string, frozenSubmissionId?: string): Promise<void>;
   /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */
   createSelectionSideSession?(
     sessionId: string,

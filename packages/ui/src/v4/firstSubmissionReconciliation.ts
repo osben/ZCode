@@ -94,14 +94,14 @@ export function useFirstSubmissionReconciliation({
   }, []);
   const [settled, setSettled] = useState(0);
   useEffect(() => {
-    if (!enabled || !sessionId || !submissionId || !commandId) return;
+    if (!enabled || !sessionId || !submissionId) return;
     if (active || !snapshotLive) return;
     if (status !== "sending" && status !== "unknown") return;
     // `report` only for identity-backed decisions (this command's query result or its own row):
     // registry listeners such as a Remove hold or the ledger clear the user's text on "accepted".
     const apply = (next: Extract<FirstSubmissionStatus, "sending" | "failed">, report: boolean) => {
       attemptRef.current = { factsKey, revision: hostRevision, decided: true };
-      if (report)
+      if (report && commandId)
         pendingCommandRegistry.reportReconciledResolution(
           commandId,
           next === "sending" ? "accepted" : "failed",
@@ -125,13 +125,16 @@ export function useFirstSubmissionReconciliation({
     if (attempt?.factsKey === factsKey && attempt.decided) return;
     // A record is cleared by the pane's reconcile predicate (fresh-session fallback included).
     if (realRowProjected && !held) return;
-    // The Host marks a reserved submission's preparation active when a sendText executes. Known
-    // limitation: the bridge does so for any sendText, so this is not identity evidence — it only
-    // keeps a record synchronizing and never decides a held copy (spec: CLI follow-up).
-    if (!held && markerProvesAdmission && !hostPreparing) {
-      apply("sending", false);
+    // A record without an id has nothing to query: only the reserved marker can reconcile it, and
+    // that is not identity evidence (it keeps the record synchronizing, never decides a held copy).
+    if (!commandId) {
+      if (!held && markerProvesAdmission && !hostPreparing) apply("sending", false);
       return;
     }
+    // Ask the ledger about this record's own id before consulting the marker. The bridge sets the
+    // marker for a sendText that names this submission, and for a legacy sendText with no field from
+    // a renderer that predates it (spec: Owner of the frozen input). A foreign legacy sendText can set
+    // it too, so an active marker cannot prove that this id was admitted.
     if (inFlightRef.current === factsKey) return;
     if (attempt?.factsKey === factsKey && attempt.revision === hostRevision) return;
     inFlightRef.current = factsKey;
@@ -150,16 +153,15 @@ export function useFirstSubmissionReconciliation({
         }
         const item = result.results.find((entry) => entry.key.commandId === commandId);
         const next = decideFirstSubmissionFromQuery(item?.result);
-        // For a reserved submission whose marker already flipped, a query "unknown" is no evidence
-        // either way (another input may have flipped it, and a CLI restart forgets accepted
-        // commands): keep holding. Worktree markers never carry this signal (spec: residual risk).
-        const undecided =
-          !next ||
-          (next === "failed" &&
-            item?.result === "unknown" &&
-            markerProvesAdmission &&
-            !hostPreparing);
-        if (!undecided) apply(next, true);
+        // "unknown" is no evidence for this id (a CLI restart forgets accepted commands). A reserved
+        // record whose marker flipped takes the marker decision, unreported. A held copy of such a
+        // record stays held. Worktree markers never carry this signal (spec: residual risk).
+        const markerDecides = item?.result === "unknown" && markerProvesAdmission && !hostPreparing;
+        const undecided = !next || (markerDecides && held);
+        if (!undecided) {
+          if (markerDecides) apply("sending", false);
+          else apply(next, true);
+        }
         finish(!undecided);
       },
       (error: unknown) => {

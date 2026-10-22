@@ -1,4 +1,8 @@
-import { TID_TASK_DELETE, TID_V4_TASK_OPEN_IN_SPLIT } from "@zcode/shared/test-ids";
+import {
+  TID_TASK_DELETE,
+  TID_TASK_VIEW_MODEL_TRAJECTORY,
+  TID_V4_TASK_OPEN_IN_SPLIT,
+} from "@zcode/shared/test-ids";
 
 interface TaskActionMenuItemProps {
   children: React.ReactNode;
@@ -230,6 +234,7 @@ export function TaskActionMenuContent({
           {/* 调用轨迹查看：从 ~/.zcode/cli 的 model-io 还原该 task 的模型请求/响应/工具调用，
               在右侧边栏可视化。只依赖 taskId（即 sessionId），不依赖快照文件是否落盘。 */}
           <Item
+            data-testid={TID_TASK_VIEW_MODEL_TRAJECTORY}
             disabled={taskTargetActionsDisabled || !activeSessionId}
             title={taskTargetActionsDisabled ? disabledReason : undefined}
             onSelect={onViewModelTrajectory}
