@@ -5,8 +5,22 @@ import type {
   ZCodeTrajectoryV2Record,
   ZCodeTrajectoryV2ToolTiming,
 } from "../contract.js";
+import {
+  classifyToolCall,
+  collectMemoryRoots,
+  findContextInjections,
+  memorySidecarOf,
+  type ContextInjectionSource,
+  type ToolCategoryInfo,
+} from "./eventCategories.js";
 
-export type LedgerMarker = "compact" | "context-reset" | "window-truncated" | "retry";
+export type LedgerMarker =
+  | "compact"
+  | "context-reset"
+  | "window-truncated"
+  | "retry"
+  | "memory-recall-selection"
+  | "memory-dream";
 
 interface RowBase {
   key: string;
@@ -41,8 +55,22 @@ export type LedgerRow =
       input: unknown;
       result?: { output: unknown; isError: boolean };
       timing?: ZCodeTrajectoryV2ToolTiming;
+      category?: ToolCategoryInfo;
     })
-  | (RowBase & { kind: "marker"; marker: LedgerMarker; recordIndex?: number });
+  | (RowBase & {
+      kind: "context";
+      recordIndex: number;
+      source: ContextInjectionSource;
+      files: string[];
+      text: string;
+    })
+  | (RowBase & {
+      kind: "marker";
+      marker: LedgerMarker;
+      recordIndex?: number;
+      /** Memory writes made by a dream sidecar call. */
+      memoryWrites?: number;
+    });
 
 export type LedgerRowKind = LedgerRow["kind"];
 
@@ -76,7 +104,7 @@ function partText(parts: readonly ZCodeModelTrajectoryContentPart[]): string {
 
 /** Tool results by call id across every record's input (deltas carry each result once). */
 function collectToolResults(records: readonly ZCodeTrajectoryV2Record[]) {
-  const results = new Map<string, { output: unknown; isError: boolean }>();
+  const results = new Map<string, { output: unknown; isError: boolean; truncatedBytes?: number }>();
   for (const record of records) {
     for (const message of record.request.messages) {
       for (const part of message.parts) {
@@ -87,7 +115,12 @@ function collectToolResults(records: readonly ZCodeTrajectoryV2Record[]) {
           typeof output === "object" &&
           output !== null &&
           (output as { type?: unknown }).type === "error-text";
-        results.set(part.toolCallId, { output, isError });
+        const truncatedBytes = part.truncated?.originalBytes;
+        results.set(part.toolCallId, {
+          output,
+          isError,
+          ...(truncatedBytes !== undefined ? { truncatedBytes } : {}),
+        });
       }
     }
   }
@@ -115,6 +148,14 @@ export function buildLedgerRows(
   const rows: LedgerRow[] = [];
   const results = collectToolResults(trajectory.records);
   const timings = new Map(trajectory.toolTiming.entries.map((entry) => [entry.toolCallId, entry]));
+  const memoryRoots = collectMemoryRoots(trajectory.records);
+  const categorize = (toolName: string, args: unknown, toolCallId?: string) =>
+    classifyToolCall({
+      toolName,
+      args,
+      memoryRoots,
+      ...(toolCallId && results.has(toolCallId) ? { result: results.get(toolCallId) } : {}),
+    });
   let lastTurnId: string | undefined;
   let seenMain = false;
 
@@ -145,6 +186,24 @@ export function buildLedgerRows(
         t1,
       });
       return;
+    }
+    // Memory sidecars are shown even when sidecars are hidden (spec "Event categories", rule 41).
+    const memorySidecar = memorySidecarOf(record);
+    if (memorySidecar) {
+      const memoryWrites = (record.response?.toolCalls ?? []).filter(
+        (part) =>
+          part.kind === "tool-call" &&
+          categorize(part.toolName, part.input)?.memory?.op === "write",
+      ).length;
+      rows.push({
+        kind: "marker",
+        marker: memorySidecar === "dream" ? "memory-dream" : "memory-recall-selection",
+        key: `marker:memory:${id}`,
+        recordIndex,
+        t0,
+        t1,
+        ...(memorySidecar === "dream" ? { memoryWrites } : {}),
+      });
     }
     if (kind !== "main" && !options.showSidecars) return;
 
@@ -194,6 +253,18 @@ export function buildLedgerRows(
           t1: t0,
         });
       }
+      findContextInjections(entries.map((entry) => entry.message)).forEach((injection, index) => {
+        rows.push({
+          kind: "context",
+          recordIndex,
+          source: injection.source,
+          files: injection.files,
+          text: injection.text,
+          key: `ctx:${id}:${index}`,
+          t0,
+          t1: t0,
+        });
+      });
     }
 
     const response = record.response;
@@ -218,7 +289,9 @@ export function buildLedgerRows(
       const toolCallId = part.toolCallId ?? `${id}:${part.toolName}`;
       const timing = part.toolCallId ? timings.get(part.toolCallId) : undefined;
       const start = timing?.execStartedAt ?? timing?.scheduledAt ?? t1;
-      const result = part.toolCallId ? results.get(part.toolCallId) : undefined;
+      const stored = part.toolCallId ? results.get(part.toolCallId) : undefined;
+      const result = stored ? { output: stored.output, isError: stored.isError } : undefined;
+      const category = categorize(part.toolName, part.input, part.toolCallId);
       rows.push({
         kind: "tool",
         recordIndex,
@@ -230,6 +303,7 @@ export function buildLedgerRows(
         t1: timing?.execEndedAt ?? start,
         ...(result ? { result } : {}),
         ...(timing ? { timing } : {}),
+        ...(category ? { category } : {}),
       });
     }
   });

@@ -9,6 +9,7 @@ import type { ModelTrajectoryV2PaneProps } from "../contract.js";
 import { useModelTrajectoryV2 } from "../app/useModelTrajectoryV2.js";
 import { useElementWidth, useTrajectoryV2Prefs } from "../app/useTrajectoryV2Prefs.js";
 import { useTrajectoryV2Model } from "../app/useTrajectoryV2Model.js";
+import { TrajectoryCategoryChips, TrajectoryCategorySummary } from "./TrajectoryCategories.js";
 import { TrajectoryContextChart } from "./TrajectoryContextChart.js";
 import { TrajectoryInspector } from "./TrajectoryInspector.js";
 import { TrajectoryLedger } from "./TrajectoryLedger.js";
@@ -123,6 +124,7 @@ export function ModelTrajectoryV2Pane({
           ) : null}
         </div>
         {hasRecords ? <TrajectorySummaryLine model={model} intl={intl} /> : null}
+        {hasRecords ? <TrajectoryCategorySummary model={model} intl={intl} /> : null}
         {load.status === "error" && load.data ? (
           <p className="text-ui-xs text-destructive" data-trajectory-v2-error="">
             {t("modelTrajectoryV2.refreshFailed", { message: load.error ?? "" })}
@@ -154,6 +156,7 @@ export function ModelTrajectoryV2Pane({
               <TrajectoryToolTimeChart model={model} intl={intl} />
             </div>
           ) : null}
+          <TrajectoryCategoryChips model={model} intl={intl} />
           <TrajectoryV2Layout
             layout={layout}
             model={model}

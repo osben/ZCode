@@ -10,7 +10,9 @@ import {
   requestFacts,
   type RequestChange,
 } from "../domain/requestDiff.js";
+import { rowCategory } from "../domain/categorySummary.js";
 import { tr, type TrajectoryIntl } from "./intl.js";
+import { CategoryBadge, CategoryRowBody } from "./TrajectoryCategories.js";
 
 const KIND_STYLES: Record<string, { label: string; className: string }> = {
   user: { label: "modelTrajectoryV2.kind.user", className: "text-trajectory-user/80" },
@@ -113,9 +115,13 @@ function rowBody(row: LedgerRow, model: TrajectoryV2Model, intl: TrajectoryIntl)
     case "marker":
       return (
         <span className="text-ui-xs text-foreground-subtle italic">
-          {tr(intl, `modelTrajectoryV2.marker.${row.marker}`)}
+          {tr(intl, `modelTrajectoryV2.marker.${row.marker}`, {
+            writes: String(row.memoryWrites ?? 0),
+          })}
         </span>
       );
+    case "context":
+      return <CategoryRowBody row={row} intl={intl} />;
     case "request":
       return <RequestRow row={row} model={model} intl={intl} />;
     case "user":
@@ -135,6 +141,7 @@ function rowBody(row: LedgerRow, model: TrajectoryV2Model, intl: TrajectoryIntl)
         </span>
       );
     case "tool":
+      if (row.category) return <CategoryRowBody row={row} intl={intl} />;
       return (
         <span className="flex min-w-0 items-baseline gap-1.5 font-mono text-ui-sm">
           <span className="shrink-0 text-foreground">{row.toolName}</span>
@@ -178,7 +185,8 @@ export const TrajectoryLedgerRow = memo(function TrajectoryLedgerRow({
   selected: boolean;
   onSelect: (key: string) => void;
 }) {
-  const style = KIND_STYLES[row.kind];
+  const category = rowCategory(row);
+  const style = category ? undefined : KIND_STYLES[row.kind];
   const selectable = row.kind !== "turn";
   return (
     <div
@@ -187,6 +195,7 @@ export const TrajectoryLedgerRow = memo(function TrajectoryLedgerRow({
       aria-selected={selectable ? selected : undefined}
       data-trajectory-v2-row-kind={row.kind}
       data-trajectory-v2-row-key={row.key}
+      data-trajectory-v2-category={category}
       data-trajectory-v2-selected={selected ? "true" : undefined}
       onClick={selectable ? () => onSelect(row.key) : undefined}
       className={cn(
@@ -197,6 +206,7 @@ export const TrajectoryLedgerRow = memo(function TrajectoryLedgerRow({
         selected && "bg-accent",
       )}
     >
+      {category && row.kind !== "marker" ? <CategoryBadge category={category} intl={intl} /> : null}
       {style ? (
         <span className={cn("w-16 shrink-0 text-ui-xs font-medium uppercase", style.className)}>
           {tr(intl, style.label)}

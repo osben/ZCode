@@ -25,6 +25,7 @@ import {
   type TimeDomain,
 } from "../domain/timeScale.js";
 import { tr, type TrajectoryIntl } from "./intl.js";
+import { CATEGORY_STYLES } from "./TrajectoryCategories.js";
 
 const LANE_LABEL_WIDTH = 48;
 const SUB_ROW_HEIGHT = 8;
@@ -34,6 +35,8 @@ const DRAG_THRESHOLD_PX = 3;
 interface Lanes {
   model: ReturnType<typeof packLane>;
   tools: ReturnType<typeof packLane>;
+  memory: ReturnType<typeof packLane>;
+  hasMemory: boolean;
 }
 
 function buildLanes(
@@ -42,6 +45,7 @@ function buildLanes(
 ): Lanes {
   const modelSpans: LaneSpan[] = [];
   const toolSpans: LaneSpan[] = [];
+  const memorySpans: LaneSpan[] = [];
   for (const row of rows) {
     if (row.kind === "request") {
       const record = records[row.recordIndex];
@@ -54,10 +58,26 @@ function buildLanes(
         isError: Boolean(record?.error),
       });
     } else if (row.kind === "tool" && row.t1 > row.t0) {
-      toolSpans.push({ key: row.key, start: row.t0, end: row.t1, isError: row.result?.isError });
+      toolSpans.push({
+        key: row.key,
+        start: row.t0,
+        end: row.t1,
+        isError: row.result?.isError,
+        ...(row.category ? { category: row.category.category } : {}),
+      });
+    } else if (
+      row.kind === "marker" &&
+      (row.marker === "memory-dream" || row.marker === "memory-recall-selection")
+    ) {
+      memorySpans.push({ key: row.key, start: row.t0, end: row.t1, category: "memory" });
     }
   }
-  return { model: packLane(modelSpans), tools: packLane(toolSpans) };
+  return {
+    model: packLane(modelSpans),
+    tools: packLane(toolSpans),
+    memory: packLane(memorySpans),
+    hasMemory: memorySpans.length > 0,
+  };
 }
 
 function laneHeight(rows: number): number {
@@ -135,7 +155,9 @@ export function TrajectoryOverviewStrip({
   if (!domain || !bounds) return null;
   const modelHeight = laneHeight(lanes.model.rows);
   const toolsHeight = laneHeight(lanes.tools.rows);
-  const height = modelHeight + toolsHeight + 16;
+  const memoryHeight = lanes.hasMemory ? laneHeight(lanes.memory.rows) : 0;
+  const lanesHeight = modelHeight + toolsHeight + memoryHeight;
+  const height = lanesHeight + 16;
   const rangeX = model.range
     ? { from: timeToX(model.range.from, domain, width), to: timeToX(model.range.to, domain, width) }
     : null;
@@ -150,7 +172,12 @@ export function TrajectoryOverviewStrip({
       const x1 = Math.max(x0 + 2, timeToX(span.end, domain, width));
       const y = top + SUB_ROW_GAP + span.subRow * (SUB_ROW_HEIGHT + SUB_ROW_GAP);
       const selected = span.key === model.selectedKey;
-      const color = kind === "model" ? "fill-trajectory-assistant" : "fill-trajectory-tool-call";
+      const color =
+        kind === "model"
+          ? "fill-trajectory-assistant"
+          : span.category
+            ? CATEGORY_STYLES[span.category].fill
+            : "fill-trajectory-tool-call";
       const ttftX =
         span.firstTokenAt !== undefined ? timeToX(span.firstTokenAt, domain, width) : undefined;
       return (
@@ -227,6 +254,11 @@ export function TrajectoryOverviewStrip({
           <div style={{ height: toolsHeight }} className="flex items-center">
             {tr(intl, "modelTrajectoryV2.strip.tools")}
           </div>
+          {lanes.hasMemory ? (
+            <div style={{ height: memoryHeight }} className="flex items-center">
+              {tr(intl, "modelTrajectoryV2.strip.memory")}
+            </div>
+          ) : null}
         </div>
         <svg
           ref={svgRef}
@@ -255,6 +287,18 @@ export function TrajectoryOverviewStrip({
           />
           {renderLane(lanes.model, 0, "model")}
           {renderLane(lanes.tools, modelHeight, "tool")}
+          {lanes.hasMemory ? (
+            <g data-trajectory-v2-memory-lane="">
+              <rect
+                x={0}
+                y={modelHeight + toolsHeight}
+                width={width}
+                height={memoryHeight}
+                className="fill-surface/40"
+              />
+              {renderLane(lanes.memory, modelHeight + toolsHeight, "tool")}
+            </g>
+          ) : null}
           {tickTimes.map((time) => {
             const x = timeToX(time, domain, width);
             return (
@@ -263,7 +307,7 @@ export function TrajectoryOverviewStrip({
                   x1={x}
                   x2={x}
                   y1={0}
-                  y2={modelHeight + toolsHeight}
+                  y2={lanesHeight}
                   className="stroke-border"
                   strokeDasharray="2 3"
                 />
@@ -278,7 +322,7 @@ export function TrajectoryOverviewStrip({
               x={rangeX.from}
               y={0}
               width={Math.max(1, rangeX.to - rangeX.from)}
-              height={modelHeight + toolsHeight}
+              height={lanesHeight}
               className="fill-accent/25 stroke-ring"
             />
           ) : null}
@@ -287,7 +331,7 @@ export function TrajectoryOverviewStrip({
               x={dragX.from}
               y={0}
               width={dragX.to - dragX.from}
-              height={modelHeight + toolsHeight}
+              height={lanesHeight}
               className="fill-accent/20"
             />
           ) : null}

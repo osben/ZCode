@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ZCodeModelTrajectoryV2 } from "../contract.js";
+import { filterRowsByCategory, summarizeCategories } from "../domain/categorySummary.js";
+import type { EventCategory } from "../domain/eventCategories.js";
 import { buildLedgerRows, filterRowsByRange, type LedgerRow } from "../domain/ledger.js";
 import { contextSeries, summarizeTrajectory, toolTimeByName } from "../domain/metrics.js";
 import { domainOf, type TimeDomain } from "../domain/timeScale.js";
@@ -33,6 +35,7 @@ export function useTrajectoryV2Model(data: ZCodeModelTrajectoryV2 | null, showSi
   const summary = useMemo(() => summarizeTrajectory(trajectory), [trajectory]);
   const toolTimes = useMemo(() => toolTimeByName(trajectory), [trajectory]);
   const context = useMemo(() => contextSeries(trajectory), [trajectory]);
+  const categories = useMemo(() => summarizeCategories(trajectory, rows), [trajectory, rows]);
   const extent = useMemo(
     () =>
       domainOf(
@@ -43,13 +46,18 @@ export function useTrajectoryV2Model(data: ZCodeModelTrajectoryV2 | null, showSi
 
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [range, setRange] = useState<TimeDomain | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<EventCategory | null>(null);
 
   useEffect(() => {
     setSelectedKey((key) => reconcileSelection(key, rows));
     setRange((current) => reconcileRange(current, extent));
   }, [rows, extent]);
 
-  const visibleRows = useMemo(() => filterRowsByRange(rows, range), [rows, range]);
+  // The category filter is ANDed with the time range (spec rule 43).
+  const visibleRows = useMemo(
+    () => filterRowsByCategory(filterRowsByRange(rows, range), categoryFilter),
+    [rows, range, categoryFilter],
+  );
   const selectedRow = useMemo<LedgerRow | null>(
     () => rows.find((row) => row.key === selectedKey) ?? null,
     [rows, selectedKey],
@@ -66,6 +74,9 @@ export function useTrajectoryV2Model(data: ZCodeModelTrajectoryV2 | null, showSi
     summary,
     toolTimes,
     context,
+    categories,
+    categoryFilter,
+    setCategoryFilter,
     extent,
     selectedKey,
     selectedRow,

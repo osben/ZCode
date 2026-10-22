@@ -112,6 +112,16 @@ export function RowSummary({ row, model, intl }: { row: LedgerRow } & Sections) 
       ],
     );
   }
+  if (row.kind === "tool" && row.category) items.push(...categoryFields(row, intl));
+  if (row.kind === "context") {
+    items.push(
+      [
+        tr(intl, "modelTrajectoryV2.field.source"),
+        tr(intl, `modelTrajectoryV2.context.${row.source}`, { count: String(row.files.length) }),
+      ],
+      [tr(intl, "modelTrajectoryV2.field.files"), row.files.join("\n") || "—"],
+    );
+  }
   if (row.kind === "marker")
     items.push([
       tr(intl, "modelTrajectoryV2.field.marker"),
@@ -123,6 +133,33 @@ export function RowSummary({ row, model, intl }: { row: LedgerRow } & Sections) 
       <span className="text-destructive">{record.error.message}</span>,
     ]);
   return <Fields items={items} />;
+}
+
+function categoryFields(row: RowOf<"tool">, intl: TrajectoryIntl): [string, ReactNode][] {
+  const { skill, mcp, memory } = row.category ?? {};
+  if (skill) {
+    return [
+      [tr(intl, "modelTrajectoryV2.field.skill"), skill.name],
+      [tr(intl, "modelTrajectoryV2.field.skillArgs"), skill.args],
+      [tr(intl, "modelTrajectoryV2.field.loaded"), formatBytes(skill.loadedBytes)],
+    ];
+  }
+  if (mcp) {
+    return [
+      [tr(intl, "modelTrajectoryV2.field.mcpServer"), mcp.server],
+      [tr(intl, "modelTrajectoryV2.field.mcpTool"), mcp.tool],
+    ];
+  }
+  if (memory) {
+    return [
+      [
+        tr(intl, "modelTrajectoryV2.field.memoryOp"),
+        tr(intl, `modelTrajectoryV2.memory.${memory.op}`),
+      ],
+      [tr(intl, "modelTrajectoryV2.field.memoryPath"), memory.path],
+    ];
+  }
+  return [];
 }
 
 export function RowTiming({ row, model, intl }: { row: LedgerRow } & Sections) {
@@ -314,7 +351,7 @@ export function ToolPayload({ row }: { row: RowOf<"tool"> }) {
   return <Pre text={prettyPayload(row.input)} />;
 }
 
-export function UserPayload({ row }: { row: RowOf<"user"> }) {
+export function UserPayload({ row }: { row: RowOf<"user"> | RowOf<"context"> }) {
   return <Pre text={row.text} />;
 }
 

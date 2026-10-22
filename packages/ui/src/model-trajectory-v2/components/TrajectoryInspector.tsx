@@ -26,6 +26,7 @@ export function inspectorTabs(row: LedgerRow): InspectorTab[] {
     case "assistant":
       return ["summary", "result", "timing"];
     case "user":
+    case "context":
       return ["summary", "payload"];
     default:
       return ["summary"];
@@ -46,7 +47,7 @@ function tabContent(
     case "payload":
       if (row.kind === "request") return <RequestPayload row={row} model={model} intl={intl} />;
       if (row.kind === "tool") return <ToolPayload row={row} />;
-      if (row.kind === "user") return <UserPayload row={row} />;
+      if (row.kind === "user" || row.kind === "context") return <UserPayload row={row} />;
       return null;
     case "result":
       if (row.kind === "tool") return <ToolResult row={row} intl={intl} />;

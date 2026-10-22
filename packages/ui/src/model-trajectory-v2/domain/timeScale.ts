@@ -10,6 +10,8 @@ export interface LaneSpan {
   /** TTFT end for model spans; spans without it draw solid. */
   firstTokenAt?: number;
   isError?: boolean;
+  /** Skill, memory or MCP category of a tool span (spec rule 44). */
+  category?: "skill" | "memory" | "mcp";
 }
 
 export interface PackedSpan extends LaneSpan {
