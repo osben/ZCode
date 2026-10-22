@@ -1246,3 +1246,5 @@ export interface TaskStreamWatermark {
   runId: string;
   opSeq: number;
 }
+
+// CI probe: full affected run on the integration baseline.
