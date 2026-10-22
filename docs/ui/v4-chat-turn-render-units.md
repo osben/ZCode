@@ -115,6 +115,14 @@ model A completed
 - explore / agent / subagent 工具内部已经有自己的折叠和聚合语义，虚拟滚动不能进入这些聚合内部。
 - history collapsed 状态需要按 turn / assistant work key 记忆，不能按 transient row index 记忆。
 
+### 渲染性能规则
+
+- 运行中的时钟（`nowMs`）只属于仍在运行的 turn：每秒 tick 只允许重渲染运行中的 live turn。历史（非运行）turn 不接收随 tick 变化的 `nowMs` 或 unit 对象，`ConversationTurnGroup` 的 memo 必须对它们生效。
+- 同一 `turnId` 的 unit 对象身份在以下情况保持不变：其 `turnHeader`、`orderedRows` 元素引用、session phase、末轮位置与插件卡片 pin 结果均未变化。未变化的 turn 不得因为其他 turn 的 row 增量、或 tick 而得到新对象。
+- Highspeed output footer 依赖 `nowMs` 的过期判定，仍由 builder 每次重算；只有标记真正变化时才产生新对象。
+- 运行中的 turn 不进入 unit 缓存，因为其耗时依赖 `nowMs`。
+- 验收：`packages/ui/test/v4ConversationTurnRenderUnits.test.ts`（unit 引用稳定）与 `packages/ui/test/v4ConversationTimelineHistoricTurnStability.test.ts`（3 个历史 turn + 1 个运行 turn，推进 3 秒，历史组渲染次数不变）。
+
 ## Explore 聚合与 reasoning 可见性
 
 Explore 是 assistant work 的 UI 聚合视图，不改变 `ConversationRow[]` 的原始顺序。聚合边界必须与当前消息流的 reasoning 可见性一致：

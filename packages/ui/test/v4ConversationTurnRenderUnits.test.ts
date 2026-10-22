@@ -12,6 +12,7 @@ import type {
 } from "@zcode/shared/zcode-protocol-v4";
 import {
   buildConversationTurnRenderUnits,
+  createConversationTurnRenderUnitCache,
   resolveNextHighspeedExpiryMs,
 } from "@/v4/conversationTurnRenderUnits.js";
 import { resolveAssistantCopyText } from "@/v4/ConversationTurnRow.js";
@@ -1056,5 +1057,50 @@ describe("buildConversationTurnRenderUnits", () => {
     expect(unit?.assistantTailRows.map((row) => row.rowId)).toEqual([6]);
     expect(unit?.workSegments?.[0]?.assistantHistoryRows.map((row) => row.rowId)).toEqual([3, 4]);
     expect(unit?.workSegments?.[0]?.assistantHistoryDefaultOpen).toBe(false);
+  });
+});
+
+describe("buildConversationTurnRenderUnits unit identity across ticks", () => {
+  const rows: ConversationRow[] = [
+    turnHeader(1, { turnId: "turn-a" }),
+    userInput(2, "first", { turnId: "turn-a" }),
+    assistantText(3, "first done", { turnId: "turn-a" }),
+    turnHeader(4, { turnId: "turn-b" }),
+    userInput(5, "second", { turnId: "turn-b" }),
+    assistantText(6, "second done", { turnId: "turn-b" }),
+    turnHeader(7, { turnId: "turn-live", state: "running", activeMs: undefined, startedAt: 9_000 }),
+    userInput(8, "live", { turnId: "turn-live" }),
+  ];
+
+  function unitFor(units: readonly { turnId: string }[], turnId: string) {
+    return units.find((unit) => unit.turnId === turnId);
+  }
+
+  it("keeps historic unit objects stable across clock ticks while the live unit updates", () => {
+    const cache = createConversationTurnRenderUnitCache();
+    const first = buildConversationTurnRenderUnits(rows, { nowMs: 10_000, cache });
+    const second = buildConversationTurnRenderUnits(rows, { nowMs: 13_000, cache });
+
+    expect(second).toEqual(buildConversationTurnRenderUnits(rows, { nowMs: 13_000 }));
+    expect(unitFor(second, "turn-a")).toBe(unitFor(first, "turn-a"));
+    expect(unitFor(second, "turn-b")).toBe(unitFor(first, "turn-b"));
+    expect(unitFor(second, "turn-live")).not.toBe(unitFor(first, "turn-live"));
+    expect(unitFor(second, "turn-live")?.isRunning).toBe(true);
+    expect(unitFor(second, "turn-live")?.workStatus?.durationMs).toBe(4_000);
+  });
+
+  it("reuses unchanged turns when only another turn's rows change", () => {
+    const cache = createConversationTurnRenderUnitCache();
+    const first = buildConversationTurnRenderUnits(rows, { nowMs: 10_000, cache });
+    const nextRows = rows.map((row) =>
+      row.rowId === 6 ? assistantText(6, "second done, edited", { turnId: "turn-b" }) : row,
+    );
+    const second = buildConversationTurnRenderUnits(nextRows, { nowMs: 10_000, cache });
+
+    expect(unitFor(second, "turn-a")).toBe(unitFor(first, "turn-a"));
+    expect(unitFor(second, "turn-b")).not.toBe(unitFor(first, "turn-b"));
+    expect(unitFor(second, "turn-b")?.assistantTextRows.map((row) => row.text)).toEqual([
+      "second done, edited",
+    ]);
   });
 });

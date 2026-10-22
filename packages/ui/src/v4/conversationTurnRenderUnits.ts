@@ -1,10 +1,13 @@
 import type {
   ConversationTurnRenderUnit,
   BuildConversationTurnRenderUnitsOptions,
+  ConversationTurnRenderUnitCache,
+  ConversationTurnRenderUnitCacheEntry,
 } from "@/v4/conversationTurnRenderUnitTypes.js";
 export type {
   ConversationTurnRenderUnit,
   BuildConversationTurnRenderUnitsOptions,
+  ConversationTurnRenderUnitCache,
 } from "@/v4/conversationTurnRenderUnitTypes.js";
 import type {
   AssistantTextRow,
@@ -391,6 +394,122 @@ function normalizeRenderUnitPosition(
   };
 }
 
+export function createConversationTurnRenderUnitCache(): ConversationTurnRenderUnitCache {
+  return { entries: new Map() };
+}
+
+interface MaterializedDraftSlot {
+  unit: ConversationTurnRenderUnit;
+  /** Present only for non-running turns when a cache is supplied; running turns depend on nowMs and are never reused. */
+  entry?: ConversationTurnRenderUnitCacheEntry;
+}
+
+/**
+ * Plugin pin results are derived from the whole window (other turns can change a row's disposition), so the
+ * turn's cache key is the resolved value for its plugin rows, not the resolver closure identity.
+ */
+function resolvePinSignature(
+  orderedRows: readonly ConversationRow[],
+  resolver: BuildConversationTurnRenderUnitsOptions["pluginUiPinResolver"],
+): string {
+  if (!resolver) return "";
+  const parts: string[] = [];
+  for (const row of orderedRows) {
+    if (row.kind !== "toolCall") continue;
+    const display = row.display;
+    if (display?.kind !== "mcp_tool" || display.ui === undefined) continue;
+    parts.push(`${row.toolCallId}:${JSON.stringify(resolver(row.toolCallId) ?? null)}`);
+  }
+  return parts.join("\n");
+}
+
+function isSameDraftInputs(
+  entry: ConversationTurnRenderUnitCacheEntry,
+  draft: DraftTurnRenderUnit,
+  isLastDraft: boolean,
+  sessionPhase: BuildConversationTurnRenderUnitsOptions["sessionPhase"],
+  pinSignature: string,
+): boolean {
+  if (
+    entry.header !== draft.header ||
+    entry.sessionPhase !== sessionPhase ||
+    entry.isLastDraft !== isLastDraft ||
+    entry.pinSignature !== pinSignature ||
+    entry.orderedRows.length !== draft.orderedRows.length
+  ) {
+    return false;
+  }
+  return entry.orderedRows.every((row, index) => row === draft.orderedRows[index]);
+}
+
+function materializeCachedDraftUnit(
+  draft: DraftTurnRenderUnit,
+  index: number,
+  total: number,
+  options: BuildConversationTurnRenderUnitsOptions,
+  previous: ConversationTurnRenderUnitCacheEntry | undefined,
+): MaterializedDraftSlot {
+  const isLastDraft = index === total - 1;
+  const pinSignature = resolvePinSignature(draft.orderedRows, options.pluginUiPinResolver);
+  if (
+    previous &&
+    isSameDraftInputs(previous, draft, isLastDraft, options.sessionPhase, pinSignature)
+  ) {
+    return { unit: previous.materialized, entry: previous };
+  }
+  const unit = materializeDraftUnit(draft, index, total, options);
+  if (!options.cache || unit.isRunning) return { unit };
+  return {
+    unit,
+    entry: {
+      header: draft.header,
+      orderedRows: draft.orderedRows,
+      sessionPhase: options.sessionPhase,
+      isLastDraft,
+      pinSignature,
+      materialized: unit,
+    },
+  };
+}
+
+function normalizeCachedUnit(
+  slot: MaterializedDraftSlot,
+  index: number,
+  total: number,
+  options: BuildConversationTurnRenderUnitsOptions,
+): ConversationTurnRenderUnit {
+  const isLast = index === total - 1;
+  const entry = slot.entry;
+  if (!entry) return normalizeRenderUnitPosition(slot.unit, index, total, options);
+  if (entry.normalized?.source === slot.unit && entry.normalized.isLast === isLast) {
+    return entry.normalized.unit;
+  }
+  const unit = normalizeRenderUnitPosition(slot.unit, index, total, options);
+  entry.normalized = { source: slot.unit, isLast, unit };
+  return unit;
+}
+
+function isSameFooterMark(a: ConversationTurnRenderUnit, b: ConversationTurnRenderUnit): boolean {
+  return (
+    a.showHighspeedOutputFooter === b.showHighspeedOutputFooter &&
+    JSON.stringify(a.highspeedOutputFooterTarget ?? null) ===
+      JSON.stringify(b.highspeedOutputFooterTarget ?? null)
+  );
+}
+
+/** The footer pass rebuilds a target object on every call; keep the previous object while the mark is unchanged. */
+function reuseFooterMarkedUnit(
+  slot: MaterializedDraftSlot,
+  base: ConversationTurnRenderUnit,
+  marked: ConversationTurnRenderUnit,
+): ConversationTurnRenderUnit {
+  if (marked === base || !slot.entry) return marked;
+  const previous = slot.entry.footer;
+  if (previous?.base === base && isSameFooterMark(previous.unit, marked)) return previous.unit;
+  slot.entry.footer = { base, unit: marked };
+  return marked;
+}
+
 export function buildConversationTurnRenderUnits(
   rows: readonly ConversationRow[],
   options: BuildConversationTurnRenderUnitsOptions = {},
@@ -427,12 +546,26 @@ export function buildConversationTurnRenderUnits(
     unit.assistantWorkRows.push(row);
   }
 
-  const materializedUnits = units.map((unit, index) =>
-    materializeDraftUnit(unit, index, units.length, options),
+  const previousEntries = options.cache?.entries;
+  const nextEntries = new Map<string, ConversationTurnRenderUnitCacheEntry>();
+  const materializedSlots = units.map((unit, index) => {
+    const slot = materializeCachedDraftUnit(
+      unit,
+      index,
+      units.length,
+      options,
+      previousEntries?.get(unit.turnId),
+    );
+    if (slot.entry) nextEntries.set(unit.turnId, slot.entry);
+    return slot;
+  });
+  const keptSlots = materializedSlots.filter((slot) => shouldKeepRenderUnit(slot.unit));
+  const normalizedUnits = keptSlots.map((slot, index) =>
+    normalizeCachedUnit(slot, index, keptSlots.length, options),
   );
-  const keptUnits = materializedUnits.filter(shouldKeepRenderUnit);
-  const normalizedUnits = keptUnits.map((unit, index) =>
-    normalizeRenderUnitPosition(unit, index, keptUnits.length, options),
+  const markedUnits = markHighspeedOutputFooterUnits(normalizedUnits, options.nowMs ?? Date.now());
+  if (options.cache) options.cache.entries = nextEntries;
+  return markedUnits.map((unit, index) =>
+    reuseFooterMarkedUnit(keptSlots[index]!, normalizedUnits[index]!, unit),
   );
-  return markHighspeedOutputFooterUnits(normalizedUnits, options.nowMs ?? Date.now());
 }
