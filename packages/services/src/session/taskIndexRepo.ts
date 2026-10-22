@@ -248,6 +248,12 @@ const CLI_FACT_CREATED_AT_SQL =
 const CLI_FACT_TITLE_SQL =
   "(CASE WHEN cli_created_at IS NULL OR title_overridden = 1 THEN title ELSE cli_title END)";
 
+// Reservation placeholder: project-repository inserts it before the CLI session exists, with no CLI facts, created_at 0 and the
+// column default meta_json '{}'. Every read hides it until applyCliFacts writes facts, so an abandoned create never shows up as an
+// empty, zero-time task. Other writers always store a real meta_json, so they are not matched.
+const RESERVATION_PLACEHOLDER_SQL =
+  "(cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}')";
+
 function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
   if (row.cli_created_at == null) return meta;
   const outcome =
@@ -287,11 +293,14 @@ function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
         titleOverridden: row.title_overridden === 1,
       };
     }
-    logger.warn(
-      undefined,
-      `读取 task index meta_json 非法 taskId=${row.task_id}`,
-      parsed.error.flatten(),
-    );
+    // A reservation placeholder is expected to carry the default '{}' until CLI facts arrive; it is not corruption, so it stays silent.
+    if (row.meta_json !== "{}") {
+      logger.warn(
+        undefined,
+        `读取 task index meta_json 非法 taskId=${row.task_id}`,
+        parsed.error.flatten(),
+      );
+    }
   } catch (error) {
     logger.warn(undefined, `读取 task index meta_json 失败 taskId=${row.task_id}`, error);
   }
@@ -2294,6 +2303,7 @@ export class TaskIndexRepo {
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
+          AND NOT ${RESERVATION_PLACEHOLDER_SQL}
           -- Bugfix: ZCode Agent 列表只接受当前 glm provider；Claude Code 导入也属于非 glm 历史数据。
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
@@ -2580,6 +2590,7 @@ export class TaskIndexRepo {
       .prepare(
         `SELECT EXISTS(
           SELECT 1 FROM tasks WHERE (@include_deleted = 1 OR deleted = 0)
+            AND NOT ${RESERVATION_PLACEHOLDER_SQL}
         ) AS found`,
       )
       .get({ include_deleted: params.includeDeleted ? 1 : 0 }) as { found: number } | undefined;
@@ -2637,7 +2648,11 @@ export class TaskIndexRepo {
     const search = params.search?.trim();
     const normalizedSearchLike =
       search && search.length > 0 ? `%${search.toLocaleLowerCase()}%` : null;
-    const where = ["deleted = 0", `workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`];
+    const where = [
+      "deleted = 0",
+      `NOT ${RESERVATION_PLACEHOLDER_SQL}`,
+      `workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`,
+    ];
     const args: Array<string | number> = [...workspaceKeys];
     if (params.provider) {
       appendZCodeAgentIndexedProviderFilter(where, args, params.provider);
@@ -2912,6 +2927,7 @@ export class TaskIndexRepo {
     const workspaceKeys = normalizeWorkspaceKeys(params.workspaceScopes);
     const activeTaskWhere = [
       "deleted = 0",
+      `NOT ${RESERVATION_PLACEHOLDER_SQL}`,
       "archived = 0",
       "pinned = 0",
       ...(includeAllWorkspaces
