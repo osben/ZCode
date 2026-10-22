@@ -76,6 +76,7 @@ export {
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
   forkAppSettingsStoredSchema,
+  appSettingsSyncPatchSchema,
   pickForkSettings,
   planLegacyLocaleMigration,
   resolveEffectiveLocale,

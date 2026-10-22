@@ -5,6 +5,7 @@ import {
 } from "./incognito-profile.js";
 import { isLocale, isLocalePreference } from "./locale.js";
 import type { AppSettings, Locale, LocalePreference } from "./protocol.js";
+import { appSettingsPatchSchema } from "./validationAppSettings.js";
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
@@ -26,8 +27,6 @@ export const FORK_SETTING_KEYS = [
   "memoryIndexAsContext",
   "incognitoDefaults",
   "resourceTelemetryEnabled",
-  "localePreferenceOverride",
-  "localeOverride",
 ] as const satisfies readonly (keyof AppSettings)[];
 
 export type ForkSettingKey = (typeof FORK_SETTING_KEYS)[number];
@@ -240,14 +239,25 @@ export function splitLocaleSettings(input: {
   }
 
   // Explicit keys with undefined values clear the override in the sidecar (JSON drops them).
+  // The locale override applies only to system resolution. A fixed preference always wins over a
+  // stale resolved language, so a Ukrainian locale under zh-CN/en-US is written as en-US and not kept.
+  // With no locale in the patch, a fixed preference also becomes the shared locale, so a stale
+  // en-US from an earlier Ukrainian pick cannot leak through.
+  const sharedLocale =
+    input.locale !== undefined
+      ? toSharedLocale(input.locale)
+      : preference !== "system"
+        ? preference
+        : undefined;
   return {
     forkPatch: {
       localePreferenceOverride: undefined,
-      localeOverride: input.locale === FORK_UK_LOCALE ? FORK_UK_LOCALE : undefined,
+      localeOverride:
+        preference === "system" && input.locale === FORK_UK_LOCALE ? FORK_UK_LOCALE : undefined,
     },
     sharedPatch: {
       localePreference: preference,
-      ...(input.locale !== undefined ? { locale: toSharedLocale(input.locale) } : {}),
+      ...(sharedLocale !== undefined ? { locale: sharedLocale } : {}),
     },
   };
 }
@@ -289,3 +299,12 @@ export function planLegacyLocaleMigration(raw: unknown): LegacyLocaleMigrationPl
   // splitLocaleSettings always writes both shared keys for a uk-UA input, so the plan is complete.
   return split as LegacyLocaleMigrationPlan;
 }
+
+/**
+ * Immediate-sync payload (desktop main). Locale keys are removed before validation, so a stale or
+ * uk-UA locale in the payload is ignored instead of invalidating the other fields. Locale changes
+ * go through settingService.update, which owns the fork split.
+ */
+export const appSettingsSyncPatchSchema = appSettingsPatchSchema
+  .omit({ locale: true, localePreference: true })
+  .extend({ resourceTelemetryEnabled: forkAppSettingsPatchSchema.shape.resourceTelemetryEnabled });

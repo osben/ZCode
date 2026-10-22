@@ -7,7 +7,7 @@ import { readZCodeStdioTapDevState } from "@zcode/services/node";
 import {
   DesktopCommandIds,
   appSettingsPatchSchema,
-  forkAppSettingsPatchSchema,
+  appSettingsSyncPatchSchema,
   formatZodError,
   localeSchema,
   nonEmptyStringSchema,
@@ -66,10 +66,6 @@ import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerDesktopCommandIpcHandler } from "./desktopCommandIpc.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 import { registerDesktopDictationSystemAudioIpc } from "./desktopDictationSystemAudio.js";
-
-const appSettingsSyncPatchSchema = appSettingsPatchSchema.extend({
-  resourceTelemetryEnabled: forkAppSettingsPatchSchema.shape.resourceTelemetryEnabled,
-});
 
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;

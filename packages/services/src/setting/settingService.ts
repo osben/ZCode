@@ -276,7 +276,14 @@ async function writeSettings(
  * and nowhere else (specs/fork-locale-storage.md, owner rule 3).
  */
 function withEffectiveLocale(settings: AppSettings, fork: ForkAppSettings): AppSettings {
-  return { ...settings, ...fork, ...resolveEffectiveLocale(settings, fork) };
+  // The two override keys are read only by resolveEffectiveLocale. They are not AppSettings fields,
+  // so a settings object read back by the UI cannot carry a stale uk-UA override into a later write.
+  const {
+    localeOverride: _localeOverride,
+    localePreferenceOverride: _localePreferenceOverride,
+    ...stored
+  } = fork;
+  return { ...settings, ...stored, ...resolveEffectiveLocale(settings, fork) };
 }
 
 export function createSettingService(): ISettingService {
@@ -334,21 +341,36 @@ export function createSettingServiceWithMigrations(): {
   // Caller holds the main-file lock. The fork override is written first: a crash between the two
   // writes leaves the choice in the fork, and the next read finishes the shared rewrite (idempotent).
   // The shared file is rewritten with a targeted raw edit, so unrelated and unknown keys are kept.
+  // Returns false when the migration did not finish; callers must not merge over the uk-UA file then.
   const migrateLegacyLocaleLocked = async (
     shouldCommit: () => boolean,
     enterCommitPhase: () => void,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
+    try {
+      return await runLegacyLocaleMigration(shouldCommit, enterCommitPhase);
+    } catch (error) {
+      // A transient rename failure (EPERM/EBUSY on Windows) must not make every get() reject.
+      log("legacy locale migration failed, will retry on the next read. error:", error);
+      return false;
+    }
+  };
+
+  const runLegacyLocaleMigration = async (
+    shouldCommit: () => boolean,
+    enterCommitPhase: () => void,
+  ): Promise<boolean> => {
     let raw: unknown;
     try {
       raw = JSON.parse(await readFile(location.file, "utf-8"));
     } catch (error) {
       log("legacy locale migration skipped, setting.json unreadable. error:", error);
-      return;
+      return false;
     }
     const plan = planLegacyLocaleMigration(raw);
-    if (!plan || !shouldCommit()) return;
+    if (!plan) return true;
+    if (!shouldCommit()) return false;
     await updateForkSettings(plan.forkPatch, { shouldCommit }, location);
-    if (!shouldCommit()) return;
+    if (!shouldCommit()) return false;
     await atomicWriteText(
       location.file,
       JSON.stringify({ ...(raw as object), ...plan.sharedPatch }, null, 2),
@@ -369,6 +391,7 @@ export function createSettingServiceWithMigrations(): {
       },
     );
     log("legacy uk-UA locale moved to fork overrides, shared locale keys rewritten");
+    return true;
   };
 
   const service: ISettingService = {
@@ -465,7 +488,8 @@ export function createSettingServiceWithMigrations(): {
           let read = await readSettingsWithMeta(location);
           if (read.legacyLocaleMigration) {
             // Migrate before merging: an unrelated patch must never rewrite the uk-UA value into the shared keys.
-            await migrateLegacyLocaleLocked(shouldCommit, enterCommitPhase);
+            const migrated = await migrateLegacyLocaleLocked(shouldCommit, enterCommitPhase);
+            if (!migrated) throw new Error("settings.locale-migration-failed");
             read = await readSettingsWithMeta(location);
           }
           if (expectedAccountSettings) {
@@ -520,10 +544,13 @@ export function createSettingServiceWithMigrations(): {
             Object.hasOwn(patch, "providerFamilyConnectionSelections"),
             { useFileLock: false },
           );
+          // The fork write stays under the main-file lock: otherwise another instance could interleave
+          // its shared write between ours and this fork write, and the older choice would win.
+          // Lock order is always main file, then fork file (same as the migration and seeding paths).
+          if (validatedForkPatch) {
+            await updateForkSettings(validatedForkPatch, { shouldCommit }, location);
+          }
         });
-        if (validatedForkPatch) {
-          await updateForkSettings(validatedForkPatch, { shouldCommit }, location);
-        }
         // Refresh before the queue turn resolves so a read that follows this update is served without disk IO.
         await loadSettingsSnapshot();
         log("settings updated, patch keys:", Object.keys(patch).join(", "));
