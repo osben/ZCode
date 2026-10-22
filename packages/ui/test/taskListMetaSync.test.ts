@@ -149,3 +149,43 @@ describe("syncTaskMetaToTaskCaches", () => {
     expect(queryTask?.status).toBe("running");
   });
 });
+
+describe("manual rename of a running task", () => {
+  it("shows a shorter manual title on a running task without changing its order", () => {
+    const runningTask = createTaskMeta({
+      title: "Analyze the long airline import flow",
+      status: "running",
+      updatedAt: 100,
+    });
+    const otherTask = createTaskMeta({
+      taskId: "task-other",
+      title: "其他任务",
+      updatedAt: 50,
+    });
+    const renamedTask = createTaskMeta({
+      title: "短名",
+      titleOverridden: true,
+      status: "running",
+      updatedAt: 100,
+    });
+    const store = useZCodeSessionStore.getState();
+    store.setTaskListCache(WORKSPACE_PATH, [runningTask, otherTask]);
+    store.upsertOptimisticTaskListItem(WORKSPACE_PATH, runningTask);
+    store.upsertOptimisticTaskListItem(WORKSPACE_PATH, otherTask);
+    upsertTaskQueryCacheTaskMeta(runningTask);
+
+    store.upsertOptimisticTaskListItem(WORKSPACE_PATH, renamedTask);
+    syncTaskMetaToTaskCaches({
+      workspacePath: WORKSPACE_PATH,
+      task: renamedTask,
+      membership: { pinned: false, archived: false },
+    });
+
+    const workspaceState = useZCodeSessionStore.getState().getWorkspaceState(WORKSPACE_PATH);
+    expect(getTaskMeta(workspaceState, TASK_ID)).toMatchObject({ title: "短名", updatedAt: 100 });
+    expect(workspaceState.taskListCache?.map((task) => task.taskId)).toEqual([
+      TASK_ID,
+      "task-other",
+    ]);
+  });
+});

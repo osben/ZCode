@@ -19,6 +19,12 @@ Task title can come from several places during a session lifecycle. Renderer cod
 - `New session` must not overwrite a non-placeholder title, even when the snapshot has a newer `updatedAt`.
 - Generated titles may replace the first query title when there is no user override.
 
+## Ordering time is CLI time
+
+- `updated_at` and `cli_updated_at` are CLI activity time. Rename, title echoes, pin, archive, and unread never change them, so a renamed task keeps its sidebar position.
+- The only writer of CLI time is `applyCliFacts`. Host-side patches may carry `updatedAt` only as a copy of the CLI summary's `lastActivityAt` (terminal status), never a Host wall-clock value.
+- Manual rename changes only `title` and `titleOverridden`. Open item: when two manual titles tie on `updatedAt`, the renderer merge cannot order them, so a title recency marker is needed.
+
 ## Compatibility
 
 - Workspace-scoped title lookup uses `workspaceIdentity?.trim() || workspacePath`, matching remote workspace isolation. The active read also belongs to its scoped service/attachment and task ID; late responses cannot overwrite a newer target or request.

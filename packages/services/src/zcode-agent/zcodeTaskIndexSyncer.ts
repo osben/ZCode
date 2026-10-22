@@ -593,7 +593,8 @@ export function createZCodeTaskIndexSyncer(
       taskId: target.sessionId,
       unreadSignal: unreadSignal ?? null,
     });
-    const updatedAt = Date.now();
+    // updatedAt comes from the CLI summary: Host receive time must not reorder history (I6).
+    const updatedAt = summary.lastActivityAt;
     void taskIndexRepo
       .applyAgentPatch({
         workspacePath: target.workspacePath,
@@ -638,15 +639,17 @@ export function createZCodeTaskIndexSyncer(
       });
   }
 
-  /** Title change → patch the SQLite title; fetch a full snapshot if the row is missing (matching legacy first_input semantics). */
+  /**
+   * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
+   * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
+   */
   function applyTitleChange(target: ZCodeAgentSessionTarget, title: string): void {
-    const updatedAt = Date.now();
     void taskIndexRepo
       .applyAgentPatch({
         workspacePath: target.workspacePath,
         workspaceIdentity: target.workspaceIdentity,
         taskId: target.sessionId,
-        patch: { title, updatedAt },
+        patch: { title },
       })
       .then((meta) => {
         if (meta) {

@@ -4,6 +4,7 @@ import {
   waitBotGroupExecutionEnd,
 } from "#src/zcode-agent/groupRuntimeSnapshot.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,11 @@ import type {
   WorkspaceConfigTopicWireFrame,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { NetworkObservation } from "@zcode/rpc";
-import { getLegacyTaskSessionSnapshotPath, setDataBaseDir } from "../src/paths.js";
+import {
+  getLegacyTaskSessionSnapshotPath,
+  getTasksIndexDatabasePath,
+  setDataBaseDir,
+} from "../src/paths.js";
 import { createZCodeTaskServiceAdapter } from "../src/zcode-agent/zcodeTaskServiceAdapter.js";
 import { createZCodeTaskIndexSyncer } from "../src/zcode-agent/zcodeTaskIndexSyncer.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
@@ -2129,15 +2134,25 @@ describe("ZCode legacy task compat task index", () => {
     expect(results.flatMap((result) => result.failedTaskIds)).toEqual([]);
   });
 
-  it("bumps updatedAt when renaming a task so running UI title refreshes immediately", async () => {
+  it("keeps updatedAt and CLI order when renaming a running task", async () => {
     vi.useFakeTimers();
+    // Far after the seeded CLI time: any Host wall-clock write to updated_at shows up as a mismatch.
     vi.setSystemTime(new Date("2026-06-13T14:45:00.000Z"));
     const { agent, service, taskIndexRepo } = createService();
-    await seedIndexedTask(taskIndexRepo, {
-      taskId: "running-rename",
-      provider: "glm",
-      workspacePath: "/repo",
-      updatedAt: 100,
+    // CLI-admitted row: applyCliFacts is the only writer of cli_updated_at, so the mirror path is exercised.
+    await taskIndexRepo.applyCliFacts({
+      meta: {
+        taskId: "running-rename",
+        traceId: "trace_running-rename",
+        title: "原标题",
+        workspacePath: "/repo",
+        createdAt: 10,
+        updatedAt: 100,
+        mode: "build",
+        status: "running",
+        provider: "glm",
+      },
+      titleSource: "default",
     });
     vi.mocked(agent.sendConversationCommandV4).mockClear();
 
@@ -2149,7 +2164,7 @@ describe("ZCode legacy task compat task index", () => {
 
     expect(renamed.title).toBe("短名");
     expect(renamed.titleOverridden).toBe(true);
-    expect(renamed.updatedAt).toBe(Date.parse("2026-06-13T14:45:00.000Z"));
+    expect(renamed.updatedAt).toBe(100);
     await expect(
       taskIndexRepo.getTaskMeta({
         taskId: "running-rename",
@@ -2158,7 +2173,19 @@ describe("ZCode legacy task compat task index", () => {
     ).resolves.toMatchObject({
       title: "短名",
       titleOverridden: true,
+      updatedAt: 100,
     });
+    const rawDatabase = new DatabaseSync(getTasksIndexDatabasePath());
+    try {
+      const rawRow = rawDatabase
+        .prepare(
+          "SELECT updated_at, cli_updated_at FROM tasks WHERE workspace_key = ? AND task_id = ?",
+        )
+        .get("/repo", "running-rename");
+      expect(rawRow).toEqual({ updated_at: 100, cli_updated_at: 100 });
+    } finally {
+      rawDatabase.close();
+    }
     expect(agent.sendConversationCommandV4).toHaveBeenCalledWith({
       workspacePath: "/repo",
       workspaceIdentity: undefined,

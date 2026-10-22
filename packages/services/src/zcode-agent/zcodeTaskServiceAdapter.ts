@@ -1584,8 +1584,8 @@ export function createZCodeTaskServiceAdapter(
   function updateTaskIndexFromStreamEvent(params: TaskTarget, event: ZCodeStreamEvent): void {
     if (event.type === "session_info_update") {
       const patch: Parameters<typeof taskIndexRepo.applyAgentPatch>[0]["patch"] = {
+        // Title echoes must not carry host wall-clock time: updated_at is CLI time (I6).
         title: typeof event.title === "string" ? event.title : undefined,
-        updatedAt: Date.now(),
       };
       if (event.target) {
         // session_info_update often contains only a title or updated time. Override the task index only
@@ -1615,7 +1615,6 @@ export function createZCodeTaskServiceAdapter(
           patch: {
             status: "completed",
             lastError: undefined,
-            updatedAt: Date.now(),
           },
         })
         .catch((error) => {
@@ -1640,7 +1639,6 @@ export function createZCodeTaskServiceAdapter(
               taskId: params.taskId,
               ...(event.attribution ? { attribution: event.attribution } : {}),
             },
-            updatedAt: Date.now(),
           },
         })
         .catch((error) => {
@@ -3449,7 +3447,6 @@ export function createZCodeTaskServiceAdapter(
     },
 
     async renameTask(params): Promise<ZCodeTaskMeta> {
-      const renamedAt = Date.now();
       logger.info(undefined, "[ZCodeTaskService] renameTask start", {
         taskId: params.taskId,
         workspacePath: params.workspacePath,
@@ -3463,12 +3460,9 @@ export function createZCodeTaskServiceAdapter(
           taskId: params.taskId,
           workspaceKey: resolveWorkspaceKey(params),
         });
+        // Rename changes only the title. updatedAt is CLI activity time (I6); a Host bump here moved the row to the top labelled "now".
         const meta = await updateIndexedTaskState(params, {
           title: params.title,
-          // Manual rename is an app-side task metadata change. Previously only title was written, not the
-          // update time. While running, the frontend optimistic merge treated the old longer title with
-          // the same updatedAt as stronger metadata, so the new title did not appear until the task ended.
-          updatedAt: renamedAt,
           titleOverridden: true,
         });
         logger.info(undefined, "[ZCodeTaskService] renameTask index updated", {
