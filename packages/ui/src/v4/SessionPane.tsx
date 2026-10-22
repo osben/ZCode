@@ -4198,6 +4198,12 @@ export function SessionPane({
             ...(options?.source ? { source: options.source } : {}),
             ...highspeed.override,
             conversationQuotes: options?.conversationQuotes,
+            // The frozen first sendText of a reserved plain submission names its submission, so only this
+            // sendText may complete the durable preparation (the bridge matches it; see first-submission spec).
+            ...(reservedSubmissionSessionId !== undefined &&
+            options?.firstSubmissionId !== undefined
+              ? { firstSubmissionId: options.firstSubmissionId }
+              : {}),
           },
           createdSessionId,
           undefined,

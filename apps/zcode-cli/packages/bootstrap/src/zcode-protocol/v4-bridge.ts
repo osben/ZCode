@@ -1780,9 +1780,17 @@ export function createConversationV4Gateway(
       }),
     withPreparedWorktreeActivation: <T>(sessionId: string, body: () => Promise<T>) =>
       serializePreparedWorktreeMutation(context, sessionId, body),
-    completePreparedWorktreeActivation: async (sessionId) =>
+    completePreparedWorktreeActivation: async (sessionId, frozenSubmissionId) =>
       serializePreparedWorktreeMutation(context, sessionId, async () => {
         const submission = await loadPreparedSubmission(context, sessionId);
+        if (frozenSubmissionId !== undefined) {
+          // Only the frozen sendText's own submission: another id (or no submission) is a no-op, so a
+          // worktree preparation is never completed by a sendText.
+          if (!submission || submission.submissionId !== frozenSubmissionId || submission.status !== "preparing") return;
+          await persistPreparedSubmission(context, submission, "active");
+          context.v4Gateway?.notifyPreparedSessionChanged(sessionId);
+          return;
+        }
         if (submission) {
           if (submission.status !== "active") {
             await persistPreparedSubmission(context, submission, "active");
@@ -2441,11 +2449,14 @@ export function createConversationV4Gateway(
       if (!nativeExecutor.supports(envelope.type)) throw new V4CommandNotImplementedError(envelope.type);
       const result = await nativeExecutor.execute(envelope, admission);
       // Runtime creation alone is not input admission: two-step uploads may still fail or restart.
+      // Only the frozen sendText names its submission; any other sendText executes and leaves the
+      // preparation as it is (the owner decides by the id, see the first-submission spec).
       if (envelope.type === "sendText" && envelope.sessionId) {
-        const prepared = await loadPreparedSubmission(context, envelope.sessionId);
-        if (prepared?.status === "preparing") {
+        const frozenSubmissionId = (envelope.payload as { firstSubmissionId?: unknown })
+          .firstSubmissionId;
+        if (typeof frozenSubmissionId === "string") {
           try {
-            await coreHost.completePreparedWorktreeActivation?.(envelope.sessionId);
+            await coreHost.completePreparedWorktreeActivation?.(envelope.sessionId, frozenSubmissionId);
           } catch (error) {
             context.logger?.warn("Could not persist admitted submission receipt", {
               sessionId: envelope.sessionId,

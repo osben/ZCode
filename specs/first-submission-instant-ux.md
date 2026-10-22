@@ -193,9 +193,10 @@ One ordering barrier stays: while the bound session's snapshot still reports
 with a visible reason instead of silently dropping the click. Without it a foreign
 input admitted first would reorder the frozen message behind it (SessionPane still
 sends the frozen `sendText` after activation, which acknowledges `input-admitted`
-without a receipt), and the bridge's `executeCommand` hook marks the preparation
+without a receipt), and the bridge's `executeCommand` hook marked the preparation
 `active` on _any_ `sendText` to a preparing session, so reconciliation's "marker absent
-⇒ admitted" shortcut would mark a never-run frozen record `sending`. When the record is
+⇒ admitted" shortcut would mark a never-run frozen record `sending`. The hook now flips it
+only for the frozen `sendText` (see _Owner of the frozen input_ below). When the record is
 settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
 or Remove, never as "still being delivered".
 
@@ -214,8 +215,8 @@ that the frozen input reached Core. The bridge decides in this order:
 1. X identity-admitted → `input-admitted` (the handler completes the activation receipt
    and admits nothing);
 2. preparation `active` → `already-active`. An active marker alone is not admission: the
-   bridge's `executeCommand` hook sets it on any `sendText`, so another window's input can
-   set it while X is not admitted;
+   frozen `sendText` of a retry carries a fresh command id, so the marker can be active while X
+   is not admitted;
 3. otherwise the existing outcomes (`input-pending` when the runtime exists, else
    `materialized`).
 
@@ -238,39 +239,49 @@ first (table below). The marker decides only when the ledger answers `unknown`, 
 record holds no id at all. An active marker therefore never settles a record `sending` whose
 own id the ledger rejects.
 
-**Owner of the frozen input in the bridge (open, decision needed).** The bridge's
-`executeCommand` hook still marks the preparation `active` on _any_ `sendText` into a preparing
-session, so a foreign window's or mobile remote's input can set the marker. The intended rule
-is that only the frozen submission's own `sendText` flips it. Keying that rule on the
-`expectedFirstInputCommandId` does not hold as written:
+**Owner of the frozen input in the bridge (implemented).** Only the frozen submission's own
+`sendText` may mark its preparation `active`. Identity is the submission id, not the command id:
+a retried frozen input is a new `sendText` with a freshly minted uuidv7 (`commandFactory.ts`), and
+a first attempt has no command id before its `sendText`. The submission id is stable across
+attempts and is already the durable key of the preparation entry.
 
-- The activation learns only the original id X. A retried frozen input is a new `sendText`
-  with a freshly minted uuidv7 (`commandFactory.ts`), so its id Y never equals X. A strict
-  X-keyed flip would leave the preparation `preparing` after a successful retry, and the
-  ordering barrier would keep Send disabled.
-- A first attempt sends no id at all, so the activation cannot name its frozen `sendText`.
+- The renderer sets `firstSubmissionId` on the frozen `sendText` of a reserved plain submission
+  (`SessionPane` sendText route, when `reservedSubmissionSessionId` is set): the first attempt
+  and every retry. The shared `sendText` payload declares it as an optional non-empty string
+  (`packages/shared/src/zcode-protocol-v4/command.ts`).
+- The bridge's `executeCommand` hook calls `completePreparedSubmissionInput(sessionId,
+firstSubmissionId)` for a `sendText` that carries the field. That method runs under the
+  preparation's serializer. It flips the persisted entry to `active` only when the entry's
+  `submissionId` equals the field and its status is `preparing`. Any other `sendText` (no field,
+  or another id) executes normally and leaves the preparation `preparing`.
+- A cold process reads the same entry (`loadPreparedSubmission`), so it agrees with no extra
+  state.
+- Worktree activations never carry the field. They complete at their activation through
+  `completePreparedWorktreeActivation` (the handler's `completePreparedActivation` when
+  `preparedSessionId` is set without `expectedSubmissionId`), and their `sendText` never reaches
+  the submission path. They are unaffected.
 
-Closing the gap needs the bridge to know the frozen `sendText` identity before it arrives.
-Options, not yet chosen:
-
-- (a) The `sendText` payload carries the first-submission id and the bridge matches it against
-  the persisted `submissionId`. This is the smallest protocol change and covers first attempts
-  and retries alike.
-- (b) The renderer pre-mints the frozen `sendText` id, persists it on the record before the
-  reservation createSession, and passes it on the activation next to `expectedFirstInputCommandId`.
-
-Until one is chosen, a foreign `sendText` into a preparing session still sets the marker. The
-renderer's query-first rule keeps that from settling a record `sending` wrongly.
+**Mixed versions (known degradation).** An older renderer sends no `firstSubmissionId`, so its
+frozen `sendText` no longer flips the marker. The activation does not settle a reserved plain
+submission on its own: the handler's `completePreparedActivation` runs only for a non-reserved
+activation or one that carries `firstInput` (`session-mgmt.ts`). It also runs on `input-admitted`,
+but that needs a repeat activation. So until a repeat activation settles it, the preparation
+stays `preparing` and the snapshot keeps `submissionPreparation`, which keeps the ordering barrier
+on for that session. Renderer and CLI ship together in the desktop bundle, so this affects only
+a remote Host paired with an older renderer.
 
 ```mermaid
 sequenceDiagram
     participant R as Record holder (SessionPane)
     participant B as CLI bridge (executeCommand)
     participant L as Command ledger
-    R->>B: createSession (expectedSubmissionId, expectedFirstInputCommandId X)
+    R->>B: createSession (expectedSubmissionId S, expectedFirstInputCommandId X)
     B-->>R: input-pending or materialized (X not admitted)
-    R->>B: sendText, fresh id Y (the frozen input on a retry)
-    B->>B: marker set active on any sendText (today)
+    R->>B: sendText, fresh id Y, firstSubmissionId S (frozen input)
+    B->>B: admit Y; flip preparation to active only if entry.submissionId == S
+    B-->>R: ack
+    R->>B: foreign sendText (no field or another id)
+    B->>B: execute; preparation stays preparing
     R->>L: query Y (the record holds Y)
     L-->>R: accepted, rejected, or unknown
     R->>R: accepted gives sending, rejected gives failed, unknown lets the marker decide

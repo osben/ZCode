@@ -127,6 +127,21 @@ describe("zcode-protocol-v4 command", () => {
     ).toEqual({ text: "opposite follow-up", requestedDelivery: "queue" });
   });
 
+  it("round-trips the frozen first sendText's submission id and rejects an empty or non-string one", () => {
+    expect(
+      commandPayloadSchemas.sendText.parse({ text: "frozen", firstSubmissionId: "submission-1" }),
+    ).toMatchObject({ text: "frozen", firstSubmissionId: "submission-1" });
+    expect(commandPayloadSchemas.sendText.parse({ text: "plain" })).not.toHaveProperty(
+      "firstSubmissionId",
+    );
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: "" }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.sendText.safeParse({ text: "x", firstSubmissionId: 7 }).success,
+    ).toBe(false);
+  });
+
   it("validates bot delivery target on sendText", () => {
     const payload = commandPayloadSchemas.sendText.parse({
       text: "创建一个定时任务",

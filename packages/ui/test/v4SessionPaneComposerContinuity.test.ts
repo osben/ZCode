@@ -1689,6 +1689,11 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       type: "createSession",
       payload: { expectedFirstInputCommandId: "cmd-orig-active" },
     });
+    // The retried frozen sendText names its submission: only it may complete the preparation.
+    expect(calls[1]![0]).toMatchObject({
+      type: "sendText",
+      payload: { firstSubmissionId: "sub-active" },
+    });
     expect(outcome).toBe("sent");
   });
 
@@ -1719,6 +1724,7 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     // the frozen input: the sendText must still go out.
     const calls = conversationMock.sendCommand.mock.calls.slice(before);
     expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
+    expect(calls[1]![0].payload).not.toHaveProperty("firstSubmissionId");
     expect(outcome).toBe("sent");
   });
 
@@ -1750,6 +1756,10 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     const calls = conversationMock.sendCommand.mock.calls.slice(before);
     expect(calls.map(([envelope]) => envelope.type)).toEqual(["createSession", "sendText"]);
     expect(calls[0]![0].payload).not.toHaveProperty("expectedFirstInputCommandId");
+    expect(calls[1]![0]).toMatchObject({
+      type: "sendText",
+      payload: { firstSubmissionId: "sub-no-id" },
+    });
     expect(outcome).toBe("sent");
   });
 
