@@ -187,7 +187,7 @@ export function TaskActionMenuContent({
           diverges from upstream 0a1fc56d, which always shows it. */}
       {taskSessionFile.exists ? (
         <Item
-          disabled={taskTargetActionsDisabled || taskSessionFile.loading || !taskSessionFile.path}
+          disabled={taskTargetActionsDisabled || !taskSessionFile.path}
           title={taskTargetActionsDisabled ? disabledReason : undefined}
           onSelect={onCopyTaskPath}
         >

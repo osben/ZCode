@@ -193,7 +193,7 @@ export function GroupedTaskContextMenuContent({
           (diverges from upstream 0a1fc56d). */}
       {taskSessionFile.exists ? (
         <ContextMenuItem
-          disabled={taskSessionFile.loading || !taskSessionFile.path}
+          disabled={!taskSessionFile.path}
           onSelect={() =>
             onCopyText(intl.formatMessage({ id: "appHeader.copyTaskPath" }), taskSessionFile.path)
           }
