@@ -32,10 +32,8 @@ import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  deriveTaskLeadingIndicator,
-  formatTaskRelativeTime,
-} from "@/lib/taskListItemPresentation.js";
+import { deriveTaskLeadingIndicator } from "@/lib/taskListItemPresentation.js";
+import { TaskRelativeTimeLabel } from "@/TaskListItem.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
@@ -140,7 +138,6 @@ function GroupedTaskRowComponent({
     intl.formatMessage({
       id: task.forkedFromTaskId ? "taskList.forkedUntitled" : "taskList.untitled",
     });
-  const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const isTaskCron = isCronTask(task);
   // 月亮身份改为持久 meta 标记判断；off-peak store 反查在任务被删除后会丢失
   // 会话溯源，且让每一行多背一个全局 store 订阅。
@@ -241,7 +238,11 @@ function GroupedTaskRowComponent({
                 className="size-3.5 shrink-0"
               />
             ) : null}
-            {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
+            {!hasPendingInteraction ? (
+              <span className="mr-1">
+                <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
+              </span>
+            ) : null}
           </span>
         </span>
       </span>
@@ -514,7 +515,11 @@ function GroupedTaskRowComponent({
               {!hasPendingInteraction && task.incognito ? (
                 <IncognitoTaskMarker task={task} />
               ) : null}
-              {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
+              {!hasPendingInteraction ? (
+                <span className="mr-1">
+                  <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
+                </span>
+              ) : null}
             </span>
           ) : null}
           {!hasPendingInteraction ? (

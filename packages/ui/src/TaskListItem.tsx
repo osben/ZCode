@@ -22,6 +22,7 @@ import { formatTaskTitleWithChanges, getTaskChangeSummary } from "@/lib/taskChan
 import {
   deriveTaskLeadingIndicator,
   formatTaskRelativeTime,
+  useNowMinute,
 } from "@/lib/taskListItemPresentation.js";
 import { getTaskListAttention, getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { TaskListItemContextMenu } from "@/TaskListItemContextMenu.js";
@@ -154,6 +155,23 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.onOpenTaskContextMenu === right.onOpenTaskContextMenu &&
     left.onOpenFileTree === right.onOpenFileTree
   );
+}
+
+type TaskRelativeTimeIntl = Parameters<typeof formatTaskRelativeTime>[1];
+
+/**
+ * Relative "updated at" label for a sidebar task row. Subscribes to the shared minute ticker here,
+ * not in the row body, so a tick re-renders only this label instead of the memoized row.
+ */
+export function TaskRelativeTimeLabel({
+  timestamp,
+  intl,
+}: {
+  timestamp: number;
+  intl: TaskRelativeTimeIntl;
+}) {
+  const now = useNowMinute();
+  return <>{formatTaskRelativeTime(timestamp, intl, now)}</>;
 }
 
 export const MemoTaskItem = memo(function TaskListItem({
@@ -387,7 +405,6 @@ export const MemoTaskItem = memo(function TaskListItem({
     hoverEnabled && (hoverActionsVisible || focusActionsVisible);
   const shouldMountWorkspaceTaskActions =
     !hoverEnabled || shouldSuppressWorkspaceTaskMetadata || isHoverNone;
-  const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const taskChangeSummary = getTaskChangeSummary(task);
   const isRemoteTask = Boolean(task.workspaceIdentity?.trim());
   const remoteConnectionUnavailable = shouldShowRemoteConnectionOverlay({
@@ -733,7 +750,9 @@ export const MemoTaskItem = memo(function TaskListItem({
                       {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
                       {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                       {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
-                      <span className="mr-1">{taskTimeLabel}</span>
+                      <span className="mr-1">
+                        <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
+                      </span>
                     </span>
                   ) : null}
                   {taskActionGroupNode}
@@ -831,7 +850,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                     {task.executionWorktree ? <WorktreeTaskMarker task={task} /> : null}
                     {task.executionWorktree ? <TaskPullRequestMarker task={task} /> : null}
                     {task.incognito ? <IncognitoTaskMarker task={task} /> : null}
-                    {taskTimeLabel}
+                    <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
                   </span>
                 ) : null}
 
