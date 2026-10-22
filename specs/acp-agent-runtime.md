@@ -39,7 +39,13 @@ the mock-agent tests encode the contract below.
   is non-blank, at most 4096 characters; at most 32 `args` of at most 4096 characters; neither may
   contain NUL, CR or LF (a line break would let a command escape any line-oriented script it is
   embedded in). At most 64 env overrides; keys match `[A-Za-z_][A-Za-z0-9_]*` and are not
-  loader keys; values are at most 8192 characters without NUL. A stored provider that violates the
+  loader keys; values are at most 8192 characters without NUL. The loader key list covers the
+  library loaders (`LD_*`, `DYLD_*`), the interpreter startup hooks (`NODE_OPTIONS`, `BASH_ENV`,
+  `ENV`, `ZDOTDIR`, `BASH_FUNC_*`, `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PERL5OPT`,
+  `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`) and the git exec hooks
+  (`GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_EXEC_PATH`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND`). It is one list
+  in `@zcode/shared/acp-launch-rules`. It is defence in depth for the launch config, not a sandbox:
+  the agent command still runs with the user's privileges. A stored provider that violates the
   rules still loads (the sparse stored shape stays structural) but fails complete validation, so it
   is reported invalid and never launched.
 - Login helper (macOS): the terminal script prints the command with `printf '%s\n'` and a
@@ -89,7 +95,12 @@ entry point:
 - `acp:<agentId>` personal providers are filtered out of the view `useModelProviders` derives from
   the provider settings service, so an agent enabled in development does not leak into provider
   navigation, detail pages, or settings lists in packaged and production builds.
-- Existing configs stay on disk and keep resolving; the gate hides UI, it never migrates or deletes.
+- The provider host applies the same gate (`isEffectiveDevelopmentNodeEnv`, the signal that sets
+  `acpExecutable`): in a packaged host the sidecar is not derived into providers, no ACP writer is wired,
+  and `saveAcpAgent` / `setAcpAgentEnabled` fail with "not supported in this environment". The inline
+  migration also does not run there.
+- Existing sidecar and inline files stay on disk untouched. The gate never migrates, rewrites or
+  deletes them; a development host keeps resolving them as before.
 
 The host enforces the same gate: the settings bridge (detect / test / status / login) is wired
 into the provider runtime only when the host runs as a development runtime
@@ -729,6 +740,15 @@ Acceptance (S6):
 - E2E (`conversation-session-acp-agent-config.test.ts`): select the agent mode "plan" after a first
   turn, send, and the mock records `session/set_config_option` (mode=plan) before `session/prompt`; the
   value survives an app restart.
+
+### Reservation ordering (first message)
+
+The renderer reserves a session id and subscribes to it as soon as the `createSession` envelope is
+created, before the host acknowledges it. A subscribe that reaches the gateway during that create waits
+for the create to settle (`CommandInbox.whenSessionCreationSettles`, tracked from receipt in
+`command-inbox-creations.ts`). Without the wait the gateway answered `fault.subscribe.sessionNotFound`,
+which the renderer treats as terminal, so the first message of a new session could stall. The rule is
+not ACP-specific; it applies to every first message.
 
 ### Acceptance scenarios
 

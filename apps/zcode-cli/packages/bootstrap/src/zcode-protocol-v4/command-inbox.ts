@@ -1,5 +1,6 @@
 // Command inbox：统一命令 admission 与查询入口。
 // 三类事实严格分离：in-flight / live input 永远 pinned；只有 settled 进入 512/session LRU。
+import { PendingSessionCreations } from "./command-inbox-creations.js";
 import type {
   CommandAck,
   CommandEnvelope,
@@ -114,10 +115,52 @@ export class CommandInbox {
   private readonly admissionSeq = new Map<string, number>();
   private readonly keyGates = new AsyncGateRegistry();
   private readonly sessionGates = new AsyncGateRegistry();
+  private readonly creations = new PendingSessionCreations();
 
   constructor(private readonly host: CommandInboxHost) {}
 
+  /**
+   * Resolves once every createSession received so far for `sessionId` has settled. A subscribe for the
+   * reserved id waits here, so it is never answered "not found" while its create is still running.
+   */
+  whenSessionCreationSettles(sessionId: string): Promise<void> {
+    return this.creations.whenSettled(sessionId);
+  }
+
   async handle(raw: unknown): Promise<CommandInboxOutcome> {
+    const parsed = parseCommandEnvelope(raw);
+    // The creation is registered on receipt, before any await, so a subscribe that arrives during
+    // admission (prepareDecision) already waits for it.
+    const creatingSessionId =
+      parsed.ok && parsed.envelope.type === "createSession" ? parsed.envelope.sessionId : null;
+    if (creatingSessionId === null) return this.admit(raw);
+    const release = this.creations.begin(creatingSessionId);
+    let outcome: CommandInboxOutcome;
+    try {
+      outcome = await this.admit(raw);
+    } catch (error) {
+      release();
+      throw error;
+    }
+    if (outcome.kind === "ack") {
+      release();
+      return outcome;
+    }
+    // An admitted create stays pending until the handler settles it, not until admission returns.
+    const settle = outcome.settle;
+    return {
+      ...outcome,
+      settle: (final) => {
+        try {
+          settle(final);
+        } finally {
+          release();
+        }
+      },
+    };
+  }
+
+  private async admit(raw: unknown): Promise<CommandInboxOutcome> {
     const parsed = parseCommandEnvelope(raw);
     if (!parsed.ok) {
       return this.ackOnly({

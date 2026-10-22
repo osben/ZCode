@@ -647,3 +647,48 @@ describe("CommandInbox single-flight 与 admission FIFO", () => {
     if (second.kind === "execute") second.settle({ status: "accepted" });
   });
 });
+
+describe("CommandInbox session creation ordering", () => {
+  // A subscribe for the reserved id can arrive while the create is still admitted or executing. The
+  // gateway waits on this, so the subscribe is never answered "not found" for a session still being created.
+  it("a subscribe waits for an admitted createSession until the handler settles it", async () => {
+    const inbox = new CommandInbox(makeHost());
+    const create = envelope({
+      commandId: "create-1",
+      sessionId: "s-reserved",
+      type: "createSession",
+      payload: { workspaceId: "w-1" },
+    });
+    const admitted = inbox.handle(create);
+    let waited = false;
+    const subscribe = inbox.whenSessionCreationSettles("s-reserved").then(() => {
+      waited = true;
+    });
+    const outcome = await admitted;
+    expect(outcome.kind).toBe("execute");
+    await Promise.resolve();
+    expect(waited).toBe(false);
+    if (outcome.kind !== "execute") return;
+    outcome.settle({ status: "accepted" });
+    await subscribe;
+    expect(waited).toBe(true);
+  });
+
+  it("an ack-only createSession releases the wait without an execution", async () => {
+    const inbox = new CommandInbox(makeHost());
+    const malformed = { ...envelope({ sessionId: "s-rejected" }), type: "createSession", payload: 1 };
+    const outcome = await inbox.handle(malformed);
+    expect(outcome.kind).toBe("ack");
+    await expect(inbox.whenSessionCreationSettles("s-rejected")).resolves.toBeUndefined();
+  });
+
+  it("a wait for one session never blocks on another session's create", async () => {
+    const inbox = new CommandInbox(makeHost());
+    const other = await inbox.handle(
+      envelope({ commandId: "create-other", sessionId: "s-other", type: "createSession", payload: { workspaceId: "w-1" } }),
+    );
+    expect(other.kind).toBe("execute");
+    await expect(inbox.whenSessionCreationSettles("s-unrelated")).resolves.toBeUndefined();
+    if (other.kind === "execute") other.settle({ status: "accepted" });
+  });
+});

@@ -1620,6 +1620,9 @@ export class ConversationV4Gateway {
     if (sessionId === null) {
       throw new Error(`Unsupported topic: ${params.topic}`);
     }
+    // A subscribe may race the createSession that reserved this id (the renderer subscribes as soon as it
+    // reserves). Wait for that create, so "not found" is only answered for a session that does not exist.
+    await this.inbox.whenSessionCreationSettles(sessionId);
     await this.host.restorePreparedSession?.(sessionId);
     const isLiveConversation = this.hasLiveConversation(sessionId);
     this.host.onDebug?.(
