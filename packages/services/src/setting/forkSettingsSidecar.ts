@@ -47,7 +47,7 @@ type LocationArg = SettingsLocation;
  * temporarily unreadable file as empty, or the write back would delete the stored settings.
  */
 async function readRawForkSettings(
-  options: { throwOnIoError?: boolean } | undefined,
+  options: { throwOnIoError?: boolean; onIoError?: () => void } | undefined,
   location: LocationArg,
 ): Promise<unknown> {
   const forkSettingsFile = location.forkFile;
@@ -73,6 +73,7 @@ async function readRawForkSettings(
     if (options?.throwOnIoError) {
       throw err;
     }
+    options?.onIoError?.();
     log("fork settings read failed, using defaults. error:", err);
     return undefined;
   }
@@ -85,9 +86,10 @@ async function readRawForkSettings(
  */
 export async function readForkSettings(
   location: LocationArg = resolveSettingsLocation(),
+  options?: { onIoError?: () => void },
 ): Promise<ForkAppSettings> {
   const result = forkAppSettingsSchema.safeParse(
-    (await readRawForkSettings(undefined, location)) ?? {},
+    (await readRawForkSettings({ onIoError: options?.onIoError }, location)) ?? {},
   );
   if (!result.success) {
     log(
@@ -124,7 +126,8 @@ async function writeForkSettings(
   location: LocationArg,
 ): Promise<void> {
   const forkSettingsFile = location.forkFile;
-  log("writing fork settings to:", forkSettingsFile, JSON.stringify(settings));
+  debugLog("writing fork settings, keys:", Object.keys(settings).join(", "));
+  debugLog("fork write payload:", JSON.stringify(settings));
   await mkdir(location.dir, { recursive: true });
   if (options.guards && !options.guards.shouldCommit()) {
     // The queue turn expired while this write was pending: skip entirely, the same way
