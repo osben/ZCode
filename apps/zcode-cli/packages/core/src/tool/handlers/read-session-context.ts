@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   CoreErrorType,
   READ_SESSION_CONTEXT_DEFAULT_MAX_TOKENS,
@@ -347,7 +348,7 @@ async function generateLiteExtraction(input: {
       traceContext: traceFromContext(input.context),
     },
     () =>
-      model.generateText({
+      assertNotExternalAgentModel(model, "session context reader").generateText({
         messages,
         tools: [],
         options: {

@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   ModelErrorCode,
   runWithModelInvocationContext,
@@ -295,7 +296,7 @@ async function handleCompactSummaryStreamFailure(
     },
   };
   return runWithModelInvocationContext(invocationContext(fallbackRequest), () =>
-    input.model.generateText(cleanRequest(fallbackRequest)),
+    assertNotExternalAgentModel(input.model, "compact summary").generateText(cleanRequest(fallbackRequest)),
   );
 }
 
@@ -304,7 +305,7 @@ function compactModelStream(
   request: CompactSummaryModelRequest,
 ): AsyncIterable<ModelStreamEvent> {
   return runWithModelInvocationContext(invocationContext(request), () =>
-    input.model.streamText(cleanRequest(request)),
+    assertNotExternalAgentModel(input.model, "compact summary").streamText(cleanRequest(request)),
   );
 }
 

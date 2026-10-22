@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   CoreErrorType,
   createCoreError,
@@ -63,7 +64,7 @@ export async function processFetchedContent(
         traceContext: traceFromContext(context),
       },
       () =>
-        model.generateText({
+        assertNotExternalAgentModel(model, "web fetch").generateText({
           messages,
           tools: [],
           options: {

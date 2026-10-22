@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import type { McpAppsSamplingParams, McpAppsSamplingResult } from "@zcode/shared/mcp-apps";
 import { mcpAppsSamplingParamsSchema, mcpAppsSamplingResultSchema } from "@zcode/shared/mcp-apps";
 import {
@@ -78,7 +79,7 @@ export async function sampleModel(
         }),
       },
       () =>
-        model.generateText({
+        assertNotExternalAgentModel(model, "MCP app sampling").generateText({
           abortSignal: signal,
           messages,
           options: {
