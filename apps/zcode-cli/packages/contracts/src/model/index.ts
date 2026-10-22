@@ -22,6 +22,7 @@ export * from "./image-media.js";
 export * from "./model.js";
 export * from "./invocation-context.js";
 export * from "./external-agent.js";
+export * from "./external-agent-config.js";
 
 export type JsonSchema = Record<string, unknown>;
 

@@ -28,6 +28,11 @@ import {
   type ModelUsage,
 } from "@zcode/contracts";
 import type { AcpPoolRuntime, AcpSessionPool } from "./acp-session-pool.js";
+import {
+  reconcileAcpSessionConfig,
+  toExternalAgentConfig,
+  type AcpSessionConfigStore,
+} from "./acp-config-reconcile.js";
 
 /** Auth failures are recognized by the agent's own wording; the runtime never inspects text otherwise. */
 const AUTH_FAILURE_PATTERN = /\bauth(?:entication|orization|orized)?\b|sign[ -]?in|log[ -]?in|unauthori[sz]ed|credential/i;
@@ -57,6 +62,8 @@ export interface AcpExternalAgentHostOptions {
   readonly pool: AcpSessionPool;
   /** Worker logger for debug/warn facts that never reach the conversation (commands, stalls). */
   readonly logger?: Logger;
+  /** Offered options and chosen values per session (S6). Without it no choice is re-applied. */
+  readonly config?: AcpSessionConfigStore;
 }
 
 export function createAcpExternalAgentHost(
@@ -98,12 +105,24 @@ function createAcpTurnDriver(
       }
       // A session that could not be restored is shown to the user before the agent answers.
       if (runtime.takeSessionStart?.() === "reset") request.onEvent({ type: "context_reset" });
+      // Chosen values reach the agent before the prompt; a change made during a running turn waits here.
+      if (options.config !== undefined) {
+        await reconcileAcpSessionConfig({
+          runtime,
+          store: options.config,
+          sessionId: request.sessionId,
+          agentId,
+          ...(options.logger === undefined ? {} : { logger: options.logger }),
+          onOptions: (configOptions) =>
+            request.onEvent({ type: "config_options", options: configOptions }),
+        });
+      }
       // Asks of this agent session reach the turn only while the prompt runs (see pool.bindTurnPermission).
       const unbind = options.pool.bindTurnPermission(request.sessionId, (ask) =>
         toAcpPermissionAnswer(request, ask),
       );
       try {
-        return await runPrompt(runtime, agentId, request, options.logger);
+        return await runPrompt(runtime, agentId, request, options);
       } finally {
         unbind();
       }
@@ -138,8 +157,9 @@ async function runPrompt(
   runtime: AcpPoolRuntime,
   agentId: string,
   request: ExternalAgentTurnRequest,
-  logger: Logger | undefined,
+  options: AcpExternalAgentHostOptions,
 ): Promise<ExternalAgentTurnResult> {
+  const logger = options.logger;
   let authRequired = false;
   const onEvent = (event: AcpRuntimeEvent) => {
     switch (event.type) {
@@ -186,7 +206,25 @@ async function runPrompt(
           agentId,
           silentMs: event.silentMs,
         });
+        request.onEvent({ type: "stalled", silentMs: event.silentMs });
         return;
+      case "resumed":
+        request.onEvent({ type: "resumed" });
+        return;
+      case "config_options": {
+        // Agent-initiated change: the display copy shows the agent's value; choices stay as they are.
+        const configOptions = toExternalAgentConfig(event.options);
+        request.onEvent({ type: "config_options", options: configOptions });
+        options.config?.writeOffered(request.sessionId, configOptions).catch((error: unknown) => {
+          logger?.warn("ACP agent config options could not be stored", {
+            event: "external_agent.config_store_failed",
+            module: "bootstrap.acp-agent",
+            agentId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
+        });
+        return;
+      }
       default:
         // Usage is read from the prompt response; exit and cleanup events are handled by the rejection path.
         return;

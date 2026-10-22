@@ -348,6 +348,7 @@ export async function runZCodeProtocolAgent(
       env: options.env,
       loggerFactory,
       lsp: activeLspRuntimeHub.protocolHost,
+      externalAgentConfig: acpAgents.config,
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,

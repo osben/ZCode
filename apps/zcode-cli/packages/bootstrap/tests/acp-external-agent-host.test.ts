@@ -180,6 +180,8 @@ describe("ACP external agent tool, plan and title mapping", () => {
       },
       { type: "plan", entries: [{ content: "Write tests", priority: "high", status: "in_progress" }] },
       { type: "session_title", title: "Fix the parser" },
+      // S6: a stall reaches core as a transient turn status as well as the worker log.
+      { type: "stalled", silentMs: 5000 },
     ]);
     expect(debug).toHaveBeenCalledWith(
       "ACP agent advertised commands",

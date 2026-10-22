@@ -19,6 +19,21 @@ function addSessionColumnsIfMissing(db: DatabaseSync, columns: readonly string[]
   }
 }
 
+/** Same guard as addSessionColumnsIfMissing, for the fork-owned ACP binding table. */
+function addAcpBindingColumnsIfMissing(db: DatabaseSync, columns: readonly string[]): void {
+  const existing = new Set(
+    db
+      .prepare("pragma table_info(fork_acp_session_binding)")
+      .all()
+      .map((row) => row.name),
+  );
+  for (const column of columns) {
+    if (!existing.has(column)) {
+      db.exec(`alter table fork_acp_session_binding add column ${column} text`);
+    }
+  }
+}
+
 const FORK_ACP_SESSION_BINDING_SQL = `
   create table if not exists fork_acp_session_binding (
     session_id text primary key,
@@ -71,6 +86,22 @@ export const FORK_SESSION_MIGRATIONS: readonly SqliteMigration[] = [
     touchedTables: ["fork_acp_session_binding"],
     apply: (db) => db.exec(FORK_ACP_SESSION_BINDING_SQL),
     sql: FORK_ACP_SESSION_BINDING_SQL,
+  },
+  {
+    appVersion: "0.16.9",
+    id: "9004_fork_session_acp_config",
+    // Fork-owned (9004_fork_* id, fork_ table): the agent's offered config options (display copy, JSON)
+    // and the user's chosen values (JSON map of config id to value). Both are nullable: a binding
+    // without a first turn has neither. They are cleared with the binding row.
+    touchedTables: ["fork_acp_session_binding"],
+    apply: (db) => addAcpBindingColumnsIfMissing(db, ["config_options", "config_choices"]),
+    sql: `
+      alter table fork_acp_session_binding
+        add column config_options text;
+
+      alter table fork_acp_session_binding
+        add column config_choices text;
+    `,
   },
 ];
 

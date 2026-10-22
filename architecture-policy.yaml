@@ -764,7 +764,12 @@ exceptions:
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-external-agent-host.ts
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts
       - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/runtime-cleanup.ts
-    reason: Chat delegation to external ACP agents (specs/acp-agent-runtime.md "Chat delegation (phase 4)") adds the external-agent turn port (contract), its turn runner in core (side-effect free apart from the existing turn ports), and the bootstrap composition root (process pool and driver). The zcode-cli tree has no managed module yet; the same reasoning as acp-agent-fork-sidecar-unmanaged-files applies, so adopting apps/zcode-cli needs a separate module boundary refactor. Core keeps no import of the ACP runtime; only bootstrap binds it.
+      - apps/zcode-cli/packages/contracts/src/model/external-agent-config.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-session-events.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-config-reconcile.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/external-agent-config-store.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/external-agent-config.ts
+    reason: Chat delegation to external ACP agents (specs/acp-agent-runtime.md "Chat delegation (phase 4)") adds the external-agent turn port (contract), its turn runner in core (side-effect free apart from the existing turn ports), and the bootstrap composition root (process pool and driver). The zcode-cli tree has no managed module yet; the same reasoning as acp-agent-fork-sidecar-unmanaged-files applies, so adopting apps/zcode-cli needs a separate module boundary refactor. Core keeps no import of the ACP runtime; only bootstrap binds it. S6 (agent configuration options) adds the config option contract, its non-transcript session events in core, the driver reconcile in bootstrap, and the v4 command handler with its narrow store port; none of them imports the ACP runtime outside bootstrap.
   - id: opensource-cua-test-project-config
     rule: unmanaged-new-file
     paths: [packages/zcode-cua/vitest.config.ts]

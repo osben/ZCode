@@ -40,6 +40,8 @@ import type {
   TurnId,
 } from "../interfaces/shared.js";
 import type {
+  ExternalAgentConfigUpdatedPayload,
+  ExternalAgentStatusPayload,
   ModelNetworkStatusEvent,
   ModelSelection,
   ModelUsage,
@@ -88,6 +90,10 @@ export const SessionEventType = {
   SessionCompacted: "session_compacted",
   SessionTitleUpdated: "session_title_updated",
   SessionModeChanged: "session_mode_changed",
+  // ACP agent session selects (specs/acp-agent-runtime.md "S6"): config state, never a transcript row.
+  ExternalAgentConfigUpdated: "external_agent_config_updated",
+  // ACP agent stall/resume during a prompt: a transient turn status, never a transcript row.
+  ExternalAgentStatus: "external_agent_status",
   SessionEnded: "session_ended",
   TurnStarted: "turn_started",
   TurnInputReceived: "turn_input_received",
@@ -1338,6 +1344,8 @@ export type SessionEventPayload =
   | SessionCompactedPayload
   | SessionTitleUpdatedPayload
   | SessionModeChangedPayload
+  | ExternalAgentConfigUpdatedPayload
+  | ExternalAgentStatusPayload
   | TurnStartedPayload
   | TurnInputReceivedPayload
   | TurnSteerQueuedPayload

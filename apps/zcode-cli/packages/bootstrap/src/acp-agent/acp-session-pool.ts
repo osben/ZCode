@@ -21,12 +21,13 @@ import {
   type AcpSessionStart,
   type ContentBlock,
 } from "@zcode/acp-agent-runtime";
+import type { AcpConfigRuntime } from "./acp-config-reconcile.js";
 
 /**
  * The part of a runtime the pool and turn driver use. Structural so tests can inject a fake;
  * `AcpSessionRuntime` satisfies it.
  */
-export interface AcpPoolRuntime {
+export interface AcpPoolRuntime extends AcpConfigRuntime {
   readonly state: AcpRuntimeState;
   /** ACP session id of the runtime's current session. */
   readonly acpSessionId?: string;
@@ -198,7 +199,8 @@ export class AcpSessionPool {
 
   /**
    * The ACP session to load for a cold start: only a binding of the same agent, working directory and
-   * launch config. Any other binding is cleared, so the agent starts a new session.
+   * launch config. Any other binding is cleared, so the agent starts a new session. Clearing the row
+   * also drops the chosen config values: they belong to the earlier agent process configuration.
    */
   async #resumeSessionId(sessionId: string, launch: AcpLaunchOptions): Promise<string | undefined> {
     const stored = await this.#bindings?.read(sessionId);

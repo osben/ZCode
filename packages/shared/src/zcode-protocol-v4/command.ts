@@ -238,6 +238,17 @@ export const commandPayloadSchemas = {
   switchCollaborationMode: z.object({
     mode: z.enum(["build", "edit", "plan", "yolo", "guarded"]),
   }),
+  // Additive (specs/acp-agent-runtime.md "S6"): the user's choice for one select of the session's
+  // ACP agent. The worker stores it and applies it before the next prompt; a running turn is never
+  // touched. `sessionId` repeats the envelope's session and must equal it. No baseRevision: the choice
+  // does not depend on the conversation revision, and a same value is a no-op (config.unchanged).
+  setExternalAgentConfigOption: z
+    .object({
+      sessionId: z.string().min(1),
+      configId: z.string().min(1),
+      value: z.string().min(1),
+    })
+    .strict(),
   setFollowupMode: z.object({ mode: z.enum(["queue", "guide"]) }),
   pauseGoal: z.object({}),
   resumeGoal: z.object({}),

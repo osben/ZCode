@@ -159,6 +159,9 @@ function isExternalAgentContextResetPayload(payload: unknown): boolean {
 }
 
 const LIVE_ONLY_EVENT_TYPES = new Set<string>([
+  // An ACP agent stall is a status of its running turn: the authority-turn check above keeps it for a
+  // turn still running, and this drops it for a settled one, so it never replays after the turn ended.
+  SessionEventType.ExternalAgentStatus,
   SessionEventType.PluginUiResourceUpdated,
   SessionEventType.PluginUiResourceListChanged,
   SessionEventType.PluginUiAppToolCallRequested,
@@ -169,6 +172,8 @@ const MEMORY_ONLY_EVENT_TYPES = new Set<string>([
   SessionEventType.SessionResumed,
   SessionEventType.SessionTitleUpdated,
   SessionEventType.SessionModeChanged,
+  // ACP agent selects (S6): config state that no transcript synthesizes.
+  SessionEventType.ExternalAgentConfigUpdated,
   SessionEventType.PermissionRequested,
   SessionEventType.PermissionResolved,
   SessionEventType.PermissionDenied,

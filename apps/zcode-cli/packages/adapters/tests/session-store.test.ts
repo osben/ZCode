@@ -461,7 +461,7 @@ describe("SQLite session store", () => {
   it("keeps the existing in-memory session store path working", async () => {
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     try {
-      expect(store.debugMigrationIds()).toHaveLength(26);
+      expect(store.debugMigrationIds()).toHaveLength(28);
     } finally {
       store.close();
     }
@@ -591,6 +591,8 @@ describe("SQLite session store", () => {
       "0024_session_database_identity",
       "9001_fork_session_incognito",
       "9002_fork_session_execution_worktree",
+      "9003_fork_session_acp_binding",
+      "9004_fork_session_acp_config",
     ];
 
     try {
@@ -627,6 +629,8 @@ describe("SQLite session store", () => {
         "0.16.5",
         "0.16.5",
         "0.16.5",
+        "0.16.9",
+        "0.16.9",
         "0.16.9",
         "0.16.9",
         "0.16.9",
@@ -678,7 +682,7 @@ describe("SQLite session store", () => {
         ]),
       );
       expect(attempts.flat().filter((result) => !result.ok)).toEqual([]);
-      expect(attempts.flat().every((result) => result.migrationIds?.length === 26)).toBe(true);
+      expect(attempts.flat().every((result) => result.migrationIds?.length === 28)).toBe(true);
     },
     CONCURRENT_STARTUP_TEST_TIMEOUT_MS,
   );
@@ -905,6 +909,8 @@ describe("SQLite session store", () => {
         "0024_session_database_identity",
         "9001_fork_session_incognito",
         "9002_fork_session_execution_worktree",
+        "9003_fork_session_acp_binding",
+        "9004_fork_session_acp_config",
       ]);
       store.close();
     } finally {

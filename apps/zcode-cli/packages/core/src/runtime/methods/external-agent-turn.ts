@@ -31,6 +31,7 @@ import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { ExternalAgentToolRows } from "./external-agent-tool-rows.js";
 import { answerExternalAgentPermission } from "./external-agent-permission.js";
 import { setExternalAgentSessionTitle } from "./session-title.js";
+import { appendExternalAgentConfig, appendExternalAgentStatus } from "./external-agent-session-events.js";
 import { recordModelHistoryRound } from "./turn-loop-state.js";
 import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js";
 import { captureAssistantPersistenceAnchor, persistCompletedAssistantStep } from "./turn-stop.js";
@@ -281,6 +282,19 @@ export async function runExternalAgentTurn(
         state.events.push(notice);
         return;
       }
+      case "config_options":
+        await appendExternalAgentConfig(this, state, driver.agentId, event.options);
+        return;
+      case "stalled":
+        await appendExternalAgentStatus(this, state, {
+          agentId: driver.agentId,
+          status: "stalled",
+          silentMs: event.silentMs,
+        });
+        return;
+      case "resumed":
+        await appendExternalAgentStatus(this, state, { agentId: driver.agentId, status: "resumed" });
+        return;
     }
   };
   const onEvent = (event: ExternalAgentTurnEvent) => {

@@ -19,8 +19,14 @@ import { workspaceHookReviewRequestPayloadSchema } from "./workspace-hook-review
 import { workflowRunsStateSchema } from "./workflow-runs.js";
 import { sessionConfigStateSchema, sessionModelTransitionSchema } from "./session-config.js";
 export {
+  externalAgentConfigOptionSchema,
+  externalAgentConfigStateSchema,
+  externalAgentConfigValueSchema,
   sessionConfigStateSchema,
   sessionModelTransitionSchema,
+  type ExternalAgentConfigOption,
+  type ExternalAgentConfigState,
+  type ExternalAgentConfigValue,
   type SessionConfigState,
   type SessionModelTransition,
 } from "./session-config.js";
@@ -130,6 +136,16 @@ export const apiRetryStateSchema = z.object({
 });
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
+export const externalAgentStallStateSchema = z
+  .object({
+    agentId: z.string().min(1),
+    /** When the stall was reported. */
+    since: timestampSchema,
+    silentMs: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ExternalAgentStallState = z.infer<typeof externalAgentStallStateSchema>;
+
 export const sessionControlSchema = z.object({
   phase: sessionPhaseSchema,
   // Derived value (= phase ∈ completed*), retained for UI convenience.
@@ -142,6 +158,10 @@ export const sessionControlSchema = z.object({
   activeWorks: z.array(activeWorkSummarySchema),
   lastError: sessionErrorInfoSchema.nullable(),
   apiRetry: apiRetryStateSchema.nullable(),
+  // Additive (specs/acp-agent-runtime.md "S6"): the external ACP agent produced no output for
+  // `silentMs` during the running turn. Non-blocking (Stop stays available); null after the agent
+  // resumes or the turn ends. Optional so older snapshots still parse.
+  externalAgentStall: externalAgentStallStateSchema.nullable().optional(),
 });
 export type SessionControl = z.infer<typeof sessionControlSchema>;
 

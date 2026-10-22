@@ -41,4 +41,5 @@ export { createForkAcpSessionBindingStore } from "./session-store/fork-acp-sessi
 export type {
   ForkAcpSessionBinding,
   ForkAcpSessionBindingStore,
+  ForkAcpSessionConfig,
 } from "./session-store/fork-acp-session-binding.js";

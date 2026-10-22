@@ -133,3 +133,42 @@ describe("cold replay of an external agent context reset", () => {
     expect(rows.filter((row) => row.kind === "timelineMarker")).toHaveLength(1);
   });
 });
+
+// specs/acp-agent-runtime.md "S6": the selects survive cold replay; a settled turn's stall does not.
+describe("cold replay of external agent config and stall events", () => {
+  it("keeps external_agent_config_updated and drops the stall of a settled turn", () => {
+    const turnId = "runtime-turn-config";
+    const user = userMessage("u-config", "plan it", 1_000, turnId);
+    const config = {
+      agentId: "opencode",
+      options: [
+        {
+          id: "mode",
+          name: "Mode",
+          description: null,
+          category: "mode",
+          currentValue: "plan",
+          options: [{ value: "plan", name: "Plan", description: null, group: null }],
+        },
+      ],
+    };
+    const memoryEvents = [
+      event(1, SessionEventType.TurnStarted, { turnNumber: 1, input: "plan it", messageId: "u-config" }, turnId),
+      event(2, SessionEventType.ExternalAgentConfigUpdated, config, turnId),
+      event(3, SessionEventType.ExternalAgentStatus, { agentId: "opencode", status: "stalled", silentMs: 30_000 }, turnId),
+      event(4, SessionEventType.TurnComplete, { resultType: "success", historyRoundCount: 1 }, turnId),
+    ];
+
+    const merged = mergeColdConversationEvents({
+      memoryEvents,
+      messages: [user, assistantMessage("a-config", user.info.id, "planned", 1_200, turnId)],
+      sessionId: "s1",
+    });
+
+    expect(merged.events.map((item) => item.type)).toContain(SessionEventType.ExternalAgentConfigUpdated);
+    expect(merged.events.map((item) => item.type)).not.toContain(SessionEventType.ExternalAgentStatus);
+    const snapshot = reduce(merged.events).getSnapshot();
+    expect(snapshot.config.externalAgentConfig).toEqual(config);
+    expect(snapshot.control.externalAgentStall ?? null).toBeNull();
+  });
+});

@@ -6,6 +6,7 @@
 // ACP runtime. The composition root (bootstrap) is the only place that binds the two together.
 
 import type { Model, ModelOptions, ModelOptionSpecs, ModelProperties, ModelUsage } from "./index.js";
+import type { ExternalAgentConfigOption } from "./external-agent-config.js";
 
 /** Symbol key under which a marker Model carries its turn driver. `Symbol.for` keeps bundles agreeing. */
 export const EXTERNAL_AGENT_TURN_DRIVER: unique symbol = Symbol.for(
@@ -51,7 +52,12 @@ export type ExternalAgentTurnEvent =
   | { readonly type: "plan"; readonly entries: readonly ExternalAgentPlanEntry[] }
   | { readonly type: "session_title"; readonly title: string }
   /** The agent started a new session where the earlier one could not be restored (S5). */
-  | { readonly type: "context_reset" };
+  | { readonly type: "context_reset" }
+  /** The agent's offered options changed (S6): the full list, with the agent's current values. */
+  | { readonly type: "config_options"; readonly options: readonly ExternalAgentConfigOption[] }
+  /** No frame from the agent for `silentMs` during the prompt (S6); `resumed` follows the next frame. */
+  | { readonly type: "stalled"; readonly silentMs: number }
+  | { readonly type: "resumed" };
 
 /** A permission ask of the agent, after the runtime's live-turn check. */
 export interface ExternalAgentPermissionAsk {

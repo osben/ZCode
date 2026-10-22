@@ -647,7 +647,13 @@ Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, o
 
 - Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
   after the first message"), and with `config.invalid` when the id or value is not offered.
-- A same value that is already the chosen value is a no-op (`config.unchanged`).
+- A same value that is already the chosen value and the shown value is a no-op (`config.unchanged`).
+  Choosing the shown value when it is not the stored choice (an agent-initiated value) stores it, so
+  the next reconcile does not revert it.
+- The command carries no `baseRevision`: the choice does not depend on the conversation revision.
+  The payload `sessionId` must equal the envelope's session (`config.invalid` otherwise). A session
+  whose model is not `acp:<agentId>` is refused with `config.notExternalAgent`; refusals are failed
+  ACKs with the reason code.
 - Otherwise it writes `config_choices`, writes the display copy with the chosen value, and emits
   `external_agent_config_updated`. The command is additive on the protocol: `zcode-protocol` and the v4
   command union get the new payload with strict types and runtime validation.
@@ -655,12 +661,19 @@ Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, o
 Event and stream semantics: `external_agent_config_updated` is a persisted session event. The
 desktop-continuous link receives it live, and the web-remote-replayable link rebuilds the selects from
 the same log after a reconnect. Cold replay keeps it (it is not transcript-derived). The share projection
-passes it through without rendering a row.
+passes it through without rendering a row. The projected field is `config.externalAgentConfig`
+(`{ agentId, options }`). Session events live in the worker's memory, so after a worker restart the
+gateway seeds `config.externalAgentConfig` from `fork_acp_session_binding.config_options` when the
+projection is hydrated (no delta; an event value always wins over the seed).
 
 Stall: the runtime emits `stalled` once per prompt after `stallWarningMs` without frames, and `resumed`
 on the next inbound frame. The driver forwards both to core. Core shows a non-blocking turn status
 "The agent is not responding…" with Stop available, and clears it on `resumed` or at turn end. No
-transcript row is written.
+transcript row is written. Core appends `external_agent_status` (`{ agentId, status, silentMs? }`); the
+projection sets `control.externalAgentStall` (`{ agentId, since, silentMs }`, nullable, optional) for the
+running turn and sets it to `null` on `resumed`, `TurnStarted`, `TurnComplete` and `TurnError`. The
+existing `control.apiRetry` is not reused: it carries attempt counts and renders as "Reconnecting…".
+Cold replay drops the status of a settled turn.
 
 Migration `9004_fork_session_acp_config` (additive, `fork_` prefix) adds nullable `config_options` and
 `config_choices` (text) to `fork_acp_session_binding`. Upstream migrations are unchanged.
