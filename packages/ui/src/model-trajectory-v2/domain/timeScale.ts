@@ -81,8 +81,9 @@ export function clampDomain(domain: TimeDomain, bounds: TimeDomain): TimeDomain 
 
 /** Normalize a drag into an ordered range clamped to `bounds`; null when it collapses to nothing. */
 export function normalizeRange(a: number, b: number, bounds: TimeDomain): TimeDomain | null {
-  const from = Math.max(bounds.from, Math.min(a, b));
-  const to = Math.min(bounds.to, Math.max(a, b));
+  // Ranges are whole epoch milliseconds (spec "View state"); pixel-to-time conversion yields fractions.
+  const from = Math.floor(Math.max(bounds.from, Math.min(a, b)));
+  const to = Math.ceil(Math.min(bounds.to, Math.max(a, b)));
   return to > from ? { from, to } : null;
 }
 

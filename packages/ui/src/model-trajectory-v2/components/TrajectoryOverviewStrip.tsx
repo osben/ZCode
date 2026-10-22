@@ -80,7 +80,11 @@ export function TrajectoryOverviewStrip({
   );
   const bounds = model.extent;
   const [view, setView] = useState<TimeDomain | null>(null);
-  const [drag, setDrag] = useState<{ startX: number; currentX: number } | null>(null);
+  const [drag, setDrag] = useState<{
+    startX: number;
+    currentX: number;
+    spanKey: string | null;
+  } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => setView(null), [model.trajectory.taskId]);
@@ -93,9 +97,12 @@ export function TrajectoryOverviewStrip({
 
   const onPointerDown = (event: PointerEvent<SVGSVGElement>) => {
     if (event.button !== 0) return;
+    // Pointer capture retargets pointerup to the svg, so the span under the press is read before capturing.
+    const spanKey =
+      (event.target as Element).closest("[data-span-key]")?.getAttribute("data-span-key") ?? null;
     event.currentTarget.setPointerCapture(event.pointerId);
     const x = pointerX(event);
-    setDrag({ startX: x, currentX: x });
+    setDrag({ startX: x, currentX: x, spanKey });
   };
   const onPointerMove = (event: PointerEvent<SVGSVGElement>) => {
     if (drag) setDrag({ ...drag, currentX: pointerX(event) });
@@ -105,9 +112,7 @@ export function TrajectoryOverviewStrip({
     const endX = pointerX(event);
     setDrag(null);
     if (Math.abs(endX - drag.startX) < DRAG_THRESHOLD_PX) {
-      const target = (event.target as Element).closest("[data-span-key]");
-      const key = target?.getAttribute("data-span-key");
-      if (key) model.select(key);
+      if (drag.spanKey) model.select(drag.spanKey);
       return;
     }
     model.setRange(
@@ -230,6 +235,7 @@ export function TrajectoryOverviewStrip({
           width={width}
           height={height}
           className="touch-none select-none"
+          data-trajectory-v2-strip-svg=""
           data-trajectory-v2-range={
             model.range ? `${model.range.from}-${model.range.to}` : undefined
           }

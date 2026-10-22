@@ -90,6 +90,7 @@ export function TrajectoryInspector({
       onValueChange={(value) => setTab(value as InspectorTab)}
       className="flex h-full min-h-0 flex-col gap-0"
       data-trajectory-v2-inspector={row.kind}
+      data-trajectory-v2-inspector-key={row.key}
     >
       <div className="shrink-0 border-b border-border px-3 py-1.5">
         <TabsList variant="line">
