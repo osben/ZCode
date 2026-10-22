@@ -107,8 +107,14 @@ sequenceDiagram
 - The only source of truth is the file on the target host's disk. The UI holds only `loaded` (the last read or saved content, revision, eol, and hasBom) and `draft`.
   Do not add caching, settings, or broadcast synchronization.
 - Register the service in each host process (`packages/services/src/node.ts`), shared by the Desktop local Host and remote server.
-  In the combined service collection Desktop builds for remote workspaces (`packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`),
-  the service **must proxy to the remote connection** (`packages/client/src/remoteServiceAccess.ts`). It must not fall back to the local instance, which would silently edit a local file.
+  Desktop exposes remote workspaces to the renderer through `createServerRemoteWorkspaceServiceCollection`
+  (`packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`), the production path for every remote target (server, and SSH / WSL / Docker reaching a Source).
+  That collection **must register** `IUserInstructionsService` as the remote connection's proxy (`packages/client/src/remoteServiceAccess.ts`);
+  without the registration the Host has no `userInstructions` channel and even an up-to-date remote host shows "Remote host version not supported".
+  It must not fall back to the local instance, which would silently edit a local file.
+- The channel is fork-only, like `ISystemPromptService`: it is deliberately not part of the upstream remote-workspace RPC contract
+  (`remoteWorkspaceRpcContract.ts`, `REMOTE_WORKSPACE_RPC_REGISTRATIONS`), so upstream or older remote servers still connect and fall into the
+  "Remote host version not supported" state below.
 - The UI selects the target host through `useWorkspaceServicesResolution(workspacePath, remoteSessionId, workspaceIdentity)`. Without a workspace, use the local service.
 - Invariant: the server must resolve the file path exactly like the CLI adapter (`HOME` → `USERPROFILE` → `os.homedir()` + `.zcode/AGENTS.md`).
   Do not read `ZCODE_DESKTOP_HOME_DIR`. Share the same path helper in `@zcode/shared/node` with `settingsSyncService`.

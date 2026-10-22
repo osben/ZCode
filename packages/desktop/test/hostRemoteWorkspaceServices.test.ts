@@ -33,6 +33,7 @@ import {
   ISubagentsService,
   ICommandsService,
   ISettingsSyncService,
+  IUserInstructionsService,
   type ZCodeAgentSessionRuntimePreferencesRequest,
 } from "@zcode/services";
 import {
@@ -749,6 +750,49 @@ describe("remote workspace host service wiring", () => {
     expect(services.get(IUsageStatsService)).toBe(remoteServices.usageStatsService);
     expect(services.get(ISubagentsService)).toBe(remoteServices.subagentsService);
     expect(services.get(ISettingsSyncService)).toBe(remoteServices.settingsSyncService);
+  });
+
+  it("forwards global instructions to the server remote host instead of an unknown channel", async () => {
+    const userInstructionsService: IUserInstructionsService = {
+      read: vi.fn(async () => ({
+        kind: "error" as const,
+        path: "/home/remote/.zcode/AGENTS.md",
+        code: "NOT_UTF8" as const,
+      })),
+      write: vi.fn(async () => ({ kind: "conflict" as const, currentRevision: null })),
+      readClaudeImportSource: vi.fn(async () => ({
+        kind: "missing" as const,
+        path: "/home/remote/.claude/CLAUDE.md",
+      })),
+    };
+    const services = createServerRemoteWorkspaceServiceCollection({
+      clientConfigService,
+      connectionServices: { ...makeRemoteServices(), userInstructionsService } as never,
+      targetKind: "ssh",
+    });
+    const [serverProtocol, clientProtocol] = createQueuePair();
+    const server = new ChannelServer(serverProtocol, "remote-user-instructions", 50);
+    const client = new ChannelClient(clientProtocol);
+    services.exposeOnChannelServer(server);
+    const proxy = ProxyChannel.toService<IUserInstructionsService>(
+      client.getChannel(IUserInstructionsService.channelName),
+    );
+    try {
+      await expect(proxy.read()).resolves.toEqual({
+        kind: "error",
+        path: "/home/remote/.zcode/AGENTS.md",
+        code: "NOT_UTF8",
+      });
+      await expect(proxy.readClaudeImportSource()).resolves.toEqual({
+        kind: "missing",
+        path: "/home/remote/.claude/CLAUDE.md",
+      });
+      expect(userInstructionsService.read).toHaveBeenCalledTimes(1);
+      expect(userInstructionsService.readClaudeImportSource).toHaveBeenCalledTimes(1);
+    } finally {
+      client.dispose();
+      server.dispose();
+    }
   });
 
   it("materializes web remote task prompts before the reporting wrapper observes them", async () => {
