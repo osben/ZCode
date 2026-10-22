@@ -193,11 +193,23 @@ export function isAcpNodeKey(key: string | null): boolean {
 export interface AcpAgentCatalogEntry {
   readonly binary: string;
   readonly docsUrl: string;
+  /** The vendor's documented install command; it provides `binary` on PATH. */
+  readonly installCommand: string;
 }
 
 export const ACP_AGENT_CATALOG: Readonly<Record<string, AcpAgentCatalogEntry>> = {
-  opencode: { binary: "opencode", docsUrl: "https://opencode.ai/docs/" },
-  cursor: { binary: "cursor-agent", docsUrl: "https://cursor.com/docs/cli/overview" },
+  opencode: {
+    binary: "opencode",
+    docsUrl: "https://opencode.ai/docs/",
+    installCommand: "curl -fsSL https://opencode.ai/install | bash",
+  },
+  // The Cursor installer links both `agent` and `cursor-agent`; detection probes only
+  // `cursor-agent` because a bare `agent` collides with other CLIs on PATH.
+  cursor: {
+    binary: "cursor-agent",
+    docsUrl: "https://cursor.com/docs/cli/overview",
+    installCommand: "curl https://cursor.com/install -fsS | bash",
+  },
 };
 
 /** Detection state as the settings page consumes it (one owner: the detection hook). */

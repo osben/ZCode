@@ -150,9 +150,13 @@ export function AcpAgentCatalogDetail({
                   ) : (
                     <Badge variant="outline">{t("notInstalled")}</Badge>
                   )}
-                  {catalog ? (
-                    <span className="min-w-0 flex-1 text-ui-sm text-foreground-subtle">
+                  <span className="min-w-0 flex-1" />
+                  {catalog && !agent.installed ? (
+                    <span className="flex w-full min-w-0 flex-col gap-1 text-ui-sm text-foreground-subtle">
                       {t("installHint", { binary: catalog.binary })}
+                      <code className="select-all overflow-x-auto rounded-md border border-border bg-background px-2 py-1 font-mono text-ui-sm text-foreground">
+                        {catalog.installCommand}
+                      </code>
                     </span>
                   ) : null}
                   {catalog ? (

@@ -7942,7 +7942,7 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.acp.emptyDescription":
     "No supported ACP agent CLI was found on this machine. Install one, make sure its command is on your PATH, then rescan.",
   "settings.modelProvider.acp.installHint":
-    "Install the {binary} command to make this agent available.",
+    "Run this in a terminal to install {binary}, then rescan:",
   "settings.modelProvider.acp.installed": "Installed",
   "settings.modelProvider.acp.notInstalled": "Not installed",
   "settings.modelProvider.acp.docs": "Documentation",

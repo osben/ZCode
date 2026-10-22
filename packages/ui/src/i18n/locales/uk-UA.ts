@@ -2890,7 +2890,7 @@ const ukUA: Record<string, string> = {
   "settings.modelProvider.acp.emptyDescription":
     "На цьому комп'ютері не знайдено підтримуваних CLI-агентів ACP. Встановіть один із них, переконайтеся, що його команда є в PATH, і повторіть сканування.",
   "settings.modelProvider.acp.installHint":
-    "Встановіть команду {binary}, щоб цей агент був доступний.",
+    "Виконайте в терміналі, щоб встановити {binary}, потім проскануйте знову:",
   "settings.modelProvider.acp.installed": "Встановлено",
   "settings.modelProvider.acp.notInstalled": "Не встановлено",
   "settings.modelProvider.acp.docs": "Документація",

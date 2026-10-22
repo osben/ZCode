@@ -7538,7 +7538,7 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.acp.detecting": "正在检测代理…",
   "settings.modelProvider.acp.emptyDescription":
     "本机未找到受支持的 ACP 代理 CLI。请先安装，并确保其命令在 PATH 中，然后重新扫描。",
-  "settings.modelProvider.acp.installHint": "安装 {binary} 命令后即可使用该代理。",
+  "settings.modelProvider.acp.installHint": "在终端中运行以下命令安装 {binary}，然后重新扫描：",
   "settings.modelProvider.acp.installed": "已安装",
   "settings.modelProvider.acp.notInstalled": "未安装",
   "settings.modelProvider.acp.docs": "文档",

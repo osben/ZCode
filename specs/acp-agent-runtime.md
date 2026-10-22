@@ -137,8 +137,11 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - While the first detection is in flight the group shows a loading row, and navigation
   correction must not move an `acp-agent:*` selection away until detection settles.
 - Empty state: when detection finds no installed agent the group still renders one entry
-  ("Detect agents") whose detail lists the supported agents (name, binary, docs link, install
-  hint) with a Rescan action. A failed scan shows the error and Retry in that same detail.
+  ("Detect agents") whose detail lists the supported agents (name, installed badge, docs link)
+  with a Rescan action. An agent that is not installed also shows the vendor's documented install
+  command as selectable text (never executed by ZCode). A failed scan shows the error and Retry in
+  that same detail. The Cursor installer links both `agent` and `cursor-agent`; detection keeps
+  probing only `cursor-agent`, because a bare `agent` on PATH can belong to another CLI.
 - Detail pane for an agent: header (initial mark, name, version, binary path, Rescan, enable
   switch labelled with the agent name, status), then sections for launch config (command, args,
   env), login/status helpers, and Test. Raw ACP frames are behind a collapsed disclosure. Unsaved
