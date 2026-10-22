@@ -299,6 +299,7 @@ export async function runZCodeProtocolAgent(
     const externalAgents = createAcpExternalAgentHost({
       records: activeProviderRegistryRuntime.acpAgentStore,
       pool: acpSessionPool,
+      logger,
     });
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,

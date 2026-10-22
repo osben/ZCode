@@ -285,9 +285,9 @@ Design (fix):
 
 ## Chat delegation (phase 4)
 
-Status: slices S1 (gate, registry, composer) and S2 (text chat turns) are specified here. S3 (title,
-tool and plan rendering), S4 (permission UI) and S5 (session restore via `session/load`) are
-follow-ups and are only named in this section.
+Status: slices S1 (gate, registry, composer), S2 (text chat turns), S3 (tool, plan and title
+rendering) are specified here. S4 (user-once permissions) and S5 (session restore via `session/load`)
+are specified in their own sections below.
 
 ### Decisions
 
@@ -434,6 +434,47 @@ agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, 
   `exceptions` in `architecture-policy.yaml` with the same reasoning as the ACP sidecar exception.
 - Not covered in S2: `available_commands` and `stalled` events are ignored (not logged); the subagent
   refusal has no dedicated unit test; S3–S5 are unchanged.
+
+### S3: tool, plan and title events
+
+Runtime event → ZCode mapping. The driver turns ACP updates into turn events; core owns every
+ZCode event and persisted part. ACP-origin rows are never a tool contract for the model.
+
+| ACP update           | ZCode effect                                                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tool_call`          | `ToolCallScheduled` (toolName `acp:<kind>`, `kind` absent → `acp:other`, input = `rawInput` or `{}`) and a persisted `tool` part (`pending`). When `status` is `in_progress`, also `ToolCallStarted` and the part becomes `running`. |
+| `tool_call_update`   | First `in_progress` → `ToolCallStarted`. `pending`/`in_progress` → `ToolCallProgress`. `completed` → `ToolCallResult` (output = text content). `failed` → `ToolCallError`. An unseen id creates the row on the fly.                  |
+| `plan`               | A synthetic `TodoWrite` row (scheduled, started, result) with input `{todos}`. The session todo state is written with `updateTodos`, so the todo panel follows the plan.                                                             |
+| `session_title`      | `SessionTitleUpdated` with `source: "generated"` through the existing title setter. A `custom` title is never overwritten. An unchanged title is skipped.                                                                            |
+| `available_commands` | Debug log only.                                                                                                                                                                                                                      |
+| `stalled`            | Warn log only.                                                                                                                                                                                                                       |
+
+Rules:
+
+- Ordering. Text and reasoning deltas stream through the segment queue. Before a tool or plan event,
+  core closes the open text/reasoning block, drains the queue and persists the segment. The next
+  text opens a new part, so cold hydration keeps the reply order. Every `onEvent` runs on one
+  promise chain, and the turn awaits the chain before it finishes or fails.
+- ZCode tool call ids are minted per turn, one per ACP `toolCallId`. The first `tool_call` or
+  update carrying an id creates the row. A missing or empty title is absent, and an update merges
+  into the row.
+- Output text is capped at 32 KiB before it is persisted or streamed.
+- Turn end. Every row that is still open is closed as `ToolCallError`: "Cancelled" for a cancelled
+  turn, otherwise "The agent turn ended before this tool finished".
+- Tool parts carry `metadata.externalAgent = true`. Cold history hydration skips them, so a later
+  non-ACP model never sees an `acp:*` tool call without a declared tool.
+- Logs: `available_commands` (debug) and `stalled` (warn) carry the agent id and counts only.
+
+Acceptance (S3):
+
+- A `tool_call` with `in_progress` emits Scheduled then Started. A completed update emits Result
+  with the text output. A failed update emits Error.
+- A `tool_call_update` for an unseen id creates one row. Text before and after a tool is persisted as
+  two text parts in order.
+- A plan emits a `TodoWrite` row and writes the session todos.
+- A title event updates the session title. A custom title is kept.
+- Cancel or failure while a tool is open closes the row with an error.
+- The E2E scenarios for the tool row, the plan and the title are in the desktop conversation spec.
 
 ### Acceptance scenarios
 

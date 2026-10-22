@@ -104,6 +104,94 @@ function hostWith(
   return { host: createAcpExternalAgentHost({ records: recordSource, pool }), pool };
 }
 
+describe("ACP external agent tool, plan and title mapping", () => {
+  it("maps tool updates, plans and titles onto the turn contract and logs commands and stalls", async () => {
+    let finish!: () => void;
+    const runtime = scriptedRuntime({
+      prompt: () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ stopReason: "end_turn" });
+        }),
+    });
+    const { source } = records(enabledOpencode());
+    const debug = vi.fn();
+    const warn = vi.fn();
+    const logger = { debug, info: vi.fn(), warn, error: vi.fn(), child: () => logger };
+    const pool = new AcpSessionPool({ createRuntime: async () => runtime });
+    const host = createAcpExternalAgentHost({ records: source, pool, logger: logger as never });
+    const seen: unknown[] = [];
+    const turn = { ...request(), onEvent: (event: unknown) => seen.push(event) };
+
+    const pending = host.driverFor("opencode").runTurn(turn as ExternalAgentTurnRequest);
+    await vi.waitFor(() => expect(runtime.prompt).toHaveBeenCalled());
+    runtime.emit({
+      type: "tool_call",
+      toolCall: {
+        toolCallId: "t1",
+        title: "Edit a.ts",
+        kind: "edit",
+        status: "in_progress",
+        raw: { rawInput: { path: "a.ts" }, content: [{ type: "diff", path: "a.ts", newText: "x" }] },
+      },
+    });
+    runtime.emit({
+      type: "tool_call_update",
+      toolCall: {
+        toolCallId: "t1",
+        title: "",
+        kind: null,
+        status: "completed",
+        raw: { content: [{ type: "content", content: { type: "text", text: "done" } }] },
+      },
+    });
+    runtime.emit({
+      type: "plan",
+      entries: [{ content: "Write tests", priority: "high", status: "in_progress" }],
+      raw: null,
+    });
+    runtime.emit({ type: "session_title", title: "Fix the parser" });
+    runtime.emit({ type: "available_commands", commands: [{ name: "x" }] });
+    runtime.emit({ type: "stalled", silentMs: 5000 });
+    finish();
+    await pending;
+
+    expect(seen).toEqual([
+      {
+        type: "tool_call",
+        update: {
+          toolCallId: "t1",
+          title: "Edit a.ts",
+          kind: "edit",
+          status: "in_progress",
+          input: { path: "a.ts" },
+          output: "a.ts\nx",
+        },
+      },
+      {
+        type: "tool_call_update",
+        update: {
+          toolCallId: "t1",
+          title: null,
+          kind: null,
+          status: "completed",
+          input: undefined,
+          output: "done",
+        },
+      },
+      { type: "plan", entries: [{ content: "Write tests", priority: "high", status: "in_progress" }] },
+      { type: "session_title", title: "Fix the parser" },
+    ]);
+    expect(debug).toHaveBeenCalledWith(
+      "ACP agent advertised commands",
+      expect.objectContaining({ agentId: "opencode", count: 1 }),
+    );
+    expect(warn).toHaveBeenCalledWith(
+      "ACP agent produced no output for a while",
+      expect.objectContaining({ agentId: "opencode", silentMs: 5000 }),
+    );
+  });
+});
+
 describe("ACP external agent turn driver", () => {
   it("maps streamed chunks, prompt blocks and usage onto the turn contract", async () => {
     let finish!: () => void;

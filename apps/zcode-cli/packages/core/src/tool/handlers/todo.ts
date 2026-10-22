@@ -191,7 +191,7 @@ export const todoWriteToolEntry: ToolEntry = {
   },
 };
 
-function summarizeTodos(todos: TodoItem[]) {
+export function summarizeTodos(todos: TodoItem[]) {
   return {
     total: todos.length,
     pending: todos.filter((todo) => todo.status === "pending").length,

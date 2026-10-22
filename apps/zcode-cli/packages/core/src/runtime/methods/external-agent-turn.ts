@@ -25,6 +25,8 @@ import { createChildTraceContext, createMessageId, createPartId, TurnMachineImpl
 import type { AgentRuntimeInternal } from "../internal.js";
 import type { RuntimeModelTextResult } from "../types.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
+import { ExternalAgentToolRows } from "./external-agent-tool-rows.js";
+import { setExternalAgentSessionTitle } from "./session-title.js";
 import { recordModelHistoryRound } from "./turn-loop-state.js";
 import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js";
 import { captureAssistantPersistenceAnchor, persistCompletedAssistantStep } from "./turn-stop.js";
@@ -134,77 +136,127 @@ export async function runExternalAgentTurn(
     runtime: this,
     traceContext,
   });
-  const stream = {
+  // The open segment: text and reasoning since the last tool or plan event. Each tool event closes
+  // the segment, so the persisted text parts keep the order the agent produced them in.
+  const segment = {
     text: "",
     reasoning: "",
     textOpen: false,
     reasoningOpen: false,
+    startedAt: assistantCreatedAt,
     reasoningStartedAt: assistantCreatedAt,
   };
+  const response = { text: "", reasoning: "" };
   const enqueue = (payload: Omit<ModelStreamingPayload, "assistantMessageId">) =>
     queue.enqueue({ ...payload, assistantMessageId });
   const closeBlocks = () => {
-    if (stream.reasoningOpen) {
-      stream.reasoningOpen = false;
+    if (segment.reasoningOpen) {
+      segment.reasoningOpen = false;
       enqueue({ delta: "", done: false, kind: "reasoning_end" });
     }
-    if (stream.textOpen) {
-      stream.textOpen = false;
+    if (segment.textOpen) {
+      segment.textOpen = false;
       enqueue({ delta: "", done: false, kind: "text_end" });
     }
   };
-  const onEvent = (event: ExternalAgentTurnEvent) => {
-    if (event.type === "message_delta") {
-      if (stream.reasoningOpen) closeBlocks();
-      if (!stream.textOpen) {
-        stream.textOpen = true;
-        enqueue({ delta: "", done: false, kind: "text_start" });
-      }
-      stream.text += event.text;
-      enqueue({ delta: event.text, done: false, kind: "text_delta" });
-      return;
-    }
-    if (stream.textOpen) closeBlocks();
-    if (!stream.reasoningOpen) {
-      stream.reasoningOpen = true;
-      enqueue({ delta: "", done: false, kind: "reasoning_start" });
-    }
-    stream.reasoning += event.text;
-    enqueue({ delta: event.text, done: false, kind: "reasoning_delta" });
-  };
-
   const persistParts = async () => {
     const endedAt = Date.now();
-    if (stream.reasoning.length > 0) {
+    if (segment.reasoning.length > 0) {
       await this.persistPart(
         {
           id: createPartId(),
           sessionID: this.sessionId,
           messageID: assistantMessageId,
           type: "reasoning",
-          text: stream.reasoning,
-          time: { start: stream.reasoningStartedAt, end: endedAt },
+          text: segment.reasoning,
+          time: { start: segment.reasoningStartedAt, end: endedAt },
         },
         traceContext,
       );
+      response.reasoning += segment.reasoning;
     }
-    if (stream.text.length > 0) {
+    if (segment.text.length > 0) {
       await this.persistPart(
         {
           id: createPartId(),
           sessionID: this.sessionId,
           messageID: assistantMessageId,
           type: "text",
-          text: stream.text,
-          time: { start: assistantCreatedAt, end: endedAt },
+          text: segment.text,
+          time: { start: segment.startedAt, end: endedAt },
         },
         traceContext,
       );
+      response.text += segment.text;
     }
+    segment.text = "";
+    segment.reasoning = "";
+    segment.startedAt = endedAt;
+    segment.reasoningStartedAt = endedAt;
+  };
+  // Closes the open segment so the next part starts after the tool or plan rows already persisted.
+  const breakSegment = async () => {
+    closeBlocks();
+    await queue.drain();
+    await persistParts();
   };
 
-  // Partial output stays visible when the turn ends early; the assistant step is closed as failed
-  // or cancelled and never joins the history that a later non-ACP model sees.
+  const tools = new ExternalAgentToolRows({
+    agentId: driver.agentId,
+    assistantMessageId,
+    runtime: this,
+    traceContext,
+    turnTraceContext: state.turnTraceContext,
+    events: state.events,
+  });
+
+  // Every event runs on one chain: streamed text and tool rows keep the agent's wire order.
+  let pending: Promise<void> = Promise.resolve();
+  const handleEvent = async (event: ExternalAgentTurnEvent): Promise<void> => {
+    switch (event.type) {
+      case "message_delta": {
+        if (segment.reasoningOpen) closeBlocks();
+        if (!segment.textOpen) {
+          segment.textOpen = true;
+          enqueue({ delta: "", done: false, kind: "text_start" });
+        }
+        segment.text += event.text;
+        enqueue({ delta: event.text, done: false, kind: "text_delta" });
+        return;
+      }
+      case "reasoning_delta": {
+        if (segment.textOpen) closeBlocks();
+        if (!segment.reasoningOpen) {
+          segment.reasoningOpen = true;
+          enqueue({ delta: "", done: false, kind: "reasoning_start" });
+        }
+        segment.reasoning += event.text;
+        enqueue({ delta: event.text, done: false, kind: "reasoning_delta" });
+        return;
+      }
+      case "tool_call":
+      case "tool_call_update":
+        await breakSegment();
+        await tools.apply(event.update, event.type === "tool_call_update");
+        return;
+      case "plan":
+        await breakSegment();
+        await tools.applyPlan(event.entries);
+        return;
+      case "session_title":
+        await setExternalAgentSessionTitle.call(this, {
+          title: event.title,
+          traceContext: state.turnTraceContext,
+        });
+        return;
+    }
+  };
+  const onEvent = (event: ExternalAgentTurnEvent) => {
+    pending = pending.then(() => handleEvent(event));
+    // A failed handler surfaces once, when the turn awaits `pending`; this keeps it from being unhandled.
+    pending.catch(() => undefined);
+  };
+
   const closeInterrupted = async (finish: "error" | "cancelled") => {
     closeBlocks();
     await queue.drain().catch(() => undefined);
@@ -217,7 +269,7 @@ export async function runExternalAgentTurn(
       traceContext,
       model,
     );
-    state.modelResponse = stream.text;
+    state.modelResponse = response.text;
   };
 
   let outcome: ExternalAgentTurnResult;
@@ -229,9 +281,15 @@ export async function runExternalAgentTurn(
       signal: state.turnAbortSignal,
       onEvent,
     });
+    await pending;
   } catch (error) {
-    await closeInterrupted(state.turnAbortSignal.aborted ? "cancelled" : "error");
-    if (state.turnAbortSignal.aborted) throwIfTurnAborted(state.turnAbortSignal);
+    await pending.catch(() => undefined);
+    const cancelled = state.turnAbortSignal.aborted;
+    await tools.closeOpen(
+      cancelled ? "Cancelled" : "The agent turn failed before this tool finished",
+    );
+    await closeInterrupted(cancelled ? "cancelled" : "error");
+    if (cancelled) throwIfTurnAborted(state.turnAbortSignal);
     this.logger?.warn("External agent turn failed", {
       agentId: driver.agentId,
       event: "external_agent.turn.failed",
@@ -242,6 +300,7 @@ export async function runExternalAgentTurn(
   }
 
   if (state.turnAbortSignal.aborted || outcome.stopReason === "cancelled") {
+    await tools.closeOpen("Cancelled");
     await closeInterrupted("cancelled");
     throwIfTurnAborted(state.turnAbortSignal);
     throw createTurnCancelledError(new Error("External agent cancelled the prompt"));
@@ -251,12 +310,13 @@ export async function runExternalAgentTurn(
   closeBlocks();
   enqueue({ delta: "", done: true, kind: "finish" });
   await queue.drain();
+  await tools.closeOpen("The agent turn ended before this tool finished");
   await persistParts();
 
-  state.modelResponse = stream.text;
+  state.modelResponse = response.text;
   const result: RuntimeModelTextResult = {
-    text: stream.text,
-    reasoning: stream.reasoning ? [reasoningBlock(stream.reasoning)] : [],
+    text: response.text,
+    reasoning: response.reasoning ? [reasoningBlock(response.reasoning)] : [],
     finishReason: outcome.stopReason,
     usage: (outcome.usage ?? {}) as ModelUsage,
     toolCalls: [],

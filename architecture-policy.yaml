@@ -756,6 +756,7 @@ exceptions:
     paths:
       - apps/zcode-cli/packages/contracts/src/model/external-agent.ts
       - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-turn.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-tool-rows.ts
       - apps/zcode-cli/packages/core/src/runtime/methods/sample-model.ts
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-external-agent-host.ts
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts

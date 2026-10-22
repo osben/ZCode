@@ -11,14 +11,18 @@ import {
   ACP_AGENT_DEFINITIONS,
   AcpAgentDiedError,
   type AcpRuntimeEvent,
+  type AcpToolCallInfo,
   type ContentBlock,
 } from "@zcode/acp-agent-runtime";
 import {
   ExternalAgentTurnError,
   type ExternalAgentPromptBlock,
+  type ExternalAgentToolStatus,
+  type ExternalAgentToolUpdate,
   type ExternalAgentTurnDriver,
   type ExternalAgentTurnRequest,
   type ExternalAgentTurnResult,
+  type Logger,
   type ModelUsage,
 } from "@zcode/contracts";
 import type { AcpPoolRuntime, AcpSessionPool } from "./acp-session-pool.js";
@@ -49,6 +53,8 @@ export interface ExternalAgentTurnHost {
 export interface AcpExternalAgentHostOptions {
   readonly records: AcpAgentRecordSource;
   readonly pool: AcpSessionPool;
+  /** Worker logger for debug/warn facts that never reach the conversation (commands, stalls). */
+  readonly logger?: Logger;
 }
 
 export function createAcpExternalAgentHost(
@@ -88,7 +94,7 @@ function createAcpTurnDriver(
       } catch (error) {
         throw toStartFailure(error, agentId);
       }
-      return runPrompt(runtime, agentId, request);
+      return runPrompt(runtime, agentId, request, options.logger);
     },
   };
 }
@@ -120,6 +126,7 @@ async function runPrompt(
   runtime: AcpPoolRuntime,
   agentId: string,
   request: ExternalAgentTurnRequest,
+  logger: Logger | undefined,
 ): Promise<ExternalAgentTurnResult> {
   let authRequired = false;
   const onEvent = (event: AcpRuntimeEvent) => {
@@ -130,11 +137,46 @@ async function runPrompt(
       case "thought_chunk":
         request.onEvent({ type: "reasoning_delta", text: event.text });
         return;
+      case "tool_call":
+        request.onEvent({ type: "tool_call", update: toToolUpdate(event.toolCall) });
+        return;
+      case "tool_call_update":
+        request.onEvent({ type: "tool_call_update", update: toToolUpdate(event.toolCall) });
+        return;
+      case "plan":
+        request.onEvent({
+          type: "plan",
+          entries: event.entries.map((entry) => ({
+            content: entry.content,
+            priority: entry.priority,
+            status: entry.status,
+          })),
+        });
+        return;
+      case "session_title":
+        request.onEvent({ type: "session_title", title: event.title });
+        return;
       case "auth_required":
         authRequired = true;
         return;
+      case "available_commands":
+        logger?.debug("ACP agent advertised commands", {
+          event: "external_agent.commands",
+          module: "bootstrap.acp-agent",
+          agentId,
+          count: event.commands.length,
+        });
+        return;
+      case "stalled":
+        logger?.warn("ACP agent produced no output for a while", {
+          event: "external_agent.stalled",
+          module: "bootstrap.acp-agent",
+          agentId,
+          silentMs: event.silentMs,
+        });
+        return;
       default:
-        // Tool, plan, title and command updates belong to later slices; usage is read from the response.
+        // Usage is read from the prompt response; exit and cleanup events are handled by the rejection path.
         return;
     }
   };
@@ -159,6 +201,46 @@ async function runPrompt(
     runtime.off("event", onEvent);
     request.signal.removeEventListener("abort", onAbort);
   }
+}
+
+const TOOL_STATUSES: ReadonlySet<string> = new Set<ExternalAgentToolStatus>([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+]);
+
+/** ACP tool updates carry the raw update object; only the fields the turn contract needs are read. */
+function toToolUpdate(info: AcpToolCallInfo): ExternalAgentToolUpdate {
+  const raw = (info.raw ?? {}) as { rawInput?: unknown; content?: unknown };
+  return {
+    toolCallId: info.toolCallId,
+    title: info.title.trim().length > 0 ? info.title : null,
+    kind: info.kind ?? null,
+    status:
+      typeof info.status === "string" && TOOL_STATUSES.has(info.status)
+        ? (info.status as ExternalAgentToolStatus)
+        : null,
+    input: raw.rawInput,
+    output: textOfToolContent(raw.content),
+  };
+}
+
+/** Text of an ACP tool content list: text blocks verbatim, diffs as their path and new text. */
+function textOfToolContent(content: unknown): string | null {
+  if (!Array.isArray(content)) return null;
+  const chunks: string[] = [];
+  for (const item of content as Record<string, unknown>[]) {
+    if (item === null || typeof item !== "object") continue;
+    if (item.type === "content") {
+      const inner = item.content as { type?: unknown; text?: unknown } | undefined;
+      if (inner?.type === "text" && typeof inner.text === "string") chunks.push(inner.text);
+    } else if (item.type === "diff" && typeof item.path === "string") {
+      const newText = typeof item.newText === "string" ? `\n${item.newText}` : "";
+      chunks.push(`${item.path}${newText}`);
+    }
+  }
+  return chunks.length === 0 ? null : chunks.join("\n");
 }
 
 function toContentBlocks(prompt: readonly ExternalAgentPromptBlock[]): ContentBlock[] {

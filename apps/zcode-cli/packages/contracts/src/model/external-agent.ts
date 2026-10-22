@@ -17,10 +17,39 @@ export type ExternalAgentPromptBlock =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "image"; readonly data: string; readonly mimeType: string };
 
-/** Streaming facts the driver reports while the agent works; ordering is the wire order. */
+/** ACP tool call status; `null` when the agent did not send one. */
+export type ExternalAgentToolStatus = "pending" | "in_progress" | "completed" | "failed";
+
+/**
+ * One ACP `tool_call` or `tool_call_update` after mapping. Fields the agent omitted are `null`
+ * (`input` is `undefined`); an update merges into the row the same `toolCallId` created.
+ */
+export interface ExternalAgentToolUpdate {
+  /** ACP tool call id; core mints the ZCode id per turn. */
+  readonly toolCallId: string;
+  readonly title: string | null;
+  /** ACP kind (`read`, `edit`, `execute`, ...); `null` maps to `other`. */
+  readonly kind: string | null;
+  readonly status: ExternalAgentToolStatus | null;
+  readonly input: unknown;
+  /** Text content of the update, when it carries any. */
+  readonly output: string | null;
+}
+
+export interface ExternalAgentPlanEntry {
+  readonly content: string;
+  readonly priority: string;
+  readonly status: string;
+}
+
+/** Streaming and session facts the driver reports while the agent works; ordering is the wire order. */
 export type ExternalAgentTurnEvent =
   | { readonly type: "message_delta"; readonly text: string }
-  | { readonly type: "reasoning_delta"; readonly text: string };
+  | { readonly type: "reasoning_delta"; readonly text: string }
+  | { readonly type: "tool_call"; readonly update: ExternalAgentToolUpdate }
+  | { readonly type: "tool_call_update"; readonly update: ExternalAgentToolUpdate }
+  | { readonly type: "plan"; readonly entries: readonly ExternalAgentPlanEntry[] }
+  | { readonly type: "session_title"; readonly title: string };
 
 export interface ExternalAgentTurnRequest {
   /** ZCode session that owns the resident agent process. */
