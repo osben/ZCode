@@ -34,6 +34,11 @@ Follows `docs/plans/2026-10-21-app-qa-orchestration-plan.md` (round 1, closed wi
 8. ISSUE-017: affected-test runner isolation (S, scripts).
 9. Composer: `firstSubmissionDelivering` / `attachmentsNotReady` still raise deduped notices; decide whether they are transient (S, ui).
 
+## Progress (2026-10-22 01:35)
+
+- Phase C 1 done (09385ad8). Phase C 5 resolved as by-design with a pinned test (cc95aa71). Phase C 6 implemented but parked on `claude/plugin-discovery-host-ordering` (7c0495f0): the gate only helps if the Host sends the subscribe before the renderer requests readPresentation, which is not yet measured; needs a renderer-side ordering decision. New: ISSUE-019 restored draft with a deleted project → null scope (158cc676).
+- Phase D real-scale pass done on a copy of the real index (see findings ledger): no block over 173 ms in sidebar, tables or search; ISSUE-020 search scope recorded as a product decision.
+
 ## Phase D — Remaining manual matrix
 
 - Multi-window: second window on the same workspace, sidebar sync, unread CAS across windows.
