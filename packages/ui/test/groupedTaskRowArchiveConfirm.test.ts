@@ -3,14 +3,17 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import type { SessionPullRequest, SessionPullRequestStatus, ZCodeTaskMeta } from "@zcode/shared";
 import { GroupedTaskRow } from "@/project-sidebar/grouped/task-row.js";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
+import enUS from "@/i18n/locales/en-US.js";
+import { expectedCopy } from "./helpers/uiCopy.js";
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     intl: {
-      formatMessage: ({ id }: { id: string }) =>
+      formatMessage: ({ id }: { id: string }, values?: Record<string, string | number>) =>
         ({
           "common.close": "Close",
           "common.confirm": "Confirm",
@@ -18,7 +21,9 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
           "taskGroup.moveToTop": "Move to top",
           "taskList.justNow": "just now",
           "taskList.untitled": "New chat",
-        })[id] ?? id,
+        })[id] ??
+        // Other copy comes from the en-US catalog so assertions follow the translation ledger.
+        (enUS[id] === undefined ? id : expectedCopy(id, values)),
     },
   }),
 }));
@@ -209,5 +214,129 @@ describe("GroupedTaskRow archive action", () => {
 
     expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
     expect(onCloseTask).not.toHaveBeenCalled();
+  });
+});
+
+const PR_WORKSPACE_PATH = "/tmp/workspace-grouped-archive";
+
+function makePullRequest(overrides: Partial<SessionPullRequest> = {}): SessionPullRequest {
+  return {
+    number: 7,
+    url: "https://github.com/osben/ZCode/pull/7",
+    title: "Example",
+    repository: "osben/ZCode",
+    headRefName: "feat/grouped",
+    stage: "open",
+    checks: "passing",
+    failingCheckCount: 0,
+    totalCheckCount: 1,
+    hasConflict: false,
+    reviewDecision: null,
+    additions: 1,
+    deletions: 1,
+    updatedAt: "2026-10-18T10:00:00Z",
+    mergedAt: null,
+    ...overrides,
+  };
+}
+
+function makeStatus(pullRequests: SessionPullRequest[]): SessionPullRequestStatus {
+  return {
+    state: "ready",
+    unavailableReason: null,
+    source: "branch",
+    pullRequests,
+    primaryNumber: pullRequests[0]?.number ?? null,
+    fetchedAt: "2026-10-18T10:00:01Z",
+    stale: false,
+  };
+}
+
+const worktreeTask = {
+  ...task,
+  taskId: "grouped-pr-task",
+  traceId: "trace-grouped-pr-task",
+  executionWorktree: { path: "/tmp/wt-grouped", branchName: "feat/grouped" },
+} as ZCodeTaskMeta;
+
+function renderGroupedRow(rowTask: ZCodeTaskMeta) {
+  const view = render(rowElement(rowTask, vi.fn()));
+  const row = view.container.querySelector<HTMLElement>("[data-grouped-task-key]")!;
+  return { ...view, row };
+}
+
+describe("GroupedTaskRow hover card and pull request menu", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    usePullRequestStatusStore.getState().dropWorkspaceTasks(PR_WORKSPACE_PATH);
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the task hover card with title and worktree branch when the row is focused", () => {
+    const { row } = renderGroupedRow(worktreeTask);
+    act(() => row.focus());
+
+    const card = document.querySelector<HTMLElement>('[data-task-hover-card="true"]');
+    expect(card).not.toBeNull();
+    expect(card!.textContent).toContain("Grouped archive");
+    expect(card!.textContent).toContain("feat/grouped");
+  });
+
+  it("lists the task's pull requests in the hover card", () => {
+    usePullRequestStatusStore.getState().setWorkspacePullRequestStatuses(PR_WORKSPACE_PATH, {
+      [worktreeTask.taskId]: makeStatus([makePullRequest()]),
+    });
+    const { row } = renderGroupedRow(worktreeTask);
+    act(() => row.focus());
+
+    const card = document.querySelector<HTMLElement>('[data-task-hover-card="true"]');
+    expect(card?.querySelector('[data-task-hover-pr="list"]')).not.toBeNull();
+    expect(card!.textContent).toContain("#7");
+  });
+
+  it("offers pull request items in the grouped context menu for worktree tasks", () => {
+    usePullRequestStatusStore.getState().setWorkspacePullRequestStatuses(PR_WORKSPACE_PATH, {
+      [worktreeTask.taskId]: makeStatus([makePullRequest()]),
+    });
+    const { row } = renderGroupedRow(worktreeTask);
+    fireEvent.contextMenu(row);
+
+    expect(
+      screen.getByRole("menuitem", { name: expectedCopy("pullRequest.open", { number: 7 }) }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: expectedCopy("pullRequest.copyLink") }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: expectedCopy("pullRequest.refresh") }),
+    ).toBeTruthy();
+  });
+
+  it("omits pull request items from the grouped context menu for ordinary tasks", () => {
+    usePullRequestStatusStore.getState().setWorkspacePullRequestStatuses(PR_WORKSPACE_PATH, {
+      [task.taskId]: makeStatus([makePullRequest()]),
+    });
+    const { row } = renderGroupedRow(task);
+    fireEvent.contextMenu(row);
+
+    expect(
+      screen.getByRole("menuitem", { name: expectedCopy("taskList.markAsUnread") }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("menuitem", { name: expectedCopy("pullRequest.copyLink") }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: expectedCopy("pullRequest.refresh") }),
+    ).toBeNull();
   });
 });
