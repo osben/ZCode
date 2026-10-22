@@ -3414,7 +3414,7 @@ describe("sidebar child session facts", () => {
     return { parentID, otherParent };
   }
 
-  it("counts side chats and subagents per parent, excluding workflow children, forks, and archived rows", async () => {
+  it("counts side chats and subagents per parent, excluding workflow children and forks", async () => {
     const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     try {
       const { parentID, otherParent } = await seedFamily(store);

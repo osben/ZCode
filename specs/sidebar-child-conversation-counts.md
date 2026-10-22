@@ -13,11 +13,11 @@ Side conversations and subagents are real sessions attached to their parent by `
 Two read-only methods on the session-store port (`apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`), implemented in the adapters repository (`storage/session-store/repositories/sessions.ts` — `listSessions` already speaks hierarchy via `roots` → `parent_id is null`, :213):
 
 ```ts
-/** Grouped child counts by parent id; archived children excluded (matches listSessions default). */
+/** Grouped child counts by parent id; tombstoned (time_deleted) children excluded, like listSessions. */
 countChildSessions(input: { parentIds: readonly string[] }): Promise<
   Map<string, { sideChats: number; subagents: number }>
 >;
-/** Latest non-archived child sessions per parent, newest first, capped per parent. */
+/** Latest live (not tombstoned) child sessions per parent, newest first, capped per parent. */
 listChildSessions(input: {
   parentIds: readonly string[];
   limitPerParent: number;
@@ -80,7 +80,7 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 2. `/side` chat created from a selection → parent's `sideChatCount` becomes 1 and the chat appears in the expanded list within the TTL + next fan-out.
 3. Marker click → child list expands beneath the row; click again → collapses; expansion state survives reload (localStorage, per parent).
 4. Plain session without children → summaries may carry absent fields, row renders byte-identical to today; a session with only side chats renders only the side-chat segment (no zero subagents segment).
-5. A fork (taskType `fork`, has a parent) is NOT counted; archived children are NOT counted.
+5. A fork (taskType `fork`, has a parent) is NOT counted; tombstoned children are NOT counted. The fork `time_archived` column is not a filter (upstream has no CLI archive; `specs/upstream-sync-cli-divergences.md`).
 6. CLI restart with cold children → counts and list restored from the store; `running` / `runningSubagentCount` are 0/absent until a child runs again.
 7. Old UI + new CLI and new UI + old CLI → no parse errors, no rendering.
 8. A summary whose only change is a counter or a child-list entry emits a projection delta (not conflated away).

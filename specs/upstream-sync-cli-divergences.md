@@ -23,12 +23,17 @@ is adopted or the final sync PR retires the compatibility member.
 
 ## Temporary compatibility members (remove in the final sync PR)
 
-- `ListSessionsInput.includeArchived` (fork archive filter; still temporary until the wire protocol `includeArchived` /
-  `archivedAt` decision is made).
 - Removed: `UpdateSessionInput.timeArchived` and session `time.archived` (fork archive column, no longer read or written
   by the port), the `SchemaMigrationRow` re-export in `adapters/src/storage/session-store/rows.ts`, `ensureParentDir` in
   `paths.ts`, and the synchronous session-store factories (`createSqliteSessionStore` and `openStartupSqliteSessionStore`
   are async again, as in upstream).
+- Removed: `ListSessionsInput.includeArchived` and the `time_archived is null` filters in `repositories/sessions.ts`
+  (session listing and the child-session scope), as in upstream. The `time_archived` column stays in the schema
+  (inserts write NULL); no DDL, migration id or checksum changes. Data check on 2026-10-21, read-only on the shared
+  `~/.zcode/cli/db/db.sqlite`: 5053 `session` rows, 0 with non-null `time_archived`, so no listing changes. The
+  upstream app reads the same database without the filter, so a row archived by an older build is already listed there.
+  The wire fields `session.list.includeArchived` and `session.archivedAt` are removed with it (decision and version
+  compatibility: `specs/build-pipeline-entrypoints.md`, "Shared-sync compatibility").
 - `trimTruncatedUtf8Tail` in `adapters/src/fs/text-metadata.ts` (fork tail trim; upstream uses `getUtf8CompletionBytes`).
 - `buildEnvInfoSection` argument order: fork's `executionWorktree` third, upstream's `additionalDirectories` fourth.
 - `ChildSessionFactsResolver.loadStoredFacts` / `ChildSessionRecordView`: fork-only bridge helpers (store reads and a structural record view, so `zcode-protocol-v4/` does not import the legacy directory).

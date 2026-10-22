@@ -2,26 +2,23 @@ import { expect, it } from "vitest";
 import { zcodeSessionInfoSchema } from "../src/zcode-protocol-legacy-types.js";
 import { zcodeSessionListParamsSchema } from "../src/zcode-protocol/index.js";
 
-it("preserves the archive filter used by CLI session listing", () => {
-  expect(zcodeSessionListParamsSchema.parse({})).toMatchObject({ includeArchived: false });
-  expect(zcodeSessionListParamsSchema.parse({ includeArchived: true })).toMatchObject({
-    includeArchived: true,
-  });
-  expect(zcodeSessionListParamsSchema.safeParse({ includeArchived: "true" }).success).toBe(false);
+// Upstream 3.16.1 removed the session archive wire fields; see specs/build-pipeline-entrypoints.md.
+it("has no archive filter on session.list params", () => {
+  expect(zcodeSessionListParamsSchema.parse({})).toEqual({});
+  expect(zcodeSessionListParamsSchema.safeParse({ includeArchived: true }).success).toBe(false);
 });
 
-it("preserves the archived timestamp produced by the existing session mapper", () => {
+it("has no archived timestamp on session info", () => {
   const session = {
     sessionId: "session-1",
     workspace: { workspacePath: "/workspace", workspaceKey: "/workspace" },
     sessionKind: "interactive",
-    title: "Archived task",
+    title: "Task",
     mode: "build",
     status: "idle",
     createdAt: 1,
     updatedAt: 2,
-    archivedAt: 3,
   };
-  expect(zcodeSessionInfoSchema.parse(session).archivedAt).toBe(3);
-  expect(zcodeSessionInfoSchema.safeParse({ ...session, archivedAt: -1 }).success).toBe(false);
+  expect(zcodeSessionInfoSchema.parse(session)).not.toHaveProperty("archivedAt");
+  expect(zcodeSessionInfoSchema.safeParse({ ...session, archivedAt: 3 }).success).toBe(false);
 });

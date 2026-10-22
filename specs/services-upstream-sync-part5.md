@@ -65,7 +65,7 @@ sequenceDiagram
 
 Part 4 checked this file by symbol name only. This part did not complete the hunk review, and nothing in `zcodeAgentService.ts` changed. Ledger row: "zcodeAgentService hunk review, open. Fork single-writer of task state stays. Upstream task-facts and task-groups stay unwired. Next step: normalize both sides (oxfmt, strip comments), classify each hunk as fork-decided or non-ownership, port only non-ownership hunks with tests."
 
-Fork-decided, not to be ported: task-facts and task-groups writes, `updateTaskPresentation`, the `refreshRegistry` barrier in `ensureAccountProviderConfigSynced`, and `includeArchived` removal in `sessionList`.
+Fork-decided, not to be ported: task-facts and task-groups writes, `updateTaskPresentation`, the `refreshRegistry` barrier in `ensureAccountProviderConfigSynced`, and `includeArchived` removal in `sessionList` (since superseded: removed, see `specs/build-pipeline-entrypoints.md`).
 
 ## Fork features verified unchanged
 

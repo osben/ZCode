@@ -138,7 +138,7 @@ async function seedFamily(h: Awaited<ReturnType<typeof openStore>>) {
   const { store, raw: db } = h;
   const parent = await seedSession(store, "parent", "interactive");
   await seedSession(store, "chat", "selection_side_chat", "parent");
-  // Archive state has no port writer; the listing and count filters read the time_archived column directly.
+  // A row archived by an older build: the fork time_archived column has no port reader or writer.
   db.prepare("update session set time_archived = ? where id = ?").run(100, raw("chat"));
   await seedSession(store, "nested-sub", "subagent_child", "chat");
   await seedSession(store, "sub", "subagent_child", "parent");
@@ -182,6 +182,26 @@ describe("session tree count and erase", () => {
         workflowSessions: 0,
         workflowRuns: 0,
       });
+    } finally {
+      h.close();
+    }
+  });
+
+  it("lists and counts rows with a time_archived value, as upstream does", async () => {
+    const h = await openStore();
+    try {
+      const { parent, other } = await seedFamily(h);
+      h.raw.prepare("update session set time_archived = ? where id = ?").run(100, String(other));
+      const roots = await h.store.listSessions({ roots: true });
+      expect(roots.map((session) => session.id)).toEqual(expect.arrayContaining([parent, other]));
+      const sideChats = await h.store.listSessions({ taskTypes: ["selection_side_chat"] });
+      expect(sideChats.map((session) => session.id)).toEqual([createSessionId("chat")]);
+      const counts = await h.store.countChildSessions({ parentIds: [parent] });
+      expect(counts.get(String(parent))).toEqual({ sideChats: 1, subagents: 1 });
+      const children = await h.store.listChildSessions({ parentIds: [parent], limitPerParent: 10 });
+      expect(children.get(String(parent))?.map((child) => child.id)).toEqual(
+        expect.arrayContaining([createSessionId("chat"), createSessionId("sub")]),
+      );
     } finally {
       h.close();
     }

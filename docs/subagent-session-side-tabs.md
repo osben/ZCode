@@ -238,7 +238,7 @@ session、message、part。查询不创建 runtime、不读取 transcript、不�
 贯穿 workspaceIdentity / remoteSessionId，异步结果仅应用于仍有效的订阅代际；旧 Agent 不支持
 显式查询、缺失 session 或查询失败时保留索引，下一次 workspace 基线再尝试。不得根据基线缺失
 或 parentID 单独删除。普通 session/list 继续只返回主列表类型；显式 sessionIds 查询返回匹配
-workspace 的持久化身份（含隐藏类型），单批最多 64 个，includeArchived 沿用现有含义。
+workspace 的持久化身份（含隐藏类型），单批最多 64 个（不再有 includeArchived，见 specs/build-pipeline-entrypoints.md）。
 
 完整 snapshot 同步也不得将 subagent_child 写成主任务；对于已打开的旧污染标签页，后端
 准入仍拒绝输入。修复不新增 accepted queue、timer、owner，不改变 continuous/replayable 边界。

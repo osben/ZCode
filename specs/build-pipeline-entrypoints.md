@@ -42,10 +42,26 @@ colocated with the Host code that creates the Worker.
 ## Shared-sync compatibility
 
 A workspace build includes the Agent contracts and bootstrap, beyond the root typecheck.
-Keep the existing session archive fields (`session.list.includeArchived`, default false,
-and optional nonnegative `session.archivedAt`) in the wire schema while their current
-CLI handlers still implement them. This is an additive compatibility repair; no storage
-or migration definition changes.
+The session archive wire fields are removed, as in upstream 3.16.1 (`0a1fc56d`):
+`session.list` params have no `includeArchived`, and `session` info has no `archivedAt`.
+Both schemas stay `.strict()`. No CLI handler implements them any more. The CLI listing
+ignored `includeArchived`, the session mapper does not emit `archivedAt`, and the Host
+stopped sending `includeArchived` in the 3.16.1 services sync. No storage or migration
+definition changes (`specs/upstream-sync-cli-divergences.md`).
+
+Version compatibility: a strict schema rejects the removed field when a peer still sends
+it (an older Host sending `includeArchived`, or an older Agent answering with `archivedAt`).
+The Host and the Agent ship in lockstep, so the fork accepts this, as upstream does:
+
+- Local: production uses the Agent runtime bundled with the app. An explicit binary path is
+  used only when the bundled runtime is missing (`desktop/src/main/desktopRuntimeEnv.ts`).
+- Remote: the Source Server release descriptor must match `ZCODE_VERSION`
+  (`desktop/src/host/sourceServerReleaseResolver.ts`).
+
+The Host's unrecognized-key retry covers only new optional fields of create, resume, send
+and MCP list against an older Agent. It does not cover `session.list`. An older Agent emits
+`archivedAt` only for an archived row, and the shared database has none (count in the CLI
+divergences spec).
 
 Highspeed metadata and execution fallback events in Agent contracts accept the same
 three reasons as the shared schema, including `highspeed_selection_unavailable`.

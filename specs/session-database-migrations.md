@@ -89,9 +89,9 @@ visible there until the new build erases them. Accepted: fork erase removes rows
   a no-op. Message and part rows are kept. Session listings and child-session counts filter `time_deleted is null`.
 - The fork permanent erase (`repositories/session-tree.ts`, `deleteSessionTree`, see `specs/session-deletion-cascade.md`)
   physically removes an erased tree. Tombstone and erase coexist: a tombstoned row is hidden; an erased row is gone.
-- The fork archive column (`time_archived`) has no port writer (inserts write NULL). Listings still exclude archived
-  sessions unless `includeArchived` is set. `updateSession` does not accept `timeArchived`, and `SessionInfo.time.archived`
-  is removed.
+- The fork archive column (`time_archived`) stays in the schema but has no port reader or writer (inserts write NULL).
+  As in upstream, listings and child-session counts do not filter on it, `ListSessionsInput` has no `includeArchived`,
+  `updateSession` does not accept `timeArchived`, and `SessionInfo.time.archived` is removed.
 - `updateSession` writes only the columns the input owns (upstream partial update), which fixes the stale full-row
   overwrite of concurrent title and permission changes.
 - `UpdateSessionInput.lastOutcome` is written to `last_outcome` by the same partial update as the other owned columns
