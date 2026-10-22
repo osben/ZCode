@@ -140,7 +140,8 @@ export function ChatPromptEditor({
   shellClassName?: string;
   avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
-  onChange?: (value: string) => void;
+  /** `programmatic` is true for the editor's own clears and restores, false for typing. */
+  onChange?: (value: string, meta: { programmatic: boolean }) => void;
   // 适配：返回 false 表示业务层拒绝/延迟本次提交，Lexical 不自行 reset（草稿保留）。
   onSubmit: (value: string) => boolean | void;
   onModifiedSubmit?: (value: string) => boolean | void;
@@ -209,9 +210,9 @@ export function ChatPromptEditor({
   }, [initialValue, resolvedInputApiRef, syncInitialValueOnMount]);
 
   const handleTextChange = useCallback(
-    (value: string) => {
+    (value: string, meta: { programmatic: boolean }) => {
       latestTextRef.current = value;
-      onChange?.(value);
+      onChange?.(value, meta);
     },
     [onChange],
   );
@@ -309,7 +310,8 @@ export function ChatPromptEditor({
           payload: workspaceFilePayload,
           workspacePath,
           workspaceIdentity,
-          onTextChange: handleTextChange,
+          // A dropped file mention is an insertion the editor performs, not typing.
+          onTextChange: (text) => handleTextChange(text, { programmatic: true }),
         });
         return;
       }

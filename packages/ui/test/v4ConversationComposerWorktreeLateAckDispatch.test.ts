@@ -1484,6 +1484,155 @@ it("a cancelled checkout guard withdraws the frozen submission even after the ed
   }
 });
 
+it("a send-time switch that fails at once keeps the draft branch intent and the text (ISSUE-037)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
+  const switchBranch = vi.fn(async () => {
+    throw new Error("switch rejected");
+  });
+  branchIntentWiring.gitService = {
+    getLocalBranches: async () => ({ currentBranchName: "main" }),
+    switchBranch,
+  };
+  branchIntentWiring.guard = null;
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("failing text");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("failing text");
+      await flushAsyncWork();
+    });
+    expect(switchBranch).toHaveBeenCalledTimes(1);
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("failing text");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("failing text");
+      await flushAsyncWork();
+    });
+    expect(switchBranch).toHaveBeenCalledTimes(2);
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("the user emptying a non-empty draft clears the draft branch intent (ISSUE-037)", async () => {
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("typed text", { programmatic: false });
+      await flushAsyncWork();
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("", { programmatic: false });
+      await flushAsyncWork();
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBeUndefined();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a programmatic empty update never clears the draft branch intent (ISSUE-037)", async () => {
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("typed text", { programmatic: false });
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("", { programmatic: true });
+      await flushAsyncWork();
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("the editor's clear echo during a cancelled checkout guard keeps the intent (ISSUE-037)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
+  branchIntentWiring.gitService = {
+    getLocalBranches: async () => ({ currentBranchName: "main" }),
+    switchBranch: async () => ({ ok: true }),
+  };
+  branchIntentWiring.guard = async () => {
+    chatPromptEditorProps.at(-1)!.onChange!("", { programmatic: true });
+    await flushAsyncWork();
+    return false;
+  };
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("guarded text", { programmatic: false });
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("guarded text");
+      await flushAsyncWork();
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("an accepted worktree send consumes the draft base intent (ISSUE-037)", async () => {
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "main");
+  const harness = renderLateAckComposer();
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("worktree text", { programmatic: false });
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("worktree text");
+      await flushAsyncWork();
+    });
+    expect(harness.capturedPrepareSession()).toBeTypeOf("function");
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBeUndefined();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
 it("a cancelled checkout guard keeps the draft branch intent; the next send asks the guard again (ISSUE-037)", async () => {
   const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
   const switchBranch = vi.fn(async () => ({ ok: true as const }));

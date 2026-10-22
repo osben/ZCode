@@ -889,7 +889,7 @@ function TextContentPlugin({
   onChange,
   taskId,
 }: {
-  onChange?: (text: string) => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   taskId?: string | null;
 }) {
   const [editor] = useLexicalComposerContext();
@@ -941,7 +941,9 @@ function TextContentPlugin({
           return;
         }
 
-        onChange(nextText);
+        // Programmatic updates (clear, restore, replace) carry PROGRAMMATIC_UPDATE_TAG; consumers
+        // that must tell typing from the editor's own clears read this flag.
+        onChange(nextText, { programmatic: tags.has(PROGRAMMATIC_UPDATE_TAG) });
 
         const lagMs = performance.now() - startedAt;
         // Programmatic edits and IME composition do not count as typing lag (recordInputLag filters them centrally).
@@ -1394,7 +1396,7 @@ interface LexicalChatInputProps {
   enterSubmits?: boolean;
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
-  onChange?: (text: string) => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   onFocus?: () => void;
   triggerPanelContainer?: HTMLElement | null;
   workspacePath: string;

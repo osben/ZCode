@@ -1840,28 +1840,6 @@ function ConversationComposerImpl({
     [workspaceKey],
   );
 
-  // Draft branch intent clears when the user empties a non-empty draft (spec §1 "cleared with the
-  // draft"). Picking a branch before typing anything is unaffected: the transition requires prior
-  // content.
-  const draftHadTextRef = useRef(false);
-  // Set while a checkout branch intent is applied at send. The send's own editor claim clears the
-  // text before the guard dialog opens; that clear is not the user emptying the draft, so it must
-  // not drop the intent when the guard is cancelled (ISSUE-037).
-  const checkoutIntentResolvingRef = useRef(false);
-  useEffect(() => {
-    const hasText = text.trim().length > 0;
-    if (hasText) {
-      draftHadTextRef.current = true;
-      return;
-    }
-    if (draftHadTextRef.current) {
-      draftHadTextRef.current = false;
-      if (draftMode && sessionId === null && !checkoutIntentResolvingRef.current) {
-        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
-      }
-    }
-  }, [draftMode, sessionId, text, workspaceKey]);
-
   const submit = useCallback(
     async (
       heldQueueDisposition?: "clearQueueAndSend" | "keepQueueAndSend",
@@ -2462,9 +2440,6 @@ function ConversationComposerImpl({
           : null;
       if (draftBranchIntent && branchIntentGitService) {
         acquirePending();
-        // No await separates the editor claim above from this flag, so the claim's text clear is
-        // always observed while the flag is set.
-        checkoutIntentResolvingRef.current = true;
         try {
           const resolution = await applyDraftBranchIntentForSend({
             gitService: branchIntentGitService,
@@ -2492,7 +2467,6 @@ function ConversationComposerImpl({
             return;
           }
         } finally {
-          checkoutIntentResolvingRef.current = false;
           releasePending();
         }
       }
@@ -2942,6 +2916,11 @@ function ConversationComposerImpl({
             withdrawUnreservedSubmission();
             return;
           }
+          // Worktree send acceptance: the worktree creation has its own base (captured when the
+          // intent slot was registered), so the draft's base intent is consumed here. This is the
+          // worktree-mode counterpart of applyDraftBranchIntentForSend's checkout success clear.
+          if (draftMode && sessionId === null)
+            useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
           preparedSessionIdForSend = begin.sessionId;
         }
         const pendingRecoveryDraft = readV4ComposerDraft(
@@ -3430,16 +3409,35 @@ function ConversationComposerImpl({
 
   // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
   // Lexical onChange（首字符也稳定回传，见 LexicalChatInput.TextContentPlugin）。
+  // The only writer that drops the draft branch intent: the user emptying a non-empty draft
+  // (spec §1). Programmatic editor updates (send claim, restore, replace) are reported with
+  // `programmatic: true` and never clear it; a successful send consumes the intent separately.
   const handleEditorChange = useCallback(
-    (value: string) => {
+    (value: string, meta?: { programmatic: boolean }) => {
+      // An absent flag means a direct call, which is typing as far as the draft is concerned.
+      const userEmptiedDraft =
+        meta?.programmatic !== true &&
+        value.trim().length === 0 &&
+        textRef.current.trim().length > 0;
       suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
+      if (userEmptiedDraft && draftMode && sessionId === null) {
+        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+      }
       // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
       updateComposerContent({ text: value });
       scheduleDraftPersist();
     },
-    [conversationTelemetry, scheduleDraftPersist, updateComposerContent, updateText],
+    [
+      conversationTelemetry,
+      draftMode,
+      scheduleDraftPersist,
+      sessionId,
+      updateComposerContent,
+      updateText,
+      workspaceKey,
+    ],
   );
 
   const handleEditorFocus = useCallback(() => {
