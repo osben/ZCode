@@ -2207,6 +2207,19 @@ export function createLocalServices(options: {
           taskId: target.sessionId,
         },
       }),
+    prepareForkedSession: async (target) =>
+      (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
+        task: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.sessionId,
+        },
+        forkOf: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.parentSessionId,
+        },
+      }),
     resolveSessionDirectories: async (target) =>
       (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
         .additionalDirectories,

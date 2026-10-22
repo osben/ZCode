@@ -1073,6 +1073,16 @@ interface CreateZCodeAgentServiceOptions extends Omit<
     workspaceIdentity?: string;
     sessionId: string;
   }) => Promise<unknown>;
+  /**
+   * Claims the fork child for its parent's project after the CLI acknowledges forkAssistant (see claimForkedSessionOwnership).
+   * The CLI does not know projects, and its sessions-index row may arrive before or after this ack, so the claim must be idempotent.
+   */
+  prepareForkedSession?: (target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    parentSessionId: string;
+    sessionId: string;
+  }) => Promise<unknown>;
   resolveSessionDirectories?: (target: ZCodeAgentSessionTarget) => Promise<string[]>;
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
@@ -3873,6 +3883,26 @@ export function createZCodeAgentService(
     }
   }
 
+  /**
+   * A fork child is created by the CLI, so the Host never reserves it on the create path. The accepted forkAssistant ACK names the
+   * child, and this is the only point where the Host knows its parent; the child claims the parent's project and directories here.
+   */
+  async function claimForkedSessionOwnership(
+    params: ZCodeAgentConversationCommandParams,
+    envelope: CommandEnvelope,
+    ack: CommandAck,
+  ): Promise<void> {
+    if (!options?.prepareForkedSession) return;
+    if (envelope.type !== "forkAssistant" || !envelope.sessionId) return;
+    if (ack.result?.type !== "forkAssistant") return;
+    await options.prepareForkedSession({
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      parentSessionId: envelope.sessionId,
+      sessionId: ack.result.sessionId,
+    });
+  }
+
   async function buildConversationCommandEnvelope(
     params: ZCodeAgentConversationCommandParams,
   ): Promise<CommandEnvelope> {
@@ -6408,6 +6438,7 @@ export function createZCodeAgentService(
       }
       const ack: CommandAck = await client.request(V4_METHODS.command, envelope, commandAckSchema);
       await discardAbandonedSessionReservation(params, ack, createReservationSessionId);
+      await claimForkedSessionOwnership(params, envelope, ack);
       // The Prompt command returns as soon as either committed TurnStarted or committed WorkspaceHookReviewRequested authority arrives;
       // human review must not occupy Host RPC, so keep the shared default timeout/watchdog. Extending it to the review deadline would only hide a serial protocol queue deadlock.
       // A duplicate proves only that commandId was processed before, not that its target still matches the current session configuration.

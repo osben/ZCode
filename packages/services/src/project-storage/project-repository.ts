@@ -11,6 +11,7 @@ import {
 import type {
   AutoArchiveInput,
   ProjectDirectories,
+  ReserveCreatedTaskInput,
   ProjectRepositoryContract,
   ProjectTask,
   ProjectTaskRef,
@@ -31,6 +32,31 @@ const executionDirectoriesSchema = z.array(z.string().min(1)).max(256);
 // and discardCreatedTaskReservation may delete only rows that still match it, so CLI-admitted rows are never removed.
 export const RESERVATION_PLACEHOLDER_SQL =
   "(cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}')";
+
+function insertReservationRow(
+  db: DatabaseSync,
+  input: {
+    key: string;
+    task: ProjectTaskRef;
+    host: string;
+    projectId: string | null;
+    executionDirectories: string | null;
+  },
+): void {
+  // 创建归属必须先于 CLI 首发；空事实不是假会话，列表只读取已有 CLI 事实的行。
+  db.prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,host_id,root_path,project_id,handoff_pending,execution_directories)
+          VALUES(?,?,?,?,0,0,?,?,?,?,?)`).run(
+    input.key,
+    input.task.workspacePath,
+    input.task.workspaceIdentity ?? null,
+    input.task.taskId,
+    input.host,
+    input.task.workspacePath,
+    input.projectId,
+    OWNERSHIP_DECIDED,
+    input.executionDirectories,
+  );
+}
 
 function transaction<T>(db: DatabaseSync, body: () => T, write = true): T {
   db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
@@ -385,15 +411,12 @@ export class ProjectRepository implements ProjectRepositoryContract {
     return transaction(this.db, () => resolveDirectories(this.db, task, this.ownerHostId), false);
   }
 
-  reserveCreatedTask(input: {
-    task: ProjectTaskRef;
-    projectId: string | null;
-    additionalDirectories?: string[];
-  }): ProjectDirectories {
+  reserveCreatedTask(input: ReserveCreatedTaskInput): ProjectDirectories {
     return transaction(this.db, () => {
       const key = resolveWorkspaceKey(input.task);
       const host = ensureHost(this.db, key, this.ownerHostId);
       if (host !== (this.ownerHostId ?? "local")) throw new Error("project.cross-host-move");
+      if (input.forkOf) return this.claimForkedTask(input.task, input.forkOf, key, host);
       if (!readTask(this.db, input.task)) {
         assertRemoteTaskDirectories(
           this.ownerHostId,
@@ -413,25 +436,65 @@ export class ProjectRepository implements ProjectRepositoryContract {
             throw new Error("project.cwd-not-in-roots");
         }
         // 创建归属必须先于 CLI 首发；空事实不是假会话，列表只读取已有 CLI 事实的行。
-        this.db
-          .prepare(`INSERT INTO tasks(workspace_key,workspace_path,workspace_identity,task_id,created_at,updated_at,host_id,root_path,project_id,handoff_pending,execution_directories)
-          VALUES(?,?,?,?,0,0,?,?,?,?,?)`)
-          .run(
-            key,
-            input.task.workspacePath,
-            input.task.workspaceIdentity ?? null,
-            input.task.taskId,
-            host,
-            input.task.workspacePath,
-            input.projectId,
-            OWNERSHIP_DECIDED,
+        insertReservationRow(this.db, {
+          key,
+          task: input.task,
+          host,
+          projectId: input.projectId,
+          executionDirectories:
             input.additionalDirectories === undefined
               ? null
               : JSON.stringify(executionDirectoriesSchema.parse(input.additionalDirectories)),
-          );
+        });
       }
       return resolveDirectories(this.db, input.task, this.ownerHostId);
     });
+  }
+
+  /**
+   * A fork is born from a parent that already has an owner, so the child inherits the parent's project, cwd and
+   * resolved additional directories as frozen execution facts (session-management I2/I16). The CLI does not know the
+   * project, so the Host claims the child here; a row that already has a host is never re-claimed.
+   */
+  private claimForkedTask(
+    task: ProjectTaskRef,
+    parentTask: ProjectTaskRef,
+    key: string,
+    host: string,
+  ): ProjectDirectories {
+    if (resolveWorkspaceKey(parentTask) !== key) throw new Error("project.fork-workspace-mismatch");
+    if (!readTask(this.db, parentTask)) throw new Error("project.fork-parent-missing");
+    // Reads the parent through the owner-host check, so a foreign parent row is rejected before any claim is written.
+    const parent = resolveDirectories(this.db, parentTask, this.ownerHostId);
+    const row = readTask(this.db, task);
+    if (row && row.host_id !== null) return resolveDirectories(this.db, task, this.ownerHostId);
+    const executionDirectories = JSON.stringify(
+      executionDirectoriesSchema.parse(parent.additionalDirectories),
+    );
+    if (row) {
+      this.db
+        .prepare(
+          "UPDATE tasks SET host_id=?,root_path=?,project_id=?,handoff_pending=handoff_pending | ?,execution_directories=? WHERE workspace_key=? AND task_id=? AND host_id IS NULL",
+        )
+        .run(
+          host,
+          parent.workspacePath,
+          parent.projectId,
+          OWNERSHIP_DECIDED,
+          executionDirectories,
+          key,
+          task.taskId,
+        );
+    } else {
+      insertReservationRow(this.db, {
+        key,
+        task: { ...task, workspacePath: parent.workspacePath },
+        host,
+        projectId: parent.projectId,
+        executionDirectories,
+      });
+    }
+    return resolveDirectories(this.db, task, this.ownerHostId);
   }
 
   /**

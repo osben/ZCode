@@ -308,7 +308,9 @@ process.stdin.on("data", (chunk) => {
         ? { result: { type: "createSession", sessionId: "created-session", input: acceptedInput } }
         : msg.params.type === "sendText"
           ? { result: { type: "inputAccepted", ...acceptedInput } }
-          : {};
+          : msg.params.type === "forkAssistant"
+            ? { result: { type: "forkAssistant", sessionId: "forked-session" } }
+            : {};
       send({
         id: msg.id,
         result: {
@@ -422,6 +424,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
       discardSessionReservation?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["discardSessionReservation"];
+      prepareForkedSession?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["prepareForkedSession"];
       resolveSessionDirectories?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["resolveSessionDirectories"];
@@ -450,6 +455,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
       commandResolver,
       prepareSessionCreation: options.prepareSessionCreation,
       discardSessionReservation: options.discardSessionReservation,
+      prepareForkedSession: options.prepareForkedSession,
       resolveSessionDirectories: options.resolveSessionDirectories,
       repoSnapshotCaptureIntentScheduler: options.repoSnapshotCaptureIntentScheduler,
       repoSnapshotSidecar: options.repoSnapshotSidecar,
@@ -483,6 +489,77 @@ describe("zcodeAgentService v4 conversation channel", () => {
     });
     return { service, workspacePath, logPath, commandResolver };
   }
+
+  it("claims a forked child for the parent's project only after the forkAssistant ack", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const claims: unknown[] = [];
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) => {
+        claims.push(target);
+        return repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        });
+      },
+    });
+    const project = repo.saveProject({ roots: [env.workspacePath] });
+    repo.reserveCreatedTask({
+      task: { workspacePath: env.workspacePath, taskId: "parent" },
+      projectId: project.id,
+    });
+    // The syncer may write the fork's row before the ack reaches the Host; it carries no owner, as in the observed index.
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "forked-session", "Fork of parent", 1, 2);
+    expect(() =>
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toThrow("project.host-mismatch");
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-claim",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(claims).toEqual([
+      {
+        workspacePath: env.workspacePath,
+        parentSessionId: "parent",
+        sessionId: "forked-session",
+      },
+    ]);
+    expect(
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toEqual({
+      workspacePath: env.workspacePath,
+      projectId: project.id,
+      additionalDirectories: [],
+    });
+    await env.service.disposeAllAndWait();
+  });
 
   const childHostId = "remote:server:subagent-view";
   const childWorkspace = (workspacePath: string) => ({

@@ -23,6 +23,24 @@ export interface ProjectStorageContract {
   admitTaskIdentity(db: DatabaseSync, task: ProjectTaskRef, hostId?: string): void;
 }
 
+/**
+ * A plain create names its project and directories. A fork names only its parent: the child takes over the parent's
+ * project, cwd and resolved directories, and a row that already has an owner is left unchanged.
+ */
+export type ReserveCreatedTaskInput =
+  | {
+      task: ProjectTaskRef;
+      projectId: string | null;
+      /** Host 已固化的执行目录；首次预留持久化，重试不改。undefined 为普通新建。 */
+      additionalDirectories?: string[];
+      forkOf?: undefined;
+    }
+  | {
+      task: ProjectTaskRef;
+      forkOf: ProjectTaskRef;
+      projectId?: undefined;
+      additionalDirectories?: undefined;
+    };
 export interface ProjectRoot {
   rootPath: string;
   position: number;
@@ -104,10 +122,5 @@ export interface ProjectRepositoryContract extends ProjectReservationCleanupCont
   reorderProjects(ids: string[]): void;
   resolveSessionDirectories(task: ProjectTaskRef): ProjectDirectories;
   /** CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。 */
-  reserveCreatedTask(input: {
-    task: ProjectTaskRef;
-    projectId: string | null;
-    /** Host 已固化的执行目录；首次预留持久化，重试不改。undefined 为普通新建。 */
-    additionalDirectories?: string[];
-  }): ProjectDirectories;
+  reserveCreatedTask(input: ReserveCreatedTaskInput): ProjectDirectories;
 }

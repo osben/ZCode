@@ -403,6 +403,34 @@ CLI 消费点
 
 放弃的预留生命周期：草稿预热（prewarm）会话可能在首发前被丢弃，普通 create 也可能被 CLI 以 rejected ACK 拒绝（例如 `project.not-found`）。预留由项目仓库写入，同一拥有者负责删除：deleteSession 的 ACK 为 accepted 或 noop，或普通 createSession（不含 submissionPreparation、expectedSubmissionId、preparedSessionId、worktreePreparation）的 ACK 为 rejected 时，仅删除仍匹配占位签名（无 CLI 事实）的行，缺失行为空操作。持久首发预留与 worktree 预留保留，供显式 Retry 复用，不因失败删除。调用结果未知（请求抛错、duplicate、stale）保留行，因为 CLI 可能已经创建会话。App 崩溃或退出遗留的占位行暂无清理者：签名不含时间，无法判定放弃已超过多久，因此不做无年龄限制的启动清扫；此项需另行设计。
 
+分叉会话归属（2026-10-22）：分叉子会话由 CLI 创建，CLI 不知道项目，因此 Host 不走创建路径预留，而是在 `forkAssistant` 的 accepted ACK 返回子会话 ID 时，用父会话认领子会话：`reserveCreatedTask({ task: 子, forkOf: 父 })`，与创建同一事务、同一写者（项目仓库）。子会话一次性继承父会话的 `project_id`、`host_id`、cwd（`root_path`）以及父会话解析后的附加目录，并冻结为子会话的 `execution_directories` 快照（I2、I16）。之后项目 roots 的变化不改变分叉子会话的目录，与普通创建一致。
+
+- 认领不复用 `projectId` 创建校验（项目已软删除、cwd 不在当前 roots 时仍允许），因为父会话的归属已经生效；分叉不是新建项目归属。
+- 父行缺失报 `project.fork-parent-missing`；父行 `host_id` 不属于本 Host 报 `project.host-mismatch`；父子工作区键不同报 `project.fork-workspace-mismatch`。三者都直接拒绝，不回落为 `[]`，也不按路径猜项目；`project.host-mismatch` 的检查不放宽。
+- 子行已有 `host_id` 时不再认领，重放同一 ACK 幂等。子行可以先于 ACK 到达（syncer 写入的无归属行），也可以后到；两种顺序都由认领补齐归属，CLI 事实字段（`cli_*`）不由认领写入。
+- 认领只覆盖 ACK 返回的子会话。`forkAssistant` 之外的 CLI 分叉入口未接入时，仍按上述 `host-mismatch` 拒绝首发，不得以放宽校验掩盖。
+- 已存在的历史分叉行（`host_id` 为空，且早于本规则）不由本规则回填，需要单独的迁移决策。子会话行的 CLI 事实（`cli_created_at`）仍由 syncer 的 `applyCliFacts` 写入；在此之前子会话不进入侧栏列表，该可见性缺口另行设计。
+
+事件顺序：
+
+```text
+Host 发出 forkAssistant（父会话 ID）
+        |
+CLI 复制历史并创建子会话（子会话 ID，目录 = 父会话目录）
+        |                                   \
+        |                  syncer 写入子会话索引行（可能无归属，host_id NULL）
+        v                                   /
+Host 收到 accepted ACK（result.sessionId = 子会话 ID）
+        |
+reserveCreatedTask({ task: 子, forkOf: 父 })   [单事务、幂等]
+        |  父行 host 不匹配 / 缺失 → 拒绝
+        |  子行已有 host_id → 不覆盖
+        v
+子行：host_id = 本 Host，project_id = 父项目，root_path = 父 cwd，execution_directories = 父解析附加目录
+        |
+子会话首发 → resolveSessionDirectories(子) 返回上述归属
+```
+
 ```text
 选择项目 → Host 预留 session 归属 + 读取 roots（事务）
                          ↓
