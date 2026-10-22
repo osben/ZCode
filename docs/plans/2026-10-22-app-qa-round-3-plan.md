@@ -52,3 +52,9 @@ Follows `docs/plans/2026-10-22-app-qa-round-2-plan.md` (round 2, closed with fix
 ## Re-plan trigger
 
 When Phase C 1–3 are merged or deferred and the user's Phase B decisions are in, write round 4.
+
+## Progress (2026-10-22 04:40)
+
+- Phase C 3 tried and discarded: seeding unmeasured row heights with a latched median of measured heights (gated to following state) changed nothing live: cold jumps 10 → 20 → 1 measured 253 / 72 / 256 ms via HMR and 293 / 69 / 268 ms after a restart, against 254 / 62 / 246 ms before. The cost is the React commit of 10–20 never-rendered turns plus the measurement re-render, not the estimate correction. Next attempt needs a React Profiler trace of one jump (count commits, find the heaviest subtree) before any change.
+- Phase C 1: renderer half landed (3ef1fa16, reconciliation asks the ledger about the record's own id first). Bridge half in progress with the submission id carried on the frozen `sendText` (a retried frozen input is a new sendText with a fresh id, so the activation's command id cannot key the marker).
+- ISSUE-023 review follow-ups in progress (reveal window, mixed-message search/preview, `{content}` unwrap before cut, show-next label, two surviving mutations, spec alignment, E2E scenario).
