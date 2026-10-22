@@ -843,20 +843,27 @@ Verification (`claude/ui-tail-shell`): `pnpm typecheck` exit 0; `pnpm lint` 0 er
 
 ## post-sync leftover cleanup
 
-Branch `claude/post-sync-leftover-cleanup`, after the debt PRs #260–#265. It removes only symbols those PRs left without production callers. Each one was checked with `git grep` and knip.
+Branch `claude/post-sync-leftover-cleanup`, after the debt PRs #260–#265. It removes only fork-owned symbols those PRs left without production callers. Each one was checked with `git grep` and knip.
+
+Rule: an upstream-owned file or export (present in the pinned upstream commit, listed in `scripts/architecture/upstream-snapshot.json`) that becomes dead in the fork is kept, not deleted. Deleting it makes the next upstream sync hit a modify/delete conflict for no gain.
 
 ### Removed
 
-- `packages/ui/src/lib/archivedTaskDeletion.ts` (`collectArchivedTaskDeletion`, `deleteArchivedTaskSelection`), `packages/ui/test/archivedTaskDeletion.test.ts` and the UI-batch case in `packages/desktop/test/windowHostArchivedTaskDeletion.test.ts`. Its only production caller, `DeleteAllArchivedTasksButton.tsx`, was removed when archive bulk delete moved to permanent erase (#265). The controller batch cases stay.
 - Locale keys `archives.delete`, `archives.deleteTitle`, `archives.deleteDescription` in en-US, zh-CN and uk-UA. Their only reader was the old `useArchiveManagement` confirm dialog (#265).
-- `packages/desktop/src/host/remoteConnectionServiceCollection.ts` and its skill-sync case. It came from upstream 3.15.1; upstream 3.16.1 (`0a1fc56d`) deleted it, and the fork host never called it.
+- `packages/desktop/src/host/remoteConnectionServiceCollection.ts` and its skill-sync case. It came from upstream 3.15.1; upstream 3.16.1 (`0a1fc56d`) deleted it, so it is not upstream-owned at the pinned commit, and the fork host never called it.
 
 ### Changed
 
-- `WebRemoteControlRelayPayloadSerializer.prepare` already defaults `client_ts` to Unix seconds since #262, as upstream 3.16.1 does. This pass restores the upstream test for that default, which round-trips the frame through the relay parser. The relay contract (`unixSeconds`) rejects milliseconds, and both production transports already pass seconds explicitly, so nothing reads milliseconds.
+- `WebRemoteControlRelayPayloadSerializer.prepare` already defaults `client_ts` to Unix seconds since #262, as upstream 3.16.1 does. This pass restores the upstream test for that default, which round-trips the frame through the relay parser. The relay contract (`unixSeconds`) rejects milliseconds (`packages/remote-relay/src/adapters/nodeServer.ts` answers `WRONG_PARAM`), and both production transports already pass seconds explicitly, so nothing reads milliseconds.
 - uk-UA `project.createTask` is translated ("Нове завдання").
 
-### Kept
+### Kept (upstream-owned, dead in the fork)
 
-- The eight `packages/services/src/node.ts` re-exports knip reports as unused (`OAuthCredentialRepo`, `resolveCurrentAccountAccess`, `createAccountRequestAuthService`, `resolveAccountTeamPlanRuntimeMaterial`, `createAccountProjectTokenClient`, `createUsageStatsService`, `createSubagentsService`, `createMemoryService`). All of them exist in upstream `0a1fc56d`, so removing them would diverge from upstream.
-- Seven more upstream `node.ts` re-exports that knip reports once `remoteConnectionServiceCollection.ts` is gone: `createAccountProviderCredentialStore`, `createBroadcastService`, `createClientScenesService`, `createCodingPlanSubscriptionService`, `createMediaPreviewService`, `createOAuthProviderLogoutHandler`, `createSettingsSyncService`. Upstream deleted the same consumer and kept these re-exports, so the same rule applies.
+- `packages/ui/src/lib/archivedTaskDeletion.ts` (`collectArchivedTaskDeletion`, `deleteArchivedTaskSelection`), `packages/ui/test/archivedTaskDeletion.test.ts` and the UI-batch case in `packages/desktop/test/windowHostArchivedTaskDeletion.test.ts`. Their only production caller, `DeleteAllArchivedTasksButton.tsx`, was removed in #265.
+- Fifteen `packages/services/src/node.ts` re-exports that knip reports as unused, all present in upstream `0a1fc56d`:
+  - eight that were already unused: `OAuthCredentialRepo`, `resolveCurrentAccountAccess`, `createAccountRequestAuthService`, `resolveAccountTeamPlanRuntimeMaterial`, `createAccountProjectTokenClient`, `createUsageStatsService`, `createSubagentsService`, `createMemoryService`;
+  - seven whose only consumer was `remoteConnectionServiceCollection.ts`: `createAccountProviderCredentialStore`, `createBroadcastService`, `createClientScenesService`, `createCodingPlanSubscriptionService`, `createMediaPreviewService`, `createOAuthProviderLogoutHandler`, `createSettingsSyncService`.
+
+### Deliberate divergence: `DeleteAllArchivedTasksButton.tsx`
+
+#265 deleted the upstream-owned `packages/ui/src/DeleteAllArchivedTasksButton.tsx`. It is the one upstream-owned deletion in this cleanup round, and it is deliberate: the fork's Settings → Archives page deletes through `useTaskDeleteDialog` (`specs/session-deletion-cascade.md`). Sync rule: on a modify/delete conflict for this file, resolve as deleted. `upstream-snapshot.json` is not edited by hand.

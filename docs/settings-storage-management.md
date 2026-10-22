@@ -190,7 +190,7 @@ export const IStorageService = createServiceDescriptor<IStorageService>("storage
 
 复用：desktop 已有一个只用于遥测的递归大小扫描器（`packages/desktop/src/main/zcodeDataSizeScanner.ts`，Worker 内跑、不跟随符号链接，由 `desktopZCodeDataSizeTelemetry.ts` 调用）。本功能把它下沉到 services 层并扩展为「按 catalog 分类累加 + 进度回调 + 取消」，遥测改为调用同一实现，避免两份目录遍历逻辑。
 
-RPC 接线沿用 `ISettingService` 的既有模式：`packages/shared/src/channels.ts` 增加 `ServiceChannels.Storage` → services 定义描述符与实现 → host collection（`packages/desktop/src/host/remoteConnectionServiceCollection.ts`）`.register` → `packages/client/src/remoteServiceAccess.ts` 增加代理并加进 `IServiceAccessor` → UI 通过 `useServices().storageService` 调用。
+RPC 接线沿用 `ISettingService` 的既有模式：`packages/shared/src/channels.ts` 增加 `ServiceChannels.Storage` → services 定义描述符与实现 → host collection `.register`（superseded: the storage service now lives in main, `packages/desktop/src/main/resourceManagerStorage.ts`, over IPC; the host collection file was removed） → `packages/client/src/remoteServiceAccess.ts` 增加代理并加进 `IServiceAccessor` → UI 通过 `useServices().storageService` 调用。
 
 ## 5. 时序与状态
 
@@ -410,7 +410,7 @@ desktop/src/main/zcodeDataSizeWorker.ts      改为 import services 的 fsWalker
 | `packages/services/src/node.ts`                                                                   | 导出 `createStorageService` 与 adapters 工厂                                                                                                                                                |
 | `packages/client/src/remoteServiceAccess.ts`                                                      | `ProxyChannel.toService<IStorageService>`                                                                                                                                                   |
 | `packages/desktop/src/host/index.ts`                                                              | 在 `createSettingService()` 附近组装：roots resolver、Worker scan runner、fs cleaner、volume probe                                                                                          |
-| `packages/desktop/src/host/remoteConnectionServiceCollection.ts`                                  | `.register(IStorageService, ...)`（连接级，机器作用域；不注册到 workspace 级 collection）                                                                                                   |
+| `packages/desktop/src/main/resourceManagerStorage.ts`                                             | Main-owned `IStorageService` instance exposed over IPC to the Resource Manager window (no host RPC registration)                                                                            |
 | `packages/desktop/src/host/storageScanWorker.ts` + `storageScanWorkerClient.ts`                   | Worker 入口与 ScanRunnerPort 实现                                                                                                                                                           |
 | `packages/desktop/tsup.config.ts`                                                                 | host 增加 `"host/storageScanWorker"` entry                                                                                                                                                  |
 | `packages/desktop/src/main/zcodeDataSizeWorker.ts` / `zcodeDataSizeScanner.ts`                    | 遍历实现迁入 services，main 侧只保留 Worker 入口                                                                                                                                            |

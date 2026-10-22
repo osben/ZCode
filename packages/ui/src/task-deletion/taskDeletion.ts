@@ -16,7 +16,7 @@ export interface TaskDeleteServices {
   gitService: IGitService;
 }
 
-type ResolveTaskDeleteServices = (target: TaskDeleteTarget) => TaskDeleteServices | null;
+export type ResolveTaskDeleteServices = (target: TaskDeleteTarget) => TaskDeleteServices | null;
 
 function workspaceParams(target: Pick<TaskDeleteTarget, "workspacePath" | "workspaceIdentity">) {
   return {
