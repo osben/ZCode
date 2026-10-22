@@ -93,7 +93,7 @@ Compatibility:
 - A section without `revision` (older host) disables conflict detection for that section: the UI sends no
   `expectedRevision` and never shows "Changed on disk".
 - The remote proxy (`packages/client/src/remoteServiceAccess.ts`) and the remote service collection
-  (`packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`) forward the interface unchanged. The web
+  (`createServerRemoteWorkspaceServiceCollection` in `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`) forward the interface unchanged. The web
   stub (`packages/web/src/main.tsx`) stays on the unsupported home-only service. An older remote host keeps
   working as described above.
 

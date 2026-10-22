@@ -73,8 +73,7 @@ Code that parses Bash stdout after execution would see rtk-compressed text:
 
 - **User intent** — fork setting `rtkCompression?: boolean`, stored only when set by the user. Registered in `FORK_SETTING_KEYS`
   (`packages/shared/src/forkAppSettings.ts`) — never a `setting.json` key. Delivered to the CLI via the session runtime preferences
-  result (`default(true)`), resolved in `packages/services/src/node.ts` and
-  `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts`. Frozen at session start (it shapes the Bash description).
+  result (`default(true)`), resolved in `packages/services/src/node.ts`. Frozen at session start (it shapes the Bash description).
 - **Availability** — owned by the CLI process on the executing host, probed once asynchronously through the session shell
   environment (`adapters/src/exec/shell-init-snapshot.ts`; a Finder-launched Electron app lacks `/opt/homebrew/bin` on PATH),
   cached per process. Exposed via a workspace-scoped `rtk/status` request modeled on `lsp/status`:
@@ -129,7 +128,7 @@ env; handler test that permission and transcript see the original; protocol sche
   new `adapters/src/exec/rtk-probe.ts`, `rtk-rewrite.ts`; `node-execution-adapter-run.ts`; bootstrap `server-operations.ts`,
   `rtk/status` handler.
 - Shared: `forkAppSettings.ts`, `protocol.ts`, `zcode-protocol/index.ts` (strict types + runtime validation).
-- Services/Desktop: `services/src/node.ts`, `desktop/src/host/remoteWorkspaceServiceCollection.ts`.
+- Services: `services/src/node.ts`.
 - UI: settings row next to native search (`packages/ui/src/settingsPageHelpers.tsx`), `store/rtkStore.ts` (like `lspStore`),
   i18n en-US / zh-CN / uk-UA.
 
