@@ -1,6 +1,5 @@
 import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
 import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
-import { isV4FirstSubmissionActive } from "@/v4/composer/composerDraftStore.js";
 import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 // Mounted regression for the late worktree reservation ACK: dispatch of the queued send, failed
 // dispatch, and Retry of the frozen submission (specs/composer-worktree-setup-steps.md, acceptance 15

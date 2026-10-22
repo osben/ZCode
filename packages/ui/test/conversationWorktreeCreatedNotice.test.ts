@@ -168,6 +168,26 @@ describe("ConversationWorktreeCreatedNotice actions menu", () => {
     );
   });
 
+  it("names the editor and path in its own message when opening fails", async () => {
+    const platform = createDesktopPlatform();
+    platform.openInEditor.mockResolvedValueOnce({ success: false, error: "spawn failed" });
+    renderNotice({ path: PATH }, platform);
+
+    openActionsMenu();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open in VS Code" }));
+
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        `Could not open the worktree in VS Code: ${PATH}`,
+        expect.objectContaining({ durationMs: 10_000 }),
+      ),
+    );
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.stringContaining("Worktree created but could not be opened"),
+      expect.anything(),
+    );
+  });
+
   it("copies the absolute path even when the label is shortened", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });

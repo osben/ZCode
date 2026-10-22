@@ -3776,6 +3776,23 @@ Contract: `specs/first-submission-lifecycle.md`. Accepted cases are listed in th
 catalog. Test references identify intended verification, not passing evidence.
 No new case is promoted or admitted to Docker by this table.
 
+### First-submission review fixes (2026-10-21)
+
+Contract: `specs/first-submission-instant-ux.md` (flag lifetimes, Retry surface,
+Reconciliation). Mounted UI regressions run in Vitest; every Desktop scenario is pending.
+
+| Case        | Focused regression                                                                                                                 | Desktop evidence                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| IUX02       | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: double click dispatches once; a new draft after the bind sends ordinarily | pending: double click, then type and Send while bound  |
+| IUX02-B     | Same file: Send disabled with a visible reason while the bound session still reports `submissionPreparation`                       | pending: hold the frozen `sendText`, type a second one |
+| IUX07-E     | Same file + `composerWorktreeRecovery.test.ts`: blocked Retry names its reason (`aria-describedby`), restores nothing, never locks | pending: Retry with the runtime not ready              |
+| IUX07-R     | Same files: Remove returns the text locally, keeps the reservation, registers an unresolved command in the unsettled ledger        | pending: Remove on unknown, then late ACK              |
+| A-ledger    | Same file: unknown outcome is in the unsettled ledger; an unmoved record stays in the draft view with its reservation              | pending fault injection (lost ACK, storage quota)      |
+| C-withdraw  | Same file: cancelled checkout guard and pre-reservation worktree failure withdraw the record after the editor clear echo           | pending: cancel the checkout guard dialog              |
+| F-reconcile | `v4SessionPaneComposerContinuity.test.ts`: inactive sending/unknown reconciles from Host facts, then the original command id       | pending restart with an unresolved record              |
+| B-bind      | Same file: worktree reservation binds at the ACK without waiting on project-tree staging                                           | pending                                                |
+| IUX01-inert | `v4ConversationTurnGroup.test.ts`: the optimistic row renders inert, without pin/edit/attachment actions                           | pending                                                |
+
 ## Permanent task deletion (2026-10-19)
 
 Contract: `specs/session-deletion-cascade.md`. The following cases are accepted; desktop evidence is pending until explicitly recorded. No formal promotion or Docker admission is implied.

@@ -73,7 +73,7 @@ const ukUA: Record<string, string> = {
   "firstSubmission.contexts": "Посилання на контекст: {count}",
   "firstSubmission.remove": "Вилучити",
   "composer.sendBlocked.remoteUnavailable":
-    "Віддалений хост недоступний. Спробуйте знову після відновлення з’єднання.",
+    "Віддалений хост недоступний. Спробуйте знову після відновлення з'єднання.",
   "composer.sendBlocked.sessionNotReady": "Сесія ще не готова. Спробуйте трохи згодом.",
   "composer.sendBlocked.sendInProgress": "Інше повідомлення ще надсилається.",
   "composer.sendBlocked.firstSubmissionDelivering":
