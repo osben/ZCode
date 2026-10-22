@@ -25,6 +25,8 @@ export const DEATH_GRACE_MS = 1_000;
 export interface ActivePromptState {
   readonly generation: number;
   stallEmitted: boolean;
+  /** Set with the one `resumed` event that follows the prompt's stall. */
+  resumedEmitted?: boolean;
   reject?: (reason?: unknown) => void;
 }
 
@@ -107,7 +109,8 @@ export async function waitUntil(
 /**
  * One stall warning per prompt: `arm` (re)starts the silence window on every
  * inbound activity; the warning fires once when the window elapses while the
- * prompt is still current.
+ * prompt is still current. The first activity after the warning reports the
+ * prompt resumed, once.
  */
 export class StallWatch {
   private timer: NodeJS.Timeout | undefined;
@@ -115,10 +118,18 @@ export class StallWatch {
   constructor(
     private readonly silentMs: number,
     private readonly onStall: (silentMs: number) => void,
+    private readonly onResume: () => void = () => {},
   ) {}
 
-  arm(prompt: { stallEmitted: boolean } | undefined, isCurrent: () => boolean): void {
+  arm(
+    prompt: { stallEmitted: boolean; resumedEmitted?: boolean } | undefined,
+    isCurrent: () => boolean,
+  ): void {
     this.clear();
+    if (prompt?.stallEmitted && !prompt.resumedEmitted && isCurrent()) {
+      prompt.resumedEmitted = true;
+      this.onResume();
+    }
     if (!prompt || prompt.stallEmitted || this.silentMs <= 0) return;
     this.timer = setTimeout(() => {
       if (!isCurrent() || prompt.stallEmitted) return;

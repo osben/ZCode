@@ -14,6 +14,16 @@
  *   - anything else: "pong".
  * `session/load` replays one history chunk ("replayed history") before it answers, so a test can prove
  * the replay is not shown. `--state <file>` keeps memory and a method log across processes.
+ *
+ * Session configuration (specs/acp-agent-runtime.md "S6"), chosen by `--config <mode>` or the
+ * `ACP_MOCK_CONFIG` env variable (the flag wins):
+ *   - "options": `session/new` and `session/load` return `configOptions` with a "mode" select
+ *     (agent|plan|ask, current "agent") and a "model" select (m1|m2, current "m1").
+ *   - "legacy": they return only `modes` (build|plan, current "build").
+ *   - unset: neither.
+ * `session/set_config_option` and `session/set_mode` validate and apply the value. The method log in the
+ * state file is a list of strings in arrival order: "process-start", "session/new", "session/load",
+ * "session/prompt", "session/set_config_option <configId>=<value>" and "session/set_mode <modeId>".
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -23,6 +33,10 @@ const HANG_MARKER = "hang";
 const argv = process.argv.slice(2);
 const stateIndex = argv.indexOf("--state");
 const STATE_FILE = stateIndex >= 0 ? argv[stateIndex + 1] : undefined;
+const configIndex = argv.indexOf("--config");
+const CONFIG_MODE = (configIndex >= 0 ? argv[configIndex + 1] : process.env.ACP_MOCK_CONFIG) ?? "";
+const configValues = { mode: "agent", model: "m1" };
+let currentModeId = "build";
 const rl = createInterface({ input: process.stdin });
 const pendingClientRequests = new Map();
 let pendingHangId;
@@ -53,6 +67,78 @@ function rememberWord(word) {
   const state = readState();
   state.memory = word;
   writeFileSync(STATE_FILE, JSON.stringify(state));
+}
+
+function configOptions() {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: configValues.mode,
+      options: [
+        { value: "agent", name: "Agent" },
+        { value: "plan", name: "Plan" },
+        { value: "ask", name: "Ask" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: configValues.model,
+      options: [
+        { value: "m1", name: "Model 1" },
+        { value: "m2", name: "Model 2" },
+      ],
+    },
+  ];
+}
+
+/** The configuration part of a `session/new` or `session/load` response. */
+function sessionConfig() {
+  if (CONFIG_MODE === "options") return { configOptions: configOptions() };
+  if (CONFIG_MODE === "legacy") {
+    return {
+      modes: {
+        currentModeId,
+        availableModes: [
+          { id: "build", name: "Build" },
+          { id: "plan", name: "Plan" },
+        ],
+      },
+    };
+  }
+  return {};
+}
+
+const fail = (id, text) => send({ jsonrpc: "2.0", id, error: { code: -32602, message: text } });
+
+function handleSetConfigOption(request) {
+  const configId = request.params?.configId;
+  const value = request.params?.value;
+  recordMethod(`session/set_config_option ${String(configId)}=${String(value)}`);
+  const option = configOptions().find((candidate) => candidate.id === configId);
+  if (CONFIG_MODE !== "options" || !option) {
+    return fail(request.id, `unknown config option ${String(configId)}`);
+  }
+  if (!option.options.some((entry) => entry.value === value)) {
+    return fail(request.id, `invalid value ${String(value)} for ${String(configId)}`);
+  }
+  configValues[configId] = value;
+  send({ jsonrpc: "2.0", id: request.id, result: { configOptions: configOptions() } });
+}
+
+function handleSetMode(request) {
+  const modeId = request.params?.modeId;
+  recordMethod(`session/set_mode ${String(modeId)}`);
+  if (CONFIG_MODE !== "legacy" || (modeId !== "build" && modeId !== "plan")) {
+    return fail(request.id, `invalid mode ${String(modeId)}`);
+  }
+  currentModeId = modeId;
+  send({ jsonrpc: "2.0", id: request.id, result: {} });
 }
 
 process.stderr.write("acp-mock-agent ready\n");
@@ -192,16 +278,25 @@ rl.on("line", (line) => {
   }
   if (request.method === "session/new") {
     recordMethod("session/new");
-    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: SESSION_ID } });
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: SESSION_ID, ...sessionConfig() } });
     return;
   }
   if (request.method === "session/load") {
     recordMethod("session/load");
     notify(request.params?.sessionId ?? SESSION_ID, message("replayed history"));
-    send({ jsonrpc: "2.0", id: request.id, result: {} });
+    send({ jsonrpc: "2.0", id: request.id, result: sessionConfig() });
+    return;
+  }
+  if (request.method === "session/set_config_option") {
+    handleSetConfigOption(request);
+    return;
+  }
+  if (request.method === "session/set_mode") {
+    handleSetMode(request);
     return;
   }
   if (request.method === "session/prompt") {
+    recordMethod("session/prompt");
     void handlePrompt(request);
     return;
   }

@@ -4,8 +4,16 @@
  * `taskkill /T /F`). State transitions stay with `AcpSessionRuntime`.
  */
 import { captureProcessTreeSnapshotAsync, terminateProcessTreeAndWait } from "@zcode/shared/node";
-import { raceTimeout } from "./runtime-helpers.js";
+import { AcpAgentDiedError, AcpCancelledError, AcpRuntimeError } from "./errors.js";
+import {
+  DEATH_GRACE_MS,
+  classifyTransportFailure,
+  fulfillsWithin,
+  raceTimeout,
+  waitUntil,
+} from "./runtime-helpers.js";
 import type { SpawnedAcpProcess } from "./transport.js";
+import type { AcpRuntimeState } from "./types.js";
 
 export interface AcpTeardownTimeouts {
   readonly stopGraceMs: number;
@@ -60,4 +68,70 @@ export async function runAcpProcessTeardown(
     windowsTaskkillTimeoutMs: 2000,
   });
   return result.remainingPids;
+}
+
+export interface AcpCancelSteps {
+  readonly notify: () => Promise<unknown>;
+  readonly graceMs: number;
+  /** False once the cancelled prompt settled or was replaced, or the runtime restarted. */
+  readonly isSameTurn: () => boolean;
+  readonly isSettled: () => boolean;
+  readonly terminate: (reason: Error) => Promise<void>;
+}
+
+/** Bounded `session/cancel`: escalates to `terminate` when the notify or the settle misses the grace. */
+export async function runAcpCancel(steps: AcpCancelSteps): Promise<void> {
+  // One deadline bounds the whole cancel: a notify write can stay pending
+  // forever when a live child stops reading stdin (backpressured pipe), and
+  // a closed connection rejects. Escalate on either instead of hanging.
+  const deadline = Date.now() + steps.graceMs;
+  const notified = await fulfillsWithin(steps.notify(), steps.graceMs);
+  // The cancelled prompt settled (or was replaced) while the notify raced;
+  // never escalate against a newer prompt or a restarted runtime.
+  if (!steps.isSameTurn()) return;
+  if (!notified) {
+    await steps.terminate(new AcpCancelledError("Cancel notification failed or did not flush"));
+    return;
+  }
+  const settled = await waitUntil(steps.isSettled, deadline - Date.now(), 50);
+  if (!settled) {
+    await steps.terminate(new AcpCancelledError("Prompt did not settle after cancel"));
+  }
+}
+
+export interface AcpPromptFailureHooks {
+  readonly state: () => AcpRuntimeState;
+  readonly connectionAborted: () => boolean;
+  /** Tears the process down; cleanup failures are reported by the caller, never thrown. */
+  readonly teardown: (reason: Error) => Promise<void>;
+}
+
+/**
+ * Normalizes "connection closed" rejections into `AcpAgentDiedError` when
+ * the process actually died; intentional stops keep the original error.
+ * Fatal transport failures (`MessageTooLargeError`, a closed connection
+ * whose child survives) tear the process down before returning, so
+ * `prompt()`'s `finally` cannot restore "ready" on a dead connection.
+ */
+export async function normalizeAcpPromptError(
+  error: unknown,
+  hooks: AcpPromptFailureHooks,
+): Promise<unknown> {
+  if (error instanceof AcpRuntimeError) return error;
+  if (hooks.state() === "stopped") return error;
+  const failure = classifyTransportFailure(error);
+  if (failure === "closed") {
+    if (await waitUntil(() => hooks.state() === "failed", DEATH_GRACE_MS)) {
+      return new AcpAgentDiedError("Agent process died during the prompt", { cause: error });
+    }
+  }
+  if (hooks.state() === "prompting" && (failure !== null || hooks.connectionAborted())) {
+    // The SDK connection is unusable while the child may still be alive:
+    // mark the runtime failed and kill the process so the next prompt
+    // restarts instead of reusing the dead connection.
+    await hooks.teardown(
+      error instanceof Error ? error : new Error(`ACP transport failure: ${String(error)}`),
+    );
+  }
+  return error;
 }

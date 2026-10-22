@@ -18,6 +18,7 @@ import {
 import { AcpProtocolVersionError } from "./errors.js";
 import { readTextFileViaBridge, writeTextFileViaBridge } from "./fs.js";
 import { buildChildEnv } from "./launch.js";
+import type { AcpSessionConfigSource } from "./runtime-config.js";
 import type { AcpSessionStart } from "./runtime-resume.js";
 import { withTimeout } from "./runtime-helpers.js";
 import { spawnAcpProcess, type SpawnedAcpProcess } from "./transport.js";
@@ -98,6 +99,8 @@ export interface AcpHandshakeOptions {
 export interface AcpHandshakeResult {
   readonly sessionId: string;
   readonly start: AcpSessionStart;
+  /** `configOptions` and legacy `modes` of the `session/load` or `session/new` response. */
+  readonly config: AcpSessionConfigSource;
 }
 
 /**
@@ -127,7 +130,7 @@ export async function performAcpHandshake(
   const previous = options.resumeSessionId;
   if (previous !== undefined && init.agentCapabilities?.loadSession === true) {
     try {
-      await options.race(
+      const loaded = await options.race(
         withTimeout(
           connection.agent.request(methods.agent.session.load, {
             sessionId: previous,
@@ -138,7 +141,7 @@ export async function performAcpHandshake(
           "session/load",
         ),
       );
-      return { sessionId: previous, start: "loaded" };
+      return { sessionId: previous, start: "loaded", config: sessionConfigOf(loaded) };
     } catch {
       // Not restorable (the agent refused or timed out): a new session replaces it, shown as a reset.
     }
@@ -150,5 +153,15 @@ export async function performAcpHandshake(
       "session/new",
     ),
   );
-  return { sessionId: session.sessionId, start: previous === undefined ? "created" : "reset" };
+  return {
+    sessionId: session.sessionId,
+    start: previous === undefined ? "created" : "reset",
+    config: sessionConfigOf(session),
+  };
+}
+
+function sessionConfigOf(
+  response: AcpSessionConfigSource | null | undefined,
+): AcpSessionConfigSource {
+  return { configOptions: response?.configOptions ?? null, modes: response?.modes ?? null };
 }

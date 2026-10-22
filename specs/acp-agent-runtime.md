@@ -286,7 +286,8 @@ Design (fix):
 ## Chat delegation (phase 4)
 
 Status: slices S1 (gate, registry, composer), S2 (text chat turns), S3 (tool, plan and title
-rendering), S4 (user-once permissions) and S5 (session restore via `session/load`) are specified here.
+rendering), S4 (user-once permissions), S5 (session restore via `session/load`) and S6 (agent
+configuration options) are specified here.
 
 ### Decisions
 
@@ -578,6 +579,110 @@ Acceptance (S5):
 - E2E: after an app relaunch, the next turn loads the earlier session (`session/load`, no
   `session/new` in the relaunched process), the mock recalls the word from the first turn, and the
   replayed text is not shown.
+
+### S6: agent configuration options
+
+ZCode's permission modes do not control an external agent. The agent applies edits itself, ignores the
+client `fs.writeTextFile` capability, and asks only for shell commands outside its own allowlist. The
+control surface is the agent's own session configuration, so the composer shows the agent's selects
+instead of the ZCode permission modes when the selected model is an ACP agent.
+
+Sources of the options:
+
+- `session/new` and `session/load` responses carry `configOptions` (ACP `SessionConfigOption`) and,
+  for some agents, the legacy `modes` (`currentModeId`, `availableModes`). `configOptions` wins. The
+  legacy `modes` are used only when `configOptions` is absent or empty, and then `mode` is a synthesized
+  select with the agent's mode ids. A synthesized `mode` is set with `session/set_mode`.
+- Only select options are offered. Boolean options are dropped with a debug log (no current agent
+  advertises one). Groups are kept on each option and flattened when a value is validated.
+- Ownership of each fact:
+
+| Fact                                          | Owner                                           | Persisted in                                             |
+| --------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------- |
+| Offered options and the agent's current value | AcpSessionRuntime snapshot (handshake, updates) | `fork_acp_session_binding.config_options` (display copy) |
+| Chosen values (user choices)                  | ZCode session (driver reconcile)                | `fork_acp_session_binding.config_choices` (JSON map)     |
+| Projected options for the composer            | Session config state (projection)               | `external_agent_config_updated` session event            |
+
+Chosen values are cleared with the binding: an agent switch, a cwd change or a launch-config change
+clears them, because the values belong to one agent process configuration.
+
+Decision: the controls are disabled with "available after the first message" until the session has an
+offered snapshot. The alternative (the worker spawns the agent when the agent is selected) was rejected:
+a composer selection would start an agent process outside CommandInbox admission and outside the owner
+and lease of a turn, and a draft may have no session yet. After the first turn, the snapshot is
+persisted and projected, so the controls are available again after an app relaunch without a spawn.
+
+Runtime (`packages/acp-agent-runtime`):
+
+- `configOptions` getter: the normalized snapshot (`AcpConfigOption`: id, name, description, category,
+  currentValue, options). It is updated by the handshake, `config_option_update`, `current_mode_update`
+  and the `setConfigOption` response.
+- `setConfigOption(configId, value)` sends `session/set_config_option` (`sessionId`, `configId`,
+  `value`) and returns the snapshot. It requires state `ready`. A synthesized `mode` sends
+  `session/set_mode` (`modeId`) instead. An unknown id or a value outside the options rejects before any
+  request.
+- Events: `config_options` (the full snapshot after a `config_option_update` or
+  `current_mode_update`) and `resumed` (first inbound frame after `stalled`).
+
+Turn reconcile (driver, before `runtime.prompt`):
+
+```text
+pool.acquire(sessionId)  ─▶ runtime (fresh, reused, or restarted; loaded or new session)
+  │
+  ▼ read choices (config_choices) and offered options (runtime.configOptions)
+  ├ choice id not offered, or value not in the options ─▶ drop, debug log (no request)
+  ├ choice differs from the agent's current value    ─▶ setConfigOption; failure ─▶ TurnError
+  ▼
+offered snapshot differs from config_options ─▶ persist it, emit external_agent_config_updated
+  ▼
+runtime.prompt(...)
+```
+
+- A change made while a turn runs (command handler) persists the choice and never touches the
+  runtime. It applies at the next reconcile, before the next prompt. The turn is not interrupted.
+- `config_options` events during a turn (agent-initiated changes) update the display copy. They do not
+  overlay the user's choice, so the composer shows the agent's real value until the next reconcile.
+
+Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, owner: session):
+
+- Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
+  after the first message"), and with `config.invalid` when the id or value is not offered.
+- A same value that is already the chosen value is a no-op (`config.unchanged`).
+- Otherwise it writes `config_choices`, writes the display copy with the chosen value, and emits
+  `external_agent_config_updated`. The command is additive on the protocol: `zcode-protocol` and the v4
+  command union get the new payload with strict types and runtime validation.
+
+Event and stream semantics: `external_agent_config_updated` is a persisted session event. The
+desktop-continuous link receives it live, and the web-remote-replayable link rebuilds the selects from
+the same log after a reconnect. Cold replay keeps it (it is not transcript-derived). The share projection
+passes it through without rendering a row.
+
+Stall: the runtime emits `stalled` once per prompt after `stallWarningMs` without frames, and `resumed`
+on the next inbound frame. The driver forwards both to core. Core shows a non-blocking turn status
+"The agent is not responding…" with Stop available, and clears it on `resumed` or at turn end. No
+transcript row is written.
+
+Migration `9004_fork_session_acp_config` (additive, `fork_` prefix) adds nullable `config_options` and
+`config_choices` (text) to `fork_acp_session_binding`. Upstream migrations are unchanged.
+
+Acceptance (S6):
+
+- Runtime: `configOptions` from `session/new` and `session/load`; legacy `modes` maps to a `mode` select
+  only when `configOptions` is absent; `setConfigOption` sends `session/set_config_option` and returns
+  the snapshot; the legacy path sends `session/set_mode`; `config_option_update` and
+  `current_mode_update` update the snapshot and emit `config_options`; an unknown value rejects without
+  a request.
+- Worker: a stored choice is re-applied after a cold start and after a restart; a choice the agent no
+  longer offers is dropped (debug log, no request); a change during a running turn is applied before the
+  next prompt and does not interrupt it.
+- Migration: `9004` adds both columns on a database that already has `9003`, and an upstream migration
+  checksum is unchanged.
+- UI: an ACP model shows the agent's selects (mode, model, effort if offered) and no ZCode permission
+  modes; a non-ACP model is unchanged; labels come from the agent; the hint about the agent applying
+  edits and asking for commands outside its allowlist is visible.
+- E2E (`conversation-session-acp-agent-config.test.ts`): select the agent mode "plan" after a first
+  turn, send, and the mock records `session/set_config_option` (mode=plan) before `session/prompt`; the
+  value survives an app restart.
 
 ### Acceptance scenarios
 

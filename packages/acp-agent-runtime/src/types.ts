@@ -87,6 +87,29 @@ export interface AcpPlanEntry {
   readonly status: string;
 }
 
+/** One value of a select configuration option; the groups of a grouped select are flattened. */
+export interface AcpConfigSelectOption {
+  readonly value: string;
+  readonly name: string;
+  readonly description: string | null;
+  /** Display name of the agent's option group, or `null` for an ungrouped select. */
+  readonly group: string | null;
+}
+
+/**
+ * One select configuration option of the agent's session (ACP `SessionConfigOption`), or the `mode`
+ * select synthesized from the legacy `modes` of an agent without `configOptions`.
+ */
+export interface AcpConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string | null;
+  /** ACP category such as "mode", "model" or "thought_level"; `null` when the agent sends none. */
+  readonly category: string | null;
+  readonly currentValue: string;
+  readonly options: readonly AcpConfigSelectOption[];
+}
+
 /** Typed event stream emitted by the runtime (`on("event", ...)`). */
 export type AcpRuntimeEvent =
   | { readonly type: "message_chunk"; readonly text: string }
@@ -108,6 +131,10 @@ export type AcpRuntimeEvent =
   /** Terminal event of a prompt that rejected instead of stopping (exactly one per prompt). */
   | { readonly type: "prompt_failed"; readonly message: string }
   | { readonly type: "stalled"; readonly silentMs: number }
+  /** First inbound frame after `stalled` in the same prompt (at most one per stall). */
+  | { readonly type: "resumed" }
+  /** Full snapshot after an agent-initiated `config_option_update` or `current_mode_update`. */
+  | { readonly type: "config_options"; readonly options: readonly AcpConfigOption[] }
   | { readonly type: "process_cleanup_failed"; readonly message: string }
   | {
       readonly type: "process_exit";
