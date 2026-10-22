@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/context-menu.js";
 import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 import { TaskGroupColorDot } from "@/project-sidebar/grouped/colors.js";
+import { getTaskGroupDisplayTitle } from "@/project-sidebar/grouped/group-title.js";
 import type { TaskGroupMenuItem } from "@/project-sidebar/grouped/types.js";
 
 export function GroupedTaskContextMenuContent({
@@ -83,6 +84,7 @@ export function GroupedTaskContextMenuContent({
           </SidebarNativeTooltip>
           <ContextMenuSeparator />
           {groups.map((group) => (
+            // System groups store placeholder titles ('cron' / 'off-peak') in the DB; show the localized title like the group header.
             <SidebarNativeTooltip key={group.id}>
               <ContextMenuItem
                 data-task-group-target={group.id}
@@ -95,7 +97,12 @@ export function GroupedTaskContextMenuContent({
                 }}
               >
                 <TaskGroupColorDot color={group.color} />
-                <span className="truncate">{group.title}</span>
+                <span className="truncate">
+                  {getTaskGroupDisplayTitle(group, {
+                    cron: intl.formatMessage({ id: "taskGroup.cronGroupName" }),
+                    offPeak: intl.formatMessage({ id: "offPeak.sidebar.groupTitle" }),
+                  })}
+                </span>
               </ContextMenuItem>
             </SidebarNativeTooltip>
           ))}

@@ -109,6 +109,9 @@ cache/path；受支持 MIME 的真实 IO 或 durable artifact 故障仍在 provi
 - 图片沿用紧凑缩略图，中央覆盖圆形进度环和百分比。
 - 非图片附件显示同等的文本状态；失败态提供重试和删除。
 - 状态不只依赖颜色，必须提供本地化的 `aria-label` / `role=status|alert`。
+- inline image/video/PDF 超过体积上限（图片 20MiB）属于确定性失败：不自动重试，chip 直接进入 failed 并保持发送禁用；
+  失败原因沿用现有 tooltip/aria 表面，显示本地化的 `chat.attachments.oversizedInline{Image,Video,Pdf}`
+  （含文件名、实际大小、上限），不得显示 `oversized-inline-*-attachment` 错误码。
 - V4 的文件 drop 由整个对话 pane 根节点唯一接管：时间线、空态、状态区和 composer 都处于同一 drop surface；主输入框不再重复注册文件 drop。桌面新建任务的轻量标题栏在窗口级 drag 状态激活后显示临时 drop mask，并接到主草稿 composer。这一结构与旧版 `ChatView` 一致。
 - 工作区文件树的 `WORKSPACE_FILE_DRAG_MIME` 不作为上传附件，而是插入工作区文件 mention；操作系统文件才进入附件预传队列。该语义与旧版 `ChatView` 一致。
 - 手机 Web 没有系统文件拖拽/选择器入口；本次只复用 V4 composer 的 renderer 本地 drop 路由，不新增 runtime、host、relay 或 `web-remote-replayable` 传输语义。

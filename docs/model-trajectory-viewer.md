@@ -22,6 +22,8 @@
   旧日志缺少 `querySource` 时，服务层会对已知标题生成 prompt 做兼容识别。
 - TOOL 消息的 `content` 在实际 model-io 中通常是字符串，而 `toolCallId` / `toolName` 位于消息顶层；
   服务层归一化为 `tool-result` 时必须把这些顶层关联字段一并保留，不能只映射 output，否则 UI 无法关联和展示 tool call ID。
+- ASSISTANT 消息的历史 tool call 位于顶层 `toolCalls`（`{ id, name, input }`），不在 `content` 中；服务层按记录顺序将其投影为
+  `content` 各段之后的 `tool-call` 段，有界化规则与 `response.toolCalls` 相同（见 `specs/model-trajectory-projection.md`）。
 - 写入链路必须是有界的：模型请求完成后写 model-io 属于 agent 主流程上的诊断旁路，禁止为了 append
   新记录同步读取并 expand 整个历史 JSONL。长会话曾把单个生产 rollout 文件写到 1GB 量级，旧实现每次写入前
   `readFileSync(filePath, "utf8")` 并逐行 `JSON.parse` / expand，可能在 UTF-8 转换或 V8 字符串分配阶段触发

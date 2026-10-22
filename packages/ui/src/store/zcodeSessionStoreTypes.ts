@@ -29,6 +29,7 @@ import type { SessionConfigState, SubmissionMode } from "@zcode/shared/zcode-pro
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
 import type {
   AutomationsNavigationTab,
+  TaskNavEntry,
   TaskNavigationHistory,
   WorkspaceNavEntry,
 } from "@/lib/taskNavigationHistory.js";
@@ -458,12 +459,13 @@ export interface ZCodeSessionStoreState {
   ) => void;
   /** 记录插件市场主视图导航。 */
   taskNavPushPluginStore: (workspacePath: string, workspaceIdentity?: string) => void;
-  /** 后退，返回目标 entry；到头了返回 null */
-  taskNavGoBack: () => WorkspaceNavEntry | null;
-  /** 前进，返回目标 entry；到头了返回 null */
-  taskNavGoForward: () => WorkspaceNavEntry | null;
-  /** task 被删除时清理导航历史中的对应 task 条目 */
-  removeTaskFromNavHistory: (taskId: string) => void;
+  /**
+   * 后退，返回目标 entry；到头了返回 null。
+   * isAvailable 判定失效的 task 条目会在同一次更新中清除，不改变其余条目的顺序。
+   */
+  taskNavGoBack: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
+  /** 前进，语义同 taskNavGoBack。 */
+  taskNavGoForward: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
 }
 
 // ────────────────────────────────────────────

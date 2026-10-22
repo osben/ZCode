@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "@zcode/services";
 import { resolveRpcLogLevel } from "../src/host/rpcLogLevel.js";
 
 describe("host RPC 日志级别映射", () => {
@@ -44,5 +45,51 @@ describe("host RPC 日志级别映射", () => {
         error,
       ),
     ).toBe("info");
+  });
+});
+
+describe("host RPC log level: expected runtime-unavailable sessions-index probe", () => {
+  const runtimeUnavailable = () =>
+    Object.assign(new Error("ZCode Agent runtime is not running."), {
+      code: ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE,
+    });
+
+  it("logs a runtime-unavailable subscribeSessionsIndexV4 failure at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.subscribeSessionsIndexV4 FAIL (0.1ms)",
+        runtimeUnavailable(),
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps the same failure at warn when it carries no runtime-unavailable code", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.subscribeSessionsIndexV4 FAIL (0.1ms)",
+        new Error("ZCode Agent runtime is not running."),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.subscribeSessionsIndexV4 FAIL (0.1ms)",
+        Object.assign(new Error("boom"), { code: "SOMETHING_ELSE" }),
+      ),
+    ).toBe("warn");
+  });
+
+  it("keeps other methods carrying the runtime-unavailable code at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.subscribeWorkspaceConfigV4 FAIL (0.1ms)",
+        runtimeUnavailable(),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.otherSubscribeSessionsIndexV4 FAIL (0.1ms)",
+        runtimeUnavailable(),
+      ),
+    ).toBe("warn");
   });
 });

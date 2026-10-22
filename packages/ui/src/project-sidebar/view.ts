@@ -195,6 +195,7 @@ export function mergeProjectTrees(
 } {
   const projects = [...local.projects];
   const tasks = [...local.tasks];
+  // Local deletion facts carry hostId "local" (see LOCAL_TASK_HOST_ID in deletedTaskFacts.ts); the remote rows below are filtered by host id.
   const deletedTasks = [...(local.deletedTasks ?? [])];
   const availability = new Map(
     local.projects.map((project) => [projectKey(project), { online: true } as ProjectAvailability]),
