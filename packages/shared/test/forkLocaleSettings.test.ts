@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  FORK_SETTING_KEYS,
+  appSettingsSyncPatchSchema,
   forkAppSettingsStoredSchema,
   planLegacyLocaleMigration,
   resolveEffectiveLocale,
+  splitForkSettingsPatch,
   splitLocaleSettings,
 } from "../src/forkAppSettings.js";
 import type { Locale, LocalePreference } from "../src/protocol.js";
@@ -67,11 +70,38 @@ describe("fork locale storage rules", () => {
     }
   });
 
-  it("writes only the preference to shared keys when the patch carries no locale", () => {
-    const split = splitLocaleSettings({ localePreference: "en-US" });
+  it("writes the fixed preference as the shared locale when the patch carries no locale", () => {
+    // Without this, a fixed choice after a Ukrainian pick would leave the shared locale at en-US.
+    const split = splitLocaleSettings({ localePreference: "zh-CN" });
 
-    expect(split.sharedPatch).toEqual({ localePreference: "en-US" });
+    expect(split.sharedPatch).toEqual({ locale: "zh-CN", localePreference: "zh-CN" });
     expect(split.forkPatch.localePreferenceOverride).toBeUndefined();
+    expect(split.forkPatch.localeOverride).toBeUndefined();
+  });
+
+  it("leaves the shared locale alone for a system preference with no locale", () => {
+    const split = splitLocaleSettings({ localePreference: "system" });
+
+    expect(split.sharedPatch).toEqual({ localePreference: "system" });
+  });
+
+  it("applies the locale override only for a system preference", () => {
+    const split = splitLocaleSettings({ locale: "uk-UA", localePreference: "zh-CN" });
+
+    expect(split.forkPatch.localeOverride).toBeUndefined();
+    expect(split.sharedPatch).toEqual({ locale: "en-US", localePreference: "zh-CN" });
+  });
+
+  it("never routes the fork override keys from a generic settings patch", () => {
+    const { forkPatch } = splitForkSettingsPatch({
+      localeOverride: "uk-UA",
+      locale: "zh-CN",
+      localePreference: "zh-CN",
+    } as Parameters<typeof splitForkSettingsPatch>[0]);
+
+    expect(forkPatch.localeOverride).toBeUndefined();
+    expect(FORK_SETTING_KEYS).not.toContain("localeOverride");
+    expect(FORK_SETTING_KEYS).not.toContain("localePreferenceOverride");
   });
 
   it("resolves the effective locale as override first, then shared", () => {
@@ -132,6 +162,20 @@ describe("fork locale storage rules", () => {
     const rewritten = { ...raw, ...plan?.sharedPatch };
     expect(planLegacyLocaleMigration(rewritten)).toBeUndefined();
     expect(rewritten.recentProjects).toEqual(["/p"]);
+  });
+});
+
+describe("settings sync payload", () => {
+  it("drops locale keys from the immediate sync patch without rejecting the whole payload", () => {
+    const parsed = appSettingsSyncPatchSchema.safeParse({
+      locale: "uk-UA",
+      localePreference: "uk-UA",
+      closeToTrayOnWindows: true,
+      resourceTelemetryEnabled: false,
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual({ closeToTrayOnWindows: true, resourceTelemetryEnabled: false });
   });
 });
 
