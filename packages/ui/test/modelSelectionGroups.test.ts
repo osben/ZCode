@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BUILTIN_MODEL_PROVIDER_IDS } from "@zcode/shared";
 import type { ModelSelectionView } from "@zcode/services";
 import { buildRegistryModelSelectGroups } from "../src/lib/modelSelectionGroups.js";
+import { buildComposerPlanGroups } from "../src/lib/composerPlanGroups.js";
 
 describe("model selection groups", () => {
   it.each([
@@ -264,5 +265,57 @@ describe("model selection groups", () => {
     expect(buildRegistryModelSelectGroups("d6819161-0127-45d7-b88d-82f2a73208aa", view)).toEqual(
       [],
     );
+  });
+});
+
+describe("ACP agent providers in the composer", () => {
+  // specs/acp-agent-runtime.md "Chat delegation (phase 4)": an agent has no HTTP api section, so the
+  // api-format filter must not hide it; the registry's development gate decides whether it is listed.
+  const acpView: ModelSelectionView = {
+    revision: 1,
+    providers: [
+      {
+        providerId: "acp:opencode",
+        providerName: "opencode (ACP)",
+        config: {
+          group: "standard-personal",
+          access: { type: "acp-agent", agentId: "opencode", command: "opencode", args: ["acp"] },
+        } as ModelSelectionView["providers"][number]["config"],
+        models: [{ modelId: "opencode", config: {} as never }],
+      },
+    ],
+  };
+
+  it("lists the agent as a registry group with its model", () => {
+    const groups = buildRegistryModelSelectGroups("glm", acpView);
+    expect(groups.map((group) => group.key)).toEqual(["registry-provider:acp:opencode"]);
+    expect(groups[0]!.items.map((item) => item.name)).toEqual(["opencode"]);
+  });
+
+  it("keeps the agent group through the composer plan groups", () => {
+    const groups = buildComposerPlanGroups(
+      buildRegistryModelSelectGroups("glm", acpView),
+      [],
+      undefined,
+      "glm",
+      {},
+    );
+    expect(groups.map((group) => group.key)).toContain("registry-provider:acp:opencode");
+  });
+
+  it("still hides an api-less provider that is not an agent", () => {
+    const plain: ModelSelectionView = {
+      revision: 1,
+      providers: [
+        {
+          providerId: "plain",
+          config: {
+            access: { type: "api-key" },
+          } as ModelSelectionView["providers"][number]["config"],
+          models: [{ modelId: "m", config: {} as never }],
+        },
+      ],
+    };
+    expect(buildRegistryModelSelectGroups("glm", plain)).toEqual([]);
   });
 });
