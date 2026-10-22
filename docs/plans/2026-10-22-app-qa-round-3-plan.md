@@ -62,3 +62,16 @@ When Phase C 1–3 are merged or deferred and the user's Phase B decisions are i
 - ISSUE-023 review follow-ups landed (0c99821a); E2E TRJ11 written, run pending with the dev app stopped.
 - ISSUE-024 found: the E2E baseline on the fork is broken for every spec that expects the seeded legacy workspace to become a project (the Host path seeds no projects since 46c33e9d). Decision for the user (Phase B): keep the fork rule and make the harness create the default project through the app's own flow (default, in progress), or pass settings on the Host path so legacy `lastWorkspaceSession` entries migrate into projects as upstream does (affects pre-3.12 upgraders).
 - ISSUE-024 closed on the harness side (f3564ff7) without changing the product rule; the trajectory spec passes end to end on the fork after 56a64c14 (menu entry test id was never rendered, seed fixture allowed one match, helpers read the first pane). The product-seeding alternative stays a Phase B decision.
+
+## Phase B decided (2026-10-22 08:10, by the orchestrator at the user's request)
+
+| Item                         | Decision                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| ISSUE-010 Stop vs queue      | Stop pauses the inbox; "Resume queue" in the composer; a new Send while paused goes first, then resumes |
+| ISSUE-012b orphan sweep      | One-shot DELETE of exact-signature placeholder rows at startup, after migrations, before any Host       |
+| ISSUE-020 search scope       | Search all local workspaces of this Host; results show the project name                                 |
+| `writeRecord` cli\_\* mirror | Remove; `applyCliFacts` is the sole writer of `cli_*` (audit every writer first)                        |
+| Trajectory payload           | Host projects input deltas against the previous record; viewer reconstructs                             |
+| Host-path project seeding    | Unchanged (user decision 46c33e9d); harness creates the default project                                 |
+
+Fix pack 3 branch: `claude/qa-fix-pack-3` (stacked on pack 2). Four agents run in parallel on disjoint files; reviewer pass follows before the PR.

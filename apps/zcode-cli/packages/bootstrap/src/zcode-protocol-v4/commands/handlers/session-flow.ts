@@ -296,6 +296,19 @@ async function stop(
 ): Promise<CommandResult | undefined> {
   const record = requireRecord(host, envelope.sessionId);
   const payload = envelope.payload as CommandPayloadMap["stop"];
+  const hadActivePrompt = Boolean(record.activeAbortController);
+  const activeExecutionId = record.app.runtime?.getActiveForegroundExecutionId?.();
+  // Hold the following queue before any abort (ISSUE-010): the turn-end auto-drain check reads the
+  // projection, so QueueAutoDrainChanged(false) must be projected before the abort can finish the turn.
+  // Only a stop that will really cancel holds; a stale execution id is rejected below and leaves the queue alone.
+  const willCancel =
+    activeExecutionId !== undefined
+      ? payload.expectedForegroundExecutionId === undefined ||
+        payload.expectedForegroundExecutionId === activeExecutionId
+      : hadActivePrompt && payload.expectedForegroundExecutionId === undefined;
+  if (willCancel && (host.getQueueLength?.(record.app.sessionId) ?? 0) > 0) {
+    await holdFollowingQueue(host, record);
+  }
   const runtimeStop = record.app.runtime?.stopActiveForegroundExecution?.({
     expectedForegroundExecutionId: payload.expectedForegroundExecutionId,
     reason: "v4 session stopped",
@@ -325,18 +338,6 @@ async function stop(
     // 先打断 runtime-owned verifier/continuation，再等待 goal pause；否则 verifier 可能在
     // pause RPC 完成前通过并接入下一次 continuation。
     record.activeAbortController?.abort(new Error("v4 session stopped"));
-    if ((host.getQueueLength?.(record.app.sessionId) ?? 0) > 0) {
-      try {
-        // verifier 已越过普通 turn catch，不能依赖 TurnComplete(cancelled)
-        // 翻转 runtime queue gate；显式写入 false，确保 future queue 原位 held。
-        await record.app.setQueueAutoDrain(false);
-      } catch (error) {
-        host.logger?.warn?.("v4 stop failed to hold following queue", {
-          error: error instanceof Error ? error.message : String(error),
-          sessionId: record.app.sessionId,
-        });
-      }
-    }
     const pausedGoal = await pauseActiveGoal(host, record);
     if (pausedGoal) {
       await host.afterLegacyStateMutation?.(record, "session_stop_goal_paused");
@@ -346,7 +347,6 @@ async function stop(
 
   // 兼容 compact 与旧客户端：它们没有 runtime foreground execution token，仍由
   // bootstrap 外层 controller 提供取消窗口。
-  const hadActivePrompt = Boolean(record.activeAbortController);
   let pausedGoal = false;
   if (hadActivePrompt) {
     pausedGoal = await pauseActiveGoal(host, record);
@@ -356,6 +356,25 @@ async function stop(
     await host.afterLegacyStateMutation?.(record, "session_stop_goal_paused");
   }
   return undefined;
+}
+
+/**
+ * Writes autoDrain=false and waits for the authority write. The verifier path has already passed the
+ * ordinary turn catch, so TurnComplete(cancelled) cannot be relied on to close the runtime queue gate.
+ * A failed write is logged and the stop still proceeds.
+ */
+async function holdFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(false);
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to hold following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+  }
 }
 
 /** goal-pause barrier 共用件：stop 与 sendQueuedNow（抢占重发）复用，不复制。 */
