@@ -26,6 +26,10 @@ import {
 } from "./official-plugin-definitions.js";
 import { writeOfficialPluginRuntimeManifest } from "./official-plugin-runtime.js";
 import {
+  hashFilesystemSeedFile,
+  pruneFilesystemSeedHashMemo,
+} from "./official-plugin-seed-hash-memo.js";
+import {
   isOfficialPluginSeedLockTimeoutError,
   withOfficialPluginSeedLock,
 } from "./official-plugin-seed-lock.js";
@@ -372,17 +376,20 @@ function collectFilesystemPluginFiles(
     ...includedTopLevelPaths,
     ...(definition.runtimeTopLevelPaths ?? []),
   ]);
+  const visited = new Set<string>();
   for (const sourcePath of walkFiles(rootPath, allowedTopLevelPaths)) {
     const relativePath = toPosixPath(sourcePath.slice(rootPath.length + 1));
     if (!shouldIncludePluginFile(relativePath, allowedTopLevelPaths)) continue;
-    const bytes = readFileSync(sourcePath);
+    visited.add(sourcePath);
+    const stats = statSync(sourcePath);
     files.push({
-      mode: modeForSeedFile(relativePath, statSync(sourcePath).mode),
+      mode: modeForSeedFile(relativePath, stats.mode),
       path: relativePath,
-      sha256: hashBytes(bytes),
+      sha256: hashFilesystemSeedFile(sourcePath, stats),
       sourcePath,
     });
   }
+  pruneFilesystemSeedHashMemo(rootPath, visited);
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
