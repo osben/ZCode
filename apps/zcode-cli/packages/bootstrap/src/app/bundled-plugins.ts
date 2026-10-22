@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
+  type Stats,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -25,10 +26,6 @@ import {
   type OfficialPluginDefinition,
 } from "./official-plugin-definitions.js";
 import { writeOfficialPluginRuntimeManifest } from "./official-plugin-runtime.js";
-import {
-  hashFilesystemSeedFile,
-  pruneFilesystemSeedHashMemo,
-} from "./official-plugin-seed-hash-memo.js";
 import {
   isOfficialPluginSeedLockTimeoutError,
   withOfficialPluginSeedLock,
@@ -391,6 +388,31 @@ function collectFilesystemPluginFiles(
   }
   pruneFilesystemSeedHashMemo(rootPath, visited);
   return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+// Every discovery call (readPresentation, session runtime creation, skills) rebuilt the seed hash
+// list by reading and hashing all bundled plugin bytes (~63 MB packaged), which dominated the
+// synchronous plugin resolution on the CLI request queue. Hashes are reused only while the
+// file's stat signature is unchanged; ctime and inode catch edits that preserve size and mtime.
+// Stat happens before read, so a concurrent edit can only cause an extra re-hash later.
+const filesystemSeedHashMemo = new Map<string, { signature: string; sha256: string }>();
+
+function hashFilesystemSeedFile(sourcePath: string, stats: Stats): string {
+  const signature = `${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.ino}`;
+  const memo = filesystemSeedHashMemo.get(sourcePath);
+  if (memo?.signature === signature) return memo.sha256;
+  const sha256 = hashBytes(readFileSync(sourcePath));
+  filesystemSeedHashMemo.set(sourcePath, { signature, sha256 });
+  return sha256;
+}
+
+function pruneFilesystemSeedHashMemo(rootPath: string, visited: ReadonlySet<string>): void {
+  const prefix = `${rootPath}${sep}`;
+  for (const sourcePath of filesystemSeedHashMemo.keys()) {
+    if (sourcePath.startsWith(prefix) && !visited.has(sourcePath)) {
+      filesystemSeedHashMemo.delete(sourcePath);
+    }
+  }
 }
 
 function* walkFiles(

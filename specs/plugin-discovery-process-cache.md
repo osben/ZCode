@@ -47,10 +47,12 @@ Tier 1 removes most of the cost with no staleness, while Tier 2 would save only 
 
 ### Tier 1: stat-validated seed-file hash memo (implemented in prototype)
 
-- **Owner:** `apps/zcode-cli/packages/bootstrap/src/app/official-plugin-seed-hash-memo.ts`, a
-  fork module holding one module-level, per-process map. Its only caller is
-  `collectFilesystemPluginFiles` in the upstream-synced `bundled-plugins.ts`, which keeps a
-  ~10-line delta. Nothing else reads or writes the map.
+- **Owner:** `apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts`. A module-level,
+  per-process map is used only by `collectFilesystemPluginFiles`, and nothing else reads or
+  writes it. The memo is inline in this upstream-synced file, a fork delta of about 30 lines,
+  because `apps/zcode-cli` is not an architecture-managed module and a new sibling file would be
+  rejected. The file was already over the 20 KB staged-size cap, so it is listed in
+  `.staged-file-size-exemptions` instead of being split.
 - **Key:** the absolute source file path.
 - **Validator:** the file's `stat` signature: `size`, `mtimeMs`, `ctimeMs`, `ino`.
   - `ctime` cannot be set from user space (`utimes` does not change it).
@@ -152,7 +154,7 @@ What the numbers show:
 - The first readPresentation of a fresh process is unchanged. It fills the memo, so the
   `runtime/capabilities` request queued behind it still waits about 115 ms.
 
-**Worth it?** Yes. The change is about 30 lines of fork code plus a ~10-line hook-in, has no
+**Worth it?** Yes. The change is about 30 lines in one file, has no
 invalidation surface and removes 50–55 ms from every discovery call after the first.
 
 It does not fix the fresh-client wait, because the first discovery call of a process still pays
