@@ -127,6 +127,8 @@ const COMMAND_CENTER_SECTION_LIMIT = 3;
 const COMMAND_CENTER_CONTEXT_SECTION_LIMIT = 3;
 const COMMAND_CENTER_FILE_RESULT_LIMIT = 80;
 const COMMAND_CENTER_TASK_RESULT_LIMIT = 80;
+// Same settle as TaskSearchDialog (specs/task-search-debounce.md). A copy: that constant is private to TaskSearchDialog.tsx.
+const COMMAND_CENTER_TASK_SEARCH_SETTLE_MS = 200;
 const commandCenterDialogClassName = cn(
   quickPickDialogClassName,
   // On Linux desktop, the shared DialogContent offsets centered dialogs for the custom title bar.
@@ -723,10 +725,25 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
       ),
     [effectiveWorkspaceTabs, projectTree, searchConversations],
   );
+  // The task-list RPC waits for the query to settle (specs/task-search-debounce.md). Typing, command and file
+  // filtering and highlights stay on the live searchQuery. Clearing the input settles at once and cancels a pending settle.
+  const [settledSearchQuery, setSettledSearchQuery] = useState("");
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSettledSearchQuery("");
+      return;
+    }
+    const timer = setTimeout(
+      () => setSettledSearchQuery(searchQuery.trim()),
+      COMMAND_CENTER_TASK_SEARCH_SETTLE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
   // Keyed by content: a new tree object with the same scope does not change the query key.
+  // No workspace is queried before the query settles, so a keystroke never fans out one listTaskList per workspace.
   const searchWorkspaceTabs = useMemo<TaskSearchScope[]>(
-    () => JSON.parse(localSearchScopeKey) as TaskSearchScope[],
-    [localSearchScopeKey],
+    () => (settledSearchQuery ? (JSON.parse(localSearchScopeKey) as TaskSearchScope[]) : []),
+    [localSearchScopeKey, settledSearchQuery],
   );
   const projectNameByTaskKey = useMemo(
     () => buildTaskSearchProjectNames(projectTree),
@@ -747,7 +764,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     kind: "active",
     workspaceTabs: searchWorkspaceTabs,
     sortBy: "updated",
-    searchQuery,
+    searchQuery: settledSearchQuery,
     expanded: false,
     collapsedLimit: COMMAND_CENTER_TASK_RESULT_LIMIT,
   });

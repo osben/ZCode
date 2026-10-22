@@ -7,6 +7,7 @@
 ## Owner
 
 - `packages/ui/src/TaskSearchDialog.tsx` owns the settled query (`settledQuery`). It is the only component that decides which query reaches `useGlobalTaskList`.
+- `packages/ui/src/command-center/CommandCenterDialog.tsx` owns its own settled query (`settledSearchQuery`), with the same rule. It is the only other component that decides which query reaches the search `useGlobalTaskList`.
 - `useGlobalTaskList` (`packages/ui/src/hooks/useGlobalTaskList.ts`) owns request ordering. It keeps a `requestSerialRef` so only the latest request writes results, and it keys `hasCurrentResult` by query. It is not changed by this spec.
 - The input value and the match highlight stay on the live query and are not part of this contract.
 
@@ -61,4 +62,8 @@ Task search covers the local tasks of every project listed in the sidebar. It do
 
 ### Settle and cost
 
-- The 200 ms settle in this document applies to `TaskSearchDialog`. `CommandCenterDialog`, the surface that ships, has no settle today. Widening the scope makes each keystroke query every local workspace, so adding a settle there is an open decision for the user. It is not implemented here.
+- The 200 ms settle applies to both `TaskSearchDialog` and `CommandCenterDialog`, the surface that ships.
+- The command center settles the resolved query: the text after an optional `>`, `#` or `@` scope prefix. Commands, files, highlights and the recents list stay on the live input.
+- Until the query settles, no workspace is queried: the search scope is empty for that query, so a keystroke never fans out one `listTaskList` per local workspace. Only the query that has settled is sent.
+- The empty-state wording shows during the first settle, because there is no earlier result to keep. A later keystroke keeps the previous settled results until its own query settles.
+- Clearing the input settles at once and cancels a pending settle.
