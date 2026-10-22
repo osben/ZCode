@@ -273,8 +273,11 @@ existing send path; the pane never calls into the composer.
   (`reportReconciledResolution`). Accepted: the submission is dropped and the
   unsettled-submission ledger clears the unedited editor (no duplicate). Failed or
   discarded: the copy becomes an ordinary Retry of the same submission and
-  reservation. Remove is disabled while the submission is active or the editor holds
-  another draft.
+  reservation. The hold applies to an unreserved draft record too (reachable when a
+  CLI without durable reservation lost the ACK); with no session bucket to query, that
+  copy resolves only through the registry (live ACK/projection or the existing draft
+  command recovery). Remove is disabled while the submission is active or the editor
+  holds another draft.
 - **Copy.** A `failed` record that never had a `sendText` command says the message
   was not sent ("Unsent message saved" / "Failed to send"). Once a command existed
   (for example a failure reconciled from an unknown outcome) the copy says delivery
@@ -284,19 +287,28 @@ existing send path; the pane never calls into the composer.
 
 A persisted first submission in `sending` / `unknown` that is not active in this
 renderer (chain ended with a lost ACK, or the app restarted) is reconciled by the pane
-that holds the record, on mount and whenever its inputs change — never by a timer.
+that holds the record, on mount and whenever its inputs change — the record, the
+Host snapshot's `revision` (every Host state change) or connectivity — never by a
+timer. Facts already decided are not re-queried; only a transient failure is.
 Durable Host facts decide before the command query, because an `accepted` ACK does not
 survive a CLI restart and a query `unknown` therefore does not prove non-admission:
 
 | Facts (bound session's live snapshot, then `commands/query`)                     | Record becomes                                     |
 | -------------------------------------------------------------------------------- | -------------------------------------------------- |
-| a real user row is projected                                                     | cleared by the reconcile predicate (already owned) |
+| a real user row carries this command id                                          | accepted (reported to the registry)                |
+| a real user row is projected (fresh-session fallback, records only)              | cleared by the reconcile predicate (already owned) |
 | reserved record and `submissionPreparation` absent (input admitted)              | `sending` — synchronizing, no Retry                |
 | query `accepted` / `duplicate`                                                   | `sending` — synchronizing until the row projects   |
 | still `preparing` and query `rejected` / `failed` / `stale` / `noop` / `unknown` | `failed` — Retry and Remove                        |
-| query throws or reports `fault.command.queryUnavailable`                         | unchanged — re-checked on the next input change    |
+| query throws or reports `fault.command.queryUnavailable`                         | unchanged — re-checked when the revision advances  |
 
 The query uses the command's own bucket: the reserved session id for `sendText`.
+Only identity-backed decisions reach the command registry: this command's query result
+or a real user row carrying its `sourceCommandId` (FSL rule 6). The fresh-session
+fallback and the marker shortcut are not identity evidence — they may only keep a
+record synchronizing, and never settle a Remove-held copy, whose "accepted" would
+clear the user's unsent text. For a held copy of a reserved submission whose marker
+already flipped, a query `unknown` decides nothing and the copy stays held.
 Only a reserved (plain) record may treat a missing `submissionPreparation` as proof of
 admission — that marker flips when its `sendText` executes. A worktree record never has
 that marker (its `worktreePreparation` completes at activation, before any input), so it

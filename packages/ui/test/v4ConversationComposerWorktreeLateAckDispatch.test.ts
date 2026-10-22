@@ -1544,3 +1544,47 @@ it("a failed first submission is named as needing action, not as still being del
     });
   }
 });
+
+it("Remove on an unresolved unreserved draft record holds the copy too", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => undefined);
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  // Reachable: a CLI without durable reservation sends createSession+sendText directly, and a
+  // lost ACK while the pane was elsewhere persists the record under the draft owner.
+  persistV4ComposerDraft(
+    "/workspace",
+    undefined,
+    getV4WorktreeRecoveryScope("__draft__", "sub-draft-held"),
+    {
+      text: "draft held",
+      firstSubmission: {
+        submissionId: "sub-draft-held",
+        ownerKey: "__draft__",
+        status: "unknown",
+        commandId: "cmd-draft-held",
+      },
+    },
+  );
+  try {
+    harness.refresh();
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("draft held");
+      await flushAsyncWork();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});

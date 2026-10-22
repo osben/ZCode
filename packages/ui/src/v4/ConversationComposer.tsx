@@ -3224,7 +3224,14 @@ function ConversationComposerImpl({
     (draft: V4ComposerDraft, recoveryScope: string) => {
       const pending = draft.firstSubmission;
       if (!pending) return;
-      const keepReservation = Boolean(pending.reservation || sessionId !== null);
+      // An unresolved outcome is always held (the copy must stay unsendable until decided), even
+      // for an unreserved draft record; a decided one keeps only a reservation worth reusing.
+      const keepReservation = Boolean(
+        pending.reservation ||
+        sessionId !== null ||
+        pending.status === "sending" ||
+        pending.status === "unknown",
+      );
       applyWorktreeRecoveryDraft(
         keepReservation ? draft : { ...draft, firstSubmission: undefined },
       );

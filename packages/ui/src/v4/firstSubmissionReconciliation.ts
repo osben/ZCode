@@ -32,8 +32,10 @@ export function useFirstSubmissionReconciliation({
   heldFirstSubmission,
   active,
   realRowProjected,
+  commandRowProjected,
   snapshotLive,
   hostPreparing,
+  hostRevision,
   queryCommands,
 }: {
   enabled: boolean;
@@ -49,11 +51,16 @@ export function useFirstSubmissionReconciliation({
   heldFirstSubmission?: V4ComposerDraft["firstSubmission"];
   /** A live send chain in this renderer owns the record and settles it itself. */
   active: boolean;
+  /** The record's reconcile predicate matched (strict id or the fresh-session fallback). */
   realRowProjected: boolean;
+  /** A visible realUser row carries exactly this command id (identity evidence). */
+  commandRowProjected: (commandId: string) => boolean;
   /** The bound session's snapshot has arrived, so `hostPreparing` is a Host fact. */
   snapshotLive: boolean;
   /** The Host still reports `submissionPreparation`: the frozen input was not admitted yet. */
   hostPreparing: boolean;
+  /** Advances with every Host state change: re-checks after a transient query failure. */
+  hostRevision: number | undefined;
   queryCommands: (params: CommandsQueryParams) => Promise<CommandsQueryResult>;
 }): void {
   const queryRef = useRef(queryCommands);
@@ -68,17 +75,25 @@ export function useFirstSubmissionReconciliation({
   // Only a reserved (plain) submission's marker flips at its sendText; a worktree marker completes
   // at activation, before any input, so its absence proves nothing about admission.
   const markerProvesAdmission = Boolean(firstSubmission?.reservation);
+  const matchedRow = commandId ? commandRowProjected(commandId) : false;
+  // A decided attempt is not repeated for the same facts; only a transient failure (query threw or
+  // was unavailable) re-queries, when the Host revision advances or connectivity returns.
+  const settledFactsRef = useRef<string | null>(null);
+  const factsKey = `${commandId}:${status}:${hostPreparing}:${held}`;
   useEffect(() => {
     if (!enabled || !sessionId || !submissionId || !commandId) return;
     if (active || !snapshotLive) return;
     if (status !== "sending" && status !== "unknown") return;
-    const apply = (next: Extract<FirstSubmissionStatus, "sending" | "failed">) => {
-      // Listeners (a Remove hold, the unsettled ledger) learn the decision from the registry; the
-      // record, when there is one, is written here — the held copy is owned by its composer.
-      pendingCommandRegistry.reportReconciledResolution(
-        commandId,
-        next === "sending" ? "accepted" : "failed",
-      );
+    if (settledFactsRef.current === factsKey) return;
+    // `report` only for identity-backed decisions (this command's query result or its own row):
+    // registry listeners such as a Remove hold or the ledger clear the user's text on "accepted".
+    const apply = (next: Extract<FirstSubmissionStatus, "sending" | "failed">, report: boolean) => {
+      settledFactsRef.current = factsKey;
+      if (report)
+        pendingCommandRegistry.reportReconciledResolution(
+          commandId,
+          next === "sending" ? "accepted" : "failed",
+        );
       if (held || next === status) return;
       try {
         updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, { status: next });
@@ -86,16 +101,17 @@ export function useFirstSubmissionReconciliation({
         logger.warn("[first-submission] could not persist the reconciled outcome", error);
       }
     };
-    if (realRowProjected) {
-      // A record is cleared by the pane's reconcile predicate; a held copy is settled here.
-      if (held) apply("sending");
+    if (matchedRow) {
+      apply("sending", true);
       return;
     }
+    // A record is cleared by the pane's reconcile predicate (fresh-session fallback included).
+    if (realRowProjected && !held) return;
     // The Host marks a reserved submission's preparation active when a sendText executes. Known
-    // limitation: the bridge does so for any sendText, so a foreign input sent from another
-    // client into the preparing session also satisfies this (spec: CLI follow-up).
-    if (markerProvesAdmission && !hostPreparing) {
-      apply("sending");
+    // limitation: the bridge does so for any sendText, so this is not identity evidence — it only
+    // keeps a record synchronizing and never decides a held copy (spec: CLI follow-up).
+    if (!held && markerProvesAdmission && !hostPreparing) {
+      apply("sending", false);
       return;
     }
     let current = true;
@@ -104,10 +120,23 @@ export function useFirstSubmissionReconciliation({
         if (!current) return;
         const item = result.results.find((entry) => entry.key.commandId === commandId);
         const next = decideFirstSubmissionFromQuery(item?.result);
-        if (next) apply(next);
+        if (!next) return;
+        // For a reserved submission whose marker already flipped, a query "unknown" is no evidence
+        // either way (another input may have flipped it, and a CLI restart forgets accepted
+        // commands): keep holding. Worktree markers never carry this signal (spec: residual risk).
+        if (
+          next === "failed" &&
+          item?.result === "unknown" &&
+          markerProvesAdmission &&
+          !hostPreparing
+        ) {
+          settledFactsRef.current = factsKey;
+          return;
+        }
+        apply(next, true);
       },
       (error: unknown) => {
-        // Nothing decided: the record stays as it is and is checked again on the next input change.
+        // Nothing decided: re-checked when the Host revision advances or connectivity returns.
         logger.warn("[first-submission] outcome query failed; keeping the record", error);
       },
     );
@@ -118,9 +147,12 @@ export function useFirstSubmissionReconciliation({
     active,
     commandId,
     enabled,
+    factsKey,
     held,
     hostPreparing,
+    hostRevision,
     markerProvesAdmission,
+    matchedRow,
     realRowProjected,
     sessionId,
     snapshotLive,

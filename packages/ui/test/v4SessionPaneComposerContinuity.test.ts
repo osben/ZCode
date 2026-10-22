@@ -1855,6 +1855,102 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-f6")).toHaveLength(0);
   });
 
+  async function mountHeldCopy(
+    sessionId: string,
+    commandId: string,
+    options: {
+      rows?: ConversationSnapshot["rows"]["window"];
+      preparing: boolean;
+      query: () => Promise<unknown>;
+    },
+  ) {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: `sub-${commandId}`,
+        ownerKey: sessionId,
+        status: "unknown",
+        commandId,
+        reservation: { sessionId, commandId: `reserve-${commandId}` },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(
+      options.query as typeof conversationMock.layer.queryCommands,
+    );
+    const decisions: string[] = [];
+    const off = pendingCommandRegistry.subscribeResolution(commandId, (resolution) =>
+      decisions.push(resolution),
+    );
+    conversationMock.layer.acquire.mockImplementation(
+      () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState(sessionId, {
+      ...(options.rows ? { rows: options.rows } : {}),
+      ...(options.preparing ? { submissionPreparation: { submissionId: `sub-${commandId}` } } : {}),
+    });
+    renderPane(root, sessionId);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    return { root, decisions, off };
+  }
+
+  it("F: a foreign user row or marker never accepts a held copy (identity matching, FSL rule 6)", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f7", "cmd-f7", {
+      rows: [realUserInputRow("cmd-foreign")],
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f7", commandId: "cmd-f7" }, result: "unknown" }],
+      }),
+    });
+    off();
+    // Neither the foreign row nor the flipped marker is evidence for cmd-f7; an unknown query
+    // outside preparation decides nothing, so the user's unsent copy stays.
+    expect(decisions).toEqual([]);
+  });
+
+  it("F: a user row carrying the held command id accepts the held copy", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f8", "cmd-f8", {
+      rows: [realUserInputRow("cmd-f8")],
+      preparing: false,
+      query: async () => ({ results: [] }),
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: a transient query failure is re-checked when the Host snapshot advances", async () => {
+    let calls = 0;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f9", "cmd-f9", {
+      preparing: true,
+      query: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport down");
+        return {
+          results: [{ key: { sessionId: "reserved-f9", commandId: "cmd-f9" }, result: "unknown" }],
+        };
+      },
+    });
+    expect(decisions).toEqual([]);
+    const advanced = boundProjectionState("reserved-f9", {
+      submissionPreparation: { submissionId: "sub-cmd-f9" },
+    });
+    projectionState.current = {
+      ...advanced,
+      snapshot: { ...advanced.snapshot!, revision: 7 },
+    };
+    renderPane(root, "reserved-f9");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
   it("F: an unavailable command query leaves the record unchanged", async () => {
     conversationMock.layer.queryCommands.mockImplementation(async () => {
       throw new Error("transport down");

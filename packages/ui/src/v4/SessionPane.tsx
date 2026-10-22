@@ -5296,11 +5296,18 @@ export function SessionPane({
         firstSubmissionRecord.draft.firstSubmission.submissionId,
       ),
     ),
-    realRowProjected: firstSubmissionRecord
-      ? firstSubmissionRowProjected
-      : snapshot?.sessionId === sessionId && hasVisibleRealUserFirstInputRow(snapshot.rows.window),
+    realRowProjected: firstSubmissionRowProjected,
+    commandRowProjected: (commandId) =>
+      snapshot?.sessionId === sessionId &&
+      snapshot.rows.window.some(
+        (row) =>
+          row.kind === "userInput" &&
+          row.origin === "realUser" &&
+          row.sourceCommandId === commandId,
+      ),
     snapshotLive: Boolean(sessionId && snapshot?.sessionId === sessionId),
     hostPreparing: Boolean(snapshot?.meta.submissionPreparation),
+    hostRevision: snapshot?.sessionId === sessionId ? snapshot.revision : undefined,
     queryCommands: (params) => layer.queryCommands(params),
   });
   useEffect(() => {
