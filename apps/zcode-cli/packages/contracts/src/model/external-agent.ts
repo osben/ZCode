@@ -49,7 +49,9 @@ export type ExternalAgentTurnEvent =
   | { readonly type: "tool_call"; readonly update: ExternalAgentToolUpdate }
   | { readonly type: "tool_call_update"; readonly update: ExternalAgentToolUpdate }
   | { readonly type: "plan"; readonly entries: readonly ExternalAgentPlanEntry[] }
-  | { readonly type: "session_title"; readonly title: string };
+  | { readonly type: "session_title"; readonly title: string }
+  /** The agent started a new session where the earlier one could not be restored (S5). */
+  | { readonly type: "context_reset" };
 
 /** A permission ask of the agent, after the runtime's live-turn check. */
 export interface ExternalAgentPermissionAsk {

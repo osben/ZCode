@@ -28,6 +28,7 @@ import type {
   PluginUiAppToolCallRequestedPayload,
   PluginUiResourceListChangedPayload,
   PluginUiResourceUpdatedPayload,
+  SystemMessagePayload,
   SessionEvent,
   SessionForkedPayload,
   SessionInputPromotedPayload,
@@ -1494,6 +1495,8 @@ export class ProductProjection {
         return this.onSessionResumed(event);
       case SessionEventType.SessionTitleUpdated:
         return this.onSessionTitleUpdated(event);
+      case SessionEventType.SystemMessage:
+        return this.onSystemMessage(event);
       case SessionEventType.TurnStarted:
         if (fact.semanticKind !== "userIntent") return [];
         return [
@@ -3268,6 +3271,7 @@ export class ProductProjection {
           row: {
             ...existing,
             toolName: payload.toolName,
+            ...(payload.title ? { title: payload.title } : {}),
             ...(payload.assistantMessageId
               ? { assistantResponseId: String(payload.assistantMessageId) }
               : {}),
@@ -3288,6 +3292,7 @@ export class ProductProjection {
         : {}),
       toolCallId,
       toolName: payload.toolName,
+      ...(payload.title ? { title: payload.title } : {}),
       status: "inputStreaming",
       inputText,
       input: payload.input,
@@ -5541,6 +5546,20 @@ export class ProductProjection {
       if (this.turnHeaderRowIdByTurnId.has(mapped)) return mapped;
     }
     return this.turnIdOf(event);
+  }
+
+  // ── external agent context reset（S5：divider，lane 由投影裁决）──
+
+  private onSystemMessage(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as SystemMessagePayload;
+    if (payload.type !== "external_agent_context_reset") return [];
+    const row: TimelineMarkerRow = {
+      ...this.rowBase(event, this.turnIdOf(event)),
+      kind: "timelineMarker",
+      lane: "lightBoundary",
+      marker: { type: "agentContextReset", agentId: payload.content },
+    };
+    return [{ op: "row.appended", row }];
   }
 
   // ── fork marker（forkAssistant 命令效果）──

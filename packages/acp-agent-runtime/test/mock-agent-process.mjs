@@ -41,12 +41,21 @@ const app = agent({ name: `mock-agent (${scenario})` })
     receivedMarker = process.env.MOCK_MARKER ?? null;
     return {
       protocolVersion: PROTOCOL_VERSION,
-      agentCapabilities: { loadSession: false },
+      agentCapabilities: { loadSession: scenario.startsWith("load") },
       authMethods:
         scenario === "auth"
           ? [{ id: "mock-login", name: "Mock Login", description: "Mock auth method" }]
           : [],
     };
+  })
+  // `load` replays one history chunk before it answers; `load-fails` refuses the load.
+  .onRequest(methods.agent.session.load, async (ctx) => {
+    if (scenario === "load-fails") throw new Error("session/load refused");
+    await ctx.client.notify(methods.client.session.update, {
+      sessionId: ctx.params.sessionId,
+      update: msgChunk("replayed"),
+    });
+    return {};
   })
   .onRequest(methods.agent.session.new, async () => {
     if (scenario === "slow-new") {
@@ -159,7 +168,8 @@ const app = agent({ name: `mock-agent (${scenario})` })
         }
         return stop("end_turn");
       }
-      case "die": {
+      case "die":
+      case "load-die": {
         await notify(msgChunk("alive"));
         setTimeout(() => process.exit(7), 150);
         return stop("end_turn");

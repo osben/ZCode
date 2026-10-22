@@ -2092,6 +2092,13 @@ const TimelineMarkerRowView = memo(function TimelineMarkerRowView({
           running,
         };
       }
+      case "agentContextReset":
+        return {
+          // Context was reset by the agent process, not by a model switch, so no icon marks a direction.
+          icon: null,
+          label: intl.formatMessage({ id: "chat.agentContextReset" }, { agent: marker.agentId }),
+          running: false,
+        };
       case "forkNotice":
         return {
           icon: MARKER_FORK_ICON,

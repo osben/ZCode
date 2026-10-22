@@ -156,6 +156,7 @@ export class ExternalAgentToolRows {
       toolCallId: row.toolCallId,
       assistantMessageId: this.#options.assistantMessageId,
       toolName: row.toolName,
+      ...(row.title ? { title: row.title } : {}),
       input: row.input,
       dependencies: [],
       canRunParallel: false,

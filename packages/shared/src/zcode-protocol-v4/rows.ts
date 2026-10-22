@@ -210,6 +210,8 @@ export const toolCallRowSchema = z.object({
   assistantResponseId: z.string().min(1).optional(),
   toolCallId: z.string(),
   toolName: z.string(),
+  // Title an external agent gave the tool call (ACP); ZCode tools derive their label from toolName.
+  title: z.string().optional(),
   status: z.enum(["inputStreaming", "pendingApproval", "running", "success", "error", "cancelled"]),
   inputText: z.string(),
   input: z.unknown().optional(),
@@ -359,6 +361,11 @@ export const timelineMarkerPayloadSchema = z.union([
     type: z.literal("forkNotice"),
     parentSessionId: z.string(),
     parentRowId: z.number(),
+  }),
+  // An external agent started a new session where its earlier one could not be restored (S5).
+  z.object({
+    type: z.literal("agentContextReset"),
+    agentId: z.string(),
   }),
   // Appears in the parent (optional display).
   z.object({

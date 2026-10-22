@@ -9,6 +9,7 @@
 import {
   CoreErrorType,
   ExternalAgentTurnError,
+  SessionEventType,
   createCoreError,
   type CoreError,
   type ExternalAgentPermissionAnswer,
@@ -268,6 +269,18 @@ export async function runExternalAgentTurn(
           traceContext: state.turnTraceContext,
         });
         return;
+      case "context_reset": {
+        await breakSegment();
+        const notice = this.createEvent(
+          SessionEventType.SystemMessage,
+          // The content is the agent id: the timeline row names the agent without a second payload field.
+          { type: "external_agent_context_reset", content: driver.agentId },
+          state.turnTraceContext,
+        );
+        await this.appendEvent(notice, state.turnTraceContext);
+        state.events.push(notice);
+        return;
+      }
     }
   };
   const onEvent = (event: ExternalAgentTurnEvent) => {

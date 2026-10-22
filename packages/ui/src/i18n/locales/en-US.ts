@@ -5512,6 +5512,8 @@ const enUS: Record<string, string> = {
   "chat.contextCompaction.completed": "Context compressed",
   "chat.modelChange.switched": "Model switched {from} → {to}",
   "chat.modelChange.using": "Using {model}",
+  "chat.agentContextReset":
+    "Agent context was reset. {agent} cannot see earlier messages of this conversation.",
   "chat.contextCompaction.failed": "Context compression failed",
   "chat.contextCompaction.interrupted": "Context compression interrupted",
   "chat.contextCompaction.retry": "Retry",

@@ -96,6 +96,8 @@ function createAcpTurnDriver(
       } catch (error) {
         throw toStartFailure(error, agentId);
       }
+      // A session that could not be restored is shown to the user before the agent answers.
+      if (runtime.takeSessionStart?.() === "reset") request.onEvent({ type: "context_reset" });
       // Asks of this agent session reach the turn only while the prompt runs (see pool.bindTurnPermission).
       const unbind = options.pool.bindTurnPermission(request.sessionId, (ask) =>
         toAcpPermissionAnswer(request, ask),

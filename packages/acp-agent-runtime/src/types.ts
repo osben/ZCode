@@ -23,6 +23,11 @@ export interface AcpLaunchOptions {
 
 /** Options of `AcpSessionRuntime.start`: one launch plus runtime tuning. */
 export interface AcpSessionRuntimeOptions extends AcpLaunchOptions {
+  /**
+   * ACP session id of an earlier run. The first handshake asks the agent to `session/load` it when
+   * the agent advertises `loadSession`; otherwise, or when the load fails, a new session starts.
+   */
+  readonly resumeSessionId?: string;
   readonly timeouts?: AcpTimeouts;
   readonly maxFrameBytes?: number;
   /**

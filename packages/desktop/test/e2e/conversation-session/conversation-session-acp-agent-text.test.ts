@@ -1,17 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { clearAppData, DEFAULT_WORKSPACE } from "../helpers/desktop-app.js";
 import {
-  TID_CHAT_MODEL_SELECT_GROUP,
-  TID_CHAT_MODEL_SELECT_ITEM,
-  TID_CHAT_MODEL_SELECT_TRIGGER,
-  TID_LOGIN_USE_API_KEY_BUTTON,
-  TID_TASK_SETTINGS_BUTTON,
-  encodeCustomModelValue,
-  testId,
-} from "@zcode/shared";
-import { clearAppData, DEFAULT_WORKSPACE, getE2EAppDataPaths } from "../helpers/desktop-app.js";
+  ACP_AGENT_DIR,
+  acpSpawnCount,
+  removeAcpAgentDir,
+  seedEnabledAcpAgent,
+  selectAcpModelFromComposer,
+  writeAcpLoggingShim,
+} from "../helpers/acp-agent-e2e.js";
+import { TID_LOGIN_USE_API_KEY_BUTTON, TID_TASK_SETTINGS_BUTTON } from "@zcode/shared";
 import {
   clickV4Stop,
   getV4Messages,
@@ -28,87 +25,7 @@ import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboard
 // "hang" waits for session/cancel. The shim logs one line per agent process it starts, so a
 // second turn that reuses the resident process leaves exactly one line.
 
-const AGENT_DIR = process.env.ZCODE_E2E_ACP_AGENT_PATH?.trim() ?? "";
-const MOCK_AGENT_FIXTURE = resolve(process.cwd(), "../services/test/fixtures/acp-mock-agent.mjs");
-const OPENCODE_SHIM = join(AGENT_DIR, "opencode");
-const SPAWN_LOG = join(AGENT_DIR, "spawns.log");
-const ACP_PROVIDER_ID = "acp:opencode";
-const ACP_MODEL_ID = "opencode";
-const SIDECAR_FILE = join(dirname(getE2EAppDataPaths().configFile), "fork_acp_agents.json");
-
-/**
- * Shim for the `opencode` binary: version and auth probes exit before logging; every ACP launch
- * appends its pid (exec keeps the pid) before handing over to the mock agent.
- */
-async function writeLoggingShim() {
-  assert.ok(existsSync(MOCK_AGENT_FIXTURE), `missing mock agent fixture: ${MOCK_AGENT_FIXTURE}`);
-  await mkdir(AGENT_DIR, { recursive: true });
-  await rm(SPAWN_LOG, { force: true });
-  const node = JSON.stringify(process.execPath);
-  await writeFile(
-    OPENCODE_SHIM,
-    [
-      "#!/bin/sh",
-      'case "$1" in',
-      '  --version) echo "0.0.0-e2e"; exit 0 ;;',
-      '  auth) echo "e2e mock agent: logged in"; exit 0 ;;',
-      "esac",
-      `echo "$$" >> ${JSON.stringify(SPAWN_LOG)}`,
-      `exec ${node} ${JSON.stringify(MOCK_AGENT_FIXTURE)} "$@"`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  await chmod(OPENCODE_SHIM, 0o755);
-}
-
-/** Enabled sidecar record for the mock agent, written while Electron is down (the host reads it at start). */
-async function seedEnabledAgent() {
-  await writeFile(
-    SIDECAR_FILE,
-    JSON.stringify({
-      schemaVersion: 1,
-      agents: [
-        {
-          agentId: "opencode",
-          providerName: "opencode (ACP)",
-          enabled: true,
-          command: OPENCODE_SHIM,
-          args: ["acp"],
-        },
-      ],
-    }),
-    "utf8",
-  );
-}
-
-/**
- * The composer lists providers in a submenu that is closed by default. Open the model menu, open the
- * provider submenu, pick the agent's group, then its model.
- */
-async function selectAcpModelFromComposer() {
-  const modelTrigger = await $(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`);
-  await modelTrigger.waitForClickable({ timeout: 30000 });
-  await modelTrigger.click();
-  const providerTrigger = await $('[data-testid="composer-provider-trigger"]');
-  await providerTrigger.waitForClickable({ timeout: 20000 });
-  await providerTrigger.click();
-  const group = await $(
-    `[data-testid="${testId(TID_CHAT_MODEL_SELECT_GROUP, `registry-provider:${ACP_PROVIDER_ID}`)}"]`,
-  );
-  await group.waitForDisplayed({ timeout: 30000 });
-  await group.click();
-  const item = await $(
-    `[data-testid="${testId(TID_CHAT_MODEL_SELECT_ITEM, encodeCustomModelValue(ACP_PROVIDER_ID, ACP_MODEL_ID))}"]`,
-  );
-  await item.waitForDisplayed({ timeout: 30000 });
-  await item.click();
-}
-
-async function spawnCount(): Promise<number> {
-  if (!existsSync(SPAWN_LOG)) return 0;
-  return (await readFile(SPAWN_LOG, "utf8")).split("\n").filter((line) => line.trim()).length;
-}
+/** Spawn log lines are per process; see helpers/acp-agent-e2e.ts for the shim and sidecar. */
 
 async function assistantTextCount(text: string): Promise<number> {
   const messages = await getV4Messages("assistant");
@@ -119,7 +36,7 @@ describe("Conversation with an ACP agent (text)", () => {
   before(async function () {
     this.timeout(240000);
     if (process.platform === "win32") this.skip();
-    assert.ok(AGENT_DIR, "ZCODE_E2E_ACP_AGENT_PATH is not set by wdio.conf.ts");
+    assert.ok(ACP_AGENT_DIR, "ZCODE_E2E_ACP_AGENT_PATH is not set by wdio.conf.ts");
     await browser.waitUntil(
       async () =>
         browser.execute(
@@ -140,8 +57,8 @@ describe("Conversation with an ACP agent (text)", () => {
 
     await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
       afterElectronProcessExit: async () => {
-        await writeLoggingShim();
-        await seedEnabledAgent();
+        await writeAcpLoggingShim({ resetState: true });
+        await seedEnabledAcpAgent();
       },
     });
     await skipOccupationOnboardingIfPresent();
@@ -149,7 +66,7 @@ describe("Conversation with an ACP agent (text)", () => {
   });
 
   after(async () => {
-    await rm(AGENT_DIR, { recursive: true, force: true });
+    await removeAcpAgentDir();
     await clearAppData();
   });
 
@@ -182,7 +99,7 @@ describe("Conversation with an ACP agent (text)", () => {
     );
     // The hung prompt produced no reply, and Stop cancels the prompt without killing the process.
     assert.equal(await assistantTextCount("pong"), repliesBefore);
-    assert.equal(await spawnCount(), 1);
+    assert.equal(await acpSpawnCount(), 1);
   });
 
   it("ACP-CHAT-03: a second turn reuses the agent process", async function () {
@@ -198,6 +115,6 @@ describe("Conversation with an ACP agent (text)", () => {
       "the second agent turn did not complete",
       120000,
     );
-    assert.equal(await spawnCount(), 1, "the agent process must be reused across turns");
+    assert.equal(await acpSpawnCount(), 1, "the agent process must be reused across turns");
   });
 });

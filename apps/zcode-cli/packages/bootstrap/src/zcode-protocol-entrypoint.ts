@@ -35,8 +35,8 @@ import {
 } from "./zcode-protocol/storage-startup.js";
 import { closeSessionStore, getSessionDbPath } from "./app/session-store.js";
 import { startProcessProviderRegistryRuntime } from "./app/process-provider-registry-runtime.js";
-import { AcpSessionPool, acpRuntimeLoggerFrom } from "./acp-agent/acp-session-pool.js";
-import { createAcpExternalAgentHost } from "./acp-agent/acp-external-agent-host.js";
+import type { AcpSessionPool } from "./acp-agent/acp-session-pool.js";
+import { createAcpWorkerAgents } from "./acp-agent/acp-worker-agents.js";
 import { scheduleStartupLogRetentionCleanup } from "./log-retention.js";
 import { resolveProcessProviderEndpointRoutingPort } from "./provider-endpoint-routing.js";
 import { StartupTimer, startupNow } from "./startup-logging.js";
@@ -295,12 +295,13 @@ export async function runZCodeProtocolAgent(
     const activeLspRuntimeHub = lspRuntimeHub;
     const activeProviderRegistryRuntime = providerRegistryRuntime;
     // One resident ACP agent process per ZCode session; the sidecar store is read per turn.
-    acpSessionPool = new AcpSessionPool({ logger: acpRuntimeLoggerFrom(logger) });
-    const externalAgents = createAcpExternalAgentHost({
+    const acpAgents = createAcpWorkerAgents({
       records: activeProviderRegistryRuntime.acpAgentStore,
-      pool: acpSessionPool,
       logger,
+      sessionDbPath: getSessionDbPath(configResult),
     });
+    acpSessionPool = acpAgents.pool;
+    const externalAgents = acpAgents.externalAgents;
     const modelSelectionFacade = createNodeModelSelectionFacade(
       activeProviderRegistryRuntime.runtime.registryService,
     );

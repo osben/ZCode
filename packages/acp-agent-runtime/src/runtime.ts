@@ -2,12 +2,10 @@
 /**
  * AcpSessionRuntime — lifecycle owner for one external ACP agent process.
  *
- * Flow: spawn → initialize (protocol version check) → session/new → ready.
- * `prompt()` streams `session/update` events through `on("event", ...)` and
- * resolves when the turn stops. One active prompt per session; `cancel()` is
- * a bounded `session/cancel` with kill escalation; unexpected process death
- * or a fatal transport failure (oversized frame, closed stream) moves the
- * runtime to `failed` and the next `prompt()` restarts it.
+ * Flow: spawn → initialize → session/load or session/new → ready. `prompt()` streams
+ * `session/update` events and resolves when the turn stops. `cancel()` is a bounded
+ * `session/cancel` with kill escalation. Process death or a fatal transport failure marks the
+ * runtime `failed`; the next `prompt()` restarts it.
  */
 import { EventEmitter } from "node:events";
 import {
@@ -34,6 +32,7 @@ import {
   raceProcessFailures,
   spawnAcpAgentProcess,
 } from "./runtime-handshake.js";
+import { AcpSessionResume, type AcpSessionStart } from "./runtime-resume.js";
 import { planAcpProcessTeardown, runAcpProcessTeardown } from "./runtime-teardown.js";
 import type { SpawnedAcpProcess } from "./transport.js";
 import { mapSessionUpdate } from "./updates.js";
@@ -66,11 +65,11 @@ export class AcpSessionRuntime extends EventEmitter {
   private readonly options: AcpSessionRuntimeOptions;
   private readonly bridge: AcpHostBridge;
   private readonly timeouts: Required<AcpTimeouts>;
+  private readonly resume: AcpSessionResume;
   private process: SpawnedAcpProcess | undefined;
   private connection: ClientConnection | undefined;
   private sessionId: string | undefined;
   private authMethods: readonly AcpAuthMethod[] = [];
-  private configOptions: unknown = null;
   private generation = 0;
   /** Last generation whose process exit was handled outside an explicit stop; written only by `handleExit`. */
   private exitedGeneration = 0;
@@ -87,6 +86,7 @@ export class AcpSessionRuntime extends EventEmitter {
     this.options = options;
     this.bridge = bridge;
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts };
+    this.resume = new AcpSessionResume(options.resumeSessionId);
     this.stallWatch = new StallWatch(this.timeouts.stallWarningMs, (silentMs) =>
       this.emitEvent({ type: "stalled", silentMs }),
     );
@@ -115,8 +115,9 @@ export class AcpSessionRuntime extends EventEmitter {
     return this.authMethods;
   }
 
-  get sessionConfigOptions(): unknown {
-    return this.configOptions;
+  /** How the latest session began; read once per connect. */
+  takeSessionStart(): AcpSessionStart | undefined {
+    return this.resume.take();
   }
 
   get ignoredUpdates(): number {
@@ -281,6 +282,7 @@ export class AcpSessionRuntime extends EventEmitter {
         capabilities,
         initializeMs: this.timeouts.initializeMs,
         newSessionMs: this.timeouts.newSessionMs,
+        resumeSessionId: this.resume.target,
         race: (operation) => raceProcessFailures(this.process, operation),
         onInitialized: (init) => {
           this.authMethods = normalizeAuthMethods(init);
@@ -298,8 +300,7 @@ export class AcpSessionRuntime extends EventEmitter {
         throw new AcpAgentDiedError("Agent terminated during the handshake");
       }
       this.sessionId = session.sessionId;
-      this.configOptions =
-        (session as unknown as { configOptions?: unknown }).configOptions ?? null;
+      this.resume.committed(session.sessionId, session.start);
       this.currentState = this.stopRequested ? "stopped" : "ready";
       this.log("info", "ACP agent session ready");
     } catch (error) {
@@ -341,19 +342,13 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   private handleSessionUpdate(notification: SessionNotification, generation: number): void {
-    if (generation !== this.generation) {
-      // Buffered update from a superseded process: counted, never surfaced,
-      // even when its sessionId collides with the new session's.
-      this.ignoredUpdateCount += 1;
-      return;
-    }
-    if (notification.sessionId !== this.sessionId) {
-      // Updates for other sessions (sub-agents, stale sessions) are counted, not surfaced.
-      this.ignoredUpdateCount += 1;
-      return;
-    }
-    const event = mapSessionUpdate(notification.update);
-    if (event) this.emitEvent(event);
+    // Only the current process and session surface. Buffered updates of a superseded process, updates of
+    // other sessions (sub-agents, stale sessions) and history replayed by `session/load` are counted.
+    const surfaced =
+      generation === this.generation && notification.sessionId === this.sessionId
+        ? mapSessionUpdate(notification.update)
+        : null;
+    if (surfaced) this.emitEvent(surfaced);
     else this.ignoredUpdateCount += 1;
   }
 

@@ -685,7 +685,8 @@ export interface HighspeedMetricsUpdatedPayload {
 }
 
 export interface SystemMessagePayload {
-  type: "init" | "compact_boundary" | "interrupted";
+  /** `external_agent_context_reset`: `content` is the agent id (specs/acp-agent-runtime.md "S5"). */
+  type: "init" | "compact_boundary" | "interrupted" | "external_agent_context_reset";
   content: string;
   compactBoundary?: CompactBoundaryPayload;
 }
@@ -910,6 +911,8 @@ export interface ToolCallScheduledPayload {
   toolCallId: ToolCallId;
   assistantMessageId?: MessageId;
   toolName: string;
+  /** Human-readable title of an external agent tool call (ACP `title`); absent for ZCode tools. */
+  title?: string;
   input: unknown;
   dependencies?: ToolCallId[];
   parallelGroupIndex?: number;

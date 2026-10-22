@@ -6,6 +6,7 @@
  * session deactivation (`stopSession`), on worker shutdown (`stopAll`), and when the launch config
  * changes. A failed runtime is restarted explicitly before its next prompt.
  */
+import { createHash } from "node:crypto";
 import type { Logger } from "@zcode/contracts";
 import {
   AcpSessionRuntime,
@@ -17,6 +18,7 @@ import {
   type AcpRuntimeLogger,
   type AcpRuntimeState,
   type AcpSessionRuntimeOptions,
+  type AcpSessionStart,
   type ContentBlock,
 } from "@zcode/acp-agent-runtime";
 
@@ -26,6 +28,10 @@ import {
  */
 export interface AcpPoolRuntime {
   readonly state: AcpRuntimeState;
+  /** ACP session id of the runtime's current session. */
+  readonly acpSessionId?: string;
+  /** How the latest session began; read once per acquire (see `AcpSessionStart`). */
+  takeSessionStart?(): AcpSessionStart | undefined;
   restart(): Promise<void>;
   stop(): Promise<void>;
   cancel(): Promise<void>;
@@ -45,8 +51,29 @@ export type AcpRuntimeFactory = (
 /** Answers one permission ask of the turn currently bound to a session. */
 export type AcpTurnPermissionHandler = (ask: AcpPermissionAsk) => Promise<AcpPermissionAnswer>;
 
+/** The ACP session a ZCode session resumes: agent, working directory and launch-config digest must match. */
+export interface AcpSessionBinding {
+  readonly agentId: string;
+  readonly acpSessionId: string;
+  readonly cwd: string;
+  readonly launchKey: string;
+}
+
+/** Persistence of bindings (fork_acp_session_binding). Optional: without it every cold start is new. */
+export interface AcpSessionBindings {
+  read(sessionId: string): Promise<AcpSessionBinding | undefined>;
+  write(sessionId: string, binding: AcpSessionBinding): Promise<void>;
+  clear(sessionId: string): Promise<void>;
+}
+
+/** Digest of the launch config. The env can carry credentials, so the config itself is never stored. */
+export function acpLaunchKey(launch: AcpLaunchOptions): string {
+  return createHash("sha256").update(acpLaunchFingerprint(launch)).digest("hex");
+}
+
 export interface AcpSessionPoolOptions {
   readonly logger?: AcpRuntimeLogger;
+  readonly bindings?: AcpSessionBindings;
   /**
    * Builds the host bridge of one runtime. Defaults to routing each ask to the turn bound to its
    * session (see `bindTurnPermission`); with no bound turn the ask is answered `cancelled`.
@@ -89,12 +116,14 @@ export class AcpSessionPool {
   readonly #entries = new Map<string, PoolEntry>();
   readonly #chains = new Map<string, Promise<unknown>>();
   readonly #turnPermissions = new Map<string, AcpTurnPermissionHandler>();
+  readonly #bindings: AcpSessionBindings | undefined;
   readonly #createRuntime: AcpRuntimeFactory;
   readonly #bridgeFor: (agentId: string, sessionId: string) => AcpHostBridge;
   readonly #logger: AcpRuntimeLogger | undefined;
 
   constructor(options: AcpSessionPoolOptions = {}) {
     this.#logger = options.logger;
+    this.#bindings = options.bindings;
     this.#createRuntime = options.createRuntime ?? defaultRuntimeFactory;
     this.#bridgeFor =
       options.bridgeFor ??
@@ -141,12 +170,14 @@ export class AcpSessionPool {
       const existing = this.#entries.get(sessionId);
       if (existing && existing.fingerprint === fingerprint && existing.runtime.state !== "stopped") {
         if (existing.runtime.state === "failed") await existing.runtime.restart();
+        await this.#recordBinding(sessionId, launch, existing.runtime);
         return existing.runtime;
       }
       if (existing) {
         this.#entries.delete(sessionId);
         await existing.runtime.stop();
       }
+      const resume = await this.#resumeSessionId(sessionId, launch);
       const runtime = await this.#createRuntime(
         {
           agentId: launch.agentId,
@@ -155,11 +186,43 @@ export class AcpSessionPool {
           cwd: launch.cwd,
           ...(launch.env === undefined ? {} : { env: { ...launch.env } }),
           ...(this.#logger === undefined ? {} : { logger: this.#logger }),
+          ...(resume === undefined ? {} : { resumeSessionId: resume }),
         },
         this.#bridgeFor(launch.agentId, sessionId),
       );
       this.#entries.set(sessionId, { fingerprint, runtime });
+      await this.#recordBinding(sessionId, launch, runtime);
       return runtime;
+    });
+  }
+
+  /**
+   * The ACP session to load for a cold start: only a binding of the same agent, working directory and
+   * launch config. Any other binding is cleared, so the agent starts a new session.
+   */
+  async #resumeSessionId(sessionId: string, launch: AcpLaunchOptions): Promise<string | undefined> {
+    const stored = await this.#bindings?.read(sessionId);
+    if (stored === undefined) return undefined;
+    if (
+      stored.agentId === launch.agentId &&
+      stored.cwd === launch.cwd &&
+      stored.launchKey === acpLaunchKey(launch)
+    ) {
+      return stored.acpSessionId;
+    }
+    await this.#bindings?.clear(sessionId);
+    return undefined;
+  }
+
+  /** Records the session the runtime now holds, so the next cold start can load it. */
+  async #recordBinding(sessionId: string, launch: AcpLaunchOptions, runtime: AcpPoolRuntime) {
+    const acpSessionId = runtime.acpSessionId;
+    if (this.#bindings === undefined || acpSessionId === undefined) return;
+    await this.#bindings.write(sessionId, {
+      agentId: launch.agentId,
+      acpSessionId,
+      cwd: launch.cwd,
+      launchKey: acpLaunchKey(launch),
     });
   }
 

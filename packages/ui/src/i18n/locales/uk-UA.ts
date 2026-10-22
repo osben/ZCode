@@ -5058,6 +5058,8 @@ const ukUA: Record<string, string> = {
   "chat.contextCompaction.completed": "Контекст стиснуто",
   "chat.modelChange.switched": "Модель змінено: {from} → {to}",
   "chat.modelChange.using": "Використовується {model}",
+  "chat.agentContextReset":
+    "Контекст агента скинуто. {agent} не бачить попередніх повідомлень цієї розмови.",
   "chat.contextCompaction.failed": "Не вдалося стиснути контекст",
   "chat.contextCompaction.interrupted": "Стиснення контексту перервано",
   "chat.contextCompaction.retry": "Повторити",

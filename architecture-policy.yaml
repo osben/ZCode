@@ -758,6 +758,8 @@ exceptions:
       - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-turn.ts
       - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-tool-rows.ts
       - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-permission.ts
+      - apps/zcode-cli/packages/adapters/src/storage/session-store/fork-acp-session-binding.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-worker-agents.ts
       - apps/zcode-cli/packages/core/src/runtime/methods/sample-model.ts
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-external-agent-host.ts
       - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts
@@ -890,6 +892,7 @@ exceptions:
     paths:
       - packages/acp-agent-runtime/src/runtime-handshake.ts
       - packages/acp-agent-runtime/src/runtime-teardown.ts
+      - packages/acp-agent-runtime/src/runtime-resume.ts
       - packages/services/src/model-provider/acpAgentLogin.ts
     reason: Cohesive pieces split out of the existing ACP runtime and settings bridge to keep each file under the staged-size limit (handshake wiring, process-tree teardown, login helpers); the runtime keeps the single lifecycle state owner. Adopting packages/acp-agent-runtime and the services model-provider directory needs a separate module boundary refactor.
   - id: acp-agent-fork-sidecar-unmanaged-files

@@ -5156,6 +5156,7 @@ const zhCN: Record<string, string> = {
   "chat.contextCompaction.completed": "上下文已压缩",
   "chat.modelChange.switched": "模型已切换 {from} → {to}",
   "chat.modelChange.using": "正在使用 {model}",
+  "chat.agentContextReset": "智能体上下文已重置，{agent} 看不到本会话之前的消息。",
   "chat.contextCompaction.failed": "上下文压缩失败",
   "chat.contextCompaction.interrupted": "上下文压缩已中断",
   "chat.contextCompaction.retry": "重试",

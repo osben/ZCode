@@ -286,8 +286,7 @@ Design (fix):
 ## Chat delegation (phase 4)
 
 Status: slices S1 (gate, registry, composer), S2 (text chat turns), S3 (tool, plan and title
-rendering) and S4 (user-once permissions) are specified here. S5 (session restore via
-`session/load`) is specified in its own section below.
+rendering), S4 (user-once permissions) and S5 (session restore via `session/load`) are specified here.
 
 ### Decisions
 
@@ -530,6 +529,55 @@ Acceptance (S4):
 - A yolo, plan or auto session still shows the prompt for an ACP ask.
 - A runtime that asks while no turn is bound answers `cancelled` and never calls the broker.
 - The runtime `cancel()` answers pending asks `cancelled` before `session/cancel`.
+
+### S5: session restore through session/load
+
+Both opencode v2.0.31 and cursor-agent 2026.10.18 advertise `agentCapabilities.loadSession: true`.
+The runtime restores an earlier ACP session instead of starting over when that is possible.
+
+Binding and owners:
+
+- `fork_acp_session_binding` (migration `9003_fork_session_acp_binding`, the fork's `fork_` prefix) holds
+  one row per ZCode session: `agent_id`, `acp_session_id`, `cwd` and `launch_key`, a SHA-256 digest of
+  the launch config (the env can carry credentials, so the config itself is never stored). The table
+  is separate from upstream session rows and needs no upstream column change.
+- The pool owns the binding. After every acquire (a new runtime, a reused runtime, or a restart) it
+  writes the binding of the session the runtime now holds.
+- A cold start (no resident runtime) resumes the stored `acp_session_id` only when the agent, the
+  working directory and the launch digest all match. Any other binding is cleared, so the agent starts
+  a new session.
+- A launch-config change replaces the runtime and clears the binding. An agent switch clears it too.
+  Deactivation (`stopSession`) keeps the binding, so the next turn is a cold start.
+- The runtime remembers the session id it last established. A restart after a failure asks for that
+  session again.
+
+Handshake (`performAcpHandshake`):
+
+```text
+initialize (protocolVersion)
+  ├ resume target and agentCapabilities.loadSession ─▶ session/load(sessionId, cwd)
+  │    ├ ok ─▶ start = loaded  (the replayed history updates are foreign to the uncommitted session: counted, not surfaced)
+  │    └ error (refused, timed out, or a process failure) ─▶ fall through
+  └ session/new(cwd) ─▶ start = created (no earlier session) | reset (earlier session not restored)
+```
+
+Visible reset: a `reset` start emits one `context_reset` turn event before the agent's first output.
+Core persists a `SystemMessage` of type `external_agent_context_reset` (content: the agent id), and the
+v4 projection shows it as the `agentContextReset` divider in the timeline. A cold replay keeps the
+event, because it is not a transcript-derived type. No notice appears for `loaded` or `created`.
+
+Acceptance (S5):
+
+- The binding round-trips and is replaced per session (adapter test on the migrated database).
+- A matching stored binding resumes; a changed agent, cwd or launch digest starts a new session and
+  clears the binding; without a binding store nothing resumes and nothing is written.
+- With `loadSession` true the handshake sends `session/load`, not `session/new`, and the replayed
+  history is not surfaced. With `loadSession` false, or a refused load, the handshake sends
+  `session/new` and reports `reset`.
+- A runtime that dies after a turn loads the same session on its next prompt.
+- E2E: after an app relaunch, the next turn loads the earlier session (`session/load`, no
+  `session/new` in the relaunched process), the mock recalls the word from the first turn, and the
+  replayed text is not shown.
 
 ### Acceptance scenarios
 

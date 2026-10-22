@@ -298,7 +298,11 @@ describe("external agent tool, plan and title events", () => {
         SessionEventType.ToolCallResult,
       ]);
       const scheduled = stored.find((event) => event.type === SessionEventType.ToolCallScheduled);
-      expect(scheduled?.payload).toMatchObject({ toolName: "acp:read", input: { path: "a.txt" } });
+      expect(scheduled?.payload).toMatchObject({
+        toolName: "acp:read",
+        title: "Read a.txt",
+        input: { path: "a.txt" },
+      });
       const result = stored.find((event) => event.type === SessionEventType.ToolCallResult);
       expect(result?.payload).toMatchObject({ result: { success: true, content: "file body" } });
 
