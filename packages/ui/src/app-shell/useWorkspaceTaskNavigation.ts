@@ -7,7 +7,6 @@ import {
   isAutomationsNavEntry,
   isPluginStoreNavEntry,
   type AutomationsNavigationTab,
-  type TaskNavEntry,
   type WorkspaceNavEntry,
 } from "@/lib/taskNavigationHistory.js";
 import { shouldBlockTaskSelectionDuringModelRestart } from "@/lib/taskSwitchGuard.js";
@@ -22,18 +21,15 @@ import {
   setTaskQueryCacheUnreadOverlay,
   useTaskQueryCacheStore,
 } from "@/store/taskQueryCacheStore.js";
-import { isTaskNavigationTargetDeleted } from "@/lib/taskNavigationTarget.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
 
-// Replay purges a task entry only on positive deletion evidence from the project tree (taskNavDeletedKeys).
-// A query-cache or visible-list miss is not deletion; such a task stays navigable and handleSelectTask opens it.
-function createNavTargetAvailability(): (entry: TaskNavEntry) => boolean {
-  const deletedTaskKeys = useZCodeSessionStore.getState().taskNavDeletedKeys;
-  return (entry) => !isTaskNavigationTargetDeleted({ entry, deletedTaskKeys });
-}
+// Replay purges a task entry only when the project directory owner reports it as deleted.
+// A query-cache or visible-list miss is not deletion: such a task stays navigable and handleSelectTask opens it.
+const NO_KNOWN_DELETED_TASKS = (): boolean => false;
 
 export interface AutomationsNavigationTarget {
   workspacePath: string;
@@ -68,6 +64,9 @@ export function useWorkspaceTaskNavigation({
   const taskNavPushAutomations = useZCodeSessionStore((s) => s.taskNavPushAutomations);
   const taskNavPushPluginStore = useZCodeSessionStore((s) => s.taskNavPushPluginStore);
   const taskNavGoBack = useZCodeSessionStore((s) => s.taskNavGoBack);
+  // Read at command time through the owner; no tombstone copy lives in the session store.
+  const isTaskKnownDeleted =
+    useOptionalProjectDirectory()?.isTaskKnownDeleted ?? NO_KNOWN_DELETED_TASKS;
   const taskNavGoForward = useZCodeSessionStore((s) => s.taskNavGoForward);
 
   const handleSelectTask = useCallback(
@@ -280,13 +279,13 @@ export function useWorkspaceTaskNavigation({
     }
 
     // The store purges unavailable task entries and picks the next reachable one in the same update.
-    const entry = taskNavGoBack(createNavTargetAvailability());
+    const entry = taskNavGoBack((target) => !isTaskKnownDeleted(target));
     if (!entry) {
       toast(intl.formatMessage({ id: "taskNav.noMoreBack" }));
       return;
     }
     openHistoryEntry(entry);
-  }, [intl, openHistoryEntry, taskNavGoBack, workspaceAbsPath]);
+  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoBack, workspaceAbsPath]);
 
   const handleTaskNavForward = useCallback(() => {
     const currentWorkspaceState = useZCodeSessionStore
@@ -308,13 +307,13 @@ export function useWorkspaceTaskNavigation({
       return;
     }
 
-    const entry = taskNavGoForward(createNavTargetAvailability());
+    const entry = taskNavGoForward((target) => !isTaskKnownDeleted(target));
     if (!entry) {
       toast(intl.formatMessage({ id: "taskNav.noMoreForward" }));
       return;
     }
     openHistoryEntry(entry);
-  }, [intl, openHistoryEntry, taskNavGoForward, workspaceAbsPath]);
+  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoForward, workspaceAbsPath]);
 
   const canGoBack = navCanGoBack(taskNavHistory);
   const canGoForward = navCanGoForward(taskNavHistory);

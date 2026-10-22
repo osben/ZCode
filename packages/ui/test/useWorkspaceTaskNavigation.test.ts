@@ -5,7 +5,7 @@ import type { IServiceAccessor } from "@zcode/services";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { useWorkspaceTaskNavigation } from "@/app-shell/useWorkspaceTaskNavigation.js";
-import { createTaskNavigationHistory } from "@/lib/taskNavigationHistory.js";
+import { createTaskNavigationHistory, taskRefKey } from "@/lib/taskNavigationHistory.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
@@ -29,6 +29,24 @@ const tabStore = vi.hoisted(() => {
       state = next;
     },
   };
+});
+
+// The project directory owner is the only source of deletion facts; tests drive it through its accessor.
+const projectDirectory = vi.hoisted(() => ({
+  deleted: [] as Array<{ taskId: string; workspacePath: string; workspaceIdentity?: string }>,
+}));
+
+vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/project-sidebar/ProjectDirectoryProvider.js")>();
+  const owner = {
+    isTaskKnownDeleted: (task: {
+      taskId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+    }) => projectDirectory.deleted.some((ref) => taskRefKey(ref) === taskRefKey(task)),
+  };
+  return { ...original, useOptionalProjectDirectory: () => owner };
 });
 
 vi.mock("@/store/TabStoreProvider.js", () => ({
@@ -91,7 +109,7 @@ describe("useWorkspaceTaskNavigation", () => {
       sessionIdByWorkspaceIdentity: {},
     });
     useZCodeSessionStore.setState({ taskNavHistory: createTaskNavigationHistory() });
-    useZCodeSessionStore.getState().setTaskNavDeletedTasks([]);
+    projectDirectory.deleted = [];
   });
 
   it("把 Idle-time intent 写入 Automations 导航目标和历史", () => {
@@ -388,9 +406,7 @@ describe("useWorkspaceTaskNavigation", () => {
   });
 
   it("ISSUE-033: 前进遇到项目树确认删除的 task 时清除它，并按访问顺序到达下一条有效条目", () => {
-    useZCodeSessionStore
-      .getState()
-      .setTaskNavDeletedTasks([{ taskId: "task-missing", workspacePath: localWorkspacePath }]);
+    projectDirectory.deleted = [{ taskId: "task-missing", workspacePath: localWorkspacePath }];
     useZCodeSessionStore.setState({
       taskNavHistory: {
         entries: [
@@ -426,7 +442,6 @@ describe("useWorkspaceTaskNavigation", () => {
     const taskA = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-A" };
     const taskB = { kind: "task" as const, workspacePath: "/work/qa-sandbox", taskId: "task-B" };
     const taskC = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-C" };
-    useZCodeSessionStore.getState().setTaskNavDeletedTasks([]);
     useZCodeSessionStore.setState({
       taskNavHistory: { entries: [pluginStore, taskA, taskB, taskC], cursor: 3 },
     });
@@ -450,9 +465,7 @@ describe("useWorkspaceTaskNavigation", () => {
   });
 
   it("ISSUE-033: 项目树确认删除的 task 在后退时只清除该条目，其余按顺序回放", () => {
-    useZCodeSessionStore
-      .getState()
-      .setTaskNavDeletedTasks([{ taskId: "task-A", workspacePath: "/draft/aa49" }]);
+    projectDirectory.deleted = [{ taskId: "task-A", workspacePath: "/draft/aa49" }];
     useZCodeSessionStore.setState({
       taskNavHistory: {
         entries: [
@@ -483,6 +496,48 @@ describe("useWorkspaceTaskNavigation", () => {
       afterSecond.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
     ).toEqual(["plugin-store", "task-B", "task-C"]);
     expect(afterSecond.entries[afterSecond.cursor]).toMatchObject({ kind: "plugin-store" });
+    hook.unmount();
+  });
+  it("ISSUE-033: 同一 taskId 位于不同 workspace 时，回放只清除已删除 workspace 的条目", () => {
+    projectDirectory.deleted = [
+      { taskId: "task-x", workspacePath: "/work/one", workspaceIdentity: "remote:x" },
+    ];
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+          {
+            kind: "task",
+            workspacePath: "/work/one",
+            workspaceIdentity: "remote:x",
+            taskId: "task-x",
+          },
+          { kind: "task", workspacePath: "/work/one", taskId: "task-y" },
+        ],
+        cursor: 3,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(history.entries).toEqual([
+      { kind: "plugin-store", workspacePath: "/home/dev" },
+      { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+      { kind: "task", workspacePath: "/work/one", taskId: "task-y" },
+    ]);
+    expect(history.entries[history.cursor]).toEqual({
+      kind: "task",
+      workspacePath: "/work/one",
+      taskId: "task-x",
+    });
     hook.unmount();
   });
 });

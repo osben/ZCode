@@ -78,7 +78,9 @@ describe("workspace navigation history", () => {
       pushAutomationsNavEntry(automationsHistory, "/workspace", undefined, "automation-a"),
     ).toBe(automationsHistory);
 
-    expect(removeTaskFromHistory(automationsHistory, "task-a")).toEqual({
+    expect(
+      removeTaskFromHistory(automationsHistory, { taskId: "task-a", workspacePath: "/workspace" }),
+    ).toEqual({
       entries: [
         {
           kind: "automations",
@@ -137,11 +139,66 @@ describe("workspace navigation history", () => {
       cursor: 3,
     };
 
-    const removed = removeTaskFromHistory(history, "task-a");
+    const removed = removeTaskFromHistory(history, {
+      taskId: "task-a",
+      workspacePath: "/workspace",
+    });
 
     expect(
       removed.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
     ).toEqual(["task-x", "task-y", "task-z"]);
     expect(removed.cursor).toBe(1);
+  });
+  it("ISSUE-033: 删除 task 按完整身份匹配，同 taskId 的其他 workspace 条目保留", () => {
+    const history = {
+      entries: [
+        { kind: "task" as const, workspacePath: "/work/one", taskId: "task-x" },
+        {
+          kind: "task" as const,
+          workspacePath: "/work/one",
+          workspaceIdentity: "remote:x",
+          taskId: "task-x",
+        },
+      ],
+      cursor: 1,
+    };
+
+    const removed = removeTaskFromHistory(history, {
+      taskId: "task-x",
+      workspacePath: "/work/one",
+      workspaceIdentity: "remote:x",
+    });
+
+    expect(removed.entries).toEqual([
+      { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+    ]);
+  });
+
+  it("ISSUE-033: 回放清除失效条目按完整身份匹配，不误伤同 taskId 的其他 workspace", () => {
+    const history = {
+      entries: [
+        { kind: "task" as const, workspacePath: "/work/one", taskId: "task-x" },
+        {
+          kind: "task" as const,
+          workspacePath: "/work/one",
+          workspaceIdentity: "remote:x",
+          taskId: "task-x",
+        },
+        { kind: "task" as const, workspacePath: "/work/one", taskId: "task-y" },
+      ],
+      cursor: 2,
+    };
+
+    const step = stepTaskNavigationHistory(
+      history,
+      "back",
+      (entry) => entry.workspaceIdentity !== "remote:x",
+    );
+
+    expect(step.entry).toEqual({ kind: "task", workspacePath: "/work/one", taskId: "task-x" });
+    expect(step.history.entries).toEqual([
+      { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+      { kind: "task", workspacePath: "/work/one", taskId: "task-y" },
+    ]);
   });
 });

@@ -77,13 +77,13 @@
 - 入栈只发生在用户主动选择的入口：侧栏/搜索/命令面板选中 task（经 `setActiveTaskId`）、Automations 与插件市场主视图。后退、前进回放不得改变栈的内容，只能移动 cursor。
 - 相邻且身份相同的条目不重复入栈（身份 = `workspaceIdentity` 与 `workspacePath` 的完整键）。非相邻重复允许保留，因为它代表一次新的访问。
 - 选择新条目时，cursor 之后的前进历史被截断（浏览器语义）。
-- 只有权威的删除事实才能清除历史条目：项目目录树（`ProjectTree.deletedTasks`，由 `readTree({ includeDeletedTasks: true })` 返回，即 `deleted=1 OR cli_deleted=1` 的 task）。`useProjectTree` 每次接受新快照时把它发布到 `taskNavDeletedKeys`（键为 `buildTaskEntityKey`，即 `workspaceIdentity?.trim() || workspacePath` + `taskId`）。
-- “不在 task query cache、不在当前 workspace 可见列表”不是删除证据。侧栏项目视图中的 task 常常不在这两处，它们仍可导航，`handleSelectTask` 负责打开。树尚未加载或某 Host 离线时，没有 tombstone 即视为可导航（未知按可导航处理），不设超时。
+- 只有权威的删除事实才能清除历史条目。删除事实由项目目录 owner（`useProjectTree` → `ProjectDirectoryProvider`）持有，来源是目录树的 `ProjectTree.deletedTasks`（`readTree({ includeDeletedTasks: true })`，即 `deleted=1 OR cli_deleted=1`）。owner 按 `hostId` 保留每个成员 Host 的最近一次删除事实：Host 读取成功则替换为本次结果（恢复的 task 随之移出）；读取失败或离线则保留上一次结果；Host 离开目录成员关系才丢弃。回放通过 `useOptionalProjectDirectory().isTaskKnownDeleted` 在命令执行时读取，会话 store 不复制这份事实。键为 `workspaceIdentity?.trim() || workspacePath` + `taskId`，与其它 task 实体一致。
+- “不在 task query cache、不在当前 workspace 可见列表”不是删除证据。侧栏项目视图中的 task 常常不在这两处，它们仍可导航，`handleSelectTask` 负责打开。从未读取成功过的 Host（例如冷启动时即离线）没有删除事实，其 task 视为可导航（未知按可导航处理），不设超时。
 - 后退或前进遇到已确认删除的 task 条目时，该 task 的全部条目被清除；清除与 cursor 定位在同一次纯函数计算中完成，并沿原方向继续寻找下一个有效条目，不跳过、不重排其余条目。
 - 归档 task：归档转换由既有 owner（`useProjectTree` 的归档清理）调用 `removeTaskState`，该动作清除其历史条目，行为保持不变；导航回放本身不因归档而清除条目。
 - 到头（没有有效目标）时历史只保留已清除的失效条目，cursor 留在当前条目，不发生导航。
 - 删除 task（`removeTaskState`）时清除该 task 的条目；cursor 落在删除前位置之后的第一个保留条目（与旧行为一致）。
-- 应用内删除或归档时，`removeTaskState` 仍是即时清除的 owner；回放只在遇到 tombstone 时惰性清除，两者都以同一身份键匹配。
+- 应用内删除或归档时，`removeTaskState` 仍是即时清除的 owner，并按完整身份（`workspaceIdentity?.trim() || workspacePath` + `taskId`）清除条目；回放只在遇到已确认删除的条目时惰性清除。同一 `taskId` 位于不同 workspace 的条目互不影响。
 
 | 用例         | 前置                                                                                       | 操作          | 期望                                            |
 | ------------ | ------------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------- |

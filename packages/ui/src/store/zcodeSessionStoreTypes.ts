@@ -27,7 +27,6 @@ import {
 } from "@zcode/shared";
 import type { SessionConfigState, SubmissionMode } from "@zcode/shared/zcode-protocol-v4";
 import type { ZCodeUiError } from "@/lib/zcodeUiError.js";
-import type { DeletedTaskRef } from "@/lib/taskNavigationTarget.js";
 import type {
   AutomationsNavigationTab,
   TaskNavEntry,
@@ -467,10 +466,6 @@ export interface ZCodeSessionStoreState {
   taskNavGoBack: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
   /** 前进，语义同 taskNavGoBack。 */
   taskNavGoForward: (isAvailable?: (entry: TaskNavEntry) => boolean) => WorkspaceNavEntry | null;
-  /** 项目树确认删除的 task 键（buildTaskEntityKey）；只有这些条目会被回放清除。 */
-  taskNavDeletedKeys: ReadonlySet<string>;
-  /** 以最新接受的项目树 deletedTasks 替换删除事实；内容未变时保持引用。 */
-  setTaskNavDeletedTasks: (tasks: readonly DeletedTaskRef[]) => void;
 }
 
 // ────────────────────────────────────────────

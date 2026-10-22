@@ -5,6 +5,8 @@
  * zcodeSessionStore owns the instance and drives UI state.
  */
 
+import { getWorkspaceKey } from "@/lib/workspaceKey.js";
+
 interface WorkspaceNavEntryBase {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -50,6 +52,18 @@ export function createTaskNavigationHistory(): TaskNavigationHistory {
 
 export function isTaskNavEntry(entry: WorkspaceNavEntry): entry is TaskNavEntry {
   return entry.kind === "task";
+}
+
+/** Identity of a task across workspaces: the same taskId in two workspaces is two different tasks. */
+export interface TaskIdentityRef {
+  taskId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+/** Full identity key, using the workspace identity rule: `workspaceIdentity?.trim() || workspacePath`. */
+export function taskRefKey(ref: TaskIdentityRef): string {
+  return `${getWorkspaceKey(ref.workspacePath, ref.workspaceIdentity)}::${ref.taskId}`;
 }
 
 export function isAutomationsNavEntry(entry: WorkspaceNavEntry): entry is AutomationsNavEntry {
@@ -229,9 +243,12 @@ function cursorAfterRemoval(
  */
 export function removeTaskFromHistory(
   history: TaskNavigationHistory,
-  taskId: string,
+  task: TaskIdentityRef,
 ): TaskNavigationHistory {
-  const kept = history.entries.filter((entry) => !isTaskNavEntry(entry) || entry.taskId !== taskId);
+  const taskKey = taskRefKey(task);
+  const kept = history.entries.filter(
+    (entry) => !isTaskNavEntry(entry) || taskRefKey(entry) !== taskKey,
+  );
 
   if (kept.length === history.entries.length) {
     return history;
@@ -265,7 +282,7 @@ export function stepTaskNavigationHistory(
   isAvailable: (entry: TaskNavEntry) => boolean,
 ): TaskNavigationStep {
   const stride = direction === "back" ? -1 : 1;
-  const unavailableTaskIds = new Set<string>();
+  const unavailableTaskKeys = new Set<string>();
   let target: WorkspaceNavEntry | undefined;
 
   for (
@@ -278,11 +295,12 @@ export function stepTaskNavigationHistory(
       break;
     }
     if (isTaskNavEntry(entry)) {
-      if (unavailableTaskIds.has(entry.taskId)) {
+      const key = taskRefKey(entry);
+      if (unavailableTaskKeys.has(key)) {
         continue;
       }
       if (!isAvailable(entry)) {
-        unavailableTaskIds.add(entry.taskId);
+        unavailableTaskKeys.add(key);
         continue;
       }
     }
@@ -291,10 +309,10 @@ export function stepTaskNavigationHistory(
   }
 
   const kept =
-    unavailableTaskIds.size === 0
+    unavailableTaskKeys.size === 0
       ? history.entries
       : history.entries.filter(
-          (entry) => !(isTaskNavEntry(entry) && unavailableTaskIds.has(entry.taskId)),
+          (entry) => !(isTaskNavEntry(entry) && unavailableTaskKeys.has(taskRefKey(entry))),
         );
 
   if (target) {
