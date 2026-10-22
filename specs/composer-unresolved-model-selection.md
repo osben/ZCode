@@ -15,6 +15,10 @@ no notice appeared, and hovering Send showed nothing, so the reason was computed
    never silently replaced by another model. A new-task (root) draft is different: it still
    initializes from the Host's `preferredSelection` as before (`useDraftConfigControl`). Saved
    records and requests already pinned to a model are not changed.
+   - **Precedence with ISSUE-035:** a stale explicit pick (the Session model moved away from its base) is
+     dropped only when the picked model is resolvable. An unresolvable pick stays as stored intent: the
+     marker and the model stay, and Send stays blocked with the model reason. See the precedence rule in
+     `docs/ui/composer-text-draft-persistence.md`, section "已有 Session 的显式模型选择".
 2. **Only the unavailability verdicts count.** The Host's `ModelSelectionView.selectionIssue`
    (`packages/provider/src/effective-model-selection.ts`) values mean the stored model cannot run now:
    - `provider-not-found` and `model-not-found` give `modelUnavailable`:

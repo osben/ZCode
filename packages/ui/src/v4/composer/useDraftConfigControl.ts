@@ -52,16 +52,11 @@ function isSameModelSelection(left: ModelSelection, right: ModelSelection): bool
 }
 
 /**
- * Provider and model identity for the Session's own model (ISSUE-035). A reasoning level the base does not
- * state is not a difference: the Snapshot may omit it while the picker fills in the view's default.
+ * Provider and model only (ISSUE-035). The reasoning level is deliberately not compared: a Snapshot may omit
+ * it, another window may change it, and a reasoning-level change is not a model pick.
  */
-function isSameModelIdentity(selection: ModelSelection, base: ModelSelection): boolean {
-  return (
-    selection.providerId === base.providerId &&
-    selection.modelId === base.modelId &&
-    (base.options?.reasoningLevel === undefined ||
-      selection.options?.reasoningLevel === base.options.reasoningLevel)
-  );
+function isSameModel(selection: ModelSelection, base: ModelSelection): boolean {
+  return selection.providerId === base.providerId && selection.modelId === base.modelId;
 }
 
 /** Once the picked model is accepted it is the Session's selection, so it is no longer a pending pick (ISSUE-035). */
@@ -312,12 +307,25 @@ export function useDraftConfigControl(params: {
   // ISSUE-035 (C-1): a pick is stale once the Session model moves away from the model it was made against
   // (another window, a Host fallback, the CLI). Drop the marker and adopt the Session model, so a stale pick
   // cannot silently switch the next send back. The text is kept.
+  // MF3: a pick made before any Snapshot arrived (or a record written before the base existed) takes the
+  // first Snapshot as its base, so it can expire like any other pick.
+  if (
+    sessionId !== null &&
+    draft.modelSelectionPicked &&
+    !draft.modelSelectionPickedFrom &&
+    sessionConfig?.modelSelection
+  ) {
+    draft = { ...draft, modelSelectionPickedFrom: sessionConfig.modelSelection };
+  }
+  // MF2: the drop applies only to a resolvable stale pick. An unresolvable pick is stored intent (ISSUE-026):
+  // it stays, and the composer keeps naming the model reason.
   if (
     sessionId !== null &&
     draft.modelSelectionPicked &&
     draft.modelSelectionPickedFrom &&
     sessionConfig?.modelSelection &&
-    !isSameModelIdentity(sessionConfig.modelSelection, draft.modelSelectionPickedFrom)
+    modelSelectionView?.effectiveSelection &&
+    !isSameModel(sessionConfig.modelSelection, draft.modelSelectionPickedFrom)
   ) {
     draft = { ...withoutModelSelectionPick(draft), modelSelection: sessionConfig.modelSelection };
   }
@@ -358,6 +366,9 @@ export function useDraftConfigControl(params: {
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
+  // Read by the pick handler at call time, so a new Snapshot does not recreate the handler (ISSUE-035 NIT).
+  const sessionConfigRef = useRef(sessionConfig);
+  sessionConfigRef.current = sessionConfig;
   const persistDraft = useCallback(
     (value: V4ComposerDraft) => {
       const workspace = useZCodeSessionStore
@@ -655,8 +666,8 @@ export function useDraftConfigControl(params: {
       });
       // ISSUE-035: an explicit pick in an existing Session is kept without text. Picking the Session's own
       // model is a no-op, so it stores no marker and clears an earlier pick (C-4). Root drafts never store one.
-      const base = sessionId !== null ? sessionConfig?.modelSelection : undefined;
-      const isNoOp = base !== undefined && isSameModelIdentity(modelSelection, base);
+      const base = sessionId !== null ? sessionConfigRef.current?.modelSelection : undefined;
+      const isNoOp = base !== undefined && isSameModel(modelSelection, base);
       updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection), {
         pick: sessionId === null ? undefined : isNoOp ? "cleared" : { base },
       });
@@ -664,7 +675,6 @@ export function useDraftConfigControl(params: {
     [
       modelSelectionView,
       modelSelectionRead.state,
-      sessionConfig,
       sessionId,
       updateDraftConfig,
       workspaceIdentity,

@@ -51,11 +51,14 @@ Agent；Hook 单测覆盖本地/远端 identity、权限/Plan 保留、已选/�
 - 切走任务或刷新后返回该 Session，恢复所选模型；权限与 Plan 仍以当前 Snapshot 为准。
 - 带标记的模型意图被 Host 接纳后，标记清除；若此时正文也为空，记录删除，之后模型跟随 Session 最新 Snapshot。发送失败或未接纳时，标记与记录保留。
 - 写入只经 `persistV4ComposerDraft`，内存配置仍由 `useDraftConfigControl` 唯一持有。保留规则在读取与写入两侧一致：没有标记的旧空记录仍被过滤。
-- ISSUE-026 规则不变：所选模型失效时保留用户意图，不自动换成其他模型。
+- **与 ISSUE-026 的优先级**：所选模型当前无法解析（Registry 无法解析该选择）时，下方的过期规则不生效。这时保留用户意图：标记与模型都不变，不自动换成其他模型，发送继续被模型原因阻止。只有可解析的过期选择才会被删除标记（decision 1 of `specs/composer-unresolved-model-selection.md`）。
 - 存储沿用 `workspaceIdentity?.trim() || workspacePath` 加 Session id 隔离，不同工作区或远端身份不共享记录。
 - Recent 不因选模型而更新，仍只在 accepted 时更新。“选择即采纳为 Recent”本次未实现。
-- **基准模型（C-1）**：记录同时保存选择时 Session 快照的模型（`modelSelectionPickedFrom`）。若之后 Session 模型离开该基准（另一窗口、Host 回退或 CLI 改动），该选择已过期：删除标记，并把草稿模型改为 Session 当前模型。正文保留。模型按 provider 与 model 比较，快照省略的 reasoning 档位不算差异。没有基准（选择时尚无快照）时不做此判断。
-- **与 Session 相同的选择（C-4）**：选择与 Session 当前模型（provider 与 model 相同）不写标记；若之前有标记，则一并清除。
+- **基准模型（C-1）**：记录同时保存选择时 Session 快照的模型（`modelSelectionPickedFrom`）。若之后 Session 的 provider 与 model 离开该基准（另一窗口、Host 回退或 CLI 改动），该选择已过期：删除标记，并把草稿模型改为 Session 当前模型。正文保留（无论是否有正文）。
+- **基准的比较只看 provider 与 model（MF1）**：reasoning 档位不参与比较。快照省略档位、另一窗口只改档位，都不会让选择过期。
+- **没有基准时（MF3）**：选择发生在第一个快照到达之前（或旧记录没有基准字段）时，第一个到达的快照成为基准，之后按上一条规则过期。
+- **无法解析时不过期（MF2）**：见上文“与 ISSUE-026 的优先级”。
+- **与 Session 相同的选择（C-4、MF1）**：选择与 Session 当前模型的 provider 与 model 相同即不写标记；若之前有标记，则一并清除。同一模型、不同档位的选择也属于这种情况。
 - **仅改思考档位（C-4）**：思考档位变化不是模型选择，不写标记；无正文时不落盘，与上文一致。
 - **删除或归档（C-2）**：不清理该 Session 的草稿记录。UI 中没有统一的会话删除/归档草稿钩子（永久删除只覆盖归档管理页）。归档后可恢复，因此记录保留；永久删除后的记录是孤儿，每个 Session 至多一条小记录。
 
@@ -73,6 +76,9 @@ Agent；Hook 单测覆盖本地/远端 identity、权限/Plan 保留、已选/�
 | MP10 | 选 B（基准 A）后，Session 模型被外部改为 C            | 标记删除；草稿模型为 C；正文保留；记录删除（若正文为空） |
 | MP11 | 选 B 后再选回 A（Session 当前模型）                   | 标记与记录清除；草稿模型为 A                             |
 | MP12 | 选 B 后只改思考档位（无正文）                         | 不写盘；无记录                                           |
+| MP13 | 选 B 后，Session 快照省略或改变档位但模型仍为 A       | 标记保留；草稿仍为 B                                     |
+| MP14 | 选 B（Registry 无法解析）后，Session 移到可解析的 C   | 标记与模型 B 保留；发送继续被模型原因阻止                |
+| MP15 | 选择发生在第一个快照之前，第一个快照到达后再移走      | 第一个快照成为基准；移走后过期，草稿模型为新模型         |
 
 ## 状态归属与影响面
 
