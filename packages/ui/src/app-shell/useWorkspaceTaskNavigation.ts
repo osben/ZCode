@@ -21,7 +21,7 @@ import {
   setTaskQueryCacheUnreadOverlay,
   useTaskQueryCacheStore,
 } from "@/store/taskQueryCacheStore.js";
-import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";

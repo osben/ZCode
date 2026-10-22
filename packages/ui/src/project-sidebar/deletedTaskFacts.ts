@@ -31,7 +31,8 @@ export function isKnownDeletedTask(facts: DeletedTaskFacts, task: TaskIdentityRe
   return facts.keys.has(taskRefKey(task));
 }
 
-/** Host id of the window's own tasks in project tree rows and deletion facts. */
+// Host id of the window's own tasks. Local tombstones carry hostId "local" because the repository reports
+// `ownerHostId ?? "local"` (project-repository.ts readTree); this module and view.ts mergeProjectTrees rely on it.
 export const LOCAL_TASK_HOST_ID = "local";
 
 /**

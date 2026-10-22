@@ -77,7 +77,7 @@
 - 入栈只发生在用户主动选择的入口：侧栏/搜索/命令面板选中 task（经 `setActiveTaskId`）、Automations 与插件市场主视图。后退、前进回放不得改变栈的内容，只能移动 cursor。
 - 相邻且身份相同的条目不重复入栈（身份 = `workspaceIdentity` 与 `workspacePath` 的完整键）。非相邻重复允许保留，因为它代表一次新的访问。
 - 选择新条目时，cursor 之后的前进历史被截断（浏览器语义）。
-- 只有权威的删除事实才能清除历史条目。删除事实由项目目录 owner（`useProjectTree` → `ProjectDirectoryProvider`）持有，来源是目录树的 `ProjectTree.deletedTasks`（`readTree({ includeDeletedTasks: true })`，即 `deleted=1 OR cli_deleted=1`）。owner 按 `hostId` 保留每个成员 Host 的最近一次删除事实：Host 读取成功则替换为本次结果（恢复的 task 随之移出）；读取失败或离线则保留上一次结果；Host 离开目录成员关系才丢弃。回放通过 `useOptionalProjectDirectory().isTaskKnownDeleted` 在命令执行时读取，会话 store 不复制这份事实。键为 `workspaceIdentity?.trim() || workspacePath` + `taskId`，与其它 task 实体一致。
+- 只有权威的删除事实才能清除历史条目。删除事实由项目目录 owner（`useProjectTree` → `ProjectDirectoryProvider`）持有，来源是目录树的 `ProjectTree.deletedTasks`（`readTree({ includeDeletedTasks: true })`，即 `deleted=1 OR cli_deleted=1`）。owner 按 `hostId` 保留每个成员 Host 的最近一次删除事实：Host 读取成功则替换为本次结果（恢复的 task 随之移出）；读取失败或离线则保留上一次结果；Host 离开目录成员关系才丢弃。回放通过公共入口 `project-sidebar/index.js` 的 `useOptionalProjectDirectory().isTaskKnownDeleted` 在命令执行时读取，会话 store 不复制这份事实。没有 Provider 的嵌入 pane 与测试环境中回放永不清除（视为可导航）；生产 Root 始终挂载该 Provider。键为 `workspaceIdentity?.trim() || workspacePath` + `taskId`，与其它 task 实体一致。
 - “不在 task query cache、不在当前 workspace 可见列表”不是删除证据。侧栏项目视图中的 task 常常不在这两处，它们仍可导航，`handleSelectTask` 负责打开。从未读取成功过的 Host（例如冷启动时即离线）没有删除事实，其 task 视为可导航（未知按可导航处理），不设超时。
 - 后退或前进遇到已确认删除的 task 条目时，该 task 的全部条目被清除；清除与 cursor 定位在同一次纯函数计算中完成，并沿原方向继续寻找下一个有效条目，不跳过、不重排其余条目。
 - 归档 task：归档转换由既有 owner（`useProjectTree` 的归档清理）调用 `removeTaskState`，该动作清除其历史条目，行为保持不变；导航回放本身不因归档而清除条目。
