@@ -50,6 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import { Hand } from "lucide-react";
+import { PendingReservationGate } from "./pendingReservationGate.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
@@ -485,6 +486,12 @@ export interface SessionPaneProps {
 }
 
 const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
+/**
+ * createSession commands in flight, keyed by the reserved session id. The pane binds the reserved id
+ * before the host acknowledges the create, and a subscribe sent in that window is answered "not found"
+ * (see pendingReservationGate.ts), so the conversation lease waits for the acknowledgement.
+ */
+const pendingReservations = new PendingReservationGate();
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -2241,6 +2248,10 @@ export function SessionPane({
           issuedAt: envelope.issuedAt,
         });
       }
+      const settleReservation =
+        type === "createSession" && targetSessionId !== null
+          ? pendingReservations.begin(targetSessionId)
+          : null;
       let ack: CommandAck;
       try {
         if (telemetrySeed?.localTtft && !workspaceIdentity?.trim()) {
@@ -2255,11 +2266,13 @@ export function SessionPane({
           projectId !== undefined
             ? await sendCommand(envelope, { projectId })
             : await sendCommand(envelope);
+        settleReservation?.();
         if (telemetrySeed?.localTtft && ack.reasonCode === "guard.heldQueueConfirmationStale")
           getLocalTtftObserver()?.confirmationRetry(telemetrySeed.localTtft);
         else if (telemetrySeed?.localTtft)
           getLocalTtftObserver()?.ack(telemetrySeed.localTtft, ack.status, ack.ttftExcluded);
       } catch (error) {
+        settleReservation?.();
         if (telemetrySeed?.localTtft)
           getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
         if (lease?.store) {
@@ -3619,10 +3632,21 @@ export function SessionPane({
     workspaceIdentity,
   });
 
+  const [reservationSettledRevision, setReservationSettledRevision] = useState(0);
   useEffect(() => {
     if (!effectiveSessionId) {
       setLease({ sessionId, layer, lease: null });
       return;
+    }
+    if (pendingReservations.isPending(effectiveSessionId)) {
+      // The create of this reserved id is not acknowledged yet; subscribing now would be answered "not found".
+      let cancelled = false;
+      void pendingReservations.whenSettled(effectiveSessionId).then(() => {
+        if (!cancelled) setReservationSettledRevision((revision) => revision + 1);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const nextLease = layer.acquire(effectiveSessionId);
     // Bug 原因：acquire 会立即启动 connect，activation 可能在下一轮 effect 前释放
@@ -3635,7 +3659,7 @@ export function SessionPane({
       offOnlineModelTransition();
       nextLease.release();
     };
-  }, [layer, effectiveSessionId]);
+  }, [layer, effectiveSessionId, reservationSettledRevision]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;

@@ -743,12 +743,16 @@ Acceptance (S6):
 
 ### Reservation ordering (first message)
 
-The renderer reserves a session id and subscribes to it as soon as the `createSession` envelope is
-created, before the host acknowledges it. A subscribe that reaches the gateway during that create waits
-for the create to settle (`CommandInbox.whenSessionCreationSettles`, tracked from receipt in
-`command-inbox-creations.ts`). Without the wait the gateway answered `fault.subscribe.sessionNotFound`,
-which the renderer treats as terminal, so the first message of a new session could stall. The rule is
-not ACP-specific; it applies to every first message.
+The composer binds the pane to the reserved session id before the host acknowledges the `createSession`
+(display only). The conversation lease for that id is the owner of the subscribe, and it opens only after
+the create is acknowledged: `pendingReservations` (`SessionPane.tsx`, backed by `pendingReservationGate.ts`)
+marks a create from the moment it is sent until its ack. This follows the order of every later turn, where
+the subscribe comes after the acknowledgement.
+
+The host keeps a second guard. `CommandInbox.whenSessionCreationSettles` (tracked from receipt in
+`command-inbox-creations.ts`) makes a subscribe that reaches the gateway while the create is admitted wait
+for it. Before these guards, a subscribe sent during the create was answered `fault.subscribe.sessionNotFound`,
+which the renderer treats as terminal. The rule is not ACP-specific and applies to every first message.
 
 ### Acceptance scenarios
 
