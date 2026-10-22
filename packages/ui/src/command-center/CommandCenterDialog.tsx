@@ -43,6 +43,13 @@ import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { toast } from "@/components/ui/toast.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import {
+  buildLocalTaskSearchScopes,
+  buildTaskSearchProjectNames,
+  getTaskSearchTaskKey,
+  type TaskSearchScope,
+} from "@/project-sidebar/taskSearchScope.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -704,9 +711,26 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   const searchConversations =
     open && hasSearchQuery && (activeScope === "all" || activeScope === "conversations");
   const searchFiles = open && hasSearchQuery && (activeScope === "all" || activeScope === "files");
-  const searchWorkspaceTabs = useMemo(
-    () => (searchConversations ? effectiveWorkspaceTabs : []),
-    [effectiveWorkspaceTabs, searchConversations],
+  const projectTree = useOptionalProjectDirectory()?.tree;
+  // Search covers every local project of the sidebar, not only the open tabs (specs/task-search-debounce.md, Search scope).
+  const localSearchScopeKey = useMemo(
+    () =>
+      JSON.stringify(
+        buildLocalTaskSearchScopes({
+          tree: searchConversations ? projectTree : null,
+          openTabs: searchConversations ? effectiveWorkspaceTabs : [],
+        }),
+      ),
+    [effectiveWorkspaceTabs, projectTree, searchConversations],
+  );
+  // Keyed by content: a new tree object with the same scope does not change the query key.
+  const searchWorkspaceTabs = useMemo<TaskSearchScope[]>(
+    () => JSON.parse(localSearchScopeKey) as TaskSearchScope[],
+    [localSearchScopeKey],
+  );
+  const projectNameByTaskKey = useMemo(
+    () => buildTaskSearchProjectNames(projectTree),
+    [projectTree],
   );
   const currentWorkspaceTabs = useMemo(
     () =>
@@ -1850,6 +1874,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           const task = row.task;
           const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
           const workspaceLabel =
+            projectNameByTaskKey.get(getTaskSearchTaskKey(task)) ??
             workspaceLabelByKey.get(task.workspaceIdentity?.trim() || task.workspacePath) ??
             task.workspacePath;
           const searchSnippet = row.searchSnippet?.trim();

@@ -13,6 +13,13 @@ import {
   CommandShortcut,
 } from "@/components/ui/command.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import {
+  buildLocalTaskSearchScopes,
+  buildTaskSearchProjectNames,
+  getTaskSearchTaskKey,
+  type TaskSearchScope,
+} from "@/project-sidebar/taskSearchScope.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { formatCommandShortcutLabel, matchesPrimaryShortcut } from "@/lib/keyboardShortcuts.js";
@@ -108,7 +115,27 @@ export function TaskSearchDialog({
   const shortcutLabel = formatCommandShortcutLabel("G");
   const trimmedQuery = query.trim();
   const [settledQuery, setSettledQuery] = useState("");
-  const searchWorkspaceTabs = useMemo(() => (open ? workspaceTabs : []), [open, workspaceTabs]);
+  const projectTree = useOptionalProjectDirectory()?.tree;
+  // Search covers every local project of the sidebar, not only the open tabs (specs/task-search-debounce.md, Search scope).
+  const localSearchScopeKey = useMemo(
+    () =>
+      JSON.stringify(
+        buildLocalTaskSearchScopes({
+          tree: open ? projectTree : null,
+          openTabs: open ? workspaceTabs : [],
+        }),
+      ),
+    [open, projectTree, workspaceTabs],
+  );
+  // Keyed by content: a new tree object with the same scope does not change the query key.
+  const searchWorkspaceTabs = useMemo<TaskSearchScope[]>(
+    () => JSON.parse(localSearchScopeKey) as TaskSearchScope[],
+    [localSearchScopeKey],
+  );
+  const projectNameByTaskKey = useMemo(
+    () => buildTaskSearchProjectNames(projectTree),
+    [projectTree],
+  );
   const taskList = useGlobalTaskList({
     kind: "active",
     // Fix rationale: the search dialog component stays mounted in the App, but does not need
@@ -352,6 +379,7 @@ export function TaskSearchDialog({
                 const task = result.task;
                 const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
                 const workspaceLabel =
+                  projectNameByTaskKey.get(getTaskSearchTaskKey(task)) ??
                   workspaceLabelByKey.get(task.workspaceIdentity?.trim() || task.workspacePath) ??
                   task.workspacePath;
                 const searchSnippet = hasQuery ? result.searchSnippet?.trim() : undefined;
