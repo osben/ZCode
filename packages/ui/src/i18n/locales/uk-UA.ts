@@ -71,6 +71,12 @@ const ukUA: Record<string, string> = {
   "firstSubmission.unknown": "Перевіряємо, чи повідомлення було прийнято…",
   "firstSubmission.synchronizing": "Очікуємо оновлення розмови…",
   "firstSubmission.contexts": "Посилання на контекст: {count}",
+  "composer.sendBlocked.outcomeUnresolved":
+    "Перевіряємо, чи прийнято перше повідомлення. Надіслати можна буде, щойно це з'ясується.",
+  "composer.sendBlocked.firstSubmissionNeedsAction":
+    "Перше повідомлення потребує уваги: повторіть або вилучіть його, перш ніж надсилати інше.",
+  "firstSubmission.deliveryUnconfirmed": "Не вдалося підтвердити, що це повідомлення доставлено.",
+  "firstSubmission.savedUnconfirmed": "Повідомлення збережено; доставку не підтверджено",
   "firstSubmission.remove": "Вилучити",
   "composer.sendBlocked.remoteUnavailable":
     "Віддалений хост недоступний. Спробуйте знову після відновлення з'єднання.",

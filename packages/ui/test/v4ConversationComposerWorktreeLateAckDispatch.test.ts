@@ -897,11 +897,10 @@ it("a repeat of the same submission dispatches nothing new; a new draft after th
   }
 });
 
-it("a second Send waits visibly while the bound session still prepares the frozen submission", async () => {
-  const harness = renderLateAckComposer({ worktree: false });
-  harness.controls.snapshot = {
+function preparingSnapshot(sessionId: string, submissionId: string) {
+  return {
     protocolVersion: 1,
-    sessionId: "session-preparing",
+    sessionId,
     logEpoch: "epoch-1",
     seq: 0,
     revision: 0,
@@ -930,7 +929,7 @@ it("a second Send waits visibly while the bound session still prepares the froze
       title: "",
       titleSource: "firstInput",
       submissionPreparation: {
-        submissionId: "sub-preparing",
+        submissionId,
         status: "preparing",
         createdAt: 1,
         updatedAt: 1,
@@ -949,7 +948,14 @@ it("a second Send waits visibly while the bound session still prepares the froze
     goal: null,
     plan: null,
     rows: { window: [], totalCount: 0, firstRowId: null },
-  } as unknown as NonNullable<typeof harness.controls.snapshot>;
+  } as unknown as NonNullable<
+    import("@/v4/ConversationComposer.js").ConversationComposerProps["snapshot"]
+  >;
+}
+
+it("a second Send waits visibly while the bound session still prepares the frozen submission", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.controls.snapshot = preparingSnapshot("session-preparing", "sub-preparing");
   try {
     harness.rerender("session-preparing");
     await act(async () => {
@@ -1367,6 +1373,170 @@ it("a worktree begin that fails before any reservation withdraws the frozen subm
     expect(allFirstSubmissionRecords()).toHaveLength(0);
     expect(editorApi.setText).toHaveBeenCalledWith("worktree text");
     expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+// ── #270 review: Remove on an unresolved outcome must not make a sendable copy; the owner token. ──
+
+it.each(["sending", "unknown"] as const)(
+  "Remove → Send on a %s record dispatches nothing until the outcome is decided",
+  async (status) => {
+    const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+    const prepare = vi.fn<PrepareFirstSubmission>(async () => `session-held-${status}`);
+    const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+    const sessionId = `session-held-${status}`;
+    seedBoundFailedRecord(sessionId, `sub-held-${status}`, {
+      status,
+      commandId: `cmd-held-${status}`,
+    });
+    try {
+      harness.rerender(sessionId);
+      await act(async () => {
+        (
+          findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+            .onClick as () => void
+        )();
+        await flushAsyncWork();
+      });
+      // The restored text is visible but not sendable: Send is disabled with the reason.
+      harness.refresh();
+      expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+      expect(
+        findReactPropsByTestId(harness.container, "composer-send-blocked-reason"),
+      ).not.toBeNull();
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(`frozen sub-held-${status}`);
+        await flushAsyncWork();
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(harness.onSendText).not.toHaveBeenCalled();
+
+      // A decided "not accepted" outcome lifts the hold; the next Send continues the same
+      // submission and reservation.
+      await act(async () => {
+        pendingCommandRegistry.reportReconciledResolution(`cmd-held-${status}`, "failed");
+        await flushAsyncWork();
+      });
+      harness.refresh();
+      expect(findReactPropsByTestId(harness.container, "composer-send-blocked-reason")).toBeNull();
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(`frozen sub-held-${status}`);
+        await flushAsyncWork();
+      });
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+        firstSubmissionId: `sub-held-${status}`,
+      });
+    } finally {
+      await act(async () => {
+        await flushAsyncWork();
+        harness.root.unmount();
+      });
+    }
+  },
+);
+
+it("an accepted outcome after Remove clears the unedited copy and sends nothing", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-held-accepted", "sub-held-accepted", {
+    status: "unknown",
+    commandId: "cmd-held-accepted",
+  });
+  try {
+    harness.rerender("session-held-accepted");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    editorApi.clear.mockClear();
+    await act(async () => {
+      pendingCommandRegistry.reportReconciledResolution("cmd-held-accepted", "accepted");
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).toHaveBeenCalled();
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "session-held-accepted")?.firstSubmission,
+    ).toBeUndefined();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("an earlier first-submission chain never releases a later send's repeat-submit token", async () => {
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-token", commandId: "reserve-token" });
+      return "session-token";
+    },
+  });
+  let settleFirst!: () => void;
+  harness.onSendText
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve;
+        }),
+    )
+    .mockImplementationOnce(() => new Promise<void>(() => {}));
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("first");
+      await flushAsyncWork();
+    });
+    harness.rerender("session-token");
+    // Chain 2 (ordinary) takes the token after the bind released it and stays in flight.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("second");
+      chatPromptEditorProps.at(-1)!.onSubmit!("second");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+    // Chain 1 ends: its `finally` must not clear chain 2's token.
+    await act(async () => {
+      settleFirst();
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("third");
+      chatPromptEditorProps.at(-1)!.onSubmit!("third");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a failed first submission is named as needing action, not as still being delivered", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-needs-action", "sub-needs-action");
+  harness.controls.snapshot = preparingSnapshot("session-needs-action", "sub-needs-action");
+  try {
+    harness.rerender("session-needs-action");
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("another message");
+      await flushAsyncWork();
+    });
+    const reason = findReactPropsByTestId(harness.container, "composer-send-blocked-reason");
+    expect(String(reason?.children)).toContain("needs attention");
+    expect(String(reason?.children)).not.toContain("still being delivered");
   } finally {
     await act(async () => {
       await flushAsyncWork();

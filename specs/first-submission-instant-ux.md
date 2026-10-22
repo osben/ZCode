@@ -190,9 +190,20 @@ any editor change after the claim makes the next Send a new draft. That new draf
 takes the ordinary send path, and the CLI `CommandInbox` serializes its admission.
 One ordering barrier stays: while the bound session's snapshot still reports
 `submissionPreparation` (the frozen `sendText` has not executed yet), Send is disabled
-with a visible reason instead of silently dropping the click — a foreign input
-admitted first would make activation report `input-admitted` for the frozen
-submission.
+with a visible reason instead of silently dropping the click. Without it a foreign
+input admitted first would reorder the frozen message behind it (SessionPane still
+sends the frozen `sendText` after activation, which acknowledges `input-admitted`
+without a receipt), and the bridge's `executeCommand` hook marks the preparation
+`active` on _any_ `sendText` to a preparing session, so reconciliation's "marker absent
+⇒ admitted" shortcut would mark a never-run frozen record `sending`. When the record is
+settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
+or Remove, never as "still being delivered".
+
+**Known limitation (CLI follow-up, not fixed here).** The barrier lives in this
+composer only: mobile remote control and other windows can still send into a
+preparing session. The CLI should flip the preparation marker only for the frozen
+submission's own `sendText`, and return `preparedActivation` so the UI skips the
+frozen `sendText` on `input-admitted`.
 
 ## Status under the message (decided 2026-10-21)
 
@@ -254,10 +265,20 @@ existing send path; the pane never calls into the composer.
   Host: no cancel, no delete, so an already-admitted command is never withdrawn. For a
   reserved record the restored composer draft keeps `firstSubmission` (submission id
   and reservation), so the next Send still activates the prepared session with
-  `expectedSubmissionId` instead of stranding it. When the record carries an
-  unresolved command id, the text is registered in the unsettled-submission ledger so
-  an authoritative acceptance clears the unedited editor (no duplicate resend).
-  Remove is disabled while the submission is active or the editor holds another draft.
+  `expectedSubmissionId` instead of stranding it. **Remove on an unresolved record**
+  (`sending` / `unknown`) restores a copy that is not sendable: the composer keeps
+  the submission with its unresolved status, Send is disabled with a visible reason,
+  and the copy is held until a decision reaches the command registry — a live
+  ACK/projection, or the pane's reconciliation result
+  (`reportReconciledResolution`). Accepted: the submission is dropped and the
+  unsettled-submission ledger clears the unedited editor (no duplicate). Failed or
+  discarded: the copy becomes an ordinary Retry of the same submission and
+  reservation. Remove is disabled while the submission is active or the editor holds
+  another draft.
+- **Copy.** A `failed` record that never had a `sendText` command says the message
+  was not sent ("Unsent message saved" / "Failed to send"). Once a command existed
+  (for example a failure reconciled from an unknown outcome) the copy says delivery
+  could not be confirmed, never that the message was unsent.
 
 ## Reconciliation of unresolved outcomes (decided 2026-10-21)
 

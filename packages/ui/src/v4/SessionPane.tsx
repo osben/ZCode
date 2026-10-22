@@ -5287,6 +5287,7 @@ export function SessionPane({
     workspaceIdentity,
     sessionId,
     firstSubmission: firstSubmissionRecord?.draft.firstSubmission,
+    heldFirstSubmission: sessionId !== null ? composerDraft?.firstSubmission : undefined,
     active: Boolean(
       firstSubmissionRecord?.draft.firstSubmission &&
       isV4FirstSubmissionActive(
@@ -5295,7 +5296,9 @@ export function SessionPane({
         firstSubmissionRecord.draft.firstSubmission.submissionId,
       ),
     ),
-    realRowProjected: firstSubmissionRowProjected,
+    realRowProjected: firstSubmissionRecord
+      ? firstSubmissionRowProjected
+      : snapshot?.sessionId === sessionId && hasVisibleRealUserFirstInputRow(snapshot.rows.window),
     snapshotLive: Boolean(sessionId && snapshot?.sessionId === sessionId),
     hostPreparing: Boolean(snapshot?.meta.submissionPreparation),
     queryCommands: (params) => layer.queryCommands(params),

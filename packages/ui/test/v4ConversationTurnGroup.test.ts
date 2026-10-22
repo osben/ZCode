@@ -3020,7 +3020,7 @@ describe("optimistic first-submission turn", () => {
     expect(renderUnit(unit!)).toContain("Frozen first message");
   });
 
-  it("is non-interactive: no pin, edit or attachment actions for the negative rowId", () => {
+  it("withholds pin, edit and attachment actions for the negative rowId but stays readable", () => {
     const row = userInputRow(-42, {
       turnId: "first-submission:sub-1",
       entityId: "sub-1",
@@ -3037,9 +3037,9 @@ describe("optimistic first-submission turn", () => {
     expect(html).not.toContain('data-testid="v4-pin');
     expect(html).not.toContain('data-testid="v4-edit');
     expect(html).toContain('data-optimistic-first-input="true"');
-    expect(html).toMatch(
-      /data-optimistic-first-input="true"[^>]*inert=""|inert=""[^>]*data-optimistic-first-input="true"/,
-    );
+    // Readable, not hidden: no inert/aria-hidden around the user's own pending message.
+    expect(html).not.toContain("inert");
+    expect(html).not.toMatch(/data-optimistic-first-input="true"[^>]*aria-hidden/);
   });
 
   it("keeps the message above the worktree setup slot attached to the same unit (FSL02)", () => {

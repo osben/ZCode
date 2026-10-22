@@ -74,6 +74,30 @@ describe("first-submission status line under the optimistic turn (FSL01/FSL04/FS
     expect(screen.getByRole("status").className).toContain("text-destructive");
   });
 
+  it("does not claim a failed send when a sendText command existed (reconciled unknown)", () => {
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(FirstSubmissionStatus, {
+          draft: {
+            text: "hello",
+            updatedAt: 1,
+            firstSubmission: {
+              submissionId: "s",
+              ownerKey: "o",
+              status: "failed",
+              commandId: "cmd",
+            },
+          },
+          active: false,
+        }),
+      ),
+    );
+    expect(screen.getByRole("status").textContent).toContain("Couldn’t confirm");
+    expect(screen.getByRole("status").textContent).not.toContain("Failed to send");
+  });
+
   it("distinguishes an unknown command outcome from a new unsent draft", () => {
     status(false, "unknown");
     expect(screen.getByRole("status").textContent).toContain("Checking whether");

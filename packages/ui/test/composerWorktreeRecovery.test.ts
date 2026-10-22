@@ -248,6 +248,13 @@ describe("failed first-submission retry card", () => {
     },
   );
 
+  it("never promises an unsent message once a sendText command existed", () => {
+    seed({ status: "failed", commandId: "send-cmd" });
+    card();
+    expect(screen.getByText("Message saved; delivery not confirmed")).toBeTruthy();
+    expect(screen.queryByText("Unsent message saved")).toBeNull();
+  });
+
   it("offers explicit continue for an inactive preparing record after restart (IUX09)", () => {
     seed({ status: "preparing" });
     card();

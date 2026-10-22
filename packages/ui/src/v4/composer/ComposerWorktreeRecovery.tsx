@@ -27,8 +27,12 @@ import {
 function firstSubmissionStatusMessageId(
   status: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] | undefined,
   active: boolean,
+  commandCreated: boolean,
 ): string | null {
-  if (status === "failed") return "chat.error.sendFailed";
+  // A failure decided after a sendText command existed (e.g. reconciled from an unknown outcome)
+  // must not claim the message was never sent.
+  if (status === "failed")
+    return commandCreated ? "firstSubmission.deliveryUnconfirmed" : "chat.error.sendFailed";
   if (status === "unknown") return "firstSubmission.unknown";
   // An active submission is still moving; the optimistic turn is the feedback.
   if (status === "sending" && !active) return "firstSubmission.synchronizing";
@@ -48,7 +52,11 @@ export function FirstSubmissionStatus({
     (count, items) => count + (items?.length ?? 0),
     0,
   );
-  const messageId = firstSubmissionStatusMessageId(pending?.status, active);
+  const messageId = firstSubmissionStatusMessageId(
+    pending?.status,
+    active,
+    Boolean(pending?.commandId),
+  );
   if (contextCount === 0 && !messageId) return null;
   return (
     <div
@@ -164,7 +172,13 @@ export function ComposerWorktreeRecovery({
       data-testid="composer-worktree-recovery"
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
-      <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
+      <p>
+        {intl.formatMessage({
+          id: firstSubmission?.commandId
+            ? "firstSubmission.savedUnconfirmed"
+            : "composerRecovery.title",
+        })}
+      </p>
       {/* A first submission's message is already the optimistic turn above; do not repeat it. */}
       {!firstSubmission ? (
         <>

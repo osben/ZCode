@@ -7649,6 +7649,12 @@ const enUS: Record<string, string> = {
   "firstSubmission.unknown": "Checking whether the message was accepted…",
   "firstSubmission.synchronizing": "Waiting for the conversation to update…",
   "firstSubmission.contexts": "Context references: {count}",
+  "composer.sendBlocked.outcomeUnresolved":
+    "Checking whether your first message was accepted. You can send once that is known.",
+  "composer.sendBlocked.firstSubmissionNeedsAction":
+    "Your first message needs attention: retry or remove it before sending another.",
+  "firstSubmission.deliveryUnconfirmed": "Couldn’t confirm that this message was delivered.",
+  "firstSubmission.savedUnconfirmed": "Message saved; delivery not confirmed",
   "firstSubmission.remove": "Remove",
   "composer.sendBlocked.remoteUnavailable":
     "The remote host is unavailable. Try again once it reconnects.",

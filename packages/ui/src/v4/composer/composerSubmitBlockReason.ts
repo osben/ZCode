@@ -6,6 +6,7 @@ export type ComposerSubmitBlockReason =
   | "sessionNotReady"
   | "sendInProgress"
   | "firstSubmissionDelivering"
+  | "outcomeUnresolved"
   | "attachmentsNotReady";
 
 export function resolveComposerSubmitBlockReason(input: {
@@ -20,14 +21,21 @@ export function resolveComposerSubmitBlockReason(input: {
   preparedSessionAwaitingFirstInput: boolean;
   /** This submit continues the frozen first submission itself (Retry / restored record). */
   retrying: boolean;
+  /**
+   * The restored first submission still has an undecided sendText outcome (Remove on a
+   * sending/unknown record): sending it now could admit the same input twice.
+   */
+  outcomeUnresolved: boolean;
   attachmentsReady: boolean;
 }): ComposerSubmitBlockReason | null {
   if (!input.remoteAvailable) return "remoteUnavailable";
   if (input.runtimeBlocked || !input.submissionReady || !input.submissionConfigured)
     return "sessionNotReady";
   if (input.sendInProgress) return "sendInProgress";
-  // Ordering barrier: a foreign input admitted before the frozen one would make activation
-  // report `input-admitted` for the frozen submission, which would then never be sent.
+  if (input.outcomeUnresolved) return "outcomeUnresolved";
+  // Ordering barrier: a foreign input admitted first would reorder the frozen message behind it,
+  // and the bridge marks the preparation active on any sendText, so reconciliation would then
+  // take a never-run frozen record as admitted (spec: Second Send after bind).
   if (input.preparedSessionAwaitingFirstInput && !input.retrying)
     return "firstSubmissionDelivering";
   if (!input.attachmentsReady) return "attachmentsNotReady";

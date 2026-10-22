@@ -5,6 +5,7 @@
 import { useEffect, useRef } from "react";
 import type { CommandsQueryParams, CommandsQueryResult } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
+import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
 import { updateV4FirstSubmission, type V4ComposerDraft } from "@/v4/composer/composerDraftStore.js";
 
 type FirstSubmissionStatus = NonNullable<V4ComposerDraft["firstSubmission"]>["status"];
@@ -27,7 +28,8 @@ export function useFirstSubmissionReconciliation({
   workspacePath,
   workspaceIdentity,
   sessionId,
-  firstSubmission,
+  firstSubmission: recordFirstSubmission,
+  heldFirstSubmission,
   active,
   realRowProjected,
   snapshotLive,
@@ -40,6 +42,11 @@ export function useFirstSubmissionReconciliation({
   /** The bound session holding the record; draft-scope records have no Host command to query. */
   sessionId: string | null;
   firstSubmission: V4ComposerDraft["firstSubmission"];
+  /**
+   * The session composer's restored submission after Remove on an unresolved record. It has no
+   * record of its own; the decision reaches its owner (the composer) only through the registry.
+   */
+  heldFirstSubmission?: V4ComposerDraft["firstSubmission"];
   /** A live send chain in this renderer owns the record and settles it itself. */
   active: boolean;
   realRowProjected: boolean;
@@ -51,6 +58,10 @@ export function useFirstSubmissionReconciliation({
 }): void {
   const queryRef = useRef(queryCommands);
   queryRef.current = queryCommands;
+  const held =
+    !recordFirstSubmission &&
+    (heldFirstSubmission?.status === "sending" || heldFirstSubmission?.status === "unknown");
+  const firstSubmission = recordFirstSubmission ?? (held ? heldFirstSubmission : undefined);
   const submissionId = firstSubmission?.submissionId;
   const commandId = firstSubmission?.commandId;
   const status = firstSubmission?.status;
@@ -59,17 +70,30 @@ export function useFirstSubmissionReconciliation({
   const markerProvesAdmission = Boolean(firstSubmission?.reservation);
   useEffect(() => {
     if (!enabled || !sessionId || !submissionId || !commandId) return;
-    if (active || realRowProjected || !snapshotLive) return;
+    if (active || !snapshotLive) return;
     if (status !== "sending" && status !== "unknown") return;
-    const apply = (next: FirstSubmissionStatus) => {
-      if (next === status) return;
+    const apply = (next: Extract<FirstSubmissionStatus, "sending" | "failed">) => {
+      // Listeners (a Remove hold, the unsettled ledger) learn the decision from the registry; the
+      // record, when there is one, is written here — the held copy is owned by its composer.
+      pendingCommandRegistry.reportReconciledResolution(
+        commandId,
+        next === "sending" ? "accepted" : "failed",
+      );
+      if (held || next === status) return;
       try {
         updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, { status: next });
       } catch (error) {
         logger.warn("[first-submission] could not persist the reconciled outcome", error);
       }
     };
-    // The Host marks a reserved submission's input admitted durably when its sendText executes.
+    if (realRowProjected) {
+      // A record is cleared by the pane's reconcile predicate; a held copy is settled here.
+      if (held) apply("sending");
+      return;
+    }
+    // The Host marks a reserved submission's preparation active when a sendText executes. Known
+    // limitation: the bridge does so for any sendText, so a foreign input sent from another
+    // client into the preparing session also satisfies this (spec: CLI follow-up).
     if (markerProvesAdmission && !hostPreparing) {
       apply("sending");
       return;
@@ -94,6 +118,7 @@ export function useFirstSubmissionReconciliation({
     active,
     commandId,
     enabled,
+    held,
     hostPreparing,
     markerProvesAdmission,
     realRowProjected,

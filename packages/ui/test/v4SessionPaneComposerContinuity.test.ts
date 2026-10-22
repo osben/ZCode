@@ -360,12 +360,15 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
   }),
 }));
 
+const draftControlMock = vi.hoisted(() => ({
+  composerDraft: { text: "", updatedAt: 0 } as Record<string, unknown>,
+}));
 vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
   buildDraftCreateConfigPayload: () => ({}),
   useDraftConfigControl: () => ({
     modelSelectionRead: useModelSelectionServiceView(null),
     captureAcceptedModelSelection: () => vi.fn(),
-    composerDraft: { text: "", updatedAt: 0 },
+    composerDraft: draftControlMock.composerDraft,
     draftConfig: {},
     draftConfigRef: {
       current: {
@@ -703,6 +706,7 @@ function renderPane(
 }
 
 beforeEach(() => {
+  draftControlMock.composerDraft = { text: "", updatedAt: 0 };
   projectDirectoryMock.current = null;
   conversationMock.layer.queryCommands.mockReset();
   conversationMock.layer.queryCommands.mockImplementation(async () => ({ results: [] }));
@@ -1811,6 +1815,44 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       commands: [{ sessionId: "worktree-f5", commandId: "cmd-f5" }],
     });
     expect(recordStatus("worktree-f5")).toBe("failed");
+  });
+
+  it("F: a copy held after Remove gets its decision through the command registry", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: "f6",
+        ownerKey: "reserved-f6",
+        status: "unknown",
+        commandId: "cmd-f6",
+        reservation: { sessionId: "reserved-f6", commandId: "reserve-f6" },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f6", commandId: "cmd-f6" }, result: "unknown" }],
+    }));
+    const decisions: string[] = [];
+    const off = pendingCommandRegistry.subscribeResolution("cmd-f6", (resolution) =>
+      decisions.push(resolution),
+    );
+    conversationMock.layer.acquire.mockImplementation(
+      () =>
+        ({ ...conversationMock.lease, sessionId: "reserved-f6" }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState("reserved-f6", {
+      submissionPreparation: { submissionId: "f6" },
+    });
+    renderPane(root, "reserved-f6");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed"]);
+    // The held copy is owned by its composer: the pane never writes it to storage.
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-f6")).toHaveLength(0);
   });
 
   it("F: an unavailable command query leaves the record unchanged", async () => {

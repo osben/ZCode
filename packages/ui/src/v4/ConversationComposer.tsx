@@ -29,6 +29,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -149,10 +150,14 @@ import {
 } from "@/v4/composer/composerAutoFocus.js";
 import {
   clearV4ComposerDraft,
+  getV4FirstSubmissionVersion,
   getV4WorktreeRecoveryScope,
+  isV4FirstSubmissionActive,
   moveV4ComposerDraft,
   persistV4ComposerDraft,
   readV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
+  subscribeV4ComposerDrafts,
   updateV4FirstSubmission,
   setV4FirstSubmissionActive,
   V4_DRAFT_SCOPE_ROOT,
@@ -1564,7 +1569,10 @@ function ConversationComposerImpl({
     !runtimeBlocked;
   // Same predicate as submit() (composerSubmitBlockReason), from render state: the bound-session
   // barrier and an in-flight first submission disable Send visibly instead of dropping the click.
-  const submitBlockReasonFor = (retrying: boolean) =>
+  const heldFirstSubmission = composerDraft?.firstSubmission;
+  const heldOutcomeUnresolved =
+    heldFirstSubmission?.status === "sending" || heldFirstSubmission?.status === "unknown";
+  const submitBlockReasonFor = (retrying: boolean, outcomeUnresolved: boolean) =>
     resolveComposerSubmitBlockReason({
       remoteAvailable,
       runtimeBlocked,
@@ -1573,13 +1581,41 @@ function ConversationComposerImpl({
       sendInProgress: pendingOwner !== null || worktreeQueued,
       preparedSessionAwaitingFirstInput: Boolean(sessionId && snapshot?.meta.submissionPreparation),
       retrying,
+      outcomeUnresolved,
       attachmentsReady,
     });
-  const sendBlockReason = submitBlockReasonFor(Boolean(composerDraft?.firstSubmission));
+  const sendBlockReason = submitBlockReasonFor(Boolean(heldFirstSubmission), heldOutcomeUnresolved);
   const sendBarrierActive =
     sendBlockReason === "firstSubmissionDelivering" ||
+    sendBlockReason === "outcomeUnresolved" ||
     (sendBlockReason === "sendInProgress" && pendingOwner !== null && !pending);
-  const retryBlockReason = submitBlockReasonFor(true);
+  const retryBlockReason = submitBlockReasonFor(true, false);
+  // A settled (failed / restart-preparing) first-submission record of this session is not "still
+  // being delivered": the barrier then names the record that needs Retry or Remove.
+  useSyncExternalStore(
+    subscribeV4ComposerDrafts,
+    () => getV4FirstSubmissionVersion(workspacePath, workspaceIdentity),
+    () => "",
+  );
+  const sessionFirstSubmission =
+    sessionId !== null
+      ? readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, sessionId).find(
+          ({ draft }) => draft.firstSubmission,
+        )?.draft.firstSubmission
+      : undefined;
+  const sendBlockMessageId =
+    sendBlockReason === "firstSubmissionDelivering" &&
+    sessionFirstSubmission &&
+    !isV4FirstSubmissionActive(
+      workspacePath,
+      workspaceIdentity,
+      sessionFirstSubmission.submissionId,
+    ) &&
+    (sessionFirstSubmission.status === "failed" || sessionFirstSubmission.status === "preparing")
+      ? "composer.sendBlocked.firstSubmissionNeedsAction"
+      : sendBlockReason
+        ? `composer.sendBlocked.${sendBlockReason}`
+        : null;
   // 旧 UI 状态机：streaming + 空草稿 → Stop；有草稿 → 发送键（入队）。
   const showStopControl = canStop && !hasDraftToSubmit;
 
@@ -2265,6 +2301,9 @@ function ConversationComposerImpl({
             snapshotRef.current?.meta.submissionPreparation,
           ),
           retrying: Boolean(retryFirstSubmission),
+          outcomeUnresolved:
+            retryFirstSubmission?.status === "sending" ||
+            retryFirstSubmission?.status === "unknown",
           attachmentsReady,
         }) !== null ||
         // A double click: no editor change since this composer's last claim.
@@ -3219,6 +3258,33 @@ function ConversationComposerImpl({
       workspacePath,
     ],
   );
+  // Remove hold: a restored submission whose sendText outcome is still undecided stays unsendable
+  // until an authoritative acceptance (the copy is dropped from the submission, and the ledger
+  // clears an unedited editor) or a failed/discarded decision (it becomes an ordinary Retry). The
+  // decision arrives through the command registry: a live ACK/projection, or the pane's
+  // reconciliation result (specs/first-submission-instant-ux.md, Reconciliation).
+  const composerDraftRef = useRef(composerDraft);
+  composerDraftRef.current = composerDraft;
+  const heldCommandId = heldOutcomeUnresolved ? heldFirstSubmission?.commandId : undefined;
+  const [heldResubscribe, setHeldResubscribe] = useState(0);
+  useEffect(() => {
+    if (!heldCommandId) return;
+    return pendingCommandRegistry.subscribeResolution(heldCommandId, (resolution) => {
+      const held = composerDraftRef.current?.firstSubmission;
+      if (held?.commandId !== heldCommandId) return;
+      // The registry drops its listeners after a notification; an "unknown" keeps the hold.
+      if (resolution === "unknown") {
+        setHeldResubscribe((value) => value + 1);
+        return;
+      }
+      const decided =
+        resolution === "accepted" || resolution === "duplicate" || resolution === "authoritative"
+          ? undefined
+          : { ...held, status: "failed" as const };
+      retryFirstSubmissionRef.current = decided;
+      updateComposerContent({ text: textRef.current, firstSubmission: decided });
+    });
+  }, [heldCommandId, heldResubscribe, updateComposerContent]);
   useEffect(() => {
     if (recoveryRetryRequest <= appliedRecoveryRetryRef.current) return;
     appliedRecoveryRetryRef.current = recoveryRetryRequest;
@@ -4229,13 +4295,13 @@ function ConversationComposerImpl({
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
-        {sendBarrierActive && hasDraftToSubmit && sendBlockReason ? (
+        {sendBarrierActive && hasDraftToSubmit && sendBlockMessageId ? (
           <p
             role="status"
             data-testid="composer-send-blocked-reason"
             className="px-3 pb-2 text-ui-sm text-foreground-subtle"
           >
-            {intl.formatMessage({ id: `composer.sendBlocked.${sendBlockReason}` })}
+            {intl.formatMessage({ id: sendBlockMessageId })}
           </p>
         ) : null}
         <ComposerWorktreeRecovery
