@@ -72,10 +72,11 @@ describe("useVoiceModelStatus", () => {
         await vi.advanceTimersByTimeAsync(0);
       });
       const afterFirstPoll = renders;
+      // Idle cadence is 10 s: polls at 0 s, 10 s and 20 s; the equal snapshots must not re-render.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(3_000);
+        await vi.advanceTimersByTimeAsync(21_000);
       });
-      expect(mocks.service!.getRuntimeState.mock.calls.length).toBeGreaterThan(2);
+      expect(mocks.service!.getRuntimeState.mock.calls.length).toBe(3);
       expect(renders).toBe(afterFirstPoll);
     } finally {
       vi.useRealTimers();

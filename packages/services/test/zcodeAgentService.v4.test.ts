@@ -296,7 +296,13 @@ process.stdin.on("data", (chunk) => {
       else reply();
     }
     if (msg.method === "v4/command" && msg.id !== undefined) {
-      const status = "accepted";
+      // Test seam: commandIds prefixed "reject-" get a guard rejection (no session created), so abandonment paths can be exercised.
+      // The "reject-missing-" prefix answers proto.sessionNotFound, the CLI's reply for a session it never initialized.
+      const rejected = String(msg.params.commandId).startsWith("reject-");
+      const reasonCode = String(msg.params.commandId).startsWith("reject-missing-")
+        ? "proto.sessionNotFound"
+        : "project.not-found";
+      const status = rejected ? "rejected" : "accepted";
       const acceptedInput = {
         delivery: "startNow",
         inputId: msg.params.commandId,
@@ -306,14 +312,16 @@ process.stdin.on("data", (chunk) => {
         ? { result: { type: "createSession", sessionId: "created-session", input: acceptedInput } }
         : msg.params.type === "sendText"
           ? { result: { type: "inputAccepted", ...acceptedInput } }
-          : {};
+          : msg.params.type === "forkAssistant"
+            ? { result: { type: "forkAssistant", sessionId: "forked-session" } }
+            : {};
       send({
         id: msg.id,
         result: {
           commandId: msg.params.commandId,
           status,
           revisionAtDecision: 3,
-          ...createSessionResult,
+          ...(rejected ? { reasonCode } : createSessionResult),
         },
       });
     }
@@ -417,6 +425,12 @@ describe("zcodeAgentService v4 conversation channel", () => {
       prepareSessionCreation?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["prepareSessionCreation"];
+      discardSessionReservation?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["discardSessionReservation"];
+      prepareForkedSession?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["prepareForkedSession"];
       resolveSessionDirectories?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["resolveSessionDirectories"];
@@ -444,6 +458,8 @@ describe("zcodeAgentService v4 conversation channel", () => {
     const service = createZCodeAgentService({
       commandResolver,
       prepareSessionCreation: options.prepareSessionCreation,
+      discardSessionReservation: options.discardSessionReservation,
+      prepareForkedSession: options.prepareForkedSession,
       resolveSessionDirectories: options.resolveSessionDirectories,
       repoSnapshotCaptureIntentScheduler: options.repoSnapshotCaptureIntentScheduler,
       repoSnapshotSidecar: options.repoSnapshotSidecar,
@@ -477,6 +493,125 @@ describe("zcodeAgentService v4 conversation channel", () => {
     });
     return { service, workspacePath, logPath, commandResolver };
   }
+
+  it("claims a forked child for the parent's project only after the forkAssistant ack", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const claims: unknown[] = [];
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) => {
+        claims.push(target);
+        return repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        });
+      },
+    });
+    const project = repo.saveProject({ roots: [env.workspacePath] });
+    repo.reserveCreatedTask({
+      task: { workspacePath: env.workspacePath, taskId: "parent" },
+      projectId: project.id,
+    });
+    // The syncer may write the fork's row before the ack reaches the Host; it carries no owner, as in the observed index.
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "forked-session", "Fork of parent", 1, 2);
+    expect(() =>
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toThrow("project.host-mismatch");
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-claim",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(claims).toEqual([
+      {
+        workspacePath: env.workspacePath,
+        parentSessionId: "parent",
+        sessionId: "forked-session",
+      },
+    ]);
+    expect(
+      repo.resolveSessionDirectories({
+        workspacePath: env.workspacePath,
+        taskId: "forked-session",
+      }),
+    ).toEqual({
+      workspacePath: env.workspacePath,
+      projectId: project.id,
+      additionalDirectories: [],
+    });
+    await env.service.disposeAllAndWait();
+  });
+
+  it("acknowledges a fork whose parent has no owner yet: warns and writes no child row", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) =>
+        repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        }),
+    });
+    // The parent row has no host yet (organization writer, before the first CLI admission).
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "parent", "Parent", 1, 2);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-unowned-parent",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(JSON.stringify(warn.mock.calls)).toContain("fork child left unclaimed");
+    expect(JSON.stringify(warn.mock.calls)).toContain("forked-session");
+    expect(
+      state.db.prepare("SELECT task_id FROM tasks WHERE task_id='forked-session'").get(),
+    ).toBeUndefined();
+    warn.mockRestore();
+    await env.service.disposeAllAndWait();
+  });
 
   const childHostId = "remote:server:subagent-view";
   const childWorkspace = (workspacePath: string) => ({
@@ -1184,6 +1319,165 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(readRequests(logPath).filter((entry) => entry.method === "v4/command")).toHaveLength(
         2,
       );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a plain create's reservation when the CLI rejects the create", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "reject-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a prewarm reservation once the CLI accepts its deleteSession", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "prewarm-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).not.toHaveBeenCalled();
+
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "delete-prewarm",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("accepted");
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("keeps the reservation when a deleteSession is rejected", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-kept",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      expect(discardSessionReservation).not.toHaveBeenCalled();
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("deleteSession rejected with proto.sessionNotFound discards", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-abandoned",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-missing-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack).toMatchObject({ status: "rejected", reasonCode: "proto.sessionNotFound" });
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
     } finally {
       await service.disposeAllAndWait();
     }

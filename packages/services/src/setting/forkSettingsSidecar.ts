@@ -4,24 +4,17 @@ import {
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
   forkAppSettingsStoredSchema,
-  formatLogPrefix,
   formatZodError,
   pickForkSettings,
 } from "@zcode/shared";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
-import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import { resolveSettingsLocation, type SettingsLocation } from "./settingsPaths.js";
 
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("forkSettings", process.pid), ...args);
-
-function debugLog(...args: unknown[]) {
-  // NODE_ENV inherited from the user's shell can mislead the service-layer debug switch; use ZCODE_RUNTIME_ENV consistently.
-  if (!isEffectiveDevelopmentNodeEnv()) {
-    return;
-  }
-  console.debug(formatLogPrefix("forkSettings", process.pid), ...args);
-}
+const forkLogger = createServiceLogger("forkSettings");
+// info lines carry key names and counts only; settings values go to debug, which the service logger gates to development.
+const log = (...args: unknown[]) => forkLogger.info(undefined, ...args);
+const debugLog = (...args: unknown[]) => forkLogger.debug(undefined, ...args);
 
 /** Same stale-write protection writeSettings() uses for the main file: an expired queue turn must not rename late. */
 export interface ForkSettingsWriteGuards {
@@ -47,7 +40,7 @@ type LocationArg = SettingsLocation;
  * temporarily unreadable file as empty, or the write back would delete the stored settings.
  */
 async function readRawForkSettings(
-  options: { throwOnIoError?: boolean } | undefined,
+  options: { throwOnIoError?: boolean; onIoError?: () => void } | undefined,
   location: LocationArg,
 ): Promise<unknown> {
   const forkSettingsFile = location.forkFile;
@@ -73,6 +66,7 @@ async function readRawForkSettings(
     if (options?.throwOnIoError) {
       throw err;
     }
+    options?.onIoError?.();
     log("fork settings read failed, using defaults. error:", err);
     return undefined;
   }
@@ -85,9 +79,10 @@ async function readRawForkSettings(
  */
 export async function readForkSettings(
   location: LocationArg = resolveSettingsLocation(),
+  options?: { onIoError?: () => void },
 ): Promise<ForkAppSettings> {
   const result = forkAppSettingsSchema.safeParse(
-    (await readRawForkSettings(undefined, location)) ?? {},
+    (await readRawForkSettings({ onIoError: options?.onIoError }, location)) ?? {},
   );
   if (!result.success) {
     log(
@@ -124,7 +119,8 @@ async function writeForkSettings(
   location: LocationArg,
 ): Promise<void> {
   const forkSettingsFile = location.forkFile;
-  log("writing fork settings to:", forkSettingsFile, JSON.stringify(settings));
+  debugLog("writing fork settings, keys:", Object.keys(settings).join(", "));
+  debugLog("fork write payload:", JSON.stringify(settings));
   await mkdir(location.dir, { recursive: true });
   if (options.guards && !options.guards.shouldCommit()) {
     // The queue turn expired while this write was pending: skip entirely, the same way

@@ -1106,13 +1106,9 @@ const SingleUserInputRowView = memo(function SingleUserInputRowView({
   });
 
   useEffect(() => {
-    if (!editing) {
-      setDraft(parsedShareContext.visibleContent);
-      setEditAttachments([...(row.attachments ?? [])]);
-      setEditAttachmentIndices((row.attachments ?? []).map((_, index) => index));
-      setEditPromptContexts(parsedPrompt);
-      return;
-    }
+    // Edit state is only read while editing, and handleOpenEdit/handleCancelEdit already reset it.
+    // Resetting here with fresh arrays forced a second commit on every user row mount.
+    if (!editing) return;
     const focusEditor = () => inputApiRef.current?.focus();
     if (typeof requestAnimationFrame === "function") {
       requestAnimationFrame(focusEditor);

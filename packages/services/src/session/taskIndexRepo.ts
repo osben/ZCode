@@ -39,6 +39,7 @@ import type {
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getTasksIndexDatabasePath, getZCodeDataRootDir } from "#src/paths.js";
 import { projectStorage, type ProjectMigrationContext } from "#src/project-storage/index.js";
+import { RESERVATION_PLACEHOLDER_SQL } from "#src/project-storage/project-repository.js";
 import { runTasksDatabaseMigrations } from "#src/session/tasksDatabase/migrations.js";
 
 const require = createRequire(import.meta.url);
@@ -248,6 +249,9 @@ const CLI_FACT_CREATED_AT_SQL =
 const CLI_FACT_TITLE_SQL =
   "(CASE WHEN cli_created_at IS NULL OR title_overridden = 1 THEN title ELSE cli_title END)";
 
+// Reservation placeholder (signature defined with its only writer in project-repository.ts): every read hides it until applyCliFacts
+// writes facts, so an abandoned create never shows up as an empty, zero-time task.
+
 function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
   if (row.cli_created_at == null) return meta;
   const outcome =
@@ -282,16 +286,23 @@ function rowToStoredMeta(row: TaskIndexMetaRow): ZCodeTaskMeta {
         // meta_json is authoritative for cron identity; cron_automation_id is an indexed projection used only as a fallback.
         // Historical meta_json may lack this field, so read the column as fallback; the next write backfills it into meta_json.
         cronAutomationId: parsed.data.cronAutomationId ?? row.cron_automation_id ?? undefined,
+        // The fork link is immutable and is written by several writers; the column keeps it even when a snapshot write omits it from meta_json.
+        forkedFromTaskId: row.forked_from_task_id ?? parsed.data.forkedFromTaskId,
         // Use the same strategy for off-peak identity: meta_json is authoritative, with the column as fallback, so migrating existing rows needs to write only the column.
         offPeakTaskId: parsed.data.offPeakTaskId ?? row.off_peak_task_id ?? undefined,
         titleOverridden: row.title_overridden === 1,
       };
     }
-    logger.warn(
-      undefined,
-      `读取 task index meta_json 非法 taskId=${row.task_id}`,
-      parsed.error.flatten(),
-    );
+    // A reservation placeholder (created_at 0, no CLI facts, default meta_json '{}') is expected until CLI facts arrive; it is not corruption, so it stays silent.
+    const isReservationPlaceholder =
+      row.meta_json === "{}" && row.created_at === 0 && row.cli_created_at == null;
+    if (!isReservationPlaceholder) {
+      logger.warn(
+        undefined,
+        `读取 task index meta_json 非法 taskId=${row.task_id}`,
+        parsed.error.flatten(),
+      );
+    }
   } catch (error) {
     logger.warn(undefined, `读取 task index meta_json 失败 taskId=${row.task_id}`, error);
   }
@@ -1692,7 +1703,8 @@ export class TaskIndexRepo {
           mode = excluded.mode,
           model = excluded.model,
           migration_source = excluded.migration_source,
-          forked_from_task_id = excluded.forked_from_task_id,
+          -- The first stored fork link wins: a later write with another parent must not re-parent the fork.
+          forked_from_task_id = COALESCE(tasks.forked_from_task_id, excluded.forked_from_task_id),
           cron_automation_id = excluded.cron_automation_id,
           off_peak_task_id = excluded.off_peak_task_id,
           created_at = excluded.created_at,
@@ -1990,6 +2002,14 @@ export class TaskIndexRepo {
         // fork's organization writer (syncTaskMeta) deliberately does not, so project membership is set only by CLI facts.
         projectStorage.admitTaskIdentity(db, params.meta, this.storageHostId);
         const source = params.titleSource ?? "default";
+        // Title recency lives in meta_json (no column). Only a non-negative integer from CLI facts is written, and applyCliFacts is the sole writer of this key on admitted rows.
+        const titleUpdatedAt = params.meta.titleUpdatedAt;
+        const persistedTitleUpdatedAt =
+          titleUpdatedAt !== undefined &&
+          Number.isSafeInteger(titleUpdatedAt) &&
+          titleUpdatedAt >= 0
+            ? titleUpdatedAt
+            : null;
         db.prepare(`UPDATE tasks SET
           cli_title=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
           cli_title_source=CASE WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title_source ELSE ? END,
@@ -1998,7 +2018,8 @@ export class TaskIndexRepo {
           title=CASE WHEN (handoff_pending & 2)<>0 THEN title WHEN cli_title_source='custom' AND ?<>'custom' THEN cli_title ELSE ? END,
           title_overridden=CASE WHEN (handoff_pending & 2)<>0 THEN title_overridden WHEN ?='custom' OR cli_title_source='custom' THEN 1 ELSE 0 END,
           updated_at=?,created_at=?,task_status=coalesce(?,task_status),deleted=max(deleted,?),
-          handoff_pending=(handoff_pending & ~4) & CASE WHEN ?=1 THEN ~1 ELSE -1 END & CASE WHEN ?=title AND ?='custom' THEN ~2 ELSE -1 END
+          handoff_pending=(handoff_pending & ~4) & CASE WHEN ?=1 THEN ~1 ELSE -1 END & CASE WHEN ?=title AND ?='custom' THEN ~2 ELSE -1 END,
+          meta_json=CASE WHEN ? AND json_valid(meta_json) THEN json_set(meta_json,'$.titleUpdatedAt',?) ELSE meta_json END
           WHERE workspace_key=? AND task_id=?`).run(
           source,
           params.meta.title,
@@ -2018,6 +2039,8 @@ export class TaskIndexRepo {
           params.deleted ? 1 : 0,
           params.meta.title,
           source,
+          persistedTitleUpdatedAt === null ? 0 : 1,
+          persistedTitleUpdatedAt,
           workspaceKey(params.meta),
           params.meta.taskId,
         );
@@ -2029,6 +2052,77 @@ export class TaskIndexRepo {
         throw error;
       }
     });
+  }
+
+  /**
+   * Admits a fork child from its sessions-index summary. The CLI emits the child summary before or after the forkAssistant ACK,
+   * so the first summary claims the child for the parent's project whenever the parent is owned, and only then applies CLI facts.
+   * The claim must come first: applyCliFacts' admitTaskIdentity would pick a project by cwd, and claimForkedTask would then skip
+   * copying the parent's frozen directories. Each step is its own write, because reserveCreatedTask and applyCliFacts each open a
+   * transaction and must not nest. Unowned parents are not claimed here; they keep the unowned admission that applyCliFacts already does.
+   * Returns changed=true only when ownership, the fork link or a CLI fact column differs from its stored value, so a repeated
+   * summary stays silent for the caller.
+   */
+  async admitForkSummary(params: {
+    meta: ZCodeTaskMeta;
+    titleSource?: string;
+  }): Promise<{ meta: ZCodeTaskMeta; changed: boolean }> {
+    const parentTaskId = params.meta.forkedFromTaskId;
+    if (!parentTaskId) throw new Error("task index 分叉准入缺少 forkedFromTaskId");
+    await this.seedTaskMetaIfMissing(params.meta);
+    const projects = await this.getProjectRepository();
+    const child = {
+      workspacePath: params.meta.workspacePath,
+      workspaceIdentity: params.meta.workspaceIdentity,
+      taskId: params.meta.taskId,
+    };
+    const parent = { ...child, taskId: parentTaskId };
+    const before = await this.enqueueWrite(params.meta, () => {
+      const snapshot = this.readForkAdmissionState(child);
+      // A resync can create or rewrite the row before this runs, and the snapshot carries no parent id, so the link is filled once and never replaced.
+      this.getDatabase()
+        .prepare(
+          "UPDATE tasks SET forked_from_task_id=COALESCE(forked_from_task_id,?) WHERE workspace_key=? AND task_id=?",
+        )
+        .run(parentTaskId, workspaceKey(child), child.taskId);
+      if (
+        this.readTaskHostId(child) === null &&
+        this.readTaskHostId(parent) === (this.storageHostId ?? "local")
+      ) {
+        projects.reserveCreatedTask({ task: child, forkOf: parent });
+      }
+      return snapshot;
+    });
+    const meta = await this.applyCliFacts({ meta: params.meta, titleSource: params.titleSource });
+    const after = this.readForkAdmissionState(child);
+    return { meta, changed: JSON.stringify(before) !== JSON.stringify(after) };
+  }
+
+  /** Ownership, fork link and CLI fact columns; the fields admitForkSummary can change, excluding resync-owned organization fields. */
+  private readForkAdmissionState(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): Record<string, unknown> | null {
+    const row = this.getDatabase()
+      .prepare(
+        `SELECT host_id, project_id, root_path, forked_from_task_id, cli_title, cli_title_source,
+          cli_created_at, cli_updated_at, cli_last_outcome, cli_deleted
+        FROM tasks WHERE workspace_key=? AND task_id=?`,
+      )
+      .get(workspaceKey(params), params.taskId) as Record<string, unknown> | undefined;
+    return row ?? null;
+  }
+
+  private readTaskHostId(params: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    taskId: string;
+  }): string | null {
+    const row = this.getDatabase()
+      .prepare("SELECT host_id FROM tasks WHERE workspace_key=? AND task_id=?")
+      .get(workspaceKey(params), params.taskId) as { host_id: string | null } | undefined;
+    return row?.host_id ?? null;
   }
 
   async seedTaskMetaIfMissing(meta: ZCodeTaskMeta): Promise<ZCodeTaskMeta> {
@@ -2294,6 +2388,7 @@ export class TaskIndexRepo {
         FROM tasks
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
+          AND NOT ${RESERVATION_PLACEHOLDER_SQL}
           -- Bugfix: ZCode Agent 列表只接受当前 glm provider；Claude Code 导入也属于非 glm 历史数据。
           AND (@provider IS NULL OR provider = @provider)
           AND (@pinned IS NULL OR pinned = @pinned)
@@ -2580,6 +2675,7 @@ export class TaskIndexRepo {
       .prepare(
         `SELECT EXISTS(
           SELECT 1 FROM tasks WHERE (@include_deleted = 1 OR deleted = 0)
+            AND NOT ${RESERVATION_PLACEHOLDER_SQL}
         ) AS found`,
       )
       .get({ include_deleted: params.includeDeleted ? 1 : 0 }) as { found: number } | undefined;
@@ -2637,7 +2733,11 @@ export class TaskIndexRepo {
     const search = params.search?.trim();
     const normalizedSearchLike =
       search && search.length > 0 ? `%${search.toLocaleLowerCase()}%` : null;
-    const where = ["deleted = 0", `workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`];
+    const where = [
+      "deleted = 0",
+      `NOT ${RESERVATION_PLACEHOLDER_SQL}`,
+      `workspace_key IN (${workspaceKeys.map(() => "?").join(", ")})`,
+    ];
     const args: Array<string | number> = [...workspaceKeys];
     if (params.provider) {
       appendZCodeAgentIndexedProviderFilter(where, args, params.provider);
@@ -2912,6 +3012,7 @@ export class TaskIndexRepo {
     const workspaceKeys = normalizeWorkspaceKeys(params.workspaceScopes);
     const activeTaskWhere = [
       "deleted = 0",
+      `NOT ${RESERVATION_PLACEHOLDER_SQL}`,
       "archived = 0",
       "pinned = 0",
       ...(includeAllWorkspaces

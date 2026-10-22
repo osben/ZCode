@@ -3395,6 +3395,26 @@ export function SessionPane({
   // ── 草稿态 v4 draft session 预热（m5）──
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
+  const dispatchPrewarmCommand = useCallback(
+    (
+      type: CommandType,
+      payload: Record<string, unknown>,
+      targetSessionId: string | null,
+      creationProjectId?: string | null,
+    ) =>
+      dispatchCommand(
+        type,
+        payload,
+        targetSessionId,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        creationProjectId,
+      ),
+    [dispatchCommand],
+  );
   const incognitoDraftActive = useDraftIncognitoIntentStore(
     (state) => sessionId === null && selectDraftIncognito(state, workspaceKey) !== null,
   );
@@ -3408,7 +3428,10 @@ export function SessionPane({
     // SessionDataLayer 来自 workspace connection registry：同 transport generation 的 pane/remount
     // 共享 identity；provider wrapper 重建产生的新 sendCommand 函数不能误判为 transport 换代。
     transportIdentity: layer,
-    dispatchCommand,
+    // 预热 createSession 的项目范围由草稿 pane 的 Root scope 决定（null = 未归属项目），
+    // 每代预热启动时捕获；不在失败重试时重新读取 store，避免写入另一个项目的目标。
+    dispatchCommand: dispatchPrewarmCommand,
+    creationProjectId: newTaskComposerScope.projectId,
     // 预热会话只消费当前 Root Composer Draft 的一次性初始化结果。
     resolveInitialConfig: resolveInitialDraftConfig,
   });

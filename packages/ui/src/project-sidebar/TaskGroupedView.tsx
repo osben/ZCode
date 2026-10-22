@@ -435,7 +435,6 @@ export function TaskGroupedView({
                     {...rowCallbacks}
                     node={node}
                     getTaskRemoteSessionId={getTaskRemoteSessionId}
-                    getTaskWorkspaceLabel={getWorkspaceLabel}
                     onCreateTask={() => createTask(node.group.id)}
                     hasDraftTask={draftGroupId === node.group.id}
                     draftTaskActive={!activeTaskId}
@@ -463,7 +462,6 @@ export function TaskGroupedView({
                   key={taskKey(node.task)}
                   task={node.task}
                   remoteSessionId={getTaskRemoteSessionId(node.task)}
-                  workspaceLabel={getWorkspaceLabel(node.task)}
                   dragId={taskKey(node.task)}
                   dragging={drag.activeTaskKey === taskKey(node.task)}
                 />
@@ -492,7 +490,6 @@ export function TaskGroupedView({
                   {...rowCallbacks}
                   task={activeTask}
                   remoteSessionId={getTaskRemoteSessionId(activeTask)}
-                  workspaceLabel={getWorkspaceLabel(activeTask)}
                   dragId={drag.activeTaskKey ?? undefined}
                   dragOverlay
                 />

@@ -31,6 +31,9 @@ import type { WorkspaceTabState } from "@/store/tabStore.js";
 
 const TASK_SEARCH_RESULT_LIMIT = 9;
 const TASK_SEARCH_GROUP_COLLAPSED_SNIPPET_LIMIT = 3;
+// Each query is a host RPC that scans the whole tasks index, so only the query that has stopped
+// changing for this long is sent to useGlobalTaskList. The input itself always updates instantly.
+const TASK_SEARCH_QUERY_SETTLE_MS = 200;
 
 type TaskSearchResultItem = ZCodeTaskMeta & {
   searchSnippet?: string;
@@ -104,6 +107,7 @@ export function TaskSearchDialog({
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<Set<string>>(() => new Set());
   const shortcutLabel = formatCommandShortcutLabel("G");
   const trimmedQuery = query.trim();
+  const [settledQuery, setSettledQuery] = useState("");
   const searchWorkspaceTabs = useMemo(() => (open ? workspaceTabs : []), [open, workspaceTabs]);
   const taskList = useGlobalTaskList({
     kind: "active",
@@ -113,7 +117,7 @@ export function TaskSearchDialog({
     // subscriptions while idle, reducing renderer/RPC pressure during startup.
     workspaceTabs: searchWorkspaceTabs,
     sortBy: "updated",
-    searchQuery: trimmedQuery,
+    searchQuery: settledQuery,
     expanded: false,
     collapsedLimit: TASK_SEARCH_RESULT_LIMIT,
   });
@@ -124,6 +128,8 @@ export function TaskSearchDialog({
       ),
     [workspaceTabs],
   );
+  // Mode follows the typed query, not the settled one: the list is still the previous result during the
+  // settle window, and deriving the mode from settledQuery would flip the empty-state wording and snippets to recents.
   const hasQuery = trimmedQuery.length > 0;
   const getTaskResultKey = useCallback(
     (task: Pick<TaskSearchResultItem, "workspaceIdentity" | "workspacePath" | "taskId">) =>
@@ -208,7 +214,7 @@ export function TaskSearchDialog({
       }
 
       onSelectSearchResult?.(row.task, {
-        query: trimmedQuery,
+        query: settledQuery,
         searchSnippet: row.searchSnippet?.trim() || row.task.searchSnippet?.trim() || undefined,
         snippetIndex: row.snippetIndex,
       });
@@ -216,7 +222,7 @@ export function TaskSearchDialog({
       setOpen(false);
       setQuery("");
     },
-    [getTaskResultKey, onSelectSearchResult, onSelectTask, trimmedQuery],
+    [getTaskResultKey, onSelectSearchResult, onSelectTask, settledQuery],
   );
   const selectTaskHeader = useCallback(
     (task: TaskSearchResultItem) => {
@@ -228,7 +234,18 @@ export function TaskSearchDialog({
   );
 
   useEffect(() => {
-    if (!open || !trimmedQuery) {
+    if (!trimmedQuery) {
+      // Clearing the input empties the list at once; the previous settled query must not linger.
+      setSettledQuery("");
+      return;
+    }
+
+    const timer = setTimeout(() => setSettledQuery(trimmedQuery), TASK_SEARCH_QUERY_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [trimmedQuery]);
+
+  useEffect(() => {
+    if (!open || !settledQuery) {
       return;
     }
 
@@ -236,22 +253,22 @@ export function TaskSearchDialog({
     // fresh in the task query cache. Refresh once when a query is typed so the service layer's
     // new body index and on-demand backfill take effect.
     void taskList.refresh();
-  }, [open, taskList.refresh, trimmedQuery]);
+  }, [open, taskList.refresh, settledQuery]);
 
   useEffect(() => {
     setExpandedTaskKeys(new Set());
-  }, [trimmedQuery]);
+  }, [settledQuery]);
 
   useEffect(() => {
-    if (!open || !trimmedQuery) {
+    if (!open || !settledQuery) {
       return;
     }
 
     const snippetCount = visibleResults.filter((result) => result.searchSnippet?.trim()).length;
     logger.info(
-      `[TaskSearchDialog] 搜索结果 query=${JSON.stringify(trimmedQuery)} items=${visibleResults.length} snippets=${snippetCount} firstSnippet=${JSON.stringify(visibleResults[0]?.searchSnippet?.slice(0, 80) ?? "")}`,
+      `[TaskSearchDialog] 搜索结果 query=${JSON.stringify(settledQuery)} items=${visibleResults.length} snippets=${snippetCount} firstSnippet=${JSON.stringify(visibleResults[0]?.searchSnippet?.slice(0, 80) ?? "")}`,
     );
-  }, [open, trimmedQuery, visibleResults]);
+  }, [open, settledQuery, visibleResults]);
 
   useEffect(() => {
     if (openRequestId <= 0) {

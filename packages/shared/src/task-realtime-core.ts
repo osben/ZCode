@@ -53,6 +53,7 @@ const taskMetaRealtimeSchema = z.object({
   traceId: nonEmptyString,
   title: z.string(),
   titleOverridden: z.boolean().optional(),
+  titleUpdatedAt: z.number().int().nonnegative().optional(),
   workspacePath: nonEmptyString,
   workspaceIdentity: nonEmptyString.optional(),
   createdAt: z.number().int().nonnegative(),

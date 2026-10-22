@@ -23,7 +23,6 @@ function mount() {
     activeWorkspacePath: "/workspace",
     activeTaskId: null,
     getTaskRemoteSessionId: () => undefined,
-    getTaskWorkspaceLabel: () => "workspace",
     onSelectTask: vi.fn(),
     onCloseTask: vi.fn(),
     onCreateTask: vi.fn(),

@@ -1,5 +1,5 @@
 import type { Locale } from "@zcode/shared";
-import { PlatformChannels } from "@zcode/shared";
+import { FALLBACK_UI_LOCALE, PlatformChannels, resolveSystemLocale } from "@zcode/shared";
 import type { PluginSandboxHandle, PluginSandboxRegisterInput } from "@zcode/shared/mcp-apps";
 import {
   BrowserWindow,
@@ -60,6 +60,8 @@ export function installPluginSandboxHost(input: {
   registry?: PluginSandboxRegistryPort;
   /** 注册表容量（缺省 64）；e2e L05 用 1 验证配额拒绝。 */
   registryMaxEntries?: number;
+  /** 应用语言（与 index.ts 的 resolveEffectiveConfirmationLocale 同源）；每次弹框时读取。缺省用系统语言。 */
+  getLocale?: () => Locale;
 }): PluginSandboxHost {
   if (installedHost) return installedHost;
   const detachByKey = new Map<string, () => void>();
@@ -154,8 +156,13 @@ export function installPluginSandboxHost(input: {
     });
 
   // 页面浏览器权限闸门：确认框由 main 原生弹出，父窗口是登记该沙箱的宿主窗口，页面无法伪造。
+  // 缺省语言与 desktopApplicationMenu 的 resolveSystemApplicationLocale 同源（系统语言优先）。
   const resolveLocale = (): Locale =>
-    app.getLocale().toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+    input.getLocale?.() ??
+    resolveSystemLocale(
+      app.getPreferredSystemLanguages?.()[0] ?? app.getLocale(),
+      FALLBACK_UI_LOCALE,
+    );
   const permissions = createPluginSandboxPermissionGate({
     registry,
     async prompt({ record, permissions: pending }) {

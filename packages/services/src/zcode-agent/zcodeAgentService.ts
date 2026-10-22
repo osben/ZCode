@@ -406,6 +406,28 @@ import {
   zcodeMcpUiOpenInstanceResultSchema,
 } from "@zcode/shared";
 const logger = createServiceLogger("zcode-agent-service");
+
+/**
+ * Session id reserved by prepareSessionCreation for a plain create. Durable submissions, worktree preparations and prepared ids keep
+ * their reservation for explicit Retry (specs/first-submission-lifecycle.md), so they never report a discardable reservation.
+ */
+function plainCreateReservationSessionId(
+  params: ZCodeAgentConversationCommandParams,
+  envelope: CommandEnvelope,
+): string | undefined {
+  if (params.envelope.type !== "createSession" || envelope.type !== "createSession")
+    return undefined;
+  const source = params.envelope.payload as Record<string, unknown>;
+  if (
+    source.submissionPreparation !== undefined ||
+    source.expectedSubmissionId !== undefined ||
+    source.preparedSessionId !== undefined ||
+    source.worktreePreparation !== undefined
+  )
+    return undefined;
+  const sessionId = (envelope.payload as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === "string" ? sessionId : undefined;
+}
 const cuaOperationLogger = createServiceLogger("cua-operation-turn");
 const PLUGIN_MANAGEMENT_WORKSPACE_DIR_NAME = "plugin-workspace";
 // Release idle MCP subprocesses after status probing; this affects only the control plane, not session processes.
@@ -1042,6 +1064,26 @@ interface CreateZCodeAgentServiceOptions extends Omit<
       additionalDirectories?: string[];
     },
   ) => Promise<string[]>;
+  /**
+   * Removes the reservation placeholder that prepareSessionCreation wrote for a create the CLI never admitted (see
+   * discardAbandonedSessionReservation). The implementation must delete only rows that still have no CLI facts.
+   */
+  discardSessionReservation?: (target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    sessionId: string;
+  }) => Promise<unknown>;
+  /**
+   * Claims the fork child for its parent's project after the CLI acknowledges forkAssistant (see claimForkedSessionOwnership).
+   * The CLI does not know projects, and its sessions-index row may arrive before or after this ack, so the claim must be idempotent.
+   * Resolves null when the parent has no owner yet; the child then stays unclaimed until admission (never an error).
+   */
+  prepareForkedSession?: (target: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    parentSessionId: string;
+    sessionId: string;
+  }) => Promise<unknown>;
   resolveSessionDirectories?: (target: ZCodeAgentSessionTarget) => Promise<string[]>;
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
@@ -3809,6 +3851,72 @@ export function createZCodeAgentService(
       : { dynamicWorkflowEnabled: false };
   }
 
+  /**
+   * Abandoned create/prewarm reservations are cleared here, the same place that reserved them. A deleteSession ACK accepted or noop
+   * means the CLI no longer holds the session; a deleteSession rejected with proto.sessionNotFound means the CLI never initialized it
+   * (an abandoned draft). A plain create ACK rejected means the CLI refused it before creating anything. Unknown outcomes (a thrown
+   * request, duplicate or stale ACKs) keep the reservation, because the CLI may have created the session. Discarding on
+   * proto.sessionNotFound is safe: a concurrent create that lands later re-creates a missing row when its CLI facts apply.
+   */
+  async function discardAbandonedSessionReservation(
+    params: ZCodeAgentConversationCommandParams,
+    ack: CommandAck,
+    createReservationSessionId: string | undefined,
+  ): Promise<void> {
+    if (!options?.discardSessionReservation) return;
+    let sessionId: string | undefined;
+    if (params.envelope.type === "deleteSession") {
+      if (
+        ack.status === "accepted" ||
+        ack.status === "noop" ||
+        (ack.status === "rejected" && ack.reasonCode === "proto.sessionNotFound")
+      )
+        sessionId = params.envelope.sessionId ?? undefined;
+    } else if (createReservationSessionId !== undefined && ack.status === "rejected") {
+      sessionId = createReservationSessionId;
+    }
+    if (sessionId === undefined) return;
+    try {
+      await options.discardSessionReservation({
+        workspacePath: params.workspacePath,
+        ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+        sessionId,
+      });
+    } catch (error) {
+      logger.warn(undefined, "放弃的会话预留清理失败", {
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * A fork child is created by the CLI, so the Host never reserves it on the create path. The accepted forkAssistant ACK names the
+   * child, and this is the only point where the Host knows its parent; the child claims the parent's project and directories here.
+   */
+  async function claimForkedSessionOwnership(
+    params: ZCodeAgentConversationCommandParams,
+    envelope: CommandEnvelope,
+    ack: CommandAck,
+  ): Promise<void> {
+    if (!options?.prepareForkedSession) return;
+    if (envelope.type !== "forkAssistant" || !envelope.sessionId) return;
+    if (ack.result?.type !== "forkAssistant") return;
+    const claim = await options.prepareForkedSession({
+      workspacePath: params.workspacePath,
+      ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
+      parentSessionId: envelope.sessionId,
+      sessionId: ack.result.sessionId,
+    });
+    // The CLI has already forked, so an unowned parent must not fail the command. admitForkSummary claims the child later.
+    if (claim === null) {
+      logger.warn(undefined, "fork child left unclaimed: parent has no owner yet", {
+        parentSessionId: envelope.sessionId,
+        sessionId: ack.result.sessionId,
+      });
+    }
+  }
+
   async function buildConversationCommandEnvelope(
     params: ZCodeAgentConversationCommandParams,
   ): Promise<CommandEnvelope> {
@@ -6302,6 +6410,10 @@ export function createZCodeAgentService(
         });
       }
       let envelope = await buildConversationCommandEnvelope(params);
+      const createReservationSessionId =
+        options?.prepareSessionCreation !== undefined
+          ? plainCreateReservationSessionId(params, envelope)
+          : undefined;
       // The first TTFT version allows only trusted desktop-local continuous sessions; mobile/remote forwarding cannot enable local observation.
       if (
         commandClientMode !== "desktop-continuous" ||
@@ -6339,6 +6451,8 @@ export function createZCodeAgentService(
         }
       }
       const ack: CommandAck = await client.request(V4_METHODS.command, envelope, commandAckSchema);
+      await discardAbandonedSessionReservation(params, ack, createReservationSessionId);
+      await claimForkedSessionOwnership(params, envelope, ack);
       // The Prompt command returns as soon as either committed TurnStarted or committed WorkspaceHookReviewRequested authority arrives;
       // human review must not occupy Host RPC, so keep the shared default timeout/watchdog. Extending it to the review deadline would only hide a serial protocol queue deadlock.
       // A duplicate proves only that commandId was processed before, not that its target still matches the current session configuration.

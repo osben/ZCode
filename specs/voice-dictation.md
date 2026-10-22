@@ -374,13 +374,14 @@ Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on 
 - `voiceDictation.warmUpOnFocus` controls it. **Default on**: absent means on; only an explicit `false` disables it. The setting row explains that a loaded model holds memory until the idle-unload delay passes.
 - Warm-up also counts as use: warming an already-loaded model restarts its idle-unload countdown, so a model stays resident while the user keeps coming back to the composer.
 - Warm-up is best-effort. A failure (missing model file, older Host without the method, load error) is logged at warn level and never shown to the user; the next recording loads the model on demand exactly as before.
+- **Not-ready rule:** a selected model that is not ready (not downloaded, or still downloading) is skipped by the Host. `warmUp` resolves without loading, starting a timer, or logging an error, so an idle user with no model produces no warm-up failure. Only a real load failure of a ready model rejects. A stream that starts while the model state is read also makes `warmUp` resolve without loading, because the stream owns the model and a load under a live stream is refused. Recording still reports a missing model when it needs one.
 - Warm-up is Desktop-local only: Web remote control and hosts without the voice service do nothing.
 
 ### Ownership and interfaces
 
 - `IVoiceDictationService.warmUp({ modelId })` is new. `VoiceTranscriber` still owns which model is loaded (`load()` already serializes through its queue); `VoiceDictationService` owns the idle timer and the stream-lease guard.
-- Service rules: no-op while a dictation stream is active (never unload or swap a model under a stream); otherwise load the model, then (re)start the idle-unload timer unless a stream or transcription started meanwhile. A model that is not downloaded rejects with the store's existing error.
-- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds for the whole renderer window (a module-scope throttle keyed by model id, shared by every composer), never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session.
+- Service rules: no-op while a dictation stream is active (never unload or swap a model under a stream); no-op when the model is not ready (see the not-ready rule); otherwise load the model, then (re)start the idle-unload timer unless a stream or transcription started meanwhile.
+- UI: `useVoiceModelWarmUp` (renderer) listens for focus entering the composer scope, applies the idle-unload preference, and calls `warmUp`. It requests at most once per model per 30 seconds for the whole renderer window (a module-scope throttle keyed by model id, shared by every composer), never while a request is in flight, and tolerates `Method not found: warmUp` from an older Host by disabling itself for the session. While the request is in flight it holds a runtime-poll activity lease (`retainVoiceDictationRuntimeActivity`), so the status dot shows the load at the active cadence.
 - Settings UI owns only the toggle; the service stays authoritative for what is loaded (the existing runtime state shows the `Loaded` badge).
 
 ```mermaid
@@ -411,7 +412,7 @@ sequenceDiagram
 | VD-WRM-03 | Focus the composer repeatedly within 30 seconds      | At most one warm-up request.                                                                            |
 | VD-WRM-04 | Model already loaded; focus the composer             | No reload; the idle-unload countdown restarts.                                                          |
 | VD-WRM-05 | A dictation stream is active                         | Warm-up does nothing and the stream is untouched.                                                       |
-| VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; the failure is only logged.                                                             |
+| VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; no warm-up failure is logged (the Host skips a model that is not ready).                |
 | VD-WRM-07 | Older Host without `warmUp`                          | Dictation works as before; no toast; no repeated requests in the session.                               |
 | VD-WRM-08 | Web remote control                                   | No warm-up.                                                                                             |
 
@@ -426,20 +427,23 @@ sequenceDiagram
 ### Ownership and interfaces
 
 - The Host stays the only owner of what is loaded. `VoiceTranscriber.load()` now reports the `loading` phase and the model id through the existing runtime snapshot (it did not before: only transcription and streaming did, so a warm-up load was invisible).
-- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()` once per second, only while Desktop dictation is enabled and the window is visible. There is no second source of truth. One poller per renderer window (`useVoiceDictationRuntimeState`) is shared by every mounted composer and settings view: it runs while at least one view subscribes, and it notifies views only when the snapshot fields change, so an unchanged poll does not re-render.
-- The snapshot is a poll, so the dot can lag the Host by up to one poll interval.
+- The renderer derives the status with the pure `deriveVoiceModelStatus(runtimeState, selectedModelId)` and polls the existing `getRuntimeState()`, only while Desktop dictation is enabled and the window is visible. There is no second source of truth. One poller per renderer window (`useVoiceDictationRuntimeState`) is shared by every mounted composer and settings view: it runs while at least one view subscribes, and it notifies views only when the snapshot fields change, so an unchanged poll does not re-render.
+- **Poll cadence rule:** the poll runs every **1 s** while the Host reports a busy snapshot (`activePhase` is `loading`, `transcribing`, or `streaming`) or while this window holds an activity lease (a warm-up request in flight; the lease also triggers an immediate poll). Otherwise, including the home screen with no session open, it runs every **10 s**. The voice service has no push event for runtime state, so the poll is the only source. Downloads do not change the runtime snapshot; download progress is read separately through `listModels()` by the Settings page and does not need this poll.
+- The snapshot is a poll, so the dot can lag the Host by up to one poll interval: up to 1 s while busy, up to 10 s while idle.
 
 ### Acceptance scenarios
 
-| Case      | Setup / action                                       | Expected result                                                   |
-| --------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| VD-DOT-01 | Selected model starts loading (warm-up or first use) | A pulsing warning dot appears on the microphone button.           |
-| VD-DOT-02 | The model finishes loading                           | The dot turns success-colored and stays.                          |
-| VD-DOT-03 | The idle-unload delay passes                         | The dot disappears within about a second.                         |
-| VD-DOT-04 | A different model is loaded than the selected one    | No dot.                                                           |
-| VD-DOT-05 | Recording or transcribing                            | The dot is hidden; the existing recording/spinner state is shown. |
-| VD-DOT-06 | Reduced motion is requested                          | The loading dot does not pulse.                                   |
-| VD-DOT-07 | Window hidden                                        | The renderer stops polling until it is visible again.             |
+| Case      | Setup / action                                           | Expected result                                                               |
+| --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| VD-DOT-01 | Selected model starts loading (warm-up or first use)     | A pulsing warning dot appears on the microphone button.                       |
+| VD-DOT-02 | The model finishes loading                               | The dot turns success-colored and stays.                                      |
+| VD-DOT-03 | The idle-unload delay passes                             | The dot disappears within one idle poll interval (up to 10 s, VD-DOT-08).     |
+| VD-DOT-04 | A different model is loaded than the selected one        | No dot.                                                                       |
+| VD-DOT-05 | Recording or transcribing                                | The dot is hidden; the existing recording/spinner state is shown.             |
+| VD-DOT-06 | Reduced motion is requested                              | The loading dot does not pulse.                                               |
+| VD-DOT-07 | Window hidden                                            | The renderer stops polling until it is visible again, then polls immediately. |
+| VD-DOT-08 | Idle Host, no session open, user does nothing            | The runtime snapshot is requested at most once per 10 s, not once per second. |
+| VD-DOT-09 | Warm-up request in flight, or the Host reports `loading` | The runtime snapshot is requested once per second until the load ends.        |
 
 ## Post-processing of dictated text
 

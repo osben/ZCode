@@ -647,6 +647,38 @@ describe("createZCodeTaskIndexSyncer", () => {
     env.configEmitter.dispose();
   });
 
+  it("mirrors summary titleUpdatedAt into task meta when a title change lands on an admitted row", async () => {
+    const env = setupEnv({
+      initialSessions: [summaryOf(seedTarget.sessionId, "running")],
+    });
+    await seedRunningTask(env.repo);
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    syncer.ensureSessionSubscription(seedTarget);
+    await subscribed(env);
+
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf(seedTarget.sessionId, "running", { title: "renamed", titleUpdatedAt: 555 }),
+      ),
+    );
+
+    await vi.waitFor(async () => {
+      const meta = await env.repo.getTaskMeta({
+        workspacePath: seedTarget.workspacePath,
+        taskId: seedTarget.sessionId,
+      });
+      expect(meta?.title).toBe("renamed");
+      expect(meta?.titleUpdatedAt).toBe(555);
+    });
+
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
   it("falls back to a full snapshot when title arrives before task index row exists", async () => {
     const env = setupEnv();
     const target: ZCodeAgentSessionTarget = {
@@ -698,6 +730,196 @@ describe("createZCodeTaskIndexSyncer", () => {
       taskId: "sess_missing",
     });
     expect(broadcasts.length).toBe(1);
+
+    subscription.dispose();
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
+  it("admits a fork child claimed by the Host from its first sessions-index summary", async () => {
+    const env = setupEnv();
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    const broadcasts: ZCodeWorkspaceEvent[] = [];
+    const subscription = syncer.onDynamicWorkspaceEvent({
+      workspacePath: "/repo",
+    })((event) => broadcasts.push(event));
+    syncer.ensureSessionSubscription({ workspacePath: "/repo", sessionId: "parent" });
+    await subscribed(env);
+
+    // The parent is owned by the Host (reserved at create). The child is claimed at the forkAssistant ACK,
+    // which may land before or after its first summary; this test covers the claim-first ordering.
+    const projects = await env.repo.getProjectRepository();
+    const project = projects.saveProject({ roots: ["/repo"] });
+    const parent = { workspacePath: "/repo", taskId: "parent" };
+    projects.reserveCreatedTask({ task: parent, projectId: project.id });
+    projects.reserveCreatedTask({ task: { ...parent, taskId: "child" }, forkOf: parent });
+
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf("child", "running", {
+          title: "Fork of parent",
+          parentSessionId: "parent",
+          createdAt: 1000,
+          lastActivityAt: 1100,
+        }),
+      ),
+    );
+
+    const db = await env.repo.getOrganizationDatabase();
+    await vi.waitFor(() => {
+      expect(
+        db
+          .prepare("SELECT host_id, project_id, cli_created_at FROM tasks WHERE task_id='child'")
+          .get(),
+      ).toEqual({ host_id: "local", project_id: project.id, cli_created_at: 1000 });
+    });
+    // The became-visible resync runs in parallel and must not clear the fork link it may overwrite.
+    await vi.waitFor(() => {
+      expect(env.agent.readSession).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "child" }),
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const listed = await env.repo.listTaskMetas({ workspacePath: "/repo" });
+    expect(listed.find((meta) => meta.taskId === "child")).toMatchObject({
+      taskId: "child",
+      forkedFromTaskId: "parent",
+      createdAt: 1000,
+    });
+    // The first admission announces the child to the sidebar once.
+    expect(
+      broadcasts.filter(
+        (event) =>
+          event.type === "workspace_task_list_changed" &&
+          event.taskId === "child" &&
+          event.reason === "task_meta_changed",
+      ),
+    ).toHaveLength(1);
+
+    // A repeated identical summary changes no ownership or CLI fact, so it must not broadcast again.
+    const settled = broadcasts.length;
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf("child", "running", {
+          title: "Fork of parent",
+          parentSessionId: "parent",
+          createdAt: 1000,
+          lastActivityAt: 1100,
+        }),
+        3,
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(broadcasts).toHaveLength(settled);
+
+    subscription.dispose();
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
+  it("claims an unowned legacy fork row on its first summary when the parent is owned", async () => {
+    const env = setupEnv();
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    const subscription = syncer.onDynamicWorkspaceEvent({
+      workspacePath: "/repo",
+    })(() => {});
+    syncer.ensureSessionSubscription({ workspacePath: "/repo", sessionId: "parent" });
+    await subscribed(env);
+
+    const projects = await env.repo.getProjectRepository();
+    const project = projects.saveProject({ roots: ["/repo"] });
+    const parent = { workspacePath: "/repo", taskId: "parent" };
+    projects.reserveCreatedTask({ task: parent, projectId: project.id });
+    // A pre-fix fork row: written by the organization writer with created_at set, no host, project or CLI facts.
+    await env.repo.syncTaskMeta({
+      meta: {
+        taskId: "child",
+        traceId: "trace_child",
+        title: "Fork of parent",
+        workspacePath: "/repo",
+        createdAt: 1000,
+        updatedAt: 1000,
+        mode: "default",
+        forkedFromTaskId: "parent",
+      },
+    });
+
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf("child", "running", {
+          title: "Fork of parent",
+          parentSessionId: "parent",
+          createdAt: 1000,
+          lastActivityAt: 1100,
+        }),
+      ),
+    );
+
+    const db = await env.repo.getOrganizationDatabase();
+    await vi.waitFor(() => {
+      expect(
+        db.prepare("SELECT host_id, project_id, root_path FROM tasks WHERE task_id='child'").get(),
+      ).toEqual({ host_id: "local", project_id: project.id, root_path: "/repo" });
+    });
+    await vi.waitFor(async () => {
+      const listed = await env.repo.listTaskMetas({ workspacePath: "/repo" });
+      expect(listed).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ taskId: "child", forkedFromTaskId: "parent" }),
+        ]),
+      );
+    });
+
+    subscription.dispose();
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
+  it("admits legacy fork rows from the silent first snapshot without broadcasting", async () => {
+    const env = setupEnv({
+      initialSessions: [
+        summaryOf("child", "completedSuccess", {
+          title: "Fork of parent",
+          parentSessionId: "parent",
+          createdAt: 1000,
+          lastActivityAt: 1100,
+        }),
+      ],
+    });
+    const projects = await env.repo.getProjectRepository();
+    const project = projects.saveProject({ roots: ["/repo"] });
+    const parent = { workspacePath: "/repo", taskId: "parent" };
+    projects.reserveCreatedTask({ task: parent, projectId: project.id });
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    const broadcasts: ZCodeWorkspaceEvent[] = [];
+    const subscription = syncer.onDynamicWorkspaceEvent({
+      workspacePath: "/repo",
+    })((event) => broadcasts.push(event));
+    syncer.ensureSessionSubscription({ workspacePath: "/repo", sessionId: "parent" });
+    await subscribed(env);
+
+    const db = await env.repo.getOrganizationDatabase();
+    await vi.waitFor(() => {
+      expect(
+        db
+          .prepare("SELECT host_id, project_id, cli_created_at FROM tasks WHERE task_id='child'")
+          .get(),
+      ).toEqual({ host_id: "local", project_id: project.id, cli_created_at: 1000 });
+    });
+    expect(broadcasts).toEqual([]);
 
     subscription.dispose();
     syncer.disposeAll();

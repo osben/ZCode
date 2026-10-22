@@ -9,6 +9,7 @@ import {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
 } from "@/components/ui/context-menu.js";
+import { TaskPullRequestMenuItems } from "@/components/TaskPullRequestMenuItems.js";
 import { TaskGroupColorDot } from "@/project-sidebar/grouped/colors.js";
 import type { TaskGroupMenuItem } from "@/project-sidebar/grouped/types.js";
 
@@ -153,6 +154,13 @@ export function GroupedTaskContextMenuContent({
           {intl.formatMessage({ id: "taskList.markAsUnread" })}
         </ContextMenuItem>
       </SidebarNativeTooltip>
+      <TaskPullRequestMenuItems
+        task={task}
+        intl={intl}
+        Item={ContextMenuItem}
+        Separator={ContextMenuSeparator}
+        onCopyText={onCopyText}
+      />
       <ContextMenuSeparator />
       <SidebarNativeTooltip>
         <ContextMenuItem

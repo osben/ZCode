@@ -6,15 +6,18 @@ import {
   dispatchWebElementContextAddToChat,
   type WebElementContextPayload,
 } from "@/lib/webElementContext.js";
-import {
-  dispatchCodeCommentAddToChat,
-  type CodeCommentPayload,
-} from "@/lib/codeCommentContext.js";
+import { dispatchCodeCommentAddToChat, type CodeCommentPayload } from "@/lib/codeCommentContext.js";
 import { ConversationComposer } from "@/v4/ConversationComposer.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const { chatPromptEditorProps } = vi.hoisted(() => ({
   chatPromptEditorProps: [] as Array<Record<string, unknown>>,
+}));
+
+// A failed send now announces itself with a toast; the real toast needs document.body and
+// requestAnimationFrame, which this composer harness does not provide.
+vi.mock("@/components/ui/toast.js", () => ({
+  toast: vi.fn(),
 }));
 
 vi.mock("@/ControlHintTooltip.js", async () => {

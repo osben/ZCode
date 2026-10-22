@@ -13,6 +13,12 @@ The conversation pinned-message strip keeps its accessible title on the containe
 - Menu actions retain their labels and behavior.
 - Pinned messages retain navigation, removal, and an accessible strip label.
 
+## Sidebar task relative time labels
+
+- Relative time labels on sidebar task rows (for example "8m", "3h") refresh at least every minute while the window is visible, even when the task's data does not change; a single shared minute ticker (`useNowMinute` in `lib/taskListItemPresentation.ts`) owns "now" for all rows, rendered through `TaskRelativeTimeLabel`, and it pauses while the document is hidden and refreshes immediately when it becomes visible again.
+- Time labels are display-only: sort order and grouping keys never read the ticker's "now", so a label refresh cannot reorder rows (session-management invariant I6).
+- Acceptance: with fake timers, a row label changes from "now" to "1m" after 60 s while visible, and does not change while hidden.
+
 ## Distinct names for the two "New task" entry points
 
 The sidebar has two task-creation entry points with different destinations:

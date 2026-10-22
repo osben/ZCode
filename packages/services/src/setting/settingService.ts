@@ -1,4 +1,4 @@
-import { access, readFile, mkdir, rename } from "node:fs/promises";
+import { access, readFile, mkdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type {
@@ -11,7 +11,6 @@ import {
   appSettingsSchema,
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
-  formatLogPrefix,
   formatZodError,
   splitForkSettingsPatch,
 } from "@zcode/shared";
@@ -19,7 +18,7 @@ import type { ForkAppSettings } from "@zcode/shared";
 import type { ISettingService, WorkspaceSettingsProjection } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
-import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
 import { createSettingsWriteQueue } from "./settingsWriteQueue.js";
@@ -42,15 +41,10 @@ const DEFAULT_PROJECT_NAME = "ZCodeProject";
 const SETTINGS_PARSE_RETRY_DELAY_MS = 300;
 const SETTINGS_PARSE_RETRY_COUNT = 3;
 
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("settingService", process.pid), ...args);
-const debugLog = (...args: unknown[]) => {
-  // NODE_ENV inherited from the user's shell can mislead the service-layer debug switch; use ZCODE_RUNTIME_ENV consistently.
-  if (!isEffectiveDevelopmentNodeEnv()) {
-    return;
-  }
-  console.debug(formatLogPrefix("settingService", process.pid), ...args);
-};
+const settingLogger = createServiceLogger("settingService");
+// info lines carry key names and counts only; settings values go to debug, which the service logger gates to development.
+const log = (...args: unknown[]) => settingLogger.info(undefined, ...args);
+const debugLog = (...args: unknown[]) => settingLogger.debug(undefined, ...args);
 
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
@@ -106,6 +100,8 @@ function shouldPersistSettingsMigrations(rawValue: unknown): boolean {
 interface ReadSettingsResult {
   settings: AppSettings;
   needsMigrationPersist: boolean;
+  /** Set when the file could not be read or parsed this time; such defaults must not be cached as the file's content. */
+  transientReadFailure?: boolean;
   /** Fork-owned keys found in the raw setting.json before the schema stripped them; set only when the one-time sidecar migration still has something to move. */
   legacyForkSettings?: Partial<ForkAppSettings>;
 }
@@ -137,6 +133,7 @@ async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSet
         return {
           settings: defaultSettings(),
           needsMigrationPersist: false,
+          transientReadFailure: true,
         };
       }
     }
@@ -176,12 +173,50 @@ async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSet
     return {
       settings: defaultSettings(),
       needsMigrationPersist: false,
+      transientReadFailure: true,
     };
   }
 }
 
-async function readSettings(location: SettingsLocation): Promise<AppSettings> {
-  return (await readSettingsWithMeta(location)).settings;
+const RACY_TIMESTAMP_WINDOW_MS = 2_000;
+const NS_PER_MS = BigInt(1_000_000);
+
+/**
+ * Identity of one settings file. Every atomic write replaces the inode, so a rewrite by any
+ * process changes this value. Null means the identity cannot be trusted (stat failed, or the file
+ * changed within the racy window) and the snapshot built from it must not be reused.
+ */
+async function readSettingsFileIdentity(filePath: string): Promise<string | null> {
+  try {
+    const info = await stat(filePath, { bigint: true });
+    // Racy-timestamp guard, as git applies to its index: coarse-timestamp filesystems (FAT/exFAT 2 s,
+    // some SMB/DrvFs mounts) can keep size and timestamp unchanged across a rewrite made within the same
+    // granularity. An identity captured this close to the file's last change proves nothing, so it is not cached.
+    // Future-dated timestamps fall inside the same check and are treated as racy too.
+    const newestChangeNs = info.mtimeNs > info.ctimeNs ? info.mtimeNs : info.ctimeNs;
+    if (newestChangeNs >= BigInt(Date.now() - RACY_TIMESTAMP_WINDOW_MS) * NS_PER_MS) return null;
+    return `${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
+      return "absent";
+    }
+    return null;
+  }
+}
+
+async function readSettingsFilesIdentity(location: SettingsLocation): Promise<string | null> {
+  const [main, fork] = await Promise.all([
+    readSettingsFileIdentity(location.file),
+    readSettingsFileIdentity(location.forkFile),
+  ]);
+  return main === null || fork === null ? null : `${main}|${fork}`;
+}
+
+interface SettingsSnapshot {
+  /** Identity taken before the files were read: a later change makes this snapshot stale. */
+  identity: string | null;
+  base: ReadSettingsResult;
+  fork: ForkAppSettings;
 }
 
 async function writeSettings(
@@ -197,7 +232,8 @@ async function writeSettings(
   const settingsFile = location.file;
   // Tests on Windows may change only HOME; if a module-level constant freezes homedir() at import time,
   // later reads/writes still use the real user directory. Resolve the config path from the current environment each time for stable local/test behavior.
-  log("writing settings to:", settingsFile, JSON.stringify(settings));
+  debugLog("writing settings, keys:", Object.keys(settings).join(", "));
+  debugLog("write payload:", JSON.stringify(settings));
   maybeThrowInjectedFsFault({ operation: "mkdir", path: settingsDir });
   await mkdir(settingsDir, { recursive: true });
   if (!shouldCommit()) return;
@@ -227,7 +263,7 @@ async function writeSettings(
         await renameFile();
       }),
   });
-  log("write done");
+  debugLog("write done");
 }
 
 export function createSettingService(): ISettingService {
@@ -248,6 +284,30 @@ export function createSettingServiceWithMigrations(): {
     createSettingsWriteQueue();
   // Paths are pinned here: a later service created under another HOME must not redirect this instance's IO.
   const location = resolveSettingsLocation();
+  // Reads are served from this snapshot, reloaded only when the files' identity changes. The write path
+  // reloads the snapshot inside the queue before it resolves; an identity change covers writes by other
+  // instances and external edits.
+  let snapshot: SettingsSnapshot | undefined;
+  const loadSettingsSnapshot = async (): Promise<SettingsSnapshot> => {
+    const identity = await readSettingsFilesIdentity(location);
+    if (snapshot && identity !== null && snapshot.identity === identity) return snapshot;
+    const base = await readSettingsWithMeta(location);
+    let forkReadFailed = false;
+    const fork = await readForkSettings(location, {
+      onIoError: () => {
+        forkReadFailed = true;
+      },
+    });
+    if (snapshot) {
+      debugLog("settings snapshot reloaded after file change");
+    } else {
+      log("settings snapshot loaded, top-level keys:", Object.keys(base.settings).length);
+    }
+    // A failed read yields defaults for this call only: keep identity null so the next read retries the disk.
+    const cacheable = identity !== null && !base.transientReadFailure && !forkReadFailed;
+    snapshot = { identity: cacheable ? identity : null, base, fork };
+    return snapshot;
+  };
   // Upstream host assembly binds the workspace projection once. Fork keys are merged after projection,
   // so projection parsing (which strips unknown keys) never sees the sidecar values.
   let workspaceProjection:
@@ -263,12 +323,12 @@ export function createSettingServiceWithMigrations(): {
       // A Session may be created or cold-restored immediately after settings change; if this read overtakes an enqueued write,
       // runtime will retain the old switch value. Wait for queued writes first so startup preferences use the committed choice.
       await waitForQueuedWrites();
-      const result = await readSettingsWithMeta(location);
-      const projected = await projectSettings(result.settings);
+      const loaded = await loadSettingsSnapshot();
+      const projected = await projectSettings(loaded.base.settings);
       const migrationPending =
-        result.needsMigrationPersist || result.legacyForkSettings !== undefined;
-      if (!migrationPending && JSON.stringify(projected) === JSON.stringify(result.settings)) {
-        return { ...projected, ...(await readForkSettings(location)) };
+        loaded.base.needsMigrationPersist || loaded.base.legacyForkSettings !== undefined;
+      if (!migrationPending && JSON.stringify(projected) === JSON.stringify(loaded.base.settings)) {
+        return structuredClone({ ...projected, ...loaded.fork });
       }
 
       await enqueueSettingsWrite(async (shouldCommit, enterCommitPhase) => {
@@ -301,13 +361,14 @@ export function createSettingServiceWithMigrations(): {
             { useFileLock: false },
           );
         });
+        await loadSettingsSnapshot();
       });
 
-      const [settings, migratedForkSettings] = await Promise.all([
-        readSettings(location),
-        readForkSettings(location),
-      ]);
-      return { ...(await projectSettings(settings)), ...migratedForkSettings };
+      const migrated = await loadSettingsSnapshot();
+      return structuredClone({
+        ...(await projectSettings(migrated.base.settings)),
+        ...migrated.fork,
+      });
     },
 
     async update(patch: Partial<AppSettings>, expectedAccountSettings): Promise<void> {
@@ -391,6 +452,9 @@ export function createSettingServiceWithMigrations(): {
         if (validatedForkPatch) {
           await updateForkSettings(validatedForkPatch, { shouldCommit }, location);
         }
+        // Refresh before the queue turn resolves so a read that follows this update is served without disk IO.
+        await loadSettingsSnapshot();
+        log("settings updated, patch keys:", Object.keys(patch).join(", "));
       };
 
       await enqueueSettingsWrite(runUpdate);
@@ -491,6 +555,7 @@ export function createSettingServiceWithMigrations(): {
             enterCommitPhase,
             true,
           );
+          await loadSettingsSnapshot();
         });
         return readIncompleteLegacyTeamConnections(
           await readLegacyAccountConnectionSettingsFile(location.file),

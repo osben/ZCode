@@ -1,6 +1,7 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { retainVoiceDictationRuntimeActivity } from "@/hooks/useVoiceDictationRuntimeState.js";
 import { applyIdleUnloadPreference } from "@/lib/voiceIdleUnload.js";
 import { resolveVoiceDictationPreferences } from "@/lib/voiceDictationPreferences.js";
 import { logger } from "@/logger.js";
@@ -57,6 +58,8 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
       if (last !== undefined && now - last < WARM_UP_THROTTLE_MS) return;
       inFlightRef.current = true;
       lastWarmUpByModel.set(modelId, now);
+      // The status dot must show the load while it runs, so the runtime poll runs at its active cadence.
+      const releaseActivity = retainVoiceDictationRuntimeActivity();
       try {
         await applyIdleUnloadPreference(voiceDictationService, idleUnloadMinutes);
         await voiceDictationService.warmUp({ modelId });
@@ -70,6 +73,7 @@ export function useVoiceModelWarmUp({ enabled, scopeRef }: UseVoiceModelWarmUpOp
           });
         }
       } finally {
+        releaseActivity();
         inFlightRef.current = false;
       }
     };

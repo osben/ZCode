@@ -412,6 +412,49 @@ describe("CodeViewer", () => {
     expect(html).toContain("--code-comment-add-tooltip:&quot;点击或拖拽添加评论&quot;");
   });
 
+  it("stops observing gutter shadow roots whose host left the document", async () => {
+    const observedTargets = new Map<Node, { disconnected: boolean }>();
+    const NativeMutationObserver = globalThis.MutationObserver;
+    class TrackingMutationObserver extends NativeMutationObserver {
+      private readonly records: { disconnected: boolean }[] = [];
+      override observe(target: Node, options?: MutationObserverInit) {
+        const record = { disconnected: false };
+        this.records.push(record);
+        observedTargets.set(target, record);
+        super.observe(target, options);
+      }
+      override disconnect() {
+        for (const record of this.records) record.disconnected = true;
+        super.disconnect();
+      }
+    }
+    vi.stubGlobal("MutationObserver", TrackingMutationObserver);
+    try {
+      const view = render(
+        createElement(CodeViewer, {
+          code: "const value = 1;",
+          language: "typescript",
+          enableLineSelection: true,
+          enableGutterUtility: true,
+          onSubmitCodeComment: () => undefined,
+        }),
+      );
+      const diffsContainer = view.container.querySelector("diffs-container");
+      if (!diffsContainer) throw new Error("diffs container was not rendered");
+      const staleHost = document.createElement("div");
+      const staleShadowRoot = staleHost.attachShadow({ mode: "open" });
+      diffsContainer.append(staleHost);
+      await waitFor(() => expect(observedTargets.get(staleShadowRoot)).toBeDefined());
+
+      staleHost.remove();
+      diffsContainer.append(document.createElement("span"));
+
+      await waitFor(() => expect(observedTargets.get(staleShadowRoot)?.disconnected).toBe(true));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not render comment creation UI without a submit handler", () => {
     const html = renderToStaticMarkup(
       createElement(CodeViewer, {

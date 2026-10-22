@@ -72,10 +72,14 @@ export function TaskChildSessionRows({
           <span className="min-w-0 truncate">{child.title}</span>
           <span className="ml-auto flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtlest">
             {child.running ? (
-              <LoaderIcon
+              // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
+              <span
+                role="img"
                 aria-label={intl.formatMessage({ id: "taskList.childRunningLabel" })}
-                className="size-3 motion-safe:animate-spin"
-              />
+                className="flex size-3 items-center justify-center motion-safe:animate-spin"
+              >
+                <LoaderIcon aria-hidden="true" className="size-3" />
+              </span>
             ) : (
               <span className="tabular-nums">
                 {formatTaskRelativeTime(child.lastActivityAt, intl)}

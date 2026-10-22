@@ -41,6 +41,8 @@ export const sessionSummarySchema = z.object({
   // custom = explicitly renamed by the user; default/generated are not manual titles in product semantics.
   // optional preserves compatibility with old sessions-index frames and persisted summaries.
   titleSource: sessionMetaStateSchema.shape.titleSource.optional(),
+  // CLI time_title_updated (or time_created when absent). Optional: old frames omit it. Picks the title in renderer merges only.
+  titleUpdatedAt: timestampSchema.optional(),
   lastOutcome: z.enum(["completed", "error", "interrupted"]).optional(),
   phase: sessionPhaseSchema,
   sessionEnded: z.boolean(),
@@ -132,6 +134,7 @@ export const sessionsIndexReconcileResultSchema = z
               deleted: z.boolean(),
               title: z.string(),
               titleSource: sessionMetaStateSchema.shape.titleSource,
+              titleUpdatedAt: timestampSchema.optional(),
               createdAt: timestampSchema,
               updatedAt: timestampSchema,
               lastOutcome: z.enum(["completed", "error", "interrupted"]).optional(),
