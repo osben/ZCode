@@ -653,6 +653,10 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     .register(ICommandsService, params.connectionServices.commandsService)
     .register(IHooksService, params.connectionServices.hooksService)
     .register(IMemoryService, params.connectionServices.memoryService)
+    // Root cause: this is the only production collection for remote workspaces; without this fork-only
+    // registration the Host has no user-instructions channel and every remote host reports "not supported".
+    // Kept out of the upstream RPC contract so upstream or older servers still connect.
+    .register(IUserInstructionsService, params.connectionServices.userInstructionsService)
     .register(IOutputStyleService, params.connectionServices.outputStyleService)
     .register(ISystemPromptService, params.connectionServices.systemPromptService)
     .register(ISettingsSyncService, params.connectionServices.settingsSyncService)
