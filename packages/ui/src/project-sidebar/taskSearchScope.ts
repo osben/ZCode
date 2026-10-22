@@ -44,7 +44,7 @@ export function buildLocalTaskSearchScopes(params: {
     for (const task of params.tree.tasks) {
       // A task's cwd can differ from every current root of its project (the primary directory changed after it ran),
       // so the cwd of every listed local task is searched too.
-      if (task.workspaceIdentity?.trim()) continue;
+      if (task.hostId !== "local" || task.workspaceIdentity?.trim()) continue;
       add({ workspacePath: task.workspacePath });
     }
   }

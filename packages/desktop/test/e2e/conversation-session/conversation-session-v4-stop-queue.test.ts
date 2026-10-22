@@ -1,4 +1,4 @@
-// catalog B02/B02a/B04（stopKeepsQueueAndDisablesAutoDrain）+ B06（暂停队列发送确认）
+// catalog B02/B02a/B04 (stopKeepsQueueAndDisablesAutoDrain) + B06 (paused-queue send confirmation)
 // + B08（sendQueuedPromptNow）+ B14/B15（暂停队列继续）验收。
 // 证据层 L3：running 中入队 → stop → queue 原样保留并显示暂停提示；正常发送按钮
 // 打开 modal 后执行 keep/clear；idle 继续按 FIFO 到空；running 继续只武装、不抢占。
@@ -65,11 +65,11 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     expect(await hasV4PausedQueueSendDialog()).toBe(false);
   });
 
-  it("B02a：stop 后暂停队列不自行开新 turn，观察窗口内无 admission，显式继续后才消费", async () => {
+  it("B02a: after stop the paused queue starts no turn and admits nothing during the observation window; only an explicit resume consumes it", async () => {
     await setupHeldQueue(["E2E_V4_HELD_Q1 排队的第一条"]);
     await waitForV4PausedQueueBanner(15000);
 
-    // 5s 观察窗口：每 500ms 检查一次，不能进入 running、不能消费队首、不能出现 Q1 回复。
+    // 5 s observation window, checked every 500 ms: no running state, no consumed queue head, no Q1 reply.
     const observeUntil = Date.now() + 5000;
     while (Date.now() < observeUntil) {
       const snapshot = await waitForV4Pane(() => true, "读取快照失败", 5000);
@@ -80,7 +80,7 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     }
     expect(await hasV4PausedQueueBanner()).toBe(true);
 
-    // 显式继续是唯一的恢复路径：队首才被消费并出现回复。
+    // An explicit resume is the only recovery path: only then is the queue head consumed and answered.
     await clickV4PausedQueueResume();
     await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
     await waitForV4QueueCount(0, 15000);

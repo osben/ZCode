@@ -193,3 +193,42 @@ export function resolveOrdinaryQueueModelSelection(
   }
   return selection;
 }
+
+/**
+ * Stop queue hold (ISSUE-010, specs/stop-queue-hold.md). Writes autoDrain=false and waits for the authority write. The verifier path has already passed the
+ * ordinary turn catch, so TurnComplete(cancelled) cannot be relied on to close the runtime queue gate.
+ * A failed write is logged and the stop still proceeds.
+ */
+export async function holdFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(false);
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to hold following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+  }
+}
+
+/**
+ * Undoes a hold written by a stop that cancelled nothing: the turn ended on its own while the hold was
+ * being written, and its turn-end drain check already saw autoDrain=false. Resuming goes through the same
+ * ready hook as setAutoDrain(true) so an idle session promotes the queue head at once.
+ */
+export async function releaseFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(true);
+    await host.afterLegacyStateMutation?.(record, "queue_auto_drain_resumed");
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to release following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+  }
+}

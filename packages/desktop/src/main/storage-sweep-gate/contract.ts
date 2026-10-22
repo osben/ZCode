@@ -1,14 +1,15 @@
 /**
  * Main-side gate for the reservation placeholder startup sweep (specs/first-submission-lifecycle.md, "Placeholder startup sweep").
  * The first local Host claimed in an app process carries sweepAbandonedReservations. Every later local InitLocal waits until that
- * Host reports its startup ready or failed, or its process exits. There is no timer: the Host's own startup status timeout produces
- * the terminal state.
+ * Host reports a startup phase past preparing_host_storage (its tasks index, and so the sweep, is committed), or ready or failed,
+ * or its process exits. There is no timer: a first Host that stays alive but silent keeps later local windows waiting
+ * (an open follow-up in the spec).
  */
 export interface LocalHostStartupTicket {
   readonly sweepAbandonedReservations: boolean;
   /** Resolves when this Host's InitLocal may be posted. */
   readonly open: Promise<void>;
-  /** Reports the claimed Host's terminal startup state or exit. A no-op for every other ticket. */
+  /** Reports that the claimed Host passed the sweep, failed, or exited. A no-op for every other ticket. */
   settle(): void;
 }
 

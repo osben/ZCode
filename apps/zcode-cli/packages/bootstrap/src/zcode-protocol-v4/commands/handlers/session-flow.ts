@@ -12,8 +12,10 @@ import { mapAttachmentRefsToTurnAttachments } from "../attachment-refs.js";
 import {
   applyHeldQueueDisposition,
   hasPromptInput,
+  holdFollowingQueue,
   resolveOrdinaryQueueModelSelection,
   resolveSubmittedExecutionState,
+  releaseFollowingQueue,
   V4InputAdmissionRejectedError,
 } from "../input-admission.js";
 import { inputIntentMetadata } from "../input-intent.js";
@@ -306,11 +308,21 @@ async function stop(
       ? payload.expectedForegroundExecutionId === undefined ||
         payload.expectedForegroundExecutionId === activeExecutionId
       : hadActivePrompt && payload.expectedForegroundExecutionId === undefined;
-  if (willCancel && (host.getQueueLength?.(record.app.sessionId) ?? 0) > 0) {
+  // A queue the user already paused is left alone, so a stop that ends up cancelling nothing never resumes it.
+  const heldByThisStop =
+    willCancel &&
+    (host.getQueueLength?.(record.app.sessionId) ?? 0) > 0 &&
+    host.getQueueAutoDrain?.(record.app.sessionId) !== false;
+  const legacyController = record.activeAbortController;
+  if (heldByThisStop) {
     await holdFollowingQueue(host, record);
   }
+  // The hold write yields, so the turn seen above may have ended (or been replaced) meanwhile.
+  // Pin the stop to the execution observed before the hold; without a payload id this is the same
+  // synchronous target the stop had before the hold existed.
+  const stopTargetId = payload.expectedForegroundExecutionId ?? activeExecutionId;
   const runtimeStop = record.app.runtime?.stopActiveForegroundExecution?.({
-    expectedForegroundExecutionId: payload.expectedForegroundExecutionId,
+    expectedForegroundExecutionId: stopTargetId,
     reason: "v4 session stopped",
   });
   host.logger?.info?.("v4 stop foreground execution inspected", {
@@ -326,10 +338,18 @@ async function stop(
     runtimeStopKind: runtimeStop?.kind ?? "unsupported",
     sessionId: record.app.sessionId,
   });
+  const legacyTargetChanged =
+    heldByThisStop &&
+    activeExecutionId === undefined &&
+    record.activeAbortController !== legacyController;
   if (
-    payload.expectedForegroundExecutionId !== undefined &&
-    (runtimeStop?.kind === "idle" || runtimeStop?.kind === "mismatch")
+    (stopTargetId !== undefined &&
+      (runtimeStop?.kind === "idle" || runtimeStop?.kind === "mismatch")) ||
+    legacyTargetChanged
   ) {
+    if (heldByThisStop) {
+      await releaseFollowingQueue(host, record);
+    }
     // Stop 从 renderer 到 host 有异步窗口；若 verifier 已结束且下一轮已启动，
     // 继续 abort 外层 controller 会误杀用户没看到的新执行。execution id 不匹配只能 noop。
     throw new V4CommandNoopError("guard.stopTargetChanged");
@@ -356,25 +376,6 @@ async function stop(
     await host.afterLegacyStateMutation?.(record, "session_stop_goal_paused");
   }
   return undefined;
-}
-
-/**
- * Writes autoDrain=false and waits for the authority write. The verifier path has already passed the
- * ordinary turn catch, so TurnComplete(cancelled) cannot be relied on to close the runtime queue gate.
- * A failed write is logged and the stop still proceeds.
- */
-async function holdFollowingQueue(
-  host: V4CommandCoreHost,
-  record: V4SessionRecordView,
-): Promise<void> {
-  try {
-    await record.app.setQueueAutoDrain(false);
-  } catch (error) {
-    host.logger?.warn?.("v4 stop failed to hold following queue", {
-      error: error instanceof Error ? error.message : String(error),
-      sessionId: record.app.sessionId,
-    });
-  }
 }
 
 /** goal-pause barrier 共用件：stop 与 sendQueuedNow（抢占重发）复用，不复制。 */

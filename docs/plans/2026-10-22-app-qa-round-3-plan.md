@@ -65,13 +65,13 @@ When Phase C 1–3 are merged or deferred and the user's Phase B decisions are i
 
 ## Phase B decided (2026-10-22 08:10, by the orchestrator at the user's request)
 
-| Item                         | Decision                                                                                                |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| ISSUE-010 Stop vs queue      | Stop pauses the inbox; "Resume queue" in the composer; a new Send while paused goes first, then resumes |
-| ISSUE-012b orphan sweep      | One-shot DELETE of exact-signature placeholder rows at startup, after migrations, before any Host       |
-| ISSUE-020 search scope       | Search all local workspaces of this Host; results show the project name                                 |
-| `writeRecord` cli\_\* mirror | Remove; `applyCliFacts` is the sole writer of `cli_*` (audit every writer first)                        |
-| Trajectory payload           | Host projects input deltas against the previous record; viewer reconstructs                             |
-| Host-path project seeding    | Unchanged (user decision 46c33e9d); harness creates the default project                                 |
+| Item                         | Decision                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ISSUE-010 Stop vs queue      | Stop pauses the inbox; "Resume queue" in the composer; a new Send while paused follows catalog B06 (confirm: clear and send, or keep paused and send); resume stays explicit (`specs/stop-queue-hold.md`) |
+| ISSUE-012b orphan sweep      | One-shot DELETE of exact-signature placeholder rows at startup, after migrations, before any Host                                                                                                         |
+| ISSUE-020 search scope       | Search all local workspaces of this Host; results show the project name                                                                                                                                   |
+| `writeRecord` cli\_\* mirror | Remove; `applyCliFacts` is the sole writer of `cli_*` (audit every writer first)                                                                                                                          |
+| Trajectory payload           | Host projects input deltas against the previous record; viewer reconstructs                                                                                                                               |
+| Host-path project seeding    | Unchanged (user decision 46c33e9d); harness creates the default project                                                                                                                                   |
 
 Fix pack 3 branch: `claude/qa-fix-pack-3` (stacked on pack 2). Four agents run in parallel on disjoint files; reviewer pass follows before the PR.

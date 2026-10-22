@@ -1,11 +1,12 @@
 # desktop-storage-sweep-gate
 
-Main 进程的启动门：只让每个应用进程里第一个本地 Host 的 InitLocal 带 `sweepAbandonedReservations`，其余本地 InitLocal 等第一个 Host 报告 `ready` / `failed` 或退出后再发送。规则与理由见 `specs/first-submission-lifecycle.md`「Placeholder startup sweep」。
+Main-process startup gate: only the first local Host in each app process gets `sweepAbandonedReservations` on its InitLocal. Every other local InitLocal waits until that first Host reports a startup phase past `preparing_host_storage` (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or its process exits. Rules and rationale are in `specs/first-submission-lifecycle.md`, "Placeholder startup sweep".
 
-不变量：
+Invariants:
 
-- `claim()` 每个进程只对第一次调用返回 `sweepAbandonedReservations: true`，其后都为 false。
-- 后续 ticket 的 `open` 只在第一 ticket 的 `settle()` 后兑现；`settle()` 幂等，非第一 ticket 的 `settle()` 为空操作。
-- 不使用计时器；卡住的启动由 Host 侧的启动状态超时转为 `failed`。
-- 门只延后 InitLocal 的发送，不延后端口创建与交给渲染进程。
-- 接线点：`spawnHostProcess`（`desktopHostProcess.ts`）；它的 `localHostStartupGate` 缺省时不门控。
+- `claim()` returns `sweepAbandonedReservations: true` only on the first call in each process; every later call returns false.
+- A later ticket's `open` resolves only after the first ticket's `settle()`. `settle()` is idempotent; `settle()` on a non-first ticket is a no-op.
+- Main registers the exit settle immediately after `claim()`.
+- No timer. A first Host that stays alive but silent keeps later local windows waiting; bounding that wait is an open follow-up in the spec.
+- The gate only delays sending InitLocal; it does not delay port creation or handing the port to the renderer.
+- Wiring point: `spawnHostProcess` (`desktopHostProcess.ts`); when its `localHostStartupGate` is absent, nothing is gated.

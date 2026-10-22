@@ -11,6 +11,7 @@ import {
   type HostMcpTelemetryResponse,
   type HostPluginTelemetryResponse,
   type HostSessionCreateTelemetryResponse,
+  type DatabaseStartupState,
   type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
   type WorkspacePurpose,
@@ -113,6 +114,16 @@ export interface SpawnHostProcessOptions {
 
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
 const disposingHostProcesses = new Set<ElectronUtilityProcess>();
+/**
+ * Startup phases that prove the tasks index is prepared, so its placeholder sweep has committed
+ * (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). Later windows need not wait for session storage or services.
+ */
+const sweepGateOpenPhases: ReadonlySet<DatabaseStartupState["phase"]> = new Set([
+  "preparing_session_storage",
+  "starting_services",
+  "ready",
+  "failed",
+]);
 
 export function listDisposingHostProcesses(): ElectronUtilityProcess[] {
   return Array.from(disposingHostProcesses);
@@ -337,6 +348,8 @@ export function spawnHostProcess(
 
   // spawnHostProcess only starts local Hosts, and each one begins with InitLocal, so every claim here is for InitLocal.
   const startupTicket = dependencies.localHostStartupGate?.claim();
+  // Settle on exit before anything else can throw: an unsettled first ticket would hold every later window.
+  if (startupTicket) child.once("exit", () => startupTicket.settle());
   const databaseStartupRelay = bindDatabaseStartupRelay(win, child, hostId);
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
@@ -346,8 +359,7 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.DatabaseStartupState) {
       databaseStartupRelay.receive(result.data.state);
-      if (result.data.state.phase === "ready" || result.data.state.phase === "failed")
-        startupTicket?.settle();
+      if (startupTicket && sweepGateOpenPhases.has(result.data.state.phase)) startupTicket.settle();
       return;
     }
 
@@ -894,7 +906,6 @@ export function spawnHostProcess(
 
   child.on("exit", (code) => {
     exitedHostProcesses.add(child);
-    startupTicket?.settle();
     // Host exit is the authoritative fail-hidden boundary; do not rely on an exiting Host to send inactive afterward.
     dependencies.onCuaOperationStateSourceExited?.(child);
     hostLogRelay.flushRawLogs();

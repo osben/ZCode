@@ -541,7 +541,10 @@ describe("desktopHostProcess local startup gate", () => {
     type: HostMessageTypes.InitLocal as const,
     zcodeBuiltinProviderConfigFilePath: "/config.json",
   };
-  const startupState = (startupId: string, phase: "ready" | "failed") => ({
+  const startupState = (
+    startupId: string,
+    phase: "preparing_host_storage" | "preparing_session_storage" | "ready" | "failed",
+  ) => ({
     type: HostResponseTypes.DatabaseStartupState,
     state: {
       schemaVersion: 1,
@@ -580,6 +583,52 @@ describe("desktopHostProcess local startup gate", () => {
       type: HostMessageTypes.InitLocal,
       sweepAbandonedReservations: false,
     });
+  });
+
+  it("releases the held InitLocal once the claimed Host is past the tasks index, without waiting for ready", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(11) as never, "gate-window-11", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(12) as never, "gate-window-12", initLocal, gateDependencies(gate));
+    await flush();
+    const firstInit = first.postMessage.mock.calls[0]![0];
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "preparing_host_storage"));
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "preparing_session_storage"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    first.emit("exit", 0);
+    second.emit("exit", 0);
+  });
+
+  it("releases the held InitLocal when the claimed Host's spawn throws after the claim and the process exits", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const failing = gateDependencies(gate);
+    failing.broadcastHub = {
+      register: vi.fn(() => {
+        throw new Error("register failed");
+      }),
+      unregister: vi.fn(),
+    } as never;
+    expect(() =>
+      spawnHostProcess(windowFor(13) as never, "gate-window-13", initLocal, failing),
+    ).toThrow("register failed");
+    spawnHostProcess(windowFor(14) as never, "gate-window-14", initLocal, gateDependencies(gate));
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("exit", 1);
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    second.emit("exit", 0);
   });
 
   it("releases the held InitLocal when the claimed Host reports failed or exits", async () => {

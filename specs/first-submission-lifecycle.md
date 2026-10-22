@@ -167,18 +167,26 @@ fix stay hidden from reads but keep growing counts and backups.
   not time-based.
 - Gate (Main): `sweepAbandonedReservations: true` is sent in the `InitLocal` of the
   first local Host that Main spawns in an app process, and in no other message.
-  Main claims this ticket inside `spawnHostProcess` for `InitLocal` only. Every
-  later local `InitLocal` is held by Main and posted only after the claimed first
-  Host reports `DatabaseStartupState` `ready` or `failed`, or its process exits.
-  Main uses no timer. The Host-side `startup_status_timeout` turns a stuck
-  migration into `failed`. Only the `InitLocal` post is deferred: the port is
+  Main claims this ticket inside `spawnHostProcess` for `InitLocal` only and
+  registers the exit settle right after the claim. Every later local `InitLocal`
+  is held by Main and posted only after the claimed first Host reports a
+  `DatabaseStartupState` phase past `preparing_host_storage`
+  (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or its
+  process exits. The tasks index, and so the sweep, is committed before the Host
+  reports `preparing_session_storage`, so later windows do not wait for the first
+  window's session storage or services. Main uses no timer, and no Host-side
+  bound exists after the first startup frame: a first Host that stays alive but
+  silent (for example waiting up to the 60 min migration lock) keeps later local
+  windows waiting until it reports or exits. Bounding that wait is an open
+  follow-up that needs a product decision. Only the `InitLocal` post is deferred: the port is
   created and handed to the renderer as before. A respawned Host, a later window,
   a server entry or a remote source never gets the flag. When no gate is passed,
   Main neither sends the flag nor holds anything.
 - Why no live reservation exists at the sweep: placeholders are written only by a
   local Host's project repository. While the first claimed Host is starting, no
-  other local Host runs services, because its `InitLocal` is held. The first Host
-  reports `ready` only after the sweep. The app holds a single-instance lock, so
+  other local Host runs services, because its `InitLocal` is held until the sweep
+  has committed, and the first Host starts its own services only after the sweep.
+  The app holds a single-instance lock, so
   no second app process of this build runs.
 - Residual risk (accepted by the user): the upstream app can co-run on the same
   `tasks-index.sqlite`, and the single-instance lock does not exclude it. A live

@@ -1019,6 +1019,7 @@ export function createConversationV4Gateway(
     hasQueuedDelivery: (sessionId, delivery) =>
       context.v4Gateway?.hasQueuedDelivery(sessionId, delivery) ?? false,
     getQueueLength: (sessionId) => context.v4Gateway?.getQueueLength(sessionId) ?? 0,
+    getQueueAutoDrain: (sessionId) => context.v4Gateway?.getQueueAutoDrain(sessionId) ?? null,
     retainQueuedTurnExecution: (sessionId, sourceCommandId, execution) => {
       const sessionExecutions = queuedTurnExecutions.get(sessionId) ?? new Map();
       sessionExecutions.set(sourceCommandId, execution);
