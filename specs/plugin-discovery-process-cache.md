@@ -78,21 +78,27 @@ Tier 1 removes most of the cost with only the narrow staleness edge described be
   build), and these steps keep healing it on every call as they do today.
 - **Invalidation:**
   - Implicit: any signature change re-hashes that file.
-  - Explicit, one case: when copying into the cache, the existing check of the copied bytes throws
-    `Bundled plugin asset hash mismatch`. Before that throw, every memo entry for that plugin's
-    source files is now dropped. That discovery call fails, as it did before this change. The
-    next call re-hashes from bytes and recovers.
-- **What may go stale:** a same-size, in-place edit within one timestamp tick that leaves size,
-  mtime, ctime and inode all unchanged. This needs a coarse-timestamp filesystem (HFS+ 1 s, FAT
-  2 s, some NFS/SMB mounts) or one with ctime updates disabled.
-  - Such an edit keeps the old hash. If nothing else changes, the seed marker still matches and
-    the cached copy keeps the old bytes until any later stat change re-hashes the file, or until
-    the process restarts. Before this change, the next discovery call would have re-seeded.
-  - If another change forces a re-seed, the copy-time hash check catches the mismatch. That call
-    fails once, and the self-heal above makes the next call correct.
-  - Bundled plugin sources change only in dev checkouts and app updates (new paths/inodes), so
-    production exposure is minimal.
-  - The SEA branch is not affected; it already uses precomputed hashes.
+  - Explicit, one case: the copy-path self-heal below.
+- **Racily-clean guard (as in git):** `Date.now()` is taken before each read. A file whose
+  `mtime` or `ctime` falls within 2 s before that moment is hashed but not memoized, so the next
+  call hashes it again. A later same-size edit can then no longer hide inside the same coarse
+  timestamp tick (HFS+ 1 s, FAT 2 s, coarse ktime, NTFS) behind an unchanged signature.
+  - Without the guard, the old hash would feed `plugin.hash` and `isSeedCurrent` would report the
+    cache as current. The copy-time check would never run, and the cached copy would silently
+    keep the old bytes.
+  - Cost: files written in the last 2 s are re-hashed on every call. Only freshly rebuilt dev
+    sources are affected; packaged sources are old.
+- **What may go stale:** an edit that keeps size, `mtime`, `ctime` and inode unchanged even
+  though the file was last written more than 2 s earlier. That needs timestamp granularity
+  coarser than 2 s, ctime updates disabled, or a file timestamp clock running behind the local
+  clock (network filesystems stamped by the server: NFS, SMB). Windows and network filesystems
+  are unverified.
+- **Self-heal (copy path only):** when copying into the cache, the existing check of the copied
+  bytes throws `Bundled plugin asset hash mismatch`. Before that throw, every memo entry for that
+  plugin's source files is dropped. That discovery call fails, as it did before this change, and
+  the next call re-hashes and recovers. This only helps when something else forces a re-seed; the
+  racily-clean guard covers the case where the seed marker still matches.
+- The SEA branch is not affected; it already uses precomputed hashes.
 - **Race:** the file is `stat`ed before it is read. If it changes between the two, the memo stores
   the new hash under the old signature. The next call sees a different signature and hashes again,
   so the error is always toward re-hashing.
@@ -174,9 +180,9 @@ What the numbers show:
 - The first readPresentation of a fresh process is unchanged. It fills the memo, so the
   `runtime/capabilities` request queued behind it still waits about 115 ms.
 
-**Worth it?** Yes. The change is about 35 lines in one file. Invalidation is implicit by stat,
-with one explicit self-heal on a hash mismatch. It removes 50–55 ms from every discovery call
-after the first.
+**Worth it?** Yes. The change is about 45 lines in one file. Invalidation is implicit by stat,
+with a racily-clean guard and one explicit self-heal on a hash mismatch. It removes 50–55 ms from
+every discovery call after the first.
 
 It does not fix the fresh-client wait, because the first discovery call of a process still pays
 the cold hash. The ordering fix covers that case (measured below). Tier 1b is the alternative, not
@@ -234,16 +240,16 @@ discovery for the same workspace.
 
 **Option ranking:**
 
-| Option                                                                                | readPresentation                | Cold resume                                                             | Staleness / regression risk                                                                                                                                                                 |
-| ------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| (a) Tier 1 stat-validated hash memo (this branch)                                     | warm 98 → 48 ms; cold unchanged | `resolve_plugins` 80 → 27 ms after any earlier discovery in the process | Only a same-tick, unchanged-stat edit on coarse-timestamp filesystems (self-heals on a hash mismatch). Every file is still stat-ed; seeding still runs every call.                          |
-| (a') Tier 2 outcome cache                                                             | ~−25 ms more                    | ~−25 ms more                                                            | Nested plugin edits and re-seeds by another build go stale; needs a generation counter plus file signatures.                                                                                |
-| (b) Remove duplicate scans within a call                                              | 0                               | 0                                                                       | Nothing to remove.                                                                                                                                                                          |
-| (c1) Skip metadata enumeration when only `commandRoots` are needed (readPresentation) | −~9 ms                          | 0 (resume consumers read plugin metadata)                               | Low, but adds a second shape of `PluginLoadOutcome`.                                                                                                                                        |
-| (c2) Read skill files in parallel during skills discovery, keeping order              | 0                               | skills 24–42 → ~10 ms wall (estimate)                                   | Low; priority order must be kept when merging.                                                                                                                                              |
-| (c3) Build-time seed hash manifest for packaged builds (like SEA)                     | cold −~44 ms                    | cold −~44 ms                                                            | Medium. Codesigning or notarization rewrites native binaries after staging, so a stale manifest would fail the copy-time hash check and degrade seeding. Needs a packaging-pipeline change. |
-| (c4) Tier 1b: persist the stat→hash memo in a `fork_` sidecar                         | cold −~40 ms                    | cold −~40 ms                                                            | Low to medium; adds a cross-process file format.                                                                                                                                            |
-| (d) Rust/native discovery                                                             | —                               | —                                                                       | Not justified. Parsing CPU is 5–8 ms of ~100 ms. The syscall count would stay the same. SHA-256 already runs in native OpenSSL.                                                             |
+| Option                                                                                | readPresentation                | Cold resume                                                             | Staleness / regression risk                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (a) Tier 1 stat-validated hash memo (this branch)                                     | warm 98 → 48 ms; cold unchanged | `resolve_plugins` 80 → 27 ms after any earlier discovery in the process | Racily-clean guard covers same-tick edits up to 2 s granularity. What remains: >2 s granularity or a lagging file-timestamp clock (copy path self-heals). Every file is still stat-ed; seeding still runs every call. |
+| (a') Tier 2 outcome cache                                                             | ~−25 ms more                    | ~−25 ms more                                                            | Nested plugin edits and re-seeds by another build go stale; needs a generation counter plus file signatures.                                                                                                          |
+| (b) Remove duplicate scans within a call                                              | 0                               | 0                                                                       | Nothing to remove.                                                                                                                                                                                                    |
+| (c1) Skip metadata enumeration when only `commandRoots` are needed (readPresentation) | −~9 ms                          | 0 (resume consumers read plugin metadata)                               | Low, but adds a second shape of `PluginLoadOutcome`.                                                                                                                                                                  |
+| (c2) Read skill files in parallel during skills discovery, keeping order              | 0                               | skills 24–42 → ~10 ms wall (estimate)                                   | Low; priority order must be kept when merging.                                                                                                                                                                        |
+| (c3) Build-time seed hash manifest for packaged builds (like SEA)                     | cold −~44 ms                    | cold −~44 ms                                                            | Medium. Codesigning or notarization rewrites native binaries after staging, so a stale manifest would fail the copy-time hash check and degrade seeding. Needs a packaging-pipeline change.                           |
+| (c4) Tier 1b: persist the stat→hash memo in a `fork_` sidecar                         | cold −~40 ms                    | cold −~40 ms                                                            | Low to medium; adds a cross-process file format.                                                                                                                                                                      |
+| (d) Rust/native discovery                                                             | —                               | —                                                                       | Not justified. Parsing CPU is 5–8 ms of ~100 ms. The syscall count would stay the same. SHA-256 already runs in native OpenSSL.                                                                                       |
 
 **Recommendation:**
 
@@ -315,6 +321,8 @@ Memo invalidation (`bootstrap/tests/bundled-plugins-hash-memo.test.ts`):
 - After a hash mismatch caused by an edit the stat signature missed (simulated with a frozen
   stat), that call fails and the next call re-seeds the new bytes. The test fails without the
   self-heal.
+- A same-tick, same-size edit of a recently written file is re-hashed while the seed marker still
+  matches (frozen stat, real clock). The test fails without the racily-clean guard.
 - A file added under an included top-level path is picked up on the next call. A removed file
   drops out of the seed file list and out of the reseeded cache.
 - Existing seed resilience behaviour is unchanged (`bundled-plugins-resilience.test.ts`,

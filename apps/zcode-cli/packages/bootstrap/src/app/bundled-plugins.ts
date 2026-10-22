@@ -161,8 +161,8 @@ function seedBundledOfficialPlugins(input: {
             for (const file of plugin.files) {
               const bytes = readSeedFileBytes(source, plugin, file);
               if (hashBytes(bytes) !== file.sha256) {
-                // A same-tick edit on a coarse-timestamp filesystem can leave the stat signature
-                // unchanged; forget this plugin's memoized hashes so the next call re-hashes.
+                // Copy-path self-heal only: if a memoized hash went stale without a stat change,
+                // forget this plugin's hashes so the next call re-hashes instead of failing again.
                 forgetFilesystemSeedHashes(plugin.files);
                 throw new Error(
                   `Bundled plugin asset hash mismatch: ${plugin.definition.name}/${file.path}`,
@@ -397,15 +397,24 @@ function collectFilesystemPluginFiles(
 // list by reading and hashing all bundled plugin bytes (~63 MB packaged), which dominated the
 // synchronous plugin resolution on the CLI request queue. Hashes are reused only while the
 // file's exact (nanosecond) stat signature is unchanged; ctime and inode catch edits that preserve
-// size and mtime. Stat happens before read, so a concurrent edit can only cause an extra re-hash.
+// size and mtime. Like git's racily-clean rule, a file whose mtime or ctime is within the window
+// before the read is hashed but not memoized: a later same-size edit inside the same coarse
+// timestamp tick (FAT 2 s, HFS+ 1 s, coarse ktime) would otherwise keep the signature and the old
+// hash, and isSeedCurrent would then skip the copy-time check that could catch it.
 const filesystemSeedHashMemo = new Map<string, { signature: string; sha256: string }>();
+const RACY_SEED_HASH_WINDOW_NS = 2_000_000_000n;
 
 function hashFilesystemSeedFile(sourcePath: string, stats: BigIntStats): string {
   const signature = `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}:${stats.ino}`;
   const memo = filesystemSeedHashMemo.get(sourcePath);
   if (memo?.signature === signature) return memo.sha256;
+  const memoizableBeforeNs = BigInt(Date.now()) * 1_000_000n - RACY_SEED_HASH_WINDOW_NS;
   const sha256 = hashBytes(readFileSync(sourcePath));
-  filesystemSeedHashMemo.set(sourcePath, { signature, sha256 });
+  if (stats.mtimeNs <= memoizableBeforeNs && stats.ctimeNs <= memoizableBeforeNs) {
+    filesystemSeedHashMemo.set(sourcePath, { signature, sha256 });
+  } else {
+    filesystemSeedHashMemo.delete(sourcePath);
+  }
   return sha256;
 }
 

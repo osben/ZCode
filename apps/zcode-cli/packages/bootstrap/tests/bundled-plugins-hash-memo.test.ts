@@ -51,11 +51,17 @@ describe("bundled official plugin seed hash memo", () => {
     await cp(join(PACKAGES_ROOT, "skill-creator-plugin"), sourceRoot, { recursive: true });
     process.argv[1] = join(entrypointRoot, "zcode.cjs");
     storageRoot = join(root, "plugins");
+    // Freshly copied fixtures are inside the racily-clean window, so run memoizing tests with a
+    // clock 10 s ahead; the racy-edit test switches back to the real clock.
+    const realNow = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + 10_000);
     resolveOfficialPluginRoots({ storageRoot });
     fsSpy.readPaths = [];
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    fsSpy.frozenStats.clear();
     process.argv[1] = originalEntrypoint;
     await Promise.all(cleanups.splice(0).map((root) => rm(root, { force: true, recursive: true })));
   });
@@ -130,6 +136,23 @@ describe("bundled official plugin seed hash memo", () => {
     } finally {
       fsSpy.frozenStats.clear();
     }
+
+    expect(await readFile(cachedSkillFile(), "utf8")).toBe(edited);
+  });
+
+  it("re-hashes a same-tick edit of a recently written file while the seed marker matches", async () => {
+    vi.restoreAllMocks();
+    const sourceSkill = join(sourceRoot, SKILL_FILE);
+    const original = await readFile(sourceSkill, "utf8");
+    // Rewrite in place so mtime/ctime are "now", then freeze that stat to model a coarse tick in
+    // which the following same-size edit leaves the signature unchanged.
+    await writeFile(sourceSkill, original);
+    fsSpy.frozenStats.set(sourceSkill, statSync(sourceSkill, { bigint: true }));
+    resolveOfficialPluginRoots({ storageRoot });
+    const edited = `${original.slice(0, -1)}${original.endsWith("X") ? "Y" : "X"}`;
+    await writeFile(sourceSkill, edited);
+
+    resolveOfficialPluginRoots({ storageRoot });
 
     expect(await readFile(cachedSkillFile(), "utf8")).toBe(edited);
   });
