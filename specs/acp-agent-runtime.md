@@ -467,8 +467,8 @@ agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, 
   platform is supported (`acpExecutable`). Its registry config is validated by the ACP schema (not the
   API-key union). The model-selection projection drops `env` (it may carry credentials).
 - Composer: an agent provider has no `api` section, so the composer's registry grouping
-  (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The development
-  gate in the Registry still decides whether the group exists at all.
+  (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The registry's
+  `acpExecutable` (availability) still decides whether the group exists at all.
 - Dependency: `@agentclientprotocol/sdk` resolves its `zod` peer from `acp-agent-runtime`, which pins
   `zod` 4.6.5 like `services`; without the pin the desktop build's zod dedupe check fails.
 - Side callers: title, memory recall/extraction and the MCP-prefetch are skipped for external turns.
