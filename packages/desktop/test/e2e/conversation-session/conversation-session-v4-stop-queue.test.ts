@@ -205,14 +205,10 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     const items = await getV4QueueItems();
     expect(items).toHaveLength(2);
     expect(await clickV4QueueItemSendNow(items[0]!.queueItemId)).toBe(true);
-    // Probe the paused banner during the interruption window: a Steer must never show the hold,
-    // not even transiently (ISSUE-039 QA observed the banner right after Steer).
-    for (let i = 0; i < 15; i++) {
-      expect(await hasV4PausedQueueBanner()).toBe(false);
-      await browser.pause(200);
-    }
-
+    // Deterministic check at the moment the steered item has run: with the QA symptom the queue is held
+    // (banner present) while the steered item completes, so this assertion fails there. It is not a sampling loop.
     await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
+    expect(await hasV4PausedQueueBanner()).toBe(false);
     await waitForV4TimelineContaining("V4_HELD_Q2_REPLY", 45000);
     await waitForV4QueueCount(0, 15000);
     await waitForV4Pane((s) => !s.canStop, "steer 后队列没有回到 idle", 30000);
