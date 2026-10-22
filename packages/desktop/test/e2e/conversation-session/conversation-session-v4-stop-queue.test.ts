@@ -205,6 +205,12 @@ describe("v4 catalog B 组：stop 后暂停队列、发送确认与继续消费"
     const items = await getV4QueueItems();
     expect(items).toHaveLength(2);
     expect(await clickV4QueueItemSendNow(items[0]!.queueItemId)).toBe(true);
+    // Probe the paused banner during the interruption window: a Steer must never show the hold,
+    // not even transiently (ISSUE-039 QA observed the banner right after Steer).
+    for (let i = 0; i < 15; i++) {
+      expect(await hasV4PausedQueueBanner()).toBe(false);
+      await browser.pause(200);
+    }
 
     await waitForV4TimelineContaining("V4_HELD_Q1_REPLY", 45000);
     await waitForV4TimelineContaining("V4_HELD_Q2_REPLY", 45000);
