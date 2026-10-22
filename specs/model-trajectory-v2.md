@@ -136,6 +136,24 @@ Response shape (summary; the module contract is authoritative):
 32. Mobile compact viewport: the inspector opens in a bottom sheet.
 33. Styling follows `DESIGN.md`: the `--color-trajectory-*` category tokens, `text-ui-xs` for axis labels, `font-mono` for ids, arguments and commands, no horizontal page scroll.
 
+### Event categories: skills, memory, MCP (H1–H4)
+
+Agreed on a mockup with the user (2026-10-22). Classification is a pure UI function of the v2 response; the Host contract does not change. It relies on runtime names and text markers listed below, so a runtime change to any of them must update `domain/eventCategories.ts` and its tests.
+
+34. Categories: `skill`, `memory` (operation `read` or `write`), `mcp`; everything else stays uncategorized.
+35. Skill: a tool call named `Skill`. The skill name is `input.skill`, arguments `input.args`. Slash commands also go through this tool (the Skill tool description instructs it; no other injection path exists in the runtime). Loaded size is the result's `truncated.originalBytes` when bounded, otherwise its serialized length.
+36. MCP: a tool call whose name starts with `mcp__`. Strip the prefix and split at the first `__`: the left part is the server, the rest the tool (`mcp__plugin_image-search_image_search__search_image` → server `plugin_image-search_image_search`, tool `search_image`).
+37. Memory roots are learned from the input: `Contents of <root>/MEMORY.md (user's auto-memory, …)` gives a root, and each `Memory: <path>:` line of a recall attachment gives a file. A path also counts as memory when it matches `/memories/projects/<project>/memory/` (the runtime's `resolveProjectMemoryRoot`).
+38. Memory read: a `Read` of a memory path; an index injection (`Contents of …/MEMORY.md`); a recall attachment (`Retrieved for possible relevance …` with its `Memory: <path>:` lines). Memory write: `Write`, `Edit` or `MultiEdit` of a memory path.
+39. Injections are found only in a main call's new input (its delta, or the messages after the last assistant message of a full record), so a full history is never counted twice. The index shows again after compaction or a context reset; that is a real reload.
+40. Injections become ledger rows of kind `context` (`data-trajectory-v2-row-kind="context"`) with source `memory-index` or `memory-recall` and the file list. Their inspector shows Summary and Payload (the injected text).
+41. Memory sidecars are model calls with `querySource` `project_memory_recall` (selects recall files) or `dream` (background consolidation). They always produce a `memory` marker row, even when sidecars are hidden; a `dream` row states how many memory writes its tool calls made.
+42. H3: tool rows keep `data-trajectory-v2-row-kind="tool"` and gain `data-trajectory-v2-category`. The badge reads SKILL, MEMORY or MCP; the text is `skill-name → loaded, size`, `server · tool {args} → result`, or `read|write · file name`.
+43. H1: filter chips above the ledger with counts per category (memory shows reads and writes, MCP the number of servers). One chip at a time; the filter is ANDed with the time range; turn headers of kept rows stay, request separators are hidden while a category filter is on. Counts cover the whole loaded window, including hidden sidecar records.
+44. H2: tool spans on the strip are colored by category, and memory sidecar calls get their own lane, drawn only when such calls exist.
+45. H4: a second summary line lists loaded skill names, memory reads and writes, and MCP calls per server with total execution time.
+46. Category colors are the feature tokens `--color-trajectory-skill`, `--color-trajectory-memory`, `--color-trajectory-mcp`, defined for all four themes; category is never shown by color alone (badge text always present).
+
 ## Compatibility and version skew
 
 - Records without `timing`, wire body or `cacheWriteTokens` are valid and show unknown values.
@@ -160,3 +178,4 @@ E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-model-
 6. After closing the tab, the `+` launcher and the header menu reopen v2 for the active task.
 7. A narrow pane uses a single column with drill-in and no horizontal scroll.
 8. With the session database unavailable, the trajectory loads and timing shows as unavailable.
+9. Skills, memory and MCP: a Skill call, an MCP call, a memory Write, an index and a recall injection, and `project_memory_recall` and `dream` sidecars produce categorized rows with badges, filter chips with correct counts (filtering keeps only that category), strip colors and a memory lane, and the summary line of skills, memory and MCP servers.
