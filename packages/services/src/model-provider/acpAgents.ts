@@ -117,13 +117,39 @@ export function createHostAcpAgentsBridge(
   env: Record<string, string | undefined> = process.env,
   dependencies: AcpAgentsBridgeDependencies = {},
 ): ProviderSettingsAcpAgentsBridge | undefined {
-  return isEffectiveDevelopmentNodeEnv(env) ? createAcpAgentsBridge(dependencies) : undefined;
+  if (!isEffectiveDevelopmentNodeEnv(env)) return undefined;
+  const e2eAgentPath = resolveE2eAcpAgentPath(env);
+  if (e2eAgentPath === undefined || dependencies.detectAgents) {
+    return createAcpAgentsBridge(dependencies);
+  }
+  // Only the probed PATH changes; every other env key reaches the probe unchanged.
+  const detectionEnv = { ...env, PATH: e2eAgentPath };
+  return createAcpAgentsBridge({
+    ...dependencies,
+    detectAgents: (input) => defaultDetectAgents(input, detectionEnv),
+  });
+}
+
+/** E2E detection seam (specs/acp-agent-runtime.md, "Dev-only visibility"). */
+export const ACP_E2E_AGENT_PATH_ENV = "ZCODE_E2E_ACP_AGENT_PATH";
+
+/**
+ * The PATH that replaces the detection probe path in desktop E2E, or undefined. Honored only in
+ * an unpackaged development host (the bridge gate) running the test environment, so a value left
+ * in a user's shell never changes what a real install detects.
+ */
+export function resolveE2eAcpAgentPath(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  if (!isEffectiveDevelopmentNodeEnv(env) || env.ZCODE_ENV !== "test") return undefined;
+  const value = env[ACP_E2E_AGENT_PATH_ENV]?.trim();
+  return value ? value : undefined;
 }
 
 export function createAcpAgentsBridge(
   dependencies: AcpAgentsBridgeDependencies = {},
 ): ProviderSettingsAcpAgentsBridge {
-  const detectAgents = dependencies.detectAgents ?? defaultDetectAgents;
+  const detectAgents = dependencies.detectAgents ?? ((input) => defaultDetectAgents(input));
   const runCommand = dependencies.runCommand ?? defaultRunCommand;
   const openTerminal = dependencies.openTerminal ?? defaultOpenTerminal;
   const startRuntime = dependencies.startRuntime ?? ((options) => AcpSessionRuntime.start(options));
@@ -330,11 +356,12 @@ export function createAcpAgentsBridge(
   };
 }
 
-async function defaultDetectAgents(input: {
-  readonly refresh: boolean;
-}): Promise<readonly AcpAgentSummary[]> {
+async function defaultDetectAgents(
+  input: { readonly refresh: boolean },
+  detectionEnv?: Record<string, string | undefined>,
+): Promise<readonly AcpAgentSummary[]> {
   if (input.refresh) refreshAcpAgentCache();
-  const detections = await detectAcpAgents();
+  const detections = await detectAcpAgents(detectionEnv ? { env: detectionEnv } : {});
   return detections.map((detection) => {
     const definition = ACP_AGENT_DEFINITIONS.find((entry) => entry.agentId === detection.agentId);
     return {

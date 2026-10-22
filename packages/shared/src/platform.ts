@@ -1205,7 +1205,10 @@ export interface IPlatformService {
   /** stdio tap proxy switch state in development; non-desktop platforms may omit this. */
   getZCodeStdioTapDevState?(): Promise<ZCodeStdioTapDevState>;
 
-  /** Whether running locally in development; Desktop injects !app.isPackaged, while Web may omit this. */
+  /**
+   * Whether running locally in development; Desktop injects !app.isPackaged (main → preload via
+   * DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG), while Web may omit this.
+   */
   isLocalDevelopmentRuntime?: boolean;
 
   /** Notification that the Settings file was updated by a desktop menu command; the renderer refreshes its settings snapshot. */
@@ -1254,4 +1257,18 @@ export interface IPlatformService {
    *   resistant to browser/network/language/time-zone changes and changes only when the phone changes.
    */
   getDeviceId(): string;
+}
+
+/**
+ * Preload argument that carries Electron main's `!app.isPackaged` to app renderer windows.
+ *
+ * The desktop renderer's dev-only gate must come from main, not from a Vite `define`: Vite only
+ * applies `globalThis.<define>` under `vite dev`, so every built renderer (including the unpackaged
+ * desktop E2E app) would read it as false while its host runs as a development runtime
+ * (specs/acp-agent-runtime.md, "Dev-only visibility").
+ */
+export const DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG = "--zcode-local-development-runtime";
+
+export function hasDesktopLocalDevelopmentRuntimeArg(argv: readonly string[]): boolean {
+  return argv.includes(DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG);
 }
