@@ -296,7 +296,9 @@ process.stdin.on("data", (chunk) => {
       else reply();
     }
     if (msg.method === "v4/command" && msg.id !== undefined) {
-      const status = "accepted";
+      // Test seam: commandIds prefixed "reject-" get a guard rejection (no session created), so abandonment paths can be exercised.
+      const rejected = String(msg.params.commandId).startsWith("reject-");
+      const status = rejected ? "rejected" : "accepted";
       const acceptedInput = {
         delivery: "startNow",
         inputId: msg.params.commandId,
@@ -313,7 +315,7 @@ process.stdin.on("data", (chunk) => {
           commandId: msg.params.commandId,
           status,
           revisionAtDecision: 3,
-          ...createSessionResult,
+          ...(rejected ? { reasonCode: "project.not-found" } : createSessionResult),
         },
       });
     }
@@ -417,6 +419,9 @@ describe("zcodeAgentService v4 conversation channel", () => {
       prepareSessionCreation?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["prepareSessionCreation"];
+      discardSessionReservation?: NonNullable<
+        Parameters<typeof createZCodeAgentService>[0]
+      >["discardSessionReservation"];
       resolveSessionDirectories?: NonNullable<
         Parameters<typeof createZCodeAgentService>[0]
       >["resolveSessionDirectories"];
@@ -444,6 +449,7 @@ describe("zcodeAgentService v4 conversation channel", () => {
     const service = createZCodeAgentService({
       commandResolver,
       prepareSessionCreation: options.prepareSessionCreation,
+      discardSessionReservation: options.discardSessionReservation,
       resolveSessionDirectories: options.resolveSessionDirectories,
       repoSnapshotCaptureIntentScheduler: options.repoSnapshotCaptureIntentScheduler,
       repoSnapshotSidecar: options.repoSnapshotSidecar,
@@ -1184,6 +1190,122 @@ describe("zcodeAgentService v4 conversation channel", () => {
       expect(readRequests(logPath).filter((entry) => entry.method === "v4/command")).toHaveLength(
         2,
       );
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a plain create's reservation when the CLI rejects the create", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "reject-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("discards a prewarm reservation once the CLI accepts its deleteSession", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "prewarm-create",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      expect(discardSessionReservation).not.toHaveBeenCalled();
+
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "delete-prewarm",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("accepted");
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("keeps the reservation when a deleteSession is rejected", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-kept",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack.status).toBe("rejected");
+      expect(discardSessionReservation).not.toHaveBeenCalled();
     } finally {
       await service.disposeAllAndWait();
     }

@@ -2199,6 +2199,14 @@ export function createLocalServices(options: {
         projectId: target.projectId,
         additionalDirectories: target.additionalDirectories,
       }).additionalDirectories,
+    discardSessionReservation: async (target) =>
+      (await taskIndexRepo.getProjectRepository()).discardCreatedTaskReservation({
+        task: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.sessionId,
+        },
+      }),
     resolveSessionDirectories: async (target) =>
       (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
         .additionalDirectories,

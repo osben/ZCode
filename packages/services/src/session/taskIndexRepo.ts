@@ -39,6 +39,7 @@ import type {
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { getTasksIndexDatabasePath, getZCodeDataRootDir } from "#src/paths.js";
 import { projectStorage, type ProjectMigrationContext } from "#src/project-storage/index.js";
+import { RESERVATION_PLACEHOLDER_SQL } from "#src/project-storage/project-repository.js";
 import { runTasksDatabaseMigrations } from "#src/session/tasksDatabase/migrations.js";
 
 const require = createRequire(import.meta.url);
@@ -248,11 +249,8 @@ const CLI_FACT_CREATED_AT_SQL =
 const CLI_FACT_TITLE_SQL =
   "(CASE WHEN cli_created_at IS NULL OR title_overridden = 1 THEN title ELSE cli_title END)";
 
-// Reservation placeholder: project-repository inserts it before the CLI session exists, with no CLI facts, created_at 0 and the
-// column default meta_json '{}'. Every read hides it until applyCliFacts writes facts, so an abandoned create never shows up as an
-// empty, zero-time task. Other writers always store a real meta_json, so they are not matched.
-const RESERVATION_PLACEHOLDER_SQL =
-  "(cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}')";
+// Reservation placeholder (signature defined with its only writer in project-repository.ts): every read hides it until applyCliFacts
+// writes facts, so an abandoned create never shows up as an empty, zero-time task.
 
 function projectCliFacts(row: TaskIndexMetaRow, meta: ZCodeTaskMeta): ZCodeTaskMeta {
   if (row.cli_created_at == null) return meta;

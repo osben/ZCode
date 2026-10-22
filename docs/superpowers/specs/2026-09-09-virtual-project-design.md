@@ -401,6 +401,8 @@ CLI 消费点
 
 创建时序：UI 只传选中的 `projectId`（全局创建显式为 NULL）；Host 按 create command 的幂等 ID 分配稳定 session ID，在 app 同一事务预留归属并读取目录，然后才向 CLI 发送 create/firstInput。预留行的 `cli_created_at` 为空，所有列表隐藏，直到 CLI 发布持久会话事实。预留占位行的签名为 `cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}'`：该签名的行不进入 `listTaskMetas`、`queryTaskList` 与 `hasTaskMetas`，读取时不记录「meta_json 非法」告警，也不删除行；只有 `applyCliFacts` 写入 CLI 事实后才可见。其他写者产生的 `created_at = 0` 行带有非 `'{}'` 的 meta_json，不受该规则影响。重复 create 不覆盖已经移动过的归属；失败不伪造会话事实。CLI 不接收项目 ID，只接收 session ID 和 `additionalDirectories`，并拒绝覆盖已存在的运行实例或持久会话；命令重试仍由 CommandInbox 去重。
 
+放弃的预留生命周期：草稿预热（prewarm）会话可能在首发前被丢弃，普通 create 也可能被 CLI 以 rejected ACK 拒绝（例如 `project.not-found`）。预留由项目仓库写入，同一拥有者负责删除：deleteSession 的 ACK 为 accepted 或 noop，或普通 createSession（不含 submissionPreparation、expectedSubmissionId、preparedSessionId、worktreePreparation）的 ACK 为 rejected 时，仅删除仍匹配占位签名（无 CLI 事实）的行，缺失行为空操作。持久首发预留与 worktree 预留保留，供显式 Retry 复用，不因失败删除。调用结果未知（请求抛错、duplicate、stale）保留行，因为 CLI 可能已经创建会话。App 崩溃或退出遗留的占位行暂无清理者：签名不含时间，无法判定放弃已超过多久，因此不做无年龄限制的启动清扫；此项需另行设计。
+
 ```text
 选择项目 → Host 预留 session 归属 + 读取 roots（事务）
                          ↓

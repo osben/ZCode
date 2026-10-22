@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { ProjectReservationCleanupContract } from "#src/project-storage/reservation-contract.js";
 import type { AppSettings } from "@zcode/shared";
 import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
 
@@ -86,7 +87,7 @@ export interface AutoArchiveInput {
   cutoff: number;
   activeTasks: readonly ProjectTaskRef[];
 }
-export interface ProjectRepositoryContract {
+export interface ProjectRepositoryContract extends ProjectReservationCleanupContract {
   /** 单事务纯按 CLI 最后活动时间筛选，置顶与 activeTasks 除外，仅写组织态；覆盖未归类 cwd。 */
   archiveInactive(input: AutoArchiveInput): ProjectTaskRef[];
   /** 可只取目录，并参与调用方已有的 SQLite 读快照。 */

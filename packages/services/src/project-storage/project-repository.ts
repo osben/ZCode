@@ -26,6 +26,12 @@ import {
 
 const executionDirectoriesSchema = z.array(z.string().min(1)).max(256);
 
+// Reservation placeholder signature: reserveCreatedTask (this file) is the only writer that leaves created_at 0, cli_created_at NULL and
+// the column default meta_json '{}' together. Reads hide such rows until applyCliFacts writes facts (taskIndexRepo imports this predicate),
+// and discardCreatedTaskReservation may delete only rows that still match it, so CLI-admitted rows are never removed.
+export const RESERVATION_PLACEHOLDER_SQL =
+  "(cli_created_at IS NULL AND created_at = 0 AND meta_json = '{}')";
+
 function transaction<T>(db: DatabaseSync, body: () => T, write = true): T {
   db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
   try {
@@ -425,6 +431,22 @@ export class ProjectRepository implements ProjectRepositoryContract {
           );
       }
       return resolveDirectories(this.db, input.task, this.ownerHostId);
+    });
+  }
+
+  /**
+   * Deletes a reservation placeholder whose create was abandoned before the CLI admitted it (prewarm discarded, create rejected by the
+   * CLI). Only the exact placeholder signature is removed; a row with CLI facts or any other writer's row is left untouched, and a
+   * missing row is a no-op. Returns whether a row was removed.
+   */
+  discardCreatedTaskReservation(input: { task: ProjectTaskRef }): boolean {
+    return transaction(this.db, () => {
+      const result = this.db
+        .prepare(
+          `DELETE FROM tasks WHERE workspace_key=? AND task_id=? AND host_id=? AND ${RESERVATION_PLACEHOLDER_SQL}`,
+        )
+        .run(resolveWorkspaceKey(input.task), input.task.taskId, this.ownerHostId ?? "local");
+      return Number(result.changes) > 0;
     });
   }
 }
