@@ -97,9 +97,12 @@ export function ConversationWorktreeCreatedNotice({
       editorId: editor.id,
       error: result.error ?? "unknown-error",
     });
-    toast(intl.formatMessage({ id: "commandCenter.worktree.openFailed" }, { path }), {
-      durationMs: 10_000,
-    });
+    toast(
+      intl.formatMessage({ id: "worktreeSetup.openInEditorFailed" }, { editor: editor.name, path }),
+      {
+        durationMs: 10_000,
+      },
+    );
   }, [editor, intl, path, platform]);
 
   const copyText = useCallback(

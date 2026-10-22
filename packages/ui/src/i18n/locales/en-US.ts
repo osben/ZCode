@@ -7649,6 +7649,14 @@ const enUS: Record<string, string> = {
   "firstSubmission.unknown": "Checking whether the message was accepted…",
   "firstSubmission.synchronizing": "Waiting for the conversation to update…",
   "firstSubmission.contexts": "Context references: {count}",
+  "firstSubmission.remove": "Remove",
+  "composer.sendBlocked.remoteUnavailable":
+    "The remote host is unavailable. Try again once it reconnects.",
+  "composer.sendBlocked.sessionNotReady": "The session isn’t ready yet. Try again in a moment.",
+  "composer.sendBlocked.sendInProgress": "Another message is still being sent.",
+  "composer.sendBlocked.firstSubmissionDelivering":
+    "Your first message is still being delivered. You can send this one once it arrives.",
+  "composer.sendBlocked.attachmentsNotReady": "Attachments are still uploading.",
   "composerRecovery.title": "Unsent message saved",
   "composerRecovery.storageUnavailable":
     "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",
@@ -7748,6 +7756,7 @@ const enUS: Record<string, string> = {
   "worktreeSetup.copyCommand": "Copy command",
   "worktreeSetup.commandCopied": "Command copied",
   "worktreeSetup.copyFailed": "Could not copy to the clipboard",
+  "worktreeSetup.openInEditorFailed": "Could not open the worktree in {editor}: {path}",
   "worktreeSetup.summaryFailed": "failed",
   "worktreeSetup.commandLabel": "Command",
   "worktreeSetup.stepCreating": "Preparing worktree {branch}…",

@@ -148,6 +148,8 @@ export function flushAsyncWork() {
 }
 
 export interface LateAckHarness {
+  /** Re-render the current view after mutating `controls`. */
+  refresh: () => void;
   capturedPrepareSession: () =>
     | ((params: ComposerWorktreePreparationParams) => Promise<string>)
     | null;
@@ -156,6 +158,10 @@ export interface LateAckHarness {
     rejectSend: boolean;
     /** While set, worktree beginCreation stays pending until resolve() — emulates a slow Host ACK. */
     beginGate: { promise: Promise<void>; resolve: () => void } | null;
+    /** Snapshot handed to the composer on the next render (bound-session states). */
+    snapshot: ConversationComposerProps["snapshot"];
+    /** Ordinary session readiness handed to the composer on the next render. */
+    submissionReady: boolean;
   };
   onPrepareWorktreeSession: ReturnType<typeof vi.fn>;
   sessionActivated: ReturnType<typeof vi.fn>;
@@ -215,6 +221,8 @@ export function renderLateAckComposer(
       | { ok: false },
     rejectSend: false,
     beginGate: null as { promise: Promise<void>; resolve: () => void } | null,
+    snapshot: null as ConversationComposerProps["snapshot"],
+    submissionReady: true,
   };
   const onSendText = vi.fn(async () => {
     if (controls.rejectSend) throw new Error("send dispatch failed");
@@ -244,7 +252,7 @@ export function renderLateAckComposer(
           onSwitchMode: vi.fn(),
           provider: undefined,
           sessionId,
-          snapshot: null,
+          snapshot: controls.snapshot,
           composerDraft,
           updateComposerContent: (content: { text: string }) => {
             persistV4ComposerDraft("/workspace", undefined, scopeId, {
@@ -259,16 +267,22 @@ export function renderLateAckComposer(
               updatedAt: Date.now(),
             });
           },
-          submissionReady: true,
+          submissionReady: controls.submissionReady,
           workspacePath: "/workspace",
         }),
       ),
     );
   };
+  let currentSessionId: string | null = null;
   act(() => {
     root.render(render(null));
   });
   return {
+    refresh: () => {
+      act(() => {
+        root.render(render(currentSessionId));
+      });
+    },
     capturedPrepareSession: () => captured.prepareSession,
     controls,
     onPrepareWorktreeSession,
@@ -281,6 +295,7 @@ export function renderLateAckComposer(
           text: draftText,
         });
       }
+      currentSessionId = sessionId;
       act(() => {
         root.render(render(sessionId, draftText));
       });

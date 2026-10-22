@@ -36,7 +36,6 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
-          sessionBound: false,
           onRestore: restore,
           onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
@@ -63,7 +62,6 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty,
           attachments: [],
-          sessionBound: false,
           onRestore,
           onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
@@ -99,7 +97,6 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
-          sessionBound: false,
           onRestore: restore,
           onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
@@ -141,7 +138,6 @@ describe("explicit worktree recovery", () => {
           scopeId: "prepared",
           editorEmpty: true,
           attachments: [],
-          sessionBound: false,
           onRestore: restore,
           onRetry: vi.fn(),
           onDiscardAttachments: async () => {},
@@ -186,9 +182,17 @@ describe("failed first-submission retry card", () => {
       },
     });
   }
-  function card(props: { editorEmpty?: boolean; sessionBound?: boolean; scopeId?: string } = {}) {
-    const onRetry = vi.fn();
+  function card(
+    props: {
+      editorEmpty?: boolean;
+      scopeId?: string;
+      retryBlockedReason?: string | null;
+      onRetry?: () => void;
+    } = {},
+  ) {
+    const onRetry = vi.fn(props.onRetry);
     const onRestore = vi.fn();
+    const onRemove = vi.fn();
     const element = () =>
       createElement(
         ZCodeIntlProvider,
@@ -198,15 +202,17 @@ describe("failed first-submission retry card", () => {
           scopeId: props.scopeId ?? "reserved-1",
           editorEmpty: props.editorEmpty ?? true,
           attachments: [],
-          sessionBound: props.sessionBound ?? true,
+          retryBlockedReason: props.retryBlockedReason ?? null,
           onRestore,
           onRetry,
+          onRemove,
           onDiscardAttachments: async () => {},
         }),
       );
     const view = render(element());
-    return { onRetry, onRestore, rerender: () => view.rerender(element()) };
+    return { onRetry, onRestore, onRemove, rerender: () => view.rerender(element()) };
   }
+  const removeButton = () => screen.queryByRole("button", { name: "Remove", exact: true });
   const retryButton = () => screen.queryByRole("button", { name: "Retry", exact: true });
 
   afterEach(() => setV4FirstSubmissionActive("/repo", undefined, "sub-1", false));
@@ -229,11 +235,16 @@ describe("failed first-submission retry card", () => {
   });
 
   it.each(["sending", "unknown"] as const)(
-    "never offers a resend for a %s record (unresolved sendText command, FSL rule 4)",
+    "never offers a resend for a %s record, only Remove (unresolved sendText command, FSL rule 4)",
     (status) => {
       seed({ status, commandId: "send-cmd" });
-      card();
-      expect(screen.queryByTestId("composer-worktree-recovery")).toBeNull();
+      const { onRemove } = card();
+      expect(retryButton()).toBeNull();
+      fireEvent.click(removeButton()!);
+      expect(onRemove).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "frozen first message" }),
+        scope,
+      );
     },
   );
 
@@ -245,9 +256,13 @@ describe("failed first-submission retry card", () => {
 
   it("hands the record and its scope to the composer once, keeping the record in place", () => {
     seed();
-    const { onRetry } = card();
+    // The composer's retry freeze marks the submission active, which hides the card: there is
+    // no "already clicked" lock that a no-op submit could leave behind.
+    const { onRetry } = card({
+      onRetry: () => setV4FirstSubmissionActive("/repo", undefined, "sub-1", true),
+    });
     fireEvent.click(retryButton()!);
-    fireEvent.click(retryButton()!);
+    expect(retryButton()).toBeNull();
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onRetry).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -259,7 +274,17 @@ describe("failed first-submission retry card", () => {
     expect(readV4ComposerDraft("/repo", undefined, scope)?.firstSubmission?.submissionId).toBe(
       "sub-1",
     );
-    expect((retryButton() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables Retry with the concrete blocked reason tied through aria-describedby", () => {
+    seed();
+    const { onRetry } = card({ retryBlockedReason: "The session isn’t ready yet." });
+    const button = retryButton() as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    const reason = screen.getByText("The session isn’t ready yet.");
+    expect(button.getAttribute("aria-describedby")).toBe(reason.id);
+    fireEvent.click(button);
+    expect(onRetry).not.toHaveBeenCalled();
   });
 
   it("disables Retry and says why while another draft occupies the editor", () => {
@@ -277,14 +302,15 @@ describe("failed first-submission retry card", () => {
     expect(screen.queryByRole("button", { name: "Dismiss saved message" })).toBeNull();
   });
 
-  it("keeps Dismiss for an unbound draft record", () => {
+  it("offers Remove instead of Dismiss for an unbound draft record", () => {
     const draftScope = getV4WorktreeRecoveryScope("__draft__", "sub-1");
     persistV4ComposerDraft("/repo", undefined, draftScope, {
       text: "never reserved",
       firstSubmission: { submissionId: "sub-1", ownerKey: "__draft__", status: "failed" },
     });
-    card({ scopeId: "__draft__", sessionBound: false });
-    expect(screen.getByRole("button", { name: "Dismiss saved message" })).toBeTruthy();
+    card({ scopeId: "__draft__" });
+    expect(screen.queryByRole("button", { name: "Dismiss saved message" })).toBeNull();
+    expect(removeButton()).not.toBeNull();
     expect(retryButton()).not.toBeNull();
   });
 });
