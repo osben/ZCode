@@ -30,7 +30,7 @@ export class WebRemoteControlRelayPayloadSerializer {
 
   prepare(
     payload: WebRemoteControlAppPayload,
-    clientTimestamp = Date.now(),
+    clientTimestamp = Math.floor(Date.now() / 1000),
   ): SerializedWebRemoteControlRelayPayload {
     const cached = this.cache.get(payload);
     if (cached) return cached;

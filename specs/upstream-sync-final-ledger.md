@@ -679,7 +679,7 @@ Source of truth for the decisions: `specs/relay-v2-migration.md` section 13.
 
 ## relay v2 server
 
-Scope: `packages/remote-relay` moves from the fork's V1 protocol (HMAC proof, `device_register_init`, `pass_hash`) to the V2 protocol (`/api/v1/remote/*`, `ws2`, relay-issued EdDSA JWTs). Spec: `specs/relay-v2-migration.md` section 12.
+Scope: `packages/remote-relay` moves from the fork's V1 protocol (HMAC proof, `device_register_init`, `pass_hash`) to the V2 protocol (`/api/v1/remote/*`, `ws2`, relay-issued EdDSA JWTs). Spec: `specs/relay-v2-migration.md` section 14.
 
 ### Deleted (owner-approved)
 
