@@ -1964,10 +1964,12 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       results: [{ key: { sessionId: "reserved-f3", commandId: "cmd-f3" }, result: "unknown" }],
     }));
     await mountBoundRecord("reserved-f3", "f3", { preparing: false });
-    // No submissionPreparation: the Host marked the frozen input admitted, so no Retry (it
-    // would resend the same input under a new command id).
+    // No submissionPreparation: the ledger is asked for the record's own id first; its unknown
+    // answer lets the marker decide, so no Retry (it would resend the same input under a new id).
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "reserved-f3", commandId: "cmd-f3" }],
+    });
     expect(recordStatus("reserved-f3")).toBe("sending");
-    expect(conversationMock.layer.queryCommands).not.toHaveBeenCalled();
   });
 
   it("F: a worktree record never trusts a missing marker (it completes at activation) and queries", async () => {

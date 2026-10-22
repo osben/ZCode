@@ -232,14 +232,49 @@ enforced where `reservedSubmissionSessionId` is set (ConversationComposer: only 
 is no execution worktree and no prepared session). Worktree activations complete before
 any input, so they never send an id and their `already-active` never skips.
 
-**Remaining limitation (follow-up).** The ordering barrier above still lives in this
-composer only: mobile remote control and other windows can send into a preparing session.
-The bridge's `executeCommand` hook still marks the preparation `active` on any `sendText`
-to it; the decision above no longer relies on that marker, but the hook should flip it
-only for the frozen submission's own `sendText`. The reconciliation marker shortcut
-(`markerProvesAdmission` in `firstSubmissionReconciliation.ts`) still settles a record as
-`sending` without querying X, so a foreign-marked preparation can leave a record
-`sending` until the reconciliation is changed to query the original id (follow-up).
+**Reconciliation asks the ledger first (implemented).** The reconciliation hook does not let
+the reservation marker decide a record that holds an original command id. It queries that id
+first (table below). The marker decides only when the ledger answers `unknown`, or when the
+record holds no id at all. An active marker therefore never settles a record `sending` whose
+own id the ledger rejects.
+
+**Owner of the frozen input in the bridge (open, decision needed).** The bridge's
+`executeCommand` hook still marks the preparation `active` on _any_ `sendText` into a preparing
+session, so a foreign window's or mobile remote's input can set the marker. The intended rule
+is that only the frozen submission's own `sendText` flips it. Keying that rule on the
+`expectedFirstInputCommandId` does not hold as written:
+
+- The activation learns only the original id X. A retried frozen input is a new `sendText`
+  with a freshly minted uuidv7 (`commandFactory.ts`), so its id Y never equals X. A strict
+  X-keyed flip would leave the preparation `preparing` after a successful retry, and the
+  ordering barrier would keep Send disabled.
+- A first attempt sends no id at all, so the activation cannot name its frozen `sendText`.
+
+Closing the gap needs the bridge to know the frozen `sendText` identity before it arrives.
+Options, not yet chosen:
+
+- (a) The `sendText` payload carries the first-submission id and the bridge matches it against
+  the persisted `submissionId`. This is the smallest protocol change and covers first attempts
+  and retries alike.
+- (b) The renderer pre-mints the frozen `sendText` id, persists it on the record before the
+  reservation createSession, and passes it on the activation next to `expectedFirstInputCommandId`.
+
+Until one is chosen, a foreign `sendText` into a preparing session still sets the marker. The
+renderer's query-first rule keeps that from settling a record `sending` wrongly.
+
+```mermaid
+sequenceDiagram
+    participant R as Record holder (SessionPane)
+    participant B as CLI bridge (executeCommand)
+    participant L as Command ledger
+    R->>B: createSession (expectedSubmissionId, expectedFirstInputCommandId X)
+    B-->>R: input-pending or materialized (X not admitted)
+    R->>B: sendText, fresh id Y (the frozen input on a retry)
+    B->>B: marker set active on any sendText (today)
+    R->>L: query Y (the record holds Y)
+    L-->>R: accepted, rejected, or unknown
+    R->>R: accepted gives sending, rejected gives failed, unknown lets the marker decide
+```
 
 ## Status under the message (decided 2026-10-21)
 
@@ -341,16 +376,18 @@ on every pass, so it still accepts a copy after an undecided query.
 Durable Host facts decide before the command query, because an `accepted` ACK does not
 survive a CLI restart and a query `unknown` therefore does not prove non-admission:
 
-| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                   |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| a real user row carries this command id                                          | accepted (reported to the registry)                       |
-| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned) |
-| reserved record and `submissionPreparation` absent                               | record `sending`, not reported; never decides a held copy |
-| query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                           |
-| query `rejected` / `failed` / `stale` / `noop`                                   | `failed` (reported) — Retry and Remove                    |
-| query `unknown`: reserved and still preparing, or a worktree record              | `failed` (reported) — Retry and Remove                    |
-| query `unknown`: held copy of a reserved submission whose marker already flipped | unchanged — the copy stays held                           |
-| query throws or reports `fault.command.queryUnavailable`                         | unchanged — one re-check once the revision has advanced   |
+| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                     |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| a real user row carries this command id                                          | accepted (reported to the registry)                         |
+| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned)   |
+| record holds no command id, reserved, `submissionPreparation` absent             | record `sending`, not reported; a held copy stays unchanged |
+| record holds no command id otherwise                                             | unchanged (nothing names the input to query)                |
+| query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                             |
+| query `rejected` / `failed` / `stale` / `noop`, whatever the marker says         | `failed` (reported) — Retry and Remove                      |
+| query `unknown`: reserved, `submissionPreparation` absent, not held              | record `sending`, not reported (the marker decides)         |
+| query `unknown`: held copy of a reserved submission whose marker already flipped | unchanged — the copy stays held                             |
+| query `unknown`: reserved and still preparing, or a worktree record              | `failed` (reported) — Retry and Remove                      |
+| query throws or reports `fault.command.queryUnavailable`                         | unchanged — one re-check once the revision has advanced     |
 
 The query uses the command's own bucket: the reserved session id for `sendText`.
 Only identity-backed decisions reach the command registry: this command's query result
