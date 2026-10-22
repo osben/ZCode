@@ -71,9 +71,14 @@ describe("provider config file codec with legacy inline acp-agent providers", ()
 
     const decoded = decodeProviderConfigFile(encoded);
     expect(decoded.providers.get("acp:opencode")?.toJSON().access).toEqual(ACCESS);
-    expect(decoded.models.getExact("acp:opencode", "opencode")?.toJSON()).toEqual(
-      PSEUDO_MODEL_CONFIG,
-    );
+    // reasoningLevel.default is catalog-owned and never persisted (specs/fork-provider-config-upstream-compat.md).
+    expect(decoded.models.getExact("acp:opencode", "opencode")?.toJSON()).toEqual({
+      ...PSEUDO_MODEL_CONFIG,
+      optionSpecs: {
+        ...PSEUDO_MODEL_CONFIG.optionSpecs,
+        reasoningLevel: { values: ["auto"], map: "{}" },
+      },
+    });
     expect(decoded.providerOrder).toEqual(["acp:opencode"]);
     // Canonical stability: re-encoding the decoded update reproduces the document.
     expect(encodeProviderConfigFile(decoded)).toEqual(encoded);

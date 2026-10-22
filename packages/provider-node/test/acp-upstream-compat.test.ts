@@ -83,7 +83,10 @@ describe("upstream 3.16.1 decoder against fork-written provider_config.json", ()
     expect(() => decodeWithUpstreamSchemas(inlineAcpFile())).toThrow(/discriminator|type/i);
   });
 
-  it("rejects the ACP pseudo-model config (fork-only reasoningLevel.default)", () => {
-    expect(() => decodeWithUpstreamSchemas(pseudoModelFile())).toThrow(/default|unrecognized/i);
+  it("the shared file never carries the ACP pseudo-model reasoningLevel.default", () => {
+    const encoded = pseudoModelFile();
+
+    expect(JSON.stringify(encoded)).not.toContain('"default"');
+    expect(() => decodeWithUpstreamSchemas(encoded)).not.toThrow();
   });
 });

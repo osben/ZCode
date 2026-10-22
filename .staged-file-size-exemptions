@@ -270,3 +270,4 @@ packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
 # file below 20000 bytes, or when apps/zcode-cli becomes a managed architecture module and the memo
 # can move into its own sibling file.
 apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
+packages/provider/src/config/model-config.ts

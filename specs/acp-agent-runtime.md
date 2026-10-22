@@ -184,7 +184,8 @@ code pinned in `fork-upstream-base.json` (3.16.1, `0a1fc56d`):
   `zhipu-coding-plan-api-key` and `zhipu-account`. An `acp-agent` entry fails the parse; the
   decoder does not drop the entry, it throws for the whole file.
 - The ACP pseudo-model writes `reasoningLevel.default`, a fork-only key that upstream's strict
-  `enumOptionSpecDataSchema` also rejects.
+  `enumOptionSpecDataSchema` also rejects. The derived pseudo-model keeps it in memory only; the
+  personal rule writer strips it (`specs/fork-provider-config-upstream-compat.md`).
 - Upstream `NodePersonalProviderConfigRepository.read()` catches the error and falls back to an
   in-memory empty overlay; the file is preserved, but the upstream build shows no personal
   providers and loses the configured `defaultModelSelection` (the headless CLI default). Its
