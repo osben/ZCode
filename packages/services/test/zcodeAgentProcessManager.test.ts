@@ -304,6 +304,82 @@ describe("resolveDefaultZCodeAgentCommand", () => {
     },
   );
 
+  describe("checkout boundary (specs/agent-cli-checkout-resolution.md)", () => {
+    const cliDir = ["apps", "zcode-cli", "packages", "cli"] as const;
+
+    function writeFile(path: string): string {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, "");
+      return path;
+    }
+
+    // Parent repo with a stale CLI dist; nested linked worktree with source + tsx only.
+    function createNestedWorktree() {
+      delete process.env.ZCODE_AGENT_SERVER_COMMAND;
+      delete process.env.ZCODE_AGENT_SERVER_ARGS_JSON;
+      delete process.env.ZCODE_AGENT_SERVER_CWD;
+      Object.defineProperty(process.versions, "electron", { configurable: true, value: undefined });
+      const parentRepo = mkdtempSync(join(tmpdir(), "zcode-agent-checkout-boundary-"));
+      createdDirs.push(parentRepo);
+      mkdirSync(join(parentRepo, ".git"));
+      writeFile(join(parentRepo, ...cliDir, "dist", "zcode.cjs"));
+      writeFile(join(parentRepo, "node_modules", ".bin", "tsx"));
+      const worktree = join(parentRepo, ".claude", "worktrees", "wt");
+      mkdirSync(worktree, { recursive: true });
+      writeFileSync(join(worktree, ".git"), "gitdir: ../../../.git/worktrees/wt\n");
+      const source = writeFile(join(worktree, ...cliDir, "src", "main.ts"));
+      const serverDir = join(worktree, "packages", "server");
+      mkdirSync(serverDir, { recursive: true });
+      process.chdir(serverDir);
+      return { worktree, source };
+    }
+
+    it("runs the worktree source instead of the parent repo dist", () => {
+      const { worktree, source } = createNestedWorktree();
+      const tsx = writeFile(join(worktree, "node_modules", ".bin", "tsx"));
+
+      const command = resolveDefaultZCodeAgentCommand({
+        workspacePath: worktree,
+        workspaceKey: worktree,
+      });
+
+      expect(realpathSync(command!.command)).toBe(realpathSync(tsx));
+      expect(realpathSync(command!.args![0]!)).toBe(realpathSync(source));
+      expect(command!.args!.slice(1)).toEqual(["app-server", "--stdio"]);
+    });
+
+    it("prefers the worktree dist over the worktree source", () => {
+      const { worktree } = createNestedWorktree();
+      writeFile(join(worktree, "node_modules", ".bin", "tsx"));
+      const dist = writeFile(join(worktree, ...cliDir, "dist", "zcode.cjs"));
+
+      const command = resolveDefaultZCodeAgentCommand({
+        workspacePath: worktree,
+        workspaceKey: worktree,
+      });
+
+      expect(command!.command).toBe(process.execPath);
+      expect(realpathSync(command!.args![0]!)).toBe(realpathSync(dist));
+    });
+
+    it("never borrows the parent repo build when the worktree has no tsx", () => {
+      const { worktree } = createNestedWorktree();
+      const binaryPath = writeFile(join(worktree, "deployed-zcode-agent"));
+      process.env[ZCODE_AGENT_RUNTIME.binaryEnvVar] = binaryPath;
+
+      const command = resolveDefaultZCodeAgentCommand({
+        workspacePath: worktree,
+        workspaceKey: worktree,
+      });
+
+      expect(command).toEqual({
+        command: binaryPath,
+        args: ZCODE_AGENT_RUNTIME.spawnArgs,
+        cwd: worktree,
+      });
+    });
+  });
+
   it("monorepo 不可达时回退到已部署原生 binary", () => {
     delete process.env.ZCODE_AGENT_SERVER_COMMAND;
     delete process.env.ZCODE_AGENT_SERVER_ARGS_JSON;
