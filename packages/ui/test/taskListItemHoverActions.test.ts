@@ -102,6 +102,8 @@ vi.mock("@/components/ui/context-menu.js", () => ({
 
 vi.mock("@/lib/taskListItemPresentation.js", () => ({
   deriveTaskLeadingIndicator: () => leadingIndicatorState.value,
+  // The row label subscribes to the shared minute ticker; a static clock keeps the mock inert.
+  useNowMinute: () => 0,
   formatTaskRelativeTime: (updatedAt: number) => {
     formatRelativeTimeCalls.push(updatedAt);
     return "now";
