@@ -326,6 +326,8 @@ function renderUnit(
     onFeedbackChange?: (target: ConversationRowTarget, feedback: "like" | "dislike" | null) => void;
     /** 覆盖行渲染上下文的若干键（产物 chips 的门就是 `sessionId` + `onOpenWorkflowArtifact`）。 */
     context?: Partial<ConversationRowRenderContext>;
+    onPinChange?: () => void;
+    onEdit?: () => void;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -357,6 +359,8 @@ function renderUnit(
               onFork: options.onFork,
               onRetry: options.onRetry,
               onFeedbackChange: options.onFeedbackChange,
+              ...(options.onPinChange ? { onPinChange: options.onPinChange } : {}),
+              ...(options.onEdit ? { onEdit: options.onEdit } : {}),
             }),
           ),
         ),
@@ -3014,6 +3018,28 @@ describe("optimistic first-submission turn", () => {
   it("renders the frozen message bubble before any transcript row exists", () => {
     const [unit] = withOptimisticFirstInputRow([], optimisticRow);
     expect(renderUnit(unit!)).toContain("Frozen first message");
+  });
+
+  it("is non-interactive: no pin, edit or attachment actions for the negative rowId", () => {
+    const row = userInputRow(-42, {
+      turnId: "first-submission:sub-1",
+      entityId: "sub-1",
+      text: "Frozen first message",
+      actions: { canEdit: true } as UserInputRow["actions"],
+      attachments: [{ ref: "local-file", fileName: "notes.txt", mime: "text/plain", bytes: 3 }],
+    });
+    const html = renderUnit(withOptimisticFirstInputRow([], row)[0]!, {
+      onPinChange: () => {},
+      onEdit: () => {},
+      context: { readAttachment: async () => new Uint8Array() } as never,
+    });
+    expect(html).toContain("Frozen first message");
+    expect(html).not.toContain('data-testid="v4-pin');
+    expect(html).not.toContain('data-testid="v4-edit');
+    expect(html).toContain('data-optimistic-first-input="true"');
+    expect(html).toMatch(
+      /data-optimistic-first-input="true"[^>]*inert=""|inert=""[^>]*data-optimistic-first-input="true"/,
+    );
   });
 
   it("keeps the message above the worktree setup slot attached to the same unit (FSL02)", () => {
