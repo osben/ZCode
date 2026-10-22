@@ -461,6 +461,62 @@ describe("TaskListItem hover action rendering", () => {
     });
   });
 
+  // task-hover-card-layout #9 (regular row only; grouped rows have no phone marker).
+  it.each([
+    { name: "error", attribute: "data-error-indicator", value: "true", indicator: "error" },
+    { name: "unread", attribute: "data-unread-indicator", value: "true", indicator: "unread" },
+    { name: "running", attribute: "data-icon", value: "loader", indicator: "loading" },
+  ] as const)(
+    "shows a mobile-active $name task's run-state indicator in the slot once hover actions take it",
+    async ({ attribute, value, indicator }) => {
+      const { MemoTaskItem } = await import("@/TaskListItem.js");
+      const container = installMinimalDom();
+      const root: Root = createRoot(container);
+      leadingIndicatorState.value = indicator;
+
+      act(() => {
+        root.render(
+          createElement(MemoTaskItem, {
+            intl: stableIntl,
+            isActive: false,
+            isArchiveConfirming: false,
+            isMobileActive: true,
+            isPinned: false,
+            onArchiveTask: vi.fn(),
+            onArchiveTaskInline: vi.fn(),
+            onCancelArchiveConfirm: vi.fn(),
+            onMarkTaskAsUnread: vi.fn(),
+            onSelectTask: vi.fn(),
+            onStartRenameTask: vi.fn(),
+            onTogglePinTask: vi.fn(),
+            task: createTask(),
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+
+      const indicatorNode = findByAttributeValue(container, attribute, value);
+      expect(indicatorNode).not.toBeNull();
+      // At rest the phone marker owns the slot, so the run-state node is only invisible.
+      expect(indicatorNode?.parentNode?.__attrs.get("class")).toContain("invisible");
+
+      const row = findByAttribute(container, "data-task-item-key");
+      act(() => {
+        row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+      });
+
+      const slotClass = findByAttributeValue(container, attribute, value)?.parentNode?.__attrs.get(
+        "class",
+      );
+      expect(slotClass).not.toContain("invisible");
+      expect(slotClass).not.toContain("hidden");
+
+      act(() => {
+        root.unmount();
+      });
+    },
+  );
+
   it.each([
     { name: "error", indicatorAttribute: "data-error-indicator", indicator: "error" },
     { name: "unread", indicatorAttribute: "data-unread-indicator", indicator: "unread" },
