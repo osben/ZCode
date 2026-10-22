@@ -49,9 +49,11 @@ v4 send path does not reach it, so it may not be the QA trigger.
   exported from `@zcode/core`). The marker is a non-enumerable property, so it stays out of JSON and cause logs. The core
   turn catch (`turn.ts`) also honours `hasPreserveQueueAutoDrainCancelIntent(turnAbortSignal.reason)`. The reason reaches
   the turn through the parent abort chain. A user Stop aborts with a plain reason and never carries the marker.
-- In-flight cancel (ISSUE-039 D1): `stop` treats a cancel already in flight (the target was aborted by a Steer and has
-  not torn down) as cancelling. It keeps its own hold and does not release it (`isStopCancelInFlight`,
-  `commands/input-admission.ts`). `stop` stays in `commands/handlers/session-flow.ts`; `pauseActiveGoal` moved to
+- In-flight cancel (ISSUE-039 D1): `stop` treats any cancel already in flight (the target was aborted by a Steer, a
+  goal pause, or a projection-fault termination, and has not torn down) as cancelling. It keeps its own hold and does
+  not release it (`isStopCancelInFlight`, `commands/input-admission.ts`). The only target check is the pinned
+  `stopTargetId`: core returns `idle` for an aborted active execution before the expected-id check, so `idle` alone
+  does not prove the expected target is the aborted one. `stop` stays in `commands/handlers/session-flow.ts`; `pauseActiveGoal` moved to
   `commands/input-admission.ts` to keep that file under the commit size guard.
 - Queue projection owner: `ProductProjection.queue` (`autoDrain`, `pauseReason`). Only `QueueAutoDrainChanged`
   and a cancelled `TurnComplete` without the preserve intent change the hold.
@@ -164,13 +166,18 @@ stop(expectedForegroundExecutionId?)
       it; its regression guards are the unit and core tests.
 13. Edit and retry (`editUserQuery`, `retryTurn`) call `preemptActiveTurnAndWait` without the intent (see Scope).
     A cancel from edit or retry holds the queue like a user Stop. This is documented, not changed.
-14. Stop always wins over an in-flight Steer (ISSUE-039 D1). If a Steer has aborted the target and the turn has not
-    torn down yet, a user Stop keeps its own hold in both branches (runtime token: `stopActiveForegroundExecution`
-    returns idle while the execution is still registered; no token: the controller was already aborted before the
-    stop). The queue stays held after the steered item starts. The stop does not release its hold in this window.
-    A Stop after the turn has torn down releases its hold as before (rule 4). Pinned by CLI unit tests `ISSUE-039 D1`
-    in `v4-native-queue.test.ts` and projection test `ISSUE-039 D1` in `product-projection.test.ts`. The projection
-    shows `pauseReason: "manual"` in this order, because the Stop's hold lands before the Steer's TurnComplete.
+14. A user Stop always holds. If any cancel is already in flight on the target (a Steer, a goal pause, or a
+    projection-fault termination has aborted it and the turn has not torn down yet), the Stop keeps its own hold in
+    both branches: runtime token (`stopActiveForegroundExecution` returns `idle` while the pinned execution is still
+    registered) and no token (the controller was aborted before the stop). The queue stays held after the steered
+    item starts. The Stop does not release its hold in this window. - Stale expected id (ISSUE-039 D1 M1): an expected id that no longer matches the registered execution never counts as
+    in flight, because `idle` can come from a different, already-aborted execution. Such a stop writes no hold to keep
+    and returns the `guard.stopTargetChanged` noop, per rule 2 (CLI unit `ISSUE-039 D1：stale expected id ...`). - Teardown during the hold write (rule 4): if the pinned execution tears down before the stop's runtime call, the
+    stop releases the hold it wrote and returns the `guard.stopTargetChanged` noop (CLI unit `ISSUE-039 D1：steer 已
+abort 的执行在 hold 写入期间收口后 ...`). - Projection (characterization guard, not red-first): the Stop's hold lands before the Steer's cancelled TurnComplete,
+    so the projection keeps `autoDrain=false` and reads `pauseReason: "manual"`. The UI shows the generic paused copy
+    for `manual` (`ConversationQueuePanel.tsx`: only `stopped` and `error` have their own copy), so the user sees the
+    same generic banner as after a plain pause.
 
 ## Acceptance scenarios
 
@@ -202,7 +209,9 @@ abort is a plain user Stop reason`). Runtime-idle is not reachable from the E2E 
 15. ISSUE-039 Steer immediately after the turn enters running (no streamed output yet): the queue still drains
     in order (E2E `STEER 刚进入 running：`).
 16. ISSUE-039 D1 (rule 14): a Stop that lands after a Steer aborted the target and before teardown keeps its hold, in the
-    runtime-token branch and in the no-token branch (CLI unit `ISSUE-039 D1：...`). A Steer alone still drains (rule 10).
+    runtime-token branch and in the no-token branch (CLI unit `ISSUE-039 D1：...`). A stale expected id writes no hold to
+    keep (CLI unit `ISSUE-039 D1：stale expected id ...`). A Stop whose pinned target tears down during the hold write
+    releases (CLI unit `ISSUE-039 D1：steer 已 abort ...`). A Steer alone still drains (rule 10).
 17. ISSUE-039 N2: the preserve marker on the cancel reason is non-enumerable (core unit `turn cancel reason intent`
     in `core/tests/turn-errors.test.ts`).
 18. E2E `STEER：`: the queue reaches [Q2] (Q1 promoted) with no paused banner, and the steered reply has no banner.
