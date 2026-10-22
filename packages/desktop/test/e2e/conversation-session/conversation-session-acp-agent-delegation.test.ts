@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import {
-  TID_LOGIN_USE_API_KEY_BUTTON,
-  TID_TASK_SETTINGS_BUTTON,
-  TID_V4_SESSION_TITLE,
-} from "@zcode/shared";
+import { TID_LOGIN_USE_API_KEY_BUTTON, TID_TASK_SETTINGS_BUTTON } from "@zcode/shared";
 import { clearAppData, DEFAULT_WORKSPACE } from "../helpers/desktop-app.js";
 import {
   ACP_AGENT_DIR,
+  readAcpSessionTitle,
+  waitForAcpDocumentText,
+  waitForAcpWorkText,
+  withAcpDiagnostics,
   removeAcpAgentDir,
   seedEnabledAcpAgent,
   selectAcpModelFromComposer,
@@ -72,8 +72,10 @@ describe("Conversation with an ACP agent (tools, plan, title, permissions)", () 
   it("ACP-TOOL-01: a tool row appears with its title and completes", async function () {
     this.timeout(180000);
     await sendV4Prompt("tool please");
-    await waitForV4TimelineContaining("Read a.txt", 120000);
-    await waitForV4TimelineContaining("tool finished", 120000);
+    await withAcpDiagnostics("tool-row", async () => {
+      await waitForAcpWorkText("Read a.txt", "the tool row did not appear");
+      await waitForV4TimelineContaining("tool finished", 120000);
+    });
     await waitForV4ConversationState(
       (state) => state.state === "idle",
       "the tool turn did not complete",
@@ -84,7 +86,9 @@ describe("Conversation with an ACP agent (tools, plan, title, permissions)", () 
   it("ACP-PLAN-01: a plan renders as the todo steps", async function () {
     this.timeout(180000);
     await sendV4Prompt("plan please");
-    await waitForV4TimelineContaining("Write the tests", 120000);
+    await withAcpDiagnostics("plan", () =>
+      waitForAcpDocumentText("Write the tests", "the plan did not render"),
+    );
     await waitForV4ConversationState(
       (state) => state.state === "idle",
       "the plan turn did not complete",
@@ -95,14 +99,11 @@ describe("Conversation with an ACP agent (tools, plan, title, permissions)", () 
   it("ACP-TITLE-01: the agent's session title replaces the placeholder title", async function () {
     this.timeout(180000);
     await sendV4Prompt("title please");
-    await browser.waitUntil(
-      async () => {
-        const title = await $(`[data-testid="${TID_V4_SESSION_TITLE}"]`);
-        return (
-          (await title.isExisting()) && (await title.getText()).includes("Parser fix from ACP")
-        );
-      },
-      { timeout: 120000, timeoutMsg: "the session title did not follow the agent" },
+    await withAcpDiagnostics("title", () =>
+      browser.waitUntil(async () => (await readAcpSessionTitle()).includes("Parser fix from ACP"), {
+        timeout: 120000,
+        timeoutMsg: "the session title did not follow the agent",
+      }),
     );
     await waitForV4ConversationState(
       (state) => state.state === "idle",
