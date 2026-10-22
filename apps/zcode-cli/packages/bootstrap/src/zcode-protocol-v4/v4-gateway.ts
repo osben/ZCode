@@ -285,6 +285,9 @@ export interface V4GatewayHost {
   /** sessions-index：会话的列表用元信息（createdAt/父会话/最后活动时刻）。 */
   getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
   /** Runtime-less Host-owned setup facts for a preparing session's initial conversation snapshot. */
+  getSessionSubmissionPreparationSeed?(
+    sessionId: string,
+  ): ConversationSnapshot["meta"]["submissionPreparation"] | null;
   getSessionPreparationSeed?(
     sessionId: string,
   ): ConversationSnapshot["meta"]["worktreePreparation"] | null;
@@ -726,6 +729,7 @@ export class ConversationV4Gateway {
     try {
       const publisher = this.ensurePublisher(sessionId);
       publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
       publisher.requestSnapshotForSubscribers();
       for (const [routeKey, state] of this.flushStates) {
         if (state.sessionId === sessionId) this.scheduleFlush(routeKey, state, publisher);
@@ -1653,6 +1657,7 @@ export class ConversationV4Gateway {
               )
             : await this.hydratePublisher(sessionId);
     publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
     const cliSessionRestoreMs = !isLiveConversation
       ? Math.max(0, Math.round(performance.now() - restoreStartedAt))
       : undefined;
@@ -3153,6 +3158,7 @@ export class ConversationV4Gateway {
       // Config seed: inject runtime truth at creation (emits no delta and does not bump revision).
       this.seedPublisherConfig(sessionId, publisher);
       publisher.seedWorktreePreparation(this.host.getSessionPreparationSeed?.(sessionId));
+      publisher.seedSubmissionPreparation(this.host.getSessionSubmissionPreparationSeed?.(sessionId));
     }
     return publisher;
   }

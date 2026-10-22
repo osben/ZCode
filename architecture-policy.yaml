@@ -861,6 +861,19 @@ exceptions:
       - packages/ui/src/lib/providerFamilyConnectionTransition.ts
       - packages/ui/src/prompt-editor/useComposerToolbarFit.ts
     reason: Composer model, provider and toolbar files reached staging without the MR architecture gate running; adopting the packages/ui composer toolbar needs a separate module boundary refactor.
+  - id: worktree-setup-card-slot-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/v4/conversationTurnRenderUnitTypes.ts
+      - packages/ui/src/v4/conversationTurnUnitSlots.ts
+      - packages/ui/src/v4/worktreeCommandText.ts
+    reason: Worktree setup-card slot wiring extends the existing v4 conversation turn assembly (same pattern as topicPreparationRenderUnits); the render-unit type is an admitted file edited only to add the slot field. Adopting packages/ui/src/v4 needs a separate module boundary refactor.
+  - id: first-submission-review-fixes-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/v4/composer/composerSubmitBlockReason.ts
+      - packages/ui/src/v4/firstSubmissionReconciliation.ts
+    reason: First-submission review fixes extract the shared submit/Retry block predicate from ConversationComposer and the outcome reconciliation hook from SessionPane (both size-exempt monoliths) instead of growing them; same unmanaged packages/ui/src/v4 tree as worktree-setup-card-slot-unmanaged-files. Adopting packages/ui/src/v4 needs a separate module boundary refactor.
   - id: provider-endpoint-routing-unmanaged-edit
     rule: unmanaged-new-file
     paths:

@@ -264,8 +264,6 @@ export interface ZCodeAgentListSessionsParams extends ZCodeAgentWorkspaceTarget 
   sessionIds?: string[];
   runtimePolicy?: ZCodeAgentRuntimePolicy;
   limit?: number;
-  // Fork: archived-session repair and deletion query archived rows. Upstream dropped this field; kept until those callers move.
-  includeArchived?: boolean;
 }
 
 export interface ZCodeAgentListSessionSubagentsParams extends ZCodeAgentSessionTarget {

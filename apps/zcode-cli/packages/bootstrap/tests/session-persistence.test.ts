@@ -1929,6 +1929,98 @@ describe("session persistence", () => {
     }
   });
 
+  it("keeps the reserved placeholder title and derives first_input from the real first prompt", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-reserved-first-input-title-"));
+    const dbPath = join(tempRoot, "session.sqlite");
+    const store = await createSqliteSessionStore({ dbPath });
+    let modelCalls = 0;
+    try {
+      const app = await createZCodeApp({
+        skipUserConfig: true,
+        env: {},
+        eventStore: createInMemorySessionEventStore(),
+        modelExecutor: {
+          async generateText() {
+            modelCalls += 1;
+            if (modelCalls > 1) throw new Error("no title sidecar requests in this test");
+            return {
+              finishReason: "stop",
+              text: "reserved ok",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never,
+        runtimeConfig: {
+          workingDirectory: tempRoot,
+        },
+        sessionId: createSessionId("reserved-first-input-title"),
+        sessionStore: store,
+      });
+
+      // Reservation persists the session before any input exists (specs/
+      // first-submission-lifecycle.md): the empty input must keep the "New session"
+      // default placeholder, not stamp first_input "Untitled session".
+      await app.runtime.ensureSessionPersistedForExternalActivity("");
+      const reserved = await store.getSession(app.sessionId);
+      expect(reserved?.title).toBe("New session");
+      expect(reserved?.titleSource).toBe("default");
+
+      await app.submitPrompt("настроить интеграцию с оплатой");
+      const titled = await store.getSession(app.sessionId);
+      expect(titled?.title).toBe("настроить интеграцию с оплатой");
+      expect(titled?.titleSource).toBe("first_input");
+    } finally {
+      store.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces the legacy first_input placeholder on the next persisted turn input", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "zcode-legacy-placeholder-title-"));
+    const dbPath = join(tempRoot, "session.sqlite");
+    const store = await createSqliteSessionStore({ dbPath });
+    let modelCalls = 0;
+    try {
+      const app = await createZCodeApp({
+        skipUserConfig: true,
+        env: {},
+        eventStore: createInMemorySessionEventStore(),
+        modelExecutor: {
+          async generateText() {
+            modelCalls += 1;
+            if (modelCalls > 1) throw new Error("no title sidecar requests in this test");
+            return {
+              finishReason: "stop",
+              text: "legacy ok",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never,
+        runtimeConfig: {
+          workingDirectory: tempRoot,
+        },
+        sessionId: createSessionId("legacy-placeholder-title"),
+        sessionStore: store,
+      });
+
+      // Sessions reserved before the placeholder fix carry first_input "Untitled session".
+      await app.runtime.ensureSessionPersistedForExternalActivity("");
+      await store.updateSession({
+        id: app.sessionId,
+        title: "Untitled session",
+        titleSource: "first_input",
+      });
+
+      await app.submitPrompt("update the deployment pipeline");
+      const titled = await store.getSession(app.sessionId);
+      expect(titled?.title).toBe("update the deployment pipeline");
+      expect(titled?.titleSource).toBe("first_input");
+    } finally {
+      store.close();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("keeps builtin prompt command text visible while sending the expanded runtime prompt", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-builtin-init-visible-prompt-"));
     const dbPath = join(tempRoot, "session.sqlite");

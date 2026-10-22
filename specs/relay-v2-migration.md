@@ -83,6 +83,7 @@ WebSocket `/api/v1/remote/ws2?token=…` (optional gateway hint `mid`). Missing/
 
 - client→relay: `auth_init {device_sid, meta?, client_ts?}`, `pair_status_query {client_ts?}`, `data {payload, client_ts?}`.
 - relay→client: `auth_ack {device_sid, terminal_sid, pair_status, server_ts?}`, `pair_status_ack`, `data {payload, server_ts?}`, `error {code, message?, server_ts?}`.
+- All `client_ts` and `server_ts` values are Unix seconds; the relay rejects a millisecond `client_ts` with `WRONG_PARAM`.
 - Error codes: `AUTH_FAILED | WRONG_PARAM | KICKED | INTERNAL | DEVICE_OFFLINE`. Pair status: `waiting | matched`.
 - Heartbeat: 5000 ms ±1000 ms jitter, ACK deadline 15000 ms.
 
@@ -214,8 +215,21 @@ Compatibility: the desktop and web clients must remain compatible with upstream'
   `.github/workflows/fork-release.yml` (`vars.*`, build time), read at runtime by
   `packages/shared/src/env.ts` (`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT`) and
   `packages/desktop/src/main/index.ts`, and for web as `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL`.
-- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`; a path is stripped).
-  A legacy `wss://host/ws` value is normalized to its origin with a logged warning. Release notes must say so.
+- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`) or an explicit V2 WS URL.
+  A bare origin (`wss://host`, `wss://host/`) and the legacy V1 endpoint (`wss://host/ws`) are normalized to
+  `wss://host/api/v1/remote/ws2`; for those origin-only values `https:`/`http:` become `wss:`/`ws:`. Any other path is an
+  explicit WS URL and is kept verbatim, scheme included (upstream override semantics). Release notes must say so.
+- Owner: `normalizeConfiguredWebRemoteControlRelayWsUrl` in `packages/shared/src/zcodeEndpoint.ts` (pure), called
+  once by Desktop main when it reads the runtime env override and the baked release default. When a value is
+  rewritten, Main logs one warning naming only the old and new path (never the host). The build script and
+  `resolveWebRemoteControlRelayWsUrl` do not normalize, so there is a single rewrite point.
+- Why: release builds baked `wss://host/ws` (the V1 path) while the V2 relay accepts only
+  `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` and answers any other WS path with 400, so pairing could not connect.
+  HTTP calls were unaffected because `relayHttpOriginFromWsUrl` keeps only the origin.
+- Acceptance: (1) `wss://host/ws`, `wss://host/ws/`, `wss://host`, `https://host` resolve to
+  `wss://host/api/v1/remote/ws2`; (2) `wss://host/api/v1/remote/ws2` and `ws://localhost:8787/custom` are unchanged;
+  (3) empty input yields no configured value (endpoint-derived fallback applies); (4) the V2 path constant in
+  `zcodeEndpoint.ts` equals `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH`.
 - Derived from the origin, never separately configured:
   HTTP `${origin}/api/v1/remote/{device,device/delete,token}`,
   WS `${wsOrigin}/api/v1/remote/ws2?token=…`,
@@ -255,7 +269,7 @@ Decisions taken while implementing the desktop client. Each one is a deviation o
 1. Main relay code: `packages/desktop/src/main/web-remote-relay/` taken from upstream `0a1fc56d` (contract, device storage, V2 HTTP, WS transport), CJK comments translated. New file `webRemoteControlRelaySession.ts` holds the bearer exchange.
 2. Bearer (11.2): `createWebRemoteControlRelayBearer` exchanges the account identity JWT at `POST {relayOrigin}/api/v1/remote/session` (body `{identity_token}`, response `{code:0,data:{jwt,expires_in}}`). The relay JWT is cached per relay origin and identity until 30 s before expiry, concurrent exchanges are shared, `auth-required` drops the cache. The exchange endpoint is owned by the S4 server; it does not exist in upstream zcode-server, so desktop builds that point at upstream zcode-server cannot pair until that endpoint or a passthrough is decided (open, see the PR body).
 3. Relay HTTP origin: the origin of the relay WS URL (`wss`→`https`, `ws`→`http`). Previously upstream used the endpoint origin for HTTP. Self-hosted relays configured through `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` therefore receive HTTP and WS on the same origin.
-4. Relay URL (11.1): `resolveWebRemoteControlRelayWsUrl` treats the configured value as an origin, drops any path and appends `/api/v1/remote/ws2`. The removed `wss://zcode.z.ai/ws` default and the test-endpoint special case are gone. `buildZCodeEndpointUrls` returns `relayWsUrl` on ws2 and `webRemoteCallbackUrl` on `/remote/v4`.
+4. Relay URL (11.1): superseded by the §11.1 owner rule. Desktop main normalizes configured values with `normalizeConfiguredWebRemoteControlRelayWsUrl` (origin or legacy `/ws` → `/api/v1/remote/ws2`, other paths verbatim); `resolveWebRemoteControlRelayWsUrl` itself does not rewrite paths. The removed `wss://zcode.z.ai/ws` default and the test-endpoint special case are gone. `buildZCodeEndpointUrls` returns `relayWsUrl` on ws2 and `webRemoteCallbackUrl` on `/remote/v4`.
 5. QR (V2): `buildWebRemoteControlExternalQrUrl` no longer takes `passHash`/`timestamp` and removes stale `hash`/`t` from the base URL. The parser `parseWebRemoteControlExternalQrParams` is unchanged here; packages/web still uses the V1 parser until S3 lands.
 6. Re-pair (10.3): `deviceStorage.clearLegacy()` resolves to `true` when pre-V2 pairing material was found. The manager then sets `repairRequired` on the status. The dialog shows `webRemoteControl.failure.repairRequired` (en-US, uk-UA, zh-CN). The flag clears only when a phone pairs. It is not persisted, so a later restart that finds no legacy data drops the notice; the QR still works.
 7. Refresh QR (fork feature `ResetWebRemoteControlPairing`): `resetPairing` closes the runtime and calls `start` with `forceRegistration`, which deletes the stored device and registers a new SID. The channel was missing from `packages/shared/src/channels.ts` on the base branch and is restored.

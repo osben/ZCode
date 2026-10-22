@@ -1,5 +1,12 @@
 # 草稿首发：任务列表与详情同时提交
 
+> First-submission lifecycle update (2026-10-20):
+> [`specs/first-submission-lifecycle.md`](../specs/first-submission-lifecycle.md)
+> now permits an immediate pending conversation before any Host row exists. The
+> sidebar still uses only real Host rows; real session binding retains the atomic
+> tree/navigation contract below. Submitted reserved sessions survive preparation
+> failure. Historical validation records below are not evidence for the new UX.
+
 ## 行为与原因
 
 用户裁决（2026-09-15）：草稿按发送、成功转圈结束时，左侧已有并选中该任务，右侧进入同一任务详情。复用已有首发生命周期，不新增协议 ACK 字段、任务状态或超时补偿。
@@ -30,13 +37,13 @@ CommandInbox 接受输入 → 现有 deferred 提升 → publishCurrentSummaryTo
 
 ## 验收
 
-| Case | 场景/动作 | 必须断言 | 验证层 |
-| --- | --- | --- | --- |
-| FSV01 | 预热草稿首发，初始化未产生下一事件 | accepted 前发布已提升摘要；未提交草稿仍不进列表 | CLI 单测 |
-| FSV02 | 收到已持久化、phase=draft 摘要 | 真任务行 + task_created；零 readSession/resumeSession；重复摘要不重复创建广播 | Host 单测 |
-| FSV03 | 首发完成时已有目录读取在途，持续失效通知 | 不并发堆叠、不饿死；目录含行与详情绑定同次提交；同 cwd 不同 identity 不匹配 | UI 单测 |
-| FSV04 | service 切换/卸载、目录错误 | 旧响应不导航，错误可观察，不重新提交输入 | UI 单测 |
-| FSV05 | 真实桌面发送草稿 | 每帧采样：首次详情帧已有侧栏行且选中；CLI/Host 存在对应事实；未首发时无任务行 | pending E2E |
+| Case  | 场景/动作                                | 必须断言                                                                      | 验证层      |
+| ----- | ---------------------------------------- | ----------------------------------------------------------------------------- | ----------- |
+| FSV01 | 预热草稿首发，初始化未产生下一事件       | accepted 前发布已提升摘要；未提交草稿仍不进列表                               | CLI 单测    |
+| FSV02 | 收到已持久化、phase=draft 摘要           | 真任务行 + task_created；零 readSession/resumeSession；重复摘要不重复创建广播 | Host 单测   |
+| FSV03 | 首发完成时已有目录读取在途，持续失效通知 | 不并发堆叠、不饿死；目录含行与详情绑定同次提交；同 cwd 不同 identity 不匹配   | UI 单测     |
+| FSV04 | service 切换/卸载、目录错误              | 旧响应不导航，错误可观察，不重新提交输入                                      | UI 单测     |
+| FSV05 | 真实桌面发送草稿                         | 每帧采样：首次详情帧已有侧栏行且选中；CLI/Host 存在对应事实；未首发时无任务行 | pending E2E |
 
 文本与附件共用首发回调，分别保留 prewarm 与 createSession(firstInput) 原路径。移动端用共享组件与身份单测覆盖接线，实机回归结果单独记录。codegraph 查询因 unresolved_refs 表缺失失败，影响面按源码追踪，未完成图扫描。
 

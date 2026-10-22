@@ -17,6 +17,22 @@ rules:
     - "evidence-only"
 
 nodes:
+  - id: "capability.first-submission-lifecycle"
+    kind: "capability"
+    label: "Immediate first message and durable failed session preparation"
+    aliases: ["first send", "message-first preparation", "failed startup session"]
+    docs: ["specs/first-submission-lifecycle.md", "docs/task-first-submit-visibility.md"]
+    codeSeeds:
+      - file: "packages/ui/src/v4/SessionPane.tsx"
+        symbol: "SessionPane"
+      - file: "packages/ui/src/v4/composer/composerDraftStore.ts"
+        symbol: "updateV4FirstSubmission"
+      - file: "apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts"
+        symbol: "createConversationV4Gateway"
+    invariants:
+      - "Renderer previews unaccepted frozen intent before preparation; only CLI admission owns the authoritative transcript."
+      - "Submitted durable identities survive preparation failure; unknown input outcomes retain the original command identity."
+      - "Worktree cwd and incognito profile are fixed before runtime startup; restoring saved intent never auto-sends."
   - id: "capability.tool-search"
     kind: "capability"
     label: "Provider-aware deferred ToolSearch"
@@ -5186,6 +5202,16 @@ nodes:
         file: "packages/ui/src/v4/SessionPane.tsx"
 
 edges:
+  - from: "capability.first-submission-lifecycle"
+    to: "state.composer-text-draft"
+    type: "recovers-via"
+    rank: "must-inspect"
+    condition: "Frozen first inputs use the existing draft recovery owner across reservation and pane binding."
+  - from: "capability.first-submission-lifecycle"
+    to: "service.zcode-task-index-syncer"
+    type: "projects-to"
+    rank: "must-inspect"
+    condition: "Only real CLI preparation summaries seed Host task rows; renderer never invents sidebar membership."
   - from: "capability.tool-search"
     to: "surface.tool-search-settings"
     type: "renders-in"

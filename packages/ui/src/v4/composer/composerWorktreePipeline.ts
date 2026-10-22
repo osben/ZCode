@@ -32,7 +32,6 @@ import {
   selectComposerWorktreePipeline,
   type ComposerWorktreeCreationParams,
 } from "@/store/composerWorktreePipelineStore.js";
-import { initiateComposerWorktreeFailureReturn } from "@/v4/composer/composerWorktreeFailureReturn.js";
 
 const inFlightByPipelineKey = new Map<string, Promise<"ready" | "failed">>();
 const beginInFlightBySubmissionKey = new Map<string, Promise<ComposerWorktreeBeginResult>>();
@@ -249,9 +248,7 @@ export function startComposerWorktreePipeline({
         .markReady(workspaceKey, worktreePath, existing, sessionId, attemptId);
       return "ready";
     };
-    // Every failed preparation outcome settles through one exit: mark the entry failed, then offer
-    // the return-to-draft hand-off. The hand-off is ownership-gated and returns false when it cannot
-    // take over, which leaves the failed-row path (the entry already marked failed) in place.
+    // Failed preparation retains the same session and frozen input for explicit recovery.
     const failPreparation = (failure: {
       message: string;
       issueCode?: string | null;
@@ -263,17 +260,7 @@ export function startComposerWorktreePipeline({
           issueCode: failure.issueCode ?? null,
           rawDetail: failure.rawDetail ?? null,
         });
-      if (sessionId) {
-        initiateComposerWorktreeFailureReturn({
-          workspaceKey,
-          sessionId,
-          attemptId,
-          params,
-          failureMessage: failure.message,
-          issueCode: failure.issueCode ?? null,
-          rawDetail: failure.rawDetail ?? null,
-        });
-      }
+      // A submitted session remains visible after preparation fails; Retry owns the next attempt.
       return "failed";
     };
     try {

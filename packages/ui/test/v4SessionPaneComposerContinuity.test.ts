@@ -1,12 +1,23 @@
 import { act, createElement, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
+import type { ConversationRow, ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { pendingCommandRegistry, type PendingCommandEntry } from "@/v4/pendingCommandRegistry.js";
 import { SessionPane } from "@/v4/SessionPane.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
+import {
+  composerScopeKey,
+  getV4WorktreeRecoveryScope,
+  isV4FirstSubmissionActive,
+  moveV4ComposerDraft,
+  persistV4ComposerDraft,
+  readV4WorktreeRecoveryDrafts,
+  resolveComposerScope,
+  setV4FirstSubmissionActive,
+} from "@/v4/composer/composerDraftStore.js";
 
 type ProjectionState = {
   status: "connecting" | "live";
@@ -38,6 +49,35 @@ vi.mock("@/lib/sessionCreateTelemetry.js", () => ({
   reportSessionCreate: sessionCreateCapture.report,
 }));
 
+// First-submission instant UX (specs/first-submission-instant-ux.md): the sidebar
+// source is controllable so a test can hold it empty while the pane binds.
+const sessionsIndexItems = vi.hoisted(() => ({
+  current: [] as Array<{ taskId: string }>,
+}));
+vi.mock("@/v4/useWorkspaceSessionsIndexItems.js", () => ({
+  useWorkspaceSessionsIndexItems: () => ({ items: sessionsIndexItems.current, hydrating: [] }),
+}));
+
+const agentHandshakeMock = vi.hoisted(() => ({
+  hello: { capabilities: { durableFirstSubmission: true } },
+}));
+vi.mock("@/v4/agentV4ConnectionHandshake.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/agentV4ConnectionHandshake.js")>()),
+  ensureAgentV4ConnectionHandshake: async () => agentHandshakeMock.hello,
+}));
+
+// Project tree staging (commitCreatedTask): null by default, a never-settling stager per test.
+const projectDirectoryMock = vi.hoisted(() => ({
+  current: null as null | {
+    commitCreatedTask: ReturnType<typeof import("vitest").vi.fn>;
+    groups: { refresh: () => Promise<void> };
+  },
+}));
+vi.mock("@/project-sidebar/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/project-sidebar/index.js")>()),
+  useOptionalProjectDirectory: () => projectDirectoryMock.current,
+}));
+
 const projectionState = vi.hoisted(() => ({
   current: null as ProjectionState | null,
 }));
@@ -53,6 +93,14 @@ const composerLifecycle = vi.hoisted(() => ({
 const scrollFocus = vi.hoisted(() => ({
   composerProps: null as null | {
     onOpenRunningBackgroundWorks?: () => void;
+    onPrepareFirstSubmission?: (params: {
+      submissionId: string;
+      incognito?: unknown;
+      reservation?: { sessionId: string; commandId: string };
+      onReservationCreated?: (reservation: { sessionId: string; commandId: string }) => void;
+    }) => Promise<string | undefined>;
+    onFirstSubmissionReserved?: (sessionId: string) => void;
+    firstSubmissionActive?: boolean;
     onSendText: (
       text: string,
       options?: {
@@ -88,6 +136,32 @@ const scrollFocus = vi.hoisted(() => ({
   scrollToBottom: vi.fn(),
 }));
 
+// SessionPane builds the optimistic first-input row from the persisted record; the
+// timeline mock mirrors its shape to assert per-render reconciliation behavior.
+type OptimisticFirstInputRow = {
+  rowId: number;
+  turnId: string;
+  productTurnId: string;
+  entityId: string;
+  kind: "userInput";
+  text: string;
+  origin: "realUser";
+  sourceCommandId?: string;
+  createdAt: number;
+  createdAtSeq: number;
+};
+
+const timelineFocus = vi.hoisted(() => ({
+  props: null as null | {
+    optimisticFirstInputRow: OptimisticFirstInputRow | null;
+    afterFirstUserInputSlot: unknown;
+    emptyState: unknown;
+    centerEmptyStateWithDock: boolean | undefined;
+    rows: readonly ConversationRow[];
+  },
+  optimisticRowHistory: [] as Array<OptimisticFirstInputRow | null>,
+}));
+
 // Never resolves: these files do not test discovery queries; resolving would
 // trigger setState after environment teardown (unhandled exception).
 const workflowRunsQueryMock = vi.hoisted(() =>
@@ -99,6 +173,9 @@ const conversationMock = vi.hoisted(() => {
     store: {
       expectAcceptedInputProjection: vi.fn(),
       markCommandPending: vi.fn(),
+      // PluginUiSessionProvider attaches a live-delta feed whenever the lease store
+      // becomes non-null (IUX06 binds a session-scoped lease).
+      onLiveDeltas: vi.fn(() => () => {}),
       recoverFromStaleAuthority: vi.fn(),
       onOnlineModelTransition: vi.fn(() => () => {}),
       refreshPlans: vi.fn(async () => {}),
@@ -183,6 +260,8 @@ const servicesMock = vi.hoisted(() => ({
   zcodeTaskService: {
     restartWorkspaceProcess: vi.fn(),
   },
+  // Only prepareFirstSubmission reads this presence flag; per-test assignment.
+  zcodeAgentService: undefined as object | undefined,
 }));
 
 vi.mock("@/components/ui/toast.js", () => ({ toast: vi.fn() }));
@@ -281,12 +360,15 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
   }),
 }));
 
+const draftControlMock = vi.hoisted(() => ({
+  composerDraft: { text: "", updatedAt: 0 } as Record<string, unknown>,
+}));
 vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
   buildDraftCreateConfigPayload: () => ({}),
   useDraftConfigControl: () => ({
     modelSelectionRead: useModelSelectionServiceView(null),
     captureAcceptedModelSelection: () => vi.fn(),
-    composerDraft: { text: "", updatedAt: 0 },
+    composerDraft: draftControlMock.composerDraft,
     draftConfig: {},
     draftConfigRef: {
       current: {
@@ -331,7 +413,15 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
 vi.mock("@/v4/ConversationComposer.js", () => ({
   ConversationComposer: (props: {
     disabled?: boolean;
+    firstSubmissionActive?: boolean;
     onOpenRunningBackgroundWorks?: () => void;
+    onPrepareFirstSubmission?: (params: {
+      submissionId: string;
+      incognito?: unknown;
+      reservation?: { sessionId: string; commandId: string };
+      onReservationCreated?: (reservation: { sessionId: string; commandId: string }) => void;
+    }) => Promise<string | undefined>;
+    onFirstSubmissionReserved?: (sessionId: string) => void;
     onSendText: (
       text: string,
       options?: {
@@ -386,11 +476,27 @@ vi.mock("@/v4/ConversationTimeline.js", () => ({
     bottomDock,
     emptyState,
     scrollToBottomActionRef,
+    optimisticFirstInputRow,
+    afterFirstUserInputSlot,
+    centerEmptyStateWithDock,
+    rows,
   }: {
     bottomDock?: ReactNode;
     emptyState?: ReactNode;
     scrollToBottomActionRef?: { current: (() => void) | null };
+    optimisticFirstInputRow?: OptimisticFirstInputRow | null;
+    afterFirstUserInputSlot?: ReactNode;
+    centerEmptyStateWithDock?: boolean;
+    rows?: readonly ConversationRow[];
   }) => {
+    timelineFocus.props = {
+      optimisticFirstInputRow: optimisticFirstInputRow ?? null,
+      afterFirstUserInputSlot: afterFirstUserInputSlot ?? null,
+      emptyState: emptyState ?? null,
+      centerEmptyStateWithDock,
+      rows: rows ?? [],
+    };
+    timelineFocus.optimisticRowHistory.push(optimisticFirstInputRow ?? null);
     useLayoutEffect(() => {
       if (scrollToBottomActionRef) {
         scrollToBottomActionRef.current = scrollFocus.scrollToBottom;
@@ -480,6 +586,27 @@ function makeDraftSnapshot(): ConversationSnapshot {
 
 const mountedRoots: Root[] = [];
 
+// The v4 composer draft store persists through window.localStorage; the minimal
+// DOM needs an in-memory implementation so seeded first-submission records are
+// readable by the real SessionPane code paths.
+function createMemoryStorage(): Storage {
+  const entries = new Map<string, string>();
+  return {
+    get length() {
+      return entries.size;
+    },
+    clear: () => entries.clear(),
+    getItem: (key: string) => (entries.has(key) ? entries.get(key)! : null),
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    removeItem: (key: string) => {
+      entries.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      entries.set(key, String(value));
+    },
+  };
+}
+
 function createMinimalElement(ownerDocument: Document, tagName = "div") {
   const element = {
     addEventListener: () => {},
@@ -530,10 +657,13 @@ function installMinimalDom() {
   } as unknown as Document;
   const windowMock = {
     addEventListener: () => {},
+    // Draft-store writes broadcast a change event; no listeners exist in this DOM.
+    dispatchEvent: () => true,
     document: documentMock,
     HTMLIFrameElement: function HTMLIFrameElement() {},
     HTMLElement: function HTMLElement() {},
     innerWidth: 1024,
+    localStorage: createMemoryStorage(),
     Node: function Node() {},
     removeEventListener: () => {},
   };
@@ -552,7 +682,11 @@ function installMinimalDom() {
   return createMinimalElement(documentMock, "div");
 }
 
-function renderPane(root: Root, sessionId: string | null): void {
+function renderPane(
+  root: Root,
+  sessionId: string | null,
+  extraProps?: { onSessionCreated?: (sessionId: string) => void },
+): void {
   act(() => {
     root.render(
       createElement(
@@ -562,6 +696,9 @@ function renderPane(root: Root, sessionId: string | null): void {
           paneId: "workspace-main",
           sessionId,
           workspacePath: "/workspace",
+          ...(extraProps?.onSessionCreated
+            ? { onSessionCreated: extraProps.onSessionCreated }
+            : {}),
         }),
       ),
     );
@@ -569,9 +706,17 @@ function renderPane(root: Root, sessionId: string | null): void {
 }
 
 beforeEach(() => {
+  draftControlMock.composerDraft = { text: "", updatedAt: 0 };
+  projectDirectoryMock.current = null;
+  conversationMock.layer.queryCommands.mockReset();
+  conversationMock.layer.queryCommands.mockImplementation(async () => ({ results: [] }));
   sessionCreateCapture.report.mockClear();
   recoveryCapture.entries = [];
   recoveryCapture.onResend = null;
+  sessionsIndexItems.current = [];
+  servicesMock.zcodeAgentService = undefined;
+  timelineFocus.props = null;
+  timelineFocus.optimisticRowHistory = [];
   prewarmHookInputs.binding = null;
   composerLifecycle.disabledStates = [];
   composerLifecycle.mounts = 0;
@@ -579,6 +724,7 @@ beforeEach(() => {
   composerLifecycle.renders = [];
   composerLifecycle.unmounts = 0;
   conversationMock.layer.acquire.mockClear();
+  conversationMock.layer.acquire.mockImplementation(() => conversationMock.lease);
   conversationMock.lease.release.mockClear();
   conversationMock.lease.store.expectAcceptedInputProjection.mockClear();
   conversationMock.currentLayer = null;
@@ -1271,5 +1417,674 @@ describe("SessionPane composer continuity", () => {
     renderPane(root, "session-2");
     expect(scrollFocus.statusPanelProps?.agentSectionOpen).toBe(false);
     expect(scrollFocus.composerProps?.onOpenRunningBackgroundWorks).toBeUndefined();
+  });
+});
+
+describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
+  const WORKSPACE = "/workspace";
+
+  // SessionPane derives the draft scope as `__draft__:${composerScopeKey(scope)}`
+  // with the workspace's draft project and the mocked "desktop" client namespace.
+  function paneDraftScope(): string {
+    const workspaceState = useZCodeSessionStore.getState().getWorkspaceState(WORKSPACE, undefined);
+    return `__draft__:${composerScopeKey(
+      resolveComposerScope(workspaceState.draftProjectId, undefined, "desktop"),
+    )}`;
+  }
+
+  function paneDraftGeneration(): number {
+    return useZCodeSessionStore.getState().getWorkspaceState(WORKSPACE, undefined)
+      .draftFocusVersion;
+  }
+
+  // Seed the record the way the composer does at freeze: persist at the scope the
+  // pane reads for this session, then arm the active-first-submission flag.
+  function seedFirstSubmissionRecord(
+    scopeSessionId: string,
+    submissionId: string,
+    overrides?: {
+      commandId?: string;
+      status?: "preparing" | "sending" | "failed" | "unknown";
+      text?: string;
+      reservation?: { sessionId: string; commandId: string };
+    },
+  ): void {
+    persistV4ComposerDraft(
+      WORKSPACE,
+      undefined,
+      getV4WorktreeRecoveryScope(scopeSessionId, submissionId),
+      {
+        text: overrides?.text ?? "hello",
+        firstSubmission: {
+          submissionId,
+          ownerKey: "test-owner",
+          generation: paneDraftGeneration(),
+          status: overrides?.status ?? "preparing",
+          ...(overrides?.commandId ? { commandId: overrides.commandId } : {}),
+          ...(overrides?.reservation ? { reservation: overrides.reservation } : {}),
+        },
+      },
+    );
+    setV4FirstSubmissionActive(WORKSPACE, undefined, submissionId, true);
+  }
+
+  function realUserInputRow(sourceCommandId?: string): ConversationRow {
+    return {
+      rowId: 101,
+      turnId: "turn-1",
+      entityId: "entity-1",
+      productTurnId: "turn-1",
+      kind: "userInput",
+      text: "hello",
+      origin: "realUser",
+      createdAt: 1_700_000_000_000,
+      createdAtSeq: 1,
+      ...(sourceCommandId ? { sourceCommandId } : {}),
+    };
+  }
+
+  function boundProjectionState(
+    sessionId: string,
+    options?: {
+      rows?: ConversationSnapshot["rows"]["window"];
+      queueItems?: ConversationSnapshot["queue"]["items"];
+      submissionPreparation?: { submissionId: string };
+    },
+  ): ProjectionState {
+    const base = makeDraftSnapshot();
+    return {
+      status: "live",
+      snapshot: {
+        ...base,
+        ...(options?.submissionPreparation
+          ? {
+              meta: {
+                ...base.meta,
+                submissionPreparation: {
+                  submissionId: options.submissionPreparation.submissionId,
+                  status: "preparing" as const,
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              },
+            }
+          : {}),
+        sessionId,
+        queue: { autoDrain: true, items: options?.queueItems ?? [] },
+        rows: {
+          window: options?.rows ?? [],
+          totalCount: (options?.rows ?? []).length,
+          firstRowId: null,
+        },
+      },
+      subscriptionId: `sub-${sessionId}`,
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+  }
+
+  it("IUX05: a held reservation ACK keeps the user in chat with the optimistic row and no progress label", async () => {
+    servicesMock.zcodeAgentService = {};
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const submissionId = "a1b2c3d4-1111-4222-8333-444444444444";
+    seedFirstSubmissionRecord(paneDraftScope(), submissionId, { text: "hello" });
+
+    renderPane(root, null);
+
+    const optimistic = timelineFocus.props?.optimisticFirstInputRow ?? null;
+    expect(optimistic).not.toBeNull();
+    expect(optimistic).toMatchObject({ kind: "userInput", text: "hello", origin: "realUser" });
+    // The turn itself is the feedback: nothing renders under the message while the
+    // submission is active (specs/first-submission-instant-ux.md, Status under the message).
+    expect(
+      renderToStaticMarkup(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          timelineFocus.props?.afterFirstUserInputSlot as ReactNode,
+        ),
+      ),
+    ).toBe("");
+    expect(timelineFocus.props?.emptyState).toBeNull();
+    expect(timelineFocus.props?.centerEmptyStateWithDock).toBe(false);
+    expect(scrollFocus.composerProps?.firstSubmissionActive).toBe(true);
+
+    // Hold the createSession reservation ACK like a slow Host.
+    let resolveReservation!: (ack: unknown) => void;
+    conversationMock.sendCommand.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReservation = resolve;
+        }),
+    );
+    const onReservationCreated = vi.fn();
+    let prepared: Promise<string | undefined> | undefined;
+    await act(async () => {
+      prepared = scrollFocus.composerProps?.onPrepareFirstSubmission?.({
+        submissionId,
+        onReservationCreated,
+      });
+    });
+    expect(conversationMock.sendCommand).toHaveBeenCalledTimes(1);
+    const [reservationEnvelope] = conversationMock.sendCommand.mock.calls[0]!;
+    expect(reservationEnvelope).toMatchObject({
+      type: "createSession",
+      payload: {
+        submissionPreparation: { submissionId },
+        sessionId: submissionId,
+      },
+    });
+    // The P2 bind material exists at the dispatch envelope, before the ACK.
+    expect(onReservationCreated).toHaveBeenCalledExactlyOnceWith({
+      sessionId: submissionId,
+      commandId: expect.any(String),
+    });
+
+    await act(async () => {
+      resolveReservation({
+        commandId: onReservationCreated.mock.calls[0]?.[0].commandId,
+        revisionAtDecision: 1,
+        status: "accepted",
+        result: { type: "createSession", sessionId: submissionId },
+      });
+      await expect(prepared).resolves.toBe(submissionId);
+    });
+    // Resolving the held ACK must not make the pane dispatch a second createSession
+    // or a duplicate sendText for the same submission.
+    const calls = conversationMock.sendCommand.mock.calls;
+    expect(calls).toHaveLength(1);
+  });
+
+  it("IUX08: the reserved-session bind never waits for the sessions-index row", async () => {
+    const onSessionCreated = vi.fn();
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    renderPane(root, null, { onSessionCreated });
+    expect(sessionsIndexItems.current).toHaveLength(0);
+
+    // Async act: the immediate bind bumps the task-list version on the real session
+    // store; the nested re-render must flush inside the act scope, not on the
+    // scheduler after this minimal DOM (and window) is torn down.
+    await act(async () => {
+      scrollFocus.composerProps?.onFirstSubmissionReserved?.("reserved-1");
+    });
+
+    // The pane binds from the Host reservation identity in the same act; the
+    // sidebar source never produced a row for the reserved session.
+    expect(onSessionCreated).toHaveBeenCalledExactlyOnceWith("reserved-1");
+    expect(sessionsIndexItems.current).toHaveLength(0);
+  });
+
+  it("IUX06: an admitted queue item keeps exactly one optimistic user turn until the real projection lands", () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const submissionId = "b2c3d4e5-2222-4332-9444-555555555555";
+    seedFirstSubmissionRecord("reserved-1", submissionId, {
+      commandId: "cmd-1",
+      status: "sending",
+    });
+    const admittedQueueItem = {
+      queueItemId: "q-first",
+      kind: "sendText" as const,
+      text: "hello",
+      sourceCommandId: "cmd-1",
+      clientId: "desktop",
+      attachments: [],
+      delivery: { requested: "queue" as const, admitted: "queue" as const },
+      order: { admissionSeq: 1, queuePosition: 0 },
+      steer: { state: "notRequested" as const },
+      dispatch: { state: "queued" as const },
+      admittedAt: 1,
+    };
+    // The lease must report the bound session id for the timeline snapshot to flow.
+    conversationMock.layer.acquire.mockImplementationOnce(
+      () =>
+        ({ ...conversationMock.lease, sessionId: "reserved-1" }) as typeof conversationMock.lease,
+    );
+
+    projectionState.current = boundProjectionState("reserved-1", {
+      queueItems: [admittedQueueItem],
+    });
+    renderPane(root, "reserved-1");
+
+    const queuePhase = timelineFocus.props;
+    expect(queuePhase?.optimisticFirstInputRow).toMatchObject({
+      kind: "userInput",
+      text: "hello",
+      origin: "realUser",
+      sourceCommandId: "cmd-1",
+    });
+    // Queue-item visibility alone must never hide the row: every render so far
+    // (mount, lease settle, store version bumps) kept the optimistic row alive.
+    expect(timelineFocus.optimisticRowHistory.length).toBeGreaterThan(0);
+    for (const captured of timelineFocus.optimisticRowHistory) {
+      expect(captured).not.toBeNull();
+    }
+    // Exactly one user turn: the optimistic row only, no projected user row yet.
+    expect((queuePhase?.rows ?? []).filter((row) => row.kind === "userInput")).toHaveLength(0);
+
+    projectionState.current = boundProjectionState("reserved-1", {
+      queueItems: [admittedQueueItem],
+      rows: [realUserInputRow("cmd-1")],
+    });
+    renderPane(root, "reserved-1");
+
+    expect(timelineFocus.props?.optimisticFirstInputRow).toBeNull();
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-1")).toHaveLength(0);
+    expect(isV4FirstSubmissionActive(WORKSPACE, undefined, submissionId)).toBe(false);
+
+    // Fresh-session fallback: a realUser row without sourceCommandId also reconciles.
+    const fallbackSubmissionId = "c3d4e5f6-3333-5443-a555-666666666666";
+    seedFirstSubmissionRecord("reserved-2", fallbackSubmissionId, { status: "sending" });
+    conversationMock.layer.acquire.mockImplementationOnce(
+      () =>
+        ({ ...conversationMock.lease, sessionId: "reserved-2" }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState("reserved-2", {
+      rows: [realUserInputRow()],
+    });
+    renderPane(root, "reserved-2");
+    expect(timelineFocus.props?.optimisticFirstInputRow).toBeNull();
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-2")).toHaveLength(0);
+    expect(isV4FirstSubmissionActive(WORKSPACE, undefined, fallbackSubmissionId)).toBe(false);
+  });
+
+  it("IUX04: navigating away before the ACK never renders or re-dispatches the submission; returning reconciles", () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const submissionId = "d4e5f6a7-4444-6553-b666-777777777777";
+    const draftScope = paneDraftScope();
+    seedFirstSubmissionRecord(draftScope, submissionId, { text: "navigate away" });
+    const onSessionCreated = vi.fn();
+
+    renderPane(root, null, { onSessionCreated });
+    expect(timelineFocus.props?.optimisticFirstInputRow).toMatchObject({
+      text: "navigate away",
+      origin: "realUser",
+    });
+
+    // Navigate to another existing session before the reservation identity exists.
+    projectionState.current = boundProjectionState("other-session");
+    renderPane(root, "other-session");
+    expect(timelineFocus.props?.optimisticFirstInputRow).toBeNull();
+
+    // The late reservation bind lands while the pane is elsewhere (the composer's
+    // bindReservedSessionRecord moves the persisted record to the reserved scope).
+    expect(
+      moveV4ComposerDraft(
+        WORKSPACE,
+        undefined,
+        getV4WorktreeRecoveryScope(draftScope, submissionId),
+        getV4WorktreeRecoveryScope("reserved-1", submissionId),
+      ),
+    ).toBe(true);
+    renderPane(root, "other-session");
+    // A pane not on the reserved session never renders it and never steals focus.
+    expect(timelineFocus.props?.optimisticFirstInputRow).toBeNull();
+    expect(onSessionCreated).not.toHaveBeenCalledWith("reserved-1");
+
+    projectionState.current = boundProjectionState("reserved-1");
+    renderPane(root, "reserved-1");
+    // Returning reconciles from the persisted record: same text and identity, and
+    // the pane never re-dispatched the submission.
+    expect(timelineFocus.props?.optimisticFirstInputRow).toMatchObject({
+      text: "navigate away",
+      origin: "realUser",
+      entityId: submissionId,
+    });
+    expect(conversationMock.sendCommand).not.toHaveBeenCalled();
+  });
+  // Unresolved outcomes (specs/first-submission-instant-ux.md, Reconciliation): the pane holding
+  // an inactive sending/unknown record decides from durable Host facts, then the original command.
+  async function mountBoundRecord(
+    sessionId: string,
+    submissionId: string,
+    options: { preparing: boolean; status?: "sending" | "unknown"; worktree?: boolean },
+  ) {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    seedFirstSubmissionRecord(sessionId, submissionId, {
+      commandId: `cmd-${submissionId}`,
+      status: options.status ?? "unknown",
+      // Plain first submissions carry their Host reservation; worktree ones never do.
+      ...(options.worktree
+        ? {}
+        : { reservation: { sessionId, commandId: `reserve-${submissionId}` } }),
+    });
+    // The chain ended (lost ACK) or the app restarted: nothing in this renderer owns it.
+    setV4FirstSubmissionActive(WORKSPACE, undefined, submissionId, false);
+    conversationMock.layer.acquire.mockImplementation(
+      () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState(
+      sessionId,
+      options.preparing ? { submissionPreparation: { submissionId } } : undefined,
+    );
+    renderPane(root, sessionId);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+  const recordStatus = (sessionId: string) =>
+    readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, sessionId)[0]?.draft.firstSubmission?.status;
+
+  it("F: a still-preparing session whose command the Host does not know turns failed with Retry", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f1", commandId: "cmd-f1" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("reserved-f1", "f1", { preparing: true });
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "reserved-f1", commandId: "cmd-f1" }],
+    });
+    expect(recordStatus("reserved-f1")).toBe("failed");
+    expect(conversationMock.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("F: an accepted command settles to synchronizing until the real row projects", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [
+        {
+          key: { sessionId: "reserved-f2", commandId: "cmd-f2" },
+          result: { commandId: "cmd-f2", status: "accepted", revisionAtDecision: 1 },
+        },
+      ],
+    }));
+    await mountBoundRecord("reserved-f2", "f2", { preparing: true });
+    expect(recordStatus("reserved-f2")).toBe("sending");
+  });
+
+  it("F: a Host that already admitted the frozen input is trusted over a lost command ledger", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f3", commandId: "cmd-f3" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("reserved-f3", "f3", { preparing: false });
+    // No submissionPreparation: the Host marked the frozen input admitted, so no Retry (it
+    // would resend the same input under a new command id).
+    expect(recordStatus("reserved-f3")).toBe("sending");
+    expect(conversationMock.layer.queryCommands).not.toHaveBeenCalled();
+  });
+
+  it("F: a worktree record never trusts a missing marker (it completes at activation) and queries", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "worktree-f5", commandId: "cmd-f5" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("worktree-f5", "f5", { preparing: false, worktree: true });
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "worktree-f5", commandId: "cmd-f5" }],
+    });
+    expect(recordStatus("worktree-f5")).toBe("failed");
+  });
+
+  it("F: a copy held after Remove gets its decision through the command registry", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: "f6",
+        ownerKey: "reserved-f6",
+        status: "unknown",
+        commandId: "cmd-f6",
+        reservation: { sessionId: "reserved-f6", commandId: "reserve-f6" },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f6", commandId: "cmd-f6" }, result: "unknown" }],
+    }));
+    const decisions: string[] = [];
+    const off = pendingCommandRegistry.subscribeResolution("cmd-f6", (resolution) =>
+      decisions.push(resolution),
+    );
+    conversationMock.layer.acquire.mockImplementation(
+      () =>
+        ({ ...conversationMock.lease, sessionId: "reserved-f6" }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState("reserved-f6", {
+      submissionPreparation: { submissionId: "f6" },
+    });
+    renderPane(root, "reserved-f6");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed"]);
+    // The held copy is owned by its composer: the pane never writes it to storage.
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-f6")).toHaveLength(0);
+  });
+
+  async function mountHeldCopy(
+    sessionId: string,
+    commandId: string,
+    options: {
+      rows?: ConversationSnapshot["rows"]["window"];
+      preparing: boolean;
+      query: () => Promise<unknown>;
+    },
+  ) {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: `sub-${commandId}`,
+        ownerKey: sessionId,
+        status: "unknown",
+        commandId,
+        reservation: { sessionId, commandId: `reserve-${commandId}` },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(
+      options.query as typeof conversationMock.layer.queryCommands,
+    );
+    const decisions: string[] = [];
+    // The registry drops its listeners after each notification: keep collecting.
+    let unsubscribe = () => {};
+    let stopped = false;
+    const listen = () => {
+      unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
+        decisions.push(resolution);
+        if (!stopped) listen();
+      });
+    };
+    listen();
+    const off = () => {
+      stopped = true;
+      unsubscribe();
+    };
+    conversationMock.layer.acquire.mockImplementation(
+      () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState(sessionId, {
+      ...(options.rows ? { rows: options.rows } : {}),
+      ...(options.preparing ? { submissionPreparation: { submissionId: `sub-${commandId}` } } : {}),
+    });
+    renderPane(root, sessionId);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    return { root, decisions, off };
+  }
+
+  it("F: a foreign user row or marker never accepts a held copy (identity matching, FSL rule 6)", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f7", "cmd-f7", {
+      rows: [realUserInputRow("cmd-foreign")],
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f7", commandId: "cmd-f7" }, result: "unknown" }],
+      }),
+    });
+    off();
+    // Neither the foreign row nor the flipped marker is evidence for cmd-f7; an unknown query
+    // outside preparation decides nothing, so the user's unsent copy stays.
+    expect(decisions).toEqual([]);
+  });
+
+  it("F: a user row carrying the held command id accepts the held copy", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f8", "cmd-f8", {
+      rows: [realUserInputRow("cmd-f8")],
+      preparing: false,
+      query: async () => ({ results: [] }),
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: a transient query failure is re-checked when the Host snapshot advances", async () => {
+    let calls = 0;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f9", "cmd-f9", {
+      preparing: true,
+      query: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport down");
+        return {
+          results: [{ key: { sessionId: "reserved-f9", commandId: "cmd-f9" }, result: "unknown" }],
+        };
+      },
+    });
+    expect(decisions).toEqual([]);
+    const advanced = boundProjectionState("reserved-f9", {
+      submissionPreparation: { submissionId: "sub-cmd-f9" },
+    });
+    projectionState.current = {
+      ...advanced,
+      snapshot: { ...advanced.snapshot!, revision: 7 },
+    };
+    renderPane(root, "reserved-f9");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
+  it("F: Host revisions during an in-flight query never multiply the query (one + one follow-up)", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f10", "cmd-f10", {
+      preparing: true,
+      query: () => {
+        calls += 1;
+        if (calls === 1)
+          return new Promise((_, reject) => {
+            release = () => reject(new Error("transport down"));
+          });
+        return Promise.resolve({
+          results: [
+            { key: { sessionId: "reserved-f10", commandId: "cmd-f10" }, result: "unknown" },
+          ],
+        });
+      },
+    });
+    const at = (revision: number) => {
+      const base = boundProjectionState("reserved-f10", {
+        submissionPreparation: { submissionId: "sub-cmd-f10" },
+      });
+      projectionState.current = { ...base, snapshot: { ...base.snapshot!, revision } };
+      renderPane(root, "reserved-f10");
+    };
+    for (const revision of [2, 3, 4, 5]) at(revision);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls).toBe(1);
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    // The transient failure re-checks once because the revision advanced during the flight.
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
+  it("F: the copy's own row still accepts it after an undecided query", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f11", "cmd-f11", {
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f11", commandId: "cmd-f11" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual([]);
+    projectionState.current = boundProjectionState("reserved-f11", {
+      rows: [realUserInputRow("cmd-f11")],
+    });
+    renderPane(root, "reserved-f11");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: the own row still wins after a decided failure", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f12", "cmd-f12", {
+      preparing: true,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f12", commandId: "cmd-f12" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual(["failed"]);
+    projectionState.current = boundProjectionState("reserved-f12", {
+      rows: [realUserInputRow("cmd-f12")],
+      submissionPreparation: { submissionId: "sub-cmd-f12" },
+    });
+    renderPane(root, "reserved-f12");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed", "accepted"]);
+  });
+
+  it("F: an unavailable command query leaves the record unchanged", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => {
+      throw new Error("transport down");
+    });
+    await mountBoundRecord("reserved-f4", "f4", { preparing: true, status: "sending" });
+    expect(recordStatus("reserved-f4")).toBe("sending");
+  });
+
+  it("B: a worktree reservation binds from the Host identity at the ACK, never on the project tree", async () => {
+    const commitCreatedTask = vi.fn(() => new Promise<void>(() => {}));
+    projectDirectoryMock.current = { commitCreatedTask, groups: { refresh: async () => {} } };
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const submissionId = "f6a7b8c9-6666-4775-8888-999999999999";
+    seedFirstSubmissionRecord(paneDraftScope(), submissionId, { text: "worktree first" });
+    const onSessionCreated = vi.fn();
+    renderPane(root, null, { onSessionCreated });
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: { type: "createSession", sessionId: "wt-session-1" },
+    }));
+    const prepare = (
+      scrollFocus.composerProps as unknown as {
+        onPrepareWorktreeSession: (
+          params: { branchName: string; targetPath: string; attemptId: string },
+          options: { shouldActivate: () => boolean },
+        ) => Promise<string>;
+      }
+    ).onPrepareWorktreeSession;
+    await act(async () => {
+      await expect(
+        prepare(
+          { branchName: "feature-b", targetPath: "/worktrees/feature-b", attemptId: "attempt-b" },
+          { shouldActivate: () => true },
+        ),
+      ).resolves.toBe("wt-session-1");
+    });
+    // The message moved with the bind, which never waited on the (never-settling) tree staging.
+    expect(onSessionCreated).toHaveBeenCalledWith("wt-session-1");
+    expect(commitCreatedTask).not.toHaveBeenCalled();
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "wt-session-1")).toHaveLength(1);
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, paneDraftScope())).toHaveLength(0);
   });
 });

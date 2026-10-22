@@ -66,6 +66,25 @@ export function joinFilePath(basePath: string, childPath: string): string {
   return `${normalizedBasePath}${separator}${normalizedChildPath}`;
 }
 
+/**
+ * Display-only `~` form of an absolute path under the Host home directory; any other path (or an
+ * unknown home) is returned unchanged. Never feed the result back into file operations.
+ */
+export function formatHomeRelativePath(path: string, homePath: string | undefined): string {
+  const home = homePath?.trim().replace(/[\\/]+$/, "");
+  if (!home || !isAbsoluteFilePath(home)) {
+    return path;
+  }
+  if (path === home) {
+    return "~";
+  }
+  const separator = path[home.length];
+  if (path.startsWith(home) && (separator === "/" || separator === "\\")) {
+    return `~${path.slice(home.length)}`;
+  }
+  return path;
+}
+
 // encodeURI does not escape # and ?, but they are fragment/query delimiters in URLs.
 // If a filename contains # (such as index#v2.html), downstream URL parsing truncates the pathname in the generated file URL
 // (leaving only /E:/dir/index), so opening it through the shell fails. Escape them after encodeURI.

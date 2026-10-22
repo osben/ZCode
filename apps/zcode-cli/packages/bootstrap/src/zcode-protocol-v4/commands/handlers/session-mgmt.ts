@@ -37,6 +37,16 @@ async function createSession(
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
   const payload = envelope.payload as CommandPayloadMap["createSession"];
+  if (payload.submissionPreparation) {
+    if (!host.prepareSubmissionSession) throw new Error("Durable submission preparation is unavailable");
+    const prepared = await host.prepareSubmissionSession({
+      workspaceId: payload.workspaceId,
+      ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
+      submissionId: payload.submissionPreparation.submissionId,
+      incognito: payload.incognito,
+    });
+    return { type: "createSession", sessionId: prepared.sessionId };
+  }
   if (payload.worktreePreparation) {
     if (
       payload.preparedSessionId ||
@@ -86,6 +96,7 @@ async function createSession(
       workspaceId: payload.workspaceId,
       ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
       ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
+      ...(payload.expectedSubmissionId ? { expectedSubmissionId: payload.expectedSubmissionId } : {}),
       ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
       mcpServers: payload.mcpServers,
       ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),
@@ -115,7 +126,7 @@ async function createSession(
         if (payload.config.mode === "guarded" || payload.firstInput?.mode === "guarded") {
           // 根因：旧 catch 吞掉模式应用失败后仍提交首轮，Guarded 会静默退化。
           try {
-            await host.deleteSession?.(sessionId);
+            if (!payload.preparedSessionId) await host.deleteSession?.(sessionId);
           } catch (closeError) {
             host.logger?.warn?.("v4 guarded draft cleanup failed", { sessionId, closeError });
           }
@@ -190,7 +201,7 @@ async function createSession(
     // Complete the preparation at the first input's admission boundary, before the model response
     // finishes, so the conversation snapshot and sessions-index stop carrying the preparation marker
     // and later sends target the active session through ordinary queue/guide routing.
-    if (payload.preparedSessionId) {
+    if (payload.preparedSessionId && (!payload.expectedSubmissionId || firstInput)) {
       await completePreparedActivation(host, sessionId);
     }
     return { type: "createSession", sessionId, ...(firstInput ? { input: firstInput } : {}) };
@@ -252,12 +263,13 @@ async function deleteSession(
   host: V4CommandCoreHost,
   envelope: CommandEnvelope,
 ): Promise<CommandResult | undefined> {
-  const record = requireRecord(host, envelope.sessionId);
+  if (!envelope.sessionId) throw new Error("Session identity is required for deletion");
+  if (!host.hasPreparedSession?.(envelope.sessionId)) requireRecord(host, envelope.sessionId);
   if (!host.deleteSession) {
     // 关闭不能静默降级：钩子缺失说明 binder 接线不完整，直接失败（ACK failed）。
     throw new Error("v4 deleteSession requires host.deleteSession capability");
   }
-  await host.deleteSession(record.app.sessionId);
+  await host.deleteSession(envelope.sessionId);
   return undefined;
 }
 

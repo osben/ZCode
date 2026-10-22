@@ -43,7 +43,7 @@ Source: `pnpm typecheck` after the overlay, exit 2, 513 errors (503 in packages/
 - `packages/ui/src/v4/composer/branchSwitchGuard.tsx`
 - `packages/ui/src/v4/composer/composerAttachmentSubmission.ts`
 - `packages/ui/src/v4/composer/composerRecoveryContexts.ts`
-- `packages/ui/src/v4/composer/composerWorktreeFailureReturn.ts`
+- `packages/ui/src/v4/composer/composerWorktreeFailureReturn.ts` (deleted 2026-10-21: the first-submission lifecycle removed its only caller)
 - `packages/web/src/main.tsx`
 - `packages/web/src/share/ConversationShareLandingPage.tsx`
 

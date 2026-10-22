@@ -384,7 +384,6 @@ function snapshotWith(
       activeTurnId: undefined,
       lastTurnId: undefined,
       lastInputId: undefined,
-      archivedAt: undefined,
     },
     settings: {
       model: {
@@ -753,48 +752,77 @@ describe("createZCodeTaskIndexSyncer", () => {
     env.configEmitter.dispose();
   });
 
-  it("indexes durable preparing sessions on cold and live delivery without a runtime snapshot", async () => {
-    const preparation = {
-      branchName: "feature",
-      targetPath: "/worktree",
-      status: "preparing" as const,
-      attemptId: "one",
-    };
-    const env = setupEnv({
-      initialSessions: [
-        summaryOf("prepared-cold", "draft", {
-          title: "Worktree feature",
-          worktreePreparation: preparation,
-        }),
-        summaryOf("ordinary-draft", "draft"),
-      ],
-    });
-    const syncer = createZCodeTaskIndexSyncer({ agentService: env.agent, taskIndexRepo: env.repo });
-    syncer.ensureSessionSubscription({ workspacePath: "/repo", sessionId: "prepared-cold" });
-    await subscribed(env);
-    await vi.waitFor(async () =>
+  it.each(["worktree", "submission"] as const)(
+    "indexes durable %s preparation on cold and live delivery without a runtime snapshot",
+    async (kind) => {
+      const preparation = {
+        branchName: "feature",
+        targetPath: "/worktree",
+        status: "preparing" as const,
+        attemptId: "one",
+      };
+      const fields =
+        kind === "worktree"
+          ? { worktreePreparation: preparation }
+          : {
+              submissionPreparation: {
+                submissionId: "first-submission",
+                status: "preparing" as const,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            };
+      const env = setupEnv({
+        initialSessions: [
+          summaryOf("prepared-cold", "draft", {
+            title: "Worktree feature",
+            ...fields,
+          }),
+          summaryOf("ordinary-draft", "draft"),
+        ],
+      });
+      // A seeded reserved row must also be admitted with CLI facts: sidebar reads list only
+      // cli-admitted rows (cli_created_at IS NOT NULL), so seeding alone leaves it invisible.
+      const applyCliFactsSpy = vi.spyOn(env.repo, "applyCliFacts");
+      const syncer = createZCodeTaskIndexSyncer({
+        agentService: env.agent,
+        taskIndexRepo: env.repo,
+      });
+      syncer.ensureSessionSubscription({ workspacePath: "/repo", sessionId: "prepared-cold" });
+      await subscribed(env);
+      await vi.waitFor(async () =>
+        expect(
+          await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "prepared-cold" }),
+        ).toMatchObject({ title: "Worktree feature" }),
+      );
       expect(
-        await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "prepared-cold" }),
-      ).toMatchObject({ title: "Worktree feature" }),
-    );
-    expect(
-      await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "ordinary-draft" }),
-    ).toBeNull();
-    env.indexEmitter.fire(
-      indexUpsertFrame(
-        summaryOf("prepared-live", "draft", {
-          title: "Worktree feature",
-          worktreePreparation: preparation,
-        }),
-      ),
-    );
-    await vi.waitFor(async () =>
-      expect(
-        await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "prepared-live" }),
-      ).not.toBeNull(),
-    );
-    syncer.disposeAll();
-  });
+        await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "ordinary-draft" }),
+      ).toBeNull();
+      env.indexEmitter.fire(
+        indexUpsertFrame(
+          summaryOf("prepared-live", "draft", {
+            title: "Worktree feature",
+            ...fields,
+          }),
+        ),
+      );
+      await vi.waitFor(async () =>
+        expect(
+          await env.repo.getTaskMeta({ workspacePath: "/repo", taskId: "prepared-live" }),
+        ).not.toBeNull(),
+      );
+      // A live reserved row must also be admitted with CLI facts: sidebar reads list only
+      // cli-admitted rows (cli_created_at IS NOT NULL), so seeding alone leaves it invisible.
+      await vi.waitFor(() =>
+        expect(applyCliFactsSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            meta: expect.objectContaining({ taskId: "prepared-live" }),
+          }),
+        ),
+      );
+      syncer.disposeAll();
+    },
+  );
 
   it("silently seeds missing rows from the first sessions-index snapshot and skips drafts", async () => {
     const env = setupEnv({
@@ -1086,7 +1114,6 @@ describe("createZCodeTaskIndexSyncer", () => {
       expect.objectContaining({
         workspacePath: "/repo",
         sessionIds: expect.arrayContaining(["child", "fork", "unknown"]),
-        includeArchived: true,
       }),
     );
     expect(env.agent.resumeSession).not.toHaveBeenCalled();

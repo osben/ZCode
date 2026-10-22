@@ -6,9 +6,29 @@ import {
 } from "@zcode/shared";
 import {
   ensureIncognitoSupport,
+  ensureDurableFirstSubmissionSupport,
   ensureIndependentPlanSupport,
   supportsHistoryFirst,
 } from "../src/zcode-agent/runtimeCapabilitySupport.js";
+
+describe("durable first-submission execution-endpoint capability", () => {
+  it("fails closed for an older CLI and a failed capability query", async () => {
+    for (const client of [
+      { request: vi.fn().mockResolvedValue({ independentPlanState: true }) },
+      { request: vi.fn().mockRejectedValue(new Error("Method not found")) },
+    ]) {
+      await expect(ensureDurableFirstSubmissionSupport(client as never)).rejects.toThrow(
+        "proto.durableFirstSubmissionUnsupported",
+      );
+    }
+  });
+  it("allows reservation only when the CLI explicitly advertises it", async () => {
+    const client = { request: vi.fn().mockResolvedValue({ durableFirstSubmission: true }) };
+    await ensureDurableFirstSubmissionSupport(client as never);
+    await ensureDurableFirstSubmissionSupport(client as never);
+    expect(client.request).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("historyFirst execution-endpoint capability", () => {
   it("forwards history-first only when the CLI advertises it, sharing one capability read", async () => {

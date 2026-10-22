@@ -233,6 +233,38 @@ export function buildRuntimeZCodeApiUrl(env: RuntimeZCodeEndpointEnv = {}, path:
   return `${resolveRuntimeZCodeEndpointOrigin(env)}${normalizedPath}`;
 }
 
+/** Relay V2 WebSocket path; must equal `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` (guarded by a test). */
+export const WEB_REMOTE_CONTROL_RELAY_WS_PATH = "/api/v1/remote/ws2";
+
+const RELAY_ORIGIN_ONLY_PATHS = new Set(["", "/", "/ws", "/ws/"]);
+
+/**
+ * Fork: a configured relay value (runtime env or baked release default) is a relay origin or an explicit
+ * WS URL. Release builds baked the V1 endpoint `wss://host/ws`, which the V2 relay rejects, so a bare
+ * origin or that legacy path maps to the V2 WS path. Owner and rules: specs/relay-v2-migration.md §11.1.
+ */
+export function normalizeConfiguredWebRemoteControlRelayWsUrl(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  if (!RELAY_ORIGIN_ONLY_PATHS.has(url.pathname)) {
+    return trimmed;
+  }
+  if (url.protocol === "https:") url.protocol = "wss:";
+  if (url.protocol === "http:") url.protocol = "ws:";
+  url.pathname = WEB_REMOTE_CONTROL_RELAY_WS_PATH;
+  return url.toString();
+}
+
 export function resolveWebRemoteControlRelayWsUrl(options?: {
   endpointOrigin?: string | null | undefined;
   overrideUrl?: string | null | undefined;
@@ -255,7 +287,7 @@ export function resolveWebRemoteControlRelayWsUrl(options?: {
     normalizeZCodeEndpointOrigin(options?.endpointOrigin?.trim() || DEFAULT_ZCODE_ENDPOINT_ORIGIN),
   );
   origin.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
-  origin.pathname = "/api/v1/remote/ws2";
+  origin.pathname = WEB_REMOTE_CONTROL_RELAY_WS_PATH;
   return origin.toString();
 }
 
@@ -388,7 +420,7 @@ export function buildZCodeEndpointUrls(
     remoteUrl: `${normalizedOrigin}/remote/${remoteVersion}`,
     webRemoteCallbackUrl: `${normalizedOrigin}/remote/v4`,
     webShareCallbackUrl: `${normalizedOrigin}/cn/share/callback`,
-    relayWsUrl: `${wsOrigin}/api/v1/remote/ws2`,
+    relayWsUrl: `${wsOrigin}${WEB_REMOTE_CONTROL_RELAY_WS_PATH}`,
     zcodePlanOpenAiBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan`,
     zcodePlanAnthropicBaseUrl: `${normalizedOrigin}/api/v1/zcode-plan/anthropic`,
     zcodePlanBillingCurrentUrl: `${normalizedOrigin}/api/v1/zcode-plan/billing/current`,

@@ -1,5 +1,11 @@
 # UI draft send path (upstream 3.16.1 SessionPane, UI-2a)
 
+> First-submission lifecycle update (2026-10-20):
+> [first-submission-lifecycle.md](./first-submission-lifecycle.md) supersedes the
+> failed-empty-incognito cleanup rule and accepted-only visibility below. A
+> submitted reserved session must survive upload/runtime failure. Immediate
+> pending presentation precedes async work; sidebar rows remain Host-owned.
+
 Status: design for the UI-2a port. Scope: `packages/ui/src/v4/SessionPane.tsx`
 `dispatchSendTextAfterConfig` and the hooks it reads. Not in scope: the
 `/plan` shortcut (removed upstream; decision: not restored), the composer
@@ -159,9 +165,9 @@ same attachment path; they must not become native slash commands.
 
 The captured attachment owner uploads pathless content through `attachmentPut`;
 remote local paths go through the transfer service and must return `staged: true`.
-No local path may be forwarded to a remote runtime. An upload failure retires the
-new empty incognito runtime (never a prepared worktree session), sends no
-prompt, preserves the draft/profile/files, and uses the existing send error path.
+No local path may be forwarded to a remote runtime. An upload failure retains the
+submitted incognito session, sends no prompt, preserves the draft/profile/files,
+and exposes the existing send error path with explicit same-session recovery.
 Accepted input retains the existing continuous/replayable delivery semantics and
 command ledger; unknown command outcomes are not retried automatically.
 

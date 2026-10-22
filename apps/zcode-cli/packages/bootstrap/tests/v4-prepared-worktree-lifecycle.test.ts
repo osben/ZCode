@@ -213,6 +213,170 @@ afterEach(() => {
 });
 
 describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", () => {
+  it("persists a compatible ready prewarm without creating a second runtime", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-prewarm-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "ready-prewarm";
+    const record = makeFakeRecord(sessionId, target);
+    Object.assign(record.app.runtime, {
+      isIncognito: () => false,
+      getExecutionWorktree: () => undefined,
+      ensureSessionPersistedForExternalActivity: async () => {
+        const now = Date.now();
+        await target.store.createSession({ id: sessionId as never, projectID: createProjectId("prewarm"), directory: WORKSPACE, path: WORKSPACE, slug: "prewarm", title: "New session", version: "test", time: { created: now, updated: now } });
+      },
+    });
+    target.context.sessions.set(sessionId, record);
+    const reserved = await target.gateway.handleCommand(command("createSession", { workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "warm-input" } }, "reserve-prewarm"));
+    expect(reserved.status).toBe("accepted");
+    const activated = await target.gateway.handleCommand(command("createSession", { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "warm-input" }, "activate-prewarm"));
+    expect(activated.status).toBe("accepted");
+    expect(target.context.sessions.get(sessionId)).toBe(record);
+    expect(target.materializations).toEqual([]);
+    expect(await target.store.getSession(sessionId as never)).toBeTruthy();
+  });
+  it("retains the reserved identity when runtime materialization itself rejects", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-startup-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "reserved-startup-failure";
+    await target.gateway.handleCommand(command("createSession", { workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "startup-failure" } }, "reserve-startup"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "startup-failure", firstInput: { text: "Retain this input" } };
+    vi.mocked(createSessionRecordForV4).mockRejectedValueOnce(new Error("runtime startup failed"));
+    const failed = await target.gateway.handleCommand(command("createSession", activation, "activate-startup-failure"));
+    expect(failed.status).toBe("failed");
+    expect(await target.store.getSession(sessionId as never)).toBeTruthy();
+    expect(target.sentInputs).toEqual([]);
+    const retried = await target.gateway.handleCommand(command("createSession", activation, "retry-startup-failure"));
+    expect(retried.status).toBe("accepted");
+    expect(retried.result).toMatchObject({ sessionId });
+    expect(target.materializations).toEqual([sessionId]);
+    expect(target.sentInputs).toEqual(["Retain this input"]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+  it("keeps a two-step submission recoverable until sendText admission, including a cold retry", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-two-step-"));
+    const dbPath = join(dbDir, "sessions.sqlite");
+    const target = await makeHarness(dbPath);
+    harness = { ...target, dbDir };
+    const sessionId = "two-step-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId,
+      submissionPreparation: { submissionId: "two-step" },
+    }, "reserve-two-step"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "two-step" };
+    const initialized = await target.gateway.handleCommand(command("createSession", activation, "initialize-two-step"));
+    expect(initialized.status).toBe("accepted");
+    const entries = await target.store.sessionEntries!({ sessionID: sessionId as never, type: "v4/fork_submission_preparation" });
+    expect(entries.at(-1)?.data).toMatchObject({ status: "preparing" });
+    expect(target.sentInputs).toEqual([]);
+    target.gateway.dispose();
+    await target.store.close?.();
+    const cold = await makeHarness(dbPath);
+    harness = { ...cold, dbDir };
+    const retry = await cold.gateway.handleCommand(command("createSession", activation, "retry-initialize-two-step"));
+    expect(retry.status).toBe("accepted");
+    expect(cold.materializations).toEqual([sessionId]);
+    const sent = await cold.gateway.handleCommand(command("sendText", { text: "one frozen input" }, "send-two-step", sessionId));
+    expect(sent.status).toBe("accepted");
+    expect(cold.sentInputs).toEqual(["one frozen input"]);
+    const active = await cold.store.sessionEntries!({ sessionID: sessionId as never, type: "v4/fork_submission_preparation" });
+    expect(active.at(-1)?.data).toMatchObject({ status: "active" });
+    cold.heldCompletions.forEach((held) => held.resolve());
+  });
+  it("reserves an ordinary submitted session before runtime creation and restores without auto-running", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const dbPath = join(dbDir, "sessions.sqlite");
+    const target = await makeHarness(dbPath);
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-1",
+      submissionPreparation: { submissionId: "submission-1" },
+    }, "cmd-reserve-submission"));
+    expect(reserve.status).toBe("accepted");
+    expect(reserve.result).toMatchObject({ sessionId: "durable-submission-1" });
+    expect(target.materializations).toEqual([]);
+    expect(await target.store.getSession("durable-submission-1" as never)).toBeTruthy();
+    await target.store.close?.();
+    target.gateway.dispose();
+
+    const cold = await makeHarness(dbPath);
+    harness = { ...cold, dbDir };
+    await cold.gateway.subscribe({
+      topic: "conversation/durable-submission-1",
+      connectionId: "submission-restart",
+      clientMode: "desktop-continuous",
+    });
+    expect(cold.context.sessions.size).toBe(0);
+    expect(cold.materializations).toEqual([]);
+    expect(cold.sentInputs).toEqual([]);
+  });
+
+  it("keeps a reserved incognito row through bootstrap failure and reuses it on explicit retry", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-2",
+      submissionPreparation: { submissionId: "submission-2" },
+      incognito: INCOGNITO_LOCKDOWN_PROFILE,
+    }, "cmd-reserve-incognito"));
+    expect(reserve.status).toBe("accepted");
+    expect((await target.store.getSession("durable-submission-2" as never))?.incognito)
+      .toEqual(INCOGNITO_LOCKDOWN_PROFILE);
+    const payload = {
+      workspaceId: WORKSPACE,
+      preparedSessionId: "durable-submission-2",
+      expectedSubmissionId: "submission-2",
+      incognito: INCOGNITO_LOCKDOWN_PROFILE,
+      firstInput: { text: "durable frozen input" },
+    };
+    vi.mocked(createSessionRecordForV4).mockRejectedValueOnce(new Error("bootstrap failed"));
+    const failed = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-fail"));
+    expect(failed.status).toBe("failed");
+    expect(await target.store.getSession("durable-submission-2" as never)).toBeTruthy();
+    const retried = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-retry"));
+    expect(retried.status).toBe("accepted");
+    expect(retried.result).toMatchObject({ sessionId: "durable-submission-2" });
+    expect(target.sentInputs).toEqual(["durable frozen input"]);
+    const repeated = await target.gateway.handleCommand(command("createSession", payload, "cmd-submission-repeat"));
+    expect(repeated.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["durable frozen input"]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("rejects a stale submission identity or profile before materialization", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const reserve = await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE,
+      sessionId: "durable-submission-3",
+      submissionPreparation: { submissionId: "submission-3" },
+    }, "cmd-reserve-stale"));
+    expect(reserve.status).toBe("accepted");
+    for (const overrides of [
+      { expectedSubmissionId: "other-submission" },
+      { incognito: INCOGNITO_LOCKDOWN_PROFILE },
+      { workspaceId: "/other-workspace" },
+      { executionWorktree: { path: TARGET_PATH, branchName: BRANCH } },
+    ]) {
+      const ack = await target.gateway.handleCommand(command("createSession", {
+        workspaceId: WORKSPACE,
+        preparedSessionId: "durable-submission-3",
+        expectedSubmissionId: "submission-3",
+        firstInput: { text: "frozen input" },
+        ...overrides,
+      }, `cmd-stale-${JSON.stringify(overrides)}`));
+      expect(ack.status).toBe("failed");
+    }
+    expect(target.materializations).toEqual([]);
+    expect(target.sentInputs).toEqual([]);
+  });
+
   it("completes preparation at the first input's admission boundary, before the response finishes", async () => {
     const dbDir = mkdtempSync(join(tmpdir(), "wt-lifecycle-"));
     const target = await makeHarness(join(dbDir, "sessions.sqlite"));

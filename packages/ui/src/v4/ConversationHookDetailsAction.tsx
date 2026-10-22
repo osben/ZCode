@@ -129,13 +129,16 @@ export const ConversationHookDetailsAction = memo(function ConversationHookDetai
 }) {
   const { intl } = useZCodeIntl();
   const [open, setOpen] = useState(false);
+  // Always controlled: passing `undefined` while the Popover is closed flipped Radix between
+  // controlled and uncontrolled on every open/close and logged a warning each time.
+  const [tooltipOpen, setTooltipOpen] = useState(false);
   const items = useMemo(() => buildHookDetailItems(rows), [rows]);
   if (items.length === 0) return null;
 
   const label = intl.formatMessage({ id: "chat.hooks.label" });
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Tooltip open={open ? false : undefined}>
+      <Tooltip open={open ? false : tooltipOpen} onOpenChange={setTooltipOpen}>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button

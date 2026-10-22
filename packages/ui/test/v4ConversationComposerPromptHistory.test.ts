@@ -250,10 +250,13 @@ function installMinimalDom() {
     nodeType: 9,
     removeEventListener: () => {},
   } as unknown as Document & { defaultView?: unknown };
+  const body = createMinimalElement(documentMock as unknown as Document, "body");
+  Object.assign(documentMock, { body });
   const windowMock = {
     addEventListener: target.addEventListener.bind(target),
     cancelAnimationFrame: () => {},
     clearTimeout,
+    dispatchEvent: (event: Event) => target.dispatchEvent(event),
     document: documentMock,
     HTMLIFrameElement: function HTMLIFrameElement() {},
     HTMLElement: function HTMLElement() {},
