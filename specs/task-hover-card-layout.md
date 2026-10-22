@@ -2,6 +2,9 @@
 
 Status: implemented (2026-10-15). Covers the sidebar task-row hover card (`TaskSidebarHoverCard`,
 `data-task-hover-card`). Supersedes the previous status/workspace/diff stacked layout.
+Regression 2026-10-22 (fixed): the grouped row hid its run-state dot on hover/focus, and the regular
+row replaced its run-state slot with the Pin action (`hidden` status span). Both are restored by
+the leading-slot rule below and acceptance #8-#9.
 
 ## Contract
 
@@ -35,6 +38,12 @@ Run-state indicators remain visible on the sidebar row while hover/focus actions
 the detail card must not hide the running spinner or error/unread marker.
 For a mobile-active task, the phone marker occupies the leading status slot while visible; when
 hover/focus actions suppress that marker, restore the task's leading run-state indicator in the slot.
+
+Leading-slot owner (regular `TaskListItem` row): the left slot shows one of the phone marker, the
+run-state indicator (error, unread, spinner), or the Pin action. A present run-state indicator always
+keeps the slot on hover/focus; the Pin action then moves into the right-side action cluster next to
+Archive. The grouped row keeps its run-state dot in the trailing metadata cluster beside the action
+cluster on hover/focus.
 
 ## Acceptance scenarios
 

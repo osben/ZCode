@@ -529,13 +529,6 @@ export const MemoTaskItem = memo(function TaskListItem({
         <ListTree className="size-3.5" />
       </TaskRowActionButton>
     ) : null;
-  const taskActionGroupNode =
-    fileTreeActionNode || archiveActionNode ? (
-      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
-        {fileTreeActionNode}
-        {archiveActionNode}
-      </span>
-    ) : null;
   const pinActionButton = (
     <Button
       type="button"
@@ -557,8 +550,36 @@ export const MemoTaskItem = memo(function TaskListItem({
   );
   // hover:none 只让右侧 task actions 常驻；如果也用它接管 leading 槽，
   // 触屏端的错误、未读和 loading 状态会被 Pin 永久替换。
-  const shouldRenderPinAction =
-    showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
+  // Single owner of the left slot (task-hover-card-layout, leading-slot rule): the phone marker, the
+  // run-state indicator, or Pin. A present run-state indicator keeps the slot on hover/focus, so Pin
+  // moves into the action cluster instead of hiding the status.
+  const hasRunState = leadingIndicator !== "none";
+  const shouldRenderPinOnLeft =
+    showPinAction && !hasRunState && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
+  const shouldRenderPinInActions =
+    showPinAction && hasRunState && shouldSuppressWorkspaceTaskMetadata;
+  const pinActionInActionsNode = shouldRenderPinInActions ? (
+    <ControlHintTooltip
+      title={
+        workspaceActionsDisabledReason ??
+        intl.formatMessage({
+          id: isPinned ? "taskList.unpin" : "taskList.pin",
+        })
+      }
+      side="top"
+      align="center"
+    >
+      {pinActionButton}
+    </ControlHintTooltip>
+  ) : null;
+  const taskActionGroupNode =
+    pinActionInActionsNode || fileTreeActionNode || archiveActionNode ? (
+      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
+        {pinActionInActionsNode}
+        {fileTreeActionNode}
+        {archiveActionNode}
+      </span>
+    ) : null;
   return (
     <Tooltip open={hoverEnabled ? undefined : false}>
       <TooltipTrigger asChild>
@@ -619,7 +640,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 "flex size-4 items-center justify-center transition-opacity",
                 // SVG 自身旋转会逐帧重算样式；让现有 HTML 槽位合成旋转，保留图标与状态语义。
                 leadingIndicator === "loading" && "animate-spin",
-                shouldRenderPinAction && "hidden",
+                shouldRenderPinOnLeft && "hidden",
                 // Phone marker owns the slot only while no hover/focus actions suppress it (task-hover-card-layout #9).
                 isMobileActive && !shouldSuppressWorkspaceTaskMetadata && "invisible",
               )}
@@ -639,7 +660,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <LoaderIcon className="size-4 text-foreground-subtle" />
               ) : null}
             </span>
-            {shouldRenderPinAction ? (
+            {shouldRenderPinOnLeft ? (
               <ControlHintTooltip
                 title={
                   workspaceActionsDisabledReason ??
