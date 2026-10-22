@@ -94,6 +94,7 @@ async function fixture() {
   return { root, userRoot, statePath, state, readState, cache, workspace, emit, read };
 }
 
+// CI probe: run this suite on the integration baseline.
 describe("Host incremental subagent snapshots", () => {
   it("keeps the filesystem root observable when the configuration directory does not exist", async () => {
     // Use the real root path of the current platform but mock the watcher, avoiding writes to the drive root or watching the whole filesystem.
