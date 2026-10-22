@@ -84,7 +84,8 @@ turn
 
 ```text
 ConversationSnapshot.rows
-  -> buildConversationTurnRenderUnits(rows, nowMs)
+  -> buildConversationTurnRenderUnits(rows)           // no clock; rebuilt on rows/phase/pins/footer-expiry change
+  -> applyConversationTurnLiveClock(units, nowMs)     // per tick; patches running turns only
   -> split leadingBoundaryRows / assistantWorkRows
   -> unit.workSegments[].workStatus { state, durationMs, outputTokens? } | undefined
        (outputTokens only on the last segment of a completed turn)
@@ -119,9 +120,9 @@ model A completed
 
 - 运行中的时钟（`nowMs`）只属于仍在运行的 turn：每秒 tick 只允许重渲染运行中的 live turn。历史（非运行）turn 不接收随 tick 变化的 `nowMs` 或 unit 对象，`ConversationTurnGroup` 的 memo 必须对它们生效。
 - 同一 `turnId` 的 unit 对象身份在以下情况保持不变：其 `turnHeader`、`orderedRows` 元素引用、session phase、末轮位置与插件卡片 pin 结果均未变化。未变化的 turn 不得因为其他 turn 的 row 增量、或 tick 而得到新对象。
-- Highspeed output footer 依赖 `nowMs` 的过期判定，仍由 builder 每次重算；只有标记真正变化时才产生新对象。
-- 运行中的 turn 不进入 unit 缓存，因为其耗时依赖 `nowMs`。
-- 验收：`packages/ui/test/v4ConversationTurnRenderUnits.test.ts`（unit 引用稳定）与 `packages/ui/test/v4ConversationTimelineHistoricTurnStability.test.ts`（3 个历史 turn + 1 个运行 turn，推进 3 秒，历史组渲染次数不变）。
+- Highspeed output footer 的过期判定依赖 `nowMs`，但 builder 不随 tick 重算：`nextHighspeedExpiryMs` 只在某张卡跨过到期边界时变化，timeline 以它作为 builder 的重建键；footer 标记未变时保持对象身份。
+- 运行中的 turn 不进入 unit 缓存。它的耗时由 `applyConversationTurnLiveClock` 在每个 tick 补丁写入：只替换 turn 级 `workStatus` 与最后一个 work segment 的 `workStatus`，其余字段，以及所有非运行 unit，保持对象身份。
+- 验收：`packages/ui/test/v4ConversationTurnRenderUnits.test.ts`（unit 引用稳定）与 `packages/ui/test/v4ConversationTimelineHistoricTurnStability.test.ts`（3 个历史 turn + 1 个运行 turn，推进 3 秒，历史组渲染次数不变；tick 不重新调用 builder，运行 turn 的 `durationMs` 同步推进 3 秒）。`v4ConversationTurnRenderUnits.test.ts` 断言 `applyConversationTurnLiveClock` 与带时钟构建逐 unit 相等。
 
 ## Explore 聚合与 reasoning 可见性
 

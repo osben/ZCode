@@ -1874,7 +1874,9 @@ it("a Send blocked by session readiness names the reason instead of returning si
       await flushAsyncWork();
     });
     expect(harness.onSendText).not.toHaveBeenCalled();
-    expect(toast).toHaveBeenCalledWith("The session isn’t ready yet. Try again in a moment.");
+    expect(toast).toHaveBeenCalledWith("The session isn’t ready yet. Try again in a moment.", {
+      dedupeKey: "composer.sendBlocked.sessionNotReady",
+    });
   } finally {
     await act(async () => {
       await flushAsyncWork();
@@ -1907,6 +1909,174 @@ it("a failed outside-project first submission never reaches another session's co
     );
     expect(readV4ComposerDraft("/workspace", undefined, "session-other")?.text ?? "").toBe("");
     expect(allFirstSubmissionRecords()).toEqual([]);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("repeated Sends blocked for one reason share one dedupe key, so Enter spam keeps one visible notice (S2b)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  vi.mocked(toast).mockClear();
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.controls.submissionReady = false;
+  harness.refresh();
+  try {
+    for (let press = 0; press < 3; press += 1) {
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!("not yet");
+        await flushAsyncWork();
+      });
+    }
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    const notices = vi
+      .mocked(toast)
+      .mock.calls.filter(
+        ([message]) => message === "The session isn’t ready yet. Try again in a moment.",
+      );
+    expect(notices).toHaveLength(3);
+    for (const [, options] of notices) {
+      expect(options).toEqual({ dedupeKey: "composer.sendBlocked.sessionNotReady" });
+    }
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a Send refused only because another send is in flight raises no notice (S2c)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  vi.mocked(toast).mockClear();
+  const harness = renderLateAckComposer({ worktree: false });
+  // The first dispatch never settles, so the second Send meets the in-flight guard.
+  harness.onSendText.mockImplementationOnce(() => new Promise<never>(() => {}));
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("first");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("second");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    expect(toast).not.toHaveBeenCalledWith("Another message is still being sent.");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a Send whose dispatch throws gets no composer toast, because the pane banner already reports it (S4)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  vi.mocked(toast).mockClear();
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.controls.rejectSend = true;
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("will fail");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    // SessionPane.handleSendText sets the admission-failure banner for this error; a composer toast
+    // with the same text would be a second notice for one failure.
+    expect(toast).not.toHaveBeenCalledWith("Failed to send. Try again later.");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a failure before dispatch, which has no pane banner, keeps its single composer notice (S4b)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  vi.mocked(toast).mockClear();
+  const onPrepareFirstSubmission = vi.fn<PrepareFirstSubmission>(async () => {
+    throw new Error("project.not-found");
+  });
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("outside draft");
+      await flushAsyncWork();
+    });
+    expect(onPrepareFirstSubmission).toHaveBeenCalledTimes(1);
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(toast)
+        .mock.calls.filter(([message]) => message === "Failed to send. Try again later."),
+    ).toHaveLength(1);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a Send made after a failed worktree preparation names the failed first message instead of going silent (S2d)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  vi.mocked(toast).mockClear();
+  const harness = renderLateAckComposer();
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("queued text");
+      await flushAsyncWork();
+    });
+    const prepareSession = harness.capturedPrepareSession();
+    await act(async () => {
+      void prepareSession!({
+        workspaceKey: "/workspace",
+        branchName: "feature-a",
+        targetPath: "/worktrees/feature-a",
+        attemptId: "attempt-1",
+      });
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      harness.resolveReservation("prepared-session-a");
+      await flushAsyncWork();
+    });
+    // The frozen send stays armed after a retryable failure, while worktreeQueued is already cleared.
+    useComposerWorktreePipelineStore.getState().startPipeline("/workspace", {
+      status: "failed",
+      sessionId: "prepared-session-a",
+      failureMessage: "git worktree add failed",
+      params: {
+        workspacePath: "/workspace",
+        branchName: "feature-a",
+        targetPath: "/worktrees/feature-a",
+        attemptId: "attempt-1",
+        baseFromHeadDefault: true,
+      },
+      queuedPromptPreview: "queued text",
+      createdAt: Date.now(),
+    });
+    await act(async () => {
+      await flushAsyncWork();
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).not.toHaveBeenCalled();
+
+    vi.mocked(toast).mockClear();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("second text");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(
+      "Your first message needs attention: retry or remove it before sending another.",
+      { dedupeKey: "composer.sendBlocked.firstSubmissionNeedsAction" },
+    );
   } finally {
     await act(async () => {
       await flushAsyncWork();

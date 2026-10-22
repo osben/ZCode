@@ -106,7 +106,6 @@ function renderGroupedTaskRow(
         activeWorkspacePath: task.workspacePath,
         activeWorkspaceIdentity: task.workspaceIdentity,
         activeTaskId: null,
-        workspaceLabel: "workspace",
         onSelectTask: () => {},
         onCloseTask: () => {},
         onMoveTaskToGroup: () => {},

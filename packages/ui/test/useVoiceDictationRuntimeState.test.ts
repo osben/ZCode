@@ -33,6 +33,9 @@ describe("useVoiceDictationRuntimeState", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    // Visibility overrides belong to one test; a failed assertion must not leave the document hidden.
+    delete (document as unknown as Record<string, unknown>).hidden;
+    delete (document as unknown as Record<string, unknown>).visibilityState;
     // The mock is shared across tests; later tests start from the default snapshot.
     h.state.runtime = { loadedModelId: "model-a", activeModelId: null, activePhase: null };
   });
@@ -80,6 +83,51 @@ describe("useVoiceDictationRuntimeState", () => {
     expect(calls()).toBe(6);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(calls()).toBe(7);
+  });
+
+  it("polls at once when the window becomes visible again instead of waiting out the idle interval", async () => {
+    vi.useFakeTimers();
+    h.service.getRuntimeState.mockClear();
+    h.state.runtime = { loadedModelId: null, activeModelId: null, activePhase: null };
+    renderHook(() => useVoiceDictationRuntimeState());
+    const calls = () => h.service.getRuntimeState.mock.calls.length;
+    const setVisibility = (hidden: boolean) => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => (hidden ? "hidden" : "visible"),
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(calls()).toBe(1);
+
+    // Hidden: the scheduled idle poll skips the Host call.
+    setVisibility(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(calls()).toBe(1);
+
+    // Shown again: the poll happens now, not up to 10 s later.
+    setVisibility(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(calls()).toBe(2);
+
+    // The cadence restarts from the visible poll.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_999);
+    });
+    expect(calls()).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(calls()).toBe(3);
   });
 
   it("gives a re-enabled view the current shared snapshot, not the one it last saw", async () => {

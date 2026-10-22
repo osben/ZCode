@@ -83,7 +83,15 @@ function pollNow(): void {
 }
 
 /**
- * Marks a window-local operation (such as a warm-up request) as active: the poll switches to the
+ * A hidden window skips its Host calls and reschedules at the idle cadence, so the first poll after the
+ * window is shown could lag by a whole idle interval. Poll at once when it becomes visible again.
+ */
+function handleVisibilityChange(): void {
+  if (document.hidden) return;
+  pollNow();
+}
+
+/** Marks a window-local operation (such as a warm-up request) as active: the poll switches to the
  * active cadence and refreshes at once, so the status dot shows the load without waiting for the idle
  * interval. The Host snapshot stays the only source of what is loaded. Call the returned function
  * when the operation settles; it is safe to call twice.
@@ -108,10 +116,14 @@ function subscribeRuntimeState(
   // A view that re-subscribes missed the changes made while it was off, and later polls equal the
   // shared snapshot, so it would never be notified. Replay the snapshot the poller holds now.
   listener(sharedPoller.latest);
-  if (sharedPoller.listeners.size === 1) pollNow();
+  if (sharedPoller.listeners.size === 1) {
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    pollNow();
+  }
   return () => {
     sharedPoller.listeners.delete(listener);
     if (sharedPoller.listeners.size > 0) return;
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
     sharedPoller.generation += 1;
     if (sharedPoller.timer !== undefined) window.clearTimeout(sharedPoller.timer);
     sharedPoller.timer = undefined;

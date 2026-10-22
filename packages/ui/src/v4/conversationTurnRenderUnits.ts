@@ -25,6 +25,7 @@ import {
 } from "@/v4/workflowLaunchTurn.js";
 import {
   buildConversationTurnWorkSegments,
+  type ConversationTurnWorkStatus,
   resolveConversationTurnWorkDurationMs,
   resolveConversationTurnWorkStatus,
   withTurnOutputTokens,
@@ -392,6 +393,84 @@ function normalizeRenderUnitPosition(
     assistantHistoryDefaultOpen,
     ...(workSegments ? { workSegments } : {}),
   };
+}
+
+/**
+ * Writes the live work clock into running turns. buildConversationTurnRenderUnits without nowMs leaves a
+ * running turn's duration open, so the timeline builds once per rows change and calls this per tick. Only
+ * running units can change: their unit-level workStatus and last work segment status are recomputed with the
+ * same helpers the builder uses, and every other unit keeps its object identity.
+ */
+export function applyConversationTurnLiveClock(
+  units: ConversationTurnRenderUnit[],
+  nowMs: number,
+): ConversationTurnRenderUnit[] {
+  if (!units.some((unit) => unit.isRunning)) return units;
+  return units.map((unit) => (unit.isRunning ? withLiveWorkClock(unit, nowMs) : unit));
+}
+
+function isSameWorkStatus(
+  a: ConversationTurnWorkStatus | undefined,
+  b: ConversationTurnWorkStatus | undefined,
+): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function withLiveWorkClock(
+  unit: ConversationTurnRenderUnit,
+  nowMs: number,
+): ConversationTurnRenderUnit {
+  // A running turn is never interrupted: resolveTurnRunning rejects terminal headers and terminal session phases.
+  const isInterrupted = false;
+  const { header } = unit;
+  const workStatus = withTurnOutputTokens(
+    resolveConversationTurnWorkStatus(
+      header,
+      unit.assistantWorkRows,
+      true,
+      resolveConversationTurnWorkDurationMs(header, { nowMs }, true),
+      isInterrupted,
+    ),
+    header,
+  );
+  // Same row sets as materializeDraftUnit feeds to the segment builder, so the last segment is computed identically.
+  const leadingBoundaryRowIds = new Set(unit.leadingBoundaryRows.map((row) => row.rowId));
+  const browserTurnEndRowIds = new Set(unit.browserTurnEndRows.map((row) => row.rowId));
+  const liveSegments = buildConversationTurnWorkSegments({
+    key: unit.key,
+    ...(header ? { header } : {}),
+    orderedRows: unit.renderRows.filter(
+      (row) => !leadingBoundaryRowIds.has(row.rowId) && !browserTurnEndRowIds.has(row.rowId),
+    ),
+    assistantTailRows: unit.assistantTailRows,
+    ...(unit.latestAssistantTextRow ? { latestAssistantTextRow: unit.latestAssistantTextRow } : {}),
+    isRunning: true,
+    isLastTurn: unit.isLastTurn,
+    isInterrupted,
+    forceOpenHistory: false,
+    timelineOnly: unit.timelineOnly,
+    nowMs,
+  });
+  const liveLastStatus = liveSegments.at(-1)?.workStatus;
+  const baseSegments = unit.workSegments;
+  const lastBaseSegment = baseSegments?.at(-1);
+  const segmentStatusChanged =
+    lastBaseSegment !== undefined && !isSameWorkStatus(lastBaseSegment.workStatus, liveLastStatus);
+  if (isSameWorkStatus(unit.workStatus, workStatus) && !segmentStatusChanged) return unit;
+
+  const next: ConversationTurnRenderUnit = { ...unit };
+  if (workStatus) next.workStatus = workStatus;
+  else delete next.workStatus;
+  if (baseSegments && segmentStatusChanged) {
+    next.workSegments = baseSegments.map((segment, index) => {
+      if (index !== baseSegments.length - 1) return segment;
+      const patched = { ...segment };
+      if (liveLastStatus) patched.workStatus = liveLastStatus;
+      else delete patched.workStatus;
+      return patched;
+    });
+  }
+  return next;
 }
 
 export function createConversationTurnRenderUnitCache(): ConversationTurnRenderUnitCache {

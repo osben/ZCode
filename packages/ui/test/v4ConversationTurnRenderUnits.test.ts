@@ -11,6 +11,7 @@ import type {
   UserInputRow,
 } from "@zcode/shared/zcode-protocol-v4";
 import {
+  applyConversationTurnLiveClock,
   buildConversationTurnRenderUnits,
   createConversationTurnRenderUnitCache,
   resolveNextHighspeedExpiryMs,
@@ -1102,5 +1103,118 @@ describe("buildConversationTurnRenderUnits unit identity across ticks", () => {
     expect(unitFor(second, "turn-b")?.assistantTextRows.map((row) => row.text)).toEqual([
       "second done, edited",
     ]);
+  });
+});
+
+describe("applyConversationTurnLiveClock", () => {
+  // Each shape exercises one duration rule of the segment builder: a single segment, guided segments with
+  // header facts, guided segments without facts, and a headerless running tool.
+  const shapes: Array<[string, ConversationRow[]]> = [
+    [
+      "a single running segment",
+      [
+        turnHeader(1, {
+          state: "running",
+          activeMs: undefined,
+          endedAt: undefined,
+          startedAt: 1_700_000_000_000,
+        }),
+        userInput(2, "go"),
+        reasoning(3, "thinking", { state: "streaming" }),
+      ],
+    ],
+    [
+      "guided segments with header facts",
+      [
+        turnHeader(1, {
+          state: "running",
+          activeMs: undefined,
+          endedAt: undefined,
+          startedAt: 1_700_000_000_000,
+          workSegments: [
+            {
+              segmentId: "initial",
+              startedAt: 1_700_000_000_001,
+              endedAt: 1_700_000_000_005,
+              activeMs: 4,
+            },
+            { segmentId: "guide-1", triggerEntityId: "guide-1", startedAt: 1_700_000_000_005 },
+          ],
+        }),
+        userInput(2, "first"),
+        reasoning(3, "plan", { state: "complete" }),
+        userInput(4, "guide", { guided: true, entityId: "guide-1" }),
+        reasoning(5, "more", { state: "streaming" }),
+      ],
+    ],
+    [
+      "guided segments without header facts",
+      [
+        turnHeader(1, {
+          state: "running",
+          activeMs: undefined,
+          endedAt: undefined,
+          startedAt: 1_700_000_000_000,
+        }),
+        userInput(2, "first"),
+        reasoning(3, "plan", { state: "complete" }),
+        userInput(4, "guide", { guided: true, entityId: "guide-1" }),
+        reasoning(5, "more", { state: "streaming" }),
+      ],
+    ],
+    [
+      "a headerless running tool",
+      [userInput(1, "run it"), toolCall(2, "Read", { status: "running" })],
+    ],
+  ];
+
+  for (const [name, rows] of shapes) {
+    it(`matches a clock-bearing build for ${name} at every tick`, () => {
+      const base = buildConversationTurnRenderUnits(rows);
+      for (const nowMs of [1_700_000_010_000, 1_700_000_013_000]) {
+        expect(applyConversationTurnLiveClock(base, nowMs)).toEqual(
+          buildConversationTurnRenderUnits(rows, { nowMs }),
+        );
+      }
+    });
+  }
+
+  it("advances only the running turn and keeps every other unit by identity", () => {
+    const rows: ConversationRow[] = [
+      turnHeader(1, { turnId: "turn-a" }),
+      userInput(2, "first", { turnId: "turn-a" }),
+      assistantText(3, "first done", { turnId: "turn-a" }),
+      turnHeader(4, {
+        turnId: "turn-live",
+        state: "running",
+        activeMs: undefined,
+        endedAt: undefined,
+        startedAt: 9_000,
+      }),
+      userInput(5, "live", { turnId: "turn-live" }),
+    ];
+    const cache = createConversationTurnRenderUnitCache();
+    const base = buildConversationTurnRenderUnits(rows, { cache });
+    const unitFor = (units: readonly { turnId: string }[], turnId: string) =>
+      units.find((unit) => unit.turnId === turnId);
+
+    // The base build carries no clock, so the running duration stays open until a tick applies one.
+    expect(unitFor(base, "turn-live")?.workStatus?.durationMs).toBeUndefined();
+    const first = applyConversationTurnLiveClock(base, 10_000);
+    const second = applyConversationTurnLiveClock(base, 13_000);
+
+    expect(unitFor(first, "turn-live")?.workStatus?.durationMs).toBe(1_000);
+    expect(unitFor(second, "turn-live")?.workStatus?.durationMs).toBe(4_000);
+    expect(unitFor(second, "turn-a")).toBe(unitFor(base, "turn-a"));
+    expect(unitFor(second, "turn-live")).not.toBe(unitFor(base, "turn-live"));
+  });
+
+  it("returns the same array when no turn is running", () => {
+    const base = buildConversationTurnRenderUnits([
+      turnHeader(1, { turnId: "turn-a" }),
+      userInput(2, "first", { turnId: "turn-a" }),
+      assistantText(3, "done", { turnId: "turn-a" }),
+    ]);
+    expect(applyConversationTurnLiveClock(base, 13_000)).toBe(base);
   });
 });

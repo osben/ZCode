@@ -30,9 +30,15 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
    command ID, never automatically resent with a new command/session ID.
    A failure before any reservation keeps no recovery record, so there is no
    error row: the text returns to the editor and the failure is announced with a
-   notice (`chat.error.sendFailed`). A Send refused by the submit predicate
-   (`resolveComposerSubmitBlockReason`) with content names its reason in a notice;
-   it never returns silently.
+   notice (`chat.error.sendFailed`). A failure thrown while dispatching the send is
+   announced only by the pane's admission-failure banner; the composer adds no second
+   notice for it. A Send refused by the submit predicate
+   (`resolveComposerSubmitBlockReason`) with content names its reason in a notice keyed
+   by that reason, so repeated presses keep one visible notice. `sendInProgress` is
+   transient and gets no notice (the Send tooltip names it). A Send held by a failed
+   worktree preparation names the failed first message
+   (`composer.sendBlocked.firstSubmissionNeedsAction`). No blocked Send with content
+   returns silently.
 5. Restart restores a non-running recovery state and offers explicit continuation;
    restoring a record never automatically dispatches the saved prompt.
 6. Reconcile the pending message by accepted input/command identity, not matching
@@ -45,8 +51,8 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
 9. Worktree runtime starts only in its verified execution cwd. Incognito profile is
    frozen before runtime startup. No reuse of an incompatible ordinary prewarm.
 10. A prewarm `createSession` (no `firstInput`) is config-only: it does not own the pending
-   task draft and does not record a command for it. Its project scope is the one captured when its
-   generation started (see `specs/sidebar-new-task-outside-project.md`, Draft lifetime).
+    task draft and does not record a command for it. Its project scope is the one captured when its
+    generation started (see `specs/sidebar-new-task-outside-project.md`, Draft lifetime).
 
 Ordinary messages and attachment/context-bearing input use this lifecycle. Native
 control slash commands retain their existing command-specific admission semantics.

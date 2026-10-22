@@ -128,7 +128,9 @@ export function TaskSearchDialog({
       ),
     [workspaceTabs],
   );
-  const hasQuery = settledQuery.length > 0;
+  // Mode follows the typed query, not the settled one: the list is still the previous result during the
+  // settle window, and deriving the mode from settledQuery would flip the empty-state wording and snippets to recents.
+  const hasQuery = trimmedQuery.length > 0;
   const getTaskResultKey = useCallback(
     (task: Pick<TaskSearchResultItem, "workspaceIdentity" | "workspacePath" | "taskId">) =>
       `${task.workspaceIdentity?.trim() || task.workspacePath}:${task.taskId}`,

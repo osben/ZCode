@@ -8,7 +8,25 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import type { ConversationRowRenderContext } from "@/v4/conversationRowContext.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
 
-const probe = vi.hoisted(() => ({ renders: new Map<string, number>() }));
+const probe = vi.hoisted(() => ({
+  renders: new Map<string, number>(),
+  durations: new Map<string, number | undefined>(),
+  builds: 0,
+}));
+
+// Call-through spy on the builder: a clock tick must not re-run it, only the live unit's clock patch.
+vi.mock("@/v4/conversationTurnRenderUnits.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/v4/conversationTurnRenderUnits.js")>();
+  return {
+    ...actual,
+    buildConversationTurnRenderUnits: (
+      ...args: Parameters<typeof actual.buildConversationTurnRenderUnits>
+    ) => {
+      probe.builds += 1;
+      return actual.buildConversationTurnRenderUnits(...args);
+    },
+  };
+});
 
 // The virtualizer reports the three historic turns as mounted items; the running turn is the
 // normal-flow live tail and is not virtualized.
@@ -45,6 +63,7 @@ vi.mock("@/v4/ConversationTurnGroup.js", async () => {
   type Props = ComponentProps<typeof React.Fragment> & { unit: { turnId: string } };
   const ConversationTurnGroup = memo(function ConversationTurnGroupProbe(props: Props) {
     probe.renders.set(props.unit.turnId, (probe.renders.get(props.unit.turnId) ?? 0) + 1);
+    probe.durations.set(props.unit.turnId, props.unit.workStatus?.durationMs);
     return React.createElement("div", { "data-turn-id": props.unit.turnId });
   });
   return { ConversationTurnGroup };
@@ -149,6 +168,8 @@ function rendersOf(turnId: string): number {
 
 beforeEach(() => {
   probe.renders.clear();
+  probe.durations.clear();
+  probe.builds = 0;
   vi.useFakeTimers();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = document.createElement("div");
@@ -177,5 +198,20 @@ describe("ConversationTimeline clock ticks", () => {
 
     expect(["turn-a", "turn-b", "turn-c"].map(rendersOf)).toEqual(historicBefore);
     expect(rendersOf("turn-live")).toBeGreaterThan(liveBefore);
+  });
+
+  it("does not rebuild the render units on a clock tick, but still advances the running duration", () => {
+    act(() => renderTimeline());
+    const buildsBefore = probe.builds;
+    const durationBefore = probe.durations.get("turn-live");
+    expect(buildsBefore).toBeGreaterThan(0);
+    expect(durationBefore).toBeTypeOf("number");
+
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+
+    expect(probe.builds).toBe(buildsBefore);
+    expect(probe.durations.get("turn-live")).toBe((durationBefore as number) + 3_000);
   });
 });

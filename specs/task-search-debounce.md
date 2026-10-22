@@ -18,9 +18,11 @@
 4. Results for a stale query must not overwrite results for a newer one. This is guaranteed by `useGlobalTaskList`'s request serial, and must not regress.
 5. The index refresh that runs when a query is typed (`taskList.refresh`) runs once per settled query, not once per keystroke.
 6. Expanded snippet groups reset when the settled query changes.
+7. The list mode (search or recents wording, and whether snippets show) follows the typed query, not the settled one. Only the task-list RPC waits for the settle delay, so the list does not flip to recents while a query is settling.
 
 ## Acceptance scenarios
 
 1. Typing `r`, `re`, `rev`, `revi`, `revie`, `review` in quick succession (each step under 200 ms apart) shows each value in the input immediately. The task list is never called with any intermediate value. After 200 ms of quiet it is called with `review` exactly once, and the refresh runs once.
 2. Clearing the input after a settled query calls the task list with the empty query without waiting for the settle delay.
 3. A query that is still changing when the dialog is closed does not leave a pending settle that updates a closed dialog. Closing the dialog clears the input, which clears the settled query.
+4. Typing `review` from an empty input shows the search empty-state wording (`taskSearch.noResults`) at once, before the 200 ms settle, and the task list is still called with the empty query until the settle completes.

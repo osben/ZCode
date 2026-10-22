@@ -61,6 +61,7 @@ import {
   getConversationStatusPanelOffsetClassName,
 } from "@/v4/conversationLayout.js";
 import {
+  applyConversationTurnLiveClock,
   buildConversationTurnRenderUnits,
   createConversationTurnRenderUnitCache,
   resolveNextHighspeedExpiryMs,
@@ -508,54 +509,62 @@ function ConversationTimelineImpl({
     });
   }, [pluginUiDerivation, sessionKey, pluginUiDisclosureVersion]);
   const topicPreparations = useBotTopicPreparations();
-  const renderUnits = useMemo(
-    () =>
-      keepUnchangedRenderUnitIdentity(
-        withAfterFirstUserInputSlot(
-          withOptimisticFirstInputRow(
-            withTopicPreparationMessages(
-              buildConversationTurnRenderUnits(rows, {
-                nowMs: liveNowMs,
-                sessionPhase,
-                pluginUiPinResolver,
-                cache: renderUnitCacheRef.current ?? undefined,
-              }),
-              rows,
-              topicPreparations,
-            ),
-            optimisticFirstInputRow,
+  const nextHighspeedExpiryMs = useMemo(
+    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
+    [liveNowMs, rows],
+  );
+  // Built on rows, phase, pins and slots, not per tick. The builder reads the clock only for the highspeed
+  // footer, and nextHighspeedExpiryMs changes exactly when a footer becomes due, so it is the only clock input here.
+  const baseRenderUnits = useMemo(() => {
+    void nextHighspeedExpiryMs;
+    return keepUnchangedRenderUnitIdentity(
+      withAfterFirstUserInputSlot(
+        withOptimisticFirstInputRow(
+          withTopicPreparationMessages(
+            buildConversationTurnRenderUnits(rows, {
+              sessionPhase,
+              pluginUiPinResolver,
+              cache: renderUnitCacheRef.current ?? undefined,
+            }),
+            rows,
+            topicPreparations,
           ),
-          afterFirstUserInputSlot,
+          optimisticFirstInputRow,
         ),
-        renderUnitIdentityRef,
+        afterFirstUserInputSlot,
       ),
-    [
-      liveNowMs,
-      pluginUiPinResolver,
-      rows,
-      sessionPhase,
-      topicPreparations,
-      afterFirstUserInputSlot,
-      optimisticFirstInputRow,
-    ],
+      renderUnitIdentityRef,
+    );
+  }, [
+    nextHighspeedExpiryMs,
+    pluginUiPinResolver,
+    rows,
+    sessionPhase,
+    topicPreparations,
+    afterFirstUserInputSlot,
+    optimisticFirstInputRow,
+  ]);
+  // The live work clock only changes running turns; the per-tick pass returns every other unit by identity.
+  const renderUnits = useMemo(
+    () => applyConversationTurnLiveClock(baseRenderUnits, liveNowMs),
+    [baseRenderUnits, liveNowMs],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
     () => splitConversationTimelineLiveTail(renderUnits),
     [renderUnits],
   );
-  const hasRunningUnit = useMemo(() => renderUnits.some((unit) => unit.isRunning), [renderUnits]);
-  const nextHighspeedExpiryMs = useMemo(
-    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
-    [liveNowMs, rows],
+  const hasRunningUnit = useMemo(
+    () => baseRenderUnits.some((unit) => unit.isRunning),
+    [baseRenderUnits],
   );
   const turnNavigatorQueryRowIds = useMemo(
     () =>
       new Set(
-        renderUnits.flatMap((unit) =>
+        baseRenderUnits.flatMap((unit) =>
           unit.visibleUserInputs.filter((row) => row.origin === "realUser").map((row) => row.rowId),
         ),
       ),
-    [renderUnits],
+    [baseRenderUnits],
   );
   const turnNavigatorQueryRowIdsRef = useRef(turnNavigatorQueryRowIds);
   turnNavigatorQueryRowIdsRef.current = turnNavigatorQueryRowIds;

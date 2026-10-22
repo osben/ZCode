@@ -105,6 +105,23 @@ describe("TaskSearchDialog query settling", () => {
     expect(taskListProbe.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the search empty-state wording while the query is still settling", () => {
+    const input = renderOpenDialog();
+    expect(screen.getByText("taskSearch.noRecent")).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: "review" } });
+    // Inside the settle window the RPC still carries "", but the dialog is already in search mode.
+    expect(taskListProbe.searchQueries.at(-1)).toBe("");
+    expect(screen.getByText("taskSearch.noResults")).toBeTruthy();
+    expect(screen.queryByText("taskSearch.noRecent")).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(taskListProbe.searchQueries.at(-1)).toBe("review");
+    expect(screen.getByText("taskSearch.noResults")).toBeTruthy();
+  });
+
   it("empties the task list immediately when the input is cleared", () => {
     const input = renderOpenDialog();
 

@@ -437,11 +437,11 @@ sequenceDiagram
 | --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | VD-DOT-01 | Selected model starts loading (warm-up or first use)     | A pulsing warning dot appears on the microphone button.                       |
 | VD-DOT-02 | The model finishes loading                               | The dot turns success-colored and stays.                                      |
-| VD-DOT-03 | The idle-unload delay passes                             | The dot disappears within about a second.                                     |
+| VD-DOT-03 | The idle-unload delay passes                             | The dot disappears within one idle poll interval (up to 10 s, VD-DOT-08).     |
 | VD-DOT-04 | A different model is loaded than the selected one        | No dot.                                                                       |
 | VD-DOT-05 | Recording or transcribing                                | The dot is hidden; the existing recording/spinner state is shown.             |
 | VD-DOT-06 | Reduced motion is requested                              | The loading dot does not pulse.                                               |
-| VD-DOT-07 | Window hidden                                            | The renderer stops polling until it is visible again.                         |
+| VD-DOT-07 | Window hidden                                            | The renderer stops polling until it is visible again, then polls immediately. |
 | VD-DOT-08 | Idle Host, no session open, user does nothing            | The runtime snapshot is requested at most once per 10 s, not once per second. |
 | VD-DOT-09 | Warm-up request in flight, or the Host reports `loading` | The runtime snapshot is requested once per second until the load ends.        |
 
