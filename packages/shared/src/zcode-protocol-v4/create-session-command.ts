@@ -20,6 +20,12 @@ export const createSessionPayloadSchema = z
     submissionPreparation: z.object({ submissionId: z.string().min(1) }).optional(),
     /** Frozen submission identity required when materializing a generic reservation. */
     expectedSubmissionId: z.string().min(1).optional(),
+    /**
+     * Command id of the frozen first sendText an earlier attempt of this reserved submission already
+     * created. The CLI admits-or-not by that identity (a session_input row with this sourceCommandId),
+     * so a Retry after a rejected or lost attempt is never judged by another input's admission.
+     */
+    expectedFirstInputCommandId: z.string().min(1).optional(),
     ...worktreePreparationCommand.worktreePreparationCreateSessionFields,
     permissionScope: z.literal("session").optional(),
     firstInput: z
@@ -75,6 +81,17 @@ export const createSessionPayloadSchema = z
         code: z.ZodIssueCode.custom,
         message: "submission activation requires only a prepared session and submission identity",
         path: ["expectedSubmissionId"],
+      });
+    }
+    if (
+      payload.expectedFirstInputCommandId &&
+      (!payload.expectedSubmissionId || payload.executionWorktree || payload.firstInput)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "expectedFirstInputCommandId is valid only for a reserved submission activation (no worktree, no firstInput)",
+        path: ["expectedFirstInputCommandId"],
       });
     }
     // The prepare step reserves the session row before any profile exists, and that reservation

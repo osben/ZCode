@@ -29,9 +29,11 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
    admitted input. An unknown command outcome must be reconciled by the original
    command ID, never automatically resent with a new command/session ID.
    When the record holds the original sendText command ID and a reserved activation
-   reports the frozen input already admitted (`preparedActivation` `input-admitted` or
-   `already-active`), the input is not resent: the record is settled as sending under
-   that ID.
+   reports `preparedActivation` `input-admitted`, the frozen input is not resent: the
+   record is settled as sending under that ID. The CLI decides `input-admitted` from that
+   command ID's own admitted `session_input` row, not from any admitted input or an active
+   marker. `already-active` alone does not skip: the frozen input is not admitted under
+   that ID, so it is sent on the ordinary path.
    A failure before any reservation keeps no recovery record, so there is no
    error row: the text returns to the editor and the failure is announced with a
    notice (`chat.error.sendFailed`). A failure thrown while dispatching the send is

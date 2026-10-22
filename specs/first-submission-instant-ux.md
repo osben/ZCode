@@ -201,25 +201,45 @@ or Remove, never as "still being delivered".
 
 **Implemented: prepared activation outcome.** The createSession ACK of a prepared
 submission carries `preparedActivation` (`materialized`, `input-pending`,
-`input-admitted`, `already-active`; closed enum in `commandResultSchema`). The skip is
-taken only when all three hold: the send is a reserved plain submission
-(`reservedSubmissionSessionId`, not a worktree activation); the ACK is `input-admitted`
-or `already-active`; and the record still holds the original sendText command id
-(`originalCommandId`, carried through every freeze and restore). Then the frozen
-`sendText` is not dispatched, the send resolves to `alreadyAdmitted`, and the composer
-sets the record to `sending` under that original id (no new command id). Worktree
-activations complete before any input, so their `already-active` never skips. Without an
-original id, or with `materialized` / `input-pending` / an absent value, the frozen
-`sendText` path is unchanged.
+`input-admitted`, `already-active`; closed enum in `commandResultSchema`). A reserved
+plain submission whose frozen `sendText` already exists under command id X
+(`originalCommandId`, carried through every freeze and restore) sends X as
+`expectedFirstInputCommandId` on the activation createSession (shared
+`createSessionPayloadSchema`, valid only with `expectedSubmissionId`). Worktree
+activations and first attempts (no X yet) never send it. The CLI decides admission by
+that identity and never by "any admitted input row": a `session_input` row whose intent
+`sourceCommandId` is X and whose status is `admitted` or `promoted` is the only evidence
+that the frozen input reached Core. The bridge decides in this order:
 
-**Known limitation (follow-up, not fixed here).** The ordering barrier above still lives
-in this composer only: mobile remote control and other windows can send into a preparing
-session. The CLI bridge's `executeCommand` hook marks the preparation `active` on any
-`sendText` to it, so `already-active` can come from another window's input. The skip's
-original-id condition keeps that case reconcilable by id (the record is queried, never
-resent under a new id) instead of silently dropping the frozen message. The CLI should
-flip the marker only for the frozen submission's own `sendText`, and admission should be
-identity-checked, not inferred from any admitted row (`sessionHasAdmittedInput`).
+1. X identity-admitted → `input-admitted` (the handler completes the activation receipt
+   and admits nothing);
+2. preparation `active` → `already-active`. An active marker alone is not admission: the
+   bridge's `executeCommand` hook sets it on any `sendText`, so another window's input can
+   set it while X is not admitted;
+3. otherwise the existing outcomes (`input-pending` when the runtime exists, else
+   `materialized`).
+
+Without an id (first attempts, and clients that send none) the CLI keeps today's order:
+step 2 first, then the any-row check (`sessionHasAdmittedInput` with no command id)
+returns `input-admitted` when any admitted row exists.
+
+The renderer skips the frozen `sendText` only on `input-admitted`, and only for a
+reserved plain submission that holds an original id. The send then resolves to
+`alreadyAdmitted` and the composer sets the record to `sending` under X (no new command
+id). On `already-active` X is not admitted, so the frozen `sendText` is dispatched on the
+ordinary path, as for `input-pending` and `materialized`. The reserved-only condition is
+enforced where `reservedSubmissionSessionId` is set (ConversationComposer: only when there
+is no execution worktree and no prepared session). Worktree activations complete before
+any input, so they never send an id and their `already-active` never skips.
+
+**Remaining limitation (follow-up).** The ordering barrier above still lives in this
+composer only: mobile remote control and other windows can send into a preparing session.
+The bridge's `executeCommand` hook still marks the preparation `active` on any `sendText`
+to it; the decision above no longer relies on that marker, but the hook should flip it
+only for the frozen submission's own `sendText`. The reconciliation marker shortcut
+(`markerProvesAdmission` in `firstSubmissionReconciliation.ts`) still settles a record as
+`sending` without querying X, so a foreign-marked preparation can leave a record
+`sending` until the reconciliation is changed to query the original id (follow-up).
 
 ## Status under the message (decided 2026-10-21)
 

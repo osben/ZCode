@@ -20,7 +20,11 @@ function commandAck(value: unknown): CommandAck | null {
   return ack as CommandAck;
 }
 
-function discardedSourceCommandId(record: SessionInputRecord): string | undefined {
+/**
+ * The command id that admitted a session_input row (its intent sourceCommandId). Rows written by the
+ * admission path carry it under `intent` or `conversationInputIntent`; identity checks read only this.
+ */
+export function sessionInputSourceCommandId(record: SessionInputRecord): string | undefined {
   for (const candidate of [record.payload.conversationInputIntent, record.payload.intent]) {
     if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
     const sourceCommandId = (candidate as Record<string, unknown>).sourceCommandId;
@@ -101,7 +105,7 @@ export async function loadPersistentCommandFacts(
     if (terminalStatus !== "discarded" && terminalStatus !== "cancelled") {
       continue;
     }
-    const sourceCommandId = discardedSourceCommandId(record);
+    const sourceCommandId = sessionInputSourceCommandId(record);
     if (!sourceCommandId) continue;
     const discardedOnRestart =
       terminalStatus === "discarded" && terminalReason === "session_resumed";

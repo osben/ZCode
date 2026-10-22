@@ -51,6 +51,7 @@ import {
   mergeColdConversationEvents,
 } from "../zcode-protocol-v4/cold-event-merge.js";
 import { lookupGlobalCreateSessionCommand } from "../zcode-protocol-v4/create-session-command-fact.js";
+import { sessionInputSourceCommandId } from "../zcode-protocol-v4/persistent-command-facts.js";
 import type {
   V4CommandCoreHost,
   V4QueuedTurnExecution,
@@ -270,16 +271,23 @@ async function restorePreparedWorktreeSession(
  * Durable admission evidence for a prepared session: a session_input ledger row that was admitted
  * or promoted (not cancelled, discarded, or failed). Read only on the reactivation path, where
  * re-sending the frozen input under a new command id must be impossible unless no admission ever
- * durably happened. Without a readable ledger the result is conservatively "admitted".
+ * durably happened. With `commandId`, only that command's own row counts: another input admitted
+ * into the same session (a foreign window, a mobile remote) is not evidence for the frozen input.
+ * Without a readable ledger the result is conservatively "admitted".
  */
 async function sessionHasAdmittedInput(
   context: ZCodeProtocolAgentServerContext,
   sessionId: string,
+  commandId?: string,
 ): Promise<boolean> {
   const store = context.deps.sessionStore;
   if (!store?.listSessionInputs) return true;
   const inputs = await store.listSessionInputs({ sessionID: sessionId as SessionId });
-  return inputs.some((input) => input.status === "admitted" || input.status === "promoted");
+  return inputs.some(
+    (input) =>
+      (input.status === "admitted" || input.status === "promoted") &&
+      (commandId === undefined || sessionInputSourceCommandId(input) === commandId),
+  );
 }
 
 async function persistPreparedWorktreeStatus(
@@ -1483,6 +1491,7 @@ export function createConversationV4Gateway(
       preparedSessionId,
       expectedAttemptId,
       expectedSubmissionId,
+      expectedFirstInputCommandId,
       mcpServers,
       executionWorktree,
       incognito,
@@ -1507,10 +1516,21 @@ export function createConversationV4Gateway(
             throw new Error("Prepared submission does not match the frozen incognito profile");
           }
           activationIncognito = prepared.incognito ?? undefined;
+          // Identity first: the frozen input's own admitted row is proof of admission even when the
+          // preparation is already marked active (the marker can be set by another window's input).
+          // Checked on a cold process too, so a prior admitted input is never replayed under another id.
+          if (
+            expectedFirstInputCommandId !== undefined &&
+            (await sessionHasAdmittedInput(context, preparedSessionId, expectedFirstInputCommandId))
+          ) {
+            return { sessionId: preparedSessionId, preparedActivation: "input-admitted" };
+          }
           if (prepared.status === "active") return { sessionId: preparedSessionId, preparedActivation: "already-active" };
-          // Check durable admission even on a cold process. A prior admitted input must never be
-          // replayed merely because runtime creation is being retried under another command id.
-          if (await sessionHasAdmittedInput(context, preparedSessionId)) {
+          // Without an identity (first attempt, or a client that sends none) any admitted row decides.
+          if (
+            expectedFirstInputCommandId === undefined &&
+            (await sessionHasAdmittedInput(context, preparedSessionId))
+          ) {
             return { sessionId: preparedSessionId, preparedActivation: "input-admitted" };
           }
           if (context.sessions.has(preparedSessionId)) return { sessionId: preparedSessionId, preparedActivation: "input-pending" };

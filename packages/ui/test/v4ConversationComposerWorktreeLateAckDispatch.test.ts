@@ -1104,6 +1104,39 @@ it("Retry after input-admitted issues no sendText, record becomes sending with t
   }
 });
 
+it("Retry hands the pane its original command id so the activation can be checked by that identity", async () => {
+  // The pane sends it as expectedFirstInputCommandId; an already-active answer is not an admission, so the
+  // pane dispatches the frozen sendText and the composer takes its ordinary result ("sent").
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-active-retry");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-active-retry", "sub-active-retry", {
+    status: "failed",
+    commandId: "cmd-orig-active-retry",
+  });
+  harness.onSendText.mockImplementationOnce(async () => "sent" as const);
+  try {
+    harness.rerender("session-active-retry");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-retry")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+
+    expect(harness.onSendText).toHaveBeenCalledTimes(1);
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      reservedSubmissionSessionId: "session-active-retry",
+      originalCommandId: "cmd-orig-active-retry",
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
 it("a retry that fails before its own command keeps the original command id for the next Retry", async () => {
   // Freezing a retry overwrites the stored record; a failure before any new sendText must not drop the
   // id of the earlier sendText, or a later admitted activation could only be settled without it.

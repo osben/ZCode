@@ -97,6 +97,9 @@ async function createSession(
       ...(payload.preparedSessionId ? { preparedSessionId: payload.preparedSessionId } : {}),
       ...(payload.expectedAttemptId ? { expectedAttemptId: payload.expectedAttemptId } : {}),
       ...(payload.expectedSubmissionId ? { expectedSubmissionId: payload.expectedSubmissionId } : {}),
+      ...(payload.expectedFirstInputCommandId
+        ? { expectedFirstInputCommandId: payload.expectedFirstInputCommandId }
+        : {}),
       ...(payload.permissionScope ? { permissionScope: payload.permissionScope } : {}),
       mcpServers: payload.mcpServers,
       ...(payload.executionWorktree ? { executionWorktree: payload.executionWorktree } : {}),

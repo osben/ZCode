@@ -303,8 +303,9 @@ export interface ConversationComposerSendOptions {
   /** 提交命令创建后由 Composer 订阅权威 projection，覆盖 ACK 丢失后的收口。 */
   onCommandCreated?: (commandId: string) => void;
   /**
-   * The command id an earlier attempt of this reserved first submission already created. Only with it
-   * may the pane settle an admitted activation without resending (ConversationComposerSendResult).
+   * The command id an earlier attempt of this reserved first submission already created. It is sent as
+   * expectedFirstInputCommandId, and only an input-admitted activation under it settles without resending
+   * (ConversationComposerSendResult).
    */
   originalCommandId?: string;
   sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
@@ -314,7 +315,8 @@ export interface ConversationComposerSendOptions {
 
 /**
  * "alreadyAdmitted": a prepared submission whose frozen input the Host had already admitted under its
- * original command id; the pane sent no new sendText. The composer settles it as sending under that id.
+ * original command id (preparedActivation input-admitted); the pane sent no new sendText. The composer
+ * settles it as sending under that id. An already-active activation is not this result: it sends normally.
  */
 export type ConversationComposerSendResult =
   | "sent"

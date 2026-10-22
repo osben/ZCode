@@ -627,6 +627,69 @@ describe("zcode-protocol-v4 command", () => {
     ).toBe(false);
   });
 
+  it("round-trips expectedFirstInputCommandId only on a reserved submission activation", () => {
+    const reserved = {
+      workspaceId: "ws-1",
+      preparedSessionId: "prepared-1",
+      expectedSubmissionId: "sub-1",
+    };
+    expect(
+      commandPayloadSchemas.createSession.parse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }),
+    ).toMatchObject({ expectedFirstInputCommandId: "cmd-frozen-1" });
+    const parsed = parseCommandEnvelope({
+      commandId: "cmd-activate-1",
+      clientId: "client-1",
+      sessionId: null,
+      type: "createSession",
+      payload: { ...reserved, expectedFirstInputCommandId: "cmd-frozen-1" },
+      issuedAt: 1000,
+    });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.envelope.payload).toMatchObject({
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      });
+    }
+    // Wrong type or empty id is rejected, not stripped.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({ ...reserved, expectedFirstInputCommandId: 7 })
+        .success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "",
+      }).success,
+    ).toBe(false);
+    // Only a reserved submission activation may carry it: not a worktree activation, not a generic
+    // reservation without expectedSubmissionId, not with an input of its own.
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedAttemptId: "attempt-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        workspaceId: "ws-1",
+        preparedSessionId: "prepared-1",
+        expectedFirstInputCommandId: "cmd-frozen-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      commandPayloadSchemas.createSession.safeParse({
+        ...reserved,
+        expectedFirstInputCommandId: "cmd-frozen-1",
+        firstInput: { text: "second" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps omitted createSession.config.mode absent so workspace default mode can win", () => {
     const result = parseCommandEnvelope({
       commandId: "cmd-create-config-no-mode",

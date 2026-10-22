@@ -951,7 +951,10 @@ export function SessionPane({
       workspacePath,
     ],
   );
+  // Only the open share dock reads these ids (its popover is gated by shareActive, like shareRenderUnits);
+  // building the row map on every window change while no share is open was wasted work.
   const eligibleShareProductTurnIds = useMemo(() => {
+    if (!shareActive) return [];
     const rowsById = new Map((snapshot?.rows.window ?? []).map((row) => [row.rowId, row]));
     const seen = new Set<string>();
     return eligibleShareItems.flatMap((item) => {
@@ -960,7 +963,7 @@ export function SessionPane({
       seen.add(productTurnId);
       return [productTurnId];
     });
-  }, [eligibleShareItems, snapshot?.rows.window]);
+  }, [eligibleShareItems, shareActive, snapshot?.rows.window]);
   const sharePreflightCacheRef = useRef(new Map<string, ConversationShareTurnPreflightResult>());
   // 传输类失败会被按 turn 缓存成阻断项，仅靠选择变化无法再次触发 RPC；
   // 重试 token 变化时清缓存并重新发起，避免一次网络抖动把用户卡死在选择阶段。
@@ -4111,7 +4114,14 @@ export function SessionPane({
               ? {
                   preparedSessionId,
                   ...(reservedSubmissionSessionId
-                    ? { expectedSubmissionId: options?.firstSubmissionId }
+                    ? {
+                        expectedSubmissionId: options?.firstSubmissionId,
+                        // The frozen first sendText an earlier attempt already created: the CLI checks
+                        // admission by this command id. A first attempt has none and sends no id.
+                        ...(options?.originalCommandId !== undefined
+                          ? { expectedFirstInputCommandId: options.originalCommandId }
+                          : {}),
+                      }
                     : { expectedAttemptId: options?.preparedAttemptId }),
                 }
               : {}),
@@ -4149,15 +4159,16 @@ export function SessionPane({
             return;
           }
         }
-        // A reserved plain submission whose sendText was already created under its original command id:
-        // input-admitted / already-active then mean that command reached Core, so resending it under a new
-        // command id would admit it twice. The composer settles it under that id (lifecycle rule 4). Worktree
-        // activations never qualify: their activation completes before any input is sent.
+        // input-admitted means the CLI found the admitted row of the frozen sendText's original command id,
+        // so resending it under a new command id would admit it twice: the composer settles it under that id
+        // (lifecycle rule 4). already-active does not prove that: another input may have set the marker, so
+        // the frozen sendText is sent below. Worktree activations never reach this guard with an original id
+        // (ConversationComposer sets reservedSubmissionSessionId only without an execution worktree or a
+        // prepared session).
         if (
           reservedSubmissionSessionId !== undefined &&
           options?.originalCommandId !== undefined &&
-          (createAck.result.preparedActivation === "input-admitted" ||
-            createAck.result.preparedActivation === "already-active")
+          createAck.result.preparedActivation === "input-admitted"
         ) {
           return "alreadyAdmitted" as const;
         }

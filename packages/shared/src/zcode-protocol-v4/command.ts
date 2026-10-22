@@ -371,7 +371,10 @@ export const commandResultSchema = z.discriminatedUnion("type", [
     // Prepared-worktree activation outcome (createSession with preparedSessionId only). Closed
     // enum: an unknown value fails the ACK parse instead of being stripped into a guess.
     //  - materialized / input-pending: the frozen input is not admitted yet; the sender dispatches it.
-    //  - input-admitted / already-active: the frozen input is durably admitted; the sender must not resend it.
+    //  - input-admitted: the frozen input is durably admitted under the command id the sender named
+    //    (expectedFirstInputCommandId); the sender must not resend it.
+    //  - already-active: the preparation is active, which another input can cause. It does not prove the
+    //    frozen input was admitted; the sender dispatches it unless input-admitted was returned.
     preparedActivation: z
       .enum(["materialized", "input-pending", "input-admitted", "already-active"])
       .optional(),

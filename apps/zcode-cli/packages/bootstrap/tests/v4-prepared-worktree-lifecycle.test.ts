@@ -195,6 +195,18 @@ async function readPreparationStatus(
   return data?.status ?? null;
 }
 
+async function readSubmissionPreparationStatus(
+  target: Harness,
+  sessionId: string,
+): Promise<string | null> {
+  const entries = await target.store.sessionEntries!({
+    sessionID: sessionId as never,
+    type: "v4/fork_submission_preparation",
+  });
+  const data = entries.at(-1)?.data as { status?: string } | undefined;
+  return data?.status ?? null;
+}
+
 async function admittedInputCount(target: Harness, sessionId: string): Promise<number> {
   const inputs = await target.store.listSessionInputs!({ sessionID: sessionId as never });
   return inputs.filter((input) => input.status === "admitted" || input.status === "promoted")
@@ -285,6 +297,74 @@ describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", (
     expect(active.at(-1)?.data).toMatchObject({ status: "active" });
     cold.heldCompletions.forEach((held) => held.resolve());
   });
+  it("admits a reserved activation by the frozen input's own command id, never by a foreign input", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "identity-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "identity" },
+    }, "reserve-identity"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "identity" };
+    const materialized = await target.gateway.handleCommand(command("createSession", activation, "materialize-identity"));
+    expect(materialized.status).toBe("accepted");
+    // A foreign input (another window or mobile remote control) is admitted first. The bridge's
+    // executeCommand hook marks the still-preparing submission active on any sendText.
+    const foreign = await target.gateway.handleCommand(command("sendText", { text: "foreign input" }, "cmd-foreign", sessionId));
+    expect(foreign.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    expect(await target.store.sessionEntries!({ sessionID: sessionId as never, type: "v4/fork_submission_preparation" }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({ status: "active" }) })]));
+
+    // The frozen input "cmd-frozen" was never admitted: the foreign row must not count as its admission.
+    // The preparation is active, so the answer is already-active and nothing is admitted here.
+    const notAdmitted = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen" }, "retry-frozen-not-admitted"));
+    expect(notAdmitted.status).toBe("accepted");
+    expect(notAdmitted.result).toMatchObject({ sessionId, preparedActivation: "already-active" });
+    expect(target.sentInputs).toEqual(["foreign input"]);
+
+    // Once the frozen input is admitted under its own id, the same retry reports input-admitted even
+    // though the preparation is active, and it is not sent again.
+    const frozen = await target.gateway.handleCommand(command("sendText", { text: "frozen input" }, "cmd-frozen", sessionId));
+    expect(frozen.status).toBe("accepted");
+    target.heldCompletions.forEach((held) => held.resolve());
+    const admittedRetry = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen" }, "retry-frozen-admitted"));
+    expect(admittedRetry.status).toBe("accepted");
+    expect(admittedRetry.result).toMatchObject({ sessionId, preparedActivation: "input-admitted" });
+    expect(target.sentInputs).toEqual(["foreign input", "frozen input"]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("a foreign admitted row does not count as the frozen input's admission while the preparation stays preparing", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "foreign-row-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "foreign-row" },
+    }, "reserve-foreign-row"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "foreign-row" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-foreign-row"))).status).toBe("accepted");
+    // An admitted row for another command lands without the bridge's marker flip (the marker write
+    // failed, or the row came from a path that does not mark the preparation), so it stays preparing.
+    await target.store.saveSessionInput!({
+      id: "queue_cmd-foreign-row",
+      sessionID: sessionId as never,
+      kind: "sendText",
+      delivery: "startNow",
+      payload: { text: "foreign input", intent: { sourceCommandId: "cmd-foreign-row" } },
+    } as never);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+
+    // Identity decides: "cmd-frozen-row" has no row, so the foreign row is not its admission.
+    // The runtime exists, so the answer is input-pending and the sender admits the frozen input once.
+    const retry = await target.gateway.handleCommand(command("createSession", { ...activation, expectedFirstInputCommandId: "cmd-frozen-row" }, "retry-foreign-row"));
+    expect(retry.status).toBe("accepted");
+    expect(retry.result).toMatchObject({ sessionId, preparedActivation: "input-pending" });
+    expect(target.sentInputs).toEqual([]);
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
   it("reserves an ordinary submitted session before runtime creation and restores without auto-running", async () => {
     const dbDir = mkdtempSync(join(tmpdir(), "submission-lifecycle-"));
     const dbPath = join(dbDir, "sessions.sqlite");

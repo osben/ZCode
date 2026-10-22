@@ -529,6 +529,47 @@ describe("v4 原生 createSession", () => {
     expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
   });
 
+  it("reserved activation forwards expectedFirstInputCommandId to the Host and never re-sends on input-admitted", async () => {
+    const app = makeApp({ sendInput: vi.fn(), runtime: { getSessionModelSelection: vi.fn(() => null) } });
+    const record = makeRecord({ app });
+    const createSessionRecord = vi.fn().mockResolvedValue({
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
+    const completePreparedWorktreeActivation = vi.fn().mockResolvedValue(undefined);
+    const host = makeHost(record, {
+      createSessionRecord,
+      completePreparedWorktreeActivation,
+    });
+
+    const result = await new V4CommandExecutor(host).execute(
+      envelope(
+        "createSession",
+        {
+          workspaceId: "/w",
+          preparedSessionId: "s1",
+          expectedSubmissionId: "sub-1",
+          expectedFirstInputCommandId: "cmd-frozen",
+        },
+        "s1",
+      ),
+    );
+    expect(createSessionRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preparedSessionId: "s1",
+        expectedSubmissionId: "sub-1",
+        expectedFirstInputCommandId: "cmd-frozen",
+      }),
+    );
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
+    expect(app.sendInput).not.toHaveBeenCalled();
+    expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
+  });
+
   it("preparedActivation=input-pending：恢复性重试恰好 admit 一次冻结输入", async () => {
     const app = makeApp({ sendInput: vi.fn().mockResolvedValue({ kind: "accepted" }) });
     const record = makeRecord({ app, persistence: "deferred" });
