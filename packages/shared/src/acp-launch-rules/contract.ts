@@ -30,8 +30,13 @@ export function containsAcpForbiddenLineChar(value: string): boolean {
   return FORBIDDEN_LINE_CHARS.some((char) => value.includes(char));
 }
 
-/** Loader and interpreter-startup injection variables an override may never set. */
-const LOADER_ENV_KEY_RE = /^(?:LD_.*|DYLD_.*|NODE_OPTIONS|BASH_ENV)$/i;
+/**
+ * Loader, interpreter-startup and exec-hook variables an override may never set. Defence in depth for
+ * the launch config, not a sandbox: an agent can still run any program its command is allowed to run.
+ * One list for the UI validator and the runtime (`acp-agent-runtime` launch.ts), so both reject the same keys.
+ */
+const LOADER_ENV_KEY_RE =
+  /^(?:LD_.*|DYLD_.*|NODE_OPTIONS|BASH_ENV|PYTHONPATH|PYTHONSTARTUP|PYTHONHOME|PERL5OPT|PERL5LIB|RUBYOPT|RUBYLIB|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|ZDOTDIR|ENV|BASH_FUNC_.*|GIT_SSH|GIT_SSH_COMMAND|GIT_EXEC_PATH|GIT_ASKPASS|GIT_PROXY_COMMAND)$/i;
 
 export function isAcpLoaderInjectionEnvKey(key: string): boolean {
   return LOADER_ENV_KEY_RE.test(key);

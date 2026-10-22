@@ -103,6 +103,8 @@ export class ProviderRuntime {
   readonly #modelSelectionRuntime: IModelSelectionService & { dispose(): void };
   readonly #disposeModelSelectionConfiguredDefaultSource?: () => void;
   readonly #acpAgentStore?: ForkAcpAgentStore & { dispose?(): void };
+  /** The sidecar store, present only in development runtimes; the derivation, writer and migration use it. */
+  readonly #gatedAcpAgentStore?: ForkAcpAgentStore;
   #startPromise: ReturnType<ProviderRegistryService["start"]> | null = null;
   #disposed = false;
 
@@ -113,11 +115,16 @@ export class ProviderRuntime {
       dependencies.disposeModelSelectionConfiguredDefaultSource;
     this.configService = this.#configRuntime.configService;
     this.#acpAgentStore = dependencies.acpAgentStore;
+    // Dev-only stabilization gate (specs/acp-agent-runtime.md "Dev-only visibility"): the sidecar is
+    // derived into providers and written to only when the host is a development runtime. A packaged
+    // host keeps the sidecar file on disk untouched and reads no `acp:` provider from it.
+    this.#gatedAcpAgentStore =
+      dependencies.acpExecutable === true ? dependencies.acpAgentStore : undefined;
     const wrappedConfigSource = dependencies.wrapConfigSource
       ? dependencies.wrapConfigSource(this.configService)
       : this.configService;
-    this.registryConfigSource = this.#acpAgentStore
-      ? createDerivedAcpAgentConfigSource(wrappedConfigSource, this.#acpAgentStore)
+    this.registryConfigSource = this.#gatedAcpAgentStore
+      ? createDerivedAcpAgentConfigSource(wrappedConfigSource, this.#gatedAcpAgentStore)
       : wrappedConfigSource;
     const accountSource: RefreshableProviderSource<AccountProviderConfigSnapshot> =
       dependencies.accountSource ?? new EmptyAccountProviderConfigSource(this.registryConfigSource);
@@ -147,8 +154,8 @@ export class ProviderRuntime {
       ensureReady,
       dependencies.testConnectivity,
       dependencies.acpAgents,
-      this.#acpAgentStore
-        ? createAcpAgentWriter(this.#acpAgentStore, this.#configRuntime.personalRepository)
+      this.#gatedAcpAgentStore
+        ? createAcpAgentWriter(this.#gatedAcpAgentStore, this.#configRuntime.personalRepository)
         : undefined,
     );
     this.#modelSelectionRuntime = createModelSelectionService(
@@ -174,11 +181,11 @@ export class ProviderRuntime {
   }
 
   async #migrateInlineAcpProviders(): Promise<void> {
-    if (!this.#acpAgentStore) return;
+    if (!this.#gatedAcpAgentStore) return;
     try {
       const result = await migrateInlineAcpProviders(
         this.#configRuntime.personalRepository,
-        this.#acpAgentStore,
+        this.#gatedAcpAgentStore,
       );
       if (result.stripped) {
         log.info(undefined, "moved inline ACP providers to the fork sidecar", {
@@ -189,6 +196,13 @@ export class ProviderRuntime {
         // These rules still make provider_config.json unreadable for upstream builds.
         log.warn(undefined, "inline ACP providers left in provider_config.json", {
           count: result.kept.length,
+        });
+      }
+      if (result.conflicts.length > 0) {
+        // The sidecar record wins on read. The differing inline rule is kept, never stripped, and this
+        // runs once per runtime (the migration starts once in `start`), so it is not repeated per turn.
+        log.warn(undefined, "inline ACP provider differs from the sidecar record; kept inline", {
+          count: result.conflicts.length,
         });
       }
     } catch (error) {

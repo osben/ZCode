@@ -149,7 +149,7 @@ describe("migrateInlineAcpProviders", () => {
     expect(() => decodeWithUpstreamSchemas(legacy)).toThrow();
 
     const result = await migrateInlineAcpProviders(repository(), store());
-    expect(result).toEqual({ copied: ["opencode"], stripped: true, kept: [] });
+    expect(result).toEqual({ copied: ["opencode"], stripped: true, kept: [], conflicts: [] });
 
     const mainText = await readFile(personalFilePath, "utf8");
     expect(mainText).not.toContain("acp:");
@@ -175,20 +175,37 @@ describe("migrateInlineAcpProviders", () => {
       copied: [],
       stripped: false,
       kept: [],
+      conflicts: [],
     });
     expect(await readFile(personalFilePath, "utf8")).toBe(mainBefore);
     expect(await readFile(sidecarFilePath, "utf8")).toBe(sidecarBefore);
   });
 
-  it("keeps the sidecar record when a crash left both copies (sidecar wins)", async () => {
-    // State after a crash between the sidecar write and the strip, followed by a newer edit.
-    await writeLegacyInlineFile("old-command");
+  it("strips an inline rule that is identical to its sidecar record", async () => {
+    // State after a crash between the sidecar write and the strip: both copies are the same record.
+    await writeLegacyInlineFile("/usr/local/bin/opencode");
     await store().update(() => [OPENCODE]);
 
     const result = await migrateInlineAcpProviders(repository(), store());
-    expect(result).toEqual({ copied: [], stripped: true, kept: [] });
+    expect(result).toEqual({ copied: [], stripped: true, kept: [], conflicts: [] });
     expect((await store().read()).agents).toEqual([OPENCODE]);
     expect(await readFile(personalFilePath, "utf8")).not.toContain("acp:");
+  });
+
+  it("keeps a differing inline rule in provider_config.json and reports it (sidecar wins on read)", async () => {
+    // A newer sidecar edit made the inline rule stale; the inline copy is not user-visible data we may drop.
+    await writeLegacyInlineFile("old-command");
+    await store().update(() => [OPENCODE]);
+    const sidecarBefore = await readFile(sidecarFilePath, "utf8");
+
+    const result = await migrateInlineAcpProviders(repository(), store());
+    expect(result.stripped).toBe(false);
+    expect(result.copied).toEqual([]);
+    expect(result.conflicts).toEqual(["opencode"]);
+    expect(result.kept).toHaveLength(1);
+    expect(await readFile(personalFilePath, "utf8")).toContain("acp:");
+    expect(await readFile(sidecarFilePath, "utf8")).toBe(sidecarBefore);
+    expect((await store().read()).agents).toEqual([OPENCODE]);
   });
 
   it("does nothing for a file without inline ACP providers", async () => {
@@ -196,6 +213,7 @@ describe("migrateInlineAcpProviders", () => {
       copied: [],
       stripped: false,
       kept: [],
+      conflicts: [],
     });
   });
 
@@ -237,8 +255,34 @@ describe("migrateInlineAcpProviders", () => {
       copied: [],
       stripped: false,
       kept: ["custom-acp", "acp:bad id"],
+      conflicts: [],
     });
     expect(await readFile(personalFilePath, "utf8")).toBe(before);
     expect((await store().read()).agents).toEqual([]);
+  });
+});
+
+describe("NodeForkAcpAgentStore recovery reporting", () => {
+  it("reports an invalid sidecar once per file content, not on every read", async () => {
+    await writeFile(sidecarFilePath, "{ not json");
+    const onRecovery = vi.fn();
+    const recovering = new NodeForkAcpAgentStore({
+      filePath: sidecarFilePath,
+      pollingIntervalMs: false,
+      onRecovery,
+    });
+    try {
+      await recovering.read();
+      await recovering.read();
+      await recovering.read();
+      expect(onRecovery).toHaveBeenCalledTimes(1);
+
+      // A different invalid revision is a new report.
+      await writeFile(sidecarFilePath, '{"schemaVersion": 1, "agents": 7}');
+      await recovering.read();
+      expect(onRecovery).toHaveBeenCalledTimes(2);
+    } finally {
+      recovering.dispose();
+    }
   });
 });

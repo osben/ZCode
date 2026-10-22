@@ -86,12 +86,16 @@ export async function startProcessProviderRegistryRuntime(
   const acpAgentStore = new NodeForkAcpAgentStore({
     filePath: resolveForkAcpAgentsFilePath(paths.personalFilePath),
   });
+  // Same development-runtime signal as the host ACP gate (specs/acp-agent-runtime.md "Dev-only visibility"):
+  // a packaged worker does not derive `acp:` providers from the sidecar.
+  const acpDevelopmentRuntime = resolveZCodeRuntimeEnv(env) === "development";
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
     wrapConfigSource: (source) =>
-      createDerivedAcpAgentConfigSource(chatGptPlanConfigWrapper(source), acpAgentStore),
-    // Same development-runtime signal as the host ACP gate (specs/acp-agent-runtime.md).
-    acpExecutable: resolveZCodeRuntimeEnv(env) === "development",
+      acpDevelopmentRuntime
+        ? createDerivedAcpAgentConfigSource(chatGptPlanConfigWrapper(source), acpAgentStore)
+        : chatGptPlanConfigWrapper(source),
+    acpExecutable: acpDevelopmentRuntime,
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,

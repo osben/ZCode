@@ -46,6 +46,23 @@ describe("ACP launch rules", () => {
       "DYLD_INSERT_LIBRARIES",
       "NODE_OPTIONS",
       "BASH_ENV",
+      "PYTHONPATH",
+      "PYTHONSTARTUP",
+      "PYTHONHOME",
+      "PERL5OPT",
+      "PERL5LIB",
+      "RUBYOPT",
+      "RUBYLIB",
+      "JAVA_TOOL_OPTIONS",
+      "_JAVA_OPTIONS",
+      "ZDOTDIR",
+      "ENV",
+      "BASH_FUNC_my_fn",
+      "GIT_SSH",
+      "GIT_SSH_COMMAND",
+      "GIT_EXEC_PATH",
+      "GIT_ASKPASS",
+      "GIT_PROXY_COMMAND",
     ]) {
       expect(isAcpLoaderInjectionEnvKey(key)).toBe(true);
       expect(describeAcpEnvProblem({ [key]: "x" })).toMatch(/loader/);
@@ -53,6 +70,8 @@ describe("ACP launch rules", () => {
     }
     expect(isAcpLoaderInjectionEnvKey("OLD_PRELOAD")).toBe(false);
     expect(isAcpLoaderInjectionEnvKey("NODE_PATH")).toBe(false);
+    expect(isAcpLoaderInjectionEnvKey("GIT_AUTHOR_NAME")).toBe(false);
+    expect(isAcpLoaderInjectionEnvKey("PYTHONUNBUFFERED")).toBe(false);
   });
 
   it("rejects invalid env names, NUL values and too many pairs", () => {

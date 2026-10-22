@@ -77,7 +77,15 @@ describe("validateLaunchOptions", () => {
   });
 
   it("rejects loader/injection env overrides but allows deleting them", () => {
-    for (const key of ["LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "NODE_OPTIONS", "node_options"]) {
+    for (const key of [
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "NODE_OPTIONS",
+      "node_options",
+      "PYTHONPATH",
+      "GIT_SSH_COMMAND",
+      "BASH_FUNC_x",
+    ]) {
       expect(
         captureError(() => validateLaunchOptions(validLaunch({ env: { [key]: "/tmp/x.so" } })))
           .code,
