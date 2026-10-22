@@ -158,6 +158,22 @@ describe("ConversationHookDetailsAction", () => {
     await waitFor(() => expect(tooltipCapture.opens.at(-1)).toBe(false));
   });
 
+  it("keeps its tooltip controlled for its whole lifetime while the Popover opens and closes", async () => {
+    // Radix warns "Tooltip is changing from controlled to uncontrolled" when `open` flips between a
+    // boolean and undefined; opening the Popover used to pass false, closing it undefined.
+    renderAction([hookRow(1, { displayName: "prepare-context", sourceKind: "user" })]);
+    const trigger = screen.getByTestId("v4-hook-details-trigger-turn-1");
+
+    fireEvent.click(trigger);
+    await screen.findByTestId("v4-hook-details-content-turn-1");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("v4-hook-details-content-turn-1")).toBeNull());
+
+    expect(tooltipCapture.opens.length).toBeGreaterThan(2);
+    expect(tooltipCapture.opens.every((open) => typeof open === "boolean")).toBe(true);
+    expect(tooltipCapture.opens.at(-1)).toBe(false);
+  });
+
   it("does not render the action when no client-visible Hook actually executed", () => {
     const { container } = renderAction([
       hookRow(1, {
