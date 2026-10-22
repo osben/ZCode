@@ -51,6 +51,11 @@ export interface V4ComposerDraft {
   mode?: SubmissionMode;
   planEnabled?: boolean;
   modelSelection?: ModelSelection;
+  /**
+   * Existing-session only: the user explicitly picked `modelSelection` in this Session's composer.
+   * This marker alone keeps an empty-text record; it is cleared when the picked model is accepted.
+   */
+  modelSelectionPicked?: true;
   /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
   initializeFromNewTask?: true;
   recoveryAttachments?: V4ComposerRecoveryAttachment[];
@@ -356,7 +361,7 @@ function readDraftFile(key: string): V4DraftFile {
     }
     const scopes = Object.fromEntries(
       Object.entries(parsed.scopes).flatMap(([scopeId, value]) => {
-        const draft = readDraft(value);
+        const draft = readDraft(value, scopeId);
         return draft ? [[scopeId, draft]] : [];
       }),
     );
@@ -377,7 +382,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readDraft(value: unknown): V4ComposerDraft | null {
+/**
+ * An explicit model pick made in an existing session is the only non-text state that keeps a draft
+ * record (ISSUE-035). A model inherited from the Session Snapshot, or any new-task draft, never qualifies.
+ */
+function keepsExplicitModelPick(
+  scopeId: string,
+  draft: { modelSelection?: unknown; modelSelectionPicked?: unknown },
+): boolean {
+  return (
+    scopeId !== V4_DRAFT_SCOPE_ROOT &&
+    draft.modelSelectionPicked === true &&
+    modelSelectionSchema.safeParse(draft.modelSelection).success
+  );
+}
+
+function readDraft(value: unknown, scopeId: string): V4ComposerDraft | null {
   if (!isRecord(value) || typeof value.text !== "string") return null;
   const recoveryContexts = readRecoveryContexts(value.recoveryContexts);
   const worktreeIntent = readWorktreeIntent(value.worktreeIntent);
@@ -388,7 +408,11 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     : undefined;
   // 无正文的 worktree 恢复记录仍要保留附件/上下文，否则失败后的草稿会在读取时丢失。
   const hasRecovery = Boolean(recoveryAttachments?.length) || hasRecoveryContexts(recoveryContexts);
-  if (!value.text.trim() && !hasRecovery) return null;
+  const keepsModelPick = keepsExplicitModelPick(scopeId, {
+    modelSelection: value.modelSelection,
+    modelSelectionPicked: value.modelSelectionPicked,
+  });
+  if (!value.text.trim() && !hasRecovery && !keepsModelPick) return null;
   const mode = submissionModeSchema.safeParse(value.mode);
   const selection = modelSelectionSchema.safeParse(value.modelSelection);
   // 坏 options 不应连带丢掉可确定的模型身份；不读取旧 provider/model/thought 别名。
@@ -466,6 +490,7 @@ function readDraft(value: unknown): V4ComposerDraft | null {
         ? { planEnabled: mode.data === "plan" }
         : {}),
     ...(modelSelection ? { modelSelection } : {}),
+    ...(keepsModelPick ? { modelSelectionPicked: true as const } : {}),
     updatedAt:
       typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : 0,
   };
@@ -602,7 +627,7 @@ export function persistV4ComposerDraft(
     Boolean(next.recoveryAttachments?.length) ||
     hasRecoveryContexts(next.recoveryContexts) ||
     Boolean(next.firstSubmission);
-  if (!next.text.trim() && !hasRecoveryPayload) {
+  if (!next.text.trim() && !hasRecoveryPayload && !keepsExplicitModelPick(scopeId, next)) {
     delete file.scopes[scopeId];
   } else {
     file.scopes[scopeId] = { ...next, updatedAt: Date.now() };

@@ -51,6 +51,13 @@ function isSameModelSelection(left: ModelSelection, right: ModelSelection): bool
   );
 }
 
+/** Once the picked model is accepted it is the Session's selection, so it is no longer a pending pick (ISSUE-035). */
+function withoutModelSelectionPick(draft: V4ComposerDraft): V4ComposerDraft {
+  if (draft.modelSelectionPicked === undefined) return draft;
+  const { modelSelectionPicked: _accepted, ...accepted } = draft;
+  return accepted;
+}
+
 export function applyDraftModelSelection(
   current: Partial<SessionConfigState>,
   model: ModelSelection,
@@ -400,18 +407,25 @@ export function useDraftConfigControl(params: {
     [isCurrentScope, persistDraft],
   );
   const updateDraftConfig = useCallback(
-    (update: (current: Partial<SessionConfigState>) => Partial<SessionConfigState>) => {
+    (
+      update: (current: Partial<SessionConfigState>) => Partial<SessionConfigState>,
+      // ISSUE-035: an explicit model pick in an existing session is kept even without text.
+      options?: { modelSelectionPicked?: boolean },
+    ) => {
       const next = update(draftConfigRef.current);
       const mode = submissionModeSchema.safeParse(next.mode);
       updateComposerDraft((current) => ({
         ...current,
         mode: mode.success ? mode.data : current.mode,
         modelSelection: next.modelSelection,
+        ...(options?.modelSelectionPicked && sessionId !== null
+          ? { modelSelectionPicked: true as const }
+          : {}),
         // 导入等待目录期间的显式选择也是有效选择，不能再被默认初始化覆盖。
         ...(current.mode ? {} : { mode: mode.success ? mode.data : "build" }),
       }));
     },
-    [updateComposerDraft],
+    [sessionId, updateComposerDraft],
   );
   const captureAcceptedModelSelection = useCallback(
     (selection: ModelSelection, expectedSelection: ModelSelection = selection): (() => void) => {
@@ -431,7 +445,9 @@ export function useDraftConfigControl(params: {
           stateRef.current.draft.modelSelection !== original
         )
           return;
-        updateComposerDraft((current) => ({ ...current, modelSelection: selection }));
+        updateComposerDraft((current) =>
+          withoutModelSelectionPick({ ...current, modelSelection: selection }),
+        );
       };
     },
     [scopeKey, updateComposerDraft],
@@ -596,7 +612,9 @@ export function useDraftConfigControl(params: {
         workspacePath,
         workspaceIdentity: workspaceIdentity ?? null,
       });
-      updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection));
+      updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection), {
+        modelSelectionPicked: true,
+      });
     },
     [
       modelSelectionView,

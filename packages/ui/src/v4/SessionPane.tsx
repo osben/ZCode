@@ -5046,9 +5046,18 @@ export function SessionPane({
         model,
         branch: "composer-submission-intent",
       });
+      // ISSUE-035: a manual pick in an existing session announces its switch right away. The source is
+      // the model the composer showed before this pick; the helper ignores new-task drafts and no-op picks.
+      showModelChangeNotice(
+        sourceModel ?? {
+          provider: draftConfigRef.current.provider ?? "",
+          model: draftConfigRef.current.model ?? "",
+        },
+        { provider: resolvedProvider, model },
+      );
       handleDraftSelectModel(resolvedProvider, model, reasoningLevel);
     },
-    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl],
+    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl, showModelChangeNotice],
   );
 
   const handleSelectThought = useCallback(
