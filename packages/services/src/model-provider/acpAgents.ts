@@ -124,17 +124,14 @@ const runtimeLogger: AcpRuntimeLogger = {
 };
 
 /**
- * Host-side stabilization gate (specs/acp-agent-runtime.md, "Dev-only
- * visibility"): the bridge spawns caller-supplied commands, so it exists only
- * in development runtimes. Without it the provider settings service answers
- * `supported: false` and never spawns anything.
+ * The host settings bridge (specs/acp-agent-runtime.md, "Availability (platform rule)"). Its only
+ * condition is the one availability predicate, `acpAgentPlatformSupported`. Unsupported platforms get no
+ * bridge at all, so nothing can spawn a caller-supplied command there. The runtime env changes nothing.
  */
 export function createHostAcpAgentsBridge(
   env: Record<string, string | undefined> = process.env,
   dependencies: AcpAgentsBridgeDependencies = {},
 ): ProviderSettingsAcpAgentsBridge | undefined {
-  if (!isEffectiveDevelopmentNodeEnv(env)) return undefined;
-  // Unsupported platforms get no bridge at all, so nothing can spawn a caller-supplied command there.
   if (!acpAgentPlatformSupported(dependencies.platform ?? process.platform)) return undefined;
   const e2eAgentPath = resolveE2eAcpAgentPath(env);
   if (e2eAgentPath === undefined || dependencies.detectAgents) {
@@ -148,7 +145,7 @@ export function createHostAcpAgentsBridge(
   });
 }
 
-/** E2E detection seam (specs/acp-agent-runtime.md, "Dev-only visibility"). */
+/** E2E detection seam (specs/acp-agent-runtime.md, "E2E seam"). */
 export const ACP_E2E_AGENT_PATH_ENV = "ZCODE_E2E_ACP_AGENT_PATH";
 
 /**

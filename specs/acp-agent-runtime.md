@@ -85,55 +85,67 @@ Owner: one `AcpSessionRuntime` per agent process.
 - Frame observer (`onFrame`): raw NDJSON lines per direction in wire order; lines over 16 KiB are
   truncated with a marker; observer exceptions are swallowed.
 
-## Dev-only visibility (stabilization gate)
+## Availability (platform rule)
 
-Until the feature is stabilized, ACP agents are visible only in local development runtimes:
-`platform.isLocalDevelopmentRuntime === true` (desktop dev; packaged apps are excluded) or
-`import.meta.env.DEV === true` (web dev server). The gate hides the whole surface, not just the
-entry point:
+ACP agents are available when the host platform is supported, and for no other reason. One predicate
+decides it: `acpAgentPlatformSupported(platform)` in `@zcode/acp-agent-runtime` (macOS only today). No
+runtime-env, build-mode, `NODE_ENV` or `import.meta.env.DEV` condition exists. A packaged app, a production
+web build and a development run on macOS expose ACP the same way; Windows and Linux hide it everywhere.
 
-- Settings → Model Providers does not render the ACP agents panel (detection, enable, edit, login,
-  test).
-- `acp:<agentId>` personal providers are filtered out of the view `useModelProviders` derives from
-  the provider settings service, so an agent enabled in development does not leak into provider
-  navigation, detail pages, or settings lists in packaged and production builds.
-- The provider host applies the same gate (`isEffectiveDevelopmentNodeEnv`, the signal that sets
-  `acpExecutable`): in a packaged host the sidecar is not derived into providers, no ACP writer is wired,
-  and `saveAcpAgent` / `setAcpAgentEnabled` fail with "not supported in this environment". The inline
-  migration also does not run there.
-- Existing sidecar and inline files stay on disk untouched. The gate never migrates, rewrites or
-  deletes them; a development host keeps resolving them as before.
+Each composition root evaluates the predicate once with its own platform value and feeds that one value to
+everything it builds:
 
-The host enforces the same gate: the settings bridge (detect / test / status / login) is wired
-into the provider runtime only when the host runs as a development runtime
-(`ZCODE_RUNTIME_ENV=development`, which desktop main injects for unpackaged builds). Elsewhere the
-provider settings service answers `supported: false` / an error without spawning anything, so a
-packaged host never spawns caller-supplied commands even if a client calls the RPC directly. A web
-dev server started without `ZCODE_RUNTIME_ENV=development` therefore shows the panel as
-unsupported.
+- Host (`packages/services/src/node.ts`): `acpAgentsAvailable` is computed once. It creates the settings
+  bridge only when the value is true (`createHostAcpAgentsBridge`, which returns `undefined` otherwise) and
+  passes the same value as `acpExecutable` to the provider runtime.
+- Provider runtime (`packages/services/src/model-provider/providerRuntime.ts`): when `acpExecutable` is true
+  it derives `acp:<agentId>` providers from the sidecar, wires the ACP writer (`saveAcpAgent`,
+  `setAcpAgentEnabled`) and runs the inline migration. When false, none of the three happens.
+- Resolver (`packages/provider/src/resolver.ts`): `acpExecutable` false keeps `acp:` models non-executable,
+  so they never reach the composer.
+- Worker (`apps/zcode-cli/packages/bootstrap/src/app/process-provider-registry-runtime.ts`): the same
+  predicate decides sidecar derivation and `acpExecutable` for the CLI worker Registry.
+- Settings bridge (`detect`, `catalog`, `test`, `status`, `login`): answers `supported: false` and spawns
+  nothing on an unsupported host. The renderer has no predicate of its own. It reads `supported` from the
+  host's detection, so a web client sees the state of the host it is connected to, not of the browser.
 
-Gate source (one signal for renderer and host): Electron main computes `isLocalDevelopmentRuntime =
-!app.isPackaged` once (`desktopRuntimeEnv.ts`). Main passes it to every app renderer window as the
-preload argument `--zcode-local-development-runtime`; preload exposes it before the renderer boots,
-and the desktop platform reports it as `platform.isLocalDevelopmentRuntime`. The same value selects
-`ZCODE_RUNTIME_ENV=development` for the host. A packaged app therefore keeps both the renderer
-surface and the host bridge closed, and an unpackaged build — including a production-mode Vite
-build such as the desktop E2E app — opens both. The renderer never derives this gate from a
-compile-time `define`: Vite only applies `globalThis.<define>` under `vite dev`. The user-action
-trace `deploymentEnvironment` keeps its own compile-time input and is not part of this gate.
+Surface behavior (all layers derive from the same value):
 
-E2E detection seam: `ZCODE_E2E_ACP_AGENT_PATH` replaces only the PATH that default detection
-probes (every other detection input, and the env/args of spawned agents, are unchanged). The host
-honors it only when the bridge is open (unpackaged, development runtime) and `ZCODE_ENV=test`;
-anywhere else it is ignored. The desktop E2E points it at a run-scoped directory so detection
-never sees a real `opencode` / `cursor-agent` installed on the machine.
+- Settings → Model Providers: the ACP group is built only while detection reports `supported`. Until the
+  first detection settles it shows the loading row, so an unsupported host shows that row briefly and then
+  no group.
+- Providers: `acp:<agentId>` providers exist only when the host is supported. ACP-managed providers
+  (`acp-agent` access) are never listed under the custom group, whatever the platform, so a legacy inline
+  `acp-agent` rule on an unsupported host is listed nowhere. The file is left untouched.
+- Composer: ACP models are offered only when `acpExecutable` is true.
+- Writes: on an unsupported host `saveAcpAgent` and `setAcpAgentEnabled` fail with "not supported in this
+  environment" before any write.
+- Inline migration: runs on every supported host at provider runtime start. It rewrites
+  `provider_config.json` (strip `acp:` rules whose sidecar record now exists), so on a packaged macOS build it
+  writes the shared file. The write is the same one-shot, idempotent migration described under "Storage and
+  upstream compatibility".
 
-The bridge still accepts `command` / `args` / `env` overrides (custom executables and the saved
-provider's command), validated with the shared launch rules before anything is spawned or a login
-script is written; resolving the command only from detection or the saved provider is a follow-up.
+Kill switch: a future kill switch changes `acpAgentPlatformSupported` (or the one caller that wraps it) and
+nothing else. Widening to Windows or Linux is the same edit, after the platform is verified.
 
-Remove this section together with the gate (`isLocalDevelopmentRuntime` in
-`packages/ui/src/lib/devRuntime.ts` and the `useModelProviders` filter) when ACP ships publicly.
+E2E seam: `ZCODE_E2E_ACP_AGENT_PATH` replaces only the PATH that default detection probes. It is honoured
+only when the host is an unpackaged development runtime AND `ZCODE_ENV=test`. That condition is a test
+seam, not an availability gate: a packaged or production host ignores the variable even when a shell sets
+it. The desktop E2E points it at a run-scoped directory so detection never sees a real agent installed on
+the machine.
+
+Existing sidecar and inline files are never deleted or rewritten by the availability rule itself. Only the
+supported-host migration writes, as described above.
+
+Acceptance (availability; tests in `packages/services/test/acpAgents.test.ts`, `acpAgentSidecarIntegration.test.ts`, `apps/zcode-cli/packages/bootstrap/tests/acp-worker-registry-derivation.test.ts` and `packages/ui/test/acpNavigation.test.ts`):
+
+- For runtime env in {development, production, unset} and platform in {darwin, win32}, the bridge exists
+  exactly on darwin, and the runtime env changes nothing.
+- A packaged darwin configuration exposes ACP at every layer: bridge present, writer present, sidecar
+  provider listed with an executable model, worker derivation on, settings group built after detection.
+- The same packaged configuration on win32 hides everything: no bridge, no derived provider, writer refused,
+  resolver not executable, no settings group.
+- The E2E seam is ignored by a production host and by a development host without `ZCODE_ENV=test`.
 
 ## Settings UI placement
 
@@ -142,7 +154,7 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Navigation: a dedicated group `id: "acp"` ("ACP agents") rendered directly after the `custom`
   group. Each installed agent, and each uninstalled agent that still has an ACP-managed provider, is
   one nav item (`type: "acpAgent"`, key `acp-agent:<agentId>`) with the agent initial, its name,
-  and the status dot defined below. The group obeys the dev-only gate above.
+  and the status dot defined below. The group is built only while the host reports `supported` (see "Availability (platform rule)").
 - `acp:<agentId>` personal providers are listed only in the `acp` group, never also under
   `custom`.
 - Detection has one owner: a single hook called once by `ModelProviderSection`; navigation and
@@ -237,8 +249,8 @@ Design (fix):
   is not rewritten. Migration failure is logged and never blocks startup.
 - Provisioning stays main-file only: ACP launch config is per host (command paths are host-local)
   and is not synced to remote environments.
-- Wiring: the desktop/web host provider runtime. Process registries in CLI workers do not see ACP
-  providers yet; phase 4 (chat delegation) must wire the same decorator there.
+- Wiring: the desktop/web host provider runtime. The CLI worker Registry derives the same sidecar
+  decorator under the same predicate (bootstrap `process-provider-registry-runtime.ts`).
 - `chatgpt-account` / `chatgpt-family` are not affected: they only appear in derived builtin
   entries and account snapshots, never in `provider_config.json`.
 
@@ -350,8 +362,8 @@ configuration options) are specified here.
 - Cancel: stop → existing `stopActiveForegroundExecution` → turn abort → driver `cancel()` →
   `runtime.cancel()` (bounded `session/cancel`). The turn completes as cancelled. An escalation kill
   marks the runtime `failed`, and the next turn restarts it through the runtime's own restart path.
-- Dev-only gate: the S1 registry gate and the composer gate are the same dev-runtime signal as the
-  host bridge (`isEffectiveDevelopmentNodeEnv`). Packaged builds never execute an `acp:` model.
+- Availability: the registry (`acpExecutable`) and the composer follow the one platform predicate (see
+  "Availability (platform rule)"). A host on an unsupported platform never executes an `acp:` model.
 
 ### Product defaults (v1)
 
@@ -422,8 +434,8 @@ agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, 
 
 ### Implementation notes (S2 as shipped)
 
-- Registry admission: an executable ACP provider enters the execution Registry only behind the
-  development gate (`acpExecutable`). Its registry config is validated by the ACP schema (not the
+- Registry admission: an executable ACP provider enters the execution Registry only when the host
+  platform is supported (`acpExecutable`). Its registry config is validated by the ACP schema (not the
   API-key union). The model-selection projection drops `env` (it may carry credentials).
 - Composer: an agent provider has no `api` section, so the composer's registry grouping
   (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The development
@@ -812,7 +824,7 @@ Catalog (`fork_acp_agent_catalog.json`, next to `provider_config.json`):
   exception (`acp-agent-config-composer-unmanaged-files`), the same unmanaged `packages/ui` tree as its neighbours.
 
 Platform scope: ACP is macOS only until Windows and Linux are verified. `acpAgentPlatformSupported(platform)` in
-`@zcode/acp-agent-runtime` is the one predicate. The settings bridge is wired only for a development host on macOS;
+`@zcode/acp-agent-runtime` is the one predicate. The settings bridge is wired only on macOS;
 its `detect` and `catalog` report `supported: false` otherwise, and the worker and host ACP gates use the same
 predicate, so no `acp:` provider is derived and nothing is offered in the composer.
 

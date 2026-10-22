@@ -225,8 +225,6 @@ export interface AcpDetectionState {
 }
 
 export interface AcpNavigationGroupInput {
-  /** Dev-only gate (`isLocalDevelopmentRuntime`); false means no group at all. */
-  readonly enabled: boolean;
   readonly title: string;
   readonly detectLabel: string;
   readonly detectingLabel: string;
@@ -247,7 +245,9 @@ export interface AcpNavigationGroupInput {
 export function buildAcpNavigationGroup(
   input: AcpNavigationGroupInput,
 ): ModelProviderNavGroup | null {
-  if (!input.enabled) return null;
+  // Availability is the host's answer (detection `supported`, one platform predicate on the host).
+  // Before the first answer the loading row shows; an unsupported host gets no group at all.
+  if (input.detection.status !== "loading" && !input.detection.supported) return null;
   // Installed agents are listed; an uninstalled agent stays listed only while it has an ACP-managed provider.
   const listed = input.detection.agents.filter(
     (agent) => agent.installed || input.managedAgentIds.has(agent.agentId),

@@ -67,7 +67,7 @@ interface UseModelProviderNavigationOptions {
   showPurchasedTeamPlanFallback?: boolean;
   selectedNodeKey: string | null;
   setSelectedNodeKey: (key: string | null) => void;
-  /** The "ACP agents" group, already built by the page; omitted (undefined/null) when the dev-only gate is off. */
+  /** The "ACP agents" group, already built by the page; omitted (undefined/null) when the host reports ACP unsupported. */
   acpGroup?: ModelProviderNavGroup | null;
   /** The first ACP detection is still in flight; an `acp-*` selection must not be corrected away yet. */
   acpDetectionPending?: boolean;

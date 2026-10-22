@@ -14,7 +14,7 @@ import { reloadElectronSessionSafely } from "../helpers/e2e-electron-reload.js";
 import { seedPersonalProviderConfig } from "../helpers/model-provider-restart-config.js";
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 
-// Contract: specs/acp-agent-runtime.md "Settings UI placement" and "Dev-only visibility".
+// Contract: specs/acp-agent-runtime.md "Settings UI placement" and "Availability (platform rule)".
 // Detection only probes ZCODE_E2E_ACP_AGENT_PATH (wdio.conf.ts), so the real opencode /
 // cursor-agent on the machine is never detected; this spec writes a mock `opencode` there.
 

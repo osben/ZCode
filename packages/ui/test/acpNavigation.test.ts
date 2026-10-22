@@ -57,7 +57,6 @@ type GroupInput = Parameters<typeof buildAcpNavigationGroup>[0];
 
 function group(params: Partial<GroupInput>) {
   return buildAcpNavigationGroup({
-    enabled: true,
     title: "ACP agents",
     detectLabel: "Detect agents",
     detectingLabel: "Detecting agents",
@@ -92,8 +91,14 @@ function renderWithTooltip(element: ReactElement) {
 }
 
 describe("ACP navigation group builder", () => {
-  it("returns no group while the dev-only gate is off", () => {
-    expect(group({ enabled: false })).toBeNull();
+  it("returns no group once the host reports the platform unsupported, whatever the runtime", () => {
+    expect(group({ detection: { ...READY, supported: false } })).toBeNull();
+    expect(group({ detection: { ...READY, supported: false, status: "loading" } })).not.toBeNull();
+  });
+
+  it("shows the loading row before the first detection on a supported host", () => {
+    const loading = group({ detection: { ...READY, status: "loading", agents: [] } });
+    expect(loading?.items.map((item) => item.type)).toEqual(["acpLoading"]);
   });
 
   it("lists every installed agent as one acpAgent row keyed by agent id", () => {
@@ -213,7 +218,7 @@ describe("model provider navigation with the ACP group", () => {
     expect(custom?.items.map((item) => item.key)).toEqual([`custom:${acpProviderId("opencode")}`]);
   });
 
-  it("produces no acp group when the gate is off", () => {
+  it("produces no acp group when the host reports ACP unavailable", () => {
     const groups = navigationGroupsOf({ acp: null, providers: [customProvider("custom-a")] });
     expect(groups.map((item) => item.id)).toEqual(["preset", "chatgpt", "custom"]);
   });

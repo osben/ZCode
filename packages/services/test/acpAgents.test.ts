@@ -209,11 +209,16 @@ describe("ACP agents bridge platform scope and catalog", () => {
     expect(roundtrip.frames).toEqual([]);
   });
 
-  it("is not wired on non-macOS development hosts", () => {
-    const env = { ZCODE_RUNTIME_ENV: "development" };
-    expect(createHostAcpAgentsBridge(env, { platform: "linux" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge(env, { platform: "win32" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge(env, { platform: "darwin" })).toBeDefined();
+  it("is not wired on non-macOS hosts, in any runtime environment", () => {
+    for (const env of [
+      { ZCODE_RUNTIME_ENV: "development" },
+      { ZCODE_RUNTIME_ENV: "production" },
+      {},
+    ]) {
+      expect(createHostAcpAgentsBridge(env, { platform: "linux" })).toBeUndefined();
+      expect(createHostAcpAgentsBridge(env, { platform: "win32" })).toBeUndefined();
+      expect(createHostAcpAgentsBridge(env, { platform: "darwin" })).toBeDefined();
+    }
   });
 
   it("records the options a handshake offered for a known agent", async () => {
@@ -390,14 +395,26 @@ describe("ACP agents bridge hardening", () => {
     expect(report.output).toBe("token=absent path=set");
   });
 
-  it("wires the bridge only in development host runtimes", () => {
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "development" })).toBeDefined();
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "production" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "test" })).toBeUndefined();
-    // NODE_ENV leaks from user shells and never enables the gate.
-    expect(createHostAcpAgentsBridge({ NODE_ENV: "development" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge({})).toBeUndefined();
-  });
+  // specs/acp-agent-runtime.md "Availability (platform rule)": the runtime env changes nothing.
+  const runtimeEnvs = [
+    { ZCODE_RUNTIME_ENV: "development" },
+    { ZCODE_RUNTIME_ENV: "production" },
+    { ZCODE_RUNTIME_ENV: "test" },
+    { NODE_ENV: "development" },
+    {},
+  ];
+  for (const env of runtimeEnvs) {
+    for (const platform of ["darwin", "win32"] as const) {
+      it(`exposes the bridge exactly on darwin for ${JSON.stringify(env)} on ${platform}`, async () => {
+        const bridge = createHostAcpAgentsBridge(env, {
+          platform,
+          detectAgents: vi.fn(async () => []),
+        });
+        expect(bridge !== undefined).toBe(platform === "darwin");
+        if (bridge) expect(await bridge.detect()).toMatchObject({ supported: true });
+      });
+    }
+  }
 
   it("honors the E2E detection path only in a development host running ZCODE_ENV=test", () => {
     const dir = "/tmp/zcode-e2e-acp-bin";

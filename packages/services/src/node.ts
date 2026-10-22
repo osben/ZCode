@@ -475,7 +475,6 @@ import { createProviderProvisioningTarget } from "./model-provider/providerProvi
 import { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 import { buildOffPeakModelSelectionView } from "./model-provider/offPeakModelSelectionView.js";
 import { resolveClientConfigPlatform } from "./runtime-tools/clientPlatform.js";
-import { isEffectiveDevelopmentNodeEnv } from "./runtime-tools/nodeEnv.js";
 import {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
@@ -1652,7 +1651,6 @@ export function createLocalServices(options: {
   let providerConnectivityAgentService:
     | Pick<IZCodeAgentService, "testModelConnectivity">
     | undefined;
-  // Dev-only stabilization gate, enforced on the host as well as in the UI.
   // Last offered options per agent (S6 readiness): the Settings Test roundtrip writes them.
   const acpAgentCatalogStore = new NodeForkAcpAgentCatalogStore({
     filePath: resolveForkAcpAgentCatalogFilePath(
@@ -1663,7 +1661,12 @@ export function createLocalServices(options: {
         error,
       }),
   });
+  // One availability value for the host (specs/acp-agent-runtime.md "Availability (platform rule)"):
+  // it gates the settings bridge and the provider runtime's `acpExecutable` alike.
+  const acpAgentPlatform = process.platform;
+  const acpAgentsAvailable = acpAgentPlatformSupported(acpAgentPlatform);
   const acpAgentsBridge = createHostAcpAgentsBridge(undefined, {
+    platform: acpAgentPlatform,
     recordCatalog: (agentId, options) => acpAgentCatalogStore.write(agentId, options),
     readCatalog: (agentId) => acpAgentCatalogStore.readAgent(agentId),
   });
@@ -1680,8 +1683,7 @@ export function createLocalServices(options: {
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     acpAgentStore,
-    // Same dev-runtime signal as the host ACP bridge (specs/acp-agent-runtime.md "Dev-only visibility").
-    acpExecutable: isEffectiveDevelopmentNodeEnv() && acpAgentPlatformSupported(),
+    acpExecutable: acpAgentsAvailable,
     wrapConfigSource: chatGptPlanConfigSourceWrapper,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,

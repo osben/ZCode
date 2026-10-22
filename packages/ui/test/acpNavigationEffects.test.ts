@@ -27,7 +27,6 @@ function group(
   enabledIds: string[] = [],
 ): ModelProviderNavGroup | null {
   return buildAcpNavigationGroup({
-    enabled: true,
     title: "ACP agents",
     detectLabel: "Detect agents",
     detectingLabel: "Detecting agents",
