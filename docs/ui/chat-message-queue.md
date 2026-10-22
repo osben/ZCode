@@ -65,6 +65,8 @@ restore request 必须幂等。目标已被消费或被另一端删除时，`del
 - Stop 是用户主动停止：先写 `autoDrain=false`（held，`pauseReason=stopped`）再 abort，剩余 queue 保持暂停，需显式继续。
 - Steer 只抢占当前 turn 以执行被选中的队列项：不写 hold，`TurnComplete(cancelled)` 携带 `preserveQueueAutoDrainOnCancel`，投影保持 `autoDrain=true`；被发送项执行后，剩余 queue 由自动续跑按 FIFO 继续。
 - Steer 之后的用户 Stop 仍写 hold，与单独 Stop 相同。
+- Steer 的保留意图有两个载体：runtime 前台 token 存在时写在执行上；runtime 尚无 token 时写在调用方 controller 的 abort reason 上（ISSUE-039 修复）。用户 Stop 两种情况都不带该意图。
+- 编辑与重试（`editUserQuery` / `retryTurn`）同样会打断运行中的 turn，但不携带保留意图，因此会 hold 队列，与用户 Stop 一致；这是当前行为，文档记录，未改动。
 - 桌面 continuous 链路与 web/mobile remote replayable 链路共用同一 CLI 路径；hold 与续跑都是 projection 事实，断线重连后的快照必须与实时一致。
 
 `guide` 是对 active turn 的引导语义，不作为普通 queue item 提供编辑、删除或立即发送。Stop 只停止当前执行；queue 是否 held/续跑由 CLI projection 明确表达。Goal 暂停、恢复和 queue drain 也由 CLI reducer/handler 统一裁决。
