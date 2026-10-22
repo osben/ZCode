@@ -230,6 +230,7 @@ function buildBaselineMetaFromSummary(
     traceId: generateTraceId(summary.sessionId),
     title: summary.title,
     ...(summary.titleSource === "custom" ? { titleOverridden: true } : {}),
+    ...(summary.titleUpdatedAt !== undefined ? { titleUpdatedAt: summary.titleUpdatedAt } : {}),
     workspacePath: target.workspacePath,
     workspaceIdentity: target.workspaceIdentity,
     createdAt: summary.createdAt,
@@ -593,7 +594,8 @@ export function createZCodeTaskIndexSyncer(
       taskId: target.sessionId,
       unreadSignal: unreadSignal ?? null,
     });
-    const updatedAt = Date.now();
+    // updatedAt comes from the CLI summary: Host receive time must not reorder history (I6).
+    const updatedAt = summary.lastActivityAt;
     void taskIndexRepo
       .applyAgentPatch({
         workspacePath: target.workspacePath,
@@ -638,21 +640,84 @@ export function createZCodeTaskIndexSyncer(
       });
   }
 
-  /** Title change → patch the SQLite title; fetch a full snapshot if the row is missing (matching legacy first_input semantics). */
-  function applyTitleChange(target: ZCodeAgentSessionTarget, title: string): void {
-    const updatedAt = Date.now();
+  /**
+   * A fork child is created by the CLI, so the Host claims it for the parent's project before its CLI facts are applied
+   * (TaskIndexRepo.admitForkSummary). Prepared sessions keep their own admission path.
+   */
+  function isForkAdmissionCandidate(summary: SessionSummary): boolean {
+    return (
+      summary.parentSessionId !== undefined &&
+      summary.phase !== "draft" &&
+      !summary.worktreePreparation &&
+      !summary.submissionPreparation
+    );
+  }
+
+  function admitForkChild(
+    workspace: ZCodeAgentWorkspaceTarget,
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): void {
+    void taskIndexRepo
+      .admitForkSummary({
+        meta: buildBaselineMetaFromSummary(workspace, summary),
+        titleSource: summary.titleSource,
+      })
+      .then(({ meta, changed }) => {
+        // Steady-state summaries change nothing in the admitted facts; broadcast only the first claim or a real fact change.
+        if (changed)
+          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_meta_changed");
+      })
+      .catch((error) =>
+        logger.warn(undefined, `Could not admit forked session taskId=${target.sessionId}`, error),
+      );
+  }
+
+  /**
+   * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
+   * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
+   */
+  function applyTitleChange(
+    target: ZCodeAgentSessionTarget,
+    title: string,
+    summary: SessionSummary,
+  ): void {
     void taskIndexRepo
       .applyAgentPatch({
         workspacePath: target.workspacePath,
         workspaceIdentity: target.workspaceIdentity,
         taskId: target.sessionId,
-        patch: { title, updatedAt },
+        patch: { title },
       })
-      .then((meta) => {
+      .then(async (meta) => {
         if (meta) {
+          // Title recency is a CLI fact; applyCliFacts is its only writer on admitted rows (docs/ui/task-title-authority.md).
+          // applyAgentPatch above keeps its own write for the title text, so the recency is persisted through the CLI-facts path.
+          const persisted =
+            summary.titleUpdatedAt === undefined
+              ? meta
+              : await taskIndexRepo.applyCliFacts({
+                  meta: {
+                    taskId: summary.sessionId,
+                    traceId: generateTraceId(summary.sessionId),
+                    title,
+                    workspacePath: target.workspacePath,
+                    workspaceIdentity: target.workspaceIdentity,
+                    createdAt: summary.createdAt,
+                    updatedAt: summary.lastActivityAt,
+                    mode: "default",
+                    provider: ZCODE_AGENT_PROVIDER,
+                    titleUpdatedAt: summary.titleUpdatedAt,
+                  },
+                  titleSource: summary.titleSource,
+                });
           // Title changes (first message/automatic title generation) are unrelated to ownership and occur for every task.
           // Use a dedicated reason to avoid reloading global membership whenever the initial or terminal title is persisted.
-          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_title_changed");
+          emitWorkspaceTaskListChanged(
+            broadcastTargetFrom(target),
+            persisted,
+            "task_title_changed",
+          );
         } else {
           // Draft sessions do not pre-write placeholder rows. If the first title (legacy first_input) arrives before any
           // snapshot upsert, fetch a full snapshot rather than relying on an empty session placeholder.
@@ -713,6 +778,7 @@ export function createZCodeTaskIndexSyncer(
       }
       return;
     }
+    if (isForkAdmissionCandidate(next)) admitForkChild(state.target, target, next);
     const becameVisibleTask = previous === undefined || previous.phase === "draft";
     // A terminal transition means the baseline actually observed non-terminal → terminal. Do not replay terminal events for sessions with no baseline
     // (cold-recovery hydration or historical sessions first seen after gap fallback). Active sessions always enter the baseline as running/prewarming
@@ -736,7 +802,7 @@ export function createZCodeTaskIndexSyncer(
     }
     const title = next.title.trim();
     if (title && (previous === undefined || previous.title !== next.title)) {
-      applyTitleChange(target, title);
+      applyTitleChange(target, title, next);
     }
   }
 
@@ -761,9 +827,11 @@ export function createZCodeTaskIndexSyncer(
     for (let offset = 0; offset < candidates.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
       const batch = candidates.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
       const results = await Promise.allSettled(
-        batch.map((summary) =>
-          taskIndexRepo.seedTaskMetaIfMissing(buildBaselineMetaFromSummary(state.target, summary)),
-        ),
+        batch.map((summary) => {
+          const meta = buildBaselineMetaFromSummary(state.target, summary);
+          if (!isForkAdmissionCandidate(summary)) return taskIndexRepo.seedTaskMetaIfMissing(meta);
+          return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
+        }),
       );
       for (const result of results) {
         if (result.status === "rejected") {

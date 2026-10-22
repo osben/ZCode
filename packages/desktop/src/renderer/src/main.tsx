@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Desktop renderer bridge 聚合平台、远端 attachment 与启动编排契约。 */
 import { DatabaseStartupAdmission } from "./databaseStartupAdmission.js";
 import { initializeDesktopLocalTtft } from "./localTtftBootstrap.js";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root as ReactDomRoot } from "react-dom/client";
 import { useEffect } from "react";
 import {
   AppErrorBoundary,
@@ -167,8 +167,15 @@ initializeDesktopUserActionTrace({
 installDocumentHiddenMotionPause();
 let appInitialized = false;
 const databaseStartupAdmission = new DatabaseStartupAdmission();
-const appRoot =
-  windowKind === "update-status" ? null : createRoot(document.getElementById("root")!);
+// Vite HMR re-evaluates this entry (it has no exports to accept) before the follow-up full reload, so a
+// second createRoot on the same container logged a React error and crashed the AppErrorBoundary subtree in
+// dev. Reuse the root created by the previous evaluation; production evaluates the entry once.
+const reactRootHolder = globalThis as typeof globalThis & { __zcodeReactRoot?: ReactDomRoot };
+function getOrCreateReactRoot(): ReactDomRoot {
+  reactRootHolder.__zcodeReactRoot ??= createRoot(document.getElementById("root")!);
+  return reactRootHolder.__zcodeReactRoot;
+}
+const appRoot = windowKind === "update-status" ? null : getOrCreateReactRoot();
 const sendStartupControl = (control: DatabaseStartupControl) =>
   window.postMessage({ type: InternalChannels.DatabaseStartupControl, control }, "*");
 function renderDatabaseStartup(): void {
@@ -381,7 +388,7 @@ if (windowKind !== "update-status") {
 }
 
 if (windowKind === "update-status") {
-  createRoot(document.getElementById("root")!).render(
+  getOrCreateReactRoot().render(
     <AppErrorBoundary isDesktop isMacDesktop={isMacDesktop} isWindowsDesktop={isWindowsDesktop}>
       <StartupReadyNotifier />
       <UpdateStatusWindowRoot

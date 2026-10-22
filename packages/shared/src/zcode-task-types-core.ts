@@ -297,6 +297,8 @@ export interface ZCodeTaskMeta {
    * so that status/target/updatedAt updates do not temporarily overwrite it.
    */
   titleOverridden?: boolean;
+  /** When the current title was last changed (CLI time_title_updated; see docs/ui/task-title-authority.md "Title recency"). Used only to pick the title, never for ordering. */
+  titleUpdatedAt?: number;
   /** Associated workspace absolute path. */
   workspacePath: string;
   /**

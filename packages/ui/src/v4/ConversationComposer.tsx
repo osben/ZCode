@@ -2276,37 +2276,52 @@ function ConversationComposerImpl({
         };
         commandResolutionCleanupsRef.current.add(cleanup);
       };
+      const hasNothingToSend =
+        !trimmed &&
+        !hasPendingAttachments &&
+        !hasPendingCodeCommentContexts &&
+        !hasPendingWebElementContexts &&
+        !hasPendingPptxElementReferences &&
+        !hasPendingConversationSelections &&
+        !hasPendingPluginUiContexts &&
+        !submittedShareContextId;
+      const submitBlockReason = resolveComposerSubmitBlockReason({
+        remoteAvailable,
+        runtimeBlocked,
+        submissionReady,
+        submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        sendInProgress:
+          pendingRef.current !== null ||
+          targetSelectionPendingRef.current ||
+          worktreeQueued ||
+          reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
+          pendingWorktreeSendRef.current !== null,
+        preparedSessionAwaitingFirstInput: Boolean(snapshotRef.current?.meta.submissionPreparation),
+        retrying: Boolean(retryFirstSubmission),
+        outcomeUnresolved:
+          retryFirstSubmission?.status === "sending" || retryFirstSubmission?.status === "unknown",
+        attachmentsReady,
+      });
+      // A blocked Send with content must say why; a silent return looks like a lost message.
+      // A failed worktree preparation keeps its frozen send armed (pendingWorktreeSendRef) after
+      // worktreeQueued is cleared; that block is the failed first message awaiting Retry, not an
+      // in-flight send, so it is named instead of being dropped with sendInProgress.
+      const noticeReason =
+        submitBlockReason === "sendInProgress" &&
+        pendingWorktreeSendRef.current !== null &&
+        !worktreeQueued
+          ? "firstSubmissionNeedsAction"
+          : submitBlockReason;
+      // The reason is the dedupe key: toast() replaces the notice with the same key, so Enter spam keeps
+      // one visible notice per reason. A live sendInProgress clears itself when the in-flight send settles,
+      // and the Send tooltip already names it, so it gets no notice.
+      if (!hasNothingToSend && noticeReason !== null && noticeReason !== "sendInProgress")
+        toast(intl.formatMessage({ id: `composer.sendBlocked.${noticeReason}` }), {
+          dedupeKey: `composer.sendBlocked.${noticeReason}`,
+        });
       if (
-        (!trimmed &&
-          !hasPendingAttachments &&
-          !hasPendingCodeCommentContexts &&
-          !hasPendingWebElementContexts &&
-          !hasPendingPptxElementReferences &&
-          !hasPendingConversationSelections &&
-          !hasPendingPluginUiContexts &&
-          !submittedShareContextId) ||
-        resolveComposerSubmitBlockReason({
-          remoteAvailable,
-          runtimeBlocked,
-          submissionReady,
-          submissionConfigured: !(
-            createSubmissionFromComposer !== undefined && submission === null
-          ),
-          sendInProgress:
-            pendingRef.current !== null ||
-            targetSelectionPendingRef.current ||
-            worktreeQueued ||
-            reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
-            pendingWorktreeSendRef.current !== null,
-          preparedSessionAwaitingFirstInput: Boolean(
-            snapshotRef.current?.meta.submissionPreparation,
-          ),
-          retrying: Boolean(retryFirstSubmission),
-          outcomeUnresolved:
-            retryFirstSubmission?.status === "sending" ||
-            retryFirstSubmission?.status === "unknown",
-          attachmentsReady,
-        }) !== null ||
+        hasNothingToSend ||
+        submitBlockReason !== null ||
         // A double click: no editor change since this composer's last claim.
         (claimedSubmissionRef.current !== null &&
           claimedSubmissionRef.current.revision === contentRevisionRef.current &&
@@ -2515,6 +2530,8 @@ function ConversationComposerImpl({
         let promptHistoryBeforeSend: readonly string[] | null = null;
         let promptHistoryAfterAppend: readonly string[] | null = null;
         let promptHistoryWasPersisted = false;
+        // Set when onSendText threw: SessionPane.handleSendText has already set its admission-failure banner.
+        let sendTextFailureShown = false;
         const rollbackPromptHistory = () => {
           if (!promptHistoryWasPersisted || !promptHistoryBeforeSend || !promptHistoryAfterAppend) {
             return;
@@ -2686,6 +2703,9 @@ function ConversationComposerImpl({
                   ],
                 }
               : {}),
+          }).catch((error: unknown) => {
+            sendTextFailureShown = true;
+            throw error;
           });
           if (sendResult === "blocked") {
             if (telemetrySeed.localTtft)
@@ -2757,6 +2777,12 @@ function ConversationComposerImpl({
             getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
           // On failure, keep the draft in the input (do not clear it) and record only the reason.
           logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
+          // The restored text is the only trace of a failed send when no record was kept (the
+          // reservation never landed). Say so, otherwise the user sees an unchanged composer.
+          // A failure thrown by onSendText is already announced by the pane banner; only a failure in
+          // the composer flow itself (no banner) gets this notice.
+          if (!submittedContentSettled && !sendTextFailureShown)
+            toast(intl.formatMessage({ id: "chat.error.sendFailed" }));
           // SessionPane already finalizes ACK-side failures; reaching this point means Composer's own flow failed.
           conversationTelemetry?.settleSendResult({
             seed: telemetrySeed,

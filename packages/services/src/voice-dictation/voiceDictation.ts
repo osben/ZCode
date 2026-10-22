@@ -81,8 +81,8 @@ export interface IVoiceDictationService {
   setIdleUnloadMinutes(minutes: VoiceModelIdleUnloadMinutes): Promise<void>;
   /**
    * Loads the model in the background so the first recording does not wait for it, and restarts its
-   * idle-unload countdown. A no-op while a dictation stream is active; rejects like a recording
-   * would when the model is not downloaded.
+   * idle-unload countdown. A no-op while a dictation stream is active, and a silent no-op when the
+   * model is not ready (not downloaded or still downloading); it rejects only for a real load failure.
    */
   warmUp(request: VoiceWarmUpRequest): Promise<void>;
   /** Whether the post-processing provider can run on this machine (and why not, when it cannot). */

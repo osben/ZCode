@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveIncognitoDefaults, type AppSettings } from "@zcode/shared";
 import type { ISettingService } from "../src/setting/setting.js";
@@ -1894,5 +1894,146 @@ describe("fork settings sidecar", () => {
     await service.update({ worktreeBranchPrefix: undefined });
     expect((await service.get()).worktreeBranchPrefix).toBeUndefined();
     expect(readJsonFile(forkSettingsFile(home))).not.toHaveProperty("worktreeBranchPrefix");
+  });
+});
+
+describe("settingService read snapshot", () => {
+  async function importSettingServiceWithDiskReadLog(
+    home: string,
+    diskReads: string[],
+    failures = { remaining: 0 },
+  ) {
+    process.env.ZCODE_DESKTOP_HOME_DIR = home;
+    vi.resetModules();
+    vi.doMock("node:fs/promises", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:fs/promises")>();
+      return {
+        ...actual,
+        readFile: ((path: string, options?: unknown) => {
+          if (basename(String(path)) === "setting.json") {
+            diskReads.push(String(path));
+            if (failures.remaining > 0) {
+              failures.remaining -= 1;
+              return Promise.reject(Object.assign(new Error("simulated lock"), { code: "EBUSY" }));
+            }
+          }
+          return (actual.readFile as (...args: unknown[]) => Promise<unknown>)(path, options);
+        }) as typeof actual.readFile,
+      };
+    });
+    const mod = await import("#src/setting/settingService.js");
+    return mod.createSettingService();
+  }
+
+  // Files written by a test are inside the racy window on the real clock, so their identity is not
+  // cacheable. Advancing only Date past the window models files that have settled, which is what the
+  // cache tests below assume. The racy tests pin the clock to the write time instead.
+  const SETTLED_CLOCK_OFFSET_MS = 3_000;
+  function settleFileClock(): void {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + SETTLED_CLOCK_OFFSET_MS });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("100 consecutive reads after the first load perform no further disk reads", async () => {
+    settleFileClock();
+    const home = makeTempHome();
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ memoryEnabled: true });
+
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads);
+    for (let read = 0; read < 100; read += 1) {
+      expect((await service.get()).memoryEnabled).toBe(true);
+    }
+    expect(diskReads).toHaveLength(1);
+  });
+
+  it("a write followed by a read returns the written value without another disk read", async () => {
+    settleFileClock();
+    const home = makeTempHome();
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ memoryEnabled: true });
+
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads);
+    expect((await service.get()).memoryEnabled).toBe(true);
+
+    await service.update({ memoryEnabled: false, worktreeBranchPrefix: "snapshot" });
+    diskReads.length = 0;
+    const settings = await service.get();
+    expect(settings.memoryEnabled).toBe(false);
+    expect(settings.worktreeBranchPrefix).toBe("snapshot");
+    expect(diskReads).toHaveLength(0);
+  });
+
+  it("does not cache defaults produced by a transient read failure", async () => {
+    settleFileClock();
+    const home = makeTempHome();
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ memoryEnabled: true });
+
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads, { remaining: 1 });
+    expect((await service.get()).memoryEnabled).toBe(false);
+    expect((await service.get()).memoryEnabled).toBe(true);
+    expect(diskReads).toHaveLength(2);
+  });
+
+  it("refreshes after an external edit and after a write by another service instance", async () => {
+    settleFileClock();
+    const home = makeTempHome();
+    const file = join(home, ".zcode/v2/setting.json");
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ recentProjects: ["/example/project-a"] });
+
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads);
+    expect((await service.get()).recentProjects).toEqual(["/example/project-a"]);
+
+    const raw = JSON.parse(await readFile(file, "utf-8")) as Record<string, unknown>;
+    await writeFile(
+      file,
+      JSON.stringify({ ...raw, recentProjects: ["/example/project-b-longer"] }, null, 2),
+    );
+    diskReads.length = 0;
+    expect((await service.get()).recentProjects).toEqual(["/example/project-b-longer"]);
+    expect(diskReads).toHaveLength(1);
+
+    const writer = await importSettingServiceWithDiskReadLog(home, []);
+    await writer.update({ recentProjects: ["/example/project-c"] });
+    diskReads.length = 0;
+    expect((await service.get()).recentProjects).toEqual(["/example/project-c"]);
+    expect(diskReads).toHaveLength(1);
+  });
+
+  it("re-reads the disk on every read while the file identity is inside the racy window", async () => {
+    const home = makeTempHome();
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ memoryEnabled: true });
+
+    // The clock equals the write time, so the file's mtime and ctime are inside the 2 s window. A
+    // same-size rewrite in that window could keep the identity unchanged on a coarse-timestamp filesystem.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads);
+    expect((await service.get()).memoryEnabled).toBe(true);
+    expect((await service.get()).memoryEnabled).toBe(true);
+    expect(diskReads).toHaveLength(2);
+  });
+
+  it("serves later reads from the snapshot when the file identity is outside the racy window", async () => {
+    const home = makeTempHome();
+    const seed = await importSettingServiceWithDiskReadLog(home, []);
+    await seed.update({ memoryEnabled: true });
+
+    settleFileClock();
+    const diskReads: string[] = [];
+    const service = await importSettingServiceWithDiskReadLog(home, diskReads);
+    expect((await service.get()).memoryEnabled).toBe(true);
+    expect((await service.get()).memoryEnabled).toBe(true);
+    expect(diskReads).toHaveLength(1);
   });
 });

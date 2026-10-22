@@ -63,7 +63,6 @@ function rowElement(dragOverlay: boolean) {
       activeWorkspacePath: task.workspacePath,
       activeWorkspaceIdentity: undefined,
       activeTaskId: task.taskId,
-      workspaceLabel: "workspace",
       onSelectTask: () => {},
       onCloseTask: () => {},
       onMoveTaskToGroup: () => {},

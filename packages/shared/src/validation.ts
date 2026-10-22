@@ -1963,6 +1963,8 @@ export const zcodeTaskMetaSchema = z.object({
   traceId: nonEmptyStringSchema,
   title: z.string(),
   titleOverridden: z.boolean().optional(),
+  // Title recency (docs/ui/task-title-authority.md). Optional for compatibility with metas written before the field existed.
+  titleUpdatedAt: z.number().int().nonnegative().optional(),
   workspacePath: nonEmptyStringSchema,
   workspaceIdentity: nonEmptyStringSchema.optional(),
   workspacePurpose: z.enum(["project", "conversation"]).optional(),

@@ -456,13 +456,20 @@ export class OAuthCredentialRepo {
       await this.clearProvider(provider);
     }
     await this.credentialService.delete(ACTIVE_PROVIDER_KEY);
-    try {
-      await this.onCorruptOAuthSessionCleared?.(this.knownProviderIds);
-    } catch (error) {
+    // Derived cleanup (account refresh, network probes) can hang or reject. It must not sit on the
+    // startup restore path, so it runs detached: the caller resolves as signed-out without waiting.
+    // The callback is invoked synchronously inside the executor, so a synchronous throw is also caught.
+    const onCleared = this.onCorruptOAuthSessionCleared;
+    if (!onCleared) {
+      return;
+    }
+    void new Promise<void>((resolve) => {
+      resolve(onCleared(this.knownProviderIds));
+    }).catch((error: unknown) => {
       // Failure to clear a derived model provider must not block recovery from a corrupted OAuth state.
       // The main OAuth credentials are already deleted, and the user must be able to return to a signed-out state and log in again.
       log.warn(undefined, "clear derived provider keys after corrupt OAuth session failed", error);
-    }
+    });
   }
 }
 

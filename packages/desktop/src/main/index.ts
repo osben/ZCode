@@ -2386,6 +2386,8 @@ app.whenReady().then(async () => {
   });
   // Plugin UI sandbox: registry + renderer-callable IPC; the scheme's privileged registration completed with zcode-media before ready.
   installPluginSandboxHost({
+    // Plugin permission dialogs follow the app language, not only the OS locale (specs/ukrainian-locale.md D15).
+    getLocale: resolveEffectiveConfirmationLocale,
     preloadPath: join(import.meta.dirname, "../preload/pluginSandbox.cjs"),
     rendererDir: join(import.meta.dirname, "../renderer"),
     aliasDir: join(import.meta.dirname, "../plugin-sandbox"),

@@ -268,6 +268,71 @@ describe("AgentToolCallBlock", () => {
     expect(html).not.toContain("子会话");
   });
 
+  it("shows the fallback copy as summary text only when no subagent name is available", () => {
+    const fallbackLabel = expectedCopy("chat.toolCall.agent.fallback");
+    const html = renderToStaticMarkup(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: TEST_LOCALE },
+        createElement(
+          ServiceProvider,
+          { services: mockServices },
+          createElement(
+            StoreProvider,
+            { broadcastService: mockBroadcastService },
+            createElement(AgentToolCallBlock, {
+              toolCallNode: {
+                toolCall: {
+                  toolId: "tool-agent-no-name",
+                  kind: "think",
+                  title: "Agent",
+                  input: {
+                    prompt: "分析当前工作区并继续拆分任务",
+                  },
+                  output: [],
+                  status: "running",
+                  raw: {
+                    _meta: {
+                      zcode: {
+                        toolName: "Agent",
+                      },
+                    },
+                  },
+                },
+                childToolCalls: [],
+              },
+              workspacePath: "/workspace",
+              displayModel: {
+                inlinePreview: { type: "none" },
+                planResult: null,
+                viewerSource: null,
+                viewerLabelId: "codeViewer.viewCode",
+                showSummaryFileLink: false,
+                showInput: false,
+                showOutput: false,
+                showKind: false,
+              },
+              viewerSource: null,
+              rawFileSummaries: [],
+              isRunning: true,
+              statusLabel: "执行中",
+              errorText: undefined,
+              childToolList: null,
+              showIcon: true,
+              forceOpen: false,
+              onOpenCodeViewer: undefined,
+              onOpenBrowserUrl: undefined,
+            }),
+          ),
+        ),
+      ),
+    );
+
+    // With no name, description, or subagent_type, the summary text is the fallback copy.
+    expect(html).toContain(`title="${fallbackLabel}"`);
+    expect(html).not.toContain("分析当前工作区并继续拆分任务");
+  });
+
   it("colors the subagent name from the configured agent color", () => {
     useSubagentsStore.setState({
       agents: [

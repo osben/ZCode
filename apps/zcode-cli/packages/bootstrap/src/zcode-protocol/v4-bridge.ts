@@ -2099,6 +2099,7 @@ export function createConversationV4Gateway(
               updatedAt: submission.updatedAt,
             } } : {}),
             titleSource: normalizeStoredTitleSource(session.titleSource),
+            titleUpdatedAt: session.time?.titleUpdated ?? session.time?.created,
             phase: isPreparing
               ? ("draft" as const)
               : session.lastOutcome === "error"
@@ -2169,6 +2170,7 @@ export function createConversationV4Gateway(
             deleted: session.time.deleted !== undefined,
             title: session.title,
             titleSource: normalizeStoredTitleSource(session.titleSource),
+            titleUpdatedAt: session.time.titleUpdated ?? session.time.created,
             createdAt: session.time.created,
             updatedAt: session.time.updated,
             ...(session.lastOutcome ? { lastOutcome: session.lastOutcome } : {}),

@@ -27,6 +27,7 @@ import {
   type TaskDeleteServices,
 } from "@/task-deletion/taskDeletion.js";
 import type { SessionManagerScope, SessionManagerStatusFilter } from "./sessionManagerTypes.js";
+import { withOptimisticTitleRecency } from "@/lib/zcodeTaskMetaMerge.js";
 
 export interface SessionManagerUniverseTab {
   workspacePath: string;
@@ -280,12 +281,18 @@ export function useSessionManagerRowActions(
               : {}),
             title,
           });
+          // Overlay-only renderer clock; the rename RPC sent just the title.
+          const optimisticMeta = withOptimisticTitleRecency(meta);
           useZCodeSessionStore
             .getState()
-            .upsertOptimisticTaskListItem(row.task.workspacePath, meta, row.task.workspaceIdentity);
+            .upsertOptimisticTaskListItem(
+              row.task.workspacePath,
+              optimisticMeta,
+              row.task.workspaceIdentity,
+            );
           applyTaskQueryCacheMutation({
             previousTask,
-            nextTask: meta,
+            nextTask: optimisticMeta,
             previousState: { pinned: row.pinned, archived: row.archived },
             nextState: { pinned: row.pinned, archived: row.archived },
           });

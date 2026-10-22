@@ -19,6 +19,32 @@ Task title can come from several places during a session lifecycle. Renderer cod
 - `New session` must not overwrite a non-placeholder title, even when the snapshot has a newer `updatedAt`.
 - Generated titles may replace the first query title when there is no user override.
 
+## Ordering time is CLI time
+
+- `updated_at` and `cli_updated_at` are CLI activity time. Rename, title echoes, pin, archive, and unread never change them, so a renamed task keeps its sidebar position.
+- The only writer of CLI time is `applyCliFacts`. Host-side patches may carry `updatedAt` only as a copy of the CLI summary's `lastActivityAt` (terminal status), never a Host wall-clock value.
+- Manual rename changes only `title` and `titleOverridden`.
+
+## Title recency
+
+- A title carries `titleUpdatedAt` (ms). Its CLI source is the session row's `time_title_updated`, written on every title change. When that column is null (rows that predate it), the CLI reports the session's `time_created`, the earliest time the CLI observed the title.
+- `titleUpdatedAt` is optional and additive everywhere it appears: the sessions-index summary and reconcile result, the task meta schema (`zcodeTaskMetaSchema`), and the renderer optimistic overlay.
+- Renderer title selection: the title with the larger `titleUpdatedAt` wins. A candidate without the field is treated as older than one with it. Only when both candidates lack the field does the existing length tie-break apply (on an `updatedAt` tie). Equal present values keep the preferred candidate.
+- The `titleOverridden` guard and the placeholder guard (`New session`) run before recency, so a generated or placeholder title cannot win on a larger timestamp alone.
+- `titleUpdatedAt` never changes ordering. It does not choose the candidate that supplies `updatedAt`, `status`, `model`, or unread state; those keep the `updatedAt`-based preference (I6). It only selects which title, and which `titleUpdatedAt`, the merged meta carries.
+- The renderer overlay sets `titleUpdatedAt = Date.now()` on an optimistic manual rename only. The rename RPC sends `{ taskId, title }`; the UI clock value is never sent to or persisted by the Host. On remote workspaces the overlay uses the UI clock and the CLI uses its own clock, so the overlay is a local tie-breaker until the CLI value arrives.
+
+Owner and event order for a manual rename:
+
+```text
+UI rename        -> optimistic overlay titleUpdatedAt = UI clock (renderer only)
+Host renameSession -> RPC {taskId, title}, no timestamp
+CLI renameSession  -> time_title_updated = CLI clock
+CLI reconcile/summary -> titleUpdatedAt = time_title_updated
+Host task-facts mirror -> applyCliFacts (CLI facts only)
+Renderer merge     -> larger titleUpdatedAt supplies the title
+```
+
 ## Compatibility
 
 - Workspace-scoped title lookup uses `workspaceIdentity?.trim() || workspacePath`, matching remote workspace isolation. The active read also belongs to its scoped service/attachment and task ID; late responses cannot overwrite a newer target or request.

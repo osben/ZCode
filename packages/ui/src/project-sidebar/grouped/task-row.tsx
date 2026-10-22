@@ -9,9 +9,7 @@ import {
   Archive,
   ArrowUpToLine,
   Clock,
-  Cloud,
   CloudUpload,
-  Folder,
   ListTree,
   LoaderIcon,
   Moon,
@@ -24,6 +22,7 @@ import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
+import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
   isChildSessionsExpanded,
   persistChildSessionsExpanded,
@@ -31,13 +30,10 @@ import {
 import { TaskChildSessionRows } from "@/project-sidebar/grouped/task-child-sessions.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip.js";
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import {
-  deriveTaskLeadingIndicator,
-  formatTaskRelativeTime,
-} from "@/lib/taskListItemPresentation.js";
-import { getTaskChangeSummary } from "@/lib/taskChangeSummary.js";
+import { deriveTaskLeadingIndicator } from "@/lib/taskListItemPresentation.js";
+import { TaskRelativeTimeLabel } from "@/TaskListItem.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildTaskFeedbackDescription } from "@/lib/taskFeedbackDraft.js";
 import { useTaskListItemContextActions } from "@/useTaskListItemContextActions.js";
@@ -46,7 +42,6 @@ import { getTaskListAttention, getTaskListRowActivity } from "@/v4/taskListRowAc
 import { GroupedTaskContextMenuContent } from "@/project-sidebar/grouped/task-context-menu-content.js";
 import { TaskRowActionButton } from "@/workspace-grouped-tasks/task-row-action-button.js";
 import { TaskInteractionBadge } from "@/TaskInteractionBadge.js";
-import { formatGroupedTaskHoverChangeParts } from "@/project-sidebar/grouped/task-row-tooltip.js";
 import {
   TASK_GROUP_ROW_CLASS,
   TASK_GROUP_ROW_LINE_CLASS,
@@ -67,7 +62,6 @@ type GroupedTaskRowProps = {
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
-  workspaceLabel: string;
   onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
@@ -140,7 +134,6 @@ function deriveGroupedTaskRowPresentation({
     taskAttentionDisplay,
     leadingIndicator,
     taskTitle,
-    taskTimeLabel: formatTaskRelativeTime(task.updatedAt, intl),
     isTaskCron: isCronTask(task),
     // 月亮身份改为持久 meta 标记判断；off-peak store 反查在任务被删除后会丢失
     // 会话溯源，且让每一行多背一个全局 store 订阅。
@@ -167,7 +160,6 @@ function GroupedTaskDragOverlayRow({
     taskAttentionDisplay,
     leadingIndicator,
     taskTitle,
-    taskTimeLabel,
     isTaskCron,
     isTaskOffPeak,
     isActive,
@@ -237,7 +229,11 @@ function GroupedTaskDragOverlayRow({
                 className="size-3.5 shrink-0"
               />
             ) : null}
-            {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
+            {!hasPendingInteraction ? (
+              <span className="mr-1">
+                <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
+              </span>
+            ) : null}
           </span>
         </span>
       </span>
@@ -254,7 +250,6 @@ function GroupedTaskInteractiveRow({
   activeWorkspaceIdentity,
   activeTaskId,
   mobileActiveTaskKey,
-  workspaceLabel,
   onSelectTask,
   onCloseTask,
   onOpenFileTree,
@@ -287,7 +282,6 @@ function GroupedTaskInteractiveRow({
     taskAttentionDisplay,
     leadingIndicator,
     taskTitle,
-    taskTimeLabel,
     isTaskCron,
     isTaskOffPeak,
     isActive,
@@ -299,7 +293,6 @@ function GroupedTaskInteractiveRow({
     activeWorkspaceIdentity,
     activeTaskId,
   });
-  const taskChangeParts = formatGroupedTaskHoverChangeParts(getTaskChangeSummary(task));
   // Bugfix：远端 session 未就绪时打开文件树必然会被 resolver 拒绝，因此不要暴露
   // 无效 action；本地 task 不需要 remoteSessionId，仍保持入口可用。
   const canOpenFileTree =
@@ -587,7 +580,11 @@ function GroupedTaskInteractiveRow({
               {!hasPendingInteraction && task.incognito ? (
                 <IncognitoTaskMarker task={task} />
               ) : null}
-              {!hasPendingInteraction ? <span className="mr-1">{taskTimeLabel}</span> : null}
+              {!hasPendingInteraction ? (
+                <span className="mr-1">
+                  <TaskRelativeTimeLabel timestamp={task.updatedAt} intl={intl} />
+                </span>
+              ) : null}
             </span>
           ) : null}
           {!hasPendingInteraction ? (
@@ -681,29 +678,12 @@ function GroupedTaskInteractiveRow({
           <TooltipTrigger asChild>
             <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent side="right" align="center" sideOffset={6}>
-            {remoteSessionId ? (
-              <Cloud aria-hidden="true" className="size-3.5 shrink-0" />
-            ) : (
-              <Folder aria-hidden="true" className="size-3.5 shrink-0" />
-            )}
-            <span className="min-w-0 max-w-48 truncate">{workspaceLabel}</span>
-            {taskChangeParts.length > 0 ? (
-              <>
-                <span className="text-tooltip-foreground/60">·</span>
-                <span className="inline-flex shrink-0 items-center gap-1">
-                  {taskChangeParts.map((part) => (
-                    <span
-                      key={part}
-                      className={part.startsWith("+") ? "text-diff-added" : "text-diff-removed"}
-                    >
-                      {part}
-                    </span>
-                  ))}
-                </span>
-              </>
-            ) : null}
-          </TooltipContent>
+          <TaskSidebarHoverCard
+            task={task}
+            attentionLabel={taskAttentionDisplay}
+            activity={taskActivity}
+            intl={intl}
+          />
         </Tooltip>
       )}
       {contextMenuOpen ? (

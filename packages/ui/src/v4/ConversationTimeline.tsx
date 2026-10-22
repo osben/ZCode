@@ -61,9 +61,12 @@ import {
   getConversationStatusPanelOffsetClassName,
 } from "@/v4/conversationLayout.js";
 import {
+  applyConversationTurnLiveClock,
   buildConversationTurnRenderUnits,
+  createConversationTurnRenderUnitCache,
   resolveNextHighspeedExpiryMs,
   type ConversationTurnRenderUnit,
+  type ConversationTurnRenderUnitCache,
 } from "@/v4/conversationTurnRenderUnits.js";
 import {
   resolveConversationTurnNavigatorActiveQueryRowId,
@@ -118,6 +121,41 @@ const RUNNING_WORK_DURATION_TICK_MS = 1000;
 const COMPOSER_MESSAGE_MASK_FADE_PX = 24;
 const COMPOSER_MESSAGE_MASK_TRANSPARENT_HEIGHT_PX = 96;
 const USER_SCROLL_INTENT_TTL_MS = 1200;
+
+/**
+ * Keeps each unit's object identity while its content is unchanged. The slot and topic-preparation wrappers
+ * spread units on every rebuild, and ConversationTurnGroup is memoized by unit identity, so without this a
+ * clock tick or unrelated row change would re-render historic turns (docs/ui/v4-chat-turn-render-units.md).
+ */
+function keepUnchangedRenderUnitIdentity(
+  units: readonly ConversationTurnRenderUnit[],
+  identity: { current: Map<string, ConversationTurnRenderUnit> },
+): ConversationTurnRenderUnit[] {
+  const previous = identity.current;
+  const next = new Map<string, ConversationTurnRenderUnit>();
+  const stable = units.map((unit) => {
+    const prior = previous.get(unit.key);
+    const result = prior !== undefined && isShallowSameRenderUnit(prior, unit) ? prior : unit;
+    next.set(unit.key, result);
+    return result;
+  });
+  identity.current = next;
+  return stable;
+}
+
+function isShallowSameRenderUnit(a: ConversationTurnRenderUnit, b: ConversationTurnRenderUnit) {
+  const left = a as unknown as Record<string, unknown>;
+  const right = b as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    const x = left[key];
+    const y = right[key];
+    if (Object.is(x, y)) continue;
+    if (!Array.isArray(x) || !Array.isArray(y) || x.length !== y.length) return false;
+    if (!x.every((item, index) => Object.is(item, y[index]))) return false;
+  }
+  return true;
+}
 const LAYOUT_SCROLL_GUARD_MS = 250;
 const CONTENT_WIDTH_RESIZE_SETTLE_MS = 120;
 const SCROLL_MEMORY_RESTORE_TOLERANCE_PX = 1;
@@ -447,6 +485,11 @@ function ConversationTimelineImpl({
     return () => observer.disconnect();
   }, [hasHeaderSlot]);
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
+  const renderUnitCacheRef = useRef<ConversationTurnRenderUnitCache | null>(null);
+  if (renderUnitCacheRef.current === null) {
+    renderUnitCacheRef.current = createConversationTurnRenderUnitCache();
+  }
+  const renderUnitIdentityRef = useRef<Map<string, ConversationTurnRenderUnit>>(new Map());
   // 插件卡片展示模型——同资源替代 + 最近三回合自动展开 + 手动固定；推导结果发布给卡片自己读。
   const pluginUiDerivation = useMemo(() => deriveLogicalUiInstances(rows), [rows]);
   useEffect(() => {
@@ -466,15 +509,22 @@ function ConversationTimelineImpl({
     });
   }, [pluginUiDerivation, sessionKey, pluginUiDisclosureVersion]);
   const topicPreparations = useBotTopicPreparations();
-  const renderUnits = useMemo(
-    () =>
+  const nextHighspeedExpiryMs = useMemo(
+    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
+    [liveNowMs, rows],
+  );
+  // Built on rows, phase, pins and slots, not per tick. The builder reads the clock only for the highspeed
+  // footer, and nextHighspeedExpiryMs changes exactly when a footer becomes due, so it is the only clock input here.
+  const baseRenderUnits = useMemo(() => {
+    void nextHighspeedExpiryMs;
+    return keepUnchangedRenderUnitIdentity(
       withAfterFirstUserInputSlot(
         withOptimisticFirstInputRow(
           withTopicPreparationMessages(
             buildConversationTurnRenderUnits(rows, {
-              nowMs: liveNowMs,
               sessionPhase,
               pluginUiPinResolver,
+              cache: renderUnitCacheRef.current ?? undefined,
             }),
             rows,
             topicPreparations,
@@ -483,33 +533,38 @@ function ConversationTimelineImpl({
         ),
         afterFirstUserInputSlot,
       ),
-    [
-      liveNowMs,
-      pluginUiPinResolver,
-      rows,
-      sessionPhase,
-      topicPreparations,
-      afterFirstUserInputSlot,
-      optimisticFirstInputRow,
-    ],
+      renderUnitIdentityRef,
+    );
+  }, [
+    nextHighspeedExpiryMs,
+    pluginUiPinResolver,
+    rows,
+    sessionPhase,
+    topicPreparations,
+    afterFirstUserInputSlot,
+    optimisticFirstInputRow,
+  ]);
+  // The live work clock only changes running turns; the per-tick pass returns every other unit by identity.
+  const renderUnits = useMemo(
+    () => applyConversationTurnLiveClock(baseRenderUnits, liveNowMs),
+    [baseRenderUnits, liveNowMs],
   );
   const { virtualizedUnits, liveUnit, liveUnitIndex } = useMemo(
     () => splitConversationTimelineLiveTail(renderUnits),
     [renderUnits],
   );
-  const hasRunningUnit = useMemo(() => renderUnits.some((unit) => unit.isRunning), [renderUnits]);
-  const nextHighspeedExpiryMs = useMemo(
-    () => resolveNextHighspeedExpiryMs(rows, liveNowMs),
-    [liveNowMs, rows],
+  const hasRunningUnit = useMemo(
+    () => baseRenderUnits.some((unit) => unit.isRunning),
+    [baseRenderUnits],
   );
   const turnNavigatorQueryRowIds = useMemo(
     () =>
       new Set(
-        renderUnits.flatMap((unit) =>
+        baseRenderUnits.flatMap((unit) =>
           unit.visibleUserInputs.filter((row) => row.origin === "realUser").map((row) => row.rowId),
         ),
       ),
-    [renderUnits],
+    [baseRenderUnits],
   );
   const turnNavigatorQueryRowIdsRef = useRef(turnNavigatorQueryRowIds);
   turnNavigatorQueryRowIdsRef.current = turnNavigatorQueryRowIds;
@@ -2051,7 +2106,8 @@ function ConversationTimelineImpl({
                     >
                       <ConversationTurnGroup
                         unit={unit}
-                        nowMs={liveNowMs}
+                        // Only a running turn reads the clock; historic turns get no tick-varying prop so the memo holds.
+                        nowMs={unit.isRunning ? liveNowMs : undefined}
                         apiRetry={null}
                         context={rowContext}
                         onFork={onFork}

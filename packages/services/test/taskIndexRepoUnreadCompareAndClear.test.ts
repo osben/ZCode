@@ -170,6 +170,51 @@ describe("TaskIndexRepo unread compare-and-clear", () => {
     ).resolves.toEqual(expect.objectContaining({ unreadAt: terminalUnreadAt }));
   });
 
+  it("unread, pin and archive never change updated_at or cli_updated_at of a CLI-admitted row", async () => {
+    const task = {
+      ...createTask(0),
+      unreadAt: undefined,
+      status: "completed" as const,
+      updatedAt: 100,
+    };
+    await seedTaskIndex(repo, { meta: task });
+
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { unreadAt: 200 },
+    });
+    await repo.clearTaskUnreadIfMatches({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      expectedUnreadAt: 200,
+    });
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { pinned: true },
+    });
+    await repo.updateTaskState({
+      taskId: task.taskId,
+      workspacePath: task.workspacePath,
+      patch: { archived: true },
+    });
+
+    await expect(
+      repo.getTaskMeta({ taskId: task.taskId, workspacePath: task.workspacePath }),
+    ).resolves.toMatchObject({ updatedAt: 100 });
+    const db = new DatabaseSync(getTasksIndexDatabasePath());
+    try {
+      expect(
+        db
+          .prepare("SELECT updated_at, cli_updated_at FROM tasks WHERE task_id = ?")
+          .get(task.taskId),
+      ).toEqual({ updated_at: 100, cli_updated_at: 100 });
+    } finally {
+      db.close();
+    }
+  });
+
   it("远程 workspace 重启后在时钟回拨时仍推进未读 marker", async () => {
     const firstWorkspaceIdentity = "remote:ssh:host-a:22:user:/workspace/project";
     const secondWorkspaceIdentity = "remote:ssh:host-b:22:user:/workspace/project";

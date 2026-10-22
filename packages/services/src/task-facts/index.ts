@@ -55,6 +55,7 @@ export function createTaskFacts(options: {
           ...task,
           traceId: generateTraceId(fact.sessionId),
           title: fact.title,
+          ...(fact.titleUpdatedAt !== undefined ? { titleUpdatedAt: fact.titleUpdatedAt } : {}),
           createdAt: fact.createdAt,
           updatedAt: fact.updatedAt,
           mode: "default",
@@ -70,6 +71,7 @@ export function createTaskFacts(options: {
         (fact.deleted ||
           !before ||
           before.title !== meta.title ||
+          before.titleUpdatedAt !== meta.titleUpdatedAt ||
           before.updatedAt !== meta.updatedAt ||
           before.status !== meta.status)
       )
@@ -88,6 +90,7 @@ export function createTaskFacts(options: {
         taskId: summary.sessionId,
         traceId: generateTraceId(summary.sessionId),
         title: summary.title,
+        ...(summary.titleUpdatedAt !== undefined ? { titleUpdatedAt: summary.titleUpdatedAt } : {}),
         workspacePath: target.workspacePath,
         workspaceIdentity: target.workspaceIdentity,
         createdAt: summary.createdAt,

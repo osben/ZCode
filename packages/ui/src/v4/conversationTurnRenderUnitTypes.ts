@@ -72,4 +72,32 @@ export interface BuildConversationTurnRenderUnitsOptions {
   sessionPhase?: SessionPhase;
   /** Plugin card collapse adjudication (the timeline is assembled from derived results + manual state). */
   pluginUiPinResolver?: PluginUiRowPinResolver;
+  /**
+   * Per-timeline memo. When supplied, a non-running turn whose inputs are unchanged keeps the same unit object
+   * across calls (docs/ui/v4-chat-turn-render-units.md, 渲染性能规则). Owned by one timeline instance.
+   */
+  cache?: ConversationTurnRenderUnitCache;
+}
+
+export interface ConversationTurnRenderUnitCache {
+  entries: Map<string, ConversationTurnRenderUnitCacheEntry>;
+}
+
+/** Inputs that decide a turn's materialized unit, plus the derived unit objects reused while those inputs hold. */
+export interface ConversationTurnRenderUnitCacheEntry {
+  header: TurnHeaderRow | undefined;
+  orderedRows: readonly ConversationRow[];
+  sessionPhase: SessionPhase | undefined;
+  isLastDraft: boolean;
+  pinSignature: string;
+  materialized: ConversationTurnRenderUnit;
+  normalized?: {
+    source: ConversationTurnRenderUnit;
+    isLast: boolean;
+    unit: ConversationTurnRenderUnit;
+  };
+  footer?: {
+    base: ConversationTurnRenderUnit;
+    unit: ConversationTurnRenderUnit;
+  };
 }

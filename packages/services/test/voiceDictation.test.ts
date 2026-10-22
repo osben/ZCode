@@ -1031,7 +1031,7 @@ function makeWarmUpService(dir: string, descriptor: VoiceModelDescriptor, idleUn
     }),
     idleUnloadMs,
   });
-  return { service, counts };
+  return { service, counts, store };
 }
 
 test("warmUp loads the model without transcribing and shows it as loaded", async () => {
@@ -1091,14 +1091,49 @@ test("warmUp is a no-op while a dictation stream is active", async () => {
   });
 });
 
-test("warmUp rejects for a model that is not downloaded and leaves nothing loaded", async () => {
+test("warmUp resolves without loading for a model that is not downloaded", async () => {
   await withTempDir(async (dir) => {
     const descriptor = makeDescriptor();
     const { service, counts } = makeWarmUpService(dir, descriptor);
 
-    await assert.rejects(service.warmUp({ modelId: descriptor.id }));
+    // Idle users without a downloaded model must not produce a warm-up failure on the Host.
+    await service.warmUp({ modelId: descriptor.id });
     assert.equal(counts.loads, 0);
     assert.equal((await service.getRuntimeState()).loadedModelId, null);
+    assert.equal((await service.getRuntimeState()).activePhase, null);
+  });
+});
+
+test("warmUp yields without an error when a stream starts while the model state is read", async () => {
+  await withTempDir(async (dir) => {
+    const descriptor = makeDescriptor({ family: "parakeet", streaming: true });
+    await installFakeModel(dir, descriptor);
+    const { service, counts, store } = makeWarmUpService(dir, descriptor);
+    // Hold only the warm-up's state read (the first call), so the stream starts inside that await.
+    const readState = store.getState.bind(store);
+    let releaseFirstRead: () => void = () => undefined;
+    const firstReadGate = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let stateReads = 0;
+    store.getState = async (modelId: string) => {
+      stateReads += 1;
+      if (stateReads === 1) await firstReadGate;
+      return readState(modelId);
+    };
+
+    const warming = service.warmUp({ modelId: descriptor.id });
+    const streamId = await service.beginStream({ modelId: descriptor.id });
+    assert.ok(streamId);
+    const loadsBeforeWarm = counts.loads;
+    releaseFirstRead();
+
+    // The warm-up must resolve: no load is attempted under the live stream, so the transcriber cannot reject it.
+    await warming;
+    assert.equal(counts.loads, loadsBeforeWarm);
+    assert.equal((await service.getRuntimeState()).activePhase, "streaming");
+    await service.cancelStream(streamId);
+    await service.removeModel(descriptor.id);
   });
 });
 

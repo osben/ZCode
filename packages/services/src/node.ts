@@ -1399,15 +1399,11 @@ export function createLocalServices(options: {
     hasExistingLocalTask: () => taskIndexRepo.hasTaskMetas(),
   });
   let handleOAuthProviderLogout: ReturnType<typeof createOAuthProviderLogoutHandler> | null = null;
-  const oauthCredentialRepo = new OAuthCredentialRepo(credentialService, {
-    onCorruptOAuthSessionCleared: async (providers) => {
-      // A background path outside telemetry may encounter corrupted OAuth credentials first.
-      // Treat this recovery like logout and reuse the same handler to remove derived model provider keys.
-      await Promise.all(
-        providers.map((provider) => handleOAuthProviderLogout?.(provider) ?? Promise.resolve()),
-      );
-    },
-  });
+  // Corrupt-credential recovery on this background repo used to replay the logout handler, which (without an
+  // account identity) only enqueued an account refresh with a network probe behind which a later login refresh
+  // had to wait. Recovery deletes the OAuth keys itself; derived provider state reconciles on the next login,
+  // logout or settings refresh (specs/oauth-corrupt-session-recovery.md).
+  const oauthCredentialRepo = new OAuthCredentialRepo(credentialService);
   const projectTokenClient = createAccountProjectTokenClient(apiClient, credentialService);
   invalidateProjectTokens = () => projectTokenClient.clear();
   const accountProviderApiKeyRemoteClient = new AccountProviderApiClient(apiClient);
@@ -2214,6 +2210,27 @@ export function createLocalServices(options: {
         projectId: target.projectId,
         additionalDirectories: target.additionalDirectories,
       }).additionalDirectories,
+    discardSessionReservation: async (target) =>
+      (await taskIndexRepo.getProjectRepository()).discardCreatedTaskReservation({
+        task: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.sessionId,
+        },
+      }),
+    prepareForkedSession: async (target) =>
+      (await taskIndexRepo.getProjectRepository()).reserveCreatedTask({
+        task: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.sessionId,
+        },
+        forkOf: {
+          workspacePath: target.workspacePath,
+          ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+          taskId: target.parentSessionId,
+        },
+      }),
     resolveSessionDirectories: async (target) =>
       (await projectService.resolveSessionDirectories({ ...target, taskId: target.sessionId }))
         .additionalDirectories,

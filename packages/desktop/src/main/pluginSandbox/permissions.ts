@@ -100,33 +100,66 @@ export interface PluginSandboxPermissionDialogText {
   denyButton: string;
 }
 
-const PERMISSION_LABELS: Record<"zh" | "en", Record<PluginSandboxPromptedPermission, string>> = {
-  zh: { camera: "摄像头", microphone: "麦克风", geolocation: "位置" },
-  en: { camera: "camera", microphone: "microphone", geolocation: "location" },
+interface PluginSandboxPermissionDialogCopy {
+  labels: Record<PluginSandboxPromptedPermission, string>;
+  /** Separator between permission labels in the message. */
+  listSeparator: string;
+  title: string;
+  message: (serverName: string, list: string) => string;
+  detail: string;
+  allowButton: string;
+  denyButton: string;
+}
+
+// Record<Locale, …>: adding a locale to Locale forces a matching dialog copy here.
+const DIALOG_COPY: Record<Locale, PluginSandboxPermissionDialogCopy> = {
+  "zh-CN": {
+    labels: { camera: "摄像头", microphone: "麦克风", geolocation: "位置" },
+    listSeparator: "、",
+    title: "应用权限请求",
+    message: (serverName, list) => `「${serverName}」的应用请求使用${list}`,
+    detail:
+      "该页面运行在 ZCode 的沙箱中。允许后，本次运行期间这个 MCP server 的应用可继续使用这些权限；重启桌面端后会再次询问。",
+    allowButton: "允许",
+    denyButton: "拒绝",
+  },
+  "en-US": {
+    labels: { camera: "camera", microphone: "microphone", geolocation: "location" },
+    listSeparator: ", ",
+    title: "App permission request",
+    message: (serverName, list) => `The "${serverName}" app wants to use your ${list}`,
+    detail:
+      "This page runs in the ZCode sandbox. If you allow it, apps from this MCP server can keep using these permissions until ZCode restarts.",
+    allowButton: "Allow",
+    denyButton: "Deny",
+  },
+  "uk-UA": {
+    labels: { camera: "камера", microphone: "мікрофон", geolocation: "геолокація" },
+    listSeparator: ", ",
+    title: "Запит дозволу застосунку",
+    message: (serverName, list) =>
+      `Застосунок «${serverName}» просить дозволу на використання: ${list}`,
+    detail:
+      "Ця сторінка працює в пісочниці ZCode. Якщо дозволити, застосунки цього сервера MCP зможуть користуватися цими дозволами, доки ZCode не перезапуститься.",
+    allowButton: "Дозволити",
+    denyButton: "Відхилити",
+  },
 };
 
 export function formatPluginSandboxPermissionDialogText(
   input: { serverName: string; permissions: readonly PluginSandboxPromptedPermission[] },
   locale: Locale,
 ): PluginSandboxPermissionDialogText {
-  if (locale === "zh-CN") {
-    const list = input.permissions.map((permission) => PERMISSION_LABELS.zh[permission]).join("、");
-    return {
-      title: "应用权限请求",
-      message: `「${input.serverName}」的应用请求使用${list}`,
-      detail:
-        "该页面运行在 ZCode 的沙箱中。允许后，本次运行期间这个 MCP server 的应用可继续使用这些权限；重启桌面端后会再次询问。",
-      allowButton: "允许",
-      denyButton: "拒绝",
-    };
-  }
-  const list = input.permissions.map((permission) => PERMISSION_LABELS.en[permission]).join(", ");
+  // Unknown locale tags fall back to en-US, matching resolveSystemLocale's fallback.
+  const copy = DIALOG_COPY[locale] ?? DIALOG_COPY["en-US"];
+  const list = input.permissions
+    .map((permission) => copy.labels[permission])
+    .join(copy.listSeparator);
   return {
-    title: "App permission request",
-    message: `The "${input.serverName}" app wants to use your ${list}`,
-    detail:
-      "This page runs in the ZCode sandbox. If you allow it, apps from this MCP server can keep using these permissions until ZCode restarts.",
-    allowButton: "Allow",
-    denyButton: "Deny",
+    title: copy.title,
+    message: copy.message(input.serverName, list),
+    detail: copy.detail,
+    allowButton: copy.allowButton,
+    denyButton: copy.denyButton,
   };
 }

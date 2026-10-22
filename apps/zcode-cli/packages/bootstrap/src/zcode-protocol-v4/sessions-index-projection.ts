@@ -32,9 +32,17 @@ export interface SessionSummaryDeriveExtra {
   executionWorktreeMissing?: boolean;
   /** True for an incognito session (specs/incognito-session.md). */
   incognito?: boolean;
+  /** Title recency: CLI time_title_updated, or time_created when the column is null. Absent when the live source cannot supply it. */
+  titleUpdatedAt?: number;
 }
 
 const MAX_PREVIEW_CHARS = 120;
+
+/** Keeps titleUpdatedAt absent unless a value is known, so a deleted field is never serialized as undefined. */
+function setTitleUpdatedAt(summary: SessionSummary, titleUpdatedAt: number | undefined): void {
+  if (titleUpdatedAt === undefined) delete summary.titleUpdatedAt;
+  else summary.titleUpdatedAt = titleUpdatedAt;
+}
 
 /** 从 ConversationSnapshot + 会话元信息派生 SessionSummary（纯函数，golden 可测）。 */
 export function deriveSessionSummary(
@@ -106,6 +114,7 @@ export function deriveSessionSummary(
         ? `Worktree ${snapshot.meta.worktreePreparation.branchName}`
         : ""),
     titleSource: snapshot.meta.titleSource,
+    ...(extra.titleUpdatedAt !== undefined ? { titleUpdatedAt: extra.titleUpdatedAt } : {}),
     ...(lastOutcome ? { lastOutcome } : {}),
     phase: snapshot.control.phase,
     // 忠实透传 control.sessionEnded（语义：成功轮收口后即 true，不代表已删除）。
@@ -145,6 +154,7 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.parentSessionId === b.parentSessionId &&
     a.title === b.title &&
     a.titleSource === b.titleSource &&
+    a.titleUpdatedAt === b.titleUpdatedAt &&
     a.lastOutcome === b.lastOutcome &&
     a.phase === b.phase &&
     a.submissionPreparation?.submissionId === b.submissionPreparation?.submissionId &&
@@ -213,11 +223,14 @@ export class SessionsIndexProjection {
       // sessions-index 读侧要区分“存储/协议物理标题”和“用户显式重命名”。
       // 冷恢复 live 投影在 hydration 补齐前可能只有 default/generated 标题；旧 seed 若已是
       // custom，不得被这类自动标题降级，否则侧边栏会把用户手动标题闪回生成标题。
+      // titleUpdatedAt always moves with the title it describes: when the title is kept from prev, its recency is kept too.
       if (prev.titleSource === "custom" && summary.titleSource !== "custom") {
         summary.title = prev.title;
         summary.titleSource = prev.titleSource;
+        setTitleUpdatedAt(summary, prev.titleUpdatedAt);
       } else if (!summary.title && prev.title) {
         summary.title = prev.title;
+        setTitleUpdatedAt(summary, prev.titleUpdatedAt);
         // 旧 store seed 的 titleSource 可缺省；冷投影的
         // default 只是暂态值。保住标题时也要保住“字段缺省”，否则
         // summariesEqual 会产生一帧无产品变化的 upsert。
@@ -245,6 +258,15 @@ export class SessionsIndexProjection {
           summary.goalStatus = prev.goalStatus;
         }
       }
+    }
+    // Same title and no supplied value: the previous recency still describes this title.
+    if (
+      prev &&
+      summary.titleUpdatedAt === undefined &&
+      prev.titleUpdatedAt !== undefined &&
+      summary.title === prev.title
+    ) {
+      setTitleUpdatedAt(summary, prev.titleUpdatedAt);
     }
     if (prev && summariesEqual(prev, summary)) return [];
     this.summaries.set(summary.sessionId, summary);
