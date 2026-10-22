@@ -23,7 +23,7 @@ export interface AcpAgentDefinition {
   readonly versionArgs: readonly string[];
   /** Default CLI arguments that start the agent in ACP server mode. */
   readonly spawnArgs: readonly string[];
-  /** CLI arguments that start the interactive login flow from the settings UI. */
+  /** CLI arguments that start the interactive login flow from the settings UI; empty when there is none. */
   readonly loginArgs: readonly string[];
   /** Fixed, non-interactive arguments that print auth status; omit when unsupported. */
   readonly statusArgs?: readonly string[];
@@ -49,6 +49,42 @@ export const ACP_AGENT_DEFINITIONS: readonly AcpAgentDefinition[] = Object.freez
     spawnArgs: ["acp"],
     loginArgs: ["login"],
     statusArgs: ["status"],
+  },
+  {
+    agentId: "qwen",
+    displayName: "Qwen Code",
+    binaries: ["qwen"],
+    versionArgs: ["--version"],
+    // Native ACP server (qwen-code 0.19.x). `qwen auth` is removed upstream, so no login helper.
+    spawnArgs: ["--acp"],
+    loginArgs: [],
+  },
+  {
+    agentId: "codex",
+    displayName: "Codex",
+    // Adapter over the user's Codex login; Codex itself has no native ACP server.
+    binaries: ["codex-acp"],
+    versionArgs: ["--version"],
+    spawnArgs: [],
+    loginArgs: [],
+  },
+  {
+    agentId: "claude",
+    displayName: "Claude Code",
+    // Adapter over the user's Claude Code login (no adapter login flag).
+    binaries: ["claude-agent-acp"],
+    versionArgs: ["--version"],
+    spawnArgs: [],
+    loginArgs: [],
+  },
+  {
+    agentId: "gemini",
+    displayName: "Gemini CLI",
+    binaries: ["gemini"],
+    versionArgs: ["--version"],
+    // Documented as experimental in the Gemini CLI reference. Not live-verified here: gemini is not installed.
+    spawnArgs: ["--experimental-acp"],
+    loginArgs: [],
   },
 ]);
 

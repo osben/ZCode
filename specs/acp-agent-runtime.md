@@ -12,7 +12,7 @@ the mock-agent tests encode the contract below.
 ## Product rules
 
 - Agents are user-installed CLIs; ZCode never installs, updates or logs them in silently. Detection
-  probes fixed binaries on the login-shell PATH (`opencode`, `cursor-agent` — never bare `agent`,
+  probes fixed binaries on the login-shell PATH (the binaries in "Agent registry"; never bare `agent`,
   which collides with unrelated CLIs) with fixed version-probe arguments only.
 - An enabled agent becomes the personal provider `acp:<agentId>` with one synthetic model
   (`modelId = agentId`); ids are stable and validated (not taken, no whitespace). Until phase 4 the
@@ -55,6 +55,28 @@ the mock-agent tests encode the contract below.
   other construct a crafted line could terminate.
 - One active prompt per session. `cancel` sends a bounded `session/cancel` and escalates to a
   process-tree kill; `stop` is idempotent and safe to call at any time.
+
+## Agent registry
+
+`ACP_AGENT_DEFINITIONS` (`packages/acp-agent-runtime/src/registry.ts`) is the one list of supported agents.
+The settings catalog `ACP_AGENT_CATALOG` (`packages/ui/src/settings/model-provider-section/acpAgentConfig.ts`)
+must list the same agent ids, in the same order, with the same binary; `acpAgentCatalog.test.ts` checks it.
+Every agent is probed with `--version` only (5 s timeout, fixed arguments). Login and status helpers are
+declared only where the agent binary has a real subcommand; otherwise they are empty and the UI shows none.
+ZCode never runs an install command. The catalog shows the vendor's command as selectable text.
+
+| Agent id   | Binary             | Spawn args           | Login / status helper                  | Install (documented)                                   | Verification                                                                                                                       |
+| ---------- | ------------------ | -------------------- | -------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode` | `opencode`         | `acp`                | `auth login` / `auth list`             | vendor curl script (catalog)                           | Live: opencode v2.0.31 spike traces                                                                                                |
+| `cursor`   | `cursor-agent`     | `acp`                | `login` / `status`                     | vendor curl script (catalog)                           | Live: cursor-agent 2026.10.18 spike traces                                                                                         |
+| `qwen`     | `qwen`             | `--acp`              | none (`qwen auth` is removed upstream) | `npm install -g @qwen-code/qwen-code`                  | Live probe: v0.19.10, ACP `initialize` protocolVersion 1, `loadSession: true`, authMethods `openai`                                |
+| `codex`    | `codex-acp`        | none                 | none                                   | `npm install -g @agentclientprotocol/codex-acp`        | Live probe: adapter v2.2.2 (wraps the user's Codex login), `initialize` ok, `loadSession: true`, authMethods `api-key`, `chat-gpt` |
+| `claude`   | `claude-agent-acp` | none                 | none (uses the Claude Code login)      | `npm install -g @agentclientprotocol/claude-agent-acp` | Live probe: adapter v0.94.0, `initialize` ok, `loadSession: true`, authMethods `[]`                                                |
+| `gemini`   | `gemini`           | `--experimental-acp` | none                                   | `npm install -g @google/gemini-cli`                    | **Not live-verified**: the flag is from the Gemini CLI reference; `gemini` is not installed here                                   |
+
+- The `@zed-industries/*` adapter packages are deprecated and not referenced.
+- GitHub Copilot CLI is not listed: no ACP support is confirmed.
+- Version probes ran with `HOME`, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` pointed at a scratch directory.
 
 ## State owner and lifecycle
 

@@ -210,6 +210,26 @@ export const ACP_AGENT_CATALOG: Readonly<Record<string, AcpAgentCatalogEntry>> =
     docsUrl: "https://cursor.com/docs/cli/overview",
     installCommand: "curl https://cursor.com/install -fsS | bash",
   },
+  qwen: {
+    binary: "qwen",
+    docsUrl: "https://github.com/QwenLM/qwen-code",
+    installCommand: "npm install -g @qwen-code/qwen-code",
+  },
+  codex: {
+    binary: "codex-acp",
+    docsUrl: "https://github.com/agentclientprotocol/codex-acp",
+    installCommand: "npm install -g @agentclientprotocol/codex-acp",
+  },
+  claude: {
+    binary: "claude-agent-acp",
+    docsUrl: "https://github.com/agentclientprotocol/claude-agent-acp",
+    installCommand: "npm install -g @agentclientprotocol/claude-agent-acp",
+  },
+  gemini: {
+    binary: "gemini",
+    docsUrl: "https://github.com/google-gemini/gemini-cli",
+    installCommand: "npm install -g @google/gemini-cli",
+  },
 };
 
 /** Detection state as the settings page consumes it (one owner: the detection hook). */

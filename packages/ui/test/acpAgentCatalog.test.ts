@@ -38,6 +38,29 @@ function summary(agentId: string, installed: boolean): AcpAgentSummary {
   };
 }
 
+// Must stay in sync with ACP_AGENT_DEFINITIONS (packages/acp-agent-runtime/src/registry.ts):
+// same agent ids, in the same order, and the same probed binary per agent.
+const REGISTRY_AGENTS: Record<string, string> = {
+  opencode: "opencode",
+  cursor: "cursor-agent",
+  qwen: "qwen",
+  codex: "codex-acp",
+  claude: "claude-agent-acp",
+  gemini: "gemini",
+};
+
+describe("ACP_AGENT_CATALOG", () => {
+  it("matches the registry: same agents, same binaries, a documented install and docs link", () => {
+    expect(Object.keys(ACP_AGENT_CATALOG)).toEqual(Object.keys(REGISTRY_AGENTS));
+    for (const [agentId, binary] of Object.entries(REGISTRY_AGENTS)) {
+      const entry = ACP_AGENT_CATALOG[agentId];
+      expect(entry?.binary).toBe(binary);
+      expect(entry?.docsUrl).toMatch(/^https:\/\//);
+      expect(entry?.installCommand.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe("AcpAgentCatalogDetail", () => {
   afterEach(() => {
     cleanup();
