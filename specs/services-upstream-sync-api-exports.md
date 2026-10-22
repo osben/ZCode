@@ -46,4 +46,4 @@ Still missing after the additions (not added in this PR, reasons):
 - Shared `validation.ts` (`resolvedWslTarget`, `taskHostId` schemas) and `platform.ts` `WSLConnectOptions` compat: deferred in the #189 shared PR; schema changes belong to that unit.
 - `WebRemoteControlWorkspaceSwitchOptions.openFileManager` and `taskHostId`: resolved; live members in upstream order, placeholder comment removed.
 - `ConversationShareFailureIssueCode` values `authentication_required` and `content_unavailable` and `ImportedConversationShare.contentBlocks`: shared conversation-share divergence. Adding union members changes fork-side Record maps, so this needs its own change.
-- `HooksSection` `scope` on hook trust APIs, `Locale` values (`uk-UA`), tool presentation families (`web-fetch`), and `WebRemoteControlStatusKind` / failure reasons (`auth-required`, `device-not-owned`): UI and shared protocol features, not API names.
+- `HooksSection` `scope` on hook trust APIs, `Locale` values (`uk-UA`), tool presentation families (`web-fetch`): UI and shared protocol features, not API names. The relay-status members `auth-required` and `device-not-owned` are present in the fork's unions.

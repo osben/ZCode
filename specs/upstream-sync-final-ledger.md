@@ -662,7 +662,7 @@ Tests: the 19 test files that cover these sources pass on this branch (`node scr
 
 ## Relay v2 web client (S2, `claude/relay-v2-web`)
 
-Source of truth for the decisions: `specs/relay-v2-migration.md` section 12.
+Source of truth for the decisions: `specs/relay-v2-migration.md` section 13.
 
 - `packages/web/src/web-remote-control/**`: taken from upstream 0a1fc56d. CJK comments and test titles translated to English. zh-CN UI copy tables kept (`webRemoteControlScreenCopy.ts`; the fork already ships zh-CN screen copy).
 - Removed (V1 only): `packages/web/src/webRemoteControl{RelayAuthProvider,Transport,WorkspaceBridgeSession}.ts`, `webRemoteControlLifecycle/Route/TaskRead/ThemeSeed/DeviceInfo/Version/VersionNotice/FailureScreen.ts(x)` (moved under `web-remote-control/`), `packages/web/src/auth/WebLoggedInWaitingPage.tsx` (upstream deletion; its four TEMPORARY waiting-copy keys removed from `webAuthLocale.ts`).

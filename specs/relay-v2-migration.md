@@ -27,7 +27,7 @@ User decision (final): migrate the web remote relay to V2. No dual stack.
 
 ## 2. Inventory of V1 (historical: the fork tree before the migration)
 
-Historical snapshot taken before the migration. Items marked as removed are gone; see the Status line.
+Historical snapshot taken before the migration. The Status line lists what has since been removed.
 
 Server (fork self-hosted relay, Node, V1 protocol):
 
