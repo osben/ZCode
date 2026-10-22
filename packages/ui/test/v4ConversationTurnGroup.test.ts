@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { createElement, type ContextType } from "react";
 import { DeliveryContext } from "@/v4/botGroupDeliveryContext.js";
 import { withTopicPreparationMessages } from "@/v4/topicPreparationRenderUnits.js";
+import {
+  withAfterFirstUserInputSlot,
+  withOptimisticFirstInputRow,
+} from "@/v4/conversationTurnUnitSlots.js";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { expectedCopy, TEST_LOCALE } from "./helpers/uiCopy.js";
@@ -322,6 +326,8 @@ function renderUnit(
     onFeedbackChange?: (target: ConversationRowTarget, feedback: "like" | "dislike" | null) => void;
     /** 覆盖行渲染上下文的若干键（产物 chips 的门就是 `sessionId` + `onOpenWorkflowArtifact`）。 */
     context?: Partial<ConversationRowRenderContext>;
+    onPinChange?: () => void;
+    onEdit?: () => void;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -353,6 +359,8 @@ function renderUnit(
               onFork: options.onFork,
               onRetry: options.onRetry,
               onFeedbackChange: options.onFeedbackChange,
+              ...(options.onPinChange ? { onPinChange: options.onPinChange } : {}),
+              ...(options.onEdit ? { onEdit: options.onEdit } : {}),
             }),
           ),
         ),
@@ -2995,5 +3003,53 @@ describe("topic preparation flow membership", () => {
       expect(html).toContain('data-v4-user-input-collapsible-content="true"');
       expect(html).toContain(`aria-label="${expectedCopy("chat.topicPreparation.preparing")}"`);
     }
+  });
+});
+
+// specs/first-submission-instant-ux.md P1 + specs/composer-worktree-setup-steps.md: the
+// optimistic first-input turn is a timeline-only unit, yet its user bubble must render — and
+// render above the worktree setup slot attached to it while the Host prepares the session.
+describe("optimistic first-submission turn", () => {
+  const optimisticRow = userInputRow(-42, {
+    turnId: "first-submission:sub-1",
+    text: "Frozen first message",
+  });
+
+  it("renders the frozen message bubble before any transcript row exists", () => {
+    const [unit] = withOptimisticFirstInputRow([], optimisticRow);
+    expect(renderUnit(unit!)).toContain("Frozen first message");
+  });
+
+  it("withholds pin, edit and attachment actions for the negative rowId but stays readable", () => {
+    const row = userInputRow(-42, {
+      turnId: "first-submission:sub-1",
+      entityId: "sub-1",
+      text: "Frozen first message",
+      actions: { canEdit: true } as UserInputRow["actions"],
+      attachments: [{ ref: "local-file", fileName: "notes.txt", mime: "text/plain", bytes: 3 }],
+    });
+    const html = renderUnit(withOptimisticFirstInputRow([], row)[0]!, {
+      onPinChange: () => {},
+      onEdit: () => {},
+      context: { readAttachment: async () => new Uint8Array() } as never,
+    });
+    expect(html).toContain("Frozen first message");
+    expect(html).not.toContain('data-testid="v4-pin');
+    expect(html).not.toContain('data-testid="v4-edit');
+    expect(html).toContain('data-optimistic-first-input="true"');
+    // Readable, not hidden: no inert/aria-hidden around the user's own pending message.
+    expect(html).not.toContain("inert");
+    expect(html).not.toMatch(/data-optimistic-first-input="true"[^>]*aria-hidden/);
+  });
+
+  it("keeps the message above the worktree setup slot attached to the same unit (FSL02)", () => {
+    const [unit] = withAfterFirstUserInputSlot(
+      withOptimisticFirstInputRow([], optimisticRow),
+      createElement("div", null, "Worktree setup steps"),
+    );
+    const html = renderUnit(unit!);
+    expect(html).toContain("Frozen first message");
+    expect(html).toContain("Worktree setup steps");
+    expect(html.indexOf("Frozen first message")).toBeLessThan(html.indexOf("Worktree setup steps"));
   });
 });

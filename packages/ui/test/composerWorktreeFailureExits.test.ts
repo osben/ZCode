@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 /**
- * Regression coverage for the failed preparation exits that run the return-to-draft hand-off
- * (spec: specs/composer-worktree-setup-steps.md §Return to draft on failure). The marker-sync
- * failure must hand off like the final rejection branch, not strand the user on the failed row.
+ * Failed preparation preserves the submitted session and its recovery record.
+ * Spec: specs/first-submission-lifecycle.md, FSL04.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useComposerWorktreePipelineStore } from "@/store/composerWorktreePipelineStore.js";
@@ -11,10 +10,15 @@ import {
   useRemoteWorkspaceSessionStore,
 } from "@/store/remoteWorkspaceSessionStore.js";
 import { useWorktreeFailureReturnStore } from "@/store/worktreeFailureReturnStore.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import {
+  getV4WorktreeRecoveryScope,
+  readV4ComposerDraft,
+} from "@/v4/composer/composerDraftStore.js";
 import { startComposerWorktreePipeline } from "@/v4/composer/composerWorktreePipeline.js";
 import { createMockServices, seedFailure } from "./composerWorktreeFailureReturnTestUtils.js";
 
-describe("failed preparation exits share the return-to-draft hand-off", () => {
+describe("failed preparation preserves its submitted session", () => {
   beforeEach(() => {
     window.localStorage.clear();
     useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
@@ -30,8 +34,8 @@ describe("failed preparation exits share the return-to-draft hand-off", () => {
     useRemoteWorkspaceSessionStore.setState({ baseServices: null });
   });
 
-  it("hands off when Git settles the branch at another path and no marker sync is available", async () => {
-    const { services, deleteTask } = createMockServices();
+  it("keeps the failed session when Git settles the branch elsewhere and marker sync is unavailable", async () => {
+    const { services, commands, deleteTask } = createMockServices();
     registerBaseWorkspaceServices(services);
     const workspacePath = "/proj/return-marker-sync";
     const sessionId = "session-return-marker-sync";
@@ -92,14 +96,33 @@ describe("failed preparation exits share the return-to-draft hand-off", () => {
     });
     expect(outcome).toBe("failed");
 
-    await vi.waitFor(() =>
-      expect(deleteTask).toHaveBeenCalledWith({ taskId: sessionId, workspacePath }),
-    );
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(
+      commands.map((command) => (command.payload as Record<string, unknown>).status),
+    ).not.toContain("cancelled");
     expect(
       useWorktreeFailureReturnStore.getState().modalByWorkspaceKey[workspacePath],
+    ).toBeUndefined();
+    expect(
+      useZCodeSessionStore.getState().getWorkspaceState(workspacePath, undefined).activeTaskId,
+    ).toBe(sessionId);
+    expect(
+      useComposerWorktreePipelineStore.getState().pipelineByWorkspaceKey[workspacePath]
+        ?.entriesBySessionKey[sessionId],
     ).toMatchObject({
-      sessionId,
-      message: "worktreeSetup.reconcile.markerSyncUnavailable",
+      status: "failed",
+      failureMessage: "worktreeSetup.reconcile.markerSyncUnavailable",
+      params: { submissionId: params.submissionId },
+    });
+    expect(
+      readV4ComposerDraft(
+        workspacePath,
+        undefined,
+        getV4WorktreeRecoveryScope(sessionId, params.submissionId),
+      ),
+    ).toMatchObject({
+      text: "frozen submission text",
+      recoveryAttachments: [expect.objectContaining({ id: "att-1" })],
     });
   });
 });

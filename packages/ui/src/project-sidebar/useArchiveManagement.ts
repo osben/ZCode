@@ -26,7 +26,7 @@ export function useArchiveManagement({
   const directory = useProjectDirectory();
   const { zcodeTaskService: service, windowControllerService: controller } =
     useBaseWorkspaceServices();
-  const { intl } = useZCodeIntl();
+  const { intl, locale } = useZCodeIntl();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{
     succeeded: number;
@@ -51,9 +51,9 @@ export function useArchiveManagement({
       ? intl.formatMessage(
           { id: "taskList.deleteAllArchivedUnavailable" },
           {
-            projects: [...new Set(remote.map((task) => getPathLeaf(task.workspacePath)))].join(
-              ", ",
-            ),
+            projects: new Intl.ListFormat(locale, { type: "conjunction" }).format([
+              ...new Set(remote.map((task) => getPathLeaf(task.workspacePath))),
+            ]),
           },
         )
       : undefined;

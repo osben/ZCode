@@ -94,6 +94,9 @@ export function deriveSessionSummary(
     ...(snapshot.meta.worktreePreparation
       ? { worktreePreparation: snapshot.meta.worktreePreparation }
       : {}),
+    ...(snapshot.meta.submissionPreparation
+      ? { submissionPreparation: snapshot.meta.submissionPreparation }
+      : {}),
     sessionId: snapshot.sessionId,
     workspaceId: extra.workspaceId,
     ...(extra.parentSessionId ? { parentSessionId: extra.parentSessionId } : {}),
@@ -144,6 +147,8 @@ function summariesEqual(a: SessionSummary, b: SessionSummary): boolean {
     a.titleSource === b.titleSource &&
     a.lastOutcome === b.lastOutcome &&
     a.phase === b.phase &&
+    a.submissionPreparation?.submissionId === b.submissionPreparation?.submissionId &&
+    a.submissionPreparation?.status === b.submissionPreparation?.status &&
     a.worktreePreparation?.attemptId === b.worktreePreparation?.attemptId &&
     a.worktreePreparation?.status === b.worktreePreparation?.status &&
     a.worktreePreparation?.branchName === b.worktreePreparation?.branchName &&

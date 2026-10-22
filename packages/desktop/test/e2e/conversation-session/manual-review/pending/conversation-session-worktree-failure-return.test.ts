@@ -1,7 +1,7 @@
 // Worktree failure return-to-draft E2E (specs/composer-worktree-setup-steps.md §Return to draft
 // on failure, acceptance scenario 24 — the preflight half). The post-session modal flow needs a
-// Git failure the preflight cannot predict, which has no deterministic UI-only trigger yet; its
-// coverage lives in packages/ui/test/composerWorktreeFailureReturn.test.ts. This spec drives the
+// Git failure the preflight cannot predict; that hand-off was removed with the first-submission
+// lifecycle (a failed preparation now stays on its session with Retry). This spec drives the
 // deterministic preflight scenario: an unborn-HEAD repository (no branches, no commits) blocks
 // Send before any session exists, names the cause, and keeps the draft in the editor.
 //

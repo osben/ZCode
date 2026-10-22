@@ -371,6 +371,17 @@ export interface GitIgnoredPathsRequest extends GitRepositoryRequest {
   paths: string[];
 }
 
+/** One status entry a forced worktree removal would discard; `status` is a short code such as `M`, `UU` or `??`. */
+export interface GitWorktreeRemovalPreviewFile {
+  path: string;
+  status: string;
+}
+
+/** Every staged, unstaged, conflicted and untracked entry of a worktree (specs/session-deletion-cascade.md). */
+export interface GitWorktreeRemovalPreview {
+  files: GitWorktreeRemovalPreviewFile[];
+}
+
 export interface GitDiffQuery extends GitRepositoryRequest, GitDiffRequest {}
 
 export interface GitBranchComparison {

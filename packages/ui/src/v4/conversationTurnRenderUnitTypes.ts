@@ -1,5 +1,6 @@
 import type { PluginUiRowPinResolver } from "@/plugin-ui/index.js";
 import type { BotTopicPreparation } from "@zcode/shared";
+import type { ReactNode } from "react";
 import type {
   AssistantTextRow,
   ConversationRow,
@@ -20,6 +21,12 @@ import type { HighspeedOutputFooterMark } from "@/highspeed/highspeedOutputFoote
 export interface ConversationTurnRenderUnit extends HighspeedOutputFooterMark {
   /** Display projection of unaccepted bot messages; not written to CLI rows or the navigation/share index. */
   topicPreparations?: readonly BotTopicPreparation[];
+  /**
+   * Session-level context row (worktree setup/created) rendered right after this unit's user
+   * inputs — the second timeline item, below the first user message (specs/composer-worktree-setup-steps.md).
+   * Attached only to the first unit; timeline-only fallback units render it above their content.
+   */
+  afterFirstUserInputSlot?: ReactNode;
   key: string;
   turnId: string;
   header?: TurnHeaderRow;

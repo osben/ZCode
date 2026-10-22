@@ -154,6 +154,17 @@ export interface ZCodeProtocolPreparedWorktreeSession {
   incognito?: IncognitoProfile | null;
 }
 
+/** CLI-owned durable submission; its prompt remains unaccepted until explicit activation. */
+export interface ZCodeProtocolPreparedSubmissionSession {
+  sessionId: SessionId;
+  workspace: ZCodeWorkspaceRef;
+  submissionId: string;
+  createdAt: number;
+  updatedAt: number;
+  status: "preparing" | "active";
+  incognito: IncognitoProfile | null;
+}
+
 export interface ZCodeProtocolClientRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -199,6 +210,7 @@ export interface ZCodeProtocolAgentServerContext {
   lsp?: LspProtocolHost;
   sessions: Map<string, ZCodeProtocolSessionRecord>;
   preparedWorktreeSessions?: Map<string, ZCodeProtocolPreparedWorktreeSession>;
+  preparedSubmissionSessions?: Map<string, ZCodeProtocolPreparedSubmissionSession>;
   /** 仅覆盖异步创建窗口，结束即释放；输入命令仍由 CommandInbox 排队。 */
   sessionCreationIds?: Set<string>;
   notify(notification: ZCodeProtocolNotification): void;

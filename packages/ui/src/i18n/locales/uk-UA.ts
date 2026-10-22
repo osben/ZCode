@@ -11,7 +11,11 @@ const ukUA: Record<string, string> = {
   "taskDelete.includesGeneric":
     "Може також містити пов'язані бічні розмови, субагентів і сеанси робочих процесів.",
   "taskDelete.worktreeUnknown":
-    "Не вдалося перевірити зміни в робочих деревах. Вилучення дерева назавжди знищить незакомічені файли.",
+    "Не вдалося перевірити зміни в робочих деревах, тож незакомічені зміни можуть бути втрачені. Вилучення дерева назавжди знищить незакомічені файли.",
+  "taskDelete.worktreeIgnoredNotice":
+    "Ігноровані файли в робочому дереві (наприклад, файли .env або локальні бази даних) також будуть видалені.",
+  "taskDelete.worktreeUnknownAcknowledge":
+    "Я розумію, що незакомічені зміни в робочому дереві можуть бути назавжди втрачені",
   "taskDelete.retainedNotice":
     "Гілки Git і зведена статистика використання збережуться. Робочі дерева, що використовуються, залишаться.",
   "taskDelete.unsupported": "Остаточне видалення недоступне для вибраних сеансів.",
@@ -68,12 +72,43 @@ const ukUA: Record<string, string> = {
   "sessionManager.openUnavailable":
     "Робочий простір сесії недоступний. Відновіть з'єднання або відкрийте проєкт і повторіть спробу.",
   "sessionManager.pinnedArchived": "Закріплення не фільтрує архівні сесії.",
+  "firstSubmission.unknown": "Перевіряємо, чи повідомлення було прийнято…",
+  "firstSubmission.synchronizing": "Очікуємо оновлення розмови…",
+  "firstSubmission.contexts": "Посилання на контекст: {count}",
+  "composer.heldCopy.unlock": "Однаково надіслати…",
+  "composer.heldCopy.warning":
+    "Це повідомлення могло вже бути доставлене. Повторне надсилання може створити дублікат.",
+  "composer.heldCopy.confirm": "Дозволити надсилання",
+  "composer.sendBlocked.outcomeUnresolved":
+    "Перевіряємо, чи прийнято перше повідомлення. Надіслати можна буде, щойно це з'ясується.",
+  "composer.sendBlocked.firstSubmissionNeedsAction":
+    "Перше повідомлення потребує уваги: повторіть або вилучіть його, перш ніж надсилати інше.",
+  "firstSubmission.deliveryUnconfirmed": "Не вдалося підтвердити, що це повідомлення доставлено.",
+  "firstSubmission.savedUnconfirmed": "Повідомлення збережено; доставку не підтверджено",
+  "firstSubmission.remove": "Вилучити",
+  "composer.sendBlocked.remoteUnavailable":
+    "Віддалений хост недоступний. Спробуйте знову після відновлення з'єднання.",
+  "composer.sendBlocked.sessionNotReady": "Сесія ще не готова. Спробуйте трохи згодом.",
+  "composer.sendBlocked.sendInProgress": "Інше повідомлення ще надсилається.",
+  "composer.sendBlocked.firstSubmissionDelivering":
+    "Перше повідомлення ще доставляється. Ви зможете надіслати це, щойно його буде доставлено.",
+  "composer.sendBlocked.attachmentsNotReady": "Вкладення ще завантажуються.",
   "composerRecovery.title": "Ненадіслане повідомлення збережено",
   "composerRecovery.storageUnavailable":
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",
   "worktreeSetup.connectionUnavailable":
     "Відновіть з'єднання з Host цього проєкту, щоб продовжити підготовку worktree.",
-  "worktreeSetup.created": "Worktree створено",
+  "worktreeSetup.collapsibleLabel": "Worktree",
+  "worktreeSetup.summaryReady": "готово · {branch}",
+  "worktreeSetup.summaryExisting": "існуючий · {branch}",
+  "worktreeSetup.actions": "Дії з worktree",
+  "worktreeSetup.pathCopied": "Шлях скопійовано",
+  "worktreeSetup.copyCommand": "Копіювати команду",
+  "worktreeSetup.commandCopied": "Команду скопійовано",
+  "worktreeSetup.copyFailed": "Не вдалося скопіювати в буфер обміну",
+  "worktreeSetup.openInEditorFailed": "Не вдалося відкрити worktree у {editor}: {path}",
+  "worktreeSetup.summaryFailed": "помилка",
+  "worktreeSetup.commandLabel": "Команда",
   "worktreeSetup.stepCreating": "Готуємо worktree {branch}…",
   "worktreeSetup.stepCreating.baseHead": "Базова гілка — HEAD",
   "worktreeSetup.stepReady": "Worktree готово: {path}",
@@ -81,10 +116,11 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.stepFailed": "Не вдалося підготувати worktree: {reason}",
   "worktreeSetup.retry": "Повторити",
   "worktreeSetup.discard": "Відхилити",
-  "worktreeSetup.queuedMessageLabel": "Повідомлення в черзі",
   "worktreeSetup.orphanedNote":
     "Це приготування вже не належить активній сесії, його можна відхилити.",
   "composerRecovery.editorOccupied": "Надішліть або очистьте поточну чернетку перед відновленням.",
+  "composerRecovery.retryOccupied":
+    "Надішліть або очистьте поточну чернетку перед повторною спробою.",
   "composerRecovery.reattach": "Прикріпіть відсутні файли знову або явно видаліть їх.",
   "composerRecovery.restore": "Відновити",
   "composerRecovery.removeMissing": "Видалити відсутні файли",
@@ -8336,7 +8372,7 @@ const ukUA: Record<string, string> = {
   "project.collapseAll": "Collapse all projects",
   "project.new": "New project",
   "project.tasks": "Tasks",
-  "project.createTask": "New task",
+  "project.createTask": "Нове завдання",
   "project.showMore": "Show more",
   "project.restore": "Restore project",
   "project.edit": "Edit project",

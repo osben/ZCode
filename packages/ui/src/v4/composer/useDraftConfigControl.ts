@@ -85,7 +85,7 @@ export interface DraftConfigControl {
   resolveInitialDraftConfig: () => Partial<SessionConfigState> | undefined;
   composerDraft: V4ComposerDraft;
   updateComposerContent: (
-    content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">,
+    content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention" | "firstSubmission">,
   ) => void;
   replaceComposerDraft: (draft: Omit<V4ComposerDraft, "updatedAt">) => void;
   /** 新任务被接纳后，把当前完整 Root Draft 原子式转移到真实 Session scope。 */
@@ -424,7 +424,9 @@ export function useDraftConfigControl(params: {
   }, [appFollowupMode]);
 
   const updateComposerContent = useCallback(
-    (content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">) => {
+    (
+      content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention" | "firstSubmission">,
+    ) => {
       updateComposerDraft((current) => ({
         ...current,
         editorStateJson: undefined,

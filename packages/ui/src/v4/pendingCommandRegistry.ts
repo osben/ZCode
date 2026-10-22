@@ -555,6 +555,11 @@ export class PendingCommandRegistry {
     return written;
   }
 
+  /** First-submission reconciliation decision for listeners only (spec: Reconciliation). */
+  reportReconciledResolution(commandId: string, resolution: "accepted" | "failed"): void {
+    this.notifyResolution(commandId, resolution);
+  }
+
   private notifyResolution(commandId: string, resolution: PendingCommandResolution): void {
     const listeners = this.resolutionListeners.get(commandId);
     if (!listeners) return;

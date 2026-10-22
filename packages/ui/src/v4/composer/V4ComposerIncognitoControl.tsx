@@ -25,6 +25,19 @@ export const TID_V4_COMPOSER_INCOGNITO_MARKER = "v4-composer-incognito-marker";
 export const TID_V4_COMPOSER_INCOGNITO_OFF = "v4-composer-incognito-off";
 export const TID_V4_COMPOSER_INCOGNITO_CAPABILITY = "v4-composer-incognito-capability";
 
+// specs/incognito-session.md "Composer toggle": the incognito icon is a start-only option like
+// choosing Git. A frozen first submission drops it even before the reserved session is bound, so
+// drafts composed while preparation proceeds cannot arm or change the already-frozen profile.
+export function shouldRenderComposerIncognitoControl(input: {
+  draftMode: boolean;
+  sessionId: string | null;
+  isWebRemoteControl: boolean;
+  firstSubmissionActive: boolean;
+}): boolean {
+  const { draftMode, sessionId, isWebRemoteControl, firstSubmissionActive } = input;
+  return draftMode && sessionId === null && !isWebRemoteControl && !firstSubmissionActive;
+}
+
 /**
  * Draft-only incognito control (specs/incognito-session.md "Composer toggle"). Off: the icon turns the
  * mode on directly, with the per-session capability set read from the Settings defaults. On: the chip

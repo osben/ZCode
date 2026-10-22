@@ -397,6 +397,12 @@ class DraftSessionPrewarmCoordinator {
               return;
             }
             current.controller.markPromoted();
+            // A promoted prewarm is consumed (specs/first-submission-lifecycle.md "Owners and
+            // event order"): keep exposing it and the next submission in this draft pane would
+            // reserve the already-used session, which the CLI must reject. Detach so the next
+            // reservation creates a fresh session by its own submission id.
+            current.binding = null;
+            this.emitBindings();
           },
           discard: () => {
             if (this.current !== current || current.binding !== binding) {

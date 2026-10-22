@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeTaskTreeCounts } from "@zcode/services";
 import { SessionManagerDeleteDialog } from "@/session-manager/SessionManagerDeleteDialog.js";
 import type { SessionManagerRow } from "@/session-manager/sessionManagerModel.js";
+import { loadTaskDeletionWorktreePreview } from "@/task-deletion/taskDeletion.js";
 
 // Permanent deletion shares the dialog; pinned inclusion remains explicit.
 
@@ -49,6 +50,7 @@ function mount(options: {
   counts: ZCodeTaskTreeCounts | null;
   canErase?: boolean;
   rows?: SessionManagerRow[];
+  loadWorktreePreview?: (rows: readonly SessionManagerRow[]) => Promise<unknown>;
 }) {
   const onConfirm = vi.fn();
   render(
@@ -56,7 +58,7 @@ function mount(options: {
       selectedRows: options.rows ?? [makeRow("a")],
       loadTreeCounts: async () => options.counts,
       loadCapability: async () => options.canErase ?? true,
-      loadWorktreePreview: async () => [],
+      loadWorktreePreview: (options.loadWorktreePreview ?? (async () => [])) as never,
       onCancel: vi.fn(),
       onConfirm,
     }),
@@ -120,5 +122,52 @@ describe("SessionManagerDeleteDialog", () => {
       expect.objectContaining({ taskKey: "a" }),
       expect.objectContaining({ taskKey: "pinned" }),
     ]);
+  });
+
+  it("requires the worktree-loss acknowledgement when a session's worktree status cannot be read", async () => {
+    const row = {
+      ...makeRow("wt"),
+      task: {
+        taskId: "wt",
+        title: "wt",
+        workspacePath: "/project",
+        executionWorktree: { path: "/project/.worktrees/wt" },
+      },
+    } as unknown as SessionManagerRow;
+    const getWorktreeRemovalPreview = vi.fn(async () => {
+      throw new Error("git unavailable");
+    });
+    const { onConfirm } = mount({
+      counts: counts(),
+      rows: [row],
+      loadWorktreePreview: (rows) =>
+        loadTaskDeletionWorktreePreview(
+          rows.map((item) => ({
+            id: item.taskKey,
+            taskId: item.task.taskId,
+            title: item.task.title,
+            workspacePath: item.task.workspacePath,
+            archived: item.archived,
+            pinned: item.pinned,
+            ...(item.task.executionWorktree
+              ? { executionWorktree: item.task.executionWorktree }
+              : {}),
+          })),
+          () => ({ taskService: {} as never, gitService: { getWorktreeRemovalPreview } as never }),
+        ),
+    });
+    const acknowledge = await screen.findByRole("checkbox", {
+      name: "taskDelete.worktreeUnknownAcknowledge",
+    });
+    expect(getWorktreeRemovalPreview).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "taskDelete.confirm:1" })).toBeNull();
+    const confirm = screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.click(acknowledge);
+    await waitFor(() => expect(confirm.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith([expect.objectContaining({ taskKey: "wt" })]);
   });
 });

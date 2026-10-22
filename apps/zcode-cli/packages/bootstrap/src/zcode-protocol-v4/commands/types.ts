@@ -106,6 +106,7 @@ export interface V4SessionRecordView {
 }
 
 export interface V4CommandCoreHost {
+  hasPreparedSession?(sessionId: string): boolean;
   /** 会话查找（同一注册表对象引用；不存在返回 undefined → handler 拒绝）。 */
   getRecord(sessionId: string): V4SessionRecordView | undefined;
   logger?: V4CommandLogger;
@@ -304,6 +305,7 @@ export interface V4CommandCoreHost {
     /** Host-reserved identity to materialize; the Host must validate the preparation marker. */
     preparedSessionId?: string;
     expectedAttemptId?: string;
+    expectedSubmissionId?: string;
     permissionScope?: "session";
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /**
@@ -323,6 +325,13 @@ export interface V4CommandCoreHost {
     dynamicWorkflowMode?: DynamicWorkflowMode;
   }): Promise<{ sessionId: string; preparedActivation?: PreparedWorktreeActivationOutcome }>;
   /** Reserve a durable session identity without creating a runtime. */
+  prepareSubmissionSession?(params: {
+    workspaceId: string;
+    sessionId?: string;
+    submissionId: string;
+    incognito?: CommandPayloadMap["createSession"]["incognito"];
+  }): Promise<{ sessionId: string }>;
+  /** Reserve a durable worktree session identity without creating a runtime. */
   prepareWorktreeSession?(params: {
     workspaceId: string;
     branchName: string;
