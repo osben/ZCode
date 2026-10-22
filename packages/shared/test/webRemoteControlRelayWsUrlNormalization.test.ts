@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH } from "../src/web-remote-relay/contractV2.js";
+import { WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH } from "../src/web-remote-relay/index.js";
 import {
   WEB_REMOTE_CONTROL_RELAY_WS_PATH,
   normalizeConfiguredWebRemoteControlRelayWsUrl,
