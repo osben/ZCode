@@ -260,3 +260,25 @@ export function isStopCancelInFlight(input: {
 }): boolean {
   return input.held && input.runtimeIdle && (input.runtimeIdRegistered || input.compatAbortedBefore);
 }
+
+/** goal-pause barrier 共用件：stop 与 sendQueuedNow（抢占重发）复用，不复制。 */
+export async function pauseActiveGoal(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<boolean> {
+  // 注意：方法必须经 app 调用（不可解构，实现可能依赖 this 绑定）。
+  const target = await record.app.readTarget();
+  if (!target || target.status !== "active") {
+    return false;
+  }
+  try {
+    const paused = await record.app.updateTargetStatus("paused");
+    return Boolean(paused);
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to pause active goal", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+    return false;
+  }
+}
