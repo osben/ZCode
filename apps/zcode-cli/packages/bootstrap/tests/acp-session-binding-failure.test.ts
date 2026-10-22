@@ -117,4 +117,40 @@ describe("ACP session binding failures", () => {
     expect(result.stopReason).toBe("end_turn");
     expect(runtime.prompt).toHaveBeenCalledTimes(1);
   });
+
+  // A failed write leaves the old row (an earlier ACP session) behind. A later cold start would load that
+  // session, not the one the runtime now holds, so the failed write must clear the row.
+  it("clears the old binding when the write fails, so the next cold start does not load a stale session", async () => {
+    const rows = new Map<string, { acpSessionId: string; agentId: string; cwd: string; launchKey: string }>();
+    rows.set("zc-stale", { acpSessionId: "acp-old", agentId: "opencode", cwd: LAUNCH.cwd, launchKey: "x" });
+    // The key the pool computes from LAUNCH must match the stored row for a resume to be attempted.
+    const { acpLaunchKey } = await import("../src/acp-agent/acp-session-pool.js");
+    rows.set("zc-stale", { ...rows.get("zc-stale")!, launchKey: acpLaunchKey(LAUNCH) });
+    const bindings: AcpSessionBindings = {
+      read: vi.fn(async (sessionId: string) => rows.get(sessionId)),
+      write: vi.fn(async () => {
+        throw new Error("SQLITE_BUSY");
+      }),
+      clear: vi.fn(async (sessionId: string) => {
+        rows.delete(sessionId);
+      }),
+    };
+    const firstPool = new AcpSessionPool({
+      bindings,
+      logger: logger(),
+      createRuntime: async () => fakeRuntime() as never,
+    });
+    await firstPool.acquire("zc-stale", LAUNCH);
+    expect(bindings.clear).toHaveBeenCalledWith("zc-stale");
+    expect(rows.has("zc-stale")).toBe(false);
+
+    // Next cold start (a new pool): no stored row, so the agent starts a new session.
+    const createRuntime = vi.fn(async () => fakeRuntime() as never);
+    const coldPool = new AcpSessionPool({ bindings, logger: logger(), createRuntime });
+    await coldPool.acquire("zc-stale", LAUNCH);
+    expect(createRuntime).toHaveBeenCalledWith(
+      expect.not.objectContaining({ resumeSessionId: expect.anything() }),
+      expect.anything(),
+    );
+  });
 });

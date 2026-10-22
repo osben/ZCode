@@ -691,4 +691,29 @@ describe("CommandInbox session creation ordering", () => {
     await expect(inbox.whenSessionCreationSettles("s-unrelated")).resolves.toBeUndefined();
     if (other.kind === "execute") other.settle({ status: "accepted" });
   });
+
+  // The renderer's first-submission reservation: the id is in the payload and the envelope target is null
+  // (createCommandEnvelope copies the dispatch target). The subscribe for that id must still wait.
+  it("registers a reservation keyed by its payload id when the envelope target is null", async () => {
+    const inbox = new CommandInbox(makeHost());
+    const reservation = {
+      commandId: "reserve-1",
+      clientId: "client-a",
+      sessionId: null,
+      type: "createSession",
+      payload: { workspaceId: "w-1", sessionId: "s-reserved", submissionPreparation: { submissionId: "sub-1" } },
+      issuedAt: 1,
+    } as unknown as CommandEnvelope;
+    const outcome = await inbox.handle(reservation);
+    expect(outcome.kind).toBe("execute");
+    let waited = false;
+    const subscribe = inbox.whenSessionCreationSettles("s-reserved").then(() => {
+      waited = true;
+    });
+    await Promise.resolve();
+    expect(waited).toBe(false);
+    if (outcome.kind === "execute") outcome.settle({ status: "accepted" });
+    await subscribe;
+    expect(waited).toBe(true);
+  });
 });

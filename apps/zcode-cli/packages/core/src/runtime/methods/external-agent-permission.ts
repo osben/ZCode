@@ -69,9 +69,14 @@ export async function answerExternalAgentPermission(
   // turn aborts first; the replay therefore never keeps a dialog without its end.
   let decision: PermissionBrokerResult | "aborted" | undefined;
   try {
-    await Promise.race([response.registered ?? Promise.resolve(), aborted]);
-    // An ask the turn aborted before the broker registered it publishes nothing: the user never saw it (spec S4).
-    if (signal.aborted) return "cancelled";
+    // Only an abort that wins before the broker registers the ask suppresses it: the user never saw it (spec S4).
+    // A registration that already happened is published even when the turn aborts right after it.
+    let registered = false;
+    const registration = (response.registered ?? Promise.resolve()).then(() => {
+      registered = true;
+    });
+    await Promise.race([registration, aborted]);
+    if (!registered) return "cancelled";
     await appendEvent(this, context.state, SessionEventType.PermissionRequested, {
       requestId,
       approvalMode: "user-once",

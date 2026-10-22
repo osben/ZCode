@@ -667,6 +667,16 @@ Seed and cache: the projection seed reads the binding only for a session whose p
 `acp:` provider (`ACP_PROVIDER_ID_PREFIX`). The binding store keeps the last config read per session (bounded,
 dropped by every write of the store), so a repeated subscribe does not reopen the shared session database.
 
+The cache assumes one live worker per session. A session has one owner (owner/lease, see "Owner and event
+order"), so the worker that owns it is the only writer of its binding row, and the cache of that worker's
+store instance cannot go stale. A second worker writing the same row would break this, so the cache must not be
+shared across processes. A failed binding write clears the row (best effort) so no later cold start loads the
+session the row named.
+
+Permission publication (S4 refinement): an ask is suppressed only when the turn aborts before the broker
+registers it. An ask the broker registered is published as requested, even when the abort lands right after,
+and is then resolved cancelled, because the client may already show the dialog.
+
 Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, owner: session):
 
 - Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
@@ -764,6 +774,11 @@ The composer binds the pane to the reserved session id before the host acknowled
 the create is acknowledged: `pendingReservations` (`SessionPane.tsx`, backed by `pendingReservationGate.ts`)
 marks a create from the moment it is sent until its ack. This follows the order of every later turn, where
 the subscribe comes after the acknowledgement.
+
+The reservation envelope carries the id in the payload and dispatches with a null envelope target
+(`createCommandEnvelope` copies the dispatch target). The renderer marks the id from the payload
+(`reservedCreateSessionId`), and the inbox keys the create on the payload id, falling back to the envelope
+target. Both sides read the same field.
 
 The host keeps a second guard. `CommandInbox.whenSessionCreationSettles` (tracked from receipt in
 `command-inbox-creations.ts`) makes a subscribe that reaches the gateway while the create is admitted wait

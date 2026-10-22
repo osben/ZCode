@@ -128,12 +128,15 @@ export class CommandInbox {
   }
 
   async handle(raw: unknown): Promise<CommandInboxOutcome> {
-    // Parsed once: the envelope may carry lazy fields, and admission must not read them a second time.
+    // Parsed once, so the raw input's fields are read a single time for both the registration and admission.
     const parsed = parseCommandEnvelope(raw);
     // The creation is registered on receipt, before any await, so a subscribe that arrives during
-    // admission (prepareDecision) already waits for it.
+    // admission (prepareDecision) already waits for it. A reservation carries its id in the payload and
+    // dispatches with a null envelope target, so the payload id is the key.
     const creatingSessionId =
-      parsed.ok && parsed.envelope.type === "createSession" ? parsed.envelope.sessionId : null;
+      parsed.ok && parsed.envelope.type === "createSession"
+        ? createSessionKey(parsed.envelope)
+        : null;
     if (creatingSessionId === null) return this.admit(raw, parsed);
     const release = this.creations.begin(creatingSessionId);
     let outcome: CommandInboxOutcome;
@@ -552,4 +555,11 @@ export class CommandInbox {
     }
     return "";
   }
+}
+
+/** The session id a createSession is for: the payload id of a reservation, else the envelope target. */
+function createSessionKey(envelope: CommandEnvelope): string | null {
+  const payloadId = (envelope.payload as { sessionId?: unknown } | null)?.sessionId;
+  if (typeof payloadId === "string" && payloadId.length > 0) return payloadId;
+  return envelope.sessionId;
 }

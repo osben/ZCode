@@ -56,3 +56,19 @@ export function trackReservedCreate<A extends readonly unknown[], R>(
     return dispatch(...args).finally(() => settle?.());
   };
 }
+
+/**
+ * The reserved session id of a dispatched `createSession`, or null for every other command. A reservation
+ * carries its id in the payload and dispatches with a null target (SessionPane's first-submission create),
+ * so the payload is read first; a create dispatched with a target uses that target.
+ */
+export function reservedCreateSessionId(args: readonly unknown[]): string | null {
+  if (args[0] !== "createSession") return null;
+  const payload = args[1];
+  if (payload !== null && typeof payload === "object") {
+    const sessionId = (payload as { sessionId?: unknown }).sessionId;
+    if (typeof sessionId === "string" && sessionId.length > 0) return sessionId;
+  }
+  const target = args[2];
+  return typeof target === "string" && target.length > 0 ? target : null;
+}

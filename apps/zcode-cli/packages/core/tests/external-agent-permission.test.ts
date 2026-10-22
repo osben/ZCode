@@ -237,4 +237,52 @@ describe("external agent user-once permissions", () => {
       runtime.beginShutdown();
     }
   });
+
+  it("publishes an ask the broker registered before the abort, then resolves it cancelled", async () => {
+    const controller = new AbortController();
+    const asked = Promise.withResolvers<void>();
+    const requests: PermissionBrokerRequest[] = [];
+    const port: PermissionBrokerPort = {
+      requestPermission(request, options) {
+        requests.push(request);
+        asked.resolve();
+        // The interaction is registered, and the turn aborts in the same task, before the handler continues.
+        // The client may already show the dialog, so the request is published and then resolved.
+        const response = new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        });
+        const registered = Promise.resolve();
+        controller.abort();
+        return Object.assign(response, { registered });
+      },
+    } as PermissionBrokerPort;
+    const driver: ExternalAgentTurnDriver = {
+      agentId: "fake",
+      runTurn: vi.fn(async (request: ExternalAgentTurnRequest) => {
+        await request.requestPermission({
+          toolCallId: "acp-4",
+          title: "Edit",
+          detail: null,
+          optionKinds: ["allow_once", "reject_once"],
+        });
+        return { agentId: "fake", stopReason: "cancelled" };
+      }),
+    } as ExternalAgentTurnDriver;
+    const { runtime, eventStore } = runtimeWith(driver, port);
+    try {
+      const turn = runtime.executeTurn("edit", undefined, { abortSignal: controller.signal });
+      await expect(turn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+      await asked.promise;
+      const events = permissionEvents(await eventStore.getEvents(runtime.sessionId));
+      expect(events.map((event) => event.type)).toEqual([
+        SessionEventType.PermissionRequested,
+        SessionEventType.PermissionResolved,
+      ]);
+      expect(events[1]).toMatchObject({
+        payload: { decision: "deny", reason: "Permission request cancelled" },
+      });
+    } finally {
+      runtime.beginShutdown();
+    }
+  });
 });

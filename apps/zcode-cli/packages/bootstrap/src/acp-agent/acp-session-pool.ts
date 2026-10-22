@@ -238,7 +238,14 @@ export class AcpSessionPool {
         launchKey: acpLaunchKey(launch),
       });
     } catch (error) {
-      this.#warnBinding("could not write the ACP session binding; a later cold start starts a new session", launch, error);
+      // The row still names the earlier agent session, and a later cold start would load that one instead of the
+      // session this runtime holds. Dropping the row makes the next cold start start a new session.
+      this.#warnBinding("could not write the ACP session binding; the earlier binding is cleared", launch, error);
+      try {
+        await this.#bindings.clear(sessionId);
+      } catch (clearError) {
+        this.#warnBinding("could not clear the ACP session binding after a failed write", launch, clearError);
+      }
     }
   }
 

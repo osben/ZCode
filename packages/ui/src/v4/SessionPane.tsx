@@ -50,7 +50,11 @@ import {
   type ReactNode,
 } from "react";
 import { Hand } from "lucide-react";
-import { PendingReservationGate, trackReservedCreate } from "./pendingReservationGate.js";
+import {
+  PendingReservationGate,
+  reservedCreateSessionId,
+  trackReservedCreate,
+} from "./pendingReservationGate.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
@@ -492,9 +496,6 @@ const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
  * (see pendingReservationGate.ts), so the conversation lease waits for the acknowledgement.
  */
 const pendingReservations = new PendingReservationGate();
-/** The reserved session id of a dispatched `createSession`, or null for every other command. */
-const reservedCreateSessionId = (args: readonly unknown[]): string | null =>
-  args[0] === "createSession" && typeof args[2] === "string" ? args[2] : null;
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,

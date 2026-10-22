@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PendingReservationGate, trackReservedCreate } from "../src/v4/pendingReservationGate.js";
+import {
+  PendingReservationGate,
+  reservedCreateSessionId,
+  trackReservedCreate,
+} from "../src/v4/pendingReservationGate.js";
 
 describe("PendingReservationGate", () => {
   it("keeps a reserved session pending until its create is acknowledged", async () => {
@@ -82,5 +86,38 @@ describe("trackReservedCreate", () => {
     const other = tracked("sendText", "s-other");
     expect(gate.isPending("s-other")).toBe(false);
     await expect(other).rejects.toThrow("refused sendText");
+  });
+});
+
+describe("reservedCreateSessionId (real reservation shape)", () => {
+  it("reads the reserved id from the payload when the dispatch target is null", async () => {
+    // SessionPane dispatches a reservation as createSession with the id in the payload and a null target.
+    const gate = new PendingReservationGate();
+    let release!: () => void;
+    const dispatch = async (...args: readonly unknown[]) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return args[0];
+    };
+    const tracked = trackReservedCreate(gate, dispatch, reservedCreateSessionId);
+    const pending = tracked(
+      "createSession",
+      {
+        workspaceId: "w-1",
+        sessionId: "s-reserved",
+        submissionPreparation: { submissionId: "sub-1" },
+      },
+      null,
+    );
+    expect(gate.isPending("s-reserved")).toBe(true);
+    release();
+    await pending;
+    expect(gate.isPending("s-reserved")).toBe(false);
+  });
+
+  it("returns null for other commands and for a createSession without a reserved id", () => {
+    expect(reservedCreateSessionId(["sendText", { text: "hi" }, "s-1"])).toBeNull();
+    expect(reservedCreateSessionId(["createSession", { workspaceId: "w-1" }, null])).toBeNull();
   });
 });
