@@ -70,3 +70,19 @@
 - `Task list`、`Pinned`、`Projects`、`Tasks` 均使用 base 字号；保留总标题和分组标题原有的颜色、间距和交互。
 - `command-center-focus.test.ts` 检查总标题、分组标题等于 `--ui-font-size`，两者字号差为 0，并验证深浅主题与窄屏。
 - 验证顺序为 `pnpm typecheck` → E2E 构建 → E2E 运行。不要并行执行前两步：`tsconfig.host.json` 会向 `out/host` 输出未打包 JS，与桌面 bundle 共用目录，可能导致 Host 直接加载 workspace TS 并因 `.js` 模块不存在退出。类型检查结束后重新构建，不修改 Host 产品逻辑来绕过产物污染。
+
+## 任务前进 / 后退历史（ISSUE-033）
+
+- 历史是一条全局线性栈，由 `packages/ui/src/lib/taskNavigationHistory.ts` 纯函数维护；`zcodeSessionStoreNavigation.ts` 是唯一写入者。
+- 入栈只发生在用户主动选择的入口：侧栏/搜索/命令面板选中 task（经 `setActiveTaskId`）、Automations 与插件市场主视图。后退、前进回放不得改变栈的内容，只能移动 cursor。
+- 相邻且身份相同的条目不重复入栈（身份 = `workspaceIdentity` 与 `workspacePath` 的完整键）。非相邻重复允许保留，因为它代表一次新的访问。
+- 选择新条目时，cursor 之后的前进历史被截断（浏览器语义）。
+- 后退或前进遇到已失效的 task 条目（`taskNavigationTargetExists` 为假）时，该 task 的全部条目被清除；清除与 cursor 定位在同一次纯函数计算中完成，并沿原方向继续寻找下一个有效条目，不跳过、不重排其余条目。
+- 到头（没有有效目标）时历史只保留已清除的失效条目，cursor 留在当前条目，不发生导航。
+- 删除 task（`removeTaskState`）时清除该 task 的条目；cursor 落在删除前位置之后的第一个保留条目（与旧行为一致）。
+
+| 用例         | 前置                                         | 操作        | 期望                                            |
+| ------------ | -------------------------------------------- | ----------- | ----------------------------------------------- |
+| `NAV-033-01` | 栈 `[Auto, PS, A(失效), B, C]`，cursor 在 PS | 前进        | 导航到 B；A 被清除；cursor 指向 B               |
+| `NAV-033-02` | 栈 `[A(失效), B]`，cursor 在 B               | 后退        | 清除 A；无目标；cursor 仍在 B，不导航           |
+| `NAV-033-03` | 栈 `[A, A, X, A, Y, Z]`，cursor 在第 4 个 A  | 删除 task A | cursor 指向 Y（删除前位置之后的第一个保留条目） |

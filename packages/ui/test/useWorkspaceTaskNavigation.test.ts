@@ -59,10 +59,7 @@ function servicesWithSetTaskUnread(setTaskUnread: ReturnType<typeof vi.fn>): ISe
 
 function renderNavigation(params: {
   ambientServices: IServiceAccessor;
-  activateTabByPath: (
-    workspacePath: string,
-    options?: { workspaceIdentity?: string },
-  ) => boolean;
+  activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
   workspacePath?: string;
   workspaceIdentity?: string;
   onNavigateToAutomations?: ReturnType<typeof vi.fn>;
@@ -74,8 +71,7 @@ function renderNavigation(params: {
       useWorkspaceTaskNavigation({
         intl: { formatMessage: ({ id }) => id },
         workspaceAbsPath: params.workspacePath ?? "/home/dev",
-        workspaceIdentity:
-          params.workspaceIdentity ?? "remote:ssh:dev:22:user:/home/dev",
+        workspaceIdentity: params.workspaceIdentity ?? "remote:ssh:dev:22:user:/home/dev",
         activateTabByPath: params.activateTabByPath,
         onNavigateToAutomations: params.onNavigateToAutomations,
       }),
@@ -250,12 +246,7 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     await act(async () => {
-      hook.result.current.handleSelectTask(
-        localWorkspacePath,
-        taskId,
-        undefined,
-        321,
-      );
+      hook.result.current.handleSelectTask(localWorkspacePath, taskId, undefined, 321);
       await Promise.resolve();
     });
 
@@ -286,11 +277,12 @@ describe("useWorkspaceTaskNavigation", () => {
         "remote-b": { sessionId: "remote-b", services: targetServices },
       },
     });
-    useTaskQueryCacheStore
-      .getState()
-      .upsertTaskMeta(
-        taskMeta({ workspacePath: targetWorkspacePath, workspaceIdentity: targetWorkspaceIdentity }),
-      );
+    useTaskQueryCacheStore.getState().upsertTaskMeta(
+      taskMeta({
+        workspacePath: targetWorkspacePath,
+        workspaceIdentity: targetWorkspaceIdentity,
+      }),
+    );
     tabStore.setState({
       activeTabId: "remote-a",
       tabs: [
@@ -328,11 +320,7 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     await act(async () => {
-      hook.result.current.handleSelectTask(
-        targetWorkspacePath,
-        taskId,
-        targetWorkspaceIdentity,
-      );
+      hook.result.current.handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
       await Promise.resolve();
     });
 
@@ -386,18 +374,61 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     act(() => {
-      hook.result.current.handleSelectTask(
-        targetWorkspacePath,
-        taskId,
-        targetWorkspaceIdentity,
-      );
+      hook.result.current.handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
     });
 
     expect(baseSetTaskUnread).not.toHaveBeenCalled();
     expect(staleRemoteSetTaskUnread).not.toHaveBeenCalled();
     expect(
-      useTaskQueryCacheStore.getState().taskMetaByEntityKey[buildTaskEntityKey(remoteTask)]?.unreadAt,
+      useTaskQueryCacheStore.getState().taskMetaByEntityKey[buildTaskEntityKey(remoteTask)]
+        ?.unreadAt,
     ).toBe(2);
+    hook.unmount();
+  });
+
+  it("ISSUE-033: 前进遇到已失效 task 时清除它，并按访问顺序到达下一条有效条目", () => {
+    const taskMetaFor = (id: string) => ({
+      taskId: id,
+      traceId: id,
+      title: id,
+      workspacePath: localWorkspacePath,
+      createdAt: 1,
+      updatedAt: 2,
+      mode: "default" as const,
+    });
+    const taskB = taskMetaFor("task-b");
+    const taskC = taskMetaFor("task-c");
+    useTaskQueryCacheStore.setState({
+      taskMetaByEntityKey: {
+        [buildTaskEntityKey(taskB)]: taskB,
+        [buildTaskEntityKey(taskC)]: taskC,
+      },
+    } as never);
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-missing" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-b" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-c" },
+        ],
+        cursor: 0,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavForward();
+    });
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(
+      history.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
+    ).toEqual(["plugin-store", "task-b", "task-c"]);
+    expect(history.entries[history.cursor]).toMatchObject({ kind: "task", taskId: "task-b" });
     hook.unmount();
   });
 });
