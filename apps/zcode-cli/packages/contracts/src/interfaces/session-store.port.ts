@@ -185,8 +185,6 @@ export interface SessionInfo {
     updated: number;
     titleUpdated?: number;
     compacting?: number;
-    // TEMPORARY fork compatibility (remove in final PR): fork archive timestamp.
-    archived?: number;
     deleted?: number;
   };
 }
@@ -289,8 +287,6 @@ export interface UpdateSessionInput {
   revert?: SessionRevert | null;
   permission?: PermissionRuleset | null;
   timeCompacting?: number | null;
-  // TEMPORARY fork compatibility (remove in final PR): fork archive column; upstream replaced it with lastOutcome.
-  timeArchived?: number | null;
 }
 
 export interface FileDiff {

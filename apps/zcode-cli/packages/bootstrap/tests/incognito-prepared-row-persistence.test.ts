@@ -8,7 +8,7 @@ import { createTestAgentRuntime } from "./helpers/test-agent-runtime.js";
 // has a profile; first-send persistence of the incognito runtime must still land it.
 describe("incognito profile on a prepared row", () => {
   it("lands on the first send of the incognito runtime", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionId = createSessionId("incognito-prepared-row");
     try {
       await store.createSession({

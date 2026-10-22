@@ -84,7 +84,6 @@ import { dirname } from "node:path";
 import {
   DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
   runSqliteSessionMigrationsAsync,
-  runSqliteSessionMigrationsSync,
   type AsyncSqliteMigrationOptions,
 } from "./migration-runner.js";
 import type {
@@ -92,7 +91,7 @@ import type {
   SessionStoreDebugCounts,
   SqliteSessionStoreOptions,
 } from "./options.js";
-import { ensureParentDir, getDefaultSessionDbPath } from "./paths.js";
+import { getDefaultSessionDbPath } from "./paths.js";
 import { maybeThrowStorageFsFault } from "../fs-fault-injection.js";
 import * as debugRepository from "./repositories/debug.js";
 import { createDwfJournalStore } from "./repositories/dwf-journal.js";
@@ -245,7 +244,7 @@ export class SqliteSessionStore
     db: DatabaseSync,
     dbPath: string,
     options: SqliteSessionStoreOptions,
-    readonly migrationResult: MigrationResult | undefined,
+    readonly migrationResult: MigrationResult,
   ) {
     this.db = db;
     this.dbPath = dbPath;
@@ -303,39 +302,6 @@ export class SqliteSessionStore
     migrationOptions: AsyncSqliteMigrationOptions = {},
   ): Promise<SqliteSessionStore> {
     return SqliteSessionStore.open(options, migrationOptions);
-  }
-
-  /**
-   * Compatibility open for the synchronous factories (remove with them; see
-   * specs/session-database-migrations.md). Migrations run without the table backup.
-   */
-  static openSyncCompat(options: SqliteSessionStoreOptions = {}): SqliteSessionStore {
-    const dbPath = options.dbPath ?? getDefaultSessionDbPath();
-    const startupLockTimeoutMs =
-      options.startupLockTimeoutMs ?? DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS;
-    let db: DatabaseSync;
-    try {
-      ensureParentDir(dbPath);
-      maybeThrowStorageFsFault({ operation: "sqliteOpen", path: dbPath });
-      db = new DatabaseSync(dbPath, { timeout: startupLockTimeoutMs });
-    } catch (error) {
-      throw new SqliteSessionMigrationError(`Failed to open SQLite session database at ${dbPath}`, {
-        cause: error,
-        dbPath,
-        kind: "open_failed",
-      });
-    }
-    try {
-      const result = runSqliteSessionMigrationsSync(db, dbPath, startupLockTimeoutMs);
-      return new SqliteSessionStore(db, dbPath, options, result);
-    } catch (error) {
-      try {
-        db.close();
-      } catch {
-        /* Preserve the original migration failure. */
-      }
-      throw error;
-    }
   }
 
   getDatabasePath(): string {
@@ -1104,21 +1070,16 @@ export class SqliteSessionStore
   }
 }
 
-/**
- * Compatibility factory for synchronous callers (bootstrap sessions, tests, scripts). It runs migrations
- * without the table backup. TEMPORARY: remove in the final PR, after callers use `SqliteSessionStore.open`.
- */
 export function createSqliteSessionStore(
   options: SqliteSessionStoreOptions = {},
-): SqliteSessionStore {
-  return SqliteSessionStore.openSyncCompat(options);
+): Promise<SqliteSessionStore> {
+  return SqliteSessionStore.open(options);
 }
 
-/** TEMPORARY compatibility alias of `createSqliteSessionStore`; remove in the final PR. */
 export function openStartupSqliteSessionStore(
   options: SqliteSessionStoreOptions = {},
-): SqliteSessionStore {
-  return SqliteSessionStore.openSyncCompat(options);
+): Promise<SqliteSessionStore> {
+  return SqliteSessionStore.open(options);
 }
 
 export { getDefaultSessionDbPath };

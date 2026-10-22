@@ -12,7 +12,7 @@ const PROFILE = { ...INCOGNITO_LOCKDOWN_PROFILE, memory: true };
 
 describe("incognito profile on the CLI resume resolution", () => {
   it("readPersistedIncognitoProfile returns the row profile, undefined for a normal row or a missing session", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const incognitoId = createSessionId("resume-incognito");
     const normalId = createSessionId("resume-normal");
     try {
@@ -52,7 +52,7 @@ describe("incognito profile on the CLI resume resolution", () => {
   });
 
   it("resolveLatestSession exposes the latest session's profile for --continue", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     try {
       await store.createSession({
         id: createSessionId("continue-incognito"),

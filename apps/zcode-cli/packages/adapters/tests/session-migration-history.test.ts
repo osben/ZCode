@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
 import {
   runSqliteSessionMigrationsAsync,
-  runSqliteSessionMigrationsSync,
 } from "../src/storage/session-store/migration-runner.js";
 
 // Real sqlite fixtures of the histories that reach this build (see specs/session-database-migrations.md):
@@ -108,7 +107,7 @@ describe("session database history: fork build DB before the PR opens with the n
     expect(seedRows(db)).toEqual(seedBefore);
   });
 
-  it("is idempotent on reopen and keeps the sync compat path equivalent", async () => {
+  it("is idempotent on reopen", async () => {
     const path = await copyFixture("fork-head-execution-worktree.sqlite");
     const first = open(path);
     await runSqliteSessionMigrationsAsync(first, path);
@@ -120,12 +119,6 @@ describe("session database history: fork build DB before the PR opens with the n
     expect(result.applied).toEqual([]);
     expect(ledger(second)).toEqual(snapshot);
     second.close();
-
-    const syncPath = await copyFixture("fork-head-execution-worktree.sqlite");
-    const syncDb = open(syncPath);
-    runSqliteSessionMigrationsSync(syncDb, syncPath);
-    expect([...ledger(syncDb).keys()].sort()).toEqual([...snapshot.keys()].sort());
-    expect(ledger(syncDb).get(NEW_EXECUTION_ID)?.checksum).toBe(snapshot.get(NEW_EXECUTION_ID)?.checksum);
   });
 
   it("ignores fork ledger rows this build does not own (the fork usage rollup id)", async () => {
@@ -177,7 +170,7 @@ describe("session database history: fork build DB with translated 0020 SQL comme
   it("keeps the translated variant accepted by the runner's preflight for every reopen", async () => {
     const path = await copyFixture("fork-translated-0020.sqlite");
     const db = open(path);
-    runSqliteSessionMigrationsSync(db, path);
+    await runSqliteSessionMigrationsAsync(db, path);
     expect(ledger(db).get("0020_provider_model_selection")?.checksum).toBe(TRANSLATED_0020);
   });
 });

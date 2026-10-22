@@ -23,7 +23,12 @@ import type {
 import { runJournalStoreContract } from "@zcode/dynamic-workflow/testing";
 import type { DwfRunIntrospectionQueries, DwfRunSessionListItem } from "../src/storage/index.js";
 import { createDwfJournalStore, createSqliteSessionStore } from "../src/storage/index.js";
-import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
+import { runSqliteSessionMigrationsAsync } from "../src/storage/session-store/migration-runner.js";
+import { SQLITE_MIGRATIONS } from "../src/storage/session-store/migrations.js";
+import {
+  applySqliteSchemaMigration,
+  ensureSqliteSchemaMigrationTable,
+} from "@zcode/shared/sqlite-migrations";
 
 const openDatabases: DatabaseSync[] = [];
 
@@ -31,7 +36,12 @@ const openDatabases: DatabaseSync[] = [];
 function openJournalDb(dbPath = ":memory:"): { db: DatabaseSync; journal: JournalStorePort } {
   const db = new DatabaseSync(dbPath);
   openDatabases.push(db);
-  runSqliteSessionMigrationsSync(db, dbPath);
+  // The journal factory only loads the frozen upstream schema; async startup, backup and locking
+  // are verified by the migration tests.
+  db.exec("BEGIN IMMEDIATE");
+  ensureSqliteSchemaMigrationTable(db);
+  for (const migration of SQLITE_MIGRATIONS) applySqliteSchemaMigration(db, migration);
+  db.exec("COMMIT");
   return { db, journal: createDwfJournalStore(db) };
 }
 
@@ -93,7 +103,7 @@ describe("SQLite dwf journal store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
 
     try {
-      const first = createSqliteSessionStore({ dbPath });
+      const first = await createSqliteSessionStore({ dbPath });
       const journal = first.workflowJournalStore();
       journal.createRun(RUN);
       journal.putActor(ACTOR);
@@ -104,7 +114,7 @@ describe("SQLite dwf journal store", () => {
       journal.updateRunUsage(RUN.runId, 120);
       first.close();
 
-      const second = createSqliteSessionStore({ dbPath });
+      const second = await createSqliteSessionStore({ dbPath });
       const resumed = second.workflowJournalStore();
 
       expect(resumed.getRun(RUN.runId)).toEqual({ ...RUN, spentTokens: 120 });
@@ -145,7 +155,7 @@ describe("SQLite dwf journal store", () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-dwf-journal-caps-"));
     const dbPath = join(tempRoot, "session.sqlite");
     try {
-      const first = createSqliteSessionStore({ dbPath });
+      const first = await createSqliteSessionStore({ dbPath });
       const journal = first.workflowJournalStore();
       journal.createRun(RUN);
       journal.updateRunUsage(RUN.runId, 120);
@@ -159,7 +169,7 @@ describe("SQLite dwf journal store", () => {
       });
       first.close();
 
-      const second = createSqliteSessionStore({ dbPath });
+      const second = await createSqliteSessionStore({ dbPath });
       expect(second.workflowJournalStore().getRun(RUN.runId)?.caps).toEqual({ maxConcurrency: 2 });
       second.close();
     } finally {
@@ -212,7 +222,7 @@ describe("SQLite dwf journal store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
 
     try {
-      const first = createSqliteSessionStore({ dbPath });
+      const first = await createSqliteSessionStore({ dbPath });
       const journal = first.workflowJournalStore();
       journal.createRun(RUN);
       journal.updateRunStatus(RUN.runId, "completed", {
@@ -222,7 +232,7 @@ describe("SQLite dwf journal store", () => {
 
       // The persistence face of a desktop-observed bug: once the process exits, the artifact must
       // still be readable back from the journal.
-      const second = createSqliteSessionStore({ dbPath });
+      const second = await createSqliteSessionStore({ dbPath });
       const resumed = second.workflowJournalStore().getRun(RUN.runId);
       expect(resumed?.status).toBe("completed");
       expect(resumed?.result).toEqual({ report: "done", steps: [1, 2, 3] });
@@ -1204,10 +1214,10 @@ describe("SQLite dwf journal store — listRunsByParentSession", () => {
    * Conversely `failure_json` must be in the SQL: the resumable predicate depends on
    * failure.code (see the next case).
    */
-  it("枚举查询的 SQL 取 failure_json 而不取 result_json", () => {
+  it("枚举查询的 SQL 取 failure_json 而不取 result_json", async () => {
     const db = new DatabaseSync(":memory:");
     openDatabases.push(db);
-    runSqliteSessionMigrationsSync(db, ":memory:");
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     const prepared: string[] = [];
     // A bypass recorder for prepare: only to see the real column list this query sends.
     const recordingDb = new Proxy(db, {
