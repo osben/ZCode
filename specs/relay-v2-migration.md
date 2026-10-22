@@ -1,6 +1,8 @@
 # Relay V2 migration (web remote control)
 
-Status: DRAFT, awaiting user review on the decisions in section 5. No implementation has started.
+Status: V2 landed. Desktop client (S2, `2fffbdd7`), web client (S3, `packages/web/src/web-remote-control`) and
+self-hosted server (S4, `a00b0dd2`) are merged via PR #243. The relay-v1 cleanup removes the remaining V1 shared
+code (heartbeat module, proof vectors, V1 message schemas, V1 task-list sync). Sections 2 and 7 are historical.
 Base: `origin/integration` (`cccf1977`, upstream 3.16.1 merged via PR #228).
 Upstream reference: `0a1fc56d`. Upstream protocol reference: `docs/web-remote-control/relay-v2-pairing.md`
 (contract taken from zcode-server `origin/staging` `5a947cae`: `docs/remote-relay.md`,
@@ -23,7 +25,9 @@ User decision (final): migrate the web remote relay to V2. No dual stack.
 - Fork-only behavior survives: OAuth callback page (`specs/oauth-callback-page.md`), self-hosted
   conversation share, bots `/remote`, deep links, English copy and comments.
 
-## 2. Inventory of V1 (what is in the fork tree today)
+## 2. Inventory of V1 (historical: the fork tree before the migration)
+
+Historical snapshot taken before the migration. The Status line lists what has since been removed.
 
 Server (fork self-hosted relay, Node, V1 protocol):
 
@@ -146,7 +150,11 @@ Production gates, all owned outside this repo:
 - OAuth whitelist for the `/remote/v4` callback.
   Release order: prod server V2, gateway WS and OSS rules, OAuth whitelist, mobile page version directory, then same-version desktop app.
 
-## 7. Implementation slices (proposed, not started)
+## 7. Implementation slices (historical: all landed)
+
+Done. S1 (shared) landed in `48d740d7` and the merge `56929f62`; its V1 leftovers (heartbeat module, proof
+vectors, V1 schemas) were removed by the relay-v1 cleanup. S2, S3 and S4 landed as listed in the Status line.
+The slice text below is kept as the original plan.
 
 Each slice must be green alone (typecheck, lint, architecture, tests) and ledgered.
 
@@ -291,7 +299,7 @@ Status: implemented in PR "feat(relay): self-hosted relay v2 server (own JWT iss
 `claude/relay-v2-server-final`). Sections 10 and 11 remain the owner decisions; this section fixes the
 server details they leave open. Client slices (desktop, web) consume the wire contract below.
 
-### 12.1 Login identity and the trust boundary
+### 14.1 Login identity and the trust boundary
 
 What the clients hold today (verified in code, not assumed):
 
@@ -306,7 +314,7 @@ Decision for the exchange input (`identity_token`):
 - The input is the existing login JWT (`zcodejwttoken`). It is the only identity the owner already has on
   desktop and mobile, so no new login flow is introduced.
 - The relay verifies it locally, with no network call at runtime. Verification uses a public JWK set and
-  an issuer string from environment configuration (section 12.4). The relay never calls the account
+  an issuer string from environment configuration (section 14.4). The relay never calls the account
   service, zcode-server or any OAuth endpoint.
 - Accepted algorithms: `EdDSA` (Ed25519), `ES256`, `RS256`. `none` and HMAC algorithms are rejected, so no
   shared secret with the account service is needed.
@@ -329,9 +337,9 @@ Trust boundary (explicit):
    public key set.
 2. After the exchange, the relay JWT is the only credential for `/api/v1/remote/*`. The one-time WS token is
    minted from it. The login JWT is never sent to `ws2`, never placed in a QR code and never logged.
-3. The relay trusts only tokens it signed itself (section 12.2).
+3. The relay trusts only tokens it signed itself (section 14.2).
 
-### 12.2 Relay JWT (fork-owned issuer)
+### 14.2 Relay JWT (fork-owned issuer)
 
 - Signed with EdDSA (Ed25519). Header: `alg: EdDSA`, `typ: JWT`, `kid`.
 - Claims: `iss = "zcode-remote-relay"`, `aud = "zcode-remote-relay"`, `sub` = user id from the identity
@@ -343,7 +351,7 @@ Trust boundary (explicit):
   replica; this PR is single-replica.
 - Expired or invalid relay JWTs return HTTP 401 before any handler runs.
 
-### 12.3 HTTP and WebSocket contract (server side)
+### 14.3 HTTP and WebSocket contract (server side)
 
 HTTP responses use the envelope `{code, msg, data?}`; `code: 0` is success. Every response carries
 `Cache-Control: no-store`. Unknown routes return 404.
@@ -383,7 +391,7 @@ Liveness: an unauthenticated socket is closed after 15 s without a successful `a
 ping every 15 s, closed after 45 s without pong. The client heartbeat (`pair_status_query`, 5 s ±1 s, 15 s ACK)
 is application level and is answered by the relay with `pair_status_ack`.
 
-### 12.4 Environment variables (server)
+### 14.4 Environment variables (server)
 
 Kept from V1: `ZCODE_RELAY_HOST`, `ZCODE_RELAY_PORT`, `ZCODE_RELAY_ALLOWED_ORIGINS`,
 `ZCODE_RELAY_TRUSTED_PROXIES`, `ZCODE_RELAY_MAX_CONNECTIONS`, `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` (also
@@ -406,7 +414,7 @@ New:
 
 Missing or malformed required values stop startup with a message that names the variable, never its value.
 
-### 12.5 Event order (server side)
+### 14.5 Event order (server side)
 
 Owners: the relay registry (`app/relay.ts`) owns connections and the `(SID, role)` slot; the token store owns
 unconsumed tokens; the device store owns device records. Nothing else.
@@ -454,14 +462,14 @@ sequenceDiagram
 Connection states: `pending` (token consumed, no `auth_init` yet) to `authenticated` (slot owned). Any other
 transition closes the socket. Reconnection always starts from a new token.
 
-### 12.6 Persistence
+### 14.6 Persistence
 
 SQLite (`node:sqlite`, one worker thread, as before). Table `relay_devices(device_sid TEXT PRIMARY KEY,
 user_id TEXT NOT NULL, device_mid TEXT NOT NULL, created_at INTEGER NOT NULL)` with indexes on `user_id`
 and `(user_id, device_mid)`. Delete removes the row, so the SID stops authenticating. Plaintext at rest by
 design, since no secret is stored; the package README requires the file to be readable only by the relay user.
 
-### 12.7 Verification (S3 acceptance)
+### 14.7 Verification (S3 acceptance)
 
 Unit: JWT sign/verify (algorithm allowlist, `kid`, expiry, issuer, audience, user claim); identity
 verification for each accepted algorithm; one-time token rules; device store operations and restart
@@ -473,7 +481,7 @@ V2 schemas in the tests.
 
 ## 15. Identity modes (`ZCODE_REMOTE_RELAY_IDENTITY_MODE`)
 
-Problem: section 12.1 makes the relay depend on a z.ai login JWT and its JWKS. The fork owner does not
+Problem: section 14.1 makes the relay depend on a z.ai login JWT and its JWKS. The fork owner does not
 operate z.ai, and fork users may have no z.ai login (API-key only). The relay therefore supports two
 identity modes, chosen by environment, with identical relay JWT format, routes, `ws2` protocol and device
 lifecycle. Only the way a client proves who it is at `POST /api/v1/remote/session` differs.
@@ -482,7 +490,7 @@ lifecycle. Only the way a client proves who it is at `POST /api/v1/remote/sessio
 
 | Mode         | Caller proves identity with                                  | Relay user id (`sub`)                     |
 | ------------ | ------------------------------------------------------------ | ----------------------------------------- |
-| `zai-jwt`    | z.ai login JWT in `{identity_token}` (sections 12.1 to 12.3) | the configured user claim, unchanged      |
+| `zai-jwt`    | z.ai login JWT in `{identity_token}` (sections 14.1 to 14.3) | the configured user claim, unchanged      |
 | `device-key` | Ed25519 device key plus enrollment secret (15.2)             | `dk:` + base64url(sha256(raw public key)) |
 
 - `ZCODE_REMOTE_RELAY_IDENTITY_MODE` is `zai-jwt` or `device-key`. Unknown values stop startup, naming the variable.

@@ -56,7 +56,7 @@ Notes:
 - Pins: the upstream project pin model is the owner. `fork_workspace_pins` data is migrated into upstream project pins (#232).
 - `/plan` slash command: removed in the fork. The upstream palette toggle is used instead.
 - Bots: adopt `[hostId, projectId]` project identity (#231). Persisted bot state is migrated, and backups of the old state are kept.
-- Relay: the fork relay moves to relay v2 with fork-owned JWT keys read from environment variables. The relay PR with these keys is still pending (separate PR, see section 5).
+- Relay: the fork relay runs relay v2 with fork-owned JWT keys read from environment variables. The relay V2 migration has landed (`specs/relay-v2-migration.md`, Status line).
 - Size guard: `.md` and test files are exempt from the staged-size guard (#222). Other exemptions are temporary and listed in section 4.
 - `getTaskMeta` throws when the task source becomes invalid, instead of returning a partial value.
 - Build chain: `stageRemoteAssetsCli` is called directly from the build chain, not through the old wrapper.
@@ -71,7 +71,7 @@ Notes:
   - `server/src/http.ts`: `/api/connect-remote` and `/ws/remote/:id` are kept, because fork remote features and bots `/remote` depend on them.
   - `uk-UA` locale is kept. The shared `Locale` stays three-valued, and UI service boundaries map uk-UA to en-US through `toServiceLocale()`.
   - `autoUpdater.ts` keeps the fork "3.15.3 parity" quit-and-install state machine. Upstream's `quitAndInstallState` and `isUpdateTargetLocked()` are not adopted (`specs/desktop-upstream-sync.md`).
-  - Relay placeholders (`WebRemoteControlStatus.mobileTaskView?`, `WebRemoteControlTaskTarget.hostId?`) are optional and marked `TEMPORARY relay-decision placeholder`.
+  - Relay placeholders are resolved: `WebRemoteControlStatus.mobileTaskView` is nullable and `WebRemoteControlTaskTarget.hostId` is a live optional member. Their TEMPORARY markers were removed in the relay-v1 cleanup.
 - Next upstream target: `3c5b2276` (upstream `main` moved there during the sync). It is the next sync, not part of 3.16.1.
 
 ## 4. Known gaps and follow-ups

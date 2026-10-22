@@ -1,8 +1,6 @@
-import { relayClientMessageSchema } from "./contract.js";
-
-export const relayAuthExample = relayClientMessageSchema.parse({
-  type: "auth_init",
-  role: "terminal",
-  device_sid: "fixture-device",
-  meta: { platform: "web", version: "fixture", name: "fixture" },
+import { parseWebRemoteControlRelayV2IncomingMessage } from "#src/web-remote-relay/contract.js";
+export const matchedDevice = parseWebRemoteControlRelayV2IncomingMessage({
+  type: "auth_ack",
+  device_sid: "device-example",
+  pair_status: "matched",
 });

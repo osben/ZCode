@@ -867,7 +867,3 @@ exceptions:
       - apps/zcode-cli/packages/adapters/src/model/endpoint-routing-edition/index.ts
       - apps/zcode-cli/packages/adapters/src/model/provider-endpoint-routing-options.ts
     reason: Existing upstream routing assembly files gain the endpoint origin and injected JWT reader; adopting the full CLI model adapter directory needs a separate module boundary refactor.
-  - id: ui-plugin-managed-page-size-upstream-3161
-    rule: max-file-lines
-    paths: [packages/ui/src/plugin-ui/adapters/pluginUiManagedPage.ts]
-    reason: Upstream 3.16.1 file carried into the UI-1 sync; splitting belongs to the UI-2 plugin UI work.

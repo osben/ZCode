@@ -2284,8 +2284,6 @@ nodes:
     codeSeeds:
       - symbol: "WebRemoteControlMobileTaskHome"
         file: "packages/ui/src/WebRemoteControlMobileTaskHome.tsx"
-      - symbol: "buildWebRemoteControlTaskTargets"
-        file: "packages/ui/src/lib/webRemoteControlTaskIndex.ts"
   - id: "surface.desktop-web-remote-control-dialog"
     kind: "ui-surface"
     label: "Desktop Web Remote Control dialog"
@@ -2342,9 +2340,6 @@ nodes:
   - id: "state.web-remote-task-target-projection"
     kind: "state-owner"
     label: "Web remote task target projection"
-    codeSeeds:
-      - symbol: "buildWebRemoteControlTaskTargets"
-        file: "packages/ui/src/lib/webRemoteControlTaskIndex.ts"
   - id: "service.zcode-task-list"
     kind: "service"
     label: "ZCode task list service"

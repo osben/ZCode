@@ -161,8 +161,6 @@ declare global {
       syncWindowTabs(paths: string[]): void;
       /** Sync the workspaces Web remote control may switch between for the current window. */
       syncWebRemoteControlWorkspaces?(workspaces: WebRemoteControlWorkspaceTarget[]): void;
-      /** Sync the task snapshots Web remote control can display for the current window. */
-      syncWebRemoteControlTasks?(tasks: WebRemoteControlTaskTarget[]): void;
       /** Register a callback for a mobile Web remote control request to reconnect a workspace. */
       onWebRemoteControlReconnectWorkspace?(
         handler: (

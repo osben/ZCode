@@ -220,7 +220,7 @@ packages/ui/src/project-sidebar/grouped/task-row.tsx
 # Upstream-identical file (30400 bytes before the color field); keep it diffable against upstream.
 packages/ui/src/project-sidebar/ProjectEditor.tsx
 
-# TEMPORARY (upstream 3.16.1 final sync WIP): split these files below 20000 bytes, then remove this block.
+# TEMPORARY (upstream 3.16.1 sync, landed in PR #228): split these files below 20000 bytes, then remove this block.
 packages/desktop/src/host/sourceServerConnectionManager.ts
 packages/desktop/src/host/sourceServerDirectory.ts
 packages/desktop/src/host/windowRemoteConnectionRegistry.ts
@@ -242,18 +242,16 @@ packages/services/src/session/offPeakMockGateway.ts
 packages/services/src/session/offPeakTaskService.ts
 packages/services/src/zcode-agent/zcodeAgentProcessManager.ts
 packages/services/src/zcode-session/zcodeSessionService.ts
+# Permanent: generated upstream baseline and the architecture policy table are data tables, not
+# split candidates; their size is expected and they stay exempt.
 scripts/architecture/upstream-snapshot.json
 architecture-policy.yaml
 
 # TEMPORARY (relay v2 desktop client, specs/relay-v2-migration.md section 12): webRemoteControlManager.ts carries the upstream V2 manager plus fork hunks (~87 KB); split it into relay start/transport, bridge, and status modules, then remove this block. WebRemoteControlDialog.tsx grew past 20 KB with the repair notice; split the failure/notice presentation out, then remove this block.
 packages/desktop/src/main/webRemoteControlManager.ts
 packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx
-# TEMPORARY(ui-parity-composer): composer files keep fork features that specs/composer-worktree-setup-steps.md,
-# specs/incognito-session.md, specs/voice-dictation.md and specs/composer-branch-switcher-semantics.md require.
-# Remove once the composer is split into smaller modules.
 # TEMPORARY (claude/ui-tests-fonts): npm-overrides.json is a generated-style license data table; remove once it is split.
 third-party/npm-overrides.json
 
-# TEMPORARY(claude/ui-tail-shell): fork command center (worktree palette, page stack), settings (sessions, instructions, voice, palette, fonts), root and side-pane wiring keep fork features that specs/composer-worktree-setup-steps.md, specs/manage-sessions-table.md, specs/global-instructions.md, specs/themes.md, specs/voice-dictation.md and specs/sidebar-child-conversation-counts.md require. Remove once these files are split below 20000 bytes.
 # TEMPORARY (relay v2 web client): upstream webRemoteControlTransport (~27 KB) taken as-is. Split it below 20000 bytes (WebSocket framing vs heartbeat/token recovery), then remove this block.
 packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
