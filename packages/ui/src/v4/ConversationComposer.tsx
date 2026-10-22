@@ -1597,6 +1597,7 @@ function ConversationComposerImpl({
       runtimeBlocked,
       submissionReady,
       submissionConfigured: true,
+      modelSelectionIssue: modelSelectionView?.selectionIssue,
       sendInProgress: pendingOwner !== null || worktreeQueued,
       preparedSessionAwaitingFirstInput: Boolean(sessionId && snapshot?.meta.submissionPreparation),
       retrying,
@@ -2290,6 +2291,7 @@ function ConversationComposerImpl({
         runtimeBlocked,
         submissionReady,
         submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        modelSelectionIssue: modelSelectionView?.selectionIssue,
         sendInProgress:
           pendingRef.current !== null ||
           targetSelectionPendingRef.current ||

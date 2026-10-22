@@ -7685,6 +7685,7 @@ const enUS: Record<string, string> = {
   "composer.sendBlocked.remoteUnavailable":
     "The remote host is unavailable. Try again once it reconnects.",
   "composer.sendBlocked.sessionNotReady": "The session isn’t ready yet. Try again in a moment.",
+  "composer.sendBlocked.modelUnavailable": "Selected model is unavailable — choose a model.",
   "composer.sendBlocked.sendInProgress": "Another message is still being sent.",
   "composer.sendBlocked.firstSubmissionDelivering":
     "Your first message is still being delivered. You can send this one once it arrives.",
