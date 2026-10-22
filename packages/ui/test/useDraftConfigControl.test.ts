@@ -8,6 +8,7 @@ import { resolveEffectiveModelSelection, type ProviderRegistryView } from "@zcod
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useDraftConfigControl as useActualDraftConfigControl } from "@/v4/composer/useDraftConfigControl.js";
 import {
+  composerScopeKey,
   persistV4ComposerDraft as persistScopedDraft,
   readV4ComposerDraft as readScopedDraft,
   resolveComposerScope,
@@ -443,11 +444,18 @@ describe("useDraftConfigControl slash command hydration", () => {
       }
       await act(async () => root.render(createElement(Probe, { ready: false })));
       await act(async () => root.render(createElement(Probe, { ready: true })));
+      // An unselectable persisted root selection is replaced by the Host preferredSelection
+      // (see specs/sidebar-new-task-outside-project.md rule 5), never kept as a dead selection.
+      const preferred = {
+        providerId: "provider",
+        modelId: "default",
+        options: { reasoningLevel: "high" },
+      };
       expect(control!.composerDraft.modelSelection).toEqual(
-        scenario === "session" ? undefined : selection,
+        scenario === "session" ? undefined : scenario === "invalid" ? preferred : selection,
       );
       expect(control!.draftConfig.modelSelection).toEqual(
-        scenario === "chosen" ? selection : undefined,
+        scenario === "chosen" ? selection : scenario === "invalid" ? preferred : undefined,
       );
       expect(control!.composerDraft.text).toBe("KEEP INTENT");
       act(() => root.unmount());
@@ -1829,5 +1837,142 @@ describe("useDraftConfigControl slash command hydration", () => {
       modelSelection: { providerId: "provider", modelId: "model-a" },
     });
     act(() => root.unmount());
+  });
+});
+
+describe("useDraftConfigControl dead stored selection (sidebar-new-task-outside-project rule 5)", () => {
+  // The Host view does not offer this provider, so the picker's effectiveSelection is null.
+  const DEAD = {
+    providerId: "account:zai-individual-coding-plan",
+    modelId: "GLM-5.3",
+    options: { reasoningLevel: "max" },
+  };
+  const OTHER = { providerId: "provider", modelId: "other", options: { reasoningLevel: "high" } };
+  const PREFERRED = {
+    providerId: "provider",
+    modelId: "model",
+    options: { reasoningLevel: "high" },
+  };
+  const view = {
+    ...modelSelectionView(1, ["model", "other"], "model"),
+    preferredSelection: PREFERRED,
+  } as ModelSelectionView;
+  const scopes = [
+    ["project", { projectId: "p" }],
+    ["global", { projectId: null }],
+  ] as const;
+
+  function recentKey(workspacePath: string) {
+    return `zcode-composer-recent:v2:${composerScopeKey(testScope(workspacePath))}`;
+  }
+
+  async function settle() {
+    for (let index = 0; index < 4; index += 1) await act(async () => {});
+  }
+
+  // installMinimalDom() replaces the storage, so every seed happens after the DOM is installed.
+  function mountProbe(workspacePath: string) {
+    const root = createRoot(installMinimalDom());
+    const result: { control?: ReturnType<typeof useDraftConfigControl> } = {};
+    function Probe() {
+      result.control = useDraftConfigControl({
+        workspacePath,
+        sessionId: null,
+        agentStartupAllowed: false,
+        modelSelectionView: view,
+      });
+      return null;
+    }
+    return { root, result, Probe };
+  }
+
+  it.each(scopes)(
+    "rule 5 (%s scope): a dead Recent selection initializes to preferredSelection and Recent is not rewritten",
+    async (_name, scope) => {
+      const workspacePath = `/dead-recent-${_name}`;
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: DEAD })();
+      const recentBefore = window.localStorage.getItem(recentKey(workspacePath));
+      expect(recentBefore).not.toBeNull();
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      expect(result.control!.composerDraft.modelSelection).toEqual(PREFERRED);
+      expect(result.control!.draftConfig.modelSelection).toEqual(PREFERRED);
+      // A blank page's config stays in memory (composerDraftStore), so no persisted root record exists here.
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toBeNull();
+      expect(window.localStorage.getItem(recentKey(workspacePath))).toBe(recentBefore);
+      act(() => root.unmount());
+    },
+  );
+
+  it.each(scopes)(
+    "rule 5 (%s scope): a dead persisted root selection is replaced and keeps the text",
+    async (_name, scope) => {
+      const workspacePath = `/dead-root-${_name}`;
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      persistV4ComposerDraft(workspacePath, undefined, "__draft__", {
+        text: "KEEP TEXT",
+        mode: "build",
+        planEnabled: false,
+        modelSelection: DEAD,
+      });
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      expect(result.control!.composerDraft).toMatchObject({
+        text: "KEEP TEXT",
+        modelSelection: PREFERRED,
+      });
+      expect(result.control!.draftConfig.modelSelection).toEqual(PREFERRED);
+      expect(readV4ComposerDraft(workspacePath, undefined, "__draft__")).toMatchObject({
+        text: "KEEP TEXT",
+        modelSelection: PREFERRED,
+      });
+      act(() => root.unmount());
+    },
+  );
+
+  it("rule 5: a Recent selection that the view can select is kept", async () => {
+    const workspacePath = "/valid-recent";
+    const { root, result, Probe } = mountProbe(workspacePath);
+    act(() =>
+      useZCodeSessionStore
+        .getState()
+        .startDraft(workspacePath, undefined, undefined, { projectId: "p" }),
+    );
+    captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: OTHER })();
+    const recentBefore = window.localStorage.getItem(recentKey(workspacePath));
+    await act(async () => root.render(createElement(Probe)));
+    await settle();
+    expect(result.control!.composerDraft.modelSelection).toEqual(OTHER);
+    expect(result.control!.draftConfig.modelSelection).toEqual(OTHER);
+    expect(window.localStorage.getItem(recentKey(workspacePath))).toBe(recentBefore);
+    act(() => root.unmount());
+  });
+
+  it("rule 5: project and global scopes produce the same initial selection for the same inputs", async () => {
+    const outcomes: unknown[] = [];
+    for (const [, scope] of scopes) {
+      const workspacePath = "/scope-parity";
+      const { root, result, Probe } = mountProbe(workspacePath);
+      act(() =>
+        useZCodeSessionStore.getState().startDraft(workspacePath, undefined, undefined, scope),
+      );
+      captureComposerRecentSubmission(workspacePath, { mode: "build", modelSelection: DEAD })();
+      await act(async () => root.render(createElement(Probe)));
+      await settle();
+      outcomes.push({
+        composer: result.control!.composerDraft.modelSelection,
+        config: result.control!.draftConfig.modelSelection,
+      });
+      act(() => root.unmount());
+    }
+    expect(outcomes[0]).toEqual(outcomes[1]);
+    expect(outcomes[0]).toEqual({ composer: PREFERRED, config: PREFERRED });
   });
 });

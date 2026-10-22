@@ -51,6 +51,10 @@ Rules:
 4. **Recent is written only by accepted submissions** of the same scope. A prewarm `createSession`
    without `firstInput` does not own the pending task draft; only the first submission or the send
    that follows it does.
+5. **A dead stored selection is replaced, never kept.** A stored Recent or persisted draft selection
+   that is not selectable in the current Host view (the view's `effectiveSelection` is null) is
+   replaced by the view's `preferredSelection` when the draft initializes. Recent itself is not
+   rewritten; the next accepted submission of the same scope replaces it (rule 4).
 
 Acceptance scenarios:
 

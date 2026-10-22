@@ -42,6 +42,15 @@ import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 /** 目录水合单飞（per workspaceKey）：draft、已有 session 和严格模式双挂载共享一次 RPC。 */
 const workspaceCatalogHydrationFlights = new Map<string, Promise<void>>();
 
+// Compare the identity and reasoning level only; object key order is not selection identity.
+function isSameModelSelection(left: ModelSelection, right: ModelSelection): boolean {
+  return (
+    left.providerId === right.providerId &&
+    left.modelId === right.modelId &&
+    left.options?.reasoningLevel === right.options?.reasoningLevel
+  );
+}
+
 export function applyDraftModelSelection(
   current: Partial<SessionConfigState>,
   model: ModelSelection,
@@ -194,6 +203,8 @@ export function useDraftConfigControl(params: {
       selection: draft.modelSelection ?? null,
     },
   );
+  // The Host view above was read for this stored selection, before any in-render initialization.
+  const viewedSelection = draft.modelSelection;
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
   if (currentState.initialization === "new-task" && !draft.mode && modelSelectionView) {
@@ -205,12 +216,23 @@ export function useDraftConfigControl(params: {
       rootScope,
     );
   }
-  // 空配置先初始化了权限，旧逻辑便因已有 mode 永久跳过模型初始化。
-  // 仅为无模型原意图的 Root 草稿补齐首次可用选择；不重置正文、权限或 Plan，
-  // 也不替换失效的旧选择、已有 Session 或分享导入的配置。
-  if (sessionId === null && !draft.modelSelection && modelSelectionView) {
-    const selection = resolveDraftInitialModelSelection(modelSelectionView, null).selection;
-    if (selection) draft = { ...draft, modelSelection: selection };
+  // An empty root draft that already has a mode must still receive its first usable model.
+  // Also replace a stored root selection the picker cannot resolve (effectiveSelection is null)
+  // with the Host preferredSelection. The Recent record is not rewritten here; the next accepted
+  // submission of the same scope replaces it. Existing sessions and imports are not touched.
+  if (sessionId === null && modelSelectionView) {
+    const preferred = resolveDraftInitialModelSelection(modelSelectionView, null).selection;
+    if (!draft.modelSelection) {
+      if (preferred) draft = { ...draft, modelSelection: preferred };
+    } else if (
+      // A selection seeded in this render has no Host verdict yet; wait for the read it triggers.
+      draft.modelSelection === viewedSelection &&
+      !modelSelectionView.effectiveSelection &&
+      preferred &&
+      !isSameModelSelection(preferred, draft.modelSelection)
+    ) {
+      draft = { ...draft, modelSelection: preferred };
+    }
   }
   if (sessionId && sessionConfig) {
     const previous = currentState.observedConfig;
