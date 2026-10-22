@@ -528,7 +528,11 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
 });
 
 describe("desktopHostProcess local startup gate", () => {
-  const windowFor = (id: number) => ({ id, webContents: { id: id + 10, postMessage: vi.fn() } });
+  const windowFor = (id: number) => ({
+    id,
+    isDestroyed: () => false,
+    webContents: { id: id + 10, postMessage: vi.fn(), send: vi.fn(), isDestroyed: () => false },
+  });
   const gateDependencies = (gate?: LocalHostStartupGate) => ({
     hostProcessLocalEnv: {},
     logger: { info: vi.fn(), warn: vi.fn() },
@@ -564,8 +568,10 @@ describe("desktopHostProcess local startup gate", () => {
     const first = new MockUtilityProcess();
     const second = new MockUtilityProcess();
     electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
-    spawnHostProcess(windowFor(1) as never, "gate-window-1", initLocal, gateDependencies(gate));
-    spawnHostProcess(windowFor(2) as never, "gate-window-2", initLocal, gateDependencies(gate));
+    const firstWindow = windowFor(1);
+    const secondWindow = windowFor(2);
+    spawnHostProcess(firstWindow as never, "gate-window-1", initLocal, gateDependencies(gate));
+    spawnHostProcess(secondWindow as never, "gate-window-2", initLocal, gateDependencies(gate));
     await flush();
 
     expect(first.postMessage).toHaveBeenCalledTimes(1);
@@ -575,6 +581,13 @@ describe("desktopHostProcess local startup gate", () => {
       sweepAbandonedReservations: true,
     });
     expect(second.postMessage).not.toHaveBeenCalled();
+    // The held window is shown its Host's sequence-0 "starting" state at once, so its renderer does not time out.
+    expect(firstWindow.webContents.send).not.toHaveBeenCalled();
+    expect(secondWindow.webContents.send).toHaveBeenCalledTimes(1);
+    expect(secondWindow.webContents.send.mock.calls[0]![1]).toMatchObject({
+      sequence: 0,
+      phase: "starting",
+    });
 
     first.emit("message", startupState(firstInit.databaseStartupId, "ready"));
     await flush();

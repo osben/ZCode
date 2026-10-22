@@ -121,6 +121,28 @@ const disposingHostProcesses = new Set<ElectronUtilityProcess>();
  * Startup phases that prove the tasks index is prepared, so its placeholder sweep has run (it is best-effort)
  * (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). Later windows need not wait for session storage or services.
  */
+/**
+ * A window whose InitLocal Main holds gets no startup state until its Host starts, and the renderer turns 30 s
+ * without one into a synthetic startup_status_timeout failure. Show it the Host's own sequence-0 "starting"
+ * state at once; the Host's first report (sequence 1) and the relay's exit failure (sequence 1) both replace it.
+ * Sent only here, before the relay has forwarded anything for this startupId.
+ */
+function showHeldStartup(win: BrowserWindow, startupId: string): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  const now = Date.now();
+  const state: DatabaseStartupState = {
+    schemaVersion: 1,
+    startupId,
+    attemptId: randomUUID(),
+    sequence: 0,
+    startedAt: now,
+    updatedAt: now,
+    phase: "starting",
+    disk: [],
+  };
+  win.webContents.send(InternalChannels.DatabaseStartupState, state);
+}
+
 const sweepGateOpenPhases: ReadonlySet<DatabaseStartupState["phase"]> = new Set([
   "preparing_session_storage",
   "starting_services",
@@ -873,6 +895,7 @@ export function spawnHostProcess(
       send();
       return;
     }
+    if (!ticket.sweepAbandonedReservations) showHeldStartup(win, databaseStartupRelay.startupId);
     void ticket.open.then(send).catch((error: unknown) => {
       ticket.settle();
       dependencies.logger.warn(

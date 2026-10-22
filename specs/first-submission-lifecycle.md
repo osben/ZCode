@@ -178,14 +178,15 @@ fix stay hidden from reads but keep growing counts and backups.
   reports `preparing_session_storage`, so later windows do not wait for the first
   window's session storage or services. Session storage preparation of several Hosts
   may overlap, as it did before this gate existed; the session store
-  migration runner takes its own lock. Main uses no timer, and no Host-side
-  bound exists after the first startup frame: a first Host that stays alive but
-  silent (for example waiting up to the 60 min migration lock) keeps later local
-  windows waiting until it reports or exits. Bounding that wait is an open
-  follow-up that needs a product decision. A held window still shows the
-  renderer's synthetic 30 s `startup_status_timeout` failure when the first
-  window's tasks index takes longer than that; it recovers when the real state
-  arrives, but its Retry is ignored (open follow-up). Only the `InitLocal` post is deferred: the port is
+  migration runner takes its own lock. Main uses no timer (decided
+  2026-10-22): while the first Host waits on the tasks-index migration lock, a
+  released later Host would wait on the same lock, so a bound would only move
+  the wait. A first Host that hangs without reporting also hangs its own window;
+  quitting the app ends both. While a window is held, Main shows it the Host's
+  sequence-0 `starting` state at once (`showHeldStartup` in `spawnHostProcess`),
+  so the renderer's 30 s first-state timer never turns the wait into a
+  synthetic `startup_status_timeout` failure; the Host's first report
+  (sequence 1) replaces it. Only the `InitLocal` post is deferred: the port is
   created and handed to the renderer as before. A respawned Host, a later window,
   a server entry or a remote source never gets the flag. When no gate is passed,
   Main neither sends the flag nor holds anything.
