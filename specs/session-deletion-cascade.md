@@ -136,6 +136,67 @@ Immediate reads, recomputation, reopened connections and retries preserve the sa
 
 Run root typecheck/lint, CLI typecheck/lint, targeted store/bootstrap/services/shared/UI tests, architecture changed check and fork-scoped format check. Inspect final diff and report real results. Git publication requires explicit user authorization.
 
+## Settings → Archives surface
+
+Settings → Archives (`ArchiveManagement`) is an archived-session Delete surface. Its row trash, group "Delete all" and header "Delete all" entries are permanent Delete, not the hide-only `deleteTask` lane. Restore (unarchive) is unchanged and needs no confirmation.
+
+Owners (one write path for Delete on this page):
+
+- `useArchiveManagement` owns the selection freeze (rows visible under the current search and project filter at the time of the action), the unarchive lock, remote-row exclusion and the Web-remote gate. It never calls `mutateProjectTask` with `kind: "delete"` for this surface.
+- `useTaskDeleteDialog` owns the permanent-Delete dialog state (frozen rows, in-flight guard, result text). It renders `TaskDeleteConfirmationDialog` and invokes the executor.
+- `permanentlyDeleteTasks` (`packages/ui/src/task-deletion/taskDeletion.ts`) is the only executor. Base local services resolve through `useBaseWorkspaceServices`.
+
+Rules:
+
+- Local archived rows are mapped with `archived: true` and `pinned: false`. The archived batch path (`deleteArchivedTasks`) is still-archived guarded, so a row restored elsewhere before confirm is reported as skipped.
+- Remote rows (`workspaceIdentity` set) are never sent to the executor. They are excluded from batches and per-row and per-group entries are disabled with reason `taskDelete.remoteUnavailable`. A batch that contains them shows `taskList.deleteAllArchivedUnavailable` naming the affected projects. If no local rows remain, no dialog opens.
+- Web remote control (`isWebRemoteControl`, passed as `allowPermanentDelete={!isWebRemoteControl}`) disables every permanent-Delete entry on this page with reason `taskDelete.remoteUnavailable`. The hook also returns before opening the dialog, and never consults `getDeletionCapability`, even when the base Host advertises local deletion support.
+- Capability is explicit: `getDeletionCapability` through `taskDeletionSupported`. Unsupported capability keeps confirm disabled and never falls back to hide-only success.
+- Single-row delete uses the same flow as batch delete (the fork's archived single delete also opened the permanent dialog).
+- Cancel mutates nothing. The page entry stays disabled while the dialog is open or the erase runs, and is re-enabled on cancel or result.
+- Results are inline status text (`formatTaskDeletionResult`), not toasts, because the page has no toast owner.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Page as ArchiveManagement
+    participant Sel as useArchiveManagement
+    participant Dlg as useTaskDeleteDialog
+    participant Exec as permanentlyDeleteTasks
+    participant Svc as Local zcodeTaskService
+    User->>Page: Delete (header, group or row)
+    Page->>Sel: run(visible rows, "delete")
+    alt allowPermanentDelete is false
+        Sel-->>Page: no-op, entries already disabled
+    else
+        Sel->>Sel: freeze archived local rows, count remote rows
+        Sel->>Dlg: openRows(local rows, remote notice)
+        Dlg-->>User: confirmation dialog (capability, counts, worktree preview)
+    end
+    User->>Dlg: Confirm
+    Dlg->>Exec: permanentlyDeleteTasks(confirmed rows)
+    Exec->>Svc: getDeletionCapability, countTaskTrees (running guard)
+    Exec->>Svc: deleteArchivedTasks (tombstone; still-archived guard)
+    Exec-->>Dlg: onTombstoned, removeTaskState per tombstoned row
+    Exec->>Svc: eraseTasks (tombstoned IDs only)
+    Exec-->>Dlg: categorized result
+    Dlg->>Sel: refresh tree, publish result text
+```
+
+Acceptance scenarios:
+
+1. Header Delete with no archived rows is disabled; with rows it opens the confirmation dialog.
+2. Cancel: no `deleteArchivedTasks` or `eraseTasks` call, and the entry is enabled again.
+3. Confirm: one `deleteArchivedTasks` then one `eraseTasks` with the confirmed IDs. The entry is disabled while the erase runs and the result text is shown after it.
+4. Search or project filter: only the visible rows reach the dialog. Rows hidden by the filter are not deleted.
+5. A remote row mixed into a batch is excluded and named in the notice. Local rows still delete. A remote-only batch opens no dialog.
+6. Web remote: header, group and row Delete are disabled with the reason. Clicking does nothing, and `getDeletionCapability` is never called even if the service reports supported.
+7. Capability reported unsupported: confirm is disabled and nothing is written.
+8. A row restored elsewhere between open and confirm is reported as skipped by the still-archived guard.
+9. Restore (unarchive) from this page is unchanged.
+
+E2E: the pending manual-review cases under `packages/desktop/test/e2e/conversation-session/manual-review/pending/` are not run by this change. Desktop E2E for this surface is recorded as not run.
+
 ## Decisions and non-goals
 
 - 2026-10-19: permanent Delete supersedes conflicting 2026-10-18 Hide/Erase decisions. Archive remains unchanged.

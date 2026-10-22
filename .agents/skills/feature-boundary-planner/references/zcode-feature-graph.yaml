@@ -339,8 +339,8 @@ nodes:
     codeSeeds:
       - file: "packages/ui/src/WorkspaceSidebar.tsx"
         symbol: "WorkspaceSidebar"
-      - file: "packages/ui/src/DeleteAllArchivedTasksButton.tsx"
-        symbol: "DeleteAllArchivedTasksButton"
+      - file: "packages/ui/src/hooks/useTaskDeleteDialog.tsx"
+        symbol: "useTaskDeleteDialog"
       - file: "packages/ui/src/WorkspaceArchivedTasksFlatSection.tsx"
         symbol: "WorkspaceArchivedTasksFlatSection"
   - id: "surface.web-archived-tasks"
@@ -349,8 +349,8 @@ nodes:
     codeSeeds:
       - file: "packages/ui/src/WorkspaceSidebar.tsx"
         symbol: "WorkspaceSidebar"
-      - file: "packages/ui/src/DeleteAllArchivedTasksButton.tsx"
-        symbol: "DeleteAllArchivedTasksButton"
+      - file: "packages/ui/src/hooks/useTaskDeleteDialog.tsx"
+        symbol: "useTaskDeleteDialog"
       - file: "packages/ui/src/WebRemoteControlTaskIndex.tsx"
         symbol: "WebRemoteControlTaskIndex"
   - id: "capability.help-client-config"
