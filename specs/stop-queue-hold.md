@@ -16,15 +16,17 @@ Stopping a running turn with queued input could let the queue drain on its own. 
 stop(expectedForegroundExecutionId?)
   read activeExecutionId, legacy controller           (sync)
   willCancel && queue > 0 && projected autoDrain !== false ?
-     └─ setQueueAutoDrain(false) → QueueAutoDrainChanged projected   (await)
-  runtime.stopActiveForegroundExecution(expected ?? activeExecutionId)
+     └─ setQueueAutoDrain(false) → QueueAutoDrainChanged projected   (await; held = write succeeded)
+  runtime.stopActiveForegroundExecution(expected ?? (held ? activeExecutionId : undefined))
      ├─ stopped  → abort controller → pause goal → done (queue held, pauseReason=stopped)
      └─ idle / mismatch (turn ended or was replaced during the hold write)
           └─ hold written by this stop ? setQueueAutoDrain(true) + ready hook
              → noop guard.stopTargetChanged
-  compat path (no runtime token seen): controller replaced or runtime execution started
-          during the hold write → release + noop before any runtime stop;
-          otherwise pause goal → abort controller
+  compat path (no runtime token seen, held):
+     controller replaced during the hold write → release + noop, no runtime stop
+     controller cleared (turn ended on its own) → release, then pause goal as before
+     otherwise (same controller, even if its runtime token registered meanwhile)
+          → runtime stop without a pinned id, or pause goal → abort controller
 ```
 
 ## Product rules
@@ -32,10 +34,11 @@ stop(expectedForegroundExecutionId?)
 1. A stop that will cancel a turn while the queue is not empty writes `autoDrain=false` and waits for it to be projected before any abort.
 2. A stop whose execution id is already stale (mismatch/idle with an expected id) writes no hold.
 3. A stop never resumes a queue the user had already paused: if the projected `autoDrain` is already `false`, the stop neither holds nor releases.
-4. The hold write yields. If the target turn ended or was replaced while the hold was being written, the stop cancels nothing, releases the hold it wrote, and returns the `guard.stopTargetChanged` noop. A stop without an expected id is pinned to the execution it observed before the hold, so it never aborts a turn that started during the hold write.
-5. The compat path (no runtime foreground execution token, for example compact or older clients) holds the queue too. If the bootstrap controller changed, or a runtime execution started, during the hold write, the stop releases the hold and noops without calling the runtime stop or aborting any controller.
+4. The hold write yields. If the target turn ended or was replaced while the hold was being written, the stop cancels nothing, releases the hold it wrote, and returns the `guard.stopTargetChanged` noop. After a hold write, a stop without an expected id is pinned to the execution it observed before the hold, so it never aborts a turn that started during the hold write. A stop that wrote no hold keeps the earlier unpinned behavior (no await happened, so nothing could change).
+5. The compat path (no runtime foreground execution token, for example compact or older clients) holds the queue too. If the bootstrap controller was replaced during the hold write, the stop releases the hold and noops without calling the runtime stop or aborting any controller. If the controller was cleared (the turn ended on its own), the stop releases the hold and still pauses an active goal, as the compat stop always did. A runtime token registered meanwhile under the same controller belongs to the same turn and is stopped.
 6. After a stop that cancelled a turn, resuming is explicit (`setAutoDrain(true)`, the composer's resume action). A new Send while paused follows catalog B06 (confirm: clear the queue and send, or keep it paused and send).
-7. A failed hold or release write is logged as a warning; the stop still proceeds.
+7. A failed hold or release write is logged as a warning; the stop still proceeds. Only a hold this stop wrote successfully is ever released.
+8. Residual risk: release writes `autoDrain=true` unconditionally. If an internal writer (a failing queued compact, which writes its own FIFO hold) wrote `false` during the same hold write and the stop then cancels nothing, the release undoes that hold. Closing this needs a hold owner or compare-and-set at the authority (follow-up).
 
 ## Acceptance scenarios
 
@@ -48,4 +51,7 @@ Unit tests: `apps/zcode-cli/packages/bootstrap/tests/v4-native-commands.test.ts`
 5. Stop without an id, turn ends during the hold write: the runtime stop is called with the id observed before the hold; same release and noop.
 6. Queue already paused by the user: the stop proceeds without any `setQueueAutoDrain` call.
 7. Compat stop whose controller is replaced during the hold write: neither controller is aborted; the hold is released; noop.
-8. Compat stop where a runtime execution starts during the hold write: the runtime stop is not called, nothing is aborted, the hold is released; noop.
+8. Compat stop whose turn registers its runtime token during the hold write (same controller): that turn is stopped; the hold stays.
+9. Compat stop whose turn ends during the hold write: the hold is released and an active goal is paused.
+10. A failed hold write is never released.
+11. A stop without an id that writes no hold calls the runtime stop unpinned and keeps the compat fallthrough.

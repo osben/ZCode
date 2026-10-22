@@ -174,9 +174,11 @@ fix stay hidden from reads but keep growing counts and backups.
   is held by Main and posted only after the claimed first Host reports a
   `DatabaseStartupState` phase past `preparing_host_storage`
   (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or its
-  process exits. The tasks index, and so the sweep, is committed before the Host
+  process exits. The tasks index is prepared, and the sweep attempted, before the Host
   reports `preparing_session_storage`, so later windows do not wait for the first
-  window's session storage or services. Main uses no timer, and no Host-side
+  window's session storage or services. Session storage preparation of several Hosts
+  may overlap, as it did before this gate existed; the session store
+  migration runner takes its own lock. Main uses no timer, and no Host-side
   bound exists after the first startup frame: a first Host that stays alive but
   silent (for example waiting up to the 60 min migration lock) keeps later local
   windows waiting until it reports or exits. Bounding that wait is an open

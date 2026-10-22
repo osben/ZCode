@@ -2220,12 +2220,15 @@ describe("v4 原生 stop", () => {
     expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
   });
 
-  it("ISSUE-010: a compat stop does not stop a runtime execution that started during the hold write", async () => {
+  it("ISSUE-010: a compat stop whose turn registers its runtime token during the hold write still stops that turn", async () => {
     const execution: { id: string | undefined } = { id: undefined };
-    const stopActiveForegroundExecution = vi.fn();
+    const stopActiveForegroundExecution = vi.fn(() => ({
+      kind: "stopped",
+      foregroundExecutionId: "foreground-same",
+    }));
     const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
       await new Promise((resolve) => setTimeout(resolve, 5));
-      if (!autoDrain) execution.id = "foreground-new";
+      if (!autoDrain) execution.id = "foreground-same";
     });
     const app = makeApp({
       runtime: {
@@ -2238,12 +2241,74 @@ describe("v4 原生 stop", () => {
     const record = makeRecord({ app, activeAbortController: controller });
     const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
 
-    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
-      reasonCode: "guard.stopTargetChanged",
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      expectedForegroundExecutionId: undefined,
+      reason: "v4 session stopped",
     });
-    expect(stopActiveForegroundExecution).not.toHaveBeenCalled();
-    expect(controller.signal.aborted).toBe(false);
+    expect(controller.signal.aborted).toBe(true);
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false]]);
+  });
+
+  it("ISSUE-010: a compat stop whose turn ended during the hold write releases the hold and still pauses the goal", async () => {
+    const record = makeRecord({ activeAbortController: new AbortController() });
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) record.activeAbortController = undefined;
+    });
+    const updateTargetStatus = vi.fn().mockResolvedValue({ status: "paused" });
+    record.app = makeApp({
+      setQueueAutoDrain,
+      readTarget: vi.fn().mockResolvedValue({ status: "active" }),
+      updateTargetStatus,
+    }) as never;
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
     expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+    expect(updateTargetStatus).toHaveBeenCalledWith("paused");
+    expect(host.legacyMutations).toEqual(["queue_auto_drain_resumed", "session_stop_goal_paused"]);
+  });
+
+  it("ISSUE-010: a failed hold write is never released", async () => {
+    const { app, stopActiveForegroundExecution } = turnEndsDuringHold();
+    const setQueueAutoDrain = vi.fn().mockRejectedValue(new Error("write failed"));
+    (app as { setQueueAutoDrain: unknown }).setQueueAutoDrain = setQueueAutoDrain;
+    stopActiveForegroundExecution.mockReturnValue({ kind: "idle" });
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false]]);
+    expect(host.legacyMutations).toEqual([]);
+  });
+
+  it("a stop without an id and without a hold keeps the unpinned runtime stop and the compat fallthrough", async () => {
+    const stopActiveForegroundExecution = vi.fn().mockReturnValue({ kind: "idle" });
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => "foreground-unwinding",
+      },
+    });
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+
+    await new V4CommandExecutor(makeHost(record, { getQueueLength: () => 0 })).execute(
+      envelope("stop", {}),
+    );
+
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      expectedForegroundExecutionId: undefined,
+      reason: "v4 session stopped",
+    });
+    expect(controller.signal.aborted).toBe(true);
   });
 });
 

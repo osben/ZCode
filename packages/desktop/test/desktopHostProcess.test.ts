@@ -632,6 +632,26 @@ describe("desktopHostProcess local startup gate", () => {
     second.emit("exit", 0);
   });
 
+  it("settles the gate when posting the claimed Host's InitLocal fails", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    first.postMessage.mockImplementation(() => {
+      throw new Error("post failed");
+    });
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const dependencies = gateDependencies(gate);
+    spawnHostProcess(windowFor(15) as never, "gate-window-15", initLocal, dependencies);
+    spawnHostProcess(windowFor(16) as never, "gate-window-16", initLocal, gateDependencies(gate));
+    await flush();
+
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0].sweepAbandonedReservations).toBe(false);
+    expect(dependencies.logger.warn).toHaveBeenCalled();
+    first.emit("exit", 1);
+    second.emit("exit", 0);
+  });
+
   it("releases the held InitLocal when the claimed Host reports failed or exits", async () => {
     const gate = createLocalHostStartupGate();
     const first = new MockUtilityProcess();

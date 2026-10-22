@@ -102,6 +102,18 @@ describe("buildLocalTaskSearchScopes", () => {
     expect(scopes.map((scope) => scope.workspacePath)).not.toContain("/srv/remote");
   });
 
+  it("does not widen a remote task that lacks a workspace identity", () => {
+    const scopes = buildLocalTaskSearchScopes({
+      tree: {
+        ...tree,
+        tasks: [task("bare-remote-task", "/srv/bare", null, { hostId: "remote-1" })],
+      },
+      openTabs: [],
+    });
+
+    expect(scopes.map((scope) => scope.workspacePath)).not.toContain("/srv/bare");
+  });
+
   it("keeps an open remote tab as given and deduplicates by workspace key", () => {
     const scopes = buildLocalTaskSearchScopes({
       tree,

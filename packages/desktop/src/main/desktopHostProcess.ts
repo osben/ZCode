@@ -118,7 +118,7 @@ export interface SpawnHostProcessOptions {
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
 const disposingHostProcesses = new Set<ElectronUtilityProcess>();
 /**
- * Startup phases that prove the tasks index is prepared, so its placeholder sweep has committed
+ * Startup phases that prove the tasks index is prepared, so its placeholder sweep has run (it is best-effort)
  * (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). Later windows need not wait for session storage or services.
  */
 const sweepGateOpenPhases: ReadonlySet<DatabaseStartupState["phase"]> = new Set([

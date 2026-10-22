@@ -300,37 +300,32 @@ async function stop(
   const payload = envelope.payload as CommandPayloadMap["stop"];
   const hadActivePrompt = Boolean(record.activeAbortController);
   const activeExecutionId = record.app.runtime?.getActiveForegroundExecutionId?.();
-  // Hold the following queue before any abort (ISSUE-010): the turn-end auto-drain check reads the
-  // projection, so QueueAutoDrainChanged(false) must be projected before the abort can finish the turn.
-  // Only a stop that will really cancel holds; a stale execution id is rejected below and leaves the queue alone.
+  // Only a stop that will really cancel holds the queue before aborting (ISSUE-010, holdFollowingQueue).
   const willCancel =
     activeExecutionId !== undefined
       ? payload.expectedForegroundExecutionId === undefined ||
         payload.expectedForegroundExecutionId === activeExecutionId
       : hadActivePrompt && payload.expectedForegroundExecutionId === undefined;
-  // A queue the user already paused is left alone, so a stop that ends up cancelling nothing never resumes it.
-  const heldByThisStop =
-    willCancel &&
-    (host.getQueueLength?.(record.app.sessionId) ?? 0) > 0 &&
-    host.getQueueAutoDrain?.(record.app.sessionId) !== false;
   const legacyController = record.activeAbortController;
-  if (heldByThisStop) {
-    await holdFollowingQueue(host, record);
-  }
-  // The hold write yields, so the target seen above may have ended or been replaced meanwhile. A compat target
-  // changed if its controller was replaced or a runtime execution started; a runtime target is pinned below.
-  const targetChanged =
-    heldByThisStop &&
-    activeExecutionId === undefined &&
-    (record.activeAbortController !== legacyController ||
-      record.app.runtime?.getActiveForegroundExecutionId?.() !== undefined);
-  const stopTargetId = payload.expectedForegroundExecutionId ?? activeExecutionId;
-  const runtimeStop = targetChanged
-    ? undefined
-    : record.app.runtime?.stopActiveForegroundExecution?.({
-        expectedForegroundExecutionId: stopTargetId,
-        reason: "v4 session stopped",
-      });
+  const held = await holdFollowingQueue(host, record, willCancel);
+  // The hold write yields, so the target seen above may have ended or been replaced meanwhile. A compat
+  // target is its controller: replaced means a new turn, cleared means the turn ended on its own.
+  const compatTarget = held && activeExecutionId === undefined;
+  const compatReplaced =
+    compatTarget &&
+    record.activeAbortController !== undefined &&
+    record.activeAbortController !== legacyController;
+  const compatEnded = compatTarget && record.activeAbortController === undefined;
+  // After a hold write, pin the runtime stop to the execution observed before it.
+  const stopTargetId =
+    payload.expectedForegroundExecutionId ?? (held ? activeExecutionId : undefined);
+  const runtimeStop =
+    compatReplaced || compatEnded
+      ? undefined
+      : record.app.runtime?.stopActiveForegroundExecution?.({
+          expectedForegroundExecutionId: stopTargetId,
+          reason: "v4 session stopped",
+        });
   host.logger?.info?.("v4 stop foreground execution inspected", {
     activeForegroundExecutionId:
       runtimeStop?.kind === "mismatch"
@@ -344,14 +339,18 @@ async function stop(
     runtimeStopKind: runtimeStop?.kind ?? "unsupported",
     sessionId: record.app.sessionId,
   });
+  // A stop that cancels nothing undoes its own hold: the turn-end drain check already saw autoDrain=false.
+  const cancelledNothing =
+    compatReplaced ||
+    compatEnded ||
+    runtimeStop?.kind === "idle" ||
+    runtimeStop?.kind === "mismatch";
+  if (held && cancelledNothing) await releaseFollowingQueue(host, record);
   if (
-    targetChanged ||
+    compatReplaced ||
     (stopTargetId !== undefined &&
       (runtimeStop?.kind === "idle" || runtimeStop?.kind === "mismatch"))
   ) {
-    if (heldByThisStop) {
-      await releaseFollowingQueue(host, record);
-    }
     // Stop 从 renderer 到 host 有异步窗口；若 verifier 已结束且下一轮已启动，
     // 继续 abort 外层 controller 会误杀用户没看到的新执行。execution id 不匹配只能 noop。
     throw new V4CommandNoopError("guard.stopTargetChanged");
