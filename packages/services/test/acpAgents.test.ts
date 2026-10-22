@@ -1,13 +1,34 @@
+import { execFile } from "node:child_process";
+import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildMacLoginScript,
   createAcpAgentsBridge,
+  createHostAcpAgentsBridge,
   formatLoginCommand,
   type AcpAgentSummary,
   type AcpAgentsBridgeDependencies,
 } from "../src/model-provider/acpAgents.js";
 
 const MOCK_AGENT_PATH = fileURLToPath(new URL("./fixtures/acp-mock-agent.mjs", import.meta.url));
+const execFileAsync = promisify(execFile);
+const CRAFTED_COMMAND =
+  "/usr/local/bin/opencode\nZCODE_ACP_LOGIN_BANNER\ntouch /tmp/zcode-acp-pwned";
+
+const tempDirs: string[] = [];
+afterEach(async () => {
+  for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  delete process.env.ZCODE_ACP_TEST_TOKEN;
+});
+async function makeTempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "zcode-acp-bridge-test-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 const mockSummary = (overrides: Partial<AcpAgentSummary> = {}): AcpAgentSummary => ({
   agentId: "opencode",
@@ -168,5 +189,106 @@ describe("ACP agents bridge", () => {
     expect(
       formatLoginCommand("C:\\Program Files\\Opencode\\opencode.exe", ["auth", "login"], "win32"),
     ).toBe("& 'C:\\Program Files\\Opencode\\opencode.exe' auth login");
+  });
+});
+
+describe("ACP agents bridge hardening", () => {
+  it("rejects a crafted login command before any terminal opens", async () => {
+    const openTerminal = vi.fn(async () => ({ opened: true }));
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => [mockSummary()]),
+      openTerminal,
+    });
+
+    const result = await bridge.startLogin({ agentId: "opencode", command: CRAFTED_COMMAND });
+
+    expect(result.opened).toBe(false);
+    expect(result.error).toMatch(/CR or LF/);
+    expect(openTerminal).not.toHaveBeenCalled();
+  });
+
+  it("rejects a crafted status command without running it", async () => {
+    const runCommand = vi.fn(async () => ({ exitCode: 0, output: "" }));
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => [mockSummary()]),
+      runCommand,
+    });
+
+    const report = await bridge.status({ agentId: "opencode", command: CRAFTED_COMMAND });
+
+    expect(report.error).toMatch(/CR or LF/);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects loader env overrides, line breaks and oversized args in the smoke test", async () => {
+    const startRuntime = vi.fn();
+    const makeSandboxDir = vi.fn(async () => "/tmp/unused");
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      startRuntime: startRuntime as unknown as AcpAgentsBridgeDependencies["startRuntime"],
+      makeSandboxDir,
+    });
+
+    for (const input of [
+      { command: process.execPath, args: [MOCK_AGENT_PATH], env: { LD_PRELOAD: "/tmp/x.so" } },
+      { command: process.execPath, args: [MOCK_AGENT_PATH], env: { DYLD_INSERT_LIBRARIES: "/x" } },
+      { command: process.execPath, args: [MOCK_AGENT_PATH], env: { NODE_OPTIONS: "-r /x.js" } },
+      { command: `${process.execPath}\nid`, args: [MOCK_AGENT_PATH] },
+      { command: process.execPath, args: Array.from({ length: 33 }, () => "a") },
+    ]) {
+      const result = await bridge.test(input);
+      expect(result.ok).toBe(false);
+      expect(result.error?.message).toMatch(/Invalid ACP launch/);
+    }
+    expect(startRuntime).not.toHaveBeenCalled();
+    expect(makeSandboxDir).not.toHaveBeenCalled();
+  });
+
+  it("builds a login script without a heredoc that prints and runs the command literally", async () => {
+    const dir = await makeTempDir();
+    const marker = join(dir, "marker");
+    const commandLine = formatLoginCommand("/bin/echo", [`it's $(touch ${marker})`], "darwin");
+    const script = buildMacLoginScript(commandLine);
+    expect(script).not.toContain("<<");
+    expect(script.split("\n")[1]).toMatch(/^printf '%s\\n' '/);
+    expect(() => buildMacLoginScript("opencode\nid")).toThrow(/CR or LF/);
+
+    // The script removes its own directory, so run it from a dedicated subdirectory.
+    const scriptDir = await mkdtemp(join(dir, "script-"));
+    const scriptPath = join(scriptDir, "login.command");
+    await writeFile(scriptPath, script, "utf8");
+    await chmod(scriptPath, 0o755);
+    const { stdout } = await execFileAsync("/bin/sh", [scriptPath]);
+
+    expect(stdout).toContain(`[ZCode] Running: ${commandLine}`);
+    expect(stdout).toContain(`it's $(touch ${marker})`);
+    expect(await readdir(dir)).not.toContain("marker");
+  });
+
+  it("runs the status command with the scrubbed child environment", async () => {
+    const dir = await makeTempDir();
+    const scriptPath = join(dir, "opencode");
+    await writeFile(
+      scriptPath,
+      '#!/bin/sh\necho "token=${ZCODE_ACP_TEST_TOKEN:-absent} path=${PATH:+set}"\n',
+      "utf8",
+    );
+    await chmod(scriptPath, 0o755);
+    process.env.ZCODE_ACP_TEST_TOKEN = "leaked-secret";
+    const bridge = createAcpAgentsBridge({ detectAgents: vi.fn(async () => []) });
+
+    const report = await bridge.status({ agentId: "opencode", command: scriptPath });
+
+    expect(report.exitCode).toBe(0);
+    expect(report.output).toBe("token=absent path=set");
+  });
+
+  it("wires the bridge only in development host runtimes", () => {
+    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "development" })).toBeDefined();
+    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "production" })).toBeUndefined();
+    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "test" })).toBeUndefined();
+    // NODE_ENV leaks from user shells and never enables the gate.
+    expect(createHostAcpAgentsBridge({ NODE_ENV: "development" })).toBeUndefined();
+    expect(createHostAcpAgentsBridge({})).toBeUndefined();
   });
 });

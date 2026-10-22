@@ -458,7 +458,7 @@ import {
   IProviderSettingsService,
 } from "./model-provider/providerFacadeServices.js";
 import { createProviderSettingsConnectivityTester } from "./model-provider/providerSettingsConnectivity.js";
-import { createAcpAgentsBridge } from "./model-provider/acpAgents.js";
+import { createHostAcpAgentsBridge } from "./model-provider/acpAgents.js";
 import {
   createProviderProvisioningSource,
   listProviderProvisioningCredentialKeys,
@@ -1650,6 +1650,8 @@ export function createLocalServices(options: {
   let providerConnectivityAgentService:
     | Pick<IZCodeAgentService, "testModelConnectivity">
     | undefined;
+  // Dev-only stabilization gate, enforced on the host as well as in the UI.
+  const acpAgentsBridge = createHostAcpAgentsBridge();
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     wrapConfigSource: chatGptPlanConfigSourceWrapper,
@@ -1665,7 +1667,7 @@ export function createLocalServices(options: {
         return providerConnectivityAgentService.testModelConnectivity(input);
       },
     }),
-    acpAgents: createAcpAgentsBridge(),
+    ...(acpAgentsBridge ? { acpAgents: acpAgentsBridge } : {}),
     disposeAccountSource: () => {
       disposeAccountProviderInvalidation();
       accountProviderRefreshErrorDispose();
