@@ -3419,8 +3419,8 @@ describe("sidebar child session facts", () => {
     await seed("child-chat", "selection_side_chat", "side chat", 40);
     await seed("child-sub-old", "subagent_child", "oldest subagent", 30);
     await seed("child-workflow", "workflow_child", "workflow child", 60);
-    // Archived children are excluded from both counts and the list. The newest timestamp makes the list
-    // cap expose a missing `time_archived is null` filter.
+    // A row with a time_archived value is a live child, as in upstream: the column has no reader. The newest
+    // timestamp makes the list cap expose a reintroduced `time_archived is null` filter.
     await seed("child-sub-archived", "subagent_child", "archived subagent", 80);
     raw
       .prepare("update session set time_archived = ? where id = ?")
@@ -3441,12 +3441,12 @@ describe("sidebar child session facts", () => {
     return { parentID, otherParent };
   }
 
-  it("counts side chats and subagents per parent, excluding workflow children, forks, and archived rows", async () => {
+  it("counts side chats and subagents per parent, excluding workflow children and forks", async () => {
     const { store, raw, close } = await openFamilyStore();
     try {
       const { parentID, otherParent } = await seedFamily(store, raw);
       const counts = await store.countChildSessions({ parentIds: [parentID, otherParent] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
       expect(counts.get(String(otherParent))).toEqual({ sideChats: 1, subagents: 0 });
       await expect(store.countChildSessions({ parentIds: [] })).resolves.toBeInstanceOf(Map);
     } finally {
@@ -3460,11 +3460,11 @@ describe("sidebar child session facts", () => {
       const { parentID } = await seedFamily(store, raw);
       const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 2 });
       const children = listed.get(String(parentID));
-      expect(children.map((child) => child.title)).toEqual(["newest subagent", "side chat"]);
-      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 50 });
+      expect(children.map((child) => child.title)).toEqual(["archived subagent", "newest subagent"]);
+      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 80 });
       // The cap truncates the list, but the grouped counts still report all live children.
       const counts = await store.countChildSessions({ parentIds: [parentID] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
     } finally {
       await close();
     }

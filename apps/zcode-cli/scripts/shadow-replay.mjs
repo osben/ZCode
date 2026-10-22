@@ -66,7 +66,7 @@ const store = await createSqliteSessionStore({ dbPath });
 
 const sessions = args.session
   ? [{ id: args.session }]
-  : await store.listSessions({ includeArchived: true, limit: 100000 });
+  : await store.listSessions({ limit: 100000 });
 
 const totals = {
   sessions: 0,

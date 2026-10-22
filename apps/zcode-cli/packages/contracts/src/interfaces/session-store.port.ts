@@ -325,8 +325,6 @@ export interface ListSessionsInput {
   path?: string;
   roots?: boolean;
   taskTypes?: SessionTaskType[];
-  // TEMPORARY fork compatibility (remove in final PR): include archived rows in listings.
-  includeArchived?: boolean;
   limit?: number;
 }
 
