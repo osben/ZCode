@@ -287,13 +287,16 @@ function messagePreview(
         .trim() || "—"
     );
   }
-  const toolCallNames = message.parts.flatMap((part) =>
-    part.kind === "tool-call" ? [part.toolName] : [],
+  const toolCallInputs = message.parts.flatMap((part) =>
+    part.kind === "tool-call" ? [compactPreviewValue(part.input)] : [],
   );
-  if (toolCallNames.length > 0) {
-    return message.parts
-      .flatMap((part) => (part.kind === "tool-call" ? [compactPreviewValue(part.input)] : []))
-      .join(", ");
+  if (toolCallInputs.length > 0) {
+    // Text parts come first, as in the expanded body; a mixed message must not hide its text behind the tool input.
+    const hasText = message.parts.some(
+      (part) => "text" in part && typeof part.text === "string" && part.text.length > 0,
+    );
+    const inputs = toolCallInputs.join(", ");
+    return hasText ? `${compactTextPreview(message)} ${inputs}` : inputs;
   }
   if (role === "user" || role === "assistant") return compactTextPreview(message);
   return firstLinePreview(message);

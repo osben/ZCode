@@ -109,9 +109,11 @@ export async function readModelTrajectory(
     return (asString(left.requestId) ?? "").localeCompare(asString(right.requestId) ?? "");
   });
 
-  const records = expandModelIODeltaRecords(rawRecords).map((record) => mapRecord(record));
-  const truncated = inputTruncated || records.length > safeLimit;
-  const trimmedRecords = truncated ? records.slice(records.length - safeLimit) : records;
+  // Delta expansion must run over every raw record in order; projection (the costly part) runs only on the kept tail.
+  const expanded = expandModelIODeltaRecords(rawRecords);
+  const truncated = inputTruncated || expanded.length > safeLimit;
+  const kept = truncated ? expanded.slice(expanded.length - safeLimit) : expanded;
+  const trimmedRecords = kept.map((record) => mapRecord(record));
 
   return {
     taskId,

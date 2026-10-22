@@ -10,12 +10,17 @@ import {
   TrajectoryExpansionRegistryContext,
   type TrajectoryExpansionRegistry,
 } from "@/ModelTrajectoryExpansion.js";
+import { resolveInputRowWindow } from "@/ModelTrajectoryExpansion.js";
 import { CallCard } from "@/ModelTrajectoryPaneParts.js";
-import { TrajectorySearchRevealContext } from "@/ModelTrajectorySearch.js";
+import {
+  buildTrajectorySearchIndex,
+  TrajectorySearchRevealContext,
+} from "@/ModelTrajectorySearch.js";
 
 const messages: Record<string, string> = {
   "modelTrajectory.showMoreRows": "Show next {count} of {total} messages",
   "modelTrajectory.truncatedAtSource": "Truncated at source, {bytes} bytes",
+  "modelTrajectory.rowsHidden": "{count} rows hidden",
 };
 
 const intl = {
@@ -104,6 +109,32 @@ function mountedBodies(container: HTMLElement) {
   return container.querySelectorAll("[data-trajectory-message-content]").length;
 }
 
+describe("resolveInputRowWindow", () => {
+  it("windows a far hit with a radius around it and reports both gaps", () => {
+    expect(resolveInputRowWindow({ total: 1000, limit: 40, revealIndex: 900 })).toEqual({
+      pageEnd: 40,
+      revealStart: 890,
+      revealEnd: 911,
+      hiddenBefore: 850,
+      hiddenAfter: 89,
+      windowed: true,
+    });
+  });
+
+  it("adds no window for a hit already on the page or beyond the card", () => {
+    expect(resolveInputRowWindow({ total: 100, limit: 40, revealIndex: 10 }).windowed).toBe(false);
+    expect(resolveInputRowWindow({ total: 100, limit: 40, revealIndex: 100 }).windowed).toBe(false);
+  });
+
+  it("starts the window at the page end when the hit is just past it", () => {
+    expect(resolveInputRowWindow({ total: 100, limit: 40, revealIndex: 40 })).toMatchObject({
+      revealStart: 40,
+      hiddenBefore: 0,
+      windowed: true,
+    });
+  });
+});
+
 describe("CallCard input row window", () => {
   it("keeps a card with 40 input rows all expanded and mounted", () => {
     const { container } = renderCard(userRows(40));
@@ -134,7 +165,7 @@ describe("CallCard input row window", () => {
 
   it("uses the registry-owned row limit when one is provided", () => {
     const setRowLimit = vi.fn();
-    const { container } = renderCard(userRows(100), {
+    const { container } = renderCard(userRows(200), {
       reg: registry({ rowLimits: new Map([[PREFIX, 80]]), setRowLimit }),
     });
     expect(mountedRows(container)).toBe(80);
@@ -160,17 +191,41 @@ describe("CallCard input row window", () => {
     expect(mountedBodies(container)).toBe(0);
   });
 
-  it("reveals a collapsed row past the page while a search targets it", () => {
+  it("reveals a collapsed row past the page with a window, not a prefix up to the row", () => {
     const { container } = renderCard(userRows(100), { revealKey: `${PREFIX}:input:70` });
 
-    expect(mountedRows(container)).toBe(71);
+    // Page [0,40) plus window [60,81); rows 40..59 and 81..99 are gap rows.
+    expect(mountedRows(container)).toBe(61);
     expect(mountedBodies(container)).toBe(1);
     expect(container.querySelector("[data-trajectory-message-content]")?.textContent).toContain(
       "message 70",
     );
     expect(container.querySelector("[data-trajectory-rows-more]")?.textContent).toBe(
-      "Show next 29 of 100 messages",
+      "Show next 20 of 100 messages",
     );
+    expect(container.querySelector("[data-trajectory-rows-hidden]")?.textContent).toBe(
+      "19 rows hidden",
+    );
+  });
+
+  it("mounts a page plus a 21-row window for a hit at row 900 of 1000, not 901 rows", () => {
+    const { container } = renderCard(userRows(1000), { revealKey: `${PREFIX}:input:900` });
+
+    expect(mountedRows(container)).toBe(61);
+    expect(container.querySelector("[data-trajectory-message-content]")?.textContent).toContain(
+      "message 900",
+    );
+  });
+
+  it("makes the show-next label count exactly the rows the click mounts", () => {
+    const { container } = renderCard(userRows(100), { revealKey: `${PREFIX}:input:70` });
+    const before = mountedRows(container);
+    const label = container.querySelector("[data-trajectory-rows-more]")?.textContent ?? "";
+    const claimed = Number(/Show next (\d+) of/.exec(label)?.[1]);
+
+    fireEvent.click(container.querySelector("[data-trajectory-rows-more]") as Element);
+
+    expect(mountedRows(container) - before).toBe(claimed);
   });
 
   it("keeps the mixed text of an assistant input row that also has a tool call", () => {
@@ -242,5 +297,34 @@ describe("CallCard input row window", () => {
     expect(container.querySelector("[data-trajectory-truncated]")?.textContent).toBe(
       "Truncated at source, 20000 bytes",
     );
+  });
+});
+
+describe("mixed text and tool-call messages", () => {
+  const mixed: ZCodeModelTrajectoryMessage[] = [
+    {
+      role: "assistant",
+      parts: [
+        { kind: "text", text: "needle in the text part" },
+        { kind: "tool-call", toolName: "Read", toolCallId: "call_m", input: { path: "haystack" } },
+      ],
+    },
+  ];
+
+  it("indexes the text part of a mixed message, not only its tool input", () => {
+    const index = buildTrajectorySearchIndex(
+      [{ key: PREFIX, record: record(), inputMessages: mixed }],
+      "needle",
+    );
+
+    expect(index.matches.length).toBe(1);
+  });
+
+  it("previews the text part before the tool input of a mixed message", () => {
+    const { container } = renderCard(mixed);
+
+    const preview = container.querySelector("[data-trajectory-message-preview]")?.textContent ?? "";
+    expect(preview.startsWith("needle in the text part")).toBe(true);
+    expect(preview).toContain("haystack");
   });
 });

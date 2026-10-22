@@ -249,7 +249,124 @@ describe("模型调用轨迹查看器 E2E", () => {
       { timeout: 20_000, timeoutMsg: "有界尾部读取没有保留 recent record 或 truncated 提示" },
     );
   });
+
+  it("TRJ11: 超过 40 条输入的卡片默认收起并分页，搜索命中只挂载窗口，超长段显示截断提示", async function () {
+    this.timeout(240_000);
+    await prepareV4ConversationE2E();
+    await setRendererLocale("en-US");
+    await sendV4Prompt("E2E_TRJ_TASK_SEED reply with E2E_TRJ_TASK_READY");
+    await waitForV4TimelineContaining("E2E_TRJ_TASK_READY", 45_000);
+    await waitForV4Pane(
+      (snapshot) => snapshot.sessionId !== null && snapshot.sessionId !== "draft",
+      "window case 没有建立真实 task/session",
+      45_000,
+    );
+    const taskId = (await getV4PaneSnapshot()).sessionId as string;
+    const actualTrajectoryFile = await waitForActualTrajectory(taskId);
+    // The fixture record starts before the CLI record, so it becomes call 1 with its full 100-message context.
+    await appendFile(
+      actualTrajectoryFile.filePath,
+      `${JSON.stringify(createWindowRecord(taskId))}\n`,
+      "utf8",
+    );
+    await openTrajectoryThroughTaskMenu(taskId);
+    await waitForTrajectory();
+
+    // TRJ11a: 100 input rows, so only the first page (40) is mounted and every mounted row is collapsed.
+    const initial = await windowCardSnapshot();
+    expect(initial.inputRows).toBe(40);
+    expect(initial.openInputRows).toBe(0);
+    expect(initial.moreLabel).toBe("Show next 40 of 100 messages");
+
+    // TRJ11b: the >16 KiB segment is cut on the host; expanding its row shows the explicit notice.
+    await clickFirst(
+      '[data-trajectory-expandable-role="user"] [data-trajectory-message-trigger=""]',
+    );
+    await browser.waitUntil(async () => (await windowCardSnapshot()).truncatedNotices.length > 0, {
+      timeout: 10_000,
+      timeoutMsg: "被裁剪的段没有显示截断提示",
+    });
+    const cut = await windowCardSnapshot();
+    expect(cut.truncatedNotices).toEqual([
+      expect.stringMatching(/^Truncated at source, \d+ bytes$/),
+    ]);
+
+    // TRJ11c: a hit at row 90 mounts the page plus a 20-row window [80, 100), not 91 rows.
+    await searchAndNavigate(WINDOW_MARKER);
+    await browser.waitUntil(async () => (await windowCardSnapshot()).inputRows === 60, {
+      timeout: 10_000,
+      timeoutMsg: "搜索命中没有挂载页加窗口（期望 60 行）",
+    });
+    const revealed = await windowCardSnapshot();
+    expect(revealed.moreLabel).toBe("Show next 40 of 100 messages");
+    expect(revealed.hiddenLabel).toBe("");
+
+    // TRJ11d: "show next" must mount exactly the rows its label claims (40 of the gap before the window).
+    await clickFirst('[data-trajectory-call=""] [data-trajectory-rows-more=""]');
+    await browser.waitUntil(async () => (await windowCardSnapshot()).inputRows === 100, {
+      timeout: 10_000,
+      timeoutMsg: "显示接下来没有挂载标签声明的 40 行",
+    });
+    expect((await windowCardSnapshot()).moreLabel).toBe("");
+  });
 });
+
+const WINDOW_MARKER = "E2E_TRJ11_FAR_ROW";
+const WINDOW_SEGMENT_HEAD = "E2E_TRJ11_SEGMENT_HEAD";
+
+function createWindowRecord(taskId: string) {
+  const messages = Array.from({ length: 100 }, (_, index) => ({
+    role: "user",
+    content:
+      index === 0
+        ? `${WINDOW_SEGMENT_HEAD} ${"w".repeat(20_000)}`
+        : index === 90
+          ? `${WINDOW_MARKER} ${index}`
+          : `window row ${index}`,
+  }));
+  return {
+    type: "model_io",
+    sessionId: taskId,
+    requestId: "e2e-trj-window-card",
+    querySource: "main_turn",
+    startedAt: "2000-01-01T00:00:00.000Z",
+    completedAt: "2000-01-01T00:00:00.250Z",
+    durationMs: 250,
+    model: { modelId: "e2e-trajectory-model", providerId: "e2e-provider" },
+    request: { messages, toolNames: [] },
+    response: {
+      text: "E2E_TRJ11_RESPONSE",
+      finishReason: "stop",
+      toolCalls: [],
+      usage: { inputTokens: 1, outputTokens: 1 },
+    },
+  };
+}
+
+async function windowCardSnapshot() {
+  return browser.execute(() => {
+    const card = document.querySelector<HTMLElement>('[data-trajectory-call=""]');
+    const input = card?.querySelector<HTMLElement>('[data-trajectory-section=""]');
+    const rows = input
+      ? Array.from(input.querySelectorAll<HTMLElement>('[data-trajectory-message-collapsible=""]'))
+      : [];
+    return {
+      inputRows: rows.length,
+      openInputRows: rows.filter((row) => row.dataset.state === "open").length,
+      moreLabel:
+        input?.querySelector<HTMLElement>('[data-trajectory-rows-more=""]')?.textContent?.trim() ??
+        "",
+      hiddenLabel:
+        input
+          ?.querySelector<HTMLElement>('[data-trajectory-rows-hidden=""]')
+          ?.textContent?.trim() ?? "",
+      truncatedNotices: Array.from(
+        document.querySelectorAll<HTMLElement>('[data-trajectory-truncated=""]'),
+        (element) => element.textContent?.trim() ?? "",
+      ),
+    };
+  });
+}
 
 async function seedTrajectory(taskId: string, filePath: string) {
   const safeTaskId = taskId

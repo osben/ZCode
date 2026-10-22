@@ -5,9 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setDataBaseDir } from "../src/paths.js";
 import { readModelTrajectory } from "../src/zcode-agent/modelTrajectory.js";
 
-// Mirrors the host budget in modelTrajectory.ts (12 KiB head + 4 KiB tail, separator "\n…\n").
-const KEPT_BYTES = 12 * 1024 + 4 * 1024;
+// Mirrors the host budget in modelTrajectoryFileTail.ts: 16 KiB of output in total, separator included.
 const SEPARATOR = "\n…\n";
+const BUDGET_BYTES = 16 * 1024;
+// Content bytes kept by a cut; the output (kept + separator) never exceeds BUDGET_BYTES.
+const KEPT_BYTES = BUDGET_BYTES - Buffer.byteLength(SEPARATOR, "utf8");
 
 const tempDirs: string[] = [];
 
@@ -70,7 +72,7 @@ describe("readModelTrajectory per-segment byte budget", () => {
 
   it("leaves a segment exactly at the budget untouched and without a marker", async () => {
     const sessionId = "sess_bound_exact";
-    const text = "a".repeat(KEPT_BYTES);
+    const text = "a".repeat(BUDGET_BYTES);
     writeSession(sessionId, [
       modelIO(sessionId, "req_1", "2026-06-03T00:00:00.000Z", { messages: [userText(text)] }),
     ]);
@@ -224,5 +226,98 @@ describe("readModelTrajectory per-segment byte budget", () => {
       if (part?.kind !== "text") throw new Error("expected a text part");
       expect(Buffer.byteLength(part.text, "utf8")).toBe(KEPT_BYTES + Buffer.byteLength(SEPARATOR));
     }
+  });
+
+  it("counts the separator inside the budget, so a segment just over it comes out smaller", async () => {
+    const sessionId = "sess_bound_just_over";
+    const text = "b".repeat(BUDGET_BYTES + 3);
+    writeSession(sessionId, [
+      modelIO(sessionId, "req_1", "2026-06-03T00:00:00.000Z", { messages: [userText(text)] }),
+    ]);
+
+    const part = (await readModelTrajectory(sessionId)).records[0]?.request.messages[0]?.parts[0];
+
+    if (part?.kind !== "text") throw new Error("expected a text part");
+    expect(Buffer.byteLength(part.text, "utf8")).toBe(BUDGET_BYTES);
+    expect(part.truncated?.originalBytes).toBe(BUDGET_BYTES + 3);
+  });
+
+  it("keeps an error-text output's type when an array-form tool-result part is oversized", async () => {
+    const sessionId = "sess_bound_array_error";
+    writeSession(sessionId, [
+      modelIO(sessionId, "req_1", "2026-06-03T00:00:00.000Z", {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call_arr",
+                toolName: "Bash",
+                output: { type: "error-text", value: "E".repeat(20_000) },
+              },
+            ],
+          },
+        ],
+      }),
+    ]);
+
+    const part = (await readModelTrajectory(sessionId)).records[0]?.request.messages[0]?.parts[0];
+
+    expect(part).toMatchObject({
+      kind: "tool-result",
+      output: { type: "error-text" },
+      truncated: { originalBytes: 20_000 },
+    });
+    if (part?.kind !== "tool-result") throw new Error("expected a tool-result part");
+    expect((part.output as { value: string }).value.length).toBeLessThan(20_000);
+  });
+
+  it("parses a small JSON string TOOL output instead of keeping the raw string", async () => {
+    const sessionId = "sess_small_json_tool";
+    writeSession(sessionId, [
+      modelIO(sessionId, "req_1", "2026-06-03T00:00:00.000Z", {
+        messages: [{ role: "tool", toolCallId: "call_j", toolName: "Read", content: '{"a":1}' }],
+      }),
+    ]);
+
+    const part = (await readModelTrajectory(sessionId)).records[0]?.request.messages[0]?.parts[0];
+
+    expect(part).toEqual({
+      kind: "tool-result",
+      toolCallId: "call_j",
+      toolName: "Read",
+      output: { a: 1 },
+    });
+  });
+
+  it("cuts the inner string of an oversized {content} output so it renders like a small one", async () => {
+    const sessionId = "sess_content_wrapper";
+    const inner = "line\n".repeat(5_000);
+    writeSession(sessionId, [
+      modelIO(sessionId, "req_1", "2026-06-03T00:00:00.000Z", {
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call_c",
+                toolName: "Read",
+                output: { type: "text", content: inner },
+              },
+            ],
+          },
+        ],
+      }),
+    ]);
+
+    const part = (await readModelTrajectory(sessionId)).records[0]?.request.messages[0]?.parts[0];
+
+    if (part?.kind !== "tool-result") throw new Error("expected a tool-result part");
+    expect(typeof part.output).toBe("string");
+    expect(String(part.output).startsWith("line\nline")).toBe(true);
+    expect(String(part.output).includes('"content"')).toBe(false);
+    expect(part.truncated?.originalBytes).toBe(Buffer.byteLength(inner, "utf8"));
   });
 });

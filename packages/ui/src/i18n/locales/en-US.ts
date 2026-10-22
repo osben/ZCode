@@ -1510,6 +1510,7 @@ const enUS: Record<string, string> = {
   "modelTrajectory.showAll": "Expand",
   "modelTrajectory.truncatedAtSource": "Truncated at source, {bytes} bytes",
   "modelTrajectory.showMoreRows": "Show next {count} of {total} messages",
+  "modelTrajectory.rowsHidden": "{count} rows hidden",
   "modelTrajectory.collapseContent": "Collapse",
   "modelTrajectory.toolCall": "Tool call",
   "modelTrajectory.toolId": "ID",

@@ -11,6 +11,7 @@ import type { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { ContentPartView, EmptyState, summarizeRecords } from "@/ModelTrajectoryPaneDetails.js";
 import { ExpandableTrajectoryMessage } from "@/ModelTrajectoryExpandableMessage.js";
 import {
+  resolveInputRowWindow,
   TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS,
   TRAJECTORY_ROW_PAGE_SIZE,
   TrajectoryExpansionRegistryContext,
@@ -51,22 +52,65 @@ export function CallCard({
   const storedRowLimit =
     expansionKeyPrefix && registry ? registry.rowLimits.get(expansionKeyPrefix) : undefined;
   const pageRowLimit = storedRowLimit ?? localRowLimit;
-  // A search reveal of row i mounts it even when it is past the page; the effective limit is derived in render only.
+  // A search reveal past the page mounts a window around the target; the window is derived in render only.
   const revealedRowIndex = expansionKeyPrefix
     ? inputRevealIndex(searchRevealKey, expansionKeyPrefix)
     : undefined;
-  const rowLimit =
-    revealedRowIndex === undefined ? pageRowLimit : Math.max(pageRowLimit, revealedRowIndex + 1);
+  const rowWindow = resolveInputRowWindow({
+    total: inputMessages.length,
+    limit: pageRowLimit,
+    revealIndex: revealedRowIndex,
+  });
   const rowsDefaultOpen = inputMessages.length <= TRAJECTORY_COLLAPSED_BY_DEFAULT_ROWS;
-  const hiddenRowCount = Math.max(0, inputMessages.length - rowLimit);
-  const showNextRows = () => {
-    const nextLimit = pageRowLimit + TRAJECTORY_ROW_PAGE_SIZE;
+  const setPageLimit = (nextLimit: number) => {
     if (expansionKeyPrefix && registry) {
       registry.setRowLimit(expansionKeyPrefix, nextLimit);
     } else {
       setLocalRowLimit(nextLimit);
     }
   };
+  // "Show next" grows the page by min(page, hidden rows before the gap). It stops at the reveal window's start,
+  // so the window is never swallowed and the click mounts exactly the rows the label counts.
+  const showMoreControl = (hiddenRows: number) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-trajectory-rows-more=""
+      onClick={() =>
+        setPageLimit(rowWindow.pageEnd + Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRows))
+      }
+      className="col-span-full h-8 justify-start rounded-none px-3 font-mono text-ui-xs text-foreground-subtle"
+    >
+      {intl.formatMessage(
+        { id: "modelTrajectory.showMoreRows" },
+        {
+          count: Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRows),
+          total: inputMessages.length,
+        },
+      )}
+    </Button>
+  );
+  const renderInputRows = (from: number, to: number) =>
+    inputMessages.slice(from, to).map((message, offset) => {
+      const messageIndex = from + offset;
+      return (
+        <Fragment key={`${index}:${messageIndex}`}>
+          <TrajectoryRowDivider />
+          <MessageBlock
+            message={message}
+            callStartedAt={record.startedAt}
+            callDurationMs={record.durationMs}
+            isAlt={messageIndex % 2 === 1}
+            defaultOpen={rowsDefaultOpen}
+            expansionKey={
+              expansionKeyPrefix ? `${expansionKeyPrefix}:input:${messageIndex}` : undefined
+            }
+            intl={intl}
+          />
+        </Fragment>
+      );
+    });
 
   return (
     <article data-trajectory-call="" className="col-span-full grid grid-cols-subgrid">
@@ -106,40 +150,23 @@ export function CallCard({
               kind="input"
               label={intl.formatMessage({ id: "modelTrajectory.inputSection" })}
             />
-            {inputMessages.slice(0, rowLimit).map((message, messageIndex) => (
-              <Fragment key={`${index}:${messageIndex}`}>
-                <TrajectoryRowDivider />
-                <MessageBlock
-                  message={message}
-                  callStartedAt={record.startedAt}
-                  callDurationMs={record.durationMs}
-                  isAlt={messageIndex % 2 === 1}
-                  defaultOpen={rowsDefaultOpen}
-                  expansionKey={
-                    expansionKeyPrefix ? `${expansionKeyPrefix}:input:${messageIndex}` : undefined
-                  }
-                  intl={intl}
-                />
-              </Fragment>
-            ))}
-            {hiddenRowCount > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                data-trajectory-rows-more=""
-                onClick={showNextRows}
-                className="col-span-full h-8 justify-start rounded-none px-3 font-mono text-ui-xs text-foreground-subtle"
+            {renderInputRows(0, rowWindow.pageEnd)}
+            {rowWindow.hiddenBefore > 0 ? showMoreControl(rowWindow.hiddenBefore) : null}
+            {renderInputRows(rowWindow.revealStart, rowWindow.revealEnd)}
+            {rowWindow.windowed && rowWindow.hiddenAfter > 0 ? (
+              <p
+                data-trajectory-rows-hidden=""
+                className="col-span-full px-3 py-1 font-mono text-ui-xs text-foreground-subtlest"
               >
                 {intl.formatMessage(
-                  { id: "modelTrajectory.showMoreRows" },
-                  {
-                    count: Math.min(TRAJECTORY_ROW_PAGE_SIZE, hiddenRowCount),
-                    total: inputMessages.length,
-                  },
+                  { id: "modelTrajectory.rowsHidden" },
+                  { count: rowWindow.hiddenAfter },
                 )}
-              </Button>
+              </p>
             ) : null}
+            {!rowWindow.windowed && rowWindow.hiddenAfter > 0
+              ? showMoreControl(rowWindow.hiddenAfter)
+              : null}
           </section>
         ) : null}
 

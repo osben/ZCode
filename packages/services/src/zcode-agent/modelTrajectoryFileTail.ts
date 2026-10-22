@@ -57,14 +57,14 @@ export async function readTrajectoryFileTail(filePath: string): Promise<Trajecto
   }
 }
 
-// Per-segment projection budget (docs/model-trajectory-viewer.md, "数据来源"): 12 KiB head + 4 KiB tail.
-// Sized from the 5-call session fixture (sess_1293b371, 825-834 messages per call): 16 KiB cuts 30 of 3144 segments (6 in the first call);
-// smaller budgets cut more content without moving the payload size much, because the payload is dominated
-// by per-record duplication of the restored context, not by single large segments.
-const PART_HEAD_BYTES = 12 * 1024;
-const PART_TAIL_BYTES = 4 * 1024;
-const PART_BUDGET_BYTES = PART_HEAD_BYTES + PART_TAIL_BYTES;
+// Per-segment projection budget (docs/model-trajectory-viewer.md, "数据来源"): 16 KiB of output in total,
+// separator included. Head is 12 KiB; the tail takes what remains, so a cut output never exceeds the budget.
+// Sized from the 5-call session fixture (sess_1293b371, 825-834 messages per call): 16 KiB cuts 30 of 3144 segments (6 in the first call).
+const PART_BUDGET_BYTES = 16 * 1024;
 const TRUNCATION_SEPARATOR = "\n…\n";
+const SEPARATOR_BYTES = Buffer.byteLength(TRUNCATION_SEPARATOR, "utf8");
+const PART_HEAD_BYTES = 12 * 1024;
+const PART_TAIL_BYTES = PART_BUDGET_BYTES - SEPARATOR_BYTES - PART_HEAD_BYTES;
 
 /**
  * Cut a text segment to PART_BUDGET_BYTES. Head and tail are taken on UTF-8 character boundaries so the
@@ -109,6 +109,11 @@ export function boundPayload(value: unknown): {
       ? { value: { type: "error-text", value: bounded.text }, truncated: bounded.truncated }
       : { value };
   }
+  if (isContentWrapper(value)) {
+    // The UI unwraps {content} to its string, so cut the inner string: small and large outputs then render alike.
+    const bounded = boundText(value.content);
+    return bounded.truncated ? { value: bounded.text, truncated: bounded.truncated } : { value };
+  }
   let json: string | undefined;
   try {
     json = JSON.stringify(value);
@@ -120,6 +125,12 @@ export function boundPayload(value: unknown): {
   }
   const bounded = boundText(json);
   return { value: bounded.text, truncated: bounded.truncated };
+}
+
+function isContentWrapper(value: unknown): value is { content: string } {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? typeof (value as { content?: unknown }).content === "string"
+    : false;
 }
 
 function isErrorTextPayload(value: unknown): value is { type: "error-text"; value: string } {
