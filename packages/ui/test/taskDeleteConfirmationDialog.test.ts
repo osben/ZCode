@@ -61,7 +61,9 @@ function mount(options: {
       rows: options.rows ?? [row("a")],
       supported: options.supported ?? true,
       loadTreeCounts: options.loadTreeCounts ?? (async () => options.counts),
-      loadWorktreePreview: options.loadWorktreePreview ?? (async () => options.worktrees ?? []),
+      loadWorktreePreview:
+        options.loadWorktreePreview ??
+        (async () => (options.worktrees === undefined ? [] : options.worktrees)),
       onCancel: vi.fn(),
       onConfirm,
     }),
@@ -152,6 +154,121 @@ describe("TaskDeleteConfirmationDialog", () => {
     expect(screen.getByText("src/a.ts").closest("li")?.textContent).toContain("M");
     expect(screen.getByText("notes.txt").closest("li")?.textContent).toContain("??");
     expect(screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" })).toBeTruthy();
+  });
+
+  it("requires an explicit acknowledgement before Delete anyway when worktree status is unknown", async () => {
+    const { onConfirm } = mount({
+      rows: [row("a", { executionWorktree: { path: "/repo/.worktrees/a" } })],
+      counts: counts(),
+      worktrees: null,
+    });
+    expect(await screen.findByText("taskDelete.worktreeUnknown")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "taskDelete.confirm:1" })).toBeNull();
+    const confirm = screen.getByRole("button", {
+      name: "taskDelete.deleteAnyway:1",
+    }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "taskDelete.worktreeUnknownAcknowledge" }),
+    );
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith([
+      row("a", { executionWorktree: { path: "/repo/.worktrees/a" } }),
+    ]);
+  });
+
+  it("treats a rejected worktree preview as unknown, not clean", async () => {
+    const { onConfirm } = mount({
+      counts: counts(),
+      loadWorktreePreview: async () => {
+        throw new Error("git unavailable");
+      },
+    });
+    const confirm = (await screen.findByRole("button", {
+      name: "taskDelete.deleteAnyway:1",
+    })) as HTMLButtonElement;
+    expect(
+      screen.getByRole("checkbox", { name: "taskDelete.worktreeUnknownAcknowledge" }),
+    ).toBeTruthy();
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("clears the unknown-status acknowledgement when the candidate set changes", async () => {
+    const loadWorktreePreview = vi.fn(async () => null);
+    mount({
+      rows: [row("normal"), row("pinned", { pinned: true })],
+      counts: counts(),
+      loadWorktreePreview,
+    });
+    const acknowledge = await screen.findByRole("checkbox", {
+      name: "taskDelete.worktreeUnknownAcknowledge",
+    });
+    fireEvent.click(acknowledge);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "taskDelete.includePinned:1" }));
+    await waitFor(() => expect(loadWorktreePreview).toHaveBeenCalledTimes(2));
+    const confirm = (await screen.findByRole("button", {
+      name: "taskDelete.deleteAnyway:2",
+    })) as HTMLButtonElement;
+    const reloaded = await screen.findByRole("checkbox", {
+      name: "taskDelete.worktreeUnknownAcknowledge",
+    });
+    expect(reloaded.getAttribute("aria-checked")).toBe("false");
+    expect(confirm.disabled).toBe(true);
+  });
+
+  it("keeps known-clean worktrees on the plain Delete flow without an acknowledgement", async () => {
+    const { onConfirm } = mount({
+      rows: [row("a", { executionWorktree: { path: "/repo/.worktrees/a" } })],
+      counts: counts(),
+      worktrees: [{ path: "/repo/.worktrees/a", files: [] }],
+    });
+    const confirm = (await screen.findByRole("button", {
+      name: "taskDelete.confirm:1",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText("taskDelete.worktreeUnknown")).toBeNull();
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps known-dirty worktrees on one-click Delete anyway without an acknowledgement", async () => {
+    const { onConfirm } = mount({
+      counts: counts(),
+      worktrees: [{ path: "/repo/.worktrees/a", files: [{ path: "src/a.ts", status: "M" }] }],
+    });
+    const confirm = (await screen.findByRole("button", {
+      name: "taskDelete.deleteAnyway:1",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(confirm.disabled).toBe(false));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an acknowledged unknown status blocked by other guards", async () => {
+    mount({ counts: counts({ running: 1 }), worktrees: null });
+    const acknowledge = await screen.findByRole("checkbox", {
+      name: "taskDelete.worktreeUnknownAcknowledge",
+    });
+    fireEvent.click(acknowledge);
+    await waitFor(() => expect(acknowledge.getAttribute("aria-checked")).toBe("true"));
+    expect(
+      (screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("blocks a known running tree before confirmation", async () => {

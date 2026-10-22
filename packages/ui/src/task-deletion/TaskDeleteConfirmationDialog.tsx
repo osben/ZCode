@@ -71,6 +71,7 @@ export function TaskDeleteConfirmationDialog({
   const [worktreePreview, setWorktreePreview] = useState<
     readonly TaskDeleteWorktreePreview[] | null | undefined
   >(undefined);
+  const [unknownWorktreeAcknowledged, setUnknownWorktreeAcknowledged] = useState(false);
   const candidates = useMemo(
     () => rows.filter((row) => includePinned || !row.pinned),
     [includePinned, rows],
@@ -84,6 +85,8 @@ export function TaskDeleteConfirmationDialog({
     let cancelled = false;
     setCounts(undefined);
     setWorktreePreview(undefined);
+    // An acknowledgement covers only the candidate set whose preview failed; any reload asks again.
+    setUnknownWorktreeAcknowledged(false);
     if (candidates.length === 0) {
       setCounts(null);
       setWorktreePreview([]);
@@ -132,9 +135,13 @@ export function TaskDeleteConfirmationDialog({
   const dirtyWorktrees = worktreePreview?.filter((worktree) => worktree.files.length > 0) ?? [];
   const hasDirtyWorktree = dirtyWorktrees.length > 0;
   const runningCount = counts?.running ?? 0;
-  const confirmLabel = hasDirtyWorktree ? "taskDelete.deleteAnyway" : "taskDelete.confirm";
+  const worktreeConfirmMode =
+    worktreePreview === null ? "unknown" : hasDirtyWorktree ? "dirty" : "clean";
+  const confirmLabel =
+    worktreeConfirmMode === "clean" ? "taskDelete.confirm" : "taskDelete.deleteAnyway";
   const confirmDisabled =
     capability !== true ||
+    (worktreeConfirmMode === "unknown" && !unknownWorktreeAcknowledged) ||
     runningCount > 0 ||
     deletableCount === 0 ||
     counts === undefined ||
@@ -198,10 +205,19 @@ export function TaskDeleteConfirmationDialog({
             {intl.formatPlural({ id: "taskDelete.includePinned" }, pinnedCount)}
           </label>
         ) : null}
-        {worktreePreview === null ? (
-          <p className="text-ui-sm text-warning">
-            {intl.formatMessage({ id: "taskDelete.worktreeUnknown" })}
-          </p>
+        {worktreeConfirmMode === "unknown" ? (
+          <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-2.5">
+            <p className="text-ui-sm text-warning">
+              {intl.formatMessage({ id: "taskDelete.worktreeUnknown" })}
+            </p>
+            <label className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
+              <Checkbox
+                checked={unknownWorktreeAcknowledged}
+                onCheckedChange={(checked) => setUnknownWorktreeAcknowledged(checked === true)}
+              />
+              {intl.formatMessage({ id: "taskDelete.worktreeUnknownAcknowledge" })}
+            </label>
+          </div>
         ) : null}
         {hasDirtyWorktree ? (
           <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-2.5">

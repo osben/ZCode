@@ -7715,7 +7715,9 @@ const enUS: Record<string, string> = {
   "taskDelete.includesGeneric":
     "This may also include attached side chats, subagents and workflow sessions.",
   "taskDelete.worktreeUnknown":
-    "Worktree changes could not be checked. Removing a worktree permanently discards its uncommitted files.",
+    "Worktree changes could not be checked, so uncommitted changes may be lost. Removing a worktree permanently discards its uncommitted files.",
+  "taskDelete.worktreeUnknownAcknowledge":
+    "I understand that uncommitted changes in the worktree may be permanently lost",
   "taskDelete.retainedNotice":
     "Git branches and aggregate usage statistics are preserved. Worktrees still in use will be retained.",
   "taskDelete.unsupported": "Permanent deletion is unavailable for this selection.",

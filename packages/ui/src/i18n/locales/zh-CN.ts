@@ -7329,7 +7329,9 @@ const zhCN: Record<string, string> = {
     "永久删除这些对话及其关联会话，同时移除符合条件的执行工作树文件夹。此操作无法撤销。",
   "taskDelete.includes": "包含{items}。",
   "taskDelete.includesGeneric": "也可能包含关联的侧边对话、子智能体和工作流会话。",
-  "taskDelete.worktreeUnknown": "无法检查工作树更改。移除工作树将永久丢弃其中未提交的文件。",
+  "taskDelete.worktreeUnknown":
+    "无法检查工作树更改，未提交的更改可能会丢失。移除工作树将永久丢弃其中未提交的文件。",
+  "taskDelete.worktreeUnknownAcknowledge": "我了解工作树中未提交的更改可能会永久丢失",
   "taskDelete.retainedNotice": "Git 分支和汇总使用统计会保留。仍在使用中的工作树不会被移除。",
   "taskDelete.unsupported": "所选会话不支持永久删除。",
   "taskDelete.remoteUnavailable": "请在本地桌面应用中删除。",
