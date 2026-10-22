@@ -226,7 +226,13 @@ function GroupedTaskRowComponent({
             )}
           >
             {leadingIndicator === "loading" ? (
-              <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
+              // Rotate the HTML wrapper, not the SVG: SVG transforms recalc style every frame (same as TaskListItem).
+              <span
+                aria-hidden="true"
+                className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
+              >
+                <LoaderIcon className="size-3.5 text-foreground-subtle" />
+              </span>
             ) : statusDotClassName ? (
               <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
                 <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
@@ -485,7 +491,12 @@ function GroupedTaskRowComponent({
           {!shouldSuppressTaskMetadata ? (
             <span className="flex shrink-0 items-center gap-1">
               {leadingIndicator === "loading" ? (
-                <LoaderIcon className="size-3.5 animate-spin text-foreground-subtle" />
+                <span
+                  aria-hidden="true"
+                  className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
+                >
+                  <LoaderIcon className="size-3.5 text-foreground-subtle" />
+                </span>
               ) : statusDotClassName ? (
                 <span
                   aria-hidden="true"
