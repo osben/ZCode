@@ -4,8 +4,9 @@
  * and keeps the agent's offered config options (display copy) and the user's chosen values. It lives in
  * `fork_acp_session_binding` (migrations 9003 and 9004), so upstream session repositories never read it.
  *
- * Each call opens the session database for itself: a binding is read and written a few times per turn,
- * and no connection outlives the call.
+ * Each call opens the session database for itself, so no connection outlives the call. The config of a
+ * session is read on every subscribe of an ACP session, so the store keeps the last read per session. Every
+ * write of this store drops the session's entry; the worker is the only writer of these rows.
  */
 import { DatabaseSync } from "node:sqlite";
 import type { ExternalAgentConfigOption } from "@zcode/contracts";
@@ -57,6 +58,9 @@ interface ConfigRow {
   config_choices: string | null;
 }
 
+/** Bounded so a long-lived worker does not keep every session it has ever seen. */
+const CONFIG_CACHE_LIMIT = 256;
+
 export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSessionBindingStore {
   const withDatabase = async <T>(run: (db: DatabaseSync) => T): Promise<T> => {
     const db = new DatabaseSync(dbPath, { timeout: SESSION_DB_BUSY_TIMEOUT_MS });
@@ -65,6 +69,32 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
     } finally {
       db.close();
     }
+  };
+  const configCache = new Map<string, ForkAcpSessionConfig>();
+  // A read started before a write must not be cached after it. Every write bumps the version.
+  let writeVersion = 0;
+  const written = (sessionId: string): void => {
+    writeVersion += 1;
+    configCache.delete(sessionId);
+  };
+  const readConfigFromDatabase = async (sessionId: string): Promise<ForkAcpSessionConfig> => {
+    const version = writeVersion;
+    const config = await withDatabase((db) => {
+      const row = readConfigRow(db, sessionId);
+      return {
+        agentId: row?.agent_id,
+        offered: parseOffered(row?.config_options ?? null),
+        choices: parseChoices(row?.config_choices ?? null),
+      };
+    });
+    if (version === writeVersion) {
+      if (configCache.size >= CONFIG_CACHE_LIMIT) {
+        const oldest = configCache.keys().next();
+        if (!oldest.done) configCache.delete(oldest.value);
+      }
+      configCache.set(sessionId, config);
+    }
+    return config;
   };
   return {
     read: (sessionId) =>
@@ -82,8 +112,8 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
           launchKey: row.launch_key,
         };
       }),
-    write: (sessionId, binding) =>
-      withDatabase((db) => {
+    write: async (sessionId, binding) => {
+      await withDatabase((db) => {
         db.prepare(
           `insert into fork_acp_session_binding
              (session_id, agent_id, acp_session_id, cwd, launch_key, updated_at)
@@ -102,28 +132,29 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
           binding.launchKey,
           Date.now(),
         );
-      }),
-    clear: (sessionId) =>
-      withDatabase((db) => {
+      });
+      written(sessionId);
+    },
+    clear: async (sessionId) => {
+      await withDatabase((db) => {
         db.prepare("delete from fork_acp_session_binding where session_id = ?").run(sessionId);
-      }),
-    readConfig: (sessionId) =>
-      withDatabase((db) => {
-        const row = readConfigRow(db, sessionId);
-        return {
-          agentId: row?.agent_id,
-          offered: parseOffered(row?.config_options ?? null),
-          choices: parseChoices(row?.config_choices ?? null),
-        };
-      }),
-    writeOffered: (sessionId, options) =>
-      withDatabase((db) => {
+      });
+      written(sessionId);
+    },
+    readConfig: (sessionId) => {
+      const cached = configCache.get(sessionId);
+      return cached === undefined ? readConfigFromDatabase(sessionId) : Promise.resolve(cached);
+    },
+    writeOffered: async (sessionId, options) => {
+      await withDatabase((db) => {
         db.prepare(
           "update fork_acp_session_binding set config_options = ?, updated_at = ? where session_id = ?",
         ).run(JSON.stringify(options), Date.now(), sessionId);
-      }),
-    writeChoice: (sessionId, configId, value) =>
-      withDatabase((db) => {
+      });
+      written(sessionId);
+    },
+    writeChoice: async (sessionId, configId, value) => {
+      await withDatabase((db) => {
         // Read-modify-write under one write lock, so two choices never overwrite each other.
         db.exec("begin immediate");
         try {
@@ -139,7 +170,9 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
           db.exec("rollback");
           throw error;
         }
-      }),
+      });
+      written(sessionId);
+    },
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PendingReservationGate } from "../src/v4/pendingReservationGate.js";
+import { PendingReservationGate, trackReservedCreate } from "../src/v4/pendingReservationGate.js";
 
 describe("PendingReservationGate", () => {
   it("keeps a reserved session pending until its create is acknowledged", async () => {
@@ -44,5 +44,43 @@ describe("PendingReservationGate", () => {
     second();
     await lease;
     expect(opened).toBe(true);
+  });
+});
+
+describe("trackReservedCreate", () => {
+  it("marks a reserved create synchronously, before the dispatch awaits anything", async () => {
+    const gate = new PendingReservationGate();
+    let release!: () => void;
+    const dispatch = async (type: string, sessionId: string | null) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { type, sessionId };
+    };
+    const tracked = trackReservedCreate(gate, dispatch, (args) =>
+      args[0] === "createSession" ? args[1] : null,
+    );
+    const pending = tracked("createSession", "s-early");
+    // The mark is set on entry, so a lease effect that runs now sees the create in flight.
+    expect(gate.isPending("s-early")).toBe(true);
+    release();
+    await expect(pending).resolves.toEqual({ type: "createSession", sessionId: "s-early" });
+    expect(gate.isPending("s-early")).toBe(false);
+  });
+
+  it("settles on a rejected dispatch and never marks other command types", async () => {
+    const gate = new PendingReservationGate();
+    const dispatch = async (type: string, _sessionId: string | null): Promise<string> => {
+      throw new Error(`refused ${type}`);
+    };
+    const tracked = trackReservedCreate(gate, dispatch, (args) =>
+      args[0] === "createSession" ? args[1] : null,
+    );
+    await expect(tracked("createSession", "s-fail")).rejects.toThrow("refused createSession");
+    expect(gate.isPending("s-fail")).toBe(false);
+
+    const other = tracked("sendText", "s-other");
+    expect(gate.isPending("s-other")).toBe(false);
+    await expect(other).rejects.toThrow("refused sendText");
   });
 });

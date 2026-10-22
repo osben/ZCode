@@ -50,7 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import { Hand } from "lucide-react";
-import { PendingReservationGate } from "./pendingReservationGate.js";
+import { PendingReservationGate, trackReservedCreate } from "./pendingReservationGate.js";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
@@ -492,6 +492,9 @@ const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
  * (see pendingReservationGate.ts), so the conversation lease waits for the acknowledgement.
  */
 const pendingReservations = new PendingReservationGate();
+/** The reserved session id of a dispatched `createSession`, or null for every other command. */
+const reservedCreateSessionId = (args: readonly unknown[]): string | null =>
+  args[0] === "createSession" && typeof args[2] === "string" ? args[2] : null;
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -2110,7 +2113,7 @@ export function SessionPane({
     },
     [onSessionCreated, sessionId],
   );
-  const dispatchCommand = useCallback(
+  const dispatchCommandUntracked = useCallback(
     async (
       type: CommandType,
       payload: Record<string, unknown>,
@@ -2248,10 +2251,6 @@ export function SessionPane({
           issuedAt: envelope.issuedAt,
         });
       }
-      const settleReservation =
-        type === "createSession" && targetSessionId !== null
-          ? pendingReservations.begin(targetSessionId)
-          : null;
       let ack: CommandAck;
       try {
         if (telemetrySeed?.localTtft && !workspaceIdentity?.trim()) {
@@ -2266,13 +2265,11 @@ export function SessionPane({
           projectId !== undefined
             ? await sendCommand(envelope, { projectId })
             : await sendCommand(envelope);
-        settleReservation?.();
         if (telemetrySeed?.localTtft && ack.reasonCode === "guard.heldQueueConfirmationStale")
           getLocalTtftObserver()?.confirmationRetry(telemetrySeed.localTtft);
         else if (telemetrySeed?.localTtft)
           getLocalTtftObserver()?.ack(telemetrySeed.localTtft, ack.status, ack.ttftExcluded);
       } catch (error) {
-        settleReservation?.();
         if (telemetrySeed?.localTtft)
           getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
         if (lease?.store) {
@@ -2408,6 +2405,13 @@ export function SessionPane({
       workspaceIdentity,
       workspacePath,
     ],
+  );
+  // The reservation mark is set before the untracked dispatch runs, so a lease effect cannot subscribe to a
+  // reserved id that is not yet marked (see pendingReservationGate.ts).
+  const dispatchCommand = useMemo(
+    () =>
+      trackReservedCreate(pendingReservations, dispatchCommandUntracked, reservedCreateSessionId),
+    [dispatchCommandUntracked],
   );
   dispatchCommandRef.current = dispatchCommand;
   const updateWorktreePreparationMarker = useCallback(

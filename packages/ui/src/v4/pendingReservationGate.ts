@@ -39,3 +39,20 @@ export class PendingReservationGate {
     return pending ? Promise.all(pending).then(() => undefined) : Promise.resolve();
   }
 }
+
+/**
+ * Wraps a command dispatch so a `createSession` for a reserved id is marked from the first synchronous
+ * statement until its dispatch settles (on success, failure or early refusal). The mark must exist before
+ * any `await`, because a lease effect can run in that window and subscribe to the reserved id.
+ */
+export function trackReservedCreate<A extends readonly unknown[], R>(
+  gate: PendingReservationGate,
+  dispatch: (...args: A) => Promise<R>,
+  reservedSessionIdOf: (args: A) => string | null,
+): (...args: A) => Promise<R> {
+  return (...args: A) => {
+    const sessionId = reservedSessionIdOf(args);
+    const settle = sessionId === null ? null : gate.begin(sessionId);
+    return dispatch(...args).finally(() => settle?.());
+  };
+}

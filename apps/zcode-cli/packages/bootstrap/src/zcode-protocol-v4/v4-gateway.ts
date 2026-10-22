@@ -35,6 +35,7 @@ import type {
 } from "@zcode/contracts";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionEventType, isFileSystemPortError } from "@zcode/contracts";
+import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
 import type { ZCodeWorkspaceRef } from "@zcode/shared";
 import { extractMarkdownArtifactImageRefs } from "@zcode/shared";
 import type {
@@ -3722,6 +3723,9 @@ export class ConversationV4Gateway {
   ): Promise<void> {
     const getSeed = this.host.getSessionExternalAgentConfigSeed;
     if (!getSeed) return;
+    // Only an ACP agent session has an external config binding. Any other session skips the store, so a
+    // plain subscribe never reads the shared session database for it.
+    if (!publisher.getSnapshot().config.provider.startsWith(ACP_PROVIDER_ID_PREFIX)) return;
     try {
       publisher.seedExternalAgentConfig(await getSeed.call(this.host, sessionId));
     } catch (error) {

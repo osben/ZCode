@@ -128,16 +128,17 @@ export class CommandInbox {
   }
 
   async handle(raw: unknown): Promise<CommandInboxOutcome> {
+    // Parsed once: the envelope may carry lazy fields, and admission must not read them a second time.
     const parsed = parseCommandEnvelope(raw);
     // The creation is registered on receipt, before any await, so a subscribe that arrives during
     // admission (prepareDecision) already waits for it.
     const creatingSessionId =
       parsed.ok && parsed.envelope.type === "createSession" ? parsed.envelope.sessionId : null;
-    if (creatingSessionId === null) return this.admit(raw);
+    if (creatingSessionId === null) return this.admit(raw, parsed);
     const release = this.creations.begin(creatingSessionId);
     let outcome: CommandInboxOutcome;
     try {
-      outcome = await this.admit(raw);
+      outcome = await this.admit(raw, parsed);
     } catch (error) {
       release();
       throw error;
@@ -160,8 +161,10 @@ export class CommandInbox {
     };
   }
 
-  private async admit(raw: unknown): Promise<CommandInboxOutcome> {
-    const parsed = parseCommandEnvelope(raw);
+  private async admit(
+    raw: unknown,
+    parsed: ReturnType<typeof parseCommandEnvelope>,
+  ): Promise<CommandInboxOutcome> {
     if (!parsed.ok) {
       return this.ackOnly({
         commandId: this.extractCommandId(raw),

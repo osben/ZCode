@@ -175,4 +175,42 @@ describe("fork ACP session binding storage", () => {
     await store.writeChoice("zcode-1", "mode", "plan");
     expect((await store.readConfig("zcode-1")).choices).toEqual({ mode: "plan" });
   });
+
+  it("serves repeated config reads from the store without opening the database again", async () => {
+    const dbPath = await openSessionDatabase();
+    const store = createForkAcpSessionBindingStore(dbPath);
+    await store.write("zc-cache", BINDING);
+    await store.writeOffered("zc-cache", [MODE_OPTION]);
+    await store.readConfig("zc-cache");
+
+    // An outside write the store did not make: a cached read must not see it, a database read would.
+    const outside = new DatabaseSync(dbPath);
+    try {
+      outside.prepare("update fork_acp_session_binding set config_choices = ? where session_id = ?").run(
+        JSON.stringify({ mode: "plan" }),
+        "zc-cache",
+      );
+    } finally {
+      outside.close();
+    }
+    expect((await store.readConfig("zc-cache")).choices).toEqual({});
+  });
+
+  it("drops the cached config on every write of the store", async () => {
+    const dbPath = await openSessionDatabase();
+    const store = createForkAcpSessionBindingStore(dbPath);
+    await store.write("zc-write", BINDING);
+    await store.writeOffered("zc-write", [MODE_OPTION]);
+    expect((await store.readConfig("zc-write")).choices).toEqual({});
+
+    await store.writeChoice("zc-write", "mode", "plan");
+    expect((await store.readConfig("zc-write")).choices).toEqual({ mode: "plan" });
+
+    await store.clear("zc-write");
+    expect(await store.readConfig("zc-write")).toMatchObject({
+      agentId: undefined,
+      offered: undefined,
+      choices: {},
+    });
+  });
 });

@@ -203,28 +203,49 @@ export class AcpSessionPool {
    * also drops the chosen config values: they belong to the earlier agent process configuration.
    */
   async #resumeSessionId(sessionId: string, launch: AcpLaunchOptions): Promise<string | undefined> {
-    const stored = await this.#bindings?.read(sessionId);
-    if (stored === undefined) return undefined;
-    if (
-      stored.agentId === launch.agentId &&
-      stored.cwd === launch.cwd &&
-      stored.launchKey === acpLaunchKey(launch)
-    ) {
-      return stored.acpSessionId;
+    try {
+      const stored = await this.#bindings?.read(sessionId);
+      if (stored === undefined) return undefined;
+      if (
+        stored.agentId === launch.agentId &&
+        stored.cwd === launch.cwd &&
+        stored.launchKey === acpLaunchKey(launch)
+      ) {
+        return stored.acpSessionId;
+      }
+      await this.#bindings?.clear(sessionId);
+      return undefined;
+    } catch (error) {
+      // Only the resume is lost: the agent starts a new session, the turn goes on.
+      this.#warnBinding("could not read the ACP session binding; the agent starts a new session", launch, error);
+      return undefined;
     }
-    await this.#bindings?.clear(sessionId);
-    return undefined;
   }
 
-  /** Records the session the runtime now holds, so the next cold start can load it. */
+  /**
+   * Records the session the runtime now holds, so the next cold start can load it. The runtime is already
+   * resident when this runs, so a failed write is logged and never fails the acquire (which the driver would
+   * report as a start failure).
+   */
   async #recordBinding(sessionId: string, launch: AcpLaunchOptions, runtime: AcpPoolRuntime) {
     const acpSessionId = runtime.acpSessionId;
     if (this.#bindings === undefined || acpSessionId === undefined) return;
-    await this.#bindings.write(sessionId, {
+    try {
+      await this.#bindings.write(sessionId, {
+        agentId: launch.agentId,
+        acpSessionId,
+        cwd: launch.cwd,
+        launchKey: acpLaunchKey(launch),
+      });
+    } catch (error) {
+      this.#warnBinding("could not write the ACP session binding; a later cold start starts a new session", launch, error);
+    }
+  }
+
+  #warnBinding(message: string, launch: AcpLaunchOptions, error: unknown): void {
+    this.#logger?.warn(message, {
       agentId: launch.agentId,
-      acpSessionId,
-      cwd: launch.cwd,
-      launchKey: acpLaunchKey(launch),
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 

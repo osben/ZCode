@@ -196,4 +196,45 @@ describe("external agent user-once permissions", () => {
       runtime.beginShutdown();
     }
   });
+
+  it("publishes nothing for an ask the turn aborted before the broker registered it", async () => {
+    const controller = new AbortController();
+    const asked = Promise.withResolvers<void>();
+    const requests: PermissionBrokerRequest[] = [];
+    // The broker never registers the interaction; the abort is the only thing that settles the ask.
+    const port: PermissionBrokerPort = {
+      requestPermission(request, options) {
+        requests.push(request);
+        asked.resolve();
+        const response = new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        });
+        return Object.assign(response, { registered: new Promise<void>(() => undefined) });
+      },
+    } as PermissionBrokerPort;
+    const driver: ExternalAgentTurnDriver = {
+      agentId: "fake",
+      runTurn: vi.fn(async (request: ExternalAgentTurnRequest) => {
+        const settled = await request.requestPermission({
+          toolCallId: "acp-3",
+          title: "Edit",
+          detail: null,
+          optionKinds: ["allow_once", "reject_once"],
+        });
+        expect(settled).toBe("cancelled");
+        return { agentId: "fake", stopReason: "cancelled" };
+      }),
+    } as ExternalAgentTurnDriver;
+    const { runtime, eventStore } = runtimeWith(driver, port);
+    try {
+      const turn = runtime.executeTurn("edit", undefined, { abortSignal: controller.signal });
+      await asked.promise;
+      controller.abort();
+      await expect(turn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+      expect(requests).toHaveLength(1);
+      expect(permissionEvents(await eventStore.getEvents(runtime.sessionId))).toEqual([]);
+    } finally {
+      runtime.beginShutdown();
+    }
+  });
 });

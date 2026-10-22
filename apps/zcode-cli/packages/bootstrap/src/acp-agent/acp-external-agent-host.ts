@@ -90,7 +90,11 @@ function createAcpTurnDriver(
   return {
     agentId,
     async runTurn(request) {
+      // Stop can arrive at any await of the spawn. The turn then ends cancelled and the agent gets no
+      // prompt. A runtime that finished spawning stays resident for the next turn.
+      const cancelled = (): ExternalAgentTurnResult => ({ agentId, stopReason: "cancelled" });
       const launch = await readEnabledLaunch(options.records, agentId);
+      if (request.signal.aborted) return cancelled();
       let runtime: AcpPoolRuntime;
       try {
         runtime = await options.pool.acquire(request.sessionId, {
@@ -101,27 +105,37 @@ function createAcpTurnDriver(
           cwd: request.workingDirectory,
         });
       } catch (error) {
+        if (request.signal.aborted) return cancelled();
         throw toStartFailure(error, agentId);
       }
+      if (request.signal.aborted) return cancelled();
       // A session that could not be restored is shown to the user before the agent answers.
       if (runtime.takeSessionStart?.() === "reset") request.onEvent({ type: "context_reset" });
       // Chosen values reach the agent before the prompt; a change made during a running turn waits here.
       if (options.config !== undefined) {
-        await reconcileAcpSessionConfig({
-          runtime,
-          store: options.config,
-          sessionId: request.sessionId,
-          agentId,
-          ...(options.logger === undefined ? {} : { logger: options.logger }),
-          onOptions: (configOptions) =>
-            request.onEvent({ type: "config_options", options: configOptions }),
-        });
+        try {
+          await reconcileAcpSessionConfig({
+            runtime,
+            store: options.config,
+            sessionId: request.sessionId,
+            agentId,
+            ...(options.logger === undefined ? {} : { logger: options.logger }),
+            onOptions: (configOptions) =>
+              request.onEvent({ type: "config_options", options: configOptions }),
+          });
+        } catch (error) {
+          if (request.signal.aborted) return cancelled();
+          throw error;
+        }
       }
+      if (request.signal.aborted) return cancelled();
       // Asks of this agent session reach the turn only while the prompt runs (see pool.bindTurnPermission).
       const unbind = options.pool.bindTurnPermission(request.sessionId, (ask) =>
         toAcpPermissionAnswer(request, ask),
       );
       try {
+        // The last check before session/prompt: a Stop that arrived while the permission bind ran is honoured.
+        if (request.signal.aborted) return cancelled();
         return await runPrompt(runtime, agentId, request, options);
       } finally {
         unbind();

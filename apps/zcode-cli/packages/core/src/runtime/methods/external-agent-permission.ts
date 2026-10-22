@@ -70,6 +70,8 @@ export async function answerExternalAgentPermission(
   let decision: PermissionBrokerResult | "aborted" | undefined;
   try {
     await Promise.race([response.registered ?? Promise.resolve(), aborted]);
+    // An ask the turn aborted before the broker registered it publishes nothing: the user never saw it (spec S4).
+    if (signal.aborted) return "cancelled";
     await appendEvent(this, context.state, SessionEventType.PermissionRequested, {
       requestId,
       approvalMode: "user-once",

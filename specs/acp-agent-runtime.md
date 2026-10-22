@@ -654,6 +654,19 @@ runtime.prompt(...)
 - `config_options` events during a turn (agent-initiated changes) update the display copy. They do not
   overlay the user's choice, so the composer shows the agent's real value until the next reconcile.
 
+Stop during the spawn or the reconcile: the driver checks the turn signal after the launch read, after
+`pool.acquire`, after the reconcile, and after the permission bind (the last check before `session/prompt`).
+Each check that finds the signal aborted returns `cancelled` with no prompt. A runtime that finished its spawn
+stays resident for the next turn. Core treats the returned `cancelled` as a Stop, not as a failure.
+
+Binding failures are not turn failures. A failed binding read starts a new agent session, and a failed binding
+write leaves the runtime resident. Both are logged as warnings that name the lost resume, so a write error is
+never reported as a start failure.
+
+Seed and cache: the projection seed reads the binding only for a session whose projected provider is an
+`acp:` provider (`ACP_PROVIDER_ID_PREFIX`). The binding store keeps the last config read per session (bounded,
+dropped by every write of the store), so a repeated subscribe does not reopen the shared session database.
+
 Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, owner: session):
 
 - Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
@@ -666,8 +679,11 @@ Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, o
   whose model is not `acp:<agentId>` is refused with `config.notExternalAgent`; refusals are failed
   ACKs with the reason code.
 - Otherwise it writes `config_choices`, writes the display copy with the chosen value, and emits
-  `external_agent_config_updated`. The command is additive on the protocol: `zcode-protocol` and the v4
-  command union get the new payload with strict types and runtime validation.
+  `external_agent_config_updated`. The command is additive on the v4 protocol. It is declared in the v4
+  command union (`packages/shared/src/zcode-protocol-v4/command.ts`) with a strict zod payload and runtime
+  validation, the same place as the other v4-only commands (`createSelectionSideSession`,
+  `updateWorktreePreparation`). The legacy `zcode-protocol/index.ts` has no route for a v4-only command and is
+  not changed. A v4 command that has a legacy twin (`switchCollaborationMode`) is declared in both.
 
 Event and stream semantics: `external_agent_config_updated` is a persisted session event. The
 desktop-continuous link receives it live, and the web-remote-replayable link rebuilds the selects from
