@@ -56,3 +56,10 @@ Follows `docs/plans/2026-10-21-app-qa-orchestration-plan.md` (round 1, closed wi
 ## Re-plan trigger
 
 When Phase C items 1–6 are merged or explicitly deferred and Phase D is exercised, write round 3 (perf windowing, remaining spec gaps, upstream sync of 3.16.x if it lands).
+
+## Progress (2026-10-22 02:05)
+
+- Phase C 4 shipped as fix pack 2 on `claude/qa-fix-pack-2` (50809fe3): the CLI now returns `preparedActivation` on the `createSession` ACK and the renderer skips the frozen `sendText` for an already-admitted reserved submission. Gates green (typecheck, lint 0 errors, fmt, architecture 0, 155 targeted tests); live plain first send re-verified. Push blocked until the worktree is clean (pre-push `test:unit:affected` refuses a dirty tree while sub-agents edit).
+- Phase C 7 measured and designed (read-only agent pass, claims spot-checked): the subscribe snapshot is already a 60-row tail; the 570 ms block is `loadAllOlder()` committing ~1480 older rows in one `setState` for the turn-navigator directory (wide layout ≥ 864 px), plus an uncached share-mode `buildConversationTurnRenderUnits` in `SessionPane` that runs on every window change regardless of `shareActive`, plus O(all assistant chars) preview normalisation in `buildPreviewText`. Option A (renderer-only: chunked per-page commit with `loadingOlder` held, share build gated on `shareActive`, bounded preview slice) is in implementation; Option B (protocol-level turn directory) deferred as a second source of navigator truth.
+- Phase C 8 (ISSUE-017) in implementation (runner isolation, scripts only).
+- New: ISSUE-022 incognito sidebar marker missing on a fresh incognito session (CLI row has the profile, index meta and live overlay lack `incognito`); investigation delegated.

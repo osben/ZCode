@@ -47,7 +47,7 @@ Fixed in this round: ISSUE-001 (1a5fbbf9), task-search debounce (026c35a0), real
 | ISSUE-012 | S3 | index | Every opened-but-abandoned new-task composer leaves a reservation placeholder row (3 for one project after a few minutes); hidden by ISSUE-008 fix but never cleaned up. | open |
 | ISSUE-010 | S3 | composer | After pressing Stop, a message queued during the run is still sent automatically. Expected by CommandInbox semantics, but a user pressing Stop may expect the queue to pause. Needs product decision. | open |
 
-| ISSUE-017 | S3 | test infra | `pnpm test:unit:affected` batch run failed `packages/web/test/webOAuthCallbackEntry.test.ts` (21, `Cannot read properties of undefined (reading 'clear')`) and `packages/ui/test/composerWorktreePipeline.test.ts` (8); both pass when run alone → isolation/ordering flake in the affected runner. | open |
+| ISSUE-017 | S3 | test infra | `pnpm test:unit:affected` batch run failed `packages/web/test/webOAuthCallbackEntry.test.ts` (21, `Cannot read properties of undefined (reading 'clear')`) and `packages/ui/test/composerWorktreePipeline.test.ts` (8); both pass when run alone → isolation/ordering flake in the affected runner. | fixed: not a flake; Node 26 Web Storage leaves `localStorage` undefined in in-process vitest workers unless `--no-experimental-webstorage` is in NODE_OPTIONS (run-vitest.mjs sets it, the affected runner did not) |
 
 Status 00:45 — ISSUE-011 fixed (37cdcd94, dead stored selection replaced by the view's preferred selection; e85c344b prewarm scope; 39cb71ee/a8619425 notices). ISSUE-014 fixed (5dabf6f7 + title recency 0bd465cc). ISSUE-015 fixed (00cb654f); ISSUE-018 fork visibility agent in flight. Review round 1 should-fix items 1–8 landed (742cf35b, d86731c6, 6b0dfa1d, a8619425); reviewer item 2 (discard on `deleteSession` rejected `proto.sessionNotFound`) still open.
 
@@ -71,6 +71,7 @@ ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coinci
 
 | ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
 | ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
+| ISSUE-022 | S2 | incognito | Fresh incognito session (prepared-submission path, 4POLL, 01:40) replies fine and the CLI `session` row carries `fork_incognito`, but the index `meta_json` never gets `"incognito":true` and the sidebar row renders no `[data-incognito-task-icon]`. The round-1 incognito session (sandbox repo) did converge. Chain read: CLI `getSessionIndexMeta` → summary `incognito` → Host overlay → `persistIncognitoMarkers`; break point not yet located. | investigating |
 
 ## E2E run (round 2, Phase E, 01:50)
 
