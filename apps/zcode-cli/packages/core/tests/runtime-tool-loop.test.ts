@@ -8828,7 +8828,9 @@ describe("AgentRuntime tool loop", () => {
     expect(queued.kind).toBe("queued");
 
     controller.abort(
-      createTurnCancelReason("v4 sendQueuedNow preempts active turn", true),
+      createTurnCancelReason("v4 sendQueuedNow preempts active turn", {
+        preserveQueueAutoDrainOnCancel: true,
+      }),
     );
     await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
 

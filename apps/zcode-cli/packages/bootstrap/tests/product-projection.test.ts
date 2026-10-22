@@ -6871,6 +6871,55 @@ describe("fork / modelChange marker", () => {
     });
   });
 
+  // ISSUE-039 D1: the Stop's hold is written before the Steer's cancelled TurnComplete (which carries the
+  // preserve intent). The projection must keep the hold; the steer cancel must not clear it.
+  it("ISSUE-039 D1：steer 的 cancelled TurnComplete 不清除先写入的用户 Stop hold", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q1",
+        input: "第一条",
+        inputPreview: "第一条",
+        inputSize: 9,
+        queueLength: 1,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q2",
+        input: "第二条",
+        inputPreview: "第二条",
+        inputSize: 9,
+        queueLength: 2,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: false });
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+        preserveQueueAutoDrainOnCancel: true,
+      },
+      { turnId: "t1" },
+    );
+
+    const snapshot = runAll(log.events).projection.getSnapshot();
+    expect(snapshot.queue.autoDrain).toBe(false);
+    expect(snapshot.queue.items).toHaveLength(2);
+  });
+
   // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──
   it("A/B：setFollowupMode(guide) → running 时输入路由为 guide", () => {
     const log = new EventLog();

@@ -244,3 +244,19 @@ export async function releaseFollowingQueue(
     });
   }
 }
+
+/**
+ * ISSUE-039 D1. A cancel already in flight: the target was aborted by a Steer and has not torn down yet. A stop
+ * that wrote its own hold keeps it (Stop always wins over an in-flight Steer). The inputs are observed by the
+ * caller: runtimeIdle (stopActiveForegroundExecution returned idle), runtimeIdRegistered (the execution is still
+ * registered, so idle means aborted, not torn down), compatAbortedBefore (no runtime token, the controller was
+ * aborted before the stop began).
+ */
+export function isStopCancelInFlight(input: {
+  held: boolean;
+  runtimeIdle: boolean;
+  runtimeIdRegistered: boolean;
+  compatAbortedBefore: boolean;
+}): boolean {
+  return input.held && input.runtimeIdle && (input.runtimeIdRegistered || input.compatAbortedBefore);
+}
