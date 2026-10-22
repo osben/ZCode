@@ -13,6 +13,10 @@ import {
   loadWindow,
   spawnHostProcess,
 } from "../src/main/desktopHostProcess.js";
+import {
+  createLocalHostStartupGate,
+  type LocalHostStartupGate,
+} from "../src/main/storage-sweep-gate/contract.js";
 
 vi.mock("../src/main/databaseStartupRelay.js", () => ({
   bindDatabaseStartupRelay: (_win: unknown, _child: unknown, startupId: string) => ({
@@ -521,4 +525,154 @@ it("PRT-010: main 的真实 Host 消息分发即时报告 Bash 完成事实，�
     setDesktopResourceTelemetryEnabled(false, telemetryLogger);
     sendCustom.mockRestore();
   }
+});
+
+describe("desktopHostProcess local startup gate", () => {
+  const windowFor = (id: number) => ({ id, webContents: { id: id + 10, postMessage: vi.fn() } });
+  const gateDependencies = (gate?: LocalHostStartupGate) => ({
+    hostProcessLocalEnv: {},
+    logger: { info: vi.fn(), warn: vi.fn() },
+    broadcastHub: { register: vi.fn(), unregister: vi.fn() } as never,
+    windowHostProcessMap: new Map(),
+    hostRunningTaskCountMap: new Map(),
+    localHostStartupGate: gate,
+  });
+  const initLocal = {
+    type: HostMessageTypes.InitLocal as const,
+    zcodeBuiltinProviderConfigFilePath: "/config.json",
+  };
+  const startupState = (startupId: string, phase: "ready" | "failed") => ({
+    type: HostResponseTypes.DatabaseStartupState,
+    state: {
+      schemaVersion: 1,
+      startupId,
+      attemptId: "attempt-1",
+      sequence: 1,
+      startedAt: 1,
+      updatedAt: 1,
+      phase,
+      disk: [],
+    },
+  });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+  it("sends the sweep flag only on the first local InitLocal and holds the second until the first is ready", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(1) as never, "gate-window-1", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(2) as never, "gate-window-2", initLocal, gateDependencies(gate));
+    await flush();
+
+    expect(first.postMessage).toHaveBeenCalledTimes(1);
+    const firstInit = first.postMessage.mock.calls[0]![0];
+    expect(firstInit).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: true,
+    });
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "ready"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(second.postMessage.mock.calls[0]![0]).toMatchObject({
+      type: HostMessageTypes.InitLocal,
+      sweepAbandonedReservations: false,
+    });
+  });
+
+  it("releases the held InitLocal when the claimed Host reports failed or exits", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    const third = new MockUtilityProcess();
+    electronMock.fork
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockReturnValueOnce(third);
+    spawnHostProcess(windowFor(3) as never, "gate-window-3", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(4) as never, "gate-window-4", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(5) as never, "gate-window-5", initLocal, gateDependencies(gate));
+    await flush();
+    const firstInit = first.postMessage.mock.calls[0]![0];
+
+    first.emit("message", startupState(firstInit.databaseStartupId, "failed"));
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+    expect(third.postMessage).toHaveBeenCalledTimes(1);
+    expect(third.postMessage.mock.calls[0]![0].sweepAbandonedReservations).toBe(false);
+  });
+
+  it("releases the held InitLocal when the claimed Host exits without reporting", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(6) as never, "gate-window-6", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(7) as never, "gate-window-7", initLocal, gateDependencies(gate));
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+
+    first.emit("exit", 1);
+    await flush();
+    expect(second.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not post a held InitLocal to a Host that exited while waiting", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = new MockUtilityProcess();
+    const second = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    spawnHostProcess(windowFor(8) as never, "gate-window-8", initLocal, gateDependencies(gate));
+    spawnHostProcess(windowFor(9) as never, "gate-window-9", initLocal, gateDependencies(gate));
+    await flush();
+
+    second.emit("exit", 1);
+    first.emit("exit", 0);
+    await flush();
+    expect(second.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("posts InitLocal at once and without the flag when no gate is passed", async () => {
+    const child = new MockUtilityProcess();
+    electronMock.fork.mockReturnValueOnce(child);
+    spawnHostProcess(windowFor(10) as never, "gate-window-10", initLocal, gateDependencies());
+
+    expect(child.postMessage).toHaveBeenCalledTimes(1);
+    expect(child.postMessage.mock.calls[0]![0]).not.toHaveProperty("sweepAbandonedReservations");
+    child.emit("exit", 0);
+  });
+});
+
+describe("createLocalHostStartupGate", () => {
+  it("claims the sweep only once and keeps later tickets waiting on the first settle", async () => {
+    const gate = createLocalHostStartupGate();
+    const first = gate.claim();
+    const second = gate.claim();
+    expect(first.sweepAbandonedReservations).toBe(true);
+    expect(second.sweepAbandonedReservations).toBe(false);
+
+    let opened = false;
+    void second.open.then(() => {
+      opened = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(opened).toBe(false);
+
+    first.settle();
+    first.settle();
+    await second.open;
+    expect(opened).toBe(true);
+  });
+
+  it("keeps the sweep flag through the Host InitLocal schema", () => {
+    expect(
+      hostIncomingMessageSchema.parse({
+        type: "init-local",
+        zcodeBuiltinProviderConfigFilePath: "/config.json",
+        sweepAbandonedReservations: true,
+      }),
+    ).toMatchObject({ sweepAbandonedReservations: true });
+  });
 });

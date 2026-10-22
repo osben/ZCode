@@ -199,6 +199,7 @@ import {
   loadWindow,
   spawnHostProcess,
 } from "./desktopHostProcess.js";
+import { createLocalHostStartupGate } from "./storage-sweep-gate/contract.js";
 import { spawnCronScheduler, type CronSchedulerHandle } from "./desktopCronScheduler.js";
 import {
   clearOAuthRoutesForWindow,
@@ -297,6 +298,8 @@ import {
 
 registerLocalMediaPreviewScheme(protocol, [PLUGIN_SANDBOX_PRIVILEGED_SCHEME]);
 const localMediaPreviewPathRegistry = createLocalMediaPreviewPathRegistry();
+// One gate per app process: only the first local Host gets the placeholder sweep (specs/first-submission-lifecycle.md).
+const localHostStartupGate = createLocalHostStartupGate();
 
 // E2E lets ChromeDriver manage the remote debugging port. Keeping it fixed at 9229 here would conflict with an already
 // running ZCode Dev instance and leave a white screen before the WebDriver session is created.
@@ -2047,6 +2050,7 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           logger,
           broadcastHub,
           taskRealtimeBus,
+          localHostStartupGate,
           getOpenWorkspaceInventory: () => {
             const windows = getMainApplicationWindows();
             // Preparation snapshots are window-Host-owned. Until all Hosts can answer one

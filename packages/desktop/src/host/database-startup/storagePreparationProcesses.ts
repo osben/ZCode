@@ -34,10 +34,14 @@ export function prepareHostStorage(
   path: string,
   report: (phase: Phase, migration?: DatabaseMigrationFacts) => void,
   signal: AbortSignal,
+  options?: { sweepAbandonedReservations?: boolean },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./tasksStorageWorker.js", import.meta.url), {
-      workerData: { path },
+      workerData: {
+        path,
+        sweepAbandonedReservations: options?.sweepAbandonedReservations === true,
+      },
     });
     let done = false;
     let failure: unknown;

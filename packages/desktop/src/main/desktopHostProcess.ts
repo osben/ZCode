@@ -49,6 +49,7 @@ import {
   resolveBundledGlmBinaryPath,
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
+import type { LocalHostStartupGate } from "./storage-sweep-gate/contract.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
 import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
@@ -92,6 +93,8 @@ export interface HostInitMessage {
   zcodeBuiltinProviderConfigFilePath: string;
   /** Local runtime environment collected/filtered asynchronously by Main; passed only to InitLocal. */
   runtimeProcessEnvPatch?: Record<string, string>;
+  /** Set by spawnHostProcess from the startup gate; true only for the first local Host of an app process. */
+  sweepAbandonedReservations?: boolean;
 }
 
 export interface SpawnHostProcessOptions {
@@ -163,6 +166,8 @@ export function spawnHostProcess(
   initMessage: HostInitMessage,
   dependencies: {
     hostProcessLocalEnv: Record<string, string>;
+    /** Absent in tests and entries that need no sweep gating; then InitLocal is posted at once and carries no flag. */
+    localHostStartupGate?: LocalHostStartupGate;
     /** Main has completed the server-side rollout decision; Host consumes this snapshot without making requests or bucketing users. */
     desktopContextPromptEnabled?: () => boolean;
     logger: {
@@ -330,6 +335,8 @@ export function spawnHostProcess(
     hostLogRelay.onStdout(data.toString());
   });
 
+  // spawnHostProcess only starts local Hosts, and each one begins with InitLocal, so every claim here is for InitLocal.
+  const startupTicket = dependencies.localHostStartupGate?.claim();
   const databaseStartupRelay = bindDatabaseStartupRelay(win, child, hostId);
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
@@ -339,6 +346,8 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.DatabaseStartupState) {
       databaseStartupRelay.receive(result.data.state);
+      if (result.data.state.phase === "ready" || result.data.state.phase === "failed")
+        startupTicket?.settle();
       return;
     }
 
@@ -831,11 +840,25 @@ export function spawnHostProcess(
       }
     : { ...initMessage, databaseStartupId: databaseStartupRelay.startupId };
 
+  // Only the InitLocal post waits for the gate; the port is still created and handed to the renderer at once.
+  const postInit = (transfer?: MessagePortMain[]) => {
+    const message: HostInitMessage = startupTicket
+      ? { ...hostInitMessage, sweepAbandonedReservations: startupTicket.sweepAbandonedReservations }
+      : hostInitMessage;
+    const send = () => {
+      if (exitedHostProcesses.has(child)) return;
+      if (transfer) child.postMessage(message, transfer);
+      else child.postMessage(message);
+    };
+    if (startupTicket) void startupTicket.open.then(send);
+    else send();
+  };
+
   if (options?.attachInitialServicePort === false) {
-    child.postMessage(hostInitMessage);
+    postInit();
   } else {
     const { port1, port2 } = new MessageChannelMain();
-    child.postMessage(hostInitMessage, [port2]);
+    postInit([port2]);
 
     if (options?.onPortReady) {
       options.onPortReady(port1);
@@ -871,6 +894,7 @@ export function spawnHostProcess(
 
   child.on("exit", (code) => {
     exitedHostProcesses.add(child);
+    startupTicket?.settle();
     // Host exit is the authoritative fail-hidden boundary; do not rely on an exiting Host to send inactive afterward.
     dependencies.onCuaOperationStateSourceExited?.(child);
     hostLogRelay.flushRawLogs();

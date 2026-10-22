@@ -150,6 +150,60 @@ Older CLI builds without the capability retain their supported creation route;
 the UI must not issue an unrecognized reservation or claim durable preparation
 before Host has confirmed it.
 
+### Placeholder startup sweep (ISSUE-012b)
+
+A reservation placeholder is a `tasks` row with `cli_created_at IS NULL AND
+created_at = 0 AND meta_json = '{}'` (`RESERVATION_PLACEHOLDER_SQL`). Abandoned
+drafts and rejected creates discard their placeholder; rows orphaned before that
+fix stay hidden from reads but keep growing counts and backups.
+
+- What: rows matching all three signature parts with `host_id = 'local'`, the owner
+  of the local tasks index. Rows matching one or two parts, CLI-admitted rows
+  (pinned or archived included), and rows of any other host are never removed.
+- When: inside `prepareTasksIndexStorage`, after the migration COMMIT and the
+  `maintaining` report, before the handle closes and before `TaskIndexRepo`,
+  `AutomationRepo` and `OffPeakTaskRepo` run `ensureReady`. It runs in its own
+  `BEGIN IMMEDIATE` transaction on the same handle. It is never a migration and is
+  not time-based.
+- Gate (Main): `sweepAbandonedReservations: true` is sent in the `InitLocal` of the
+  first local Host that Main spawns in an app process, and in no other message.
+  Main claims this ticket inside `spawnHostProcess` for `InitLocal` only. Every
+  later local `InitLocal` is held by Main and posted only after the claimed first
+  Host reports `DatabaseStartupState` `ready` or `failed`, or its process exits.
+  Main uses no timer. The Host-side `startup_status_timeout` turns a stuck
+  migration into `failed`. Only the `InitLocal` post is deferred: the port is
+  created and handed to the renderer as before. A respawned Host, a later window,
+  a server entry or a remote source never gets the flag. When no gate is passed,
+  Main neither sends the flag nor holds anything.
+- Why no live reservation exists at the sweep: placeholders are written only by a
+  local Host's project repository. While the first claimed Host is starting, no
+  other local Host runs services, because its `InitLocal` is held. The first Host
+  reports `ready` only after the sweep. The app holds a single-instance lock, so
+  no second app process of this build runs.
+- Residual risk (accepted by the user): the upstream app can co-run on the same
+  `tasks-index.sqlite`, and the single-instance lock does not exclude it. A live
+  upstream reservation swept by this startup is re-created by the next
+  `createSession` replay with the same project and directories, because
+  `reserveCreatedTask` re-inserts a missing row. A reservation that is never
+  replayed loses its ownership.
+- Replay: every create path re-runs `prepareSessionCreation` and therefore
+  `reserveCreatedTask`, which re-inserts a missing row with the same project,
+  directories and fork parent. A swept row does not lose ownership on replay.
+- Retry: the flag applies to the first prepare attempt of that Host only. A
+  coordinator retry of the same Host runs without the sweep, because other windows
+  may already hold live drafts. Rows left by a failed first attempt wait for the
+  next launch.
+- Locale: a locale change can reach a held Host before its `InitLocal`. The Host
+  ignores the `InitLocal` locale once a change has arrived, so the older value
+  cannot overwrite the newer one.
+- Idempotency: a repeated run deletes only rows that still match the signature. A
+  second run in the same app process is never issued by the gate.
+- Logging: a sweep that removes rows writes one `info` line with the count. A run
+  that removes nothing writes nothing. A failure is recoverable because the rows
+  are hidden: it writes `warn` and startup continues.
+- Live reservations created after the sweep are untouched, because the sweep
+  does not run again until the next app launch.
+
 | ID    | Setup/action                                             | Required assertion                                                                           | Evidence                                        |
 | ----- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | FSL01 | Hold first-create/prewarm/config ACK; send ordinary text | Full message visible before releasing any held IO; no progress label                         | Mounted UI + pending Desktop scenario           |
