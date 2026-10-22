@@ -657,7 +657,6 @@ export function SessionPane({
   activeSelectionSideChatSessionId = null,
   workspacePath,
   workspaceIdentity,
-  onCreateTaskInWorkspace,
   remoteSessionId,
   isDesktop = false,
   compactForRemoteControl = false,
@@ -6721,7 +6720,6 @@ export function SessionPane({
                               workspaceIdentity={workspaceIdentity}
                               remoteSessionId={remoteSessionId}
                               homePath={workspaceHomePath}
-                              onOpenWorktree={onCreateTaskInWorkspace}
                             />
                           )
                         ) : null}

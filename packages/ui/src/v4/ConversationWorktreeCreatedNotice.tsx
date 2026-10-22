@@ -1,18 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Check,
-  ChevronRight,
-  Copy,
-  FolderOpen,
-  GitBranch,
-  MoreHorizontal,
-  SquarePen,
-} from "lucide-react";
-import {
-  claimsRemoteWorkspaceIdentity,
-  rebaseRemoteWorkspaceIdentity,
-  type EditorInfo,
-} from "@zcode/shared";
+import { Check, ChevronRight, Copy, FolderOpen, GitBranch, MoreHorizontal } from "lucide-react";
+import { claimsRemoteWorkspaceIdentity, type EditorInfo } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import {
   Collapsible,
@@ -23,7 +11,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import {
@@ -40,15 +27,9 @@ import { readLastSelectedEditorId } from "@/lib/editorPreference.js";
 import { isFileManagerOpenTarget } from "@/lib/openWithEditors.js";
 import { formatHomeRelativePath } from "@/lib/path.js";
 import { resolveWorkspaceEditorSelection } from "@/lib/workspaceEditorSelection.js";
-import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.js";
 import { logger } from "@/logger.js";
 import { getFileManagerLabel } from "@/workspace-file-tree/helpers.js";
 import { formatWorktreeAddCommand } from "@/v4/worktreeCommandText.js";
-import {
-  bindRemoteWorkspaceIdentity,
-  unbindRemoteWorkspaceIdentity,
-  useRemoteWorkspaceSessionStore,
-} from "@/store/remoteWorkspaceSessionStore.js";
 
 /**
  * Persistent second timeline item after Host activation clears the preparation marker: the same
@@ -63,20 +44,17 @@ export function ConversationWorktreeCreatedNotice({
   workspaceIdentity,
   remoteSessionId,
   homePath,
-  onOpenWorktree,
 }: {
   branchName?: string;
   /** Undefined until Git status loads; null when the current worktree has no branch. */
   currentBranchName?: string | null;
   path: string;
-  /** Parent workspace identity; a remote parent yields a remote identity for the worktree path. */
+  /** Parent workspace identity; a remote parent hides the local-only reveal/editor items. */
   workspaceIdentity?: string;
-  /** Pane's remote session id when it has one; the parent identity binding is the fallback, as in the pane's own routing. */
+  /** Pane's remote session id when it has one; also marks the parent as remote. */
   remoteSessionId?: string | null;
   /** Home directory reported by the parent workspace's Host; display-only `~` shortening. */
   homePath?: string;
-  /** Opens the worktree as its own project tab with an empty draft ("New task in this worktree"). */
-  onOpenWorktree?: (path: string, workspaceIdentity?: string) => void | Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
   const platform = useOptionalPlatform();
@@ -92,67 +70,6 @@ export function ConversationWorktreeCreatedNotice({
   // The creation-time branch stays until Git status is known, so a later branch switch is shown.
   const displayBranchName = currentBranchName === undefined ? branchName : currentBranchName;
   const [createdOpen, setCreatedOpen] = useState(false);
-
-  const openFailed = useCallback(() => {
-    toast(intl.formatMessage({ id: "commandCenter.worktree.openFailed" }, { path }), {
-      durationMs: 10_000,
-    });
-  }, [intl, path]);
-
-  const handleOpenWorktree = useCallback(async () => {
-    if (!onOpenWorktree) return;
-    const parentIdentity = workspaceIdentity?.trim() ?? "";
-    // Remote identities embed the path, so the worktree needs its own identity on the same
-    // authority. A local parent has no remote identity and opens by path alone. A parent that
-    // claims a remote identity but does not parse must fail closed: falling back to the path
-    // would hand the remote filesystem path to the local workspace opener.
-    const worktreeIdentity = rebaseRemoteWorkspaceIdentity(parentIdentity, path);
-    if (
-      (worktreeIdentity === null && claimsRemoteWorkspaceIdentity(parentIdentity)) ||
-      (worktreeIdentity === null && Boolean(remoteSessionId?.trim()))
-    ) {
-      openFailed();
-      return;
-    }
-    // A remote worktree tab resolves its session only through the identity binding. Resolve the
-    // parent's session with the same resolver the pane uses for its own routing: the remoteSessionId
-    // prop first, then the parent identity binding (restored and split panes omit the prop). Only an
-    // attached session counts, so a remote disconnect fails closed. Failing before any bind keeps a
-    // failed open from leaving a stale identity binding behind.
-    let previousIdentityBinding: string | undefined;
-    if (worktreeIdentity !== null) {
-      const parentRemoteSessionId = resolveWorkspaceRemoteSessionId(
-        {
-          // The identity is non-empty here, so the resolver's path fallback never applies.
-          workspacePath: path,
-          workspaceIdentity: parentIdentity,
-          ...(remoteSessionId?.trim() ? { remoteSessionId: remoteSessionId.trim() } : {}),
-        },
-        useRemoteWorkspaceSessionStore.getState(),
-      );
-      if (!parentRemoteSessionId) {
-        openFailed();
-        return;
-      }
-      const bindings = useRemoteWorkspaceSessionStore.getState().sessionIdByWorkspaceIdentity;
-      previousIdentityBinding = bindings[worktreeIdentity];
-      bindRemoteWorkspaceIdentity(worktreeIdentity, parentRemoteSessionId);
-    }
-    try {
-      await onOpenWorktree(path, worktreeIdentity ?? undefined);
-    } catch {
-      // Restore the prior binding on a rejected open: remove a binding this click created, or put
-      // back the session an existing binding pointed to.
-      if (worktreeIdentity !== null) {
-        if (previousIdentityBinding) {
-          bindRemoteWorkspaceIdentity(worktreeIdentity, previousIdentityBinding);
-        } else {
-          unbindRemoteWorkspaceIdentity(worktreeIdentity);
-        }
-      }
-      openFailed();
-    }
-  }, [onOpenWorktree, openFailed, path, remoteSessionId, workspaceIdentity]);
 
   const handleReveal = useCallback(async () => {
     if (!platform || !canOpenNative) return;
@@ -281,15 +198,6 @@ export function ConversationWorktreeCreatedNotice({
                   <Copy aria-hidden="true" />
                   {intl.formatMessage({ id: "appHeader.copyPath" })}
                 </DropdownMenuItem>
-                {onOpenWorktree ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onSelect={() => void handleOpenWorktree()}>
-                      <SquarePen aria-hidden="true" />
-                      {intl.formatMessage({ id: "worktreeSetup.newTaskInWorktree" })}
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

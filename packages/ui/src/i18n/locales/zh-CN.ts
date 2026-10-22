@@ -7355,7 +7355,6 @@ const zhCN: Record<string, string> = {
   "worktreeSetup.summaryReady": "就绪 · {branch}",
   "worktreeSetup.summaryExisting": "已存在 · {branch}",
   "worktreeSetup.actions": "工作树操作",
-  "worktreeSetup.newTaskInWorktree": "在此工作树中新建任务",
   "worktreeSetup.pathCopied": "路径已复制",
   "worktreeSetup.copyCommand": "复制命令",
   "worktreeSetup.commandCopied": "命令已复制",

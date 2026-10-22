@@ -7744,7 +7744,6 @@ const enUS: Record<string, string> = {
   "worktreeSetup.summaryReady": "ready · {branch}",
   "worktreeSetup.summaryExisting": "existing · {branch}",
   "worktreeSetup.actions": "Worktree actions",
-  "worktreeSetup.newTaskInWorktree": "New task in this worktree",
   "worktreeSetup.pathCopied": "Path copied",
   "worktreeSetup.copyCommand": "Copy command",
   "worktreeSetup.commandCopied": "Command copied",

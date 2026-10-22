@@ -80,7 +80,6 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.summaryReady": "готово · {branch}",
   "worktreeSetup.summaryExisting": "існуючий · {branch}",
   "worktreeSetup.actions": "Дії з worktree",
-  "worktreeSetup.newTaskInWorktree": "Нове завдання в цьому worktree",
   "worktreeSetup.pathCopied": "Шлях скопійовано",
   "worktreeSetup.copyCommand": "Копіювати команду",
   "worktreeSetup.commandCopied": "Команду скопійовано",
