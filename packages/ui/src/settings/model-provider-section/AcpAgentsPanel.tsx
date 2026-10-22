@@ -12,6 +12,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { ACP_AGENT_CATALOG, type AcpDetectionState } from "./acpAgentConfig.js";
+import { AcpAgentMark } from "./AcpAgentMark.js";
 import { ModelProviderLoadingCard } from "./StatusCards.js";
 
 export interface AcpAgentDetection extends AcpDetectionState {
@@ -141,6 +142,7 @@ export function AcpAgentCatalogDetail({
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"
                   data-acp-catalog-agent={agent.agentId}
                 >
+                  <AcpAgentMark agentId={agent.agentId} name={agent.displayName} />
                   <span className="text-ui-base font-medium text-foreground">
                     {agent.displayName}
                   </span>

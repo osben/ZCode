@@ -78,6 +78,13 @@ ZCode never runs an install command. The catalog shows the vendor's command as s
 - GitHub Copilot CLI is not listed: no ACP support is confirmed.
 - Version probes ran with `HOME`, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` pointed at a scratch directory.
 
+Brand marks (`packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx`, `acpAgentLogo.ts`): every
+agent row in Settings (navigation, detail header and catalog rows) shows its mark, with a light and a dark
+variant that follows the app theme. Opencode uses its bundled mark, Codex the OpenAI mark and Claude Code the
+Anthropic mark. Cursor has a bundled mark that is a hand-drawn cube approximation, not the vendor artwork.
+Qwen and Gemini have no bundled mark and keep the letter mark, the fallback for any unknown agent. The
+composer model picker keeps no agent logo: derived `acp:` providers carry no `logo`.
+
 ## State owner and lifecycle
 
 Owner: one `AcpSessionRuntime` per agent process.
