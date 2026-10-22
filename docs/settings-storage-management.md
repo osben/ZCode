@@ -190,7 +190,7 @@ export const IStorageService = createServiceDescriptor<IStorageService>("storage
 
 复用：desktop 已有一个只用于遥测的递归大小扫描器（`packages/desktop/src/main/zcodeDataSizeScanner.ts`，Worker 内跑、不跟随符号链接，由 `desktopZCodeDataSizeTelemetry.ts` 调用）。本功能把它下沉到 services 层并扩展为「按 catalog 分类累加 + 进度回调 + 取消」，遥测改为调用同一实现，避免两份目录遍历逻辑。
 
-RPC 接线沿用 `ISettingService` 的既有模式：`packages/shared/src/channels.ts` 增加 `ServiceChannels.Storage` → services 定义描述符与实现 → host collection `.register`（superseded: the storage service now lives in main, `packages/desktop/src/main/resourceManagerStorage.ts`, over IPC; the host collection file was removed） → `packages/client/src/remoteServiceAccess.ts` 增加代理并加进 `IServiceAccessor` → UI 通过 `useServices().storageService` 调用。
+接线：main 进程持有唯一的 `IStorageService` 实例（`packages/desktop/src/main/resourceManagerStorage.ts`），通过 `PlatformChannels.StorageStartScan` / `StorageCancelScan` / `StorageGetSnapshot` / `StorageClean` / `StorageRevealPath` 的 IPC invoke 暴露命令，并用 `StorageScanProgress` 推送进度快照；Resource Manager 窗口经 `packages/desktop/src/preload/resourceManager.ts` 调用，不走 host RPC 注册。
 
 ## 5. 时序与状态
 

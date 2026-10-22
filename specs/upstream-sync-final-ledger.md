@@ -849,7 +849,6 @@ Rule: an upstream-owned file or export (present in the pinned upstream commit, l
 
 ### Removed
 
-- Locale keys `archives.delete`, `archives.deleteTitle`, `archives.deleteDescription` in en-US, zh-CN and uk-UA. Their only reader was the old `useArchiveManagement` confirm dialog (#265).
 - `packages/desktop/src/host/remoteConnectionServiceCollection.ts` and its skill-sync case. It came from upstream 3.15.1; upstream 3.16.1 (`0a1fc56d`) deleted it, so it is not upstream-owned at the pinned commit, and the fork host never called it.
 
 ### Changed
@@ -860,6 +859,7 @@ Rule: an upstream-owned file or export (present in the pinned upstream commit, l
 ### Kept (upstream-owned, dead in the fork)
 
 - `packages/ui/src/lib/archivedTaskDeletion.ts` (`collectArchivedTaskDeletion`, `deleteArchivedTaskSelection`), `packages/ui/test/archivedTaskDeletion.test.ts` and the UI-batch case in `packages/desktop/test/windowHostArchivedTaskDeletion.test.ts`. Their only production caller, `DeleteAllArchivedTasksButton.tsx`, was removed in #265.
+- Locale keys `archives.delete`, `archives.deleteTitle`, `archives.deleteDescription`. They are upstream-owned (en-US and zh-CN at `0a1fc56d`, read by upstream `useArchiveManagement.ts`). The fork stopped reading them in #265. uk-UA keeps them for catalog parity.
 - Fifteen `packages/services/src/node.ts` re-exports that knip reports as unused, all present in upstream `0a1fc56d`:
   - eight that were already unused: `OAuthCredentialRepo`, `resolveCurrentAccountAccess`, `createAccountRequestAuthService`, `resolveAccountTeamPlanRuntimeMaterial`, `createAccountProjectTokenClient`, `createUsageStatsService`, `createSubagentsService`, `createMemoryService`;
   - seven whose only consumer was `remoteConnectionServiceCollection.ts`: `createAccountProviderCredentialStore`, `createBroadcastService`, `createClientScenesService`, `createCodingPlanSubscriptionService`, `createMediaPreviewService`, `createOAuthProviderLogoutHandler`, `createSettingsSyncService`.
