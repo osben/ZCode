@@ -58,6 +58,12 @@ function expectedTelemetrySendOptions() {
   });
 }
 
+// Blocked and failed sends now announce themselves with a toast; the toast animates with
+// requestAnimationFrame, which this DOM harness does not provide.
+vi.mock("@/components/ui/toast.js", () => ({
+  toast: vi.fn(),
+}));
+
 vi.mock("@/components/ui/dialog.js", async () => {
   const React = await import("react");
   const Passthrough = ({ children }: { children?: ReactNode }) =>

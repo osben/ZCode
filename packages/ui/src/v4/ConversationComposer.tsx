@@ -2276,37 +2276,38 @@ function ConversationComposerImpl({
         };
         commandResolutionCleanupsRef.current.add(cleanup);
       };
+      const hasNothingToSend =
+        !trimmed &&
+        !hasPendingAttachments &&
+        !hasPendingCodeCommentContexts &&
+        !hasPendingWebElementContexts &&
+        !hasPendingPptxElementReferences &&
+        !hasPendingConversationSelections &&
+        !hasPendingPluginUiContexts &&
+        !submittedShareContextId;
+      const submitBlockReason = resolveComposerSubmitBlockReason({
+        remoteAvailable,
+        runtimeBlocked,
+        submissionReady,
+        submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        sendInProgress:
+          pendingRef.current !== null ||
+          targetSelectionPendingRef.current ||
+          worktreeQueued ||
+          reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
+          pendingWorktreeSendRef.current !== null,
+        preparedSessionAwaitingFirstInput: Boolean(snapshotRef.current?.meta.submissionPreparation),
+        retrying: Boolean(retryFirstSubmission),
+        outcomeUnresolved:
+          retryFirstSubmission?.status === "sending" || retryFirstSubmission?.status === "unknown",
+        attachmentsReady,
+      });
+      // A blocked Send with content must say why; a silent return looks like a lost message.
+      if (!hasNothingToSend && submitBlockReason !== null)
+        toast(intl.formatMessage({ id: `composer.sendBlocked.${submitBlockReason}` }));
       if (
-        (!trimmed &&
-          !hasPendingAttachments &&
-          !hasPendingCodeCommentContexts &&
-          !hasPendingWebElementContexts &&
-          !hasPendingPptxElementReferences &&
-          !hasPendingConversationSelections &&
-          !hasPendingPluginUiContexts &&
-          !submittedShareContextId) ||
-        resolveComposerSubmitBlockReason({
-          remoteAvailable,
-          runtimeBlocked,
-          submissionReady,
-          submissionConfigured: !(
-            createSubmissionFromComposer !== undefined && submission === null
-          ),
-          sendInProgress:
-            pendingRef.current !== null ||
-            targetSelectionPendingRef.current ||
-            worktreeQueued ||
-            reservingWorktreeRef.current?.epoch === renderedOwnerRef.current.epoch ||
-            pendingWorktreeSendRef.current !== null,
-          preparedSessionAwaitingFirstInput: Boolean(
-            snapshotRef.current?.meta.submissionPreparation,
-          ),
-          retrying: Boolean(retryFirstSubmission),
-          outcomeUnresolved:
-            retryFirstSubmission?.status === "sending" ||
-            retryFirstSubmission?.status === "unknown",
-          attachmentsReady,
-        }) !== null ||
+        hasNothingToSend ||
+        submitBlockReason !== null ||
         // A double click: no editor change since this composer's last claim.
         (claimedSubmissionRef.current !== null &&
           claimedSubmissionRef.current.revision === contentRevisionRef.current &&
@@ -2757,6 +2758,9 @@ function ConversationComposerImpl({
             getLocalTtftObserver()?.exclude(telemetrySeed.localTtft, "failed");
           // On failure, keep the draft in the input (do not clear it) and record only the reason.
           logger.warn(`[v4-composer] 发送失败: ${String(error)}`);
+          // The restored text is the only trace of a failed send when no record was kept (the
+          // reservation never landed). Say so, otherwise the user sees an unchanged composer.
+          if (!submittedContentSettled) toast(intl.formatMessage({ id: "chat.error.sendFailed" }));
           // SessionPane already finalizes ACK-side failures; reaching this point means Composer's own flow failed.
           conversationTelemetry?.settleSendResult({
             seed: telemetrySeed,

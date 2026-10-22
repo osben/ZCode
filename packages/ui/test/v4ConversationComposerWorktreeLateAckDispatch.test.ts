@@ -1832,3 +1832,85 @@ it("the Unlock warning is announced and described on the confirm button", async 
     });
   }
 });
+
+it("a first submission whose Host reservation throws is reported, and the next Send is dispatched again (S1)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  const onPrepareFirstSubmission = vi.fn<PrepareFirstSubmission>(async () => {
+    throw new Error("project.not-found");
+  });
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("outside draft");
+      await flushAsyncWork();
+    });
+    expect(onPrepareFirstSubmission).toHaveBeenCalledTimes(1);
+    // The failure must be visible: no silent restore of the text into the editor.
+    expect(toast).toHaveBeenCalledWith("Failed to send. Try again later.");
+    expect(harness.onSendText).not.toHaveBeenCalled();
+
+    // The restored draft is sendable again: the second Send is not dropped on the renderer side.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("outside draft");
+      await flushAsyncWork();
+    });
+    expect(onPrepareFirstSubmission).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a Send blocked by session readiness names the reason instead of returning silently (S2)", async () => {
+  const { toast } = await import("@/components/ui/toast.js");
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.controls.submissionReady = false;
+  harness.refresh();
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("not yet");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("The session isn’t ready yet. Try again in a moment.");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a failed outside-project first submission never reaches another session's composer (S3)", async () => {
+  const onPrepareFirstSubmission = vi.fn<PrepareFirstSubmission>(async () => {
+    throw new Error("project.not-found");
+  });
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("outside draft");
+      await flushAsyncWork();
+    });
+    expect(onPrepareFirstSubmission).toHaveBeenCalledTimes(1);
+    // The failed text may only live in the global outside-project draft or the new-task view.
+    editorApi.setText.mockClear();
+    editorApi.setEditorStateJson.mockClear();
+    harness.rerender("session-other");
+    await act(async () => {
+      await flushAsyncWork();
+    });
+    expect(editorApi.setText).not.toHaveBeenCalledWith("outside draft");
+    expect(editorApi.setEditorStateJson).not.toHaveBeenCalledWith(
+      expect.stringContaining("outside draft"),
+    );
+    expect(readV4ComposerDraft("/workspace", undefined, "session-other")?.text ?? "").toBe("");
+    expect(allFirstSubmissionRecords()).toEqual([]);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});

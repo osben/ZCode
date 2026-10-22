@@ -28,6 +28,11 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
    session and frozen submission. It may retry preparation known not to have
    admitted input. An unknown command outcome must be reconciled by the original
    command ID, never automatically resent with a new command/session ID.
+   A failure before any reservation keeps no recovery record, so there is no
+   error row: the text returns to the editor and the failure is announced with a
+   notice (`chat.error.sendFailed`). A Send refused by the submit predicate
+   (`resolveComposerSubmitBlockReason`) with content names its reason in a notice;
+   it never returns silently.
 5. Restart restores a non-running recovery state and offers explicit continuation;
    restoring a record never automatically dispatches the saved prompt.
 6. Reconcile the pending message by accepted input/command identity, not matching
