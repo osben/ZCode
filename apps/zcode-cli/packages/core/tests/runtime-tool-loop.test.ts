@@ -55,6 +55,7 @@ import { MessageHistoryImpl } from "../src/agent/message-history.js";
 import { hydrateMessageHistoryFromSession } from "../src/agent/session-history-hydrator.js";
 import { DEFAULT_MODEL_REQUEST_MEDIA_BUDGET_BYTES } from "../src/runtime/helpers/media-budget.js";
 import { MAX_TURN_STEER_INPUT_BYTES } from "../src/runtime/helpers/steering.js";
+import { createPreserveQueueAutoDrainCancelReason } from "../src/runtime/helpers/turn-errors.js";
 import { projectIdFromDirectory } from "../src/runtime/helpers/project.js";
 import { InMemoryRuntimeTaskRegistry } from "../src/runtime-task/registry.js";
 import { createToolRegistry } from "../src/tool/registry.js";
@@ -8791,6 +8792,91 @@ describe("AgentRuntime tool loop", () => {
       admittedDelivery: "queue",
       fallbackReasonCode: "guide.turnInterrupted",
     });
+  });
+
+  // ISSUE-039: a Steer that aborts through the caller's controller (the bootstrap path used when no runtime
+  // foreground token is present) must carry the preserve intent in the abort reason. A user Stop reason must not.
+  it("ISSUE-039 keeps queue auto-drain when a caller abort carries the steer preserve intent", async () => {
+    const sessionId = createSessionId("runtime-steer-reason-preserve");
+    const eventStore = createTestSessionEventStore();
+    const modelStarted = deferred();
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { mode: "build" },
+      {
+        eventStore,
+        modelFactory: createTestModelFactory({
+          async generateText(request: any) {
+            modelStarted.resolve();
+            await waitForAbort(request.abortSignal);
+            return {
+              finishReason: "stop",
+              providerMetadata: undefined,
+              text: "too late",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+    const controller = new AbortController();
+    const pendingTurn = runtime.executeTurn("steer through caller controller", undefined, {
+      abortSignal: controller.signal,
+    });
+    await modelStarted.promise;
+    const queued = await runtime.steerTurn("queued behind the steer");
+    expect(queued.kind).toBe("queued");
+
+    controller.abort(
+      createPreserveQueueAutoDrainCancelReason("v4 sendQueuedNow preempts active turn"),
+    );
+    await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+
+    const events = await eventStore.getEvents(sessionId);
+    expect(
+      events.find((event) => event.type === SessionEventType.TurnComplete)?.payload,
+    ).toMatchObject({ resultType: "cancelled", preserveQueueAutoDrainOnCancel: true });
+    expect((runtime as any).queueAutoDrain).toBe(true);
+  });
+
+  it("ISSUE-039 holds the queue when a caller abort is a plain user Stop reason", async () => {
+    const sessionId = createSessionId("runtime-stop-reason-holds");
+    const eventStore = createTestSessionEventStore();
+    const modelStarted = deferred();
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { mode: "build" },
+      {
+        eventStore,
+        modelFactory: createTestModelFactory({
+          async generateText(request: any) {
+            modelStarted.resolve();
+            await waitForAbort(request.abortSignal);
+            return {
+              finishReason: "stop",
+              providerMetadata: undefined,
+              text: "too late",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+    const controller = new AbortController();
+    const pendingTurn = runtime.executeTurn("stop through caller controller", undefined, {
+      abortSignal: controller.signal,
+    });
+    await modelStarted.promise;
+    expect((await runtime.steerTurn("queued behind the stop")).kind).toBe("queued");
+
+    controller.abort(new Error("v4 session stopped"));
+    await expect(pendingTurn).rejects.toMatchObject({ type: CoreErrorType.TurnCancelled });
+
+    const events = await eventStore.getEvents(sessionId);
+    const payload = events.find((event) => event.type === SessionEventType.TurnComplete)?.payload;
+    expect(payload).toMatchObject({ resultType: "cancelled" });
+    expect(payload).not.toHaveProperty("preserveQueueAutoDrainOnCancel", true);
+    expect((runtime as any).queueAutoDrain).toBe(false);
   });
 
   it("M07a preserves queue auto-drain when sendQueuedNow preempts the active turn", async () => {

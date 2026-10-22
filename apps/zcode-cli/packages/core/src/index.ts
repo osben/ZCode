@@ -154,7 +154,11 @@ export type { PermissionConfig } from "./permission/index.js";
 
 // Runtime
 export { AgentRuntime } from "./runtime.js";
-export { createExternalTurnFaultError } from "./runtime/helpers/turn-errors.js";
+export {
+  createExternalTurnFaultError,
+  createPreserveQueueAutoDrainCancelReason,
+  hasPreserveQueueAutoDrainCancelIntent,
+} from "./runtime/helpers/turn-errors.js";
 export { repairPersistedRemoteSessionPaths } from "./runtime/helpers/persisted-remote-session-path-repair.js";
 // Shared with the CLI command-center so local usage replies match the runtime's wording.
 export { DREAM_COMMAND_USAGE_RESPONSE } from "./runtime/methods/dream.js";
