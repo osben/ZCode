@@ -13,7 +13,7 @@ import {
 import { shouldBlockTaskSelectionDuringModelRestart } from "@/lib/taskSwitchGuard.js";
 import { logger } from "@/logger.js";
 import { toast } from "@/components/ui/toast.js";
-import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { buildTaskEntityKey, buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
   markTaskQueryCacheScopesStale,
@@ -22,26 +22,17 @@ import {
   setTaskQueryCacheUnreadOverlay,
   useTaskQueryCacheStore,
 } from "@/store/taskQueryCacheStore.js";
-import { taskNavigationTargetExists } from "@/lib/taskNavigationTarget.js";
+import { isTaskNavigationTargetDeleted } from "@/lib/taskNavigationTarget.js";
 import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
 
-// Task availability is read when a back/forward command runs, not subscribed by the hook.
-// Performance: task-meta recovery/stream synchronization frequently refresh query cache; a snapshot per command keeps shell rerenders out of it.
+// Replay purges a task entry only on positive deletion evidence from the project tree (taskNavDeletedKeys).
+// A query-cache or visible-list miss is not deletion; such a task stays navigable and handleSelectTask opens it.
 function createNavTargetAvailability(): (entry: TaskNavEntry) => boolean {
-  const taskMetaByEntityKey = useTaskQueryCacheStore.getState().taskMetaByEntityKey;
-  return (entry) =>
-    taskNavigationTargetExists({
-      entry,
-      visibleTasks: getVisibleTaskMetas(
-        useZCodeSessionStore
-          .getState()
-          .getWorkspaceState(entry.workspacePath, entry.workspaceIdentity),
-      ),
-      taskMetaByEntityKey,
-    });
+  const deletedTaskKeys = useZCodeSessionStore.getState().taskNavDeletedKeys;
+  return (entry) => !isTaskNavigationTargetDeleted({ entry, deletedTaskKeys });
 }
 
 export interface AutomationsNavigationTarget {

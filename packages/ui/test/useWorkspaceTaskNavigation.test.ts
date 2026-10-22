@@ -91,6 +91,7 @@ describe("useWorkspaceTaskNavigation", () => {
       sessionIdByWorkspaceIdentity: {},
     });
     useZCodeSessionStore.setState({ taskNavHistory: createTaskNavigationHistory() });
+    useZCodeSessionStore.getState().setTaskNavDeletedTasks([]);
   });
 
   it("把 Idle-time intent 写入 Automations 导航目标和历史", () => {
@@ -386,24 +387,10 @@ describe("useWorkspaceTaskNavigation", () => {
     hook.unmount();
   });
 
-  it("ISSUE-033: 前进遇到已失效 task 时清除它，并按访问顺序到达下一条有效条目", () => {
-    const taskMetaFor = (id: string) => ({
-      taskId: id,
-      traceId: id,
-      title: id,
-      workspacePath: localWorkspacePath,
-      createdAt: 1,
-      updatedAt: 2,
-      mode: "default" as const,
-    });
-    const taskB = taskMetaFor("task-b");
-    const taskC = taskMetaFor("task-c");
-    useTaskQueryCacheStore.setState({
-      taskMetaByEntityKey: {
-        [buildTaskEntityKey(taskB)]: taskB,
-        [buildTaskEntityKey(taskC)]: taskC,
-      },
-    } as never);
+  it("ISSUE-033: 前进遇到项目树确认删除的 task 时清除它，并按访问顺序到达下一条有效条目", () => {
+    useZCodeSessionStore
+      .getState()
+      .setTaskNavDeletedTasks([{ taskId: "task-missing", workspacePath: localWorkspacePath }]);
     useZCodeSessionStore.setState({
       taskNavHistory: {
         entries: [
@@ -429,6 +416,73 @@ describe("useWorkspaceTaskNavigation", () => {
       history.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
     ).toEqual(["plugin-store", "task-b", "task-c"]);
     expect(history.entries[history.cursor]).toMatchObject({ kind: "task", taskId: "task-b" });
+    hook.unmount();
+  });
+
+  // Reproduces the live trace: projects-view tasks are live in the sidebar tree but absent from
+  // visibleTasks and taskMetaByEntityKey. Back must still visit each entry in order.
+  it("ISSUE-033: 项目视图中存活但不在缓存里的 task 后退时按顺序回放且不被清除", () => {
+    const pluginStore = { kind: "plugin-store" as const, workspacePath: "/home/dev" };
+    const taskA = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-A" };
+    const taskB = { kind: "task" as const, workspacePath: "/work/qa-sandbox", taskId: "task-B" };
+    const taskC = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-C" };
+    useZCodeSessionStore.getState().setTaskNavDeletedTasks([]);
+    useZCodeSessionStore.setState({
+      taskNavHistory: { entries: [pluginStore, taskA, taskB, taskC], cursor: 3 },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+    const cursors: number[] = [];
+    for (let step = 0; step < 3; step++) {
+      act(() => {
+        hook.result.current.handleTaskNavBack();
+      });
+      cursors.push(useZCodeSessionStore.getState().taskNavHistory.cursor);
+    }
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(cursors).toEqual([2, 1, 0]);
+    expect(history.entries).toHaveLength(4);
+    expect(history.entries[history.cursor]).toMatchObject(pluginStore);
+    hook.unmount();
+  });
+
+  it("ISSUE-033: 项目树确认删除的 task 在后退时只清除该条目，其余按顺序回放", () => {
+    useZCodeSessionStore
+      .getState()
+      .setTaskNavDeletedTasks([{ taskId: "task-A", workspacePath: "/draft/aa49" }]);
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: "/draft/aa49", taskId: "task-A" },
+          { kind: "task", workspacePath: "/work/qa-sandbox", taskId: "task-B" },
+          { kind: "task", workspacePath: "/draft/aa49", taskId: "task-C" },
+        ],
+        cursor: 3,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+    const afterFirst = useZCodeSessionStore.getState().taskNavHistory;
+    expect(afterFirst.entries[afterFirst.cursor]).toMatchObject({ taskId: "task-B" });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+    const afterSecond = useZCodeSessionStore.getState().taskNavHistory;
+    expect(
+      afterSecond.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
+    ).toEqual(["plugin-store", "task-B", "task-C"]);
+    expect(afterSecond.entries[afterSecond.cursor]).toMatchObject({ kind: "plugin-store" });
     hook.unmount();
   });
 });

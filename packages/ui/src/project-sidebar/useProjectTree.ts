@@ -98,6 +98,8 @@ export function useProjectTree(isDesktop = false) {
           }
         }
         accepted.current = { service, remote: remoteService, tree: result.tree };
+        // 删除事实只来自接受的目录快照：回放据此清除历史，缺席（未加载/离线）不等于删除。
+        useZCodeSessionStore.getState().setTaskNavDeletedTasks(result.tree.deletedTasks ?? []);
         // Bugfix: 自动归档只改 Host archived，未执行手动归档的 UI 清理，导致列表消失而详情残留。
         // 只处理已接受快照中的明确状态转换；首次已归档、离线缺行与迟到响应都不是归档事件。
         if (previous?.service === service && previous.remote === remoteService) {

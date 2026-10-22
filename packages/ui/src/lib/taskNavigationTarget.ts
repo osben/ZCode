@@ -1,23 +1,31 @@
-import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { TaskNavEntry } from "@/lib/taskNavigationHistory.js";
 import type { TaskEntityKey } from "@/lib/taskQueryCache.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 
-export function taskNavigationTargetExists(params: {
+export type DeletedTaskRef = {
+  taskId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+};
+
+/**
+ * Builds the tombstone key set from the project tree's `deletedTasks` (positive deletion facts).
+ * Keys use the same identity rule as every other task entity: `workspaceIdentity?.trim() || workspacePath`.
+ */
+export function buildDeletedTaskKeySet(
+  deletedTasks: readonly DeletedTaskRef[],
+): ReadonlySet<TaskEntityKey> {
+  return new Set(deletedTasks.map((task) => buildTaskEntityKey(task)));
+}
+
+/**
+ * A history entry is purged only when the authoritative tree positively reports the task as deleted.
+ * Absence from a query cache or from the visible list is not deletion: such a task is still navigable,
+ * and handleSelectTask opens it.
+ */
+export function isTaskNavigationTargetDeleted(params: {
   entry: TaskNavEntry;
-  visibleTasks: readonly Pick<ZCodeTaskMeta, "taskId">[];
-  taskMetaByEntityKey: Record<TaskEntityKey, ZCodeTaskMeta>;
+  deletedTaskKeys: ReadonlySet<TaskEntityKey>;
 }): boolean {
-  if (params.visibleTasks.some((task) => task.taskId === params.entry.taskId)) {
-    return true;
-  }
-
-  const cachedTask = params.taskMetaByEntityKey[buildTaskEntityKey(params.entry)];
-  if (!cachedTask) {
-    return false;
-  }
-
-  // After task lists moved to the task query cache, the old taskListCache may be empty.
-  // Back/forward cannot rely only on old visibleTasks or valid history targets may be discarded, making the buttons appear unresponsive.
-  return cachedTask.taskId === params.entry.taskId;
+  return params.deletedTaskKeys.has(buildTaskEntityKey(params.entry));
 }

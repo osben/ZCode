@@ -77,12 +77,18 @@
 - 入栈只发生在用户主动选择的入口：侧栏/搜索/命令面板选中 task（经 `setActiveTaskId`）、Automations 与插件市场主视图。后退、前进回放不得改变栈的内容，只能移动 cursor。
 - 相邻且身份相同的条目不重复入栈（身份 = `workspaceIdentity` 与 `workspacePath` 的完整键）。非相邻重复允许保留，因为它代表一次新的访问。
 - 选择新条目时，cursor 之后的前进历史被截断（浏览器语义）。
-- 后退或前进遇到已失效的 task 条目（`taskNavigationTargetExists` 为假）时，该 task 的全部条目被清除；清除与 cursor 定位在同一次纯函数计算中完成，并沿原方向继续寻找下一个有效条目，不跳过、不重排其余条目。
+- 只有权威的删除事实才能清除历史条目：项目目录树（`ProjectTree.deletedTasks`，由 `readTree({ includeDeletedTasks: true })` 返回，即 `deleted=1 OR cli_deleted=1` 的 task）。`useProjectTree` 每次接受新快照时把它发布到 `taskNavDeletedKeys`（键为 `buildTaskEntityKey`，即 `workspaceIdentity?.trim() || workspacePath` + `taskId`）。
+- “不在 task query cache、不在当前 workspace 可见列表”不是删除证据。侧栏项目视图中的 task 常常不在这两处，它们仍可导航，`handleSelectTask` 负责打开。树尚未加载或某 Host 离线时，没有 tombstone 即视为可导航（未知按可导航处理），不设超时。
+- 后退或前进遇到已确认删除的 task 条目时，该 task 的全部条目被清除；清除与 cursor 定位在同一次纯函数计算中完成，并沿原方向继续寻找下一个有效条目，不跳过、不重排其余条目。
+- 归档 task：归档转换由既有 owner（`useProjectTree` 的归档清理）调用 `removeTaskState`，该动作清除其历史条目，行为保持不变；导航回放本身不因归档而清除条目。
 - 到头（没有有效目标）时历史只保留已清除的失效条目，cursor 留在当前条目，不发生导航。
 - 删除 task（`removeTaskState`）时清除该 task 的条目；cursor 落在删除前位置之后的第一个保留条目（与旧行为一致）。
+- 应用内删除或归档时，`removeTaskState` 仍是即时清除的 owner；回放只在遇到 tombstone 时惰性清除，两者都以同一身份键匹配。
 
-| 用例         | 前置                                         | 操作        | 期望                                            |
-| ------------ | -------------------------------------------- | ----------- | ----------------------------------------------- |
-| `NAV-033-01` | 栈 `[Auto, PS, A(失效), B, C]`，cursor 在 PS | 前进        | 导航到 B；A 被清除；cursor 指向 B               |
-| `NAV-033-02` | 栈 `[A(失效), B]`，cursor 在 B               | 后退        | 清除 A；无目标；cursor 仍在 B，不导航           |
-| `NAV-033-03` | 栈 `[A, A, X, A, Y, Z]`，cursor 在第 4 个 A  | 删除 task A | cursor 指向 Y（删除前位置之后的第一个保留条目） |
+| 用例         | 前置                                                                                       | 操作          | 期望                                            |
+| ------------ | ------------------------------------------------------------------------------------------ | ------------- | ----------------------------------------------- |
+| `NAV-033-01` | 栈 `[Auto, PS, A(失效), B, C]`，cursor 在 PS                                               | 前进          | 导航到 B；A 被清除；cursor 指向 B               |
+| `NAV-033-02` | 栈 `[A(失效), B]`，cursor 在 B                                                             | 后退          | 清除 A；无目标；cursor 仍在 B，不导航           |
+| `NAV-033-03` | 栈 `[A, A, X, A, Y, Z]`，cursor 在第 4 个 A                                                | 删除 task A   | cursor 指向 Y（删除前位置之后的第一个保留条目） |
+| `NAV-033-04` | 栈 `[PS, A, B, C]`，A/B/C 均不在可见列表与 query cache，但在项目树中为存活（无 tombstone） | 连续后退 3 次 | 依次到 B、A、PS，历史条目不被清除               |
+| `NAV-033-05` | 同 NAV-033-04，但项目树 `deletedTasks` 含 A                                                | 从 C 后退     | 清除 A 的全部条目；依次到 B、PS                 |

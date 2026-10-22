@@ -15,6 +15,7 @@ import {
   type WorkspaceNavEntry,
   type TaskNavEntry,
 } from "@/lib/taskNavigationHistory.js";
+import { buildDeletedTaskKeySet, type DeletedTaskRef } from "@/lib/taskNavigationTarget.js";
 import type { ZCodeSessionStoreState } from "./zcodeSessionStoreTypes.js";
 
 type SetFn = (
@@ -54,6 +55,16 @@ export function notifyTaskNavigationCommitted(target: Omit<TaskNavEntry, "kind">
 export function createNavigationSlice(set: SetFn, get: GetFn) {
   return {
     taskNavHistory: createTaskNavigationHistory(),
+    taskNavDeletedKeys: buildDeletedTaskKeySet([]),
+
+    setTaskNavDeletedTasks: (tasks: readonly DeletedTaskRef[]) => {
+      const next = buildDeletedTaskKeySet(tasks);
+      const current = get().taskNavDeletedKeys;
+      if (current.size === next.size && [...next].every((key) => current.has(key))) {
+        return;
+      }
+      set({ taskNavDeletedKeys: next });
+    },
 
     taskNavPushAutomations: (
       workspacePath: string,
