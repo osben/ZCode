@@ -382,8 +382,16 @@ describe("reservation placeholder and incognito convergence (specs/incognito-ses
           | undefined
       )?.meta_json;
 
-    // One task-service instance, as in production: the convergence ack is bound to it.
+    // One task-service instance, as in production: the convergence ack is bound to it. The controller fires
+    // persistIncognitoMarkers without awaiting it, so record each returned write on this same object to await it.
     const taskService = makeTaskService(repo);
+    const convergenceWrites: Promise<{ confirmed: string[]; written: string[] }>[] = [];
+    const persistIncognitoMarkers = taskService.persistIncognitoMarkers;
+    taskService.persistIncognitoMarkers = (params) => {
+      const write = persistIncognitoMarkers(params);
+      convergenceWrites.push(write);
+      return write;
+    };
     const stream = makeStreamingAgentService();
     const runtime = createWindowHostControllerRuntime({
       createId: () => "placeholder-live-id",
@@ -399,9 +407,11 @@ describe("reservation placeholder and incognito convergence (specs/incognito-ses
       workspaceScopes: [{ workspacePath: WORKSPACE }],
       sortBy: "updated",
     });
-    // Convergence runs fire-and-forget after the overlay publish; give it a few turns to settle.
-    for (let turn = 0; turn < 10; turn += 1)
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    // The overlay publish issued the convergence write for the placeholder. Await that write itself, so the row is read
+    // only after the write has finished. It must confirm nothing and write nothing.
+    expect(convergenceWrites.length).toBeGreaterThan(0);
+    for (const write of await Promise.all(convergenceWrites))
+      expect(write).toEqual({ confirmed: [], written: [] });
     expect(readMetaJson()).toBe("{}");
 
     // The syncer admits the prepared session with the CLI baseline meta, which carries no incognito key.
@@ -419,12 +429,13 @@ describe("reservation placeholder and incognito convergence (specs/incognito-ses
       titleSource: "default",
     });
 
-    // The next sessions-index publish still reports the incognito summary and must persist the marker.
+    // The next sessions-index publish still reports the incognito summary and must persist the marker. The publish
+    // issues the retry write synchronously, so await that write instead of polling the row.
+    const writesBeforePublish = convergenceWrites.length;
     stream.publishDelta(31);
-    const [persisted] = await waitFor(
-      () => repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false }),
-      (tasks) => tasks[0]?.incognito === true,
-    );
+    expect(convergenceWrites.length).toBeGreaterThan(writesBeforePublish);
+    expect(await convergenceWrites.at(-1)).toEqual({ confirmed: [TASK_ID], written: [TASK_ID] });
+    const [persisted] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false });
     runtime.dispose();
     expect(persisted!.incognito).toBe(true);
   });

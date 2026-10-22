@@ -119,7 +119,7 @@ Renderer heap after opening the long session: 288 MB used. Whole conversation is
 
 ## Measurements after fix pack 2 perf commit (6e2da170, dev build, same 1052-message session)
 
-| Action                                                      | Long tasks | Worst block                                                                         |
-| ----------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
-| Open session from the sidebar (directory hydration chunked) | 9          | 188 ms (was 570 ms)                                                                 |
-| Turn-navigator jumps 10 → 20 → 1                            | 5          | 266 ms, measured while the pre-push verify loaded the CPU; clean re-measure pending |
+| Action                                                      | Long tasks | Worst block                                                                                                                                                                   |
+| ----------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open session from the sidebar (directory hydration chunked) | 9          | 188 ms (was 570 ms)                                                                                                                                                           |
+| Turn-navigator jumps (cold targets)                         | 4          | 268–280 ms per cold jump on load avg 2.7–4.8 (reviewer agent running tests); round 1 measured 178 ms; needs an idle A/B against the base build before calling it a regression |

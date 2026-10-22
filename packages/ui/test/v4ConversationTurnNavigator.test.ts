@@ -391,5 +391,24 @@ describe("conversation turn navigator helpers", () => {
         expect(previewFor(straddle)).toBe(legacyPreview(straddle));
       }
     });
+
+    // Killer for an unterminated last piece being treated as terminated: "foo" + spaces + "bar" is one paragraph,
+    // so the full text yields "hi\nfoo bar". Its last piece is cut inside the scan prefix, and the prefix alone
+    // would yield "hi\nfoo" if that piece were counted as a finished paragraph.
+    it("golden：扫描前缀末段未结束时不能提前封口，超过 4096 字符的 'foo'+空格+'bar' 仍为一段", () => {
+      const killer = `hi\n\nfoo${" ".repeat(4_090)}bar`;
+      expect(killer.length).toBeGreaterThan(4_096);
+      expect(previewFor([killer])).toBe("hi\nfoo bar");
+      expect(previewFor([killer])).toBe(legacyPreview([killer]));
+    });
+
+    // A paragraph separator whose two newlines straddle the 4096-character boundary: the prefix holds only the first
+    // newline, so no separator matches inside it. The bounded path declines and the full normalization decides.
+    it("golden：段落分隔符的两个换行跨过 4096 边界时，输出与全量归一化一致", () => {
+      const straddle = `hi\n\nfoo${" ".repeat(4_088)}\n\nbar`;
+      expect(straddle.indexOf("\n\n", 7 + 4_088)).toBe(4_095);
+      expect(previewFor([straddle])).toBe("hi\nfoo");
+      expect(previewFor([straddle])).toBe(legacyPreview([straddle]));
+    });
   });
 });

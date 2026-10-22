@@ -60,10 +60,14 @@ async function fullSelectionFixture(t) {
   await git("add", ".");
   await git("commit", "-m", "baseline");
   const put = (path, contents) => writeFile(join(root, path), contents);
-  const run = async (args) => {
+  const run = async (args, envOverrides = {}) => {
     const env = { ...process.env };
     for (const name of ["ZCODE_PRE_PUSH_STDIN", "ZCODE_PRE_PUSH_BASE", "ZCODE_AFFECTED_TEST_BASE"])
       delete env[name];
+    for (const [name, value] of Object.entries(envOverrides)) {
+      if (value === undefined) delete env[name];
+      else env[name] = value;
+    }
     try {
       const result = await exec(process.execPath, [runner, ...args], { cwd: root, env });
       result.code = 0;
@@ -105,4 +109,35 @@ test("full selection without --on-full still skips and exits zero", async (t) =>
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stderr, /已跳过 UT（未执行测试）/u);
   assert.doesNotMatch(result.stderr, /执行全量/u);
+});
+
+// The entry block re-executes the runner with --no-experimental-webstorage in NODE_OPTIONS when the flag is absent,
+// because Vitest's workers read localStorage from the environment they inherit. The spec reports the flag count its
+// worker sees, so the assertion depends on the re-exec itself rather than on a comment or on the exit status alone.
+const WEBSTORAGE_FLAG = "--no-experimental-webstorage";
+const webstorageSpec = `import { expect, test } from "vitest";
+test("vitest workers see the webstorage flag exactly once", () => {
+  const flags = (process.env.NODE_OPTIONS ?? "").split(/\\s+/u).filter((option) => option === "${WEBSTORAGE_FLAG}");
+  expect(flags).toHaveLength(1);
+});
+`;
+
+test("direct start without the webstorage flag re-executes so the Vitest workers see it", async (t) => {
+  const f = await fullSelectionFixture(t);
+  await f.put("webstorage.test.mjs", webstorageSpec);
+  const result = await f.run(["--files", "webstorage.test.mjs", "--on-full", "run"], {
+    NODE_OPTIONS: undefined,
+  });
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout.replaceAll(/\x1B\[\d+m/gu, ""), /Test Files\s+1 passed/u);
+});
+
+test("direct start that already carries the webstorage flag does not add it a second time", async (t) => {
+  const f = await fullSelectionFixture(t);
+  await f.put("webstorage.test.mjs", webstorageSpec);
+  const result = await f.run(["--files", "webstorage.test.mjs", "--on-full", "run"], {
+    NODE_OPTIONS: WEBSTORAGE_FLAG,
+  });
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.match(result.stdout.replaceAll(/\x1B\[\d+m/gu, ""), /Test Files\s+1 passed/u);
 });
