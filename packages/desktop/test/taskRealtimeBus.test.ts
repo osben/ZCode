@@ -854,8 +854,26 @@ function withoutDeliveryFields(event: StreamMirrorEvent): Record<string, unknown
   return chunk;
 }
 
+// The bus limits batches by UTF-8 byte length of their JSON, not by UTF-16 code units.
+function utf8Bytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+// Body of an owner chunk as the splitter measures it: the posted event minus per-host delivery fields.
+function wireBodyBytes(event: StreamMirrorEvent): number {
+  return utf8Bytes(withoutDeliveryFields(event));
+}
+
+function isBatchEvent(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "task_stream_mirror_batch"
+  );
+}
+
 // Mirrors the header that flushBatch and the splitter build for the fixture target
-// (workspace /repo/demo, task-1, run trace-1). Only the serialized length matters here.
+// (workspace /repo/demo, task-1, run trace-1). Only the serialized size matters here.
 function fixtureChunk(ops: Array<{ seq: number }>, batchSeq: number) {
   return {
     type: "task_stream_mirror_batch",
@@ -874,7 +892,7 @@ function fixtureChunk(ops: Array<{ seq: number }>, batchSeq: number) {
   };
 }
 
-// Reference oracle: the previous splitter, which re-serializes the whole candidate chunk per op.
+// Reference oracle: a greedy splitter that measures each candidate chunk whole, in UTF-8 bytes.
 // Kept only in the test to pin chunk boundaries; the production code must produce the same ones.
 function referenceChunkBoundaries(ops: Array<{ seq: number }>, firstBatchSeq: number) {
   const chunks: Array<{ batchSeq: number; seqs: number[]; bytes: number }> = [];
@@ -887,7 +905,7 @@ function referenceChunkBoundaries(ops: Array<{ seq: number }>, firstBatchSeq: nu
     chunks.push({
       batchSeq,
       seqs: pending.map((op) => op.seq),
-      bytes: JSON.stringify(fixtureChunk(pending, batchSeq)).length,
+      bytes: utf8Bytes(fixtureChunk(pending, batchSeq)),
     });
     batchSeq += 1;
     pending = [];
@@ -896,7 +914,7 @@ function referenceChunkBoundaries(ops: Array<{ seq: number }>, firstBatchSeq: nu
     const candidate = [...pending, op];
     if (
       pending.length > 0 &&
-      JSON.stringify(fixtureChunk(candidate, batchSeq)).length > STREAM_BATCH_LIMIT_BYTES
+      utf8Bytes(fixtureChunk(candidate, batchSeq)) > STREAM_BATCH_LIMIT_BYTES
     ) {
       flushPending();
     }
@@ -961,16 +979,13 @@ describe("TaskRealtimeBus stream batch splitting", () => {
     expect(owner.map((event) => event.ops?.map((op) => op.seq))).toEqual(
       expected.map((chunk) => chunk.seqs),
     );
-    expect(owner.map((event) => JSON.stringify(withoutDeliveryFields(event)).length)).toEqual(
+    expect(owner.map((event) => wireBodyBytes(event))).toEqual(
       expected.map((chunk) => chunk.bytes),
     );
     expect(
       owner
         .filter((event) => (event.ops?.length ?? 0) > 1)
-        .every(
-          (event) =>
-            JSON.stringify(withoutDeliveryFields(event)).length <= STREAM_BATCH_LIMIT_BYTES,
-        ),
+        .every((event) => wireBodyBytes(event) <= STREAM_BATCH_LIMIT_BYTES),
     ).toBe(true);
     expect(hostB.postedMessages).toEqual([
       expect.objectContaining({
@@ -985,8 +1000,49 @@ describe("TaskRealtimeBus stream batch splitting", () => {
     vi.useRealTimers();
   });
 
-  it("splits 5 000 small mirror ops within the main-thread budget", () => {
-    // Fake only timers the bus schedules; hrtime must stay real for the wall-clock measurement.
+  it("limits multibyte Cyrillic and CJK chunks by UTF-8 bytes on the wire", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T00:00:00.000Z"));
+    const { hostA } = setupOwnerAndObserver();
+
+    // One unit is 17 UTF-16 code units but 34 UTF-8 bytes (Cyrillic letters take 2 bytes, CJK
+    // ideographs 3). Each op is ~136 KB of UTF-8, so four ops (~544 KB) exceed the 512 KB limit
+    // while seven would fit if measured in UTF-16 code units.
+    const unit = "Привет, мир 你好世界 ";
+    const contents = Array.from({ length: 10 }, (_, index) => `${index} ${unit.repeat(4_000)}`);
+    contents.forEach((content, index) => {
+      hostA.emitMessage(makeUserMessage(content, index));
+    });
+    vi.advanceTimersByTime(1000);
+
+    const fixtureOps = contents.map((content, index) => ({
+      kind: "user_message",
+      messageId: "trace-1:user",
+      content,
+      timestamp: index,
+      seq: index + 1,
+    }));
+    const expected = referenceChunkBoundaries(fixtureOps, 2);
+    const owner = streamMirrorEvents(hostA);
+
+    expect(expected.map((chunk) => chunk.seqs)).toEqual([[1, 2, 3], [4, 5, 6], [7, 8, 9], [10]]);
+    expect(owner.map((event) => event.batchSeq)).toEqual(expected.map((chunk) => chunk.batchSeq));
+    expect(owner.map((event) => event.ops?.map((op) => op.seq))).toEqual(
+      expected.map((chunk) => chunk.seqs),
+    );
+    for (const event of owner) {
+      expect(wireBodyBytes(event)).toBeLessThanOrEqual(STREAM_BATCH_LIMIT_BYTES);
+      // Guards the fixture itself: the UTF-8 size is larger than the UTF-16 length of the same chunk.
+      expect(wireBodyBytes(event)).toBeGreaterThan(
+        JSON.stringify(withoutDeliveryFields(event)).length,
+      );
+    }
+    vi.useRealTimers();
+  });
+
+  it("splits 5 000 small mirror ops with one serialization per op", () => {
+    // Fake only the timers the bus schedules. The cost is asserted by counting JSON.stringify
+    // calls, not by elapsed time, so the test does not depend on runner speed.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { hostA } = setupOwnerAndObserver();
 
@@ -995,20 +1051,29 @@ describe("TaskRealtimeBus stream batch splitting", () => {
       hostA.emitMessage(makeUserMessage(`message ${index} ${"x".repeat(150)}`, index));
     }
 
-    const startedAt = process.hrtime.bigint();
-    vi.advanceTimersByTime(1000);
-    const flushMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const stringifySpy = vi.spyOn(JSON, "stringify");
+    let serialized: unknown[] = [];
+    try {
+      vi.advanceTimersByTime(1000);
+      serialized = stringifySpy.mock.calls.map(([value]) => value);
+    } finally {
+      stringifySpy.mockRestore();
+    }
 
+    const headers = serialized.filter((value) => isBatchEvent(value));
+    const opValues = serialized.filter((value) => !isBatchEvent(value));
+    // Each op is serialized exactly once per flush.
+    expect(opValues).toHaveLength(opCount);
+    // Headers are serialized with `ops: []`, so an accumulated chunk is never re-serialized, and
+    // there is at most one header per op (the flush header plus one candidate check per op).
+    expect(headers.every((header) => (header as { ops: unknown[] }).ops.length === 0)).toBe(true);
+    expect(headers.length).toBeLessThanOrEqual(opCount);
+
+    vi.useRealTimers();
     const owner = streamMirrorEvents(hostA);
     const seqs = owner.flatMap((event) => event.ops?.map((op) => op.seq) ?? []);
     expect(owner.length).toBeGreaterThan(1);
     expect(seqs).toEqual(Array.from({ length: opCount }, (_, index) => index + 1));
-    expect(
-      owner.every(
-        (event) => JSON.stringify(withoutDeliveryFields(event)).length <= STREAM_BATCH_LIMIT_BYTES,
-      ),
-    ).toBe(true);
-    expect(flushMs).toBeLessThan(1000);
-    vi.useRealTimers();
+    expect(owner.every((event) => wireBodyBytes(event) <= STREAM_BATCH_LIMIT_BYTES)).toBe(true);
   });
 });

@@ -24,6 +24,7 @@ import { logger as defaultLogger } from "./logger.js";
 const STREAM_MIRROR_FLUSH_INTERVAL_MS = 1000;
 const STREAM_MIRROR_MAX_REPLAY_BATCHES = 60;
 const STREAM_MIRROR_MAX_REPLAY_BYTES = 512 * 1024;
+// UTF-8 bytes of the serialized batch; see measureBatchEvent.
 const STREAM_MIRROR_MAX_BATCH_BYTES = 512 * 1024;
 const STREAM_MIRROR_TEXT_OP_MAX_CHARS = 128 * 1024;
 const OWNER_COMMAND_TIMEOUT_MS = 30_000;
@@ -518,9 +519,12 @@ export class TaskRealtimeBus {
         (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
       ),
     };
-    // Serialize each op once; the batch size is derived from these lengths, not from re-stringifying
-    // the whole batch.
-    const measuredOps = ops.map((op) => ({ op, bytes: JSON.stringify(op).length }));
+    // Serialize each op once; the batch size is derived from these UTF-8 byte lengths, not from
+    // re-stringifying the whole batch.
+    const measuredOps = ops.map((op) => ({
+      op,
+      bytes: Buffer.byteLength(JSON.stringify(op), "utf8"),
+    }));
     const eventBytes = this.measureBatchEvent(
       event,
       measuredOps.reduce((total, entry) => total + entry.bytes, 0),
@@ -570,9 +574,9 @@ export class TaskRealtimeBus {
   }
 
   /**
-   * Greedy packing in seq order, with the same boundaries as serializing each candidate chunk whole.
-   * Each op's length is measured once by the caller; a candidate's length is its header plus the
-   * running op-byte total, so the split costs O(ops) rather than O(ops x chunk bytes).
+   * Greedy packing in seq order, with the same boundaries as measuring each candidate chunk whole
+   * (UTF-8 bytes). Each op's byte length is measured once by the caller; a candidate's length is its
+   * header plus the running op-byte total, so the split costs O(ops) rather than O(ops x chunk bytes).
    */
   private splitOversizedBatchForOwner(
     batch: PendingStreamBatch,
@@ -645,16 +649,21 @@ export class TaskRealtimeBus {
   }
 
   /**
-   * Serialized length of a batch whose ops are already measured. Equals JSON.stringify(event).length:
-   * the header serialized with `ops: []` (which contains "[]"), plus the op bytes, plus one comma
-   * between consecutive ops.
+   * UTF-8 byte length of a batch whose ops are already measured. Equals
+   * Buffer.byteLength(JSON.stringify(event), "utf8"): the header serialized with `ops: []` (which
+   * contains "[]"), plus the op bytes, plus one comma between consecutive ops. Concatenation is
+   * byte-exact because the JSON structural characters are ASCII.
    */
   private measureBatchEvent(
     event: TaskStreamMirrorBatchEvent,
     opByteTotal: number,
     opCount: number,
   ): number {
-    return JSON.stringify({ ...event, ops: [] }).length + opByteTotal + Math.max(opCount - 1, 0);
+    return (
+      Buffer.byteLength(JSON.stringify({ ...event, ops: [] }), "utf8") +
+      opByteTotal +
+      Math.max(opCount - 1, 0)
+    );
   }
 
   private isTerminalStreamOp(op: TaskStreamMirrorOp): boolean {
