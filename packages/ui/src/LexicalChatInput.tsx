@@ -184,6 +184,9 @@ export function shouldNormalizeLeadingChineseSlashAliasInput({
   );
 }
 
+// Shared default: a fresh [] per render made PromptHistoryPlugin re-register its update listener every render.
+const EMPTY_PROMPT_HISTORY: readonly string[] = [];
+
 /** Extract editor content; mention nodes output markdown here */
 function getEditorMarkdown(editorState: EditorState): string {
   let text = "";
@@ -191,6 +194,21 @@ function getEditorMarkdown(editorState: EditorState): string {
     text = $getPromptMarkdown();
   });
   return text;
+}
+
+/**
+ * Per-listener markdown cache keyed by immutable EditorState. While typing, each update's prevEditorState is
+ * the previous update's editorState, so the change listener serialized the whole document twice per keystroke.
+ */
+export function createCachedEditorMarkdownReader(): (editorState: EditorState) => string {
+  const cache = new WeakMap<EditorState, string>();
+  return (editorState) => {
+    const cached = cache.get(editorState);
+    if (cached !== undefined) return cached;
+    const text = getEditorMarkdown(editorState);
+    cache.set(editorState, text);
+    return text;
+  };
 }
 
 function replaceEditorText(editor: LexicalEditor, text: string) {
@@ -907,6 +925,7 @@ function TextContentPlugin({
       return;
     }
 
+    const readEditorMarkdown = createCachedEditorMarkdownReader();
     return editor.registerUpdateListener(
       ({ dirtyElements, dirtyLeaves, editorState, prevEditorState, tags }) => {
         if (dirtyElements.size === 0 && dirtyLeaves.size === 0) {
@@ -916,8 +935,8 @@ function TextContentPlugin({
         // Typing-lag timing covers the hot path of full serialization plus synchronous onChange rerendering.
         const startedAt = performance.now();
 
-        const nextText = getEditorMarkdown(editorState);
-        const previousText = getEditorMarkdown(prevEditorState);
+        const nextText = readEditorMarkdown(editorState);
+        const previousText = readEditorMarkdown(prevEditorState);
         if (nextText === previousText) {
           return;
         }
@@ -1420,7 +1439,7 @@ export function LexicalChatInput({
   skillCatalogSessionId,
   inputTestId,
   editorApiRef,
-  promptHistory = [],
+  promptHistory = EMPTY_PROMPT_HISTORY,
   avoidIosInputFocusZoom = false,
   compactPlaceholder = false,
   onWhiteboardMentionSelected,
