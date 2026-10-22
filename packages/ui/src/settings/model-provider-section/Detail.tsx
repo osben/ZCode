@@ -845,6 +845,15 @@ export function ModelProviderSectionDetail({
     return null;
   }
 
+  if (
+    selectedNavItem.type === "acpAgent" ||
+    selectedNavItem.type === "acpDetect" ||
+    selectedNavItem.type === "acpLoading"
+  ) {
+    // ACP rows are rendered by ModelProviderSection with the detection and enable handlers it owns.
+    return null;
+  }
+
   if (!selectedNavItem.provider) {
     return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
   }

@@ -26,6 +26,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("@zcode/shared", () => ({
+  DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG: "--zcode-local-development-runtime",
   ZCODE_APP_VERSION_ENV: "ZCODE_APP_VERSION",
   ZCODE_BUILD_COMMIT_ID_ENV: "ZCODE_BUILD_COMMIT_ID",
   ZCODE_RUNTIME_ENV_KEY: "ZCODE_RUNTIME_ENV",
@@ -662,6 +663,33 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.NODE_ENV).toBeUndefined();
     expect(env.ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL).toBeUndefined();
   });
+
+  // specs/acp-agent-runtime.md "Dev-only visibility": the host runtime env and the renderer's
+  // preload gate come from one signal, so dev-only surfaces never open on only one side.
+  it.each([
+    { isPackaged: true, runtimeEnv: "production", rendererGate: false },
+    { isPackaged: false, runtimeEnv: "development", rendererGate: true },
+  ])(
+    "host runtime env and renderer dev gate agree (packaged=$isPackaged)",
+    async ({ isPackaged, runtimeEnv, rendererGate }) => {
+      appMock.isPackaged = isPackaged;
+      Object.defineProperty(process, "resourcesPath", {
+        value: "/mock/resources",
+        configurable: true,
+      });
+      const { buildHostProcessEnv } = await import("../src/main/desktopRuntimeEnv.js");
+      const { buildAppRendererAdditionalArguments } =
+        await import("../src/main/desktopElectronApp.js");
+      const { hasDesktopLocalDevelopmentRuntimeArg } =
+        await vi.importActual<typeof import("@zcode/shared")>("@zcode/shared");
+
+      const rendererArgs = buildAppRendererAdditionalArguments("device-1");
+
+      expect(buildHostProcessEnv({}).ZCODE_RUNTIME_ENV).toBe(runtimeEnv);
+      expect(rendererArgs[0]).toBe("--device-id=device-1");
+      expect(hasDesktopLocalDevelopmentRuntimeArg(rendererArgs)).toBe(rendererGate);
+    },
+  );
 
   it("打包 Preview 不向 Host 注入 storage profile 或精确 CLI 根", async () => {
     appMock.isPackaged = true;

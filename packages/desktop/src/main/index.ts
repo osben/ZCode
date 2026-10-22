@@ -192,6 +192,7 @@ import {
   runtimeUserDataPath,
   shouldUseElectronDefaultUserDataPath,
 } from "./desktopRuntimeEnv.js";
+import { buildAppRendererAdditionalArguments } from "./desktopElectronApp.js";
 import {
   disposeHostProcess,
   disposeHostProcessAndWait,
@@ -1920,7 +1921,7 @@ function openUpdateStatusWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: false,
-      additionalArguments: [`--device-id=${deviceMid}`],
+      additionalArguments: buildAppRendererAdditionalArguments(deviceMid),
     },
   });
   // Keep system window controls in the update window, but do not allow resizing or fullscreen.

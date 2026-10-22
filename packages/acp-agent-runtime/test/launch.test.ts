@@ -65,6 +65,29 @@ describe("validateLaunchOptions", () => {
     );
   });
 
+  it("rejects CR/LF in command and args (shared launch rules)", () => {
+    expect(
+      captureError(() =>
+        validateLaunchOptions(validLaunch({ command: "opencode\nZCODE_ACP_LOGIN_BANNER\nid" })),
+      ).code,
+    ).toBe("ACP_INVALID_LAUNCH");
+    expect(
+      captureError(() => validateLaunchOptions(validLaunch({ args: ["acp", "x\r"] }))).code,
+    ).toBe("ACP_INVALID_LAUNCH");
+  });
+
+  it("rejects loader/injection env overrides but allows deleting them", () => {
+    for (const key of ["LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "NODE_OPTIONS", "node_options"]) {
+      expect(
+        captureError(() => validateLaunchOptions(validLaunch({ env: { [key]: "/tmp/x.so" } })))
+          .code,
+      ).toBe("ACP_INVALID_LAUNCH");
+    }
+    expect(validateLaunchOptions(validLaunch({ env: { LD_PRELOAD: undefined } })).env).toEqual({
+      LD_PRELOAD: undefined,
+    });
+  });
+
   it("rejects relative cwd", () => {
     expect(
       captureError(() => validateLaunchOptions(validLaunch({ cwd: "relative/path" }))).code,
@@ -126,6 +149,17 @@ describe("buildChildEnv", () => {
     expect(env.NEW_VAR).toBe("1");
     expect(env.EDITOR).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
+  });
+
+  it("refuses to set loader/injection keys through overrides", () => {
+    expect(
+      captureError(() => buildChildEnv({ PATH: "/usr/bin" }, { NODE_OPTIONS: "-r x" })).code,
+    ).toBe("ACP_INVALID_LAUNCH");
+    expect(
+      buildChildEnv({ PATH: "/usr/bin", LD_PRELOAD: "/x" }, { LD_PRELOAD: undefined }),
+    ).toEqual({
+      PATH: "/usr/bin",
+    });
   });
 
   it("keeps user capability sockets by design and supports the per-launch opt-out", () => {

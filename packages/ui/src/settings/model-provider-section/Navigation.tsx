@@ -18,7 +18,8 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Loader2Icon } from "lucide-react";
-import { ProviderStatusIndicator } from "./ProviderStatusIndicator.js";
+import { ProviderStatusIndicator, type ProviderStatusKind } from "./ProviderStatusIndicator.js";
+import { resolveAcpAgentStatusKind } from "./acpAgentConfig.js";
 
 import {
   resolveModelProviderFamilySpecByProviderId,
@@ -30,6 +31,13 @@ import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import type { ModelProviderNavGroup, ModelProviderNavItem } from "./constants.js";
 import { useOptimisticReorder } from "./useOptimisticReorder.js";
 import { renderModelProviderNavIcon } from "./utils.js";
+
+/** Shared status dot of an ACP agent row: active = enabled and not in conflict. */
+function resolveAcpStatusKind(
+  item: Extract<ModelProviderNavItem, { type: "acpAgent" }>,
+): ProviderStatusKind {
+  return resolveAcpAgentStatusKind(item);
+}
 
 // The sidebar clips horizontal overflow; sorting changes only vertical position, so keep x=0 while dragging as well.
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
@@ -67,6 +75,10 @@ export function shouldShowModelProviderGroupLoadingIndicator(params: {
   if (params.groupId === "preset" || params.groupId === "chatgpt") {
     return params.presetLoading;
   }
+  // The ACP group shows its own loading row; it is not driven by provider list loading.
+  if (params.groupId === "acp") {
+    return false;
+  }
   return params.customLoading;
 }
 
@@ -94,7 +106,7 @@ function ModelProviderNavigationButton({
   showIcon?: boolean;
 }) {
   const isSelected = item.key === selectedNodeKey;
-  const isLoadingItem = item.type === "codingPlanLoading";
+  const isLoadingItem = item.type === "codingPlanLoading" || item.type === "acpLoading";
   const inactiveItemClassName = "border-transparent text-foreground hover:border-border-hover/60";
 
   return (
@@ -130,6 +142,9 @@ function ModelProviderNavigationButton({
           <ProviderStatusIndicator
             provider={item.type === "preset" ? item.statusProvider : item.provider}
           />
+        ) : null}
+        {item.type === "acpAgent" ? (
+          <ProviderStatusIndicator status={resolveAcpStatusKind(item)} />
         ) : null}
       </button>
     </ControlHintTooltip>
@@ -400,7 +415,7 @@ export function ModelProviderSectionNavigation({
                 ) : null}
               </div>
 
-              {group.id === "preset" || group.id === "chatgpt" ? (
+              {group.id === "preset" || group.id === "chatgpt" || group.id === "acp" ? (
                 <PresetProviderCardNavigation
                   group={group}
                   selectedNodeKey={selectedNodeKey}

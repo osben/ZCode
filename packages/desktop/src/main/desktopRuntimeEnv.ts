@@ -38,11 +38,15 @@ import {
   resolveRemoteCdnBaseUrls as resolveOrderedRemoteCdnBaseUrls,
   type ResolveRemoteCdnOptions,
 } from "./remoteCdn.js";
-import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
+import {
+  getElectronAppPath,
+  isDesktopLocalDevelopmentRuntime,
+  isElectronAppPackaged,
+} from "./desktopElectronApp.js";
 
 declare const __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: Readonly<Record<string, string>> | undefined;
 
-const isLocalDevelopmentRuntime = !isElectronAppPackaged();
+const isLocalDevelopmentRuntime = isDesktopLocalDevelopmentRuntime();
 export const desktopRuntimeEnv: ZCodeRuntimeEnv = isLocalDevelopmentRuntime
   ? "development"
   : "production";

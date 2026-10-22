@@ -246,6 +246,18 @@ modules:
       app: .
     owner: conversation
 
+  - id: acp-launch-rules
+    roots: [packages/shared/src/acp-launch-rules]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      [
+        packages/shared/src/acp-launch-rules/index.ts,
+        packages/shared/src/acp-launch-rules/contract.ts,
+      ]
+    layers: { domain: "." }
+    owner: configuration
+
   - id: gen-ui-protocol
     roots: [packages/shared/src/gen-ui]
     managed: true
@@ -869,6 +881,20 @@ exceptions:
       - packages/ui/src/lib/providerFamilyConnectionTransition.ts
       - packages/ui/src/prompt-editor/useComposerToolbarFit.ts
     reason: Composer model, provider and toolbar files reached staging without the MR architecture gate running; adopting the packages/ui composer toolbar needs a separate module boundary refactor.
+  - id: acp-agent-runtime-size-split-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/acp-agent-runtime/src/runtime-handshake.ts
+      - packages/acp-agent-runtime/src/runtime-teardown.ts
+      - packages/services/src/model-provider/acpAgentLogin.ts
+    reason: Cohesive pieces split out of the existing ACP runtime and settings bridge to keep each file under the staged-size limit (handshake wiring, process-tree teardown, login helpers); the runtime keeps the single lifecycle state owner. Adopting packages/acp-agent-runtime and the services model-provider directory needs a separate module boundary refactor.
+  - id: acp-agent-fork-sidecar-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/provider/src/acp-agent-derivation.ts
+      - packages/provider-node/src/fork-acp-agent-store.ts
+      - packages/services/src/model-provider/acpAgentWriter.ts
+    reason: ACP agent records move out of the upstream-shared provider_config.json into the fork_acp_agents.json sidecar (specs/acp-agent-runtime.md "Storage and upstream compatibility"). The files follow the existing ChatGPT plan derivation layering inside the legacy provider, provider-node and services packages — pure derivation in provider, file owner in provider-node, settings writer in services — so the upstream-identical repository and codec stay untouched. Adopting those packages as managed modules needs a separate module boundary refactor.
   - id: worktree-setup-card-slot-unmanaged-files
     rule: unmanaged-new-file
     paths:

@@ -35,9 +35,53 @@ export function extractManualModelConfig(input: unknown): ManualModelConfig {
 
 /** Preserve standalone enabled and system leaves; restoring intelligent config and rule merging both use the same field ownership. */
 export function clearManualModelConfig(input: z.infer<typeof modelConfigDataSchema>) {
-  return modelConfigDataSchema.parse(
+  const cleared = modelConfigDataSchema.parse(
     omitSchemaFields(manualModelConfigSchema.omit({ enabled: true }), input),
   );
+  // reasoningLevel.default is catalog-owned, not an editable leaf: keep the inherited value so a manual rule overlays on it.
+  // EnumOptionSpecConfig.overlay still drops it when the rule's own values no longer include it.
+  const inheritedDefault = input.optionSpecs?.reasoningLevel?.default;
+  if (inheritedDefault === undefined) return cleared;
+  return modelConfigDataSchema.parse({
+    ...cleared,
+    optionSpecs: {
+      ...cleared.optionSpecs,
+      reasoningLevel: { ...cleared.optionSpecs?.reasoningLevel, default: inheritedDefault },
+    },
+  });
+}
+
+/**
+ * reasoningLevel.default is fork-only and catalog-owned. Upstream's strict shared-file schema rejects the whole
+ * provider_config.json when it is present, so personal model rules drop it on both parse and serialize.
+ */
+export function omitCatalogOwnedOptionFields(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  return {
+    ...input,
+    ...(Array.isArray(input.providerModelRules)
+      ? { providerModelRules: input.providerModelRules.map(omitRuleDefault) }
+      : {}),
+    ...(Array.isArray(input.manualProviderModelRules)
+      ? { manualProviderModelRules: input.manualProviderModelRules.map(omitRuleDefault) }
+      : {}),
+  };
+}
+
+function omitRuleDefault(rule: unknown): unknown {
+  if (!isRecord(rule) || !isRecord(rule.config)) return rule;
+  const optionSpecs = rule.config.optionSpecs;
+  if (!isRecord(optionSpecs) || !isRecord(optionSpecs.reasoningLevel)) return rule;
+  if (!("default" in optionSpecs.reasoningLevel)) return rule;
+  const { default: _catalogDefault, ...reasoningLevel } = optionSpecs.reasoningLevel;
+  return {
+    ...rule,
+    config: { ...rule.config, optionSpecs: { ...optionSpecs, reasoningLevel } },
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function omitSchemaFields(schema: z.ZodObject, input: unknown): unknown {
