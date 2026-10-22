@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeBrowserLoadFailure,
   isAllowedBrowserUrl,
   isCertificateBrowserLoadErrorCode,
   isDefaultBrowserOpenableUrl,
@@ -8,6 +9,11 @@ import {
   normalizeBrowserUrl,
   resolveMessageLinkOpenTarget,
 } from "@/embeddedBrowserHelpers.js";
+
+// Exact string reported by QA: webview.loadURL rejects with the main-process error wrapped by Electron IPC.
+const REPORTED_IPC_REJECTION = new Error(
+  "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_UNSAFE_PORT (-312) loading 'http://127.0.0.1:9/unreachable'",
+);
 
 describe("embeddedBrowserHelpers", () => {
   it("allows file URLs for local HTML previews", () => {
@@ -18,12 +24,8 @@ describe("embeddedBrowserHelpers", () => {
   });
 
   it("keeps explicit HTTP and HTTPS URLs unchanged", () => {
-    expect(normalizeBrowserUrl("http://localhost:5173")).toBe(
-      "http://localhost:5173",
-    );
-    expect(normalizeBrowserUrl("https://example.com/docs")).toBe(
-      "https://example.com/docs",
-    );
+    expect(normalizeBrowserUrl("http://localhost:5173")).toBe("http://localhost:5173");
+    expect(normalizeBrowserUrl("https://example.com/docs")).toBe("https://example.com/docs");
   });
 
   it("defaults normal domains to HTTPS", () => {
@@ -31,9 +33,7 @@ describe("embeddedBrowserHelpers", () => {
     expect(normalizeBrowserUrl("example.com/path?q=1#top")).toBe(
       "https://example.com/path?q=1#top",
     );
-    expect(normalizeBrowserUrl("//example.com/path")).toBe(
-      "https://example.com/path",
-    );
+    expect(normalizeBrowserUrl("//example.com/path")).toBe("https://example.com/path");
   });
 
   it("defaults local development hosts to HTTP", () => {
@@ -92,24 +92,20 @@ describe("embeddedBrowserHelpers", () => {
     const localUrl = "http://localhost:5173";
 
     // 回归：公网链接右键「打开」必须进内置浏览器，之前和「在浏览器中打开」等价。
-    expect(
-      resolveMessageLinkOpenTarget({ href: feishuDocUrl, forceInApp: true }),
-    ).toBe("app-browser");
-    expect(
-      resolveMessageLinkOpenTarget({ href: feishuDocUrl, forceExternal: true }),
-    ).toBe("external-browser");
-
-    expect(
-      resolveMessageLinkOpenTarget({ href: localUrl, forceExternal: true }),
-    ).toBe("external-browser");
-    expect(
-      resolveMessageLinkOpenTarget({ href: localUrl, forceInApp: true }),
-    ).toBe("app-browser");
-
-    // 左键单击（无 flag）仍走白名单启发式。
-    expect(resolveMessageLinkOpenTarget({ href: feishuDocUrl })).toBe(
+    expect(resolveMessageLinkOpenTarget({ href: feishuDocUrl, forceInApp: true })).toBe(
+      "app-browser",
+    );
+    expect(resolveMessageLinkOpenTarget({ href: feishuDocUrl, forceExternal: true })).toBe(
       "external-browser",
     );
+
+    expect(resolveMessageLinkOpenTarget({ href: localUrl, forceExternal: true })).toBe(
+      "external-browser",
+    );
+    expect(resolveMessageLinkOpenTarget({ href: localUrl, forceInApp: true })).toBe("app-browser");
+
+    // 左键单击（无 flag）仍走白名单启发式。
+    expect(resolveMessageLinkOpenTarget({ href: feishuDocUrl })).toBe("external-browser");
     expect(resolveMessageLinkOpenTarget({ href: localUrl })).toBe("app-browser");
 
     // 两个 flag 同传时以 forceExternal 为准。
@@ -123,12 +119,8 @@ describe("embeddedBrowserHelpers", () => {
   });
 
   it("uses HTTP for explicit non-HTTPS ports", () => {
-    expect(normalizeBrowserUrl("example.com:80")).toBe(
-      "http://example.com:80",
-    );
-    expect(normalizeBrowserUrl("example.com:8080")).toBe(
-      "http://example.com:8080",
-    );
+    expect(normalizeBrowserUrl("example.com:80")).toBe("http://example.com:80");
+    expect(normalizeBrowserUrl("example.com:8080")).toBe("http://example.com:8080");
     expect(normalizeBrowserUrl("example.com:443")).toBe("https://example.com:443");
   });
 
@@ -169,5 +161,54 @@ describe("embeddedBrowserHelpers", () => {
       expect(isCertificateBrowserLoadErrorCode(code)).toBe(false);
     }
     expect(isCertificateBrowserLoadErrorCode(null)).toBe(false);
+  });
+});
+
+describe("describeBrowserLoadFailure", () => {
+  it("reduces the reported IPC rejection to the Chromium net error token", () => {
+    expect(describeBrowserLoadFailure({ rawError: REPORTED_IPC_REJECTION })).toBe(
+      "ERR_UNSAFE_PORT",
+    );
+  });
+
+  it("prefers the did-fail-load errorDescription over the raw rejection", () => {
+    expect(
+      describeBrowserLoadFailure({
+        errorCode: -312,
+        errorDescription: "ERR_UNSAFE_PORT",
+        rawError: REPORTED_IPC_REJECTION,
+      }),
+    ).toBe("ERR_UNSAFE_PORT");
+  });
+
+  it("gives both writers the same text, whichever failure event arrives last", () => {
+    const fromDidFailLoad = describeBrowserLoadFailure({
+      errorCode: -312,
+      errorDescription: "ERR_UNSAFE_PORT",
+    });
+    const fromRejection = describeBrowserLoadFailure({ rawError: REPORTED_IPC_REJECTION });
+    expect(fromRejection).toBe(fromDidFailLoad);
+  });
+
+  it("keeps a bare net error token unchanged", () => {
+    expect(describeBrowserLoadFailure({ errorDescription: "ERR_NAME_NOT_RESOLVED" })).toBe(
+      "ERR_NAME_NOT_RESOLVED",
+    );
+  });
+
+  it("strips the IPC wrapper from a non-Chromium message", () => {
+    expect(
+      describeBrowserLoadFailure({
+        rawError: new Error("Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: boom"),
+      }),
+    ).toBe("boom");
+  });
+
+  it("falls back to the numeric code, then to a generic label, for empty input", () => {
+    expect(describeBrowserLoadFailure({ errorCode: -105, errorDescription: "" })).toBe(
+      "net error -105",
+    );
+    expect(describeBrowserLoadFailure({})).toBe("unknown error");
+    expect(describeBrowserLoadFailure({ rawError: "   " })).toBe("unknown error");
   });
 });

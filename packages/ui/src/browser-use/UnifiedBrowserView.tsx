@@ -23,6 +23,7 @@ import type { HumanBrowserViewportPreferenceChangeSource } from "@/browser-use/u
 import {
   DEFAULT_BROWSER_URL,
   INITIAL_BROWSER_STATE,
+  describeBrowserLoadFailure,
   displayBrowserUrl,
   isDefaultBrowserOpenableUrl,
   isRecoverableBrowserGuestExitReason,
@@ -479,7 +480,10 @@ export function UnifiedBrowserView({
             if (!message.includes("ERR_ABORTED")) {
               setBrowserState((prev) => ({
                 ...prev,
-                errorMessage: intl.formatMessage({ id: "browser.loadFailed" }, { message }),
+                errorMessage: intl.formatMessage(
+                  { id: "browser.loadFailed" },
+                  { message: describeBrowserLoadFailure({ rawError: loadError }) },
+                ),
                 isLoading: false,
               }));
             }
@@ -533,7 +537,12 @@ export function UnifiedBrowserView({
         currentUrl: event.validatedURL || prev.currentUrl,
         errorMessage: intl.formatMessage(
           { id: "browser.loadFailed" },
-          { message: event.errorDescription },
+          {
+            message: describeBrowserLoadFailure({
+              errorCode: event.errorCode,
+              errorDescription: event.errorDescription,
+            }),
+          },
         ),
         loadErrorCode: event.errorCode,
         isLoading: false,
@@ -830,7 +839,10 @@ export function UnifiedBrowserView({
         if (message.includes("ERR_ABORTED")) return;
         setBrowserState((prev) => ({
           ...prev,
-          errorMessage: intl.formatMessage({ id: "browser.loadFailed" }, { message }),
+          errorMessage: intl.formatMessage(
+            { id: "browser.loadFailed" },
+            { message: describeBrowserLoadFailure({ rawError: error }) },
+          ),
           isLoading: false,
         }));
       }
