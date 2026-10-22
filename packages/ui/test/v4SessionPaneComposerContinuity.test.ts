@@ -1881,9 +1881,20 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       options.query as typeof conversationMock.layer.queryCommands,
     );
     const decisions: string[] = [];
-    const off = pendingCommandRegistry.subscribeResolution(commandId, (resolution) =>
-      decisions.push(resolution),
-    );
+    // The registry drops its listeners after each notification: keep collecting.
+    let unsubscribe = () => {};
+    let stopped = false;
+    const listen = () => {
+      unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
+        decisions.push(resolution);
+        if (!stopped) listen();
+      });
+    };
+    listen();
+    const off = () => {
+      stopped = true;
+      unsubscribe();
+    };
     conversationMock.layer.acquire.mockImplementation(
       () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
     );
@@ -2009,6 +2020,26 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     });
     off();
     expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: the own row still wins after a decided failure", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f12", "cmd-f12", {
+      preparing: true,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f12", commandId: "cmd-f12" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual(["failed"]);
+    projectionState.current = boundProjectionState("reserved-f12", {
+      rows: [realUserInputRow("cmd-f12")],
+      submissionPreparation: { submissionId: "sub-cmd-f12" },
+    });
+    renderPane(root, "reserved-f12");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed", "accepted"]);
   });
 
   it("F: an unavailable command query leaves the record unchanged", async () => {

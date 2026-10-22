@@ -27,6 +27,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -3246,11 +3247,23 @@ function ConversationComposerImpl({
         const restoredRevision = contentRevisionRef.current;
         removedSettlementRef.current?.();
         removedSettlementRef.current = subscribeComposerSubmissionSettled(scopeKey, (settled) => {
-          if (settled.text !== draft.text || contentRevisionRef.current !== restoredRevision)
-            return;
-          inputApiRef.current?.clear();
-          updateText("");
-          updateComposerContent({ text: "" });
+          // The original was admitted: the frozen submission is done even if the copy was edited
+          // or unlocked, so the next message must not reuse its id through the Retry path.
+          const current = composerDraftRef.current?.firstSubmission;
+          const done = current?.commandId === settled.commandId;
+          if (done && retryFirstSubmissionRef.current?.commandId === settled.commandId)
+            retryFirstSubmissionRef.current = undefined;
+          const unedited =
+            settled.text === draft.text && contentRevisionRef.current === restoredRevision;
+          if (unedited) {
+            inputApiRef.current?.clear();
+            updateText("");
+          }
+          if (unedited || done)
+            updateComposerContent({
+              text: unedited ? "" : textRef.current,
+              ...(done ? { firstSubmission: undefined } : {}),
+            });
         });
       }
     },
@@ -3298,6 +3311,19 @@ function ConversationComposerImpl({
   // the unedited copy if the original turns out accepted before the user sends.
   const [heldUnlockConfirmOpen, setHeldUnlockConfirmOpen] = useState(false);
   useEffect(() => setHeldUnlockConfirmOpen(false), [heldCommandId]);
+  const heldUnlockWarningId = useId();
+  const heldUnlockButtonRef = useRef<HTMLButtonElement | null>(null);
+  const heldUnlockConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const heldUnlockFocusReturnRef = useRef(false);
+  useEffect(() => {
+    // Focus follows the confirmation: onto Unlock sending when it opens, back to the trigger
+    // when it is cancelled.
+    if (heldUnlockConfirmOpen) heldUnlockConfirmRef.current?.focus();
+    else if (heldUnlockFocusReturnRef.current) {
+      heldUnlockFocusReturnRef.current = false;
+      heldUnlockButtonRef.current?.focus();
+    }
+  }, [heldUnlockConfirmOpen]);
   const unlockHeldFirstSubmission = useCallback(() => {
     const held = composerDraftRef.current?.firstSubmission;
     setHeldUnlockConfirmOpen(false);
@@ -4324,14 +4350,21 @@ function ConversationComposerImpl({
             {sendBlockReason === "outcomeUnresolved" ? (
               heldUnlockConfirmOpen ? (
                 <div className="flex flex-col gap-2">
-                  <p data-testid="composer-held-unlock-warning" className="text-warning">
+                  <p
+                    id={heldUnlockWarningId}
+                    role="alert"
+                    data-testid="composer-held-unlock-warning"
+                    className="text-warning"
+                  >
                     {intl.formatMessage({ id: "composer.heldCopy.warning" })}
                   </p>
                   <div className="flex gap-2">
                     <Button
+                      ref={heldUnlockConfirmRef}
                       size="sm"
                       variant="outline"
                       data-testid="composer-held-unlock-confirm"
+                      aria-describedby={heldUnlockWarningId}
                       onClick={unlockHeldFirstSubmission}
                     >
                       {intl.formatMessage({ id: "composer.heldCopy.confirm" })}
@@ -4339,7 +4372,11 @@ function ConversationComposerImpl({
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => setHeldUnlockConfirmOpen(false)}
+                      data-testid="composer-held-unlock-cancel"
+                      onClick={() => {
+                        heldUnlockFocusReturnRef.current = true;
+                        setHeldUnlockConfirmOpen(false);
+                      }}
                     >
                       {intl.formatMessage({ id: "common.cancel" })}
                     </Button>
@@ -4348,6 +4385,7 @@ function ConversationComposerImpl({
               ) : (
                 <div>
                   <Button
+                    ref={heldUnlockButtonRef}
                     size="sm"
                     variant="ghost"
                     data-testid="composer-held-unlock"

@@ -1704,3 +1704,131 @@ it("Unlock is an explicit, confirmed override of a held copy and never sends by 
     });
   }
 });
+
+it("after Unlock, an accepted original drops the submission so the next message is a new one", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-unlock-accepted");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-unlock-accepted", "sub-unlock-accepted", {
+    status: "unknown",
+    commandId: "cmd-unlock-accepted",
+  });
+  harness.controls.snapshot = preparingSnapshot("session-unlock-accepted", "sub-unlock-accepted");
+  try {
+    harness.rerender("session-unlock-accepted");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-held-unlock-confirm")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    // The unlocked status reaches the composer (the app re-renders on draft state changes).
+    harness.refresh();
+    // The original turns out accepted (projection) before the user sends anything.
+    await act(async () => {
+      pendingCommandRegistry.reconcileSnapshot({
+        sessionId: "session-unlock-accepted",
+        queue: { items: [] },
+        rows: {
+          window: [
+            { kind: "userInput", rowId: 1, sourceCommandId: "cmd-unlock-accepted", text: "x" },
+          ],
+        },
+      } as unknown as import("@zcode/shared/zcode-protocol-v4").ConversationSnapshot);
+      await flushAsyncWork();
+    });
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "session-unlock-accepted")?.firstSubmission,
+    ).toBeUndefined();
+    // The admitted input cleared the preparation marker on the Host.
+    const admitted = preparingSnapshot("session-unlock-accepted", "sub-unlock-accepted");
+    harness.controls.snapshot = {
+      ...admitted,
+      meta: { title: "", titleSource: "firstInput" },
+    } as typeof admitted;
+    harness.refresh();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("a new message");
+      chatPromptEditorProps.at(-1)!.onSubmit!("a new message");
+      await flushAsyncWork();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[0]).toBe("a new message");
+    expect(harness.onSendText.mock.calls[0]?.[1]).not.toHaveProperty("firstSubmissionId");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("the Unlock warning is announced and described on the confirm button", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-unlock-a11y", "sub-unlock-a11y", {
+    status: "unknown",
+    commandId: "cmd-unlock-a11y",
+  });
+  harness.controls.snapshot = preparingSnapshot("session-unlock-a11y", "sub-unlock-a11y");
+  try {
+    harness.rerender("session-unlock-a11y");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    const warning = findReactPropsByTestId(harness.container, "composer-held-unlock-warning");
+    const confirm = findReactPropsByTestId(harness.container, "composer-held-unlock-confirm");
+    expect(warning?.role).toBe("alert");
+    expect(warning?.id).toBeTruthy();
+    expect(confirm?.["aria-describedby"]).toBe(warning?.id);
+    const nodeByTestId = (testId: string) => {
+      type MinimalNode = { attributes?: Map<string, string>; childNodes?: MinimalNode[] };
+      const visit = (node: MinimalNode): MinimalNode | null => {
+        if (node.attributes?.get("data-testid") === testId) return node;
+        for (const child of node.childNodes ?? []) {
+          const found = visit(child);
+          if (found) return found;
+        }
+        return null;
+      };
+      return visit(harness.container as unknown as MinimalNode);
+    };
+    const activeElement = () => (document as unknown as { activeElement?: unknown }).activeElement;
+    // Focus moves onto the confirmation when it opens...
+    expect(activeElement()).toBe(nodeByTestId("composer-held-unlock-confirm"));
+    // ...and back to the trigger on Cancel.
+    const cancel = findReactPropsByTestId(harness.container, "composer-held-unlock-cancel");
+    await act(async () => {
+      (cancel!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(activeElement()).toBe(nodeByTestId("composer-held-unlock"));
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});

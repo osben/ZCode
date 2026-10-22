@@ -31,6 +31,9 @@ export function createMinimalElement(ownerDocument: Document, tagName = "div") {
     },
     attributes: new Map<string, string>(),
     childNodes: [] as Node[],
+    focus: () => {
+      (ownerDocument as { activeElement?: unknown }).activeElement = element;
+    },
     getAttribute: (name: string) => element.attributes.get(name) ?? null,
     insertBefore: (child: Node, beforeChild?: Node | null) => {
       Object.assign(child, { parentNode: element });
