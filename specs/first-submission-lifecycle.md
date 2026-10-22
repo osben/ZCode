@@ -44,6 +44,9 @@ speed and P1/P2/P3 clocks; does not relax the durability rules below.
    input never becomes a durable submitted session. User deletion remains explicit.
 9. Worktree runtime starts only in its verified execution cwd. Incognito profile is
    frozen before runtime startup. No reuse of an incompatible ordinary prewarm.
+10. A prewarm `createSession` (no `firstInput`) is config-only: it does not own the pending
+   task draft and does not record a command for it. Its project scope is the one captured when its
+   generation started (see `specs/sidebar-new-task-outside-project.md`, Draft lifetime).
 
 Ordinary messages and attachment/context-bearing input use this lifecycle. Native
 control slash commands retain their existing command-specific admission semantics.
