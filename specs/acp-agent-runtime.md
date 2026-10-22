@@ -66,6 +66,44 @@ entry point:
 Remove this section together with the gate (`isLocalDevelopmentRuntime` in
 `packages/ui/src/lib/devRuntime.ts` and the `useModelProviders` filter) when ACP ships publicly.
 
+## Settings UI placement
+
+ACP agents live inside the Model Providers master/detail layout, not as a separate card above it.
+
+- Navigation: a dedicated group `id: "acp"` ("ACP agents") rendered directly after the `custom`
+  group. Each installed agent, and each uninstalled agent that still has an ACP-managed provider, is
+  one nav item (`type: "acpAgent"`, key `acp-agent:<agentId>`) with the agent initial, its name,
+  and the status dot defined below. The group obeys the dev-only gate above.
+- `acp:<agentId>` personal providers are listed only in the `acp` group, never also under
+  `custom`.
+- Detection has one owner: a single hook called once by `ModelProviderSection`; navigation and
+  detail read its result. Rescan keeps the previous list visible while it runs.
+- While the first detection is in flight the group shows a loading row, and navigation
+  correction must not move an `acp-agent:*` selection away until detection settles.
+- Empty state: when detection finds no installed agent the group still renders one entry
+  ("Detect agents") whose detail lists the supported agents (name, binary, docs link, install
+  hint) with a Rescan action. A failed scan shows the error and Retry in that same detail.
+- Detail pane for an agent: header (initial mark, name, version, binary path, Rescan, enable
+  switch labelled with the agent name, status), then sections for launch config (command, args,
+  env), login/status helpers, and Test. Raw ACP frames are behind a collapsed disclosure. Unsaved
+  form edits are dropped on navigation, the same as other provider details.
+- Status (one rule for the navigation row and the detail header): `ready` when enabled, installed
+  and not in conflict; `unavailable` when enabled but the CLI is not installed; otherwise `disabled`.
+- Switching off keeps the saved launch config (command, args, env): the disable write is an overlay
+  save with `enabled: false` that carries the saved `acp-agent` access back. Removing the
+  `acp:<agentId>` provider entirely is out of scope for this section.
+- ACP-managed providers (`acp:<agentId>` with the `acp-agent` access type) are excluded from the
+  custom group and from the shared provider display order used by drag reorder. A same-id provider
+  with another access type is a conflict and stays visible under custom.
+- Detection requests carry a sequence number: only the newest response writes state, so an older
+  scan that finishes later never overwrites a rescan. Detection runs once per mount; a rescan is an
+  explicit action (page Refresh or the detail's Rescan).
+- Selection: an `acp-agent:*` selection is not corrected while the first detection is pending. A
+  selected catalog entry moves once to the first agent when one is found, without looping.
+- Errors from enable, disable, test and scan are announced with `role="alert"`.
+- Tests: effect-running jsdom tests cover one detection per mount, stale-response dropping,
+  selection correction, the catalog-to-agent move, and a single login-status probe across rescans.
+
 ## Event ordering (runtime → host)
 
 - Handshake: `initialize` (protocol version checked) → `session/new` — before any prompt.
