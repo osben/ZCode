@@ -101,22 +101,14 @@ export async function loadTaskDeletionWorktreePreview(
         const services = resolveServices(row);
         if (!services || row.workspaceIdentity?.trim())
           throw new Error("Worktree status unavailable");
-        const [staged, unstaged] = await Promise.all([
-          services.gitService.getChanges({ workspacePath: path, sourceId: "staged" }),
-          services.gitService.getChanges({ workspacePath: path, sourceId: "unstaged" }),
-        ]);
-        const files = new Map<string, { path: string; status: string }>();
-        for (const file of [...staged, ...unstaged]) {
-          const status = file.isUntracked
-            ? "??"
-            : `${file.x && file.x !== "." ? file.x : " "}${file.y && file.y !== "." ? file.y : " "}`.trim() ||
-              "M";
-          files.set(`${status}:${file.workspaceRelativePath || file.path}`, {
-            path: file.workspaceRelativePath || file.path,
-            status,
-          });
-        }
-        return { path, ...(branchName ? { branchName } : {}), files: [...files.values()] };
+        // getChanges hides zero-stat untracked files that forced removal still deletes; only the
+        // dedicated removal preview is a safe source, and anything but a files array is unknown.
+        const preview = await services.gitService.getWorktreeRemovalPreview?.({
+          workspacePath: path,
+        });
+        if (!Array.isArray(preview?.files)) throw new Error("Worktree status unavailable");
+        const files = preview.files.map((file) => ({ path: file.path, status: file.status }));
+        return { path, ...(branchName ? { branchName } : {}), files };
       }),
     );
     return previews;

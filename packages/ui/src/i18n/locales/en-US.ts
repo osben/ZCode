@@ -7716,6 +7716,8 @@ const enUS: Record<string, string> = {
     "This may also include attached side chats, subagents and workflow sessions.",
   "taskDelete.worktreeUnknown":
     "Worktree changes could not be checked, so uncommitted changes may be lost. Removing a worktree permanently discards its uncommitted files.",
+  "taskDelete.worktreeIgnoredNotice":
+    "Ignored files in the worktree (for example .env files or local databases) are also deleted.",
   "taskDelete.worktreeUnknownAcknowledge":
     "I understand that uncommitted changes in the worktree may be permanently lost",
   "taskDelete.retainedNotice":

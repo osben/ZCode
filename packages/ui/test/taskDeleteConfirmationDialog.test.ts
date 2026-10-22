@@ -89,16 +89,13 @@ describe("TaskDeleteConfirmationDialog", () => {
       counts: counts(),
       loadWorktreePreview: () => new Promise((resolve) => (resolveWorktrees = resolve)),
     });
-    const button = screen.getByRole("button", { name: "taskDelete.confirm:1" });
-    expect(button.hasAttribute("disabled") || button.getAttribute("data-disabled") !== null).toBe(
-      true,
-    );
+    // The plain Delete label is reserved for a known-clean preview, never shown while loading.
+    expect(screen.queryByRole("button", { name: "taskDelete.confirm:1" })).toBeNull();
+    const loading = screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" });
+    expect(loading.hasAttribute("disabled")).toBe(true);
     resolveWorktrees([]);
-    await waitFor(() =>
-      expect(button.hasAttribute("disabled") || button.getAttribute("data-disabled") !== null).toBe(
-        false,
-      ),
-    );
+    const button = await screen.findByRole("button", { name: "taskDelete.confirm:1" });
+    await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
   });
 
   it("shows a generic descendant warning when counts are unavailable", async () => {
@@ -226,6 +223,30 @@ describe("TaskDeleteConfirmationDialog", () => {
     });
     expect(reloaded.getAttribute("aria-checked")).toBe("false");
     expect(confirm.disabled).toBe(true);
+  });
+
+  it("links the unknown-status warning to the acknowledgement and the confirm control", async () => {
+    mount({ counts: counts(), worktrees: null });
+    const warning = await screen.findByText(/^taskDelete\.worktreeUnknown$/);
+    expect(warning.id).toBeTruthy();
+    const acknowledge = screen.getByRole("checkbox", {
+      name: "taskDelete.worktreeUnknownAcknowledge",
+    });
+    const confirm = screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" });
+    expect(acknowledge.getAttribute("aria-describedby")?.split(" ")).toContain(warning.id);
+    expect(confirm.getAttribute("aria-describedby")?.split(" ")).toContain(warning.id);
+  });
+
+  it("notes that ignored files are deleted whenever a worktree is involved", async () => {
+    mount({ counts: counts(), worktrees: [{ path: "/repo/.worktrees/a", files: [] }] });
+    expect(await screen.findByText("taskDelete.worktreeIgnoredNotice")).toBeTruthy();
+    cleanup();
+    mount({ counts: counts(), worktrees: null });
+    expect(await screen.findByText("taskDelete.worktreeIgnoredNotice")).toBeTruthy();
+    cleanup();
+    mount({ counts: counts(), worktrees: [] });
+    await screen.findByRole("button", { name: "taskDelete.confirm:1" });
+    expect(screen.queryByText("taskDelete.worktreeIgnoredNotice")).toBeNull();
   });
 
   it("keeps known-clean worktrees on the plain Delete flow without an acknowledgement", async () => {

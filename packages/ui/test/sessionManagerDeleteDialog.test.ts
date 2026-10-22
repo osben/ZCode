@@ -134,7 +134,7 @@ describe("SessionManagerDeleteDialog", () => {
         executionWorktree: { path: "/project/.worktrees/wt" },
       },
     } as unknown as SessionManagerRow;
-    const getChanges = vi.fn(async () => {
+    const getWorktreeRemovalPreview = vi.fn(async () => {
       throw new Error("git unavailable");
     });
     const { onConfirm } = mount({
@@ -153,13 +153,13 @@ describe("SessionManagerDeleteDialog", () => {
               ? { executionWorktree: item.task.executionWorktree }
               : {}),
           })),
-          () => ({ taskService: {} as never, gitService: { getChanges } as never }),
+          () => ({ taskService: {} as never, gitService: { getWorktreeRemovalPreview } as never }),
         ),
     });
     const acknowledge = await screen.findByRole("checkbox", {
       name: "taskDelete.worktreeUnknownAcknowledge",
     });
-    expect(getChanges).toHaveBeenCalled();
+    expect(getWorktreeRemovalPreview).toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "taskDelete.confirm:1" })).toBeNull();
     const confirm = screen.getByRole("button", { name: "taskDelete.deleteAnyway:1" });
     expect(confirm.hasAttribute("disabled")).toBe(true);

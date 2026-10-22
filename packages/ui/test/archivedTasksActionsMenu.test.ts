@@ -115,7 +115,7 @@ function createServices(overrides: { supported?: boolean; skippedTaskIds?: strin
   };
   return {
     zcodeTaskService,
-    gitService: { getChanges: vi.fn(async () => []) },
+    gitService: { getWorktreeRemovalPreview: vi.fn(async () => ({ files: [] })) },
     windowControllerService: undefined,
   };
 }

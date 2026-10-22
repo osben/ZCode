@@ -22,7 +22,9 @@ const mocks = vi.hoisted(() => ({
   service: {} as any,
   removeTaskState: vi.fn(),
   // Stable identity: a new git service per render would change the preview loader identity.
-  gitService: { getChanges: vi.fn(async (): Promise<unknown[]> => []) },
+  gitService: {
+    getWorktreeRemovalPreview: vi.fn(async (): Promise<unknown> => ({ files: [] })),
+  },
   locale: "en-US",
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
@@ -165,7 +167,7 @@ function prepare(options: { tree?: ProjectTree } = {}) {
     loading: false,
   };
   mocks.mutateTask.mockResolvedValue(null);
-  mocks.gitService.getChanges.mockReset().mockResolvedValue([]);
+  mocks.gitService.getWorktreeRemovalPreview.mockReset().mockResolvedValue({ files: [] });
   mocks.locale = "en-US";
   mocks.service = {
     getDeletionCapability: vi.fn(async () => ({ supported: true })),
@@ -389,7 +391,7 @@ it("an archived row with unknown worktree status is not erased until the loss is
     executionWorktree: { path: "/same/.worktrees/wt", branchName: "wt" },
   });
   const { result } = setup({ tree: { ...tree(), tasks: [withWorktree] } });
-  mocks.gitService.getChanges.mockRejectedValue(new Error("git unavailable"));
+  mocks.gitService.getWorktreeRemovalPreview.mockRejectedValue(new Error("not a git repository"));
   act(() => {
     void result.current.run([withWorktree], "delete");
   });

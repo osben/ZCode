@@ -17,6 +17,7 @@ import type {
   GitGenerateCommitMessageResult,
   GitIdentity,
   GitIgnoredPathsRequest,
+  GitWorktreeRemovalPreview,
   GitLocalBranchListResult,
   GitPathMutationRequest,
   GitPushRequest,
@@ -67,6 +68,11 @@ export interface IGitService {
   removeWorktree(params: GitRemoveWorktreeRequest): Promise<GitWorktreeRemoveResult>;
   pruneWorktrees(params: GitRepositoryRequest): Promise<GitWorktreePruneResult>;
   getChanges(params: GitChangesRequest): Promise<GitFileChange[]>;
+  /**
+   * Everything `git worktree remove --force` would discard, without the review-panel stat filter.
+   * Throws when Git is unavailable, the path is not a repository or is not the worktree root.
+   */
+  getWorktreeRemovalPreview(params: GitRepositoryRequest): Promise<GitWorktreeRemovalPreview>;
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(params: GitRepositoryRequest): Promise<GitBranchComparison>;

@@ -69,7 +69,7 @@ All ordinary Delete surfaces share semantics: sidebar menu, Session Manager, arc
 
 - Pinned rows are excluded from batch deletion until opted in; previews/counts reflect actual candidates.
 - Load exact tree counts asynchronously. Show no additional count line while loading, omit zero categories, and show a generic descendant warning on failure/unsupported counts. Row overlays are not exact counts.
-- Read worktree paths from execution facts and deduplicate. Query staged, unstaged and untracked files through a public Git-service hook. Show roughly five paths/statuses (`M`, `??`, etc.) plus a localized remainder. Loading adds no Git line; failure is unknown, not clean.
+- Read worktree paths from execution facts and deduplicate. Query staged, unstaged and untracked files through the dedicated `IGitService.getWorktreeRemovalPreview` query (see "Worktree removal preview" below), never the review-panel `getChanges`. Show roughly five paths/statuses (`M`, `??`, etc.) plus a localized remainder. Loading adds no Git line; failure is unknown, not clean.
 - Dirty folders warn about permanent loss of uncommitted changes if removed. Dirtiness alone does not block: use **Delete anyway**. State that branches and aggregate usage remain.
 - Unknown worktree status (the preview failed, so dirtiness could not be read) requires an explicit acknowledgement before confirm; see "Unknown worktree status" below.
 - Protected folders can remain, so do not promise every folder will disappear.
@@ -80,18 +80,30 @@ All ordinary Delete surfaces share semantics: sidebar menu, Session Manager, arc
 
 The confirmation dialog derives one worktree confirm mode from the asynchronous worktree preview:
 
-| Preview result                                                              | Mode    | Confirm control                                                              |
-| --------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------- |
-| `[]` or worktrees with no changed files                                     | clean   | **Delete**, enabled once loads settle (unchanged)                            |
-| At least one worktree with changed files                                    | dirty   | **Delete anyway**, enabled once loads settle; dirty paths listed (unchanged) |
-| `null` (Git read failed, unavailable services, remote target, loader threw) | unknown | **Delete anyway**, disabled until the user checks the acknowledgement        |
+| Preview result                                                                                                               | Mode    | Confirm control                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------- |
+| Still loading (`undefined`)                                                                                                  | loading | **Delete anyway** label, disabled                                            |
+| `[]` or worktrees with no changed files                                                                                      | clean   | **Delete**, enabled once loads settle (unchanged)                            |
+| At least one worktree with changed files                                                                                     | dirty   | **Delete anyway**, enabled once loads settle; dirty paths listed (unchanged) |
+| `null` (Git read failed or unavailable, not a repository, missing folder, unavailable services, remote target, loader threw) | unknown | **Delete anyway**, disabled until the user checks the acknowledgement        |
 
-A preview of `[]` means no candidate row has an `executionWorktree`, so there is nothing to lose. A failed read is never treated as clean.
+A preview of `[]` means no candidate row has an `executionWorktree`, so there is nothing to lose. A failed read is never treated as clean. The plain **Delete** label appears only once the preview is known clean, never while it loads.
+
+### Worktree removal preview
+
+Cleanup removes a worktree with `git worktree remove --force`, which deletes every untracked file regardless of size or type. The review-panel query `getChanges` is not a safe preview: it drops untracked entries whose line stats are zero (binary files, files over the untracked stat limit, non-regular files, read errors), and `getStatus` degrades to an empty snapshot when Git is unavailable, the path is not a repository or the folder is missing. `getChanges` keeps those semantics for its other callers.
+
+`IGitService.getWorktreeRemovalPreview({ workspacePath })` is the deletion-preview owner:
+
+- It reads one status snapshot of the worktree and returns every entry (staged, unstaged, conflicted and untracked, including collapsed untracked directories) with a short status (`M`, `A`, `D`, `R`, `UU`, `??`, …). No line-stat filter and no workspace sub-scope: force removal deletes the whole worktree.
+- It throws when Git is unavailable, the path is not a repository or the folder is missing, and when the resolved repository root is not the worktree folder itself (for example a worktree whose `.git` link is broken resolving to an enclosing repository). The UI loader turns any throw, or a result without a `files` array (older peers, the Web home-only stub), into `null`, which is unknown mode.
+
+Known limitation (2026-10-21, no behavior change yet): force removal also deletes gitignored files (for example `.env` or local databases), which no status preview lists. Whenever the candidates include a worktree (the preview is non-empty or unknown), the dialog shows `taskDelete.worktreeIgnoredNotice` saying ignored files in the worktree are deleted too.
 
 Unknown mode rules:
 
 - The plain **Delete** label is never offered: the single destructive confirm control (`TID_TASK_DELETE_CONFIRM`) is labelled **Delete anyway** and stays disabled until the acknowledgement is checked.
-- A warning panel, styled like the dirty panel, states that worktree changes could not be checked and that uncommitted changes in the worktree may be permanently lost if it is removed. It holds the acknowledgement checkbox (`taskDelete.worktreeUnknownAcknowledge`).
+- A warning panel, styled like the dirty panel, states that worktree changes could not be checked and that uncommitted changes in the worktree may be permanently lost if it is removed. It holds the acknowledgement checkbox (`taskDelete.worktreeUnknownAcknowledge`). The warning text describes both the checkbox and the confirm control (`aria-describedby`).
 - The acknowledgement resets whenever the preview reloads (candidate set changes, for example the include-pinned opt-in, or a loader changes identity). An acknowledgement given for one candidate set never carries over to another.
 - All other blockers still apply: unsupported capability, known running trees, empty candidates and unsettled loads keep confirm disabled even when acknowledged.
 - Cancel mutates nothing.
@@ -119,7 +131,7 @@ sequenceDiagram
     Owner->>Exec: permanentlyDeleteTasks(candidates)
 ```
 
-Not covered by this guarantee (no dialog in front of them): `deleteArchivedTaskSelection` (`packages/ui/src/lib/archivedTaskDeletion.ts`, calls the executor) and `eraseHiddenRows` (`packages/ui/src/session-manager/sessionManagerErase.ts`, calls `eraseTasks` directly). Neither has a production caller today; any new caller must go through the dialog or add its own worktree confirmation.
+Not covered by this guarantee (no dialog in front of them): `deleteArchivedTaskSelection` (`packages/ui/src/lib/archivedTaskDeletion.ts`, calls the executor) and `eraseHiddenRows` (`packages/ui/src/session-manager/sessionManagerErase.ts`, calls `eraseTasks` directly). Neither has a production caller today; any new caller must go through the dialog or add its own worktree confirmation. `archivedTaskDeletion.ts` still types its Git port as `getChanges` only, so its worktree preview would always be unknown (fail-safe); adopting that upstream file into a managed module is a follow-up.
 
 ## Content, results and recovery
 
@@ -174,7 +186,7 @@ Immediate reads, recomputation, reopened connections and retries preserve the sa
 7. Canonical aliases deduplicate targets; unrelated repositories with equal branch names do not interfere; unavailable guards retain.
 8. Git failure after content deletion reports partial outcome and remains retryable through maintenance; absent folders and repeated deletion are idempotent.
 9. Session Manager has no optional erase checkbox (only the pinned opt-in and, in unknown worktree mode, the worktree-loss acknowledgement), retains pinned opt-in, and local archived single/batch actions run full deletion. Restored-elsewhere archived IDs are skipped.
-   5a. Unknown worktree status (preview read fails) on every surface that uses the shared dialog (today Session Manager and Settings → Archives): plain **Delete** is not offered, **Delete anyway** is disabled and confirming writes nothing until the acknowledgement is checked; after it, deletion proceeds. Toggling the include-pinned opt-in reloads the preview and clears the acknowledgement. Known-clean worktrees keep the one-click **Delete**; known-dirty worktrees keep the one-click **Delete anyway** after listing paths.
+   5a. Unknown worktree status (preview read fails) on every surface that uses the shared dialog (today Session Manager and Settings → Archives): plain **Delete** is not offered, **Delete anyway** is disabled and confirming writes nothing until the acknowledgement is checked; after it, deletion proceeds. Toggling the include-pinned opt-in reloads the preview and clears the acknowledgement. A binary untracked file, an untracked file over the stat limit, a non-repository folder or unavailable Git never yields a clean preview. Known-clean worktrees keep the one-click **Delete**; known-dirty worktrees keep the one-click **Delete anyway** after listing paths.
 10. Remote/read-only/unsupported peers cannot silently perform hide-only Delete. Mobile reuses its existing Host and Agent attachment.
 11. Tokens, requests, errors, cache/reasoning totals, turns/tools and duration sums/counts remain stable. Supported time/workspace ranges preserve exact session count and longest duration. Deleted sessions leave Top Sessions; anonymous storage has no original IDs/titles.
 12. Repeat with stale/no rollup, partial pruning, old/shared buckets, debounce, subsequent same-bucket usage, recompute, reopen and retention expiry.
