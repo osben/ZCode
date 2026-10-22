@@ -1998,7 +1998,10 @@ describe("v4 原生 stop", () => {
       return { kind: "stopped", foregroundExecutionId: "foreground-1" };
     });
     const app = makeApp({
-      runtime: { stopActiveForegroundExecution },
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => "foreground-1",
+      },
       setQueueAutoDrain,
       readTarget: vi.fn().mockResolvedValue({ targetID: "g1", status: "active" }),
       updateTargetStatus: vi.fn().mockImplementation(async () => {
@@ -2023,7 +2026,8 @@ describe("v4 原生 stop", () => {
       reason: "v4 session stopped",
     });
     expect(setQueueAutoDrain).toHaveBeenCalledWith(false);
-    expect(calls).toEqual(["runtime-abort", "outer-abort", "hold-queue", "pause"]);
+    // The queue hold must land in the projection before any abort (ISSUE-010): the turn-end auto-drain check reads only the projection.
+    expect(calls).toEqual(["hold-queue", "runtime-abort", "outer-abort", "pause"]);
     expect(info).toHaveBeenCalledWith("v4 stop foreground execution inspected", {
       activeForegroundExecutionId: "foreground-1",
       event: "v4.stop.foreground_execution_inspected",
@@ -2050,6 +2054,261 @@ describe("v4 原生 stop", () => {
     ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
     expect(controller.signal.aborted).toBe(false);
     expect(app.readTarget).not.toHaveBeenCalled();
+  });
+
+  // Projection learns the authorization bit asynchronously (event store persistence), so the
+  // turn-end drain check sees the flag only after the hold is durable and projected.
+  function projectionLatencyHold() {
+    const state = { projectedAutoDrain: true, seenAtAbort: [] as boolean[] };
+    const setQueueAutoDrain = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      state.projectedAutoDrain = false;
+    });
+    return { state, setQueueAutoDrain };
+  }
+
+  it("ISSUE-010: runtime stop writes the queue hold first; the turn-end check sees autoDrain=false at abort", async () => {
+    const { state, setQueueAutoDrain } = projectionLatencyHold();
+    const stopActiveForegroundExecution = vi.fn().mockReturnValue({
+      kind: "stopped",
+      foregroundExecutionId: "foreground-1",
+    });
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => "foreground-1",
+      },
+      setQueueAutoDrain,
+    });
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => state.seenAtAbort.push(state.projectedAutoDrain));
+    const record = makeRecord({ app, activeAbortController: controller });
+
+    await new V4CommandExecutor(makeHost(record, { getQueueLength: () => 2 })).execute(
+      envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+    );
+
+    expect(setQueueAutoDrain).toHaveBeenCalledWith(false);
+    expect(state.seenAtAbort).toEqual([false]);
+  });
+
+  it("ISSUE-010: a compat controller stop (no runtime execution token) also holds before aborting", async () => {
+    const { state, setQueueAutoDrain } = projectionLatencyHold();
+    const app = makeApp({ setQueueAutoDrain });
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => state.seenAtAbort.push(state.projectedAutoDrain));
+    const record = makeRecord({ app, activeAbortController: controller });
+
+    await new V4CommandExecutor(makeHost(record, { getQueueLength: () => 1 })).execute(
+      envelope("stop", {}),
+    );
+
+    expect(setQueueAutoDrain).toHaveBeenCalledWith(false);
+    expect(state.seenAtAbort).toEqual([false]);
+  });
+
+  it("ISSUE-010: a stop with a stale execution id does not write the queue hold", async () => {
+    const setQueueAutoDrain = vi.fn().mockResolvedValue(undefined);
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution: vi.fn().mockReturnValue({
+          kind: "mismatch",
+          activeForegroundExecutionId: "foreground-2",
+        }),
+        getActiveForegroundExecutionId: () => "foreground-2",
+      },
+      setQueueAutoDrain,
+    });
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+
+    await expect(
+      new V4CommandExecutor(makeHost(record, { getQueueLength: () => 1 })).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(setQueueAutoDrain).not.toHaveBeenCalled();
+  });
+
+  // The turn ends on its own while the hold write is in flight: nothing is cancelled, so the hold must not
+  // outlive the stop, otherwise the queue stays paused after a natural completion.
+  function turnEndsDuringHold() {
+    const execution: { id: string | undefined } = { id: "foreground-1" };
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) execution.id = undefined;
+    });
+    const stopActiveForegroundExecution = vi.fn(
+      ({ expectedForegroundExecutionId }: { expectedForegroundExecutionId?: string }) =>
+        execution.id === undefined
+          ? { kind: "idle" }
+          : execution.id === expectedForegroundExecutionId
+            ? { kind: "stopped", foregroundExecutionId: execution.id }
+            : { kind: "mismatch", activeForegroundExecutionId: execution.id },
+    );
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => execution.id,
+      },
+      setQueueAutoDrain,
+    });
+    return { app, setQueueAutoDrain, stopActiveForegroundExecution };
+  }
+
+  it("ISSUE-010: a stop whose turn ended during the hold write releases the hold and noops", async () => {
+    const { app, setQueueAutoDrain } = turnEndsDuringHold();
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+    expect(host.legacyMutations).toEqual(["queue_auto_drain_resumed"]);
+    expect(controller.signal.aborted).toBe(false);
+  });
+
+  it("ISSUE-010: a stop without an execution id is pinned to the execution seen before the hold", async () => {
+    const { app, setQueueAutoDrain, stopActiveForegroundExecution } = turnEndsDuringHold();
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
+      reasonCode: "guard.stopTargetChanged",
+    });
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      expectedForegroundExecutionId: "foreground-1",
+      reason: "v4 session stopped",
+    });
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+    expect(controller.signal.aborted).toBe(false);
+  });
+
+  it("ISSUE-010: a queue the user already paused is neither held again nor resumed by stop", async () => {
+    const { app, setQueueAutoDrain } = turnEndsDuringHold();
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => false });
+
+    await new V4CommandExecutor(host).execute(
+      envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+    );
+
+    expect(setQueueAutoDrain).not.toHaveBeenCalled();
+    expect(host.legacyMutations).not.toContain("queue_auto_drain_resumed");
+  });
+
+  it("ISSUE-010: a compat stop whose controller was replaced during the hold write does not abort the new turn", async () => {
+    const first = new AbortController();
+    const second = new AbortController();
+    const record = makeRecord({ activeAbortController: first });
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) record.activeAbortController = second;
+    });
+    record.app = makeApp({ setQueueAutoDrain }) as never;
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(new V4CommandExecutor(host).execute(envelope("stop", {}))).rejects.toMatchObject({
+      reasonCode: "guard.stopTargetChanged",
+    });
+    expect(first.signal.aborted).toBe(false);
+    expect(second.signal.aborted).toBe(false);
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+  });
+
+  it("ISSUE-010: a compat stop whose turn registers its runtime token during the hold write still stops that turn", async () => {
+    const execution: { id: string | undefined } = { id: undefined };
+    const stopActiveForegroundExecution = vi.fn(() => ({
+      kind: "stopped",
+      foregroundExecutionId: "foreground-same",
+    }));
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) execution.id = "foreground-same";
+    });
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => execution.id,
+      },
+      setQueueAutoDrain,
+    });
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      expectedForegroundExecutionId: undefined,
+      reason: "v4 session stopped",
+    });
+    expect(controller.signal.aborted).toBe(true);
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false]]);
+  });
+
+  it("ISSUE-010: a compat stop whose turn ended during the hold write releases the hold and still pauses the goal", async () => {
+    const record = makeRecord({ activeAbortController: new AbortController() });
+    const setQueueAutoDrain = vi.fn().mockImplementation(async (autoDrain: boolean) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!autoDrain) record.activeAbortController = undefined;
+    });
+    const updateTargetStatus = vi.fn().mockResolvedValue({ status: "paused" });
+    record.app = makeApp({
+      setQueueAutoDrain,
+      readTarget: vi.fn().mockResolvedValue({ status: "active" }),
+      updateTargetStatus,
+    }) as never;
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await new V4CommandExecutor(host).execute(envelope("stop", {}));
+
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false], [true]]);
+    expect(updateTargetStatus).toHaveBeenCalledWith("paused");
+    expect(host.legacyMutations).toEqual(["queue_auto_drain_resumed", "session_stop_goal_paused"]);
+  });
+
+  it("ISSUE-010: a failed hold write is never released", async () => {
+    const { app, stopActiveForegroundExecution } = turnEndsDuringHold();
+    const setQueueAutoDrain = vi.fn().mockRejectedValue(new Error("write failed"));
+    (app as { setQueueAutoDrain: unknown }).setQueueAutoDrain = setQueueAutoDrain;
+    stopActiveForegroundExecution.mockReturnValue({ kind: "idle" });
+    const record = makeRecord({ app, activeAbortController: new AbortController() });
+    const host = makeHost(record, { getQueueLength: () => 1, getQueueAutoDrain: () => true });
+
+    await expect(
+      new V4CommandExecutor(host).execute(
+        envelope("stop", { expectedForegroundExecutionId: "foreground-1" }),
+      ),
+    ).rejects.toMatchObject({ reasonCode: "guard.stopTargetChanged" });
+    expect(setQueueAutoDrain.mock.calls).toEqual([[false]]);
+    expect(host.legacyMutations).toEqual([]);
+  });
+
+  it("a stop without an id and without a hold keeps the unpinned runtime stop and the compat fallthrough", async () => {
+    const stopActiveForegroundExecution = vi.fn().mockReturnValue({ kind: "idle" });
+    const app = makeApp({
+      runtime: {
+        stopActiveForegroundExecution,
+        getActiveForegroundExecutionId: () => "foreground-unwinding",
+      },
+    });
+    const controller = new AbortController();
+    const record = makeRecord({ app, activeAbortController: controller });
+
+    await new V4CommandExecutor(makeHost(record, { getQueueLength: () => 0 })).execute(
+      envelope("stop", {}),
+    );
+
+    expect(stopActiveForegroundExecution).toHaveBeenCalledWith({
+      expectedForegroundExecutionId: undefined,
+      reason: "v4 session stopped",
+    });
+    expect(controller.signal.aborted).toBe(true);
   });
 });
 

@@ -1786,6 +1786,8 @@ let activeServices: ServiceCollection | null = null;
  * 也不能代表当前界面，所以只认 Main 的 InitLocal 初值与 application-locale-changed 变更。
  */
 let applicationLocale: Locale | undefined;
+// Main holds InitLocal while another Host starts, so a locale change can reach this Host first; the older InitLocal value must not overwrite it.
+let applicationLocaleChangedBeforeInit = false;
 let activeHostApiNetworkTransport: HostApiNetworkTransport | null = null;
 let sourceServerDirectory: SourceServerDirectory | null = null;
 let sourceServerConnectionManager: SourceServerConnectionManager | null = null;
@@ -3005,11 +3007,16 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
 
   const msg = result.data;
   // 在任何 await 之前同步赋值：InitLocal 与变更消息同端口按序到达，初值不会覆盖较新的变更。
-  if (msg.type === HostMessageTypes.InitLocal && msg.locale) {
+  if (
+    msg.type === HostMessageTypes.InitLocal &&
+    msg.locale &&
+    !applicationLocaleChangedBeforeInit
+  ) {
     applicationLocale = msg.locale;
   }
   if (msg.type === HostMessageTypes.ApplicationLocaleChanged) {
     applicationLocale = msg.locale;
+    applicationLocaleChangedBeforeInit = true;
     return;
   }
   if (msg.type === HostMessageTypes.NetworkCapture) {
@@ -3766,6 +3773,7 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
     });
     databaseStartup = createHostDatabaseStartup({
       startupId: msg.databaseStartupId,
+      sweepAbandonedReservations: msg.sweepAbandonedReservations === true,
       cwd: msg.agentSpawnFallbackCwd ?? process.cwd(),
       workingDirectories:
         msg.agentWarmupTargets?.map((target) => target.workspacePath) ??

@@ -16,9 +16,18 @@ description: 修改 ZCode 会话管理（左侧任务列表、tasks-index.sqlite
 ```text
 CLI  db.sqlite      存在性(软删除 time_deleted)、title+title_source、time_created/updated、last_outcome、正文、goal、fork、trace
 Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_order、projects/roots/hosts、定时/闲时；控制端另存跨设备分组成员与顺序
-                    cli_* 列 = CLI 事实的只读镜像，唯一写者 taskIndexSyncer
-禁止：CLI 写 app 库；Host 写 db.sqlite；Host 对任何 cli_* 列写 Date.now() 或从 snapshot 推导的值
+                    cli_* 列 = CLI 事实的只读镜像，写者见下方「CLI 事实列写者」
+禁止：CLI 写 app 库；Host 写 db.sqlite；Host 对任何 cli_* 列写 Date.now() 或从 snapshot 推导的值。唯一例外：下方「CLI 事实列写者」中两条携带 CLI 活动时间的 `cli_updated_at` 写入
 ```
+
+### CLI 事实列写者（单写者规则）
+
+- `cli_title_source` 与 `cli_deleted` 只由 `TaskIndexRepo.applyCliFacts` 写入；`cli_updated_at` 的主写者也是它（取 max）。`applyCliFacts` 是 CLI 首次准入与之后每次 CLI 事实的入口。
+- `cli_updated_at` 另有两条显式 CLI 活动时间写入，作为上面禁止规则的例外：`syncTaskMeta`（meta 来自 CLI 快照或旧版导入，`syncer.syncSnapshotAndBroadcast`、适配器 `syncTaskIndexMeta`）与 `applyAgentPatch` 且 `patch.updatedAt` 存在（终态转换，`applyTerminalTransition` 的 `summary.lastActivityAt`）。两者都通过 `writeRecord` 的 `cliUpdatedAt` 参数传入 CLI 时间（取 max）。
+- 例外的原因：这两条路径承载 CLI 活动时间，却不经过 `applyCliFacts`。若删掉它们的写入，已准入行的排序会停在旧 CLI 时间（测试 `advances the CLI activity time of an admitted task on a terminal summary` 对此有回归保护）。
+- 后续：把这两条路径改为经 `applyCliFacts` 写入，届时删除本例外并删除 `cliUpdatedAt` 参数。在那之前，改动这两条路径时必须保留该参数。
+- 组织写不写 `cli_updated_at`：`updateTaskState`（重命名、置顶、归档、删除、未读）、`clearTaskUnreadIfMatches`、`deleteArchivedTask`、`seedTaskMetaIfMissing` 与新行插入。它们只改 Host 列（`updated_at` 等），因此 Host 时钟不会进入 CLI 时间。
+- 其余 `cli_*` 列在 `writeRecord` 的 ON CONFLICT 中仍按 Host 写入同步（`cli_title`、`cli_created_at`、`cli_last_outcome`），这些是既有镜像，本次改动未触及；改动它们前必须按本节重新核对写者。
 
 ### 为什么
 

@@ -193,3 +193,54 @@ export function resolveOrdinaryQueueModelSelection(
   }
   return selection;
 }
+
+/**
+ * Stop queue hold (ISSUE-010, specs/stop-queue-hold.md). A stop that will cancel writes autoDrain=false and
+ * waits for the authority write before any abort. The verifier path has already passed the ordinary turn
+ * catch, so TurnComplete(cancelled) cannot be relied on to close the runtime queue gate. Nothing is written
+ * for an empty queue or a queue the user already paused. Returns whether this stop wrote the hold; a failed
+ * write is logged and the stop still proceeds.
+ */
+export async function holdFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+  willCancel: boolean,
+): Promise<boolean> {
+  const sessionId = record.app.sessionId;
+  if (
+    !willCancel ||
+    (host.getQueueLength?.(sessionId) ?? 0) === 0 ||
+    host.getQueueAutoDrain?.(sessionId) === false
+  )
+    return false;
+  try {
+    await record.app.setQueueAutoDrain(false);
+    return true;
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to hold following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId,
+    });
+    return false;
+  }
+}
+
+/**
+ * Undoes a hold written by a stop that cancelled nothing: the turn ended on its own while the hold was
+ * being written, and its turn-end drain check already saw autoDrain=false. Resuming goes through the same
+ * ready hook as setAutoDrain(true) so an idle session promotes the queue head at once.
+ */
+export async function releaseFollowingQueue(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(true);
+    await host.afterLegacyStateMutation?.(record, "queue_auto_drain_resumed");
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to release following queue", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+  }
+}

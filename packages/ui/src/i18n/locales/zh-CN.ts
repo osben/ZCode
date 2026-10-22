@@ -1402,6 +1402,7 @@ const zhCN: Record<string, string> = {
   "modelTrajectory.truncatedAtSource": "源数据已截断，原始 {bytes} 字节",
   "modelTrajectory.showMoreRows": "显示接下来 {count} 条（共 {total} 条）",
   "modelTrajectory.rowsHidden": "已隐藏 {count} 条",
+  "modelTrajectory.inputBaseMissing": "前文不可用，仅显示新增消息",
   "modelTrajectory.collapseContent": "收起",
   "modelTrajectory.toolCall": "工具调用",
   "modelTrajectory.toolId": "ID",

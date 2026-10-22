@@ -25,10 +25,18 @@ export interface TrajectorySearchIndex {
   matches: TrajectorySearchMatch[];
 }
 
+/**
+ * How a record's full input was obtained (docs/model-trajectory-viewer.md, "展示模型").
+ * "reconstructed": a delta chained onto its base. "base-missing": the base is unavailable, so only the delta rows are shown.
+ */
+export type TrajectoryInputContext = "full" | "reconstructed" | "base-missing";
+
 export interface TrajectorySearchTimelineItem {
   key: string;
   record: ZCodeModelTrajectoryRecord;
   inputMessages: ZCodeModelTrajectoryMessage[];
+  /** Set by resolveTrajectoryTimelineItems; "base-missing" marks a delta shown without its base. */
+  inputContext?: TrajectoryInputContext;
 }
 
 interface SearchTarget {

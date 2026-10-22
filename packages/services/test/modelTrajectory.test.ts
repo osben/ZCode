@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { setDataBaseDir } from "../src/paths.js";
 import { readModelTrajectory } from "../src/zcode-agent/modelTrajectory.js";
+import { expandTrajectoryInputs } from "./helpers/modelTrajectoryInputs.js";
 
 const tempDirs: string[] = [];
 
@@ -157,14 +158,14 @@ describe("readModelTrajectory", () => {
 
     expect(trajectory.records).toHaveLength(2);
     expect(trajectory.sourceFiles).toHaveLength(1);
-    expect(trajectory.records[1]?.request.messages.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-    ]);
-    expect(trajectory.records[1]?.request.messages[2]?.parts).toEqual([
-      { kind: "text", text: "third" },
-    ]);
+    // Record 2 is sent as an input delta over record 1; the reference expansion restores the full input.
+    expect(trajectory.records[1]?.inputDeltaOf).toEqual({
+      previousRequestId: "req_1",
+      sharedPrefixCount: 1,
+    });
+    const inputs = expandTrajectoryInputs(trajectory.records);
+    expect(inputs[1]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(inputs[1]?.[2]?.parts).toEqual([{ kind: "text", text: "third" }]);
   });
 
   it("从 tail baseline 继续还原后续 model-io delta 请求消息", async () => {
@@ -218,14 +219,13 @@ describe("readModelTrajectory", () => {
       "user",
       "assistant",
     ]);
-    expect(trajectory.records[1]?.request.messages.map((message) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-    ]);
-    expect(trajectory.records[1]?.request.messages[2]?.parts).toEqual([
-      { kind: "text", text: "new-70" },
-    ]);
+    expect(trajectory.records[1]?.inputDeltaOf).toEqual({
+      previousRequestId: "req_tail",
+      sharedPrefixCount: 2,
+    });
+    const inputs = expandTrajectoryInputs(trajectory.records);
+    expect(inputs[1]?.map((message) => message.role)).toEqual(["user", "assistant", "user"]);
+    expect(inputs[1]?.[2]?.parts).toEqual([{ kind: "text", text: "new-70" }]);
   });
 
   it("异步读取超过旧体积阈值的长 session model-io 文件", async () => {

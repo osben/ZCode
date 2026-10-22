@@ -15,6 +15,7 @@ try {
     data.path,
     (phase, migration) => parentPort?.postMessage({ type: "progress", phase, migration }),
     settings,
+    { sweepAbandonedReservations: data.sweepAbandonedReservations === true },
   );
   parentPort?.postMessage({ type: "done" });
 } catch (error) {

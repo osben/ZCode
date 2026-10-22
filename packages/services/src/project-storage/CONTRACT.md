@@ -36,3 +36,7 @@ Host 项目组织态的持久化升级。调用者持有 app SQLite 连接，CLI
 ## 2026-10-21 Project tree read projection
 
 `readTree` runs synchronously on the Host event loop for every navigation. Its task query must not select `tasks.searchable_text` (the full-text body, unused by the tree); it keeps every other column dynamic so older table shapes still load. The returned tree is unchanged.
+
+## 2026-10-22 Reservation placeholder startup sweep
+
+`sweepAbandonedReservations` (`project-repository.ts`) deletes only the `RESERVATION_PLACEHOLDER_SQL` rows of host `local`. It runs inside `prepareTasksIndexStorage` after the migration COMMIT and before the repos open, and only when the caller passes `sweepAbandonedReservations: true`. That option must be passed only by the first prepare attempt of the first local Host of an app process. Main sets the flag through `packages/desktop/src/main/storage-sweep-gate/contract.ts` and holds later local `InitLocal` messages until that Host reports a startup phase past `preparing_host_storage` (`preparing_session_storage`, `starting_services`, `ready`) or `failed`, or exits. Rules, the replay argument and the open race are in `specs/first-submission-lifecycle.md` ("Placeholder startup sweep").

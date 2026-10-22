@@ -638,6 +638,8 @@ export const hostInitLocalMessageSchema = z.object({
   runtimeProcessEnvPatch: z
     .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string())
     .optional(),
+  /** Set by Main only on the first local Host of an app process; see specs/first-submission-lifecycle.md "Placeholder startup sweep". */
+  sweepAbandonedReservations: z.boolean().optional(),
 });
 
 export const windowHostRemoteWorkspaceDescriptorSchema = z

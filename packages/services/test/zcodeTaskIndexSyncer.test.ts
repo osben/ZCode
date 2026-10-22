@@ -513,6 +513,45 @@ describe("createZCodeTaskIndexSyncer", () => {
     },
   );
 
+  it("advances the CLI activity time of an admitted task on a terminal summary", async () => {
+    const env = setupEnv({
+      initialSessions: [summaryOf(seedTarget.sessionId, "running")],
+    });
+    const seeded = await seedRunningTask(env.repo);
+    // Admit the row through the CLI-fact path, as the first CLI summary does in production, so cli_updated_at is set.
+    await env.repo.applyCliFacts({ meta: { ...seeded, updatedAt: 2 }, lastOutcome: undefined });
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    const subscription = syncer.onDynamicWorkspaceEvent({
+      workspacePath: seedTarget.workspacePath,
+    })(() => undefined);
+    syncer.ensureSessionSubscription(seedTarget);
+    await subscribed(env);
+
+    env.indexEmitter.fire(
+      indexUpsertFrame(
+        summaryOf(seedTarget.sessionId, "completedSuccess", { lastActivityAt: 5000 }),
+      ),
+    );
+
+    await vi.waitFor(async () => {
+      const meta = await env.repo.getTaskMeta({
+        workspacePath: seedTarget.workspacePath,
+        taskId: seedTarget.sessionId,
+      });
+      expect(meta?.status).toBe("completed");
+      // The list sorts by this CLI activity time; a terminal summary must move it, not leave the row at its old position.
+      expect(meta?.updatedAt).toBe(5000);
+    });
+
+    subscription.dispose();
+    syncer.disposeAll();
+    env.indexEmitter.dispose();
+    env.configEmitter.dispose();
+  });
+
   it("resyncs full snapshot on terminal transition so searchable_text catches up (v4 command path)", async () => {
     const env = setupEnv({
       initialSessions: [summaryOf("sess_v4_search", "running")],

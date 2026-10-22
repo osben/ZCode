@@ -158,6 +158,9 @@ interface TaskIndexWriteRecord {
   // searchableText is optional: undefined means retain the existing value for an existing row.
   // Writes such as applyAgentPatch / updateTaskState without message context therefore do not clear already indexed content.
   searchableText?: string;
+  // CLI activity time carried by this write (CLI snapshot, legacy import, or terminal summary). undefined leaves
+  // cli_updated_at unchanged. Organization writes must not pass it: a Host-side time in the CLI column reorders the list.
+  cliUpdatedAt?: number;
 }
 
 export interface TaskIndexWorktreeOwnerFact {
@@ -179,7 +182,6 @@ interface TaskIndexStatePatch {
   status?: ZCodeTaskMeta["status"];
   lastError?: ZCodeTaskMeta["lastError"];
   target?: ZCodeTaskMeta["target"];
-  updatedAt?: number;
 }
 
 // Key business rule: chat search needs only matchable text, not an unlimited full copy of a long session in the SQLite index.
@@ -1729,10 +1731,13 @@ export class TaskIndexRepo {
           meta_json = excluded.meta_json,
           -- Mirror the organization write into the CLI fact columns of CLI-admitted rows. The project migration backfills
           -- cli_* from the legacy columns once; without this mirror a later fork write would leave the read projection stale.
+          -- cli_updated_at is the exception: it moves only with an explicit CLI activity time (cliUpdatedAt), never with updated_at.
           cli_title = CASE WHEN tasks.cli_created_at IS NULL OR excluded.title_overridden = 1
             THEN tasks.cli_title ELSE excluded.title END,
           cli_created_at = CASE WHEN tasks.cli_created_at IS NULL THEN NULL ELSE excluded.created_at END,
-          cli_updated_at = CASE WHEN tasks.cli_created_at IS NULL THEN NULL ELSE excluded.updated_at END,
+          cli_updated_at = CASE WHEN tasks.cli_created_at IS NULL THEN NULL
+            WHEN @cli_updated_at IS NULL THEN tasks.cli_updated_at
+            ELSE MAX(COALESCE(tasks.cli_updated_at, 0), @cli_updated_at) END,
           cli_last_outcome = CASE WHEN tasks.cli_created_at IS NULL THEN tasks.cli_last_outcome
             WHEN excluded.task_status IN ('completed', 'error') THEN excluded.task_status ELSE NULL END`,
       )
@@ -1762,6 +1767,7 @@ export class TaskIndexRepo {
         deleted: record.deleted ? 1 : 0,
         title_overridden: record.titleOverridden ? 1 : 0,
         searchable_text: searchableText,
+        cli_updated_at: record.cliUpdatedAt ?? null,
         meta_json: serializeMetaJson(record.meta),
       });
     const persisted = this.getTaskRow(record.meta);
@@ -1863,6 +1869,8 @@ export class TaskIndexRepo {
           deleted: params.deleted ?? existing?.deleted === 1,
           titleOverridden,
           searchableText: params.searchableText,
+          // syncTaskMeta metas come from CLI snapshots and legacy imports, so their updatedAt is CLI activity time.
+          cliUpdatedAt: updatedAt,
         });
         // Add a cron session to the fixed cron group when it first receives cronAutomationId.
         // An in-session CronCreate adds the cron marker to an existing task, so checking only !existing would leave it out of the scheduled-task group.
@@ -2264,7 +2272,6 @@ export class TaskIndexRepo {
           title: params.patch.title ?? current.title,
           titleOverridden: params.patch.titleOverridden ?? current.titleOverridden,
           model: params.patch.model ?? current.model,
-          updatedAt: params.patch.updatedAt ?? current.updatedAt,
           unreadAt,
           status: params.patch.status ?? current.status,
           lastError: "lastError" in params.patch ? params.patch.lastError : current.lastError,
@@ -2296,7 +2303,10 @@ export class TaskIndexRepo {
     workspacePath: string;
     workspaceIdentity?: string;
     taskId: string;
-    patch: Pick<TaskIndexStatePatch, "title" | "status" | "lastError" | "target" | "updatedAt">;
+    // updatedAt is CLI activity time only (terminal summaries). Title echoes and organization writes omit it.
+    patch: Pick<TaskIndexStatePatch, "title" | "status" | "lastError" | "target"> & {
+      updatedAt?: number;
+    };
   }): Promise<ZCodeTaskMeta | null> {
     await this.ensureReady();
     return this.enqueueWrite(params, () => {
@@ -2321,6 +2331,7 @@ export class TaskIndexRepo {
         archived: row.archived === 1,
         deleted: row.deleted === 1,
         titleOverridden: row.title_overridden === 1,
+        cliUpdatedAt: params.patch.updatedAt,
       });
     });
   }

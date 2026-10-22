@@ -717,6 +717,14 @@ modules:
         packages/desktop/src/main/web-remote-relay/contract.ts,
       ]
     owner: remote-control
+  # Main-side gate for the reservation placeholder startup sweep: holds later local InitLocal (specs/first-submission-lifecycle.md).
+  - id: desktop-storage-sweep-gate
+    roots: [packages/desktop/src/main/storage-sweep-gate]
+    managed: true
+    requires: []
+    publicEntrypoints: [packages/desktop/src/main/storage-sweep-gate/contract.ts]
+    layers:
+      adapters: .
   # web-remote-control：由 architecture:adopt 登记
   - id: web-remote-control
     roots:

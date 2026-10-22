@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 const { DatabaseSync } = createRequire(import.meta.url)(
   "node:sqlite",
 ) as typeof import("node:sqlite");
+import { createServiceLogger } from "#src/logger/serviceLogger.js";
+import { sweepAbandonedReservations } from "#src/project-storage/project-repository.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { AutomationRepo } from "#src/session/automationRepo.js";
 import { OffPeakTaskRepo } from "#src/session/offPeakTaskRepo.js";
@@ -26,6 +28,15 @@ export type TasksStoragePhase =
   | "committing"
   | "ready";
 const LOCK_WAIT_MS = 60 * 60_000;
+const logger = createServiceLogger("project-storage-startup");
+
+export interface PrepareTasksIndexOptions {
+  /**
+   * Only the first local Host of an app process may pass true (specs/first-submission-lifecycle.md, "Placeholder startup sweep").
+   * Any other caller leaves abandoned placeholder rows alone.
+   */
+  sweepAbandonedReservations?: boolean;
+}
 
 /** 由 Host Worker 调用，SQL 和迁移后修复与旧 Repo 共用，只有获取写锁异步等待。 */
 export async function prepareTasksIndexStorage(
@@ -33,6 +44,7 @@ export async function prepareTasksIndexStorage(
   onProgress: (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) => void,
   // Upstream 3-argument form. Accepted so callers compile; the fork TaskIndexRepo has no project seeding, so it is not used (services part 4, section 7).
   _settings?: unknown,
+  options?: PrepareTasksIndexOptions,
 ): Promise<void> {
   // 回调拿到的是当时事实，不共享后续执行会继续递增的内部对象。
   const report = (phase: TasksStoragePhase, migration?: DatabaseMigrationFacts) =>
@@ -79,6 +91,24 @@ export async function prepareTasksIndexStorage(
     await runTasksDatabaseMigrations(db, { transactionOpen: true, migration, onProgress: report });
     // COMMIT 已成功，先发布事实；后续 close 失败不能把已提交误报为未提交。
     report("maintaining", migration);
+    if (options?.sweepAbandonedReservations) {
+      // Recoverable: placeholder rows are hidden from reads, so a skipped sweep only leaves them for the next launch.
+      try {
+        await acquire("BEGIN IMMEDIATE");
+        let removed: number;
+        try {
+          removed = sweepAbandonedReservations(db);
+          db.exec("COMMIT");
+        } catch (error) {
+          if (db.isTransaction) db.exec("ROLLBACK");
+          throw error;
+        }
+        if (removed > 0)
+          logger.info(undefined, `swept ${removed} abandoned reservation placeholder row(s)`);
+      } catch (error) {
+        logger.warn(undefined, "reservation placeholder sweep skipped", error);
+      }
+    }
   } catch (error) {
     failure = error;
     // 失败事实随原异常交给 Worker，不倒退发布 checking/migrating，也不覆盖首因。

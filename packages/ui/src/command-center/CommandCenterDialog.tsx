@@ -43,6 +43,13 @@ import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
 import { toast } from "@/components/ui/toast.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
+import {
+  buildLocalTaskSearchScopes,
+  buildTaskSearchProjectNames,
+  getTaskSearchTaskKey,
+  type TaskSearchScope,
+} from "@/project-sidebar/taskSearchScope.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useOptionalPlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
@@ -120,6 +127,8 @@ const COMMAND_CENTER_SECTION_LIMIT = 3;
 const COMMAND_CENTER_CONTEXT_SECTION_LIMIT = 3;
 const COMMAND_CENTER_FILE_RESULT_LIMIT = 80;
 const COMMAND_CENTER_TASK_RESULT_LIMIT = 80;
+// Same settle as TaskSearchDialog (specs/task-search-debounce.md). A copy: that constant is private to TaskSearchDialog.tsx.
+const COMMAND_CENTER_TASK_SEARCH_SETTLE_MS = 200;
 const commandCenterDialogClassName = cn(
   quickPickDialogClassName,
   // On Linux desktop, the shared DialogContent offsets centered dialogs for the custom title bar.
@@ -704,9 +713,41 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
   const searchConversations =
     open && hasSearchQuery && (activeScope === "all" || activeScope === "conversations");
   const searchFiles = open && hasSearchQuery && (activeScope === "all" || activeScope === "files");
-  const searchWorkspaceTabs = useMemo(
-    () => (searchConversations ? effectiveWorkspaceTabs : []),
-    [effectiveWorkspaceTabs, searchConversations],
+  const projectTree = useOptionalProjectDirectory()?.tree;
+  // Search covers every local project of the sidebar, not only the open tabs (specs/task-search-debounce.md, Search scope).
+  const localSearchScopeKey = useMemo(
+    () =>
+      JSON.stringify(
+        buildLocalTaskSearchScopes({
+          tree: searchConversations ? projectTree : null,
+          openTabs: searchConversations ? effectiveWorkspaceTabs : [],
+        }),
+      ),
+    [effectiveWorkspaceTabs, projectTree, searchConversations],
+  );
+  // The task-list RPC waits for the query to settle (specs/task-search-debounce.md). Typing, command and file
+  // filtering and highlights stay on the live searchQuery. Clearing the input settles at once and cancels a pending settle.
+  const [settledSearchQuery, setSettledSearchQuery] = useState("");
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSettledSearchQuery("");
+      return;
+    }
+    const timer = setTimeout(
+      () => setSettledSearchQuery(searchQuery.trim()),
+      COMMAND_CENTER_TASK_SEARCH_SETTLE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+  // Keyed by content: a new tree object with the same scope does not change the query key.
+  // No workspace is queried before the query settles, so a keystroke never fans out one listTaskList per workspace.
+  const searchWorkspaceTabs = useMemo<TaskSearchScope[]>(
+    () => (settledSearchQuery ? (JSON.parse(localSearchScopeKey) as TaskSearchScope[]) : []),
+    [localSearchScopeKey, settledSearchQuery],
+  );
+  const projectNameByTaskKey = useMemo(
+    () => buildTaskSearchProjectNames(projectTree),
+    [projectTree],
   );
   const currentWorkspaceTabs = useMemo(
     () =>
@@ -723,7 +764,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
     kind: "active",
     workspaceTabs: searchWorkspaceTabs,
     sortBy: "updated",
-    searchQuery,
+    searchQuery: settledSearchQuery,
     expanded: false,
     collapsedLimit: COMMAND_CENTER_TASK_RESULT_LIMIT,
   });
@@ -1850,6 +1891,7 @@ export const CommandCenterDialog = memo(function CommandCenterDialogComponent({
           const task = row.task;
           const title = getTaskTitle(task, intl.formatMessage({ id: "taskList.untitled" }));
           const workspaceLabel =
+            projectNameByTaskKey.get(getTaskSearchTaskKey(task)) ??
             workspaceLabelByKey.get(task.workspaceIdentity?.trim() || task.workspacePath) ??
             task.workspacePath;
           const searchSnippet = row.searchSnippet?.trim();

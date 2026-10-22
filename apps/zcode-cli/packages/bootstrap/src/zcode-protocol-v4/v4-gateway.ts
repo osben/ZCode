@@ -2875,6 +2875,10 @@ export class ConversationV4Gateway {
     return this.getQueueLength(sessionId) > 0 || this.inbox.hasPinnedSessionState(sessionId);
   }
 
+  getQueueAutoDrain(sessionId: string): boolean | null {
+    return this.publishers.get(sessionId)?.getSnapshot().queue.autoDrain ?? null;
+  }
+
   getQueueHead(sessionId: string): {
     autoDrain: boolean;
     dispatchState: QueueItem["dispatch"]["state"];

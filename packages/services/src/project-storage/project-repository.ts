@@ -377,3 +377,15 @@ export class ProjectRepository implements ProjectRepositoryContract {
     });
   }
 }
+
+/**
+ * Startup-only sweep of abandoned placeholders for the local owner (specs/first-submission-lifecycle.md, "Placeholder startup sweep").
+ * The caller holds the write transaction and calls this before any Host opens the index; it is a plain exact-signature DELETE scoped to
+ * host `local`, the same scope discardCreatedTaskReservation uses. Returns the number of rows removed.
+ */
+export function sweepAbandonedReservations(db: DatabaseSync, hostId = "local"): number {
+  const result = db
+    .prepare(`DELETE FROM tasks WHERE host_id=? AND ${RESERVATION_PLACEHOLDER_SQL}`)
+    .run(hostId);
+  return Number(result.changes);
+}

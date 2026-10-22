@@ -1555,7 +1555,6 @@ export function createZCodeTaskServiceAdapter(
       deleted?: boolean;
       title?: string;
       titleOverridden?: boolean;
-      updatedAt?: number;
       unreadAt?: number;
     },
   ): Promise<ZCodeTaskMeta> {

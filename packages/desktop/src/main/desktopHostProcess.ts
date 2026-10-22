@@ -11,6 +11,7 @@ import {
   type HostMcpTelemetryResponse,
   type HostPluginTelemetryResponse,
   type HostSessionCreateTelemetryResponse,
+  type DatabaseStartupState,
   type RemoteTarget,
   type TaskRealtimeHostDeliveryKind,
   type WorkspacePurpose,
@@ -49,6 +50,10 @@ import {
   resolveBundledGlmBinaryPath,
 } from "./desktopRuntimeEnv.js";
 import { ingestHostNetworkCapture } from "./resourceManagerNetwork.js";
+import type {
+  LocalHostStartupGate,
+  LocalHostStartupTicket,
+} from "./storage-sweep-gate/contract.js";
 import { buildHostE2ECoverageEnv } from "./e2eCoverage.js";
 import { createFeedbackLogArchiveFromExportLogs } from "./exportLogs.js";
 import { createHostLogRelay } from "./hostLogRelay.js";
@@ -92,6 +97,8 @@ export interface HostInitMessage {
   zcodeBuiltinProviderConfigFilePath: string;
   /** Local runtime environment collected/filtered asynchronously by Main; passed only to InitLocal. */
   runtimeProcessEnvPatch?: Record<string, string>;
+  /** Set by spawnHostProcess from the startup gate; true only for the first local Host of an app process. */
+  sweepAbandonedReservations?: boolean;
 }
 
 export interface SpawnHostProcessOptions {
@@ -110,6 +117,38 @@ export interface SpawnHostProcessOptions {
 
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
 const disposingHostProcesses = new Set<ElectronUtilityProcess>();
+/**
+ * Startup phases that prove the tasks index is prepared, so its placeholder sweep has run (it is best-effort)
+ * (specs/first-submission-lifecycle.md, "Placeholder startup sweep"). Later windows need not wait for session storage or services.
+ */
+/**
+ * A window whose InitLocal Main holds gets no startup state until its Host starts, and the renderer turns 30 s
+ * without one into a synthetic startup_status_timeout failure. Show it the Host's own sequence-0 "starting"
+ * state at once; the Host's first report (sequence 1) and the relay's exit failure (sequence 1) both replace it.
+ * Sent only here, before the relay has forwarded anything for this startupId.
+ */
+function showHeldStartup(win: BrowserWindow, startupId: string): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+  const now = Date.now();
+  const state: DatabaseStartupState = {
+    schemaVersion: 1,
+    startupId,
+    attemptId: randomUUID(),
+    sequence: 0,
+    startedAt: now,
+    updatedAt: now,
+    phase: "starting",
+    disk: [],
+  };
+  win.webContents.send(InternalChannels.DatabaseStartupState, state);
+}
+
+const sweepGateOpenPhases: ReadonlySet<DatabaseStartupState["phase"]> = new Set([
+  "preparing_session_storage",
+  "starting_services",
+  "ready",
+  "failed",
+]);
 
 export function listDisposingHostProcesses(): ElectronUtilityProcess[] {
   return Array.from(disposingHostProcesses);
@@ -163,6 +202,8 @@ export function spawnHostProcess(
   initMessage: HostInitMessage,
   dependencies: {
     hostProcessLocalEnv: Record<string, string>;
+    /** Absent in tests and entries that need no sweep gating; then InitLocal is posted at once and carries no flag. */
+    localHostStartupGate?: LocalHostStartupGate;
     /** Main has completed the server-side rollout decision; Host consumes this snapshot without making requests or bucketing users. */
     desktopContextPromptEnabled?: () => boolean;
     logger: {
@@ -330,6 +371,10 @@ export function spawnHostProcess(
     hostLogRelay.onStdout(data.toString());
   });
 
+  // spawnHostProcess only starts local Hosts, and each one begins with InitLocal, so every claim here is for InitLocal.
+  // Claimed right before the InitLocal post (postInit): a throw earlier in this function leaves the gate unclaimed,
+  // so the next local Host carries the sweep instead of every later window waiting on a Host that never got InitLocal.
+  let startupTicket: LocalHostStartupTicket | undefined;
   const databaseStartupRelay = bindDatabaseStartupRelay(win, child, hostId);
   child.on("message", (message: unknown) => {
     const result = hostResponseMessageSchema.safeParse(message);
@@ -339,6 +384,7 @@ export function spawnHostProcess(
 
     if (result.data.type === HostResponseTypes.DatabaseStartupState) {
       databaseStartupRelay.receive(result.data.state);
+      if (startupTicket && sweepGateOpenPhases.has(result.data.state.phase)) startupTicket.settle();
       return;
     }
 
@@ -831,11 +877,38 @@ export function spawnHostProcess(
       }
     : { ...initMessage, databaseStartupId: databaseStartupRelay.startupId };
 
+  // Only the InitLocal post waits for the gate; the port is still created and handed to the renderer at once.
+  const postInit = (transfer?: MessagePortMain[]) => {
+    startupTicket = dependencies.localHostStartupGate?.claim();
+    const ticket = startupTicket;
+    // An unsettled first ticket would hold every later local window, so exit and a failed post both settle it.
+    if (ticket) child.once("exit", () => ticket.settle());
+    const message: HostInitMessage = ticket
+      ? { ...hostInitMessage, sweepAbandonedReservations: ticket.sweepAbandonedReservations }
+      : hostInitMessage;
+    const send = () => {
+      if (exitedHostProcesses.has(child)) return;
+      if (transfer) child.postMessage(message, transfer);
+      else child.postMessage(message);
+    };
+    if (!ticket) {
+      send();
+      return;
+    }
+    if (!ticket.sweepAbandonedReservations) showHeldStartup(win, databaseStartupRelay.startupId);
+    void ticket.open.then(send).catch((error: unknown) => {
+      ticket.settle();
+      dependencies.logger.warn(
+        `[spawnHostProcess] InitLocal post failed for (${label}): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+
   if (options?.attachInitialServicePort === false) {
-    child.postMessage(hostInitMessage);
+    postInit();
   } else {
     const { port1, port2 } = new MessageChannelMain();
-    child.postMessage(hostInitMessage, [port2]);
+    postInit([port2]);
 
     if (options?.onPortReady) {
       options.onPortReady(port1);
