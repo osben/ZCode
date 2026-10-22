@@ -20,7 +20,7 @@ Facts, verified in the worktree:
 
 - Upstream `project-storage/project-repository.ts` reads `projects` and `project_roots`, writes `projects`, `project_roots`, and `tasks.project_id` / `tasks.handoff_pending`. These are created by upstream migration `0005_projects` and `0006_default_workspace_tasks`.
 - The fork tasks database (`session/tasksDatabase/`) has no `projects` or `project_roots` table. The only fork `project_id` columns are `automations.project_id` and `off_peak_tasks.project_id` (`migrations.ts`). Upstream SQL hard-codes the table names, so a `9xxx_fork_*` migration cannot satisfy it without changing upstream-identical code.
-- `createBotsService` has two non-test call sites: `packages/services/src/node.ts:2585` and `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:392`. Neither passes `projectService`. `node.ts` has no `createProjectService` instance. `IProjectService` exists only as an optional accessor field (`accessor.ts:65`).
+- `createBotsService` has one non-test call site after the local-global removal: `packages/services/src/node.ts:2585`. It does not pass `projectService`. The desktop call site (`remoteWorkspaceServiceCollection.ts:392`) was removed with the local-global collection (`specs/upstream-sync-final-ledger.md`). `node.ts` has no `createProjectService` instance. `IProjectService` exists only as an optional accessor field (`accessor.ts:65`).
 
 Consequence: if the upstream binding is ported and wired, a project-bound bot context would query missing tables at runtime. Porting it additively without wiring is inert. Either way it is not a safe change in this sync.
 
@@ -28,7 +28,7 @@ Decision: defer. Bot workspace binding stays on the fork's workspace model (`wor
 
 Single context-write path, for the future port: `BotsRepo.updateContext` is the only writer of bot context rows. Upstream `bindProject` must go through that method and must not add a second writer.
 
-Ledger row: "bots project binding, owner `botsService` + `BotsRepo`, blocked on project tables in the fork DB and on the desktop call site (`remoteWorkspaceServiceCollection.ts:392`, desktop owner). Re-open when project storage is a live fork feature."
+Ledger row: "bots project binding, owner `botsService` + `BotsRepo`, blocked on project tables in the fork DB (the desktop call site was removed with the local-global collection). Re-open when project storage is a live fork feature."
 
 ## 2. `session/taskIndexRepo.ts` project migrations
 
@@ -65,7 +65,7 @@ sequenceDiagram
 
 Part 4 checked this file by symbol name only. This part did not complete the hunk review, and nothing in `zcodeAgentService.ts` changed. Ledger row: "zcodeAgentService hunk review, open. Fork single-writer of task state stays. Upstream task-facts and task-groups stay unwired. Next step: normalize both sides (oxfmt, strip comments), classify each hunk as fork-decided or non-ownership, port only non-ownership hunks with tests."
 
-Fork-decided, not to be ported: task-facts and task-groups writes, `updateTaskPresentation`, the `refreshRegistry` barrier in `ensureAccountProviderConfigSynced`, and `includeArchived` removal in `sessionList`.
+Fork-decided, not to be ported: task-facts and task-groups writes, `updateTaskPresentation`, the `refreshRegistry` barrier in `ensureAccountProviderConfigSynced`, and `includeArchived` removal in `sessionList` (since superseded: removed, see `specs/build-pipeline-entrypoints.md`).
 
 ## Fork features verified unchanged
 

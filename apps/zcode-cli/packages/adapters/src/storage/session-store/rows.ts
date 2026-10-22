@@ -80,12 +80,6 @@ export interface LocalSettingRow {
   value: string;
 }
 
-// TEMPORARY fork compatibility (remove in final PR): upstream migration-runner declares this type inline.
-export interface SchemaMigrationRow {
-  checksum: string;
-  id: string;
-}
-
 export interface InputHistoryRow {
   id: string;
   project_id: string;

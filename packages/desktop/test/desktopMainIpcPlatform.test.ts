@@ -128,7 +128,6 @@ describe("registerPlatformIpcHandlers", () => {
       syncTaskRealtimeWorkspaceKeys: vi.fn(),
       getUpdateState: vi.fn(() => ({ status: "idle" })),
       syncWebRemoteControlWorkspaces: vi.fn(),
-      syncWebRemoteControlTasks: vi.fn(),
       deviceMid: "test-device-mid",
     });
 
@@ -164,7 +163,6 @@ describe("registerPlatformIpcHandlers", () => {
       syncTaskRealtimeWorkspaceKeys: vi.fn(),
       getUpdateState: vi.fn(() => ({ status: "idle" })),
       syncWebRemoteControlWorkspaces: vi.fn(),
-      syncWebRemoteControlTasks: vi.fn(),
       deviceMid: "test-device-mid",
       syncAppSettings,
     });
@@ -200,7 +198,6 @@ describe("registerPlatformIpcHandlers", () => {
       syncTaskRealtimeWorkspaceKeys: vi.fn(),
       getUpdateState: vi.fn(() => ({ status: "idle" })),
       syncWebRemoteControlWorkspaces: vi.fn(),
-      syncWebRemoteControlTasks: vi.fn(),
       deviceMid: "test-device-mid",
     });
 
@@ -281,7 +278,6 @@ describe("registerPlatformIpcHandlers", () => {
       syncTaskRealtimeWorkspaceKeys: vi.fn(),
       getUpdateState: vi.fn(() => ({ status: "idle" })),
       syncWebRemoteControlWorkspaces: vi.fn(),
-      syncWebRemoteControlTasks: vi.fn(),
       deviceMid: "test-device-mid",
     });
 

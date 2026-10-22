@@ -12,12 +12,12 @@ const NOW = 2_000_000_000_000;
 interface StoreFixture {
   directory: string;
   sessionID: ReturnType<typeof createSessionId>;
-  store: ReturnType<typeof createSqliteSessionStore>;
+  store: Awaited<ReturnType<typeof createSqliteSessionStore>>;
 }
 
 async function createStoreFixture(name: string): Promise<StoreFixture> {
   const directory = await mkdtemp(join(tmpdir(), `zcode-usage-prune-${name}-`));
-  const store = createSqliteSessionStore({ dbPath: join(directory, "session.sqlite") });
+  const store = await createSqliteSessionStore({ dbPath: join(directory, "session.sqlite") });
   const sessionID = createSessionId(`usage-prune-${name}`);
   await store.createSession({
     id: sessionID,

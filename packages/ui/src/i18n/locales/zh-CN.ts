@@ -8360,9 +8360,6 @@ const zhCN: Record<string, string> = {
   "workspaceSidebar.collapseAllGroups": "收起全部",
   "workspaceSidebar.searchTasks": "搜索任务",
   "workspaceSidebar.closeTaskSearch": "关闭任务搜索",
-  "workspaceSidebar.pinProject": "置顶项目",
-  "workspaceSidebar.unpinProject": "取消置顶项目",
-  "workspaceSidebar.pinFailed": "更新置顶状态失败",
   "workspaceSidebar.customize": "自定义…",
   "workspaceSidebar.openOnGitHub": "在 GitHub 上打开",
   "workspaceSidebar.removeRunningWorkspace.description":

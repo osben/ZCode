@@ -5,8 +5,7 @@ import { parsePluginStoreOrder, type PluginStoreOrder } from "./pluginStoreOrder
 export interface ClientConfigSnapshot {
   pluginStoreOrder: PluginStoreOrder | null;
   zsrcUrl: string | null;
-  // TEMPORARY upstream 3.16.1 field for the UI recommendation adapter. Present only when the server sends a valid list, so the fork snapshot shape is otherwise unchanged.
-  uiPluginRecommendations?: { pluginId: string; surfaceId: string }[];
+  uiPluginRecommendations: { pluginId: string; surfaceId: string }[];
 }
 
 const uiPluginRecommendationsSchema = z.array(
@@ -48,13 +47,10 @@ export function parseClientConfigSnapshot(payload: unknown): ClientConfigSnapsho
   const parsed = envelopeSchema.safeParse(payload);
   if (!parsed.success) throw new Error("Invalid public client config response");
   const configs = parsed.data.data?.configs;
-  const snapshot: ClientConfigSnapshot = {
+  return {
     pluginStoreOrder: parsePluginStoreOrder(configs?.pluginStoreOrder),
     uiPluginRecommendations:
       uiPluginRecommendationsSchema.safeParse(configs?.uiPluginRecommendations).data ?? [],
     zsrcUrl: zsrcSchema.safeParse(configs?.zsrc).data?.url ?? null,
   };
-  const recommendations = uiPluginRecommendationsSchema.safeParse(configs?.uiPluginRecommendations);
-  if (recommendations.success) snapshot.uiPluginRecommendations = recommendations.data;
-  return snapshot;
 }

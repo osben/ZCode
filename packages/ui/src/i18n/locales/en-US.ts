@@ -8822,9 +8822,6 @@ const enUS: Record<string, string> = {
   "workspaceSidebar.collapseAllGroups": "Collapse all",
   "workspaceSidebar.searchTasks": "Search tasks",
   "workspaceSidebar.closeTaskSearch": "Close task search",
-  "workspaceSidebar.pinProject": "Pin project",
-  "workspaceSidebar.unpinProject": "Unpin project",
-  "workspaceSidebar.pinFailed": "Could not update pinned state",
   "workspaceSidebar.customize": "Customize…",
   "workspaceSidebar.openOnGitHub": "Open on GitHub",
   "workspaceSidebar.removeRunningWorkspace.description":

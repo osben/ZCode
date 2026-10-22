@@ -34,7 +34,7 @@ and releases them once on completion or close. Anonymous POSTs (`/session`,
 Unauthenticated sockets are closed after `ZCODE_REMOTE_RELAY_AUTH_TIMEOUT_MS`.
 
 Wire protocol and deployment: `docs/web-remote-control/relay-v2-pairing.md` and
-`specs/relay-v2-migration.md` (section 12).
+`specs/relay-v2-migration.md` (section 14).
 
 ## Identity modes
 

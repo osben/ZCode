@@ -1688,9 +1688,6 @@ const ukUA: Record<string, string> = {
   "workspaceSidebar.collapseAllGroups": "Згорнути все",
   "workspaceSidebar.searchTasks": "Пошук завдань",
   "workspaceSidebar.closeTaskSearch": "Закрити пошук завдань",
-  "workspaceSidebar.pinProject": "Закріпити проєкт",
-  "workspaceSidebar.unpinProject": "Відкріпити проєкт",
-  "workspaceSidebar.pinFailed": "Не вдалося змінити стан закріплення",
   "workspaceSidebar.customize": "Налаштувати…",
   "workspaceSidebar.customizeTitle": "Налаштувати проєкт",
   "workspaceSidebar.customizeDescription":

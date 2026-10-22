@@ -21,7 +21,6 @@ import type {
   WebRemoteControlStartOperationResult,
   WebRemoteControlStatus,
   WebRemoteControlReconnectWorkspaceRequest,
-  WebRemoteControlTaskTarget,
   WebRemoteControlWorkspaceTarget,
 } from "./web-remote-control.js";
 import type { AppSettings, Locale } from "./protocol.js";
@@ -962,9 +961,6 @@ export interface IPlatformService {
 
   /** Sync workspaces that Web remote control may switch to in the current window; the Web fallback may ignore this. */
   syncWebRemoteControlWorkspaces?(workspaces: WebRemoteControlWorkspaceTarget[]): void;
-
-  /** Sync task snapshots that Web remote control may display in the current window; the Web fallback may ignore this. */
-  syncWebRemoteControlTasks?(tasks: WebRemoteControlTaskTarget[]): void;
 
   /** 注册 Web 远程控制手机端请求重连 workspace 的回调，返回 disposer */
   onWebRemoteControlReconnectWorkspace?(

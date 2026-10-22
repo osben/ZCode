@@ -23,7 +23,7 @@ Verification so far: `tsc -b packages/ui` 0 errors; related tests (groupedTaskRo
 
 Each row names the reason. Rows marked "design owner" need a decision before code.
 
-1. Pinned workspaces (`fork_workspace_pins`, `listPinnedWorkspaceKeys`/`setWorkspacePinned`, `TID_WORKSPACE_PIN_DIVIDER`, `orderWorkspaceTabsByPinned`, `isWorkspaceDragAcrossPinnedBoundary`, toast `workspaceSidebar.pinFailed`): design owner needed. Upstream models pins as project `pinned` (Host tree). The fork workspace pin is a second persisted set. Not ported; `lib/workspacePinPreference.ts` remains and is unused by project-sidebar.
+1. Pinned workspaces (`fork_workspace_pins`, `listPinnedWorkspaceKeys`/`setWorkspacePinned`, `TID_WORKSPACE_PIN_DIVIDER`, `orderWorkspaceTabsByPinned`, `isWorkspaceDragAcrossPinnedBoundary`, toast `workspaceSidebar.pinFailed`): design owner needed. Upstream models pins as project `pinned` (Host tree). The fork workspace pin is a second persisted set. Not ported; `lib/workspacePinPreference.ts` (unused by project-sidebar) was deleted with the retired pin surface (see `specs/ui-pins-upstream-migration.md`).
 2. Drag overlay display name and colour (`workspaceDisplayStore`, `WORKSPACE_ICON_COLOR_CLASS`) in `project-sidebar/grouped/group-drag-overlay.tsx` and `WorkspaceDragOverlay.tsx`: not ported; low-medium value; needs the store read in the overlay.
 3. Session-manager entry from the sidebar (`setPendingSettingsSectionIntent("sessions", { sessionsScope })`): upstream sidebar navigation has no entry; owner decision on placement.
 4. Merged-session highlight (`specs/merged-session-highlight.md`): not verified in this PR.
@@ -35,12 +35,13 @@ Each row names the reason. Rows marked "design owner" need a decision before cod
 10. Worktree notices and open button on sidebar rows: not verified in this PR.
 11. Fork `workspace-grouped-tasks/` directory: still imported by upstream `project-sidebar/grouped/*` (`TaskRowActionButton`, `task-child-sessions`), `TaskListItem.tsx`, `TaskSidebarHoverCard`, `WorkspaceCustomizeDialog`. Ported code imports the fork leaf modules. Retiring the directory needs a move of the leaf modules into `project-sidebar/grouped/`; not done here.
 12. Archived bulk-delete flow (`TaskDeleteConfirmationDialog` / `eraseTasks`, fork behavior): test `archivedTasksActionsMenu.test.ts` `it.skip` (line ~72) imports fork-only `WebRemoteControlTaskIndex`. Fork behavior changed, so port is needed; not in this PR.
-13. Off-peak grouped system group (`groupedOffPeakSystemGroup.test.ts` it.skip, reads fork `WorkspaceGroupedTasksSection.tsx`): the assertion (group-header "+" routes to Automations; projection dedupe retired) needs a rewrite against `project-sidebar/grouped/`. Not in this PR.
-14. Idle-time editor toolbar layout (`offPeakFigmaLayout.test.ts` it.skip): upstream rebuilt the toolbar; owner is the off-peak work. Not in this PR.
+13. Off-peak grouped system group (`groupedOffPeakSystemGroup.test.ts`): resolved. The Section assertion is retargeted to `project-sidebar/TaskGroupedView.tsx` (`groupId === OFF_PEAK_DEFAULT_GROUP_ID`) and un-skipped.
+14. Idle-time editor toolbar layout (`offPeakFigmaLayout.test.ts`): resolved. The three removed-picker assertions now check the current project `Select` contract (`offpeak-project-select`, `SelectValue`, `data-project-id`) and the case is un-skipped.
 15. `/plan` shortcut (`v4SlashCommands.test.ts` two `it.skip`, row UI2-PLAN-SHORTCUT): decision row; not restored (per task: composerPlanTransition / /plan not restored).
-16. SSH dialog (`sshDialogDirectorySelection.test.ts` describe.skip; `sshDialogFlow.test.ts` zh rows): owned by the remote-connection flow, not the sidebar; out of UI-2b.
+16. SSH dialog (`sshDialogDirectorySelection.test.ts`): resolved. The file is deleted; its two behaviors (reject resets `selecting`, error shown, step kept or reverted to settings) are `renderHook(useRemoteConnectionFlow)` cases in `remoteConnectionFlowRecovery.test.ts`. The `sshDialogFlow.test.ts` zh rows are still open (UI2-SSH-ZH-ROWS).
 17. Removed `TEMPORARY(UI-2)` test files: `webRemoteControlTaskIndexLayout` (relay unit: skipped by task instruction), `workspaceSidebarItemRenderStability`, `workspaceSidebarRemoteNotice`, `workspaceSidebarTaskViewSwitcher`, `workspacePinnedTasksSection`, `useGroupedTaskView`, `taskTimelineGroups`, `composerPlanTransition` (not restored: /plan), `chatEmptyWorktreeTaskToggle`, `automationTypographyTokens`, `webRemoteControlMobileTaskHome`. Status: NOT restored in this PR. Each needs a per-test comparison against the new components; the fork test files are at `9c2434f7`. Planned as UI-2b follow-up; no per-test verdict yet.
-18. `describe.skip` `workspaceSidebarProjectPins.test.ts` and `workspaceSidebarNewTaskEntryNames.test.ts`: depend on items 1 and 3 above; stay skipped with `TEMPORARY(UI-2)` markers until those rows are decided.
+18. `workspaceSidebarNewTaskEntryNames.test.ts`: resolved. Rewritten against the project sidebar (`ProjectSidebar`), for en-US, uk-UA and zh-CN; spec `specs/sidebar-new-task-outside-project.md`. The conversation "+" now uses `workspaceSidebar.newTaskOutsideProject` and keeps `virtual-project-new-task`.
+    `workspaceSidebarProjectPins.test.ts`: resolved by deletion. The fork pin mechanism is retired (`specs/ui-pins-upstream-migration.md`, Retired surface); its dead helpers and locale keys were removed with it.
 
 ## Test rule applied
 
@@ -70,8 +71,8 @@ Checked against the current UI:
 - Item 7 (review directory grouping): `GitPane/directoryRowModel.ts` present; not exercised manually.
 - Item 10 (worktree notice): `ConversationWorktreeCreatedNotice` mounted in `SessionPane`; the
   sidebar-row open-worktree button is lost.
-- Project menu "Open on GitHub" (`workspaceSidebar.openOnGitHub`, 0 usages): lost; needs a git service
-  for the project's primary root on its host (`getRepositoryRemotes`). Owner decision.
-- `workspaceSidebar.newTaskOutsideProject` (0 usages): the conversation-section "+" button no longer
-  exists in the project sidebar (`onCreateConversationTask` is not consumed by `project-sidebar`), so
-  the distinct name has no surface.
+- Project menu "Open on GitHub" (`workspaceSidebar.openOnGitHub`): restored in `ProjectNodeContent.tsx` by commit `3b14be56` (with "Manage sessions"). This audit line was stale; no owner decision is open.
+- `workspaceSidebar.newTaskOutsideProject`: now used. The conversation-section "+" button in
+  `project-sidebar/PurposeSections.tsx` creates a task outside any project (`projectId: null`) and
+  carries this name for its `aria-label` and tooltip. This audit line was stale; see
+  `specs/sidebar-new-task-outside-project.md`.

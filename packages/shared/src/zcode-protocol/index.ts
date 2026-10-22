@@ -1999,7 +1999,6 @@ export type ZCodeSessionResumeParams = z.infer<typeof zcodeSessionResumeParamsSc
 export const zcodeSessionListParamsSchema = z
   .object({
     workspace: zcodeWorkspaceRefSchema.optional(),
-    includeArchived: z.boolean().default(false),
     sessionIds: z.array(nonEmptyString).min(1).max(64).optional(),
     limit: z.number().int().positive().optional(),
   })

@@ -7,7 +7,7 @@ modes, chosen by `ZCODE_REMOTE_RELAY_IDENTITY_MODE` (below). It does not serve t
 Web frontend or run an Agent: Desktop must stay running to execute commands.
 
 Protocol and client behavior: `docs/web-remote-control/relay-v2-pairing.md`.
-Design, owner decisions and the test plan: `specs/relay-v2-migration.md` (sections 10 to 12).
+Design, owner decisions and the test plan: `specs/relay-v2-migration.md` (sections 10 to 14).
 This README replaces the V1 deployment notes that used to live in `self-hosted-remote-relay.md`.
 
 ## Identity modes

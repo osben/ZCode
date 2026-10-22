@@ -41,6 +41,7 @@ export function TaskDeleteConfirmationDialog({
   supported,
   loadCapability,
   notice,
+  requirePinnedOptIn = false,
   loadTreeCounts,
   loadWorktreePreview,
   onCancel,
@@ -50,6 +51,12 @@ export function TaskDeleteConfirmationDialog({
   supported?: boolean;
   loadCapability?: (rows: readonly TaskDeleteDialogRow[]) => Promise<boolean>;
   notice?: string;
+  /**
+   * Batch surfaces that must never erase pinned rows implicitly: pinned rows stay excluded until the
+   * user checks the opt-in, including when only one row is offered. Default keeps the single-row
+   * behavior of the other Delete surfaces.
+   */
+  requirePinnedOptIn?: boolean;
   loadTreeCounts: (rows: readonly TaskDeleteDialogRow[]) => Promise<ZCodeTaskTreeCounts | null>;
   loadWorktreePreview: (
     rows: readonly TaskDeleteDialogRow[],
@@ -58,7 +65,7 @@ export function TaskDeleteConfirmationDialog({
   onConfirm: (rows: readonly TaskDeleteDialogRow[]) => void;
 }) {
   const { intl } = useZCodeIntl();
-  const [includePinned, setIncludePinned] = useState(rows.length === 1);
+  const [includePinned, setIncludePinned] = useState(!requirePinnedOptIn && rows.length === 1);
   const [capability, setCapability] = useState<boolean | undefined>(supported);
   const [counts, setCounts] = useState<ZCodeTaskTreeCounts | null | undefined>(undefined);
   const [worktreePreview, setWorktreePreview] = useState<
@@ -182,7 +189,7 @@ export function TaskDeleteConfirmationDialog({
             {intl.formatPlural({ id: "taskDelete.running" }, runningCount)}
           </p>
         ) : null}
-        {pinnedCount > 0 && rows.length > 1 ? (
+        {pinnedCount > 0 && (requirePinnedOptIn || rows.length > 1) ? (
           <label className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
             <Checkbox
               checked={includePinned}

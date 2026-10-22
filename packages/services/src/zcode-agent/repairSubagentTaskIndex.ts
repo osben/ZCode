@@ -24,7 +24,6 @@ export async function repairSubagentTaskIndex(params: {
     const sessions = await agentService.listSessions({
       ...target,
       sessionIds: batch,
-      includeArchived: true,
       runtimePolicy: "existing-only",
     });
     // Older Agents fail directly when they do not support the parameter; missing records, cross-identity results, and expired subscriptions are not grounds to infer deletion.

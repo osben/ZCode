@@ -151,7 +151,7 @@ function createSharedContextImportBundle(params: {
 
 describe("shared context import transaction", () => {
   it("atomically stores session, one model-only context message, and provenance", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const bundle = createSharedContextImportBundle({
       sessionSlug: "shared-context-import",
       shareId: "share-1",
@@ -176,7 +176,7 @@ describe("shared context import transaction", () => {
   // rebinds session_id. The old provenance id contained only the shareId, so when the same share was imported
   // into a second workspace (dedup miss), it stole the first session's entry and the old session's shared context silently disappeared.
   it("keeps per-session entries when the same share is imported into two sessions", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const first = createSharedContextImportBundle({
       sessionSlug: "shared-context-import-a",
       shareId: "share-1",
@@ -206,7 +206,7 @@ describe("shared context import transaction", () => {
   });
 
   it("rejects a provenance id that is not namespaced by the session", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const bundle = createSharedContextImportBundle({
       sessionSlug: "shared-context-import-legacy",
       shareId: "share-1",
@@ -221,7 +221,7 @@ describe("shared context import transaction", () => {
 
 describe("remote session path repair CAS", () => {
   it("only updates paths and preserves concurrently written session metadata", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("remote-path-cas");
     const workspaceID = "remote:wsl:Debian:dev:/home/dev/project" as WorkspaceId;
     try {
@@ -241,7 +241,6 @@ describe("remote session path repair CAS", () => {
         id: sessionID,
         title: "并发新标题",
         permission: { mode: "yolo" },
-        timeArchived: 88,
         timeUpdated: 99,
       });
 
@@ -261,7 +260,7 @@ describe("remote session path repair CAS", () => {
         path: "/home/dev/project",
         title: "并发新标题",
         permission: { mode: "yolo" },
-        time: { archived: 88, updated: 99 },
+        time: { updated: 99 },
       });
     } finally {
       store.close();
@@ -269,7 +268,7 @@ describe("remote session path repair CAS", () => {
   });
 
   it("does not overwrite a path changed by a concurrent writer", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("remote-path-cas-miss");
     const workspaceID = "remote:wsl:Debian:dev:/home/dev/project" as WorkspaceId;
     try {
@@ -309,7 +308,7 @@ describe("remote session path repair CAS", () => {
 
 describe("SQLite session store", () => {
   it("updates persisted execution paths without changing identity or activity time", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("remote-path-repair");
     const workspaceID = "remote:wsl:Debian:dev:/home/dev/project" as WorkspaceId;
     try {
@@ -344,7 +343,7 @@ describe("SQLite session store", () => {
   });
 
   it("persists the terminal outcome through the partial update and keeps it across later writes", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("last-outcome");
     try {
       await store.createSession({
@@ -374,7 +373,7 @@ describe("SQLite session store", () => {
   });
 
   it("persists execution worktree facts beside the parent workspace identity", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("worktree-execution");
     try {
       await store.createSession({
@@ -421,7 +420,7 @@ describe("SQLite session store", () => {
   });
 
   it("keeps session activity time monotonic when path repair uses an older snapshot", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     const sessionID = createSessionId("remote-path-repair-race");
     try {
       const staleSnapshot = await store.createSession({
@@ -459,8 +458,8 @@ describe("SQLite session store", () => {
     expect(getDefaultSessionDbPath()).toBe(join(homedir(), ".zcode", "cli", "db", "db.sqlite"));
   });
 
-  it("keeps the existing in-memory session store path working", () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+  it("keeps the existing in-memory session store path working", async () => {
+    const store = await createSqliteSessionStore({ dbPath: ":memory:" });
     try {
       expect(store.debugMigrationIds()).toHaveLength(26);
     } finally {
@@ -484,9 +483,9 @@ describe("SQLite session store", () => {
     );
 
     try {
-      expect(() => createSqliteSessionStore({ dbPath })).toThrow(SqliteSessionMigrationError);
+      await expect(createSqliteSessionStore({ dbPath })).rejects.toThrow(SqliteSessionMigrationError);
       try {
-        createSqliteSessionStore({ dbPath });
+        await createSqliteSessionStore({ dbPath });
         throw new Error("expected injected sqlite open failure");
       } catch (error) {
         expect(error).toBeInstanceOf(SqliteSessionMigrationError);
@@ -512,7 +511,7 @@ describe("SQLite session store", () => {
   it("can inject sqlite write failures before session history writes", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-write-fault-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("sqlite-run-fault");
 
     try {
@@ -595,7 +594,7 @@ describe("SQLite session store", () => {
     ];
 
     try {
-      const firstStore = createSqliteSessionStore({ dbPath });
+      const firstStore = await createSqliteSessionStore({ dbPath });
       expect(firstStore.debugMigrationIds()).toEqual(expectedMigrations);
       expect(firstStore.debugCounts().schemaMigrations).toBe(expectedMigrations.length);
       expect(firstStore.debugCounts().localSettings).toBe(0);
@@ -646,7 +645,7 @@ describe("SQLite session store", () => {
       );
       db.close();
 
-      const secondStore = createSqliteSessionStore({ dbPath });
+      const secondStore = await createSqliteSessionStore({ dbPath });
       expect(secondStore.debugMigrationIds()).toEqual(expectedMigrations);
       expect(secondStore.debugCounts().schemaMigrations).toBe(expectedMigrations.length);
       expect(secondStore.debugCounts().localSettings).toBe(0);
@@ -695,11 +694,11 @@ describe("SQLite session store", () => {
     `);
 
     try {
-      expect(() => openStartupSqliteSessionStore({ dbPath, startupLockTimeoutMs: 25 })).toThrow(
+      await expect(openStartupSqliteSessionStore({ dbPath, startupLockTimeoutMs: 25 })).rejects.toThrow(
         SqliteSessionMigrationError,
       );
       try {
-        openStartupSqliteSessionStore({ dbPath, startupLockTimeoutMs: 25 });
+        await openStartupSqliteSessionStore({ dbPath, startupLockTimeoutMs: 25 });
         throw new Error("expected SQLite startup lock timeout");
       } catch (error) {
         expect(error).toBeInstanceOf(SqliteSessionMigrationError);
@@ -718,7 +717,7 @@ describe("SQLite session store", () => {
     const sessionID = createSessionId("failed-upgrade-session");
 
     try {
-      const seedStore = createSqliteSessionStore({ dbPath });
+      const seedStore = await createSqliteSessionStore({ dbPath });
       await seedStore.createSession({
         id: sessionID,
         projectID: createProjectId("failed-upgrade-project"),
@@ -764,7 +763,7 @@ describe("SQLite session store", () => {
       `);
       legacyDb.close();
 
-      const upgradedStore = createSqliteSessionStore({ dbPath });
+      const upgradedStore = await createSqliteSessionStore({ dbPath });
       expect(upgradedStore.debugMigrationIds()).toContain("0018_session_input_failed_status");
       await expect(upgradedStore.listSessionInputs({ sessionID })).resolves.toMatchObject([
         {
@@ -823,7 +822,7 @@ describe("SQLite session store", () => {
     legacyDb.close();
 
     try {
-      const store = createSqliteSessionStore({ dbPath });
+      const store = await createSqliteSessionStore({ dbPath });
       expect(await store.getProjectPermission(projectID)).toEqual({
         version: 1,
         allow: [{ toolName: "Read" }],
@@ -832,7 +831,7 @@ describe("SQLite session store", () => {
       expect(store.debugCounts().localSettings).toBe(1);
       store.close();
 
-      const reopenedStore = createSqliteSessionStore({ dbPath });
+      const reopenedStore = await createSqliteSessionStore({ dbPath });
       expect(reopenedStore.debugCounts().localSettings).toBe(1);
       reopenedStore.close();
     } finally {
@@ -857,9 +856,9 @@ describe("SQLite session store", () => {
     db.close();
 
     try {
-      expect(() => createSqliteSessionStore({ dbPath })).toThrow(SqliteSessionMigrationError);
+      await expect(createSqliteSessionStore({ dbPath })).rejects.toThrow(SqliteSessionMigrationError);
       try {
-        createSqliteSessionStore({ dbPath });
+        await createSqliteSessionStore({ dbPath });
         throw new Error("expected migration checksum mismatch");
       } catch (error) {
         expect(error).toBeInstanceOf(SqliteSessionMigrationError);
@@ -878,7 +877,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
 
     try {
-      const store = openStartupSqliteSessionStore({ dbPath });
+      const store = await openStartupSqliteSessionStore({ dbPath });
       expect(store.debugMigrationIds()).toEqual([
         "0001_base_session_store",
         "0002_local_setting",
@@ -921,7 +920,7 @@ describe("SQLite session store", () => {
     const workflowTraceId = createTraceId();
 
     try {
-      const store = createSqliteSessionStore({ dbPath });
+      const store = await createSqliteSessionStore({ dbPath });
       await store.createSession({
         id: workflowSessionId,
         projectID: createProjectId("workflow-task-type"),
@@ -1058,10 +1057,10 @@ describe("SQLite session store", () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-entries-"));
     const dbPath = join(tempRoot, "session.sqlite");
     const sessionID = createSessionId("session-entry-test");
-    let store: ReturnType<typeof createSqliteSessionStore> | undefined;
+    let store: Awaited<ReturnType<typeof createSqliteSessionStore>> | undefined;
 
     try {
-      store = createSqliteSessionStore({ dbPath });
+      store = await createSqliteSessionStore({ dbPath });
       await store.createSession({
         id: sessionID,
         projectID: createProjectId("session-entry-test"),
@@ -1152,7 +1151,7 @@ describe("SQLite session store", () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-empty-session-"));
     const emptyId = createSessionId("empty-preparation");
     const occupiedId = createSessionId("occupied-preparation");
-    const store = createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
+    const store = await createSqliteSessionStore({ dbPath: join(tempRoot, "session.sqlite") });
     const create = (id: typeof emptyId) =>
       store.createSession({
         id,
@@ -1189,7 +1188,7 @@ describe("SQLite session store", () => {
     const parentSessionId = createSessionId("stable-fork-parent");
     const firstChildId = createSessionId("stable-fork-child-first");
     const duplicateChildId = createSessionId("stable-fork-child-duplicate");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const metadata = {
       parentSessionId: String(parentSessionId),
       sourceCommandId: "command-stable-fork",
@@ -1268,7 +1267,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
     const parentSessionId = createSessionId("root-before-input-parent");
     const childSessionId = createSessionId("root-before-input-child");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1313,7 +1312,7 @@ describe("SQLite session store", () => {
     const parentSessionId = createSessionId("bundle-parent");
     const childSessionId = createSessionId("bundle-child");
     const messageId = createMessageId("bundle-message");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1511,7 +1510,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
     const parentSessionId = createSessionId("selection-side-parent");
     const childSessionId = createSessionId("selection-side-child");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1585,7 +1584,7 @@ describe("SQLite session store", () => {
       const parentSessionId = createSessionId(`fault-parent-${stage}`);
       const childSessionId = createSessionId(`fault-child-${stage}`);
       const messageId = createMessageId(`fault-message-${stage}`);
-      const store = createSqliteSessionStore({
+      const store = await createSqliteSessionStore({
         dbPath,
         forkCommitFaultAt: stage,
       } as never);
@@ -1698,7 +1697,7 @@ describe("SQLite session store", () => {
     const parentSessionId = createSessionId("parent-leak-parent");
     const childSessionId = createSessionId("parent-leak-child");
     const assistantId = createMessageId("parent-leak-assistant");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1775,7 +1774,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
     const parentSessionId = createSessionId("stable-no-input-parent");
     const childSessionId = createSessionId("stable-no-input-child");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1841,7 +1840,7 @@ describe("SQLite session store", () => {
       const dbPath = join(tempRoot, "session.sqlite");
       const parentSessionId = createSessionId(`result-parent-${index}`);
       const childSessionId = createSessionId(`result-child-${index}`);
-      const store = createSqliteSessionStore({ dbPath });
+      const store = await createSqliteSessionStore({ dbPath });
       try {
         await store.createSession({
           id: parentSessionId,
@@ -1895,7 +1894,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
     const parentSessionId = createSessionId("bundle-rollback-parent");
     const childSessionId = createSessionId("bundle-rollback-child");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     try {
       await store.createSession({
         id: parentSessionId,
@@ -1963,7 +1962,7 @@ describe("SQLite session store", () => {
     const dbPath = join(tempRoot, "session.sqlite");
     const parentSessionId = createSessionId("stable-fork-rollback-parent");
     const childSessionId = createSessionId("stable-fork-rollback-child");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
 
     try {
       await store.createSession({
@@ -2015,7 +2014,7 @@ describe("SQLite session store", () => {
   it("keeps persisted message order when message timestamps collide", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-store-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("same-ms-order");
     const userMessageID = createMessageId("user-same-ms");
     const assistantMessageID = createMessageId("000-assistant-same-ms");
@@ -2157,7 +2156,7 @@ describe("SQLite session store", () => {
   it("reads one message without decoding unrelated session parts", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-message-read-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("target-message-read");
     const targetMessageID = createMessageId("target-message");
     const unrelatedMessageID = createMessageId("unrelated-message");
@@ -2222,7 +2221,7 @@ describe("SQLite session store", () => {
   it("keeps a legacy NULL-sequence message in place when it is re-saved", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-null-seq-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("null-seq-resave");
     const created = 1_700_000_000_000;
     const messageIDs = [
@@ -2384,7 +2383,7 @@ describe("SQLite session store", () => {
 
   it("replaces and reads session todos in stable position order", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-todos-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const sessionID = createSessionId("todo-order");
@@ -2446,7 +2445,7 @@ describe("SQLite session store", () => {
 
   it("persists the current session goal with replacement and status updates", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-target-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const sessionID = createSessionId("target-store");
@@ -2692,7 +2691,7 @@ describe("SQLite session store", () => {
 
   it("persists project permission rulesets", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-permission-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const projectID = createProjectId("permission-rules");
@@ -2738,12 +2737,12 @@ describe("SQLite session store", () => {
       ],
     };
 
-    const firstStore = createSqliteSessionStore({ dbPath });
+    const firstStore = await createSqliteSessionStore({ dbPath });
     try {
       await firstStore.saveProjectPermission({ projectID, permission });
       firstStore.close();
 
-      const reopenedStore = createSqliteSessionStore({ dbPath });
+      const reopenedStore = await createSqliteSessionStore({ dbPath });
       try {
         expect(await reopenedStore.getProjectPermission(projectID)).toEqual(permission);
         expect(reopenedStore.debugCounts().localSettings).toBe(1);
@@ -2763,7 +2762,7 @@ describe("SQLite session store", () => {
 
   it("persists the typed project mode local setting", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-local-setting-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const projectID = createProjectId("local-setting-project");
@@ -2782,7 +2781,7 @@ describe("SQLite session store", () => {
 
   it("persists edit project permission mode", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-local-setting-edit-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const projectID = createProjectId("local-setting-edit-project");
@@ -2800,7 +2799,7 @@ describe("SQLite session store", () => {
 
   it("records project input history with global retention and duplicate suppression", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-input-history-"));
-    const store = createSqliteSessionStore({
+    const store = await createSqliteSessionStore({
       dbPath: join(tempRoot, "session.sqlite"),
     });
     const projectID = createProjectId("input-history");
@@ -2906,7 +2905,7 @@ describe("SQLite session store", () => {
   it("persists usage observability facts and prunes rows outside retention", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-usage-observability-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("usage-observability");
     const turnID = createTurnId("usage-turn");
     const traceID = createTraceId();
@@ -3031,7 +3030,7 @@ describe("SQLite session store", () => {
   it("maps the domain reasoning level to the legacy model usage variant column", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-usage-reasoning-level-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("usage-reasoning-level");
 
     try {
@@ -3101,7 +3100,7 @@ describe("session input ledger (0016)", () => {
   it("admits, promotes atomically with the user message, and settles without regressing", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-session-input-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionID = createSessionId("input-ledger");
     const created = 1_700_000_000_000;
     try {
@@ -3364,7 +3363,28 @@ describe("session input ledger (0016)", () => {
 });
 
 describe("sidebar child session facts", () => {
-  async function seedFamily(store: ReturnType<typeof createSqliteSessionStore>) {
+  // A file database is needed because the archive state has no port writer: the test archives a row through a
+  // second connection, and a ":memory:" store cannot be reached from another connection.
+  async function openFamilyStore() {
+    const root = await mkdtemp(join(tmpdir(), "zcode-child-facts-"));
+    const dbPath = join(root, "session.sqlite");
+    const store = await createSqliteSessionStore({ dbPath });
+    const raw = new DatabaseSync(dbPath);
+    return {
+      store,
+      raw,
+      async close() {
+        raw.close();
+        store.close();
+        await rm(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  async function seedFamily(
+    store: Awaited<ReturnType<typeof createSqliteSessionStore>>,
+    raw: DatabaseSync,
+  ) {
     const parentID = createSessionId("child-facts-parent");
     await store.createSession({
       id: parentID,
@@ -3399,6 +3419,12 @@ describe("sidebar child session facts", () => {
     await seed("child-chat", "selection_side_chat", "side chat", 40);
     await seed("child-sub-old", "subagent_child", "oldest subagent", 30);
     await seed("child-workflow", "workflow_child", "workflow child", 60);
+    // A row with a time_archived value is a live child, as in upstream: the column has no reader. The newest
+    // timestamp makes the list cap expose a reintroduced `time_archived is null` filter.
+    await seed("child-sub-archived", "subagent_child", "archived subagent", 80);
+    raw
+      .prepare("update session set time_archived = ? where id = ?")
+      .run(100, String(createSessionId("child-sub-archived")));
     // A second parent with a single side chat, plus a fork that must not count as a child.
     const otherParent = createSessionId("child-facts-other");
     await store.createSession({
@@ -3412,49 +3438,35 @@ describe("sidebar child session facts", () => {
     });
     await seed("child-other-chat", "selection_side_chat", "other chat", 20, otherParent);
     await seed("child-fork", "fork", "forked child", 70, otherParent);
-    // Archived children are excluded from both counts and the list.
-    const archivedID = createSessionId("child-sub-archived");
-    await store.createSession({
-      id: archivedID,
-      projectID: createProjectId("child-facts"),
-      parentID: parentID,
-      taskType: "subagent_child",
-      slug: "child-sub-archived",
-      directory: "/home/dev/project",
-      path: "/home/dev/project",
-      title: "archived subagent",
-      version: "0.1.0",
-    });
-    await store.updateSession({ id: archivedID, timeArchived: 100 });
     return { parentID, otherParent };
   }
 
-  it("counts side chats and subagents per parent, excluding workflow children, forks, and archived rows", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+  it("counts side chats and subagents per parent, excluding workflow children and forks", async () => {
+    const { store, raw, close } = await openFamilyStore();
     try {
-      const { parentID, otherParent } = await seedFamily(store);
+      const { parentID, otherParent } = await seedFamily(store, raw);
       const counts = await store.countChildSessions({ parentIds: [parentID, otherParent] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
       expect(counts.get(String(otherParent))).toEqual({ sideChats: 1, subagents: 0 });
       await expect(store.countChildSessions({ parentIds: [] })).resolves.toBeInstanceOf(Map);
     } finally {
-      store.close();
+      await close();
     }
   });
 
   it("lists newest-first children capped per parent while counts stay true totals", async () => {
-    const store = createSqliteSessionStore({ dbPath: ":memory:" });
+    const { store, raw, close } = await openFamilyStore();
     try {
-      const { parentID } = await seedFamily(store);
+      const { parentID } = await seedFamily(store, raw);
       const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 2 });
       const children = listed.get(String(parentID));
-      expect(children.map((child) => child.title)).toEqual(["newest subagent", "side chat"]);
-      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 50 });
+      expect(children.map((child) => child.title)).toEqual(["archived subagent", "newest subagent"]);
+      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 80 });
       // The cap truncates the list, but the grouped counts still report all live children.
       const counts = await store.countChildSessions({ parentIds: [parentID] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 2 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
     } finally {
-      store.close();
+      await close();
     }
   });
 });

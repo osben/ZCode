@@ -125,8 +125,6 @@ export async function updateSession(
   if (input.revert !== undefined) set("revert", encodeJson(input.revert));
   if (input.permission !== undefined) set("permission", encodeJson(input.permission));
   set("time_compacting", input.timeCompacting);
-  // Fork-owned archive state (time_archived) is index-only; it is not activity.
-  set("time_archived", input.timeArchived);
   if (
     input.title !== undefined ||
     input.titleSource !== undefined ||
@@ -217,10 +215,6 @@ export async function listSessions(
     values.push(...taskTypes);
   }
 
-  if (!input.includeArchived) {
-    clauses.push("time_archived is null");
-  }
-
   const where = clauses.length > 0 ? `where ${clauses.join(" and ")}` : "";
   const limitValue = input.limit && input.limit > 0 ? input.limit : undefined;
   const limit = limitValue === undefined ? "" : " limit ?";
@@ -241,7 +235,7 @@ function buildChildSessionScope(parentIds: readonly SessionId[]): {
   values: SQLInputValue[];
 } {
   return {
-    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_archived is null and time_deleted is null`,
+    where: `parent_id in (${parentIds.map(() => "?").join(", ")}) and task_type in (${CHILD_SESSION_TASK_TYPES.map(() => "?").join(", ")}) and time_deleted is null`,
     values: [...parentIds, ...CHILD_SESSION_TASK_TYPES],
   };
 }

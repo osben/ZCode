@@ -21,10 +21,27 @@ is adopted or the final sync PR retires the compatibility member.
 | Protocol stdin type (CLI)       | `const source = options.input ?? process.stdin` (inferred union)                                   | Annotated as `NodeJS.ReadableStream`. The inferred union of overloaded `on` signatures fails typecheck (TS2349) with `@types/node` 26; runtime unchanged                                              | `cli/src/protocol-lifecycle.ts`                                                                                             |
 | Dependency pins (CLI / TUI)     | `dotenv` 17.4.2, `react` 19.2.5, `@types/react` 19.2.0, `shiki` ^4.1.0, `ws` 8.18.0, `tsx` ^4.20.0 | Fork chore bumps kept: `dotenv` ^18.0.7 (`459cc1bc`), `react` 19.3.0 / `@types/react` 19.3.0 (`e476849c`), `shiki` ^4.5.0, `ws` ^8.22.0, `tsx` ^4.23.15 (`c642c2ef`, `05763290`)                      | `cli/package.json`, `tui/package.json`; lockfile (owned by the lockfile slice)                                              |
 
+- `scripts/verify-project-upgrade.mts` (root script, tracked in the upstream snapshot): upstream opens the old-_ phases with
+  `new SqliteSessionStore({ dbPath })`; the fork uses `await SqliteSessionStore.open({ dbPath })` for every phase because the
+  constructor is private and takes the migration result. Consequence: the old-_ phases no longer exercise a separate
+  non-backup open path; they run the same production open (with backup) as the upgrade phase.
+
 ## Temporary compatibility members (remove in the final sync PR)
 
-- `UpdateSessionInput.timeArchived`, `ListSessionsInput.includeArchived`, session `time.archived` (fork archive column).
-- `SchemaMigrationRow` re-export in `adapters/src/storage/session-store/rows.ts`; `ensureParentDir` in `paths.ts`.
+- Removed: `UpdateSessionInput.timeArchived` and session `time.archived` (fork archive column, no longer read or written
+  by the port), the `SchemaMigrationRow` re-export in `adapters/src/storage/session-store/rows.ts`, `ensureParentDir` in
+  `paths.ts`, and the synchronous session-store factories (`createSqliteSessionStore` and `openStartupSqliteSessionStore`
+  are async again, as in upstream).
+- Removed: `ListSessionsInput.includeArchived` and the `time_archived is null` filters in `repositories/sessions.ts`
+  (session listing and the child-session scope), as in upstream. The `time_archived` column stays in the schema
+  (inserts write NULL); no DDL, migration id or checksum changes. No fork or upstream build has a production writer of
+  `time_archived`: at `872ad960`, `aac47556` and `integration`, `updateSession` accepted `timeArchived`, but no caller
+  passed it. Data check on 2026-10-21, read-only on the author's local `~/.zcode/cli/db/db.sqlite`: 5053 `session` rows,
+  0 with non-null `time_archived`. If a database did have such rows, they would now appear in `session.list` and in the
+  sidebar child counts and lists. The upstream app already shows them, because it reads the same database without the
+  filter. `scripts/shadow-replay.mjs` no longer passes `includeArchived`.
+  The wire fields `session.list.includeArchived` and `session.archivedAt` are removed with it (decision and version
+  compatibility: `specs/build-pipeline-entrypoints.md`, "Shared-sync compatibility").
 - `trimTruncatedUtf8Tail` in `adapters/src/fs/text-metadata.ts` (fork tail trim; upstream uses `getUtf8CompletionBytes`).
 - `buildEnvInfoSection` argument order: fork's `executionWorktree` third, upstream's `additionalDirectories` fourth.
 - `ChildSessionFactsResolver.loadStoredFacts` / `ChildSessionRecordView`: fork-only bridge helpers (store reads and a structural record view, so `zcode-protocol-v4/` does not import the legacy directory).

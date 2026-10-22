@@ -18,11 +18,11 @@ services-side task index and project storage are specified elsewhere.
   table-level backup, the single transaction and the `schema_migration` writes.
 - Store: `session-store/sqlite-session-store.ts`. `SqliteSessionStore.open` (and its alias `openStartup`) is the
   production entry point. The constructor is private.
-- Compatibility sync path (TEMPORARY, remove in the final PR together with the callers): `runSqliteSessionMigrationsSync`,
-  `SqliteSessionStore.openSyncCompat`, `createSqliteSessionStore` and `openStartupSqliteSessionStore`. The sync
-  path applies the same ledger rules but takes no table backup. Its `migrationResult` has the shared
-  `MigrationResult` shape: `applied` lists only the ids whose SQL ran in this open (empty on a reopen), and
-  `backupSkipped` is always `true`. `storage-migrate` relies on that shape to build its report.
+- Factories: `createSqliteSessionStore` and `openStartupSqliteSessionStore` are async wrappers over
+  `SqliteSessionStore.open`, as in upstream. There is no synchronous open path. Every open, including the
+  `storage-migrate` startup migration of the shared `~/.zcode/cli/db/db.sqlite`, runs the shared `migrate` with the
+  table-level backup. `migrationResult` is the `MigrationResult` returned by that runner (`applied` lists the ids whose
+  SQL ran in this open; `storage-migrate` builds its report from it).
 
 ## Ledger rules
 
@@ -89,8 +89,9 @@ visible there until the new build erases them. Accepted: fork erase removes rows
   a no-op. Message and part rows are kept. Session listings and child-session counts filter `time_deleted is null`.
 - The fork permanent erase (`repositories/session-tree.ts`, `deleteSessionTree`, see `specs/session-deletion-cascade.md`)
   physically removes an erased tree. Tombstone and erase coexist: a tombstoned row is hidden; an erased row is gone.
-- The fork archive state (`time_archived`) is unchanged: listings still exclude archived sessions unless
-  `includeArchived` is set, and `updateSession` still writes `timeArchived`.
+- The fork archive column (`time_archived`) stays in the schema but has no port reader or writer (inserts write NULL).
+  As in upstream, listings and child-session counts do not filter on it, `ListSessionsInput` has no `includeArchived`,
+  `updateSession` does not accept `timeArchived`, and `SessionInfo.time.archived` is removed.
 - `updateSession` writes only the columns the input owns (upstream partial update), which fixes the stale full-row
   overwrite of concurrent title and permission changes.
 - `UpdateSessionInput.lastOutcome` is written to `last_outcome` by the same partial update as the other owned columns
@@ -103,7 +104,7 @@ visible there until the new build erases them. Accepted: fork erase removes rows
 
 ## Backup and admission
 
-- The async path runs the shared `migrate` with a table-level backup in `<data root>/backup`. For `:memory:`
+- Every open runs the shared `migrate` with a table-level backup in `<data root>/backup`. For `:memory:`
   databases the backup goes to the OS temp directory, so the working tree is never written.
 - Admission: WAL check, then `BEGIN IMMEDIATE`, then ledger reads under the lock. The preflight that reports the
   migration kind is read-only and needs no write lock.
@@ -112,8 +113,7 @@ visible there until the new build erases them. Accepted: fork erase removes rows
 
 - `upstream-migration-checksum-pin.test.ts`: a fresh database writes the pinned upstream checksum for every upstream id
   (`0001` to `0024`), and the translated 0020 variant hashes to its accepted checksum.
-- `session-migration-history.test.ts`: scenarios A to E on the real fixtures, plus the idempotent reopen and sync
-  compat equivalence.
+- `session-migration-history.test.ts`: scenarios A to E on the real fixtures, plus the idempotent reopen.
 - `session-soft-delete.test.ts`: tombstone hides a session and keeps its row; erase still removes a tree.
 - `session-store.test.ts`, `frozen-migration-startup.test.ts`, `async-migration-startup.test.ts`,
   `session-migration-boundaries.test.ts`, `session-database-identity-migration.test.ts`: upstream behavior, with the

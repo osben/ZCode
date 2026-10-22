@@ -1,173 +1,182 @@
 import { z } from "zod";
 
-export const RELAY_MAX_MESSAGE_BYTES = 1024 * 1024;
-export const RELAY_MAX_CONTROL_BYTES = 4096;
+// V2 requests and WebSocket messages are validated strictly; HTTP responses may add fields.
+const unixSeconds = z.number().int().min(0).max(253_402_300_799);
 const identifier = z
   .string()
   .min(1)
   .max(128)
-  .regex(/^[A-Za-z0-9._~-]+$/u);
-const timestamp = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional();
+  .refine((value) => value.trim().length > 0);
+const deviceSid = identifier.refine((value) => new TextEncoder().encode(value).length <= 128);
+const meta = z.strictObject({
+  name: z.string().optional(),
+  platform: z.string().optional(),
+  version: z.string().optional(),
+});
 const role = z.enum(["device", "terminal"]);
-// Bugfix: zcode-remote-hub currently expresses pairing state only as waiting/matched;
-// KICKED, WRONG_PARAM, etc. are error codes, not pair_status. Narrowing the shared type here
-// prevents clients from mistaking the nonexistent rejected/kicked pair states for a desktop WS
-// that must be closed.
 const pairStatus = z.enum(["waiting", "matched"]);
-const errorCode = z.enum(["AUTH_FAILED", "DEVICE_OFFLINE", "KICKED", "WRONG_PARAM", "INTERNAL"]);
-const meta = z
-  .object({
-    platform: z.string().min(1).max(64),
-    version: z.string().min(1).max(64),
-    name: z.string().min(1).max(256),
-  })
-  .strict();
+const errorCode = z.enum(["AUTH_FAILED", "WRONG_PARAM", "KICKED", "INTERNAL", "DEVICE_OFFLINE"]);
+const authInit = z.strictObject({
+  type: z.literal("auth_init"),
+  device_sid: deviceSid,
+  meta: meta.optional(),
+  client_ts: unixSeconds.optional(),
+});
 
-const registration = z
-  .object({
-    type: z.literal("device_register_init"),
-    device_mid: identifier,
-    pass_hash: z.string().min(1).max(128),
-    meta,
-    client_ts: timestamp,
-  })
-  .strict();
-const authInit = z
-  .object({
-    type: z.literal("auth_init"),
-    role,
-    device_sid: identifier,
-    meta,
-    client_ts: timestamp,
-  })
-  .strict();
-const authResponse = z
-  .object({
-    type: z.literal("auth_response"),
-    device_sid: identifier,
-    proof: z.string().min(1).max(128),
-    client_ts: timestamp,
-  })
-  .strict();
-const pairQuery = z
-  .object({
-    type: z.literal("pair_status_query"),
-    device_sid: identifier,
-    client_ts: timestamp,
-  })
-  .strict();
-const data = z
-  .object({
-    type: z.literal("data"),
-    payload: z.unknown().refine((value) => value !== undefined),
-    client_ts: timestamp,
-    server_ts: timestamp,
-  })
-  .strict();
+export type WebRemoteControlRelayV2Role = z.infer<typeof role>;
+export type WebRemoteControlRelayV2PairStatus = z.infer<typeof pairStatus>;
+export type WebRemoteControlRelayV2ErrorCode = z.infer<typeof errorCode>;
+export type WebRemoteControlRelayV2Meta = z.infer<typeof meta>;
+export type WebRemoteControlRelayV2AuthInit = z.infer<typeof authInit>;
 
-export const relayClientMessageSchema = z.discriminatedUnion("type", [
-  registration,
-  authInit,
-  authResponse,
-  pairQuery,
-  data,
-]);
-export type RelayClientMessage = z.infer<typeof relayClientMessageSchema>;
+const pairStatusQuery = z.strictObject({
+  type: z.literal("pair_status_query"),
+  client_ts: unixSeconds.optional(),
+});
+const outgoingData = z.strictObject({
+  type: z.literal("data"),
+  payload: z.json(),
+  client_ts: unixSeconds.optional(),
+});
+const outgoingMessage = z.discriminatedUnion("type", [authInit, pairStatusQuery, outgoingData]);
+export type WebRemoteControlRelayV2PairStatusQuery = z.infer<typeof pairStatusQuery>;
+export type WebRemoteControlRelayV2OutgoingData = z.infer<typeof outgoingData>;
+export type WebRemoteControlRelayV2OutgoingMessage = z.infer<typeof outgoingMessage>;
 
-const registerAck = z
-  .object({
-    type: z.literal("device_register_ack"),
-    device_sid: identifier,
-    server_ts: timestamp,
-  })
-  .strict();
-const authChallenge = z
-  .object({
-    type: z.literal("auth_challenge"),
-    nonce: identifier,
-    server_ts: timestamp,
-  })
-  .strict();
-const authAck = z
-  .object({
-    type: z.literal("auth_ack"),
-    device_sid: identifier,
-    terminal_sid: identifier.optional(),
-    pair_status: pairStatus,
-    server_ts: timestamp,
-  })
-  .strict();
-const pairAck = z
-  .object({
-    type: z.literal("pair_status_ack"),
-    terminal_sid: identifier.optional(),
-    pair_status: pairStatus,
-    server_ts: timestamp,
-  })
-  .strict();
-const relayError = z
-  .object({
-    type: z.literal("error"),
-    code: errorCode,
-    message: z.string().max(256),
-    server_ts: timestamp,
-  })
-  .strict();
-export const relayServerMessageSchema = z.discriminatedUnion("type", [
-  registerAck,
-  authChallenge,
+export function parseWebRemoteControlRelayV2OutgoingMessage(
+  value: unknown,
+): WebRemoteControlRelayV2OutgoingMessage | null {
+  const result = outgoingMessage.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+const authAck = z.strictObject({
+  type: z.literal("auth_ack"),
+  device_sid: deviceSid,
+  terminal_sid: z.string().optional(),
+  pair_status: pairStatus,
+  server_ts: unixSeconds.optional(),
+});
+const pairStatusAck = z.strictObject({
+  type: z.literal("pair_status_ack"),
+  terminal_sid: z.string().optional(),
+  pair_status: pairStatus,
+  server_ts: unixSeconds.optional(),
+});
+const incomingData = z.strictObject({
+  type: z.literal("data"),
+  payload: z.json(),
+  server_ts: unixSeconds.optional(),
+});
+const relayError = z.strictObject({
+  type: z.literal("error"),
+  code: errorCode,
+  message: z.string().optional(),
+  server_ts: unixSeconds.optional(),
+});
+const incomingMessage = z.discriminatedUnion("type", [
   authAck,
-  pairAck,
-  data,
+  pairStatusAck,
+  incomingData,
   relayError,
 ]);
-export type RelayServerMessage = z.infer<typeof relayServerMessageSchema>;
+export type WebRemoteControlRelayV2AuthAck = z.infer<typeof authAck>;
+export type WebRemoteControlRelayV2PairStatusAck = z.infer<typeof pairStatusAck>;
+export type WebRemoteControlRelayV2IncomingData = z.infer<typeof incomingData>;
+export type WebRemoteControlRelayV2Error = z.infer<typeof relayError>;
+export type WebRemoteControlRelayV2IncomingMessage = z.infer<typeof incomingMessage>;
 
-export type WebRemoteControlRelayDeviceMeta = z.infer<typeof meta>;
-export type WebRemoteControlRelayRole = z.infer<typeof role>;
-export type WebRemoteControlRelayPairStatus = z.infer<typeof pairStatus>;
-export type WebRemoteControlRelayErrorCode = z.infer<typeof errorCode>;
-export interface WebRemoteControlRelayOutgoingBase {
-  client_ts?: number;
-}
-export interface WebRemoteControlRelayIncomingBase {
-  server_ts?: number;
-}
-export type WebRemoteControlRelayDeviceRegisterInit = z.infer<typeof registration>;
-export type WebRemoteControlRelayDeviceRegisterAck = z.infer<typeof registerAck>;
-export type WebRemoteControlRelayAuthInit = z.infer<typeof authInit>;
-export type WebRemoteControlRelayAuthChallenge = z.infer<typeof authChallenge>;
-export type WebRemoteControlRelayAuthResponse = z.infer<typeof authResponse>;
-export type WebRemoteControlRelayAuthAck = z.infer<typeof authAck>;
-export type WebRemoteControlRelayPairStatusQuery = z.infer<typeof pairQuery>;
-export type WebRemoteControlRelayPairStatusAck = z.infer<typeof pairAck>;
-export type WebRemoteControlRelayError = z.infer<typeof relayError>;
-export interface WebRemoteControlRelayDataMessage<TPayload = unknown>
-  extends WebRemoteControlRelayOutgoingBase, WebRemoteControlRelayIncomingBase {
-  type: "data";
-  payload: TPayload;
+export function parseWebRemoteControlRelayV2IncomingMessage(
+  value: unknown,
+): WebRemoteControlRelayV2IncomingMessage | null {
+  const result = incomingMessage.safeParse(value);
+  return result.success ? result.data : null;
 }
 
-export interface WebRemoteControlRelayAuthProofVector {
-  passHash: string;
-  nonce: string;
-  role: WebRemoteControlRelayRole;
-  deviceSid: string;
-  proof: string;
+export const WEB_REMOTE_CONTROL_RELAY_V2_HTTP = {
+  register: { method: "POST", path: "/api/v1/remote/device" },
+  list: { method: "GET", path: "/api/v1/remote/device" },
+  delete: { method: "POST", path: "/api/v1/remote/device/delete" },
+  token: { method: "POST", path: "/api/v1/remote/token" },
+} as const;
+export const WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH = "/api/v1/remote/ws2";
+export type WebRemoteControlRelayV2HttpOperation = keyof typeof WEB_REMOTE_CONTROL_RELAY_V2_HTTP;
+
+const httpRequests = {
+  register: z.strictObject({ device_mid: identifier }),
+  list: z.strictObject({}),
+  delete: z.strictObject({ device_sid: identifier }),
+  token: z.strictObject({ role }),
+};
+// New server response fields must stay backward compatible: z.object validates declared fields and strips unknown ones, nested objects included.
+const device = z.object({
+  device_sid: deviceSid,
+  device_mid: identifier,
+  online: z.boolean(),
+  created_at: unixSeconds,
+  meta: z.object(meta.shape),
+});
+const token = z.object({
+  // The last character of 16 bytes unpadded Base64URL can only use the top two bits.
+  token: z.string().regex(/^[A-Za-z0-9_-]{21}[AQgw]$/),
+  expires_in: z.number().int().positive(),
+});
+const httpError = z.object({
+  code: z
+    .number()
+    .int()
+    .refine((value) => value !== 0),
+  msg: z.string(),
+  data: z.null().optional(),
+});
+function response<T extends z.ZodType>(data: T) {
+  return z.union([z.object({ code: z.literal(0), msg: z.string(), data }), httpError]);
 }
-export const WEB_REMOTE_CONTROL_RELAY_AUTH_PROOF_VECTORS: WebRemoteControlRelayAuthProofVector[] = [
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "device",
-    deviceSid: "device-1",
-    proof: "XK0m7u-26VS88uk7ISAX5Z_9pjzq8jqyP77N-HkCsPE",
-  },
-  {
-    passHash: "dGVzdF9oYXNo",
-    nonce: "nonce-1",
-    role: "terminal",
-    deviceSid: "device-1",
-    proof: "YkqkJy-p-iZK1g1AcoGd0Q83REOggX1EygWkcxW4oLU",
-  },
-];
+const httpResponses = {
+  register: response(device),
+  list: response(z.array(device)),
+  // Go Response.Data has omitempty: a delete success or failure may omit data.
+  delete: response(z.null().optional()),
+  token: response(token),
+};
+export type WebRemoteControlRelayV2Device = z.infer<typeof device>;
+export type WebRemoteControlRelayV2Token = z.infer<typeof token>;
+export type WebRemoteControlRelayV2HttpError = z.infer<typeof httpError>;
+export type WebRemoteControlRelayV2HttpRequest<K extends WebRemoteControlRelayV2HttpOperation> =
+  z.infer<(typeof httpRequests)[K]>;
+export type WebRemoteControlRelayV2HttpResponse<K extends WebRemoteControlRelayV2HttpOperation> =
+  z.infer<(typeof httpResponses)[K]>;
+
+const requestSchemas: {
+  [K in WebRemoteControlRelayV2HttpOperation]: z.ZodType<WebRemoteControlRelayV2HttpRequest<K>>;
+} = httpRequests;
+const responseSchemas: {
+  [K in WebRemoteControlRelayV2HttpOperation]: z.ZodType<WebRemoteControlRelayV2HttpResponse<K>>;
+} = httpResponses;
+
+export function parseWebRemoteControlRelayV2HttpRequest<
+  K extends WebRemoteControlRelayV2HttpOperation,
+>(operation: K, value: unknown): WebRemoteControlRelayV2HttpRequest<K> | null {
+  const schema: z.ZodType<WebRemoteControlRelayV2HttpRequest<K>> = requestSchemas[operation];
+  const result = schema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+export function parseWebRemoteControlRelayV2HttpResponse<
+  K extends WebRemoteControlRelayV2HttpOperation,
+>(operation: K, value: unknown): WebRemoteControlRelayV2HttpResponse<K> | null {
+  const schema: z.ZodType<WebRemoteControlRelayV2HttpResponse<K>> = responseSchemas[operation];
+  const result = schema.safeParse(value);
+  return result.success ? result.data : null;
+}
+
+/** HTTP errors keep only their category so JWTs, token URLs or server bodies never reach logs or the renderer. */
+export class WebRemoteControlV2ConnectionError extends Error {
+  constructor(
+    readonly reason: "auth-required" | "relay-unavailable",
+    readonly retryable = false,
+  ) {
+    super(reason);
+    this.name = "WebRemoteControlV2ConnectionError";
+  }
+}

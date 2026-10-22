@@ -1,13 +1,15 @@
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { storageMigrationReportSchema } from "@zcode/shared/sqlite-migrations";
 import { afterEach, describe, expect, it } from "vitest";
+import { openStartupSqliteSessionStore } from "../src/storage/index.js";
 import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
 import {
   runSqliteSessionMigrationsAsync,
-  runSqliteSessionMigrationsSync,
 } from "../src/storage/session-store/migration-runner.js";
 
 // Real sqlite fixtures of the histories that reach this build (see specs/session-database-migrations.md):
@@ -108,7 +110,7 @@ describe("session database history: fork build DB before the PR opens with the n
     expect(seedRows(db)).toEqual(seedBefore);
   });
 
-  it("is idempotent on reopen and keeps the sync compat path equivalent", async () => {
+  it("is idempotent on reopen", async () => {
     const path = await copyFixture("fork-head-execution-worktree.sqlite");
     const first = open(path);
     await runSqliteSessionMigrationsAsync(first, path);
@@ -120,12 +122,6 @@ describe("session database history: fork build DB before the PR opens with the n
     expect(result.applied).toEqual([]);
     expect(ledger(second)).toEqual(snapshot);
     second.close();
-
-    const syncPath = await copyFixture("fork-head-execution-worktree.sqlite");
-    const syncDb = open(syncPath);
-    runSqliteSessionMigrationsSync(syncDb, syncPath);
-    expect([...ledger(syncDb).keys()].sort()).toEqual([...snapshot.keys()].sort());
-    expect(ledger(syncDb).get(NEW_EXECUTION_ID)?.checksum).toBe(snapshot.get(NEW_EXECUTION_ID)?.checksum);
   });
 
   it("ignores fork ledger rows this build does not own (the fork usage rollup id)", async () => {
@@ -177,7 +173,7 @@ describe("session database history: fork build DB with translated 0020 SQL comme
   it("keeps the translated variant accepted by the runner's preflight for every reopen", async () => {
     const path = await copyFixture("fork-translated-0020.sqlite");
     const db = open(path);
-    runSqliteSessionMigrationsSync(db, path);
+    await runSqliteSessionMigrationsAsync(db, path);
     expect(ledger(db).get("0020_provider_model_selection")?.checksum).toBe(TRANSLATED_0020);
   });
 });
@@ -210,5 +206,29 @@ describe("session database history: rollback to the pre-PR fork build (scenario 
     for (const id of preIds) expect(after.get(id)?.checksum).toBe(preRow.get(id)?.checksum);
     // The columns the pre-PR build reads and writes are still present.
     expect(sessionColumns(db)).toEqual(expect.arrayContaining(["execution_directory", "execution_branch", "fork_incognito"]));
+  });
+});
+
+// Regression: the fork's synchronous startup open ran pending migrations with no table backup and reported
+// `backupSkipped: true`. The startup entry point must take the backup for a pending upgrade and report it.
+describe("session database startup open takes the backup for a pending upgrade", () => {
+  it("reports a backup directory with the table snapshot and the storage-migrated report shape", async () => {
+    const path = await copyFixture("upstream-3.16.1.sqlite");
+    const root = join(path, "..", "..", "..");
+    const store = await openStartupSqliteSessionStore({ dbPath: path });
+    try {
+      const result = store.migrationResult;
+      expect(result.applied).toContain(NEW_EXECUTION_ID);
+      expect(result.backupSkipped).toBe(false);
+      expect(result.backupPath).toBeDefined();
+      expect(result.backupPath?.startsWith(join(root, "backup"))).toBe(true);
+      expect(existsSync(join(result.backupPath!, "tables.sqlite"))).toBe(true);
+      expect(existsSync(join(result.backupPath!, "backup.json"))).toBe(true);
+      expect(
+        storageMigrationReportSchema.parse({ version: 1, kind: "storage-migrated", ...result }),
+      ).toEqual({ version: 1, kind: "storage-migrated", ...result });
+    } finally {
+      store.close();
+    }
   });
 });

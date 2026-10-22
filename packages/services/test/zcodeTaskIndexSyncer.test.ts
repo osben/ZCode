@@ -384,7 +384,6 @@ function snapshotWith(
       activeTurnId: undefined,
       lastTurnId: undefined,
       lastInputId: undefined,
-      archivedAt: undefined,
     },
     settings: {
       model: {
@@ -1115,7 +1114,6 @@ describe("createZCodeTaskIndexSyncer", () => {
       expect.objectContaining({
         workspacePath: "/repo",
         sessionIds: expect.arrayContaining(["child", "fork", "unknown"]),
-        includeArchived: true,
       }),
     );
     expect(env.agent.resumeSession).not.toHaveBeenCalled();

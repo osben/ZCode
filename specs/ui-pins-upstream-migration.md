@@ -5,12 +5,12 @@ Upstream: `0a1fc56d`. Fork base: `aac4755666d09fdcd70272fcf063c077a639015f`.
 
 ## Current state (verified in the tree)
 
-| Item        | Fork (origin/integration)                                                                                                                                                    | Upstream (0a1fc56d)                                                                                                                                                                                                           |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pin storage | `fork_workspace_pins(workspace_key PK, pinned_at)` in `tasks-index.sqlite`, migration `9001_fork_workspace_pins` (`packages/services/src/session/forkWorkspacePinRepo.ts`)   | `projects.pinned` + `projects.pinned_at` in project storage (`packages/services/src/project-storage/schema.ts`)                                                                                                               |
-| Pin writer  | `zcodeTaskService.setWorkspacePinned` / `listPinnedWorkspaceKeys` (adapter `zcodeTaskServiceAdapter.ts` ~3540)                                                               | `projectService.saveProject({ id, pinned })` (`packages/services/src/project/index.ts`), used by `ProjectSidebarNode.tsx`                                                                                                     |
-| Pin UI      | No fork UI writer is active. `WorkspaceSidebar.tsx` no longer calls the pin methods; `workspaceSidebarProjectPins.test.ts` is `describe.skip` (ledger row UI2-SIDEBAR-PINS). | `project-sidebar/ProjectNodeContent.tsx` pin/unpin menu                                                                                                                                                                       |
-| Pin order   | Not stored. The fork's manual tab order lives in the sidebar preference (`lib/workspacePinPreference.ts`).                                                                   | Upstream CONTRACT (`project-sidebar/CONTRACT.md` line 65): display order is owned by the existing sidebar preference; the server stores no UI order for pins. `projects.position` is the project list order, not a pin order. |
+| Item        | Fork (origin/integration)                                                                                                                                                     | Upstream (0a1fc56d)                                                                                                                                                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pin storage | `fork_workspace_pins(workspace_key PK, pinned_at)` in `tasks-index.sqlite`, migration `9001_fork_workspace_pins` (`packages/services/src/session/forkWorkspacePinRepo.ts`)    | `projects.pinned` + `projects.pinned_at` in project storage (`packages/services/src/project-storage/schema.ts`)                                                                                                               |
+| Pin writer  | `zcodeTaskService.setWorkspacePinned` / `listPinnedWorkspaceKeys` (adapter `zcodeTaskServiceAdapter.ts` ~3540)                                                                | `projectService.saveProject({ id, pinned })` (`packages/services/src/project/index.ts`), used by `ProjectSidebarNode.tsx`                                                                                                     |
+| Pin UI      | No fork UI writer is active. `WorkspaceSidebar.tsx` no longer calls the pin methods; `workspaceSidebarProjectPins.test.ts` is deleted (ledger row UI2-SIDEBAR-PINS resolved). | `project-sidebar/ProjectNodeContent.tsx` pin/unpin menu                                                                                                                                                                       |
+| Pin order   | Not stored. The fork's manual tab order lives in the sidebar preference (`lib/workspacePinPreference.ts`).                                                                    | Upstream CONTRACT (`project-sidebar/CONTRACT.md` line 65): display order is owned by the existing sidebar preference; the server stores no UI order for pins. `projects.position` is the project list order, not a pin order. |
 
 Consequence: the fork's pin table has no ordering field to carry over, and the pin order was never a
 server fact. The migration only needs to set the upstream boolean.
@@ -56,8 +56,13 @@ A marker with a different checksum fails loudly, as `ForkWorkspacePinRepo` does 
   service contract and the adapter. The UI has no caller left.
 - `ForkWorkspacePinRepo.setWorkspacePinned` stays callable by its own tests only; the migration
   test seeds rows through direct SQL instead.
-- `workspaceSidebarProjectPins.test.ts` stays `describe.skip` (already skipped; tests fork-only
-  sidebar behavior). It is not deleted.
+- `workspaceSidebarProjectPins.test.ts` is deleted, not kept skipped. It asserted fork-only sidebar
+  source contracts (`WorkspaceSidebar.tsx` / `WorkspaceSidebarItem.tsx` pin rendering, drag clamping,
+  `listPinnedWorkspaceKeys` / `setWorkspacePinned` persistence) that the project sidebar no longer has.
+  Its dead leftovers went with it: `lib/workspacePinPreference.ts` and its test, the
+  `TID_WORKSPACE_PIN_DIVIDER` / `TID_WORKSPACE_TOGGLE_PIN` test ids, and the
+  `workspaceSidebar.pinProject` / `unpinProject` / `pinFailed` locale keys (no src usages).
+  The pin/unpin action is the upstream `projects.pinned` write via `saveProject`.
 
 ## Acceptance tests (written first)
 

@@ -18,7 +18,7 @@ The conversation pinned-message strip keeps its accessible title on the containe
 The sidebar has two task-creation entry points with different destinations:
 
 - The top "New task" control (`taskList.newThread` in the sidebar, `sidebar.newTask` on the collapsed-sidebar overlay) starts a draft in the active workspace (the project the user is working in).
-- The "Tasks" section's add button (`TID_CONVERSATION_NEW_TASK`) starts a draft in the app-owned conversation workspace. The composer then shows "Select project" and no Git destination chip, by design.
+- The "Tasks" section's add button (`TID_VIRTUAL_PROJECT_NEW_TASK`, rendered as `virtual-project-new-task`) starts a draft in the app-owned conversation workspace. The composer then shows "Select project" and no Git destination chip, by design.
 
 Both used to carry the same accessible name and tooltip ("New task"). Screen readers, keyboard users, and automation that select by role and name could not tell them apart. Clicking `button "New task"` (the only button with that exact name) reproduces the QA MINOR-3 symptom (RT3-C7obs): after a reload, the composer shows "Select project" with no destination chip. The QA harness did not record which control it clicked.
 
@@ -26,7 +26,7 @@ Both used to carry the same accessible name and tooltip ("New task"). Screen rea
 
 - The conversation-section button uses its own message key, `workspaceSidebar.newTaskOutsideProject`, for both its `aria-label` and its tooltip title. The wording reuses the composer's existing "outside a project" phrasing (`chat.empty.workOutsideProject`).
 - In every shipped locale, that label differs from both `taskList.newThread` and `sidebar.newTask`, so only the top entry point is named plain "New task".
-- Behavior, test id, icon, and placement are unchanged. The upstream key `workspaceSidebar.newConversation` stays in the locale tables untouched.
+- Behavior, test id (`TID_VIRTUAL_PROJECT_NEW_TASK`), icon, and placement are unchanged. The upstream key `workspaceSidebar.newConversation` stays in the locale tables untouched.
 
 ### Acceptance
 

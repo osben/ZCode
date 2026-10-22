@@ -25,7 +25,7 @@ async function fixture(age = DAY) {
   const root = await mkdtemp(join(tmpdir(), "zcode-detached-"));
   roots.push(root);
   const dbPath = join(root, "usage.sqlite");
-  const store = createSqliteSessionStore({ dbPath });
+  const store = await createSqliteSessionStore({ dbPath });
   for (const id of ["deleted", "surviving"])
     await store.createSession({
       id: createSessionId(id),

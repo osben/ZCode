@@ -7,7 +7,7 @@ import {
   type SessionId,
 } from "@zcode/contracts";
 import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
-import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
+import { runSqliteSessionMigrationsAsync } from "../src/storage/session-store/migration-runner.js";
 import { createSession, getSession } from "../src/storage/session-store/repositories/sessions.js";
 
 // specs/incognito-session.md "Session storage": fork migration 9001_fork_session_incognito adds
@@ -21,10 +21,10 @@ describe("session incognito storage", () => {
     for (const db of databases.splice(0)) db.close();
   });
 
-  function openDb(): DatabaseSync {
+  async function openDb(): Promise<DatabaseSync> {
     const db = new DatabaseSync(":memory:");
     databases.push(db);
-    runSqliteSessionMigrationsSync(db, ":memory:");
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     return db;
   }
 
@@ -44,8 +44,8 @@ describe("session incognito storage", () => {
     };
   }
 
-  it("adds a nullable fork_incognito column and records the fork ledger row", () => {
-    const db = openDb();
+  it("adds a nullable fork_incognito column and records the fork ledger row", async () => {
+    const db = await openDb();
     const column = db
       .prepare("SELECT \"notnull\", dflt_value FROM pragma_table_info('session') WHERE name = ?")
       .get("fork_incognito");
@@ -55,8 +55,8 @@ describe("session incognito storage", () => {
     });
   });
 
-  it("round-trips the profile; a normal session stays NULL", () => {
-    const db = openDb();
+  it("round-trips the profile; a normal session stays NULL", async () => {
+    const db = await openDb();
     const incognitoId = createSessionId("incognito");
     const normalId = createSessionId("normal");
 
@@ -69,8 +69,8 @@ describe("session incognito storage", () => {
     });
   });
 
-  it("lets a profile land after a NULL insert, then never changes or clears it", () => {
-    const db = openDb();
+  it("lets a profile land after a NULL insert, then never changes or clears it", async () => {
+    const db = await openDb();
     const id = createSessionId("set-once");
 
     createSession(db, sessionInput(id));
@@ -81,8 +81,8 @@ describe("session incognito storage", () => {
     expect(createSession(db, sessionInput(id)).incognito).toEqual(profile);
   });
 
-  it("keeps the profile through an upstream-shaped upsert that does not know the column", () => {
-    const db = openDb();
+  it("keeps the profile through an upstream-shaped upsert that does not know the column", async () => {
+    const db = await openDb();
     const id = createSessionId("upstream-upsert");
     createSession(db, sessionInput(id, { incognito: profile }));
 
@@ -95,8 +95,8 @@ describe("session incognito storage", () => {
     expect(getSession(db, id)).toMatchObject({ title: "Renamed", incognito: profile });
   });
 
-  it("reads a stored value this build cannot parse as lockdown, not as a normal session", () => {
-    const db = openDb();
+  it("reads a stored value this build cannot parse as lockdown, not as a normal session", async () => {
+    const db = await openDb();
     const id = createSessionId("damaged");
     createSession(db, sessionInput(id));
     // A version-keyed row and a pre-toggle nine-key row both fail the flat strict schema.
@@ -110,13 +110,13 @@ describe("session incognito storage", () => {
     }
   });
 
-  it("tolerates ledger rows from another build and does not rerun its own migration", () => {
-    const db = openDb();
+  it("tolerates ledger rows from another build and does not rerun its own migration", async () => {
+    const db = await openDb();
     db.prepare(
       "INSERT INTO schema_migration (id, checksum, app_version, time_applied) VALUES (?, ?, ?, ?)",
     ).run("9002_fork_future_feature", "unknown-checksum", "9.9.9", 1);
 
-    expect(() => runSqliteSessionMigrationsSync(db, ":memory:")).not.toThrow();
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     expect(
       db.prepare("SELECT count(*) AS n FROM schema_migration WHERE id = ?").get(MIGRATION_ID),
     ).toEqual({ n: 1 });

@@ -23,10 +23,10 @@ were adopted from upstream. Comment-only fork edits are not behavior.
   key badge applies only to `api.openai.com` base URLs; the ChatGPT plan keeps "Subscription".
   Projection test expectations for `example.com` API-key providers no longer carry the "API" badge
   (fork test shape).
-- `packages/ui/test/archivedTasksActionsMenu.test.ts`: one case `it.skip` with `TEMPORARY(UI-2)`.
-  The fork replaced the bulk-delete `useConfirmDialog` with `TaskDeleteConfirmationDialog`
-  (`eraseTasks`). The fork test for that flow imports the fork-only `WebRemoteControlTaskIndex`,
-  which upstream does not have.
+- `packages/ui/test/archivedTasksActionsMenu.test.ts`: resolved. The `TEMPORARY(UI-2)` skip is removed.
+  Settings → Archives delete now routes through `TaskDeleteConfirmationDialog` and the permanent
+  erase executor (`specs/session-deletion-cascade.md`, Settings → Archives). The test targets the
+  live `ArchiveManagement`, not the removed `WebRemoteControlTaskIndex`.
 - `packages/ui/test/savedWorkflowDetailView.test.ts`: literal Chinese not-found copy replaced by
   `expectedCopy("workflows.hub.detail.notFound")` (test runs in en-US).
 - `packages/ui/test/savedWorkflowLaunchDialog.test.ts`: two upstream cases use `expectedCopy` keys
