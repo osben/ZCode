@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { FORK_LEDGER_SQL_VARIANTS } from "../src/storage/session-store/fork-migrations.js";
-import { runSqliteSessionMigrationsSync } from "../src/storage/session-store/migration-runner.js";
+import { runSqliteSessionMigrationsAsync } from "../src/storage/session-store/migration-runner.js";
 
 // Upstream (zai-org/ZCode) ledger checksums. The fork shares ~/.zcode/cli/db/db.sqlite with the
 // upstream app, so any change to these migrations' SQL text, comments included, makes the other
@@ -57,10 +57,10 @@ describe("upstream session migration checksum pin", () => {
     expect(Object.keys(UPSTREAM_CHECKSUMS).filter((id) => id.startsWith("9001_fork_"))).toEqual([]);
   });
 
-  it("a fresh database writes exactly the upstream checksum for every upstream migration", () => {
+  it("a fresh database writes exactly the upstream checksum for every upstream migration", async () => {
     const db = new DatabaseSync(":memory:");
     databases.push(db);
-    runSqliteSessionMigrationsSync(db, ":memory:");
+    await runSqliteSessionMigrationsAsync(db, ":memory:");
     const ledger = Object.fromEntries(
       db
         .prepare("SELECT id, checksum FROM schema_migration")

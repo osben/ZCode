@@ -38,7 +38,7 @@ beforeEach(async () => {
   dbPath = join(tempRoot, "session.sqlite");
   // Opening a store runs the upstream migrations once; afterwards the repositories are driven
   // directly so no write-triggered recompute interferes with explicit control of the rollup.
-  const store = createSqliteSessionStore({ dbPath });
+  const store = await createSqliteSessionStore({ dbPath });
   const sessions = [
     ["s1", "/work/alpha"],
     ["s2", "/work/alpha"],
@@ -246,7 +246,7 @@ describe("fork usage rollup", () => {
 
     // The upstream runner only walks its own migration list; unknown ledger rows and fork_ tables
     // must not trip its checksum or schema checks. Opening the store again exercises that path.
-    const reopened = createSqliteSessionStore({ dbPath });
+    const reopened = await createSqliteSessionStore({ dbPath });
     try {
       const result = await reopened.queryAppUsage({ since: 0, until: NOW, tzOffsetMs: 0 });
       expect(result.totals.modelRequestCount).toBeGreaterThan(0);
@@ -300,7 +300,7 @@ describe("fork usage rollup", () => {
 
   it("reuses a just-finished recompute within the read debounce but never skips fresh writes", async () => {
     db.close();
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const input = { since: 0, until: NOW + DAY, tzOffsetMs: 0 };
     const record = (id: string, startedAt: number) =>
       store.recordModelUsage({

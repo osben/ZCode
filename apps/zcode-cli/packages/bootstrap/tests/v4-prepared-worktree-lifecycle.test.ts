@@ -91,7 +91,7 @@ function makeFakeRecord(sessionId: string, target: Harness): ZCodeProtocolSessio
 }
 
 async function makeHarness(dbPath: string): Promise<Harness> {
-  const store = createSqliteSessionStore({ dbPath });
+  const store = await createSqliteSessionStore({ dbPath });
   const target: Harness = {
     context: null as unknown as ZCodeProtocolAgentServerContext,
     gateway: null as unknown as ConversationV4Gateway,

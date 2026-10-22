@@ -5,7 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SESSION_DATABASE_MIGRATIONS } from "../src/storage/session-store/fork-migrations.js";
 import {
-  runSqliteSessionMigrationsSync,
   runSqliteSessionMigrationsAsync,
 } from "../src/storage/session-store/migration-runner.js";
 import type { SqliteMigrationProgress } from "../src/storage/session-store/migration-runner.js";
@@ -84,7 +83,7 @@ describe("Todo144：迁移启动状态与真实 SQLite 锁", () => {
     dirs.push(dir);
     const path = join(dir, "db.sqlite");
     const holder = open(path);
-    runSqliteSessionMigrationsSync(holder, path);
+    await runSqliteSessionMigrationsAsync(holder, path);
     holder.exec("BEGIN IMMEDIATE");
     const waiter = open(path);
     const phases: string[] = [];
@@ -133,7 +132,7 @@ describe("Todo144：迁移启动状态与真实 SQLite 锁", () => {
     dirs.push(dir);
     const path = join(dir, "db.sqlite");
     const holder = open(path);
-    runSqliteSessionMigrationsSync(holder, path);
+    await runSqliteSessionMigrationsAsync(holder, path);
     holder.exec("BEGIN IMMEDIATE");
     const waiter = open(path);
     const phases: string[] = [];
@@ -222,7 +221,7 @@ it("SILENTDB-03: another writer can finish the observed migrations without this 
   dirs.push(dir);
   const path = join(dir, "db.sqlite");
   const holder = open(path);
-  runSqliteSessionMigrationsSync(holder, path);
+  await runSqliteSessionMigrationsAsync(holder, path);
   holder.exec("DELETE FROM schema_migration WHERE id >= '0020'; BEGIN IMMEDIATE");
   const waiter = open(path);
   const states: SqliteMigrationProgress[] = [];
@@ -233,7 +232,7 @@ it("SILENTDB-03: another writer can finish the observed migrations without this 
       if (state.phase === "waiting_for_lock") {
         expect(state.migration?.kind).toBe("upgrade");
         holder.exec("COMMIT");
-        runSqliteSessionMigrationsSync(holder, path);
+        await runSqliteSessionMigrationsAsync(holder, path);
       }
     },
   });
@@ -281,7 +280,7 @@ it("publishes confirmed migration demand when lock contention recurs after prech
 
 it("does not send malformed ledger IDs as telemetry or fail an otherwise prepared database", async () => {
   const db = open();
-  runSqliteSessionMigrationsSync(db, ":memory:");
+  await runSqliteSessionMigrationsAsync(db, ":memory:");
   db.prepare("INSERT INTO schema_migration VALUES (?, 'external', NULL, 0)").run(
     "private / unexpected ID",
   );

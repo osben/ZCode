@@ -125,8 +125,6 @@ export async function updateSession(
   if (input.revert !== undefined) set("revert", encodeJson(input.revert));
   if (input.permission !== undefined) set("permission", encodeJson(input.permission));
   set("time_compacting", input.timeCompacting);
-  // Fork-owned archive state (time_archived) is index-only; it is not activity.
-  set("time_archived", input.timeArchived);
   if (
     input.title !== undefined ||
     input.titleSource !== undefined ||

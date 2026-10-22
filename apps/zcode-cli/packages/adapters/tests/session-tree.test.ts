@@ -33,7 +33,7 @@ async function openStore() {
   const root = await mkdtemp(join(tmpdir(), "zcode-session-tree-"));
   tempRoots.push(root);
   const dbPath = join(root, "db.sqlite");
-  const store = createSqliteSessionStore({ dbPath });
+  const store = await createSqliteSessionStore({ dbPath });
   // Second connection: raw seeding of tables the store has no convenient writer for, and
   // orphan checks that must not go through the code under test.
   const raw = new DatabaseSync(dbPath);
@@ -138,7 +138,8 @@ async function seedFamily(h: Awaited<ReturnType<typeof openStore>>) {
   const { store, raw: db } = h;
   const parent = await seedSession(store, "parent", "interactive");
   await seedSession(store, "chat", "selection_side_chat", "parent");
-  await store.updateSession({ id: createSessionId("chat"), timeArchived: 100 });
+  // Archive state has no port writer; the listing and count filters read the time_archived column directly.
+  db.prepare("update session set time_archived = ? where id = ?").run(100, raw("chat"));
   await seedSession(store, "nested-sub", "subagent_child", "chat");
   await seedSession(store, "sub", "subagent_child", "parent");
   await seedSession(store, "wf-child", "workflow_child", "parent");
@@ -383,7 +384,7 @@ describe("session tree count and erase", () => {
   });
 
   it("cascades message rows on the production async startup path too", async () => {
-    // The protocol entrypoint opens the store with openStartupSqliteSessionStore, not the sync constructor.
+    // The protocol entrypoint opens the store with openStartupSqliteSessionStore, not createSqliteSessionStore.
     const root = await mkdtemp(join(tmpdir(), "zcode-session-tree-startup-"));
     tempRoots.push(root);
     const dbPath = join(root, "db.sqlite");

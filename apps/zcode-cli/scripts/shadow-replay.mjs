@@ -62,7 +62,7 @@ if (!args["no-copy"]) {
   }
 }
 
-const store = createSqliteSessionStore({ dbPath });
+const store = await createSqliteSessionStore({ dbPath });
 
 const sessions = args.session
   ? [{ id: args.session }]

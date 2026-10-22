@@ -14,10 +14,10 @@ import {
   SqliteSchemaMigrationChecksumError,
   sqliteMigrations,
 } from "@zcode/shared/sqlite-migrations";
-import type { MigrationResult, SqliteMigration } from "@zcode/shared/sqlite-migrations";
+import type { MigrationResult } from "@zcode/shared/sqlite-migrations";
 import { SqliteSessionMigrationError } from "./errors.js";
 import { resolveSessionDatabaseMigrations } from "./fork-migrations.js";
-import type { SchemaMigrationRow } from "./rows.js";
+type SchemaMigrationRow = { id: string; checksum: string };
 
 export const DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS = 5_000;
 
@@ -26,7 +26,6 @@ const WAL_RETRY_INITIAL_DELAY_MS = 10;
 const WAL_RETRY_MAX_DELAY_MS = 200;
 const ASYNC_NATIVE_BUSY_TIMEOUT_MS = 25;
 export const DEFAULT_SQLITE_MIGRATION_WAIT_MS = 60 * 60_000;
-const waitBuffer = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 export type SqliteMigrationPhase =
   | "checking"
@@ -209,76 +208,6 @@ export async function runSqliteSessionMigrationsAsync(
   }
 }
 
-/**
- * Compatibility path for the synchronous factories (`createSqliteSessionStore`,
- * `openStartupSqliteSessionStore`). It applies the same ledger rules as the async runner but takes
- * no table backup and cannot yield. Remove together with the sync factories (see the spec).
- */
-export function runSqliteSessionMigrationsSync(
-  db: DatabaseSync,
-  dbPath: string,
-  lockTimeoutMs = DEFAULT_SQLITE_STARTUP_LOCK_TIMEOUT_MS,
-): MigrationResult {
-  const deadline = Date.now() + Math.max(0, lockTimeoutMs);
-  db.exec("pragma foreign_keys = on");
-  retryBusySync(deadline, dbPath, () => {
-    const journal = readJournalMode(db);
-    if (journal === "wal" || isMemoryJournalMode(dbPath, journal)) return;
-    const mode = readJournalMode(db, true);
-    if (mode !== "wal" && !isMemoryJournalMode(dbPath, mode))
-      throw new SqliteSessionMigrationError(
-        `SQLite refused WAL journal mode for ${dbPath}; received ${mode}`,
-        { dbPath, kind: "sql_failed" },
-      );
-  });
-  retryBusySync(deadline, dbPath, () => db.exec("begin immediate"));
-  try {
-    ensureSqliteSchemaMigrationTable(db);
-    const applied: string[] = [];
-    for (const migration of resolveSessionDatabaseMigrations(db))
-      if (applyLedgerStep(db, dbPath, migration)) applied.push(migration.id);
-    db.exec("commit");
-    // Sync compat never takes the table backup, so the shape reports backupSkipped as true.
-    return { applied, backupSkipped: true };
-  } catch (error) {
-    if (db.isTransaction) db.exec("rollback");
-    throw error instanceof SqliteSessionMigrationError ||
-      error instanceof MigrationChecksumError ||
-      error instanceof SqliteSchemaMigrationChecksumError
-      ? error
-      : normalizeMigrationError(error, dbPath);
-  }
-}
-
-/**
- * Applies one migration to a ledger inside the caller's write transaction (sync compat only).
- * Returns true only when the migration SQL ran; a relocated previousIds row does not count as applied.
- */
-function applyLedgerStep(db: DatabaseSync, dbPath: string, migration: SqliteMigration): boolean {
-  const current = migrationChecksum(migration.sql);
-  const ids = [migration.id, ...(migration.previousIds ?? [])];
-  const applied = ids
-    .map((id) => ({ id, row: readAppliedMigration(db, id) }))
-    .filter((entry): entry is { id: string; row: SchemaMigrationRow } => entry.row !== undefined);
-  for (const entry of applied)
-    ensureMigrationChecksum(entry.id, entry.row.checksum, current, dbPath);
-  if (!applied.length) {
-    if (migration.apply) migration.apply(db);
-    else db.exec(migration.sql);
-    db.prepare(
-      "insert into schema_migration (id, checksum, app_version, time_applied) values (?, ?, ?, ?)",
-    ).run(migration.id, current, migration.appVersion, Date.now());
-    return true;
-  }
-  if (!applied.some((entry) => entry.id === migration.id)) {
-    // previousIds: the relocated row carries the same checksum and timestamp; its SQL is not re-run.
-    db.prepare(
-      "insert into schema_migration (id, checksum, app_version, time_applied) select ?, checksum, app_version, time_applied from schema_migration where id = ?",
-    ).run(migration.id, applied[0]!.id);
-  }
-  return false;
-}
-
 function isSqliteBusyError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -299,27 +228,6 @@ function readJournalMode(db: DatabaseSync, enableWal = false): string {
     | undefined;
   const mode = row?.journal_mode;
   return typeof mode === "string" ? mode.toLowerCase() : "unknown";
-}
-
-function waitSync(delayMs: number): void {
-  Atomics.wait(waitBuffer, 0, 0, Math.max(1, Math.ceil(delayMs)));
-}
-
-/** Retries a synchronous SQLite step while another writer holds the lock, bounded by the deadline. */
-function retryBusySync(deadline: number, dbPath: string, operation: () => void): void {
-  let delayMs = WAL_RETRY_INITIAL_DELAY_MS;
-  for (;;) {
-    try {
-      operation();
-      return;
-    } catch (error) {
-      if (!isSqliteBusyError(error)) throw normalizeMigrationError(error, dbPath);
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) throw lockTimeoutError(error, dbPath);
-      waitSync(Math.min(remainingMs, delayMs));
-      delayMs = Math.min(WAL_RETRY_MAX_DELAY_MS, delayMs * 2);
-    }
-  }
 }
 
 function normalizeMigrationError(

@@ -24,7 +24,7 @@ describe("fork usage rollup performance", () => {
   it("stays within the recompute and query budgets on a heavy 30-day history", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "zcode-fork-rollup-perf-"));
     const dbPath = join(tempRoot, "session.sqlite");
-    const store = createSqliteSessionStore({ dbPath });
+    const store = await createSqliteSessionStore({ dbPath });
     const sessionId = createSessionId("perf");
     await store.createSession({
       id: sessionId,
