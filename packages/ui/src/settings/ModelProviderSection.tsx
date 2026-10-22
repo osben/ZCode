@@ -41,12 +41,19 @@ import {
 } from "./model-provider-section/constants.js";
 import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
-import { AcpAgentsPanel } from "./model-provider-section/AcpAgentsPanel.js";
+import {
+  AcpAgentCatalogDetail,
+  useAcpAgentDetection,
+} from "./model-provider-section/AcpAgentsPanel.js";
+import { AcpAgentDetail } from "./model-provider-section/AcpAgentCard.js";
 import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
 import {
   acpProviderId,
   buildAcpAgentAccess,
+  buildAcpDisableOverlay,
+  buildAcpNavigationGroup,
   buildAcpPseudoModelConfig,
+  withoutAcpManagedProviders,
   type AcpAgentFormValues,
   type AcpSavedAccess,
 } from "./model-provider-section/acpAgentConfig.js";
@@ -693,6 +700,59 @@ export function ModelProviderSection({
     };
   }, [presetSubscriptionProviderId]);
 
+  // Dev-only gate (specs/acp-agent-runtime.md "Dev-only visibility"): with the gate off nothing is probed or listed.
+  const acpEnabled = isLocalDevelopmentRuntime(platform);
+  const acpDetection = useAcpAgentDetection({ enabled: acpEnabled });
+  const acpProviderInfo = useMemo(() => {
+    const accessByAgentId = new Map<string, AcpSavedAccess>();
+    const conflictAgentIds = new Set<string>();
+    const enabledProviderIds = new Set<string>();
+    for (const provider of providerSettingsView?.providers ?? []) {
+      if (!provider.providerId.startsWith("acp:")) continue;
+      const agentId = provider.providerId.slice("acp:".length);
+      const access = provider.effectiveConfig.access;
+      if (access?.type !== "acp-agent") {
+        // The stable id is taken by a provider that is not ACP-managed: never
+        // edit or delete it from this section.
+        conflictAgentIds.add(agentId);
+        continue;
+      }
+      accessByAgentId.set(agentId, {
+        command: access.command ?? "",
+        args: access.args ?? [],
+        env: access.env ?? {},
+      });
+      if (provider.enabled) enabledProviderIds.add(provider.providerId);
+    }
+    return { accessByAgentId, conflictAgentIds, enabledProviderIds };
+  }, [providerSettingsView]);
+  const acpEnabledProviderIds = acpProviderInfo.enabledProviderIds;
+  const acpManagedAgentIds = useMemo(
+    () => new Set(acpProviderInfo.accessByAgentId.keys()),
+    [acpProviderInfo.accessByAgentId],
+  );
+  const acpGroup = useMemo(
+    () =>
+      buildAcpNavigationGroup({
+        enabled: acpEnabled,
+        title: intl.formatMessage({ id: "settings.modelProvider.acp.title" }),
+        detectLabel: intl.formatMessage({ id: "settings.modelProvider.acp.detectEntry" }),
+        detectingLabel: intl.formatMessage({ id: "settings.modelProvider.acp.detecting" }),
+        detection: acpDetection,
+        enabledProviderIds: acpEnabledProviderIds,
+        managedAgentIds: acpManagedAgentIds,
+        conflictAgentIds: acpProviderInfo.conflictAgentIds,
+      }),
+    [
+      acpDetection,
+      acpEnabled,
+      acpEnabledProviderIds,
+      acpManagedAgentIds,
+      acpProviderInfo.conflictAgentIds,
+      intl,
+    ],
+  );
+
   const { navigationGroups, navigationItems, selectedNavItem, navigationUnavailable } =
     useModelProviderNavigation({
       presetProviders,
@@ -710,6 +770,8 @@ export function ModelProviderSection({
       familyConnectionSettingsFailed,
       selectedNodeKey,
       setSelectedNodeKey,
+      acpGroup,
+      acpDetectionPending: acpEnabled && acpDetection.status === "loading",
       intl,
     });
   const selectedPlanAccessKey =
@@ -1069,9 +1131,11 @@ export function ModelProviderSection({
   const handleReorderProviderIds = useCallback(
     async (orderedGroupProviderIds: string[]) => {
       const groupProviderIdSet = new Set(orderedGroupProviderIds);
-      const currentProviderIds = sortModelProvidersForDisplay(modelProviders, displayOrder).map(
-        (provider) => provider.providerId,
-      );
+      // ACP-managed providers are owned by the ACP section; keep their ids out of the shared display order.
+      const currentProviderIds = sortModelProvidersForDisplay(
+        withoutAcpManagedProviders(modelProviders),
+        displayOrder,
+      ).map((provider) => provider.providerId);
       const insertionIndex = currentProviderIds.findIndex((providerId) =>
         groupProviderIdSet.has(providerId),
       );
@@ -1095,31 +1159,6 @@ export function ModelProviderSection({
     },
     [testModelConnectivity],
   );
-
-  const acpProviderInfo = useMemo(() => {
-    const accessByAgentId = new Map<string, AcpSavedAccess>();
-    const conflictAgentIds = new Set<string>();
-    const enabledProviderIds = new Set<string>();
-    for (const provider of providerSettingsView?.providers ?? []) {
-      if (!provider.providerId.startsWith("acp:")) continue;
-      const agentId = provider.providerId.slice("acp:".length);
-      const access = provider.effectiveConfig.access;
-      if (access?.type !== "acp-agent") {
-        // The stable id is taken by a provider that is not ACP-managed: never
-        // edit or delete it from this section.
-        conflictAgentIds.add(agentId);
-        continue;
-      }
-      accessByAgentId.set(agentId, {
-        command: access.command ?? "",
-        args: access.args ?? [],
-        env: access.env ?? {},
-      });
-      if (provider.enabled) enabledProviderIds.add(provider.providerId);
-    }
-    return { accessByAgentId, conflictAgentIds, enabledProviderIds };
-  }, [providerSettingsView]);
-  const acpEnabledProviderIds = acpProviderInfo.enabledProviderIds;
 
   // ACP agents become personal providers (`acp:<agentId>`) holding one
   // synthetic model (modelId = agentId); the model config mirrors the shape
@@ -1203,12 +1242,15 @@ export function ModelProviderSection({
       const existing = providerSettingsView?.providers.find(
         (provider) => provider.providerId === providerId,
       );
-      // Ownership check: only delete a provider this section manages — a
-      // same-id provider with another access type is not ours to remove.
-      if (!existing || existing.effectiveConfig.access?.type !== "acp-agent") return;
-      await deleteProvider(providerId);
+      // Switching off keeps the saved launch config: the overlay carries the access back.
+      // Removing the provider entirely is out of scope for this section.
+      const overlay = buildAcpDisableOverlay(existing?.effectiveConfig.access);
+      if (!overlay) return;
+      await providerSettingsService.savePersonalProviderOverlay(providerId, overlay, {
+        enabled: false,
+      });
     },
-    [providerSettingsView, deleteProvider],
+    [providerSettingsView, providerSettingsService],
   );
 
   // On a slow first load, returning null left the entire model provider page blank,
@@ -1230,16 +1272,6 @@ export function ModelProviderSection({
 
   return (
     <div className="space-y-6">
-      {isLocalDevelopmentRuntime(platform) ? (
-        <AcpAgentsPanel
-          enabledProviderIds={acpEnabledProviderIds}
-          providerAccessByAgentId={acpProviderInfo.accessByAgentId}
-          conflictAgentIds={acpProviderInfo.conflictAgentIds}
-          onEnableAgent={handleAcpEnableAgent}
-          onUpdateAgent={handleAcpUpdateAgent}
-          onDisableAgent={handleAcpDisableAgent}
-        />
-      ) : null}
       <ModelProviderSectionLayout
         description={intl.formatMessage({ id: "settings.modelProviderDescription" })}
         refreshLabel={intl.formatMessage({ id: "settings.modelProvider.refresh" })}
@@ -1254,6 +1286,8 @@ export function ModelProviderSection({
             refreshTeamPlanProducts: refreshAuthenticatedEnterpriseProducts,
           });
           refreshCodingPlanEntitlements();
+          // The page refresh also rescans ACP agents, so a newly installed CLI shows up without a reload.
+          if (acpEnabled) acpDetection.rescan();
         }}
         addProviderLabel={intl.formatMessage({ id: "settings.modelProvider.addProviderAction" })}
         onAddProvider={() => setTemplatePickerOpen(true)}
@@ -1283,6 +1317,26 @@ export function ModelProviderSection({
             onCreateCustom={(label) => {
               return handleCreateProvider({ providerName: label });
             }}
+          />
+        ) : selectedNavItem?.type === "acpAgent" ? (
+          <AcpAgentDetail
+            key={selectedNavItem.key}
+            agent={selectedNavItem.agent}
+            enabled={selectedNavItem.enabled}
+            conflict={selectedNavItem.conflict}
+            savedAccess={acpProviderInfo.accessByAgentId.get(selectedNavItem.agentId)}
+            scanError={acpDetection.error}
+            rescanning={acpDetection.refreshing}
+            onRescan={acpDetection.rescan}
+            onEnable={(form) => handleAcpEnableAgent(selectedNavItem.agent, form)}
+            onUpdate={(form) => handleAcpUpdateAgent(selectedNavItem.agent, form)}
+            onDisable={() => handleAcpDisableAgent(selectedNavItem.agent)}
+          />
+        ) : selectedNavItem?.type === "acpDetect" ? (
+          <AcpAgentCatalogDetail
+            key={selectedNavItem.key}
+            detection={acpDetection}
+            status={selectedNavItem.detection}
           />
         ) : (
           <ModelProviderSectionDetail

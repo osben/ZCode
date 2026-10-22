@@ -1,3 +1,4 @@
+import type { AcpAgentSummary } from "@zcode/services";
 import {
   BIGMODEL_PROVIDER_ID,
   buildBigModelApiUrl,
@@ -218,9 +219,50 @@ export type ModelProviderNavItem =
       label: string;
       provider: ProviderSettingsFormProvider;
       statusActive: boolean;
+    }
+  | {
+      /** One detected ACP agent CLI; the stable selection key is `acp-agent:<agentId>`. */
+      key: string;
+      type: "acpAgent";
+      label: string;
+      agentId: string;
+      agent: AcpAgentSummary;
+      /** The CLI is on this machine; an uninstalled agent is listed only while its provider is managed. */
+      installed: boolean;
+      /** `acp:<agentId>` personal provider exists and is enabled. */
+      enabled: boolean;
+      /** Another personal provider already occupies the `acp:<agentId>` id. */
+      conflict: boolean;
+      /** Shared status dot: enabled and not in conflict. */
+      statusActive: boolean;
+    }
+  | {
+      /** Empty or failed detection: the entry that opens the supported-agent catalog. */
+      key: string;
+      type: "acpDetect";
+      label: string;
+      detection: "empty" | "error";
+    }
+  | {
+      /** First detection in flight; not selectable. */
+      key: string;
+      type: "acpLoading";
+      label: string;
     };
 
-export type ModelProviderNavGroupId = "preset" | "chatgpt" | "custom";
+export type ModelProviderNavGroupId = "preset" | "chatgpt" | "custom" | "acp";
+
+/** Nav rows that display status but cannot be selected (loading placeholders). */
+export type ModelProviderSelectableNavItem = Exclude<
+  ModelProviderNavItem,
+  { type: "codingPlanLoading" | "acpLoading" }
+>;
+
+export function isSelectableNavItem(
+  item: ModelProviderNavItem,
+): item is ModelProviderSelectableNavItem {
+  return item.type !== "codingPlanLoading" && item.type !== "acpLoading";
+}
 
 export interface ModelProviderNavGroup {
   id: ModelProviderNavGroupId;
