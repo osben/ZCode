@@ -139,26 +139,44 @@ export async function waitForRestoredProjects(
 }
 
 /**
+ * Project sidebar shell readiness: the project section is rendered and the occupation onboarding
+ * (which replaces the whole main UI while it is shown) is gone. Both are DOM facts, not a delay.
+ */
+async function projectSidebarShellReady(): Promise<boolean> {
+  try {
+    return await browser.execute(
+      () =>
+        !document.querySelector('[data-testid="onboarding-page"]') &&
+        Boolean(document.querySelector('[data-testid="project-section"]')),
+    );
+  } catch {
+    // renderer reload 期间 WebDriver 会短暂失去执行上下文，按未就绪处理。
+    return false;
+  }
+}
+
+/**
  * Ensures the local project row exists, creating it through the real project form when missing.
  *
  * Root cause (ISSUE-024): the fork's Host deliberately does not seed projects from
  * lastWorkspaceSession (commit 46c33e9d), so the E2E index's projects table stays empty and waiting
- * for the row only times out. A short grace period lets a project registered by the restore path
- * appear first; only then is it created through the UI, so an existing project is never duplicated.
+ * for the row only times out. Nothing registers the row once the sidebar shell is up, so the
+ * existence check runs once at that point and only then is the project created through the UI.
+ * Rule: wait for a readiness signal, never for a fixed delay; the check stays idempotent so an
+ * existing project is never duplicated. If a restore path ever registers projects after the shell
+ * renders, this check must be tied to that path's completion signal instead.
  */
 export async function ensureLocalProjectRow(
   workspacePath: string,
-  { graceTimeout = 5_000, timeout = 30_000 }: { graceTimeout?: number; timeout?: number } = {},
+  { timeout = 30_000 }: { timeout?: number } = {},
 ): Promise<void> {
+  await browser.waitUntil(projectSidebarShellReady, {
+    timeout,
+    interval: 100,
+    timeoutMsg: "项目侧栏外壳没有就绪（项目区未渲染或职业引导仍在）",
+  });
   if (await projectRowExists(workspacePath)) return;
-  try {
-    await waitForProjectRow(workspacePath, { timeout: graceTimeout });
-    return;
-  } catch {
-    // Restore path did not register the project; fall through to the project form.
-  }
   await mkdir(workspacePath, { recursive: true });
-  await $('[data-testid="project-section"]').waitForDisplayed({ timeout });
   await $('[data-testid="project-section"]').moveTo();
   await $('[data-testid="virtual-project-add"]').click();
   await $('[data-testid="virtual-project-name"]').waitForDisplayed({ timeout });

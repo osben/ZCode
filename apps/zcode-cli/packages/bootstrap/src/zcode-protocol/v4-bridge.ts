@@ -2449,14 +2449,20 @@ export function createConversationV4Gateway(
       if (!nativeExecutor.supports(envelope.type)) throw new V4CommandNotImplementedError(envelope.type);
       const result = await nativeExecutor.execute(envelope, admission);
       // Runtime creation alone is not input admission: two-step uploads may still fail or restart.
-      // Only the frozen sendText names its submission; any other sendText executes and leaves the
-      // preparation as it is (the owner decides by the id, see the first-submission spec).
+      // A sendText that names its submission completes that submission's preparation on a match only
+      // (another id leaves it preparing). A sendText with no field comes from a renderer that predates
+      // the field: it keeps the legacy rule and completes a still-preparing reserved submission
+      // (specs/first-submission-instant-ux.md, "Owner of the frozen input in the bridge").
       if (envelope.type === "sendText" && envelope.sessionId) {
-        const frozenSubmissionId = (envelope.payload as { firstSubmissionId?: unknown })
+        const firstSubmissionId = (envelope.payload as { firstSubmissionId?: unknown })
           .firstSubmissionId;
-        if (typeof frozenSubmissionId === "string") {
+        const namedSubmissionId = typeof firstSubmissionId === "string" ? firstSubmissionId : undefined;
+        const completesPreparation =
+          namedSubmissionId !== undefined ||
+          (await loadPreparedSubmission(context, envelope.sessionId))?.status === "preparing";
+        if (completesPreparation) {
           try {
-            await coreHost.completePreparedWorktreeActivation?.(envelope.sessionId, frozenSubmissionId);
+            await coreHost.completePreparedWorktreeActivation?.(envelope.sessionId, namedSubmissionId);
           } catch (error) {
             context.logger?.warn("Could not persist admitted submission receipt", {
               sessionId: envelope.sessionId,

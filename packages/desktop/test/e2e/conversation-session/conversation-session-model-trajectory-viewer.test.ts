@@ -294,7 +294,8 @@ describe("模型调用轨迹查看器 E2E", () => {
       expect.stringMatching(/^Truncated at source, \d+ bytes$/),
     ]);
 
-    // TRJ11c: a hit at row 90 mounts the page plus a 20-row window [80, 100), not 91 rows.
+    // TRJ11c: a hit at row 90 mounts the page plus the reveal window [i-10, i+11) = [80, 101), clipped to the
+    // 100 input rows: [80, 100), 20 rows (page 40 + 20 = 60), not 91 rows. Full window is 21 rows (docs/model-trajectory-viewer.md).
     await searchAndNavigate(WINDOW_MARKER);
     await browser.waitUntil(async () => (await windowCardSnapshot()).inputRows === 60, {
       timeout: 10_000,

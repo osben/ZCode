@@ -196,7 +196,8 @@ sends the frozen `sendText` after activation, which acknowledges `input-admitted
 without a receipt), and the bridge's `executeCommand` hook marked the preparation
 `active` on _any_ `sendText` to a preparing session, so reconciliation's "marker absent
 ⇒ admitted" shortcut would mark a never-run frozen record `sending`. The hook now flips it
-only for the frozen `sendText` (see _Owner of the frozen input_ below). When the record is
+only for a `sendText` that names its submission, and for a legacy `sendText` with no field from a
+renderer that predates the field (see _Owner of the frozen input_ below). When the record is
 settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
 or Remove, never as "still being delivered".
 
@@ -239,21 +240,26 @@ first (table below). The marker decides only when the ledger answers `unknown`, 
 record holds no id at all. An active marker therefore never settles a record `sending` whose
 own id the ledger rejects.
 
-**Owner of the frozen input in the bridge (implemented).** Only the frozen submission's own
-`sendText` may mark its preparation `active`. Identity is the submission id, not the command id:
-a retried frozen input is a new `sendText` with a freshly minted uuidv7 (`commandFactory.ts`), and
-a first attempt has no command id before its `sendText`. The submission id is stable across
-attempts and is already the durable key of the preparation entry.
+**Owner of the frozen input in the bridge (implemented).** A `sendText` that names its submission is
+the frozen input of that submission, and only it completes the submission's preparation by id.
+Identity is the submission id, not the command id: a retried frozen input is a new `sendText` with a
+freshly minted uuidv7 (`commandFactory.ts`), and a first attempt has no command id before its
+`sendText`. The submission id is stable across attempts and is already the durable key of the
+preparation entry. A `sendText` that names no submission is the legacy case in the hook routing bullet below.
 
 - The renderer sets `firstSubmissionId` on the frozen `sendText` of a reserved plain submission
   (`SessionPane` sendText route, when `reservedSubmissionSessionId` is set): the first attempt
   and every retry. The shared `sendText` payload declares it as an optional non-empty string
   (`packages/shared/src/zcode-protocol-v4/command.ts`).
-- The bridge's `executeCommand` hook calls `completePreparedSubmissionInput(sessionId,
-firstSubmissionId)` for a `sendText` that carries the field. That method runs under the
-  preparation's serializer. It flips the persisted entry to `active` only when the entry's
-  `submissionId` equals the field and its status is `preparing`. Any other `sendText` (no field,
-  or another id) executes normally and leaves the preparation `preparing`.
+- The bridge's `executeCommand` hook routes each `sendText` into a session by its `firstSubmissionId`:
+  - Field present: it calls `completePreparedWorktreeActivation(sessionId, firstSubmissionId)`. That
+    runs under the preparation's serializer and flips the persisted entry to `active` only when the
+    entry's `submissionId` equals the field and its status is `preparing`. Another id leaves the
+    preparation `preparing`.
+  - Field absent (a renderer that predates the field): the legacy rule applies. When the persisted
+    entry is `preparing`, the hook calls `completePreparedWorktreeActivation(sessionId)` without an
+    id, which completes the preparation as it did before 4f01049b. Otherwise the `sendText` executes
+    unchanged.
 - A cold process reads the same entry (`loadPreparedSubmission`), so it agrees with no extra
   state.
 - Worktree activations never carry the field. They complete at their activation through
@@ -261,14 +267,22 @@ firstSubmissionId)` for a `sendText` that carries the field. That method runs un
   `preparedSessionId` is set without `expectedSubmissionId`), and their `sendText` never reaches
   the submission path. They are unaffected.
 
-**Mixed versions (known degradation).** An older renderer sends no `firstSubmissionId`, so its
-frozen `sendText` no longer flips the marker. The activation does not settle a reserved plain
-submission on its own: the handler's `completePreparedActivation` runs only for a non-reserved
-activation or one that carries `firstInput` (`session-mgmt.ts`). It also runs on `input-admitted`,
-but that needs a repeat activation. So until a repeat activation settles it, the preparation
-stays `preparing` and the snapshot keeps `submissionPreparation`, which keeps the ordering barrier
-on for that session. Renderer and CLI ship together in the desktop bundle, so this affects only
-a remote Host paired with an older renderer.
+**Mixed versions (both directions).**
+
+- New renderer + old CLI: the renderer's `firstSubmissionId` is not declared by the old shared schema,
+  so it is dropped and the old bridge sees a plain `sendText`. The old bridge (before 4f01049b) completes
+  a preparation on any `sendText` into a preparing session, so the frozen input completes it as before.
+  The old CLI does not enforce the identity rule; nothing else changes.
+- Old renderer + new CLI: the old renderer sends no field, so the new bridge applies the legacy rule and
+  its first `sendText` into a preparing reserved submission completes the preparation. The snapshot
+  therefore stops reporting `submissionPreparation` once the frozen input is sent. The activation itself
+  still does not settle a reserved plain submission: `completePreparedActivation` in
+  `session-mgmt.ts` runs only for a non-reserved activation or one that carries `firstInput`, so the
+  first `sendText` (or a repeat activation with `input-admitted`) is what completes it.
+- Known trade-off: a `sendText` with no field cannot be told apart by the bridge. A foreign window or a
+  remote-control client that sends no field into a preparing reserved submission completes that
+  preparation again, which is the hazard 4f01049b removed for those clients. Narrowing the fallback needs
+  a protocol capability marker from the renderer; that is not implemented.
 
 ```mermaid
 sequenceDiagram
@@ -280,8 +294,10 @@ sequenceDiagram
     R->>B: sendText, fresh id Y, firstSubmissionId S (frozen input)
     B->>B: admit Y; flip preparation to active only if entry.submissionId == S
     B-->>R: ack
-    R->>B: foreign sendText (no field or another id)
+    R->>B: foreign sendText naming another id
     B->>B: execute; preparation stays preparing
+    R->>B: sendText with no field (renderer that predates the field)
+    B->>B: execute; legacy rule completes a preparing entry
     R->>L: query Y (the record holds Y)
     L-->>R: accepted, rejected, or unknown
     R->>R: accepted gives sending, rejected gives failed, unknown lets the marker decide

@@ -368,7 +368,9 @@ export interface V4CommandCoreHost {
    * Complete a prepared-session activation at the first input's admission boundary: persist the
    * durable `active` receipt, evict the in-memory preparation, and republish the conversation
    * snapshot and sessions-index. Idempotent: a missing entry or a non-preparing status is a no-op.
-   * With frozenSubmissionId only that submission's own preparation completes (frozen sendText).
+   * With frozenSubmissionId only that submission's own preparation completes (a sendText naming it).
+   * Without one (a sendText from a renderer that predates the field) the legacy rule completes the
+   * preparation the session is holding.
    */
   completePreparedWorktreeActivation?(sessionId: string, frozenSubmissionId?: string): Promise<void>;
   /** Create a hidden selection_side_chat child from a stable persisted boundary in the parent session. */

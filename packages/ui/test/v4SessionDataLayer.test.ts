@@ -1966,6 +1966,55 @@ describe("ConversationProjectionStore.loadOlder", () => {
     }
   });
 
+  it("TN07：分块提交期间只有 logEpoch 变化（窗口首行不变）时也停止后续块，返回 stale 且不设终态", async () => {
+    vi.useFakeTimers();
+    try {
+      installTwoPageBranch();
+      const pending = store.loadAllOlder();
+      await flushMicrotasks();
+      // Page 1 is committed: the window is 21..100 and page 2 (extending from 21) is still pending.
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(21);
+
+      // Only the log generation changes; the window head stays at 21, so the head check alone would let
+      // chunk 2 through. Only the logEpoch recheck can stop it.
+      const tail = store.getState().snapshot!;
+      store.handleFrame(
+        makeFrame("sub-1", 5, 6, {
+          kind: "snapshot",
+          snapshot: {
+            ...tail,
+            logEpoch: "epoch-2",
+            seq: 6,
+            rows: { ...tail.rows, window: tail.rows.window },
+          },
+        }),
+      );
+      expect(store.getState().snapshot!.rows.window[0]!.rowId).toBe(21);
+      await vi.runOnlyPendingTimersAsync();
+      await flushMicrotasks();
+      const result = await pending;
+
+      expect(result.status).toBe("stale");
+      expect(store.getState().loadingOlder).toBe(false);
+      // Page 2 was never committed: the window keeps only the page 1 commit and never reaches row 1.
+      expect(store.getState().snapshot!.rows.window.map((row) => row.rowId)).toEqual(
+        Array.from({ length: 80 }, (_, index) => 21 + index),
+      );
+      expect(store.getState().snapshot!.logEpoch).toBe("epoch-2");
+      // No terminal result was recorded: the next probe fetches again rather than replaying "hydrated".
+      transport.rowsRangeImpl = () => ({
+        rows: [],
+        atSeq: 6,
+        atLogEpoch: "epoch-2",
+        hasMore: false,
+      });
+      await store.loadAllOlder();
+      expect(transport.rowsRangeCalls).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("TN07：分块提交期间窗口首行被 snapshot 改写时停止，不设终态且不复活旧 rows", async () => {
     vi.useFakeTimers();
     try {

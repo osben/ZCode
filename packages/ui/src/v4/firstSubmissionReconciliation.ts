@@ -132,8 +132,9 @@ export function useFirstSubmissionReconciliation({
       return;
     }
     // Ask the ledger about this record's own id before consulting the marker. The bridge sets the
-    // marker on any sendText into a preparing session (spec: Owner of the frozen input), so an active
-    // marker cannot prove that this id was admitted.
+    // marker for a sendText that names this submission, and for a legacy sendText with no field from
+    // a renderer that predates it (spec: Owner of the frozen input). A foreign legacy sendText can set
+    // it too, so an active marker cannot prove that this id was admitted.
     if (inFlightRef.current === factsKey) return;
     if (attempt?.factsKey === factsKey && attempt.revision === hostRevision) return;
     inFlightRef.current = factsKey;

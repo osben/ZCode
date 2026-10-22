@@ -48,6 +48,8 @@ function renderReconciliation(
   options: {
     hostPreparing: boolean;
     queryCommands: QueryCommands;
+    /** A visible realUser row carries this command id (identity evidence, no query needed). */
+    rowProjected?: (commandId: string) => boolean;
   },
 ) {
   return renderHook(
@@ -60,7 +62,7 @@ function renderReconciliation(
         firstSubmission: props.firstSubmission,
         active: false,
         realRowProjected: false,
-        commandRowProjected: () => false,
+        commandRowProjected: options.rowProjected ?? (() => false),
         snapshotLive: true,
         hostPreparing: props.hostPreparing,
         hostRevision: 1,
@@ -169,5 +171,29 @@ describe("first-submission reconciliation asks the ledger for the record's own i
 
     await waitFor(() => expect(statusOnDisk()).toBe("failed"));
     expect(report).toHaveBeenCalledWith(OWN_COMMAND, "failed");
+  });
+
+  it("a visible row carrying the own id settles sending without asking, even when the ledger says unknown and the Host still reports preparing", async () => {
+    // The row is the identity evidence (matchedRow shortcut). The ledger's unknown would otherwise
+    // decide failed while the Host reports preparing, so only the shortcut yields sending here.
+    const record = storedRecord({
+      submissionId: SUBMISSION,
+      ownerKey: SESSION,
+      status: "sending",
+      commandId: OWN_COMMAND,
+      reservation: { sessionId: SESSION, commandId: "cmd-reservation" },
+    });
+    const report = vi.spyOn(pendingCommandRegistry, "reportReconciledResolution");
+    const queryCommands = ledgerAnswer("unknown");
+
+    renderReconciliation(record, {
+      hostPreparing: true,
+      queryCommands,
+      rowProjected: (commandId) => commandId === OWN_COMMAND,
+    });
+
+    await waitFor(() => expect(statusOnDisk()).toBe("sending"));
+    expect(queryCommands).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(OWN_COMMAND, "accepted");
   });
 });

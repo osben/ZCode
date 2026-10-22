@@ -308,9 +308,9 @@ describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", (
     const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "identity" };
     const materialized = await target.gateway.handleCommand(command("createSession", activation, "materialize-identity"));
     expect(materialized.status).toBe("accepted");
-    // A foreign input (another window or mobile remote control) executes, but it names no submission,
-    // so it must leave the reserved preparation preparing.
-    const foreign = await target.gateway.handleCommand(command("sendText", { text: "foreign input" }, "cmd-foreign", sessionId));
+    // A foreign input (another window or mobile remote control) executes, but it names another
+    // submission, so it must leave the reserved preparation preparing.
+    const foreign = await target.gateway.handleCommand(command("sendText", { text: "foreign input", firstSubmissionId: "foreign-submission" }, "cmd-foreign", sessionId));
     expect(foreign.status).toBe("accepted");
     target.heldCompletions.forEach((held) => held.resolve());
     expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
@@ -370,6 +370,46 @@ describe("prepared worktree lifecycle (real bridge + sqlite store + gateway)", (
     expect(own.status).toBe("accepted");
     cold.heldCompletions.forEach((held) => held.resolve());
     expect(await readSubmissionPreparationStatus(cold, sessionId)).toBe("active");
+  });
+
+  it("a sendText with no field completes a still-preparing reserved submission (renderer that predates the field)", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-legacy-renderer-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "legacy-renderer-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "legacy" },
+    }, "reserve-legacy"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "legacy" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-legacy"))).status).toBe("accepted");
+    // The reserved activation alone does not settle a plain submission; the first sendText does.
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    // An old renderer's frozen sendText carries no firstSubmissionId: the legacy rule completes the preparation.
+    const legacy = await target.gateway.handleCommand(command("sendText", { text: "legacy frozen input" }, "cmd-legacy", sessionId));
+    expect(legacy.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["legacy frozen input"]);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("active");
+    target.heldCompletions.forEach((held) => held.resolve());
+  });
+
+  it("a sendText with a mismatched field leaves the preparation preparing, and the matching field completes it", async () => {
+    const dbDir = mkdtempSync(join(tmpdir(), "submission-named-field-"));
+    const target = await makeHarness(join(dbDir, "sessions.sqlite"));
+    harness = { ...target, dbDir };
+    const sessionId = "named-field-submission";
+    await target.gateway.handleCommand(command("createSession", {
+      workspaceId: WORKSPACE, sessionId, submissionPreparation: { submissionId: "named" },
+    }, "reserve-named-field"));
+    const activation = { workspaceId: WORKSPACE, preparedSessionId: sessionId, expectedSubmissionId: "named" };
+    expect((await target.gateway.handleCommand(command("createSession", activation, "materialize-named-field"))).status).toBe("accepted");
+    const mismatched = await target.gateway.handleCommand(command("sendText", { text: "mismatched", firstSubmissionId: "someone-else" }, "cmd-named-mismatch", sessionId));
+    expect(mismatched.status).toBe("accepted");
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("preparing");
+    const matched = await target.gateway.handleCommand(command("sendText", { text: "matched", firstSubmissionId: "named" }, "cmd-named-match", sessionId));
+    expect(matched.status).toBe("accepted");
+    expect(target.sentInputs).toEqual(["mismatched", "matched"]);
+    expect(await readSubmissionPreparationStatus(target, sessionId)).toBe("active");
+    target.heldCompletions.forEach((held) => held.resolve());
   });
 
   it("a foreign admitted row does not count as the frozen input's admission while the preparation stays preparing", async () => {
