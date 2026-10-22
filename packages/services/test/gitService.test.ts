@@ -923,3 +923,99 @@ describeIfGit("gitService", () => {
     expect(branchDiff.afterContent).toBe("line 1\nline 2\nbranch change\n");
   });
 });
+
+describeIfGit("gitService.getWorktreeRemovalPreview", () => {
+  it("lists every untracked file that force removal would delete, including binary and large files", async () => {
+    const { repoPath } = await createRepo();
+    const worktreePath = join(makeTempDir("zcode-git-wt-"), "wt");
+    runGit(repoPath, ["worktree", "add", "-b", "wt", worktreePath]);
+    writeFileSync(join(worktreePath, "binary.dat"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+    writeFileSync(join(worktreePath, "large.txt"), "x".repeat(2 * 1024 * 1024));
+    writeFileSync(join(worktreePath, "empty.txt"), "");
+    writeFileSync(join(worktreePath, "packages", "app", "tracked.txt"), "changed\n");
+    const service = createGitService();
+
+    // The review panel hides zero-stat untracked entries; the deletion preview must not.
+    const reviewUntracked = (
+      await service.getChanges({ workspacePath: worktreePath, sourceId: "unstaged" })
+    ).filter((change) => change.isUntracked);
+    expect(reviewUntracked.map((change) => change.repoRelativePath)).not.toContain("binary.dat");
+
+    const preview = await service.getWorktreeRemovalPreview({ workspacePath: worktreePath });
+    expect(preview.files).toEqual(
+      expect.arrayContaining([
+        { path: "binary.dat", status: "??" },
+        { path: "large.txt", status: "??" },
+        { path: "empty.txt", status: "??" },
+        { path: "packages/app/tracked.txt", status: "M" },
+      ]),
+    );
+    expect(preview.files).toHaveLength(4);
+  });
+
+  it("returns no files for a clean worktree", async () => {
+    const { repoPath } = await createRepo();
+    const worktreePath = join(makeTempDir("zcode-git-wt-"), "wt");
+    runGit(repoPath, ["worktree", "add", "-b", "wt-clean", worktreePath]);
+    const preview = await createGitService().getWorktreeRemovalPreview({
+      workspacePath: worktreePath,
+    });
+    expect(preview).toEqual({ files: [] });
+  });
+
+  it("throws for a folder that is not a repository instead of reporting it clean", async () => {
+    const plain = makeTempDir("zcode-not-repo-");
+    writeFileSync(join(plain, "notes.txt"), "keep me\n");
+    await expect(
+      createGitService().getWorktreeRemovalPreview({ workspacePath: plain }),
+    ).rejects.toThrow(/not a Git repository/);
+  });
+
+  it("throws for a missing folder", async () => {
+    const missing = join(makeTempDir("zcode-missing-"), "gone");
+    await expect(
+      createGitService().getWorktreeRemovalPreview({ workspacePath: missing }),
+    ).rejects.toThrow(/not a Git repository/);
+  });
+
+  it("throws when the path resolves to an enclosing repository rather than the worktree root", async () => {
+    const { workspacePath } = await createRepo();
+    await expect(createGitService().getWorktreeRemovalPreview({ workspacePath })).rejects.toThrow(
+      /not the root/,
+    );
+  });
+});
+
+describe("gitService.getWorktreeRemovalPreview without Git", () => {
+  it("throws when Git is unavailable instead of reporting the worktree clean", async () => {
+    const resolution = {
+      workspacePath: "/wt",
+      repoRoot: "/wt",
+      workspaceInRepoPath: ".",
+      autoRefreshWatchPaths: [],
+      isGitAvailable: false,
+      isRepository: false,
+    };
+    const service = createGitService({
+      repo: createMockRepo({
+        getStatus: vi.fn(async () => ({
+          resolution,
+          summary: createSummary({
+            workspacePath: "/wt",
+            repoRoot: "/wt",
+            workspaceInRepoPath: ".",
+            isGitAvailable: false,
+            isRepository: false,
+          }),
+          entries: [],
+          stagedStats: new Map(),
+          unstagedStats: new Map(),
+          untrackedStats: new Map(),
+        })),
+      }),
+    });
+    await expect(service.getWorktreeRemovalPreview({ workspacePath: "/wt" })).rejects.toThrow(
+      /Git is unavailable/,
+    );
+  });
+});

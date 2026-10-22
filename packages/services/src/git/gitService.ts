@@ -1,4 +1,5 @@
 /* eslint-disable max-lines */
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -6,6 +7,7 @@ import type {
   GitBranchMergeStatus,
   GitFileChange,
   GitChangeSectionId,
+  GitWorktreeRemovalPreview,
 } from "@zcode/shared";
 import { createServiceLogger, type ServiceLogger } from "#src/logger/serviceLogger.js";
 import { toWorkspaceRelativeGitPath } from "./config.js";
@@ -119,6 +121,39 @@ function getChangesForSource(
   return snapshot.entries
     .map((entry) => toChangeForSource(snapshot, entry, sourceId))
     .filter((entry): entry is GitFileChange => Boolean(entry));
+}
+
+function toRemovalPreviewStatus(entry: GitStatusEntry): string {
+  if (entry.isUntracked) return "??";
+  const codes = [entry.x, entry.y].filter((code) => code && code !== ".").join("");
+  return codes || "M";
+}
+
+/**
+ * Deletion preview for a forced worktree removal. Unlike getChanges it keeps every untracked entry:
+ * the review filter drops zero-stat files (binary, over the stat size limit, unreadable), which force
+ * removal still deletes. An unavailable or mismatched repository throws so callers report "unknown".
+ */
+async function buildWorktreeRemovalPreview(
+  snapshot: GitStatusSnapshot,
+  workspacePath: string,
+): Promise<GitWorktreeRemovalPreview> {
+  const { resolution } = snapshot;
+  if (!resolution.isGitAvailable) throw new Error("Git is unavailable");
+  if (!resolution.isRepository) throw new Error("Worktree path is not a Git repository");
+  const [repoRoot, worktreeRoot] = await Promise.all([
+    realpath(resolution.repoRoot),
+    realpath(workspacePath),
+  ]);
+  if (repoRoot !== worktreeRoot) {
+    throw new Error("Worktree path is not the root of its Git repository");
+  }
+  return {
+    files: snapshot.entries.map((entry) => ({
+      path: entry.path,
+      status: toRemovalPreviewStatus(entry),
+    })),
+  };
 }
 
 function toBranchComparisonChange(
@@ -312,6 +347,11 @@ export function createGitService(options?: {
       // A workspace may be a subdirectory of a monorepo, so scope results here in the service layer.
       // The repo remains responsible only for parsing raw Git status, while callers always receive data within the current workspace boundary.
       return getChangesForSource(status, params.sourceId);
+    },
+
+    async getWorktreeRemovalPreview(params) {
+      const status = await repo.getStatus(params.workspacePath);
+      return await buildWorktreeRemovalPreview(status, params.workspacePath);
     },
 
     async getIgnoredPaths(params) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { ZCodeTaskTreeCounts } from "@zcode/services";
 import { GitBranch, MessageSquare, Star } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -65,12 +65,14 @@ export function TaskDeleteConfirmationDialog({
   onConfirm: (rows: readonly TaskDeleteDialogRow[]) => void;
 }) {
   const { intl } = useZCodeIntl();
+  const unknownWarningId = useId();
   const [includePinned, setIncludePinned] = useState(!requirePinnedOptIn && rows.length === 1);
   const [capability, setCapability] = useState<boolean | undefined>(supported);
   const [counts, setCounts] = useState<ZCodeTaskTreeCounts | null | undefined>(undefined);
   const [worktreePreview, setWorktreePreview] = useState<
     readonly TaskDeleteWorktreePreview[] | null | undefined
   >(undefined);
+  const [unknownWorktreeAcknowledged, setUnknownWorktreeAcknowledged] = useState(false);
   const candidates = useMemo(
     () => rows.filter((row) => includePinned || !row.pinned),
     [includePinned, rows],
@@ -84,6 +86,8 @@ export function TaskDeleteConfirmationDialog({
     let cancelled = false;
     setCounts(undefined);
     setWorktreePreview(undefined);
+    // An acknowledgement covers only the candidate set whose preview failed; any reload asks again.
+    setUnknownWorktreeAcknowledged(false);
     if (candidates.length === 0) {
       setCounts(null);
       setWorktreePreview([]);
@@ -132,9 +136,21 @@ export function TaskDeleteConfirmationDialog({
   const dirtyWorktrees = worktreePreview?.filter((worktree) => worktree.files.length > 0) ?? [];
   const hasDirtyWorktree = dirtyWorktrees.length > 0;
   const runningCount = counts?.running ?? 0;
-  const confirmLabel = hasDirtyWorktree ? "taskDelete.deleteAnyway" : "taskDelete.confirm";
+  const worktreeConfirmMode =
+    worktreePreview === undefined
+      ? "loading"
+      : worktreePreview === null
+        ? "unknown"
+        : hasDirtyWorktree
+          ? "dirty"
+          : "clean";
+  // Forced removal also deletes gitignored files, which no status preview can list.
+  const involvesWorktree = worktreePreview === null || (worktreePreview?.length ?? 0) > 0;
+  const confirmLabel =
+    worktreeConfirmMode === "clean" ? "taskDelete.confirm" : "taskDelete.deleteAnyway";
   const confirmDisabled =
     capability !== true ||
+    (worktreeConfirmMode === "unknown" && !unknownWorktreeAcknowledged) ||
     runningCount > 0 ||
     deletableCount === 0 ||
     counts === undefined ||
@@ -198,10 +214,20 @@ export function TaskDeleteConfirmationDialog({
             {intl.formatPlural({ id: "taskDelete.includePinned" }, pinnedCount)}
           </label>
         ) : null}
-        {worktreePreview === null ? (
-          <p className="text-ui-sm text-warning">
-            {intl.formatMessage({ id: "taskDelete.worktreeUnknown" })}
-          </p>
+        {worktreeConfirmMode === "unknown" ? (
+          <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-2.5">
+            <p id={unknownWarningId} className="text-ui-sm text-warning">
+              {intl.formatMessage({ id: "taskDelete.worktreeUnknown" })}
+            </p>
+            <label className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
+              <Checkbox
+                aria-describedby={unknownWarningId}
+                checked={unknownWorktreeAcknowledged}
+                onCheckedChange={(checked) => setUnknownWorktreeAcknowledged(checked === true)}
+              />
+              {intl.formatMessage({ id: "taskDelete.worktreeUnknownAcknowledge" })}
+            </label>
+          </div>
         ) : null}
         {hasDirtyWorktree ? (
           <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-2.5">
@@ -226,6 +252,11 @@ export function TaskDeleteConfirmationDialog({
             </ul>
           </div>
         ) : null}
+        {involvesWorktree ? (
+          <p className="text-ui-sm text-foreground-subtle">
+            {intl.formatMessage({ id: "taskDelete.worktreeIgnoredNotice" })}
+          </p>
+        ) : null}
         <p className="text-ui-sm text-foreground-subtle">
           {intl.formatMessage({ id: "taskDelete.retainedNotice" })}
         </p>
@@ -243,6 +274,7 @@ export function TaskDeleteConfirmationDialog({
             type="button"
             variant="destructive"
             disabled={confirmDisabled}
+            aria-describedby={worktreeConfirmMode === "unknown" ? unknownWarningId : undefined}
             data-testid={TID_TASK_DELETE_CONFIRM}
             onClick={() => onConfirm(candidates)}
           >

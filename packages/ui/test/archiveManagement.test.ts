@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   mutateTask: vi.fn(),
   service: {} as any,
   removeTaskState: vi.fn(),
+  // Stable identity: a new git service per render would change the preview loader identity.
+  gitService: {
+    getWorktreeRemovalPreview: vi.fn(async (): Promise<unknown> => ({ files: [] })),
+  },
+  locale: "en-US",
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
   useProjectDirectory: () => mocks.directory,
@@ -29,7 +34,7 @@ vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useBaseWorkspaceServices: () => ({
     windowControllerService: mocks,
     zcodeTaskService: mocks.service,
-    gitService: { getChanges: vi.fn(async () => []) },
+    gitService: mocks.gitService,
   }),
 }));
 vi.mock("@/lib/taskListMetaSync.js", () => ({ removeTaskFromTaskCaches: vi.fn() }));
@@ -38,6 +43,7 @@ vi.mock("@/store/zcodeSessionStore.js", () => ({
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
+    locale: mocks.locale,
     intl: {
       formatPlural: ({ id }: any, count: number) => `${id}:${count}`,
       formatMessage: ({ id }: any, values: any) => `${id}:${JSON.stringify(values)}`,
@@ -161,6 +167,8 @@ function prepare(options: { tree?: ProjectTree } = {}) {
     loading: false,
   };
   mocks.mutateTask.mockResolvedValue(null);
+  mocks.gitService.getWorktreeRemovalPreview.mockReset().mockResolvedValue({ files: [] });
+  mocks.locale = "en-US";
   mocks.service = {
     getDeletionCapability: vi.fn(async () => ({ supported: true })),
     countTaskTrees: vi.fn(async ({ taskIds }: { taskIds: string[] }) => ({
@@ -355,5 +363,53 @@ it("a lone pinned archived row is not erased until the user opts in", async () =
   expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
     workspacePath: "/same",
     taskIds: ["pinned-only"],
+  });
+});
+it("joins remote project names in the notice with the active locale's list format", async () => {
+  const remote = (id: string, path: string) =>
+    task(id, {
+      workspacePath: path,
+      hostId: "remote:server:r",
+      workspaceIdentity: `remote:server:r:${path}`,
+    });
+  const rows = [remote("r1", "/work/api"), remote("r2", "/work/web"), remote("r3", "/work/cli")];
+  const { result } = setup({ tree: { ...tree(), tasks: rows } });
+  await act(async () => {
+    await result.current.run(rows, "delete");
+  });
+  expect(result.current.deletionResult).toContain('"projects":"api, web, and cli"');
+
+  mocks.locale = "uk-UA";
+  const { result: uk } = renderHook(() => useArchiveManagement({ allowPermanentDelete: true }));
+  await act(async () => {
+    await uk.current.run(rows, "delete");
+  });
+  expect(uk.current.deletionResult).toContain('"projects":"api, web і cli"');
+});
+it("an archived row with unknown worktree status is not erased until the loss is acknowledged", async () => {
+  const withWorktree = task("wt", {
+    executionWorktree: { path: "/same/.worktrees/wt", branchName: "wt" },
+  });
+  const { result } = setup({ tree: { ...tree(), tasks: [withWorktree] } });
+  mocks.gitService.getWorktreeRemovalPreview.mockRejectedValue(new Error("not a git repository"));
+  act(() => {
+    void result.current.run([withWorktree], "delete");
+  });
+  renderDeletionDialog(result);
+  const acknowledge = await screen.findByRole("checkbox", {
+    name: /^taskDelete\.worktreeUnknownAcknowledge/,
+  });
+  const confirm = (await screen.findByTestId(TID_TASK_DELETE_CONFIRM)) as HTMLButtonElement;
+  expect(confirm.textContent).toBe("taskDelete.deleteAnyway:1");
+  expect(confirm.disabled).toBe(true);
+  fireEvent.click(confirm);
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+  expect(mocks.service.eraseTasks).not.toHaveBeenCalled();
+  fireEvent.click(acknowledge);
+  await confirmOpenDialog();
+  await waitFor(() => expect(mocks.service.eraseTasks).toHaveBeenCalledTimes(1));
+  expect(mocks.service.deleteArchivedTasks).toHaveBeenCalledExactlyOnceWith({
+    workspacePath: "/same",
+    taskIds: ["wt"],
   });
 });

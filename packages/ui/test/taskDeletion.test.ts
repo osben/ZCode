@@ -65,7 +65,7 @@ function mockServices(overrides: Partial<IZCodeTaskService> = {}) {
     ...overrides,
   } as unknown as IZCodeTaskService;
   const gitService = {
-    getChanges: vi.fn(async () => []),
+    getWorktreeRemovalPreview: vi.fn(async () => ({ files: [] })),
   } as never;
   return { taskService, gitService };
 }
@@ -153,33 +153,52 @@ describe("task deletion", () => {
     });
   });
 
-  it("shows staged, unstaged and untracked worktree changes with compact status codes", async () => {
+  it("previews worktree removal through the dedicated Git query and keeps every reported file", async () => {
     const services = mockServices();
-    services.gitService.getChanges = vi
-      .fn()
-      .mockResolvedValueOnce([
-        { path: "a.ts", workspaceRelativePath: "a.ts", x: "M", y: ".", isUntracked: false },
-      ])
-      .mockResolvedValueOnce([
-        { path: "b.ts", workspaceRelativePath: "b.ts", x: ".", y: "M", isUntracked: false },
-        { path: "new.ts", workspaceRelativePath: "new.ts", isUntracked: true },
-      ]) as never;
+    const files = [
+      { path: "a.ts", status: "M" },
+      { path: "binary.dat", status: "??" },
+      { path: "large.txt", status: "??" },
+    ];
+    services.gitService.getWorktreeRemovalPreview = vi.fn(async () => ({ files })) as never;
     const preview = await loadTaskDeletionWorktreePreview(
       [target("a", { executionWorktree: { path: "/repo/.worktrees/a", branchName: "a" } })],
       () => services,
     );
-    expect(services.gitService.getChanges).toHaveBeenNthCalledWith(1, {
+    expect(services.gitService.getWorktreeRemovalPreview).toHaveBeenCalledExactlyOnceWith({
       workspacePath: "/repo/.worktrees/a",
-      sourceId: "staged",
     });
-    expect(services.gitService.getChanges).toHaveBeenNthCalledWith(2, {
-      workspacePath: "/repo/.worktrees/a",
-      sourceId: "unstaged",
-    });
-    expect(preview?.[0]?.files).toEqual([
-      { path: "a.ts", status: "M" },
-      { path: "b.ts", status: "M" },
-      { path: "new.ts", status: "??" },
-    ]);
+    expect(preview).toEqual([{ path: "/repo/.worktrees/a", branchName: "a", files }]);
+  });
+
+  it("reports unknown (null) when the Git query rejects", async () => {
+    const services = mockServices();
+    services.gitService.getWorktreeRemovalPreview = vi.fn(async () => {
+      throw new Error("not a git repository");
+    }) as never;
+    const preview = await loadTaskDeletionWorktreePreview(
+      [target("a", { executionWorktree: { path: "/repo/.worktrees/a" } })],
+      () => services,
+    );
+    expect(preview).toBeNull();
+  });
+
+  it("reports unknown (null) when a peer returns no files array instead of treating it as clean", async () => {
+    const services = mockServices();
+    services.gitService.getWorktreeRemovalPreview = vi.fn(async () => undefined) as never;
+    const preview = await loadTaskDeletionWorktreePreview(
+      [target("a", { executionWorktree: { path: "/repo/.worktrees/a" } })],
+      () => services,
+    );
+    expect(preview).toBeNull();
+  });
+
+  it("reports unknown (null) when the peer has no worktree removal preview method", async () => {
+    const services = { ...mockServices(), gitService: {} as never };
+    const preview = await loadTaskDeletionWorktreePreview(
+      [target("a", { executionWorktree: { path: "/repo/.worktrees/a" } })],
+      () => services,
+    );
+    expect(preview).toBeNull();
   });
 });
