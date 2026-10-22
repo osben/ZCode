@@ -905,7 +905,11 @@ export function createTaskSlice(set: SetFn) {
 
         return {
           ...workspaceUpdate,
-          taskNavHistory: removeTaskFromHistory(state.taskNavHistory, taskId),
+          taskNavHistory: removeTaskFromHistory(state.taskNavHistory, {
+            taskId,
+            workspacePath,
+            workspaceIdentity,
+          }),
         };
       });
     },

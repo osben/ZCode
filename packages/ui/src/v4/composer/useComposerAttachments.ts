@@ -11,6 +11,7 @@ import { WORKSPACE_FILE_DRAG_MIME } from "@/lib/workspaceFileDrag.js";
 import {
   MAX_CHAT_ATTACHMENTS,
   MissingInlinePdfContentError,
+  OversizedInlineImageAttachmentError,
   OversizedInlinePdfAttachmentError,
   OversizedInlineVideoAttachmentError,
   createChatComposerAttachment,
@@ -173,6 +174,7 @@ class RemoteAttachmentNotStagedError extends Error {
 
 export function isTransientAttachmentUploadError(error: unknown): boolean {
   if (isAbortError(error)) return false;
+  if (error instanceof OversizedInlineImageAttachmentError) return false;
   if (error instanceof OversizedInlineVideoAttachmentError) return false;
   if (error instanceof OversizedInlinePdfAttachmentError) return false;
   if (error instanceof MissingInlinePdfContentError) return false;
@@ -184,10 +186,28 @@ export function isTransientAttachmentUploadError(error: unknown): boolean {
     return false;
   }
   const message = error instanceof Error ? error.message : String(error);
-  // Video-size-limit errors must be in the blocklist or they trigger a pointless retry. Match the exact error type
-  // so broadening the message regex does not change existing image-size-limit handling.
+  // Size-limit errors are deterministic and must be in the blocklist or they trigger a pointless retry. Match the exact
+  // error type so broadening the message regex does not change other handling.
   return !/(?:payloadTooLarge|invalidBase64|invalidServerProgress|frameTooLarge|permission|EACCES|ENOENT|not found|unsupported|附件缺少|缺少可读取内容|远端附件未完成物化)/iu.test(
     message,
+  );
+}
+
+function formatOversizedMessage(
+  intl: ReturnType<typeof useZCodeIntl>["intl"],
+  id:
+    | "chat.attachments.oversizedInlineImage"
+    | "chat.attachments.oversizedInlineVideo"
+    | "chat.attachments.oversizedInlinePdf",
+  error: { filename: string; sizeBytes: number; maxSizeBytes: number },
+): string {
+  return intl.formatMessage(
+    { id },
+    {
+      filename: error.filename,
+      size: formatAttachmentSize(error.sizeBytes),
+      maxSize: formatAttachmentSize(error.maxSizeBytes),
+    },
   );
 }
 
@@ -423,33 +443,22 @@ export function useComposerAttachments(
         );
         if (!current) return;
         // The UI formats structured size-limit errors by locale (matching the chatAttachments serialization-boundary contract).
+        // Root cause (ISSUE-040): the image variant was missing here, so the chip tooltip showed the raw error code.
         const message =
-          error instanceof OversizedInlineVideoAttachmentError
-            ? intl.formatMessage(
-                { id: "chat.attachments.oversizedInlineVideo" },
-                {
-                  filename: error.filename,
-                  size: formatAttachmentSize(error.sizeBytes),
-                  maxSize: formatAttachmentSize(error.maxSizeBytes),
-                },
-              )
-            : error instanceof OversizedInlinePdfAttachmentError
-              ? intl.formatMessage(
-                  { id: "chat.attachments.oversizedInlinePdf" },
-                  {
-                    filename: error.filename,
-                    size: formatAttachmentSize(error.sizeBytes),
-                    maxSize: formatAttachmentSize(error.maxSizeBytes),
-                  },
-                )
-              : error instanceof MissingInlinePdfContentError
-                ? intl.formatMessage(
-                    { id: "chat.attachments.missingInlinePdfContent" },
-                    { filename: error.filename },
-                  )
-                : error instanceof Error
-                  ? error.message
-                  : String(error);
+          error instanceof OversizedInlineImageAttachmentError
+            ? formatOversizedMessage(intl, "chat.attachments.oversizedInlineImage", error)
+            : error instanceof OversizedInlineVideoAttachmentError
+              ? formatOversizedMessage(intl, "chat.attachments.oversizedInlineVideo", error)
+              : error instanceof OversizedInlinePdfAttachmentError
+                ? formatOversizedMessage(intl, "chat.attachments.oversizedInlinePdf", error)
+                : error instanceof MissingInlinePdfContentError
+                  ? intl.formatMessage(
+                      { id: "chat.attachments.missingInlinePdfContent" },
+                      { filename: error.filename },
+                    )
+                  : error instanceof Error
+                    ? error.message
+                    : String(error);
         const transient = isTransientAttachmentUploadError(error);
         if (transient && current.autoRetryCount < 1) {
           updateItem(targetScopeKey, attachmentId, (item) => ({

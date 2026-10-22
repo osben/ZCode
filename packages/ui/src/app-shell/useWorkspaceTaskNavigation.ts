@@ -7,11 +7,12 @@ import {
   isAutomationsNavEntry,
   isPluginStoreNavEntry,
   type AutomationsNavigationTab,
+  type WorkspaceNavEntry,
 } from "@/lib/taskNavigationHistory.js";
 import { shouldBlockTaskSelectionDuringModelRestart } from "@/lib/taskSwitchGuard.js";
 import { logger } from "@/logger.js";
 import { toast } from "@/components/ui/toast.js";
-import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { buildTaskEntityKey, buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import {
   markTaskQueryCacheScopesStale,
@@ -20,11 +21,15 @@ import {
   setTaskQueryCacheUnreadOverlay,
   useTaskQueryCacheStore,
 } from "@/store/taskQueryCacheStore.js";
-import { taskNavigationTargetExists } from "@/lib/taskNavigationTarget.js";
+import { useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 import { getRemoteWorkspaceSession } from "@/store/remoteWorkspaceSessionStore.js";
 import { useTabStoreApi } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { bumpTaskListMembershipVersion } from "@/v4/taskListMembershipVersion.js";
+
+// Replay purges a task entry only when the project directory owner reports it as deleted.
+// A query-cache or visible-list miss is not deletion: such a task stays navigable and handleSelectTask opens it.
+const NO_KNOWN_DELETED_TASKS = (): boolean => false;
 
 export interface AutomationsNavigationTarget {
   workspacePath: string;
@@ -59,8 +64,10 @@ export function useWorkspaceTaskNavigation({
   const taskNavPushAutomations = useZCodeSessionStore((s) => s.taskNavPushAutomations);
   const taskNavPushPluginStore = useZCodeSessionStore((s) => s.taskNavPushPluginStore);
   const taskNavGoBack = useZCodeSessionStore((s) => s.taskNavGoBack);
+  // Read at command time through the owner; no tombstone copy lives in the session store.
+  const isTaskKnownDeleted =
+    useOptionalProjectDirectory()?.isTaskKnownDeleted ?? NO_KNOWN_DELETED_TASKS;
   const taskNavGoForward = useZCodeSessionStore((s) => s.taskNavGoForward);
-  const removeTaskFromNavHistory = useZCodeSessionStore((s) => s.removeTaskFromNavHistory);
 
   const handleSelectTask = useCallback(
     (
@@ -222,6 +229,35 @@ export function useWorkspaceTaskNavigation({
     onNavigateToPluginStore?.({ workspacePath: workspaceAbsPath, workspaceIdentity });
   }, [onNavigateToPluginStore, taskNavPushPluginStore, workspaceAbsPath, workspaceIdentity]);
 
+  // Opens a history target. Automations and the plugin marketplace are page entries; task entries go through the normal selection path.
+  const openHistoryEntry = useCallback(
+    (entry: WorkspaceNavEntry) => {
+      if (isAutomationsNavEntry(entry)) {
+        activateTabByPath(
+          entry.workspacePath,
+          entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : undefined,
+        );
+        onNavigateToAutomations?.({
+          workspacePath: entry.workspacePath,
+          ...(entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : {}),
+          ...(entry.automationId ? { automationId: entry.automationId } : {}),
+          ...(entry.automationTab ? { automationTab: entry.automationTab } : {}),
+        });
+        return;
+      }
+      if (isPluginStoreNavEntry(entry)) {
+        activateTabByPath(
+          entry.workspacePath,
+          entry.workspaceIdentity ? { workspaceIdentity: entry.workspaceIdentity } : undefined,
+        );
+        onNavigateToPluginStore?.(entry);
+        return;
+      }
+      handleSelectTask(entry.workspacePath, entry.taskId, entry.workspaceIdentity);
+    },
+    [activateTabByPath, handleSelectTask, onNavigateToAutomations, onNavigateToPluginStore],
+  );
+
   const handleTaskNavBack = useCallback(() => {
     const currentWorkspaceState = useZCodeSessionStore
       .getState()
@@ -242,72 +278,14 @@ export function useWorkspaceTaskNavigation({
       return;
     }
 
-    let entry = taskNavGoBack();
-    // Performance: task-meta recovery/stream synchronization frequently refresh query cache.
-    // History navigation needs an existence snapshot only when a command runs; do not subscribe the hook to the whole meta table and rerender the shell.
-    const taskMetaByEntityKey = useTaskQueryCacheStore.getState().taskMetaByEntityKey;
-    while (entry) {
-      const currentEntry = entry;
-      if (isAutomationsNavEntry(currentEntry)) {
-        activateTabByPath(
-          currentEntry.workspacePath,
-          currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : undefined,
-        );
-        onNavigateToAutomations?.({
-          workspacePath: currentEntry.workspacePath,
-          ...(currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : {}),
-          ...(currentEntry.automationId ? { automationId: currentEntry.automationId } : {}),
-          ...(currentEntry.automationTab ? { automationTab: currentEntry.automationTab } : {}),
-        });
-        return;
-      }
-      if (isPluginStoreNavEntry(currentEntry)) {
-        activateTabByPath(
-          currentEntry.workspacePath,
-          currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : undefined,
-        );
-        onNavigateToPluginStore?.(currentEntry);
-        return;
-      }
-      const navWorkspaceState = useZCodeSessionStore
-        .getState()
-        .getWorkspaceState(currentEntry.workspacePath, currentEntry.workspaceIdentity);
-      const exists = taskNavigationTargetExists({
-        entry: currentEntry,
-        visibleTasks: getVisibleTaskMetas(navWorkspaceState),
-        taskMetaByEntityKey,
-      });
-      if (exists) {
-        handleSelectTask(
-          currentEntry.workspacePath,
-          currentEntry.taskId,
-          currentEntry.workspaceIdentity,
-        );
-        return;
-      }
-
-      // The target task was deleted; remove it from history and keep trying.
-      removeTaskFromNavHistory(currentEntry.taskId);
-      entry = taskNavGoBack();
+    // The store purges unavailable task entries and picks the next reachable one in the same update.
+    const entry = taskNavGoBack((target) => !isTaskKnownDeleted(target));
+    if (!entry) {
+      toast(intl.formatMessage({ id: "taskNav.noMoreBack" }));
+      return;
     }
-
-    toast(intl.formatMessage({ id: "taskNav.noMoreBack" }));
-  }, [
-    activateTabByPath,
-    handleSelectTask,
-    intl,
-    onNavigateToAutomations,
-    onNavigateToPluginStore,
-    removeTaskFromNavHistory,
-    taskNavGoBack,
-    workspaceAbsPath,
-  ]);
+    openHistoryEntry(entry);
+  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoBack, workspaceAbsPath]);
 
   const handleTaskNavForward = useCallback(() => {
     const currentWorkspaceState = useZCodeSessionStore
@@ -329,70 +307,13 @@ export function useWorkspaceTaskNavigation({
       return;
     }
 
-    let entry = taskNavGoForward();
-    // Performance: read the latest query cache only when a forward command runs, instead of subscribing the entire navigation hook to small task-meta updates.
-    const taskMetaByEntityKey = useTaskQueryCacheStore.getState().taskMetaByEntityKey;
-    while (entry) {
-      const currentEntry = entry;
-      if (isAutomationsNavEntry(currentEntry)) {
-        activateTabByPath(
-          currentEntry.workspacePath,
-          currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : undefined,
-        );
-        onNavigateToAutomations?.({
-          workspacePath: currentEntry.workspacePath,
-          ...(currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : {}),
-          ...(currentEntry.automationId ? { automationId: currentEntry.automationId } : {}),
-          ...(currentEntry.automationTab ? { automationTab: currentEntry.automationTab } : {}),
-        });
-        return;
-      }
-      if (isPluginStoreNavEntry(currentEntry)) {
-        activateTabByPath(
-          currentEntry.workspacePath,
-          currentEntry.workspaceIdentity
-            ? { workspaceIdentity: currentEntry.workspaceIdentity }
-            : undefined,
-        );
-        onNavigateToPluginStore?.(currentEntry);
-        return;
-      }
-      const navWorkspaceState = useZCodeSessionStore
-        .getState()
-        .getWorkspaceState(currentEntry.workspacePath, currentEntry.workspaceIdentity);
-      const exists = taskNavigationTargetExists({
-        entry: currentEntry,
-        visibleTasks: getVisibleTaskMetas(navWorkspaceState),
-        taskMetaByEntityKey,
-      });
-      if (exists) {
-        handleSelectTask(
-          currentEntry.workspacePath,
-          currentEntry.taskId,
-          currentEntry.workspaceIdentity,
-        );
-        return;
-      }
-
-      removeTaskFromNavHistory(currentEntry.taskId);
-      entry = taskNavGoForward();
+    const entry = taskNavGoForward((target) => !isTaskKnownDeleted(target));
+    if (!entry) {
+      toast(intl.formatMessage({ id: "taskNav.noMoreForward" }));
+      return;
     }
-
-    toast(intl.formatMessage({ id: "taskNav.noMoreForward" }));
-  }, [
-    activateTabByPath,
-    handleSelectTask,
-    intl,
-    onNavigateToAutomations,
-    onNavigateToPluginStore,
-    removeTaskFromNavHistory,
-    taskNavGoForward,
-    workspaceAbsPath,
-  ]);
+    openHistoryEntry(entry);
+  }, [intl, isTaskKnownDeleted, openHistoryEntry, taskNavGoForward, workspaceAbsPath]);
 
   const canGoBack = navCanGoBack(taskNavHistory);
   const canGoForward = navCanGoForward(taskNavHistory);

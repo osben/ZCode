@@ -1,3 +1,4 @@
+import { ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE } from "@zcode/services";
 import { ZCODE_AGENT_PROVIDER_NOT_READY_CODE } from "@zcode/shared";
 
 type RpcLogLevel = "debug" | "info" | "warn";
@@ -24,6 +25,22 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
         arg !== null &&
         "code" in arg &&
         (arg as { code?: unknown }).code === ZCODE_AGENT_PROVIDER_NOT_READY_CODE,
+    )
+  ) {
+    return "info";
+  }
+
+  // The renderer probes the sessions-index subscription with runtimePolicy "existing-only" before the workspace's
+  // Agent runtime has started. The Host then throws the runtime-unavailable error by design and the store resubscribes on the
+  // runtime "available" lifecycle event, so this failure is expected and must not leave a warning per workspace.
+  if (
+    message.startsWith("[rpc:call] zcode-agent.subscribeSessionsIndexV4 FAIL (") &&
+    args.some(
+      (arg) =>
+        typeof arg === "object" &&
+        arg !== null &&
+        "code" in arg &&
+        (arg as { code?: unknown }).code === ZCODE_AGENT_RUNTIME_UNAVAILABLE_CODE,
     )
   ) {
     return "info";

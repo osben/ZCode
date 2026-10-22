@@ -1840,24 +1840,6 @@ function ConversationComposerImpl({
     [workspaceKey],
   );
 
-  // Draft branch intent clears when the user empties a non-empty draft (spec §1 "cleared with the
-  // draft"). Picking a branch before typing anything is unaffected: the transition requires prior
-  // content.
-  const draftHadTextRef = useRef(false);
-  useEffect(() => {
-    const hasText = text.trim().length > 0;
-    if (hasText) {
-      draftHadTextRef.current = true;
-      return;
-    }
-    if (draftHadTextRef.current) {
-      draftHadTextRef.current = false;
-      if (draftMode && sessionId === null) {
-        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
-      }
-    }
-  }, [draftMode, sessionId, text, workspaceKey]);
-
   const submit = useCallback(
     async (
       heldQueueDisposition?: "clearQueueAndSend" | "keepQueueAndSend",
@@ -2974,6 +2956,13 @@ function ConversationComposerImpl({
           restoreSubmittedDraft();
           return;
         }
+        // Worktree send acceptance: every failure check above has passed, so the send is committed.
+        // The worktree creation keeps the base it captured at registration (its pipeline params
+        // carry baseBranch), and the draft's base intent is consumed here, the worktree-mode
+        // counterpart of applyDraftBranchIntentForSend's checkout success clear. Failures before this
+        // point restore the draft with its base intent intact.
+        if (draftMode && sessionId === null)
+          useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
         const joinedPipeline = selectComposerWorktreePipeline(
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
@@ -3422,16 +3411,35 @@ function ConversationComposerImpl({
 
   // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
   // Lexical onChange（首字符也稳定回传，见 LexicalChatInput.TextContentPlugin）。
+  // The only writer that drops the draft branch intent: the user emptying a non-empty draft
+  // (spec §1). Programmatic editor updates (send claim, restore, replace) are reported with
+  // `programmatic: true` and never clear it; a successful send consumes the intent separately.
   const handleEditorChange = useCallback(
-    (value: string) => {
+    (value: string, meta?: { programmatic: boolean }) => {
+      // An absent flag means a direct call, which is typing as far as the draft is concerned.
+      const userEmptiedDraft =
+        meta?.programmatic !== true &&
+        value.trim().length === 0 &&
+        textRef.current.trim().length > 0;
       suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
+      if (userEmptiedDraft && draftMode && sessionId === null) {
+        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+      }
       // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
       updateComposerContent({ text: value });
       scheduleDraftPersist();
     },
-    [conversationTelemetry, scheduleDraftPersist, updateComposerContent, updateText],
+    [
+      conversationTelemetry,
+      draftMode,
+      scheduleDraftPersist,
+      sessionId,
+      updateComposerContent,
+      updateText,
+      workspaceKey,
+    ],
   );
 
   const handleEditorFocus = useCallback(() => {

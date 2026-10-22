@@ -878,6 +878,15 @@ function KeyboardPlugin({
 }
 
 /**
+ * True when an editor update came from the app rather than from typing: programmatic writes
+ * (clear, restore, replace) and prompt-history recall. The history tag is separate from the
+ * generic one for the slash panel, so it is folded in here; the slash filter keeps reading it as is.
+ */
+export function isProgrammaticEditorUpdate(tags: ReadonlySet<string>): boolean {
+  return tags.has(PROGRAMMATIC_UPDATE_TAG) || tags.has(HISTORY_NAVIGATION_UPDATE_TAG);
+}
+
+/**
  * Text-change plugin.
  *
  * With Lexical's built-in OnChangePlugin, the first character typed into an empty editor is skipped by its
@@ -889,7 +898,7 @@ function TextContentPlugin({
   onChange,
   taskId,
 }: {
-  onChange?: (text: string) => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   taskId?: string | null;
 }) {
   const [editor] = useLexicalComposerContext();
@@ -941,7 +950,9 @@ function TextContentPlugin({
           return;
         }
 
-        onChange(nextText);
+        // Consumers that must tell typing from the app's own writes (clears, restores, history recall)
+        // read this flag.
+        onChange(nextText, { programmatic: isProgrammaticEditorUpdate(tags) });
 
         const lagMs = performance.now() - startedAt;
         // Programmatic edits and IME composition do not count as typing lag (recordInputLag filters them centrally).
@@ -1394,7 +1405,7 @@ interface LexicalChatInputProps {
   enterSubmits?: boolean;
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
-  onChange?: (text: string) => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   onFocus?: () => void;
   triggerPanelContainer?: HTMLElement | null;
   workspacePath: string;
