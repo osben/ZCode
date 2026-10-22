@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AcpAgentSummary } from "@zcode/services";
 import {
   acpProviderId,
-  buildAcpAgentAccess,
-  buildAcpPseudoModelConfig,
+  buildAcpAgentSaveInput,
   formatAcpEnvLines,
   isAcpProviderId,
   joinAcpArgs,
@@ -71,38 +70,30 @@ describe("acpAgentConfig", () => {
     expect(parseAcpEnvLines("  KEY = value  ").env).toEqual({ KEY: " value  " });
   });
 
-  it("builds the access config with fallbacks and always includes env", () => {
-    expect(buildAcpAgentAccess(AGENT, { command: "  ", args: ["acp"], env: {} })).toEqual({
-      type: "acp-agent",
+  it("builds the sidecar save request with fallbacks and always includes env", () => {
+    expect(
+      buildAcpAgentSaveInput(AGENT, { command: "  ", args: ["acp"], env: {} }, { enabled: true }),
+    ).toEqual({
       agentId: "opencode",
+      providerName: "opencode (ACP)",
       command: AGENT.commandPath,
       args: ["acp"],
       env: {},
+      enabled: true,
     });
     expect(
-      buildAcpAgentAccess(AGENT, {
-        command: "/opt/opencode",
-        args: ["acp"],
-        env: { TOKEN: "1" },
-      }),
+      buildAcpAgentSaveInput(
+        AGENT,
+        { command: "/opt/opencode", args: ["acp"], env: { TOKEN: "1" } },
+        { enabled: false, providerName: "Mine" },
+      ),
     ).toEqual({
-      type: "acp-agent",
       agentId: "opencode",
+      providerName: "Mine",
       command: "/opt/opencode",
       args: ["acp"],
       env: { TOKEN: "1" },
+      enabled: false,
     });
-  });
-
-  it("builds a complete pseudo-model config with per-agent context windows", () => {
-    const opencode = buildAcpPseudoModelConfig("opencode");
-    const cursor = buildAcpPseudoModelConfig("cursor");
-    expect((opencode.properties as { contextWindow: number }).contextWindow).toBe(262144);
-    expect((cursor.properties as { contextWindow: number }).contextWindow).toBe(200000);
-    expect(opencode.optionSpecs).toMatchObject({
-      reasoningLevel: { values: ["auto"], default: "auto", map: "{}" },
-      maxOutputTokens: { max: 32000, map: "{}" },
-    });
-    expect((opencode.properties as { supportsToolCall: boolean }).supportsToolCall).toBe(true);
   });
 });

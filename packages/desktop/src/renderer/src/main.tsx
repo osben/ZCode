@@ -108,12 +108,21 @@ document.documentElement.classList.toggle("platform-windows-desktop", isWindowsD
 // webContents, it also intercepts the title-bar click area. Mark the desktop Linux root so UI overlays
 // can avoid the title bar only on Linux.
 document.documentElement.classList.toggle("platform-linux-desktop", isLinuxDesktop);
-const isLocalDevelopmentRuntime =
+// Compile-time flag, only set under `vite dev`. Kept as the user-action trace input so its
+// deploymentEnvironment does not change; the dev-only product gate uses the preload value below.
+const compiledLocalDevelopmentRuntime =
   (
     globalThis as typeof globalThis & {
       __ZCODE_LOCAL_DEVELOPMENT_RUNTIME__?: boolean;
     }
   ).__ZCODE_LOCAL_DEVELOPMENT_RUNTIME__ === true;
+// Main's `!app.isPackaged` via preload: the same signal that opens the host's dev-only bridge.
+const isLocalDevelopmentRuntime =
+  (
+    globalThis as typeof globalThis & {
+      __ZCODE_IS_LOCAL_DEVELOPMENT_RUNTIME__?: boolean;
+    }
+  ).__ZCODE_IS_LOCAL_DEVELOPMENT_RUNTIME__ === true;
 
 function readBooleanFlag(name: string, defaultValue: boolean): boolean {
   const value = new URLSearchParams(window.location.search).get(name);
@@ -141,7 +150,7 @@ const desktopPlatform = createDesktopPlatform({ isLocalDevelopmentRuntime });
 initializeDesktopLocalTtft(desktopPlatform);
 initializeDesktopUserActionTrace({
   platform: desktopPlatform,
-  isLocalDevelopmentRuntime,
+  isLocalDevelopmentRuntime: compiledLocalDevelopmentRuntime,
 });
 
 /**

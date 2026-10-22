@@ -21,6 +21,9 @@ import type { ModelConnectivityResult } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type {
   AcpAgentDetectionResult,
+  AcpAgentEnabledInput,
+  AcpAgentSaveInput,
+  ProviderSettingsAcpAgentWriter,
   AcpAgentLoginResult,
   AcpAgentStatusReport,
   AcpAgentTestInput,
@@ -88,6 +91,10 @@ export interface IProviderSettingsService {
   startAcpAgentLogin(
     input: Parameters<ProviderSettingsAcpAgentsBridge["startLogin"]>[0],
   ): Promise<AcpAgentLoginResult>;
+  /** Enable or edit an ACP agent (one atomic write of the fork-owned sidecar record). */
+  saveAcpAgent(input: AcpAgentSaveInput): Promise<ProviderSettingsView>;
+  /** Switch an ACP agent on or off; the saved launch config is kept. */
+  setAcpAgentEnabled(input: AcpAgentEnabledInput): Promise<ProviderSettingsView>;
 }
 
 export const IProviderSettingsService = createServiceDescriptor<IProviderSettingsService>(
@@ -131,7 +138,12 @@ export function createProviderSettingsService(
   ensureReady: () => Promise<void> = async () => {},
   testConnectivity?: ProviderSettingsConnectivityTester,
   acpAgents?: ProviderSettingsAcpAgentsBridge,
+  acpAgentWriter?: ProviderSettingsAcpAgentWriter,
 ): IProviderSettingsService {
+  const requireAcpAgentWriter = (): ProviderSettingsAcpAgentWriter => {
+    if (!acpAgentWriter) throw new Error("ACP agents are not supported in this environment");
+    return acpAgentWriter;
+  };
   return {
     onDidChange: toEvent((listener) => facade.onDidChange(listener)),
     getView: async () => {
@@ -251,6 +263,16 @@ export function createProviderSettingsService(
             command: "",
             error: "ACP agents are not supported in this environment",
           },
+    saveAcpAgent: async (input) => {
+      await ensureReady();
+      await requireAcpAgentWriter().save(input);
+      return facade.refresh("acp-agents:saved");
+    },
+    setAcpAgentEnabled: async (input) => {
+      await ensureReady();
+      await requireAcpAgentWriter().setEnabled(input);
+      return facade.refresh("acp-agents:enabled");
+    },
   };
 }
 

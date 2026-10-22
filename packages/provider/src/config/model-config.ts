@@ -18,7 +18,7 @@ import {
   type modelConfigDataSchema,
 } from "@zcode/shared/model-config";
 import { validateConfigSchema } from "./schema-validation.js";
-import { clearManualModelConfig } from "./manual-model-config.js";
+import { clearManualModelConfig, omitCatalogOwnedOptionFields } from "./manual-model-config.js";
 import {
   providerModelConfigRuleSchema,
   manualProviderModelConfigRuleSchema,
@@ -526,10 +526,12 @@ export class ModelConfigRules {
 
   toPersonalJSON(): PersonalModelConfigRulesData {
     // Validate full rules again at the encoding boundary so an incomplete manual value constructed directly cannot be written to disk.
-    return personalModelConfigRulesSchema.parse({
-      providerModelRules: this.#collect("provider-model"),
-      manualProviderModelRules: this.#collect("manual-provider-model"),
-    });
+    return personalModelConfigRulesSchema.parse(
+      omitCatalogOwnedOptionFields({
+        providerModelRules: this.#collect("provider-model"),
+        manualProviderModelRules: this.#collect("manual-provider-model"),
+      }),
+    );
   }
 
   toJSON() {

@@ -18,6 +18,7 @@ import {
   PlatformChannels,
 } from "@zcode/shared";
 import { loadWindow, type WindowBootstrapOptions } from "./desktopHostProcess.js";
+import { buildAppRendererAdditionalArguments } from "./desktopElectronApp.js";
 import {
   buildWindowsTitleBarOverlayForZoomLevel,
   hasCustomWindowsControls,
@@ -611,7 +612,7 @@ export function createBrowserWindow(options: {
       // Keep default throttling; during screenshots, wake only the owner renderer and current target guest temporarily.
       zoomFactor: initialDesktopZoomFactor,
       // Pass deviceMid to preload so the renderer can read it synchronously before React renders.
-      additionalArguments: [`--device-id=${options.deviceMid ?? ""}`],
+      additionalArguments: buildAppRendererAdditionalArguments(options.deviceMid ?? ""),
     },
   });
 

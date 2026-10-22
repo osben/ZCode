@@ -8,19 +8,28 @@
  * the host's runtime environment, which the services assembly has already
  * enriched with the user's login-shell PATH.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ACP_AGENT_DEFINITIONS,
   AcpSessionRuntime,
+  buildChildEnv,
   detectAcpAgents,
   refreshAcpAgentCache,
   type AcpAgentDefinition,
   type AcpRawFrame,
+  type AcpRuntimeLogger,
   type AcpSessionRuntimeOptions,
 } from "@zcode/acp-agent-runtime";
+import {
+  describeAcpCommandProblem,
+  describeAcpLaunchProblem,
+} from "@zcode/shared/acp-launch-rules";
+import { createServiceLogger } from "../logger/serviceLogger.js";
+import { defaultOpenTerminal, formatLoginCommand } from "./acpAgentLogin.js";
+import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import type {
   AcpAgentDetectionResult,
   AcpAgentLoginResult,
@@ -32,6 +41,7 @@ import type {
   ProviderSettingsAcpAgentsBridge,
 } from "./acpAgentsContract.js";
 
+export { buildMacLoginScript, formatLoginCommand } from "./acpAgentLogin.js";
 export type {
   AcpAgentDetectionResult,
   AcpAgentLoginResult,
@@ -74,7 +84,6 @@ const MAX_TEST_FRAMES = 400;
 const MAX_TEST_FRAME_BYTES = 1024 * 1024;
 const MAX_STATUS_OUTPUT_CHARS = 16 * 1024;
 const STATUS_TIMEOUT_MS = 10_000;
-const TERMINAL_OPEN_TIMEOUT_MS = 10_000;
 
 /** The smoke test allows slow agents to think, but stays bounded. */
 const TEST_INITIALIZE_MS = 30_000;
@@ -86,10 +95,61 @@ const TEST_KILL_GRACE_MS = 2_000;
 const TEST_PROMPT_TEXT =
   "Reply with the single word: pong. Do not read, create, or modify any files.";
 
+const log = createServiceLogger("acp-agent");
+
+/**
+ * Runtime logger adapter. Callers pass only agent ids, exit codes/signals and
+ * error messages: never env, args, frames or stderr, which can carry tokens.
+ */
+const runtimeLogger: AcpRuntimeLogger = {
+  info: (message, fields) => log.info(undefined, message, fields ?? {}),
+  warn: (message, fields) => log.warn(undefined, message, fields ?? {}),
+  error: (message, fields) => log.error(undefined, message, fields ?? {}),
+};
+
+/**
+ * Host-side stabilization gate (specs/acp-agent-runtime.md, "Dev-only
+ * visibility"): the bridge spawns caller-supplied commands, so it exists only
+ * in development runtimes. Without it the provider settings service answers
+ * `supported: false` and never spawns anything.
+ */
+export function createHostAcpAgentsBridge(
+  env: Record<string, string | undefined> = process.env,
+  dependencies: AcpAgentsBridgeDependencies = {},
+): ProviderSettingsAcpAgentsBridge | undefined {
+  if (!isEffectiveDevelopmentNodeEnv(env)) return undefined;
+  const e2eAgentPath = resolveE2eAcpAgentPath(env);
+  if (e2eAgentPath === undefined || dependencies.detectAgents) {
+    return createAcpAgentsBridge(dependencies);
+  }
+  // Only the probed PATH changes; every other env key reaches the probe unchanged.
+  const detectionEnv = { ...env, PATH: e2eAgentPath };
+  return createAcpAgentsBridge({
+    ...dependencies,
+    detectAgents: (input) => defaultDetectAgents(input, detectionEnv),
+  });
+}
+
+/** E2E detection seam (specs/acp-agent-runtime.md, "Dev-only visibility"). */
+export const ACP_E2E_AGENT_PATH_ENV = "ZCODE_E2E_ACP_AGENT_PATH";
+
+/**
+ * The PATH that replaces the detection probe path in desktop E2E, or undefined. Honored only in
+ * an unpackaged development host (the bridge gate) running the test environment, so a value left
+ * in a user's shell never changes what a real install detects.
+ */
+export function resolveE2eAcpAgentPath(
+  env: Record<string, string | undefined>,
+): string | undefined {
+  if (!isEffectiveDevelopmentNodeEnv(env) || env.ZCODE_ENV !== "test") return undefined;
+  const value = env[ACP_E2E_AGENT_PATH_ENV]?.trim();
+  return value ? value : undefined;
+}
+
 export function createAcpAgentsBridge(
   dependencies: AcpAgentsBridgeDependencies = {},
 ): ProviderSettingsAcpAgentsBridge {
-  const detectAgents = dependencies.detectAgents ?? defaultDetectAgents;
+  const detectAgents = dependencies.detectAgents ?? ((input) => defaultDetectAgents(input));
   const runCommand = dependencies.runCommand ?? defaultRunCommand;
   const openTerminal = dependencies.openTerminal ?? defaultOpenTerminal;
   const startRuntime = dependencies.startRuntime ?? ((options) => AcpSessionRuntime.start(options));
@@ -145,6 +205,16 @@ export function createAcpAgentsBridge(
         };
       }
       const args = input.args ? [...input.args] : definition ? [...definition.spawnArgs] : [];
+      const launchProblem = describeAcpLaunchProblem({ command, args, env: input.env });
+      if (launchProblem) {
+        return {
+          ok: false,
+          error: { message: `Invalid ACP launch: ${launchProblem}` },
+          frames: [],
+          framesDropped: 0,
+          durationMs: Date.now() - startedAt,
+        };
+      }
 
       const frames: AcpFrameEvent[] = [];
       let framesDropped = 0;
@@ -182,6 +252,7 @@ export function createAcpAgentsBridge(
           args,
           cwd: sandbox,
           ...(input.env ? { env: input.env } : {}),
+          logger: runtimeLogger,
           timeouts: {
             initializeMs: TEST_INITIALIZE_MS,
             newSessionMs: TEST_NEW_SESSION_MS,
@@ -211,6 +282,10 @@ export function createAcpAgentsBridge(
         }
       } catch (caught) {
         error = { message: caught instanceof Error ? caught.message : String(caught) };
+        log.warn(undefined, "ACP agent smoke test failed", {
+          agentId: input.agentId ?? "custom",
+          error: error.message,
+        });
       } finally {
         if (runtime) {
           stderrTail = runtime.stderrTail();
@@ -246,6 +321,10 @@ export function createAcpAgentsBridge(
         return { supported: false };
       }
       const commandPath = await resolveCommandPath(input.agentId, definition, input.command);
+      const commandProblem = describeAcpCommandProblem(commandPath);
+      if (commandProblem) {
+        return { supported: true, error: `Invalid ACP command: ${commandProblem}` };
+      }
       const result = await runCommand(commandPath, definition.statusArgs, STATUS_TIMEOUT_MS);
       return { supported: true, exitCode: result.exitCode, output: result.output };
     },
@@ -260,6 +339,12 @@ export function createAcpAgentsBridge(
         };
       }
       const commandPath = await resolveCommandPath(input.agentId, definition, input.command);
+      // The login command line is written into a shell script: a CR/LF would end
+      // the printed line and run the rest as its own command.
+      const commandProblem = describeAcpCommandProblem(commandPath);
+      if (commandProblem) {
+        return { opened: false, command: "", error: `Invalid ACP command: ${commandProblem}` };
+      }
       const commandLine = formatLoginCommand(commandPath, definition.loginArgs);
       const result = await openTerminal(commandLine);
       return {
@@ -271,11 +356,12 @@ export function createAcpAgentsBridge(
   };
 }
 
-async function defaultDetectAgents(input: {
-  readonly refresh: boolean;
-}): Promise<readonly AcpAgentSummary[]> {
+async function defaultDetectAgents(
+  input: { readonly refresh: boolean },
+  detectionEnv?: Record<string, string | undefined>,
+): Promise<readonly AcpAgentSummary[]> {
   if (input.refresh) refreshAcpAgentCache();
-  const detections = await detectAcpAgents();
+  const detections = await detectAcpAgents(detectionEnv ? { env: detectionEnv } : {});
   return detections.map((detection) => {
     const definition = ACP_AGENT_DEFINITIONS.find((entry) => entry.agentId === detection.agentId);
     return {
@@ -317,12 +403,17 @@ function defaultRunCommand(
     let child: ChildProcess;
     try {
       child = spawn(command, [...args], {
+        // Same scrubbed environment as the ACP session process.
+        env: buildChildEnv(process.env),
         stdio: ["ignore", "pipe", "pipe"],
         shell: false,
+        windowsHide: true,
         detached: process.platform !== "win32",
       });
     } catch (error) {
-      resolve({ exitCode: null, output: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(undefined, "ACP status command failed to spawn", { error: message });
+      resolve({ exitCode: null, output: message });
       return;
     }
     timer = setTimeout(() => {
@@ -340,6 +431,7 @@ function defaultRunCommand(
     child.stdout?.on("data", append);
     child.stderr?.on("data", append);
     child.once("error", (error: Error) => {
+      log.warn(undefined, "ACP status command failed", { error: error.message });
       append(error.message);
       finish(null);
     });
@@ -347,15 +439,18 @@ function defaultRunCommand(
   });
 }
 
-/** Best-effort termination of a command and its descendants. */
+/** Best-effort termination of a command and its descendants (non-blocking). */
 function killCommandTree(child: ChildProcess): void {
   const pid = child.pid;
   if (process.platform === "win32" && pid !== undefined) {
     try {
-      spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
         stdio: "ignore",
         windowsHide: true,
         timeout: 2_000,
+      });
+      killer.once("error", (error: Error) => {
+        log.warn(undefined, "ACP status command tree kill failed", { error: error.message });
       });
     } catch {
       // Fall through to the direct-child signal.
@@ -373,84 +468,4 @@ function killCommandTree(child: ChildProcess): void {
   } catch {
     // Already gone.
   }
-}
-
-async function defaultOpenTerminal(
-  commandLine: string,
-): Promise<{ opened: boolean; error?: string }> {
-  if (process.platform !== "darwin") {
-    return { opened: false, error: "Opening a terminal window is only supported on macOS." };
-  }
-  try {
-    const dir = await mkdtemp(join(tmpdir(), "zcode-acp-login-"));
-    const scriptPath = join(dir, "login.command");
-    // The banner uses a quoted heredoc: the command prints literally, so `$()`
-    // or backticks in a path cannot execute while printing. The script removes
-    // its temporary directory after the login command finishes.
-    const script = [
-      "#!/bin/sh",
-      "cat <<'ZCODE_ACP_LOGIN_BANNER'",
-      `[ZCode] Running: ${commandLine}`,
-      "ZCODE_ACP_LOGIN_BANNER",
-      commandLine,
-      'rm -rf "$(dirname "$0")"',
-      "",
-    ].join("\n");
-    await writeFile(scriptPath, script, "utf8");
-    await chmod(scriptPath, 0o755);
-    const exitCode = await new Promise<number | null>((resolve, reject) => {
-      const child = spawn("open", ["-a", "Terminal", scriptPath], { stdio: "ignore" });
-      const timer = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // Already gone.
-        }
-        resolve(null);
-      }, TERMINAL_OPEN_TIMEOUT_MS);
-      child.once("error", (error: Error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.once("close", (code) => {
-        clearTimeout(timer);
-        resolve(code);
-      });
-    });
-    if (exitCode === 0) return { opened: true };
-    return { opened: false, error: `Could not open Terminal (exit code ${exitCode}).` };
-  } catch (error) {
-    return { opened: false, error: error instanceof Error ? error.message : String(error) };
-  }
-}
-
-/** Quotes as a single POSIX-shell argument when plain-safe characters are not sufficient. */
-function quoteShellArg(value: string): string {
-  if (value.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function quotePowerShellArg(value: string): string {
-  if (value.length > 0 && /^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-/**
- * Builds the manual-login command line for the user's shell: POSIX gets
- * single-quoted arguments; PowerShell (Windows fallback) needs the call
- * operator before a quoted executable path.
- */
-export function formatLoginCommand(
-  commandPath: string,
-  loginArgs: readonly string[],
-  platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform === "win32") {
-    return [
-      "&",
-      quotePowerShellArg(commandPath),
-      ...loginArgs.map((arg) => quotePowerShellArg(arg)),
-    ].join(" ");
-  }
-  return [quoteShellArg(commandPath), ...loginArgs.map((arg) => quoteShellArg(arg))].join(" ");
 }

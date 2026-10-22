@@ -32,7 +32,7 @@ describe("ACP owned process tree", () => {
         {
           agentId: "tree-test",
           command: process.execPath,
-          args: ["--input-type=module", "-e", code],
+          args: ["--input-type=module", "-e", code.replace(/\n\s*/g, " ")],
           cwd,
           timeouts: { initializeMs: 8000, newSessionMs: 8000, stopGraceMs: 200, killGraceMs: 200 },
         },
@@ -72,7 +72,7 @@ describe("ACP owned process tree", () => {
           {
             agentId: "tree-test-died",
             command: process.execPath,
-            args: ["--input-type=module", "-e", code],
+            args: ["--input-type=module", "-e", code.replace(/\n\s*/g, " ")],
             cwd,
             timeouts: {
               initializeMs: 8000,

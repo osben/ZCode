@@ -18,10 +18,18 @@ import { isChatGptPlanSubscriptionProviderId } from "@/lib/chatgptPlanProvider.j
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
+  isSelectableNavItem,
   type CodingPlanEntitlementState,
   type ModelProviderNavGroup,
+  type ModelProviderSelectableNavItem,
   type PresetProviderSpec,
 } from "@/settings/model-provider-section/constants.js";
+import {
+  ACP_DETECT_NODE_KEY,
+  ACP_LOADING_NODE_KEY,
+  isAcpManagedProvider,
+  isAcpNodeKey,
+} from "@/settings/model-provider-section/acpAgentConfig.js";
 import { pickCodingPlanEntitlementProvider } from "@/lib/codingPlanProvider.js";
 import {
   createCodingPlanProviderNodeKey,
@@ -59,6 +67,10 @@ interface UseModelProviderNavigationOptions {
   showPurchasedTeamPlanFallback?: boolean;
   selectedNodeKey: string | null;
   setSelectedNodeKey: (key: string | null) => void;
+  /** The "ACP agents" group, already built by the page; omitted (undefined/null) when the dev-only gate is off. */
+  acpGroup?: ModelProviderNavGroup | null;
+  /** The first ACP detection is still in flight; an `acp-*` selection must not be corrected away yet. */
+  acpDetectionPending?: boolean;
   intl: ReturnType<typeof useZCodeIntl>["intl"];
 }
 
@@ -78,11 +90,15 @@ export function useModelProviderNavigation({
   showPurchasedTeamPlanFallback = false,
   selectedNodeKey,
   setSelectedNodeKey,
+  acpGroup = null,
+  acpDetectionPending = false,
   intl,
 }: UseModelProviderNavigationOptions) {
   const customProviders = useMemo(() => {
     const allCustomProviders = modelProviders.filter(
-      (provider) => provider.config.group === "standard-personal",
+      // ACP agents are listed only in the "ACP agents" group, never again as custom providers.
+      (provider) =>
+        provider.config.group === "standard-personal" && !isAcpManagedProvider(provider),
     );
     // Reuse the model-menu display order so providers appear in the same order in Settings and the chat box.
     return sortModelProvidersForDisplay(allCustomProviders, displayOrder);
@@ -254,10 +270,12 @@ export function useModelProviderNavigation({
           statusActive: provider.executable === true,
         })),
       },
+      ...(acpGroup ? [acpGroup] : []),
     ];
 
     return groups;
   }, [
+    acpGroup,
     customProviders,
     codingPlanItems,
     connectionModeCodingPlanItems,
@@ -280,14 +298,11 @@ export function useModelProviderNavigation({
   }, [connectionModeCodingPlanItems, navigationGroups]);
 
   const selectableNavigationItems = useMemo(
-    () => navigationItems.filter((item) => item.type !== "codingPlanLoading"),
+    () => navigationItems.filter(isSelectableNavItem),
     [navigationItems],
   );
   const selectableSideNavigationItems = useMemo(
-    () =>
-      navigationGroups
-        .flatMap((group) => group.items)
-        .filter((item) => item.type !== "codingPlanLoading"),
+    () => navigationGroups.flatMap((group) => group.items).filter(isSelectableNavItem),
     [navigationGroups],
   );
 
@@ -336,7 +351,20 @@ export function useModelProviderNavigation({
     selectedNodeKey,
     selectableNavigationItems,
   });
+  // When the first scan finds agents, a selection parked on the catalog entry moves to the first agent.
+  const firstAcpAgentKey = acpGroup?.items.find((item) => item.type === "acpAgent")?.key ?? null;
   useEffect(() => {
+    // Detection owns the ACP rows until it settles: an acp-agent selection is not yet resolvable.
+    if (acpDetectionPending && isAcpNodeKey(selectedNodeKey)) {
+      return;
+    }
+    if (
+      firstAcpAgentKey &&
+      (selectedNodeKey === ACP_DETECT_NODE_KEY || selectedNodeKey === ACP_LOADING_NODE_KEY)
+    ) {
+      setSelectedNodeKey(firstAcpAgentKey);
+      return;
+    }
     const hasSelectedNode = selectedNodeKey ? sideNavigationItemByKey.has(selectedNodeKey) : false;
     if (hasSelectedNode) {
       return;
@@ -346,7 +374,9 @@ export function useModelProviderNavigation({
       setSelectedNodeKey(fallbackNodeKey);
     }
   }, [
+    acpDetectionPending,
     fallbackNodeKey,
+    firstAcpAgentKey,
     selectedNavItem,
     selectedNodeKey,
     setSelectedNodeKey,
@@ -389,7 +419,7 @@ function resolvePresetFamilyStatusProvider({
     return provider;
   }
   const connectionItem = pickFamilyModeNavigationItem(
-    connectionModeItems.filter((item) => item.type !== "codingPlanLoading"),
+    connectionModeItems.filter(isSelectableNavItem),
     familySpec.id,
     connectionSelections,
   );
@@ -408,9 +438,7 @@ export function resolveFallbackModelProviderNodeKey({
   selectableNavigationItems,
 }: {
   selectedNodeKey: string | null;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
 }): string | null {
   const initialConnectionItem = pickInitialConnectionNavigationItem(selectableNavigationItems);
   const initialSideNodeKey = initialConnectionItem
@@ -440,19 +468,14 @@ function resolveSelectedProviderFamilyConnectionItem({
   modelProvidersLoading,
 }: {
   selectedNodeKey: string;
-  navigationItemByKey: Map<
-    string,
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  navigationItemByKey: Map<string, ModelProviderSelectableNavItem>;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
   connectionSelections: ProviderFamilyConnectionSelectionSettings;
   pendingConnectionSelections: ProviderFamilyConnectionSelectionSettings;
   familyConnectionSettingsLoading?: boolean;
   familyConnectionSettingsFailed?: boolean;
   modelProvidersLoading?: boolean;
-}): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+}): ModelProviderSelectableNavItem | null {
   const selectedItem = navigationItemByKey.get(selectedNodeKey) ?? null;
   if (!selectedItem) {
     return null;
@@ -489,7 +512,7 @@ function resolveSelectedProviderFamilyConnectionItem({
 }
 
 function resolveSideNavigationNodeKeyForConnectionItem(
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null,
+  item: ModelProviderSelectableNavItem | null,
 ): string | null {
   if (!item) {
     return null;
@@ -506,10 +529,8 @@ function resolveSideNavigationNodeKeyForConnectionItem(
 }
 
 function pickInitialConnectionNavigationItem(
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >,
-): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>,
+): ModelProviderSelectableNavItem | null {
   const planItems = selectableNavigationItems.filter(isPlanConnectionNavigationItem);
   const personalCodingPlanItem = planItems.find(
     (item) =>
@@ -537,12 +558,10 @@ function pickInitialConnectionNavigationItem(
 }
 
 function pickFamilyModeNavigationItem(
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >,
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>,
   familyId: "zai" | "bigmodel",
   connectionSelections: ProviderFamilyConnectionSelectionSettings,
-): Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }> | null {
+): ModelProviderSelectableNavItem | null {
   const selection = connectionSelections[familyId];
   if (!selection) return null;
   return (
@@ -558,13 +577,8 @@ export function resolveSelectedFamilyModeNodeKey({
   connectionSelections = {},
   pendingConnectionSelections = {},
 }: {
-  selectedNavItem: Exclude<
-    ModelProviderNavGroup["items"][number],
-    { type: "codingPlanLoading" }
-  > | null;
-  selectableNavigationItems: Array<
-    Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>
-  >;
+  selectedNavItem: ModelProviderSelectableNavItem | null;
+  selectableNavigationItems: Array<ModelProviderSelectableNavItem>;
   connectionSelections?: ProviderFamilyConnectionSelectionSettings;
   pendingConnectionSelections?: ProviderFamilyConnectionSelectionSettings;
 }): string | null {
@@ -589,10 +603,10 @@ export function resolveSelectedFamilyModeNodeKey({
 export function connectionSelectionMatchesNavigationItem(
   family: ProviderFamilyDomain,
   selection: ProviderFamilyConnectionSelection,
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>,
+  item: ModelProviderSelectableNavItem,
 ): boolean {
-  if (item.type === "custom") return false;
-  const familySpec = resolveModelProviderFamilySpecByProviderId(item.presetId ?? "");
+  if (!("presetId" in item)) return false;
+  const familySpec = resolveModelProviderFamilySpecByProviderId(item.presetId);
   if (familySpec?.id !== family) return false;
   if (selection.kind === "start-plan") {
     return false;
@@ -613,7 +627,7 @@ export function connectionSelectionMatchesNavigationItem(
 }
 
 function isPlanConnectionNavigationItem(
-  item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>,
+  item: ModelProviderSelectableNavItem,
 ): item is Extract<ModelProviderNavGroup["items"][number], { type: "codingPlan" | "teamPlan" }> {
   return (
     (item.type === "codingPlan" && !isStartPlanModelProviderId(item.presetId)) ||

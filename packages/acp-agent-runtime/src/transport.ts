@@ -48,6 +48,8 @@ export interface SpawnAcpProcessInput {
   readonly maxFrameBytes?: number;
   /** Raw NDJSON frame observer; see `AcpRawFrame`. */
   readonly onFrame?: AcpFrameObserver;
+  /** Called for every stdout chunk the agent writes (stall detection); never throws into the stream. */
+  readonly onInboundActivity?: () => void;
 }
 
 export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess {
@@ -101,6 +103,7 @@ export function spawnAcpProcess(input: SpawnAcpProcessInput): SpawnedAcpProcess 
     tapInboundStream(
       Readable.toWeb(stdout) as unknown as ReadableStream<Uint8Array>,
       createFrameTap(input.onFrame, "inbound"),
+      input.onInboundActivity,
     ),
     { maxMessageBytes: input.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES },
   );
@@ -310,20 +313,28 @@ function createLineSplitter(onLine: (line: Uint8Array) => void): {
 function tapInboundStream(
   input: ReadableStream<Uint8Array>,
   onLine: ((line: Uint8Array) => void) | undefined,
+  onChunk?: () => void,
 ): ReadableStream<Uint8Array> {
-  if (!onLine) return input;
-  const splitter = createLineSplitter(onLine);
+  if (!onLine && !onChunk) return input;
+  const splitter = onLine ? createLineSplitter(onLine) : undefined;
   const reader = input.getReader();
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const { value, done } = await reader.read();
         if (done) {
-          splitter.flush();
+          splitter?.flush();
           controller.close();
           return;
         }
-        splitter.push(value);
+        if (onChunk && value.byteLength > 0) {
+          try {
+            onChunk();
+          } catch {
+            // Activity tracking must never affect the transport.
+          }
+        }
+        splitter?.push(value);
         controller.enqueue(value);
       } catch (error) {
         controller.error(error);
