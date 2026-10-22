@@ -4,24 +4,17 @@ import {
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
   forkAppSettingsStoredSchema,
-  formatLogPrefix,
   formatZodError,
   pickForkSettings,
 } from "@zcode/shared";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
-import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import { resolveSettingsLocation, type SettingsLocation } from "./settingsPaths.js";
 
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("forkSettings", process.pid), ...args);
-
-function debugLog(...args: unknown[]) {
-  // NODE_ENV inherited from the user's shell can mislead the service-layer debug switch; use ZCODE_RUNTIME_ENV consistently.
-  if (!isEffectiveDevelopmentNodeEnv()) {
-    return;
-  }
-  console.debug(formatLogPrefix("forkSettings", process.pid), ...args);
-}
+const forkLogger = createServiceLogger("forkSettings");
+// info lines carry key names and counts only; settings values go to debug, which the service logger gates to development.
+const log = (...args: unknown[]) => forkLogger.info(undefined, ...args);
+const debugLog = (...args: unknown[]) => forkLogger.debug(undefined, ...args);
 
 /** Same stale-write protection writeSettings() uses for the main file: an expired queue turn must not rename late. */
 export interface ForkSettingsWriteGuards {

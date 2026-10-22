@@ -172,11 +172,12 @@ export class OAuthService implements IOAuthService {
     }
     this.repo = new OAuthCredentialRepo(credentialService, {
       providerIds: adapters.map((adapter) => adapter.providerId),
-      onCorruptOAuthSessionCleared: async (providers) => {
+      onCorruptOAuthSessionCleared: async () => {
+        // Corrupt recovery has no account identity, so the provider logout handler would only enqueue an
+        // account refresh. That refresh shares the single-flight queue with login refreshes and runs the
+        // SIWC status probe, so it would delay a login that follows the corrupt boot. Signal sign-out only;
+        // the account snapshot reconciles on the next login, logout, or settings refresh.
         this.sessionChanges.fire("signed-out");
-        // Failure to decrypt local OAuth credentials is equivalent to a forced logout.
-        // The repo can clear only the OAuth namespace; derived Start/Coding Plan provider keys must be cleared at the service layer.
-        await this.notifyProvidersLogout(providers);
       },
     });
     // ChatGPT plan (SIWC) is an independent identity domain: it never touches the zai/bigmodel

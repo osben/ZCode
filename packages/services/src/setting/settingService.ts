@@ -11,7 +11,6 @@ import {
   appSettingsSchema,
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
-  formatLogPrefix,
   formatZodError,
   splitForkSettingsPatch,
 } from "@zcode/shared";
@@ -19,7 +18,7 @@ import type { ForkAppSettings } from "@zcode/shared";
 import type { ISettingService, WorkspaceSettingsProjection } from "./setting.js";
 import { normalizeSettingsPatch } from "#src/setting/normalizeSettingsPatch.js";
 import { copyDataDirectory, getDataBaseDir, validateDataBaseDirTarget } from "../paths.js";
-import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
+import { createServiceLogger } from "../logger/serviceLogger.js";
 import { maybeThrowInjectedFsFault } from "../fs/fsFaultInjection.js";
 import { atomicWriteText, withAtomicFileLock } from "../fs/atomicFileUtils.js";
 import { createSettingsWriteQueue } from "./settingsWriteQueue.js";
@@ -42,15 +41,10 @@ const DEFAULT_PROJECT_NAME = "ZCodeProject";
 const SETTINGS_PARSE_RETRY_DELAY_MS = 300;
 const SETTINGS_PARSE_RETRY_COUNT = 3;
 
-const log = (...args: unknown[]) =>
-  console.log(formatLogPrefix("settingService", process.pid), ...args);
-const debugLog = (...args: unknown[]) => {
-  // NODE_ENV inherited from the user's shell can mislead the service-layer debug switch; use ZCODE_RUNTIME_ENV consistently.
-  if (!isEffectiveDevelopmentNodeEnv()) {
-    return;
-  }
-  console.debug(formatLogPrefix("settingService", process.pid), ...args);
-};
+const settingLogger = createServiceLogger("settingService");
+// info lines carry key names and counts only; settings values go to debug, which the service logger gates to development.
+const log = (...args: unknown[]) => settingLogger.info(undefined, ...args);
+const debugLog = (...args: unknown[]) => settingLogger.debug(undefined, ...args);
 
 function defaultSettings(): AppSettings {
   return appSettingsSchema.parse({});
@@ -184,13 +178,23 @@ async function readSettingsWithMeta(location: SettingsLocation): Promise<ReadSet
   }
 }
 
+const RACY_TIMESTAMP_WINDOW_MS = 2_000;
+const NS_PER_MS = BigInt(1_000_000);
+
 /**
  * Identity of one settings file. Every atomic write replaces the inode, so a rewrite by any
- * process changes this value. Null means the file could not be stat-ed and must not be reused.
+ * process changes this value. Null means the identity cannot be trusted (stat failed, or the file
+ * changed within the racy window) and the snapshot built from it must not be reused.
  */
 async function readSettingsFileIdentity(filePath: string): Promise<string | null> {
   try {
     const info = await stat(filePath, { bigint: true });
+    // Racy-timestamp guard, as git applies to its index: coarse-timestamp filesystems (FAT/exFAT 2 s,
+    // some SMB/DrvFs mounts) can keep size and timestamp unchanged across a rewrite made within the same
+    // granularity. An identity captured this close to the file's last change proves nothing, so it is not cached.
+    // Future-dated timestamps fall inside the same check and are treated as racy too.
+    const newestChangeNs = info.mtimeNs > info.ctimeNs ? info.mtimeNs : info.ctimeNs;
+    if (newestChangeNs >= BigInt(Date.now() - RACY_TIMESTAMP_WINDOW_MS) * NS_PER_MS) return null;
     return `${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
   } catch (err) {
     if (err && typeof err === "object" && "code" in err && err.code === "ENOENT") {
@@ -280,8 +284,9 @@ export function createSettingServiceWithMigrations(): {
     createSettingsWriteQueue();
   // Paths are pinned here: a later service created under another HOME must not redirect this instance's IO.
   const location = resolveSettingsLocation();
-  // Reads are served from this snapshot. It is reloaded only when the files' identity changes, which covers
-  // writes by this instance (the write path reloads before resolving) and by other instances or external edits.
+  // Reads are served from this snapshot, reloaded only when the files' identity changes. The write path
+  // reloads the snapshot inside the queue before it resolves; an identity change covers writes by other
+  // instances and external edits.
   let snapshot: SettingsSnapshot | undefined;
   const loadSettingsSnapshot = async (): Promise<SettingsSnapshot> => {
     const identity = await readSettingsFilesIdentity(location);

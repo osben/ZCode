@@ -101,14 +101,10 @@ function createMockCredentialDecryptError(message = "Serialized credential decry
   return Object.assign(new Error(message), { code: CREDENTIAL_DECRYPT_ERROR_CODE });
 }
 
-function expectProviderLogoutNotifications(
-  onProviderLogout: ReturnType<typeof vi.fn>,
-  expectedProviders: readonly OAuthProviderId[],
-) {
-  expect(onProviderLogout).toHaveBeenCalledTimes(expectedProviders.length);
-  expect(new Set(onProviderLogout.mock.calls.map(([provider]) => provider))).toEqual(
-    new Set(expectedProviders),
-  );
+// Corrupt recovery has no account identity to clear, so it must not run the provider logout handler
+// (that handler's only remaining effect is an account refresh).
+function expectNoProviderLogoutNotifications(onProviderLogout: ReturnType<typeof vi.fn>) {
+  expect(onProviderLogout).not.toHaveBeenCalled();
 }
 
 function createMockApiClient(mockFetch: typeof fetch): ApiClient {
@@ -2478,71 +2474,7 @@ describe("oauthService", () => {
     await expect(service.getActiveProvider()).resolves.toBeNull();
 
     expectDeletedOAuthSessionCredentials(deletedKeys);
-    expectProviderLogoutNotifications(onProviderLogout, [BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID]);
-  });
-
-  it("keeps corrupt OAuth recovery successful when derived provider cleanup fails", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const onProviderLogout = vi.fn(async () => {
-      throw new Error("model provider config write failed");
-    });
-    const deletedKeys: string[] = [];
-    const brokenCredentialService: ICredentialService = {
-      load: async (key: string) => {
-        if (key === "oauth:active_provider") {
-          throw createMockCredentialDecryptError();
-        }
-        return `${key}-value`;
-      },
-      save: async () => {},
-      delete: async (key: string) => {
-        deletedKeys.push(key);
-      },
-    };
-    const service = new OAuthService(brokenCredentialService, {
-      adapters: [],
-      onProviderLogout,
-    });
-
-    await expect(service.getActiveProvider()).resolves.toBeNull();
-
-    expectDeletedOAuthSessionCredentials(deletedKeys);
-    expectProviderLogoutNotifications(onProviderLogout, [BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID]);
-    expect(warnSpy).toHaveBeenCalled();
-  });
-
-  it("restores signed-out without waiting for a hung derived provider cleanup", async () => {
-    // Regression: the derived-provider cleanup used to be awaited inside credential recovery, so a
-    // never-settling cleanup kept restoreCachedSessionState pending and the splash screen up forever.
-    const deletedKeys: string[] = [];
-    let deletedKeysAtLogout: string[] | null = null;
-    const onProviderLogout = vi.fn(() => {
-      deletedKeysAtLogout ??= [...deletedKeys];
-      return new Promise<void>(() => {});
-    });
-    const brokenCredentialService: ICredentialService = {
-      load: async (key: string) => {
-        if (key === "oauth:active_provider") {
-          throw createMockCredentialDecryptError();
-        }
-        return `${key}-value`;
-      },
-      save: async () => {},
-      delete: async (key: string) => {
-        deletedKeys.push(key);
-      },
-    };
-    const service = new OAuthService(brokenCredentialService, {
-      adapters: [],
-      onProviderLogout,
-    });
-
-    await expect(service.restoreCachedSessionState()).resolves.toEqual({ status: "signed-out" });
-
-    expectDeletedOAuthSessionCredentials(deletedKeys);
-    // Credentials are cleared before derived cleanup starts.
-    expect(deletedKeysAtLogout).toContain("oauth:active_provider");
-    expectProviderLogoutNotifications(onProviderLogout, [BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID]);
+    expectNoProviderLogoutNotifications(onProviderLogout);
   });
 
   it("clears OAuth login credentials when cached user info cannot be decrypted", async () => {
@@ -2587,7 +2519,7 @@ describe("oauthService", () => {
     await expect(service.restoreCachedSession()).resolves.toBeNull();
 
     expectDeletedOAuthSessionCredentials(deletedKeys);
-    expectProviderLogoutNotifications(onProviderLogout, [BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID]);
+    expectNoProviderLogoutNotifications(onProviderLogout);
   });
 
   it("clears registered OAuth provider credentials when cached user info cannot be decrypted", async () => {
@@ -2637,11 +2569,7 @@ describe("oauthService", () => {
       `oauth:${customProviderId}:refresh_token`,
       `oauth:${customProviderId}:user_info`,
     ]);
-    expectProviderLogoutNotifications(onProviderLogout, [
-      BIGMODEL_PROVIDER_ID,
-      ZAI_PROVIDER_ID,
-      customProviderId,
-    ]);
+    expectNoProviderLogoutNotifications(onProviderLogout);
   });
 
   it("refresh only reads namespaced keys and ignores legacy keys", async () => {
