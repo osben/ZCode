@@ -10,6 +10,7 @@ import {
   createAcpAgentsBridge,
   createHostAcpAgentsBridge,
   formatLoginCommand,
+  resolveE2eAcpAgentPath,
   type AcpAgentSummary,
   type AcpAgentsBridgeDependencies,
 } from "../src/model-provider/acpAgents.js";
@@ -291,4 +292,56 @@ describe("ACP agents bridge hardening", () => {
     expect(createHostAcpAgentsBridge({ NODE_ENV: "development" })).toBeUndefined();
     expect(createHostAcpAgentsBridge({})).toBeUndefined();
   });
+
+  it("honors the E2E detection path only in a development host running ZCODE_ENV=test", () => {
+    const dir = "/tmp/zcode-e2e-acp-bin";
+    const seam = { ZCODE_E2E_ACP_AGENT_PATH: dir };
+    expect(
+      resolveE2eAcpAgentPath({ ...seam, ZCODE_RUNTIME_ENV: "development", ZCODE_ENV: "test" }),
+    ).toBe(dir);
+    expect(
+      resolveE2eAcpAgentPath({
+        ...seam,
+        ZCODE_RUNTIME_ENV: "development",
+        ZCODE_ENV: "production",
+      }),
+    ).toBeUndefined();
+    expect(resolveE2eAcpAgentPath({ ...seam, ZCODE_RUNTIME_ENV: "development" })).toBeUndefined();
+    // A packaged host runs as production: the seam stays closed even with ZCODE_ENV=test.
+    expect(
+      resolveE2eAcpAgentPath({ ...seam, ZCODE_RUNTIME_ENV: "production", ZCODE_ENV: "test" }),
+    ).toBeUndefined();
+    expect(
+      resolveE2eAcpAgentPath({ ZCODE_RUNTIME_ENV: "development", ZCODE_ENV: "test" }),
+    ).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "replaces only the detection PATH with the E2E seam directory",
+    async () => {
+      const dir = await makeTempDir();
+      const shim = join(dir, "opencode");
+      await writeFile(shim, "#!/bin/sh\necho 9.9.9-e2e\n", "utf8");
+      await chmod(shim, 0o755);
+      const env = {
+        PATH: process.env.PATH,
+        ZCODE_RUNTIME_ENV: "development",
+        ZCODE_E2E_ACP_AGENT_PATH: dir,
+      };
+
+      const seamed = await createHostAcpAgentsBridge({ ...env, ZCODE_ENV: "test" })!.detect({
+        refresh: true,
+      });
+      const opencode = seamed.agents.find((agent) => agent.agentId === "opencode");
+      expect(opencode).toMatchObject({ installed: true, commandPath: shim, version: "9.9.9-e2e" });
+      expect(seamed.agents.find((agent) => agent.agentId === "cursor")?.installed).toBe(false);
+
+      const ignored = await createHostAcpAgentsBridge({ ...env, ZCODE_ENV: "production" })!.detect({
+        refresh: true,
+      });
+      expect(ignored.agents.find((agent) => agent.agentId === "opencode")?.commandPath).not.toBe(
+        shim,
+      );
+    },
+  );
 });

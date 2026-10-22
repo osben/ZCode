@@ -99,6 +99,22 @@ packaged host never spawns caller-supplied commands even if a client calls the R
 dev server started without `ZCODE_RUNTIME_ENV=development` therefore shows the panel as
 unsupported.
 
+Gate source (one signal for renderer and host): Electron main computes `isLocalDevelopmentRuntime =
+!app.isPackaged` once (`desktopRuntimeEnv.ts`). Main passes it to every app renderer window as the
+preload argument `--zcode-local-development-runtime`; preload exposes it before the renderer boots,
+and the desktop platform reports it as `platform.isLocalDevelopmentRuntime`. The same value selects
+`ZCODE_RUNTIME_ENV=development` for the host. A packaged app therefore keeps both the renderer
+surface and the host bridge closed, and an unpackaged build — including a production-mode Vite
+build such as the desktop E2E app — opens both. The renderer never derives this gate from a
+compile-time `define`: Vite only applies `globalThis.<define>` under `vite dev`. The user-action
+trace `deploymentEnvironment` keeps its own compile-time input and is not part of this gate.
+
+E2E detection seam: `ZCODE_E2E_ACP_AGENT_PATH` replaces only the PATH that default detection
+probes (every other detection input, and the env/args of spawned agents, are unchanged). The host
+honors it only when the bridge is open (unpackaged, development runtime) and `ZCODE_ENV=test`;
+anywhere else it is ignored. The desktop E2E points it at a run-scoped directory so detection
+never sees a real `opencode` / `cursor-agent` installed on the machine.
+
 The bridge still accepts `command` / `args` / `env` overrides (custom executables and the saved
 provider's command), validated with the shared launch rules before anything is spawned or a login
 script is written; resolving the command only from detection or the saved provider is a follow-up.
@@ -146,6 +162,12 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Errors from enable, disable, test and scan are announced with `role="alert"`.
 - Tests: effect-running jsdom tests cover one detection per mount, stale-response dropping,
   selection correction, the catalog-to-agent move, and a single login-status probe across rescans.
+- Desktop E2E (`packages/desktop/test/e2e/settings/acp-agents-settings.test.ts`, mock agent via
+  the detection seam): the group renders after Custom providers; the catalog empty state shows when
+  nothing is detected, and Rescan moves to the detected agent; selecting an agent opens its detail;
+  Test shows a roundtrip OK with a collapsed frames disclosure; the enable switch turns on then off
+  and the saved command/args/env survive the off/on cycle; an enabled agent is not listed under
+  Custom providers.
 
 ## Storage and upstream compatibility
 

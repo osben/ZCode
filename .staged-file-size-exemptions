@@ -228,6 +228,7 @@ packages/desktop/src/main/browserView/browserPlaywrightLocatorExecutor.ts
 packages/desktop/src/main/desktopMainIpcRemote.ts
 packages/desktop/src/main/desktopRemoteSessions.ts
 packages/desktop/src/main/desktopRuntimeEnv.ts
+packages/desktop/src/main/desktopWindowChrome.ts
 packages/desktop/src/main/editors.ts
 packages/desktop/src/main/taskRealtimeBus.ts
 packages/server/src/remote/remoteAssetCache.ts
