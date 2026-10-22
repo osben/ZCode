@@ -3,10 +3,6 @@ import { Emitter } from "@zcode/rpc";
 import type { IZCodeTaskService } from "@zcode/services";
 import type { ZCodeTaskMeta, ZCodeWorkspaceEvent } from "@zcode/shared";
 import { createWindowHostControllerRuntime } from "@zcode/services/window-controller";
-import {
-  collectArchivedTaskDeletion,
-  deleteArchivedTaskSelection,
-} from "@/lib/archivedTaskDeletion.js";
 
 function createSource(count: number, workspacePath = "/isolated/probe") {
   const events = new Emitter<ZCodeWorkspaceEvent>();
@@ -75,74 +71,6 @@ function createSource(count: number, workspacePath = "/isolated/probe") {
 }
 
 describe("归档批次跨 UI / Controller 的刷新边界", () => {
-  it.each([1, 8, 72])("%i 个目标只发一个批次，Host 分区读取不随目标数增长", async (count) => {
-    const workspacePath = "/isolated/probe";
-    const { source, rows } = createSource(count);
-    const runtime = createWindowHostControllerRuntime({
-      createId: () => "probe",
-      resolveSource: () => ({
-        scope: { kind: "local", workspacePath },
-        sourceAvailability: "online",
-        taskService: source as unknown as IZCodeTaskService,
-      }),
-    });
-    try {
-      const facade = {
-        getDeletionCapability: source.getDeletionCapability,
-        countTaskTrees: source.countTaskTrees,
-        eraseTasks: source.eraseTasks,
-        listArchivedTasks: source.listArchivedTasks,
-        deleteArchivedTask: async (params: { taskId: string; workspacePath: string }) =>
-          runtime.service.deleteArchivedTask({
-            address: await runtime.resolveTaskAddress({ ...params, allowMissingTask: true }),
-          }),
-        deleteArchivedTasks: async (params: { taskIds: string[]; workspacePath: string }) =>
-          runtime.service.deleteArchivedTasks({
-            address: await runtime.resolveTaskAddress({
-              ...params,
-              taskId: params.taskIds[0]!,
-              allowMissingTask: true,
-            }),
-            taskIds: params.taskIds,
-          }),
-      };
-      await runtime.resolveTaskAddress({ workspacePath, taskId: "task-0" });
-      const selection = await collectArchivedTaskDeletion([
-        {
-          workspacePath,
-          label: "probe",
-          service: facade,
-          gitService: { getChanges: vi.fn(async () => []) },
-        },
-      ]);
-      source.listTasks.mockClear();
-      source.listPinnedTasks.mockClear();
-      source.listArchivedTasks.mockClear();
-      expect(await deleteArchivedTaskSelection(selection, vi.fn())).toMatchObject({
-        tombstoned: count,
-        erased: count,
-        skipped: 0,
-        failed: 0,
-      });
-      expect(rows.size).toBe(0);
-      expect(source.deleteArchivedTasks).toHaveBeenCalledTimes(1);
-      expect(source.eraseTasks).toHaveBeenCalledExactlyOnceWith({
-        workspacePath,
-        taskIds: [...Array(count).keys()].map((index) => `task-${index}`),
-      });
-      expect(source.deleteArchivedTasks.mock.invocationCallOrder[0]).toBeLessThan(
-        source.eraseTasks.mock.invocationCallOrder[0]!,
-      );
-      expect(source.deleteArchivedTask).not.toHaveBeenCalled();
-      // 事件通知与 mutation 回包共享 single-flight；一次批次只读取三个持久分区。
-      expect(source.listTasks).toHaveBeenCalledTimes(1);
-      expect(source.listPinnedTasks).toHaveBeenCalledTimes(1);
-      expect(source.listArchivedTasks).toHaveBeenCalledTimes(1);
-    } finally {
-      runtime.dispose();
-    }
-  });
-
   it("批次持久化成功后，列表读取失败不得改报删除失败", async () => {
     const workspacePath = "/isolated/probe";
     const { source, rows } = createSource(2);

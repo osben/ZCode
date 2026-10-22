@@ -83,6 +83,7 @@ WebSocket `/api/v1/remote/ws2?token=…` (optional gateway hint `mid`). Missing/
 
 - client→relay: `auth_init {device_sid, meta?, client_ts?}`, `pair_status_query {client_ts?}`, `data {payload, client_ts?}`.
 - relay→client: `auth_ack {device_sid, terminal_sid, pair_status, server_ts?}`, `pair_status_ack`, `data {payload, server_ts?}`, `error {code, message?, server_ts?}`.
+- All `client_ts` and `server_ts` values are Unix seconds; the relay rejects a millisecond `client_ts` with `WRONG_PARAM`.
 - Error codes: `AUTH_FAILED | WRONG_PARAM | KICKED | INTERNAL | DEVICE_OFFLINE`. Pair status: `waiting | matched`.
 - Heartbeat: 5000 ms ±1000 ms jitter, ACK deadline 15000 ms.
 

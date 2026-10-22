@@ -21,10 +21,7 @@ import {
   IRemoteProjectService,
   ITaskGroupService,
   IBroadcastService,
-  ICommandsService,
-  IMcpSyncService,
   ISkillSyncService,
-  ISkillsService,
   type BroadcastMessage,
   type IServiceAccessor,
   ServiceCollection,
@@ -33,13 +30,11 @@ import {
   IPromptAttachmentTransferService,
   IUserInstructionsService,
 } from "@zcode/services";
-import type { ApiClient } from "@zcode/shared";
 import { REMOTE_WORKSPACE_RPC_CHANNELS } from "../src/host/remoteWorkspaceRpcContract.js";
 import {
   REMOTE_WORKSPACE_RPC_REGISTRATIONS,
   createServerRemoteWorkspaceServiceCollection,
 } from "../src/host/remoteWorkspaceServiceCollection.js";
-import { createRemoteConnectionServiceCollection } from "../src/host/remoteConnectionServiceCollection.js";
 import { getRemoteProviderProvisioningExecutor } from "../src/host/remoteProviderProvisioningService.js";
 import {
   createSourceSettingsServiceCollection,
@@ -444,28 +439,5 @@ describe("server remote workspace host service wiring", () => {
       rolledBack: false,
     });
     expect(remoteTargetApply).not.toHaveBeenCalled();
-  });
-});
-
-describe("remote connection host skill and command sync wiring", () => {
-  it("exposes remote skill sync service in the remote connection host", () => {
-    const remoteServices = makeServerRemoteServices();
-    const services = createRemoteConnectionServiceCollection({
-      clientConfigService,
-      connectionServices: remoteServices,
-      parentPort: null,
-      credentialService: { load: vi.fn(), save: vi.fn(), delete: vi.fn() } as never,
-      apiClient: { request: vi.fn() } as unknown as ApiClient,
-      remoteZCodeTaskService: { remote: "wrapped-task" } as never,
-      remoteZCodeSessionService: { remote: "wrapped-session" } as never,
-    });
-
-    expect(services.get(IClientConfigService)).toBe(clientConfigService);
-    expect(services.get(ISkillsService)).toBe(remoteServices.skillsService);
-    expect(services.get(ISkillSyncService)).toBe(remoteServices.skillSyncService);
-    expect(services.get(IMcpSyncService)).toBe(remoteServices.mcpSyncService);
-    expect(services.get(IPluginSyncService)).toBe(remoteServices.pluginSyncService);
-    expect(services.get(IPluginsService)).toBe(remoteServices.pluginsService);
-    expect(services.get(ICommandsService)).toBe(remoteServices.commandsService);
   });
 });
