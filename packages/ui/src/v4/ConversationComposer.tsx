@@ -1844,6 +1844,10 @@ function ConversationComposerImpl({
   // draft"). Picking a branch before typing anything is unaffected: the transition requires prior
   // content.
   const draftHadTextRef = useRef(false);
+  // Set while a checkout branch intent is applied at send. The send's own editor claim clears the
+  // text before the guard dialog opens; that clear is not the user emptying the draft, so it must
+  // not drop the intent when the guard is cancelled (ISSUE-037).
+  const checkoutIntentResolvingRef = useRef(false);
   useEffect(() => {
     const hasText = text.trim().length > 0;
     if (hasText) {
@@ -1852,7 +1856,7 @@ function ConversationComposerImpl({
     }
     if (draftHadTextRef.current) {
       draftHadTextRef.current = false;
-      if (draftMode && sessionId === null) {
+      if (draftMode && sessionId === null && !checkoutIntentResolvingRef.current) {
         useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
       }
     }
@@ -2458,6 +2462,9 @@ function ConversationComposerImpl({
           : null;
       if (draftBranchIntent && branchIntentGitService) {
         acquirePending();
+        // No await separates the editor claim above from this flag, so the claim's text clear is
+        // always observed while the flag is set.
+        checkoutIntentResolvingRef.current = true;
         try {
           const resolution = await applyDraftBranchIntentForSend({
             gitService: branchIntentGitService,
@@ -2485,6 +2492,7 @@ function ConversationComposerImpl({
             return;
           }
         } finally {
+          checkoutIntentResolvingRef.current = false;
           releasePending();
         }
       }

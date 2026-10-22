@@ -1484,6 +1484,62 @@ it("a cancelled checkout guard withdraws the frozen submission even after the ed
   }
 });
 
+it("a cancelled checkout guard keeps the draft branch intent; the next send asks the guard again (ISSUE-037)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
+  const switchBranch = vi.fn(async () => ({ ok: true as const }));
+  branchIntentWiring.gitService = {
+    getLocalBranches: async () => ({ currentBranchName: "main" }),
+    switchBranch,
+  };
+  // The dialog stays open until the user answers: the editor's optimistic clear commits first.
+  const guard = vi.fn(async () => {
+    await flushAsyncWork();
+    return false;
+  });
+  branchIntentWiring.guard = guard;
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("guarded text");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("guarded text");
+      await flushAsyncWork();
+    });
+    expect(guard).toHaveBeenCalledTimes(1);
+    expect(guard).toHaveBeenLastCalledWith(
+      expect.objectContaining({ targetBranchName: "feature/qa-branch", scope: "checkout" }),
+    );
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(switchBranch).not.toHaveBeenCalled();
+
+    // The restored text reaches the editor again (its change event bumps the revision), then Send.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("guarded text");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("guarded text");
+      await flushAsyncWork();
+    });
+    expect(guard).toHaveBeenCalledTimes(2);
+    expect(guard).toHaveBeenLastCalledWith(
+      expect.objectContaining({ targetBranchName: "feature/qa-branch" }),
+    );
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
 it("a worktree begin that fails before any reservation withdraws the frozen submission after the echo (C)", async () => {
   const harness = renderLateAckComposer({
     onPrepareFirstSubmission: vi.fn<PrepareFirstSubmission>(async () => "never"),
