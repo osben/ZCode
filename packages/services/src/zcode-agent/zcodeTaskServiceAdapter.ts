@@ -156,6 +156,7 @@ import type {
   ZCodeTaskIndexTerminalEvent,
 } from "./zcodeTaskIndexSyncer.js";
 import { readModelTrajectory } from "./modelTrajectory.js";
+import { readModelTrajectoryV2, type ContextWindowPort } from "#src/model-trajectory-v2/index.js";
 import { errorAttributionSchema, type CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
 import {
   assertV4CommandAckOk,
@@ -203,6 +204,8 @@ interface CreateZCodeTaskServiceAdapterOptions {
   getOpenWorkspacePaths?: () => Promise<string[]>;
   settingService?: Pick<ISettingService, "get">;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
+  /** Provider registry lookup for trajectory v2 context %; absent means unknown windows. */
+  resolveModelContextWindow?: ContextWindowPort;
 }
 
 interface TaskTarget {
@@ -3361,6 +3364,17 @@ export function createZCodeTaskServiceAdapter(
       const trajectory = await readModelTrajectory(params.taskId, params.limit);
       logger.info(
         `[ZCodeTaskService] getModelTrajectory taskId=${params.taskId} records=${trajectory.records.length} files=${trajectory.sourceFiles.length} truncated=${trajectory.truncated}`,
+      );
+      return trajectory;
+    },
+
+    async getModelTrajectoryV2(params) {
+      const trajectory = await readModelTrajectoryV2(params.taskId, {
+        limit: params.limit,
+        resolveContextWindow: options.resolveModelContextWindow,
+      });
+      logger.info(
+        `[ZCodeTaskService] getModelTrajectoryV2 taskId=${params.taskId} records=${trajectory.records.length} toolTiming=${trajectory.toolTiming.source} truncated=${trajectory.truncated} omitted=${trajectory.budget.omitted}`,
       );
       return trajectory;
     },
