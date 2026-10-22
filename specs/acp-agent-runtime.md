@@ -166,8 +166,9 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
   the detection seam): the group renders after Custom providers; the catalog empty state shows when
   nothing is detected, and Rescan moves to the detected agent; selecting an agent opens its detail;
   Test shows a roundtrip OK with a collapsed frames disclosure; the enable switch turns on then off
-  and the saved command/args/env survive the off/on cycle; an enabled agent is not listed under
-  Custom providers.
+  and the saved command/args/env survive the off/on cycle in `fork_acp_agents.json` while the
+  shared `provider_config.json` never holds an `acp:` provider; an enabled agent is not listed
+  under Custom providers.
 
 ## Storage and upstream compatibility
 

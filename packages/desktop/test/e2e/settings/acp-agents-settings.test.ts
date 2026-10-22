@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   TID_MODEL_PROVIDER_NAV_ITEM,
   TID_SETTINGS_PAGE,
@@ -112,28 +112,36 @@ async function replaceValue(selector: string, value: string) {
 }
 
 interface StoredAcpAccess {
-  readonly type?: string;
   readonly command?: string;
   readonly args?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
 }
 
-/** The saved `acp-agent` access of the `acp:opencode` provider rule, if stored. */
+/**
+ * The saved launch config of the `opencode` agent from the fork sidecar
+ * (specs/acp-agent-runtime.md "Storage and upstream compatibility"). The shared
+ * provider_config.json must never hold an ACP provider, so its presence there fails the read.
+ */
 async function readSavedAcpAccess(): Promise<StoredAcpAccess | undefined> {
-  const file = getE2EAppDataPaths().configFile;
-  if (!existsSync(file)) return undefined;
-  const stored = JSON.parse(await readFile(file, "utf8")) as {
-    config?: {
-      providerConfigRules?: {
-        providerRules?: { providerId?: string; config?: { access?: StoredAcpAccess } }[];
-      };
-    };
+  const configFile = getE2EAppDataPaths().configFile;
+  if (existsSync(configFile)) {
+    assert.ok(
+      !(await readFile(configFile, "utf8")).includes(`"${ACP_PROVIDER_ID}"`),
+      "ACP providers must not be written to the shared provider_config.json",
+    );
+  }
+  const sidecar = join(dirname(configFile), "fork_acp_agents.json");
+  if (!existsSync(sidecar)) return undefined;
+  const stored = JSON.parse(await readFile(sidecar, "utf8")) as {
+    agents?: {
+      agentId?: string;
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+    }[];
   };
-  const rule = stored.config?.providerConfigRules?.providerRules?.find(
-    (entry) => entry.providerId === ACP_PROVIDER_ID,
-  );
-  const access = rule?.config?.access;
-  return access?.type === "acp-agent" ? access : undefined;
+  const record = stored.agents?.find((agent) => `acp:${agent.agentId ?? ""}` === ACP_PROVIDER_ID);
+  return record ? { command: record.command, args: record.args, env: record.env } : undefined;
 }
 
 async function writeMockOpencode() {
