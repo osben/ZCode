@@ -6,7 +6,7 @@ import {
   readdirSync,
   readFileSync,
   statSync,
-  type Stats,
+  type BigIntStats,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -161,6 +161,9 @@ function seedBundledOfficialPlugins(input: {
             for (const file of plugin.files) {
               const bytes = readSeedFileBytes(source, plugin, file);
               if (hashBytes(bytes) !== file.sha256) {
+                // A same-tick edit on a coarse-timestamp filesystem can leave the stat signature
+                // unchanged; forget this plugin's memoized hashes so the next call re-hashes.
+                forgetFilesystemSeedHashes(plugin.files);
                 throw new Error(
                   `Bundled plugin asset hash mismatch: ${plugin.definition.name}/${file.path}`,
                 );
@@ -378,9 +381,9 @@ function collectFilesystemPluginFiles(
     const relativePath = toPosixPath(sourcePath.slice(rootPath.length + 1));
     if (!shouldIncludePluginFile(relativePath, allowedTopLevelPaths)) continue;
     visited.add(sourcePath);
-    const stats = statSync(sourcePath);
+    const stats = statSync(sourcePath, { bigint: true });
     files.push({
-      mode: modeForSeedFile(relativePath, stats.mode),
+      mode: modeForSeedFile(relativePath, Number(stats.mode)),
       path: relativePath,
       sha256: hashFilesystemSeedFile(sourcePath, stats),
       sourcePath,
@@ -393,17 +396,23 @@ function collectFilesystemPluginFiles(
 // Every discovery call (readPresentation, session runtime creation, skills) rebuilt the seed hash
 // list by reading and hashing all bundled plugin bytes (~63 MB packaged), which dominated the
 // synchronous plugin resolution on the CLI request queue. Hashes are reused only while the
-// file's stat signature is unchanged; ctime and inode catch edits that preserve size and mtime.
-// Stat happens before read, so a concurrent edit can only cause an extra re-hash later.
+// file's exact (nanosecond) stat signature is unchanged; ctime and inode catch edits that preserve
+// size and mtime. Stat happens before read, so a concurrent edit can only cause an extra re-hash.
 const filesystemSeedHashMemo = new Map<string, { signature: string; sha256: string }>();
 
-function hashFilesystemSeedFile(sourcePath: string, stats: Stats): string {
-  const signature = `${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}:${stats.ino}`;
+function hashFilesystemSeedFile(sourcePath: string, stats: BigIntStats): string {
+  const signature = `${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}:${stats.ino}`;
   const memo = filesystemSeedHashMemo.get(sourcePath);
   if (memo?.signature === signature) return memo.sha256;
   const sha256 = hashBytes(readFileSync(sourcePath));
   filesystemSeedHashMemo.set(sourcePath, { signature, sha256 });
   return sha256;
+}
+
+function forgetFilesystemSeedHashes(files: ReadonlyArray<{ sourcePath?: string }>): void {
+  for (const file of files) {
+    if (file.sourcePath) filesystemSeedHashMemo.delete(file.sourcePath);
+  }
 }
 
 function pruneFilesystemSeedHashMemo(rootPath: string, visited: ReadonlySet<string>): void {

@@ -1,11 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const fsSpy = vi.hoisted(() => ({ readPaths: [] as string[] }));
+const fsSpy = vi.hoisted(() => ({
+  frozenStats: new Map<string, unknown>(),
+  readPaths: [] as string[],
+}));
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -15,6 +18,14 @@ vi.mock("node:fs", async (importOriginal) => {
       if (typeof path === "string") fsSpy.readPaths.push(path);
       return (actual.readFileSync as (...args: unknown[]) => unknown)(path, ...rest);
     }) as typeof actual.readFileSync,
+    // Simulates a coarse-timestamp filesystem: a frozen path keeps returning the stat captured
+    // when it was frozen, even after its bytes change.
+    statSync: ((path: Parameters<typeof actual.statSync>[0], ...rest: unknown[]) => {
+      if (typeof path === "string" && fsSpy.frozenStats.has(path)) {
+        return fsSpy.frozenStats.get(path);
+      }
+      return (actual.statSync as (...args: unknown[]) => unknown)(path, ...rest);
+    }) as typeof actual.statSync,
   };
 });
 
@@ -82,16 +93,43 @@ describe("bundled official plugin seed hash memo", () => {
     expect(await readFile(cachedSkillFile(), "utf8")).toContain("changed content");
   });
 
-  it("detects a same-size edit that restores the original mtime", async () => {
+  it("detects a same-size edit that keeps the exact mtime (ctime changes)", async () => {
     const sourceSkill = join(sourceRoot, SKILL_FILE);
+    // A whole-second time round-trips exactly through utimes, so only ctime can differ.
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000);
+    await utimes(sourceSkill, pinned, pinned);
+    resolveOfficialPluginRoots({ storageRoot });
     const original = await readFile(sourceSkill, "utf8");
-    const before = await stat(sourceSkill);
     const edited = `${original.slice(0, -1)}${original.endsWith("X") ? "Y" : "X"}`;
     expect(edited.length).toBe(original.length);
-    await writeFile(sourceSkill, edited);
-    await utimes(sourceSkill, before.atime, before.mtime);
 
+    await writeFile(sourceSkill, edited);
+    await utimes(sourceSkill, pinned, pinned);
+    expect((await stat(sourceSkill, { bigint: true })).mtimeNs).toBe(
+      BigInt(pinned.getTime()) * 1_000_000n,
+    );
     resolveOfficialPluginRoots({ storageRoot });
+
+    expect(await readFile(cachedSkillFile(), "utf8")).toBe(edited);
+  });
+
+  it("recovers after a hash mismatch caused by an edit the stat signature missed", async () => {
+    const sourceSkill = join(sourceRoot, SKILL_FILE);
+    const original = await readFile(sourceSkill, "utf8");
+    fsSpy.frozenStats.set(sourceSkill, statSync(sourceSkill, { bigint: true }));
+    const edited = `${original.slice(0, -1)}${original.endsWith("X") ? "Y" : "X"}`;
+    await writeFile(sourceSkill, edited);
+    // An unrelated edit forces a re-seed; the copy then sees bytes that no longer match the
+    // memoized hash of the frozen file.
+    const packageJson = join(sourceRoot, "package.json");
+    await writeFile(packageJson, `${await readFile(packageJson, "utf8")}\n`);
+
+    try {
+      expect(() => resolveOfficialPluginRoots({ storageRoot })).toThrow(/hash mismatch/u);
+      resolveOfficialPluginRoots({ storageRoot });
+    } finally {
+      fsSpy.frozenStats.clear();
+    }
 
     expect(await readFile(cachedSkillFile(), "utf8")).toBe(edited);
   });

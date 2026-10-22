@@ -1,6 +1,7 @@
 # Plugin discovery per-process cache
 
-Status: proposed (2026-10-21). Tier 1 prototyped on branch claude/strange-burnell-5a3ebb; needs user agreement before a PR.
+Status: Tier 1 in review as draft PR osben/ZCode#273 (2026-10-21); Tier 2 and the Host ordering fix
+are proposed, not implemented.
 
 ## Problem
 
@@ -12,7 +13,8 @@ discovery in the CLI:
   synchronous and runs on the CLI's serial request queue (`zcode-protocol/transport.ts`).
   `runtime/capabilities` and the session subscribe sent after it wait until it finishes.
 - Session runtime creation (`createZCodeApp`, stage `resolve_plugins`) runs the same discovery
-  through `resolveStartupPlugins`. Skills discovery runs it again.
+  through `resolveStartupPlugins`, and then the runtime's skills discovery scans the resulting
+  skill roots. Measurement shows one plugin discovery per resume, not two.
 
 ## Where the time goes (measured, 2026-10-21)
 
@@ -42,7 +44,7 @@ every discovery call.
 ## Decision
 
 Implement **Tier 1** (below). Specify **Tier 2** and defer it. The reason for deferring is that
-Tier 1 removes most of the cost with no staleness, while Tier 2 would save only the remaining
+Tier 1 removes most of the cost with only the narrow staleness edge described below, while Tier 2 would save only the remaining
 ~25 ms per call and adds staleness windows that a shared `~/.zcode` makes hard to close.
 
 ### Tier 1: stat-validated seed-file hash memo (implemented in prototype)
@@ -50,29 +52,47 @@ Tier 1 removes most of the cost with no staleness, while Tier 2 would save only 
 - **Owner:** `apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts`. A module-level,
   per-process map is used only by `collectFilesystemPluginFiles`, and nothing else reads or
   writes it. The memo is inline in this upstream-synced file, a fork delta of about 30 lines,
-  because `apps/zcode-cli` is not an architecture-managed module and a new sibling file would be
-  rejected. The file was already over the 20 KB staged-size cap, so it is listed in
+  because `apps/zcode-cli` is `managed: false` in `architecture-policy.yaml`. The pre-push
+  `architecture:check` rejects new source files in unmanaged modules (rule `unmanaged-new-file`,
+  `scripts/architecture/violations.mjs`), and it did reject a sibling
+  `official-plugin-seed-hash-memo.ts`. The file was already over the 20 KB staged-size cap, so it is listed in
   `.staged-file-size-exemptions` instead of being split.
 - **Key:** the absolute source file path.
-- **Validator:** the file's `stat` signature: `size`, `mtimeMs`, `ctimeMs`, `ino`.
-  - `ctime` cannot be set from user space (`utimes` does not change it).
-  - A content edit that keeps size and mtime (`cp -p`, `rsync -t`) still changes ctime.
+- **Validator:** the file's exact `stat` signature, taken with `statSync(path, { bigint: true })`:
+  `size`, `mtimeNs`, `ctimeNs`, `ino`. The values are nanosecond integers, not rounded ms doubles.
+  - On POSIX filesystems `ctime` cannot be set from user space (`utimes` does not change it), so a
+    content edit that keeps size and mtime (`cp -p`, `rsync -t`) still changes ctime. This is
+    verified on macOS APFS by a test that pins mtime to a whole second.
   - An atomic replace changes `ino`.
+  - Windows (NTFS change time, synthesized `ino`) and network filesystems (NFS, SMB) are
+    **unverified**. They may report coarser or cached timestamps.
 - **Value:** the file's SHA-256.
 - **Read path:** each call still walks the source tree and `stat`s every included file, so added
   and removed files are seen on every call. The file is read and hashed only when its signature
-  differs from the memo entry. Each walk rebuilds the map, so entries for deleted files go away.
+  differs from the memo entry. After each walk of a plugin root, memo entries under that root
+  that were not visited are pruned, so deleted files do not accumulate.
 - **Unchanged:** the seed lock, `isSeedCurrent`, the copy into the cache, the hash check of copied
   bytes (`readSeedFileBytes` + `hashBytes` while copying), the runtime-manifest refresh and the
   marketplace partition write all still run on every call. The official cache lives in shared
   `~/.zcode` storage that other processes also write (other workspace agents, and the upstream
   build), and these steps keep healing it on every call as they do today.
-- **Invalidation:** implicit. Any signature change re-hashes that file. Nothing needs to be
-  invalidated explicitly.
-- **What may go stale:** nothing that is observable. The only gap is a content change that leaves
-  size, mtime, ctime and inode all unchanged, which needs a filesystem with ctime disabled or
-  coarse timestamps plus an in-place same-size write within the same timestamp tick. The SEA
-  branch is not affected; it already uses precomputed hashes.
+- **Invalidation:**
+  - Implicit: any signature change re-hashes that file.
+  - Explicit, one case: when copying into the cache, the existing check of the copied bytes throws
+    `Bundled plugin asset hash mismatch`. Before that throw, every memo entry for that plugin's
+    source files is now dropped. That discovery call fails, as it did before this change. The
+    next call re-hashes from bytes and recovers.
+- **What may go stale:** a same-size, in-place edit within one timestamp tick that leaves size,
+  mtime, ctime and inode all unchanged. This needs a coarse-timestamp filesystem (HFS+ 1 s, FAT
+  2 s, some NFS/SMB mounts) or one with ctime updates disabled.
+  - Such an edit keeps the old hash. If nothing else changes, the seed marker still matches and
+    the cached copy keeps the old bytes until any later stat change re-hashes the file, or until
+    the process restarts. Before this change, the next discovery call would have re-seeded.
+  - If another change forces a re-seed, the copy-time hash check catches the mismatch. That call
+    fails once, and the self-heal above makes the next call correct.
+  - Bundled plugin sources change only in dev checkouts and app updates (new paths/inodes), so
+    production exposure is minimal.
+  - The SEA branch is not affected; it already uses precomputed hashes.
 - **Race:** the file is `stat`ed before it is read. If it changes between the two, the memo stores
   the new hash under the old signature. The next call sees a different signature and hashes again,
   so the error is always toward re-hashing.
@@ -154,8 +174,9 @@ What the numbers show:
 - The first readPresentation of a fresh process is unchanged. It fills the memo, so the
   `runtime/capabilities` request queued behind it still waits about 115 ms.
 
-**Worth it?** Yes. The change is about 30 lines in one file, has no
-invalidation surface and removes 50–55 ms from every discovery call after the first.
+**Worth it?** Yes. The change is about 35 lines in one file. Invalidation is implicit by stat,
+with one explicit self-heal on a hash mismatch. It removes 50–55 ms from every discovery call
+after the first.
 
 It does not fix the fresh-client wait, because the first discovery call of a process still pays
 the cold hash. The ordering fix covers that case (measured below). Tier 1b is the alternative, not
@@ -215,7 +236,7 @@ discovery for the same workspace.
 
 | Option                                                                                | readPresentation                | Cold resume                                                             | Staleness / regression risk                                                                                                                                                                 |
 | ------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| (a) Tier 1 stat-validated hash memo (this branch)                                     | warm 98 → 48 ms; cold unchanged | `resolve_plugins` 80 → 27 ms after any earlier discovery in the process | None observable. Every file is still stat-ed; seeding still runs every call.                                                                                                                |
+| (a) Tier 1 stat-validated hash memo (this branch)                                     | warm 98 → 48 ms; cold unchanged | `resolve_plugins` 80 → 27 ms after any earlier discovery in the process | Only a same-tick, unchanged-stat edit on coarse-timestamp filesystems (self-heals on a hash mismatch). Every file is still stat-ed; seeding still runs every call.                          |
 | (a') Tier 2 outcome cache                                                             | ~−25 ms more                    | ~−25 ms more                                                            | Nested plugin edits and re-seeds by another build go stale; needs a generation counter plus file signatures.                                                                                |
 | (b) Remove duplicate scans within a call                                              | 0                               | 0                                                                       | Nothing to remove.                                                                                                                                                                          |
 | (c1) Skip metadata enumeration when only `commandRoots` are needed (readPresentation) | −~9 ms                          | 0 (resume consumers read plugin metadata)                               | Low, but adds a second shape of `PluginLoadOutcome`.                                                                                                                                        |
@@ -289,8 +310,11 @@ Memo invalidation (`bootstrap/tests/bundled-plugins-hash-memo.test.ts`):
   re-read on purpose. Every included file is still `stat`ed.
 - When a source file's content changes (new size or mtime), the next call re-hashes it. The seed
   marker no longer matches, and the cache is re-seeded with the new bytes.
-- A content change that keeps the size and restores the original mtime is still detected
-  (ctime).
+- A same-size edit with mtime pinned to the same whole second is detected through ctime. The test
+  fails if ctime is removed from the signature.
+- After a hash mismatch caused by an edit the stat signature missed (simulated with a frozen
+  stat), that call fails and the next call re-seeds the new bytes. The test fails without the
+  self-heal.
 - A file added under an included top-level path is picked up on the next call. A removed file
   drops out of the seed file list and out of the reseeded cache.
 - Existing seed resilience behaviour is unchanged (`bundled-plugins-resilience.test.ts`,

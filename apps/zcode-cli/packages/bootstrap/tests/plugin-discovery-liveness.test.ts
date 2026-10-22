@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setZCodePluginEnabled } from "../src/plugins.js";
 import { listProtocolSlashCommands } from "../src/zcode-protocol/slash-commands.js";
 
-// specs/plugin-discovery-process-cache.md: discovery results are not cached across calls, so
-// CLI plugin ops, config edits, and edits made outside the CLI are visible on the next call.
-describe("plugin discovery liveness across calls in one process", () => {
+// Guards current behaviour (specs/plugin-discovery-process-cache.md, "Not cached in either tier"):
+// only seed file hashes are memoized, so plugin/command discovery must keep reflecting CLI plugin
+// ops, config file edits and edits made outside the CLI on the very next call in the same process.
+// A future outcome cache that misses one of these invalidation paths fails here.
+describe("plugin and command discovery reflect changes on the next call in one process", () => {
   let root: string;
   let workspace: string;
   let home: string;
