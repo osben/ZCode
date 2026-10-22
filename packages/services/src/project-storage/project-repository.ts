@@ -111,11 +111,21 @@ function resolveDirectories(
   };
 }
 
+// searchable_text holds every task's full-text body. The tree never reads it, but SELECT * made
+// this synchronous Host query sort that body through a temp B-tree, stalling the Host event loop
+// on every navigation. Keep the remaining columns dynamic so older table shapes still load.
+function taskTreeColumns(db: DatabaseSync): string {
+  return (db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[])
+    .filter(({ name }) => name !== "searchable_text")
+    .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
+    .join(",");
+}
+
 function readTasks(db: DatabaseSync): ProjectTask[] {
   // 迁移后的旧后端行也有 CLI 时间；沿用列表的 provider 边界，避免展示 Controller 无法操作的会话。
   return db
     .prepare(
-      "SELECT * FROM tasks WHERE provider=? AND deleted=0 AND coalesce(cli_deleted,0)=0 AND cli_created_at IS NOT NULL ORDER BY cli_updated_at DESC,task_id",
+      `SELECT ${taskTreeColumns(db)} FROM tasks WHERE provider=? AND deleted=0 AND coalesce(cli_deleted,0)=0 AND cli_created_at IS NOT NULL ORDER BY cli_updated_at DESC,task_id`,
     )
     .all(ZCODE_AGENT_PROVIDER)
     .map((row) => {
