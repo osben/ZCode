@@ -11,6 +11,8 @@ import {
   AcpSessionRuntime,
   type AcpHostBridge,
   type AcpLaunchOptions,
+  type AcpPermissionAnswer,
+  type AcpPermissionAsk,
   type AcpRuntimeEvent,
   type AcpRuntimeLogger,
   type AcpRuntimeState,
@@ -40,10 +42,16 @@ export type AcpRuntimeFactory = (
   bridge: AcpHostBridge,
 ) => Promise<AcpPoolRuntime>;
 
+/** Answers one permission ask of the turn currently bound to a session. */
+export type AcpTurnPermissionHandler = (ask: AcpPermissionAsk) => Promise<AcpPermissionAnswer>;
+
 export interface AcpSessionPoolOptions {
   readonly logger?: AcpRuntimeLogger;
-  /** Builds the host bridge of one agent; defaults to the S2 permission policy (cancel). */
-  readonly bridgeFor?: (agentId: string) => AcpHostBridge;
+  /**
+   * Builds the host bridge of one runtime. Defaults to routing each ask to the turn bound to its
+   * session (see `bindTurnPermission`); with no bound turn the ask is answered `cancelled`.
+   */
+  readonly bridgeFor?: (agentId: string, sessionId: string) => AcpHostBridge;
   readonly createRuntime?: AcpRuntimeFactory;
 }
 
@@ -80,8 +88,9 @@ export function acpLaunchFingerprint(launch: AcpLaunchOptions): string {
 export class AcpSessionPool {
   readonly #entries = new Map<string, PoolEntry>();
   readonly #chains = new Map<string, Promise<unknown>>();
+  readonly #turnPermissions = new Map<string, AcpTurnPermissionHandler>();
   readonly #createRuntime: AcpRuntimeFactory;
-  readonly #bridgeFor: (agentId: string) => AcpHostBridge;
+  readonly #bridgeFor: (agentId: string, sessionId: string) => AcpHostBridge;
   readonly #logger: AcpRuntimeLogger | undefined;
 
   constructor(options: AcpSessionPoolOptions = {}) {
@@ -89,15 +98,36 @@ export class AcpSessionPool {
     this.#createRuntime = options.createRuntime ?? defaultRuntimeFactory;
     this.#bridgeFor =
       options.bridgeFor ??
-      ((agentId) => ({
-        // S2: permission asks are never surfaced; the runtime answers `cancelled`. S4 adds user-once.
-        requestPermission: async () => {
-          options.logger?.info("ACP permission request cancelled (not surfaced in this slice)", {
-            agentId,
-          });
-          return { outcome: "cancelled" };
-        },
+      ((agentId, sessionId) => ({
+        requestPermission: (ask) => this.#answerAsk(agentId, sessionId, ask),
       }));
+  }
+
+  /**
+   * Binds the permission handler of the turn that is running on `sessionId`. The runtime's asks for
+   * that session go to the handler only while it is bound; the returned function unbinds it.
+   */
+  bindTurnPermission(sessionId: string, handler: AcpTurnPermissionHandler): () => void {
+    this.#turnPermissions.set(sessionId, handler);
+    return () => {
+      if (this.#turnPermissions.get(sessionId) === handler) this.#turnPermissions.delete(sessionId);
+    };
+  }
+
+  async #answerAsk(
+    agentId: string,
+    sessionId: string,
+    ask: AcpPermissionAsk,
+  ): Promise<AcpPermissionAnswer> {
+    const handler = this.#turnPermissions.get(sessionId);
+    if (handler === undefined) {
+      // A live runtime can ask outside a bound turn only through a host bug; never allow implicitly.
+      this.#logger?.info("ACP permission request cancelled (no turn bound to the session)", {
+        agentId,
+      });
+      return { outcome: "cancelled" };
+    }
+    return handler(ask);
   }
 
   get size(): number {
@@ -126,7 +156,7 @@ export class AcpSessionPool {
           ...(launch.env === undefined ? {} : { env: { ...launch.env } }),
           ...(this.#logger === undefined ? {} : { logger: this.#logger }),
         },
-        this.#bridgeFor(launch.agentId),
+        this.#bridgeFor(launch.agentId, sessionId),
       );
       this.#entries.set(sessionId, { fingerprint, runtime });
       return runtime;

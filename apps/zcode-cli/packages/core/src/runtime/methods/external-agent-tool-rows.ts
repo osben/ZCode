@@ -93,6 +93,20 @@ export class ExternalAgentToolRows {
     if (isUpdate && wasStarted) await this.#progress(row);
   }
 
+  /**
+   * The ZCode identity of an ACP tool call, for a permission ask. An ask for an id no update has
+   * named yet creates its row first, so the prompt always anchors to a scheduled tool row.
+   */
+  async rowFor(acpToolCallId: string): Promise<{ toolCallId: ToolCallIdValue; toolName: string }> {
+    let row = this.#rows.get(acpToolCallId);
+    if (!row) {
+      row = this.#createRow("acp:other", "", {});
+      this.#rows.set(acpToolCallId, row);
+      await this.#schedule(row);
+    }
+    return { toolCallId: row.toolCallId, toolName: row.toolName };
+  }
+
   /** Writes the plan as a `TodoWrite` row and the session todo state in the same turn. */
   async applyPlan(entries: readonly ExternalAgentPlanEntry[]): Promise<void> {
     const todos = entries.map(toTodoItem);

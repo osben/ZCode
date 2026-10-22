@@ -11,6 +11,8 @@ import {
   ExternalAgentTurnError,
   createCoreError,
   type CoreError,
+  type ExternalAgentPermissionAnswer,
+  type ExternalAgentPermissionAsk,
   type ExternalAgentPromptBlock,
   type ExternalAgentTurnDriver,
   type ExternalAgentTurnEvent,
@@ -26,6 +28,7 @@ import type { AgentRuntimeInternal } from "../internal.js";
 import type { RuntimeModelTextResult } from "../types.js";
 import type { RegularTurnLoopState } from "./turn-loop-state.js";
 import { ExternalAgentToolRows } from "./external-agent-tool-rows.js";
+import { answerExternalAgentPermission } from "./external-agent-permission.js";
 import { setExternalAgentSessionTitle } from "./session-title.js";
 import { recordModelHistoryRound } from "./turn-loop-state.js";
 import { createModelStreamingEventQueue } from "./model-streaming-event-queue.js";
@@ -210,6 +213,22 @@ export async function runExternalAgentTurn(
     events: state.events,
   });
 
+  // User-once asks of this turn. A turn ends only after each one is resolved, so the terminal event
+  // never precedes the `PermissionResolved` of an ask it cancelled.
+  const permissions = new Set<Promise<unknown>>();
+  const requestPermission = (ask: ExternalAgentPermissionAsk) => {
+    // Chained behind the events the agent sent before the ask, so its tool row already has the kind.
+    const answer = pending
+      .catch(() => undefined)
+      .then(() => answerExternalAgentPermission.call(this, { state, rows: tools }, ask))
+      .catch((): ExternalAgentPermissionAnswer => "cancelled");
+    permissions.add(answer);
+    return answer;
+  };
+  const settlePermissions = async () => {
+    await Promise.allSettled([...permissions]);
+  };
+
   // Every event runs on one chain: streamed text and tool rows keep the agent's wire order.
   let pending: Promise<void> = Promise.resolve();
   const handleEvent = async (event: ExternalAgentTurnEvent): Promise<void> => {
@@ -280,10 +299,12 @@ export async function runExternalAgentTurn(
       prompt,
       signal: state.turnAbortSignal,
       onEvent,
+      requestPermission,
     });
     await pending;
   } catch (error) {
     await pending.catch(() => undefined);
+    await settlePermissions();
     const cancelled = state.turnAbortSignal.aborted;
     await tools.closeOpen(
       cancelled ? "Cancelled" : "The agent turn failed before this tool finished",
@@ -300,6 +321,7 @@ export async function runExternalAgentTurn(
   }
 
   if (state.turnAbortSignal.aborted || outcome.stopReason === "cancelled") {
+    await settlePermissions();
     await tools.closeOpen("Cancelled");
     await closeInterrupted("cancelled");
     throwIfTurnAborted(state.turnAbortSignal);
@@ -310,6 +332,7 @@ export async function runExternalAgentTurn(
   closeBlocks();
   enqueue({ delta: "", done: true, kind: "finish" });
   await queue.drain();
+  await settlePermissions();
   await tools.closeOpen("The agent turn ended before this tool finished");
   await persistParts();
 

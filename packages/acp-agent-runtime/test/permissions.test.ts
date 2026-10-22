@@ -140,3 +140,30 @@ describe("permission bridge", () => {
     }
   });
 });
+
+describe("permission cancel", () => {
+  it("answers a pending ask cancelled before session/cancel, so the agent settles without a kill", async () => {
+    const cwd = await createTempDir();
+    const asks: AcpPermissionAsk[] = [];
+    const runtime = await startMockRuntime(cwd, "permission", {
+      // The host never answers: only the runtime's cancel can release the agent's pending ask.
+      requestPermission: (ask) => {
+        asks.push(ask);
+        return new Promise(() => {});
+      },
+    });
+    try {
+      const events = collectEvents(runtime);
+      const prompt = runtime.prompt("run echo");
+      await waitFor(() => asks.length === 1, 5000);
+      await runtime.cancel();
+      const response = await prompt;
+      expect(response.stopReason).toBe("cancelled");
+      expect(events).toContainEqual({ type: "message_chunk", text: "denied" });
+      expect(runtime.state).toBe("ready");
+    } finally {
+      await runtime.stop();
+      await cleanupTempDir(cwd);
+    }
+  });
+});

@@ -182,6 +182,7 @@ export class AcpSessionRuntime extends EventEmitter {
     const active = this.activePrompt;
     const generation = this.generation;
     if (!connection || !sessionId || !active) return;
+    cancelPendingAsks(this.pendingAsks);
     // One deadline bounds the whole cancel: a notify write can stay pending
     // forever when a live child stops reading stdin (backpressured pipe), and
     // a closed connection rejects. Escalate on either instead of hanging.

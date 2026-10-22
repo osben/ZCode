@@ -117,6 +117,15 @@ const app = agent({ name: `mock-agent (${scenario})` })
         await notify(msgChunk(`read:${read.content}`));
         return stop("end_turn");
       }
+      // A prompt whose text contains "stuck" never settles, even after session/cancel: only the runtime's
+      // kill escalation ends it. Other prompts complete, so a restarted process can serve the next turn.
+      case "stuck":
+        if (
+          ctx.params.prompt.some((block) => block.type === "text" && block.text.includes("stuck"))
+        ) {
+          return new Promise(() => {});
+        }
+        return stop("end_turn");
       case "cancel":
       case "silent":
       case "cancel-early": {

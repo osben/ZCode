@@ -286,8 +286,8 @@ Design (fix):
 ## Chat delegation (phase 4)
 
 Status: slices S1 (gate, registry, composer), S2 (text chat turns), S3 (tool, plan and title
-rendering) are specified here. S4 (user-once permissions) and S5 (session restore via `session/load`)
-are specified in their own sections below.
+rendering) and S4 (user-once permissions) are specified here. S5 (session restore via
+`session/load`) is specified in its own section below.
 
 ### Decisions
 
@@ -475,6 +475,61 @@ Acceptance (S3):
 - A title event updates the session title. A custom title is kept.
 - Cancel or failure while a tool is open closes the row with an error.
 - The E2E scenarios for the tool row, the plan and the title are in the desktop conversation spec.
+
+### S4: user-once permissions
+
+An agent's `session/request_permission` becomes a ZCode permission prompt. The prompt is the existing
+user-once dialog (Allow once / Deny). Nothing else answers it.
+
+Path and owners:
+
+```text
+agent ─▶ session/request_permission
+  │ runtime live check (prompting, same generation, same session)   ─ not live ─▶ cancelled (never surfaced)
+  ▼
+driver (bootstrap) ─ routes to the turn bound to this session (pool) ─ no bound turn ─▶ cancelled
+  ▼
+core turn ─ answerExternalAgentPermission
+  │ ToolCallScheduled row for the ACP id exists (created on demand)
+  │ permissionBroker.requestPermission({approvalMode:"user-once", toolName:"acp:<kind>", signal})
+  │ await registered ─▶ PermissionRequested (requestId, toolCallId, approvalMode user-once)
+  │ await the user's answer, or the turn abort
+  ▼
+PermissionResolved (exactly once) ─▶ allow → selected allow_once | deny/abort → reject_once | cancelled
+```
+
+Rules:
+
+- The ZCode permission service (`PermissionService.checkPermission`) is not consulted, so no ZCode
+  mode (`yolo`, `guarded`, `plan`, `auto`, `edit`, `build`) answers an ACP ask. The broker is
+  called for every ask. The request carries `mode: "guarded"` because an ACP ask always needs the
+  user. Hooks and fullAccess are off (`user-once`).
+- Answers map by `kind` only. `allow` → `allow_once`, `deny` → `reject_once`. `allow_always` is never
+  sent. `permissionUpdates` and session grants are ignored, so no project rule or session rule is
+  written (`bootstrap/src/permission-options.ts` is not used for ACP asks).
+- Event order per ask: the scheduled tool row, then `PermissionRequested` after the broker registers
+  the interaction, then exactly one `PermissionResolved`. A deny carries the user's reason; an abort
+  resolves as deny with reason "Permission request cancelled". An ask that the turn aborts before it
+  starts publishes nothing: the user never saw it.
+- An ask is handled after the events the agent sent before it, so its tool row already carries the
+  kind the agent reported.
+- Turn cancel or abort: pending asks are answered `cancelled`. The runtime `cancel()` answers every
+  pending ask `cancelled` before it sends `session/cancel`, because ACP requires the client to answer
+  before the turn can stop. The core waits for the pending `PermissionResolved` before it writes
+  `TurnCancelled`, so the replay never shows a dialog for a finished turn.
+- Stream semantics. `PermissionRequested` and `PermissionResolved` are persisted session events. The
+  desktop-continuous link receives them live, and the web-remote-replayable link rebuilds the pending
+  interaction from the same log after a reconnect. Neither link has a separate ACP path.
+
+Acceptance (S4):
+
+- Allow: the agent receives `allow_once` and the turn continues; one `PermissionResolved` (allow).
+- Deny: the agent receives `reject_once`; the turn continues and the tool row ends as rejected.
+- Cancel during a pending ask: `cancelled` reaches the agent, one `PermissionResolved` (deny), then
+  the turn ends as cancelled.
+- A yolo, plan or auto session still shows the prompt for an ACP ask.
+- A runtime that asks while no turn is bound answers `cancelled` and never calls the broker.
+- The runtime `cancel()` answers pending asks `cancelled` before `session/cancel`.
 
 ### Acceptance scenarios
 

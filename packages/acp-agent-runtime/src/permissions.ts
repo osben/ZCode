@@ -20,7 +20,10 @@ export interface AcpPermissionTurn {
   readonly pendingAsks: Map<string, Deferred<AcpPermissionAnswer>>;
 }
 
-/** Resolves every pending host ask `cancelled` (teardown, exit, stop). */
+/**
+ * Resolves every pending host ask `cancelled`: teardown, exit, stop, and `cancel()`. ACP requires the
+ * client to answer asks before a cancelled turn can settle; an agent waiting on its ask never would.
+ */
 export function cancelPendingAsks(pendingAsks: Map<string, Deferred<AcpPermissionAnswer>>): void {
   for (const deferred of pendingAsks.values()) deferred.resolve(CANCELLED_ANSWER);
   pendingAsks.clear();

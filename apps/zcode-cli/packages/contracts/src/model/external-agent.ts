@@ -51,6 +51,18 @@ export type ExternalAgentTurnEvent =
   | { readonly type: "plan"; readonly entries: readonly ExternalAgentPlanEntry[] }
   | { readonly type: "session_title"; readonly title: string };
 
+/** A permission ask of the agent, after the runtime's live-turn check. */
+export interface ExternalAgentPermissionAsk {
+  readonly toolCallId: string;
+  readonly title: string;
+  readonly detail: string | null;
+  /** Option kinds the agent offered. An answer is applied only through a matching kind. */
+  readonly optionKinds: readonly string[];
+}
+
+/** The user's answer: `allow` maps to `allow_once`, `deny` to `reject_once`, anything else to `cancelled`. */
+export type ExternalAgentPermissionAnswer = "allow" | "deny" | "cancelled";
+
 export interface ExternalAgentTurnRequest {
   /** ZCode session that owns the resident agent process. */
   readonly sessionId: string;
@@ -60,6 +72,13 @@ export interface ExternalAgentTurnRequest {
   /** Aborted by the turn lifecycle; the driver cancels the agent when it fires. */
   readonly signal: AbortSignal;
   readonly onEvent: (event: ExternalAgentTurnEvent) => void;
+  /**
+   * Asks the user through the turn's permission path (user-once only). Resolves `cancelled` on turn
+   * abort. The driver answers the agent with the mapped kind; `allow_always` is never sent.
+   */
+  readonly requestPermission: (
+    ask: ExternalAgentPermissionAsk,
+  ) => Promise<ExternalAgentPermissionAnswer>;
 }
 
 export interface ExternalAgentTurnResult {

@@ -10,6 +10,8 @@
 import {
   ACP_AGENT_DEFINITIONS,
   AcpAgentDiedError,
+  type AcpPermissionAnswer,
+  type AcpPermissionAsk,
   type AcpRuntimeEvent,
   type AcpToolCallInfo,
   type ContentBlock,
@@ -94,7 +96,15 @@ function createAcpTurnDriver(
       } catch (error) {
         throw toStartFailure(error, agentId);
       }
-      return runPrompt(runtime, agentId, request, options.logger);
+      // Asks of this agent session reach the turn only while the prompt runs (see pool.bindTurnPermission).
+      const unbind = options.pool.bindTurnPermission(request.sessionId, (ask) =>
+        toAcpPermissionAnswer(request, ask),
+      );
+      try {
+        return await runPrompt(runtime, agentId, request, options.logger);
+      } finally {
+        unbind();
+      }
     },
   };
 }
@@ -201,6 +211,24 @@ async function runPrompt(
     runtime.off("event", onEvent);
     request.signal.removeEventListener("abort", onAbort);
   }
+}
+
+/** The turn's answer in ACP terms: only the kind of the user's choice is sent, never `allow_always`. */
+async function toAcpPermissionAnswer(
+  request: ExternalAgentTurnRequest,
+  ask: AcpPermissionAsk,
+): Promise<AcpPermissionAnswer> {
+  const answer = await request
+    .requestPermission({
+      toolCallId: ask.toolCallId,
+      title: ask.title,
+      detail: ask.detail,
+      optionKinds: ask.options.map((option) => option.kind),
+    })
+    .catch(() => "cancelled" as const);
+  if (answer === "allow") return { outcome: "selected", kind: "allow_once" };
+  if (answer === "deny") return { outcome: "selected", kind: "reject_once" };
+  return { outcome: "cancelled" };
 }
 
 const TOOL_STATUSES: ReadonlySet<string> = new Set<ExternalAgentToolStatus>([
