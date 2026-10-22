@@ -18,6 +18,7 @@ import {
   type ModelReasoningContentBlock,
   type ModelStreamingPayload,
   type ModelUsage,
+  type ModelUsageSummary,
 } from "@zcode/contracts";
 import type { ResolvedTurnAttachment } from "../types.js";
 import { createChildTraceContext, createMessageId, createPartId, TurnMachineImpl } from "../deps.js";
@@ -246,6 +247,7 @@ export async function runExternalAgentTurn(
     throw createTurnCancelledError(new Error("External agent cancelled the prompt"));
   }
 
+  state.externalAgentUsage = outcome.usage;
   closeBlocks();
   enqueue({ delta: "", done: true, kind: "finish" });
   await queue.drain();
@@ -274,6 +276,25 @@ export async function runExternalAgentTurn(
   state.turnMachine = new TurnMachineImpl(
     state.turnMachine.complete(state.modelResponse, "success"),
   );
+}
+
+/** Turn-level summary of an external agent's reported usage (labelled `external-agent`). */
+export function externalAgentUsageSummary(usage: ModelUsage | undefined): ModelUsageSummary | undefined {
+  if (usage === undefined) return undefined;
+  const inputTokens = usage.inputTokens ?? 0;
+  const outputTokens = usage.outputTokens ?? 0;
+  return {
+    source: "external-agent",
+    modelRequestCount: 1,
+    inputTokens,
+    outputTokens,
+    totalTokens: usage.totalTokens ?? inputTokens + outputTokens,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+    reasoningTokens: usage.reasoningTokens ?? 0,
+    webSearchRequests: 0,
+    webFetchRequests: 0,
+  };
 }
 
 function reasoningBlock(text: string): ModelReasoningContentBlock {

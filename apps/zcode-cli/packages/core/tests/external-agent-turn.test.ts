@@ -109,6 +109,9 @@ describe("external agent turn path", () => {
           event.type === SessionEventType.TurnComplete || event.type === SessionEventType.TurnError,
       );
       expect(eventTypes(terminal)).toEqual([SessionEventType.TurnComplete]);
+      const turnComplete = stored.find((event) => event.type === SessionEventType.TurnComplete);
+      expect((turnComplete?.payload as { usage?: { source?: string; inputTokens?: number } }).usage)
+        .toMatchObject({ source: "external-agent", inputTokens: 3, outputTokens: 2 });
       expect(driver.runTurn).toHaveBeenCalledTimes(1);
       const request = driver.runTurn.mock.calls[0]![0] as ExternalAgentTurnRequest;
       expect(request.workingDirectory).toBe("/fixture");

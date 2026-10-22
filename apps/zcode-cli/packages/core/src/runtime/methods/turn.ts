@@ -61,6 +61,7 @@ import { runRegularTurnLoop } from "./turn-loop.js";
 import {
   buildExternalAgentPrompt,
   externalAgentTurnRefusal,
+  externalAgentUsageSummary,
   runExternalAgentTurn,
 } from "./external-agent-turn.js";
 import {
@@ -945,7 +946,10 @@ export async function executeTurnCommand(
         }
         turnMachine = loopState.turnMachine;
 
-        const turnUsage = createModelUsageSummaryFromEvents(events);
+        // External-agent turns have no ModelComplete events; their reported usage is the turn summary.
+        const turnUsage =
+          createModelUsageSummaryFromEvents(events) ??
+          externalAgentUsageSummary(loopState.externalAgentUsage);
         // goal usage/active-run 先结算，再固定 exact goal/verifier boundary；只有两者都
         // 已持久化，TurnComplete 才能让 projection/UI 开放最终 assistant fork。
         await this.accountTargetTurnCompletion({

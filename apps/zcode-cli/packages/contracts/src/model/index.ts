@@ -553,7 +553,8 @@ export interface ModelUsage {
 }
 
 export interface ModelUsageSummary {
-  source: "provider";
+  /** `external-agent`: usage reported by an ACP agent process, not billed to a ZCode provider. */
+  source: "provider" | "external-agent";
   modelRequestCount: number;
   inputTokens: number;
   outputTokens: number;
