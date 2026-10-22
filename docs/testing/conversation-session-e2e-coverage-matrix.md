@@ -3781,17 +3781,20 @@ No new case is promoted or admitted to Docker by this table.
 Contract: `specs/first-submission-instant-ux.md` (flag lifetimes, Retry surface,
 Reconciliation). Mounted UI regressions run in Vitest; every Desktop scenario is pending.
 
-| Case        | Focused regression                                                                                                                 | Desktop evidence                                       |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| IUX02       | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: double click dispatches once; a new draft after the bind sends ordinarily | pending: double click, then type and Send while bound  |
-| IUX02-B     | Same file: Send disabled with a visible reason while the bound session still reports `submissionPreparation`                       | pending: hold the frozen `sendText`, type a second one |
-| IUX07-E     | Same file + `composerWorktreeRecovery.test.ts`: blocked Retry names its reason (`aria-describedby`), restores nothing, never locks | pending: Retry with the runtime not ready              |
-| IUX07-R     | Same files: Remove returns the text locally; an unresolved copy stays unsendable until the registry decides                        | pending: Remove on unknown, then late ACK              |
-| A-ledger    | Same file: unknown outcome is in the unsettled ledger; an unmoved record stays in the draft view with its reservation              | pending fault injection (lost ACK, storage quota)      |
-| C-withdraw  | Same file: cancelled checkout guard and pre-reservation worktree failure withdraw the record after the editor clear echo           | pending: cancel the checkout guard dialog              |
-| F-reconcile | `v4SessionPaneComposerContinuity.test.ts`: inactive sending/unknown reconciles from Host facts, then the original command id       | pending restart with an unresolved record              |
-| B-bind      | Same file: worktree reservation binds at the ACK without waiting on project-tree staging                                           | pending                                                |
-| IUX01-inert | `v4ConversationTurnGroup.test.ts`: the optimistic row renders inert, without pin/edit/attachment actions                           | pending                                                |
+| Case        | Focused regression                                                                                                                  | Desktop evidence                                       |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| IUX02       | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: double click dispatches once; a new draft after the bind sends ordinarily  | pending: double click, then type and Send while bound  |
+| IUX02-B     | Same file: Send disabled with a visible reason while the bound session still reports `submissionPreparation`                        | pending: hold the frozen `sendText`, type a second one |
+| IUX07-E     | Same file + `composerWorktreeRecovery.test.ts`: blocked Retry names its reason (`aria-describedby`), restores nothing, never locks  | pending: Retry with the runtime not ready              |
+| IUX07-R     | Same files: Remove returns the text locally; an unresolved copy stays unsendable until the registry decides                         | pending: Remove on unknown, then late ACK              |
+| A-ledger    | Same file: unknown outcome is in the unsettled ledger; an unmoved record stays in the draft view with its reservation               | pending fault injection (lost ACK, storage quota)      |
+| C-withdraw  | Same file: cancelled checkout guard and pre-reservation worktree failure withdraw the record after the editor clear echo            | pending: cancel the checkout guard dialog              |
+| F-reconcile | `v4SessionPaneComposerContinuity.test.ts`: inactive sending/unknown reconciles from Host facts, then the original command id        | pending restart with an unresolved record              |
+| B-bind      | Same file: worktree reservation binds at the ACK without waiting on project-tree staging                                            | pending                                                |
+| IUX01-inert | `v4ConversationTurnGroup.test.ts`: the optimistic row renders inert, without pin/edit/attachment actions                            | pending                                                |
+| IUX07-U     | `v4ConversationComposerWorktreeLateAckDispatch.test.ts`: Unlock on a held copy needs confirmation and never sends by itself         | pending: Remove on unknown, Send anyway, confirm       |
+| A-reconnect | Same file + `composerSubmissionSettlement.test.ts`: an unknown reconnect query keeps the ledger; a later acceptance clears the copy | pending: reconnect during an unresolved send           |
+| F-flight    | `v4SessionPaneComposerContinuity.test.ts`: Host revisions during one query give one call plus at most one follow-up                 | pending: stream while a held copy reconciles           |
 
 ## Permanent task deletion (2026-10-19)
 

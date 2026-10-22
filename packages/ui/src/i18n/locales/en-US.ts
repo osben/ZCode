@@ -7649,6 +7649,10 @@ const enUS: Record<string, string> = {
   "firstSubmission.unknown": "Checking whether the message was accepted…",
   "firstSubmission.synchronizing": "Waiting for the conversation to update…",
   "firstSubmission.contexts": "Context references: {count}",
+  "composer.heldCopy.unlock": "Send anyway…",
+  "composer.heldCopy.warning":
+    "This message may already have been delivered. Sending it again can create a duplicate.",
+  "composer.heldCopy.confirm": "Unlock sending",
   "composer.sendBlocked.outcomeUnresolved":
     "Checking whether your first message was accepted. You can send once that is known.",
   "composer.sendBlocked.firstSubmissionNeedsAction":

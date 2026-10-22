@@ -3292,6 +3292,20 @@ function ConversationComposerImpl({
       updateComposerContent({ text: textRef.current, firstSubmission: decided });
     });
   }, [heldCommandId, heldResubscribe, updateComposerContent]);
+  // Unlock (specs/first-submission-instant-ux.md, Remove): a held copy whose outcome may never be
+  // decided must not leave the composer dead. Only an explicit, confirmed click turns it into an
+  // ordinary Retry of the same submission; it never sends by itself, and the ledger still clears
+  // the unedited copy if the original turns out accepted before the user sends.
+  const [heldUnlockConfirmOpen, setHeldUnlockConfirmOpen] = useState(false);
+  useEffect(() => setHeldUnlockConfirmOpen(false), [heldCommandId]);
+  const unlockHeldFirstSubmission = useCallback(() => {
+    const held = composerDraftRef.current?.firstSubmission;
+    setHeldUnlockConfirmOpen(false);
+    if (!held || (held.status !== "sending" && held.status !== "unknown")) return;
+    const unlocked = { ...held, status: "failed" as const };
+    retryFirstSubmissionRef.current = unlocked;
+    updateComposerContent({ text: textRef.current, firstSubmission: unlocked });
+  }, [updateComposerContent]);
   useEffect(() => {
     if (recoveryRetryRequest <= appliedRecoveryRetryRef.current) return;
     appliedRecoveryRetryRef.current = recoveryRetryRequest;
@@ -4303,13 +4317,48 @@ function ConversationComposerImpl({
           onPaste={attachmentsApi.handlePaste}
         />
         {sendBarrierActive && hasDraftToSubmit && sendBlockMessageId ? (
-          <p
-            role="status"
-            data-testid="composer-send-blocked-reason"
-            className="px-3 pb-2 text-ui-sm text-foreground-subtle"
-          >
-            {intl.formatMessage({ id: sendBlockMessageId })}
-          </p>
+          <div className="flex flex-col gap-2 px-3 pb-2 text-ui-sm text-foreground-subtle">
+            <p role="status" data-testid="composer-send-blocked-reason">
+              {intl.formatMessage({ id: sendBlockMessageId })}
+            </p>
+            {sendBlockReason === "outcomeUnresolved" ? (
+              heldUnlockConfirmOpen ? (
+                <div className="flex flex-col gap-2">
+                  <p data-testid="composer-held-unlock-warning" className="text-warning">
+                    {intl.formatMessage({ id: "composer.heldCopy.warning" })}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-testid="composer-held-unlock-confirm"
+                      onClick={unlockHeldFirstSubmission}
+                    >
+                      {intl.formatMessage({ id: "composer.heldCopy.confirm" })}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setHeldUnlockConfirmOpen(false)}
+                    >
+                      {intl.formatMessage({ id: "common.cancel" })}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid="composer-held-unlock"
+                    onClick={() => setHeldUnlockConfirmOpen(true)}
+                  >
+                    {intl.formatMessage({ id: "composer.heldCopy.unlock" })}
+                  </Button>
+                </div>
+              )
+            ) : null}
+          </div>
         ) : null}
         <ComposerWorktreeRecovery
           workspacePath={workspacePath}

@@ -277,7 +277,15 @@ existing send path; the pane never calls into the composer.
   CLI without durable reservation lost the ACK); with no session bucket to query, that
   copy resolves only through the registry (live ACK/projection or the existing draft
   command recovery). Remove is disabled while the submission is active or the editor
-  holds another draft.
+  holds another draft. The unsettled-submission ledger keeps tracking through an
+  `unknown` resolution (a reconnect query that found nothing yet), so a later
+  acceptance still clears the unedited copy.
+- **Unlock.** A held copy whose outcome may never be decided must not leave the
+  composer dead. "Send anyway…" reveals the warning "This message may already have
+  been delivered. Sending it again can create a duplicate." and an "Unlock sending"
+  confirmation. Only that confirmed click makes the copy an ordinary Retry of the same
+  submission (status `failed`); it never sends by itself, and the ledger still clears
+  the unedited copy if the original is accepted before the user sends.
 - **Copy.** A `failed` record that never had a `sendText` command says the message
   was not sent ("Unsent message saved" / "Failed to send"). Once a command existed
   (for example a failure reconciled from an unknown outcome) the copy says delivery
@@ -289,18 +297,24 @@ A persisted first submission in `sending` / `unknown` that is not active in this
 renderer (chain ended with a lost ACK, or the app restarted) is reconciled by the pane
 that holds the record, on mount and whenever its inputs change — the record, the
 Host snapshot's `revision` (every Host state change) or connectivity — never by a
-timer. Facts already decided are not re-queried; only a transient failure is.
+timer. At most one query is in flight per set of facts (command id, status, host
+preparation, held): a revision change never cancels or repeats it. When it settles
+undecided or with a transient failure, exactly one follow-up runs if the revision
+advanced meanwhile; decided facts are never re-queried. The copy's own row is checked
+on every pass, so it still accepts a copy after an undecided query.
 Durable Host facts decide before the command query, because an `accepted` ACK does not
 survive a CLI restart and a query `unknown` therefore does not prove non-admission:
 
-| Facts (bound session's live snapshot, then `commands/query`)                     | Record becomes                                     |
-| -------------------------------------------------------------------------------- | -------------------------------------------------- |
-| a real user row carries this command id                                          | accepted (reported to the registry)                |
-| a real user row is projected (fresh-session fallback, records only)              | cleared by the reconcile predicate (already owned) |
-| reserved record and `submissionPreparation` absent (input admitted)              | `sending` — synchronizing, no Retry                |
-| query `accepted` / `duplicate`                                                   | `sending` — synchronizing until the row projects   |
-| still `preparing` and query `rejected` / `failed` / `stale` / `noop` / `unknown` | `failed` — Retry and Remove                        |
-| query throws or reports `fault.command.queryUnavailable`                         | unchanged — re-checked when the revision advances  |
+| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                   |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| a real user row carries this command id                                          | accepted (reported to the registry)                       |
+| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned) |
+| reserved record and `submissionPreparation` absent                               | record `sending`, not reported; never decides a held copy |
+| query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                           |
+| query `rejected` / `failed` / `stale` / `noop`                                   | `failed` (reported) — Retry and Remove                    |
+| query `unknown`: reserved and still preparing, or a worktree record              | `failed` (reported) — Retry and Remove                    |
+| query `unknown`: held copy of a reserved submission whose marker already flipped | unchanged — the copy stays held                           |
+| query throws or reports `fault.command.queryUnavailable`                         | unchanged — one re-check once the revision has advanced   |
 
 The query uses the command's own bucket: the reserved session id for `sendText`.
 Only identity-backed decisions reach the command registry: this command's query result

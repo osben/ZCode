@@ -2,7 +2,7 @@
 // Reconciliation of unresolved outcomes). The pane that holds the persisted record decides from
 // durable Host facts first and only then from the original command id: an `accepted` ACK does
 // not survive a CLI restart, so a query `unknown` alone never proves the input was not admitted.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CommandsQueryParams, CommandsQueryResult } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
@@ -76,19 +76,31 @@ export function useFirstSubmissionReconciliation({
   // at activation, before any input, so its absence proves nothing about admission.
   const markerProvesAdmission = Boolean(firstSubmission?.reservation);
   const matchedRow = commandId ? commandRowProjected(commandId) : false;
-  // A decided attempt is not repeated for the same facts; only a transient failure (query threw or
-  // was unavailable) re-queries, when the Host revision advances or connectivity returns.
-  const settledFactsRef = useRef<string | null>(null);
   const factsKey = `${commandId}:${status}:${hostPreparing}:${held}`;
+  // One query in flight per facts; a Host revision never cancels or repeats it. After it settles
+  // undecided or transient, one follow-up runs only if the revision advanced meanwhile.
+  const latestFactsRef = useRef(factsKey);
+  latestFactsRef.current = factsKey;
+  const inFlightRef = useRef<string | null>(null);
+  const attemptRef = useRef<{ factsKey: string; revision: number | undefined; decided: boolean }>(
+    null,
+  );
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+  const [settled, setSettled] = useState(0);
   useEffect(() => {
     if (!enabled || !sessionId || !submissionId || !commandId) return;
     if (active || !snapshotLive) return;
     if (status !== "sending" && status !== "unknown") return;
-    if (settledFactsRef.current === factsKey) return;
     // `report` only for identity-backed decisions (this command's query result or its own row):
     // registry listeners such as a Remove hold or the ledger clear the user's text on "accepted".
     const apply = (next: Extract<FirstSubmissionStatus, "sending" | "failed">, report: boolean) => {
-      settledFactsRef.current = factsKey;
+      attemptRef.current = { factsKey, revision: hostRevision, decided: true };
       if (report)
         pendingCommandRegistry.reportReconciledResolution(
           commandId,
@@ -101,10 +113,16 @@ export function useFirstSubmissionReconciliation({
         logger.warn("[first-submission] could not persist the reconciled outcome", error);
       }
     };
+    // The copy's own row is identity evidence whenever it appears, even after an undecided query.
     if (matchedRow) {
-      apply("sending", true);
+      if (attemptRef.current?.factsKey !== `${factsKey}:row`) {
+        apply("sending", true);
+        attemptRef.current = { factsKey: `${factsKey}:row`, revision: hostRevision, decided: true };
+      }
       return;
     }
+    const attempt = attemptRef.current;
+    if (attempt?.factsKey === factsKey && attempt.decided) return;
     // A record is cleared by the pane's reconcile predicate (fresh-session fallback included).
     if (realRowProjected && !held) return;
     // The Host marks a reserved submission's preparation active when a sendText executes. Known
@@ -114,40 +132,52 @@ export function useFirstSubmissionReconciliation({
       apply("sending", false);
       return;
     }
-    let current = true;
+    if (inFlightRef.current === factsKey) return;
+    if (attempt?.factsKey === factsKey && attempt.revision === hostRevision) return;
+    inFlightRef.current = factsKey;
+    const attemptRevision = hostRevision;
+    const finish = (decided: boolean) => {
+      if (inFlightRef.current === factsKey) inFlightRef.current = null;
+      if (!decided) attemptRef.current = { factsKey, revision: attemptRevision, decided: false };
+      // Re-run once to see whether the revision advanced during the flight.
+      setSettled((value) => value + 1);
+    };
     void queryRef.current({ commands: [{ sessionId, commandId }] }).then(
       (result) => {
-        if (!current) return;
+        if (!aliveRef.current || latestFactsRef.current !== factsKey) {
+          if (inFlightRef.current === factsKey) inFlightRef.current = null;
+          return;
+        }
         const item = result.results.find((entry) => entry.key.commandId === commandId);
         const next = decideFirstSubmissionFromQuery(item?.result);
-        if (!next) return;
         // For a reserved submission whose marker already flipped, a query "unknown" is no evidence
         // either way (another input may have flipped it, and a CLI restart forgets accepted
         // commands): keep holding. Worktree markers never carry this signal (spec: residual risk).
-        if (
-          next === "failed" &&
-          item?.result === "unknown" &&
-          markerProvesAdmission &&
-          !hostPreparing
-        ) {
-          settledFactsRef.current = factsKey;
-          return;
-        }
-        apply(next, true);
+        const undecided =
+          !next ||
+          (next === "failed" &&
+            item?.result === "unknown" &&
+            markerProvesAdmission &&
+            !hostPreparing);
+        if (!undecided) apply(next, true);
+        finish(!undecided);
       },
       (error: unknown) => {
         // Nothing decided: re-checked when the Host revision advances or connectivity returns.
         logger.warn("[first-submission] outcome query failed; keeping the record", error);
+        if (!aliveRef.current || latestFactsRef.current !== factsKey) {
+          if (inFlightRef.current === factsKey) inFlightRef.current = null;
+          return;
+        }
+        finish(false);
       },
     );
-    return () => {
-      current = false;
-    };
   }, [
     active,
     commandId,
     enabled,
     factsKey,
+    settled,
     held,
     hostPreparing,
     hostRevision,

@@ -1951,6 +1951,66 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     expect(decisions).toEqual(["failed"]);
   });
 
+  it("F: Host revisions during an in-flight query never multiply the query (one + one follow-up)", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f10", "cmd-f10", {
+      preparing: true,
+      query: () => {
+        calls += 1;
+        if (calls === 1)
+          return new Promise((_, reject) => {
+            release = () => reject(new Error("transport down"));
+          });
+        return Promise.resolve({
+          results: [
+            { key: { sessionId: "reserved-f10", commandId: "cmd-f10" }, result: "unknown" },
+          ],
+        });
+      },
+    });
+    const at = (revision: number) => {
+      const base = boundProjectionState("reserved-f10", {
+        submissionPreparation: { submissionId: "sub-cmd-f10" },
+      });
+      projectionState.current = { ...base, snapshot: { ...base.snapshot!, revision } };
+      renderPane(root, "reserved-f10");
+    };
+    for (const revision of [2, 3, 4, 5]) at(revision);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls).toBe(1);
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    // The transient failure re-checks once because the revision advanced during the flight.
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
+  it("F: the copy's own row still accepts it after an undecided query", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f11", "cmd-f11", {
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f11", commandId: "cmd-f11" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual([]);
+    projectionState.current = boundProjectionState("reserved-f11", {
+      rows: [realUserInputRow("cmd-f11")],
+    });
+    renderPane(root, "reserved-f11");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
   it("F: an unavailable command query leaves the record unchanged", async () => {
     conversationMock.layer.queryCommands.mockImplementation(async () => {
       throw new Error("transport down");

@@ -1394,6 +1394,7 @@ it.each(["sending", "unknown"] as const)(
       status,
       commandId: `cmd-held-${status}`,
     });
+    harness.controls.snapshot = preparingSnapshot(sessionId, `sub-held-${status}`);
     try {
       harness.rerender(sessionId);
       await act(async () => {
@@ -1424,6 +1425,7 @@ it.each(["sending", "unknown"] as const)(
       });
       harness.refresh();
       expect(findReactPropsByTestId(harness.container, "composer-send-blocked-reason")).toBeNull();
+      expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(false);
       await act(async () => {
         chatPromptEditorProps.at(-1)!.onSubmit!(`frozen sub-held-${status}`);
         await flushAsyncWork();
@@ -1581,6 +1583,120 @@ it("Remove on an unresolved unreserved draft record holds the copy too", async (
     });
     expect(prepare).not.toHaveBeenCalled();
     expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a reconnect query that answers unknown keeps the held copy; a later acceptance clears it, sending nothing", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-reconnect", "sub-reconnect", {
+    status: "unknown",
+    commandId: "cmd-reconnect",
+  });
+  const envelope = {
+    commandId: "cmd-reconnect",
+    clientId: "client-1",
+    sessionId: "session-reconnect",
+    type: "sendText",
+    payload: { text: "frozen sub-reconnect" },
+    issuedAt: Date.now(),
+  } as unknown as import("@zcode/shared/zcode-protocol-v4").CommandEnvelope;
+  try {
+    harness.rerender("session-reconnect");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    editorApi.clear.mockClear();
+    pendingCommandRegistry.record(envelope);
+    await act(async () => {
+      pendingCommandRegistry.applyQuery({
+        results: [
+          {
+            key: { sessionId: "session-reconnect", commandId: "cmd-reconnect" },
+            result: "unknown",
+          },
+        ],
+      });
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).not.toHaveBeenCalled();
+    await act(async () => {
+      pendingCommandRegistry.reconcileSnapshot({
+        sessionId: "session-reconnect",
+        queue: { items: [] },
+        rows: {
+          window: [{ kind: "userInput", rowId: 1, sourceCommandId: "cmd-reconnect", text: "x" }],
+        },
+      } as unknown as import("@zcode/shared/zcode-protocol-v4").ConversationSnapshot);
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Unlock is an explicit, confirmed override of a held copy and never sends by itself", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-unlock");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-unlock", "sub-unlock", {
+    status: "unknown",
+    commandId: "cmd-unlock",
+  });
+  // A live snapshot (the session still prepares the frozen submission) so routing allows Send.
+  harness.controls.snapshot = preparingSnapshot("session-unlock", "sub-unlock");
+  try {
+    harness.rerender("session-unlock");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    // First click only reveals the duplicate warning and the confirmation.
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(
+      findReactPropsByTestId(harness.container, "composer-held-unlock-warning"),
+    ).not.toBeNull();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-held-unlock-confirm")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("frozen sub-unlock");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      firstSubmissionId: "sub-unlock",
+    });
   } finally {
     await act(async () => {
       await flushAsyncWork();

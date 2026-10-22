@@ -7267,6 +7267,9 @@ const zhCN: Record<string, string> = {
   "firstSubmission.unknown": "正在确认消息是否已接收…",
   "firstSubmission.synchronizing": "正在等待会话更新…",
   "firstSubmission.contexts": "上下文引用：{count}",
+  "composer.heldCopy.unlock": "仍要发送…",
+  "composer.heldCopy.warning": "这条消息可能已经送达。再次发送可能会产生重复消息。",
+  "composer.heldCopy.confirm": "解锁发送",
   "composer.sendBlocked.outcomeUnresolved": "正在确认第一条消息是否已被接收，确认后即可发送。",
   "composer.sendBlocked.firstSubmissionNeedsAction":
     "第一条消息需要处理：请先重试或移除，再发送新消息。",
