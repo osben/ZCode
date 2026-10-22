@@ -46,6 +46,11 @@ no notice appeared, and hovering Send showed nothing, so the reason was computed
    - **Empty draft:** Enter on an empty model-blocked draft is swallowed silently. It inserts no newline
      and shows no notice, because the inline line is shown only for a non-empty draft.
    - Other blocked states keep their existing Enter behavior. Mobile `enterSubmits` off is unchanged.
+   - Shift+Enter (the newline binding) is never taken by the blocked path. An Enter that is part of an IME
+     composition (`isComposing`, or the legacy keyCode 229 that Safari sends for the commit) is not taken
+     either; both use the shared `isImeEvent` predicate.
+   - **Known follow-up (not fixed):** reverse-delivery Ctrl+Enter with the default binding still inserts a
+     newline while a model reason is shown. Only a rebound send key is covered by the blocked path (UMS-09).
 7. **One owner.** `resolveComposerSubmitBlockReason`
    (`packages/ui/src/v4/composer/composerSubmitBlockReason.ts`) derives the reason. The composer
    passes `selectionIssue` and the settled flag into it at both call sites (the render-state Send

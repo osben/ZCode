@@ -21,6 +21,7 @@ import {
   shouldBareEnterFallThroughToNewline,
 } from "@/shortcuts/composerShortcuts.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
+import { isShortcutEventNoise } from "@/shortcuts/bindings.js";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
@@ -621,8 +622,10 @@ export function KeyboardPlugin({
           return true;
         }
 
-        // Do not intercept while an IME is composing (for example, a Chinese IME).
-        if (event.isComposing) {
+        // Do not intercept while an IME is composing (for example, a Chinese IME). Safari reports the IME
+        // commit Enter as keyCode 229 with isComposing false, which the shared noise predicate covers.
+        // Key repeat keeps its existing behavior, so only the IME part of the predicate applies to it.
+        if (event.isComposing || (event.repeat !== true && isShortcutEventNoise(event))) {
           return false;
         }
 

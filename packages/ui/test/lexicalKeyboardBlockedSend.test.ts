@@ -84,8 +84,10 @@ function mountKeyboard(props: {
 
 // Dispatch a keydown the way Lexical does. Returns whether a listener handled it; a handled Enter
 // means no newline is inserted, so an unhandled one falls through to Lexical's paragraph insertion.
-function pressKey(editor: LexicalEditor, init: KeyboardEventInit) {
+function pressKey(editor: LexicalEditor, init: KeyboardEventInit, keyCode?: number) {
   const event = new KeyboardEvent("keydown", { cancelable: true, bubbles: true, ...init });
+  // Legacy IME commits report keyCode 229 with isComposing false; jsdom's init may not carry it.
+  if (keyCode !== undefined) Object.defineProperty(event, "keyCode", { value: keyCode });
   let handled = false;
   act(() => {
     handled = editor.dispatchCommand(KEY_ENTER_COMMAND, event);
@@ -147,6 +149,42 @@ describe("KeyboardPlugin Enter while submit is blocked by a named reason (ISSUE-
     const { handled } = pressKey(editor, { key: "Enter", code: "Enter" });
 
     expect(onSubmitBlocked).not.toHaveBeenCalled();
+    expect(handled).toBe(false);
+  });
+
+  it("Shift+Enter (newline binding) is never taken by the blocked-send path", () => {
+    const onSubmitBlocked = vi.fn();
+    const editor = mountKeyboard({ submitDisabled: true, onSubmit: vi.fn(), onSubmitBlocked });
+
+    const { handled, event } = pressKey(editor, { key: "Enter", code: "Enter", shiftKey: true });
+
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+    expect(handled).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("an Enter that is part of an IME composition is not taken by the blocked-send path", () => {
+    const onSubmitBlocked = vi.fn();
+    const onSubmit = vi.fn();
+    const editor = mountKeyboard({ submitDisabled: true, onSubmit, onSubmitBlocked });
+
+    const { handled } = pressKey(editor, { key: "Enter", code: "Enter", isComposing: true });
+
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(handled).toBe(false);
+  });
+
+  it("an IME commit reported as keyCode 229 with isComposing false is not taken by the blocked-send path", () => {
+    const onSubmitBlocked = vi.fn();
+    const onSubmit = vi.fn();
+    const editor = mountKeyboard({ submitDisabled: true, onSubmit, onSubmitBlocked });
+
+    // Safari sends Enter for the IME commit with keyCode 229 and isComposing false.
+    const { handled } = pressKey(editor, { key: "Enter", code: "Enter" }, 229);
+
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
     expect(handled).toBe(false);
   });
 
