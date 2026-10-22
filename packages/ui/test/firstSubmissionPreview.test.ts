@@ -70,10 +70,37 @@ describe("first-submission status line under the optimistic turn (FSL01/FSL04/FS
   it("keeps the failure state visible under the message (IUX07)", () => {
     status(false, "failed");
     expect(screen.getByRole("status").textContent).toContain("Failed to send");
+    // DESIGN.md status colors: a failure uses the destructive token, not the subtle foreground.
+    expect(screen.getByRole("status").className).toContain("text-destructive");
+  });
+
+  it("does not claim a failed send when a sendText command existed (reconciled unknown)", () => {
+    render(
+      createElement(
+        ZCodeIntlProvider,
+        { initialLocale: "en-US" },
+        createElement(FirstSubmissionStatus, {
+          draft: {
+            text: "hello",
+            updatedAt: 1,
+            firstSubmission: {
+              submissionId: "s",
+              ownerKey: "o",
+              status: "failed",
+              commandId: "cmd",
+            },
+          },
+          active: false,
+        }),
+      ),
+    );
+    expect(screen.getByRole("status").textContent).toContain("Couldn’t confirm");
+    expect(screen.getByRole("status").textContent).not.toContain("Failed to send");
   });
 
   it("distinguishes an unknown command outcome from a new unsent draft", () => {
     status(false, "unknown");
     expect(screen.getByRole("status").textContent).toContain("Checking whether");
+    expect(screen.getByRole("status").className).not.toContain("text-destructive");
   });
 });

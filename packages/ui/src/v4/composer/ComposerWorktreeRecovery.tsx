@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId } from "react";
 import { logger } from "@/logger.js";
 import {
   moveComposerAttachmentScopeItems,
@@ -27,8 +27,12 @@ import {
 function firstSubmissionStatusMessageId(
   status: NonNullable<V4ComposerDraft["firstSubmission"]>["status"] | undefined,
   active: boolean,
+  commandCreated: boolean,
 ): string | null {
-  if (status === "failed") return "chat.error.sendFailed";
+  // A failure decided after a sendText command existed (e.g. reconciled from an unknown outcome)
+  // must not claim the message was never sent.
+  if (status === "failed")
+    return commandCreated ? "firstSubmission.deliveryUnconfirmed" : "chat.error.sendFailed";
   if (status === "unknown") return "firstSubmission.unknown";
   // An active submission is still moving; the optimistic turn is the feedback.
   if (status === "sending" && !active) return "firstSubmission.synchronizing";
@@ -48,7 +52,11 @@ export function FirstSubmissionStatus({
     (count, items) => count + (items?.length ?? 0),
     0,
   );
-  const messageId = firstSubmissionStatusMessageId(pending?.status, active);
+  const messageId = firstSubmissionStatusMessageId(
+    pending?.status,
+    active,
+    Boolean(pending?.commandId),
+  );
   if (contextCount === 0 && !messageId) return null;
   return (
     <div
@@ -64,7 +72,11 @@ export function FirstSubmissionStatus({
         <div
           role="status"
           data-first-submission-status="true"
-          className="flex items-center gap-2 text-ui-sm text-foreground-subtle"
+          className={
+            pending?.status === "failed"
+              ? "flex items-center gap-2 text-ui-sm text-destructive"
+              : "flex items-center gap-2 text-ui-sm text-foreground-subtle"
+          }
         >
           {intl.formatMessage({ id: messageId })}
         </div>
@@ -79,9 +91,10 @@ export function ComposerWorktreeRecovery({
   scopeId,
   editorEmpty,
   attachments,
-  sessionBound,
+  retryBlockedReason,
   onRestore,
   onRetry,
+  onRemove,
   onDiscardAttachments,
 }: {
   workspacePath: string;
@@ -89,11 +102,13 @@ export function ComposerWorktreeRecovery({
   scopeId: string;
   editorEmpty: boolean;
   attachments: readonly { id: string; filename: string }[];
-  /** The composer is on a Host session (not the draft), so its first-submission records are bound. */
-  sessionBound: boolean;
+  /** Why the ordinary submit would not run now (shared predicate); Retry is disabled with it. */
+  retryBlockedReason?: string | null;
   onRestore: (draft: V4ComposerDraft) => void;
   /** Restore-then-submit over the frozen first submission (specs/first-submission-instant-ux.md, Retry surface). */
   onRetry: (draft: V4ComposerDraft, recoveryScope: string) => void;
+  /** Return the frozen text to the editor and delete the record; never a Host call. */
+  onRemove: (draft: V4ComposerDraft, recoveryScope: string) => void;
   onDiscardAttachments: (ids: string[], scope: string) => Promise<void>;
 }) {
   const { intl } = useZCodeIntl();
@@ -106,7 +121,7 @@ export function ComposerWorktreeRecovery({
   const saved = readV4WorktreeRecoveryDrafts(workspacePath, workspaceIdentity, scopeId)[0];
   const recoveryScope = saved?.scope ?? "";
   const draft = saved?.draft;
-  const [retriedRecordAt, setRetriedRecordAt] = useState<number | null>(null);
+  const retryBlockedReasonId = useId();
   const recoveryFiles = useComposerAttachmentUploadStore(
     (state) => state.scopes[`${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`],
   );
@@ -124,15 +139,17 @@ export function ComposerWorktreeRecovery({
   }, [draft, manifest, recoveryScope, workspaceIdentity, workspacePath]);
   if (!draft) return null;
   const firstSubmission = draft.firstSubmission;
-  // A live submission owns its record; sending/unknown has an unresolved sendText command that must
-  // be reconciled by its original id, never resent under a new one (FSL rule 4).
+  // A live submission owns its record (the retry freeze also marks it active, which hides the card,
+  // so no "already clicked" lock is needed).
   if (
     firstSubmission &&
-    (isV4FirstSubmissionActive(workspacePath, workspaceIdentity, firstSubmission.submissionId) ||
-      firstSubmission.status === "sending" ||
-      firstSubmission.status === "unknown")
+    isV4FirstSubmissionActive(workspacePath, workspaceIdentity, firstSubmission.submissionId)
   )
     return null;
+  // sending/unknown has an unresolved sendText command: reconciled by its original id, never
+  // resent under a new one (FSL rule 4), so only Remove is offered until reconciliation decides.
+  const outcomeUnresolved =
+    firstSubmission?.status === "sending" || firstSubmission?.status === "unknown";
   const missing = (draft.recoveryAttachments ?? []).filter(
     (file) =>
       ![...attachments, ...(recoveryFiles ?? [])].some(
@@ -155,7 +172,13 @@ export function ComposerWorktreeRecovery({
       data-testid="composer-worktree-recovery"
       className="m-2 rounded-md border border-border p-3 text-ui-sm"
     >
-      <p>{intl.formatMessage({ id: "composerRecovery.title" })}</p>
+      <p>
+        {intl.formatMessage({
+          id: firstSubmission?.commandId
+            ? "firstSubmission.savedUnconfirmed"
+            : "composerRecovery.title",
+        })}
+      </p>
       {/* A first submission's message is already the optimistic turn above; do not repeat it. */}
       {!firstSubmission ? (
         <>
@@ -177,16 +200,26 @@ export function ComposerWorktreeRecovery({
         </p>
       ) : null}
       {missing.length ? <p>{intl.formatMessage({ id: "composerRecovery.reattach" })}</p> : null}
+      {firstSubmission && !outcomeUnresolved && retryBlockedReason ? (
+        <p
+          id={retryBlockedReasonId}
+          data-testid="composer-first-submission-retry-blocked"
+          className="text-foreground-subtle"
+        >
+          {retryBlockedReason}
+        </p>
+      ) : null}
       <div className="mt-2 flex gap-2">
-        {firstSubmission ? (
+        {firstSubmission && outcomeUnresolved ? null : firstSubmission ? (
           <Button
             size="sm"
             variant="outline"
             data-testid="composer-first-submission-retry"
-            disabled={occupied || missing.length > 0 || retriedRecordAt === draft.updatedAt}
+            disabled={occupied || missing.length > 0 || retryBlockedReason !== null}
+            aria-describedby={retryBlockedReason ? retryBlockedReasonId : undefined}
             onClick={() => {
+              if (retryBlockedReason) return;
               // The record stays: the retry freeze overwrites it in place so the turn never blinks.
-              setRetriedRecordAt(draft.updatedAt);
               moveComposerAttachmentScopeItems(
                 `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
                 `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
@@ -231,8 +264,24 @@ export function ComposerWorktreeRecovery({
             {intl.formatMessage({ id: "composerRecovery.removeMissing" })}
           </Button>
         ) : null}
-        {/* Dismissing a reserved record would strand its prepared session (it admits no other input). */}
-        {firstSubmission && (firstSubmission.reservation || sessionBound) ? null : (
+        {firstSubmission ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid="composer-first-submission-remove"
+            disabled={occupied}
+            onClick={() => {
+              moveComposerAttachmentScopeItems(
+                `${workspaceIdentity?.trim() || workspacePath}\0${recoveryScope}`,
+                `${workspaceIdentity?.trim() || workspacePath}\0${scopeId}`,
+                (recoveryFiles ?? []).map((item) => item.id),
+              );
+              onRemove(draft, recoveryScope);
+            }}
+          >
+            {intl.formatMessage({ id: "firstSubmission.remove" })}
+          </Button>
+        ) : (
           <Button
             size="sm"
             variant="ghost"

@@ -71,6 +71,24 @@ const ukUA: Record<string, string> = {
   "firstSubmission.unknown": "Перевіряємо, чи повідомлення було прийнято…",
   "firstSubmission.synchronizing": "Очікуємо оновлення розмови…",
   "firstSubmission.contexts": "Посилання на контекст: {count}",
+  "composer.heldCopy.unlock": "Однаково надіслати…",
+  "composer.heldCopy.warning":
+    "Це повідомлення могло вже бути доставлене. Повторне надсилання може створити дублікат.",
+  "composer.heldCopy.confirm": "Дозволити надсилання",
+  "composer.sendBlocked.outcomeUnresolved":
+    "Перевіряємо, чи прийнято перше повідомлення. Надіслати можна буде, щойно це з'ясується.",
+  "composer.sendBlocked.firstSubmissionNeedsAction":
+    "Перше повідомлення потребує уваги: повторіть або вилучіть його, перш ніж надсилати інше.",
+  "firstSubmission.deliveryUnconfirmed": "Не вдалося підтвердити, що це повідомлення доставлено.",
+  "firstSubmission.savedUnconfirmed": "Повідомлення збережено; доставку не підтверджено",
+  "firstSubmission.remove": "Вилучити",
+  "composer.sendBlocked.remoteUnavailable":
+    "Віддалений хост недоступний. Спробуйте знову після відновлення з'єднання.",
+  "composer.sendBlocked.sessionNotReady": "Сесія ще не готова. Спробуйте трохи згодом.",
+  "composer.sendBlocked.sendInProgress": "Інше повідомлення ще надсилається.",
+  "composer.sendBlocked.firstSubmissionDelivering":
+    "Перше повідомлення ще доставляється. Ви зможете надіслати це, щойно його буде доставлено.",
+  "composer.sendBlocked.attachmentsNotReady": "Вкладення ще завантажуються.",
   "composerRecovery.title": "Ненадіслане повідомлення збережено",
   "composerRecovery.storageUnavailable":
     "Не вдалося зберегти стан відновлення. Повідомлення не надіслано; звільніть сховище браузера та повторіть спробу.",
@@ -84,6 +102,7 @@ const ukUA: Record<string, string> = {
   "worktreeSetup.copyCommand": "Копіювати команду",
   "worktreeSetup.commandCopied": "Команду скопійовано",
   "worktreeSetup.copyFailed": "Не вдалося скопіювати в буфер обміну",
+  "worktreeSetup.openInEditorFailed": "Не вдалося відкрити worktree у {editor}: {path}",
   "worktreeSetup.summaryFailed": "помилка",
   "worktreeSetup.commandLabel": "Команда",
   "worktreeSetup.stepCreating": "Готуємо worktree {branch}…",

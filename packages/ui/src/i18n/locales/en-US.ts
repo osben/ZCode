@@ -7649,6 +7649,24 @@ const enUS: Record<string, string> = {
   "firstSubmission.unknown": "Checking whether the message was accepted…",
   "firstSubmission.synchronizing": "Waiting for the conversation to update…",
   "firstSubmission.contexts": "Context references: {count}",
+  "composer.heldCopy.unlock": "Send anyway…",
+  "composer.heldCopy.warning":
+    "This message may already have been delivered. Sending it again can create a duplicate.",
+  "composer.heldCopy.confirm": "Unlock sending",
+  "composer.sendBlocked.outcomeUnresolved":
+    "Checking whether your first message was accepted. You can send once that is known.",
+  "composer.sendBlocked.firstSubmissionNeedsAction":
+    "Your first message needs attention: retry or remove it before sending another.",
+  "firstSubmission.deliveryUnconfirmed": "Couldn’t confirm that this message was delivered.",
+  "firstSubmission.savedUnconfirmed": "Message saved; delivery not confirmed",
+  "firstSubmission.remove": "Remove",
+  "composer.sendBlocked.remoteUnavailable":
+    "The remote host is unavailable. Try again once it reconnects.",
+  "composer.sendBlocked.sessionNotReady": "The session isn’t ready yet. Try again in a moment.",
+  "composer.sendBlocked.sendInProgress": "Another message is still being sent.",
+  "composer.sendBlocked.firstSubmissionDelivering":
+    "Your first message is still being delivered. You can send this one once it arrives.",
+  "composer.sendBlocked.attachmentsNotReady": "Attachments are still uploading.",
   "composerRecovery.title": "Unsent message saved",
   "composerRecovery.storageUnavailable":
     "Recovery state could not be saved. The message has not been sent; free browser storage and try again.",
@@ -7748,6 +7766,7 @@ const enUS: Record<string, string> = {
   "worktreeSetup.copyCommand": "Copy command",
   "worktreeSetup.commandCopied": "Command copied",
   "worktreeSetup.copyFailed": "Could not copy to the clipboard",
+  "worktreeSetup.openInEditorFailed": "Could not open the worktree in {editor}: {path}",
   "worktreeSetup.summaryFailed": "failed",
   "worktreeSetup.commandLabel": "Command",
   "worktreeSetup.stepCreating": "Preparing worktree {branch}…",

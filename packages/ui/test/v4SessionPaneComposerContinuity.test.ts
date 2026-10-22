@@ -66,6 +66,18 @@ vi.mock("@/v4/agentV4ConnectionHandshake.js", async (importOriginal) => ({
   ensureAgentV4ConnectionHandshake: async () => agentHandshakeMock.hello,
 }));
 
+// Project tree staging (commitCreatedTask): null by default, a never-settling stager per test.
+const projectDirectoryMock = vi.hoisted(() => ({
+  current: null as null | {
+    commitCreatedTask: ReturnType<typeof import("vitest").vi.fn>;
+    groups: { refresh: () => Promise<void> };
+  },
+}));
+vi.mock("@/project-sidebar/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/project-sidebar/index.js")>()),
+  useOptionalProjectDirectory: () => projectDirectoryMock.current,
+}));
+
 const projectionState = vi.hoisted(() => ({
   current: null as ProjectionState | null,
 }));
@@ -348,12 +360,15 @@ vi.mock("@/hooks/useModelSelectionView.js", () => ({
   }),
 }));
 
+const draftControlMock = vi.hoisted(() => ({
+  composerDraft: { text: "", updatedAt: 0 } as Record<string, unknown>,
+}));
 vi.mock("@/v4/composer/useDraftConfigControl.js", () => ({
   buildDraftCreateConfigPayload: () => ({}),
   useDraftConfigControl: () => ({
     modelSelectionRead: useModelSelectionServiceView(null),
     captureAcceptedModelSelection: () => vi.fn(),
-    composerDraft: { text: "", updatedAt: 0 },
+    composerDraft: draftControlMock.composerDraft,
     draftConfig: {},
     draftConfigRef: {
       current: {
@@ -691,6 +706,10 @@ function renderPane(
 }
 
 beforeEach(() => {
+  draftControlMock.composerDraft = { text: "", updatedAt: 0 };
+  projectDirectoryMock.current = null;
+  conversationMock.layer.queryCommands.mockReset();
+  conversationMock.layer.queryCommands.mockImplementation(async () => ({ results: [] }));
   sessionCreateCapture.report.mockClear();
   recoveryCapture.entries = [];
   recoveryCapture.onResend = null;
@@ -705,6 +724,7 @@ beforeEach(() => {
   composerLifecycle.renders = [];
   composerLifecycle.unmounts = 0;
   conversationMock.layer.acquire.mockClear();
+  conversationMock.layer.acquire.mockImplementation(() => conversationMock.lease);
   conversationMock.lease.release.mockClear();
   conversationMock.lease.store.expectAcceptedInputProjection.mockClear();
   conversationMock.currentLayer = null;
@@ -1426,6 +1446,7 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       commandId?: string;
       status?: "preparing" | "sending" | "failed" | "unknown";
       text?: string;
+      reservation?: { sessionId: string; commandId: string };
     },
   ): void {
     persistV4ComposerDraft(
@@ -1440,6 +1461,7 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
           generation: paneDraftGeneration(),
           status: overrides?.status ?? "preparing",
           ...(overrides?.commandId ? { commandId: overrides.commandId } : {}),
+          ...(overrides?.reservation ? { reservation: overrides.reservation } : {}),
         },
       },
     );
@@ -1466,12 +1488,27 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     options?: {
       rows?: ConversationSnapshot["rows"]["window"];
       queueItems?: ConversationSnapshot["queue"]["items"];
+      submissionPreparation?: { submissionId: string };
     },
   ): ProjectionState {
+    const base = makeDraftSnapshot();
     return {
       status: "live",
       snapshot: {
-        ...makeDraftSnapshot(),
+        ...base,
+        ...(options?.submissionPreparation
+          ? {
+              meta: {
+                ...base.meta,
+                submissionPreparation: {
+                  submissionId: options.submissionPreparation.submissionId,
+                  status: "preparing" as const,
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              },
+            }
+          : {}),
         sessionId,
         queue: { autoDrain: true, items: options?.queueItems ?? [] },
         rows: {
@@ -1698,5 +1735,356 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
       entityId: submissionId,
     });
     expect(conversationMock.sendCommand).not.toHaveBeenCalled();
+  });
+  // Unresolved outcomes (specs/first-submission-instant-ux.md, Reconciliation): the pane holding
+  // an inactive sending/unknown record decides from durable Host facts, then the original command.
+  async function mountBoundRecord(
+    sessionId: string,
+    submissionId: string,
+    options: { preparing: boolean; status?: "sending" | "unknown"; worktree?: boolean },
+  ) {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    seedFirstSubmissionRecord(sessionId, submissionId, {
+      commandId: `cmd-${submissionId}`,
+      status: options.status ?? "unknown",
+      // Plain first submissions carry their Host reservation; worktree ones never do.
+      ...(options.worktree
+        ? {}
+        : { reservation: { sessionId, commandId: `reserve-${submissionId}` } }),
+    });
+    // The chain ended (lost ACK) or the app restarted: nothing in this renderer owns it.
+    setV4FirstSubmissionActive(WORKSPACE, undefined, submissionId, false);
+    conversationMock.layer.acquire.mockImplementation(
+      () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState(
+      sessionId,
+      options.preparing ? { submissionPreparation: { submissionId } } : undefined,
+    );
+    renderPane(root, sessionId);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+  const recordStatus = (sessionId: string) =>
+    readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, sessionId)[0]?.draft.firstSubmission?.status;
+
+  it("F: a still-preparing session whose command the Host does not know turns failed with Retry", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f1", commandId: "cmd-f1" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("reserved-f1", "f1", { preparing: true });
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "reserved-f1", commandId: "cmd-f1" }],
+    });
+    expect(recordStatus("reserved-f1")).toBe("failed");
+    expect(conversationMock.sendCommand).not.toHaveBeenCalled();
+  });
+
+  it("F: an accepted command settles to synchronizing until the real row projects", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [
+        {
+          key: { sessionId: "reserved-f2", commandId: "cmd-f2" },
+          result: { commandId: "cmd-f2", status: "accepted", revisionAtDecision: 1 },
+        },
+      ],
+    }));
+    await mountBoundRecord("reserved-f2", "f2", { preparing: true });
+    expect(recordStatus("reserved-f2")).toBe("sending");
+  });
+
+  it("F: a Host that already admitted the frozen input is trusted over a lost command ledger", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f3", commandId: "cmd-f3" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("reserved-f3", "f3", { preparing: false });
+    // No submissionPreparation: the Host marked the frozen input admitted, so no Retry (it
+    // would resend the same input under a new command id).
+    expect(recordStatus("reserved-f3")).toBe("sending");
+    expect(conversationMock.layer.queryCommands).not.toHaveBeenCalled();
+  });
+
+  it("F: a worktree record never trusts a missing marker (it completes at activation) and queries", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "worktree-f5", commandId: "cmd-f5" }, result: "unknown" }],
+    }));
+    await mountBoundRecord("worktree-f5", "f5", { preparing: false, worktree: true });
+    expect(conversationMock.layer.queryCommands).toHaveBeenCalledWith({
+      commands: [{ sessionId: "worktree-f5", commandId: "cmd-f5" }],
+    });
+    expect(recordStatus("worktree-f5")).toBe("failed");
+  });
+
+  it("F: a copy held after Remove gets its decision through the command registry", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: "f6",
+        ownerKey: "reserved-f6",
+        status: "unknown",
+        commandId: "cmd-f6",
+        reservation: { sessionId: "reserved-f6", commandId: "reserve-f6" },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(async () => ({
+      results: [{ key: { sessionId: "reserved-f6", commandId: "cmd-f6" }, result: "unknown" }],
+    }));
+    const decisions: string[] = [];
+    const off = pendingCommandRegistry.subscribeResolution("cmd-f6", (resolution) =>
+      decisions.push(resolution),
+    );
+    conversationMock.layer.acquire.mockImplementation(
+      () =>
+        ({ ...conversationMock.lease, sessionId: "reserved-f6" }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState("reserved-f6", {
+      submissionPreparation: { submissionId: "f6" },
+    });
+    renderPane(root, "reserved-f6");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed"]);
+    // The held copy is owned by its composer: the pane never writes it to storage.
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "reserved-f6")).toHaveLength(0);
+  });
+
+  async function mountHeldCopy(
+    sessionId: string,
+    commandId: string,
+    options: {
+      rows?: ConversationSnapshot["rows"]["window"];
+      preparing: boolean;
+      query: () => Promise<unknown>;
+    },
+  ) {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    draftControlMock.composerDraft = {
+      text: "held copy",
+      updatedAt: 1,
+      firstSubmission: {
+        submissionId: `sub-${commandId}`,
+        ownerKey: sessionId,
+        status: "unknown",
+        commandId,
+        reservation: { sessionId, commandId: `reserve-${commandId}` },
+      },
+    };
+    conversationMock.layer.queryCommands.mockImplementation(
+      options.query as typeof conversationMock.layer.queryCommands,
+    );
+    const decisions: string[] = [];
+    // The registry drops its listeners after each notification: keep collecting.
+    let unsubscribe = () => {};
+    let stopped = false;
+    const listen = () => {
+      unsubscribe = pendingCommandRegistry.subscribeResolution(commandId, (resolution) => {
+        decisions.push(resolution);
+        if (!stopped) listen();
+      });
+    };
+    listen();
+    const off = () => {
+      stopped = true;
+      unsubscribe();
+    };
+    conversationMock.layer.acquire.mockImplementation(
+      () => ({ ...conversationMock.lease, sessionId }) as typeof conversationMock.lease,
+    );
+    projectionState.current = boundProjectionState(sessionId, {
+      ...(options.rows ? { rows: options.rows } : {}),
+      ...(options.preparing ? { submissionPreparation: { submissionId: `sub-${commandId}` } } : {}),
+    });
+    renderPane(root, sessionId);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    return { root, decisions, off };
+  }
+
+  it("F: a foreign user row or marker never accepts a held copy (identity matching, FSL rule 6)", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f7", "cmd-f7", {
+      rows: [realUserInputRow("cmd-foreign")],
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f7", commandId: "cmd-f7" }, result: "unknown" }],
+      }),
+    });
+    off();
+    // Neither the foreign row nor the flipped marker is evidence for cmd-f7; an unknown query
+    // outside preparation decides nothing, so the user's unsent copy stays.
+    expect(decisions).toEqual([]);
+  });
+
+  it("F: a user row carrying the held command id accepts the held copy", async () => {
+    const { decisions, off } = await mountHeldCopy("reserved-f8", "cmd-f8", {
+      rows: [realUserInputRow("cmd-f8")],
+      preparing: false,
+      query: async () => ({ results: [] }),
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: a transient query failure is re-checked when the Host snapshot advances", async () => {
+    let calls = 0;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f9", "cmd-f9", {
+      preparing: true,
+      query: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport down");
+        return {
+          results: [{ key: { sessionId: "reserved-f9", commandId: "cmd-f9" }, result: "unknown" }],
+        };
+      },
+    });
+    expect(decisions).toEqual([]);
+    const advanced = boundProjectionState("reserved-f9", {
+      submissionPreparation: { submissionId: "sub-cmd-f9" },
+    });
+    projectionState.current = {
+      ...advanced,
+      snapshot: { ...advanced.snapshot!, revision: 7 },
+    };
+    renderPane(root, "reserved-f9");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
+  it("F: Host revisions during an in-flight query never multiply the query (one + one follow-up)", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const { root, decisions, off } = await mountHeldCopy("reserved-f10", "cmd-f10", {
+      preparing: true,
+      query: () => {
+        calls += 1;
+        if (calls === 1)
+          return new Promise((_, reject) => {
+            release = () => reject(new Error("transport down"));
+          });
+        return Promise.resolve({
+          results: [
+            { key: { sessionId: "reserved-f10", commandId: "cmd-f10" }, result: "unknown" },
+          ],
+        });
+      },
+    });
+    const at = (revision: number) => {
+      const base = boundProjectionState("reserved-f10", {
+        submissionPreparation: { submissionId: "sub-cmd-f10" },
+      });
+      projectionState.current = { ...base, snapshot: { ...base.snapshot!, revision } };
+      renderPane(root, "reserved-f10");
+    };
+    for (const revision of [2, 3, 4, 5]) at(revision);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(calls).toBe(1);
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    // The transient failure re-checks once because the revision advanced during the flight.
+    expect(calls).toBe(2);
+    expect(decisions).toEqual(["failed"]);
+  });
+
+  it("F: the copy's own row still accepts it after an undecided query", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f11", "cmd-f11", {
+      preparing: false,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f11", commandId: "cmd-f11" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual([]);
+    projectionState.current = boundProjectionState("reserved-f11", {
+      rows: [realUserInputRow("cmd-f11")],
+    });
+    renderPane(root, "reserved-f11");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["accepted"]);
+  });
+
+  it("F: the own row still wins after a decided failure", async () => {
+    const { root, decisions, off } = await mountHeldCopy("reserved-f12", "cmd-f12", {
+      preparing: true,
+      query: async () => ({
+        results: [{ key: { sessionId: "reserved-f12", commandId: "cmd-f12" }, result: "unknown" }],
+      }),
+    });
+    expect(decisions).toEqual(["failed"]);
+    projectionState.current = boundProjectionState("reserved-f12", {
+      rows: [realUserInputRow("cmd-f12")],
+      submissionPreparation: { submissionId: "sub-cmd-f12" },
+    });
+    renderPane(root, "reserved-f12");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    off();
+    expect(decisions).toEqual(["failed", "accepted"]);
+  });
+
+  it("F: an unavailable command query leaves the record unchanged", async () => {
+    conversationMock.layer.queryCommands.mockImplementation(async () => {
+      throw new Error("transport down");
+    });
+    await mountBoundRecord("reserved-f4", "f4", { preparing: true, status: "sending" });
+    expect(recordStatus("reserved-f4")).toBe("sending");
+  });
+
+  it("B: a worktree reservation binds from the Host identity at the ACK, never on the project tree", async () => {
+    const commitCreatedTask = vi.fn(() => new Promise<void>(() => {}));
+    projectDirectoryMock.current = { commitCreatedTask, groups: { refresh: async () => {} } };
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    const submissionId = "f6a7b8c9-6666-4775-8888-999999999999";
+    seedFirstSubmissionRecord(paneDraftScope(), submissionId, { text: "worktree first" });
+    const onSessionCreated = vi.fn();
+    renderPane(root, null, { onSessionCreated });
+    conversationMock.sendCommand.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 1,
+      status: "accepted" as const,
+      result: { type: "createSession", sessionId: "wt-session-1" },
+    }));
+    const prepare = (
+      scrollFocus.composerProps as unknown as {
+        onPrepareWorktreeSession: (
+          params: { branchName: string; targetPath: string; attemptId: string },
+          options: { shouldActivate: () => boolean },
+        ) => Promise<string>;
+      }
+    ).onPrepareWorktreeSession;
+    await act(async () => {
+      await expect(
+        prepare(
+          { branchName: "feature-b", targetPath: "/worktrees/feature-b", attemptId: "attempt-b" },
+          { shouldActivate: () => true },
+        ),
+      ).resolves.toBe("wt-session-1");
+    });
+    // The message moved with the bind, which never waited on the (never-settling) tree staging.
+    expect(onSessionCreated).toHaveBeenCalledWith("wt-session-1");
+    expect(commitCreatedTask).not.toHaveBeenCalled();
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "wt-session-1")).toHaveLength(1);
+    expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, paneDraftScope())).toHaveLength(0);
   });
 });

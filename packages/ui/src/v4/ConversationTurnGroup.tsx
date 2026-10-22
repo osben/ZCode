@@ -854,7 +854,23 @@ function ConversationWorkSegmentFlow({
         let content: React.ReactNode;
 
         if (item.kind === "userInput") {
-          const userRow = (
+          // The optimistic first-submission row (negative rowId) names no Host row: pin, edit and
+          // attachment reads would target nothing, so only those actions are withheld — the text
+          // stays readable to assistive tech (specs/first-submission-instant-ux.md).
+          const optimistic = item.row.rowId < 0;
+          const userRow = optimistic ? (
+            <div data-optimistic-first-input="true" className="contents">
+              <ConversationTurnRow
+                row={item.row}
+                context={{
+                  ...context,
+                  readAttachment: undefined,
+                  readAttachmentRange: undefined,
+                  onOpenCodeViewer: undefined,
+                }}
+              />
+            </div>
+          ) : (
             <ConversationTurnRow
               row={item.row}
               context={context}

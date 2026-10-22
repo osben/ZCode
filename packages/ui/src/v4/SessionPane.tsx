@@ -20,6 +20,7 @@ import type {
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { FirstSubmissionStatus } from "@/v4/composer/ComposerWorktreeRecovery.js";
+import { useFirstSubmissionReconciliation } from "@/v4/firstSubmissionReconciliation.js";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { ConversationPinnedBar, type PinnedConversationRow } from "@/v4/ConversationPinnedBar.js";
 import type { RowPinChangeHandler } from "@/v4/ConversationRowView.js";
@@ -5280,6 +5281,35 @@ export function SessionPane({
     hasVisibleRealUserFirstInputRow(snapshot.rows.window);
   const firstSubmission = firstSubmissionRowProjected ? undefined : firstSubmissionRecord;
   const hasFirstSubmission = Boolean(firstSubmission);
+  useFirstSubmissionReconciliation({
+    enabled: remoteAvailable,
+    workspacePath,
+    workspaceIdentity,
+    sessionId,
+    firstSubmission: firstSubmissionRecord?.draft.firstSubmission,
+    heldFirstSubmission: sessionId !== null ? composerDraft?.firstSubmission : undefined,
+    active: Boolean(
+      firstSubmissionRecord?.draft.firstSubmission &&
+      isV4FirstSubmissionActive(
+        workspacePath,
+        workspaceIdentity,
+        firstSubmissionRecord.draft.firstSubmission.submissionId,
+      ),
+    ),
+    realRowProjected: firstSubmissionRowProjected,
+    commandRowProjected: (commandId) =>
+      snapshot?.sessionId === sessionId &&
+      snapshot.rows.window.some(
+        (row) =>
+          row.kind === "userInput" &&
+          row.origin === "realUser" &&
+          row.sourceCommandId === commandId,
+      ),
+    snapshotLive: Boolean(sessionId && snapshot?.sessionId === sessionId),
+    hostPreparing: Boolean(snapshot?.meta.submissionPreparation),
+    hostRevision: snapshot?.sessionId === sessionId ? snapshot.revision : undefined,
+    queryCommands: (params) => layer.queryCommands(params),
+  });
   useEffect(() => {
     if (!firstSubmissionRowProjected || !firstSubmissionRecord) return;
     const projectedSubmissionId = firstSubmissionRecord.draft.firstSubmission?.submissionId;

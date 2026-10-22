@@ -1,4 +1,5 @@
 import { useDraftIncognitoIntentStore } from "@/v4/composer/draftIncognitoIntent.js";
+import { useDraftBranchIntentStore } from "@/v4/composer/draftBranchIntent.js";
 import { INCOGNITO_LOCKDOWN_PROFILE } from "@zcode/shared";
 // Mounted regression for the late worktree reservation ACK: dispatch of the queued send, failed
 // dispatch, and Retry of the frozen submission (specs/composer-worktree-setup-steps.md, acceptance 15
@@ -46,6 +47,44 @@ const { attachmentState, chatPromptEditorProps, editorApi } = vi.hoisted(() => (
     setText: vi.fn(),
   },
 }));
+
+// Draft branch intent wiring (checkout guard) and the unsettled-submission ledger: off by default,
+// armed per test through these hoisted handles.
+const branchIntentWiring = vi.hoisted(() => ({
+  gitService: null as null | {
+    getLocalBranches: () => Promise<{ currentBranchName: string | null }>;
+    switchBranch: () => Promise<{ ok: true }>;
+  },
+  guard: null as null | (() => Promise<boolean>),
+}));
+vi.mock("@/hooks/useWorkspaceServices.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/hooks/useWorkspaceServices.js")>()),
+  useOptionalWorkspaceServicesResolution: () =>
+    branchIntentWiring.gitService
+      ? { services: { gitService: branchIntentWiring.gitService } }
+      : null,
+}));
+vi.mock("@/v4/composer/branchSwitchGuard.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/v4/composer/branchSwitchGuard.js")>()),
+  useBranchSwitchGuard: () => branchIntentWiring.guard ?? undefined,
+}));
+const ledger = vi.hoisted(() => ({
+  tracked: [] as Array<{ scopeKey: string; commandId: string }>,
+}));
+vi.mock("@/v4/composer/composerSubmissionSettlement.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/v4/composer/composerSubmissionSettlement.js")>();
+  return {
+    ...actual,
+    trackUnsettledComposerSubmission: (
+      scopeKey: string,
+      submission: { commandId: string; text: string },
+    ) => {
+      ledger.tracked.push({ scopeKey, commandId: submission.commandId });
+      actual.trackUnsettledComposerSubmission(scopeKey, submission);
+    },
+  };
+});
 
 vi.mock("@/components/ui/dialog.js", async () => {
   const React = await import("react");
@@ -160,6 +199,10 @@ vi.mock("@/v4/composer/V4ComposerToolbar.js", async () => {
 });
 
 afterEach(() => {
+  branchIntentWiring.gitService = null;
+  branchIntentWiring.guard = null;
+  ledger.tracked.length = 0;
+  useDraftBranchIntentStore.setState({ intentByWorkspaceKey: {} });
   chatPromptEditorProps.length = 0;
   attachmentState.prepareForSend.mockClear();
   attachmentState.attachments = [];
@@ -799,14 +842,16 @@ it("keeps the composer free and the frozen record stable while the send chain is
   }
 });
 
-it("a second click during the in-flight first submission dispatches nothing new (IUX02)", async () => {
-  const harness = renderLateAckComposer({
-    worktree: false,
-    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
-      onReservationCreated?.({ sessionId: "session-double-click", commandId: "cmd-double" });
-      return "session-double-click";
-    },
+it("a repeat of the same submission dispatches nothing new; a new draft after the bind dispatches (IUX02)", async () => {
+  const prepare = vi.fn<
+    NonNullable<
+      import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+    >
+  >(async ({ onReservationCreated }) => {
+    onReservationCreated?.({ sessionId: "session-double-click", commandId: "cmd-double" });
+    return "session-double-click";
   });
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
   let settleSend!: () => void;
   harness.onSendText.mockImplementationOnce(
     () =>
@@ -815,24 +860,120 @@ it("a second click during the in-flight first submission dispatches nothing new 
       }),
   );
   try {
+    // Leg 1 — double click: the second submit carries the same text and no editor change
+    // happened since the claim, so it is the same submission even though the bind already
+    // released the repeat-submit ref.
     await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("double click me");
       chatPromptEditorProps.at(-1)!.onSubmit!("double click me");
       await flushAsyncWork();
     });
-    // The repeat click with new text lands while the first chain is still in flight: the
-    // armed idempotency ref must swallow it — one dispatch, one frozen submission.
-    await act(async () => {
-      chatPromptEditorProps.at(-1)!.onSubmit!("double click me");
-      await flushAsyncWork();
-    });
+    expect(prepare).toHaveBeenCalledTimes(1);
     expect(harness.onSendText).toHaveBeenCalledTimes(1);
     expect(
       readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-double-click").filter(
         (entry) => entry.draft.firstSubmission,
       ),
     ).toHaveLength(1);
+
+    // Leg 2 — the pane bound to the reserved session and the user typed a genuinely new draft
+    // while the first sendText is still in flight: it takes the ordinary send path.
+    harness.rerender("session-double-click");
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("second message");
+      chatPromptEditorProps.at(-1)!.onSubmit!("second message");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+    expect(harness.onSendText.mock.calls[1]?.[0]).toBe("second message");
+    expect(harness.onSendText.mock.calls[1]?.[1]).not.toHaveProperty("firstSubmissionId");
+    expect(prepare).toHaveBeenCalledTimes(1);
   } finally {
     settleSend?.();
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+function preparingSnapshot(sessionId: string, submissionId: string) {
+  return {
+    protocolVersion: 1,
+    sessionId,
+    logEpoch: "epoch-1",
+    seq: 0,
+    revision: 0,
+    control: {
+      phase: "draft",
+      sessionEnded: false,
+      canStop: false,
+      stopState: "idle",
+      stopTargetKind: "unknown",
+      activeWorks: [],
+      lastError: null,
+      apiRetry: null,
+    },
+    availability: {
+      fork: { allowed: true },
+      compact: { allowed: false, reasonCode: "noHistory" },
+      switchModelConfig: { allowed: true },
+      setFollowupMode: { allowed: true },
+      queueEdit: { allowed: true },
+      sendQueuedNow: { allowed: false, reasonCode: "emptyQueue" },
+      pauseGoal: { allowed: false, reasonCode: "noGoalToPause" },
+      resumeGoal: { allowed: false, reasonCode: "noGoalToResume" },
+    },
+    inputRouting: { mode: "startNow" },
+    meta: {
+      title: "",
+      titleSource: "firstInput",
+      submissionPreparation: {
+        submissionId,
+        status: "preparing",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+    config: { provider: "p", model: "m", thought: "medium", followupMode: "queue", mode: "build" },
+    usage: {
+      contextWindow: null,
+      cumulative: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    },
+    queue: { items: [], autoDrain: true },
+    pendingInteractions: [],
+    pendingCommands: [],
+    backgroundWorks: [],
+    subagents: { revision: 0, childSessionIds: [], running: [], endedTotal: 0 },
+    goal: null,
+    plan: null,
+    rows: { window: [], totalCount: 0, firstRowId: null },
+  } as unknown as NonNullable<
+    import("@/v4/ConversationComposer.js").ConversationComposerProps["snapshot"]
+  >;
+}
+
+it("a second Send waits visibly while the bound session still prepares the frozen submission", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  harness.controls.snapshot = preparingSnapshot("session-preparing", "sub-preparing");
+  try {
+    harness.rerender("session-preparing");
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("too early");
+      await flushAsyncWork();
+    });
+    // The ordering barrier stays (a foreign input admitted first would make activation report
+    // input-admitted for the frozen submission), but it is visible, not a silent drop.
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    expect(
+      findReactPropsByTestId(harness.container, "composer-send-blocked-reason"),
+    ).not.toBeNull();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("too early");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
     await act(async () => {
       await flushAsyncWork();
       harness.root.unmount();
@@ -956,6 +1097,734 @@ it("Retry moves a record found under another scope into its own, leaving one rec
     );
     expect(records).toHaveLength(1);
     expect(records[0]?.scope).toBe(getV4WorktreeRecoveryScope("session-foreign", "sub-foreign"));
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+// ── Review fixes for the first-submission stack (specs/first-submission-instant-ux.md,
+// Retry surface / Reconciliation; specs/first-submission-lifecycle.md owners). ──
+
+type PrepareFirstSubmission = NonNullable<
+  import("@/v4/ConversationComposer.js").ConversationComposerProps["onPrepareFirstSubmission"]
+>;
+
+function allFirstSubmissionRecords() {
+  const raw = window.localStorage.getItem(getV4ComposerDraftStorageKey("/workspace", undefined));
+  const scopes = (raw ? JSON.parse(raw).scopes : {}) as Record<
+    string,
+    {
+      text?: string;
+      firstSubmission?: {
+        submissionId: string;
+        status: string;
+        commandId?: string;
+        reservation?: { sessionId: string; commandId: string };
+      };
+    }
+  >;
+  return Object.entries(scopes)
+    .filter(([, draft]) => draft.firstSubmission)
+    .map(([scope, draft]) => ({ scope, draft }));
+}
+
+function seedBoundFailedRecord(
+  sessionId: string,
+  submissionId: string,
+  overrides: { status?: "failed" | "unknown"; commandId?: string } = {},
+) {
+  persistV4ComposerDraft(
+    "/workspace",
+    undefined,
+    getV4WorktreeRecoveryScope(sessionId, submissionId),
+    {
+      text: `frozen ${submissionId}`,
+      firstSubmission: {
+        submissionId,
+        ownerKey: sessionId,
+        status: overrides.status ?? "failed",
+        ...(overrides.commandId ? { commandId: overrides.commandId } : {}),
+        reservation: { sessionId, commandId: `reserve-${submissionId}` },
+      },
+    },
+  );
+}
+
+it("a blocked Retry names the reason, restores nothing, and works once readiness returns (E)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-blocked");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-blocked", "sub-blocked");
+  try {
+    harness.controls.submissionReady = false;
+    harness.rerender("session-blocked");
+    const blocked = findReactPropsByTestId(harness.container, "composer-first-submission-retry");
+    expect(blocked?.disabled).toBe(true);
+    const reason = findReactPropsByTestId(
+      harness.container,
+      "composer-first-submission-retry-blocked",
+    );
+    expect(reason?.id).toBeTruthy();
+    expect(blocked?.["aria-describedby"]).toBe(reason?.id);
+    // Even a forced click on the disabled control neither restores into the editor nor sends.
+    await act(async () => {
+      (blocked!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(editorApi.setText).not.toHaveBeenCalledWith("frozen sub-blocked");
+    expect(harness.onSendText).not.toHaveBeenCalled();
+
+    // No lock: once the session is ready, the same record retries.
+    harness.controls.submissionReady = true;
+    harness.refresh();
+    const ready = findReactPropsByTestId(harness.container, "composer-first-submission-retry");
+    expect(ready?.disabled).toBe(false);
+    await act(async () => {
+      (ready!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      firstSubmissionId: "sub-blocked",
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Remove returns the text to the editor, deletes the record, keeps the reservation and never calls the Host (F)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-remove");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-remove", "sub-remove", {
+    status: "unknown",
+    commandId: "cmd-remove",
+  });
+  try {
+    harness.rerender("session-remove");
+    const remove = findReactPropsByTestId(harness.container, "composer-first-submission-remove");
+    expect(remove).not.toBeNull();
+    await act(async () => {
+      (remove!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(editorApi.setText).toHaveBeenCalledWith("frozen sub-remove");
+    expect(
+      allFirstSubmissionRecords().filter(({ scope }) => scope !== "session-remove"),
+    ).toHaveLength(0);
+    // The session's own draft keeps the reservation, so the next Send activates the prepared
+    // session instead of stranding it; the unresolved command is in the unsettled ledger.
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "session-remove")?.firstSubmission,
+    ).toMatchObject({
+      submissionId: "sub-remove",
+      reservation: { sessionId: "session-remove", commandId: "reserve-sub-remove" },
+    });
+    expect(ledger.tracked).toContainEqual({
+      scopeKey: "/workspace\0session-remove",
+      commandId: "cmd-remove",
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("an unknown outcome of a reserved send is recorded in the unsettled ledger (A)", async () => {
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-unknown", commandId: "reserve-unknown" });
+      return "session-unknown";
+    },
+  });
+  harness.onSendText.mockImplementationOnce(async (_text: string, options?: unknown) => {
+    (options as { onCommandCreated?: (commandId: string) => void }).onCommandCreated?.(
+      "cmd-unknown",
+    );
+    throw new Error("ack lost");
+  });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("lost ack");
+      await flushAsyncWork();
+    });
+    const records = readV4WorktreeRecoveryDrafts("/workspace", undefined, "session-unknown");
+    expect(records[0]?.draft.firstSubmission).toMatchObject({
+      status: "unknown",
+      commandId: "cmd-unknown",
+    });
+    expect(ledger.tracked.map((entry) => entry.commandId)).toContain("cmd-unknown");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a failure whose bind could not move the record stays in the draft view with its reservation (A)", async () => {
+  const onFirstSubmissionReserved = vi.fn();
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onFirstSubmissionReserved,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      // The reservation write lands; the bind's move of the record fails (quota).
+      const storage = window.localStorage;
+      const setItem = storage.setItem;
+      let writes = 0;
+      storage.setItem = (key: string, value: string) => {
+        writes += 1;
+        if (writes > 1) throw new Error("quota");
+        setItem.call(storage, key, value);
+      };
+      try {
+        onReservationCreated?.({ sessionId: "session-unmoved", commandId: "reserve-unmoved" });
+      } finally {
+        storage.setItem = setItem;
+      }
+      return "session-unmoved";
+    },
+  });
+  harness.controls.rejectSend = true;
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("stay visible");
+      await flushAsyncWork();
+    });
+    // The pane never bound, so the record must stay where the user is looking: the draft.
+    expect(onFirstSubmissionReserved).not.toHaveBeenCalled();
+    expect(allFirstSubmissionRecords()).toHaveLength(1);
+    const records = readV4WorktreeRecoveryDrafts("/workspace", undefined, "__draft__");
+    expect(records).toHaveLength(1);
+    expect(records[0]?.draft.firstSubmission).toMatchObject({
+      status: "failed",
+      reservation: { sessionId: "session-unmoved", commandId: "reserve-unmoved" },
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a cancelled checkout guard withdraws the frozen submission even after the editor-clear echo (C)", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
+  branchIntentWiring.gitService = {
+    getLocalBranches: async () => ({ currentBranchName: "main" }),
+    switchBranch: async () => ({ ok: true }),
+  };
+  branchIntentWiring.guard = async () => {
+    // Lexical reports the claim's clear as a change event before the guard dialog resolves.
+    chatPromptEditorProps.at(-1)!.onChange!("");
+    return false;
+  };
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature-guarded");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("guarded text");
+      await flushAsyncWork();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    expect(allFirstSubmissionRecords()).toHaveLength(0);
+    expect(editorApi.setText).toHaveBeenCalledWith("guarded text");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a worktree begin that fails before any reservation withdraws the frozen submission after the echo (C)", async () => {
+  const harness = renderLateAckComposer({
+    onPrepareFirstSubmission: vi.fn<PrepareFirstSubmission>(async () => "never"),
+  });
+  harness.controls.beginOutcome = { ok: false };
+  let releaseBegin!: () => void;
+  harness.controls.beginGate = {
+    promise: new Promise<void>((resolve) => {
+      releaseBegin = resolve;
+    }),
+    resolve: () => releaseBegin(),
+  };
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("worktree text");
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("");
+      harness.controls.beginGate!.resolve();
+      await flushAsyncWork();
+    });
+    expect(allFirstSubmissionRecords()).toHaveLength(0);
+    expect(editorApi.setText).toHaveBeenCalledWith("worktree text");
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+// ── #270 review: Remove on an unresolved outcome must not make a sendable copy; the owner token. ──
+
+it.each(["sending", "unknown"] as const)(
+  "Remove → Send on a %s record dispatches nothing until the outcome is decided",
+  async (status) => {
+    const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+    const prepare = vi.fn<PrepareFirstSubmission>(async () => `session-held-${status}`);
+    const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+    const sessionId = `session-held-${status}`;
+    seedBoundFailedRecord(sessionId, `sub-held-${status}`, {
+      status,
+      commandId: `cmd-held-${status}`,
+    });
+    harness.controls.snapshot = preparingSnapshot(sessionId, `sub-held-${status}`);
+    try {
+      harness.rerender(sessionId);
+      await act(async () => {
+        (
+          findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+            .onClick as () => void
+        )();
+        await flushAsyncWork();
+      });
+      // The restored text is visible but not sendable: Send is disabled with the reason.
+      harness.refresh();
+      expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+      expect(
+        findReactPropsByTestId(harness.container, "composer-send-blocked-reason"),
+      ).not.toBeNull();
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(`frozen sub-held-${status}`);
+        await flushAsyncWork();
+      });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(harness.onSendText).not.toHaveBeenCalled();
+
+      // A decided "not accepted" outcome lifts the hold; the next Send continues the same
+      // submission and reservation.
+      await act(async () => {
+        pendingCommandRegistry.reportReconciledResolution(`cmd-held-${status}`, "failed");
+        await flushAsyncWork();
+      });
+      harness.refresh();
+      expect(findReactPropsByTestId(harness.container, "composer-send-blocked-reason")).toBeNull();
+      expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(false);
+      await act(async () => {
+        chatPromptEditorProps.at(-1)!.onSubmit!(`frozen sub-held-${status}`);
+        await flushAsyncWork();
+      });
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+        firstSubmissionId: `sub-held-${status}`,
+      });
+    } finally {
+      await act(async () => {
+        await flushAsyncWork();
+        harness.root.unmount();
+      });
+    }
+  },
+);
+
+it("an accepted outcome after Remove clears the unedited copy and sends nothing", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-held-accepted", "sub-held-accepted", {
+    status: "unknown",
+    commandId: "cmd-held-accepted",
+  });
+  try {
+    harness.rerender("session-held-accepted");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    editorApi.clear.mockClear();
+    await act(async () => {
+      pendingCommandRegistry.reportReconciledResolution("cmd-held-accepted", "accepted");
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).toHaveBeenCalled();
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "session-held-accepted")?.firstSubmission,
+    ).toBeUndefined();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("an earlier first-submission chain never releases a later send's repeat-submit token", async () => {
+  const harness = renderLateAckComposer({
+    worktree: false,
+    onPrepareFirstSubmission: async ({ onReservationCreated }) => {
+      onReservationCreated?.({ sessionId: "session-token", commandId: "reserve-token" });
+      return "session-token";
+    },
+  });
+  let settleFirst!: () => void;
+  harness.onSendText
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settleFirst = resolve;
+        }),
+    )
+    .mockImplementationOnce(() => new Promise<void>(() => {}));
+  try {
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("first");
+      await flushAsyncWork();
+    });
+    harness.rerender("session-token");
+    // Chain 2 (ordinary) takes the token after the bind released it and stays in flight.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("second");
+      chatPromptEditorProps.at(-1)!.onSubmit!("second");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+    // Chain 1 ends: its `finally` must not clear chain 2's token.
+    await act(async () => {
+      settleFirst();
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("third");
+      chatPromptEditorProps.at(-1)!.onSubmit!("third");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a failed first submission is named as needing action, not as still being delivered", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-needs-action", "sub-needs-action");
+  harness.controls.snapshot = preparingSnapshot("session-needs-action", "sub-needs-action");
+  try {
+    harness.rerender("session-needs-action");
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("another message");
+      await flushAsyncWork();
+    });
+    const reason = findReactPropsByTestId(harness.container, "composer-send-blocked-reason");
+    expect(String(reason?.children)).toContain("needs attention");
+    expect(String(reason?.children)).not.toContain("still being delivered");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Remove on an unresolved unreserved draft record holds the copy too", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => undefined);
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  // Reachable: a CLI without durable reservation sends createSession+sendText directly, and a
+  // lost ACK while the pane was elsewhere persists the record under the draft owner.
+  persistV4ComposerDraft(
+    "/workspace",
+    undefined,
+    getV4WorktreeRecoveryScope("__draft__", "sub-draft-held"),
+    {
+      text: "draft held",
+      firstSubmission: {
+        submissionId: "sub-draft-held",
+        ownerKey: "__draft__",
+        status: "unknown",
+        commandId: "cmd-draft-held",
+      },
+    },
+  );
+  try {
+    harness.refresh();
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("draft held");
+      await flushAsyncWork();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("a reconnect query that answers unknown keeps the held copy; a later acceptance clears it, sending nothing", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-reconnect", "sub-reconnect", {
+    status: "unknown",
+    commandId: "cmd-reconnect",
+  });
+  const envelope = {
+    commandId: "cmd-reconnect",
+    clientId: "client-1",
+    sessionId: "session-reconnect",
+    type: "sendText",
+    payload: { text: "frozen sub-reconnect" },
+    issuedAt: Date.now(),
+  } as unknown as import("@zcode/shared/zcode-protocol-v4").CommandEnvelope;
+  try {
+    harness.rerender("session-reconnect");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    editorApi.clear.mockClear();
+    pendingCommandRegistry.record(envelope);
+    await act(async () => {
+      pendingCommandRegistry.applyQuery({
+        results: [
+          {
+            key: { sessionId: "session-reconnect", commandId: "cmd-reconnect" },
+            result: "unknown",
+          },
+        ],
+      });
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).not.toHaveBeenCalled();
+    await act(async () => {
+      pendingCommandRegistry.reconcileSnapshot({
+        sessionId: "session-reconnect",
+        queue: { items: [] },
+        rows: {
+          window: [{ kind: "userInput", rowId: 1, sourceCommandId: "cmd-reconnect", text: "x" }],
+        },
+      } as unknown as import("@zcode/shared/zcode-protocol-v4").ConversationSnapshot);
+      await flushAsyncWork();
+    });
+    expect(editorApi.clear).toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("Unlock is an explicit, confirmed override of a held copy and never sends by itself", async () => {
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-unlock");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-unlock", "sub-unlock", {
+    status: "unknown",
+    commandId: "cmd-unlock",
+  });
+  // A live snapshot (the session still prepares the frozen submission) so routing allows Send.
+  harness.controls.snapshot = preparingSnapshot("session-unlock", "sub-unlock");
+  try {
+    harness.rerender("session-unlock");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    // First click only reveals the duplicate warning and the confirmation.
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(
+      findReactPropsByTestId(harness.container, "composer-held-unlock-warning"),
+    ).not.toBeNull();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(true);
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-held-unlock-confirm")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    expect(chatPromptEditorProps.at(-1)!.submitDisabled).toBe(false);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).not.toHaveBeenCalled();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onSubmit!("frozen sub-unlock");
+      await flushAsyncWork();
+    });
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[1]).toMatchObject({
+      firstSubmissionId: "sub-unlock",
+    });
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("after Unlock, an accepted original drops the submission so the next message is a new one", async () => {
+  const { pendingCommandRegistry } = await import("@/v4/pendingCommandRegistry.js");
+  const prepare = vi.fn<PrepareFirstSubmission>(async () => "session-unlock-accepted");
+  const harness = renderLateAckComposer({ worktree: false, onPrepareFirstSubmission: prepare });
+  seedBoundFailedRecord("session-unlock-accepted", "sub-unlock-accepted", {
+    status: "unknown",
+    commandId: "cmd-unlock-accepted",
+  });
+  harness.controls.snapshot = preparingSnapshot("session-unlock-accepted", "sub-unlock-accepted");
+  try {
+    harness.rerender("session-unlock-accepted");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-held-unlock-confirm")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    // The unlocked status reaches the composer (the app re-renders on draft state changes).
+    harness.refresh();
+    // The original turns out accepted (projection) before the user sends anything.
+    await act(async () => {
+      pendingCommandRegistry.reconcileSnapshot({
+        sessionId: "session-unlock-accepted",
+        queue: { items: [] },
+        rows: {
+          window: [
+            { kind: "userInput", rowId: 1, sourceCommandId: "cmd-unlock-accepted", text: "x" },
+          ],
+        },
+      } as unknown as import("@zcode/shared/zcode-protocol-v4").ConversationSnapshot);
+      await flushAsyncWork();
+    });
+    expect(
+      readV4ComposerDraft("/workspace", undefined, "session-unlock-accepted")?.firstSubmission,
+    ).toBeUndefined();
+    // The admitted input cleared the preparation marker on the Host.
+    const admitted = preparingSnapshot("session-unlock-accepted", "sub-unlock-accepted");
+    harness.controls.snapshot = {
+      ...admitted,
+      meta: { title: "", titleSource: "firstInput" },
+    } as typeof admitted;
+    harness.refresh();
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("a new message");
+      chatPromptEditorProps.at(-1)!.onSubmit!("a new message");
+      await flushAsyncWork();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(harness.onSendText).toHaveBeenCalledOnce();
+    expect(harness.onSendText.mock.calls[0]?.[0]).toBe("a new message");
+    expect(harness.onSendText.mock.calls[0]?.[1]).not.toHaveProperty("firstSubmissionId");
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
+it("the Unlock warning is announced and described on the confirm button", async () => {
+  const harness = renderLateAckComposer({ worktree: false });
+  seedBoundFailedRecord("session-unlock-a11y", "sub-unlock-a11y", {
+    status: "unknown",
+    commandId: "cmd-unlock-a11y",
+  });
+  harness.controls.snapshot = preparingSnapshot("session-unlock-a11y", "sub-unlock-a11y");
+  try {
+    harness.rerender("session-unlock-a11y");
+    await act(async () => {
+      (
+        findReactPropsByTestId(harness.container, "composer-first-submission-remove")!
+          .onClick as () => void
+      )();
+      await flushAsyncWork();
+    });
+    harness.refresh();
+    await act(async () => {
+      (findReactPropsByTestId(harness.container, "composer-held-unlock")!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    const warning = findReactPropsByTestId(harness.container, "composer-held-unlock-warning");
+    const confirm = findReactPropsByTestId(harness.container, "composer-held-unlock-confirm");
+    expect(warning?.role).toBe("alert");
+    expect(warning?.id).toBeTruthy();
+    expect(confirm?.["aria-describedby"]).toBe(warning?.id);
+    const nodeByTestId = (testId: string) => {
+      type MinimalNode = { attributes?: Map<string, string>; childNodes?: MinimalNode[] };
+      const visit = (node: MinimalNode): MinimalNode | null => {
+        if (node.attributes?.get("data-testid") === testId) return node;
+        for (const child of node.childNodes ?? []) {
+          const found = visit(child);
+          if (found) return found;
+        }
+        return null;
+      };
+      return visit(harness.container as unknown as MinimalNode);
+    };
+    const activeElement = () => (document as unknown as { activeElement?: unknown }).activeElement;
+    // Focus moves onto the confirmation when it opens...
+    expect(activeElement()).toBe(nodeByTestId("composer-held-unlock-confirm"));
+    // ...and back to the trigger on Cancel.
+    const cancel = findReactPropsByTestId(harness.container, "composer-held-unlock-cancel");
+    await act(async () => {
+      (cancel!.onClick as () => void)();
+      await flushAsyncWork();
+    });
+    expect(activeElement()).toBe(nodeByTestId("composer-held-unlock"));
   } finally {
     await act(async () => {
       await flushAsyncWork();
