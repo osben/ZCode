@@ -56,7 +56,8 @@ import {
   resolveExternalAgentComposerState,
   type ExternalAgentComposerState,
   type ExternalAgentControlKind,
-  type ExternalAgentDraftChoices,
+  draftExternalAgentChoicesOf,
+  type DraftExternalAgentChoices,
 } from "@/v4/composer/externalAgentConfig.js";
 
 function noop(): void {}
@@ -332,9 +333,15 @@ export interface V4ComposerModeAreaProps extends ModeSwitchProps {
   externalAgentConfig: ExternalAgentConfigState | null | undefined;
   /** A session choice (setExternalAgentConfigOption) once the session exists. */
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
-  /** S6 readiness: a draft's choice, kept in the composer draft until the first submission sends it. */
-  draftExternalAgentChoices?: Readonly<Record<string, ExternalAgentDraftChoices>>;
-  onSetDraftExternalAgentChoice?: (agentId: string, configId: string, value: string) => void;
+  /** S6 readiness: every draft's pre-submission choices, and the draft session they belong to (null: no draft). */
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentSessionId?: string | null;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
 }
 
 /**
@@ -348,6 +355,7 @@ function V4ExternalAgentModeAreaImpl({
   externalAgentConfig,
   draftProviderId,
   draftExternalAgentChoices,
+  draftExternalAgentSessionId,
   onSetExternalAgentConfigOption,
   onSetDraftExternalAgentChoice,
   modeSwitchProps,
@@ -357,14 +365,30 @@ function V4ExternalAgentModeAreaImpl({
   sessionProviderId: string | null | undefined;
   externalAgentConfig: ExternalAgentConfigState | null | undefined;
   draftProviderId: string | null | undefined;
-  draftExternalAgentChoices?: Readonly<Record<string, ExternalAgentDraftChoices>>;
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentSessionId: string | null;
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
-  onSetDraftExternalAgentChoice?: (agentId: string, configId: string, value: string) => void;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
   modeSwitchProps: ModeSwitchProps;
 }) {
   const catalog = useAcpAgentCatalog(agentId);
+  // A draft choice needs the draft session it belongs to; without one the selects show the catalog only.
+  const draftChoices = draftExternalAgentSessionId
+    ? draftExternalAgentChoicesOf(
+        draftExternalAgentChoices ?? {},
+        draftExternalAgentSessionId,
+        agentId,
+      )
+    : undefined;
   const canSend = Boolean(
-    sessionId ? onSetExternalAgentConfigOption : onSetDraftExternalAgentChoice,
+    sessionId
+      ? onSetExternalAgentConfigOption
+      : onSetDraftExternalAgentChoice && draftExternalAgentSessionId,
   );
   const state = useMemo(() => {
     const resolved = resolveExternalAgentComposerState({
@@ -373,22 +397,23 @@ function V4ExternalAgentModeAreaImpl({
       sessionProviderId,
       projection: externalAgentConfig,
       catalog: catalog.options,
-      draftChoices: draftExternalAgentChoices?.[agentId],
+      draftChoices,
     });
     return resolved && !canSend ? { ...resolved, options: null } : resolved;
   }, [
-    agentId,
     canSend,
     catalog.options,
-    draftExternalAgentChoices,
+    draftChoices,
     draftProviderId,
     externalAgentConfig,
     sessionId,
     sessionProviderId,
   ]);
-  const onSetOption = state?.draft
-    ? (configId: string, value: string) => onSetDraftExternalAgentChoice?.(agentId, configId, value)
-    : (onSetExternalAgentConfigOption ?? noop);
+  const onSetOption =
+    state?.draft && draftExternalAgentSessionId
+      ? (configId: string, value: string) =>
+          onSetDraftExternalAgentChoice?.(draftExternalAgentSessionId, agentId, configId, value)
+      : (onSetExternalAgentConfigOption ?? noop);
   if (!state) return <V4ComposerModeSwitch {...modeSwitchProps} />;
   return (
     <V4ExternalAgentConfigControls
@@ -412,6 +437,7 @@ function V4ComposerModeAreaImpl({
   externalAgentConfig,
   onSetExternalAgentConfigOption,
   draftExternalAgentChoices,
+  draftExternalAgentSessionId,
   onSetDraftExternalAgentChoice,
   ...modeSwitchProps
 }: V4ComposerModeAreaProps) {
@@ -426,6 +452,7 @@ function V4ComposerModeAreaImpl({
       externalAgentConfig={externalAgentConfig}
       draftProviderId={draftProviderId}
       draftExternalAgentChoices={draftExternalAgentChoices}
+      draftExternalAgentSessionId={draftExternalAgentSessionId ?? null}
       onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
       onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
       modeSwitchProps={modeSwitchProps}

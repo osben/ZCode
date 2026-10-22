@@ -109,8 +109,14 @@ function render(
     sessionProviderId?: string | null;
     externalAgentConfig?: ExternalAgentConfigState;
     catalog?: ExternalAgentConfigOption[] | null;
-    draftExternalAgentChoices?: Record<string, Record<string, string>>;
-    onSetDraftExternalAgentChoice?: (agentId: string, configId: string, value: string) => void;
+    draftExternalAgentChoices?: Record<string, Record<string, Record<string, string>>>;
+    draftExternalAgentSessionId?: string | null;
+    onSetDraftExternalAgentChoice?: (
+      draftSessionId: string,
+      agentId: string,
+      configId: string,
+      value: string,
+    ) => void;
     onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
   } = {},
 ) {
@@ -135,6 +141,10 @@ function render(
         ? overrides.onSetExternalAgentConfigOption
         : vi.fn(),
     draftExternalAgentChoices: overrides.draftExternalAgentChoices,
+    draftExternalAgentSessionId:
+      "draftExternalAgentSessionId" in overrides
+        ? overrides.draftExternalAgentSessionId
+        : "draft-1",
     onSetDraftExternalAgentChoice: overrides.onSetDraftExternalAgentChoice,
   };
   const html = renderToStaticMarkup(
@@ -238,8 +248,23 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
 
     const modeGroup = captured.radioGroups.find((group) => group.value === "default")!;
     (modeGroup.onValueChange as (value: string) => void)("plan");
-    expect(onDraft).toHaveBeenCalledWith("mock", "mode", "plan");
+    expect(onDraft).toHaveBeenCalledWith("draft-1", "mock", "mode", "plan");
     expect(onSession).not.toHaveBeenCalled();
+  });
+
+  it("shows the placeholder without a draft session id, so no draft choice is taken", () => {
+    const onDraft = vi.fn();
+    const { html } = render({
+      externalAgentConfig: undefined,
+      catalog: projection.options,
+      sessionId: null,
+      draftExternalAgentSessionId: null,
+      onSetDraftExternalAgentChoice: onDraft,
+    });
+
+    expect(html).toContain("chat.toolbar.externalAgent.availableAfterFirstMessage");
+    expect(html.match(/aria-disabled="true"/g)).toHaveLength(2);
+    expect(onDraft).not.toHaveBeenCalled();
   });
 
   it("shows the draft's choices as the current values of the catalog", () => {
@@ -247,7 +272,7 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
       externalAgentConfig: undefined,
       catalog: projection.options,
       sessionId: null,
-      draftExternalAgentChoices: { mock: { mode: "plan" } },
+      draftExternalAgentChoices: { "draft-1": { mock: { mode: "plan" } } },
       onSetDraftExternalAgentChoice: vi.fn(),
     });
 

@@ -39,8 +39,9 @@ function makeStore(initial: {
   const store: V4ExternalAgentConfigStore = {
     readConfig: vi.fn(async () => ({ agentId: initial.agentId, offered, choices: { ...choices } })),
     readCatalog: vi.fn(async () => initial.catalog),
+    // Like the real store: the offered copy exists only for a binding (an offered snapshot); pending sessions have none.
     writeOffered: vi.fn(async (_sessionId, options) => {
-      offered = options;
+      if (offered !== undefined) offered = options;
     }),
     writeChoice: vi.fn(async (_sessionId, _agentId, configId, value) => {
       choices[configId] = value;
@@ -108,6 +109,31 @@ describe("v4 setExternalAgentConfigOption", () => {
     expect(read().choices).toEqual({ mode: "plan" });
     const updated = [{ ...MODE, currentValue: "plan" }];
     expect(appended[0]?.payload).toEqual({ agentId: "opencode", options: updated });
+  });
+
+  // Pending choices are all shown: the event after a second choice still reflects the first one.
+  it("reflects every pre-turn choice made so far in the event, not only the latest", async () => {
+    const MODEL: ExternalAgentConfigOption = {
+      id: "model",
+      name: "Model",
+      description: null,
+      category: "model",
+      currentValue: "fast",
+      options: [
+        { value: "fast", name: "Fast", description: null, group: null },
+        { value: "slow", name: "Slow", description: null, group: null },
+      ],
+    };
+    const { store } = makeStore({ agentId: "opencode", catalog: [MODE, MODEL] });
+    const { host, appended } = makeHost(store);
+    const executor = new V4CommandExecutor(host);
+
+    await executor.execute(command({ configId: "mode", value: "plan" }));
+    await executor.execute(command({ configId: "model", value: "slow" }));
+
+    const options = (appended[1]?.payload as { options: ExternalAgentConfigOption[] }).options;
+    expect(options.find((option) => option.id === "mode")?.currentValue).toBe("plan");
+    expect(options.find((option) => option.id === "model")?.currentValue).toBe("slow");
   });
 
   it("refuses a pre-turn choice the catalog does not offer with config.invalid", async () => {

@@ -71,23 +71,55 @@ export function defaultRunCommand(
   });
 }
 
-/** Best-effort termination of a command and its descendants (non-blocking). */
-function killCommandTree(child: ChildProcess): void {
+/** Platform and spawner of the tree kill; injectable for tests. */
+export interface KillCommandTreeDeps {
+  readonly platform?: NodeJS.Platform;
+  readonly spawn?: typeof spawn;
+}
+
+/**
+ * Best-effort termination of a command and its descendants (non-blocking). On Windows the direct child is killed
+ * only when taskkill cannot finish the tree kill (it fails to start, or exits non-zero): killing the child while
+ * taskkill is still enumerating would leave its grandchildren running.
+ */
+export function killCommandTree(child: ChildProcess, deps: KillCommandTreeDeps = {}): void {
+  const platform = deps.platform ?? process.platform;
+  const spawnProcess = deps.spawn ?? spawn;
   const pid = child.pid;
-  if (process.platform === "win32" && pid !== undefined) {
+  const killDirectChild = (): void => {
     try {
-      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      child.kill("SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  };
+  if (platform === "win32" && pid !== undefined) {
+    let fallbackUsed = false;
+    const fallback = (reason: string, error?: Error): void => {
+      if (fallbackUsed) return;
+      fallbackUsed = true;
+      log.warn(undefined, "ACP status command tree kill failed; killing the direct child", {
+        reason,
+        ...(error ? { error: error.message } : {}),
+      });
+      killDirectChild();
+    };
+    try {
+      const killer = spawnProcess("taskkill", ["/pid", String(pid), "/T", "/F"], {
         stdio: "ignore",
         windowsHide: true,
         timeout: 2_000,
       });
-      killer.once("error", (error: Error) => {
-        log.warn(undefined, "ACP status command tree kill failed", { error: error.message });
+      killer.once("error", (error: Error) => fallback("error", error));
+      killer.once("exit", (code: number | null) => {
+        if (code !== 0) fallback(`exit ${String(code)}`);
       });
-    } catch {
-      // Fall through to the direct-child signal.
+    } catch (error) {
+      fallback("spawn", error instanceof Error ? error : new Error(String(error)));
     }
-  } else if (pid !== undefined) {
+    return;
+  }
+  if (pid !== undefined) {
     try {
       process.kill(-pid, "SIGKILL");
       return;
@@ -95,9 +127,5 @@ function killCommandTree(child: ChildProcess): void {
       // Not a group leader (spawn failed before detaching).
     }
   }
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    // Already gone.
-  }
+  killDirectChild();
 }

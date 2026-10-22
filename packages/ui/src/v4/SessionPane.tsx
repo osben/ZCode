@@ -102,8 +102,12 @@ import type {
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
 import {
+  draftExternalAgentChoicesOf,
   resolveExternalAgentId,
   sendExternalAgentConfigOption,
+  setDraftExternalAgentChoice,
+  takeDraftExternalAgentChoices,
+  type DraftExternalAgentChoices,
 } from "@/v4/composer/externalAgentConfig.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -3546,10 +3550,10 @@ export function SessionPane({
   const ensureDraftPrewarmConfigBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
     async () => undefined,
   );
-  // S6 readiness: draft choices per ACP agent, cleared once the draft becomes a session (see the effect below).
-  const [draftExternalAgentChoices, setDraftExternalAgentChoices] = useState<
-    Readonly<Record<string, Readonly<Record<string, string>>>>
-  >({});
+  // S6 readiness: pre-submission choices of every draft, keyed by the draft session that the first submission uses.
+  // The pane is reused across task bindings, so a choice is read and sent only for the draft it was made in.
+  const [draftExternalAgentChoices, setDraftExternalAgentChoices] =
+    useState<DraftExternalAgentChoices>({});
   const draftExternalAgentChoicesRef = useRef(draftExternalAgentChoices);
   draftExternalAgentChoicesRef.current = draftExternalAgentChoices;
   const applyDraftExternalAgentChoicesRef = useRef<(targetSessionId: string) => Promise<void>>(
@@ -5018,7 +5022,12 @@ export function SessionPane({
     async (targetSessionId: string) => {
       const agentId = resolveExternalAgentId(draftConfigRef.current.modelSelection?.providerId);
       if (!agentId) return;
-      const choices = draftExternalAgentChoicesRef.current[agentId];
+      // The target is the draft that is being submitted; choices of any other draft stay where they are.
+      const choices = draftExternalAgentChoicesOf(
+        draftExternalAgentChoicesRef.current,
+        targetSessionId,
+        agentId,
+      );
       if (!choices) return;
       for (const [configId, value] of Object.entries(choices)) {
         const messageId = await sendExternalAgentConfigOption(
@@ -5035,11 +5044,9 @@ export function SessionPane({
         );
         if (messageId) throw new Error(intl.formatMessage({ id: messageId }));
       }
-      setDraftExternalAgentChoices((previous) => {
-        const next = { ...previous };
-        delete next[agentId];
-        return next;
-      });
+      setDraftExternalAgentChoices((previous) =>
+        takeDraftExternalAgentChoices(previous, targetSessionId),
+      );
     },
     [dispatchCommand, intl],
   );
@@ -5228,11 +5235,10 @@ export function SessionPane({
   // S6 readiness: a draft's selects are UI-local until the first submission. They are sent once, after the draft
   // session exists and before sendText; a refusal throws there, so the prompt is never sent with another mode.
   const handleSetDraftExternalAgentChoice = useCallback(
-    (agentId: string, configId: string, value: string) => {
-      setDraftExternalAgentChoices((previous) => ({
-        ...previous,
-        [agentId]: { ...previous[agentId], [configId]: value },
-      }));
+    (draftSessionId: string, agentId: string, configId: string, value: string) => {
+      setDraftExternalAgentChoices((previous) =>
+        setDraftExternalAgentChoice(previous, draftSessionId, agentId, configId, value),
+      );
     },
     [],
   );
@@ -6381,6 +6387,7 @@ export function SessionPane({
       onSwitchMode={handleSwitchMode}
       onSetExternalAgentConfigOption={handleSetExternalAgentConfigOption}
       draftExternalAgentChoices={draftExternalAgentChoices}
+      draftExternalAgentSessionId={sessionId === null ? (prewarmSessionId ?? null) : null}
       onSetDraftExternalAgentChoice={handleSetDraftExternalAgentChoice}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined

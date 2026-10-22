@@ -126,6 +126,48 @@ export function resolveExternalAgentComposerState(params: {
   };
 }
 
+/**
+ * Pre-submission choices of every draft, keyed by the draft session that the first submission uses (S6 readiness).
+ * A draft's choices are only ever read and sent for that draft, so a switched task never receives another draft's
+ * choices. They are removed once sent, because the session holds them from then on.
+ */
+export type DraftExternalAgentChoices = Readonly<
+  Record<string, Readonly<Record<string, Readonly<Record<string, string>>>>>
+>;
+
+export function draftExternalAgentChoicesOf(
+  state: DraftExternalAgentChoices,
+  draftSessionId: string,
+  agentId: string,
+): Readonly<Record<string, string>> | undefined {
+  return state[draftSessionId]?.[agentId];
+}
+
+export function setDraftExternalAgentChoice(
+  state: DraftExternalAgentChoices,
+  draftSessionId: string,
+  agentId: string,
+  configId: string,
+  value: string,
+): DraftExternalAgentChoices {
+  const draft = state[draftSessionId] ?? {};
+  return {
+    ...state,
+    [draftSessionId]: { ...draft, [agentId]: { ...draft[agentId], [configId]: value } },
+  };
+}
+
+/** The state without one draft's choices (they were sent with its first submission). */
+export function takeDraftExternalAgentChoices(
+  state: DraftExternalAgentChoices,
+  draftSessionId: string,
+): DraftExternalAgentChoices {
+  if (!(draftSessionId in state)) return state;
+  const next = { ...state };
+  delete next[draftSessionId];
+  return next;
+}
+
 /** The offered options with a draft's choices as their current values (only values the option offers). */
 export function overlayDraftChoices(
   options: readonly ExternalAgentConfigOption[],

@@ -251,6 +251,7 @@ import {
   type ModelSelectionSource,
 } from "@/v4/composer/V4ComposerToolbar.js";
 import { V4ComposerModeArea } from "@/v4/composer/V4ExternalAgentConfigControls.js";
+import type { DraftExternalAgentChoices } from "@/v4/composer/externalAgentConfig.js";
 import {
   resolveV4ComposerConfigPickerState,
   type V4ComposerConfigPicker,
@@ -614,8 +615,14 @@ export interface ConversationComposerProps {
   /** S6: sends the user's choice for one select of the session's ACP agent (setExternalAgentConfigOption). */
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
   /** S6 readiness: the draft's choices per ACP agent, and the setter (no session command before the first submission). */
-  draftExternalAgentChoices?: Readonly<Record<string, Readonly<Record<string, string>>>>;
-  onSetDraftExternalAgentChoice?: (agentId: string, configId: string, value: string) => void;
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentSessionId?: string | null;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
   /**
@@ -724,6 +731,7 @@ function ConversationComposerImpl({
   onSwitchMode,
   onSetExternalAgentConfigOption,
   draftExternalAgentChoices,
+  draftExternalAgentSessionId,
   onSetDraftExternalAgentChoice,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
@@ -4189,6 +4197,7 @@ function ConversationComposerImpl({
           externalAgentConfig={externalAgentConfig}
           onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
           draftExternalAgentChoices={draftExternalAgentChoices}
+          draftExternalAgentSessionId={draftExternalAgentSessionId}
           onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
         />
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
@@ -4221,6 +4230,7 @@ function ConversationComposerImpl({
       onSwitchMode,
       onSetExternalAgentConfigOption,
       draftExternalAgentChoices,
+      draftExternalAgentSessionId,
       onSetDraftExternalAgentChoice,
       externalAgentConfig,
       externalAgentSessionProviderId,

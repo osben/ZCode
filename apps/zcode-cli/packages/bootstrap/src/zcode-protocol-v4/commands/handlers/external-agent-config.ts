@@ -92,9 +92,18 @@ async function setExternalAgentConfigOption(
   }
 
   await store.writeChoice(payload.sessionId, agentId, payload.configId, payload.value);
-  const options = offered.map((item) =>
-    item.id === payload.configId ? { ...item, currentValue: payload.value } : item,
-  );
+  // Every choice that is in effect is shown: a pending session has no offered copy, so the catalog is overlaid with all
+  // of its stored choices plus this one (the same set the first turn applies). A bound session shows only this choice.
+  const chosen =
+    config.offered === undefined
+      ? { ...config.choices, [payload.configId]: payload.value }
+      : { [payload.configId]: payload.value };
+  const options = offered.map((item) => {
+    const value = chosen[item.id];
+    return value !== undefined && externalAgentConfigOffers(item, value)
+      ? { ...item, currentValue: value }
+      : item;
+  });
   // Only a binding has a stored copy; a pending session has none until its first turn writes one.
   await store.writeOffered(payload.sessionId, options);
   const event: ExternalAgentConfigUpdatedPayload = { agentId, options };

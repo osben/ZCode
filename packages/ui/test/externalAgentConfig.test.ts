@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CommandAck, ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
 import {
+  draftExternalAgentChoicesOf,
+  setDraftExternalAgentChoice,
+  takeDraftExternalAgentChoices,
   filterExternalAgentConfigValues,
   nextExternalAgentConfigValue,
   resolveExternalAgentComposerState,
@@ -143,5 +146,34 @@ describe("sendExternalAgentConfigOption", () => {
     await expect(sendExternalAgentConfigOption(dispatch, "s1", "mode", "plan")).resolves.toBe(
       "chat.toolbar.externalAgent.error.failed",
     );
+  });
+
+  // Draft choices belong to the draft session that the first submission uses. Switching the task (another draft) must
+  // not send an abandoned draft's choices, and the draft's own choices are removed once they are sent.
+  it("keeps draft choices per draft: a switched task sends none of another draft's choices", () => {
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+
+    expect(draftExternalAgentChoicesOf(state, "draft-B", "mock")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({ mode: "plan" });
+  });
+
+  it("applies the same draft's choices and removes them once they are sent", () => {
+    let state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+    state = setDraftExternalAgentChoice(state, "draft-A", "mock", "model", "fast");
+    state = setDraftExternalAgentChoice(state, "draft-A", "other", "mode", "ask");
+
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({
+      mode: "plan",
+      model: "fast",
+    });
+
+    const sent = takeDraftExternalAgentChoices(state, "draft-A");
+    expect(draftExternalAgentChoicesOf(sent, "draft-A", "mock")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(sent, "draft-A", "other")).toBeUndefined();
+    // The state is immutable: the earlier value still holds the choices.
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({
+      mode: "plan",
+      model: "fast",
+    });
   });
 });
