@@ -1,8 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import { useCallback, useRef, useState } from "react";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import { toast } from "@/components/ui/toast.js";
 import { logger } from "@/logger.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { TaskDeleteConfirmationDialog } from "@/task-deletion/TaskDeleteConfirmationDialog.js";
@@ -16,14 +14,25 @@ import {
 } from "@/task-deletion/taskDeletion.js";
 import type { TaskDeleteDialogRow } from "@/task-deletion/taskDeletionTypes.js";
 
-/** Shares the deletion owner across pinned and chronological sidebar views. */
+interface TaskDeleteResult {
+  text: string;
+  failed: boolean;
+}
+
+/**
+ * Single owner of the permanent-delete dialog and of the executor call, for the Settings → Archives
+ * page only. Callers decide which rows are offered (and must exclude rows that cannot be deleted
+ * here); this hook never widens a batch. Pinned rows always require an explicit opt-in.
+ */
 export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
   const services = useBaseWorkspaceServices();
   const { intl } = useZCodeIntl();
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
   const [busy, setBusy] = useState(false);
-  const [target, setTarget] = useState<TaskDeleteTarget | null>(null);
-  const rows = useMemo(() => (target ? [target] : []), [target]);
+  const [rows, setRows] = useState<readonly TaskDeleteTarget[]>([]);
+  const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [result, setResult] = useState<TaskDeleteResult | null>(null);
+  const inFlight = useRef(false);
   const resolveServices = useCallback(
     (row: TaskDeleteTarget) =>
       row.workspaceIdentity?.trim()
@@ -49,51 +58,80 @@ export function useTaskDeleteDialog(onRefresh?: () => Promise<void>) {
       loadTaskDeletionWorktreePreview(items as readonly TaskDeleteTarget[], resolveServices),
     [resolveServices],
   );
+  const openRows = useCallback(
+    (items: readonly TaskDeleteTarget[], options?: { notice?: string }) => {
+      if (inFlight.current || items.length === 0) return;
+      setResult(null);
+      setNotice(options?.notice);
+      setRows(items);
+    },
+    [],
+  );
+  const cancel = useCallback(() => {
+    setRows([]);
+    setNotice(undefined);
+  }, []);
   const confirm = useCallback(
     async (items: readonly TaskDeleteDialogRow[]) => {
-      setTarget(null);
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setRows([]);
+      setNotice(undefined);
       setBusy(true);
       try {
-        const result = await permanentlyDeleteTasks(
-          items as readonly TaskDeleteTarget[],
-          resolveServices,
-          (row) => removeTaskState(row.workspacePath, row.taskId, row.workspaceIdentity),
-        );
-        toast(formatTaskDeletionResult(result, (id, values) => intl.formatMessage({ id }, values)));
-        await onRefresh?.();
-      } catch (error) {
-        logger.error("[TaskDeletion] sidebar deletion failed", { error });
-        toast(intl.formatMessage({ id: "taskDelete.error" }));
+        try {
+          const outcome = await permanentlyDeleteTasks(
+            items as readonly TaskDeleteTarget[],
+            resolveServices,
+            (row) => removeTaskState(row.workspacePath, row.taskId, row.workspaceIdentity),
+          );
+          setResult({
+            text: formatTaskDeletionResult(outcome, (id, values) =>
+              intl.formatMessage({ id }, values),
+            ),
+            failed:
+              outcome.failed > 0 ||
+              outcome.sessionFileFailures > 0 ||
+              outcome.worktreeCleanup.failed.length > 0,
+          });
+        } catch (error) {
+          logger.error("[TaskDeletion] permanent delete failed", { error });
+          setResult({ text: intl.formatMessage({ id: "taskDelete.error" }), failed: true });
+        }
+        // A refresh failure must not replace the erase outcome above; it is only logged.
+        try {
+          await onRefresh?.();
+        } catch (error) {
+          logger.error("[TaskDeletion] refresh after permanent delete failed", { error });
+        }
       } finally {
+        inFlight.current = false;
         setBusy(false);
       }
     },
     [intl, onRefresh, removeTaskState, resolveServices],
   );
-  const open = useCallback((task: ZCodeTaskMeta, pinned = false, archived = false) => {
-    setTarget({
-      id: `${task.workspaceIdentity?.trim() || task.workspacePath}:${task.taskId}`,
-      taskId: task.taskId,
-      title: task.title,
-      workspacePath: task.workspacePath,
-      workspaceIdentity: task.workspaceIdentity,
-      archived,
-      pinned,
-      executionWorktree: task.executionWorktree,
-    });
-  }, []);
   return {
-    open,
+    openRows,
+    cancel,
     busy,
-    dialog: target ? (
-      <TaskDeleteConfirmationDialog
-        rows={rows}
-        loadCapability={loadCapability}
-        loadTreeCounts={loadCounts}
-        loadWorktreePreview={loadPreview}
-        onCancel={() => setTarget(null)}
-        onConfirm={(items) => void confirm(items)}
-      />
-    ) : null,
+    pending: rows.length > 0,
+    result: result?.text ?? null,
+    resultFailed: result?.failed ?? false,
+    reportResult: (text: string | null) =>
+      setResult(text === null ? null : { text, failed: false }),
+    dialog:
+      rows.length > 0 ? (
+        <TaskDeleteConfirmationDialog
+          rows={rows}
+          notice={notice}
+          requirePinnedOptIn
+          loadCapability={loadCapability}
+          loadTreeCounts={loadCounts}
+          loadWorktreePreview={loadPreview}
+          onCancel={cancel}
+          onConfirm={(items) => void confirm(items)}
+        />
+      ) : null,
   };
 }
