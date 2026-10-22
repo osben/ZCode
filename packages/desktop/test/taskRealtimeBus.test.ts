@@ -831,3 +831,184 @@ describe("TaskRealtimeBus", () => {
     });
   });
 });
+
+const STREAM_BATCH_LIMIT_BYTES = 512 * 1024;
+
+type StreamMirrorEvent = {
+  type: string;
+  batchSeq?: number;
+  deliveryPurpose?: string;
+  originHostId?: string;
+  ops?: Array<{ seq: number }>;
+  [key: string]: unknown;
+};
+
+function streamMirrorEvents(host: FakeHostProcess): StreamMirrorEvent[] {
+  return host.postedMessages
+    .map((message) => (message as { event?: StreamMirrorEvent }).event)
+    .filter((event): event is StreamMirrorEvent => event?.type === "task_stream_mirror_batch");
+}
+
+function withoutDeliveryFields(event: StreamMirrorEvent): Record<string, unknown> {
+  const { originHostId: _origin, deliveryPurpose: _purpose, ...chunk } = event;
+  return chunk;
+}
+
+// Mirrors the header that flushBatch and the splitter build for the fixture target
+// (workspace /repo/demo, task-1, run trace-1). Only the serialized length matters here.
+function fixtureChunk(ops: Array<{ seq: number }>, batchSeq: number) {
+  return {
+    type: "task_stream_mirror_batch",
+    eventId: `stream-/repo/demo-task-1-trace-1-${batchSeq}`,
+    workspacePath: "/repo/demo",
+    workspaceKey: "/repo/demo",
+    traceId: "trace-1",
+    createdAt: Date.now(),
+    taskId: "task-1",
+    runId: "trace-1",
+    batchSeq,
+    fromSeq: ops[0]?.seq,
+    toSeq: ops[ops.length - 1]?.seq,
+    ops,
+    terminal: false,
+  };
+}
+
+// Reference oracle: the previous splitter, which re-serializes the whole candidate chunk per op.
+// Kept only in the test to pin chunk boundaries; the production code must produce the same ones.
+function referenceChunkBoundaries(ops: Array<{ seq: number }>, firstBatchSeq: number) {
+  const chunks: Array<{ batchSeq: number; seqs: number[]; bytes: number }> = [];
+  let pending: Array<{ seq: number }> = [];
+  let batchSeq = firstBatchSeq;
+  const flushPending = () => {
+    if (pending.length === 0) {
+      return;
+    }
+    chunks.push({
+      batchSeq,
+      seqs: pending.map((op) => op.seq),
+      bytes: JSON.stringify(fixtureChunk(pending, batchSeq)).length,
+    });
+    batchSeq += 1;
+    pending = [];
+  };
+  for (const op of ops) {
+    const candidate = [...pending, op];
+    if (
+      pending.length > 0 &&
+      JSON.stringify(fixtureChunk(candidate, batchSeq)).length > STREAM_BATCH_LIMIT_BYTES
+    ) {
+      flushPending();
+    }
+    pending.push(op);
+  }
+  flushPending();
+  return chunks;
+}
+
+function setupOwnerAndObserver() {
+  const hostA = new FakeHostProcess();
+  const hostB = new FakeHostProcess();
+  const bus = new TaskRealtimeBus({ logger: makeLogger() });
+  bus.registerHost({
+    hostId: "host-a",
+    windowId: 1,
+    child: asUtilityProcess(hostA),
+    workspaceKeys: ["/repo/demo"],
+  });
+  bus.registerHost({
+    hostId: "host-b",
+    windowId: 2,
+    child: asUtilityProcess(hostB),
+    workspaceKeys: ["/repo/demo"],
+  });
+  hostA.emitMessage(makeLeaseRequest());
+  hostA.postedMessages.length = 0;
+  hostB.postedMessages.length = 0;
+  return { hostA, hostB };
+}
+
+describe("TaskRealtimeBus stream batch splitting", () => {
+  it("keeps oversized batch chunk boundaries identical to the greedy reference", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-21T00:00:00.000Z"));
+    const { hostA, hostB } = setupOwnerAndObserver();
+
+    // Mixed sizes: several packable ops, one 700 KB op that must travel alone, and a tail.
+    const sizes = [
+      60_000, 130_000, 300_000, 700_000, 90_000, 200_000, 40_000, 510_000, 1_000, 250_000, 120_000,
+    ];
+    const contents = sizes.map((size, index) => `${index}`.padEnd(size, "y"));
+    contents.forEach((content, index) => {
+      hostA.emitMessage(makeUserMessage(content, index));
+    });
+    vi.advanceTimersByTime(1000);
+
+    const fixtureOps = contents.map((content, index) => ({
+      kind: "user_message",
+      messageId: "trace-1:user",
+      content,
+      timestamp: index,
+      seq: index + 1,
+    }));
+    // flushBatch assigns batchSeq 1 to the whole batch; the splitter numbers chunks from 2.
+    const expected = referenceChunkBoundaries(fixtureOps, 2);
+    const owner = streamMirrorEvents(hostA);
+
+    expect(expected.length).toBeGreaterThan(2);
+    expect(expected.some((chunk) => chunk.seqs.length === 1 && chunk.seqs[0] === 4)).toBe(true);
+    expect(owner.map((event) => event.batchSeq)).toEqual(expected.map((chunk) => chunk.batchSeq));
+    expect(owner.map((event) => event.ops?.map((op) => op.seq))).toEqual(
+      expected.map((chunk) => chunk.seqs),
+    );
+    expect(owner.map((event) => JSON.stringify(withoutDeliveryFields(event)).length)).toEqual(
+      expected.map((chunk) => chunk.bytes),
+    );
+    expect(
+      owner
+        .filter((event) => (event.ops?.length ?? 0) > 1)
+        .every(
+          (event) =>
+            JSON.stringify(withoutDeliveryFields(event)).length <= STREAM_BATCH_LIMIT_BYTES,
+        ),
+    ).toBe(true);
+    expect(hostB.postedMessages).toEqual([
+      expect.objectContaining({
+        type: HostMessageTypes.TaskRealtimeDeliver,
+        event: expect.objectContaining({
+          type: "task_snapshot_invalidated",
+          reason: "stream_mirror_gap",
+          streamWatermark: { runId: "trace-1", opSeq: 11 },
+        }),
+      }),
+    ]);
+    vi.useRealTimers();
+  });
+
+  it("splits 5 000 small mirror ops within the main-thread budget", () => {
+    // Fake only timers the bus schedules; hrtime must stay real for the wall-clock measurement.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { hostA } = setupOwnerAndObserver();
+
+    const opCount = 5_000;
+    for (let index = 0; index < opCount; index += 1) {
+      hostA.emitMessage(makeUserMessage(`message ${index} ${"x".repeat(150)}`, index));
+    }
+
+    const startedAt = process.hrtime.bigint();
+    vi.advanceTimersByTime(1000);
+    const flushMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+    const owner = streamMirrorEvents(hostA);
+    const seqs = owner.flatMap((event) => event.ops?.map((op) => op.seq) ?? []);
+    expect(owner.length).toBeGreaterThan(1);
+    expect(seqs).toEqual(Array.from({ length: opCount }, (_, index) => index + 1));
+    expect(
+      owner.every(
+        (event) => JSON.stringify(withoutDeliveryFields(event)).length <= STREAM_BATCH_LIMIT_BYTES,
+      ),
+    ).toBe(true);
+    expect(flushMs).toBeLessThan(1000);
+    vi.useRealTimers();
+  });
+});

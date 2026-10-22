@@ -57,6 +57,12 @@ interface TaskRunLease {
   updatedAt: number;
 }
 
+/** A batch op paired with its serialized JSON length, measured once per flush. */
+interface MeasuredStreamOp {
+  op: TaskStreamMirrorOp;
+  bytes: number;
+}
+
 interface PendingStreamBatch {
   batchKey: string;
   workspaceKey: string;
@@ -512,13 +518,20 @@ export class TaskRealtimeBus {
         (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
       ),
     };
-    const eventBytes = JSON.stringify(event).length;
+    // Serialize each op once; the batch size is derived from these lengths, not from re-stringifying
+    // the whole batch.
+    const measuredOps = ops.map((op) => ({ op, bytes: JSON.stringify(op).length }));
+    const eventBytes = this.measureBatchEvent(
+      event,
+      measuredOps.reduce((total, entry) => total + entry.bytes, 0),
+      measuredOps.length,
+    );
     if (eventBytes > STREAM_MIRROR_MAX_BATCH_BYTES) {
       // An oversized mirror batch is copied multiple times as RPC/base64/JSON, which can exhaust the
       // Host heap. The owner still relies on the mirror sequence stream from the renderer sender, so
       // send smaller batches to the owner. Observers do not consume the body stream; they receive
       // only snapshot invalidation/remoteGenerating state.
-      this.deliverOversizedStreamBatchFallback(batch, event);
+      this.deliverOversizedStreamBatchFallback(batch, event, measuredOps);
       return;
     }
     this.rememberReplayBatch(batch, event, eventBytes);
@@ -532,6 +545,7 @@ export class TaskRealtimeBus {
   private deliverOversizedStreamBatchFallback(
     batch: PendingStreamBatch,
     event: TaskStreamMirrorBatchEvent,
+    measuredOps: readonly MeasuredStreamOp[],
   ): void {
     // Do not drop mirror sequences for the owner. When the ZCode Agent has a realtime port, the
     // owner's direct stream is closed. If an oversized batch sends only a gap, the service disables
@@ -540,7 +554,7 @@ export class TaskRealtimeBus {
     // from snapshots to avoid spreading large payloads.
     batch.replayUnavailable = true;
     this.clearReplay(batch);
-    for (const chunk of this.splitOversizedBatchForOwner(batch, event)) {
+    for (const chunk of this.splitOversizedBatchForOwner(batch, event, measuredOps)) {
       this.deliverStreamBatchToHost(batch.ownerHostId, batch, chunk, "relay_owner");
     }
     this.deliverSnapshotInvalidation(
@@ -555,49 +569,96 @@ export class TaskRealtimeBus {
     }
   }
 
+  /**
+   * Greedy packing in seq order, with the same boundaries as serializing each candidate chunk whole.
+   * Each op's length is measured once by the caller; a candidate's length is its header plus the
+   * running op-byte total, so the split costs O(ops) rather than O(ops x chunk bytes).
+   */
   private splitOversizedBatchForOwner(
     batch: PendingStreamBatch,
     event: TaskStreamMirrorBatchEvent,
+    measuredOps: readonly MeasuredStreamOp[],
   ): TaskStreamMirrorBatchEvent[] {
     const chunks: TaskStreamMirrorBatchEvent[] = [];
     let pendingOps: TaskStreamMirrorOp[] = [];
+    let pendingOpBytes = 0;
+    let pendingTerminal = false;
 
-    const createChunk = (
-      ops: TaskStreamMirrorOp[],
-      batchSeq: number,
-    ): TaskStreamMirrorBatchEvent => ({
+    const buildChunk = (chunk: {
+      ops: TaskStreamMirrorOp[];
+      batchSeq: number;
+      fromSeq: number;
+      toSeq: number;
+      terminal: boolean;
+    }): TaskStreamMirrorBatchEvent => ({
       ...event,
-      eventId: `stream-${batch.workspaceKey}-${batch.taskId}-${batch.runId}-${batchSeq}`,
-      batchSeq,
-      fromSeq: ops[0]?.seq ?? event.fromSeq,
-      toSeq: ops[ops.length - 1]?.seq ?? event.toSeq,
-      ops,
-      terminal: ops.some(
-        (op) => op.kind === "stream_event" && this.isTerminalEventType(op.event.type),
-      ),
+      eventId: `stream-${batch.workspaceKey}-${batch.taskId}-${batch.runId}-${chunk.batchSeq}`,
+      batchSeq: chunk.batchSeq,
+      fromSeq: chunk.fromSeq,
+      toSeq: chunk.toSeq,
+      ops: chunk.ops,
+      terminal: chunk.terminal,
     });
 
     const flushPending = () => {
       if (pendingOps.length === 0) {
         return;
       }
-      chunks.push(createChunk(pendingOps, batch.nextBatchSeq++));
+      chunks.push(
+        buildChunk({
+          ops: pendingOps,
+          batchSeq: batch.nextBatchSeq++,
+          fromSeq: pendingOps[0]?.seq ?? event.fromSeq,
+          toSeq: pendingOps[pendingOps.length - 1]?.seq ?? event.toSeq,
+          terminal: pendingTerminal,
+        }),
+      );
       pendingOps = [];
+      pendingOpBytes = 0;
+      pendingTerminal = false;
     };
 
-    for (const op of event.ops) {
-      const candidate = [...pendingOps, op];
-      const candidateChunk = createChunk(candidate, batch.nextBatchSeq);
-      if (
-        pendingOps.length > 0 &&
-        JSON.stringify(candidateChunk).length > STREAM_MIRROR_MAX_BATCH_BYTES
-      ) {
-        flushPending();
+    for (const { op, bytes } of measuredOps) {
+      const opIsTerminal = this.isTerminalStreamOp(op);
+      if (pendingOps.length > 0) {
+        const candidateBytes = this.measureBatchEvent(
+          buildChunk({
+            ops: [],
+            batchSeq: batch.nextBatchSeq,
+            fromSeq: pendingOps[0]?.seq ?? event.fromSeq,
+            toSeq: op.seq,
+            terminal: pendingTerminal || opIsTerminal,
+          }),
+          pendingOpBytes + bytes,
+          pendingOps.length + 1,
+        );
+        if (candidateBytes > STREAM_MIRROR_MAX_BATCH_BYTES) {
+          flushPending();
+        }
       }
       pendingOps.push(op);
+      pendingOpBytes += bytes;
+      pendingTerminal = pendingTerminal || opIsTerminal;
     }
     flushPending();
     return chunks;
+  }
+
+  /**
+   * Serialized length of a batch whose ops are already measured. Equals JSON.stringify(event).length:
+   * the header serialized with `ops: []` (which contains "[]"), plus the op bytes, plus one comma
+   * between consecutive ops.
+   */
+  private measureBatchEvent(
+    event: TaskStreamMirrorBatchEvent,
+    opByteTotal: number,
+    opCount: number,
+  ): number {
+    return JSON.stringify({ ...event, ops: [] }).length + opByteTotal + Math.max(opCount - 1, 0);
+  }
+
+  private isTerminalStreamOp(op: TaskStreamMirrorOp): boolean {
+    return op.kind === "stream_event" && this.isTerminalEventType(op.event.type);
   }
 
   private coalesceOps(ops: TaskStreamMirrorPublishOp[]): TaskStreamMirrorPublishOp[] {
