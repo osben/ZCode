@@ -3852,8 +3852,10 @@ export function createZCodeAgentService(
 
   /**
    * Abandoned create/prewarm reservations are cleared here, the same place that reserved them. A deleteSession ACK accepted or noop
-   * means the CLI no longer holds the session; a plain create ACK rejected means the CLI refused it before creating anything. Unknown
-   * outcomes (a thrown request, duplicate or stale ACKs) keep the reservation, because the CLI may have created the session.
+   * means the CLI no longer holds the session; a deleteSession rejected with proto.sessionNotFound means the CLI never initialized it
+   * (an abandoned draft). A plain create ACK rejected means the CLI refused it before creating anything. Unknown outcomes (a thrown
+   * request, duplicate or stale ACKs) keep the reservation, because the CLI may have created the session. Discarding on
+   * proto.sessionNotFound is safe: a concurrent create that lands later re-creates a missing row when its CLI facts apply.
    */
   async function discardAbandonedSessionReservation(
     params: ZCodeAgentConversationCommandParams,
@@ -3863,7 +3865,11 @@ export function createZCodeAgentService(
     if (!options?.discardSessionReservation) return;
     let sessionId: string | undefined;
     if (params.envelope.type === "deleteSession") {
-      if (ack.status === "accepted" || ack.status === "noop")
+      if (
+        ack.status === "accepted" ||
+        ack.status === "noop" ||
+        (ack.status === "rejected" && ack.reasonCode === "proto.sessionNotFound")
+      )
         sessionId = params.envelope.sessionId ?? undefined;
     } else if (createReservationSessionId !== undefined && ack.status === "rejected") {
       sessionId = createReservationSessionId;

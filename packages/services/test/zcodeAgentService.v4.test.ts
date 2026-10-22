@@ -297,7 +297,11 @@ process.stdin.on("data", (chunk) => {
     }
     if (msg.method === "v4/command" && msg.id !== undefined) {
       // Test seam: commandIds prefixed "reject-" get a guard rejection (no session created), so abandonment paths can be exercised.
+      // The "reject-missing-" prefix answers proto.sessionNotFound, the CLI's reply for a session it never initialized.
       const rejected = String(msg.params.commandId).startsWith("reject-");
+      const reasonCode = String(msg.params.commandId).startsWith("reject-missing-")
+        ? "proto.sessionNotFound"
+        : "project.not-found";
       const status = rejected ? "rejected" : "accepted";
       const acceptedInput = {
         delivery: "startNow",
@@ -317,7 +321,7 @@ process.stdin.on("data", (chunk) => {
           commandId: msg.params.commandId,
           status,
           revisionAtDecision: 3,
-          ...(rejected ? { reasonCode: "project.not-found" } : createSessionResult),
+          ...(rejected ? { reasonCode } : createSessionResult),
         },
       });
     }
@@ -1383,6 +1387,49 @@ describe("zcodeAgentService v4 conversation channel", () => {
       });
       expect(ack.status).toBe("rejected");
       expect(discardSessionReservation).not.toHaveBeenCalled();
+    } finally {
+      await service.disposeAllAndWait();
+    }
+  });
+
+  it("deleteSession rejected with proto.sessionNotFound discards", async () => {
+    const prepareSessionCreation = vi.fn(async () => [] as string[]);
+    const discardSessionReservation = vi.fn(async () => true);
+    const { service, workspacePath } = setupService({
+      prepareSessionCreation,
+      discardSessionReservation,
+    });
+    try {
+      await service.sendConversationCommandV4({
+        workspacePath,
+        projectId: null,
+        envelope: {
+          commandId: "create-abandoned",
+          clientId: "test",
+          sessionId: null,
+          type: "createSession",
+          payload: { workspaceId: workspacePath },
+          issuedAt: 1,
+        },
+      });
+      const target = prepareSessionCreation.mock.calls[0]![0];
+      const ack = await service.sendConversationCommandV4({
+        workspacePath,
+        envelope: {
+          commandId: "reject-missing-delete",
+          clientId: "test",
+          sessionId: target.sessionId,
+          type: "deleteSession",
+          payload: {},
+          issuedAt: 2,
+        },
+      });
+      expect(ack).toMatchObject({ status: "rejected", reasonCode: "proto.sessionNotFound" });
+      expect(discardSessionReservation).toHaveBeenCalledTimes(1);
+      expect(discardSessionReservation).toHaveBeenCalledWith({
+        workspacePath,
+        sessionId: target.sessionId,
+      });
     } finally {
       await service.disposeAllAndWait();
     }
