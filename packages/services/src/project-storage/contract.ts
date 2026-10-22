@@ -23,9 +23,16 @@ export interface ProjectStorageContract {
   admitTaskIdentity(db: DatabaseSync, task: ProjectTaskRef, hostId?: string): void;
 }
 
+/** A plain create always resolves its directories; a fork resolves null while its parent has no owner yet. */
+export type ReserveCreatedTaskResult<T extends ReserveCreatedTaskInput> = T extends {
+  forkOf: ProjectTaskRef;
+}
+  ? ProjectDirectories | null
+  : ProjectDirectories;
+
 /**
  * A plain create names its project and directories. A fork names only its parent: the child takes over the parent's
- * project, cwd and resolved directories, and a row that already has an owner is left unchanged.
+ * project, cwd and resolved directories, and a row that already has an owner is left unchanged. An unowned parent gives no claim (null).
  */
 export type ReserveCreatedTaskInput =
   | {
@@ -121,6 +128,9 @@ export interface ProjectRepositoryContract extends ProjectReservationCleanupCont
   moveTask(input: { task: ProjectTaskRef; projectId: string; addMissingRoot?: boolean }): void;
   reorderProjects(ids: string[]): void;
   resolveSessionDirectories(task: ProjectTaskRef): ProjectDirectories;
-  /** CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。 */
-  reserveCreatedTask(input: ReserveCreatedTaskInput): ProjectDirectories;
+  /**
+   * CLI 创建之前原子预留归属；无事实的预留行不进入列表，重试不覆盖组织操作。
+   * 分叉的父行尚未归属（host_id NULL）时返回 null：子行不写入，由 admitForkSummary 在父行归属后认领。
+   */
+  reserveCreatedTask<T extends ReserveCreatedTaskInput>(input: T): ReserveCreatedTaskResult<T>;
 }

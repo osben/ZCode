@@ -1076,6 +1076,7 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   /**
    * Claims the fork child for its parent's project after the CLI acknowledges forkAssistant (see claimForkedSessionOwnership).
    * The CLI does not know projects, and its sessions-index row may arrive before or after this ack, so the claim must be idempotent.
+   * Resolves null when the parent has no owner yet; the child then stays unclaimed until admission (never an error).
    */
   prepareForkedSession?: (target: {
     workspacePath: string;
@@ -3901,12 +3902,19 @@ export function createZCodeAgentService(
     if (!options?.prepareForkedSession) return;
     if (envelope.type !== "forkAssistant" || !envelope.sessionId) return;
     if (ack.result?.type !== "forkAssistant") return;
-    await options.prepareForkedSession({
+    const claim = await options.prepareForkedSession({
       workspacePath: params.workspacePath,
       ...(params.workspaceIdentity ? { workspaceIdentity: params.workspaceIdentity } : {}),
       parentSessionId: envelope.sessionId,
       sessionId: ack.result.sessionId,
     });
+    // The CLI has already forked, so an unowned parent must not fail the command. admitForkSummary claims the child later.
+    if (claim === null) {
+      logger.warn(undefined, "fork child left unclaimed: parent has no owner yet", {
+        parentSessionId: envelope.sessionId,
+        sessionId: ack.result.sessionId,
+      });
+    }
   }
 
   async function buildConversationCommandEnvelope(

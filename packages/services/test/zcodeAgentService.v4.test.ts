@@ -565,6 +565,54 @@ describe("zcodeAgentService v4 conversation channel", () => {
     await env.service.disposeAllAndWait();
   });
 
+  it("acknowledges a fork whose parent has no owner yet: warns and writes no child row", async () => {
+    const state = await fixture();
+    await port.migrate(state.db, state.context);
+    const repo = port.repository(state.db);
+    const env = setupService({
+      resolveSessionDirectories: async (target) =>
+        repo.resolveSessionDirectories({ ...target, taskId: target.sessionId })
+          .additionalDirectories,
+      prepareForkedSession: async (target) =>
+        repo.reserveCreatedTask({
+          task: { workspacePath: target.workspacePath, taskId: target.sessionId },
+          forkOf: { workspacePath: target.workspacePath, taskId: target.parentSessionId },
+        }),
+    });
+    // The parent row has no host yet (organization writer, before the first CLI admission).
+    state.db
+      .prepare(
+        "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+      )
+      .run(env.workspacePath, env.workspacePath, "parent", "Parent", 1, 2);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const ack = await env.service.sendConversationCommandV4({
+      workspacePath: env.workspacePath,
+      envelope: {
+        commandId: "fork-unowned-parent",
+        clientId: "fork-client",
+        issuedAt: 1,
+        sessionId: "parent",
+        baseRevision: 3,
+        type: "forkAssistant",
+        payload: { target: { rowId: 1, entityId: "row-1" } },
+      },
+    } as Parameters<typeof env.service.sendConversationCommandV4>[0]);
+
+    expect(ack).toMatchObject({
+      status: "accepted",
+      result: { type: "forkAssistant", sessionId: "forked-session" },
+    });
+    expect(JSON.stringify(warn.mock.calls)).toContain("fork child left unclaimed");
+    expect(JSON.stringify(warn.mock.calls)).toContain("forked-session");
+    expect(
+      state.db.prepare("SELECT task_id FROM tasks WHERE task_id='forked-session'").get(),
+    ).toBeUndefined();
+    warn.mockRestore();
+    await env.service.disposeAllAndWait();
+  });
+
   const childHostId = "remote:server:subagent-view";
   const childWorkspace = (workspacePath: string) => ({
     workspacePath,

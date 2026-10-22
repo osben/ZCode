@@ -73,6 +73,7 @@ Host tasks-index    project_id、pinned、archived、unread_at(+CAS)、sort_orde
 - 兼容退场三阶段：V1 只读新列、旧列只写不读；V2 写 `schema_floor` 并停双写；V3 物理删退场列 / `time_archived` 并重建主键。分组表已恢复为运行态，不能按旧计划删除。不要在任何阶段引入「永久」兼容分支。
 - 降级靠加法 schema，不靠备份；首次迁移遗留、旧版本新增或 CLI 首次发现的未归属 session 只判定一次：目录唯一匹配同 host 下未删除项目才归入，零个或多个匹配保留 NULL 并进入任务区，不自动建项目。唯一例外是远端 Source Server 的首次迁移：远端自身没有旧 workspace 清单，按历史任务目录建单 root 项目（虚拟项目 spec 2026-10-15 裁决）。旧 group、空组、系统组、颜色、成员和顺序继续读取；旧 Group → Project 转换取消，workspace → Project 保留。
 - `project_id IS NULL` 是合法未归类状态，不是待迁移标记。启动时先识别 `host_id IS NULL` 的旧版本新增行，再在同一事务补齐身份与首次归属；新版本创建或首次插入行时原子写入身份和归属。已处理的 NULL 行不因启动、对账或新增同目录项目而自动归入；全局新建任务显式保持未归类。
+- Fork 子会话在 `forkAssistant` ACK 时认领父会话的项目、cwd 与附加目录（`reserveCreatedTask({ forkOf })`）。父行尚未归属（`host_id IS NULL`）时认领返回「未认领」：ACK 记 warn 并照常成功，不建子会话行，子会话由 `admitForkSummary` 在父行归属后认领；父行归属于其他 Host 仍抛出 `project.host-mismatch`。`forked_from_task_id` 一经写入不被后续 upsert 替换（先写者胜出）。
 - 迁移复用同一 SQL / Repo，启动门禁在 Host Worker 完成后才初始化业务服务；异步等待锁，迁移事务提交后再发布 ready，失败 fail-closed（重试 / 打开备份目录）。不得另造迁移实现。
 
 ## 5. 改动前检查清单

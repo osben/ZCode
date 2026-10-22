@@ -50,7 +50,48 @@ describe("forked session ownership", () => {
     const child = { workspacePath: "/repo", taskId: "child" };
     repo.reserveCreatedTask({ task: child, forkOf: parent });
     db.prepare("UPDATE tasks SET project_id=? WHERE task_id='child'").run(second.id);
-    expect(repo.reserveCreatedTask({ task: child, forkOf: parent }).projectId).toBe(second.id);
+    expect(repo.reserveCreatedTask({ task: child, forkOf: parent })?.projectId).toBe(second.id);
+  });
+
+  it("gives no claim while the parent is unowned, writes no child row, and claims once the parent is owned", async () => {
+    const { db, context } = await fixture();
+    await port.migrate(db, context);
+    const repo = port.repository(db);
+    const project = repo.saveProject({ roots: ["/repo"] });
+    // The organization writer's parent row: no host, root, or project until the CLI admits it.
+    insertLegacyForkRow(db, "parent", "/repo");
+    const parent = { workspacePath: "/repo", taskId: "parent" };
+    const child = { workspacePath: "/repo", taskId: "child" };
+
+    expect(repo.reserveCreatedTask({ task: child, forkOf: parent })).toBeNull();
+    expect(db.prepare("SELECT task_id FROM tasks WHERE task_id='child'").get()).toBeUndefined();
+
+    db.prepare(
+      "UPDATE tasks SET host_id='local', root_path='/repo', project_id=? WHERE task_id='parent'",
+    ).run(project.id);
+    expect(repo.reserveCreatedTask({ task: child, forkOf: parent })).toMatchObject({
+      workspacePath: "/repo",
+      projectId: project.id,
+    });
+    expect(db.prepare("SELECT host_id, project_id FROM tasks WHERE task_id='child'").get()).toEqual(
+      { host_id: "local", project_id: project.id },
+    );
+  });
+
+  it("still rejects a fork whose parent row is owned by another host", async () => {
+    const { db, context } = await fixture();
+    await port.migrate(db, context);
+    db.exec("INSERT INTO hosts(host_id,kind) VALUES ('remote:server:s','server')");
+    db.prepare(
+      "INSERT INTO tasks(workspace_key,workspace_path,task_id,title,created_at,updated_at,host_id,root_path) VALUES(?,?,?,?,?,?,?,?)",
+    ).run("/repo", "/repo", "parent", "Parent", 1, 1, "remote:server:s", "/repo");
+    const parent = { workspacePath: "/repo", taskId: "parent" };
+    const child = { workspacePath: "/repo", taskId: "child" };
+
+    expect(() => port.repository(db).reserveCreatedTask({ task: child, forkOf: parent })).toThrow(
+      "project.host-mismatch",
+    );
+    expect(db.prepare("SELECT task_id FROM tasks WHERE task_id='child'").get()).toBeUndefined();
   });
 
   it("rejects a fork in a foreign-host workspace and leaves the child unowned", async () => {

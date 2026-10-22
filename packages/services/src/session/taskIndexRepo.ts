@@ -1706,7 +1706,8 @@ export class TaskIndexRepo {
           mode = excluded.mode,
           model = excluded.model,
           migration_source = excluded.migration_source,
-          forked_from_task_id = COALESCE(excluded.forked_from_task_id, tasks.forked_from_task_id),
+          -- The first stored fork link wins: a later write with another parent must not re-parent the fork.
+          forked_from_task_id = COALESCE(tasks.forked_from_task_id, excluded.forked_from_task_id),
           cron_automation_id = excluded.cron_automation_id,
           off_peak_task_id = excluded.off_peak_task_id,
           created_at = excluded.created_at,
