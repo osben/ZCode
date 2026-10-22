@@ -1577,6 +1577,32 @@ it("a programmatic empty update never clears the draft branch intent (ISSUE-037)
   }
 });
 
+it("prompt-history recall that returns to an empty draft keeps the branch intent (ISSUE-037)", async () => {
+  useDraftBranchIntentStore.getState().setDraftBranchIntent("/workspace", "feature/qa-branch");
+  const harness = renderLateAckComposer({ worktree: false });
+  try {
+    // ArrowUp recalls the last prompt; the history write is an app write, not typing.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("recalled prompt", { programmatic: true });
+      await flushAsyncWork();
+    });
+    // ArrowDown past the newest entry restores an empty draft.
+    await act(async () => {
+      chatPromptEditorProps.at(-1)!.onChange!("", { programmatic: true });
+      await flushAsyncWork();
+    });
+    expect(useDraftBranchIntentStore.getState().intentByWorkspaceKey["/workspace"]).toBe(
+      "feature/qa-branch",
+    );
+    expect(harness.onSendText).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      await flushAsyncWork();
+      harness.root.unmount();
+    });
+  }
+});
+
 it("the editor's clear echo during a cancelled checkout guard keeps the intent (ISSUE-037)", async () => {
   const prepare = vi.fn<PrepareFirstSubmission>(async () => "never");
   branchIntentWiring.gitService = {

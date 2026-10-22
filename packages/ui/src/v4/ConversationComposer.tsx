@@ -2916,11 +2916,6 @@ function ConversationComposerImpl({
             withdrawUnreservedSubmission();
             return;
           }
-          // Worktree send acceptance: the worktree creation has its own base (captured when the
-          // intent slot was registered), so the draft's base intent is consumed here. This is the
-          // worktree-mode counterpart of applyDraftBranchIntentForSend's checkout success clear.
-          if (draftMode && sessionId === null)
-            useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
           preparedSessionIdForSend = begin.sessionId;
         }
         const pendingRecoveryDraft = readV4ComposerDraft(
@@ -2961,6 +2956,13 @@ function ConversationComposerImpl({
           restoreSubmittedDraft();
           return;
         }
+        // Worktree send acceptance: every failure check above has passed, so the send is committed.
+        // The worktree creation keeps the base it captured at registration (its pipeline params
+        // carry baseBranch), and the draft's base intent is consumed here, the worktree-mode
+        // counterpart of applyDraftBranchIntentForSend's checkout success clear. Failures before this
+        // point restore the draft with its base intent intact.
+        if (draftMode && sessionId === null)
+          useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
         const joinedPipeline = selectComposerWorktreePipeline(
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
