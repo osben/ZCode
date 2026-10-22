@@ -111,36 +111,29 @@ async function replaceValue(selector: string, value: string) {
   });
 }
 
-/** The saved `acp:opencode` provider rule, or undefined when none is stored. */
-async function readSavedAcpProvider(): Promise<Record<string, unknown> | undefined> {
-  const file = getE2EAppDataPaths().configFile;
-  if (!existsSync(file)) return undefined;
-  const root: unknown = JSON.parse(await readFile(file, "utf8"));
-  const stack: unknown[] = [root];
-  while (stack.length > 0) {
-    const value = stack.pop();
-    if (Array.isArray(value)) {
-      stack.push(...value);
-    } else if (value && typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      if (record.providerId === ACP_PROVIDER_ID) return record;
-      stack.push(...Object.values(record));
-    }
-  }
-  return undefined;
+interface StoredAcpAccess {
+  readonly type?: string;
+  readonly command?: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
 }
 
-function findAcpAccess(provider: Record<string, unknown> | undefined) {
-  const stack: unknown[] = [provider];
-  while (stack.length > 0) {
-    const value = stack.pop();
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const record = value as Record<string, unknown>;
-      if (record.type === "acp-agent") return record;
-      stack.push(...Object.values(record));
-    }
-  }
-  return undefined;
+/** The saved `acp-agent` access of the `acp:opencode` provider rule, if stored. */
+async function readSavedAcpAccess(): Promise<StoredAcpAccess | undefined> {
+  const file = getE2EAppDataPaths().configFile;
+  if (!existsSync(file)) return undefined;
+  const stored = JSON.parse(await readFile(file, "utf8")) as {
+    config?: {
+      providerConfigRules?: {
+        providerRules?: { providerId?: string; config?: { access?: StoredAcpAccess } }[];
+      };
+    };
+  };
+  const rule = stored.config?.providerConfigRules?.providerRules?.find(
+    (entry) => entry.providerId === ACP_PROVIDER_ID,
+  );
+  const access = rule?.config?.access;
+  return access?.type === "acp-agent" ? access : undefined;
 }
 
 async function writeMockOpencode() {
@@ -287,11 +280,14 @@ describe("ACP agents settings", () => {
 
     await (await enabledSwitch()).click();
     await waitForSwitch(true);
-    await browser.waitUntil(async () => findAcpAccess(await readSavedAcpProvider()) !== undefined, {
-      timeout: 20000,
-      timeoutMsg: "enabling did not save the acp-agent access",
-    });
-    const savedOn = findAcpAccess(await readSavedAcpProvider());
+    await browser
+      .waitUntil(async () => (await readSavedAcpAccess()) !== undefined, {
+        timeout: 20000,
+      })
+      .catch(() => {
+        throw new Error("enabling did not save the acp-agent access for acp:opencode");
+      });
+    const savedOn = await readSavedAcpAccess();
     assert.deepEqual(
       { command: savedOn?.command, args: savedOn?.args, env: savedOn?.env },
       { command: OPENCODE_SHIM, args: ["acp", "--e2e-marker"], env: { E2E_ACP_MARKER: "1" } },
@@ -299,7 +295,7 @@ describe("ACP agents settings", () => {
 
     await (await enabledSwitch()).click();
     await waitForSwitch(false);
-    const savedOff = findAcpAccess(await readSavedAcpProvider());
+    const savedOff = await readSavedAcpAccess();
     assert.deepEqual(
       { command: savedOff?.command, args: savedOff?.args, env: savedOff?.env },
       { command: OPENCODE_SHIM, args: ["acp", "--e2e-marker"], env: { E2E_ACP_MARKER: "1" } },
