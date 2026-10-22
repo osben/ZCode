@@ -581,7 +581,7 @@ function selectAfterPromptMentionById(mentionId: string): boolean {
  *
  * Intercept Enter with COMMAND_PRIORITY_HIGH to prevent Lexical's default paragraph insertion behavior.
  */
-function KeyboardPlugin({
+export function KeyboardPlugin({
   onSubmit,
   onModifiedSubmit,
   onSubmitBlocked,
@@ -638,6 +638,13 @@ function KeyboardPlugin({
         }
         if (scopedAction === "send") {
           const modifiedScopedEnter = event.shiftKey || event.ctrlKey || event.metaKey;
+          // A send key blocked by a named reason keeps the draft and reports it, for default and rebound
+          // bindings alike (ISSUE-026). Other blocked states still fall through to Lexical, unchanged.
+          if (submitDisabled && onSubmitBlocked && (enterSubmits || modifiedScopedEnter)) {
+            event.preventDefault();
+            onSubmitBlocked();
+            return true;
+          }
           // When reverse delivery is enabled, let the main path handle modified shortcuts (Ctrl+Enter = reverse delivery, whose delivery meaning is more specific than a binding).
           if (!(modifiedScopedEnter && onModifiedSubmit)) {
             // Apply the same gates as bare Enter on the main path: unmodified Enter respects submitDisabled/mobile enterSubmits;
