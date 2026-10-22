@@ -9,22 +9,29 @@ import { useArchiveManagement } from "@/project-sidebar/useArchiveManagement.js"
 const mocks = vi.hoisted(() => ({
   directory: {} as any,
   mutateTask: vi.fn(),
-  confirm: vi.fn(),
+  service: {} as any,
   removeTaskState: vi.fn(),
 }));
 vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", () => ({
   useProjectDirectory: () => mocks.directory,
 }));
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
-  useBaseWorkspaceServices: () => ({ windowControllerService: mocks, zcodeTaskService: {} }),
+  useBaseWorkspaceServices: () => ({
+    windowControllerService: mocks,
+    zcodeTaskService: mocks.service,
+    gitService: { getChanges: vi.fn(async () => []) },
+  }),
 }));
-vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => mocks.confirm }));
+vi.mock("@/lib/taskListMetaSync.js", () => ({ removeTaskFromTaskCaches: vi.fn() }));
 vi.mock("@/store/zcodeSessionStore.js", () => ({
   useZCodeSessionStore: (select: any) => select(mocks),
 }));
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
-    intl: { formatMessage: ({ id }: any, values: any) => `${id}:${JSON.stringify(values)}` },
+    intl: {
+      formatPlural: ({ id }: any, count: number) => `${id}:${count}`,
+      formatMessage: ({ id }: any, values: any) => `${id}:${JSON.stringify(values)}`,
+    },
   }),
 }));
 const task = (id: string, extra: Partial<ProjectTask> = {}): ProjectTask => ({
@@ -134,7 +141,7 @@ it("routes archived actions with full remote identity and uses the existing loca
     taskId: "local",
   });
 });
-function setup() {
+function setup(options: { allowPermanentDelete?: boolean } = {}) {
   mocks.directory = {
     tree: tree(),
     directory: { hosts: [], entries: [] },
@@ -143,17 +150,52 @@ function setup() {
     error: null,
     loading: false,
   };
-  mocks.confirm.mockResolvedValue(true);
   mocks.mutateTask.mockResolvedValue(null);
-  return renderHook(() => useArchiveManagement());
+  mocks.service = {
+    getDeletionCapability: vi.fn(async () => ({ supported: true })),
+    countTaskTrees: vi.fn(),
+    deleteArchivedTasks: vi.fn(),
+    eraseTasks: vi.fn(),
+  };
+  return renderHook(() => useArchiveManagement(options));
 }
-it("cancelled deletion does not mutate; one in-flight batch rejects duplicate clicks and preserves failures", async () => {
+it("opening the permanent delete dialog writes nothing; cancel releases the page without mutation", async () => {
   const { result } = setup();
-  mocks.confirm.mockResolvedValueOnce(false);
+  act(() => {
+    void result.current.run([tree().tasks[0]!], "delete");
+  });
+  expect(result.current.pending).toBe(true);
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+  act(() => {
+    result.current.cancelDelete();
+  });
+  expect(result.current.pending).toBe(false);
+  expect(mocks.mutateTask).not.toHaveBeenCalled();
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+  expect(mocks.service.eraseTasks).not.toHaveBeenCalled();
+  expect(result.current.busy).toBe(false);
+});
+it("does not open the permanent delete dialog for remote-only selections and reports why", async () => {
+  const { result } = setup();
+  const remoteOnly = tree().tasks[2]!;
+  await act(async () => {
+    await result.current.run([remoteOnly], "delete");
+  });
+  expect(result.current.pending).toBe(false);
+  expect(result.current.deletionResult).toContain("taskList.deleteAllArchivedUnavailable");
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+});
+it("the Web remote gate blocks the permanent delete owner before any capability lookup", async () => {
+  const { result } = setup({ allowPermanentDelete: false });
   await act(async () => {
     await result.current.run([tree().tasks[0]!], "delete");
   });
-  expect(mocks.mutateTask).not.toHaveBeenCalled();
+  expect(result.current.pending).toBe(false);
+  expect(mocks.service.getDeletionCapability).not.toHaveBeenCalled();
+  expect(mocks.service.deleteArchivedTasks).not.toHaveBeenCalled();
+});
+it("one in-flight unarchive batch rejects duplicate clicks and preserves failures", async () => {
+  const { result } = setup();
   let release!: () => void;
   mocks.mutateTask
     .mockImplementationOnce(
@@ -179,29 +221,4 @@ it("cancelled deletion does not mutate; one in-flight batch rejects duplicate cl
   expect(result.current.result).toEqual({ succeeded: 1, failed: 1, skipped: 0 });
   expect(mocks.directory.refresh).toHaveBeenCalledOnce();
   expect(result.current.busy).toBe(false);
-});
-it("does not expand the confirmed batch and skips rows unarchived while the dialog is open", async () => {
-  const { result, rerender } = setup();
-  let confirm!: (value: boolean) => void;
-  mocks.confirm.mockImplementationOnce(
-    () =>
-      new Promise<boolean>((r) => {
-        confirm = r;
-      }),
-  );
-  let pending!: Promise<void>;
-  act(() => {
-    pending = result.current.run([tree().tasks[0]!], "delete");
-  });
-  mocks.directory = {
-    ...mocks.directory,
-    tree: { ...tree(), tasks: [task("alpha", { archived: false }), task("new")] },
-  };
-  rerender();
-  await act(async () => {
-    confirm(true);
-    await pending;
-  });
-  expect(mocks.mutateTask).not.toHaveBeenCalled();
-  expect(result.current.result?.skipped).toBe(1);
 });

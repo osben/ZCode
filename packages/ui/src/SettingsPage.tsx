@@ -2420,7 +2420,7 @@ export function SettingsPage({
                                   handleTaskAutoArchiveOlderThanDaysChange
                                 }
                               />
-                              <ArchiveManagement />
+                              <ArchiveManagement allowPermanentDelete={!isWebRemoteControl} />
                             </div>
                           ) : activeSection === "usage" ? (
                             <UsageStatsSection

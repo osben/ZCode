@@ -21,17 +21,25 @@ import { remoteHostLabel } from "@/project-sidebar/RemoteHostSection.js";
 import { ArchiveGroupCard } from "@/project-sidebar/ArchiveGroupCard.js";
 import { ProjectDirectoryProvider } from "@/project-sidebar/ProjectDirectoryProvider.js";
 
-export function ArchiveManagement() {
+export function ArchiveManagement({
+  allowPermanentDelete = true,
+}: {
+  allowPermanentDelete?: boolean;
+}) {
   return (
     <ProjectDirectoryProvider>
-      <ArchiveManagementContent />
+      <ArchiveManagementContent allowPermanentDelete={allowPermanentDelete} />
     </ProjectDirectoryProvider>
   );
 }
-function ArchiveManagementContent() {
+function ArchiveManagementContent({ allowPermanentDelete }: { allowPermanentDelete: boolean }) {
   const { intl } = useZCodeIntl();
   const msg = (id: string) => intl.formatMessage({ id: `archives.${id}` });
-  const state = useArchiveManagement();
+  const state = useArchiveManagement({ allowPermanentDelete });
+  const inFlight = state.busy || state.pending;
+  const deleteUnavailableReason = allowPermanentDelete
+    ? undefined
+    : intl.formatMessage({ id: "taskDelete.remoteUnavailable" });
   const sortId = useId();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ArchiveSort>("updated");
@@ -56,7 +64,14 @@ function ArchiveManagementContent() {
         <Button
           data-testid="archive-delete-all"
           variant="ghost"
-          disabled={state.busy || state.loading || Boolean(state.error) || !rows.length}
+          disabled={
+            inFlight ||
+            state.loading ||
+            Boolean(state.error) ||
+            !rows.length ||
+            !allowPermanentDelete
+          }
+          title={deleteUnavailableReason}
           className="bg-destructive-surface text-destructive-surface-foreground hover:bg-destructive-surface"
           onClick={() => void state.run(rows, "delete")}
         >
@@ -152,6 +167,15 @@ function ArchiveManagementContent() {
           {intl.formatMessage({ id: "archives.result" }, state.result)}
         </p>
       ) : null}
+      {state.deletionResult ? (
+        <p
+          role="status"
+          className="whitespace-pre-line break-words text-ui-sm text-foreground-subtle"
+        >
+          {state.deletionResult}
+        </p>
+      ) : null}
+      {state.deletionDialog}
       {state.loading ? (
         <p role="status" className="py-8 text-ui-base text-foreground-subtle">
           {msg("loading")}
@@ -167,7 +191,8 @@ function ArchiveManagementContent() {
             group={group}
             name={name(group)}
             sort={sort}
-            disabled={state.busy || Boolean(state.error)}
+            disabled={inFlight || Boolean(state.error)}
+            allowPermanentDelete={allowPermanentDelete}
             onAction={state.run}
           />
         ))

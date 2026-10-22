@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 // 防止旧调用只写删除文案，却绕过取消默认焦点与键盘保护。
 const destructiveEntries = [
   ["BotsDialog.tsx", "bots.deleteConfirmTitle"],
-  ["project-sidebar/useArchiveManagement.ts", "archives.deleteTitle"],
+  // Archive permanent delete confirms through TaskDeleteConfirmationDialog (JSX, destructive confirm button),
+  // not confirmDialog; that path is covered by archivedTasksActionsMenu.test.ts.
   // V2 已移除刷新配对入口；无刷新按钮由 webRemoteControlDialogLayout 回归覆盖。
   ["settings/CommandsSection.tsx", "settings.commands.delete.title"],
   ["settings/AutomationsSection.tsx", "offPeak.delete.title"],

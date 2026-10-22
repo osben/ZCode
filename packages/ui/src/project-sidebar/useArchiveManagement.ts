@@ -1,23 +1,31 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ProjectTask } from "@/project-sidebar/contract.js";
 import { useProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { mutateProjectTask } from "@/project-sidebar/task-mutation.js";
 import { archiveTaskKey } from "@/project-sidebar/archive-view.js";
 import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { resolveRemoteWorkspaceSessionIdForTarget } from "@/hooks/useResolvedRemoteWorkspaceSessionId.js";
+import { useTaskDeleteDialog } from "@/hooks/useTaskDeleteDialog.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
-import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
-import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { getPathLeaf } from "@/lib/path.js";
+import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import type { TaskDeleteTarget } from "@/task-deletion/taskDeletion.js";
 import { logger } from "@/logger.js";
 
 export type ArchiveOperation = "unarchive" | "delete";
-export function useArchiveManagement() {
+
+/**
+ * Owner of Settings → Archives selection and actions. Restore runs through the task mutation lane.
+ * Delete is permanent and is handed to the single permanent-delete owner (useTaskDeleteDialog)
+ * after the Web-remote gate and the remote-row exclusion; it never uses the soft delete mutation.
+ */
+export function useArchiveManagement({
+  allowPermanentDelete = true,
+}: { allowPermanentDelete?: boolean } = {}) {
   const directory = useProjectDirectory();
   const { zcodeTaskService: service, windowControllerService: controller } =
     useBaseWorkspaceServices();
-  const removeTaskState = useZCodeSessionStore((s) => s.removeTaskState);
-  const confirm = useConfirmDialog();
   const { intl } = useZCodeIntl();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{
@@ -28,29 +36,47 @@ export function useArchiveManagement() {
   const locked = useRef(false);
   const latest = useRef(directory);
   latest.current = directory;
-  const run = async (tasks: ProjectTask[], operation: ArchiveOperation) => {
-    if (locked.current || !tasks.length) return;
+  const refreshDirectory = useCallback(() => latest.current.refresh(), []);
+  const permanentDelete = useTaskDeleteDialog(refreshDirectory);
+
+  const requestPermanentDelete = (tasks: ProjectTask[]) => {
+    if (!allowPermanentDelete || locked.current || permanentDelete.busy || permanentDelete.pending)
+      return;
     // 固定确认时的身份集合；搜索变化、新归档和重复点击不能扩充已经确认的批次。
-    const candidates = [
-      ...new Map(tasks.filter((t) => t.archived).map((t) => [archiveTaskKey(t), t])).values(),
-    ];
+    const candidates = archivedCandidates(tasks);
+    if (!candidates.length) return;
+    const local = candidates.filter((task) => !isRemoteArchiveTask(task));
+    const remote = candidates.filter(isRemoteArchiveTask);
+    const remoteNotice = remote.length
+      ? intl.formatMessage(
+          { id: "taskList.deleteAllArchivedUnavailable" },
+          {
+            projects: [...new Set(remote.map((task) => getPathLeaf(task.workspacePath)))].join(
+              "、",
+            ),
+          },
+        )
+      : undefined;
+    if (local.length === 0) {
+      permanentDelete.reportResult(remoteNotice ?? null);
+      return;
+    }
+    permanentDelete.openRows(local.map(toPermanentDeleteTarget), { notice: remoteNotice });
+  };
+
+  const run = async (tasks: ProjectTask[], operation: ArchiveOperation) => {
+    if (operation === "delete") {
+      requestPermanentDelete(tasks);
+      return;
+    }
+    if (locked.current || !tasks.length) return;
+    const candidates = archivedCandidates(tasks);
     if (!candidates.length) return;
     locked.current = true;
     setBusy(true);
     setResult(null);
     const counts = { succeeded: 0, failed: 0, skipped: 0 };
     try {
-      if (
-        operation === "delete" &&
-        !(await confirm({
-          intent: "archive-management-delete",
-          title: intl.formatMessage({ id: "archives.deleteTitle" }, { count: candidates.length }),
-          description: intl.formatMessage({ id: "archives.deleteDescription" }),
-          confirmLabel: intl.formatMessage({ id: "archives.delete" }),
-          confirmVariant: "destructive",
-        }))
-      )
-        return;
       for (const task of candidates) {
         if (
           !latest.current.tree.tasks.some(
@@ -68,11 +94,9 @@ export function useArchiveManagement() {
           await mutateProjectTask(
             { service, controller },
             task,
-            operation === "delete" ? { kind: "delete" } : { kind: "archive", archived: false },
+            { kind: "archive", archived: false },
             remoteSessionId,
           );
-          if (operation === "delete")
-            removeTaskState(task.workspacePath, task.taskId, task.workspaceIdentity);
           counts.succeeded++;
         } catch (error) {
           counts.failed++;
@@ -91,5 +115,36 @@ export function useArchiveManagement() {
       setBusy(false);
     }
   };
-  return { ...directory, busy, result, run };
+
+  return {
+    ...directory,
+    busy: busy || permanentDelete.busy,
+    pending: permanentDelete.pending,
+    result,
+    deletionResult: permanentDelete.result,
+    deletionDialog: permanentDelete.dialog,
+    run,
+    cancelDelete: permanentDelete.cancel,
+  };
+}
+
+function archivedCandidates(tasks: ProjectTask[]) {
+  return [...new Map(tasks.filter((t) => t.archived).map((t) => [archiveTaskKey(t), t])).values()];
+}
+
+function isRemoteArchiveTask(task: ProjectTask) {
+  return Boolean(task.workspaceIdentity?.trim());
+}
+
+function toPermanentDeleteTarget(task: ProjectTask): TaskDeleteTarget {
+  return {
+    id: `${buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity)}:${task.taskId}`,
+    taskId: task.taskId,
+    title: task.title,
+    workspacePath: task.workspacePath,
+    archived: true,
+    // Archived rows are unpinned; pinned=false keeps the batch from being silently narrowed by pin opt-in.
+    pinned: false,
+    ...(task.executionWorktree ? { executionWorktree: task.executionWorktree } : {}),
+  };
 }
