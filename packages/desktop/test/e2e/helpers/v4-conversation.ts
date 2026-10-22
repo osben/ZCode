@@ -73,7 +73,7 @@ import {
   setInputValueByTestIdDom,
   waitForDefaultWorkspaceReady,
 } from "./desktop-app.js";
-import { startDraftFromProject, waitForProjectRow } from "./project-sidebar.js";
+import { ensureLocalProjectRow, startDraftFromProject } from "./project-sidebar.js";
 import {
   ensureUpstreamProviderForE2E,
   selectUpstreamModel,
@@ -166,7 +166,9 @@ async function ensureV4ShellReady() {
     // The occupation onboarding of a fresh isolated profile covers the workspace; reuse the real
     // UI to skip it first.
     await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
+    // ISSUE-024: the fork does not seed projects from settings, so the default project is created
+    // through the project form when the restore path has not registered it.
+    await ensureLocalProjectRow(DEFAULT_WORKSPACE);
     return;
   } catch (error) {
     if (!(await hasApiKeyLoginButton())) {
@@ -174,7 +176,7 @@ async function ensureV4ShellReady() {
     }
     await loginWithApiKey();
     await skipOccupationOnboardingIfPresent();
-    await waitForProjectRow(DEFAULT_WORKSPACE, { timeout: 30000 });
+    await ensureLocalProjectRow(DEFAULT_WORKSPACE);
   }
 }
 

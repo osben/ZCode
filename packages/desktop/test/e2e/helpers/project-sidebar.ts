@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { basename as posixBasename } from "node:path/posix";
 import { basename as win32Basename } from "node:path/win32";
 import {
@@ -137,6 +138,42 @@ export async function waitForRestoredProjects(
   );
 }
 
+/**
+ * Ensures the local project row exists, creating it through the real project form when missing.
+ *
+ * Root cause (ISSUE-024): the fork's Host deliberately does not seed projects from
+ * lastWorkspaceSession (commit 46c33e9d), so the E2E index's projects table stays empty and waiting
+ * for the row only times out. A short grace period lets a project registered by the restore path
+ * appear first; only then is it created through the UI, so an existing project is never duplicated.
+ */
+export async function ensureLocalProjectRow(
+  workspacePath: string,
+  { graceTimeout = 5_000, timeout = 30_000 }: { graceTimeout?: number; timeout?: number } = {},
+): Promise<void> {
+  if (await projectRowExists(workspacePath)) return;
+  try {
+    await waitForProjectRow(workspacePath, { timeout: graceTimeout });
+    return;
+  } catch {
+    // Restore path did not register the project; fall through to the project form.
+  }
+  await mkdir(workspacePath, { recursive: true });
+  await $('[data-testid="project-section"]').waitForDisplayed({ timeout });
+  await $('[data-testid="project-section"]').moveTo();
+  await $('[data-testid="virtual-project-add"]').click();
+  await $('[data-testid="virtual-project-name"]').waitForDisplayed({ timeout });
+  await selectNativeProjectDirectories([workspacePath]);
+  await $('[data-testid="virtual-project-name"]').setValue(projectNameForWorkspace(workspacePath));
+  await $('[data-testid="virtual-project-save"]').click();
+  const trustConfirm = $('[data-testid="project-folder-trust-confirm"]');
+  const needsTrust = await trustConfirm.waitForDisplayed({ timeout: 5_000 }).then(
+    () => true,
+    () => false,
+  );
+  if (needsTrust) await trustConfirm.click();
+  await waitForProjectRow(workspacePath, { timeout });
+}
+
 async function readProjectExpanded(workspacePath: string): Promise<boolean> {
   return browser.execute(
     (selector, toggleTestId) =>
@@ -257,7 +294,9 @@ export async function startDraftFromProject(
     () =>
       browser.execute(
         (inputId, panePrefix, workspaceTriggerId, projectName, identity, key, previousVersion) => {
-          const inputs = document.querySelectorAll(`[data-testid="${panePrefix}-workspace-main"] [data-testid="${inputId}"]`);
+          const inputs = document.querySelectorAll(
+            `[data-testid="${panePrefix}-workspace-main"] [data-testid="${inputId}"]`,
+          );
           const pane = inputs[0]?.closest<HTMLElement>(`[data-testid^="${panePrefix}-"]`);
           const trigger = document.querySelector<HTMLElement>(
             `[data-testid="${workspaceTriggerId}"]`,
