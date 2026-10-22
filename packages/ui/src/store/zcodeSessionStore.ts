@@ -15,6 +15,8 @@ import { uiMemoryDiagnosticsRegistry } from "@/lib/memoryDiagnostics.js";
 
 export const useZCodeSessionStore = create<ZCodeSessionStoreState>()((set, get) => ({
   workspaces: {},
+  providerStartupSettled: false,
+  setProviderStartupSettled: (settled: boolean) => set({ providerStartupSettled: settled }),
   ...createNavigationSlice(set, get),
   ...createWorkspaceSlice(set),
   ...createTaskSlice(set),

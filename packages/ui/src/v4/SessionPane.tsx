@@ -1888,6 +1888,7 @@ export function SessionPane({
   ]);
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
+  const providerStartupSettled = useZCodeSessionStore((state) => state.providerStartupSettled);
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     if (sessionId !== null) {
@@ -6286,6 +6287,7 @@ export function SessionPane({
         modelSelectionView ??
         (modelSelectionRead.state.status === "loading" ? modelSelectionRead.state.catalog : null)
       }
+      modelSelectionSettled={providerStartupSettled}
       modelSelectionState={modelSelectionRead.state}
       modelSelectionReload={modelSelectionRead.reload}
       modelSelectionRefresh={modelSelectionRead.refresh}

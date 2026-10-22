@@ -584,6 +584,7 @@ function selectAfterPromptMentionById(mentionId: string): boolean {
 function KeyboardPlugin({
   onSubmit,
   onModifiedSubmit,
+  onSubmitBlocked,
   disabled,
   submitDisabled,
   allowSubmitWhenEmpty,
@@ -591,6 +592,7 @@ function KeyboardPlugin({
 }: {
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
+  onSubmitBlocked?: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
   allowSubmitWhenEmpty?: boolean;
@@ -699,6 +701,14 @@ function KeyboardPlugin({
         // While a request is in progress, the user may keep editing the draft but cannot submit again.
         // Mapping this state directly to disabled also disabled typing and suggestions; removing disabled alone
         // would let Enter submit and clear the draft. When submitDisabled, return Enter to Lexical for newline handling.
+        // A caller that names the blocked state (for example an unresolved stored model) takes the Enter:
+        // the draft stays, no newline is inserted, and the caller shows the reason. Other blocked states keep
+        // returning Enter to Lexical, unchanged.
+        if (submitDisabled && enterSubmits && onSubmitBlocked) {
+          event.preventDefault();
+          onSubmitBlocked();
+          return true;
+        }
         if (submitDisabled || !enterSubmits) {
           return false;
         }
@@ -871,6 +881,7 @@ function KeyboardPlugin({
     enterSubmits,
     onModifiedSubmit,
     onSubmit,
+    onSubmitBlocked,
     submitDisabled,
   ]);
 
@@ -1405,6 +1416,8 @@ interface LexicalChatInputProps {
   enterSubmits?: boolean;
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
+  /** Enter while submitDisabled, only when the caller names the blocked state (see KeyboardPlugin). */
+  onSubmitBlocked?: () => void;
   onChange?: (text: string, meta: { programmatic: boolean }) => void;
   onFocus?: () => void;
   triggerPanelContainer?: HTMLElement | null;
@@ -1437,6 +1450,7 @@ export function LexicalChatInput({
   placeholder,
   disabled = false,
   submitDisabled = false,
+  onSubmitBlocked,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   onSubmit,
@@ -1589,6 +1603,7 @@ export function LexicalChatInput({
           <KeyboardPlugin
             onSubmit={handleSubmit}
             onModifiedSubmit={onModifiedSubmit}
+            onSubmitBlocked={onSubmitBlocked}
             disabled={disabled}
             submitDisabled={submitDisabled}
             allowSubmitWhenEmpty={allowSubmitWhenEmpty}

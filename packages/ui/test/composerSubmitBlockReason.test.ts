@@ -10,6 +10,7 @@ const ready = {
   runtimeBlocked: false,
   submissionReady: true,
   submissionConfigured: true,
+  modelSelectionSettled: true,
   sendInProgress: false,
   preparedSessionAwaitingFirstInput: false,
   retrying: false,
@@ -26,7 +27,7 @@ const unresolvedFromView = {
 } as const;
 
 describe("resolveComposerSubmitBlockReason: stored model selection cannot be resolved", () => {
-  it.each(["provider-not-found", "account-connection-unavailable", "model-not-found"] as const)(
+  it.each(["provider-not-found", "model-not-found"] as const)(
     "names the unavailable model for selectionIssue %s",
     (modelSelectionIssue) => {
       expect(
@@ -34,6 +35,15 @@ describe("resolveComposerSubmitBlockReason: stored model selection cannot be res
       ).toBe<ComposerSubmitBlockReason>("modelUnavailable");
     },
   );
+
+  it("uses the sign-in copy when the model's account connection is missing", () => {
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        modelSelectionIssue: "account-connection-unavailable",
+      }),
+    ).toBe<ComposerSubmitBlockReason>("modelAccountUnavailable");
+  });
 
   it("keeps the stored intent visible as the block reason even when the runtime is also blocked", () => {
     expect(
@@ -53,6 +63,47 @@ describe("resolveComposerSubmitBlockReason: stored model selection cannot be res
         modelSelectionIssue: "provider-not-found",
       }),
     ).toBe("remoteUnavailable");
+  });
+
+  it("keeps the generic reason until startup has settled (cold-start verdicts can be transient)", () => {
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        modelSelectionSettled: false,
+        modelSelectionIssue: "provider-not-found",
+      }),
+    ).toBe("sessionNotReady");
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        modelSelectionSettled: false,
+        modelSelectionIssue: "account-connection-unavailable",
+      }),
+    ).toBe("sessionNotReady");
+  });
+
+  it("does not hide an in-flight send behind the model message", () => {
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        sendInProgress: true,
+        modelSelectionIssue: "model-not-found",
+      }),
+    ).toBe("sendInProgress");
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        outcomeUnresolved: true,
+        modelSelectionIssue: "model-not-found",
+      }),
+    ).toBe("outcomeUnresolved");
+    expect(
+      resolveComposerSubmitBlockReason({
+        ...unresolvedFromView,
+        preparedSessionAwaitingFirstInput: true,
+        modelSelectionIssue: "model-not-found",
+      }),
+    ).toBe("firstSubmissionDelivering");
   });
 });
 
