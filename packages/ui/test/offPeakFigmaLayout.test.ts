@@ -426,8 +426,7 @@ describe("idle-time task Figma layout contracts", () => {
     );
   });
 
-  // TEMPORARY(UI-2): upstream 3.16.1 rebuilt the idle-time editor toolbar (no containerClassName="contents" project picker, no triggerIndicator); re-verify this layout contract with the UI-2 off-peak work. Ledger: ui-fix-g3 offPeakFigmaLayout.
-  it.skip("shares a five-to-seven-line auto-sizing Instructions composer across scheduled and idle forms", () => {
+  it("shares a five-to-seven-line auto-sizing Instructions composer across scheduled and idle forms", () => {
     expect(instructionsComposerSource).toContain(
       "flex min-h-39 flex-col overflow-hidden rounded-xl border-0 bg-surface",
     );
@@ -451,7 +450,13 @@ describe("idle-time task Figma layout contracts", () => {
     expect(editViewSource).toContain("<AutomationInstructionsComposer");
     expect(automationEditViewSource).not.toContain("min-h-[116px] max-h-[156px]");
     expect(editViewSource).not.toContain("<textarea");
-    expect(editViewSource).toContain('containerClassName="contents"');
+    // The project picker is a Select: its trigger carries the offpeak-project-select test id and
+    // reuses the toolbar trigger class.
+    expect(editViewSource).toContain('data-testid="offpeak-project-select"');
+    expect(editViewSource).toContain('variant="ghost"');
+    expect(editViewSource).toContain(
+      "className={AUTOMATION_INSTRUCTIONS_TOOLBAR_TRIGGER_CLASSNAME}",
+    );
     expect(editViewSource).not.toContain("focus-within:bg-hover");
     expect(editViewSource).toContain("<ModelConfigSelect");
     expect(editViewSource).toContain("showProviderLevel={false}");
@@ -472,8 +477,9 @@ describe("idle-time task Figma layout contracts", () => {
     expect(automationIconsSource).toContain("strokeWidth={2}");
     expect(automationIconsSource).not.toContain("@/assets/");
     expect(automationIconsSource).not.toContain("maskImage");
-    expect(editViewSource).toContain("triggerIndicator={");
-    expect(editViewSource).toContain("containerSize={20}");
+    expect(editViewSource).toContain('<FolderOpen className="size-4" aria-hidden="true" />');
+    expect(editViewSource).toContain("<SelectValue />");
+    expect(editViewSource).toContain("data-project-id={option.projectId}");
     expect(editViewSource).toContain("<ConfigSelect");
     expect(editViewSource).toContain("option={modeOption}");
     expect(chatInputDisplaySource).toContain(

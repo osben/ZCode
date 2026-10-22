@@ -875,6 +875,79 @@ it("After a successful WSL finish, a repeated entry still applies the same distr
   expect(result.current.currentStep).toBe("settings");
   expect(result.current.settingsStep.wslDistro).toBe("Ubuntu");
 });
+// Directory-selection failure containment (remote-connection-flow handleSelectDirectory). A rejected
+// onSelectProject must reset `selecting` so the directory button is not stuck loading, and must surface
+// the error. The step depends on whether the connected session is still registered: keep the directory
+// step for a retry, or fall back to settings when the session was already reclaimed.
+it("A rejected directory selection resets selecting, shows the error, and keeps the directory step when the session is still registered", async () => {
+  const props = defaults({
+    preferredKind: "wsl",
+    preferredWslDistro: "Ubuntu",
+    isWindowsDesktop: true,
+  });
+  let rejectSelection!: (error: unknown) => void;
+  props.onSelectProject = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectSelection = reject;
+      }),
+  );
+  const { result } = renderHook(() => useRemoteConnectionFlow(props));
+  await drain();
+  act(() => result.current.settingsStep.onConnect());
+  await drain();
+  expect(result.current.currentStep).toBe("directory");
+
+  useRemoteWorkspaceSessionStore.setState({
+    sessionsById: { "session-a": { sessionId: "session-a" } as never },
+  });
+  act(() => {
+    void result.current.directoryStep.onSelect("/srv/test");
+  });
+  await waitFor(() => expect(result.current.directoryStep.selecting).toBe(true));
+  expect(props.onSelectProject).toHaveBeenCalledWith("session-a", "/srv/test", undefined);
+
+  await act(async () => {
+    rejectSelection(new Error("select failed boom"));
+  });
+  await waitFor(() => expect(result.current.directoryStep.selecting).toBe(false));
+  expect(result.current.error).toBe("select failed boom");
+  expect(result.current.currentStep).toBe("directory");
+});
+
+it("A rejected directory selection falls back to settings and resets selecting when the session was already reclaimed", async () => {
+  const props = defaults({
+    preferredKind: "wsl",
+    preferredWslDistro: "Ubuntu",
+    isWindowsDesktop: true,
+  });
+  let rejectSelection!: (error: unknown) => void;
+  props.onSelectProject = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectSelection = reject;
+      }),
+  );
+  const { result } = renderHook(() => useRemoteConnectionFlow(props));
+  await drain();
+  act(() => result.current.settingsStep.onConnect());
+  await drain();
+  expect(result.current.currentStep).toBe("directory");
+
+  // No registered session: the failure path must not keep the directory step on a dead session.
+  act(() => {
+    void result.current.directoryStep.onSelect("/srv/test");
+  });
+  await waitFor(() => expect(result.current.directoryStep.selecting).toBe(true));
+
+  await act(async () => {
+    rejectSelection(new Error("sync rejected"));
+  });
+  await waitFor(() => expect(result.current.currentStep).toBe("settings"));
+  expect(result.current.error).toBe("sync rejected");
+  expect(result.current.settingsStep.loading).toBe(false);
+});
+
 it("An explicit cancel settles the trace immediately; a late rejection must not settle twice", async () => {
   let reject!: (error: Error) => void;
   const props = defaults({
