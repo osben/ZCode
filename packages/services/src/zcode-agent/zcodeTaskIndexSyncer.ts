@@ -641,6 +641,39 @@ export function createZCodeTaskIndexSyncer(
   }
 
   /**
+   * A fork child is created by the CLI, so the Host claims it for the parent's project before its CLI facts are applied
+   * (TaskIndexRepo.admitForkSummary). Prepared sessions keep their own admission path.
+   */
+  function isForkAdmissionCandidate(summary: SessionSummary): boolean {
+    return (
+      summary.parentSessionId !== undefined &&
+      summary.phase !== "draft" &&
+      !summary.worktreePreparation &&
+      !summary.submissionPreparation
+    );
+  }
+
+  function admitForkChild(
+    workspace: ZCodeAgentWorkspaceTarget,
+    target: ZCodeAgentSessionTarget,
+    summary: SessionSummary,
+  ): void {
+    void taskIndexRepo
+      .admitForkSummary({
+        meta: buildBaselineMetaFromSummary(workspace, summary),
+        titleSource: summary.titleSource,
+      })
+      .then(({ meta, changed }) => {
+        // Steady-state summaries change nothing in the admitted facts; broadcast only the first claim or a real fact change.
+        if (changed)
+          emitWorkspaceTaskListChanged(broadcastTargetFrom(target), meta, "task_meta_changed");
+      })
+      .catch((error) =>
+        logger.warn(undefined, `Could not admit forked session taskId=${target.sessionId}`, error),
+      );
+  }
+
+  /**
    * Title change → patch the SQLite title only; fetch a full snapshot if the row is missing (matching legacy first_input semantics).
    * The patch deliberately carries no updatedAt: a rename or title echo is not session activity, so the row keeps its CLI order (I6).
    */
@@ -745,6 +778,7 @@ export function createZCodeTaskIndexSyncer(
       }
       return;
     }
+    if (isForkAdmissionCandidate(next)) admitForkChild(state.target, target, next);
     const becameVisibleTask = previous === undefined || previous.phase === "draft";
     // A terminal transition means the baseline actually observed non-terminal → terminal. Do not replay terminal events for sessions with no baseline
     // (cold-recovery hydration or historical sessions first seen after gap fallback). Active sessions always enter the baseline as running/prewarming
@@ -793,9 +827,11 @@ export function createZCodeTaskIndexSyncer(
     for (let offset = 0; offset < candidates.length; offset += INITIAL_BASELINE_SEED_BATCH_SIZE) {
       const batch = candidates.slice(offset, offset + INITIAL_BASELINE_SEED_BATCH_SIZE);
       const results = await Promise.allSettled(
-        batch.map((summary) =>
-          taskIndexRepo.seedTaskMetaIfMissing(buildBaselineMetaFromSummary(state.target, summary)),
-        ),
+        batch.map((summary) => {
+          const meta = buildBaselineMetaFromSummary(state.target, summary);
+          if (!isForkAdmissionCandidate(summary)) return taskIndexRepo.seedTaskMetaIfMissing(meta);
+          return taskIndexRepo.admitForkSummary({ meta, titleSource: summary.titleSource });
+        }),
       );
       for (const result of results) {
         if (result.status === "rejected") {
